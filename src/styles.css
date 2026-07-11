@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+:root {
+  color: #332c27;
+  background: #f7f1e8;
+  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --surface: #fffaf3;
+  --text: #332c27;
+  --muted: #6f6258;
+  --primary: #b85f44;
+  --primary-hover: #97462f;
+  --pantry: #5f745f;
+  --danger: #a33b35;
+  --border: #d9cabc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+.button-link {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #3f6f88;
+  outline-offset: 2px;
+}
+
+.page-frame {
+  width: min(100% - 32px, 680px);
+  margin-inline: auto;
+  padding-block: 32px 96px;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 20px;
+  box-shadow: 0 8px 24px rgb(82 60 43 / 8%);
+}
+
+.stack {
+  display: grid;
+  gap: 16px;
+}
+
+.eyebrow {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.primary-button,
+.secondary-button,
+.text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primary-button {
+  border: 1px solid var(--primary);
+  color: #fff;
+  background: var(--primary);
+}
+
+.primary-button:hover {
+  background: var(--primary-hover);
+}
+
+.secondary-button {
+  border: 1px solid var(--primary);
+  color: var(--primary-hover);
+  background: transparent;
+}
+
+.text-button {
+  border: 0;
+  color: var(--primary-hover);
+  background: transparent;
+  text-decoration: underline;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.status-message {
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.error-message {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+@media (min-width: 720px) {
+  .page-frame {
+    padding-top: 56px;
+  }
+}

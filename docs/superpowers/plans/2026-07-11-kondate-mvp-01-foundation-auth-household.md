@@ -846,7 +846,7 @@ git commit -m "feat: define shared domain contracts"
 - Consumes: React 19, Tailwind Vite plugin, and TanStack Query from Task 1.
 - Produces: `AppProviders({ children, queryClient? })` with a stable test injection seam, Japanese product heading, and the approved color/target-size CSS tokens.
 
-- [ ] **Step 1: Write the failing provider/render test (3 minutes)**
+- [x] **Step 1: Write the failing provider/render test (3 minutes)**
 
 Create `src/app/providers.test.tsx`:
 
@@ -870,13 +870,13 @@ it("provides the configured query client", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify failure (2 minutes)**
+- [x] **Step 2: Run the test and verify failure (2 minutes)**
 
 Run: `npm test -- --run src/app/providers.test.tsx`
 
 Expected: FAIL because `./providers` does not exist.
 
-- [ ] **Step 3: Implement the application provider and initial entry point (5 minutes)**
+- [x] **Step 3: Implement the application provider and initial entry point (5 minutes)**
 
 Create `src/app/providers.tsx`:
 
@@ -956,7 +956,7 @@ Create `index.html`:
 </html>
 ```
 
-- [ ] **Step 4: Add the complete mobile-first visual baseline (4 minutes)**
+- [x] **Step 4: Add the complete mobile-first visual baseline (4 minutes)**
 
 Create `src/styles.css`:
 
@@ -1131,7 +1131,7 @@ Create `netlify.toml`:
   status = 200
 ```
 
-- [ ] **Step 5: Verify component, build, and 320px CSS invariants (4 minutes)**
+- [x] **Step 5: Verify component, build, and 320px CSS invariants (4 minutes)**
 
 Run:
 
@@ -1143,7 +1143,7 @@ npm run build
 
 Expected: one component test passes, typecheck exits 0, and Vite writes `dist/index.html`. Inspect `src/styles.css` and confirm `min-width: 320px` applies only to the viewport/root, not to a child that could force horizontal overflow.
 
-- [ ] **Step 6: Commit the UI foundation (2 minutes)**
+- [x] **Step 6: Commit the UI foundation (2 minutes)**
 
 ```bash
 git add index.html netlify.toml src/app/providers.test.tsx src/app/providers.tsx src/main.tsx src/styles.css
