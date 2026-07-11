@@ -641,7 +641,7 @@ git commit -m "chore: establish Node and test toolchain"
 - Consumes: Vitest from Task 1.
 - Produces: the exact roadmap domain names; household enum names used by SQL/UI; `privacyNoticeVersion = "2026-07-11.v1"`; stable `ApiResponse<T>`.
 
-- [ ] **Step 1: Write failing contract tests (3 minutes)**
+- [x] **Step 1: Write failing contract tests (3 minutes)**
 
 Create `shared/contracts/domain.test.ts`:
 
@@ -714,13 +714,13 @@ it("keeps the discriminated API envelope", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests and verify the red state (2 minutes)**
+- [x] **Step 2: Run tests and verify the red state (2 minutes)**
 
 Run: `npm test -- --run shared/contracts/domain.test.ts shared/contracts/http.test.ts`
 
 Expected: FAIL because `./domain` and `./http` do not exist.
 
-- [ ] **Step 3: Implement the complete contracts (4 minutes)**
+- [x] **Step 3: Implement the complete contracts (4 minutes)**
 
 Create `shared/contracts/domain.ts`:
 
@@ -814,7 +814,7 @@ export type ApiFailure = {
 export type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 ```
 
-- [ ] **Step 4: Run focused tests and typecheck (3 minutes)**
+- [x] **Step 4: Run focused tests and typecheck (3 minutes)**
 
 Run:
 
@@ -825,7 +825,7 @@ npm run typecheck
 
 Expected: both contract tests pass and TypeScript exits 0.
 
-- [ ] **Step 5: Commit shared contracts (2 minutes)**
+- [x] **Step 5: Commit shared contracts (2 minutes)**
 
 ```bash
 git add shared/contracts
