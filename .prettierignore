@@ -1,0 +1,9 @@
+dist
+coverage
+infra/supabase
+playwright-report
+test-results
+src/shared/types/database.generated.ts
+package-lock.json
+docs
+.superpowers

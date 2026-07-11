@@ -212,7 +212,7 @@
 - Consumes: Node `>=24 <25` and an empty npm workspace.
 - Produces: npm scripts `dev`, `build`, `format`, `format:check`, `lint`, `typecheck`, `test`, `db:test`, `db:types`, and `e2e`; path aliases `@/*` and `@shared/*`.
 
-- [ ] **Step 1: Write the failing project-configuration test (3 minutes)**
+- [x] **Step 1: Write the failing project-configuration test (3 minutes)**
 
 Create `tests/tooling/project-config.test.mjs`:
 
@@ -242,13 +242,13 @@ test("pins Node 24 and exposes every verification script", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify the red state (2 minutes)**
+- [x] **Step 2: Run the test and verify the red state (2 minutes)**
 
 Run: `node --test tests/tooling/project-config.test.mjs`
 
 Expected: FAIL with `ENOENT: no such file or directory, open 'package.json'`.
 
-- [ ] **Step 3: Create the complete npm and TypeScript configuration (5 minutes)**
+- [x] **Step 3: Create the complete npm and TypeScript configuration (5 minutes)**
 
 Create `package.json`:
 
@@ -425,7 +425,7 @@ interface ImportMeta {
 }
 ```
 
-- [ ] **Step 4: Create lint, format, Vite, Vitest, and Playwright configuration (5 minutes)**
+- [x] **Step 4: Create lint, format, Vite, Vitest, and Playwright configuration (5 minutes)**
 
 Create `eslint.config.js`:
 
@@ -609,7 +609,7 @@ test-results
 .env
 ```
 
-- [ ] **Step 5: Install dependencies and verify the green state (5 minutes)**
+- [x] **Step 5: Install dependencies and verify the green state (5 minutes)**
 
 Run:
 
@@ -622,7 +622,7 @@ npm run lint
 
 Expected: `package-lock.json` is created, the Node test reports `1 pass`, and both static commands exit 0. If npm resolves a package outside the major lines in `package.json`, stop and correct the manifest before committing.
 
-- [ ] **Step 6: Commit the tooling baseline (2 minutes)**
+- [x] **Step 6: Commit the tooling baseline (2 minutes)**
 
 ```bash
 git add package.json package-lock.json .nvmrc .node-version .npmrc .gitignore .dockerignore .prettierignore .prettierrc.json eslint.config.js tsconfig.json tsconfig.app.json tsconfig.functions.json vite.config.ts vitest.config.ts playwright.config.ts src/test/setup.ts src/vite-env.d.ts tests/tooling/project-config.test.mjs
