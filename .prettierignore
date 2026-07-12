@@ -1,6 +1,9 @@
 dist
 coverage
 infra/supabase
+infra/supabase/volumes
+infra/supabase/volumes/db/data
+infra/supabase/**
 playwright-report
 test-results
 src/shared/types/database.generated.ts

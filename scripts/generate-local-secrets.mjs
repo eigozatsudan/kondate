@@ -83,6 +83,11 @@ values.set(
 );
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787");
 
-const rendered = [...values.entries()].map(([key, value]) => `${key}=${value}`).join("\n");
+const rendered = [...values.entries()]
+  .map(
+    ([key, value]) =>
+      `${key}=${/[^A-Za-z0-9_./:*@?=-]/u.test(value) ? JSON.stringify(value) : value}`,
+  )
+  .join("\n");
 await writeFile(output, `${rendered}\n`, { mode: 0o600 });
 console.log("Created .env with local-only credentials");
