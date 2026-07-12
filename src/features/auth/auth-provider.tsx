@@ -78,13 +78,13 @@ export function AuthProvider({
     return startRecovery({
       gateway,
       storage: window.localStorage,
-      ttlMs: getPublicEnv().authContinuationTtlMs,
+      ttlMs: providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000,
       onComplete: (result) => {
         void refreshSession();
         if (result.returnTo.startsWith("/")) window.location.assign(result.returnTo);
       },
     });
-  }, [defaultRecoveryGateway, recoveryGateway, refreshSession, startRecovery]);
+  }, [defaultRecoveryGateway, providedClient, recoveryGateway, refreshSession, startRecovery]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

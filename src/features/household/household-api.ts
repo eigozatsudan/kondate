@@ -123,16 +123,8 @@ export async function setOnboardingStatus(
   userId: string,
   status: OnboardingStatus,
 ): Promise<ProfileRow> {
-  const patch: TablesUpdate<"profiles"> = {
-    onboarding_status: status,
-    onboarding_completed_at: status === "complete" ? new Date().toISOString() : null,
-  };
-  const { data, error } = await client
-    .from("profiles")
-    .update(patch)
-    .eq("user_id", userId)
-    .select("*")
-    .single();
+  void userId;
+  const { data, error } = await client.rpc("set_onboarding_status", { p_status: status });
   if (error !== null) throw dataError("初回設定の進捗を保存できませんでした");
   return data;
 }

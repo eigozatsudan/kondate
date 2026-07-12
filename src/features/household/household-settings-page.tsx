@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   ageBands,
@@ -177,20 +177,34 @@ export function HouseholdSettingsPage() {
   const queryClient = useQueryClient();
   if (auth.session === null) return null;
   return (
-    <HouseholdSettingsForm api={createHouseholdSettingsApi(auth.session.user.id, queryClient)} />
+    <HouseholdSettingsForm
+      userId={auth.session.user.id}
+      api={createHouseholdSettingsApi(auth.session.user.id, queryClient)}
+    />
   );
 }
 
-export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
+export function HouseholdSettingsForm({
+  api,
+  userId = "settings",
+}: {
+  api: HouseholdSettingsApi;
+  userId?: string;
+}) {
   const queryClient = useQueryClient();
+  const membersKey = householdKeys.members(userId);
   const [selectedId, setSelectedId] = useState<string>();
   const [values, setValues] = useState<HouseholdSettingsValue>();
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
   const [message, setMessage] = useState("");
   const [dislike, setDislike] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const saveQueue = useRef(Promise.resolve(true));
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const deleteConfirm = useRef<HTMLButtonElement>(null);
   const membersQuery = useQuery({
-    queryKey: ["settings-members"],
+    queryKey: membersKey,
     queryFn: () => api.listMembers(),
   });
   const catalogQuery = useQuery({
@@ -221,15 +235,29 @@ export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
     }
   }, [selected]);
 
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const trigger = deleteTrigger.current;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirmDelete(false);
+    };
+    deleteConfirm.current?.focus();
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      trigger?.focus();
+    };
+  }, [confirmDelete]);
+
   const update = (patch: Partial<HouseholdSettingsValue>) => {
     setValues((current) => (current === undefined ? current : { ...current, ...patch }));
   };
-  const save = async (next: HouseholdSettingsValue) => {
-    if (selected === undefined) return;
+  const save = async (next: HouseholdSettingsValue): Promise<boolean> => {
+    if (selected === undefined) return false;
     const parsed = householdSettingsSchema.safeParse(next);
     if (!parsed.success) {
       setErrors(toHouseholdFieldErrors(parsed.error));
-      return;
+      return false;
     }
     setErrors({});
     try {
@@ -237,19 +265,25 @@ export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
         selected.status === "draft"
           ? await api.updateDraft(selected.id, toMemberPatch(parsed.data))
           : await api.updateMember(selected.id, toMemberPatch(parsed.data));
-      queryClient.setQueryData<HouseholdMemberRow[]>(["settings-members"], (current = []) =>
+      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
         current.map((member) => (member.id === saved.id ? saved : member)),
       );
       await api.invalidateSafety();
       setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
+      return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
+      return false;
     }
+  };
+  const queueSave = (next: HouseholdSettingsValue) => {
+    saveQueue.current = saveQueue.current.then(() => save(next)).catch(() => false);
+    return saveQueue.current;
   };
   const createDraft = useMutation({
     mutationFn: () => api.createDraft(members.length),
     onSuccess: (created) => {
-      queryClient.setQueryData<HouseholdMemberRow[]>(["settings-members"], (current = []) => [
+      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) => [
         ...current,
         created,
       ]);
@@ -269,11 +303,17 @@ export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
-    await save(parsed.data);
+    setSaving(true);
+    await saveQueue.current;
+    const saved = await save(parsed.data);
+    if (!saved) {
+      setSaving(false);
+      return;
+    }
     if (selected.status === "draft") {
       try {
         const completed = await api.completeMember(selected.id);
-        queryClient.setQueryData<HouseholdMemberRow[]>(["settings-members"], (current = []) =>
+        queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
           current.map((member) => (member.id === completed.id ? completed : member)),
         );
         await api.invalidateSafety();
@@ -282,12 +322,13 @@ export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
         setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
       }
     }
+    setSaving(false);
   };
 
   const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
     const next = { ...(values as HouseholdSettingsValue), ...patch };
     update(patch);
-    void save(next);
+    void queueSave(next);
   };
 
   if (membersQuery.isPending || catalogQuery.isPending)
@@ -598,10 +639,16 @@ export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
           ))}
         </fieldset>
       </section>
-      <button className="primary-button" type="button" onClick={() => void complete()}>
+      <button
+        className="primary-button"
+        type="button"
+        disabled={saving}
+        onClick={() => void complete()}
+      >
         この家族の設定を完了
       </button>
       <button
+        ref={deleteTrigger}
         className="secondary-button"
         type="button"
         onClick={() => {
@@ -614,6 +661,7 @@ export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
         <div role="dialog" aria-modal="true" aria-label="家族の削除確認" className="card stack">
           <p>この家族の設定だけを削除します。</p>
           <button
+            ref={deleteConfirm}
             className="primary-button"
             type="button"
             onClick={() =>
@@ -621,7 +669,7 @@ export function HouseholdSettingsForm({ api }: { api: HouseholdSettingsApi }) {
                 .deleteMember(selected.id)
                 .then(() => {
                   setConfirmDelete(false);
-                  return queryClient.invalidateQueries({ queryKey: ["settings-members"] });
+                  return queryClient.invalidateQueries({ queryKey: membersKey });
                 })
                 .then(() => api.invalidateSafety())
             }

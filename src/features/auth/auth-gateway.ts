@@ -4,6 +4,7 @@ import {
   buildAuthCallbackUrl,
   clearAuthFlow,
   createAuthFlow,
+  listUnexpiredAuthFlows,
   readAuthFlow,
   sanitizeReturnPath,
   createContinuationApi,
@@ -66,6 +67,12 @@ function isExpired(error: AuthError | null, url: URL): boolean {
   return code === "otp_expired" || code === "otp_disabled" || code === "token_expired";
 }
 
+function rejectConcurrentFlow(storage: Storage): void {
+  if (listUnexpiredAuthFlows(storage, new Date()).length > 0) {
+    throw new Error("ログイン処理が進行中です。元のブラウザで続けてください");
+  }
+}
+
 export function createAuthGateway(
   providedClient?: BrowserSupabaseClient,
   continuationApi: ContinuationApi = createContinuationApi(),
@@ -75,6 +82,7 @@ export function createAuthGateway(
   const client = providedClient ?? getBrowserSupabaseClient();
   return {
     async signInWithGoogle(returnTo) {
+      rejectConcurrentFlow(storage);
       const flow = await createAuthFlow(returnTo, continuationApi, storage);
       const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
       const provider = deps.getPublicEnv();
@@ -97,6 +105,7 @@ export function createAuthGateway(
     },
 
     async sendMagicLink(email, returnTo) {
+      rejectConcurrentFlow(storage);
       const flow = await createAuthFlow(returnTo, continuationApi, storage);
       const emailRedirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
       const { error } = await client.auth.signInWithOtp({
@@ -126,6 +135,9 @@ export function createAuthGateway(
       if (isExpired(null, url)) return { kind: "expired", flowId: flowId ?? "", returnTo };
       const providerError = url.searchParams.get("error");
       if (providerError !== null) {
+        if (stored !== null && state !== stored.state) {
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
         if (flowId !== null) clearAuthFlow(flowId, storage);
         return {
           kind: "error",

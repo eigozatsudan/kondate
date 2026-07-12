@@ -53,6 +53,9 @@ export function AllergyEditor(props: AllergyEditorProps) {
         />
       </label>
       <ul className="stack" aria-label="標準アレルギー候補">
+        {matches.length === 0 && (
+          <li>該当する標準項目はありません。自由登録を確認してください。</li>
+        )}
         {matches.map((item) => (
           <li key={item.id}>
             <button

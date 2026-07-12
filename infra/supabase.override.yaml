@@ -2,6 +2,14 @@ services:
   db:
     ports:
       - "127.0.0.1:54322:5432"
+  kong:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8443:8443"
+  supavisor:
+    ports: !override
+      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:6543:6543"
   auth:
     environment:
       GOTRUE_SITE_URL: ${SITE_URL}

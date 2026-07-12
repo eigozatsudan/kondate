@@ -20,7 +20,7 @@ export const householdSafetyQueryPrefixes = {
   generation: ["generation"],
   shopping: ["shopping"],
 } as const;
-export async function invalidateHouseholdSafetyDependents(
+export async function invalidateHouseholdSafetyQueries(
   queryClient: QueryClient,
   userId: string,
 ): Promise<void> {
@@ -30,6 +30,13 @@ export async function invalidateHouseholdSafetyDependents(
       queryClient.invalidateQueries({ queryKey }),
     ),
   ]);
+}
+
+export async function invalidateHouseholdSafetyDependents(
+  queryClient: QueryClient,
+  userId: string,
+): Promise<void> {
+  await invalidateHouseholdSafetyQueries(queryClient, userId);
   try {
     localStorage.setItem(householdSafetyRevisionStorageKey, crypto.randomUUID());
   } catch {

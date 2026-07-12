@@ -20,6 +20,15 @@ const readJson = async (request) => {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 };
 
+function escapeHtml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export function createOAuthMockServer({ appOrigin, fixture, now, issueLocalCredentials }) {
   const pending = new Map();
   const callback = new URL("/auth/callback", appOrigin).href;
@@ -55,7 +64,7 @@ export function createOAuthMockServer({ appOrigin, fixture, now, issueLocalCrede
         });
         return response.end(`<!doctype html><html lang="ja"><meta charset="utf-8">
           <title>ローカルGoogle認証</title><main><h1>ローカルGoogle認証</h1>
-          <p>${fixture.displayName}として続けます。</p>
+          <p>${escapeHtml(fixture.displayName)}として続けます。</p>
           <a href="${approve.pathname}${approve.search}">Googleテスト利用者で続ける</a>
           <a href="${cancel.pathname}${cancel.search}">キャンセル</a></main></html>`);
       }

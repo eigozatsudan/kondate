@@ -1,8 +1,10 @@
 \ir 000_helpers.sql
 begin;
+-- 他のローカル実行やE2Eが残した有効なレコードに依存しないよう、テスト対象を初期化する。
+delete from private.auth_continuations;
 select plan(8);
 select has_table('private', 'auth_continuations', 'continuation ledger exists');
-select function_returns('public', 'claim_auth_continuation', array['uuid', 'bytea', 'bytea', 'text', 'timestamp with time zone'], 'table', 'claim has exact five-argument signature');
+select function_returns('public', 'claim_auth_continuation', array['uuid', 'bytea', 'bytea', 'text', 'timestamp with time zone'], 'setof record', 'claim has exact five-argument signature');
 select ok(not has_table_privilege('anon', 'private.auth_continuations', 'select'), 'anonymous users cannot read the ledger');
 select lives_ok($$
   select * from public.create_auth_continuation(

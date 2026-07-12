@@ -308,6 +308,64 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_auth_continuations: {
+        Args: { p_now: string }
+        Returns: number
+      }
+      create_auth_continuation: {
+        Args: {
+          p_now: string
+          p_origin: string
+          p_return_to: string
+          p_secret_hash: string
+          p_state_hash: string
+          p_ttl_seconds: number
+        }
+        Returns: {
+          expires_at: string
+          id: string
+        }[]
+      }
+      deposit_auth_continuation: {
+        Args: {
+          p_ciphertext: string
+          p_id: string
+          p_iv: string
+          p_now: string
+          p_origin: string
+          p_state_hash: string
+        }
+        Returns: boolean
+      }
+      claim_auth_continuation: {
+        Args: {
+          p_id: string
+          p_now: string
+          p_origin: string
+          p_secret_hash: string
+          p_state_hash: string
+        }
+        Returns: {
+          code_iv: string
+          encrypted_code: string
+          return_to: string
+        }[]
+      }
+      set_onboarding_status: {
+        Args: { p_status: string }
+        Returns: {
+          age_band: string | null
+          allergy_status: string | null
+          created_at: string
+          display_name: string | null
+          ease_preferences: string[]
+          id: string
+          onboarding_completed_at: string | null
+          onboarding_status: string
+          updated_at: string
+          user_id: string
+        }
+      }
       complete_household_member: {
         Args: { p_member_id: string }
         Returns: {
@@ -469,4 +527,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

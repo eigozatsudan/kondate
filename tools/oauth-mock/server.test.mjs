@@ -13,10 +13,10 @@ afterEach(async () => {
     );
 });
 
-async function start(now = () => new Date("2026-07-11T00:00:00.000Z")) {
+async function start(now = () => new Date("2026-07-11T00:00:00.000Z"), fixtureOverride = fixture) {
   server = createOAuthMockServer({
     appOrigin: "http://127.0.0.1:5173",
-    fixture,
+    fixture: fixtureOverride,
     now,
     issueLocalCredentials: vi.fn().mockResolvedValue({
       email: fixture.email,
@@ -28,6 +28,23 @@ async function start(now = () => new Date("2026-07-11T00:00:00.000Z")) {
   if (address === null || typeof address === "string") throw new Error("oauth mock did not bind");
   return `http://127.0.0.1:${address.port}`;
 }
+
+it("escapes fixture display names before rendering provider HTML", async () => {
+  const origin = await start(undefined, {
+    ...fixture,
+    displayName: "<img src=x onerror=alert(1)>",
+  });
+  const response = await fetch(
+    `${origin}/authorize?${new URLSearchParams({
+      redirect_uri: "http://127.0.0.1:5173/auth/callback",
+      flow: "10000000-0000-4000-8000-000000000001",
+      state,
+    })}`,
+  );
+  const html = await response.text();
+  expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  expect(html).not.toContain("<img src=x onerror=alert(1)>");
+});
 
 it("redirects deterministic Google success and cancel to the exact app callback", async () => {
   const origin = await start();
