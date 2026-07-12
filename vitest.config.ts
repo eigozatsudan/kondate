@@ -12,7 +12,12 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}", "shared/**/*.test.ts", "tools/**/*.test.mjs"],
+    include: [
+      "src/**/*.test.{ts,tsx}",
+      "shared/**/*.test.ts",
+      "netlify/functions/**/*.test.ts",
+      "tools/**/*.test.mjs",
+    ],
     coverage: {
       reporter: ["text", "html"],
     },

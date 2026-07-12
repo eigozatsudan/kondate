@@ -1,0 +1,57 @@
+import { listUnexpiredAuthFlows } from "./auth-flow";
+
+export type RecoveryResult = { kind: "complete"; returnTo: string } | { kind: string };
+export type AuthContinuationRecoveryGateway = {
+  resumeFlow(flowId: string): Promise<RecoveryResult>;
+};
+
+type RecoveryCompleteResult = Extract<RecoveryResult, { kind: "complete" }>;
+
+function isRecoveryComplete(result: RecoveryResult): result is RecoveryCompleteResult {
+  return result.kind === "complete" && "returnTo" in result && typeof result.returnTo === "string";
+}
+
+export function startAuthContinuationRecovery(input: {
+  gateway: AuthContinuationRecoveryGateway;
+  storage: Storage;
+  onComplete(result: RecoveryCompleteResult): void;
+  ttlMs?: number;
+  now?: () => Date;
+  setInterval?: (handler: () => void, timeout: number) => void;
+}): () => void {
+  let running = false;
+  let stopped = false;
+  const poll = async (): Promise<void> => {
+    if (running || stopped) return;
+    running = true;
+    try {
+      for (const flow of listUnexpiredAuthFlows(
+        input.storage,
+        input.now?.() ?? new Date(),
+        input.ttlMs,
+      )) {
+        const result = await input.gateway.resumeFlow(flow.id);
+        if (isRecoveryComplete(result)) {
+          input.onComplete(result);
+          break;
+        }
+      }
+    } finally {
+      running = false;
+    }
+  };
+  const timer =
+    input.setInterval === undefined
+      ? window.setInterval(() => void poll(), 2_000)
+      : (input.setInterval(() => void poll(), 2_000), undefined);
+  const wake = (): void => void poll();
+  window.addEventListener("focus", wake);
+  document.addEventListener("visibilitychange", wake);
+  void poll();
+  return () => {
+    stopped = true;
+    if (timer !== undefined) clearInterval(timer);
+    window.removeEventListener("focus", wake);
+    document.removeEventListener("visibilitychange", wake);
+  };
+}

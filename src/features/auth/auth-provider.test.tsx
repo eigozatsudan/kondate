@@ -1,0 +1,78 @@
+import type { Session } from "@supabase/supabase-js";
+import { act, render, screen } from "@testing-library/react";
+import { useEffect } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { AuthProvider, type AuthProviderClient, useAuth } from "./auth-provider";
+
+const session = { access_token: "token", user: { id: "user-1" } } as Session;
+type AuthSubscription = ReturnType<
+  AuthProviderClient["auth"]["onAuthStateChange"]
+>["data"]["subscription"];
+
+function createAuthSubscription(): AuthSubscription {
+  return {
+    id: "test-subscription",
+    callback: () => undefined,
+    unsubscribe: vi.fn(),
+  };
+}
+
+function Probe() {
+  const auth = useAuth();
+  useEffect(() => {
+    if (auth.status === "authenticated" && auth.session !== null)
+      document.title = auth.session.user.id;
+  }, [auth]);
+  return <output>{auth.status}</output>;
+}
+
+describe("AuthProvider", () => {
+  it("loads the initial session and refreshes on focus", async () => {
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { session: null }, error: null })
+      .mockResolvedValueOnce({ data: { session }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({
+          data: { subscription: createAuthSubscription() },
+        }),
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider client={client}>
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(getSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts an injectable recovery boundary without creating an auth gateway", async () => {
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const recovery = vi.fn(() => vi.fn());
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={recovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(recovery).toHaveBeenCalledOnce();
+  });
+});

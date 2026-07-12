@@ -2644,7 +2644,7 @@ git commit -m "feat: protect household and privacy data with RLS"
 - Produces: `ServerEnv`, compile-consistent `PublicEnv`, the server-backed single-use continuation, exact fetch-style routes `/api/auth/continuations`, `/api/auth/continuations/:continuationId/callback`, and `/api/auth/continuations/:continuationId/claim`, `BrowserSupabaseClient`, `AuthProvider`, `useAuth()`, complete safe return-path/flow helpers, and `requireAccessToken`.
 - `useAuth()` returns `{ status: "loading" | "authenticated" | "unauthenticated"; session: Session | null; refreshSession(): Promise<void> }`.
 
-- [ ] **Step 1: Write failing environment and auth-flow tests (5 minutes)**
+- [x] **Step 1: Write failing environment and auth-flow tests (5 minutes)**
 
 Create `src/shared/config/public-env.test.ts`:
 
@@ -2899,13 +2899,13 @@ describe("AuthProvider", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests and verify failure (2 minutes)**
+- [x] **Step 2: Run the tests and verify failure (2 minutes)**
 
 Run: `npm test -- --run netlify/functions/_shared/env.test.ts src/shared/config/public-env.test.ts src/features/auth/auth-flow.test.ts src/features/auth/auth-provider.test.tsx`
 
 Expected: FAIL because the server/public environment and three auth implementation modules do not exist.
 
-- [ ] **Step 3: Implement separate server-seconds and browser-milliseconds environment parsing plus the lazy typed client (4 minutes)**
+- [x] **Step 3: Implement separate server-seconds and browser-milliseconds environment parsing plus the lazy typed client (4 minutes)**
 
 Create `netlify/functions/_shared/env.ts` first; this is the schema Plan 2 and Plan 3 extend without replacing:
 
@@ -3063,13 +3063,13 @@ export function getBrowserSupabaseClient(): BrowserSupabaseClient {
 }
 ```
 
-- [ ] **Step 4: Implement the server-backed continuation, safe flow storage, and callback URLs (4 minutes)**
+- [x] **Step 4: Implement the server-backed continuation, safe flow storage, and callback URLs (4 minutes)**
 
 Create the Task 7 migration, pgTAP file, `_shared/http.ts`, `_shared/supabase-admin.ts`, crypto helper/tests, all three continuation Functions/tests, and `auth-continuation-recovery.ts` using the complete locked contract in Task 13 Step 3. The create Function must pass `getServerEnv().AUTH_CONTINUATION_TTL_SECONDS` to the database create transition; only the browser recovery module uses `VITE_AUTH_CONTINUATION_TTL_MS`. These are Task 7 implementations, not deferred Task 13 alternatives.
 
 Create `src/features/auth/auth-flow.ts` with the server-backed `AuthFlow`, `ContinuationApi`, async `createAuthFlow`, `readAuthFlow`, `clearAuthFlow`, and `buildAuthCallbackUrl` contract specified in Task 13 Step 3. There is no local-only `classifyAuthContinuation`: missing local storage means the callback may deposit but cannot claim or establish a session.
 
-- [ ] **Step 5: Implement session state and access-token retrieval (5 minutes)**
+- [x] **Step 5: Implement session state and access-token retrieval (5 minutes)**
 
 Create `src/features/auth/auth-provider.tsx`:
 
@@ -3204,7 +3204,7 @@ npm run typecheck
 
 Expected: all tests pass, TypeScript exits 0, and the negative search confirms neither executable schema can regress to a generic URL validator. pgTAP proves five-minute expiry and atomic one-time claim; Function tests prove origin/state/secret binding and encrypted code storage; the provider test proves original-browser polling/focus recovery.
 
-- [ ] **Step 7: Commit browser auth primitives (2 minutes)**
+- [x] **Step 7: Commit browser auth primitives (2 minutes)**
 
 ```bash
 git add src/shared/config src/shared/lib/supabase.ts src/features/auth supabase/migrations/20260711000330_auth_continuations.sql supabase/tests/database/004_auth_continuations.test.sql netlify/functions
