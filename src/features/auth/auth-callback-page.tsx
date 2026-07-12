@@ -1,16 +1,28 @@
-import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 
 export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
-  const location = useLocation();
   const navigate = useNavigate();
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
-  const activeGateway = gateway ?? createAuthGateway();
+  const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
+  const activeGateway = gateway ?? defaultGateway;
+  const callbackStarted = useRef(false);
 
   useEffect(() => {
+    if (callbackStarted.current) return;
+    callbackStarted.current = true;
+    const callbackUrl = new URL(window.location.href);
+    const visibleUrl = new URL(callbackUrl);
+    visibleUrl.searchParams.delete("code");
+    visibleUrl.searchParams.delete("state");
+    visibleUrl.searchParams.delete("error");
+    visibleUrl.searchParams.delete("error_code");
+    visibleUrl.searchParams.delete("error_description");
+    visibleUrl.hash = "";
+    window.history.replaceState(window.history.state, "", visibleUrl);
     let active = true;
-    void activeGateway.completeCallback(new URL(window.location.href)).then((next) => {
+    void activeGateway.completeCallback(callbackUrl).then((next) => {
       if (!active) return;
       setResult(next);
       if (next.kind === "complete") {
@@ -30,7 +42,7 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
     return () => {
       active = false;
     };
-  }, [activeGateway, location.key, navigate]);
+  }, [activeGateway, navigate]);
 
   if (result?.kind === "deposited") {
     return (

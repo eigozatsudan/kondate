@@ -67,9 +67,9 @@ function isExpired(error: AuthError | null, url: URL): boolean {
   return code === "otp_expired" || code === "otp_disabled" || code === "token_expired";
 }
 
-function rejectConcurrentFlow(storage: Storage): void {
-  if (listUnexpiredAuthFlows(storage, new Date()).length > 0) {
-    throw new Error("ログイン処理が進行中です。元のブラウザで続けてください");
+function replaceExistingAuthFlows(storage: Storage): void {
+  for (const flow of listUnexpiredAuthFlows(storage, new Date())) {
+    clearAuthFlow(flow.id, storage);
   }
 }
 
@@ -82,37 +82,49 @@ export function createAuthGateway(
   const client = providedClient ?? getBrowserSupabaseClient();
   return {
     async signInWithGoogle(returnTo) {
-      rejectConcurrentFlow(storage);
+      replaceExistingAuthFlows(storage);
       const flow = await createAuthFlow(returnTo, continuationApi, storage);
-      const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
-      const provider = deps.getPublicEnv();
-      if (provider.authProviderMode === "oauth_mock") {
-        if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
+      try {
+        const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
+        const provider = deps.getPublicEnv();
+        if (provider.authProviderMode === "oauth_mock") {
+          if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
+            throw new Error("invalid mock origin");
+          }
+          const authorize = new URL("/authorize", provider.oauthMockOrigin);
+          authorize.searchParams.set(
+            "redirect_uri",
+            new URL("/auth/callback", deps.appOrigin).href,
+          );
+          authorize.searchParams.set("flow", flow.id);
+          authorize.searchParams.set("state", flow.state);
+          deps.navigate(authorize.href);
+          return;
+        }
+        const { error } = await client.auth.signInWithOAuth({
+          provider: "google",
+          options: { redirectTo },
+        });
+        if (error !== null) {
           throw new Error("Googleログインを開始できませんでした");
         }
-        const authorize = new URL("/authorize", provider.oauthMockOrigin);
-        authorize.searchParams.set("redirect_uri", new URL("/auth/callback", deps.appOrigin).href);
-        authorize.searchParams.set("flow", flow.id);
-        authorize.searchParams.set("state", flow.state);
-        deps.navigate(authorize.href);
-        return;
+      } catch {
+        clearAuthFlow(flow.id, storage);
+        throw new Error("Googleログインを開始できませんでした");
       }
-      const { error } = await client.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo },
-      });
-      if (error !== null) throw new Error("Googleログインを開始できませんでした");
     },
 
     async sendMagicLink(email, returnTo) {
-      rejectConcurrentFlow(storage);
+      replaceExistingAuthFlows(storage);
       const flow = await createAuthFlow(returnTo, continuationApi, storage);
       const emailRedirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
-      const { error } = await client.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo, shouldCreateUser: true },
-      });
-      if (error !== null) {
+      try {
+        const { error } = await client.auth.signInWithOtp({
+          email,
+          options: { emailRedirectTo, shouldCreateUser: true },
+        });
+        if (error !== null) throw new Error("magic link failed");
+      } catch {
         clearAuthFlow(flow.id, storage);
         throw new Error("ログイン用メールを送信できませんでした");
       }

@@ -33,15 +33,18 @@ class MapStorage implements Storage {
 }
 
 function continuationApiMock(overrides?: {
+  create?: ContinuationApi["create"];
   deposit?: ContinuationApi["deposit"];
   claim?: ContinuationApi["claim"];
 }): ContinuationApi {
   return {
-    create: () =>
-      Promise.resolve({
-        id: "10000000-0000-4000-8000-000000000001",
-        expiresAt: "2026-07-11T00:05:00Z",
-      }),
+    create:
+      overrides?.create ??
+      (() =>
+        Promise.resolve({
+          id: "10000000-0000-4000-8000-000000000001",
+          expiresAt: "2026-07-11T00:05:00Z",
+        })),
     deposit: overrides?.deposit ?? (() => Promise.resolve()),
     claim: overrides?.claim ?? (() => Promise.reject(new Error("not deposited"))),
   };
@@ -49,10 +52,12 @@ function continuationApiMock(overrides?: {
 
 function authClientMock(overrides?: {
   oauthResult?: { data: unknown; error: AuthError | null };
+  otpResult?: { data: unknown; error: AuthError | null };
   exchangeResult?: { data: unknown; error: AuthError | null };
   signInWithPasswordResult?: { data: unknown; error: AuthError | null };
 }) {
   const oauthResult = overrides?.oauthResult ?? { data: null, error: null };
+  const otpResult = overrides?.otpResult ?? { data: null, error: null };
   const exchangeResult = overrides?.exchangeResult ?? { data: null, error: null };
   const signInWithPasswordResult = overrides?.signInWithPasswordResult ?? {
     data: null,
@@ -61,6 +66,7 @@ function authClientMock(overrides?: {
   return {
     auth: {
       signInWithOAuth: vi.fn().mockResolvedValue(oauthResult),
+      signInWithOtp: vi.fn().mockResolvedValue(otpResult),
       exchangeCodeForSession: vi.fn().mockResolvedValue(exchangeResult),
       signInWithPassword: vi.fn().mockResolvedValue(signInWithPasswordResult),
     },
@@ -81,6 +87,15 @@ const fixedFlowDeps = {
   randomBytes: () => new Uint8Array(32).fill(7),
   now: () => new Date("2026-07-11T00:00:00Z"),
 };
+
+function configurePublicEnv(): void {
+  vi.stubEnv("VITE_SUPABASE_URL", "http://127.0.0.1:8000");
+  vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "test-key");
+  vi.stubEnv("VITE_MAGIC_LINK_RESEND_SECONDS", "60");
+  vi.stubEnv("VITE_AUTH_CONTINUATION_TTL_MS", "300000");
+  vi.stubEnv("VITE_AUTH_PROVIDER_MODE", "supabase");
+  vi.stubEnv("VITE_OAUTH_MOCK_ORIGIN", "");
+}
 
 it("uses the local Compose provider only in oauth_mock mode", async () => {
   const navigate = vi.fn();
@@ -130,6 +145,86 @@ it("uses Supabase Google and never the mock URL in production mode", async () =>
     },
   });
   expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+it("clears the just-created flow when starting Google OAuth fails", async () => {
+  const storage = new MapStorage();
+  const client = authClientMock({
+    oauthResult: { data: null, error: { message: "failed" } as AuthError },
+  });
+  const api = continuationApiMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  await expect(gateway.signInWithGoogle("/planner")).rejects.toThrow(
+    "Googleログインを開始できませんでした",
+  );
+
+  expect(readAuthFlow("10000000-0000-4000-8000-000000000001", storage)).toBeNull();
+});
+
+it("replaces an existing local flow when a magic link is resent", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000001",
+        expiresAt: "2026-07-11T00:05:00Z",
+      })
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000002",
+        expiresAt: "2026-07-11T00:05:00Z",
+      }),
+  });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  const first = await gateway.sendMagicLink("user@example.com", "/planner");
+  const resent = await gateway.sendMagicLink("user@example.com", "/planner");
+
+  expect(readAuthFlow(first.flowId, storage)).toBeNull();
+  expect(readAuthFlow(resent.flowId, storage)).not.toBeNull();
+});
+
+it("replaces an existing local magic-link flow when switching to Google", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000001",
+        expiresAt: "2026-07-11T00:05:00Z",
+      })
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000002",
+        expiresAt: "2026-07-11T00:05:00Z",
+      }),
+  });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  const magicLink = await gateway.sendMagicLink("user@example.com", "/planner");
+  await gateway.signInWithGoogle("/planner");
+
+  expect(readAuthFlow(magicLink.flowId, storage)).toBeNull();
+  expect(readAuthFlow("10000000-0000-4000-8000-000000000002", storage)).not.toBeNull();
 });
 
 it("rejects a callback URL carrying a hash fragment without exchanging it", async () => {

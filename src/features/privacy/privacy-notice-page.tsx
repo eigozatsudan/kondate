@@ -4,6 +4,8 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "@/features/auth/auth-provider";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { sanitizeReturnPath } from "@/features/auth/auth-flow";
+import { setOnboardingStatus } from "@/features/household/household-api";
+import { householdKeys } from "@/features/household/household-queries";
 import { acceptCurrentPrivacyConsent } from "./privacy-api";
 import { privacySections, providerExplanation } from "./privacy-copy";
 import { privacyKeys } from "./privacy-queries";
@@ -18,10 +20,14 @@ export function PrivacyNoticePage() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (userId === undefined) throw new Error("ログインが必要です");
-      return acceptCurrentPrivacyConsent(getBrowserSupabaseClient(), userId);
+      const client = getBrowserSupabaseClient();
+      const consent = await acceptCurrentPrivacyConsent(client, userId);
+      const profile = await setOnboardingStatus(client, userId, "complete");
+      return { consent, profile };
     },
-    onSuccess: (consent) => {
+    onSuccess: ({ consent, profile }) => {
       queryClient.setQueryData(privacyKeys.current(consent.user_id), consent);
+      queryClient.setQueryData(householdKeys.profile(profile.user_id), profile);
       void navigate(returnTo, { replace: true });
     },
   });

@@ -8,6 +8,7 @@ export default tseslint.config(
   {
     ignores: [
       "dist",
+      ".netlify",
       "coverage",
       "playwright-report",
       "test-results",

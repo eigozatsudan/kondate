@@ -55,3 +55,38 @@ it("shows visible error copy when the callback arrives unbound to a known flow",
     "ログインの情報を確認できませんでした。最初からやり直してください。",
   );
 });
+
+it("allows retrying Google after switching from a magic link and a failed start", async () => {
+  const user = userEvent.setup();
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi
+      .fn()
+      .mockRejectedValueOnce(new Error("failed"))
+      .mockResolvedValueOnce(undefined),
+    sendMagicLink: vi.fn().mockResolvedValue({
+      flowId: "flow-1",
+      email: "user@example.com",
+      resendAvailableAt: new Date(Date.now()).toISOString(),
+    }),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
+  await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
+  await user.click(screen.getByRole("button", { name: "Googleに切り替える" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Googleログインを開始できませんでした。もう一度お試しください。",
+  );
+
+  await user.click(screen.getByRole("button", { name: "Googleに切り替える" }));
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  expect(gateway.signInWithGoogle).toHaveBeenCalledTimes(2);
+});

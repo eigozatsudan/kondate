@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(16);
+select plan(25);
 
 select tests.create_supabase_user('11111111-1111-1111-1111-111111111111', 'one@example.invalid');
 select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@example.invalid');
@@ -47,6 +47,16 @@ select is(
   'complete',
   'completion RPC writes complete status'
 );
+select throws_ok(
+  $sql$
+    update public.household_members
+    set allergy_status = 'registered'
+    where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  $sql$,
+  '23514',
+  'member_registered_allergy_required',
+  'complete registered member requires an allergy at the table boundary'
+);
 
 insert into public.member_allergies(
   id, user_id, member_id, custom_name, custom_confirmed
@@ -54,6 +64,76 @@ insert into public.member_allergies(
   'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
   '11111111-1111-1111-1111-111111111111',
   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'えんどう豆たんぱく', true
+);
+select lives_ok(
+  $sql$
+    update public.household_members
+    set allergy_status = 'registered'
+    where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  $sql$,
+  'member can become registered after an allergy is stored'
+);
+select throws_ok(
+  $sql$
+    delete from public.member_allergies
+    where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+  $sql$,
+  '23514',
+  'member_registered_allergy_required',
+  'complete registered member cannot delete the last allergy'
+);
+insert into public.member_allergies(
+  id, user_id, member_id, custom_name, custom_aliases, custom_confirmed
+) values (
+  'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  '11111111-1111-1111-1111-111111111111',
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '  Ｐｅａたんぱく  ', array['  ｐｅａ protein  ', '  pea isolate  '], true
+);
+select is(
+  (select custom_name from public.member_allergies where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
+  'Peaたんぱく',
+  'custom allergy name is stored as the NFKC-trimmed canonical value'
+);
+select is(
+  (select custom_aliases from public.member_allergies where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
+  array['pea protein', 'pea isolate'],
+  'custom allergy aliases are stored as NFKC-trimmed canonical values'
+);
+select throws_ok(
+  $sql$
+    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
+    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array['  '], true)
+  $sql$,
+  '23514',
+  'invalid_custom_allergy_aliases',
+  'custom aliases cannot contain blanks'
+);
+select throws_ok(
+  $sql$
+    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
+    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array['same', ' same '], true)
+  $sql$,
+  '23514',
+  'invalid_custom_allergy_aliases',
+  'custom aliases must be unique after canonical trimming'
+);
+select throws_ok(
+  $sql$
+    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
+    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array_fill('alias'::text, array[11]), true)
+  $sql$,
+  '23514',
+  'invalid_custom_allergy_aliases',
+  'custom aliases are limited to ten entries'
+);
+select throws_ok(
+  $sql$
+    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
+    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array[repeat('a', 81)], true)
+  $sql$,
+  '23514',
+  'invalid_custom_allergy_aliases',
+  'each custom alias is limited to eighty characters'
 );
 insert into public.member_dislikes(id, user_id, member_id, ingredient_name) values (
   'cccccccc-cccc-cccc-cccc-cccccccccccc',

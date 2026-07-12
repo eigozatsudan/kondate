@@ -2,6 +2,9 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 
+const CODE_TTL_MS = 300_000;
+const DEFAULT_MAX_PENDING_CODES = 100;
+
 const json = (response, status, value, origin) => {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -29,7 +32,13 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-export function createOAuthMockServer({ appOrigin, fixture, now, issueLocalCredentials }) {
+export function createOAuthMockServer({
+  appOrigin,
+  fixture,
+  now,
+  issueLocalCredentials,
+  maxPendingCodes = DEFAULT_MAX_PENDING_CODES,
+}) {
   const pending = new Map();
   const callback = new URL("/auth/callback", appOrigin).href;
   return createServer(async (request, response) => {
@@ -74,8 +83,13 @@ export function createOAuthMockServer({ appOrigin, fixture, now, issueLocalCrede
       if (action === "cancel") {
         destination.searchParams.set("error", "access_denied");
       } else {
+        const currentTime = now().getTime();
+        for (const [code, record] of pending)
+          if (currentTime - record.createdAt > CODE_TTL_MS) pending.delete(code);
+        if (pending.size >= maxPendingCodes)
+          return json(response, 429, { error: "code_capacity_exceeded" });
         const code = randomBytes(32).toString("base64url");
-        pending.set(code, { createdAt: now().getTime(), fixture });
+        pending.set(code, { createdAt: currentTime, fixture });
         destination.searchParams.set("code", code);
       }
       response.writeHead(302, { location: destination.href, "cache-control": "no-store" });
@@ -100,7 +114,7 @@ export function createOAuthMockServer({ appOrigin, fixture, now, issueLocalCrede
         const code = typeof body.code === "string" ? body.code : "";
         const record = pending.get(code);
         pending.delete(code);
-        if (record === undefined || now().getTime() - record.createdAt > 300_000) {
+        if (record === undefined || now().getTime() - record.createdAt > CODE_TTL_MS) {
           return json(response, 404, { error: "code_unavailable" }, appOrigin);
         }
         const credentials = await issueLocalCredentials(record.fixture);

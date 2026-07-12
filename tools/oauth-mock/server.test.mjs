@@ -13,7 +13,11 @@ afterEach(async () => {
     );
 });
 
-async function start(now = () => new Date("2026-07-11T00:00:00.000Z"), fixtureOverride = fixture) {
+async function start(
+  now = () => new Date("2026-07-11T00:00:00.000Z"),
+  fixtureOverride = fixture,
+  options = {},
+) {
   server = createOAuthMockServer({
     appOrigin: "http://127.0.0.1:5173",
     fixture: fixtureOverride,
@@ -22,11 +26,24 @@ async function start(now = () => new Date("2026-07-11T00:00:00.000Z"), fixtureOv
       email: fixture.email,
       password: "local-random-password",
     }),
+    ...options,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("oauth mock did not bind");
   return `http://127.0.0.1:${address.port}`;
+}
+
+async function approve(origin) {
+  return fetch(
+    `${origin}/authorize?${new URLSearchParams({
+      redirect_uri: "http://127.0.0.1:5173/auth/callback",
+      action: "approve",
+      flow: "10000000-0000-4000-8000-000000000001",
+      state,
+    })}`,
+    { redirect: "manual" },
+  );
 }
 
 it("escapes fixture display names before rendering provider HTML", async () => {
@@ -69,15 +86,7 @@ it("redirects deterministic Google success and cancel to the exact app callback"
 
 it("exchanges an opaque code once, from the canonical app origin, within 300 seconds", async () => {
   const origin = await start();
-  const authorize = await fetch(
-    `${origin}/authorize?${new URLSearchParams({
-      redirect_uri: "http://127.0.0.1:5173/auth/callback",
-      action: "approve",
-      flow: "10000000-0000-4000-8000-000000000001",
-      state,
-    })}`,
-    { redirect: "manual" },
-  );
+  const authorize = await approve(origin);
   const code = new URL(authorize.headers.get("location")).searchParams.get("code");
   const exchange = () =>
     fetch(`${origin}/exchange`, {
@@ -96,4 +105,28 @@ it("exchanges an opaque code once, from the canonical app origin, within 300 sec
       })
     ).status,
   ).toBe(403);
+});
+
+it("rejects new approval codes when the pending-code capacity is reached", async () => {
+  const origin = await start(undefined, fixture, { maxPendingCodes: 1 });
+  expect((await approve(origin)).status).toBe(302);
+  const full = await approve(origin);
+  expect(full.status).toBe(429);
+  expect(await full.json()).toEqual({ error: "code_capacity_exceeded" });
+});
+
+it("removes expired approval codes before checking pending-code capacity", async () => {
+  let current = new Date("2026-07-11T00:00:00.000Z");
+  const origin = await start(() => current, fixture, { maxPendingCodes: 1 });
+  const first = await approve(origin);
+  const firstCode = new URL(first.headers.get("location")).searchParams.get("code");
+  current = new Date("2026-07-11T00:05:00.001Z");
+  const replacement = await approve(origin);
+  expect(replacement.status).toBe(302);
+  const expired = await fetch(`${origin}/exchange`, {
+    method: "POST",
+    headers: { origin: "http://127.0.0.1:5173", "content-type": "application/json" },
+    body: JSON.stringify({ code: firstCode }),
+  });
+  expect(expired.status).toBe(404);
 });

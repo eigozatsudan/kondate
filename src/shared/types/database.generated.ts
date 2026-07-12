@@ -9,7 +9,48 @@ export type Json =
 export type Database = {
   private: {
     Tables: {
-      [_ in never]: never
+      auth_continuations: {
+        Row: {
+          claimed_at: string | null
+          code_iv: string | null
+          created_at: string
+          deposited_at: string | null
+          encrypted_code: string | null
+          expires_at: string
+          id: string
+          origin: string
+          return_to: string
+          secret_hash: string
+          state_hash: string
+        }
+        Insert: {
+          claimed_at?: string | null
+          code_iv?: string | null
+          created_at?: string
+          deposited_at?: string | null
+          encrypted_code?: string | null
+          expires_at: string
+          id?: string
+          origin: string
+          return_to: string
+          secret_hash: string
+          state_hash: string
+        }
+        Update: {
+          claimed_at?: string | null
+          code_iv?: string | null
+          created_at?: string
+          deposited_at?: string | null
+          encrypted_code?: string | null
+          expires_at?: string
+          id?: string
+          origin?: string
+          return_to?: string
+          secret_hash?: string
+          state_hash?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -308,9 +349,46 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      cleanup_auth_continuations: {
-        Args: { p_now: string }
-        Returns: number
+      claim_auth_continuation: {
+        Args: {
+          p_id: string
+          p_now: string
+          p_origin: string
+          p_secret_hash: string
+          p_state_hash: string
+        }
+        Returns: {
+          code_iv: string
+          encrypted_code: string
+          return_to: string
+        }[]
+      }
+      cleanup_auth_continuations: { Args: { p_now: string }; Returns: number }
+      complete_household_member: {
+        Args: { p_member_id: string }
+        Returns: {
+          age_band: string | null
+          allergy_status: string | null
+          created_at: string
+          display_name: string | null
+          ease_preferences: string[]
+          id: string
+          portion_size: string | null
+          required_safety_constraints: string[]
+          sort_order: number
+          spice_level: string | null
+          status: string
+          unsupported_diet_kinds: string[]
+          unsupported_diet_status: string | null
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "household_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       create_auth_continuation: {
         Args: {
@@ -337,57 +415,18 @@ export type Database = {
         }
         Returns: boolean
       }
-      claim_auth_continuation: {
-        Args: {
-          p_id: string
-          p_now: string
-          p_origin: string
-          p_secret_hash: string
-          p_state_hash: string
-        }
-        Returns: {
-          code_iv: string
-          encrypted_code: string
-          return_to: string
-        }[]
-      }
       set_onboarding_status: {
         Args: { p_status: string }
         Returns: {
-          age_band: string | null
-          allergy_status: string | null
           created_at: string
-          display_name: string | null
-          ease_preferences: string[]
-          id: string
           onboarding_completed_at: string | null
           onboarding_status: string
           updated_at: string
           user_id: string
         }
-      }
-      complete_household_member: {
-        Args: { p_member_id: string }
-        Returns: {
-          age_band: string | null
-          allergy_status: string | null
-          created_at: string
-          display_name: string | null
-          ease_preferences: string[]
-          id: string
-          portion_size: string | null
-          required_safety_constraints: string[]
-          sort_order: number
-          spice_level: string | null
-          status: string
-          unsupported_diet_kinds: string[]
-          unsupported_diet_status: string | null
-          updated_at: string
-          user_id: string
-        }
         SetofOptions: {
           from: "*"
-          to: "household_members"
+          to: "profiles"
           isOneToOne: true
           isSetofReturn: false
         }

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import type { AllergenCatalogRow, HouseholdMemberRow } from "./household-api";
@@ -77,5 +77,40 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
   await waitFor(() => {
     expect(invalidateSafety.mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
+it("persists an edit that only changes the display name", async () => {
+  const { updateMember } = renderSettings();
+  const input = await screen.findByLabelText("呼び名");
+
+  fireEvent.change(input, { target: { value: "保護者" } });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ display_name: "保護者" }),
+    );
+  });
+});
+
+it("keeps newer local edits when an older save response updates the member query", async () => {
+  let resolveFirstSave: ((member: HouseholdMemberRow) => void) | undefined;
+  const firstSave = new Promise<HouseholdMemberRow>((resolve) => {
+    resolveFirstSave = resolve;
+  });
+  const updateMember = vi.fn().mockReturnValue(firstSave);
+  renderSettings({ updateMember });
+  const input = await screen.findByLabelText("呼び名");
+
+  fireEvent.change(input, { target: { value: "最初の入力" } });
+  fireEvent.change(input, { target: { value: "新しい入力" } });
+  resolveFirstSave?.({ ...member, display_name: "最初の入力" });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+  await waitFor(() => {
+    expect(input).toHaveValue("新しい入力");
   });
 });

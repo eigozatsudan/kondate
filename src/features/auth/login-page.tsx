@@ -23,13 +23,16 @@ function readLoginLocationState(value: unknown): LoginLocationState {
   return {};
 }
 
-export function LoginPage({ gateway = createAuthGateway() }: { gateway?: AuthGateway }) {
+export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
+  const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
+  const activeGateway = gateway ?? defaultGateway;
   const location = useLocation();
   const locationState = readLoginLocationState(location.state);
   const params = new URLSearchParams(location.search);
   const returnTo = sanitizeReturnPath(params.get("returnTo"));
   const [state, setState] = useState<MagicLinkState>({ status: "idle", email: "" });
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [googleError, setGoogleError] = useState(false);
 
   useEffect(() => {
     if (state.status !== "sent") return;
@@ -66,7 +69,7 @@ export function LoginPage({ gateway = createAuthGateway() }: { gateway?: AuthGat
     const email = "email" in state ? state.email : "";
     setState({ status: "sending", email });
     try {
-      const sent = await gateway.sendMagicLink(email, returnTo);
+      const sent = await activeGateway.sendMagicLink(email, returnTo);
       setState({ status: "sent", ...sent });
     } catch {
       setState({
@@ -74,6 +77,15 @@ export function LoginPage({ gateway = createAuthGateway() }: { gateway?: AuthGat
         email,
         message: "送信できませんでした。通信を確認して、もう一度お試しください。",
       });
+    }
+  };
+
+  const startGoogle = async (): Promise<void> => {
+    setGoogleError(false);
+    try {
+      await activeGateway.signInWithGoogle(returnTo);
+    } catch {
+      setGoogleError(true);
     }
   };
 
@@ -104,13 +116,14 @@ export function LoginPage({ gateway = createAuthGateway() }: { gateway?: AuthGat
           >
             メールアドレスを変更
           </button>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => void gateway.signInWithGoogle(returnTo)}
-          >
+          <button className="secondary-button" type="button" onClick={() => void startGoogle()}>
             Googleに切り替える
           </button>
+          {googleError && (
+            <p className="error-message" role="alert">
+              Googleログインを開始できませんでした。もう一度お試しください。
+            </p>
+          )}
         </section>
       </main>
     );
@@ -129,13 +142,14 @@ export function LoginPage({ gateway = createAuthGateway() }: { gateway?: AuthGat
           <p>Googleを再試行、別のGoogleアカウント、またはメールを選べます。</p>
         </section>
       )}
-      <button
-        className="primary-button"
-        type="button"
-        onClick={() => void gateway.signInWithGoogle(returnTo)}
-      >
+      <button className="primary-button" type="button" onClick={() => void startGoogle()}>
         Googleで続ける
       </button>
+      {googleError && (
+        <p className="error-message" role="alert">
+          Googleログインを開始できませんでした。もう一度お試しください。
+        </p>
+      )}
       <form className="card stack" onSubmit={(event) => void send(event)}>
         <label className="field">
           <span>メールアドレス</span>

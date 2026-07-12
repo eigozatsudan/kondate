@@ -65,3 +65,30 @@ it("resumes one draft and saves each required selection", async () => {
   await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
   expect(completeMember).toHaveBeenCalledWith("member-1");
 });
+
+it("opens the privacy notice without completing onboarding", async () => {
+  const user = userEvent.setup();
+  const onDone = vi.fn();
+  const setProgress = vi.fn();
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([{ ...draft, status: "complete" as const }]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember: vi.fn(),
+    listAllergies: vi.fn(),
+    addCustomAllergy: vi.fn(),
+    setProgress,
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "AI情報の説明へ" }));
+
+  expect(onDone).toHaveBeenCalledOnce();
+  expect(setProgress).not.toHaveBeenCalled();
+});

@@ -201,6 +201,7 @@ export function HouseholdSettingsForm({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveQueue = useRef(Promise.resolve(true));
+  const initializedMemberId = useRef<string | undefined>(undefined);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
   const membersQuery = useQuery({
@@ -231,7 +232,10 @@ export function HouseholdSettingsForm({
   useEffect(() => {
     if (selected !== undefined) {
       setSelectedId(selected.id);
-      setValues(memberValue(selected));
+      if (initializedMemberId.current !== selected.id) {
+        initializedMemberId.current = selected.id;
+        setValues(memberValue(selected));
+      }
     }
   }, [selected]);
 
@@ -405,7 +409,7 @@ export function HouseholdSettingsForm({
           <input
             value={values.displayName ?? ""}
             onChange={(event) => {
-              update({ displayName: event.target.value || null });
+              updateAndSave({ displayName: event.target.value || null });
             }}
           />
         </label>

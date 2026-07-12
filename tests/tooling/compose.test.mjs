@@ -35,3 +35,45 @@ test("uses one canonical loopback hostname for public browser services", async (
 test("Dockerfile uses Node 24", async () => {
   assert.match(await readFile("Dockerfile", "utf8"), /^FROM node:24-/m);
 });
+
+test("keeps host development on loopback while the container can accept published traffic", async () => {
+  const [compose, dockerfile, viteConfig] = await Promise.all([
+    readFile("compose.yaml", "utf8"),
+    readFile("Dockerfile", "utf8"),
+    readFile("vite.config.ts", "utf8"),
+  ]);
+  assert.match(viteConfig, /host: "127\.0\.0\.1"/u);
+  assert.match(dockerfile, /"--host", "0\.0\.0\.0"/u);
+  assert.match(compose, /\sapp:\n(?:.*\n)*?\s{4}healthcheck:/u);
+});
+
+test("runs mock services with only their required read-only files and environment", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  const openrouter = compose.match(
+    /\s{2}openrouter-mock:\n([\s\S]*?)(?=\n\s{2}[\w-]+:|\nvolumes:)/u,
+  )?.[1];
+  const oauth = compose.match(/\s{2}oauth-mock:\n([\s\S]*?)(?=\n\s{2}[\w-]+:|\nvolumes:)/u)?.[1];
+  assert.ok(openrouter, "openrouter mock service is missing");
+  assert.ok(oauth, "OAuth mock service is missing");
+  assert.match(openrouter, /tools\/openrouter-mock\/server\.mjs:\/app\/server\.mjs:ro/u);
+  assert.doesNotMatch(openrouter, /\.:\/workspace/u);
+  assert.doesNotMatch(openrouter, /working_dir:/u);
+  assert.match(oauth, /tools\/oauth-mock\/server\.mjs:\/app\/server\.mjs:ro/u);
+  assert.match(oauth, /tools\/oauth-mock\/fixtures:\/app\/fixtures:ro/u);
+  assert.doesNotMatch(oauth, /\.:\/workspace/u);
+  assert.doesNotMatch(oauth, /working_dir:/u);
+});
+
+test("runs the development app as the node user and keeps generated Vite cache outside mounted dependencies", async () => {
+  const [compose, dockerfile, viteConfig] = await Promise.all([
+    readFile("compose.yaml", "utf8"),
+    readFile("Dockerfile", "utf8"),
+    readFile("vite.config.ts", "utf8"),
+  ]);
+  assert.match(
+    compose,
+    /\sapp:\n(?:.*\n)*?\s{4}user: "\$\{LOCAL_UID:-1000\}:\$\{LOCAL_GID:-1000\}"/u,
+  );
+  assert.match(dockerfile, /^USER node$/m);
+  assert.match(viteConfig, /cacheDir: "\/tmp\/vite"/u);
+});

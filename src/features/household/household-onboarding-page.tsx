@@ -184,11 +184,7 @@ export function HouseholdOnboardingForm({
           {completeMembers.length === 0 ? "家族設定を始める" : "家族を追加"}
         </button>
         {completeMembers.length > 0 && (
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => void api.setProgress("complete").then(onDone)}
-          >
+          <button className="secondary-button" type="button" onClick={onDone}>
             AI情報の説明へ
           </button>
         )}
