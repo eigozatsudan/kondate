@@ -1,0 +1,6 @@
+{
+  "provider": "google",
+  "subject": "kondate-local-google-1",
+  "email": "google.oauth.local@kondate.test",
+  "displayName": "Google テスト利用者"
+}

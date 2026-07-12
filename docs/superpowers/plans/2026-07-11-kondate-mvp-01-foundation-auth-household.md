@@ -1178,7 +1178,7 @@ git commit -m "feat: bootstrap React application shell"
 - Consumes: Docker Compose 2.24 or newer, Git, OpenSSL, official `supabase/supabase` tag `v1.26.05`.
 - Produces: root services `app`, `mailpit`, `openrouter-mock`, `oauth-mock`, `migrate`, `db-test` plus official Supabase service names; health endpoints `GET http://127.0.0.1:8787/health` and `GET http://127.0.0.1:8788/health` returning `{"status":"ok"}`; deterministic Google-style authorize/exchange at browser origin `http://127.0.0.1:8788`; local DB `127.0.0.1:54322`.
 
-- [ ] **Step 1: Write failing infrastructure contract tests (4 minutes)**
+- [x] **Step 1: Write failing infrastructure contract tests (4 minutes)**
 
 Create `tests/tooling/compose.test.mjs`:
 
@@ -1274,13 +1274,13 @@ it("redirects deterministic Google success and cancel to the exact app callback"
   const origin = await start();
   const common = new URLSearchParams({
     redirect_uri: "http://127.0.0.1:5173/auth/callback",
-    flow: "10000000-0000-4000-8000-000000000001", state: "state-value",
+    flow: "10000000-0000-4000-8000-000000000001", state: "state-value-must-have-at-least-32-chars",
   });
   const success = await fetch(`${origin}/authorize?${common}&action=approve`, { redirect: "manual" });
   const successUrl = new URL(success.headers.get("location"));
   expect(successUrl.origin + successUrl.pathname).toBe("http://127.0.0.1:5173/auth/callback");
   expect(successUrl.searchParams.get("flow")).toBe(common.get("flow"));
-  expect(successUrl.searchParams.get("state")).toBe("state-value");
+  expect(successUrl.searchParams.get("state")).toBe("state-value-must-have-at-least-32-chars");
   expect(successUrl.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
   expect(successUrl.href).not.toMatch(/token|password|email/iu);
 
@@ -1292,7 +1292,7 @@ it("exchanges an opaque code once, from the canonical app origin, within 300 sec
   const origin = await start();
   const authorize = await fetch(`${origin}/authorize?${new URLSearchParams({
     redirect_uri: "http://127.0.0.1:5173/auth/callback", action: "approve",
-    flow: "10000000-0000-4000-8000-000000000001", state: "state-value",
+    flow: "10000000-0000-4000-8000-000000000001", state: "state-value-must-have-at-least-32-chars",
   })}`, { redirect: "manual" });
   const code = new URL(authorize.headers.get("location")).searchParams.get("code");
   const exchange = () => fetch(`${origin}/exchange`, { method: "POST",
@@ -1306,7 +1306,7 @@ it("exchanges an opaque code once, from the canonical app origin, within 300 sec
 });
 ```
 
-- [ ] **Step 2: Run tests and verify the red state (2 minutes)**
+- [x] **Step 2: Run tests and verify the red state (2 minutes)**
 
 Run:
 
@@ -1317,7 +1317,7 @@ npm test -- --run tools/openrouter-mock/server.test.mjs tools/oauth-mock/server.
 
 Expected: both commands fail because the Dockerfile, Compose file, and both mock servers do not exist.
 
-- [ ] **Step 3: Add the verified Supabase vendor script and execute it (5 minutes)**
+- [x] **Step 3: Add the verified Supabase vendor script and execute it (5 minutes)**
 
 Create `scripts/vendor-supabase.sh`:
 
@@ -1366,7 +1366,7 @@ test -f infra/supabase/docker-compose.yml
 
 Expected: the script prints `Vendored supabase/supabase v1.26.05 (23b55d6) docker/` and both checks exit 0. Review `git diff -- infra/supabase` only to confirm the official directory was copied; do not edit it.
 
-- [ ] **Step 4: Implement local secrets, migration, pgTAP, and readiness scripts (5 minutes)**
+- [x] **Step 4: Implement local secrets, migration, pgTAP, and readiness scripts (5 minutes)**
 
 Create `scripts/generate-local-secrets.sh`:
 
@@ -1554,7 +1554,7 @@ Run: `chmod +x scripts/*.sh`
 
 Expected: all six shell entry points are executable.
 
-- [ ] **Step 5: Implement the OpenRouter mock, Docker image, and root Compose model (5 minutes)**
+- [x] **Step 5: Implement the OpenRouter mock, Docker image, and root Compose model (5 minutes)**
 
 Create `tools/openrouter-mock/server.mjs`:
 
@@ -1976,7 +1976,7 @@ curl --fail --silent http://127.0.0.1:8000/auth/v1/health
 
 Expected: tests pass; Compose config exits 0; migration exits 0 even with no migration files; both mock health curls return `{"status":"ok"}`; Auth health returns HTTP 200. The OAuth test proves exact success/cancel redirects, one-time exchange, 300-second expiry, canonical CORS, and no token-bearing callback. If the official tag changed a service/image name referenced by the override, `docker compose config` must fail and the override—not vendor content—must be corrected.
 
-- [ ] **Step 7: Commit reproducible local infrastructure (3 minutes)**
+- [x] **Step 7: Commit reproducible local infrastructure (3 minutes)**
 
 ```bash
 git add Dockerfile compose.yaml .env.example infra scripts tools/openrouter-mock tools/oauth-mock supabase/config.toml supabase/seed.sql tests/tooling/compose.test.mjs

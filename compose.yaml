@@ -1,0 +1,129 @@
+name: kondate
+
+include:
+  - path:
+      - ./infra/supabase/docker-compose.yml
+      - ./infra/supabase.override.yaml
+    env_file: ./.env
+
+services:
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  openrouter-mock:
+    image: node:24-bookworm-slim
+    working_dir: /workspace
+    command: ["node", "tools/openrouter-mock/server.mjs"]
+    environment:
+      PORT: "8787"
+    volumes:
+      - .:/workspace:ro
+    ports:
+      - "127.0.0.1:8787:8787"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  oauth-mock:
+    image: node:24-bookworm-slim
+    working_dir: /workspace
+    command: ["node", "tools/oauth-mock/server.mjs"]
+    depends_on:
+      auth:
+        condition: service_healthy
+    environment:
+      PORT: "8788"
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      OAUTH_MOCK_USER_PASSWORD: ${OAUTH_MOCK_USER_PASSWORD}
+    volumes:
+      - .:/workspace:ro
+    ports:
+      - "127.0.0.1:8788:8788"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8788/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  migrate:
+    image: supabase/postgres:15.8.1.085
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/workspace/scripts/apply-migrations.sh"]
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+    volumes:
+      - .:/workspace:ro
+    restart: "no"
+
+  db-test:
+    image: supabase/postgres:15.8.1.085
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["/workspace/scripts/run-pgtap.sh"]
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+    volumes:
+      - .:/workspace:ro
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: development
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
+      openrouter-mock:
+        condition: service_healthy
+      oauth-mock:
+        condition: service_healthy
+    environment:
+      VITE_SUPABASE_URL: http://127.0.0.1:8000
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
+      VITE_MAGIC_LINK_RESEND_SECONDS: ${VITE_MAGIC_LINK_RESEND_SECONDS:-60}
+      VITE_AUTH_CONTINUATION_TTL_MS: ${VITE_AUTH_CONTINUATION_TTL_MS:-300000}
+      VITE_AUTH_PROVIDER_MODE: ${VITE_AUTH_PROVIDER_MODE:-oauth_mock}
+      VITE_OAUTH_MOCK_ORIGIN: ${VITE_OAUTH_MOCK_ORIGIN:-http://127.0.0.1:8788}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SERVER_SITE_ORIGIN: ${SERVER_SITE_ORIGIN:-http://127.0.0.1:5173}
+      AUTH_CONTINUATION_ENCRYPTION_KEY: ${AUTH_CONTINUATION_ENCRYPTION_KEY}
+      AUTH_CONTINUATION_TTL_SECONDS: ${AUTH_CONTINUATION_TTL_SECONDS:-300}
+      OPENROUTER_BASE_URL: http://openrouter-mock:8787
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - .:/workspace
+      - node_modules:/workspace/node_modules
+
+volumes:
+  node_modules:
