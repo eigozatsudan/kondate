@@ -2170,7 +2170,7 @@ git commit -m "feat: establish private database boundary"
 - Produces exact household columns: `id,user_id,status,display_name,age_band,portion_size,spice_level,ease_preferences,required_safety_constraints,allergy_status,unsupported_diet_status,unsupported_diet_kinds,sort_order,created_at,updated_at`.
 - Produces exact allergy columns: `id,user_id,member_id,allergen_id,custom_name,custom_aliases,custom_confirmed,created_at`.
 
-- [ ] **Step 1: Write failing RLS and completion tests (5 minutes)**
+- [x] **Step 1: Write failing RLS and completion tests (5 minutes)**
 
 Create `supabase/tests/database/002_household_rls.test.sql`:
 
@@ -2269,9 +2269,9 @@ Create `supabase/tests/database/003_catalog_grants.test.sql`:
 \ir 000_helpers.sql
 begin;
 select plan(8);
-select has_table('public', 'allergen_catalog');
-select has_table('public', 'allergen_aliases');
-select has_table('public', 'food_safety_rules');
+select has_table('public', 'allergen_catalog', 'allergen catalog table exists');
+select has_table('public', 'allergen_aliases', 'allergen aliases table exists');
+select has_table('public', 'food_safety_rules', 'food safety rules table exists');
 select ok(has_table_privilege('authenticated', 'public.allergen_catalog', 'select'), 'authenticated reads catalog');
 select ok(not has_table_privilege('authenticated', 'public.allergen_catalog', 'insert'), 'authenticated cannot insert catalog');
 select ok(not has_table_privilege('anon', 'public.allergen_catalog', 'select'), 'anonymous cannot read catalog');
@@ -2281,13 +2281,13 @@ select * from finish();
 rollback;
 ```
 
-- [ ] **Step 2: Run both tests and verify failure (3 minutes)**
+- [x] **Step 2: Run both tests and verify failure (3 minutes)**
 
 Run: `npm run db:test -- supabase/tests/database/002_household_rls.test.sql supabase/tests/database/003_catalog_grants.test.sql`
 
 Expected: FAIL with missing relation `public.household_members` or `public.allergen_catalog`.
 
-- [ ] **Step 3: Implement profiles, household, allergies, dislikes, privacy, RLS, and grants (5 minutes)**
+- [x] **Step 3: Implement profiles, household, allergies, dislikes, privacy, RLS, and grants (5 minutes)**
 
 Create `supabase/migrations/20260711000200_profiles_household_privacy.sql`:
 
@@ -2515,7 +2515,7 @@ revoke all on function public.complete_household_member(uuid) from public, anon;
 grant execute on function public.complete_household_member(uuid) to authenticated;
 ```
 
-- [ ] **Step 4: Create the final empty catalog schema and read-only boundary (5 minutes)**
+- [x] **Step 4: Create the final empty catalog schema and read-only boundary (5 minutes)**
 
 Create `supabase/migrations/20260711000300_safety_catalogs.sql`:
 
@@ -2579,7 +2579,7 @@ create policy food_safety_rules_authenticated_read on public.food_safety_rules
   for select to authenticated using (true);
 ```
 
-- [ ] **Step 5: Apply the migrations and verify RLS/grants (5 minutes)**
+- [x] **Step 5: Apply the migrations and verify RLS/grants (5 minutes)**
 
 Run:
 
@@ -2590,7 +2590,7 @@ npm run db:test -- supabase/tests/database/002_household_rls.test.sql supabase/t
 
 Expected: both files report `All tests successful`; owner CRUD succeeds, cross-user CRUD is invisible/rejected, anon has no data access, and catalog writes remain unavailable to browser roles.
 
-- [ ] **Step 6: Generate and typecheck the exact database contract (4 minutes)**
+- [x] **Step 6: Generate and typecheck the exact database contract (4 minutes)**
 
 Run:
 
@@ -2603,7 +2603,7 @@ npm run typecheck
 
 Expected: the generator exits 0; `rg` finds all four names; generated `Database` includes both `public` and `private` schemas and helper aliases; typecheck exits 0. Never paste or manually normalize the generated file.
 
-- [ ] **Step 7: Commit household, privacy, and catalog schema boundaries (3 minutes)**
+- [x] **Step 7: Commit household, privacy, and catalog schema boundaries (3 minutes)**
 
 ```bash
 git add supabase/migrations/20260711000200_profiles_household_privacy.sql supabase/migrations/20260711000300_safety_catalogs.sql supabase/tests/database/002_household_rls.test.sql supabase/tests/database/003_catalog_grants.test.sql src/shared/types/database.generated.ts scripts/generate-database-types.sh
