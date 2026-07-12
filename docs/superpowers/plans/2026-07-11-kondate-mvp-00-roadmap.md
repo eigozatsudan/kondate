@@ -330,8 +330,6 @@ Server configuration uses these exact names and release defaults:
 20260711000200_profiles_household_privacy.sql
 20260711000300_safety_catalogs.sql
 20260711000330_auth_continuations.sql
-20260712000100_onboarding_completion_boundary.sql
-20260712000200_household_allergy_and_continuation_hardening.sql
 20260711000400_safety_catalog_data.sql
 20260711001000_pantry_and_planner_drafts.sql
 20260711001100_menu_core.sql
@@ -340,10 +338,12 @@ Server configuration uses these exact names and release defaults:
 20260711004000_shopping_lists.sql
 20260711005000_account_deletion.sql
 20260711005100_maintenance_cleanup.sql
+20260712000100_onboarding_completion_boundary.sql
+20260712000200_household_allergy_and_continuation_hardening.sql
 ```
 
 Every migration is forward-only, enables RLS in the same file that creates a user-owned table, revokes broad default grants, and grants only the operations required by the corresponding plan.
-Migrations `20260712000100`/`20260712000200` are Plan 1 Task 13's correction-gate hardening, ratified after the fact during the Plan 1 whole-branch adversarial review (2026-07-13): the first closes the onboarding-completion consent bypass by revoking direct `authenticated` UPDATE on `profiles` and routing completion through a `set_onboarding_status` RPC; the second normalizes/bounds allergy and auth-continuation-cleanup invariants. They deviate from this table's original date-prefix convention and from Task 13's literal "modify only" file list; this entry is the required human ratification, not a silent edit — see `.superpowers/sdd/progress.md` Task 13 for the review record.
+Migrations `20260712000100`/`20260712000200` are Plan 1 Task 13's correction-gate hardening, ratified after the fact during the Plan 1 whole-branch adversarial review (2026-07-13): the first closes the onboarding-completion consent bypass by revoking direct `authenticated` UPDATE on `profiles` and routing completion through a `set_onboarding_status` RPC; the second normalizes/bounds allergy and auth-continuation-cleanup invariants. They deviate from this table's original date-prefix convention and from Task 13's literal "modify only" file list; this entry is the required human ratification, not a silent edit — see `.superpowers/sdd/progress.md` Task 13 for the review record. They are listed last because that is their true lexical (and thus applied) filename order among migrations that exist today; in practice both were already applied to the local dev database immediately after `20260711000330_auth_continuations.sql` during Plan 1, before any Plan 2–6 migration file existed — this table's row position is a naming-order record, not a claim that they apply after Plan 6's migrations once those files are created.
 Migration `050` is the first corrective hardening migration: it removes competing composite/non-cascade Auth FKs, adds an exact single-column `user_id → auth.users(id) ON DELETE CASCADE`, then fails deployment if any public/private user-owned relation still violates that exact invariant. It preserves owner-composite FKs to application relations. Migration `051` adds bounded canonical cleanup overloads plus one RPC executable only by a NOLOGIN maintenance executor; the scheduled Function assumes that role from its dedicated LOGIN session. Applied migrations `001`–`051` are never rewritten; a later defect is corrected by `052+`. Database type generation always includes both `--schema public,private`, and CI fails on drift in either schema.
 
 ## Attempt, Idempotency, and Retention Invariants
