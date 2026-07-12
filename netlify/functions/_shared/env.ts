@@ -13,18 +13,16 @@ const encryptionKeySchema = z
   .string()
   .refine((value) => Buffer.from(value, "base64").byteLength === 32);
 
-export const continuationServerEnvSchema = z
-  .object({
-    SUPABASE_URL: serverSupabaseUrlSchema,
-    SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
-    SERVER_SITE_ORIGIN: z.url(),
-    AUTH_CONTINUATION_ENCRYPTION_KEY: encryptionKeySchema,
-    AUTH_CONTINUATION_TTL_SECONDS: z.coerce
-      .number()
-      .int()
-      .refine((value) => value === 300),
-  })
-  .strict();
+export const continuationServerEnvSchema = z.object({
+  SUPABASE_URL: serverSupabaseUrlSchema,
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  SERVER_SITE_ORIGIN: z.url(),
+  AUTH_CONTINUATION_ENCRYPTION_KEY: encryptionKeySchema,
+  AUTH_CONTINUATION_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .refine((value) => value === 300),
+});
 
 export type ServerEnv = z.infer<typeof continuationServerEnvSchema>;
 

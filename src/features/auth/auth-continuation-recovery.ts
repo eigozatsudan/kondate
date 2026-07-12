@@ -17,7 +17,7 @@ export function startAuthContinuationRecovery(input: {
   onComplete(result: RecoveryCompleteResult): void;
   ttlMs?: number;
   now?: () => Date;
-  setInterval?: (handler: () => void, timeout: number) => void;
+  setInterval?: typeof window.setInterval;
 }): () => void {
   let running = false;
   let stopped = false;
@@ -40,17 +40,14 @@ export function startAuthContinuationRecovery(input: {
       running = false;
     }
   };
-  const timer =
-    input.setInterval === undefined
-      ? window.setInterval(() => void poll(), 2_000)
-      : (input.setInterval(() => void poll(), 2_000), undefined);
+  const timer = (input.setInterval ?? window.setInterval)(() => void poll(), 2_000);
   const wake = (): void => void poll();
   window.addEventListener("focus", wake);
   document.addEventListener("visibilitychange", wake);
   void poll();
   return () => {
     stopped = true;
-    if (timer !== undefined) clearInterval(timer);
+    clearInterval(timer);
     window.removeEventListener("focus", wake);
     document.removeEventListener("visibilitychange", wake);
   };

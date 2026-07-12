@@ -28,7 +28,7 @@ describe("auth continuation recovery", () => {
       gateway,
       storage,
       onComplete: vi.fn(),
-      setInterval: () => 1 as unknown as number,
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
     });
     window.dispatchEvent(new Event("focus"));
     document.dispatchEvent(new Event("visibilitychange"));
