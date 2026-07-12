@@ -9,3 +9,6 @@ test-results/
 *.log
 .superpowers/
 *.tsbuildinfo
+
+# Local Netlify folder
+.netlify

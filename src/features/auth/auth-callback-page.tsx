@@ -6,8 +6,7 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
-  const [defaultGateway] = useState(createAuthGateway);
-  const activeGateway = gateway ?? defaultGateway;
+  const activeGateway = gateway ?? createAuthGateway();
 
   useEffect(() => {
     let active = true;

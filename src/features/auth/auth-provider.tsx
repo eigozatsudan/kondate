@@ -41,10 +41,11 @@ type AuthProviderProps = {
 
 export function AuthProvider({
   children,
-  client = getBrowserSupabaseClient(),
+  client: providedClient,
   recoveryGateway,
   startRecovery = startAuthContinuationRecovery,
 }: AuthProviderProps) {
+  const client = providedClient ?? getBrowserSupabaseClient();
   const [session, setSession] = useState<Session | null>(null);
   const [loaded, setLoaded] = useState(false);
   const refreshSession = useCallback(async (): Promise<void> => {
