@@ -10,4 +10,5 @@ else
   done
   set -- "${requested[@]}"
 fi
+cd /workspace/supabase/tests/database
 pg_prove --failures --dbname "$DATABASE_URL" "$@"

@@ -1995,7 +1995,7 @@ git commit -m "chore: add reproducible local Supabase stack"
 - Consumes: Task 4 migration and `db-test` services.
 - Produces: `extensions` and non-exposed `private` schemas; `pgcrypto` and `pgtap`; test-only functions `tests.create_supabase_user(uuid,text)`, `tests.authenticate_as(uuid)`, and `tests.clear_authentication()`.
 
-- [ ] **Step 1: Write the failing schema boundary test and test helpers (4 minutes)**
+- [x] **Step 1: Write the failing schema boundary test and test helpers (4 minutes)**
 
 Create `supabase/tests/database/000_helpers.sql`:
 
@@ -2116,7 +2116,7 @@ Run: `npm run db:test -- supabase/tests/database/001_extensions_and_schemas.test
 
 Expected: FAIL because `private`, `pgcrypto`, or `pgtap` has not been created by a Kondate migration.
 
-- [ ] **Step 3: Implement the base migration (3 minutes)**
+- [x] **Step 3: Implement the base migration (3 minutes)**
 
 Create `supabase/migrations/20260711000100_extensions_and_schemas.sql`:
 
@@ -2148,7 +2148,7 @@ npm run db:test -- supabase/tests/database/001_extensions_and_schemas.test.sql
 
 Expected: migration records version `20260711000100` and pgTAP reports `All tests successful` with six assertions.
 
-- [ ] **Step 5: Commit the database base (2 minutes)**
+- [x] **Step 5: Commit the database base (2 minutes)**
 
 ```bash
 git add scripts/run-pgtap.sh supabase/migrations/20260711000100_extensions_and_schemas.sql supabase/tests/database/000_helpers.sql supabase/tests/database/001_extensions_and_schemas.test.sql
