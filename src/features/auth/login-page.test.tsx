@@ -34,3 +34,24 @@ it("places Google first and renders the complete sent state", async () => {
   expect(screen.getByRole("button", { name: "メールアドレスを変更" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Googleに切り替える" })).toBeInTheDocument();
 });
+
+it("shows visible error copy when the callback arrives unbound to a known flow", () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter
+      initialEntries={[{ pathname: "/login", state: { authError: "unbound_callback" } }]}
+    >
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "ログインの情報を確認できませんでした。最初からやり直してください。",
+  );
+});

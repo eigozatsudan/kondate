@@ -5,7 +5,11 @@ import type { MagicLinkState } from "./magic-link-state";
 import { sanitizeReturnPath } from "./auth-flow";
 
 type LoginLocationState = {
-  authError?: "oauth_cancelled" | "auth_callback_failed" | "magic_link_expired";
+  authError?:
+    | "oauth_cancelled"
+    | "auth_callback_failed"
+    | "magic_link_expired"
+    | "unbound_callback";
 };
 
 function readLoginLocationState(value: unknown): LoginLocationState {
@@ -14,7 +18,8 @@ function readLoginLocationState(value: unknown): LoginLocationState {
   if (
     authError === "oauth_cancelled" ||
     authError === "auth_callback_failed" ||
-    authError === "magic_link_expired"
+    authError === "magic_link_expired" ||
+    authError === "unbound_callback"
   ) {
     return { authError };
   }
@@ -52,6 +57,9 @@ export function LoginPage({ gateway = createAuthGateway() }: { gateway?: AuthGat
     }
     if (locationState.authError === "magic_link_expired") {
       return "このリンクは期限切れか、すでに使用されています。";
+    }
+    if (locationState.authError === "unbound_callback") {
+      return "ログインの情報を確認できませんでした。最初からやり直してください。";
     }
     return null;
   }, [locationState.authError]);
