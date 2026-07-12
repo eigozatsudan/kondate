@@ -25,9 +25,11 @@ const draft: HouseholdMemberRow = {
 
 it("resumes one draft and saves each required selection", async () => {
   const user = userEvent.setup();
-  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) =>
-    Promise.resolve({ ...draft, ...patch }),
-  );
+  let currentDraft = draft;
+  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
+    currentDraft = { ...currentDraft, ...patch };
+    return Promise.resolve(currentDraft);
+  });
   const completeMember = vi.fn(() =>
     Promise.resolve({
       ...draft,

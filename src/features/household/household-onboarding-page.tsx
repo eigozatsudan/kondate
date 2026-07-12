@@ -115,11 +115,8 @@ export function HouseholdOnboardingForm({
     if (draft === null) return;
     setSaveState("saving");
     try {
-      await api.updateDraft(draft.id, patch);
-      // レスポンスの行全体ではなく、送信した差分を現在のドラフトへ合成する。
-      // (サーバーは差分を永続化した完全な行を返すが、テスト用の疑似実装は
-      // 直前までの差分を保持しないため、呼び出し側で楽観的に合成する。)
-      replaceMember({ ...draft, ...patch });
+      const saved = await api.updateDraft(draft.id, patch);
+      replaceMember(saved);
       setSaveState("saved");
     } catch {
       setSaveState("failed");
