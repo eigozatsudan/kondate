@@ -6,10 +6,7 @@ import { sanitizeReturnPath } from "./auth-flow";
 
 type LoginLocationState = {
   authError?:
-    | "oauth_cancelled"
-    | "auth_callback_failed"
-    | "magic_link_expired"
-    | "unbound_callback";
+    "oauth_cancelled" | "auth_callback_failed" | "magic_link_expired" | "unbound_callback";
 };
 
 function readLoginLocationState(value: unknown): LoginLocationState {

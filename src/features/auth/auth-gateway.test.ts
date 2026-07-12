@@ -54,7 +54,10 @@ function authClientMock(overrides?: {
 }) {
   const oauthResult = overrides?.oauthResult ?? { data: null, error: null };
   const exchangeResult = overrides?.exchangeResult ?? { data: null, error: null };
-  const signInWithPasswordResult = overrides?.signInWithPasswordResult ?? { data: null, error: null };
+  const signInWithPasswordResult = overrides?.signInWithPasswordResult ?? {
+    data: null,
+    error: null,
+  };
   return {
     auth: {
       signInWithOAuth: vi.fn().mockResolvedValue(oauthResult),
@@ -215,9 +218,7 @@ it("completes in the original browser once claim and code exchange succeed", asy
   const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
 
   const result = await gateway.completeCallback(
-    new URL(
-      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
-    ),
+    new URL(`http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`),
   );
 
   expect(result).toEqual({
