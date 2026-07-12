@@ -20,6 +20,14 @@ for (const line of source.split(/\r?\n/u)) {
   const separator = line.indexOf("=");
   values.set(line.slice(0, separator), line.slice(separator + 1));
 }
+if (force) {
+  const existing = await readFile(output, "utf8");
+  for (const line of existing.split(/\r?\n/u)) {
+    if (line.startsWith("OAUTH_MOCK_USER_PASSWORD=")) {
+      values.set("OAUTH_MOCK_USER_PASSWORD", line.slice("OAUTH_MOCK_USER_PASSWORD=".length));
+    }
+  }
+}
 
 const base64url = (value) => Buffer.from(value).toString("base64url");
 const jwtSecret = randomBytes(32).toString("hex");
@@ -61,13 +69,18 @@ values.set("ENABLE_GOOGLE_SIGNUP", "false");
 values.set("GOOGLE_CLIENT_ID", "");
 values.set("GOOGLE_SECRET", "");
 values.set("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/auth/v1/callback");
-values.set("OAUTH_MOCK_USER_PASSWORD", randomBytes(24).toString("base64url"));
+if (!values.has("OAUTH_MOCK_USER_PASSWORD") || values.get("OAUTH_MOCK_USER_PASSWORD") === "") {
+  values.set("OAUTH_MOCK_USER_PASSWORD", randomBytes(24).toString("base64url"));
+}
 values.set("VITE_SUPABASE_URL", "http://127.0.0.1:8000");
 values.set("VITE_MAGIC_LINK_RESEND_SECONDS", "60");
 values.set("VITE_AUTH_CONTINUATION_TTL_MS", "300000");
 values.set("VITE_AUTH_PROVIDER_MODE", "oauth_mock");
 values.set("VITE_OAUTH_MOCK_ORIGIN", "http://127.0.0.1:8788");
-values.set("LOCAL_DB_URL", `postgresql://postgres:${values.get("POSTGRES_PASSWORD")}@127.0.0.1:54322/postgres`);
+values.set(
+  "LOCAL_DB_URL",
+  `postgresql://postgres:${values.get("POSTGRES_PASSWORD")}@127.0.0.1:54322/postgres`,
+);
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787");
 
 const rendered = [...values.entries()].map(([key, value]) => `${key}=${value}`).join("\n");
