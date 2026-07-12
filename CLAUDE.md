@@ -2,8 +2,8 @@
 
 Guidance for Claude Code (and any agent) working in this repository. This file is
 Claude-Code-specific and supplements `AGENTS.md` (general contributor conventions,
-build/test commands, coding style). Read both; this file governs *process*, `AGENTS.md`
-governs *style*.
+build/test commands, coding style). Read both; this file governs _process_, `AGENTS.md`
+governs _style_.
 
 ## What this repository is
 
