@@ -67,11 +67,12 @@ function isExpired(error: AuthError | null, url: URL): boolean {
 }
 
 export function createAuthGateway(
-  client: BrowserSupabaseClient = getBrowserSupabaseClient(),
+  providedClient?: BrowserSupabaseClient,
   continuationApi: ContinuationApi = createContinuationApi(),
   storage: Storage = window.localStorage,
   deps: AuthGatewayDeps = browserAuthGatewayDeps,
 ): AuthGateway {
+  const client = providedClient ?? getBrowserSupabaseClient();
   return {
     async signInWithGoogle(returnTo) {
       const flow = await createAuthFlow(returnTo, continuationApi, storage);

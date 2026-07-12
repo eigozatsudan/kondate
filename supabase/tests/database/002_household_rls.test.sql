@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(12);
+select plan(16);
 
 select tests.create_supabase_user('11111111-1111-1111-1111-111111111111', 'one@example.invalid');
 select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@example.invalid');
@@ -48,6 +48,19 @@ select is(
   'completion RPC writes complete status'
 );
 
+insert into public.member_allergies(
+  id, user_id, member_id, custom_name, custom_confirmed
+) values (
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+  '11111111-1111-1111-1111-111111111111',
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'えんどう豆たんぱく', true
+);
+insert into public.member_dislikes(id, user_id, member_id, ingredient_name) values (
+  'cccccccc-cccc-cccc-cccc-cccccccccccc',
+  '11111111-1111-1111-1111-111111111111',
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'ねぎ'
+);
+
 reset role;
 select tests.authenticate_as('22222222-2222-2222-2222-222222222222');
 set local role authenticated;
@@ -64,6 +77,22 @@ with removed as (
   delete from public.household_members returning 1
 )
 select is((select count(*)::integer from removed), 0, 'second user cannot delete first user member');
+with changed as (
+  update public.member_allergies set custom_name = 'other' returning 1
+)
+select is((select count(*)::integer from changed), 0, 'second user cannot update first user allergy');
+with removed as (
+  delete from public.member_allergies returning 1
+)
+select is((select count(*)::integer from removed), 0, 'second user cannot delete first user allergy');
+with changed as (
+  update public.member_dislikes set ingredient_name = 'other' returning 1
+)
+select is((select count(*)::integer from changed), 0, 'second user cannot update first user dislike');
+with removed as (
+  delete from public.member_dislikes returning 1
+)
+select is((select count(*)::integer from removed), 0, 'second user cannot delete first user dislike');
 select is(
   (select count(*)::integer from public.profiles),
   1,

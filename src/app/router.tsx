@@ -5,6 +5,7 @@ import { LoginPage } from "@/features/auth/login-page";
 import { RequireCompletedOnboarding, RequireSession } from "@/features/auth/protected-routes";
 import { HouseholdOnboardingPage } from "@/features/household/household-onboarding-page";
 import { PrivacyNoticePage } from "@/features/privacy/privacy-notice-page";
+import { HouseholdSettingsPage } from "@/features/household/household-settings-page";
 import { PlaceholderPage } from "@/shared/ui/placeholder-page";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
@@ -63,12 +64,7 @@ export function createAppRouter(): AppRouter {
                 },
                 {
                   path: "/settings",
-                  element: (
-                    <PlaceholderPage
-                      title="設定"
-                      description="家族情報とアカウントを管理する画面です。"
-                    />
-                  ),
+                  element: <HouseholdSettingsPage />,
                 },
               ],
             },

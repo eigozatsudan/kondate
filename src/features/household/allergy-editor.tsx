@@ -1,0 +1,152 @@
+import { useMemo, useState } from "react";
+import type { AllergenCatalogRow, MemberAllergyRow } from "./household-api";
+
+export function filterAllergenCatalog(
+  catalog: readonly AllergenCatalogRow[],
+  query: string,
+): AllergenCatalogRow[] {
+  const normalized = query.normalize("NFKC").trim().toLocaleLowerCase("ja-JP");
+  if (normalized.length === 0) return [...catalog];
+  return catalog.filter((item) =>
+    item.display_name.normalize("NFKC").toLocaleLowerCase("ja-JP").includes(normalized),
+  );
+}
+
+export type AllergyEditorProps = {
+  memberId: string;
+  catalog: readonly AllergenCatalogRow[];
+  allergies: readonly MemberAllergyRow[];
+  addStandard(memberId: string, allergenId: string): Promise<unknown>;
+  addCustom(memberId: string, name: string, aliases: string[]): Promise<unknown>;
+  remove(allergyId: string): Promise<unknown>;
+  disabled?: boolean;
+};
+
+export function AllergyEditor(props: AllergyEditorProps) {
+  const { memberId, catalog, allergies, disabled = false } = props;
+  const [query, setQuery] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [customAliases, setCustomAliases] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const matches = useMemo(() => filterAllergenCatalog(catalog, query), [catalog, query]);
+  const normalizedCustomName = customName.normalize("NFKC").trim();
+  const exactMatch = catalog.some(
+    (item) => item.display_name.normalize("NFKC").trim() === normalizedCustomName,
+  );
+  const aliasValues = customAliases
+    .split(",")
+    .map((alias) => alias.normalize("NFKC").trim())
+    .filter((alias) => alias.length > 0);
+
+  return (
+    <section className="stack" aria-label="アレルギー編集">
+      <label className="field">
+        <span>標準29品目を検索</span>
+        <input
+          aria-label="標準29品目を検索"
+          role="searchbox"
+          value={query}
+          disabled={disabled}
+          onChange={(event) => {
+            setQuery(event.target.value);
+          }}
+        />
+      </label>
+      <ul className="stack" aria-label="標準アレルギー候補">
+        {matches.map((item) => (
+          <li key={item.id}>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={disabled || allergies.some((allergy) => allergy.allergen_id === item.id)}
+              onClick={() => void props.addStandard(memberId, item.id)}
+            >
+              {item.display_name}を追加
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p>自由登録は候補にない場合だけ使用してください</p>
+      <fieldset className="stack">
+        <legend>自由登録</legend>
+        <label className="field">
+          <span>自由登録名</span>
+          <input
+            value={customName}
+            disabled={disabled}
+            onChange={(event) => {
+              setCustomName(event.target.value);
+            }}
+          />
+        </label>
+        <label className="field">
+          <span>別名（カンマ区切り・任意）</span>
+          <input
+            value={customAliases}
+            disabled={disabled}
+            onChange={(event) => {
+              setCustomAliases(event.target.value);
+            }}
+          />
+        </label>
+        {exactMatch && <p role="alert">標準項目を先に選んでください</p>}
+        <label>
+          <input
+            type="checkbox"
+            aria-label="標準候補に該当しないことを確認"
+            checked={confirmed}
+            disabled={disabled}
+            onChange={(event) => {
+              setConfirmed(event.target.checked);
+            }}
+          />
+          標準候補に該当しないことを確認
+        </label>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={
+            disabled ||
+            !confirmed ||
+            exactMatch ||
+            normalizedCustomName.length < 1 ||
+            normalizedCustomName.length > 80 ||
+            aliasValues.length > 10
+          }
+          onClick={() =>
+            void props.addCustom(memberId, normalizedCustomName, aliasValues).then(() => {
+              setCustomName("");
+              setCustomAliases("");
+              setConfirmed(false);
+            })
+          }
+        >
+          自由登録を追加
+        </button>
+      </fieldset>
+      <ul aria-label="選択済みアレルギー">
+        {allergies.map((allergy) => {
+          const name =
+            allergy.allergen_id === null
+              ? allergy.custom_name
+              : catalog.find((item) => item.id === allergy.allergen_id)?.display_name;
+          const displayName = name ?? "表示名を確認できない項目";
+          return (
+            <li key={allergy.id}>
+              {displayName}
+              <button
+                className="text-button"
+                type="button"
+                aria-label={`${displayName}を削除`}
+                disabled={disabled}
+                onClick={() => void props.remove(allergy.id)}
+              >
+                削除
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}

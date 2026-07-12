@@ -5,9 +5,10 @@ import type { Tables, TablesInsert, TablesUpdate } from "@/shared/types/database
 export type ProfileRow = Tables<"profiles">;
 export type HouseholdMemberRow = Tables<"household_members">;
 export type MemberAllergyRow = Tables<"member_allergies">;
+export type MemberDislikeRow = Tables<"member_dislikes">;
 export type AllergenCatalogRow = Tables<"allergen_catalog">;
 
-export type HouseholdDraftPatch = Pick<
+export type HouseholdMemberPatch = Pick<
   TablesUpdate<"household_members">,
   | "display_name"
   | "age_band"
@@ -19,6 +20,8 @@ export type HouseholdDraftPatch = Pick<
   | "unsupported_diet_status"
   | "unsupported_diet_kinds"
 >;
+
+export type HouseholdDraftPatch = HouseholdMemberPatch;
 
 function dataError(message: string): Error {
   return new Error(message);
@@ -77,6 +80,24 @@ export async function updateHouseholdMemberDraft(
     .select("*")
     .single();
   if (error !== null) throw dataError("家族情報を保存できませんでした");
+  return data;
+}
+
+export async function updateCompleteHouseholdMember(
+  client: BrowserSupabaseClient,
+  userId: string,
+  memberId: string,
+  patch: HouseholdMemberPatch,
+): Promise<HouseholdMemberRow> {
+  const { data, error } = await client
+    .from("household_members")
+    .update(patch)
+    .eq("id", memberId)
+    .eq("user_id", userId)
+    .eq("status", "complete")
+    .select("*")
+    .single();
+  if (error !== null) throw dataError("家族設定を保存できませんでした");
   return data;
 }
 
@@ -164,17 +185,91 @@ export async function addCustomMemberAllergy(
   customName: string,
   aliases: string[],
 ): Promise<MemberAllergyRow> {
+  const normalizedName = customName.normalize("NFKC").trim();
+  const normalizedAliases = aliases
+    .map((alias) => alias.normalize("NFKC").trim())
+    .filter((alias) => alias.length > 0);
+  if (normalizedName.length < 1 || normalizedName.length > 80) {
+    throw dataError("自由登録アレルギーは1〜80文字で入力してください");
+  }
+  if (
+    normalizedAliases.length > 10 ||
+    new Set(normalizedAliases).size !== normalizedAliases.length
+  ) {
+    throw dataError("別名は重複なく10件以内で登録してください");
+  }
   const input: TablesInsert<"member_allergies"> = {
     user_id: userId,
     member_id: memberId,
     allergen_id: null,
-    custom_name: customName.trim(),
-    custom_aliases: aliases.map((alias) => alias.trim()).filter((alias) => alias.length > 0),
+    custom_name: normalizedName,
+    custom_aliases: normalizedAliases,
     custom_confirmed: true,
   };
   const { data, error } = await client.from("member_allergies").insert(input).select("*").single();
   if (error !== null) throw dataError("自由登録アレルギーを保存できませんでした");
   return data;
+}
+
+export async function deleteHouseholdMember(
+  client: BrowserSupabaseClient,
+  userId: string,
+  memberId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("household_members")
+    .delete()
+    .eq("id", memberId)
+    .eq("user_id", userId);
+  if (error !== null) throw dataError("家族を削除できませんでした");
+}
+
+export async function listMemberDislikes(
+  client: BrowserSupabaseClient,
+  userId: string,
+  memberId: string,
+): Promise<MemberDislikeRow[]> {
+  const { data, error } = await client
+    .from("member_dislikes")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("member_id", memberId)
+    .order("created_at");
+  if (error !== null) throw dataError("苦手食材を読み込めませんでした");
+  return data;
+}
+
+export async function addMemberDislike(
+  client: BrowserSupabaseClient,
+  userId: string,
+  memberId: string,
+  ingredientName: string,
+): Promise<MemberDislikeRow> {
+  const normalized = ingredientName.normalize("NFKC").trim();
+  if (normalized.length < 1 || normalized.length > 80) {
+    throw dataError("苦手食材は1〜80文字で入力してください");
+  }
+  const input: TablesInsert<"member_dislikes"> = {
+    user_id: userId,
+    member_id: memberId,
+    ingredient_name: normalized,
+  };
+  const { data, error } = await client.from("member_dislikes").insert(input).select("*").single();
+  if (error !== null) throw dataError("苦手食材は1〜80文字で重複なく登録してください");
+  return data;
+}
+
+export async function deleteMemberDislike(
+  client: BrowserSupabaseClient,
+  userId: string,
+  dislikeId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("member_dislikes")
+    .delete()
+    .eq("id", dislikeId)
+    .eq("user_id", userId);
+  if (error !== null) throw dataError("苦手食材を削除できませんでした");
 }
 
 export async function deleteMemberAllergy(

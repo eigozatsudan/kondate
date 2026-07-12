@@ -18,6 +18,7 @@ const messageSchema = z.object({
 type AuthFixtures = {
   authEmail: string;
   authenticatedPage: Page;
+  completedOnboardingPage: Page;
 };
 
 export const test = base.extend<AuthFixtures>({
@@ -32,6 +33,14 @@ export const test = base.extend<AuthFixtures>({
     const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
     await page.goto(magicLink);
     await expect(page.getByRole("heading", { name: "家族の初回設定" })).toBeVisible();
+    await provide(page);
+  },
+
+  completedOnboardingPage: async ({ authenticatedPage: page }, provide) => {
+    await completeMinimumOnboarding(page);
+    await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
+    await page.getByRole("button", { name: "確認して進む" }).click();
+    await expect(page).toHaveURL(/\/planner$/u);
     await provide(page);
   },
 });

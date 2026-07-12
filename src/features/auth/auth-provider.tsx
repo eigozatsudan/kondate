@@ -14,6 +14,7 @@ import {
   startAuthContinuationRecovery,
   type AuthContinuationRecoveryGateway,
 } from "./auth-continuation-recovery";
+import { createAuthGateway } from "./auth-gateway";
 
 export type AuthContextValue = {
   status: "loading" | "authenticated" | "unauthenticated";
@@ -46,6 +47,9 @@ export function AuthProvider({
   startRecovery = startAuthContinuationRecovery,
 }: AuthProviderProps) {
   const client = providedClient ?? getBrowserSupabaseClient();
+  const [defaultRecoveryGateway] = useState(() =>
+    providedClient === undefined ? createAuthGateway(getBrowserSupabaseClient()) : undefined,
+  );
   const [session, setSession] = useState<Session | null>(null);
   const [loaded, setLoaded] = useState(false);
   const refreshSession = useCallback(async (): Promise<void> => {
@@ -69,14 +73,18 @@ export function AuthProvider({
   }, [client, refreshSession]);
 
   useEffect(() => {
-    if (recoveryGateway === undefined) return undefined;
+    const gateway = recoveryGateway ?? defaultRecoveryGateway;
+    if (gateway === undefined) return undefined;
     return startRecovery({
-      gateway: recoveryGateway,
+      gateway,
       storage: window.localStorage,
       ttlMs: getPublicEnv().authContinuationTtlMs,
-      onComplete: () => void refreshSession(),
+      onComplete: (result) => {
+        void refreshSession();
+        if (result.returnTo.startsWith("/")) window.location.assign(result.returnTo);
+      },
     });
-  }, [recoveryGateway, refreshSession, startRecovery]);
+  }, [defaultRecoveryGateway, recoveryGateway, refreshSession, startRecovery]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

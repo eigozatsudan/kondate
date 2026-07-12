@@ -6,17 +6,21 @@ import { useAuth } from "@/features/auth/auth-provider";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
   addCustomMemberAllergy,
+  addStandardMemberAllergy,
   completeHouseholdMember,
   createHouseholdMemberDraft,
   listHouseholdMembers,
   listMemberAllergies,
   setOnboardingStatus,
   updateHouseholdMemberDraft,
+  deleteMemberAllergy,
+  listAllergenCatalog,
   type HouseholdDraftPatch,
   type HouseholdMemberRow,
 } from "./household-api";
 import { defaultsForAgeBand } from "./household-defaults";
 import { householdKeys } from "./household-queries";
+import { AllergyEditor } from "./allergy-editor";
 
 const unsupportedDietOptions: ReadonlyArray<readonly [UnsupportedDietKind, string]> = [
   ["weaning_food", "離乳食"],
@@ -30,7 +34,10 @@ export interface HouseholdOnboardingApi {
   updateDraft: (memberId: string, patch: HouseholdDraftPatch) => Promise<HouseholdMemberRow>;
   completeMember: (memberId: string) => Promise<HouseholdMemberRow>;
   listAllergies: (memberId: string) => Promise<Awaited<ReturnType<typeof listMemberAllergies>>>;
+  listCatalog?: () => Promise<Awaited<ReturnType<typeof listAllergenCatalog>>>;
+  addStandardAllergy?: (memberId: string, allergenId: string) => Promise<unknown>;
   addCustomAllergy: (memberId: string, name: string, aliases: string[]) => Promise<unknown>;
+  removeAllergy?: (allergyId: string) => Promise<unknown>;
   setProgress: (status: "in_progress" | "complete") => Promise<unknown>;
 }
 
@@ -42,8 +49,12 @@ function createHouseholdApi(userId: string): HouseholdOnboardingApi {
     updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
     listAllergies: (memberId) => listMemberAllergies(client, userId, memberId),
+    listCatalog: () => listAllergenCatalog(client),
+    addStandardAllergy: (memberId, allergenId) =>
+      addStandardMemberAllergy(client, userId, memberId, allergenId),
     addCustomAllergy: (memberId, name, aliases) =>
       addCustomMemberAllergy(client, userId, memberId, name, aliases),
+    removeAllergy: (allergyId) => deleteMemberAllergy(client, userId, allergyId),
     setProgress: (status) => setOnboardingStatus(client, userId, status),
   };
 }
@@ -88,6 +99,11 @@ export function HouseholdOnboardingForm({
     queryKey: householdKeys.allergies(userId, draft?.id ?? "none"),
     queryFn: () => (draft === null ? Promise.resolve([]) : api.listAllergies(draft.id)),
     enabled: draft !== null,
+  });
+  const catalogQuery = useQuery({
+    queryKey: ["household", "allergen-catalog"],
+    queryFn: () => api.listCatalog?.() ?? Promise.resolve([]),
+    enabled: draft !== null && api.listCatalog !== undefined,
   });
   const allergies = allergiesQuery.data ?? [];
 
@@ -239,7 +255,32 @@ export function HouseholdOnboardingForm({
           </select>
         </label>
 
-        {draft.allergy_status === "registered" && (
+        {draft.allergy_status === "registered" && api.listCatalog !== undefined && (
+          <AllergyEditor
+            memberId={draft.id}
+            catalog={catalogQuery.data ?? []}
+            allergies={allergies}
+            addStandard={async (memberId, allergenId) => {
+              await api.addStandardAllergy?.(memberId, allergenId);
+              await queryClient.invalidateQueries({
+                queryKey: householdKeys.allergies(userId, memberId),
+              });
+            }}
+            addCustom={async (memberId, name, aliases) => {
+              await api.addCustomAllergy(memberId, name, aliases);
+              await queryClient.invalidateQueries({
+                queryKey: householdKeys.allergies(userId, memberId),
+              });
+            }}
+            remove={async (allergyId) => {
+              await api.removeAllergy?.(allergyId);
+              await queryClient.invalidateQueries({
+                queryKey: householdKeys.allergies(userId, draft.id),
+              });
+            }}
+          />
+        )}
+        {draft.allergy_status === "registered" && api.listCatalog === undefined && (
           <fieldset className="stack">
             <legend>登録するアレルギー</legend>
             <label className="field">

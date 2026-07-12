@@ -10,3 +10,5 @@ src/shared/types/database.generated.ts
 package-lock.json
 docs
 .superpowers
+.netlify
+.netlify/**
