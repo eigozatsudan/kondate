@@ -12,7 +12,8 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.goto("/settings");
   await page.getByRole("button", { name: "家族を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
-  await expect(page.getByRole("alert")).toContainText("必須項目");
+  await expect(page.getByRole("alert")).toContainText("年齢区分を選んでください");
+  await expect(page.getByLabel("年齢区分")).toBeFocused();
   await page.getByLabel("呼び名").fill("子ども");
   await page.getByLabel("年齢区分").selectOption("age_3_5");
   await page.getByLabel("アレルギーの確認").selectOption("registered");

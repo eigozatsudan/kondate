@@ -49,9 +49,9 @@ import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-
 export const householdSettingsSchema = z
   .object({
     displayName: z.string().trim().min(1).max(30).nullable(),
-    ageBand: z.enum(ageBands),
-    allergyStatus: z.enum(allergyStatuses),
-    unsupportedDietStatus: z.enum(unsupportedDietStatuses),
+    ageBand: z.enum(ageBands, "年齢区分を選んでください"),
+    allergyStatus: z.enum(allergyStatuses, "アレルギーの確認を選んでください"),
+    unsupportedDietStatus: z.enum(unsupportedDietStatuses, "対象外の食事の確認を選んでください"),
     unsupportedDietKinds: z.array(z.enum(unsupportedDietKinds)).max(3),
     requiredSafetyConstraints: z.array(z.enum(requiredSafetyConstraints)).max(2),
     portionSize: z.enum(portionSizes),
@@ -204,6 +204,9 @@ export function HouseholdSettingsForm({
   const initializedMemberId = useRef<string | undefined>(undefined);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
+  const ageBandRef = useRef<HTMLSelectElement>(null);
+  const allergyStatusRef = useRef<HTMLSelectElement>(null);
+  const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
   const membersQuery = useQuery({
     queryKey: membersKey,
     queryFn: () => api.listMembers(),
@@ -301,6 +304,16 @@ export function HouseholdSettingsForm({
       const nextErrors = toHouseholdFieldErrors(parsed.error);
       setErrors(nextErrors);
       setMessage("必須項目を確認してください");
+      const fieldOrder = Object.keys(
+        householdSettingsSchema.shape,
+      ) as (keyof HouseholdSettingsValue)[];
+      const fieldRefs: Partial<Record<keyof HouseholdSettingsValue, typeof ageBandRef>> = {
+        ageBand: ageBandRef,
+        allergyStatus: allergyStatusRef,
+        unsupportedDietStatus: unsupportedDietStatusRef,
+      };
+      const firstInvalidField = fieldOrder.find((key) => key in nextErrors);
+      fieldRefs[firstInvalidField as keyof typeof fieldRefs]?.current?.focus();
       return;
     }
     if (parsed.data.allergyStatus === "registered" && (allergiesQuery.data?.length ?? 0) === 0) {
@@ -416,6 +429,7 @@ export function HouseholdSettingsForm({
         <label className="field">
           <span>年齢区分</span>
           <select
+            ref={ageBandRef}
             value={values.ageBand}
             onChange={(event) => {
               updateAndSave({
@@ -441,6 +455,7 @@ export function HouseholdSettingsForm({
         <label className="field">
           <span>アレルギーの確認</span>
           <select
+            ref={allergyStatusRef}
             value={values.allergyStatus}
             onChange={(event) => {
               updateAndSave({ allergyStatus: event.target.value as AllergyStatus });
@@ -483,6 +498,7 @@ export function HouseholdSettingsForm({
         <label className="field">
           <span>対象外の食事の確認</span>
           <select
+            ref={unsupportedDietStatusRef}
             value={values.unsupportedDietStatus}
             onChange={(event) => {
               updateAndSave({
