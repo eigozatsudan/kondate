@@ -216,7 +216,8 @@ export function HouseholdSettingsForm({
     queryFn: () => api.listCatalog(),
   });
   const members = membersQuery.data ?? [];
-  const selected = members.find((member) => member.id === selectedId) ?? members[0];
+  const selected =
+    selectedId === undefined ? members[0] : members.find((member) => member.id === selectedId);
   const allergiesQuery = useQuery({
     queryKey: selected
       ? householdKeys.allergies("settings", selected.id)
@@ -406,6 +407,16 @@ export function HouseholdSettingsForm({
           </select>
         </label>
       )}
+      <button
+        className="secondary-button"
+        type="button"
+        disabled={createDraft.isPending}
+        onClick={() => {
+          createDraft.mutate();
+        }}
+      >
+        家族を追加
+      </button>
       {message && (
         <p className="status-message" role="status" aria-live="polite">
           {message}
@@ -689,6 +700,9 @@ export function HouseholdSettingsForm({
                 .deleteMember(selected.id)
                 .then(() => {
                   setConfirmDelete(false);
+                  setSelectedId(undefined);
+                  initializedMemberId.current = undefined;
+                  setValues(undefined);
                   return queryClient.invalidateQueries({ queryKey: membersKey });
                 })
                 .then(() => api.invalidateSafety())

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import type { AllergenCatalogRow, HouseholdMemberRow } from "./household-api";
@@ -60,13 +60,44 @@ function renderSettings(overrides: Partial<HouseholdSettingsApi> = {}) {
       <HouseholdSettingsForm api={api} />
     </QueryClientProvider>,
   );
-  return { api, updateMember, invalidateSafety };
+  return { api, queryClient, updateMember, invalidateSafety };
 }
 
 it("renders the complete household editor without account deletion", async () => {
   renderSettings();
   expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "アカウントを削除" })).not.toBeInTheDocument();
+});
+
+it("creates and selects a new draft while an existing member is present", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    status: "draft",
+    display_name: null,
+    age_band: null,
+    allergy_status: null,
+    unsupported_diet_status: null,
+    sort_order: 1,
+  };
+  const createDraft = vi.fn().mockResolvedValue(draft);
+  const { queryClient } = renderSettings({ createDraft });
+
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+
+  expect(createDraft).toHaveBeenCalledWith(1);
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("");
+  expect(screen.getByLabelText("年齢区分")).toHaveValue("");
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("");
+  expect(screen.getByLabelText("対象外の食事の確認")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "この家族の設定を完了" })).toBeVisible();
+
+  await act(async () => {
+    queryClient.setQueryData(["household", "members", "settings"], [member]);
+    await Promise.resolve();
+  });
+  expect(await screen.findByText("家族を追加してください")).toBeVisible();
+  expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
 });
 
 it("saves a changed safety field and invalidates dependents", async () => {
