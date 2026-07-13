@@ -57,7 +57,9 @@ export async function requestMagicLinkAndReadUrl(page: Page, email: string): Pro
   await expect
     .poll(
       async () => {
-        const listResponse = await page.request.get("http://127.0.0.1:8025/api/v1/messages");
+        const searchUrl = new URL("/api/v1/search", "http://127.0.0.1:8025");
+        searchUrl.search = new URLSearchParams({ query: `to:${email}` }).toString();
+        const listResponse = await page.request.get(searchUrl.href);
         if (!listResponse.ok()) return "";
         const parsedList = messageListSchema.safeParse(await listResponse.json());
         if (!parsedList.success) return "";
