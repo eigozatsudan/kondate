@@ -77,3 +77,19 @@ test("runs the development app as the node user and keeps generated Vite cache o
   assert.match(dockerfile, /^USER node$/m);
   assert.match(viteConfig, /cacheDir: "\/tmp\/vite"/u);
 });
+
+test("uses the isolated E2E Function server without changing the public origin", async () => {
+  const [compose, composeE2e, viteConfig, runner] = await Promise.all([
+    readFile("compose.yaml", "utf8"),
+    readFile("compose.e2e.yaml", "utf8"),
+    readFile("vite.config.ts", "utf8"),
+    readFile("tools/run-e2e-app.mjs", "utf8"),
+  ]);
+  assert.doesNotMatch(compose, /KONDATE_E2E_FUNCTION_SERVER/u);
+  assert.match(composeE2e, /KONDATE_E2E_FUNCTION_SERVER: "1"/u);
+  assert.match(composeE2e, /command: \["node", "tools\/run-e2e-app\.mjs"\]/u);
+  assert.match(viteConfig, /functions: \{ enabled: !isE2eFunctionServer \}/u);
+  assert.match(viteConfig, /target: "http:\/\/127\.0\.0\.1:5174"/u);
+  assert.match(runner, /SIGTERM/u);
+  assert.match(runner, /SIGINT/u);
+});

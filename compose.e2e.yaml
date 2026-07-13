@@ -1,0 +1,5 @@
+services:
+  app:
+    environment:
+      KONDATE_E2E_FUNCTION_SERVER: "1"
+    command: ["node", "tools/run-e2e-app.mjs"]
