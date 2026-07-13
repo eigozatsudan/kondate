@@ -13,7 +13,7 @@
 
 ## Architecture
 
-`KONDATE_E2E_FUNCTION_SERVER=1` をE2Eモードの唯一の切替条件とする。Compose の `app` サービスはこの環境変数を設定し、`tools/run-e2e-app.mjs` で `tools/e2e-function-server.mjs` と Vite を同時に起動する。テストサーバーは `127.0.0.1:5174` だけで待ち受け、Node の HTTP リクエストを Fetch API の `Request` に変換する。返却された `Response` はステータス、ヘッダー、本文を保持して HTTP 応答へ変換する。
+`KONDATE_E2E_FUNCTION_SERVER=1` をE2Eモードの唯一の切替条件とする。Compose のE2Eプロファイル専用 `app-e2e` サービスだけがこの環境変数を設定し、`tools/run-e2e-app.mjs` で `tools/e2e-function-server.mjs` と Vite を同時に起動する。既存の `app` サービスと通常の `docker compose up` は変更しない。テストサーバーは `127.0.0.1:5174` だけで待ち受け、Node の HTTP リクエストを Fetch API の `Request` に変換する。返却された `Response` はステータス、ヘッダー、本文を保持して HTTP 応答へ変換する。
 
 テストサーバーは Vite の SSR module loader を使って3つの Function モジュールを読み込む。経路とメソッドは各モジュールの `config.path` と `config.method` から導出し、`config` を複製した正規表現やルート表を持たない。`:continuationId` のみを `Context.params.continuationId` として抽出し、各モジュールの `default` handler を呼び出す。
 
