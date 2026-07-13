@@ -26,7 +26,7 @@ test("uses one canonical loopback hostname for public browser services", async (
   for (const source of [compose, example, config])
     assert.doesNotMatch(source, /http:\/\/local(?:host)/u);
   assert.match(example, /^SERVER_SITE_ORIGIN=http:\/\/127\.0\.0\.1:5173$/mu);
-  assert.match(example, /^API_EXTERNAL_URL=http:\/\/127\.0\.0\.1:8000$/mu);
+  assert.match(example, /^API_EXTERNAL_URL=http:\/\/127\.0\.0\.1:8000\/auth\/v1$/mu);
   assert.match(example, /^VITE_AUTH_PROVIDER_MODE=oauth_mock$/mu);
   assert.match(example, /^VITE_OAUTH_MOCK_ORIGIN=http:\/\/127\.0\.0\.1:8788$/mu);
   assert.match(config, /site_url = "http:\/\/127\.0\.0\.1:5173"/u);

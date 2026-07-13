@@ -1,0 +1,23 @@
+services:
+  local-secrets:
+    image: node:24-bookworm-slim
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
+    volumes:
+      - .:/workspace
+    entrypoint: ["node", "scripts/generate-local-secrets.mjs"]
+
+  vendor-supabase:
+    image: alpine/git:v2.54.0
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      HOME: /tmp
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
+    volumes:
+      - .:/workspace
+    entrypoint: ["/workspace/scripts/vendor-supabase.sh"]

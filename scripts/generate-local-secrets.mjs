@@ -20,8 +20,21 @@ for (const line of source.split(/\r?\n/u)) {
   const separator = line.indexOf("=");
   values.set(line.slice(0, separator), line.slice(separator + 1));
 }
+values.delete("COMPOSE_FILE");
 if (force) {
-  const existing = await readFile(output, "utf8");
+  let existing = "";
+  try {
+    existing = await readFile(output, "utf8");
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
+  }
   for (const line of existing.split(/\r?\n/u)) {
     if (line.startsWith("OAUTH_MOCK_USER_PASSWORD=")) {
       values.set("OAUTH_MOCK_USER_PASSWORD", line.slice("OAUTH_MOCK_USER_PASSWORD=".length));
@@ -49,6 +62,19 @@ values.set("ANON_KEY", signRole("anon"));
 values.set("SERVICE_ROLE_KEY", signRole("service_role"));
 values.set("AUTH_CONTINUATION_ENCRYPTION_KEY", randomBytes(32).toString("base64"));
 values.set("AUTH_CONTINUATION_TTL_SECONDS", "300");
+const localUid = process.env.LOCAL_UID ?? "1000";
+const localGid = process.env.LOCAL_GID ?? "1000";
+if (!/^\d+$/u.test(localUid) || !/^\d+$/u.test(localGid)) {
+  throw new Error("LOCAL_UID and LOCAL_GID must be numeric");
+}
+values.set("LOCAL_UID", localUid);
+values.set("LOCAL_GID", localGid);
+values.set("REALTIME_DB_ENC_KEY", randomBytes(8).toString("hex"));
+values.set("PG_META_CRYPTO_KEY", randomBytes(24).toString("base64url"));
+values.set("LOGFLARE_PUBLIC_ACCESS_TOKEN", randomBytes(24).toString("base64url"));
+values.set("LOGFLARE_PRIVATE_ACCESS_TOKEN", randomBytes(24).toString("base64url"));
+values.set("S3_PROTOCOL_ACCESS_KEY_ID", randomBytes(16).toString("hex"));
+values.set("S3_PROTOCOL_ACCESS_KEY_SECRET", randomBytes(32).toString("hex"));
 values.set("SERVER_SITE_ORIGIN", "http://127.0.0.1:5173");
 values.set("DASHBOARD_USERNAME", "kondate");
 values.set("DASHBOARD_PASSWORD", randomBytes(24).toString("base64url"));
@@ -56,7 +82,7 @@ values.set("SECRET_KEY_BASE", randomBytes(48).toString("hex"));
 values.set("VAULT_ENC_KEY", randomBytes(16).toString("hex"));
 values.set("SITE_URL", "http://127.0.0.1:5173");
 values.set("ADDITIONAL_REDIRECT_URLS", "http://127.0.0.1:5173/**");
-values.set("API_EXTERNAL_URL", "http://127.0.0.1:8000");
+values.set("API_EXTERNAL_URL", "http://127.0.0.1:8000/auth/v1");
 values.set("SUPABASE_PUBLIC_URL", "http://127.0.0.1:8000");
 values.set("SMTP_HOST", "mailpit");
 values.set("SMTP_PORT", "1025");
