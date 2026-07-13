@@ -115,9 +115,19 @@ test("runs local-only tooling inside pinned containers", async () => {
   assert.match(compose, /user: "\$\{LOCAL_UID:-1000\}:\$\{LOCAL_GID:-1000\}"/u);
   assert.match(compose, /entrypoint: \["node", "scripts\/generate-local-secrets\.mjs"\]/u);
   assert.match(compose, /entrypoint: \["\/workspace\/scripts\/vendor-supabase\.sh"\]/u);
+  assert.equal(
+    (compose.match(/LOCAL_UID: "\$\{LOCAL_UID:-1000\}"/gu) ?? []).length,
+    2,
+  );
+  assert.equal(
+    (compose.match(/LOCAL_GID: "\$\{LOCAL_GID:-1000\}"/gu) ?? []).length,
+    2,
+  );
   assert.match(wrapper, /docker compose -f compose\.tooling\.yaml run --rm local-secrets/u);
 });
 ```
+
+`MAILER_URLPATHS_*` の引用符付きfixtureは新しい分岐を作るためではなく、公式 `.env.example` の引用符付き入力をプロジェクトが要求する引用符なしの正規形へ変換する既存回帰契約を維持するために残す。
 
 - [ ] **Step 2: Docker内でテストを実行して失敗を確認する**
 
@@ -139,6 +149,9 @@ services:
     image: node:24-bookworm-slim
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     working_dir: /workspace
+    environment:
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
     volumes:
       - .:/workspace
     entrypoint: ["node", "scripts/generate-local-secrets.mjs"]
@@ -149,6 +162,8 @@ services:
     working_dir: /workspace
     environment:
       HOME: /tmp
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
     volumes:
       - .:/workspace
     entrypoint: ["/workspace/scripts/vendor-supabase.sh"]
@@ -245,10 +260,11 @@ Run:
 
 ```bash
 docker compose --env-file /dev/null -f compose.tooling.yaml config --quiet
+LOCAL_UID=1234 LOCAL_GID=5678 docker compose --env-file /dev/null -f compose.tooling.yaml run --rm --entrypoint node local-secrets -e 'if (process.env.LOCAL_UID !== "1234" || process.env.LOCAL_GID !== "5678") process.exit(1)'
 docker compose -f compose.tooling.yaml run --rm --entrypoint node local-secrets --test tests/tooling/project-config.test.mjs tests/tooling/compose.test.mjs
 ```
 
-Expected: tooling Composeの構文検証成功、対象NodeテストPASS。
+Expected: tooling Composeの構文検証成功、実コンテナ内の `LOCAL_UID=1234` と `LOCAL_GID=5678` を確認し、対象NodeテストPASS。この実行時配線テストにより、`user:` だけが補間されて `environment:` が欠落する回帰を検出する。
 
 - [ ] **Step 8: コミットする**
 
@@ -437,7 +453,17 @@ docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase 
 
 Expected: `vendor-supabase transactional tests passed`、exit 0。
 
-- [ ] **Step 5: 最新公式masterをDocker内からvendorする**
+- [ ] **Step 5: 最新公式masterのPG17デフォルトを読み取り専用で再確認する**
+
+Run:
+
+```bash
+docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase -c 'set -eu; tmp=$(mktemp -d); trap "rm -rf $tmp" EXIT; git -C "$tmp" init -q; git -C "$tmp" remote add origin https://github.com/supabase/supabase.git; git -C "$tmp" fetch -q --depth 1 origin refs/heads/master; sha=$(git -C "$tmp" rev-parse FETCH_HEAD); image=$(git -C "$tmp" show FETCH_HEAD:docker/docker-compose.yml | sed -n "s/^[[:space:]]*image:[[:space:]]*\(supabase\/postgres:[^[:space:]]*\).*$/\1/p"); printf "%s %s\n" "$sha" "$image"; printf "%s\n" "$sha" | grep -Eq "^[0-9a-f]{40}$"; case "$image" in supabase/postgres:17.*) ;; *) exit 1 ;; esac'
+```
+
+Expected: 40文字SHAと単一の `supabase/postgres:17.*` を表示してexit 0。計画レビュー時点では `b5ada9631df0a42cdb6e402eaf0ca18ff52aed80 supabase/postgres:17.6.1.136` を再確認済み。このpreflightは `/tmp` だけを使用し、workspaceを変更しない。
+
+- [ ] **Step 6: 最新公式masterをDocker内からvendorする**
 
 Run:
 
@@ -451,7 +477,7 @@ Expected:
 - `infra/supabase/docker-compose.yml` のDBは `supabase/postgres:17.6.1.136`。上流が進んでいる場合は、その固定SHAに記載された新しい17系完全タグ。
 - 除外対象4ファイルは存在しない。
 
-- [ ] **Step 6: vendor結果と差分の健全性を確認する**
+- [ ] **Step 7: vendor結果と差分の健全性を確認する**
 
 Run:
 
@@ -461,7 +487,7 @@ docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase 
 
 Expected: exit 0。
 
-- [ ] **Step 7: コミットする**
+- [ ] **Step 8: コミットする**
 
 ```bash
 docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase -c 'git add scripts/vendor-supabase.sh tests/tooling/vendor-supabase.test.sh infra/supabase infra/supabase.version && git commit -m "chore: Supabase公式Docker構成を最新化"'

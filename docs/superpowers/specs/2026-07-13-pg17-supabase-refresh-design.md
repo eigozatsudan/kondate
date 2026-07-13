@@ -101,7 +101,7 @@ docker compose up -d --wait
 - DB操作: 公式 `db`、プロジェクトの `migrate`、`db-test` Composeサービス
 - E2E: Chromiumを含む `e2e` Composeサービス
 
-`compose.tooling.yaml` は通常の `docker compose up` から参照されないため、toolingサービスがアプリスタックへ混入しない。vendorスクリプトはコンテナ内で `/workspace` にマウントされたリポジトリだけを書き換える。tooling実行時にホストのUID/GIDを渡し、生成物がrootまたは別ユーザー所有になることを防ぐ。シークレット生成処理は受け取ったUID/GIDを `.env` の `LOCAL_UID` と `LOCAL_GID` に保存し、以後の `app`、`e2e`、DB型生成も同じ所有者で実行する。tooling用Compose自身の構文は `.env` なしで解決できることをテストする。
+`compose.tooling.yaml` は通常の `docker compose up` から参照されないため、toolingサービスがアプリスタックへ混入しない。vendorスクリプトはコンテナ内で `/workspace` にマウントされたリポジトリだけを書き換える。tooling実行時にホストのUID/GIDを渡し、生成物がrootまたは別ユーザー所有になることを防ぐ。Composeの `user:` は実行ユーザーだけを設定してコンテナ環境変数を作らないため、`LOCAL_UID` と `LOCAL_GID` は `environment:` でも両toolingサービスへ明示的に渡す。シークレット生成処理は受け取ったUID/GIDを `.env` の `LOCAL_UID` と `LOCAL_GID` に保存し、以後の `app`、`e2e`、DB型生成も同じ所有者で実行する。tooling用Compose自身の構文は `.env` なしで解決できることに加え、任意のUID/GIDが実コンテナの `process.env` まで届くことをテストする。
 
 日常の検証コマンドは、ホストのnpmスクリプトを入口にせず、次のDocker Compose形式へ統一する。
 
