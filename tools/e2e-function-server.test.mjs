@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
-import { createE2eFunctionServer } from "./e2e-function-server.mjs";
+import { createE2eFunctionServer, startE2eFunctionServer } from "./e2e-function-server.mjs";
 
 const routes = new Map([
   [
@@ -115,4 +115,22 @@ test("returns 404 when config has no matching method and logs no secret on handl
   } finally {
     server.close();
   }
+});
+
+test("closes the HTTP server and Vite middleware server exactly once", async () => {
+  let viteCloseCount = 0;
+  const functionServer = await startE2eFunctionServer({
+    createVite: async () => ({
+      ssrLoadModule: async (path) => routes.get(path),
+      close: async () => {
+        viteCloseCount += 1;
+      },
+    }),
+  });
+
+  await functionServer.close();
+  await functionServer.close();
+
+  assert.equal(viteCloseCount, 1);
+  await assert.rejects(fetch("http://127.0.0.1:5174/api/auth/continuations"));
 });

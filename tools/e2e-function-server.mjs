@@ -90,12 +90,32 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
   });
 }
 
-export async function startE2eFunctionServer() {
-  const vite = await createViteServer({ server: { middlewareMode: true } });
+export async function startE2eFunctionServer({ createVite = createViteServer } = {}) {
+  const vite = await createVite({ server: { middlewareMode: true } });
   const server = await createE2eFunctionServer({
     loadModule: (path) => vite.ssrLoadModule(path),
     logger: console,
   });
-  server.listen(5174, "127.0.0.1");
-  return server;
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(5174, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  let closing;
+
+  return {
+    close() {
+      if (closing === undefined) {
+        closing = new Promise((resolve, reject) => {
+          server.close((error) => {
+            if (error === undefined) resolve();
+            else reject(error);
+          });
+        }).finally(() => vite.close());
+      }
+      return closing;
+    },
+  };
 }
