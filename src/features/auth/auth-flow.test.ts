@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clearAuthFlow,
+  createContinuationApi,
   createAuthFlow,
   ownedAuthStoragePrefixes,
   readAuthFlow,
@@ -51,6 +52,17 @@ describe("auth flow storage", () => {
     expect(readAuthFlow(flow.id, shared)).toBeNull();
     expect(shared.getItem(`kondate.auth.supabase.callback-owner.${flow.id}`)).toBeNull();
   });
+});
+
+it("preserves an unavailable claim HTTP status without reading sensitive response details", async () => {
+  const api = createContinuationApi(() => Promise.resolve(new Response(null, { status: 503 })));
+
+  await expect(
+    api.claim("10000000-0000-4000-8000-000000000001", {
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+    }),
+  ).rejects.toMatchObject({ status: 503 });
 });
 
 class MapStorage implements Storage {

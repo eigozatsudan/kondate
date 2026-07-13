@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import { createAuthGateway, type AuthGatewayDeps } from "./auth-gateway";
 import {
+  ContinuationHttpError,
   createAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthFlow,
@@ -382,7 +383,7 @@ it("waits for the winning tab when an in-flight recovery consumes the claim", as
   resolveWinningClaim?.({ code: "auth-code-1", returnTo: "/onboarding" });
 
   await expect(recovery).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
-  rejectLosingClaim?.(new Error("already claimed"));
+  rejectLosingClaim?.(new ContinuationHttpError(404));
 
   await expect(callback).resolves.toEqual({
     kind: "awaiting_completion",
@@ -391,3 +392,30 @@ it("waits for the winning tab when an in-flight recovery consumes the claim", as
   });
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
+
+it.each([new TypeError("network unavailable"), new ContinuationHttpError(503)])(
+  "returns an error when the owned claim fails without a competing winner",
+  async (claimError) => {
+    const storage = new MapStorage();
+    const claim = vi.fn().mockRejectedValue(claimError);
+    const api = continuationApiMock({ claim });
+    const gateway = createAuthGateway(
+      authClientMock() as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, {
+      ...fixedFlowDeps,
+      now: () => new Date(),
+    });
+    markAuthContinuationCallbackOwner(flow.id, storage);
+
+    await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+      kind: "error",
+      code: "unbound_callback",
+      returnTo: "/onboarding",
+    });
+    expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+  },
+);

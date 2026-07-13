@@ -141,6 +141,13 @@ export interface ContinuationApi {
   ): Promise<{ code: string; returnTo: string }>;
 }
 
+export class ContinuationHttpError extends Error {
+  constructor(readonly status: number) {
+    super("continuation_unavailable");
+    this.name = "ContinuationHttpError";
+  }
+}
+
 const createResponseSchema = z
   .object({ id: z.uuid(), expiresAt: z.iso.datetime({ offset: true }) })
   .strict();
@@ -157,8 +164,8 @@ export function createContinuationApi(fetchImpl: typeof fetch = fetch): Continua
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (!response.ok) throw new ContinuationHttpError(response.status);
     const value: unknown = response.status === 204 ? null : await response.json();
-    if (!response.ok) throw new Error("continuation_unavailable");
     return successEnvelope(schema).parse(value).data;
   };
   return {
@@ -172,7 +179,7 @@ export function createContinuationApi(fetchImpl: typeof fetch = fetch): Continua
           body: JSON.stringify(input),
         },
       );
-      if (response.status !== 204) throw new Error("continuation_unavailable");
+      if (response.status !== 204) throw new ContinuationHttpError(response.status);
     },
     claim: (continuationId, input) =>
       post(

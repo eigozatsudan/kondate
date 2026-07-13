@@ -4,6 +4,7 @@ import {
   buildAuthCallbackUrl,
   clearAuthFlow,
   clearClaimedAuthFlow,
+  ContinuationHttpError,
   createAuthFlow,
   listUnexpiredAuthFlows,
   isAuthContinuationCallbackOwned,
@@ -216,9 +217,11 @@ export function createAuthGateway(
           returnTo: claimedCode.returnTo,
           flowId: flow.id,
         };
-      } catch {
+      } catch (error) {
         if (claimed) clearAuthFlow(flow.id, storage);
         else if (
+          error instanceof ContinuationHttpError &&
+          error.status === 404 &&
           isAuthContinuationCallbackOwned(
             flow.id,
             storage,
