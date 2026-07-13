@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, open, readFile, rename, unlink } from "node:fs/promises";
 
 const force = process.argv.includes("--force");
 const output = ".env";
@@ -119,5 +119,17 @@ const rendered = [...values.entries()]
       `${key}=${/[^A-Za-z0-9_./:*@?=-]/u.test(value) ? JSON.stringify(value) : value}`,
   )
   .join("\n");
-await writeFile(output, `${rendered}\n`, { mode: 0o600 });
+const temporaryOutput = `.env.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
+let temporaryFile;
+try {
+  temporaryFile = await open(temporaryOutput, "wx", 0o600);
+  await temporaryFile.writeFile(`${rendered}\n`, "utf8");
+  await temporaryFile.close();
+  temporaryFile = undefined;
+  await rename(temporaryOutput, output);
+} catch (error) {
+  await temporaryFile?.close().catch(() => {});
+  await unlink(temporaryOutput).catch(() => {});
+  throw error;
+}
 console.log("Created .env with local-only credentials");

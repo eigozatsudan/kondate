@@ -180,12 +180,13 @@ test("uses the isolated E2E Function server without changing the public origin",
 
 test("runs E2E through the base and E2E Compose files in override order", async () => {
   const runner = await readFile("scripts/run-e2e.sh", "utf8");
-  assert.match(runner, /base=\(docker compose -f compose\.yaml\)/u);
-  assert.match(runner, /"\$\{base\[@\]\}" up -d --wait/u);
-  assert.match(runner, /"\$\{compose\[@\]\}" up -d --wait auth/u);
+  assert.match(runner, /^#!\/bin\/sh\nset -eu$/mu);
+  assert.doesNotMatch(runner, /\(docker compose|\[@\]|pipefail/u);
+  assert.match(runner, /docker compose -f compose\.yaml up -d --wait/u);
+  assert.match(runner, /--profile e2e up -d --wait auth/u);
   assert.match(runner, /up -d --wait --force-recreate --no-deps kong oauth-mock app/u);
   assert.match(runner, /run --rm --no-deps e2e/u);
-  assert.match(runner, /exec "\$\{compose\[@\]\}" run --rm --no-deps e2e "\$@"/u);
+  assert.match(runner, /run --rm --no-deps e2e "\$@"/u);
 });
 
 test("documents the Docker-only clean initialization and verification workflow", async () => {

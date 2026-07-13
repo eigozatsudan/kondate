@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -70,6 +70,8 @@ test("local secret generator emits unquoted Supabase verification paths", async 
       'MAILER_URLPATHS_EMAIL_CHANGE="/quoted/email-change"',
     ].join("\n"),
   );
+  await writeFile(join(cwd, ".env"), "OAUTH_MOCK_USER_PASSWORD=keep-existing-password\n");
+  await chmod(join(cwd, ".env"), 0o644);
 
   const script = resolve("scripts/generate-local-secrets.mjs");
   await new Promise((resolveRun, rejectRun) => {
@@ -85,6 +87,8 @@ test("local secret generator emits unquoted Supabase verification paths", async 
   });
 
   const generated = await readFile(join(cwd, ".env"), "utf8");
+  assert.equal((await stat(join(cwd, ".env"))).mode & 0o777, 0o600);
+  assert.match(generated, /^OAUTH_MOCK_USER_PASSWORD=keep-existing-password$/mu);
   assert.doesNotMatch(generated, /^COMPOSE_FILE=/mu);
   assert.match(generated, /^LOCAL_UID=1234$/mu);
   assert.match(generated, /^LOCAL_GID=5678$/mu);
@@ -103,6 +107,10 @@ test("local secret generator emits unquoted Supabase verification paths", async 
   ]) {
     assert.match(generated, new RegExp(`^${key}=/auth/v1/verify$`, "mu"));
   }
+  assert.deepEqual(
+    (await readdir(cwd)).filter((entry) => entry.startsWith(".env.tmp-")),
+    [],
+  );
 });
 
 test("runs local-only tooling inside pinned containers", async () => {

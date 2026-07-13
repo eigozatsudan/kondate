@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -8,12 +19,21 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 const execFileAsync = promisify(execFile);
+const typescriptPath = resolve("node_modules/typescript");
+const hasTypescript = await access(typescriptPath).then(
+  () => true,
+  () => false,
+);
 
 async function createScriptFixture(scriptName) {
   const root = await mkdtemp(join(tmpdir(), `${scriptName}-`));
   await mkdir(join(root, "scripts"));
   await copyFile(join("scripts", scriptName), join(root, "scripts", scriptName));
   await chmod(join(root, "scripts", scriptName), 0o755);
+  if (scriptName === "generate-database-types.sh" && hasTypescript) {
+    await mkdir(join(root, "node_modules"));
+    await symlink(typescriptPath, join(root, "node_modules/typescript"));
+  }
   return root;
 }
 
@@ -41,6 +61,39 @@ async function runTypeGenerator(root, url, extraEnv = {}) {
     },
   });
 }
+
+test("E2E runner is POSIX-compatible and forwards arguments and exit status", async (t) => {
+  const root = await createScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = join(root, "bin");
+  const log = join(root, "docker.log");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "docker"),
+    [
+      "#!/bin/sh",
+      'for argument do printf "%s|" "$argument"; done >> "$DOCKER_LOG"',
+      'printf "\\n" >> "$DOCKER_LOG"',
+      'case "$*" in *"run --rm --no-deps e2e"*) exit 23 ;; esac',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  await assert.rejects(
+    execFileAsync("sh", [join(root, "scripts", "run-e2e.sh"), "--grep", "space value"], {
+      cwd: tmpdir(),
+      env: { ...process.env, DOCKER_LOG: log, PATH: `${bin}:${process.env.PATH}` },
+    }),
+    (error) => error && typeof error === "object" && error.code === 23,
+  );
+
+  assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
+    "compose|-f|compose.yaml|up|-d|--wait|",
+    "compose|-f|compose.yaml|-f|compose.e2e.yaml|--profile|e2e|up|-d|--wait|auth|",
+    "compose|-f|compose.yaml|-f|compose.e2e.yaml|--profile|e2e|up|-d|--wait|--force-recreate|--no-deps|kong|oauth-mock|app|",
+    "compose|-f|compose.yaml|-f|compose.e2e.yaml|--profile|e2e|run|--rm|--no-deps|e2e|--grep|space value|",
+  ]);
+});
 
 test("reset fixes Compose to its repository when invoked from another directory", async (t) => {
   const root = await createScriptFixture("reset-local-db.sh");
@@ -71,6 +124,7 @@ test("reset fixes Compose to its repository when invoked from another directory"
 });
 
 test("type generation validates output and atomically renames from the destination directory", async (t) => {
+  if (!hasTypescript) return t.skip("TypeScriptを含むappコンテナで検証する");
   const root = await createScriptFixture("generate-database-types.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
   const destinationDir = join(root, "src", "shared", "types");
@@ -102,11 +156,22 @@ test("type generation validates output and atomically renames from the destinati
 });
 
 test("type generation preserves the existing file on every invalid response", async (t) => {
+  if (!hasTypescript) return t.skip("TypeScriptを含むappコンテナで検証する");
   const cases = [
     { name: "non-2xx", status: 500, body: "server error" },
     { name: "empty 200", status: 200, body: "" },
     { name: "HTML 200", status: 200, body: "<html>error</html>" },
     { name: "JSON 200", status: 200, body: '{"error":"bad"}' },
+    {
+      name: "HTML containing contract tokens 200",
+      status: 200,
+      body: "<html>export type Json = string; export type Database = {};</html>",
+    },
+    {
+      name: "JSON containing contract tokens 200",
+      status: 200,
+      body: '{"message":"export type Json = string; export type Database = {};"}',
+    },
     { name: "incomplete TypeScript 200", status: 200, body: "export type Json = string;\n" },
   ];
 
