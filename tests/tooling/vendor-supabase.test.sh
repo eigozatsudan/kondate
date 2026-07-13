@@ -12,7 +12,7 @@ git -C "$source_repo" init -q -b master
 git -C "$source_repo" config user.name "Kondate Test"
 git -C "$source_repo" config user.email "test@kondate.local"
 
-printf 'services:\n  db:\n    image: supabase/postgres:17.6.1.136\n' > "$source_repo/docker/docker-compose.yml"
+printf 'services: # fixture services\n  db: # canonical database\n    image: supabase/postgres:17.6.1.136\n  analytics-db-helper: # decoy service\n    image: supabase/postgres:17.6.1.136\n' > "$source_repo/docker/docker-compose.yml"
 for path in docker-compose.pg15.yml docker-compose.pg17.yml; do
   : > "$source_repo/docker/$path"
 done
@@ -213,7 +213,7 @@ if [ "$owners" != "$LOCAL_UID:$LOCAL_GID" ]; then
   exit 1
 fi
 
-printf 'services:\n  db:\n    image: supabase/postgres:15.8.1.085\n' > "$source_repo/docker/docker-compose.yml"
+printf 'services:\n  db:\n    image: supabase/postgres:15.8.1.085\n  pg17-decoy:\n    image: supabase/postgres:17.6.1.136\n' > "$source_repo/docker/docker-compose.yml"
 git -C "$source_repo" add docker/docker-compose.yml
 git -C "$source_repo" commit -q -m "fixture: pg15"
 
@@ -225,4 +225,22 @@ fi
 
 after=$(snapshot_vendor)
 test "$after" = "$before"
+
+printf 'services:\n  db:\n    command: postgres\n' > "$source_repo/docker/docker-compose.yml"
+git -C "$source_repo" add docker/docker-compose.yml
+git -C "$source_repo" commit -q -m "fixture: missing db image"
+if SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; then
+  echo "missing db image fixture was accepted" >&2
+  exit 1
+fi
+test "$(snapshot_vendor)" = "$before"
+
+printf 'services:\n  db:\n    image: supabase/postgres:17.6.1.136\n    image: supabase/postgres:17.7.0.001\n' > "$source_repo/docker/docker-compose.yml"
+git -C "$source_repo" add docker/docker-compose.yml
+git -C "$source_repo" commit -q -m "fixture: duplicate db image"
+if SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; then
+  echo "duplicate db image fixture was accepted" >&2
+  exit 1
+fi
+test "$(snapshot_vendor)" = "$before"
 echo "vendor-supabase transactional tests passed"

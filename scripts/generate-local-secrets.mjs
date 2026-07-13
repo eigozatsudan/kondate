@@ -111,10 +111,6 @@ values.set("VITE_MAGIC_LINK_RESEND_SECONDS", "60");
 values.set("VITE_AUTH_CONTINUATION_TTL_MS", "300000");
 values.set("VITE_AUTH_PROVIDER_MODE", "oauth_mock");
 values.set("VITE_OAUTH_MOCK_ORIGIN", "http://127.0.0.1:8788");
-values.set(
-  "LOCAL_DB_URL",
-  `postgresql://postgres:${values.get("POSTGRES_PASSWORD")}@127.0.0.1:54322/postgres`,
-);
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787");
 
 const rendered = [...values.entries()]

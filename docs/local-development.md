@@ -44,6 +44,10 @@ docker compose run --rm --no-deps app npm run format:check
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
+DB型生成は稼働中の公式Postgres Metaサービスを使用します。コンテナ内でPodmanを起動せず、応答を検証してから生成ファイルを原子的に置き換えます。
+
+E2E wrapperは専用overrideのAuthをhealthyまで待機し、Kong、OAuth mock、appを再作成してからPlaywrightを起動します。通常のstack定義は変更しません。
+
 ## Supabase公式Docker構成の更新
 
 ```bash

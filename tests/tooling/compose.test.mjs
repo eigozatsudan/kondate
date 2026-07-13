@@ -45,15 +45,27 @@ test("uses one Postgres 17 image across database tooling", async () => {
     readFile("infra/supabase.version", "utf8"),
   ]);
 
-  const upstreamImage = upstream.match(/^\s{4}image: (supabase\/postgres:[^\s]+)$/mu)?.[1];
+  const servicesStart = upstream.split("\n").findIndex((line) => line === "services:");
+  assert.notEqual(servicesStart, -1, "official services mapping is missing");
+  const serviceLines = upstream.split("\n").slice(servicesStart + 1);
+  const dbStart = serviceLines.findIndex((line) => line === "  db:");
+  assert.notEqual(dbStart, -1, "official db service is missing");
+  const dbLines = serviceLines.slice(dbStart + 1).filter((line, index, lines) => {
+    const nextService = lines.findIndex((candidate) => /^ {2}[^ ](?:.*):$/u.test(candidate));
+    return nextService === -1 || index < nextService;
+  });
+  const upstreamImages = dbLines
+    .map((line) => line.match(/^ {4}image: (\S+)$/u)?.[1])
+    .filter(Boolean);
   const migrateBlock = compose.match(/^ {2}migrate:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
   const migrateImage = migrateBlock?.match(/^\s{4}image: (supabase\/postgres:[^\s]+)$/mu)?.[1];
   const testImage = dbTest.match(/^FROM (supabase\/postgres:[^\s]+)$/mu)?.[1];
 
-  assert.ok(upstreamImage, "official db image is missing");
+  assert.equal(upstreamImages.length, 1, "official db service must define exactly one image");
+  const [upstreamImage] = upstreamImages;
   assert.equal(migrateImage, upstreamImage);
   assert.equal(testImage, upstreamImage);
-  assert.match(upstreamImage, /^supabase\/postgres:17\./u);
+  assert.match(upstreamImage, /^supabase\/postgres:17\.[0-9]+(?:\.[0-9]+)+$/u);
   assert.match(config, /^major_version = 17$/mu);
   assert.match(version.trim(), /^[0-9a-f]{40}$/u);
 });
@@ -69,20 +81,33 @@ test("removes Postgres 15 compatibility and upgrade assets", async () => {
   }
 });
 
-test("uses the internal database address for containerized type generation", async () => {
-  const [compose, generator] = await Promise.all([
+test("uses Postgres Meta for containerized type generation", async () => {
+  const [compose, example, generator] = await Promise.all([
     readFile("compose.yaml", "utf8"),
+    readFile(".env.example", "utf8"),
     readFile("scripts/generate-database-types.sh", "utf8"),
   ]);
   const app = compose.match(/^ {2}app:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
   assert.ok(app, "app service is missing");
-  assert.match(
-    app,
-    /LOCAL_DB_URL: postgresql:\/\/postgres:\$\{POSTGRES_PASSWORD\}@db:5432\/postgres/u,
-  );
+  assert.doesNotMatch(app, /LOCAL_DB_URL/u);
+  assert.doesNotMatch(example, /^LOCAL_DB_URL=/mu);
+  assert.match(app, /^ {6}meta:\n {8}condition: service_healthy$/mu);
   assert.match(generator, /http:\/\/meta:8080\/generators\/typescript/u);
   assert.match(generator, /included_schemas=public,private/u);
   assert.doesNotMatch(generator, /supabase gen types/u);
+  assert.match(generator, /mktemp "\$destination_dir\/\.database\.generated\.XXXXXX"/u);
+  assert.match(generator, /mv "\$tmp_file" "\$destination"/u);
+});
+
+test("verifies the pinned pgTAP source archive before installation", async () => {
+  const dockerfile = await readFile("Dockerfile.db-test", "utf8");
+  assert.match(
+    dockerfile,
+    /https:\/\/cpan\.metacpan\.org\/authors\/id\/D\/DW\/DWHEELER\/TAP-Parser-SourceHandler-pgTAP-3\.37\.tar\.gz/u,
+  );
+  assert.match(dockerfile, /6e928581442a1e687131f7b5d6f4ff44b7f8dcdf798d2d076bdcd07d8b7a597d/u);
+  assert.match(dockerfile, /sha256sum -c/u);
+  assert.match(dockerfile, /cpanm --notest \/tmp\/TAP-Parser-SourceHandler-pgTAP-3\.37\.tar\.gz/u);
 });
 
 test("keeps the one-shot database test out of the default stack", async () => {
@@ -155,10 +180,12 @@ test("uses the isolated E2E Function server without changing the public origin",
 
 test("runs E2E through the base and E2E Compose files in override order", async () => {
   const runner = await readFile("scripts/run-e2e.sh", "utf8");
-  assert.match(
-    runner,
-    /exec docker compose -f compose\.yaml -f compose\.e2e\.yaml --profile e2e run --rm e2e "\$@"/u,
-  );
+  assert.match(runner, /base=\(docker compose -f compose\.yaml\)/u);
+  assert.match(runner, /"\$\{base\[@\]\}" up -d --wait/u);
+  assert.match(runner, /"\$\{compose\[@\]\}" up -d --wait auth/u);
+  assert.match(runner, /up -d --wait --force-recreate --no-deps kong oauth-mock app/u);
+  assert.match(runner, /run --rm --no-deps e2e/u);
+  assert.match(runner, /exec "\$\{compose\[@\]\}" run --rm --no-deps e2e "\$@"/u);
 });
 
 test("documents the Docker-only clean initialization and verification workflow", async () => {

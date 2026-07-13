@@ -61,7 +61,7 @@ vendor更新用には、GitとPOSIXツールだけを含む小さな専用ツー
 
 `compose.yaml` は更新後も `infra/supabase/docker-compose.yml` と `infra/supabase.override.yaml` をincludeし、アプリ、メール、OAuth/OpenRouterモック、マイグレーション、DBテストなどプロジェクト固有サービスだけを所有する。
 
-`app` サービスには、コンテナ内部からDB型を生成するための `LOCAL_DB_URL` を追加する。ホスト向け `.env` の `127.0.0.1:54322` はコンテナ内では使用せず、`db:5432` を接続先とする。
+DB型生成は、稼働中の公式Postgres Metaサービスの `http://meta:8080/generators/typescript` を `app` コンテナから呼び出す。Supabase CLIがコンテナ内からPodmanを起動する入れ子構成は使用しない。応答がTypeScript契約を満たすことを検証し、生成先と同じディレクトリの一時ファイルから原子的にrenameする。
 
 過去の判断記録である既存の `docs/superpowers/plans/` と `docs/superpowers/specs/` に含まれるPG15表記は変更しない。
 
@@ -162,7 +162,7 @@ Nodeのtoolingテストで次を検証する。
 - すべてのプロジェクトマイグレーションが適用される。
 - `pgcrypto` と `pgtap` が利用できる。
 - `docker compose run --rm db-test` ですべてのpgTAPテストが成功する。
-- `docker compose run --rm app npm run db:types` が内部DB接続URLを使ってPG17環境から型を生成できる。
+- `docker compose run --rm app npm run db:types` がPostgres Metaを使ってPG17環境から型を生成し、検証済みの出力だけを原子的に配置できる。
 
 ### アプリ統合
 

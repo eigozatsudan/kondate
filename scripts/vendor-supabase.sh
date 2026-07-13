@@ -100,12 +100,27 @@ git -C "$checkout" archive --format=tar --output="$archive" FETCH_HEAD:docker
 mkdir -p "$new_target"
 tar -xf "$archive" -C "$new_target"
 
-db_images=$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(supabase\/postgres:[^[:space:]]*\).*$/\1/p' "$new_target/docker-compose.yml")
-test "$(printf '%s\n' "$db_images" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
-case "$db_images" in
-  supabase/postgres:17.*) ;;
-  *) echo "official db image is not Postgres 17: $db_images" >&2; exit 1 ;;
-esac
+db_images=$(awk '
+  /^services:[[:space:]]*(#.*)?$/ { in_services = 1; next }
+  in_services && /^[^[:space:]]/ { in_services = 0; in_db = 0 }
+  in_services && /^  db:[[:space:]]*(#.*)?$/ { in_db = 1; next }
+  in_services && in_db && /^  [^[:space:]][^:]*:[[:space:]]*(#.*)?$/ { in_db = 0 }
+  in_services && in_db && /^    image:[[:space:]]*/ {
+    value = $0
+    sub(/^    image:[[:space:]]*/, "", value)
+    sub(/[[:space:]]*#.*$/, "", value)
+    print value
+  }
+' "$new_target/docker-compose.yml")
+db_image_count=$(printf '%s\n' "$db_images" | sed '/^$/d' | wc -l | tr -d ' ')
+if [ "$db_image_count" != "1" ]; then
+  echo "official db service must define exactly one image" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$db_images" | grep -Eq '^supabase/postgres:17\.[0-9]+(\.[0-9]+)+$'; then
+  echo "official db image is not a complete Postgres 17 tag: $db_images" >&2
+  exit 1
+fi
 
 rm -f \
   "$new_target/docker-compose.pg15.yml" \

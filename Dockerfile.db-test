@@ -1,4 +1,9 @@
 FROM supabase/postgres:17.6.1.136
 
 RUN apk add --no-cache perl perl-app-cpanminus perl-module-build \
-  && cpanm --notest DWHEELER/TAP-Parser-SourceHandler-pgTAP-3.37.tar.gz
+  && archive=/tmp/TAP-Parser-SourceHandler-pgTAP-3.37.tar.gz \
+  && url=https://cpan.metacpan.org/authors/id/D/DW/DWHEELER/TAP-Parser-SourceHandler-pgTAP-3.37.tar.gz \
+  && wget -qO "$archive" "$url" \
+  && printf '%s  %s\n' 6e928581442a1e687131f7b5d6f4ff44b7f8dcdf798d2d076bdcd07d8b7a597d "$archive" | sha256sum -c \
+  && cpanm --notest /tmp/TAP-Parser-SourceHandler-pgTAP-3.37.tar.gz \
+  && rm -f "$archive"

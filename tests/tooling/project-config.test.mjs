@@ -113,7 +113,17 @@ test("runs local-only tooling inside pinned containers", async () => {
   ]);
   assert.match(compose, /image: node:24-bookworm-slim/u);
   assert.match(compose, /image: alpine\/git:v2\.54\.0/u);
-  assert.match(compose, /user: "\$\{LOCAL_UID:-1000\}:\$\{LOCAL_GID:-1000\}"/u);
+  for (const serviceName of ["local-secrets", "vendor-supabase"]) {
+    const lines = compose.split("\n");
+    const start = lines.findIndex((line) => line === `  ${serviceName}:`);
+    assert.notEqual(start, -1, `${serviceName} service is missing`);
+    const relativeEnd = lines.slice(start + 1).findIndex((line) => /^ {2}[^ ]/u.test(line));
+    const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd;
+    const service = lines.slice(start + 1, end).join("\n");
+    assert.match(service, /^ {4}user: "\$\{LOCAL_UID:-1000\}:\$\{LOCAL_GID:-1000\}"$/mu);
+    assert.match(service, /^ {6}LOCAL_UID: "\$\{LOCAL_UID:-1000\}"$/mu);
+    assert.match(service, /^ {6}LOCAL_GID: "\$\{LOCAL_GID:-1000\}"$/mu);
+  }
   assert.match(compose, /entrypoint: \["node", "scripts\/generate-local-secrets\.mjs"\]/u);
   assert.match(compose, /entrypoint: \["\/workspace\/scripts\/vendor-supabase\.sh"\]/u);
   assert.equal((compose.match(/LOCAL_UID: "\$\{LOCAL_UID:-1000\}"/gu) ?? []).length, 2);
