@@ -85,6 +85,10 @@ docker compose up -d --wait
 
 `.env` はGit管理外のローカルファイルであり、変更対象には含めない。DBを破棄する前提のため、`--force` によるJWT、APIキー、ローカル認証情報の再生成を許容する。通常のvolume再作成ではシークレットを再生成せず、既存のPG17用 `.env` を継続利用する。
 
+最新の公式 `.env.example` に含まれる `COMPOSE_FILE=docker-compose.yml` は、vendorディレクトリ内の公式 `run.sh` 向け設定である。これをルート `.env` へコピーすると、ルートの `compose.yaml` ではなく存在しない `docker-compose.yml` をDocker Composeが選択して起動不能になる。そのためローカルシークレット生成時に `COMPOSE_FILE` を明示的に除外する。
+
+同じ生成処理で、最新サービスが使用する `REALTIME_DB_ENC_KEY`、`PG_META_CRYPTO_KEY`、Logflareトークン、S3アクセスキーをランダム値へ置き換える。新しい非対称JWT・opaque APIキーは現在のアプリが使用していないため生成せず、公式構成のlegacy HS256フォールバックを継続利用する。`API_EXTERNAL_URL` は最新AuthがissuerおよびOAuth callbackの基点として期待する `http://127.0.0.1:8000/auth/v1` にする。
+
 ## コマンド実行環境
 
 ホストに要求する実行環境はDocker Engine、Docker Compose、POSIXシェルとする。Node、npm、Supabase CLI、Git、psql、pgTAP、Playwrightはホストで直接実行しない。
