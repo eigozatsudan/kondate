@@ -11,6 +11,7 @@ const authFlowSchema = z
     startedAt: z.iso.datetime({ offset: true }),
   })
   .strict();
+const legacyAuthFlowSchema = authFlowSchema.omit({ sessionExchange: true }).strict();
 
 export type AuthFlow = z.infer<typeof authFlowSchema>;
 
@@ -63,8 +64,16 @@ export function readAuthFlow(id: string, storage: Storage): AuthFlow | null {
   const raw = storage.getItem(key);
   if (raw === null) return null;
   try {
-    const parsed = authFlowSchema.safeParse(JSON.parse(raw));
+    const value: unknown = JSON.parse(raw);
+    const parsed = authFlowSchema.safeParse(value);
     if (parsed.success && parsed.data.id === id) return parsed.data;
+    const legacy = legacyAuthFlowSchema.safeParse(value);
+    if (legacy.success && legacy.data.id === id) {
+      // 更新直前に開始された認証を失わないよう、旧形式は本番同等の交換先へ移行する。
+      const migrated: AuthFlow = { ...legacy.data, sessionExchange: "supabase" };
+      storage.setItem(key, JSON.stringify(migrated));
+      return migrated;
+    }
   } catch {
     // 破損したブラウザ保存値は秘密の再利用を防ぐため削除する。
   }

@@ -53,7 +53,7 @@ describe("auth flow storage", () => {
     expect(shared.getItem(`kondate.auth.supabase.callback-owner.${flow.id}`)).toBeNull();
   });
 
-  it("clears a legacy flow without an explicit session exchange target", () => {
+  it("migrates a legacy flow to the Supabase session exchange target", () => {
     const storage = new MapStorage();
     const flowId = "10000000-0000-4000-8000-000000000001";
     storage.setItem(
@@ -68,8 +68,14 @@ describe("auth flow storage", () => {
       }),
     );
 
-    expect(readAuthFlow(flowId, storage)).toBeNull();
-    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
+    expect(readAuthFlow(flowId, storage)).toMatchObject({
+      id: flowId,
+      sessionExchange: "supabase",
+    });
+    expect(JSON.parse(storage.getItem(`kondate.auth.flow.${flowId}`) ?? "null")).toMatchObject({
+      id: flowId,
+      sessionExchange: "supabase",
+    });
   });
 });
 
