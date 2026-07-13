@@ -25,15 +25,18 @@
 3. SHAで固定した `docker/` を一時ディレクトリへ展開する。
 4. 公式Composeの `db` が `supabase/postgres:17.*` を使用していることを検証する。
 5. PG15移行・互換専用資産を除外する。
-6. すべての検証後に `infra/supabase/` を入れ替える。
-7. 完全SHAを `infra/supabase.version` に保存する。
+6. root実行時は数値検証済みの `LOCAL_UID` / `LOCAL_GID` へ新しいvendor treeとversion fileを再帰chownする。
+7. すべての検証後に `infra/supabase/` を入れ替える。
+8. 完全SHAを `infra/supabase.version` に保存する。
 
 更新時はホストのGitではなく、次のtoolingサービスを入口にする。
 
 ```bash
 LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" \
-  docker compose -f compose.tooling.yaml run --rm vendor-supabase --refresh
+  docker compose -f compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh
 ```
+
+Supabase起動後のvendor treeにはPostgresなどが異なるUIDで作成したmode 700のruntime dataが含まれ得るため、実更新だけrootへoverrideして旧backupを確実に削除する。新しいvendor成果物はswap前に `LOCAL_UID` / `LOCAL_GID` へ戻し、root所有の生成物を残さない。
 
 除外対象は次の4ファイルとする。
 

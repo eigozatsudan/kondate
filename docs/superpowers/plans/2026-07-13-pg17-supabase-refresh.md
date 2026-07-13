@@ -337,6 +337,28 @@ test ! -e infra/supabase/docker-compose.pg17.yml
 test ! -e infra/supabase/utils/upgrade-pg17.sh
 test ! -e infra/supabase/tests/test-pg17-upgrade.sh
 
+mkdir -p infra/supabase/volumes/db/data
+printf 'runtime data\n' > infra/supabase/volumes/db/data/PG_VERSION
+chown -R 105:0 infra/supabase/volumes/db/data
+chmod 700 infra/supabase/volumes/db/data
+
+printf 'refreshed fixture\n' > "$source_repo/docker/README.md"
+git -C "$source_repo" add docker/README.md
+git -C "$source_repo" commit -q -m "fixture: refreshed pg17"
+expected_sha=$(git -C "$source_repo" rev-parse HEAD)
+
+SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh
+
+test "$(cat infra/supabase.version)" = "$expected_sha"
+test ! -e infra/supabase/volumes/db/data/PG_VERSION
+set -- infra/.supabase-backup.*
+test ! -e "$1"
+set -- infra/.supabase-version-backup.*
+test ! -e "$1"
+test "$(stat -c '%u:%g' infra/supabase.version)" = "$LOCAL_UID:$LOCAL_GID"
+owners=$(find infra/supabase -exec stat -c '%u:%g' {} \; | sort -u)
+test "$owners" = "$LOCAL_UID:$LOCAL_GID"
+
 printf 'services:\n  db:\n    image: supabase/postgres:15.8.1.085\n' > "$source_repo/docker/docker-compose.yml"
 git -C "$source_repo" add docker/docker-compose.yml
 git -C "$source_repo" commit -q -m "fixture: pg15"
@@ -356,7 +378,7 @@ echo "vendor-supabase transactional tests passed"
 Run:
 
 ```bash
-docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase tests/tooling/vendor-supabase.test.sh
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose -f compose.tooling.yaml run --rm --user 0:0 --entrypoint sh vendor-supabase tests/tooling/vendor-supabase.test.sh
 ```
 
 Expected: 現行スクリプトがbash依存かつトランザクション契約を持たないためFAIL。
@@ -373,13 +395,26 @@ repository=${SUPABASE_REPOSITORY:-https://github.com/supabase/supabase.git}
 ref=${SUPABASE_REF:-refs/heads/master}
 target=infra/supabase
 version_file=infra/supabase.version
+running_as_root=false
+
+if [ "$(id -u)" = "0" ]; then
+  running_as_root=true
+  local_uid=${LOCAL_UID:-}
+  local_gid=${LOCAL_GID:-}
+  case "$local_uid" in
+    ""|*[!0-9]*) echo "LOCAL_UID must be numeric when running as root" >&2; exit 1 ;;
+  esac
+  case "$local_gid" in
+    ""|*[!0-9]*) echo "LOCAL_GID must be numeric when running as root" >&2; exit 1 ;;
+  esac
+fi
 
 if [ -e "$target" ] && [ "${1:-}" != "--refresh" ]; then
   echo "$target already exists; pass --refresh to replace generated vendor content" >&2
   exit 1
 fi
 
-staging=$(mktemp -d "infra/.supabase-refresh.XXXXXX")
+staging=$(mktemp -d "$(pwd)/infra/.supabase-refresh.XXXXXX")
 checkout="$staging/repository"
 archive="$staging/docker.tar"
 new_target="$staging/supabase"
@@ -395,8 +430,8 @@ finish() {
   status=$?
   trap - EXIT HUP INT TERM
   if [ "$swap_started" = true ] && [ "$swap_completed" != true ]; then
-    rm -rf "$target"
-    rm -f "$version_file"
+    rm -rf "$target" || :
+    rm -f "$version_file" || :
     if [ "$had_target" = true ] && [ -e "$backup_target" ]; then
       mv "$backup_target" "$target"
     fi
@@ -404,8 +439,8 @@ finish() {
       mv "$backup_version" "$version_file"
     fi
   fi
-  rm -rf "$staging" "$backup_target"
-  rm -f "$backup_version"
+  rm -rf "$staging" "$backup_target" || :
+  rm -f "$backup_version" || :
   exit "$status"
 }
 trap finish EXIT HUP INT TERM
@@ -433,21 +468,28 @@ rm -f \
   "$new_target/utils/upgrade-pg17.sh" \
   "$new_target/tests/test-pg17-upgrade.sh"
 printf '%s\n' "$resolved_sha" > "$new_version"
+if [ "$running_as_root" = true ]; then
+  chown -R "$local_uid:$local_gid" "$new_target" "$new_version"
+fi
 
 swap_started=true
 if [ -e "$target" ]; then
-  mv "$target" "$backup_target"
   had_target=true
+  mv "$target" "$backup_target"
 fi
 if [ -e "$version_file" ]; then
-  mv "$version_file" "$backup_version"
   had_version=true
+  mv "$version_file" "$backup_version"
 fi
 mv "$new_target" "$target"
 mv "$new_version" "$version_file"
 swap_completed=true
-rm -rf "$backup_target"
-rm -f "$backup_version"
+if ! rm -rf "$backup_target"; then
+  echo "warning: could not remove old vendor backup: $backup_target" >&2
+fi
+if ! rm -f "$backup_version"; then
+  echo "warning: could not remove old version backup: $backup_version" >&2
+fi
 
 echo "Vendored supabase/supabase $resolved_sha docker/"
 ```
@@ -457,7 +499,7 @@ echo "Vendored supabase/supabase $resolved_sha docker/"
 Run:
 
 ```bash
-docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase tests/tooling/vendor-supabase.test.sh
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose -f compose.tooling.yaml run --rm --user 0:0 --entrypoint sh vendor-supabase tests/tooling/vendor-supabase.test.sh
 ```
 
 Expected: `vendor-supabase transactional tests passed`、exit 0。
@@ -477,8 +519,10 @@ Expected: 40文字SHAと単一の `supabase/postgres:17.*` を表示してexit 0
 Run:
 
 ```bash
-LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose -f compose.tooling.yaml run --rm vendor-supabase --refresh
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose -f compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh
 ```
+
+実更新は異UID・mode 700のruntime dataを含む旧backupも削除できるようrootで実行する。スクリプトはswap前に新しいvendor treeとversion fileを数値検証済みの `LOCAL_UID` / `LOCAL_GID` へ再帰chownするため、成果物はroot所有にならない。
 
 Expected:
 
@@ -713,8 +757,10 @@ docker compose run --rm --no-deps app npm run format:check
 
 ```bash
 LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" \\
-  docker compose -f compose.tooling.yaml run --rm vendor-supabase --refresh
+  docker compose -f compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh
 ```
+
+実更新だけrootへoverrideして異UIDのruntime dataを含む旧backupを削除し、新vendor成果物はスクリプト内で `LOCAL_UID` / `LOCAL_GID` へ戻します。
 
 更新後はPostgresタグの整合性テストを実行し、ローカル環境を再作成してください。PG15データの移行とロールバックはサポートしません。
 ````
