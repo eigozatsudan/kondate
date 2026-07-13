@@ -443,7 +443,7 @@ Create `supabase/tests/database/03_pantry_and_planner_drafts.test.sql`:
 
 ```sql
 begin;
-select plan(18);
+select plan(24);
 
 select has_table('public', 'pantry_items');
 select has_table('public', 'generation_drafts');
@@ -500,6 +500,40 @@ select throws_ok(
     '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","checkedAt":"2026-07-11T00:00:00Z"}]'::jsonb)$$,
   '23514', null, 'expired confirmation cannot be persisted'
 );
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30,'standard',array[]::text[],'',
+    '[{"pantryItemId":"not-a-uuid","priority":"must_use"}]'::jsonb)$$,
+  '23514', null, 'pantry item ID must be a UUID'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30,'standard',array[]::text[],'',
+    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"optional"}]'::jsonb)$$,
+  '23514', null, 'pantry priority must be a declared value'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30,'standard',array[]::text[],'','[{"priority":"must_use"}]'::jsonb)$$,
+  '23514', null, 'pantry selection requires a pantry item ID'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30,'standard',array[]::text[],'',
+    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001"}]'::jsonb)$$,
+  '23514', null, 'pantry selection requires a priority'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30,'standard',array[]::text[],'',
+    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","note":"x"}]'::jsonb)$$,
+  '23514', null, 'pantry selection rejects undeclared keys'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30,'standard',array[]::text[],'','["invalid"]'::jsonb)$$,
+  '23514', null, 'pantry selection must be an object'
+);
 
 select * from finish();
 rollback;
@@ -534,6 +568,49 @@ create table public.pantry_items (
 create index pantry_items_owner_expiry_idx
   on public.pantry_items (user_id, expires_on nulls last, created_at desc);
 
+create or replace function private.is_valid_draft_pantry_selections(p_value jsonb)
+returns boolean
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $function$
+declare
+  v_item jsonb;
+begin
+  if p_value is null or jsonb_typeof(p_value) <> 'array' then
+    return false;
+  end if;
+
+  for v_item in
+    select item from jsonb_array_elements(p_value) as items(item)
+  loop
+    if jsonb_typeof(v_item) <> 'object' then
+      return false;
+    end if;
+
+    if not (v_item ? 'pantryItemId')
+      or not (v_item ? 'priority')
+      or (select count(*) from jsonb_object_keys(v_item)) <> 2
+      or jsonb_typeof(v_item -> 'pantryItemId') <> 'string'
+      or jsonb_typeof(v_item -> 'priority') <> 'string'
+      or (v_item ->> 'priority') not in ('must_use', 'prefer_use') then
+      return false;
+    end if;
+
+    begin
+      perform (v_item ->> 'pantryItemId')::uuid;
+    exception
+      when invalid_text_representation then
+        return false;
+    end;
+  end loop;
+
+  return true;
+end;
+$function$;
+revoke all on function private.is_valid_draft_pantry_selections(jsonb)
+  from public, anon, authenticated;
+
 create table public.generation_drafts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null unique references auth.users(id) on delete cascade,
@@ -552,7 +629,7 @@ create table public.generation_drafts (
   check (cardinality(main_ingredients) <= 8),
   check (cardinality(target_member_ids) <= 20),
   check (cardinality(avoid_ingredients) <= 20),
-  check (jsonb_typeof(pantry_selections) = 'array'),
+  check (private.is_valid_draft_pantry_selections(pantry_selections)),
   check (jsonb_array_length(pantry_selections) <= 50),
   check (pg_column_size(pantry_selections) <= 32768),
   check (
@@ -665,7 +742,7 @@ npm run db:test -- supabase/tests/database/03_pantry_and_planner_drafts.test.sql
 npm run typecheck
 ```
 
-Expected: pgTAP prints `1..14` and `Result: PASS`; generated `Database` includes both tables; typecheck exits 0.
+Expected: pgTAP prints `1..24` and `Result: PASS`; generated `Database` includes both tables; typecheck exits 0.
 
 - [ ] **Step 5 (2–5 min): Commit pantry/draft persistence**
 
@@ -673,7 +750,7 @@ Expected: pgTAP prints `1..14` and `Result: PASS`; generated `Database` includes
 git add supabase/migrations/20260711001000_pantry_and_planner_drafts.sql \
   supabase/tests/database/03_pantry_and_planner_drafts.test.sql \
   src/shared/types/database.generated.ts
-git commit -m "feat: add pantry and planner draft storage"
+git commit -m "feat: パントリーと献立下書きの保存基盤を追加"
 ```
 
 ## Task 3: Normalized Menu Core Schema and Owner RLS
