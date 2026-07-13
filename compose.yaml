@@ -76,7 +76,7 @@ services:
       retries: 30
 
   migrate:
-    image: supabase/postgres:15.8.1.085
+    image: supabase/postgres:17.6.1.136
     depends_on:
       db:
         condition: service_healthy
@@ -127,6 +127,7 @@ services:
       AUTH_CONTINUATION_ENCRYPTION_KEY: ${AUTH_CONTINUATION_ENCRYPTION_KEY}
       AUTH_CONTINUATION_TTL_SECONDS: ${AUTH_CONTINUATION_TTL_SECONDS:-300}
       OPENROUTER_BASE_URL: http://openrouter-mock:8787
+      LOCAL_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     ports:
       - "127.0.0.1:5173:5173"

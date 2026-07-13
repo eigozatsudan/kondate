@@ -1,5 +1,4 @@
-FROM supabase/postgres:15.8.1.085
+FROM supabase/postgres:17.6.1.136
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends libtap-parser-sourcehandler-pgtap-perl \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache perl perl-app-cpanminus perl-module-build \
+  && cpanm --notest DWHEELER/TAP-Parser-SourceHandler-pgTAP-3.37.tar.gz

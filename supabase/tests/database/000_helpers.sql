@@ -16,7 +16,7 @@ as $function$
     role,
     email,
     encrypted_password,
-    email_confirmed_at,
+    confirmed_at,
     raw_app_meta_data,
     raw_user_meta_data,
     created_at,

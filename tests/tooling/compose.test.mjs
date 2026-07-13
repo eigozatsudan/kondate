@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("root compose owns every local entry-point service", async () => {
@@ -34,6 +34,49 @@ test("uses one canonical loopback hostname for public browser services", async (
 
 test("Dockerfile uses Node 24", async () => {
   assert.match(await readFile("Dockerfile", "utf8"), /^FROM node:24-/m);
+});
+
+test("uses one Postgres 17 image across database tooling", async () => {
+  const [upstream, compose, dbTest, config, version] = await Promise.all([
+    readFile("infra/supabase/docker-compose.yml", "utf8"),
+    readFile("compose.yaml", "utf8"),
+    readFile("Dockerfile.db-test", "utf8"),
+    readFile("supabase/config.toml", "utf8"),
+    readFile("infra/supabase.version", "utf8"),
+  ]);
+
+  const upstreamImage = upstream.match(/^\s{4}image: (supabase\/postgres:[^\s]+)$/mu)?.[1];
+  const migrateBlock = compose.match(/^  migrate:\n([\s\S]*?)(?=^  [\w-]+:|^volumes:)/mu)?.[1];
+  const migrateImage = migrateBlock?.match(/^\s{4}image: (supabase\/postgres:[^\s]+)$/mu)?.[1];
+  const testImage = dbTest.match(/^FROM (supabase\/postgres:[^\s]+)$/mu)?.[1];
+
+  assert.ok(upstreamImage, "official db image is missing");
+  assert.equal(migrateImage, upstreamImage);
+  assert.equal(testImage, upstreamImage);
+  assert.match(upstreamImage, /^supabase\/postgres:17\./u);
+  assert.match(config, /^major_version = 17$/mu);
+  assert.match(version.trim(), /^[0-9a-f]{40}$/u);
+});
+
+test("removes Postgres 15 compatibility and upgrade assets", async () => {
+  for (const path of [
+    "infra/supabase/docker-compose.pg15.yml",
+    "infra/supabase/docker-compose.pg17.yml",
+    "infra/supabase/utils/upgrade-pg17.sh",
+    "infra/supabase/tests/test-pg17-upgrade.sh",
+  ]) {
+    await assert.rejects(access(path));
+  }
+});
+
+test("uses the internal database address for containerized type generation", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  const app = compose.match(/^  app:\n([\s\S]*?)(?=^  [\w-]+:|^volumes:)/mu)?.[1];
+  assert.ok(app, "app service is missing");
+  assert.match(
+    app,
+    /LOCAL_DB_URL: postgresql:\/\/postgres:\$\{POSTGRES_PASSWORD\}@db:5432\/postgres/u,
+  );
 });
 
 test("keeps host development on loopback while the container can accept published traffic", async () => {
