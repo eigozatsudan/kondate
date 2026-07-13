@@ -88,6 +88,7 @@ services:
     restart: "no"
 
   db-test:
+    profiles: ["test"]
     build:
       context: .
       dockerfile: Dockerfile.db-test

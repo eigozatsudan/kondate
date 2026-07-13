@@ -46,7 +46,7 @@ test("uses one Postgres 17 image across database tooling", async () => {
   ]);
 
   const upstreamImage = upstream.match(/^\s{4}image: (supabase\/postgres:[^\s]+)$/mu)?.[1];
-  const migrateBlock = compose.match(/^  migrate:\n([\s\S]*?)(?=^  [\w-]+:|^volumes:)/mu)?.[1];
+  const migrateBlock = compose.match(/^ {2}migrate:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
   const migrateImage = migrateBlock?.match(/^\s{4}image: (supabase\/postgres:[^\s]+)$/mu)?.[1];
   const testImage = dbTest.match(/^FROM (supabase\/postgres:[^\s]+)$/mu)?.[1];
 
@@ -70,13 +70,26 @@ test("removes Postgres 15 compatibility and upgrade assets", async () => {
 });
 
 test("uses the internal database address for containerized type generation", async () => {
-  const compose = await readFile("compose.yaml", "utf8");
-  const app = compose.match(/^  app:\n([\s\S]*?)(?=^  [\w-]+:|^volumes:)/mu)?.[1];
+  const [compose, generator] = await Promise.all([
+    readFile("compose.yaml", "utf8"),
+    readFile("scripts/generate-database-types.sh", "utf8"),
+  ]);
+  const app = compose.match(/^ {2}app:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
   assert.ok(app, "app service is missing");
   assert.match(
     app,
     /LOCAL_DB_URL: postgresql:\/\/postgres:\$\{POSTGRES_PASSWORD\}@db:5432\/postgres/u,
   );
+  assert.match(generator, /http:\/\/meta:8080\/generators\/typescript/u);
+  assert.match(generator, /included_schemas=public,private/u);
+  assert.doesNotMatch(generator, /supabase gen types/u);
+});
+
+test("keeps the one-shot database test out of the default stack", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  const dbTest = compose.match(/^ {2}db-test:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
+  assert.ok(dbTest, "db-test service is missing");
+  assert.match(dbTest, /^ {4}profiles: \["test"\]$/mu);
 });
 
 test("keeps host development on loopback while the container can accept published traffic", async () => {
@@ -146,4 +159,28 @@ test("runs E2E through the base and E2E Compose files in override order", async 
     runner,
     /exec docker compose -f compose\.yaml -f compose\.e2e\.yaml --profile e2e run --rm e2e "\$@"/u,
   );
+});
+
+test("documents the Docker-only clean initialization and verification workflow", async () => {
+  const [guide, packageJson, reset] = await Promise.all([
+    readFile("docs/local-development.md", "utf8"),
+    readFile("package.json", "utf8"),
+    readFile("scripts/reset-local-db.sh", "utf8"),
+  ]);
+
+  assert.match(
+    guide,
+    /Node、npm、Git、Supabase CLI、Postgresクライアント、Playwrightはコンテナ内で実行/u,
+  );
+  assert.match(guide, /local-secrets --force/u);
+  assert.match(guide, /\.\/scripts\/reset-local-db\.sh/u);
+  assert.match(packageJson, /"db:reset": "\.\/scripts\/reset-local-db\.sh"/u);
+  assert.match(reset, /docker compose down --volumes --remove-orphans/u);
+  assert.match(reset, /rm -rf infra\/supabase\/volumes\/db\/data/u);
+  assert.match(reset, /docker compose up -d --wait/u);
+  assert.match(guide, /show server_version/u);
+  assert.match(guide, /docker compose run --rm db-test/u);
+  assert.match(guide, /docker compose run --rm app npm run db:types/u);
+  assert.match(guide, /\.\/scripts\/run-e2e\.sh/u);
+  assert.match(guide, /PG15データの移行とロールバックはサポートしません/u);
 });

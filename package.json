@@ -16,7 +16,7 @@
     "typecheck": "tsc -b",
     "test": "vitest",
     "db:push": "docker compose run --rm migrate",
-    "db:reset": "docker compose down --volumes && docker compose up -d --wait",
+    "db:reset": "./scripts/reset-local-db.sh",
     "db:test": "docker compose run --rm db-test",
     "db:types": "bash scripts/generate-database-types.sh",
     "e2e": "playwright test"
