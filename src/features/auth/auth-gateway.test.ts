@@ -162,6 +162,80 @@ it("uses Supabase Google and never the mock URL in production mode", async () =>
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 
+it("exchanges a magic-link flow with Supabase even when Google mock mode is enabled", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "magic-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps({
+      getPublicEnv: () => ({
+        authContinuationTtlMs: 300_000,
+        authProviderMode: "oauth_mock",
+        oauthMockOrigin: "http://127.0.0.1:8788",
+      }),
+      fetchImpl,
+    }),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+
+  await expect(
+    gateway.completeCallback(
+      new URL(
+        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
+      ),
+    ),
+  ).resolves.toMatchObject({ kind: "complete", returnTo: "/onboarding" });
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("magic-code-1");
+  expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+it("exchanges a stored Google mock flow only with the local mock provider", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "google-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const fetchImpl = vi
+    .fn()
+    .mockResolvedValue(
+      Response.json({ email: "fixture@example.com", password: "fixture-password-1234" }),
+    );
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps({
+      getPublicEnv: () => ({
+        authContinuationTtlMs: 300_000,
+        authProviderMode: "oauth_mock",
+        oauthMockOrigin: "http://127.0.0.1:8788",
+      }),
+      fetchImpl,
+    }),
+  );
+  await gateway.signInWithGoogle("/onboarding");
+  const storedFlowId = Array.from({ length: storage.length }, (_, index) => storage.key(index))
+    .find((key) => key?.startsWith("kondate.auth.flow."))
+    ?.replace("kondate.auth.flow.", "");
+  if (storedFlowId === undefined) throw new Error("Google flow was not stored");
+
+  await expect(gateway.resumeFlow(storedFlowId)).resolves.toMatchObject({ kind: "complete" });
+  expect(fetchImpl).toHaveBeenCalledWith("http://127.0.0.1:8788/exchange", expect.any(Object));
+  expect(client.auth.signInWithPassword).toHaveBeenCalledWith({
+    email: "fixture@example.com",
+    password: "fixture-password-1234",
+  });
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+});
+
 it("clears the just-created flow when starting Google OAuth fails", async () => {
   const storage = new MapStorage();
   const client = authClientMock({

@@ -14,6 +14,7 @@ describe("auth continuation recovery", () => {
         state: "B".repeat(43),
         origin: "https://app.test",
         returnTo: "/onboarding",
+        sessionExchange: "supabase",
         startedAt,
       }),
     );
@@ -41,6 +42,7 @@ describe("auth continuation recovery", () => {
         state: "B".repeat(43),
         origin: "https://app.test",
         returnTo: "/planner",
+        sessionExchange: "supabase",
         startedAt: new Date().toISOString(),
       }),
     );

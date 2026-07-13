@@ -87,10 +87,16 @@ export function createAuthGateway(
   return {
     async signInWithGoogle(returnTo) {
       replaceExistingAuthFlows(storage);
-      const flow = await createAuthFlow(returnTo, continuationApi, storage);
+      const provider = deps.getPublicEnv();
+      const flow = await createAuthFlow(
+        returnTo,
+        continuationApi,
+        storage,
+        undefined,
+        provider.authProviderMode,
+      );
       try {
         const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
-        const provider = deps.getPublicEnv();
         if (provider.authProviderMode === "oauth_mock") {
           if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
             throw new Error("invalid mock origin");
@@ -190,10 +196,10 @@ export function createAuthGateway(
           state: flow.state,
         });
         claimed = true;
-        const provider = deps.getPublicEnv();
         const result =
-          provider.authProviderMode === "oauth_mock"
+          flow.sessionExchange === "oauth_mock"
             ? await (async () => {
+                const provider = deps.getPublicEnv();
                 if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
                   throw new Error("invalid mock origin");
                 }

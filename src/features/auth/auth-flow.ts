@@ -7,6 +7,7 @@ const authFlowSchema = z
     state: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
     origin: z.url(),
     returnTo: z.string().startsWith("/"),
+    sessionExchange: z.enum(["supabase", "oauth_mock"]),
     startedAt: z.iso.datetime({ offset: true }),
   })
   .strict();
@@ -202,6 +203,7 @@ export async function createAuthFlow(
   api: ContinuationApi,
   storage: Storage,
   deps: FlowDeps = browserFlowDeps,
+  sessionExchange: AuthFlow["sessionExchange"] = "supabase",
 ): Promise<AuthFlow> {
   const secret = base64url(deps.randomBytes(32));
   const state = base64url(deps.randomBytes(32));
@@ -213,6 +215,7 @@ export async function createAuthFlow(
     state,
     origin: window.location.origin,
     returnTo: safeReturnTo,
+    sessionExchange,
     startedAt: deps.now().toISOString(),
   });
   storage.setItem(`${flowPrefix}${flow.id}`, JSON.stringify(flow));

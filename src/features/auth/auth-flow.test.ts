@@ -52,6 +52,25 @@ describe("auth flow storage", () => {
     expect(readAuthFlow(flow.id, shared)).toBeNull();
     expect(shared.getItem(`kondate.auth.supabase.callback-owner.${flow.id}`)).toBeNull();
   });
+
+  it("clears a legacy flow without an explicit session exchange target", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        startedAt: "2026-07-13T00:00:00.000Z",
+      }),
+    );
+
+    expect(readAuthFlow(flowId, storage)).toBeNull();
+    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
+  });
 });
 
 it("preserves an unavailable claim HTTP status without reading sensitive response details", async () => {

@@ -18,6 +18,7 @@ it("expires callback ownership at the existing auth flow TTL", () => {
       state: "B".repeat(43),
       origin: "https://app.test",
       returnTo: "/onboarding",
+      sessionExchange: "supabase",
       startedAt: "2026-07-13T00:00:00.000Z",
     }),
   );
