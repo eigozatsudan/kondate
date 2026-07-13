@@ -96,3 +96,11 @@ test("uses the isolated E2E Function server without changing the public origin",
   assert.match(runner, /SIGTERM/u);
   assert.match(runner, /SIGINT/u);
 });
+
+test("runs E2E through the base and E2E Compose files in override order", async () => {
+  const runner = await readFile("scripts/run-e2e.sh", "utf8");
+  assert.match(
+    runner,
+    /exec docker compose -f compose\.yaml -f compose\.e2e\.yaml --profile e2e run --rm e2e "\$@"/u,
+  );
+});
