@@ -692,7 +692,7 @@ docker compose -f compose.tooling.yaml run --rm --entrypoint node local-secrets 
 docker compose run --rm --no-deps app npx vitest run
 docker compose run --rm db-test
 docker compose run --rm app npm run db:types
-docker compose --profile e2e run --rm e2e
+./scripts/run-e2e.sh
 docker compose run --rm --no-deps app npm run build
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
@@ -771,7 +771,7 @@ Expected: Postgres major更新だけでは公開schema型が変わらずexit 0�
 Run:
 
 ```bash
-docker compose --profile e2e run --rm e2e
+./scripts/run-e2e.sh
 ```
 
 Expected: desktop/mobile Chromiumの全E2EがPASSし、OAuthモックとメール認証フローが最新Authで動作する。
@@ -825,7 +825,7 @@ Run:
 
 ```bash
 docker compose run --rm db-test
-docker compose --profile e2e run --rm e2e
+./scripts/run-e2e.sh
 ```
 
 Expected: pgTAPと全E2EがPASS。

@@ -113,7 +113,7 @@ docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
 docker compose run --rm db-test
 docker compose run --rm app npm run db:types
-docker compose --profile e2e run --rm e2e
+./scripts/run-e2e.sh
 ```
 
 `app` の依存サービスを必要としない静的検証には `--no-deps` を指定する。DB型生成は実行中の `db` と `migrate` を必要とするため `--no-deps` を指定しない。E2Eは専用プロファイルを明示して、通常起動へブラウザイメージを混入させない。
@@ -164,7 +164,7 @@ Nodeのtoolingテストで次を検証する。
 
 - Auth、REST、Realtime、Storage、Studio、Supavisorのhealth確認
 - `docker compose run --rm --no-deps app npx vitest run`
-- `docker compose --profile e2e run --rm e2e`
+- `./scripts/run-e2e.sh`
 - `docker compose run --rm --no-deps app npm run build`
 - `docker compose run --rm --no-deps app npm run lint`
 - `docker compose run --rm --no-deps app npm run format:check`
