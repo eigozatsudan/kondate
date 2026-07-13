@@ -24,7 +24,7 @@ Postgres 17を確認します。
 
 ```bash
 docker compose exec db psql -U postgres -tAc "show server_version"
-docker compose ps
+docker compose ps --all
 ```
 
 healthcheckを持つサービスがhealthyで、`migrate` がexit 0であることを確認します。

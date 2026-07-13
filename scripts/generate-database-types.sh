@@ -17,6 +17,7 @@ PG_META_TYPES_URL="$types_url" node --input-type=module -e '
   }
   process.stdout.write(types);
 ' > "$tmp_file"
+chmod 0644 "$tmp_file"
 mv "$tmp_file" "$destination"
 trap - EXIT
 echo "Generated $destination"

@@ -182,7 +182,7 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.match(reset, /rm -rf \/workspace\/infra\/supabase\/volumes\/db\/data/u);
   assert.match(reset, /up -d --wait/u);
   assert.match(guide, /show server_version/u);
-  assert.match(guide, /docker compose ps/u);
+  assert.match(guide, /^docker compose ps --all$/mu);
   assert.match(guide, /docker compose run --rm db-test/u);
   assert.match(guide, /docker compose run --rm app npm run db:types/u);
   assert.match(

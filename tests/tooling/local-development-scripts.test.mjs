@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -95,6 +95,7 @@ test("type generation validates output and atomically renames from the destinati
   });
 
   assert.equal(await readFile(destination, "utf8"), types);
+  assert.equal((await stat(destination)).mode & 0o777, 0o644);
   const [source, target] = (await readFile(moveLog, "utf8")).trim().split("|");
   assert.equal(resolve(root, dirname(source)), destinationDir);
   assert.equal(resolve(root, target), destination);
@@ -117,11 +118,13 @@ test("type generation preserves the existing file on every invalid response", as
       const destination = join(destinationDir, "database.generated.ts");
       await mkdir(destinationDir, { recursive: true });
       await writeFile(destination, "existing types\n");
+      await chmod(destination, 0o640);
       const { server, url } = await startResponseServer(fixture.status, fixture.body);
       subtest.after(() => server.close());
 
       await assert.rejects(runTypeGenerator(root, url));
       assert.equal(await readFile(destination, "utf8"), "existing types\n");
+      assert.equal((await stat(destination)).mode & 0o777, 0o640);
     });
   }
 
@@ -132,10 +135,12 @@ test("type generation preserves the existing file on every invalid response", as
     const destination = join(destinationDir, "database.generated.ts");
     await mkdir(destinationDir, { recursive: true });
     await writeFile(destination, "existing types\n");
+    await chmod(destination, 0o640);
     const { server, url } = await startResponseServer(200, "unused");
     await new Promise((resolve) => server.close(resolve));
 
     await assert.rejects(runTypeGenerator(root, url));
     assert.equal(await readFile(destination, "utf8"), "existing types\n");
+    assert.equal((await stat(destination)).mode & 0o777, 0o640);
   });
 });
