@@ -25,6 +25,16 @@ test("pins Node 24 and exposes every verification script", async () => {
   assert.equal(await readFile(".nvmrc", "utf8"), "24\n");
 });
 
+test("ignores interrupted local secret temporary files from Git and Docker contexts", async () => {
+  const [gitignore, dockerignore] = await Promise.all([
+    readFile(".gitignore", "utf8"),
+    readFile(".dockerignore", "utf8"),
+  ]);
+  for (const ignore of [gitignore, dockerignore]) {
+    assert.ok(ignore.split(/\r?\n/u).includes(".env.tmp-*"));
+  }
+});
+
 test("E2E mobile project uses Chromium while preserving the iPhone viewport", async () => {
   const config = await readFile("playwright.config.ts", "utf8");
   assert.match(

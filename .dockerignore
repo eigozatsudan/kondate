@@ -5,4 +5,5 @@ coverage
 playwright-report
 test-results
 .env
+.env.tmp-*
 infra/supabase/volumes
