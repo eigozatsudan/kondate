@@ -6,3 +6,4 @@ services:
   auth:
     environment:
       GOTRUE_SMTP_MAX_FREQUENCY: "1s"
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "100"
