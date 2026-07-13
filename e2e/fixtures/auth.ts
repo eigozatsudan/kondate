@@ -43,7 +43,7 @@ export const test = base.extend<AuthFixtures>({
     await completeMinimumOnboarding(page);
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
-    await expect(page).toHaveURL(/\/planner$/u);
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
     await provide(page);
   },
 });
