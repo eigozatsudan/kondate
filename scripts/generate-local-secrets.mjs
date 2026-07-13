@@ -69,6 +69,14 @@ values.set("ENABLE_GOOGLE_SIGNUP", "false");
 values.set("GOOGLE_CLIENT_ID", "");
 values.set("GOOGLE_SECRET", "");
 values.set("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/auth/v1/callback");
+for (const key of [
+  "MAILER_URLPATHS_CONFIRMATION",
+  "MAILER_URLPATHS_INVITE",
+  "MAILER_URLPATHS_RECOVERY",
+  "MAILER_URLPATHS_EMAIL_CHANGE",
+]) {
+  values.set(key, "/auth/v1/verify");
+}
 if (!values.has("OAUTH_MOCK_USER_PASSWORD") || values.get("OAUTH_MOCK_USER_PASSWORD") === "") {
   values.set("OAUTH_MOCK_USER_PASSWORD", randomBytes(24).toString("base64url"));
 }

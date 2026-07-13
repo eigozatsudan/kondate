@@ -12,7 +12,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    { name: "mobile-chromium", use: { ...devices["iPhone SE"] } },
+    { name: "mobile-chromium", use: { ...devices["iPhone SE"], browserName: "chromium" } },
     { name: "desktop-chromium", use: { ...devices["Desktop Chrome"] } },
   ],
 });

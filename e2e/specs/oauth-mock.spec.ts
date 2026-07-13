@@ -31,6 +31,7 @@ test("local Google cancellation returns through the app callback with actionable
 }) => {
   await page.goto("/login?returnTo=%2Fplanner");
   await page.getByRole("button", { name: "Googleで続ける" }).click();
+  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
   const providerUrl = new URL(page.url());
   const callbackRequest = page.waitForRequest(
     (request) => new URL(request.url()).pathname === "/auth/callback",

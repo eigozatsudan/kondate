@@ -7,22 +7,23 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
   const activeGateway = gateway ?? defaultGateway;
-  const callbackStarted = useRef(false);
+  const callbackPromise = useRef<Promise<AuthCallbackResult> | null>(null);
 
   useEffect(() => {
-    if (callbackStarted.current) return;
-    callbackStarted.current = true;
-    const callbackUrl = new URL(window.location.href);
-    const visibleUrl = new URL(callbackUrl);
-    visibleUrl.searchParams.delete("code");
-    visibleUrl.searchParams.delete("state");
-    visibleUrl.searchParams.delete("error");
-    visibleUrl.searchParams.delete("error_code");
-    visibleUrl.searchParams.delete("error_description");
-    visibleUrl.hash = "";
-    window.history.replaceState(window.history.state, "", visibleUrl);
+    if (callbackPromise.current === null) {
+      const callbackUrl = new URL(window.location.href);
+      const visibleUrl = new URL(callbackUrl);
+      visibleUrl.searchParams.delete("code");
+      visibleUrl.searchParams.delete("state");
+      visibleUrl.searchParams.delete("error");
+      visibleUrl.searchParams.delete("error_code");
+      visibleUrl.searchParams.delete("error_description");
+      visibleUrl.hash = "";
+      window.history.replaceState(window.history.state, "", visibleUrl);
+      callbackPromise.current = activeGateway.completeCallback(callbackUrl);
+    }
     let active = true;
-    void activeGateway.completeCallback(callbackUrl).then((next) => {
+    void callbackPromise.current.then((next) => {
       if (!active) return;
       setResult(next);
       if (next.kind === "complete") {

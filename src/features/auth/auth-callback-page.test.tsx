@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { expect, it, vi } from "vitest";
-import { createAuthGateway, type AuthGateway } from "./auth-gateway";
+import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
 
 vi.mock("./auth-gateway", async (importOriginal) => {
@@ -91,6 +92,43 @@ it("creates the default gateway once and completes the callback once", async () 
     "元のブラウザでログインを続けてください。この画面に認証情報は保存されません",
   );
   expect(createAuthGatewayMock).toHaveBeenCalledTimes(1);
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  expect(gateway.completeCallback).toHaveBeenCalledTimes(1);
+});
+
+it("handles the original callback result after StrictMode remounts the effect", async () => {
+  let resolveCallback: ((result: AuthCallbackResult) => void) | undefined;
+  const callbackResult = new Promise<AuthCallbackResult>((resolve) => {
+    resolveCallback = resolve;
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockReturnValue(callbackResult),
+    resumeFlow: vi.fn(),
+  };
+  const router = createMemoryRouter(
+    [
+      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
+      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
+    ],
+    { initialEntries: ["/auth/callback?code=code-1&state=state-1"] },
+  );
+
+  render(
+    <StrictMode>
+      <RouterProvider router={router} />
+    </StrictMode>,
+  );
+  resolveCallback?.({
+    kind: "complete",
+    continuation: "same_browser",
+    returnTo: "/onboarding",
+    flowId: "flow-1",
+  });
+
+  expect(await screen.findByRole("heading", { name: "家族の初回設定" })).toBeInTheDocument();
+  // StrictModeでも認証コードを二重交換しないことを保証する。
   // eslint-disable-next-line @typescript-eslint/unbound-method
   expect(gateway.completeCallback).toHaveBeenCalledTimes(1);
 });

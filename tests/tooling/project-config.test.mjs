@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import test from "node:test";
 
 test("pins Node 24 and exposes every verification script", async () => {
@@ -20,4 +23,51 @@ test("pins Node 24 and exposes every verification script", async () => {
     assert.equal(typeof manifest.scripts[name], "string", `missing ${name}`);
   }
   assert.equal(await readFile(".nvmrc", "utf8"), "24\n");
+});
+
+test("E2E mobile project uses Chromium while preserving the iPhone viewport", async () => {
+  const config = await readFile("playwright.config.ts", "utf8");
+  assert.match(
+    config,
+    /name: "mobile-chromium", use: \{ \.\.\.devices\["iPhone SE"\], browserName: "chromium" \}/u,
+  );
+});
+
+test("Vite ignores Playwright output directories", async () => {
+  const config = await readFile("vite.config.ts", "utf8");
+  assert.match(config, /"\*\*\/playwright-report\/\*\*"/u);
+  assert.match(config, /"\*\*\/test-results\/\*\*"/u);
+});
+
+test("local secret generator emits unquoted Supabase verification paths", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "kondate-local-secrets-"));
+  await mkdir(join(cwd, "infra/supabase"), { recursive: true });
+  await writeFile(
+    join(cwd, "infra/supabase/.env.example"),
+    [
+      'MAILER_URLPATHS_CONFIRMATION="/quoted/confirmation"',
+      'MAILER_URLPATHS_INVITE="/quoted/invite"',
+      'MAILER_URLPATHS_RECOVERY="/quoted/recovery"',
+      'MAILER_URLPATHS_EMAIL_CHANGE="/quoted/email-change"',
+    ].join("\n"),
+  );
+
+  const script = resolve("scripts/generate-local-secrets.mjs");
+  await new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [script], { cwd, stdio: "ignore" });
+    child.once("error", rejectRun);
+    child.once("exit", (code) =>
+      code === 0 ? resolveRun() : rejectRun(new Error(`generator exited with ${String(code)}`)),
+    );
+  });
+
+  const generated = await readFile(join(cwd, ".env"), "utf8");
+  for (const key of [
+    "MAILER_URLPATHS_CONFIRMATION",
+    "MAILER_URLPATHS_INVITE",
+    "MAILER_URLPATHS_RECOVERY",
+    "MAILER_URLPATHS_EMAIL_CHANGE",
+  ]) {
+    assert.match(generated, new RegExp(`^${key}=/auth/v1/verify$`, "mu"));
+  }
 });
