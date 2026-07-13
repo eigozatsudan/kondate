@@ -13,7 +13,7 @@
 
 ## Architecture
 
-`KONDATE_E2E_FUNCTION_SERVER=1` をE2Eモードの唯一の切替条件とする。Compose のE2Eプロファイル専用 `app-e2e` サービスだけがこの環境変数を設定し、`tools/run-e2e-app.mjs` で `tools/e2e-function-server.mjs` と Vite を同時に起動する。既存の `app` サービスと通常の `docker compose up` は変更しない。テストサーバーは `127.0.0.1:5174` だけで待ち受け、Node の HTTP リクエストを Fetch API の `Request` に変換する。返却された `Response` はステータス、ヘッダー、本文を保持して HTTP 応答へ変換する。
+`KONDATE_E2E_FUNCTION_SERVER=1` をE2Eモードの唯一の切替条件とする。E2E時だけ `compose.e2e.yaml` を `compose.yaml` の後に読み込み、既存 `app` のこの環境変数と起動コマンドを上書きして `tools/run-e2e-app.mjs` で `tools/e2e-function-server.mjs` と Vite を同時に起動する。通常の `docker compose up` はこのoverrideを読まないため、既存の `app` を変更しない。テストサーバーは `127.0.0.1:5174` だけで待ち受け、Node の HTTP リクエストのメソッド、URL、ヘッダー、本文を Fetch API の `Request` に転記する。返却された `Response` はステータス、ヘッダー、本文を保持して HTTP 応答へ変換する。
 
 テストサーバーは Vite の SSR module loader を使って3つの Function モジュールを読み込む。経路とメソッドは各モジュールの `config.path` と `config.method` から導出し、`config` を複製した正規表現やルート表を持たない。`:continuationId` のみを `Context.params.continuationId` として抽出し、各モジュールの `default` handler を呼び出す。
 
@@ -30,5 +30,5 @@
 
 1. HTTP 変換、`config.path`/`config.method` からの3経路導出、`continuationId` の受け渡し、例外時の秘匿ログを単体テストでRED→GREENにする。
 2. E2E モードのVite設定が Netlify Function ランナーを無効化し、`/api` を `http://127.0.0.1:5174` へ転送することを設定テストで確認する。
-3. `docker compose --profile e2e run --rm e2e` で OAuth、認証回復、オンボーディング、設定のPlaywright仕様を実行する。
+3. `docker compose -f compose.yaml -f compose.e2e.yaml --profile e2e run --rm e2e` で OAuth、認証回復、オンボーディング、設定のPlaywright仕様を実行する。
 4. 既存の型検査、lint、フォーマット検査を実行する。
