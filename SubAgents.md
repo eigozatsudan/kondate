@@ -55,8 +55,11 @@ Critical/Important finding.
    (`review-package <base> <head>` — `<base>` recorded before dispatch, never
    `HEAD~1`).
 5. Dispatch the verifier with the package path and the Task's exact verification
-   commands (from its "Step 6"/"Run:" block). It reports command + output, not a
-   bare "passed".
+   commands (from its "Step 6"/"Run:" block). It reports, per command, pass/fail
+   plus — on failure only — the specific error/diff excerpt, never a bare
+   "passed" and never the full raw log; the report file is what the controller
+   reads, so keeping it to a summary is what keeps large Docker output (e2e,
+   db:test, whole-repo lint) out of the controller's context.
 6. Dispatch the reviewer with the same package path, the brief, the report file,
    and the plan's Global Constraints relevant to this Task copied verbatim (not
    summarized) as its attention lens.
@@ -96,7 +99,9 @@ session's model and defeats the cost/latency point of this split.
 - Task brief → `task-N-brief.md`; implementer report → `task-N-report.md`
   (same stem). Fix rounds append to the same report file.
 - Reviewer/verifier get file paths, not pasted diffs: the review-package file plus
-  the brief and report paths.
+  the brief and report paths. Verifier reports stay to pass/fail-plus-excerpt (see
+  step 5 above) — never a dumped raw log, since the controller reads this file
+  directly into its own context.
 - Never paste a prior Task's accumulated summary into a new Task's dispatch — a
   fresh subagent needs this Task's brief, the few exact prior exports it consumes,
   and nothing else.

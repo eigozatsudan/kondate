@@ -144,6 +144,26 @@ If a Docker prerequisite is missing (e.g. `pg_prove` in the runner image, a
 local password mismatch), record it as a known blocker in the progress ledger
 rather than silently skipping or faking a pass.
 
+## Keeping verification output cheap on tokens
+
+Docker output (especially `e2e`, `db:test`, a whole-repo `lint`/`typecheck`, or a
+wide `vitest run`) can be hundreds of lines. Default to scoping every command to
+the Task's own files, as the examples above already do — never run the whole
+suite when the Task's files narrow it. When a run is still expected to be large:
+
+- Redirect to a file and pull only the summary/failures into context, e.g.
+  `docker compose run --rm --no-deps app npm run lint > /tmp/lint.log 2>&1 ; grep -nE 'error|FAIL' /tmp/lint.log || tail -n 60 /tmp/lint.log`.
+- For `e2e`, a full `db:reset && db:test`, or anything else likely to exceed a
+  couple hundred lines, ask the human to run the exact command in their own
+  terminal and paste back the summary/failures, rather than running it through
+  the agent's own Bash tool. State which command and why before asking.
+- Prefer routing such runs through the verifier subagent (see `SubAgents.md`)
+  even within a single-session Task — its report is a pass/fail summary, not
+  the raw log, so the raw output never enters the controller's context.
+
+This changes only how command output reaches context — it does not relax which
+commands 検証 (step 6) requires.
+
 ## Delegating to subagents
 
 See `SubAgents.md` for the required implementer/reviewer/verifier split, model
