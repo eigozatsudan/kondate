@@ -26,6 +26,84 @@ expected_sha=$(git -C "$source_repo" rev-parse HEAD)
 
 cp "$root/scripts/vendor-supabase.sh" "$workspace/scripts/vendor-supabase.sh"
 cd "$workspace"
+
+mkdir -p "$fixture/bin"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "${FAIL_MV_STEP:-}:$1:$2" in' \
+  '  target_backup:infra/supabase:*/backup-target|target_backup:infra/supabase:infra/.supabase-backup.*) exit 73 ;;' \
+  '  version_backup:infra/supabase.version:*/backup-version|version_backup:infra/supabase.version:infra/.supabase-version-backup.*) exit 73 ;;' \
+  '  new_target:*/supabase:infra/supabase|target_restore:*/supabase:infra/supabase) exit 73 ;;' \
+  '  new_version:*/supabase.version:infra/supabase.version|version_restore:*/supabase.version:infra/supabase.version) exit 73 ;;' \
+  '  target_restore:*/backup-target:infra/supabase) exit 74 ;;' \
+  '  version_restore:*/backup-version:infra/supabase.version) exit 74 ;;' \
+  'esac' \
+  'exec /bin/mv "$@"' > "$fixture/bin/mv"
+chmod +x "$fixture/bin/mv"
+
+snapshot_vendor() {
+  tar -cf - infra/supabase infra/supabase.version | sha256sum | awk '{print $1}'
+}
+
+snapshot_tree() {
+  (cd "$1" && tar -cf - .) | sha256sum | awk '{print $1}'
+}
+
+snapshot_version() {
+  path=$1
+  printf '%s ' "$(stat -c '%a:%u:%g' "$path")"
+  sha256sum "$path" | awk '{print $1}'
+}
+
+assert_failed_swap_unchanged() {
+  step=$1
+  echo "testing forced swap failure: $step"
+  before=$(snapshot_vendor)
+  if PATH="$fixture/bin:$PATH" FAIL_MV_STEP="$step" SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; then
+    echo "forced $step failure was accepted" >&2
+    exit 1
+  fi
+  after=$(snapshot_vendor)
+  if [ "$after" != "$before" ]; then
+    echo "vendor changed after forced $step failure" >&2
+    exit 1
+  fi
+  set -- infra/.supabase-refresh.*
+  if [ -e "$1" ]; then
+    echo "staging remained after forced $step failure: $1" >&2
+    exit 1
+  fi
+}
+
+assert_failed_restore_preserved() {
+  step=$1
+  before=$(snapshot_vendor)
+  tree_before=$(snapshot_tree infra/supabase)
+  version_before=$(snapshot_version infra/supabase.version)
+  log="$fixture/$step.log"
+  if PATH="$fixture/bin:$PATH" FAIL_MV_STEP="$step" SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh 2> "$log"; then
+    echo "forced $step failure was accepted" >&2
+    exit 1
+  fi
+  preserved=$(sed -n 's/^rollback incomplete; preserved vendor backup at //p' "$log")
+  test -n "$preserved"
+  test -d "$preserved"
+  case "$step" in
+    target_restore)
+      test "$(snapshot_tree "$preserved/backup-target")" = "$tree_before"
+      test "$(snapshot_version infra/supabase.version)" = "$version_before"
+      /bin/mv "$preserved/backup-target" infra/supabase
+      ;;
+    version_restore)
+      test "$(snapshot_tree infra/supabase)" = "$tree_before"
+      test "$(snapshot_version "$preserved/backup-version")" = "$version_before"
+      /bin/mv "$preserved/backup-version" infra/supabase.version
+      ;;
+  esac
+  rm -rf "$preserved"
+  test "$(snapshot_vendor)" = "$before"
+}
+
 SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh
 
 test "$(cat infra/supabase.version)" = "$expected_sha"
@@ -35,10 +113,20 @@ test ! -e infra/supabase/docker-compose.pg17.yml
 test ! -e infra/supabase/utils/upgrade-pg17.sh
 test ! -e infra/supabase/tests/test-pg17-upgrade.sh
 
+for step in target_backup version_backup new_target new_version; do
+  assert_failed_swap_unchanged "$step"
+done
+for step in target_restore version_restore; do
+  assert_failed_restore_preserved "$step"
+done
+
 mkdir -p infra/supabase/volumes/db/data
 printf 'runtime data\n' > infra/supabase/volumes/db/data/PG_VERSION
 chown -R 105:0 infra/supabase/volumes/db/data
 chmod 700 infra/supabase/volumes/db/data
+mkdir -p infra/.supabase-backup.1
+printf 'preserve old target backup\n' > infra/.supabase-backup.1/marker
+printf 'preserve old version backup\n' > infra/.supabase-version-backup.1
 
 printf 'refreshed fixture\n' > "$source_repo/docker/README.md"
 git -C "$source_repo" add docker/README.md
@@ -49,9 +137,9 @@ SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh
 
 test "$(cat infra/supabase.version)" = "$expected_sha"
 test ! -e infra/supabase/volumes/db/data/PG_VERSION
-set -- infra/.supabase-backup.*
-test ! -e "$1"
-set -- infra/.supabase-version-backup.*
+grep -q 'preserve old target backup' infra/.supabase-backup.1/marker
+grep -q 'preserve old version backup' infra/.supabase-version-backup.1
+set -- infra/.supabase-refresh.*
 test ! -e "$1"
 version_owner=$(stat -c '%u:%g' infra/supabase.version)
 if [ "$version_owner" != "$LOCAL_UID:$LOCAL_GID" ]; then
@@ -68,11 +156,12 @@ printf 'services:\n  db:\n    image: supabase/postgres:15.8.1.085\n' > "$source_
 git -C "$source_repo" add docker/docker-compose.yml
 git -C "$source_repo" commit -q -m "fixture: pg15"
 
+before=$(snapshot_vendor)
 if SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; then
   echo "PG15 fixture was accepted" >&2
   exit 1
 fi
 
-test "$(cat infra/supabase.version)" = "$expected_sha"
-grep -q 'supabase/postgres:17.6.1.136' infra/supabase/docker-compose.yml
+after=$(snapshot_vendor)
+test "$after" = "$before"
 echo "vendor-supabase transactional tests passed"

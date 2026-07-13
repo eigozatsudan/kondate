@@ -29,28 +29,56 @@ checkout="$staging/repository"
 archive="$staging/docker.tar"
 new_target="$staging/supabase"
 new_version="$staging/supabase.version"
-backup_target="infra/.supabase-backup.$$"
-backup_version="infra/.supabase-version-backup.$$"
-swap_started=false
-swap_completed=false
-had_target=false
-had_version=false
+backup_target="$staging/backup-target"
+backup_version="$staging/backup-version"
+target_backed_up=false
+version_backed_up=false
+target_installed=false
+version_installed=false
+operation_completed=false
+preserve_staging=false
 
 finish() {
   status=$?
   trap - EXIT HUP INT TERM
-  if [ "$swap_started" = true ] && [ "$swap_completed" != true ]; then
-    rm -rf "$target" || :
-    rm -f "$version_file" || :
-    if [ "$had_target" = true ] && [ -e "$backup_target" ]; then
-      mv "$backup_target" "$target"
+  if [ "$operation_completed" != true ]; then
+    if [ "$target_installed" = true ]; then
+      if rm -rf "$target"; then
+        target_installed=false
+      else
+        preserve_staging=true
+      fi
     fi
-    if [ "$had_version" = true ] && [ -e "$backup_version" ]; then
-      mv "$backup_version" "$version_file"
+    if [ "$version_installed" = true ]; then
+      if rm -f "$version_file"; then
+        version_installed=false
+      else
+        preserve_staging=true
+      fi
+    fi
+    if [ "$target_backed_up" = true ] && [ "$target_installed" = false ]; then
+      if mv "$backup_target" "$target"; then
+        target_backed_up=false
+      else
+        preserve_staging=true
+      fi
+    fi
+    if [ "$version_backed_up" = true ] && [ "$version_installed" = false ]; then
+      if mv "$backup_version" "$version_file"; then
+        version_backed_up=false
+      else
+        preserve_staging=true
+      fi
+    fi
+    if [ "$target_backed_up" = true ] || [ "$version_backed_up" = true ]; then
+      preserve_staging=true
     fi
   fi
-  rm -rf "$staging" "$backup_target" || :
-  rm -f "$backup_version" || :
+  if [ "$preserve_staging" = true ]; then
+    echo "rollback incomplete; preserved vendor backup at $staging" >&2
+  elif ! rm -rf "$staging"; then
+    echo "warning: could not remove vendor staging directory: $staging" >&2
+  fi
   exit "$status"
 }
 trap finish EXIT HUP INT TERM
@@ -82,23 +110,29 @@ if [ "$running_as_root" = true ]; then
   chown -R "$local_uid:$local_gid" "$new_target" "$new_version"
 fi
 
-swap_started=true
 if [ -e "$target" ]; then
-  had_target=true
+  trap '' HUP INT TERM
   mv "$target" "$backup_target"
+  target_backed_up=true
+  trap finish EXIT HUP INT TERM
 fi
 if [ -e "$version_file" ]; then
-  had_version=true
+  trap '' HUP INT TERM
   mv "$version_file" "$backup_version"
+  version_backed_up=true
+  trap finish EXIT HUP INT TERM
 fi
+trap '' HUP INT TERM
 mv "$new_target" "$target"
+target_installed=true
+trap finish EXIT HUP INT TERM
+trap '' HUP INT TERM
 mv "$new_version" "$version_file"
-swap_completed=true
-if ! rm -rf "$backup_target"; then
-  echo "warning: could not remove old vendor backup: $backup_target" >&2
-fi
-if ! rm -f "$backup_version"; then
-  echo "warning: could not remove old version backup: $backup_version" >&2
+version_installed=true
+operation_completed=true
+trap finish EXIT HUP INT TERM
+if ! rm -rf "$staging"; then
+  echo "warning: could not remove vendor staging directory: $staging" >&2
 fi
 
 echo "Vendored supabase/supabase $resolved_sha docker/"
