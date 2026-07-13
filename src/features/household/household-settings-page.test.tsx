@@ -100,6 +100,55 @@ it("creates and selects a new draft while an existing member is present", async 
   expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
 });
 
+it("removes a deleted member from cache before selecting the remaining member", async () => {
+  const remaining = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member, remaining])
+    .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
+  const { queryClient } = renderSettings({ listMembers });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+  expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([remaining]);
+});
+
+it("shows the empty add screen immediately after deleting the last member", async () => {
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member])
+    .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
+  const { queryClient } = renderSettings({ listMembers });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+
+  expect(await screen.findByText("家族を追加してください")).toBeVisible();
+  expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
+  expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([]);
+});
+
+it("prevents duplicate draft creation from the empty add screen", async () => {
+  let resolveCreate: ((member: HouseholdMemberRow) => void) | undefined;
+  const createDraft = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveCreate = resolve;
+      }),
+  );
+  renderSettings({ listMembers: vi.fn().mockResolvedValue([]), createDraft });
+  const add = await screen.findByRole("button", { name: /^家族を追加$/u });
+
+  await userEvent.click(add);
+  await userEvent.click(add);
+
+  expect(add).toBeDisabled();
+  expect(createDraft).toHaveBeenCalledTimes(1);
+  resolveCreate?.({ ...member, id: "member-2", status: "draft" });
+});
+
 it("saves a changed safety field and invalidates dependents", async () => {
   const { updateMember, invalidateSafety } = renderSettings();
   await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");

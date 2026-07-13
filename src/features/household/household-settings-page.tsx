@@ -365,6 +365,7 @@ export function HouseholdSettingsForm({
         <button
           className="primary-button"
           type="button"
+          disabled={createDraft.isPending}
           onClick={() => {
             createDraft.mutate();
           }}
@@ -700,6 +701,9 @@ export function HouseholdSettingsForm({
                 .deleteMember(selected.id)
                 .then(() => {
                   setConfirmDelete(false);
+                  queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+                    current.filter((member) => member.id !== selected.id),
+                  );
                   setSelectedId(undefined);
                   initializedMemberId.current = undefined;
                   setValues(undefined);
