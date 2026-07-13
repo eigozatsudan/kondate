@@ -23,7 +23,10 @@ type AuthFixtures = {
 
 export const test = base.extend<AuthFixtures>({
   authEmail: async ({ browserName }, provide, testInfo) => {
-    const safeTitle = testInfo.title.replaceAll(/[^a-z0-9]+/giu, "-").slice(0, 30);
+    const safeTitle = testInfo.title
+      .replaceAll(/[^a-z0-9]+/giu, "-")
+      .slice(0, 30)
+      .toLowerCase();
     const workerIndex = String(testInfo.workerIndex);
     const timestamp = String(Date.now());
     await provide(`${safeTitle}-${browserName}-${workerIndex}-${timestamp}@example.invalid`);
