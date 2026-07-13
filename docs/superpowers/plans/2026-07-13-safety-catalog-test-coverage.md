@@ -112,7 +112,8 @@ set regulatory_class = 'recommended'
 where id = 'shrimp';
 ```
 
-Expected failure: `all 9 mandatory items are classified correctly`.
+Expected failures: `all 9 mandatory items are classified correctly` and
+`all 20 recommended items are classified correctly`.
 
 ```sql
 update public.food_safety_rules
@@ -120,7 +121,8 @@ set id = 'unexpected_rule_id'
 where id = 'mochi_senior';
 ```
 
-Expected failure: `the frozen food safety rule version has exactly the reviewed rule IDs`.
+Expected failures: `the frozen food safety rule version has exactly the reviewed rule IDs`
+and `senior mochi is conservatively excluded`.
 
 ```sql
 update public.allergen_aliases
