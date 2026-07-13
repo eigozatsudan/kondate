@@ -146,7 +146,11 @@ it("prevents duplicate draft creation from the empty add screen", async () => {
 
   expect(add).toBeDisabled();
   expect(createDraft).toHaveBeenCalledTimes(1);
-  resolveCreate?.({ ...member, id: "member-2", status: "draft" });
+  await act(async () => {
+    resolveCreate?.({ ...member, id: "member-2", status: "draft" });
+    await Promise.resolve();
+  });
+  expect(await screen.findByLabelText("呼び名")).toBeVisible();
 });
 
 it("saves a changed safety field and invalidates dependents", async () => {
