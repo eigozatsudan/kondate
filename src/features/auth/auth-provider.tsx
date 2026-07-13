@@ -14,7 +14,10 @@ import {
   startAuthContinuationRecovery,
   type AuthContinuationRecoveryGateway,
 } from "./auth-continuation-recovery";
-import { startAuthContinuationCompletionListener } from "./auth-continuation-completion";
+import {
+  publishAuthContinuationCompletion,
+  startAuthContinuationCompletionListener,
+} from "./auth-continuation-completion";
 import { createAuthGateway } from "./auth-gateway";
 
 export type AuthContextValue = {
@@ -36,7 +39,7 @@ type AuthProviderProps = {
   startRecovery?: (input: {
     gateway: AuthContinuationRecoveryGateway;
     storage: Storage;
-    onComplete: (result: { kind: "complete"; returnTo: string }) => void;
+    onComplete: (result: { kind: "complete"; flowId: string; returnTo: string }) => void;
     ttlMs: number;
   }) => () => void;
 };
@@ -81,6 +84,7 @@ export function AuthProvider({
       storage: window.localStorage,
       ttlMs: providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000,
       onComplete: (result) => {
+        publishAuthContinuationCompletion({ flowId: result.flowId, returnTo: result.returnTo });
         void refreshSession();
         if (result.returnTo.startsWith("/")) window.location.assign(result.returnTo);
       },

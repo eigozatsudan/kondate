@@ -1,6 +1,7 @@
 import { isAuthContinuationCallbackOwned, listUnexpiredAuthFlows } from "./auth-flow";
 
-export type RecoveryResult = { kind: "complete"; returnTo: string } | { kind: string };
+export type RecoveryResult =
+  { kind: "complete"; flowId: string; returnTo: string } | { kind: string };
 export type AuthContinuationRecoveryGateway = {
   resumeFlow(flowId: string): Promise<RecoveryResult>;
 };

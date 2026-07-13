@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
-import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import {
+  publishAuthContinuationCompletion,
+  readAuthContinuationCompletion,
+} from "./auth-continuation-completion";
 import { clearAuthFlow, markAuthContinuationCallbackOwner } from "./auth-flow";
 
 export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
@@ -35,6 +38,9 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
       if (next.kind === "complete") {
         publishAuthContinuationCompletion({ flowId: next.flowId, returnTo: next.returnTo });
         void navigate(next.returnTo, { replace: true });
+      } else if (next.kind === "awaiting_completion") {
+        const completion = readAuthContinuationCompletion(next.flowId);
+        if (completion !== null) void navigate(completion.returnTo, { replace: true });
       } else if (next.kind === "expired") {
         if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
         void navigate("/login", {

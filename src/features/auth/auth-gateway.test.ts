@@ -2,7 +2,12 @@ import type { AuthError } from "@supabase/supabase-js";
 import { expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import { createAuthGateway, type AuthGatewayDeps } from "./auth-gateway";
-import { createAuthFlow, readAuthFlow, type ContinuationApi } from "./auth-flow";
+import {
+  createAuthFlow,
+  markAuthContinuationCallbackOwner,
+  readAuthFlow,
+  type ContinuationApi,
+} from "./auth-flow";
 
 class MapStorage implements Storage {
   readonly #values = new Map<string, string>();
@@ -75,7 +80,11 @@ function authClientMock(overrides?: {
 
 function gatewayDeps(overrides?: Partial<AuthGatewayDeps>): AuthGatewayDeps {
   return {
-    getPublicEnv: () => ({ authProviderMode: "supabase", oauthMockOrigin: null }),
+    getPublicEnv: () => ({
+      authContinuationTtlMs: 300_000,
+      authProviderMode: "supabase",
+      oauthMockOrigin: null,
+    }),
     fetchImpl: vi.fn(),
     appOrigin: "http://127.0.0.1:5173",
     navigate: vi.fn(),
@@ -106,6 +115,7 @@ it("uses the local Compose provider only in oauth_mock mode", async () => {
     new MapStorage(),
     {
       getPublicEnv: () => ({
+        authContinuationTtlMs: 300_000,
         authProviderMode: "oauth_mock",
         oauthMockOrigin: "http://127.0.0.1:8788",
       }),
@@ -131,7 +141,11 @@ it("uses Supabase Google and never the mock URL in production mode", async () =>
     continuationApiMock(),
     new MapStorage(),
     {
-      getPublicEnv: () => ({ authProviderMode: "supabase", oauthMockOrigin: null }),
+      getPublicEnv: () => ({
+        authContinuationTtlMs: 300_000,
+        authProviderMode: "supabase",
+        oauthMockOrigin: null,
+      }),
       fetchImpl,
       appOrigin: "http://127.0.0.1:5173",
       navigate: vi.fn(),
@@ -191,11 +205,11 @@ it("replaces an existing local flow when a magic link is resent", async () => {
   );
 
   const first = await gateway.sendMagicLink("user@example.com", "/planner");
-  storage.setItem(`kondate.auth.callback-owner.${first.flowId}`, new Date().toISOString());
+  storage.setItem(`kondate.auth.supabase.callback-owner.${first.flowId}`, new Date().toISOString());
   const resent = await gateway.sendMagicLink("user@example.com", "/planner");
 
   expect(readAuthFlow(first.flowId, storage)).toBeNull();
-  expect(storage.getItem(`kondate.auth.callback-owner.${first.flowId}`)).toBeNull();
+  expect(storage.getItem(`kondate.auth.supabase.callback-owner.${first.flowId}`)).toBeNull();
   expect(readAuthFlow(resent.flowId, storage)).not.toBeNull();
 });
 
@@ -327,5 +341,53 @@ it("completes in the original browser once claim and code exchange succeed", asy
   expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("waits for the winning tab when an in-flight recovery consumes the claim", async () => {
+  const storage = new MapStorage();
+  let resolveWinningClaim: ((value: { code: string; returnTo: string }) => void) | undefined;
+  let rejectLosingClaim: ((reason: Error) => void) | undefined;
+  const claim = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<{ code: string; returnTo: string }>((resolve) => {
+          resolveWinningClaim = resolve;
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectLosingClaim = reject;
+        }),
+    );
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  const recovery = gateway.resumeFlow(flow.id);
+  expect(claim).toHaveBeenCalledOnce();
+  markAuthContinuationCallbackOwner(flow.id, storage);
+  const callback = gateway.resumeFlow(flow.id);
+  expect(claim).toHaveBeenCalledTimes(2);
+  resolveWinningClaim?.({ code: "auth-code-1", returnTo: "/onboarding" });
+
+  await expect(recovery).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
+  rejectLosingClaim?.(new Error("already claimed"));
+
+  await expect(callback).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });

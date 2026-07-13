@@ -17,7 +17,7 @@ describe("auth continuation recovery", () => {
         startedAt,
       }),
     );
-    storage.setItem(`kondate.auth.callback-owner.${flowId}`, startedAt);
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, startedAt);
     const gateway = { resumeFlow: vi.fn() };
 
     const stop = startAuthContinuationRecovery({

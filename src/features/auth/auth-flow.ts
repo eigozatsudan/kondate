@@ -23,14 +23,10 @@ export const browserFlowDeps: FlowDeps = {
   now: () => new Date(),
 };
 
-export const ownedAuthStoragePrefixes = [
-  "kondate.auth.flow.",
-  "kondate.auth.supabase",
-  "kondate.auth.callback-owner.",
-] as const;
+export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.supabase"] as const;
 
 const flowPrefix = ownedAuthStoragePrefixes[0];
-const callbackOwnerPrefix = ownedAuthStoragePrefixes[2];
+const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
 
 function base64url(bytes: Uint8Array): string {
   let binary = "";
@@ -78,6 +74,11 @@ export function readAuthFlow(id: string, storage: Storage): AuthFlow | null {
 export function clearAuthFlow(id: string, storage: Storage = window.localStorage): void {
   storage.removeItem(`${flowPrefix}${id}`);
   storage.removeItem(`${callbackOwnerPrefix}${id}`);
+}
+
+export function clearClaimedAuthFlow(id: string, storage: Storage = window.localStorage): void {
+  // 勝者の完了通知まで所有証跡を残し、同時claimに敗れたタブを待機へ収束させる。
+  storage.removeItem(`${flowPrefix}${id}`);
 }
 
 export function markAuthContinuationCallbackOwner(

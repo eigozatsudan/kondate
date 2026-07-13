@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import {
   publishAuthContinuationCompletion,
+  readAuthContinuationCompletion,
   startAuthContinuationCompletionListener,
 } from "./auth-continuation-completion";
 import { isAuthContinuationCallbackOwned, markAuthContinuationCallbackOwner } from "./auth-flow";
@@ -35,7 +36,7 @@ it("notifies another tab when the callback tab completes the bound flow", () => 
 
   window.dispatchEvent(
     new StorageEvent("storage", {
-      key: "kondate.auth.continuation-complete",
+      key: "kondate.auth.supabase.continuation-complete",
       newValue: JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
     }),
   );
@@ -73,6 +74,12 @@ it("publishes only a safe same-origin return path", () => {
   );
 
   expect(
-    JSON.parse(window.localStorage.getItem("kondate.auth.continuation-complete") ?? "null"),
+    JSON.parse(
+      window.localStorage.getItem("kondate.auth.supabase.continuation-complete") ?? "null",
+    ),
   ).toEqual({ flowId: "flow-1", returnTo: "/planner" });
+  expect(readAuthContinuationCompletion("flow-1")).toEqual({
+    flowId: "flow-1",
+    returnTo: "/planner",
+  });
 });

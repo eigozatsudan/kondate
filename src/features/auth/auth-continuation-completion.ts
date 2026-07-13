@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { clearAuthFlow, sanitizeReturnPath } from "./auth-flow";
 
-const completionStorageKey = "kondate.auth.continuation-complete";
+const completionStorageKey = "kondate.auth.supabase.continuation-complete";
 const completionSchema = z
   .object({
     flowId: z.string().min(1),
@@ -10,6 +10,23 @@ const completionSchema = z
   .strict();
 
 export type AuthContinuationCompletion = z.infer<typeof completionSchema>;
+
+export function readAuthContinuationCompletion(
+  flowId: string,
+  storage: Storage = window.localStorage,
+): AuthContinuationCompletion | null {
+  const raw = storage.getItem(completionStorageKey);
+  if (raw === null) return null;
+  try {
+    const completion = completionSchema.parse(JSON.parse(raw));
+    return completion.flowId === flowId
+      ? { ...completion, returnTo: sanitizeReturnPath(completion.returnTo) }
+      : null;
+  } catch {
+    storage.removeItem(completionStorageKey);
+    return null;
+  }
+}
 
 export function publishAuthContinuationCompletion(
   completion: AuthContinuationCompletion,

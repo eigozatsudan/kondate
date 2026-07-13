@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { clearAuthFlow, createAuthFlow, readAuthFlow, sanitizeReturnPath } from "./auth-flow";
+import {
+  clearAuthFlow,
+  createAuthFlow,
+  ownedAuthStoragePrefixes,
+  readAuthFlow,
+  sanitizeReturnPath,
+} from "./auth-flow";
 
 const fixedFlowDeps = {
   randomBytes: () => new Uint8Array(32).fill(7),
@@ -23,6 +29,9 @@ const continuationApiMock = () => ({
 });
 
 describe("auth flow storage", () => {
+  it("keeps the locked owned storage prefixes", () => {
+    expect(ownedAuthStoragePrefixes).toEqual(["kondate.auth.flow.", "kondate.auth.supabase"]);
+  });
   it("accepts only same-origin path values", () => {
     expect(sanitizeReturnPath("/planner?resume=1")).toBe("/planner?resume=1");
     expect(sanitizeReturnPath("https://attacker.example")).toBe("/planner");
@@ -37,10 +46,10 @@ describe("auth flow storage", () => {
     expect(readAuthFlow(flow.id, shared)).toEqual(flow);
     expect(readAuthFlow(flow.id, isolated)).toBeNull();
     expect(api.lastCreateInput).not.toHaveProperty("verifier");
-    shared.setItem(`kondate.auth.callback-owner.${flow.id}`, flow.startedAt);
+    shared.setItem(`kondate.auth.supabase.callback-owner.${flow.id}`, flow.startedAt);
     clearAuthFlow(flow.id, shared);
     expect(readAuthFlow(flow.id, shared)).toBeNull();
-    expect(shared.getItem(`kondate.auth.callback-owner.${flow.id}`)).toBeNull();
+    expect(shared.getItem(`kondate.auth.supabase.callback-owner.${flow.id}`)).toBeNull();
   });
 });
 

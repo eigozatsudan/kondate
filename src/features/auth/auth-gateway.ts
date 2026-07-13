@@ -3,8 +3,10 @@ import { z } from "zod";
 import {
   buildAuthCallbackUrl,
   clearAuthFlow,
+  clearClaimedAuthFlow,
   createAuthFlow,
   listUnexpiredAuthFlows,
+  isAuthContinuationCallbackOwned,
   readAuthFlow,
   sanitizeReturnPath,
   createContinuationApi,
@@ -27,6 +29,7 @@ export type AuthCallbackResult =
       flowId: string;
     }
   | { kind: "deposited"; continuation: "original_browser"; flowId: string; returnTo: string }
+  | { kind: "awaiting_completion"; flowId: string; returnTo: string }
   | { kind: "expired"; flowId: string; returnTo: string }
   | {
       kind: "error";
@@ -42,7 +45,7 @@ export interface AuthGateway {
 }
 
 export type AuthGatewayDeps = {
-  getPublicEnv(): Pick<PublicEnv, "authProviderMode" | "oauthMockOrigin">;
+  getPublicEnv(): Pick<PublicEnv, "authContinuationTtlMs" | "authProviderMode" | "oauthMockOrigin">;
   fetchImpl: typeof fetch;
   appOrigin: string;
   navigate(url: string): void;
@@ -206,7 +209,7 @@ export function createAuthGateway(
             : client.auth.exchangeCodeForSession(claimedCode.code);
         const { error } = await result;
         if (error !== null) throw new Error("provider exchange failed");
-        clearAuthFlow(flow.id, storage);
+        clearClaimedAuthFlow(flow.id, storage);
         return {
           kind: "complete",
           continuation: "same_browser",
@@ -215,6 +218,16 @@ export function createAuthGateway(
         };
       } catch {
         if (claimed) clearAuthFlow(flow.id, storage);
+        else if (
+          isAuthContinuationCallbackOwned(
+            flow.id,
+            storage,
+            new Date(),
+            deps.getPublicEnv().authContinuationTtlMs,
+          )
+        ) {
+          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+        }
         return { kind: "error", code: "unbound_callback", returnTo: flow.returnTo };
       }
     },
