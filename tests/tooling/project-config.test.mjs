@@ -106,9 +106,10 @@ test("local secret generator emits unquoted Supabase verification paths", async 
 });
 
 test("runs local-only tooling inside pinned containers", async () => {
-  const [compose, wrapper] = await Promise.all([
+  const [compose, wrapper, gitWrapper] = await Promise.all([
     readFile("compose.tooling.yaml", "utf8"),
     readFile("scripts/generate-local-secrets.sh", "utf8"),
+    readFile("scripts/run-tooling-git.sh", "utf8"),
   ]);
   assert.match(compose, /image: node:24-bookworm-slim/u);
   assert.match(compose, /image: alpine\/git:v2\.54\.0/u);
@@ -118,4 +119,97 @@ test("runs local-only tooling inside pinned containers", async () => {
   assert.equal((compose.match(/LOCAL_UID: "\$\{LOCAL_UID:-1000\}"/gu) ?? []).length, 2);
   assert.equal((compose.match(/LOCAL_GID: "\$\{LOCAL_GID:-1000\}"/gu) ?? []).length, 2);
   assert.match(wrapper, /docker compose -f compose\.tooling\.yaml run --rm local-secrets/u);
+  assert.match(gitWrapper, /docker compose -f compose\.tooling\.yaml run --rm/u);
+  assert.match(gitWrapper, /--entrypoint git/u);
+  assert.match(gitWrapper, /vendor-supabase/u);
+});
+
+test("tooling Git wrapper supports regular checkouts and linked worktrees", async () => {
+  const wrapper = await readFile("scripts/run-tooling-git.sh", "utf8");
+
+  const runFixture = async ({ linked, exitCode }) => {
+    const cwd = await mkdtemp(join(tmpdir(), "kondate-tooling-git-"));
+    await mkdir(join(cwd, "scripts"), { recursive: true });
+    await writeFile(join(cwd, "scripts/run-tooling-git.sh"), wrapper);
+
+    let commonDir;
+    if (linked) {
+      commonDir = join(cwd, "git-common");
+      const gitDir = join(commonDir, "worktrees/fixture");
+      await mkdir(gitDir, { recursive: true });
+      await writeFile(join(cwd, ".git"), `gitdir: ${gitDir}\n`);
+      await writeFile(join(gitDir, "commondir"), "../..\n");
+    } else {
+      await mkdir(join(cwd, ".git"));
+    }
+
+    const bin = join(cwd, "bin");
+    const capture = join(cwd, "docker-args");
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "docker"),
+      [
+        "#!/bin/sh",
+        'for argument do printf "%s\\0" "$argument"; done > "$CAPTURE"',
+        'exit "$DOCKER_EXIT_CODE"',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const status = await new Promise((resolveRun, rejectRun) => {
+      const child = spawn(
+        "sh",
+        [join(cwd, "scripts/run-tooling-git.sh"), "status", "--short", "space arg"],
+        {
+          cwd,
+          env: {
+            ...process.env,
+            CAPTURE: capture,
+            DOCKER_EXIT_CODE: String(exitCode),
+            PATH: `${bin}:${process.env.PATH}`,
+          },
+          stdio: "ignore",
+        },
+      );
+      child.once("error", rejectRun);
+      child.once("exit", resolveRun);
+    });
+
+    const args = (await readFile(capture, "utf8")).split("\0").slice(0, -1);
+    return { args, commonDir, status };
+  };
+
+  const regular = await runFixture({ linked: false, exitCode: 23 });
+  assert.equal(regular.status, 23);
+  assert.deepEqual(regular.args, [
+    "compose",
+    "-f",
+    "compose.tooling.yaml",
+    "run",
+    "--rm",
+    "--entrypoint",
+    "git",
+    "vendor-supabase",
+    "status",
+    "--short",
+    "space arg",
+  ]);
+
+  const linked = await runFixture({ linked: true, exitCode: 0 });
+  assert.equal(linked.status, 0);
+  assert.deepEqual(linked.args, [
+    "compose",
+    "-f",
+    "compose.tooling.yaml",
+    "run",
+    "--rm",
+    "--volume",
+    `${linked.commonDir}:${linked.commonDir}`,
+    "--entrypoint",
+    "git",
+    "vendor-supabase",
+    "status",
+    "--short",
+    "space arg",
+  ]);
 });

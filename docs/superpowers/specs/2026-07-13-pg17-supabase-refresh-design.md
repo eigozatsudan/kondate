@@ -97,11 +97,14 @@ docker compose up -d --wait
 
 - シークレット生成: `compose.tooling.yaml` の独立した `node:24-bookworm-slim` サービス
 - 公式vendor取得: `compose.tooling.yaml` のGitを含む専用サービス
+- リポジトリGit操作: `scripts/run-tooling-git.sh` から同じtoolingサービス内のGitを実行
 - JavaScript/TypeScript検証: `app` Composeサービス
 - DB操作: 公式 `db`、プロジェクトの `migrate`、`db-test` Composeサービス
 - E2E: Chromiumを含む `e2e` Composeサービス
 
 `compose.tooling.yaml` は通常の `docker compose up` から参照されないため、toolingサービスがアプリスタックへ混入しない。vendorスクリプトはコンテナ内で `/workspace` にマウントされたリポジトリだけを書き換える。tooling実行時にホストのUID/GIDを渡し、生成物がrootまたは別ユーザー所有になることを防ぐ。Composeの `user:` は実行ユーザーだけを設定してコンテナ環境変数を作らないため、`LOCAL_UID` と `LOCAL_GID` は `environment:` でも両toolingサービスへ明示的に渡す。シークレット生成処理は受け取ったUID/GIDを `.env` の `LOCAL_UID` と `LOCAL_GID` に保存し、以後の `app`、`e2e`、DB型生成も同じ所有者で実行する。tooling用Compose自身の構文は `.env` なしで解決できることに加え、任意のUID/GIDが実コンテナの `process.env` まで届くことをテストする。
+
+`scripts/run-tooling-git.sh` は通常checkoutとlinked worktreeの両方で、`vendor-supabase` コンテナ内のGitを `/workspace` に対して実行する。linked worktreeでは `.git` gitfileとworktree git dirの `commondir` からGit common dirの実パスを解決し、コンテナへ同じ絶対パスでread-write追加mountする。これにより、ホストGitや実行者による一時的な `-v` 指定に依存せず、任意のGitサブコマンドの引数境界と終了statusを維持する。
 
 日常の検証コマンドは、ホストのnpmスクリプトを入口にせず、次のDocker Compose形式へ統一する。
 
