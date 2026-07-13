@@ -38,6 +38,12 @@ version_installed=false
 operation_completed=false
 preserve_staging=false
 
+restore_signal_traps() {
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
 finish() {
   status=$?
   trap - EXIT HUP INT TERM
@@ -81,7 +87,8 @@ finish() {
   fi
   exit "$status"
 }
-trap finish EXIT HUP INT TERM
+trap finish EXIT
+restore_signal_traps
 
 git -C "$staging" init -q repository
 git -C "$checkout" remote add origin "$repository"
@@ -114,23 +121,23 @@ if [ -e "$target" ]; then
   trap '' HUP INT TERM
   mv "$target" "$backup_target"
   target_backed_up=true
-  trap finish EXIT HUP INT TERM
+  restore_signal_traps
 fi
 if [ -e "$version_file" ]; then
   trap '' HUP INT TERM
   mv "$version_file" "$backup_version"
   version_backed_up=true
-  trap finish EXIT HUP INT TERM
+  restore_signal_traps
 fi
 trap '' HUP INT TERM
 mv "$new_target" "$target"
 target_installed=true
-trap finish EXIT HUP INT TERM
+restore_signal_traps
 trap '' HUP INT TERM
 mv "$new_version" "$version_file"
 version_installed=true
 operation_completed=true
-trap finish EXIT HUP INT TERM
+restore_signal_traps
 if ! rm -rf "$staging"; then
   echo "warning: could not remove vendor staging directory: $staging" >&2
 fi

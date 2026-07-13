@@ -40,6 +40,18 @@ printf '%s\n' \
   'esac' \
   'exec /bin/mv "$@"' > "$fixture/bin/mv"
 chmod +x "$fixture/bin/mv"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${SIGNAL_TO_INJECT:-}" != "" ] && [ "${1:-}" = "-C" ] && [ "${3:-}" = "fetch" ]; then' \
+  '  case "$SIGNAL_TO_INJECT" in' \
+  '    HUP) kill -HUP "$PPID" ;;' \
+  '    INT) kill -INT "$PPID" ;;' \
+  '    TERM) kill -TERM "$PPID" ;;' \
+  '  esac' \
+  '  exit 0' \
+  'fi' \
+  'exec /usr/bin/git "$@"' > "$fixture/bin/git"
+chmod +x "$fixture/bin/git"
 
 snapshot_vendor() {
   tar -cf - infra/supabase infra/supabase.version | sha256sum | awk '{print $1}'
@@ -73,6 +85,23 @@ assert_failed_swap_unchanged() {
     echo "staging remained after forced $step failure: $1" >&2
     exit 1
   fi
+}
+
+assert_signal_rollback() {
+  signal=$1
+  expected_status=$2
+  echo "testing signal rollback: $signal"
+  before=$(snapshot_vendor)
+  status=0
+  PATH="$fixture/bin:$PATH" SIGNAL_TO_INJECT="$signal" SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh || status=$?
+  if [ "$status" -ne "$expected_status" ]; then
+    echo "unexpected $signal exit status: $status" >&2
+    exit 1
+  fi
+  after=$(snapshot_vendor)
+  test "$after" = "$before"
+  set -- infra/.supabase-refresh.*
+  test ! -e "$1"
 }
 
 assert_failed_restore_preserved() {
@@ -116,6 +145,9 @@ test ! -e infra/supabase/tests/test-pg17-upgrade.sh
 for step in target_backup version_backup new_target new_version; do
   assert_failed_swap_unchanged "$step"
 done
+assert_signal_rollback HUP 129
+assert_signal_rollback INT 130
+assert_signal_rollback TERM 143
 for step in target_restore version_restore; do
   assert_failed_restore_preserved "$step"
 done
