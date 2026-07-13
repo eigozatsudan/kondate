@@ -45,6 +45,12 @@ test("Vite ignores Playwright output directories", async () => {
   assert.match(config, /"\*\*\/test-results\/\*\*"/u);
 });
 
+test("Vitest excludes the plan-mandated node:test Function server suite", async () => {
+  const config = await readFile("vitest.config.ts", "utf8");
+  assert.match(config, /exclude: \["tools\/e2e-function-server\.test\.mjs"\]/u);
+  assert.match(config, /"tools\/\*\*\/\*\.test\.mjs"/u);
+});
+
 test("local secret generator emits unquoted Supabase verification paths", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "kondate-local-secrets-"));
   await mkdir(join(cwd, "infra/supabase"), { recursive: true });

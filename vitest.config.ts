@@ -18,6 +18,7 @@ export default defineConfig({
       "netlify/functions/**/*.test.ts",
       "tools/**/*.test.mjs",
     ],
+    exclude: ["tools/e2e-function-server.test.mjs"],
     coverage: {
       reporter: ["text", "html"],
     },
