@@ -511,7 +511,6 @@ trap '' HUP INT TERM
 mv "$new_version" "$version_file"
 version_installed=true
 operation_completed=true
-restore_signal_traps
 if ! rm -rf "$staging"; then
   echo "warning: could not remove vendor staging directory: $staging" >&2
 fi
@@ -551,7 +550,7 @@ LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose -f compose.tooling.yaml
 
 Expected:
 
-- `infra/supabase.version` は40文字SHA。実装時点でmasterが動いていなければ `b5ada9631df0a42cdb6e402eaf0ca18ff52aed80`。
+- `infra/supabase.version` は40文字SHA。この実装時点のmaster HEADは `05b3a6a3c04c3241fe4b4f3727a3aeb0d0277025`。
 - `infra/supabase/docker-compose.yml` のDBは `supabase/postgres:17.6.1.136`。上流が進んでいる場合は、その固定SHAに記載された新しい17系完全タグ。
 - 除外対象4ファイルは存在しない。
 

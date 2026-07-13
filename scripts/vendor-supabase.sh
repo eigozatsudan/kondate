@@ -137,7 +137,6 @@ trap '' HUP INT TERM
 mv "$new_version" "$version_file"
 version_installed=true
 operation_completed=true
-restore_signal_traps
 if ! rm -rf "$staging"; then
   echo "warning: could not remove vendor staging directory: $staging" >&2
 fi

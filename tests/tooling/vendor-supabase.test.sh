@@ -52,6 +52,15 @@ printf '%s\n' \
   'fi' \
   'exec /usr/bin/git "$@"' > "$fixture/bin/git"
 chmod +x "$fixture/bin/git"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "${POST_COMMIT_SIGNAL:-}:$1:${2:-}" in' \
+  '  TERM:-rf:*/.supabase-refresh.*)' \
+  '    if [ -e "$2" ]; then kill -TERM "$PPID"; fi' \
+  '    ;;' \
+  'esac' \
+  'exec /bin/rm "$@"' > "$fixture/bin/rm"
+chmod +x "$fixture/bin/rm"
 
 snapshot_vendor() {
   tar -cf - infra/supabase infra/supabase.version | sha256sum | awk '{print $1}'
@@ -104,6 +113,20 @@ assert_signal_rollback() {
   test ! -e "$1"
 }
 
+assert_post_commit_signal_succeeds() {
+  echo "testing post-commit signal: TERM"
+  status=0
+  PATH="$fixture/bin:$PATH" POST_COMMIT_SIGNAL=TERM SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "unexpected post-commit TERM exit status: $status" >&2
+    exit 1
+  fi
+  test "$(cat infra/supabase.version)" = "$expected_sha"
+  grep -q 'post-commit signal fixture' infra/supabase/README.md
+  set -- infra/.supabase-refresh.*
+  test ! -e "$1"
+}
+
 assert_failed_restore_preserved() {
   step=$1
   before=$(snapshot_vendor)
@@ -141,6 +164,12 @@ test ! -e infra/supabase/docker-compose.pg15.yml
 test ! -e infra/supabase/docker-compose.pg17.yml
 test ! -e infra/supabase/utils/upgrade-pg17.sh
 test ! -e infra/supabase/tests/test-pg17-upgrade.sh
+
+printf 'post-commit signal fixture\n' > "$source_repo/docker/README.md"
+git -C "$source_repo" add docker/README.md
+git -C "$source_repo" commit -q -m "fixture: post-commit signal"
+expected_sha=$(git -C "$source_repo" rev-parse HEAD)
+assert_post_commit_signal_succeeds
 
 for step in target_backup version_backup new_target new_version; do
   assert_failed_swap_unchanged "$step"
