@@ -24,7 +24,7 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByLabel("苦手食材を追加").fill("ねぎ");
   await page.getByRole("button", { name: "苦手食材を追加" }).click();
   await page.getByLabel("辛さ").selectOption("none");
-  await page.getByLabel("小さめ").check();
+  await page.getByRole("checkbox", { name: "小さめ" }).check();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
   await page.getByLabel("自由登録名").fill("えんどう豆たんぱく");
