@@ -37,8 +37,10 @@ describe("auth flow storage", () => {
     expect(readAuthFlow(flow.id, shared)).toEqual(flow);
     expect(readAuthFlow(flow.id, isolated)).toBeNull();
     expect(api.lastCreateInput).not.toHaveProperty("verifier");
+    shared.setItem(`kondate.auth.callback-owner.${flow.id}`, flow.startedAt);
     clearAuthFlow(flow.id, shared);
     expect(readAuthFlow(flow.id, shared)).toBeNull();
+    expect(shared.getItem(`kondate.auth.callback-owner.${flow.id}`)).toBeNull();
   });
 });
 

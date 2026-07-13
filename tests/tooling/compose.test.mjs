@@ -87,6 +87,7 @@ test("uses the isolated E2E Function server without changing the public origin",
   ]);
   assert.doesNotMatch(compose, /KONDATE_E2E_FUNCTION_SERVER/u);
   assert.match(composeE2e, /KONDATE_E2E_FUNCTION_SERVER: "1"/u);
+  assert.match(composeE2e, /\s{2}auth:\n\s{4}environment:\n\s{6}GOTRUE_SMTP_MAX_FREQUENCY: "1s"/u);
   assert.match(composeE2e, /command: \["node", "tools\/run-e2e-app\.mjs"\]/u);
   assert.match(viteConfig, /functions: \{ enabled: !isE2eFunctionServer \}/u);
   assert.match(viteConfig, /target: "http:\/\/127\.0\.0\.1:5174"/u);

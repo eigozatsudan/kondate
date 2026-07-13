@@ -5,10 +5,21 @@ import { RouterProvider } from "react-router/dom";
 import { expect, it, vi } from "vitest";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
+import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import { markAuthContinuationCallbackOwner } from "./auth-flow";
 
 vi.mock("./auth-gateway", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-gateway")>();
   return { ...actual, createAuthGateway: vi.fn() };
+});
+
+vi.mock("./auth-continuation-completion", () => ({
+  publishAuthContinuationCompletion: vi.fn(),
+}));
+
+vi.mock("./auth-flow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth-flow")>();
+  return { ...actual, clearAuthFlow: vi.fn(), markAuthContinuationCallbackOwner: vi.fn() };
 });
 
 const createAuthGatewayMock = vi.mocked(createAuthGateway);
@@ -67,6 +78,7 @@ it("removes callback credentials from the browser URL before completing the call
   expect(window.location.pathname + window.location.search + window.location.hash).toBe(
     "/auth/callback?flow=flow-1",
   );
+  expect(markAuthContinuationCallbackOwner).toHaveBeenCalledWith("flow-1");
 });
 
 it("creates the default gateway once and completes the callback once", async () => {
@@ -131,4 +143,8 @@ it("handles the original callback result after StrictMode remounts the effect", 
   // StrictModeでも認証コードを二重交換しないことを保証する。
   // eslint-disable-next-line @typescript-eslint/unbound-method
   expect(gateway.completeCallback).toHaveBeenCalledTimes(1);
+  expect(publishAuthContinuationCompletion).toHaveBeenCalledWith({
+    flowId: "flow-1",
+    returnTo: "/onboarding",
+  });
 });

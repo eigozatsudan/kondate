@@ -23,9 +23,14 @@ export const browserFlowDeps: FlowDeps = {
   now: () => new Date(),
 };
 
-export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.supabase"] as const;
+export const ownedAuthStoragePrefixes = [
+  "kondate.auth.flow.",
+  "kondate.auth.supabase",
+  "kondate.auth.callback-owner.",
+] as const;
 
 const flowPrefix = ownedAuthStoragePrefixes[0];
+const callbackOwnerPrefix = ownedAuthStoragePrefixes[2];
 
 function base64url(bytes: Uint8Array): string {
   let binary = "";
@@ -72,6 +77,30 @@ export function readAuthFlow(id: string, storage: Storage): AuthFlow | null {
 
 export function clearAuthFlow(id: string, storage: Storage = window.localStorage): void {
   storage.removeItem(`${flowPrefix}${id}`);
+  storage.removeItem(`${callbackOwnerPrefix}${id}`);
+}
+
+export function markAuthContinuationCallbackOwner(
+  flowId: string,
+  storage: Storage = window.localStorage,
+): void {
+  const flow = readAuthFlow(flowId, storage);
+  if (flow !== null) storage.setItem(`${callbackOwnerPrefix}${flowId}`, flow.startedAt);
+}
+
+export function isAuthContinuationCallbackOwned(
+  flowId: string,
+  storage: Storage,
+  now: Date,
+  ttlMs: number,
+): boolean {
+  const key = `${callbackOwnerPrefix}${flowId}`;
+  const startedAt = storage.getItem(key);
+  if (startedAt === null) return false;
+  const age = now.getTime() - new Date(startedAt).getTime();
+  if (Number.isFinite(age) && age >= 0 && age <= ttlMs) return true;
+  storage.removeItem(key);
+  return false;
 }
 
 export function listUnexpiredAuthFlows(storage: Storage, now: Date, ttlMs = 300_000): AuthFlow[] {

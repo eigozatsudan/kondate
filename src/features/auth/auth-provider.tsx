@@ -14,6 +14,7 @@ import {
   startAuthContinuationRecovery,
   type AuthContinuationRecoveryGateway,
 } from "./auth-continuation-recovery";
+import { startAuthContinuationCompletionListener } from "./auth-continuation-completion";
 import { createAuthGateway } from "./auth-gateway";
 
 export type AuthContextValue = {
@@ -74,7 +75,7 @@ export function AuthProvider({
 
   useEffect(() => {
     const gateway = recoveryGateway ?? defaultRecoveryGateway;
-    if (gateway === undefined) return undefined;
+    if (gateway === undefined || window.location.pathname === "/auth/callback") return undefined;
     return startRecovery({
       gateway,
       storage: window.localStorage,
@@ -85,6 +86,17 @@ export function AuthProvider({
       },
     });
   }, [defaultRecoveryGateway, providedClient, recoveryGateway, refreshSession, startRecovery]);
+
+  useEffect(
+    () =>
+      startAuthContinuationCompletionListener({
+        onComplete: (result) => {
+          void refreshSession();
+          window.location.assign(result.returnTo);
+        },
+      }),
+    [refreshSession],
+  );
 
   const value = useMemo<AuthContextValue>(
     () => ({

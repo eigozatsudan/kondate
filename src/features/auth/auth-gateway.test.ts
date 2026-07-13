@@ -191,9 +191,11 @@ it("replaces an existing local flow when a magic link is resent", async () => {
   );
 
   const first = await gateway.sendMagicLink("user@example.com", "/planner");
+  storage.setItem(`kondate.auth.callback-owner.${first.flowId}`, new Date().toISOString());
   const resent = await gateway.sendMagicLink("user@example.com", "/planner");
 
   expect(readAuthFlow(first.flowId, storage)).toBeNull();
+  expect(storage.getItem(`kondate.auth.callback-owner.${first.flowId}`)).toBeNull();
   expect(readAuthFlow(resent.flowId, storage)).not.toBeNull();
 });
 

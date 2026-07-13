@@ -1,4 +1,4 @@
-import { listUnexpiredAuthFlows } from "./auth-flow";
+import { isAuthContinuationCallbackOwned, listUnexpiredAuthFlows } from "./auth-flow";
 
 export type RecoveryResult = { kind: "complete"; returnTo: string } | { kind: string };
 export type AuthContinuationRecoveryGateway = {
@@ -25,11 +25,10 @@ export function startAuthContinuationRecovery(input: {
     if (running || stopped) return;
     running = true;
     try {
-      for (const flow of listUnexpiredAuthFlows(
-        input.storage,
-        input.now?.() ?? new Date(),
-        input.ttlMs,
-      )) {
+      const now = input.now?.() ?? new Date();
+      const ttlMs = input.ttlMs ?? 300_000;
+      for (const flow of listUnexpiredAuthFlows(input.storage, now, ttlMs)) {
+        if (isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs)) continue;
         const result = await input.gateway.resumeFlow(flow.id);
         if (isRecoveryComplete(result)) {
           input.onComplete(result);

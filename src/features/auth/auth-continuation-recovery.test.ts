@@ -2,6 +2,35 @@ import { describe, expect, it, vi } from "vitest";
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 
 describe("auth continuation recovery", () => {
+  it("does not contend for a flow owned by the same-browser callback tab", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const startedAt = new Date().toISOString();
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        startedAt,
+      }),
+    );
+    storage.setItem(`kondate.auth.callback-owner.${flowId}`, startedAt);
+    const gateway = { resumeFlow: vi.fn() };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    stop();
+  });
+
   it("serializes concurrent recovery wakes", () => {
     const storage = new MapStorage();
     storage.setItem(

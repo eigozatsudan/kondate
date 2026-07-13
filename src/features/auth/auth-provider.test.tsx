@@ -75,4 +75,28 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     expect(recovery).toHaveBeenCalledOnce();
   });
+
+  it("leaves callback claim ownership to AuthCallbackPage", async () => {
+    window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const recovery = vi.fn(() => vi.fn());
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={recovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(recovery).not.toHaveBeenCalled();
+  });
 });

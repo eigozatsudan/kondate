@@ -33,6 +33,12 @@ test("E2E mobile project uses Chromium while preserving the iPhone viewport", as
   );
 });
 
+test("E2E uses one worker for the shared local auth stack", async () => {
+  const config = await readFile("playwright.config.ts", "utf8");
+  assert.match(config, /workers: 1/u);
+  assert.doesNotMatch(config, /process\.env\.CI \? \{ workers: 1 \}/u);
+});
+
 test("Vite ignores Playwright output directories", async () => {
   const config = await readFile("vite.config.ts", "utf8");
   assert.match(config, /"\*\*\/playwright-report\/\*\*"/u);

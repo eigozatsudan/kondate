@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
+import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import { clearAuthFlow, markAuthContinuationCallbackOwner } from "./auth-flow";
 
 export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
   const navigate = useNavigate();
@@ -8,6 +10,7 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
   const activeGateway = gateway ?? defaultGateway;
   const callbackPromise = useRef<Promise<AuthCallbackResult> | null>(null);
+  const callbackFlowId = useRef<string | null>(null);
 
   useEffect(() => {
     if (callbackPromise.current === null) {
@@ -20,6 +23,9 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
       visibleUrl.searchParams.delete("error_description");
       visibleUrl.hash = "";
       window.history.replaceState(window.history.state, "", visibleUrl);
+      const flowId = callbackUrl.searchParams.get("flow");
+      callbackFlowId.current = flowId;
+      if (flowId !== null) markAuthContinuationCallbackOwner(flowId);
       callbackPromise.current = activeGateway.completeCallback(callbackUrl);
     }
     let active = true;
@@ -27,13 +33,16 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
       if (!active) return;
       setResult(next);
       if (next.kind === "complete") {
+        publishAuthContinuationCompletion({ flowId: next.flowId, returnTo: next.returnTo });
         void navigate(next.returnTo, { replace: true });
       } else if (next.kind === "expired") {
+        if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
         void navigate("/login", {
           replace: true,
           state: { authError: "magic_link_expired" },
         });
       } else if (next.kind === "error") {
+        if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
         void navigate("/login", {
           replace: true,
           state: { authError: next.code },
