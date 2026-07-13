@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 types_url="${PG_META_TYPES_URL:-http://meta:8080/generators/typescript?included_schemas=public,private&detect_one_to_one_relationships=true}"
-tmp_file="$(mktemp)"
+destination="src/shared/types/database.generated.ts"
+destination_dir="$(dirname "$destination")"
+tmp_file="$(mktemp "$destination_dir/.database.generated.XXXXXX")"
 trap 'rm -f "$tmp_file"' EXIT
 # 稼働中の公式Metaサービスを使い、CLIによる入れ子のコンテナ起動を避ける。
 PG_META_TYPES_URL="$types_url" node --input-type=module -e '
@@ -9,8 +11,12 @@ PG_META_TYPES_URL="$types_url" node --input-type=module -e '
   if (!response.ok) {
     throw new Error(`Postgres Meta type generation failed: ${response.status}`);
   }
-  process.stdout.write(await response.text());
+  const types = await response.text();
+  if (!/export type Json\s*=/.test(types) || !/export type Database\s*=/.test(types)) {
+    throw new Error("Postgres Meta returned an invalid TypeScript contract");
+  }
+  process.stdout.write(types);
 ' > "$tmp_file"
-mv "$tmp_file" src/shared/types/database.generated.ts
+mv "$tmp_file" "$destination"
 trap - EXIT
-echo "Generated src/shared/types/database.generated.ts"
+echo "Generated $destination"

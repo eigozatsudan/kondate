@@ -173,14 +173,22 @@ test("documents the Docker-only clean initialization and verification workflow",
     /Node、npm、Git、Supabase CLI、Postgresクライアント、Playwrightはコンテナ内で実行/u,
   );
   assert.match(guide, /local-secrets --force/u);
+  assert.match(guide, /stat -c %a \.env/u);
+  assert.match(guide, /docker compose pull --quiet --ignore-buildable/u);
+  assert.match(guide, /docker compose build/u);
   assert.match(guide, /\.\/scripts\/reset-local-db\.sh/u);
   assert.match(packageJson, /"db:reset": "\.\/scripts\/reset-local-db\.sh"/u);
-  assert.match(reset, /docker compose down --volumes --remove-orphans/u);
-  assert.match(reset, /rm -rf infra\/supabase\/volumes\/db\/data/u);
-  assert.match(reset, /docker compose up -d --wait/u);
+  assert.match(reset, /down --volumes --remove-orphans/u);
+  assert.match(reset, /rm -rf \/workspace\/infra\/supabase\/volumes\/db\/data/u);
+  assert.match(reset, /up -d --wait/u);
   assert.match(guide, /show server_version/u);
+  assert.match(guide, /docker compose ps/u);
   assert.match(guide, /docker compose run --rm db-test/u);
   assert.match(guide, /docker compose run --rm app npm run db:types/u);
+  assert.match(
+    guide,
+    /\.\/scripts\/run-tooling-git\.sh diff --exit-code -- src\/shared\/types\/database\.generated\.ts/u,
+  );
   assert.match(guide, /\.\/scripts\/run-e2e\.sh/u);
   assert.match(guide, /PG15データの移行とロールバックはサポートしません/u);
 });
