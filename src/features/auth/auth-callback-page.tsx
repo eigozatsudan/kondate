@@ -3,11 +3,16 @@ import { useNavigate } from "react-router";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import {
   publishAuthContinuationCompletion,
-  readAuthContinuationCompletion,
+  startAuthContinuationCompletionWait,
 } from "./auth-continuation-completion";
-import { clearAuthFlow, markAuthContinuationCallbackOwner } from "./auth-flow";
+import { getPublicEnv } from "@/shared/config/public-env";
+import {
+  clearAuthFlow,
+  markAuthContinuationCallbackOwner,
+  readAuthContinuationCallbackStartedAt,
+} from "./auth-flow";
 
-export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
+export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; ttlMs?: number }) {
   const navigate = useNavigate();
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
@@ -32,6 +37,7 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
       callbackPromise.current = activeGateway.completeCallback(callbackUrl);
     }
     let active = true;
+    let stopWaiting: (() => void) | undefined;
     void callbackPromise.current.then((next) => {
       if (!active) return;
       setResult(next);
@@ -39,8 +45,28 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
         publishAuthContinuationCompletion({ flowId: next.flowId, returnTo: next.returnTo });
         void navigate(next.returnTo, { replace: true });
       } else if (next.kind === "awaiting_completion") {
-        const completion = readAuthContinuationCompletion(next.flowId);
-        if (completion !== null) void navigate(completion.returnTo, { replace: true });
+        const startedAt = readAuthContinuationCallbackStartedAt(next.flowId);
+        if (startedAt === null) {
+          clearAuthFlow(next.flowId);
+          void navigate("/login", {
+            replace: true,
+            state: { authError: "unbound_callback" },
+          });
+          return;
+        }
+        stopWaiting = startAuthContinuationCompletionWait({
+          flowId: next.flowId,
+          startedAt,
+          ttlMs: ttlMs ?? getPublicEnv().authContinuationTtlMs,
+          onComplete: (completion) => void navigate(completion.returnTo, { replace: true }),
+          onExpire: () => {
+            clearAuthFlow(next.flowId);
+            void navigate("/login", {
+              replace: true,
+              state: { authError: "unbound_callback" },
+            });
+          },
+        });
       } else if (next.kind === "expired") {
         if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
         void navigate("/login", {
@@ -57,8 +83,9 @@ export function AuthCallbackPage({ gateway }: { gateway?: AuthGateway }) {
     });
     return () => {
       active = false;
+      stopWaiting?.();
     };
-  }, [activeGateway, navigate]);
+  }, [activeGateway, navigate, ttlMs]);
 
   if (result?.kind === "deposited") {
     return (

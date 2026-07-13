@@ -89,6 +89,13 @@ export function markAuthContinuationCallbackOwner(
   if (flow !== null) storage.setItem(`${callbackOwnerPrefix}${flowId}`, flow.startedAt);
 }
 
+export function readAuthContinuationCallbackStartedAt(
+  flowId: string,
+  storage: Storage = window.localStorage,
+): string | null {
+  return storage.getItem(`${callbackOwnerPrefix}${flowId}`);
+}
+
 export function isAuthContinuationCallbackOwned(
   flowId: string,
   storage: Storage,

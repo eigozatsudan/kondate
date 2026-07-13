@@ -56,3 +56,43 @@ export function startAuthContinuationCompletionListener(input: {
     window.removeEventListener("storage", onStorage);
   };
 }
+
+export function startAuthContinuationCompletionWait(input: {
+  flowId: string;
+  startedAt: string;
+  ttlMs: number;
+  onComplete(completion: AuthContinuationCompletion): void;
+  onExpire(): void;
+}): () => void {
+  const existing = readAuthContinuationCompletion(input.flowId);
+  if (existing !== null) {
+    input.onComplete(existing);
+    return () => undefined;
+  }
+
+  let finished = false;
+  const stopListening = startAuthContinuationCompletionListener({
+    onComplete: (completion) => {
+      if (finished || completion.flowId !== input.flowId) return;
+      finished = true;
+      window.clearTimeout(timer);
+      stopListening();
+      input.onComplete(completion);
+    },
+  });
+  const expiresAt = new Date(input.startedAt).getTime() + input.ttlMs;
+  const remainingMs = Number.isFinite(expiresAt) ? Math.max(0, expiresAt - Date.now()) : 0;
+  const timer = window.setTimeout(() => {
+    if (finished) return;
+    finished = true;
+    stopListening();
+    input.onExpire();
+  }, remainingMs);
+
+  return () => {
+    if (finished) return;
+    finished = true;
+    window.clearTimeout(timer);
+    stopListening();
+  };
+}

@@ -1,14 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { expect, it, vi } from "vitest";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
-import {
-  publishAuthContinuationCompletion,
-  readAuthContinuationCompletion,
-} from "./auth-continuation-completion";
+import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import { markAuthContinuationCallbackOwner } from "./auth-flow";
 
 vi.mock("./auth-gateway", async (importOriginal) => {
@@ -16,14 +13,19 @@ vi.mock("./auth-gateway", async (importOriginal) => {
   return { ...actual, createAuthGateway: vi.fn() };
 });
 
-vi.mock("./auth-continuation-completion", () => ({
-  publishAuthContinuationCompletion: vi.fn(),
-  readAuthContinuationCompletion: vi.fn(() => null),
-}));
+vi.mock("./auth-continuation-completion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth-continuation-completion")>();
+  return { ...actual, publishAuthContinuationCompletion: vi.fn() };
+});
 
 vi.mock("./auth-flow", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-flow")>();
-  return { ...actual, clearAuthFlow: vi.fn(), markAuthContinuationCallbackOwner: vi.fn() };
+  return {
+    ...actual,
+    clearAuthFlow: vi.fn(),
+    markAuthContinuationCallbackOwner: vi.fn(),
+    readAuthContinuationCallbackStartedAt: vi.fn(() => new Date().toISOString()),
+  };
 });
 
 const createAuthGatewayMock = vi.mocked(createAuthGateway);
@@ -71,7 +73,7 @@ it("removes callback credentials from the browser URL before completing the call
   );
 
   const router = createMemoryRouter(
-    [{ path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> }],
+    [{ path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} /> }],
     { initialEntries: ["/auth/callback"] },
   );
   render(<RouterProvider router={router} />);
@@ -124,7 +126,7 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
     resumeFlow: vi.fn(),
   };
   const router = createMemoryRouter(
-    [{ path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> }],
+    [{ path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} /> }],
     { initialEntries: ["/auth/callback?flow=flow-1"] },
   );
 
@@ -135,10 +137,10 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
 });
 
 it("uses completion published before the losing callback starts waiting", async () => {
-  vi.mocked(readAuthContinuationCompletion).mockReturnValueOnce({
-    flowId: "flow-1",
-    returnTo: "/onboarding",
-  });
+  window.localStorage.setItem(
+    "kondate.auth.supabase.continuation-complete",
+    JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
+  );
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
@@ -151,7 +153,10 @@ it("uses completion published before the losing callback starts waiting", async 
   };
   const router = createMemoryRouter(
     [
-      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
+      {
+        path: "/auth/callback",
+        element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
+      },
       { path: "/onboarding", element: <h1>家族の初回設定</h1> },
     ],
     { initialEntries: ["/auth/callback?flow=flow-1"] },
@@ -160,6 +165,40 @@ it("uses completion published before the losing callback starts waiting", async 
   render(<RouterProvider router={router} />);
 
   expect(await screen.findByRole("heading", { name: "家族の初回設定" })).toBeInTheDocument();
+});
+
+it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
+    resumeFlow: vi.fn(),
+  };
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/auth/callback",
+        element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
+      },
+      { path: "/login", element: <h1>ログイン</h1> },
+    ],
+    { initialEntries: ["/auth/callback?flow=flow-1"] },
+  );
+  const view = render(<RouterProvider router={router} />);
+  await act(async () => Promise.resolve());
+
+  await act(() => vi.advanceTimersByTime(300_000));
+
+  expect(router.state.location.pathname).toBe("/login");
+  expect(router.state.location.state).toEqual({ authError: "unbound_callback" });
+  view.unmount();
+  vi.useRealTimers();
 });
 
 it("handles the original callback result after StrictMode remounts the effect", async () => {
