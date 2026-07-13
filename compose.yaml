@@ -143,5 +143,20 @@ services:
       timeout: 2s
       retries: 30
 
+  e2e:
+    profiles: ["e2e"]
+    build:
+      context: .
+      target: e2e
+    network_mode: host
+    depends_on:
+      app:
+        condition: service_healthy
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - .:/workspace
+      - node_modules:/workspace/node_modules
+    entrypoint: ["npx", "playwright", "test"]
+
 volumes:
   node_modules:
