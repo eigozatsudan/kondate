@@ -340,7 +340,7 @@ git commit -m "fix: Supabase更新前にローカルDBを停止"
 
 **Interfaces:**
 - Consumes: `compose.yaml`、`compose.e2e.yaml`、E2E引数`"$@"`。
-- Produces: 成功・失敗・HUP・INT・TERM後にbase `auth app`を復元し、元statusを保持するE2E wrapper。
+- Produces: 同じcheckoutの並行実行を拒否し、成功・失敗・HUP・INT・TERM後にE2E one-offを即時停止・削除してbase `auth app`を復元し、元statusを保持するE2E wrapper。
 
 - [ ] **Step 1: cleanupの失敗テストを書く**
 
@@ -405,6 +405,83 @@ Expected: 全status、signal、cleanup、既存引数転送testがPASS。
 ```bash
 git add scripts/run-e2e.sh tests/tooling/local-development-scripts.test.mjs tests/tooling/compose.test.mjs docs/local-development.md
 git commit -m "fix: E2E後に通常構成を復元"
+```
+
+- [ ] **Step 6: 即時cleanupと排他lockの失敗テストを書く**
+
+`tests/tooling/local-development-scripts.test.mjs`の期待commandを、base + E2E files、project identity、`e2e` profileを共通にした次の3 phaseへ更新する。
+
+```text
+docker compose --project-directory "$repo_root" --project-name "$project_name" -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e kill e2e
+docker compose --project-directory "$repo_root" --project-name "$project_name" -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e rm --force e2e
+docker compose --project-directory "$repo_root" --project-name "$project_name" -f "$repo_root/compose.yaml" up -d --wait --force-recreate --no-deps auth app
+```
+
+fake daemon childはTERMを無視させ、`kill e2e`でSIGKILLされ、続く`rm --force e2e`がremoved markerを作ることを要求する。kill、rm、restoreの各失敗でも後続phaseをすべて記録し、statusがsignal、元E2E、kill、rm、restoreの順になることを確認する。
+
+同じ`TMPDIR`とcheckoutで1本目をE2E中に待機させ、2本目がDocker invocationを追加せず失敗するfixtureを追加する。1本目をTERMで完了させた後は3本目が成功すること、stale lockはDocker前に拒否されること、成功・通常失敗・signalでlockが消えることを確認する。lock directoryへファイルを置いて`rmdir`を失敗させ、元statusが0の場合は非0になることも確認する。
+
+- [ ] **Step 7: 追加REDを確認する**
+
+Run:
+
+```bash
+docker compose -f compose.yaml run --rm --no-deps app node --test --test-name-pattern "kills.*one-off|cleanup phase fails|serializes|stale lock|release failure" tests/tooling/local-development-scripts.test.mjs
+```
+
+Expected: `kill e2e`未実行、`rm --stop`使用、lock未実装のため各caseがFAIL。
+
+- [ ] **Step 8: 即時3 phase cleanupとlock lifecycleを実装する**
+
+最初のCompose操作前に次のlockを獲得し、lock未取得時はcleanupを実行しない。
+
+```sh
+lock_dir=${TMPDIR:-/tmp}/kondate-run-e2e-$project_name.lock
+lock_acquired=0
+if mkdir "$lock_dir"; then
+  lock_acquired=1
+else
+  echo "another E2E run is active: $lock_dir" >&2
+  exit 1
+fi
+```
+
+cleanupは個別statusを保持し、失敗後も3 phaseを順次実行する。
+
+```sh
+docker compose --project-directory "$repo_root" --project-name "$project_name" \
+  -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+  kill e2e
+docker compose --project-directory "$repo_root" --project-name "$project_name" \
+  -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+  rm --force e2e
+docker compose --project-directory "$repo_root" --project-name "$project_name" \
+  -f "$repo_root/compose.yaml" \
+  up -d --wait --force-recreate --no-deps auth app
+```
+
+`finish`でlockを`rmdir`し、元statusが0のときだけrelease failureを最終statusにする。SIGKILL後の既存lockは削除せず、次回起動を安全側に拒否する。
+
+- [ ] **Step 9: 追加GREENと全回帰を確認する**
+
+Run:
+
+```bash
+docker compose -f compose.yaml run --rm --no-deps app node --test tests/tooling/local-development-scripts.test.mjs tests/tooling/compose.test.mjs
+docker compose -f compose.yaml run --rm --no-deps app npm run typecheck
+docker compose -f compose.yaml run --rm --no-deps app npm run lint
+docker compose -f compose.yaml run --rm --no-deps app npm run format:check
+bash -n scripts/run-e2e.sh
+git diff --check
+```
+
+Expected: tooling test全件PASS、lint error 0、その他commandもexit 0。
+
+- [ ] **Step 10: 追加修正をコミットする**
+
+```bash
+git add scripts/run-e2e.sh tests/tooling/local-development-scripts.test.mjs
+git commit -m "fix: E2E実行を排他して即時cleanup"
 ```
 
 ---
