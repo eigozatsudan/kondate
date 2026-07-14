@@ -15,7 +15,7 @@ child_pid=
 forward_signal() {
   signal=$1
   status=$2
-  trap - HUP INT TERM
+  trap '' HUP INT TERM
   if [ -n "$child_pid" ]; then
     kill -s "$signal" "$child_pid" 2>/dev/null || true
     wait "$child_pid" 2>/dev/null || true
@@ -29,10 +29,11 @@ trap 'forward_signal TERM 143' TERM
 run_child() {
   "$@" &
   child_pid=$!
-  set +e
-  wait "$child_pid"
-  status=$?
-  set -e
+  if wait "$child_pid"; then
+    status=0
+  else
+    status=$?
+  fi
   child_pid=
   return "$status"
 }

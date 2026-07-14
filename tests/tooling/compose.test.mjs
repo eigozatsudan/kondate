@@ -248,6 +248,9 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.match(guide, /docker compose build/u);
   assert.match(guide, /\.\/scripts\/refresh-supabase\.sh/u);
   assert.match(guide, /symbolic link経由の起動はサポートしません/u);
+  assert.match(guide, /`COMPOSE_PROJECT_NAME`をdirect入口に設定しない/u);
+  assert.match(guide, /supabase-db/u);
+  assert.match(guide, /legacy\/foreign Compose project/u);
   assert.match(guide, /\.\/scripts\/reset-local-db\.sh/u);
   assert.match(packageJson, /"db:reset": "\.\/scripts\/reset-local-db\.sh"/u);
   assert.match(reset, /down --volumes --remove-orphans/u);

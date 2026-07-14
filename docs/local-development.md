@@ -6,6 +6,8 @@
 
 Compose project名はcheckoutの絶対pathを `cksum` した `kondate-<CRC>-<bytes>` 形式で、containerとvolumeは同名checkoutを含めて分離されます。`generate-local-secrets.sh`はこの値を `.env` に保存し、refresh/reset wrapperは欠落時だけmode 600を保ってatomic追加します。コピー元と異なる値がある場合は破壊操作前に停止するため、local secretsを再生成してください。固定portは共有できないため、複数checkoutのstackを同時には起動しないでください。
 
+`COMPOSE_PROJECT_NAME`をdirect入口に設定しないでください。wrapperが絶対pathから導出して明示するproject名を使用します。
+
 ## 初回セットアップまたはSupabase構成更新後
 
 ローカルDBとローカル専用認証情報を破棄して再作成します。このローカルDBは破棄可能な開発データだけを保存する前提であり、バックアップは作成されません。
@@ -20,6 +22,8 @@ docker compose build
 ```
 
 リセットスクリプトは `down --volumes --remove-orphans` の後、公式Composeがbind mountするPGDATAも削除してから、health待機付きで再起動します。
+
+expected projectの停止後も固定container `supabase-db` が残る場合、wrapperはlegacy/foreign Compose projectとしてPGDATA削除前に拒否します。元のcheckoutとCompose設定から `docker compose --project-name <元project名> down --remove-orphans` を実行し、containerを停止・削除してから再実行してください。PGDATA内に `postmaster.pid` が残る場合も削除を拒否するため、所有するDB processを先に停止してください。
 
 Postgres 17を確認します。
 

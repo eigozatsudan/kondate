@@ -68,11 +68,15 @@ async function installDockerRecorder(root) {
       'for argument do printf "%s\\0" "$argument"; done > "$DOCKER_LOG_DIR/$index"',
       'if [ "${DOCKER_WAIT_AT:-}" = "$index" ]; then',
       '  printf "%s\\n" "$$" > "$DOCKER_READY_FILE"',
-      '  trap "exit 143" TERM',
+      '  trap \'trap "" TERM; sleep "${DOCKER_TERM_DELAY:-0}"; exit 143\' TERM',
       '  trap "exit 130" INT',
       "  while :; do sleep 1; done",
       "fi",
       'if [ "${DOCKER_FAIL_AT:-}" = "$index" ]; then exit "$DOCKER_FAIL_STATUS"; fi',
+      'if [ "$*" = "container inspect supabase-db" ]; then',
+      '  if [ "${DOCKER_FOREIGN_CONTAINER:-}" = "1" ]; then exit 0; fi',
+      "  exit 1",
+      "fi",
     ].join("\n"),
     { mode: 0o755 },
   );
@@ -131,6 +135,7 @@ function expectedRefreshInvocations(root, projectName) {
       "--volumes",
       "--remove-orphans",
     ],
+    ["container", "inspect", "supabase-db"],
     [
       "compose",
       "--project-directory",
@@ -147,7 +152,7 @@ function expectedRefreshInvocations(root, projectName) {
       "sh",
       "vendor-supabase",
       "-c",
-      "rm -rf /workspace/infra/supabase/volumes/db/data",
+      'if [ -e /workspace/infra/supabase/volumes/db/data/postmaster.pid ]; then echo "PGDATA is still active; stop the owning database before retrying" >&2; exit 1; fi; rm -rf /workspace/infra/supabase/volumes/db/data',
     ],
     [
       "compose",
@@ -309,6 +314,10 @@ test("reset fixes Compose to its repository when invoked from another directory"
     new RegExp(`^KONDATE_COMPOSE_PROJECT_NAME=${projectName}$`, "mu"),
   );
   assert.equal((await stat(join(root, ".env"))).mode & 0o777, 0o600);
+  assert.match(
+    await readFile(join(root, "scripts", "reset-local-db.sh"), "utf8"),
+    /postmaster\.pid[\s\S]*exit 1[\s\S]*rm -rf \/workspace\/infra\/supabase\/volumes\/db\/data/u,
+  );
 });
 
 test("refresh preserves every argument from a path containing spaces", async (t) => {
@@ -326,7 +335,7 @@ test("refresh preserves every argument from a path containing spaces", async (t)
 });
 
 test("refresh preserves every failure and converges when rerun", async (t) => {
-  for (let failureStage = 1; failureStage <= 5; failureStage += 1) {
+  for (let failureStage = 1; failureStage <= 6; failureStage += 1) {
     await t.test(`stage ${failureStage}`, async (subtest) => {
       const root = await createDatabaseScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
       subtest.after(() => rm(root, { recursive: true, force: true }));
@@ -364,6 +373,7 @@ test("refresh terminates during vendor wait without starting reset", async (t) =
       ...process.env,
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: readyFile,
+      DOCKER_TERM_DELAY: "0.2",
       DOCKER_WAIT_AT: "2",
       PATH: `${bin}:${process.env.PATH}`,
     },
@@ -383,6 +393,8 @@ test("refresh terminates during vendor wait without starting reset", async (t) =
   fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
   assert.equal(Number.isSafeInteger(fakeDockerPid), true);
   process.kill(child.pid, "SIGTERM");
+  await delay(20);
+  process.kill(child.pid, "SIGTERM");
   const result = await completion;
 
   assert.deepEqual(result, { code: 143, signal: null });
@@ -390,6 +402,28 @@ test("refresh terminates during vendor wait without starting reset", async (t) =
   assert.deepEqual(
     await readDockerInvocations(logDir),
     expectedRefreshInvocations(root, await expectedProjectName(root)).slice(0, 2),
+  );
+});
+
+test("refresh rejects a foreign fixed-name database before deleting PGDATA", async (t) => {
+  const root = await createDatabaseScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "foreign log");
+  const projectName = await expectedProjectName(root);
+
+  await assert.rejects(
+    runRefresh(root, bin, logDir, {
+      COMPOSE_PROJECT_NAME: "kondate",
+      DOCKER_FOREIGN_CONTAINER: "1",
+    }),
+    (error) =>
+      error && typeof error === "object" && error.code === 1 && /supabase-db/u.test(error.stderr),
+  );
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedRefreshInvocations(root, projectName).slice(0, 4),
   );
 });
 
