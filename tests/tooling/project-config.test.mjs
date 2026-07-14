@@ -226,18 +226,25 @@ test("runs local-only tooling inside pinned containers", async () => {
   assert.equal((compose.match(/LOCAL_UID: "\$\{LOCAL_UID:-1000\}"/gu) ?? []).length, 2);
   assert.equal((compose.match(/LOCAL_GID: "\$\{LOCAL_GID:-1000\}"/gu) ?? []).length, 2);
   assert.match(wrapper, /docker compose --project-directory/u);
-  assert.match(gitWrapper, /docker compose -f compose\.tooling\.yaml run --rm/u);
+  assert.match(gitWrapper, /docker compose --project-directory/u);
+  assert.match(gitWrapper, /--project-name/u);
   assert.match(gitWrapper, /--entrypoint git/u);
   assert.match(gitWrapper, /vendor-supabase/u);
 });
 
 test("tooling Git wrapper supports regular checkouts and linked worktrees", async () => {
-  const wrapper = await readFile("scripts/run-tooling-git.sh", "utf8");
+  const [wrapper, projectNameHelper] = await Promise.all([
+    readFile("scripts/run-tooling-git.sh", "utf8"),
+    readFile("scripts/compose-project-name.sh", "utf8"),
+  ]);
 
   const runFixture = async ({ linked, exitCode }) => {
     const cwd = await mkdtemp(join(tmpdir(), "kondate-tooling-git-"));
     await mkdir(join(cwd, "scripts"), { recursive: true });
     await writeFile(join(cwd, "scripts/run-tooling-git.sh"), wrapper);
+    await writeFile(join(cwd, "scripts/compose-project-name.sh"), projectNameHelper, {
+      mode: 0o755,
+    });
 
     let commonDir;
     if (linked) {
@@ -249,6 +256,9 @@ test("tooling Git wrapper supports regular checkouts and linked worktrees", asyn
     } else {
       await mkdir(join(cwd, ".git"));
     }
+    await assert.rejects(stat(join(cwd, ".env")), { code: "ENOENT" });
+    const { stdout } = await execFileAsync(join(cwd, "scripts/compose-project-name.sh"), [cwd]);
+    const projectName = stdout.trim();
 
     const bin = join(cwd, "bin");
     const capture = join(cwd, "docker-args");
@@ -272,7 +282,9 @@ test("tooling Git wrapper supports regular checkouts and linked worktrees", asyn
           env: {
             ...process.env,
             CAPTURE: capture,
+            COMPOSE_PROJECT_NAME: "caller-compose-project",
             DOCKER_EXIT_CODE: String(exitCode),
+            KONDATE_COMPOSE_PROJECT_NAME: "caller-kondate-project",
             PATH: `${bin}:${process.env.PATH}`,
           },
           stdio: "ignore",
@@ -283,15 +295,19 @@ test("tooling Git wrapper supports regular checkouts and linked worktrees", asyn
     });
 
     const args = (await readFile(capture, "utf8")).split("\0").slice(0, -1);
-    return { args, commonDir, status };
+    return { args, commonDir, cwd, projectName, status };
   };
 
   const regular = await runFixture({ linked: false, exitCode: 23 });
   assert.equal(regular.status, 23);
   assert.deepEqual(regular.args, [
     "compose",
+    "--project-directory",
+    regular.cwd,
+    "--project-name",
+    regular.projectName,
     "-f",
-    "compose.tooling.yaml",
+    join(regular.cwd, "compose.tooling.yaml"),
     "run",
     "--rm",
     "--entrypoint",
@@ -306,8 +322,12 @@ test("tooling Git wrapper supports regular checkouts and linked worktrees", asyn
   assert.equal(linked.status, 0);
   assert.deepEqual(linked.args, [
     "compose",
+    "--project-directory",
+    linked.cwd,
+    "--project-name",
+    linked.projectName,
     "-f",
-    "compose.tooling.yaml",
+    join(linked.cwd, "compose.tooling.yaml"),
     "run",
     "--rm",
     "--volume",

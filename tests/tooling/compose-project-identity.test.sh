@@ -26,16 +26,19 @@ fi
 for fixture in "$first_root:$first_name" "$second_root:$second_name"; do
   root=${fixture%%:*}
   name=${fixture#*:}
-  printf 'KONDATE_COMPOSE_PROJECT_NAME=%s\n' "$name" > "$root/.env"
-  chmod 600 "$root/.env"
   config="$root/compose-config.json"
   tooling_config="$root/compose-tooling-config.json"
+  COMPOSE_PROJECT_NAME=caller-project KONDATE_COMPOSE_PROJECT_NAME="$name" \
+    docker compose --env-file /dev/null --project-directory "$root" --project-name "$name" \
+    -f "$repo_root/compose.tooling.yaml" config --format json \
+    > "$tooling_config" 2> "$root/compose-tooling-config.stderr"
+  grep -F '"name": "'"$name"'"' "$tooling_config" > /dev/null
+
+  printf 'KONDATE_COMPOSE_PROJECT_NAME=%s\n' "$name" > "$root/.env"
+  chmod 600 "$root/.env"
   docker compose --project-directory "$root" -f "$repo_root/compose.yaml" \
     config --format json > "$config" 2> "$root/compose-config.stderr"
-  docker compose --project-directory "$root" -f "$repo_root/compose.tooling.yaml" \
-    config --format json > "$tooling_config" 2> "$root/compose-tooling-config.stderr"
   grep -F '"name": "'"$name"'"' "$config" > /dev/null
-  grep -F '"name": "'"$name"'"' "$tooling_config" > /dev/null
   grep -F '"name": "'"$name"'_default"' "$config" > /dev/null
   grep -F '"name": "'"$name"'_node_modules"' "$config" > /dev/null
 done
