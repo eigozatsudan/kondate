@@ -39,6 +39,9 @@ version_existed=false
 target_identity=
 version_identity=
 version_hash=
+target_installed_identity=
+version_installed_identity=
+version_installed_hash=
 target_backed_up=false
 version_backed_up=false
 target_installed=false
@@ -71,34 +74,56 @@ defer_signal_traps() {
   trap 'pending_signal_status=143' TERM
 }
 
+path_identity_matches() {
+  path=$1
+  expected_identity=$2
+  [ -n "$expected_identity" ] || return 1
+  actual_identity=$(stat -c '%d:%i' "$path" 2>/dev/null) || return 1
+  [ "$actual_identity" = "$expected_identity" ]
+}
+
+version_state_matches() {
+  path=$1
+  expected_identity=$2
+  expected_hash=$3
+  path_identity_matches "$path" "$expected_identity" || return 1
+  actual_hash=$(sha256sum "$path" 2>/dev/null | awk '{print $1}') || return 1
+  [ "$actual_hash" = "$expected_hash" ]
+}
+
 finish() {
   status=$?
   trap - EXIT
   trap '' HUP INT TERM
   if [ "$operation_completed" != true ]; then
     if [ "$target_installed" = true ]; then
-      if rm -rf "$target"; then
+      if path_identity_matches "$target" "$target_installed_identity" && rm -rf "$target"; then
         target_installed=false
       else
         preserve_staging=true
       fi
     fi
     if [ "$version_installed" = true ]; then
-      if rm -f "$version_file"; then
+      if version_state_matches "$version_file" "$version_installed_identity" "$version_installed_hash" &&
+        rm -f "$version_file"; then
         version_installed=false
       else
         preserve_staging=true
       fi
     fi
     if [ "$target_backed_up" = true ] && [ "$target_installed" = false ]; then
-      if mv "$backup_target" "$target"; then
+      if path_identity_matches "$backup_target" "$target_identity" && [ ! -e "$target" ] &&
+        mv -T -n "$backup_target" "$target" &&
+        [ ! -e "$backup_target" ] && path_identity_matches "$target" "$target_identity"; then
         target_backed_up=false
       else
         preserve_staging=true
       fi
     fi
     if [ "$version_backed_up" = true ] && [ "$version_installed" = false ]; then
-      if mv "$backup_version" "$version_file"; then
+      if version_state_matches "$backup_version" "$version_identity" "$version_hash" &&
+        [ ! -e "$version_file" ] && mv -T -n "$backup_version" "$version_file" &&
+        [ ! -e "$backup_version" ] && version_state_matches "$version_file" "$version_identity" "$version_hash"; then
         version_backed_up=false
       else
         preserve_staging=true
@@ -245,6 +270,7 @@ fi
 trap '' HUP INT TERM
 mv "$new_target" "$target"
 target_installed=true
+target_installed_identity=$(stat -c '%d:%i' "$target")
 restore_signal_traps
 if [ -e "$version_file" ]; then
   echo "vendor version destination appeared during refresh: $version_file" >&2
@@ -253,6 +279,8 @@ fi
 trap '' HUP INT TERM
 mv "$new_version" "$version_file"
 version_installed=true
+version_installed_identity=$(stat -c '%d:%i' "$version_file")
+version_installed_hash=$(sha256sum "$version_file" | awk '{print $1}')
 operation_completed=true
 
 echo "Vendored supabase/supabase $resolved_sha docker/"

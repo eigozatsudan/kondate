@@ -46,7 +46,18 @@ cd "$workspace"
 mkdir -p "$fixture/bin"
 printf '%s\n' \
   '#!/bin/sh' \
-  'case "${MUTATE_MV_STEP:-}:$1:$2" in' \
+  'no_target=false' \
+  'no_clobber=false' \
+  'while [ "$#" -gt 0 ]; do' \
+  '  case "$1" in' \
+  '    -T) no_target=true; shift ;;' \
+  '    -n) no_clobber=true; shift ;;' \
+  '    *) break ;;' \
+  '  esac' \
+  'done' \
+  'source=${1:-}' \
+  'destination=${2:-}' \
+  'case "${MUTATE_MV_STEP:-}:$source:$destination" in' \
   '  target_identity:infra/supabase:*/backup-target)' \
   '    /bin/mv infra/supabase "$MUTATED_ORIGINAL"' \
   '    /bin/mkdir infra/supabase' \
@@ -61,7 +72,32 @@ printf '%s\n' \
   '    printf "%s\n" replacement-version > infra/supabase.version' \
   '    ;;' \
   'esac' \
-  'case "${FAIL_MV_STEP:-}:$1:$2" in' \
+  'case "${RECREATE_AFTER_BACKUP:-}:$source:$destination" in' \
+  '  target:infra/supabase:*/backup-target)' \
+  '    /bin/mv "$source" "$destination"' \
+  '    /bin/mkdir infra/supabase' \
+  '    printf "%s\n" external-target > infra/supabase/external-marker' \
+  '    { printf "%s " "$(stat -c "%d:%i" infra/supabase)"; (cd infra/supabase && tar -cf - .) | sha256sum | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
+  '    exit 0' \
+  '    ;;' \
+  '  version:infra/supabase.version:*/backup-version)' \
+  '    /bin/mv "$source" "$destination"' \
+  '    printf "%s\n" external-version > infra/supabase.version' \
+  '    { printf "%s " "$(stat -c "%d:%i" infra/supabase.version)"; sha256sum infra/supabase.version | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
+  '    exit 0' \
+  '    ;;' \
+  'esac' \
+  'if [ "${REPLACE_INSTALLED_TARGET:-}" != "" ] && [ "${FAIL_MV_STEP:-}" = "new_version" ]; then' \
+  '  case "$source:$destination" in' \
+  '    */supabase.version:infra/supabase.version)' \
+  '      /bin/mv infra/supabase "$MUTATED_INSTALLED"' \
+  '      /bin/mkdir infra/supabase' \
+  '      printf "%s\n" external-installed-target > infra/supabase/external-marker' \
+  '      { printf "%s " "$(stat -c "%d:%i" infra/supabase)"; (cd infra/supabase && tar -cf - .) | sha256sum | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
+  '      ;;' \
+  '  esac' \
+  'fi' \
+  'case "${FAIL_MV_STEP:-}:$source:$destination" in' \
   '  target_backup:infra/supabase:*/backup-target|target_backup:infra/supabase:infra/.supabase-backup.*) exit 73 ;;' \
   '  version_backup:infra/supabase.version:*/backup-version|version_backup:infra/supabase.version:infra/.supabase-version-backup.*) exit 73 ;;' \
   '  new_target:*/supabase:infra/supabase|target_restore:*/supabase:infra/supabase) exit 73 ;;' \
@@ -69,6 +105,11 @@ printf '%s\n' \
   '  target_restore:*/backup-target:infra/supabase) exit 74 ;;' \
   '  version_restore:*/backup-version:infra/supabase.version) exit 74 ;;' \
   'esac' \
+  'if [ "$no_target" = true ] && [ "$no_clobber" = true ]; then' \
+  '  exec /bin/mv -T -n "$@"' \
+  'fi' \
+  'if [ "$no_target" = true ]; then exec /bin/mv -T "$@"; fi' \
+  'if [ "$no_clobber" = true ]; then exec /bin/mv -n "$@"; fi' \
   'exec /bin/mv "$@"' > "$fixture/bin/mv"
 chmod +x "$fixture/bin/mv"
 printf '%s\n' \
@@ -121,6 +162,16 @@ snapshot_version() {
   path=$1
   printf '%s ' "$(stat -c '%a:%u:%g' "$path")"
   sha256sum "$path" | awk '{print $1}'
+}
+
+snapshot_target_identity_tree() {
+  printf '%s ' "$(stat -c '%d:%i' "$1")"
+  snapshot_tree "$1"
+}
+
+snapshot_version_identity_hash() {
+  printf '%s ' "$(stat -c '%d:%i' "$1")"
+  sha256sum "$1" | awk '{print $1}'
 }
 
 assert_failed_swap_unchanged() {
@@ -207,25 +258,91 @@ assert_identity_replacement_preserved() {
   step=$1
   original="$fixture/original-$step"
   before=$(snapshot_vendor)
+  log="$fixture/$step-identity.log"
   status=0
   PATH="$fixture/bin:$PATH" \
     MUTATE_MV_STEP="$step" \
     MUTATED_ORIGINAL="$original" \
     SUPABASE_REPOSITORY="$source_repo" \
-    sh scripts/vendor-supabase.sh --refresh || status=$?
+    sh scripts/vendor-supabase.sh --refresh 2> "$log" || status=$?
   test "$status" -ne 0
+  preserved=$(sed -n 's/^rollback incomplete; preserved vendor backup at //p' "$log")
+  test -n "$preserved"
   case "$step" in
     target_identity)
-      grep -q '^replacement-target$' infra/supabase/replacement-marker
-      /bin/rm -rf infra/supabase
+      grep -q '^replacement-target$' "$preserved/backup-target/replacement-marker"
       /bin/mv "$original" infra/supabase
       ;;
     version_identity|version_content)
-      test "$(cat infra/supabase.version)" = "replacement-version"
-      /bin/rm -f infra/supabase.version
+      test "$(cat "$preserved/backup-version")" = "replacement-version"
       /bin/mv "$original" infra/supabase.version
       ;;
   esac
+  /bin/rm -rf "$preserved"
+  test "$(snapshot_vendor)" = "$before"
+}
+
+assert_restore_conflict_preserved() {
+  step=$1
+  before=$(snapshot_vendor)
+  tree_before=$(snapshot_tree infra/supabase)
+  version_before=$(snapshot_version infra/supabase.version)
+  external_snapshot="$fixture/$step-external.snapshot"
+  log="$fixture/$step-conflict.log"
+  status=0
+  PATH="$fixture/bin:$PATH" \
+    RECREATE_AFTER_BACKUP="$step" \
+    EXTERNAL_SNAPSHOT="$external_snapshot" \
+    SUPABASE_REPOSITORY="$source_repo" \
+    sh scripts/vendor-supabase.sh --refresh 2> "$log" || status=$?
+  test "$status" -ne 0
+  preserved=$(sed -n 's/^rollback incomplete; preserved vendor backup at //p' "$log")
+  if [ -z "$preserved" ]; then
+    echo "$step rollback conflict did not preserve the original backup" >&2
+    exit 1
+  fi
+  test -d "$preserved"
+  case "$step" in
+    target)
+      test "$(snapshot_target_identity_tree infra/supabase)" = "$(cat "$external_snapshot")"
+      test "$(snapshot_tree "$preserved/backup-target")" = "$tree_before"
+      test "$(snapshot_version infra/supabase.version)" = "$version_before"
+      /bin/rm -rf infra/supabase
+      /bin/mv "$preserved/backup-target" infra/supabase
+      ;;
+    version)
+      test "$(snapshot_version_identity_hash infra/supabase.version)" = "$(cat "$external_snapshot")"
+      test "$(snapshot_version "$preserved/backup-version")" = "$version_before"
+      test "$(snapshot_tree infra/supabase)" = "$tree_before"
+      /bin/rm -f infra/supabase.version
+      /bin/mv "$preserved/backup-version" infra/supabase.version
+      ;;
+  esac
+  /bin/rm -rf "$preserved"
+  test "$(snapshot_vendor)" = "$before"
+}
+
+assert_installed_replacement_preserved() {
+  before=$(snapshot_vendor)
+  tree_before=$(snapshot_tree infra/supabase)
+  external_snapshot="$fixture/installed-target-external.snapshot"
+  log="$fixture/installed-target-conflict.log"
+  status=0
+  PATH="$fixture/bin:$PATH" \
+    FAIL_MV_STEP=new_version \
+    REPLACE_INSTALLED_TARGET=1 \
+    MUTATED_INSTALLED="$fixture/replaced-installed-target" \
+    EXTERNAL_SNAPSHOT="$external_snapshot" \
+    SUPABASE_REPOSITORY="$source_repo" \
+    sh scripts/vendor-supabase.sh --refresh 2> "$log" || status=$?
+  test "$status" -ne 0
+  test "$(snapshot_target_identity_tree infra/supabase)" = "$(cat "$external_snapshot")"
+  preserved=$(sed -n 's/^rollback incomplete; preserved vendor backup at //p' "$log")
+  test -n "$preserved"
+  test "$(snapshot_tree "$preserved/backup-target")" = "$tree_before"
+  /bin/rm -rf infra/supabase
+  /bin/mv "$preserved/backup-target" infra/supabase
+  /bin/rm -rf "$preserved"
   test "$(snapshot_vendor)" = "$before"
 }
 
@@ -379,6 +496,10 @@ done
 for step in target_identity version_identity version_content; do
   assert_identity_replacement_preserved "$step"
 done
+for step in target version; do
+  assert_restore_conflict_preserved "$step"
+done
+assert_installed_replacement_preserved
 
 mkdir -p infra/supabase/volumes/db/data
 printf 'runtime data\n' > infra/supabase/volumes/db/data/PG_VERSION
