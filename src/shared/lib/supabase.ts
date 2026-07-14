@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
-import type { Database } from "@/shared/types/database.generated";
+import type { Database } from "@/shared/types/database";
 
 export type BrowserSupabaseClient = SupabaseClient<Database>;
 
