@@ -1,5 +1,5 @@
 begin;
-select plan(24);
+select plan(26);
 
 select has_table('public', 'pantry_items', 'pantry item table exists');
 select has_table('public', 'generation_drafts', 'generation draft table exists');
@@ -11,6 +11,9 @@ select has_column('public', 'generation_drafts', 'pantry_selections',
   'generation draft has pantry selections');
 select has_column('public', 'generation_drafts', 'revision',
   'generation draft has a revision');
+select has_column('public', 'generation_drafts', 'deleted_at',
+  'generation draft has a deletion tombstone');
+select has_function('public', 'delete_generation_draft', array['bigint']);
 select ok((select relrowsecurity from pg_class where oid = 'public.pantry_items'::regclass),
   'pantry item RLS is enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.generation_drafts'::regclass),

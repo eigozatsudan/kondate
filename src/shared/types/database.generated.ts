@@ -56,9 +56,35 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      is_canonical_bounded_text: {
+        Args: { p_max_length: number; p_min_length: number; p_value: string }
+        Returns: boolean
+      }
       is_valid_draft_pantry_selections: {
         Args: { p_value: Json }
         Returns: boolean
+      }
+      is_valid_draft_text_array: {
+        Args: { p_max_count: number; p_max_length: number; p_value: string[] }
+        Returns: boolean
+      }
+      is_valid_draft_uuid_array: {
+        Args: { p_max_count: number; p_value: string[] }
+        Returns: boolean
+      }
+      soft_delete_generation_draft: {
+        Args: {
+          p_draft_id: string
+          p_expected_revision: number
+          p_user_id: string
+        }
+        Returns: Database["public"]["Tables"]["generation_drafts"]["Row"]
+        SetofOptions: {
+          from: "*"
+          to: "generation_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
     }
     Enums: {
@@ -174,6 +200,7 @@ export type Database = {
           budget_preference: string | null
           created_at: string
           cuisine_genre: string | null
+          deleted_at: string | null
           id: string
           main_ingredients: string[]
           meal_type: string | null
@@ -190,6 +217,7 @@ export type Database = {
           budget_preference?: string | null
           created_at?: string
           cuisine_genre?: string | null
+          deleted_at?: string | null
           id?: string
           main_ingredients?: string[]
           meal_type?: string | null
@@ -206,6 +234,7 @@ export type Database = {
           budget_preference?: string | null
           created_at?: string
           cuisine_genre?: string | null
+          deleted_at?: string | null
           id?: string
           main_ingredients?: string[]
           meal_type?: string | null
@@ -497,6 +526,10 @@ export type Database = {
           id: string
         }[]
       }
+      delete_generation_draft: {
+        Args: { p_expected_revision: number }
+        Returns: number
+      }
       deposit_auth_continuation: {
         Args: {
           p_ciphertext: string
@@ -526,6 +559,7 @@ export type Database = {
           budget_preference: string | null
           created_at: string
           cuisine_genre: string | null
+          deleted_at: string | null
           id: string
           main_ingredients: string[]
           meal_type: string | null
