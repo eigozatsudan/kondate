@@ -250,6 +250,7 @@ git commit -m "fix: Supabase vendor更新を排他制御"
 **Files:**
 - Create: `scripts/refresh-supabase.sh`
 - Modify: `tests/tooling/local-development-scripts.test.mjs`
+- Modify: `tests/tooling/compose.test.mjs`
 - Modify: `docs/local-development.md`
 
 **Interfaces:**
@@ -323,7 +324,7 @@ Expected: 全command PASS。
 - [ ] **Step 5: コミットする**
 
 ```bash
-git add scripts/refresh-supabase.sh tests/tooling/local-development-scripts.test.mjs docs/local-development.md
+git add scripts/refresh-supabase.sh tests/tooling/local-development-scripts.test.mjs tests/tooling/compose.test.mjs docs/local-development.md
 git commit -m "fix: Supabase更新前にローカルDBを停止"
 ```
 
