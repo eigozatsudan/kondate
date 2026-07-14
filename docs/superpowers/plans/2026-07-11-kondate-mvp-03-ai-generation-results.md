@@ -176,7 +176,7 @@ describe("aiGenerationResponseSchema", () => {
 
 - [ ] **Step 2 (2–5 min): Run the contract test and observe the expected failure**
 
-Run: `npm test -- --run shared/contracts/generation.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run shared/contracts/generation.test.ts'`
 
 Expected: FAIL with `Cannot find module './generation'`.
 
@@ -452,7 +452,7 @@ export type AiGeneratedMenuPayload=z.infer<typeof aiGeneratedMenuPayloadSchema>;
 
 - [ ] **Step 4 (2–5 min): Run the focused test and typecheck and observe the pass**
 
-Run: `npm test -- --run shared/contracts/generation.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run shared/contracts/generation.test.ts && npm run typecheck'`
 
 Expected: Vitest reports all generation contract cases PASS; TypeScript exits 0 without `any` or a boundary assertion.
 
@@ -698,7 +698,7 @@ rollback;
 
 - [ ] **Step 2 (2–5 min): Run pgTAP and observe the missing-table failure**
 
-Run: `npm run db:test -- supabase/tests/database/ai_control_and_quota.test.sql`
+Run: `docker compose --profile test run --rm db-test supabase/tests/database/ai_control_and_quota.test.sql`
 
 Expected: FAIL at `has_table('private', 'ai_generation_requests')` and the missing RPC assertions.
 
@@ -1092,10 +1092,10 @@ grant execute on function public.finalize_ai_generation_conflict(uuid, jsonb, ti
 Run:
 
 ```bash
-npm run db:reset
-npm run db:test -- supabase/tests/database/ai_control_and_quota.test.sql
-npm run db:types
-npm run typecheck
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test supabase/tests/database/ai_control_and_quota.test.sql
+docker compose run --rm app npm run db:types
+docker compose run --rm --no-deps app npm run typecheck
 ```
 
 Expected: pgTAP reports 20 successful assertions; generated `Database` includes all three private tables and seven public RPCs; typecheck exits 0.
@@ -1185,7 +1185,7 @@ describe("parseOpenRouterModels", () => {
 
 - [ ] **Step 2 (2–5 min): Run the focused test and observe missing parser failures**
 
-Run: `npm test -- --run netlify/functions/_shared/env.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/env.test.ts'`
 
 Expected: FAIL because `parseOpenRouterModels` and the `openRouter` configuration do not exist.
 
@@ -1347,10 +1347,10 @@ if (process.exitCode !== 1) {
 Run these exact package mutations so existing Plan 1–2 scripts and dependencies are preserved:
 
 ```bash
-npm pkg set 'scripts.verify:openrouter:config=node scripts/verify-openrouter-models.mjs'
-npm pkg set 'scripts.verify:openrouter:models=node scripts/verify-openrouter-models.mjs --remote'
-npm pkg set 'scripts.predev=npm run verify:openrouter:config'
-npm pkg set 'scripts.prebuild=npm run verify:openrouter:config'
+docker compose run --rm --no-deps app npm pkg set 'scripts.verify:openrouter:config=node scripts/verify-openrouter-models.mjs'
+docker compose run --rm --no-deps app npm pkg set 'scripts.verify:openrouter:models=node scripts/verify-openrouter-models.mjs --remote'
+docker compose run --rm --no-deps app npm pkg set 'scripts.predev=npm run verify:openrouter:config'
+docker compose run --rm --no-deps app npm pkg set 'scripts.prebuild=npm run verify:openrouter:config'
 ```
 
 - [ ] **Step 5 (2–5 min): Run parser, syntax, paid-model rejection, and type tests**
@@ -1358,10 +1358,10 @@ npm pkg set 'scripts.prebuild=npm run verify:openrouter:config'
 Run:
 
 ```bash
-npm test -- --run netlify/functions/_shared/env.test.ts
-OPENROUTER_MODELS=google/gemma-3-27b-it:free npm run verify:openrouter:config
-OPENROUTER_MODELS=openai/gpt-4o npm run verify:openrouter:config
-npm run typecheck
+docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/env.test.ts
+docker compose run --rm --no-deps -e OPENROUTER_MODELS=google/gemma-3-27b-it:free app npm run verify:openrouter:config
+docker compose run --rm --no-deps -e OPENROUTER_MODELS=openai/gpt-4o app npm run verify:openrouter:config
+docker compose run --rm --no-deps app npm run typecheck
 ```
 
 Expected: Vitest PASS; the free config exits 0 with `Verified 1 free OpenRouter model(s).`; the paid config exits non-zero with `non-free model`; typecheck exits 0. Do not run `verify:openrouter:models` in normal tests.
@@ -1386,70 +1386,26 @@ git commit -m "feat: enforce free openrouter models"
 
 - [ ] **Step 1 (2–5 min): Add a failing transaction and status test**
 
+Task 15 is the mandatory correction gate for this transaction test. Do not add the
+old empty-target/dummy-fingerprint fixture here. At this point add only a RED
+signature assertion for the one final public entry point; Task 15 replaces it with
+the complete canonical success and ordering fixture before this test file may be
+considered GREEN.
+
 ```sql
--- Replace the existing plan count before appending these four assertions.
-select plan(24);
-
-do $$
-begin
-  perform public.reserve_ai_generation(
-    '10000000-0000-4000-8000-000000000001',
-    '20000000-0000-4000-8000-000000000003',
-    'new_menu', null, 5, 45, 180, '2026-07-10 15:00:30+00'
-  );
-end;
-$$;
-
-select lives_ok($$
-  select public.finalize_ai_generation_success(
-    (select id from private.ai_generation_requests where status = 'processing' limit 1),
-    jsonb_build_object(
-      'schemaVersion','2026-07-11.v1',
-      'menuId','60000000-0000-4000-8000-000000000001',
-      'mealType','dinner','cuisineGenre','japanese','servings',2,
-      'totalElapsedMinutes',15,'safetyTags',jsonb_build_array(),
-      'dishes',jsonb_build_array(jsonb_build_object(
-        'id','61000000-0000-4000-8000-000000000001','role','main','position',1,
-        'name','鶏肉と白菜の煮物','description','短時間の煮物','cookingTimeMinutes',15,
-        'ingredients',jsonb_build_array(jsonb_build_object(
-          'id','62000000-0000-4000-8000-000000000001','position',1,'name','鶏もも肉',
-          'quantityValue',200,'quantityText','200g','unit','g','storeSection','meat_fish',
-          'pantrySelectionId',null,'labelConfirmationRequired',false
-        )),
-        'steps',jsonb_build_array(jsonb_build_object(
-          'id','63000000-0000-4000-8000-000000000001','position',1,'instruction','材料を加熱する'
-        ))
-      )),
-      'timeline',jsonb_build_array(jsonb_build_object(
-        'id','64000000-0000-4000-8000-000000000001','position',1,'startMinute',0,
-        'durationMinutes',15,'instruction','主菜を作る',
-        'dishId','61000000-0000-4000-8000-000000000001',
-        'recipeStepId','63000000-0000-4000-8000-000000000001'
-      )),
-      'adaptations',jsonb_build_array(), 'pantryUsage',jsonb_build_array(),
-      'labelConfirmations',jsonb_build_array()
-    ),
-    '{"mealType":"dinner"}'::jsonb,
-    '{"members":[]}'::jsonb,
-    'fingerprint-v1','allergen-v1','food-v1',
-    '[]'::jsonb,'[]'::jsonb,'2026-07-10 15:01:00+00'
-  )
-$$);
-select is((select status from private.ai_generation_requests
-  where completed_menu_id = '60000000-0000-4000-8000-000000000001'), 'succeeded');
-select is((select success_count from private.ai_user_daily_usage
-  where user_id = '10000000-0000-4000-8000-000000000001'), 1);
-select is((public.get_ai_generation_status(
-  '10000000-0000-4000-8000-000000000001',
-  '20000000-0000-4000-8000-000000000003', 5, '2026-07-10 15:01:00+00'
-)->>'status'), 'succeeded');
+select ok(
+  to_regprocedure(
+    'public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz)'
+  ) is not null,
+  'the final 13-argument success finalizer exists'
+);
 ```
 
 - [ ] **Step 2 (2–5 min): Run pgTAP and observe the missing-finalizer failure**
 
-Run: `npm run db:test -- supabase/tests/database/ai_control_and_quota.test.sql`
+Run: `docker compose --profile test run --rm db-test supabase/tests/database/ai_control_and_quota.test.sql`
 
-Expected: FAIL because `finalize_ai_generation_success` and `get_ai_generation_status` do not exist.
+Expected: FAIL because the final 13-argument `finalize_ai_generation_success` does not exist. Task 15 owns the only executable success fixture; no eight-argument reservation or ten-argument finalizer call is introduced here.
 
 - [ ] **Step 3 (2–5 min): Add the complete normalized private persistence function**
 
@@ -1606,6 +1562,7 @@ create or replace function public.finalize_ai_generation_success(
   p_request_id uuid,p_menu jsonb,p_preference_snapshot jsonb,p_safety_snapshot jsonb,
   p_safety_fingerprint text,p_allergen_version text,p_food_rule_version text,
   p_target_members jsonb,p_expired_checks jsonb,
+  p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text,
   p_now timestamptz default clock_timestamp()
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp
 as $$
@@ -1617,9 +1574,23 @@ begin
   if not v_request.user_quota_reserved then
     raise exception using errcode = '23514', message = 'user_reservation_missing';
   end if;
+  perform private.lock_and_assert_current_safety_fingerprint(
+    v_request.user_id,
+    array(select (target->>'householdMemberId')::uuid
+      from jsonb_array_elements(p_target_members) as targets(target)),
+    p_safety_fingerprint
+  );
   v_menu_id := private.persist_validated_menu(
     v_request,p_menu,p_preference_snapshot,p_safety_snapshot,p_safety_fingerprint,
     p_allergen_version,p_food_rule_version,p_target_members,p_expired_checks
+  );
+  perform private.assign_regeneration_lineage(
+    v_request.user_id,p_source_menu_id,v_menu_id,p_change_reason,p_change_reason_custom
+  );
+  perform private.soft_delete_generation_draft(
+    v_request.user_id,
+    v_request.draft_id,
+    null
   );
   update private.ai_user_daily_usage set
     reserved_count = reserved_count - 1, success_count = success_count + 1, updated_at = p_now
@@ -1629,7 +1600,6 @@ begin
     update private.ai_global_daily_usage set reserved_count = reserved_count - 1, updated_at = p_now
     where usage_day = v_request.global_reserved_day and reserved_count > 0;
   end if;
-  delete from public.generation_drafts where id = v_request.draft_id and user_id = v_request.user_id;
   update private.ai_generation_requests set
     status = 'succeeded',completed_menu_id = v_menu_id,user_quota_reserved = false,
     global_reserved_day = null,completed_at = p_now,updated_at = p_now,
@@ -1670,17 +1640,24 @@ begin
 end;
 $$;
 
-revoke all on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,timestamptz) from public,anon,authenticated;
+revoke all on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) from public,anon,authenticated;
 revoke all on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) from public,anon,authenticated;
-grant execute on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,timestamptz) to service_role;
+grant execute on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) to service_role;
 grant execute on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) to service_role;
 ```
 
 - [ ] **Step 5 (2–5 min): Re-run migration, transaction tests, and generated-type checks**
 
-Run: `npm run db:reset && npm run db:test -- supabase/tests/database/ai_control_and_quota.test.sql && npm run db:types && npm run typecheck`
+Run each command separately:
 
-Expected: all updated pgTAP assertions PASS; one menu and every normalized child, including all validator-returned `menu_safety_actions`, commit with one user success, while any injected child-row violation or action-count mismatch rolls the menu, quota transition, and request transition back together.
+```bash
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test supabase/tests/database/ai_control_and_quota.test.sql
+docker compose run --rm app npm run db:types
+docker compose run --rm --no-deps app npm run typecheck
+```
+
+Expected: the private normalized-persistence assertions and final 13-argument signature assertion PASS. Do not execute an empty-target or dummy-fingerprint success call at this intermediate gate. Task 15 installs the canonical fingerprint/lineage helpers and runs the sole complete transaction fixture proving that one menu and every normalized child commit with one user success while any injected violation rolls the aggregate, quota, draft, and request transitions back together.
 
 - [ ] **Step 6 (2–5 min): Commit transactional persistence**
 
@@ -1735,7 +1712,7 @@ it("serializes only the approved log fields", () => {
 
 - [ ] **Step 2 (2–5 min): Run focused tests and observe missing modules**
 
-Run: `npm test -- --run netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts'`
 
 Expected: FAIL because the user client, logger, and repository modules do not exist.
 
@@ -1899,7 +1876,7 @@ export { type UserSupabaseClient };
 
 - [ ] **Step 5 (2–5 min): Run focused tests and typecheck and observe the pass**
 
-Run: `npm test -- --run netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts && npm run typecheck'`
 
 Expected: tests PASS, RPC errors expose no database detail, logger snapshots contain exactly four allowlisted fields, and typecheck exits 0.
 
@@ -1962,7 +1939,7 @@ it("does not return malformed content", async () => {
 
 - [ ] **Step 2 (2–5 min): Run the client tests and observe the missing-module failure**
 
-Run: `npm test -- --run netlify/functions/_shared/openrouter.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter.test.ts'`
 
 Expected: FAIL because `openrouter.ts` does not exist.
 
@@ -2054,7 +2031,7 @@ export async function sendMenuGeneration(
 
 - [ ] **Step 4 (2–5 min): Run the exact client tests and typecheck**
 
-Run: `npm test -- --run netlify/functions/_shared/openrouter.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter.test.ts && npm run typecheck'`
 
 Expected: request body, ordered fallback, strict schema, `require_parameters`, malformed JSON, provider failure, actual model, and abort cases PASS; typecheck exits 0.
 
@@ -2095,7 +2072,7 @@ it("keeps every required adversarial scenario fixed in source control", () => {
 
 - [ ] **Step 2 (2–5 min): Run the test and observe the missing-fixture failure**
 
-Run: `npm test -- --run netlify/functions/_shared/openrouter-mock.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter-mock.test.ts'`
 
 Expected: FAIL because `tools/openrouter-mock/fixtures/scenarios.mjs` does not exist.
 
@@ -2280,7 +2257,7 @@ Keep Plan 1's single `openrouter-mock` service and port `8787`; do not add a sec
 
 - [ ] **Step 5 (2–5 min): Run fixture, mock integration, and Compose checks**
 
-Run: `npm test -- --run netlify/functions/_shared/openrouter-mock.test.ts && docker compose config --quiet`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter-mock.test.ts && docker compose config --quiet'`
 
 Expected: fixed-scenario test PASS and Compose exits 0 with a read-only mock source mount.
 
@@ -2334,7 +2311,7 @@ it("keeps names, email, and database ids out of the prompt", () => {
 
 - [ ] **Step 2 (2–5 min): Run the focused tests and observe missing context modules**
 
-Run: `npm test -- --run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts'`
 
 Expected: FAIL because the current-state loader and prompt builder do not exist.
 
@@ -2548,7 +2525,7 @@ export function buildGenerationMessages(context: GenerationContext): readonly Op
 
 - [ ] **Step 5 (2–5 min): Run context, prompt, and type tests**
 
-Run: `npm test -- --run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts && npm run typecheck'`
 
 Expected: tests PASS for current profile reload, incomplete/foreign member rejection, current consent, unsupported medical text, expired pantry JST reset, missing pantry row, anonymous references, and absence of DB IDs/names/email in prompts.
 
@@ -2610,7 +2587,7 @@ it("uses one repair global slot, excludes the first model, and reserves no secon
 
 - [ ] **Step 2 (2–5 min): Run the service tests and observe the missing orchestrator failure**
 
-Run: `npm test -- --run netlify/functions/_shared/generation-service.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-service.test.ts'`
 
 Expected: FAIL because `runGeneration` and its dependency contract do not exist.
 
@@ -2812,7 +2789,7 @@ export async function runGeneration(
 
 - [ ] **Step 5 (2–5 min): Run orchestration, adversarial validation, and type tests**
 
-Run: `npm test -- --run netlify/functions/_shared/generation-service.test.ts shared/safety/generation-validation.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-service.test.ts shared/safety/generation-validation.test.ts && npm run typecheck'`
 
 Expected: tests PASS for idempotent replay, one active request, pre-send release, send-before-fetch accounting, sent-call non-release, one repair, first-model exclusion, repair quota denial, conflict, timeout, raw-output non-persistence, validated transaction, and current-safety validation.
 
@@ -2858,7 +2835,7 @@ it("returns not_started for an owner-scoped missing key", async () => {
 
 - [ ] **Step 2 (2–5 min): Run handler tests and observe missing function modules**
 
-Run: `npm test -- --run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts'`
 
 Expected: FAIL because both fetch-style Functions are missing.
 
@@ -2930,7 +2907,7 @@ export const config: Config = {
 
 - [ ] **Step 5 (2–5 min): Run handler, auth-envelope, and type tests**
 
-Run: `npm test -- --run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/http.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/http.test.ts && npm run typecheck'`
 
 Expected: tests PASS for 401, 405, invalid JSON, unknown fields, consent, not_started, processing, succeeded, failed, constraint conflict, same-key replay, another user's indistinguishable missing key, and no duplicated OpenRouter call.
 
@@ -3005,7 +2982,7 @@ it("resends only from not_started and never from processing", () => {
 
 - [ ] **Step 2 (2–5 min): Run the three focused suites and observe missing modules**
 
-Run: `npm test -- --run src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts'`
 
 Expected: FAIL because browser generation modules do not exist.
 
@@ -3140,7 +3117,7 @@ export function generationReducer(state: GenerationClientState, event: Generatio
 
 - [ ] **Step 6 (2–5 min): Run browser boundary tests and typecheck**
 
-Run: `npm test -- --run src/features/generation/api src/features/generation/model && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/api src/features/generation/model && npm run typecheck'`
 
 Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST, auth expiry, envelope failure, all five statuses, offline/online, not_started-only resend, and no processing resend.
 
@@ -3189,7 +3166,7 @@ it("shows returned quota and Japan retry time after failure", () => {
 
 - [ ] **Step 2 (2–5 min): Run hook/component tests and observe missing modules**
 
-Run: `npm test -- --run src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx'`
 
 Expected: FAIL because the recovery controller and status panel do not exist.
 
@@ -3298,7 +3275,7 @@ Wire the planner submit callback to await Plan 2's `autosave.flush()`, build `{k
 
 - [ ] **Step 5 (2–5 min): Run planner, recovery, component, and route tests**
 
-Run: `npm test -- --run src/features/planner src/features/generation/hooks src/features/generation/components && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/planner src/features/generation/hooks src/features/generation/components && npm run typecheck'`
 
 Expected: tests PASS for save-before-send, POST-before-accept tab destruction, not_started re-confirm/resend, processing no-resend, response loss, online, visibility, auth return, succeeded navigation, every quota message, and 44px controls.
 
@@ -3384,7 +3361,7 @@ it("renders confirmation ids through human source, allergen, and member labels",
 
 - [ ] **Step 2 (2–5 min): Run the focused API and component tests and observe missing modules**
 
-Run: `npm test -- --run src/features/generation/api/menu-result-api.test.ts src/features/generation/components/menu-result.test.tsx src/features/generation/pages/menu-result-page.test.tsx`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/api/menu-result-api.test.ts src/features/generation/components/menu-result.test.tsx src/features/generation/pages/menu-result-page.test.tsx'`
 
 Expected: FAIL because the aggregate loader, result component, and result page do not exist.
 
@@ -3673,7 +3650,13 @@ export function MenuResultPage() {
 
 - [ ] **Step 6 (2–5 min): Run result API, component, page, RLS, and mobile checks**
 
-Run: `npm test -- --run src/features/generation/api/menu-result-api.test.ts src/features/generation/components/menu-result.test.tsx src/features/generation/pages/menu-result-page.test.tsx && npm run db:test -- supabase/tests/database/04_menu_core.test.sql && npm run typecheck`
+Run each command separately:
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/features/generation/api/menu-result-api.test.ts src/features/generation/components/menu-result.test.tsx src/features/generation/pages/menu-result-page.test.tsx
+docker compose --profile test run --rm db-test supabase/tests/database/04_menu_core.test.sql
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: tests PASS for owner aggregate mapping, another-user/missing result, timeline-first DOM order, keyboard tabs, materials, numbered steps, all adaptation fields, pantry use/shortage/unused reason, label-confirmation source/member/version, disclaimer copy, pending-key clearing after load, and 320px no-overflow styles.
 
@@ -3748,7 +3731,7 @@ it.each(["malformed-json", "direct-allergen", "alias-in-step", "missing-label-co
 
 - [ ] **Step 2 (2–5 min): Run adversarial integration and observe any missing structural-repair path**
 
-Run: `npm test -- --run netlify/functions/_shared/generation-adversarial.integration.test.ts netlify/functions/_shared/generation-service.test.ts`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-adversarial.integration.test.ts netlify/functions/_shared/generation-service.test.ts'`
 
 Expected before the final red-green correction: malformed JSON reports only one sent call, proving structural parse failures are not yet routed through the single repair path.
 
@@ -3891,13 +3874,17 @@ describe.skipIf(process.env.RUN_OPENROUTER_SMOKE !== "1")("real OpenRouter", () 
 Add the exact opt-in script without changing normal `test`:
 
 ```bash
-npm pkg set 'scripts.test:openrouter:smoke=vitest run netlify/functions/_shared/openrouter.smoke.test.ts'
+docker compose run --rm --no-deps app npm pkg set 'scripts.test:openrouter:smoke=vitest run netlify/functions/_shared/openrouter.smoke.test.ts'
 ```
 
 Manual or limited-CI command, run only with an operator-selected current free structured-output model:
 
 ```bash
-RUN_OPENROUTER_SMOKE=1 OPENROUTER_API_KEY='<explicit secret>' OPENROUTER_MODELS='<explicit-model-id>:free' npm run test:openrouter:smoke
+docker compose run --rm --no-deps \
+  -e RUN_OPENROUTER_SMOKE=1 \
+  -e OPENROUTER_API_KEY='<explicit secret>' \
+  -e OPENROUTER_MODELS='<explicit-model-id>:free' \
+  app npm run test:openrouter:smoke
 ```
 
 Expected: exactly one application call to `/chat/completions`; PASS with a structural `success` or `constraint_conflict`. This command is not part of the normal gate and its secret/output is never logged.
@@ -3907,13 +3894,13 @@ Expected: exactly one application call to `/chat/completions`; PASS with a struc
 Run:
 
 ```bash
-npm run format:check
-npm run lint
-npm run typecheck
-npm test -- --run
-npm run db:test
-npm run e2e
-npm run build
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm test -- --run
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run e2e
+docker compose run --rm --no-deps app npm run build
 docker compose config --quiet
 ```
 
@@ -4029,6 +4016,7 @@ const checks = [
 const commands: readonly GenerationCommand[] = [
   { kind: "new_menu", request: { idempotencyKey: "10000000-0000-4000-8000-000000000001",
     draftId: "20000000-0000-4000-8000-000000000001",
+    draftRevision: 3,
     privacyNoticeVersion: "2026-07-11.v1", expiredPantryConfirmations: [...checks] } },
   { kind: "regenerate_menu", request: { idempotencyKey: "10000000-0000-4000-8000-000000000002",
     sourceMenuId: "40000000-0000-4000-8000-000000000001", changeReason: "custom",
@@ -4058,6 +4046,7 @@ describe("generation command integrity", () => {
       { version: "generation-command.v1", kind: "new_menu",
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         draftId: "20000000-0000-4000-8000-000000000001",
+        draftRevision: 3,
         privacyNoticeVersion: "2026-07-11.v1", expiredPantryConfirmations: sorted },
       { version: "generation-command.v1", kind: "regenerate_menu",
         idempotencyKey: "10000000-0000-4000-8000-000000000002",
@@ -4082,6 +4071,8 @@ describe("generation command integrity", () => {
         ...newCommand.request, idempotencyKey: "10000000-0000-4000-8000-000000000009" } })],
       [newCommand, generationCommandSchema.parse({ ...newCommand, request: {
         ...newCommand.request, draftId: "20000000-0000-4000-8000-000000000009" } })],
+      [newCommand, generationCommandSchema.parse({ ...newCommand, request: {
+        ...newCommand.request, draftRevision: 4 } })],
       [newCommand, generationCommandSchema.parse({ ...newCommand, request: {
         ...newCommand.request, expiredPantryConfirmations: [
           { ...checks[0], pantryItemId: "30000000-0000-4000-8000-000000000009" }, checks[1],
@@ -4110,6 +4101,532 @@ describe("generation command integrity", () => {
 ```
 
 Extend pgTAP with a same-HMAC replay and a mismatched-HMAC transaction. Before the mismatched call, seed one stale request and snapshot every success/attempt/window/global counter. Assert `22023/idempotency_payload_mismatch`, the stale row remains `processing`, every counter is byte-for-byte unchanged, and no new ledger row exists. This proves comparison occurs before cleanup and quota/counter access—not merely before the OpenRouter send. Also inspect `pg_attribute`/`pg_constraint` to require non-null `request_hmac_version = 'generation-command.v1'`, a lowercase 64-hex `request_hmac`, and no `request_body`, `request_json`, `prompt`, or `change_reason_custom` column in `private.ai_generation_requests`. Exercise the final conflict RPC with an invalid code, duplicate code, and more than 12 codes; each call must fail with `22023/invalid_terminal_details` without changing the request. An allowed conflict persists only the closed conflict-code DTO described in Step 5. A direct SQL update attempting a nested `changeReasonCustom`, `message`, or unknown key must fail the table constraint.
+
+同じStep 5のpgTAPへ追加する前に、ファイル先頭の固定`plan(...)`を`select no_plan();`へ置換し、末尾の`select * from finish();`は維持する。次のblockはすべての変数を宣言し、呼出しは上の最終シグネチャである。DO block内の比較失敗は例外にし、成功時だけtop-levelの`pass()`がTAP assertionを1行出力する。`v_before`はrequest ledger、immutable submission snapshot、success quota、daily external attempt、fixed window、global counterの全行をPK順で保持する。
+
+Task 2 Step 1で中間migrationをRED/GREENにする旧8引数lifecycle blockはその時点では維持する。Task 15で最終migrationへ置換するとき、同じtest fileの`select throws_ok($$ select public.reserve_ai_generation(`から、最初の`finalize_ai_generation_failure`後のuser daily `reserved_count = 0`検査までを、次の完全なblockへ置換する。旧8引数呼出しを最終test fileへ1つも残さない。
+
+```sql
+insert into public.generation_drafts(
+  id,user_id,meal_type,main_ingredients,cuisine_genre,target_member_ids,
+  time_limit_minutes,budget_preference,avoid_ingredients,memo,pantry_selections,revision
+) values(
+  '21000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001','dinner',array['鶏肉'],'japanese',
+  array[]::uuid[],30,'standard',array[]::text[],'','[]',1
+);
+
+select throws_ok($$
+  select public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000099','new_menu',
+    '21000000-0000-4000-8000-000000000001',1,null,null,null,
+    'generation-command.v1',repeat('9',64),6,45,180,
+    '2026-07-10 15:00:00+00'
+  )
+$$, '22023', 'release_quota_mismatch',
+  'the database rejects an environment-only success-limit override');
+
+select is(public.reserve_ai_generation(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000001','new_menu',
+  '21000000-0000-4000-8000-000000000001',1,null,null,null,
+  'generation-command.v1',repeat('1',64),5,45,180,
+  '2026-07-10 15:00:00+00')->>'status','processing');
+select is(public.reserve_ai_generation(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000001','new_menu',
+  '21000000-0000-4000-8000-000000000001',1,null,null,null,
+  'generation-command.v1',repeat('1',64),5,45,180,
+  '2026-07-10 15:00:01+00')->>'replayed','true');
+select is((select reserved_count from private.ai_user_daily_usage
+  where user_id='10000000-0000-4000-8000-000000000001'),1);
+select is((select reserved_count from private.ai_global_daily_usage
+  where usage_day=date '2026-07-11'),1);
+select is(public.reserve_ai_generation(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002','new_menu',
+  '21000000-0000-4000-8000-000000000001',1,null,null,null,
+  'generation-command.v1',repeat('2',64),5,45,180,
+  '2026-07-10 15:00:02+00')->>'failure_code','generation_in_progress');
+select lives_ok($$
+  select public.finalize_ai_generation_failure(
+    (select id from private.ai_generation_requests
+      where idempotency_key='20000000-0000-4000-8000-000000000001'),
+    'model_unavailable','2026-07-10 15:05:00+00','2026-07-10 15:00:03+00'
+  )
+$$);
+select is((select reserved_count from private.ai_user_daily_usage
+  where user_id='10000000-0000-4000-8000-000000000001'),0);
+```
+
+```sql
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000071';
+  v_draft_id constant uuid := '20000000-0000-4000-8000-000000000071';
+  v_key constant uuid := '30000000-0000-4000-8000-000000000071';
+  v_revision constant bigint := 7;
+  v_deleted public.generation_drafts;
+  v_before jsonb;
+  v_after jsonb;
+begin
+  if to_regprocedure(
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,integer,integer,integer,timestamptz)'
+  ) is null then
+    raise exception 'the final reservation signature is missing';
+  end if;
+  if to_regprocedure(
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,integer,integer,integer,timestamptz)'
+  ) is not null then
+    raise exception 'the obsolete reservation overload still exists';
+  end if;
+  insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  values(v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','deleted-reserve@example.invalid','','{}','{}',now(),now());
+  insert into public.generation_drafts(
+    id,user_id,meal_type,main_ingredients,cuisine_genre,target_member_ids,
+    time_limit_minutes,budget_preference,avoid_ingredients,memo,pantry_selections,revision
+  ) values(v_draft_id,v_owner,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30,'standard',array[]::text[],'','[]',v_revision);
+
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft_id,v_revision);
+  if v_deleted.revision is distinct from v_revision + 1 then
+    raise exception 'deleted reserve fixture did not advance the draft revision';
+  end if;
+
+  select jsonb_build_object(
+    'requests',coalesce((select jsonb_agg(to_jsonb(t) order by t.id)
+      from private.ai_generation_requests t),'[]'::jsonb),
+    'snapshots',coalesce((select jsonb_agg(to_jsonb(t)
+      order by t.draft_id,t.user_id,t.draft_revision)
+      from private.generation_draft_submission_versions t),'[]'::jsonb),
+    'success',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_usage t),'[]'::jsonb),
+    'attempts',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_external_attempts t),'[]'::jsonb),
+    'windows',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.window_started_at)
+      from private.ai_user_rate_windows t),'[]'::jsonb),
+    'global',coalesce((select jsonb_agg(to_jsonb(t) order by t.usage_day)
+      from private.ai_global_daily_usage t),'[]'::jsonb)
+  ) into v_before;
+
+  begin
+    perform public.reserve_ai_generation(
+      v_owner,v_key,'new_menu',v_draft_id,v_revision,
+      null,null,null,'generation-command.v1',repeat('a',64),
+      5,45,180,'2026-07-11 00:00:00+00');
+    raise exception using errcode='XX000',message='expected_draft_unavailable';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> 'draft_unavailable' then raise; end if;
+  end;
+
+  select jsonb_build_object(
+    'requests',coalesce((select jsonb_agg(to_jsonb(t) order by t.id)
+      from private.ai_generation_requests t),'[]'::jsonb),
+    'snapshots',coalesce((select jsonb_agg(to_jsonb(t)
+      order by t.draft_id,t.user_id,t.draft_revision)
+      from private.generation_draft_submission_versions t),'[]'::jsonb),
+    'success',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_usage t),'[]'::jsonb),
+    'attempts',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_external_attempts t),'[]'::jsonb),
+    'windows',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.window_started_at)
+      from private.ai_user_rate_windows t),'[]'::jsonb),
+    'global',coalesce((select jsonb_agg(to_jsonb(t) order by t.usage_day)
+      from private.ai_global_daily_usage t),'[]'::jsonb)
+  ) into v_after;
+  if v_after is distinct from v_before then
+    raise exception 'deleted draft reservation changed ledger, snapshot, quota, or counter state';
+  end if;
+end
+$test$;
+select pass('deleted draft reservation rejects with the final signature and zero side effects');
+```
+
+Task 15はTask 4の旧空target/dummy fingerprintのsuccess fixtureを削除する。migration `020`に次の2関数をそのまま追加する。`jsonb::text`は区切り空白が入りJavaScriptの`JSON.stringify`と異なるため使わず、Plan 2の`createCurrentSafetyFingerprint`と同じキー順のcompact JSON textを構築する。`anonymousRef`は入力配列のordinalityで決め、その後member ID順へ並べる。allergen/constraint/diet配列も個別にソートするため、hash byte列までTypeScriptと一致する。
+
+```sql
+create or replace function private.current_safety_fingerprint(
+  p_user_id uuid,p_target_member_ids uuid[]
+) returns text
+language plpgsql
+stable
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_requested_count integer;
+  v_member_count integer;
+  v_members text;
+  v_payload text;
+begin
+  if p_user_id is null or p_target_member_ids is null
+     or pg_catalog.cardinality(p_target_member_ids)=0
+     or pg_catalog.array_position(p_target_member_ids,null::uuid) is not null then
+    raise exception using errcode='22023',message='invalid_target_members';
+  end if;
+  select pg_catalog.count(distinct requested.member_id)::integer
+    into v_requested_count
+  from pg_catalog.unnest(p_target_member_ids) as requested(member_id);
+  if v_requested_count<>pg_catalog.cardinality(p_target_member_ids) then
+    raise exception using errcode='22023',message='invalid_target_members';
+  end if;
+
+  with requested as (
+    select target.member_id,target.ordinality
+    from pg_catalog.unnest(p_target_member_ids) with ordinality
+      as target(member_id,ordinality)
+  ), canonical_members as (
+    select member.id,
+      'member_'||requested.ordinality::text as anonymous_ref,
+      member.age_band,member.allergy_status,
+      coalesce(array(select allergy.allergen_id
+        from public.member_allergies allergy
+        where allergy.user_id=p_user_id and allergy.member_id=member.id
+          and allergy.allergen_id is not null
+        order by allergy.allergen_id),array[]::text[]) as allergen_ids,
+      exists(select 1 from public.member_allergies allergy
+        where allergy.user_id=p_user_id and allergy.member_id=member.id
+          and allergy.allergen_id is null) as has_unmapped_custom_allergy,
+      array(select value from pg_catalog.unnest(member.required_safety_constraints)
+        as constraints_(value) order by value) as required_constraints,
+      member.unsupported_diet_status,
+      array(select value from pg_catalog.unnest(member.unsupported_diet_kinds)
+        as diets(value) order by value) as unsupported_diet_kinds
+    from requested
+    join public.household_members member
+      on member.id=requested.member_id and member.user_id=p_user_id
+     and member.status='complete'
+  ), encoded as (
+    select id,
+      '{"householdMemberId":'||pg_catalog.to_json(id::text)::text||
+      ',"anonymousRef":'||pg_catalog.to_json(anonymous_ref)::text||
+      ',"ageBand":'||pg_catalog.to_json(age_band)::text||
+      ',"allergyStatus":'||pg_catalog.to_json(allergy_status)::text||
+      ',"allergenIds":'||pg_catalog.to_json(allergen_ids)::text||
+      ',"hasUnmappedCustomAllergy":'||
+        pg_catalog.to_json(has_unmapped_custom_allergy)::text||
+      ',"requiredSafetyConstraints":'||pg_catalog.to_json(required_constraints)::text||
+      ',"unsupportedDietStatus":'||pg_catalog.to_json(unsupported_diet_status)::text||
+      ',"unsupportedDietKinds":'||pg_catalog.to_json(unsupported_diet_kinds)::text||'}'
+      as encoded_member
+    from canonical_members
+  )
+  select pg_catalog.count(*)::integer,
+    coalesce(pg_catalog.string_agg(encoded_member,',' order by id::text),'')
+    into v_member_count,v_members
+  from encoded;
+  if v_member_count<>v_requested_count then
+    raise exception using errcode='22023',message='invalid_target_members';
+  end if;
+
+  v_payload := '{"dictionaryVersion":"jp-caa-2026-04.v1"'
+    ||',"foodRuleVersion":"jp-caa-child-shape-2026-07.v1"'
+    ||',"members":['||v_members||']}';
+  return pg_catalog.encode(
+    extensions.digest(pg_catalog.convert_to(v_payload,'UTF8'),'sha256'),'hex');
+end
+$function$;
+
+create or replace function private.lock_and_assert_current_safety_fingerprint(
+  p_user_id uuid,p_target_member_ids uuid[],p_expected text
+) returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare v_actual text;
+begin
+  if p_expected is null then
+    raise exception using errcode='22023',message='current_safety_changed';
+  end if;
+  -- FOR UPDATE conflicts with the parent KEY SHARE lock taken by a new FK child.
+  perform 1 from public.household_members member
+    where member.user_id=p_user_id
+      and member.id=any(p_target_member_ids)
+      and member.status='complete'
+    order by member.id for update;
+  perform 1 from public.member_allergies allergy
+    where allergy.user_id=p_user_id
+      and allergy.member_id=any(p_target_member_ids)
+    order by allergy.member_id,allergy.id for share;
+  lock table public.allergen_catalog in share mode;
+  lock table public.allergen_aliases in share mode;
+  lock table public.food_safety_rules in share mode;
+  v_actual:=private.current_safety_fingerprint(p_user_id,p_target_member_ids);
+  if v_actual is distinct from p_expected then
+    raise exception using errcode='P0001',message='current_safety_changed';
+  end if;
+end
+$function$;
+
+revoke all on function private.current_safety_fingerprint(uuid,uuid[])
+  from public,anon,authenticated,service_role;
+revoke all on function private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)
+  from public,anon,authenticated,service_role;
+```
+
+次のfixtureは実在owner/member、標準allergy、seed済みcatalog/rule versionを作成・参照し、このproduction canonical builderの結果だけをfinalizerへ渡す。test-local fingerprint helperは作らない。
+
+```sql
+create temporary table finalize_fixture_context(
+  preference_snapshot jsonb not null,
+  safety_snapshot jsonb not null,
+  safety_fingerprint text not null,
+  allergen_version text not null,
+  food_rule_version text not null,
+  target_members jsonb not null
+) on commit drop;
+
+create function pg_temp.finalize_ordering_success(
+  p_request_id uuid,p_menu_id uuid,p_dish_id uuid,p_ingredient_id uuid,
+  p_step_id uuid,p_timeline_id uuid,p_now timestamptz
+) returns jsonb language plpgsql as $fixture$
+declare
+  v_context pg_temp.finalize_fixture_context;
+  v_adaptation_id uuid := pg_catalog.gen_random_uuid();
+  v_side1_dish_id uuid := pg_catalog.gen_random_uuid();
+  v_side1_ingredient_id uuid := pg_catalog.gen_random_uuid();
+  v_side1_step_id uuid := pg_catalog.gen_random_uuid();
+  v_side2_dish_id uuid := pg_catalog.gen_random_uuid();
+  v_side2_ingredient_id uuid := pg_catalog.gen_random_uuid();
+  v_side2_step_id uuid := pg_catalog.gen_random_uuid();
+begin
+  select * into strict v_context from pg_temp.finalize_fixture_context;
+  return public.finalize_ai_generation_success(
+    p_request_id,
+    jsonb_build_object(
+      'schemaVersion','2026-07-11.v1','menuId',p_menu_id,
+      'mealType','dinner','cuisineGenre','japanese','servings',2,
+      'totalElapsedMinutes',15,'safetyTags','[]'::jsonb,
+      'dishes',jsonb_build_array(jsonb_build_object(
+        'id',p_dish_id,'role','main','position',1,'name','鶏肉と白菜の煮物',
+        'description','短時間の煮物','cookingTimeMinutes',15,
+        'ingredients',jsonb_build_array(jsonb_build_object(
+          'id',p_ingredient_id,'position',1,'name','鶏もも肉',
+          'quantityValue',200,'quantityText','200g','unit','g',
+          'storeSection','meat_fish','pantrySelectionId',null,
+          'labelConfirmationRequired',false)),
+        'steps',jsonb_build_array(jsonb_build_object(
+          'id',p_step_id,'position',1,'instruction','材料を中心まで加熱する'))),
+        jsonb_build_object(
+          'id',v_side1_dish_id,'role','side','position',2,'name','白菜のおひたし',
+          'description','副菜','cookingTimeMinutes',10,
+          'ingredients',jsonb_build_array(jsonb_build_object(
+            'id',v_side1_ingredient_id,'position',1,'name','白菜',
+            'quantityValue',100,'quantityText','100g','unit','g',
+            'storeSection','vegetables','pantrySelectionId',null,
+            'labelConfirmationRequired',false)),
+          'steps',jsonb_build_array(jsonb_build_object(
+            'id',v_side1_step_id,'position',1,'instruction','白菜をゆでる'))),
+        jsonb_build_object(
+          'id',v_side2_dish_id,'role','soup','position',3,'name','わかめ汁',
+          'description','汁物','cookingTimeMinutes',10,
+          'ingredients',jsonb_build_array(jsonb_build_object(
+            'id',v_side2_ingredient_id,'position',1,'name','わかめ',
+            'quantityValue',10,'quantityText','10g','unit','g',
+            'storeSection','dry_goods','pantrySelectionId',null,
+            'labelConfirmationRequired',false)),
+          'steps',jsonb_build_array(jsonb_build_object(
+            'id',v_side2_step_id,'position',1,'instruction','わかめを煮る')))),
+      'timeline',jsonb_build_array(jsonb_build_object(
+        'id',p_timeline_id,'position',1,'startMinute',0,'durationMinutes',15,
+        'instruction','主菜を作る','dishId',p_dish_id,'recipeStepId',p_step_id)),
+      'adaptations',jsonb_build_array(jsonb_build_object(
+        'id',v_adaptation_id,'dishId',p_dish_id,
+        'anonymousMemberRef','member_1','portionText','通常量',
+        'branchBeforeRecipeStepId',p_step_id,
+        'additionalCutting',null,'additionalHeating','中心まで十分に加熱する',
+        'additionalSeasoning',null,'servingCheck','中心部の加熱を確認する',
+        'safetyTags',jsonb_build_array('heat_thoroughly'),
+        'safetyActions',jsonb_build_array(jsonb_build_object(
+          'kind','heat_thoroughly','dishId',p_dish_id,
+          'ingredientId',p_ingredient_id,'anonymousMemberRef','member_1',
+          'beforeRecipeStepId',p_step_id,
+          'instruction','鶏肉を中心まで十分に加熱する')))),
+      'pantryUsage','[]'::jsonb,
+      'labelConfirmations','[]'::jsonb),
+    v_context.preference_snapshot,v_context.safety_snapshot,v_context.safety_fingerprint,
+    v_context.allergen_version,v_context.food_rule_version,
+    v_context.target_members,'[]'::jsonb,null,null,null,p_now);
+end
+$fixture$;
+
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000072';
+  v_member constant uuid := '20000000-0000-4000-8000-000000000072';
+  v_draft public.generation_drafts;
+  v_deleted public.generation_drafts;
+  v_request_id uuid;
+  v_result jsonb;
+  v_target_ids uuid[];
+  v_allergen_version text;
+  v_food_rule_version text;
+  v_fingerprint text;
+  v_before_revision bigint;
+  v_recreated_revision bigint;
+begin
+  insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  values(v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','ordering-finalizer@example.invalid','','{}','{}',now(),now());
+  insert into public.household_members(
+    id,user_id,status,display_name,age_band,portion_size,spice_level,
+    allergy_status,unsupported_diet_status,sort_order
+  ) values(v_member,v_owner,'complete','注文確認','adult','regular','mild',
+    'registered','none',0);
+  insert into public.member_allergies(id,user_id,member_id,allergen_id)
+  values('21000000-0000-4000-8000-000000000072',v_owner,v_member,'milk');
+  select catalog_version into strict v_allergen_version
+  from public.allergen_catalog where id='milk';
+  select rule_version into strict v_food_rule_version
+  from public.food_safety_rules order by id limit 1;
+  v_target_ids := array[v_member];
+  v_fingerprint := private.current_safety_fingerprint(v_owner,v_target_ids);
+  insert into pg_temp.finalize_fixture_context values(
+    jsonb_build_object('mealType','dinner'),
+    jsonb_build_object('members',jsonb_build_array(jsonb_build_object(
+      'householdMemberId',v_member,'anonymousRef','member_1','ageBand','adult',
+      'allergyStatus','registered','allergenIds',jsonb_build_array('milk'),
+      'requiredSafetyConstraints','[]'::jsonb,'unsupportedDietStatus','none',
+      'unsupportedDietKinds','[]'::jsonb))),
+    v_fingerprint,v_allergen_version,v_food_rule_version,
+    jsonb_build_array(jsonb_build_object(
+      'householdMemberId',v_member,'anonymousRef','member_1',
+      'displayNameSnapshot','注文確認'))
+  );
+  perform set_config('request.jwt.claim.sub',v_owner::text,true);
+
+  -- Canonical success prerequisite: real member/allergy/catalog/rule and final 13 arguments.
+  v_draft := public.save_generation_draft(0,'dinner',array['canonical'],'japanese',
+    v_target_ids,30,'standard',array[]::text[],'','[]');
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000080',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('e',64),5,45,180,'2026-07-11 00:00:10+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000080';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:00:11+00');
+  v_result := pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000080','61000000-0000-4000-8000-000000000080',
+    '62000000-0000-4000-8000-000000000080','63000000-0000-4000-8000-000000000080',
+    '64000000-0000-4000-8000-000000000080','2026-07-11 00:00:12+00');
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'canonical finalizer fixture did not succeed';
+  end if;
+  if (select jsonb_build_object(
+      'menus',(select count(*) from public.menus where id='60000000-0000-4000-8000-000000000080'),
+      'targets',(select count(*) from public.menu_target_members where menu_id='60000000-0000-4000-8000-000000000080'),
+      'dishes',(select count(*) from public.dishes where menu_id='60000000-0000-4000-8000-000000000080'),
+      'ingredients',(select count(*) from public.dish_ingredients where menu_id='60000000-0000-4000-8000-000000000080'),
+      'steps',(select count(*) from public.recipe_steps where menu_id='60000000-0000-4000-8000-000000000080'),
+      'timeline',(select count(*) from public.menu_timeline_steps where menu_id='60000000-0000-4000-8000-000000000080'),
+      'adaptations',(select count(*) from public.menu_member_adaptations where menu_id='60000000-0000-4000-8000-000000000080'),
+      'actions',(select count(*) from public.menu_safety_actions
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and ingredient_id='62000000-0000-4000-8000-000000000080')
+    )) is distinct from jsonb_build_object(
+      'menus',1,'targets',1,'dishes',3,'ingredients',3,'steps',3,
+      'timeline',1,'adaptations',1,'actions',1) then
+    raise exception 'canonical finalizer did not commit every normalized child and ingredient-bound action';
+  end if;
+
+  -- helper: active delete -> NULL -> recreation delete, with monotonic revisions.
+  v_draft := public.save_generation_draft(0,'dinner',array['helper-1'],'japanese',
+    v_target_ids,30,'standard',array[]::text[],'','[]');
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,v_draft.revision);
+  if v_deleted.revision is distinct from v_draft.revision+1 then
+    raise exception 'helper did not increment an active draft revision';
+  end if;
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,null);
+  if v_deleted is not null then
+    raise exception 'helper did not return NULL for an already deleted draft';
+  end if;
+  v_draft := public.save_generation_draft(0,'dinner',array['helper-2'],'japanese',
+    v_target_ids,30,'standard',array[]::text[],'','[]');
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,null);
+  if v_deleted.revision is distinct from v_draft.revision+1 then
+    raise exception 'helper did not advance the recreated draft revision';
+  end if;
+
+  -- manual delete first: finalizer must still persist and succeed.
+  v_draft := public.save_generation_draft(0,'dinner',array['manual-first'],'japanese',
+    v_target_ids,30,'standard',array[]::text[],'','[]');
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000081',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('b',64),5,45,180,'2026-07-11 00:01:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000081';
+  perform public.delete_generation_draft(v_draft.revision);
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:01:01+00');
+  v_result := pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000081','61000000-0000-4000-8000-000000000081',
+    '62000000-0000-4000-8000-000000000081','63000000-0000-4000-8000-000000000081',
+    '64000000-0000-4000-8000-000000000081','2026-07-11 00:01:02+00');
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'manual-delete-first finalizer did not succeed';
+  end if;
+  if (select count(*) from public.menus
+      where id='60000000-0000-4000-8000-000000000081') <> 1 then
+    raise exception 'manual-delete-first did not commit the menu';
+  end if;
+
+  -- finalizer first: the old public revision is stale.
+  v_draft := public.save_generation_draft(0,'dinner',array['finalizer-first'],'japanese',
+    v_target_ids,30,'standard',array[]::text[],'','[]');
+  v_before_revision := v_draft.revision;
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000082',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('c',64),5,45,180,'2026-07-11 00:02:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000082';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:02:01+00');
+  perform pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000082','61000000-0000-4000-8000-000000000082',
+    '62000000-0000-4000-8000-000000000082','63000000-0000-4000-8000-000000000082',
+    '64000000-0000-4000-8000-000000000082','2026-07-11 00:02:02+00');
+  begin
+    perform public.delete_generation_draft(v_before_revision);
+    raise exception using errcode='XX000',message='expected_draft_revision_conflict';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> 'draft_revision_conflict' then raise; end if;
+  end;
+
+  -- reserve -> manual delete -> recreation -> finalizer deletes the live recreation.
+  v_draft := public.save_generation_draft(0,'dinner',array['reserved'],'japanese',
+    v_target_ids,30,'standard',array[]::text[],'','[]');
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000083',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('d',64),5,45,180,'2026-07-11 00:03:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000083';
+  perform public.delete_generation_draft(v_draft.revision);
+  v_draft := public.save_generation_draft(0,'dinner',array['recreated'],'japanese',
+    v_target_ids,30,'standard',array[]::text[],'','[]');
+  v_recreated_revision := v_draft.revision;
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:03:01+00');
+  perform pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000083','61000000-0000-4000-8000-000000000083',
+    '62000000-0000-4000-8000-000000000083','63000000-0000-4000-8000-000000000083',
+    '64000000-0000-4000-8000-000000000083','2026-07-11 00:03:02+00');
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_recreated_revision+1 then
+    raise exception 'finalizer did not advance the live recreation revision';
+  end if;
+  if not coalesce((select deleted_at is not null
+      from public.generation_drafts where id=v_draft.id),false) then
+    raise exception 'finalizer did not soft-delete the live recreation';
+  end if;
+end
+$test$;
+select pass('canonical finalization and both manual-delete/finalizer orderings are enforced');
+```
+
+このfixtureはPlan 3 Task 4の旧signature用testを置換し、Task 15の唯一のfinalizer signature
+`public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz)`
+だけを呼ぶ。各menu aggregateのUUIDは一意であり、top-levelの`PERFORM`、未宣言変数、未定義helperはない。
 
 Add these focused service/repository cases:
 
@@ -4403,9 +4920,9 @@ For `usage-today.test.ts`, require 401 without bearer, 405 for non-GET, owner-on
 Run:
 
 ```bash
-npm test -- --run netlify/functions/_shared/env.test.ts netlify/functions/_shared/generation-command-integrity.test.ts netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts netlify/functions/_shared/generation-repository.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/usage-today.test.ts shared/contracts/generation.test.ts src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx
-node --test tests/tooling/compose.test.mjs
-npm run db:test -- supabase/tests/database/ai_control_and_quota.test.sql
+docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/env.test.ts netlify/functions/_shared/generation-command-integrity.test.ts netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts netlify/functions/_shared/generation-repository.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/usage-today.test.ts shared/contracts/generation.test.ts src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx
+docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
+docker compose --profile test run --rm db-test supabase/tests/database/ai_control_and_quota.test.sql
 ```
 
 Expected: RED for missing/invalid HMAC-key handling, command HMAC/replay ordering, closed terminal-detail persistence, three-kind durable recovery, non-retryable request mismatch, truthful terminal usage, preflight ordering, attempt limit, locked fingerprint recheck, terminal-state preservation, model ID on malformed output, deadline suppression, usage route, retention, and the recursive UUID assertion.
@@ -4609,7 +5126,28 @@ request_hmac text not null check (request_hmac ~ '^[a-f0-9]{64}$'),
 
 It has no raw request JSON/body/prompt column and no custom-reason free-text column. It may retain the non-free-text `request_kind`, `draft_id`, `source_menu_id`, `replace_dish_id`, and `change_reason` enum needed for ownership/lineage. Replace Task 2's object-only `terminal_details` check with a private immutable validator used by the table constraint: every non-conflict row requires `null`; a conflict row permits exactly `{ "conflictCodes": [<generationConflictCode>...] }`, with 1–12 unique entries from the shared closed enum and no additional key. Change the final conflict RPC to accept only that validated `text[]`; it constructs the JSON itself, so `message`, `conditionRefs`, `changeReasonCustom`, and arbitrary prose never cross the persistence boundary. The repository reduces the validated wire conflicts to unique codes, and `toGenerationStatus` recreates each Japanese `message` from the shared code-to-copy map with `conditionRefs: []` when reading either the immediate or recovered terminal payload. Plan 4 passes `changeReasonCustom` from the in-memory validated execution command directly to atomic success persistence; only the completed `public.menus.change_reason_custom` stores it, while failed/conflict/timeout ledgers retain only the HMAC.
 
-Change `reserve_ai_generation` and the repository adapter together. The final RPC accepts `p_request_hmac_version text` and `p_request_hmac text` plus the minimum typed lineage identifiers. Its first executable state-machine operations are:
+Change `reserve_ai_generation` and the repository adapter together. Drop the obsolete eight-argument overload. The one final RPC, its revoke/grant statements, repository named arguments, generated database type, and pgTAP `to_regprocedure` assertion use exactly this signature; `change_reason_custom` is deliberately absent:
+
+```sql
+create or replace function public.reserve_ai_generation(
+  p_user_id uuid,
+  p_idempotency_key uuid,
+  p_request_kind text,
+  p_draft_id uuid,
+  p_draft_revision bigint,
+  p_source_menu_id uuid,
+  p_replace_dish_id uuid,
+  p_change_reason text,
+  p_request_hmac_version text,
+  p_request_hmac text,
+  p_user_limit integer,
+  p_global_limit integer,
+  p_stale_after_seconds integer default 180,
+  p_now timestamptz default clock_timestamp()
+) returns jsonb
+```
+
+Its first executable state-machine operations are:
 
 ```sql
 if p_request_hmac_version <> 'generation-command.v1'
@@ -4638,6 +5176,7 @@ if p_request_kind = 'new_menu' then
   select * into v_draft
   from public.generation_drafts
   where id = p_draft_id and user_id = p_user_id and revision = p_draft_revision
+    and deleted_at is null
   for update;
   if not found then
     raise exception using errcode='P0001',message='draft_unavailable';
@@ -4690,9 +5229,9 @@ if (!sent.sent) return toGenerationStatus(sent.record, key);
 
 `markSent` atomically converts one user-attempt reservation and one global reservation to sent. A sent attempt is never released. Repair calls `reserveRepairAttempt`, which atomically reserves both counters and fails on either limit.
 
-Move authoritative household-safety fingerprint construction to exact function `private.lock_and_assert_current_safety_fingerprint(p_user_id uuid,p_target_member_ids uuid[],p_expected text)`. It sorts/deduplicates and owner-verifies the exact non-empty target set, locks each member and existing allergy row in stable order (the member FK lock blocks allergy insert/delete phantoms), takes share locks on catalog/rule version tables, recomputes the same canonical fingerprint used by TypeScript, and raises `current_safety_changed` on any mismatch. Revoke it from all external roles. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes that function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Plan 4 may call this private function only from its owner-checking security-definer reconciliation/confirmation RPCs.
+Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation/confirmation RPCs.
 
-In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `regeneration_not_implemented`; revoke it from every external role. Replace the public finalizer signature once to append typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now`. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before draft deletion, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The repository derives them only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Remove the old finalizer overload/grant, regenerate types, and add pgTAP proving a normal generation calls the null no-op while any non-null lineage fails atomically in Plan 3. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
+In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `regeneration_not_implemented`; revoke it from every external role. Replace the public finalizer signature once to append typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now`. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before the draft soft-delete helper call, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The finalizer then calls `private.soft_delete_generation_draft(v_request.user_id,v_request.draft_id,null)` with `PERFORM`; a NULL result is a successful no-op and is neither assigned nor inspected. The repository derives lineage only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Remove the old finalizer overload/grant, regenerate types, and add pgTAP proving a normal generation calls the null no-op while any non-null lineage fails atomically in Plan 3. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
 
 Replace the two-step conflict wrapper with one RPC:
 
@@ -4718,7 +5257,7 @@ Require `USER_DAILY_AI_LIMIT=5`, `USER_DAILY_EXTERNAL_CALL_LIMIT=12`, `USER_SHOR
 
 Rejected active/user/global/attempt-limit requests return a response without inserting a new permanent request row. Add `cleanup_ai_generation_requests(p_before timestamptz)` that deletes only terminal rows older than 30 days; call it opportunistically for the authenticated user's rows after reservation and expose the same RPC to Plan 6 scheduled maintenance. Never delete processing rows or a row referenced by a menu.
 
-After the migration and pgTAP changes, run `npm run db:types`. The generated `Database` must contain `ai_user_daily_external_attempts`, `ai_user_rate_windows`, `menu_safety_actions`, and every changed RPC signature; do not hand-edit it.
+After the migration and pgTAP changes, run `docker compose run --rm app npm run db:types`. The generated `Database` must contain `ai_user_daily_external_attempts`, `ai_user_rate_windows`, `menu_safety_actions`, and every changed RPC signature; do not hand-edit it.
 
 Export this Netlify config from `generate-menu.ts`; the DB attempt counter remains authoritative across IPs:
 
@@ -5019,20 +5558,20 @@ All generation E2E cases consume Plan 1's `completedOnboardingPage`; remove repe
 Run each command separately:
 
 ```bash
-npm run format:check
-npm run lint
-npm run typecheck
-node --test tests/tooling/compose.test.mjs
-npm test -- --run shared/contracts shared/safety netlify/functions src/features/generation src/features/planner
-npm run db:reset
-npm run db:test
-npm run db:types
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
+docker compose run --rm --no-deps app npm test -- --run shared/contracts shared/safety netlify/functions src/features/generation src/features/planner
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run db:types
 cp src/shared/types/database.generated.ts /tmp/kondate-database.generated.ts
-npm run db:types
+docker compose run --rm app npm run db:types
 diff -u /tmp/kondate-database.generated.ts src/shared/types/database.generated.ts
-npm run typecheck
-npm run e2e -- e2e/specs/generation-recovery-results.spec.ts
-npm run build
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm app npm run e2e -- e2e/specs/generation-recovery-results.spec.ts
+docker compose run --rm --no-deps app npm run build
 if rg -n 'preferences:\s*context\.submission|authenticatedPage: page|timeoutMs:\s*60_000|USER_DAILY_AI_LIMIT:\s*positiveInteger|USER_DAILY_EXTERNAL_CALL_LIMIT:\s*positiveInteger|USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT:\s*positiveInteger|USER_SHORT_WINDOW_SECONDS:\s*positiveInteger|postMenuGeneration\(|pendingGenerationRequest\(' netlify/functions src shared; then exit 1; fi
 if rg -n 'request_(?:body|json)|raw_request|change_reason_custom\s+text' supabase/migrations/20260711002000_ai_control_and_quota.sql; then exit 1; fi
 if rg -n "p_conflicts jsonb|jsonb_build_object\('conflicts'|changeReasonCustom" supabase/migrations/20260711002000_ai_control_and_quota.sql; then exit 1; fi

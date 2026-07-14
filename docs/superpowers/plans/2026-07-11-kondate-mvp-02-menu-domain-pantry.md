@@ -25,6 +25,7 @@
 - Allergy and food-safety validation never produces a “safe” badge or guarantee. Processed ingredients retain explicit label-confirmation records.
 - All user-owned public tables have RLS and explicit grants. Shared safety catalogs are authenticated read-only. AI control tables live in a non-exposed `private` schema.
 - Local development starts through root `docker compose up`; production is Netlify plus managed Supabase.
+- Run every Node/npm/npx command in the Docker Compose `app` service. Run database resets with `./scripts/reset-local-db.sh` and pgTAP through the `db-test` service instead of npm wrappers.
 - Every behavior change follows red-green-refactor, includes exact focused tests, and ends in a small commit.
 - Safety seed `jp-caa-2026-04.v1` contains the 9 mandatory and 20 recommended Japanese allergen-label items current on 2026-07-11; its review source is the Consumer Affairs Agency's April 2026 handbook: https://www.caa.go.jp/policies/policy/food_labeling/food_sanitation/allergy/
 - The only four-way cutting action identifier is `quarter_round_food` across catalog `required_safety_tag`, TypeScript enums, normalized DB checks, validators, and fixtures.
@@ -218,7 +219,7 @@ export function makeCurrentSafetyContext(
 - Create: `supabase/migrations/20260711000400_safety_catalog_data.sql`
 
 **Interfaces:**
-- Consumes: Plan 1's final `20260711000300_safety_catalogs.sql` tables, `member_allergies_allergen_id_fkey`, authenticated read-only grants, and root `npm run db:reset`/`npm run db:test` scripts.
+- Consumes: Plan 1's final `20260711000300_safety_catalogs.sql` tables, `member_allergies_allergen_id_fkey`, authenticated read-only grants, `./scripts/reset-local-db.sh`, and the Docker Compose `db-test` service.
 - Produces: authenticated-read-only `allergen_catalog`, `allergen_aliases`, `food_safety_rules`; versions `jp-caa-2026-04.v1` and `jp-caa-child-shape-2026-07.v1`.
 
 - [ ] **Step 1 (2–5 min): Write the failing catalog/grant/seed pgTAP test**
@@ -277,7 +278,7 @@ rollback;
 
 - [ ] **Step 2 (2–5 min): Run the focused DB test and verify RED**
 
-Run: `npm run db:test -- supabase/tests/database/02_safety_catalogs.test.sql`
+Run: `docker compose --profile test run --rm db-test supabase/tests/database/02_safety_catalogs.test.sql`
 
 Expected: FAIL because `all 29 current items are seeded` reports got `0`.
 
@@ -414,7 +415,12 @@ on conflict (id) do update set
 
 - [ ] **Step 5 (2–5 min): Reset, rerun pgTAP, and verify GREEN**
 
-Run: `npm run db:reset && npm run db:test -- supabase/tests/database/02_safety_catalogs.test.sql`
+Run:
+
+```bash
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test supabase/tests/database/02_safety_catalogs.test.sql
+```
 
 Expected: reset exits 0; pgTAP prints `1..22` and `Result: PASS`.
 
@@ -430,12 +436,13 @@ git commit -m "feat: seed reviewed safety catalog data"
 
 **Files:**
 - Create: `supabase/tests/database/03_pantry_and_planner_drafts.test.sql`
+- Create: `supabase/tests/database/03a_pantry_and_planner_drafts_hardening.test.sql`
 - Create: `supabase/migrations/20260711001000_pantry_and_planner_drafts.sql`
 - Modify (generated): `src/shared/types/database.generated.ts`
 
 **Interfaces:**
 - Consumes: Plan 1's `auth.users` ownership convention and generated `Database` helpers.
-- Produces: `pantry_items` CRUD; one `generation_drafts` row per user; draft `revision`; persisted `pantry_selections` containing only `pantryItemId` and `priority`.
+- Produces: owner-preserving `pantry_items` CRUD; one serialized `generation_drafts` row per user; monotonic draft `revision`; persisted `pantry_selections` containing only `pantryItemId` and `priority`. `save_generation_draft` takes a per-user transaction advisory lock and gives an active-draft revision conflict precedence over payload constraints when `expectedRevision` is zero.
 
 - [ ] **Step 1 (2–5 min): Write the failing RLS and invariant pgTAP test**
 
@@ -443,7 +450,7 @@ Create `supabase/tests/database/03_pantry_and_planner_drafts.test.sql`:
 
 ```sql
 begin;
-select plan(24);
+select plan(26);
 
 select has_table('public', 'pantry_items');
 select has_table('public', 'generation_drafts');
@@ -451,6 +458,9 @@ select has_column('public', 'pantry_items', 'expiration_type');
 select has_column('public', 'pantry_items', 'opened_state');
 select has_column('public', 'generation_drafts', 'pantry_selections');
 select has_column('public', 'generation_drafts', 'revision');
+select has_column('public', 'generation_drafts', 'deleted_at',
+  'generation draft has a deletion tombstone');
+select has_function('public', 'delete_generation_draft', array['bigint']);
 select row_security_is('public', 'pantry_items', true);
 select row_security_is('public', 'generation_drafts', true);
 select has_function('public','save_generation_draft',
@@ -539,9 +549,20 @@ select * from finish();
 rollback;
 ```
 
+Create `supabase/tests/database/03a_pantry_and_planner_drafts_hardening.test.sql` as a self-contained `no_plan()` adversarial pgTAP transaction. In addition to the Unicode, numeric, array, RLS, ACL, soft-delete, recreation, and ABA checks, it must include all of these assertions:
+
+- `has_function` proves the existence of all six private helpers: `is_canonical_bounded_text(text,integer,integer)`, `is_valid_draft_pantry_selections(jsonb)`, `is_valid_draft_text_array(text[],integer,integer)`, `is_valid_draft_uuid_array(uuid[],integer)`, `touch_updated_at()`, and `soft_delete_generation_draft(uuid,uuid,bigint)`.
+- Each of those six helper ACL assertions first proves `to_regprocedure(...) is not null`, then proves `anon`, `authenticated`, and `service_role` cannot execute it. The aggregate PUBLIC assertion requires exactly six resolved procedures and no PUBLIC execute grant.
+- An owner can update an owned pantry row but cannot transfer it by changing `user_id`; the transfer fails with SQLSTATE `42501`.
+- Once an active draft exists, calling `save_generation_draft(0, ...)` with an otherwise invalid payload fails with `P0001/draft_revision_conflict`, proving the active revision conflict is selected before payload check violations.
+
 - [ ] **Step 2 (2–5 min): Run the focused DB test and verify RED**
 
-Run: `npm run db:test -- supabase/tests/database/03_pantry_and_planner_drafts.test.sql`
+Run:
+
+```bash
+docker compose --profile test run --rm db-test supabase/tests/database/03_pantry_and_planner_drafts.test.sql
+```
 
 Expected: FAIL with `relation "public.pantry_items" does not exist`.
 
@@ -553,9 +574,17 @@ Create `supabase/migrations/20260711001000_pantry_and_planner_drafts.sql`:
 create table public.pantry_items (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  name text not null check (char_length(btrim(name)) between 1 and 80),
-  quantity numeric(12,3) check (quantity > 0),
-  unit text check (char_length(btrim(unit)) between 1 and 24),
+  name text not null check (
+    name = btrim(name, U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF')
+    and char_length(name) between 1 and 80
+  ),
+  quantity numeric check (
+    quantity > 0 and quantity <= 999999 and quantity = round(quantity, 3)
+  ),
+  unit text check (
+    unit = btrim(unit, U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF')
+    and char_length(unit) between 1 and 24
+  ),
   expires_on date,
   expiration_type text check (expiration_type in ('use_by', 'best_before', 'other', 'unknown')),
   opened_state text check (opened_state in ('unopened', 'opened', 'unknown')),
@@ -568,10 +597,28 @@ create table public.pantry_items (
 create index pantry_items_owner_expiry_idx
   on public.pantry_items (user_id, expires_on nulls last, created_at desc);
 
+create or replace function private.is_canonical_bounded_text(
+  p_value text, p_min_length integer, p_max_length integer
+) returns boolean
+language sql
+immutable
+security invoker
+set search_path = ''
+as $function$
+  select p_value is null or (
+    pg_catalog.char_length(p_value) between p_min_length and p_max_length
+    and p_value = pg_catalog.btrim(
+      p_value,
+      U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )
+  );
+$function$;
+
 create or replace function private.is_valid_draft_pantry_selections(p_value jsonb)
 returns boolean
 language plpgsql
 immutable
+security invoker
 set search_path = pg_catalog
 as $function$
 declare
@@ -580,15 +627,9 @@ begin
   if p_value is null or jsonb_typeof(p_value) <> 'array' then
     return false;
   end if;
-
-  for v_item in
-    select item from jsonb_array_elements(p_value) as items(item)
-  loop
-    if jsonb_typeof(v_item) <> 'object' then
-      return false;
-    end if;
-
-    if not (v_item ? 'pantryItemId')
+  for v_item in select item from jsonb_array_elements(p_value) as items(item) loop
+    if jsonb_typeof(v_item) <> 'object'
+      or not (v_item ? 'pantryItemId')
       or not (v_item ? 'priority')
       or (select count(*) from jsonb_object_keys(v_item)) <> 2
       or jsonb_typeof(v_item -> 'pantryItemId') <> 'string'
@@ -596,20 +637,61 @@ begin
       or (v_item ->> 'priority') not in ('must_use', 'prefer_use') then
       return false;
     end if;
-
     begin
       perform (v_item ->> 'pantryItemId')::uuid;
-    exception
-      when invalid_text_representation then
-        return false;
+    exception when invalid_text_representation then
+      return false;
     end;
   end loop;
-
   return true;
 end;
 $function$;
+
+create or replace function private.is_valid_draft_text_array(
+  p_value text[], p_max_count integer, p_max_length integer
+) returns boolean
+language sql
+immutable
+security invoker
+set search_path = ''
+as $function$
+  select p_value is not null
+    and pg_catalog.cardinality(p_value) <= p_max_count
+    and (pg_catalog.cardinality(p_value) = 0 or pg_catalog.array_ndims(p_value) = 1)
+    and not exists (
+      select 1
+      from pg_catalog.unnest(p_value) as values_(value)
+      where value is null
+        or not private.is_canonical_bounded_text(value, 1, p_max_length)
+    );
+$function$;
+
+create or replace function private.is_valid_draft_uuid_array(
+  p_value uuid[], p_max_count integer
+) returns boolean
+language sql
+immutable
+security invoker
+set search_path = ''
+as $function$
+  select p_value is not null
+    and pg_catalog.cardinality(p_value) <= p_max_count
+    and (pg_catalog.cardinality(p_value) = 0 or pg_catalog.array_ndims(p_value) = 1)
+    and not exists (
+      select 1
+      from pg_catalog.unnest(p_value) as values_(value)
+      where value is null
+    );
+$function$;
+
+revoke all on function private.is_canonical_bounded_text(text, integer, integer)
+  from public, anon, authenticated, service_role;
 revoke all on function private.is_valid_draft_pantry_selections(jsonb)
-  from public, anon, authenticated;
+  from public, anon, authenticated, service_role;
+revoke all on function private.is_valid_draft_text_array(text[], integer, integer)
+  from public, anon, authenticated, service_role;
+revoke all on function private.is_valid_draft_uuid_array(uuid[], integer)
+  from public, anon, authenticated, service_role;
 
 create table public.generation_drafts (
   id uuid primary key default gen_random_uuid(),
@@ -621,14 +703,16 @@ create table public.generation_drafts (
   time_limit_minutes smallint check (time_limit_minutes in (15, 30, 45)),
   budget_preference text check (budget_preference in ('economy', 'standard')),
   avoid_ingredients text[] not null default '{}',
-  memo text not null default '' check (char_length(memo) <= 200),
+  memo text not null default '',
   pantry_selections jsonb not null default '[]'::jsonb,
   revision bigint not null default 0 check (revision >= 0),
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  check (cardinality(main_ingredients) <= 8),
-  check (cardinality(target_member_ids) <= 20),
-  check (cardinality(avoid_ingredients) <= 20),
+  check (private.is_valid_draft_text_array(main_ingredients, 8, 80)),
+  check (private.is_valid_draft_uuid_array(target_member_ids, 20)),
+  check (private.is_valid_draft_text_array(avoid_ingredients, 20, 80)),
+  check (private.is_canonical_bounded_text(memo, 0, 200)),
   check (private.is_valid_draft_pantry_selections(pantry_selections)),
   check (jsonb_array_length(pantry_selections) <= 50),
   check (pg_column_size(pantry_selections) <= 32768),
@@ -643,14 +727,16 @@ create table public.generation_drafts (
 create or replace function private.touch_updated_at()
 returns trigger
 language plpgsql
-set search_path = pg_catalog
-as $$
+security invoker
+set search_path = ''
+as $function$
 begin
-  new.updated_at = statement_timestamp();
+  new.updated_at = pg_catalog.statement_timestamp();
   return new;
 end;
-$$;
-revoke all on function private.touch_updated_at() from public, anon, authenticated;
+$function$;
+revoke all on function private.touch_updated_at()
+  from public, anon, authenticated, service_role;
 
 create trigger pantry_items_touch_updated_at
 before update on public.pantry_items
@@ -665,7 +751,7 @@ alter table public.generation_drafts enable row level security;
 revoke all on public.pantry_items from anon, authenticated;
 revoke all on public.generation_drafts from anon, authenticated;
 grant select, insert, update, delete on public.pantry_items to authenticated;
-grant select, delete on public.generation_drafts to authenticated;
+grant select on public.generation_drafts to authenticated;
 
 create policy pantry_items_owner_select on public.pantry_items
   for select to authenticated using ((select auth.uid()) = user_id);
@@ -678,57 +764,150 @@ create policy pantry_items_owner_delete on public.pantry_items
   for delete to authenticated using ((select auth.uid()) = user_id);
 
 create policy generation_drafts_owner_select on public.generation_drafts
-  for select to authenticated using ((select auth.uid()) = user_id);
-create policy generation_drafts_owner_insert on public.generation_drafts
-  for insert to authenticated with check ((select auth.uid()) = user_id);
-create policy generation_drafts_owner_update on public.generation_drafts
-  for update to authenticated using ((select auth.uid()) = user_id)
-  with check ((select auth.uid()) = user_id);
-create policy generation_drafts_owner_delete on public.generation_drafts
-  for delete to authenticated using ((select auth.uid()) = user_id);
+  for select to authenticated
+  using ((select auth.uid()) = user_id and deleted_at is null);
 
-create or replace function public.save_generation_draft(
-  p_expected_revision bigint,p_meal_type text,p_main_ingredients text[],
-  p_cuisine_genre text,p_target_member_ids uuid[],p_time_limit_minutes smallint,
-  p_budget_preference text,p_avoid_ingredients text[],p_memo text,
-  p_pantry_selections jsonb
+create or replace function private.soft_delete_generation_draft(
+  p_user_id uuid, p_draft_id uuid, p_expected_revision bigint
 ) returns public.generation_drafts
-language plpgsql security definer set search_path='' as $function$
-declare v_user_id uuid:=(select auth.uid());v_saved public.generation_drafts;
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_deleted public.generation_drafts;
 begin
-  if v_user_id is null or p_expected_revision<0 then
-    raise exception using errcode='22023',message='invalid_draft_save';
-  end if;
-  if p_expected_revision=0 then
-    insert into public.generation_drafts(user_id,meal_type,main_ingredients,cuisine_genre,
-      target_member_ids,time_limit_minutes,budget_preference,avoid_ingredients,memo,
-      pantry_selections,revision)
-    values(v_user_id,p_meal_type,p_main_ingredients,p_cuisine_genre,p_target_member_ids,
-      p_time_limit_minutes,p_budget_preference,p_avoid_ingredients,p_memo,
-      p_pantry_selections,1)
-    on conflict(user_id) do nothing returning * into v_saved;
-    if found then return v_saved;end if;
-  end if;
-  update public.generation_drafts set meal_type=p_meal_type,
-    main_ingredients=p_main_ingredients,cuisine_genre=p_cuisine_genre,
-    target_member_ids=p_target_member_ids,time_limit_minutes=p_time_limit_minutes,
-    budget_preference=p_budget_preference,avoid_ingredients=p_avoid_ingredients,
-    memo=p_memo,pantry_selections=p_pantry_selections,revision=revision+1
-  where user_id=v_user_id and revision=p_expected_revision
-  returning * into v_saved;
-  if not found then
-    raise exception using errcode='P0001',message='draft_revision_conflict';
-  end if;
-  return v_saved;
+  update public.generation_drafts
+  set deleted_at = pg_catalog.statement_timestamp(), revision = revision + 1
+  where user_id = p_user_id
+    and deleted_at is null
+    and (p_draft_id is null or id = p_draft_id)
+    and (p_expected_revision is null or revision = p_expected_revision)
+  returning * into v_deleted;
+  return v_deleted;
 end;
 $function$;
-revoke all on function public.save_generation_draft(
-  bigint,text,text[],text,uuid[],smallint,text,text[],text,jsonb
-) from public,anon;
-grant execute on function public.save_generation_draft(
-  bigint,text,text[],text,uuid[],smallint,text,text[],text,jsonb
-) to authenticated;
 
+revoke all on function private.soft_delete_generation_draft(uuid, uuid, bigint)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.save_generation_draft(
+  p_expected_revision bigint, p_meal_type text, p_main_ingredients text[],
+  p_cuisine_genre text, p_target_member_ids uuid[], p_time_limit_minutes smallint,
+  p_budget_preference text, p_avoid_ingredients text[], p_memo text,
+  p_pantry_selections jsonb
+) returns public.generation_drafts
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := (select auth.uid());
+  v_saved public.generation_drafts;
+  v_has_existing boolean;
+begin
+  if v_user_id is null or p_expected_revision is null or p_expected_revision < 0 then
+    raise exception using errcode = '22023', message = 'invalid_draft_save';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(v_user_id::text, 0)
+  );
+  select * into v_saved
+  from public.generation_drafts
+  where user_id = v_user_id
+  for update;
+  v_has_existing := found;
+
+  if p_expected_revision = 0 then
+    if v_has_existing and v_saved.deleted_at is null then
+      raise exception using errcode = 'P0001', message = 'draft_revision_conflict';
+    end if;
+
+    if not v_has_existing then
+      insert into public.generation_drafts (
+        user_id, meal_type, main_ingredients, cuisine_genre, target_member_ids,
+        time_limit_minutes, budget_preference, avoid_ingredients, memo,
+        pantry_selections, revision
+      ) values (
+        v_user_id, p_meal_type, p_main_ingredients, p_cuisine_genre, p_target_member_ids,
+        p_time_limit_minutes, p_budget_preference, p_avoid_ingredients, p_memo,
+        p_pantry_selections, 1
+      )
+      returning * into v_saved;
+    else
+      update public.generation_drafts
+      set meal_type = p_meal_type,
+        main_ingredients = p_main_ingredients,
+        cuisine_genre = p_cuisine_genre,
+        target_member_ids = p_target_member_ids,
+        time_limit_minutes = p_time_limit_minutes,
+        budget_preference = p_budget_preference,
+        avoid_ingredients = p_avoid_ingredients,
+        memo = p_memo,
+        pantry_selections = p_pantry_selections,
+        revision = revision + 1,
+        deleted_at = null
+      where id = v_saved.id
+      returning * into v_saved;
+    end if;
+    return v_saved;
+  else
+    if not v_has_existing
+      or v_saved.deleted_at is not null
+      or v_saved.revision <> p_expected_revision then
+      raise exception using errcode = 'P0001', message = 'draft_revision_conflict';
+    end if;
+
+    update public.generation_drafts
+    set meal_type = p_meal_type,
+      main_ingredients = p_main_ingredients,
+      cuisine_genre = p_cuisine_genre,
+      target_member_ids = p_target_member_ids,
+      time_limit_minutes = p_time_limit_minutes,
+      budget_preference = p_budget_preference,
+      avoid_ingredients = p_avoid_ingredients,
+      memo = p_memo,
+      pantry_selections = p_pantry_selections,
+      revision = revision + 1
+    where id = v_saved.id
+    returning * into v_saved;
+    return v_saved;
+  end if;
+end;
+$function$;
+
+create or replace function public.delete_generation_draft(p_expected_revision bigint)
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := (select auth.uid());
+  v_deleted public.generation_drafts;
+begin
+  if v_user_id is null or p_expected_revision is null or p_expected_revision < 0 then
+    raise exception using errcode = '22023', message = 'invalid_draft_save';
+  end if;
+  v_deleted := private.soft_delete_generation_draft(v_user_id, null, p_expected_revision);
+  if v_deleted is null then
+    raise exception using errcode = 'P0001', message = 'draft_revision_conflict';
+  end if;
+  return v_deleted.revision;
+end;
+$function$;
+
+revoke all on function public.save_generation_draft(
+  bigint, text, text[], text, uuid[], smallint, text, text[], text, jsonb
+) from public, anon, authenticated, service_role;
+revoke all on function public.delete_generation_draft(bigint)
+  from public, anon, authenticated, service_role;
+grant execute on function public.save_generation_draft(
+  bigint, text, text[], text, uuid[], smallint, text, text[], text, jsonb
+) to authenticated;
+grant execute on function public.delete_generation_draft(bigint)
+  to authenticated;
 ```
 
 - [ ] **Step 4 (2–5 min): Reset, regenerate types, and verify GREEN**
@@ -736,21 +915,23 @@ grant execute on function public.save_generation_draft(
 Run:
 
 ```bash
-npm run db:reset
-npm run db:types
-npm run db:test -- supabase/tests/database/03_pantry_and_planner_drafts.test.sql
-npm run typecheck
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test supabase/tests/database/03_pantry_and_planner_drafts.test.sql
+docker compose --profile test run --rm db-test supabase/tests/database/03a_pantry_and_planner_drafts_hardening.test.sql
+docker compose run --rm app npm run db:types
+docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: pgTAP prints `1..24` and `Result: PASS`; generated `Database` includes both tables; typecheck exits 0.
+Expected: 03が26 assertion、03aの全assertion（6 helperの存在/ACL、owner transfer拒否、invalid payloadに対するactive expected-zero conflict precedenceを含む）がPASSし、型生成とtypecheckがexit 0。
 
 - [ ] **Step 5 (2–5 min): Commit pantry/draft persistence**
 
 ```bash
 git add supabase/migrations/20260711001000_pantry_and_planner_drafts.sql \
   supabase/tests/database/03_pantry_and_planner_drafts.test.sql \
+  supabase/tests/database/03a_pantry_and_planner_drafts_hardening.test.sql \
   src/shared/types/database.generated.ts
-git commit -m "feat: パントリーと献立下書きの保存基盤を追加"
+git commit -m "fix: 献立下書きの保存境界を強化"
 ```
 
 ## Task 3: Normalized Menu Core Schema and Owner RLS
@@ -820,7 +1001,7 @@ rollback;
 
 - [ ] **Step 2 (2–5 min): Run the focused DB test and verify RED**
 
-Run: `npm run db:test -- supabase/tests/database/04_menu_core.test.sql`
+Run: `docker compose --profile test run --rm db-test supabase/tests/database/04_menu_core.test.sql`
 
 Expected: FAIL with `relation "public.menus" does not exist`.
 
@@ -1162,10 +1343,10 @@ grant execute on function public.confirm_menu_label_confirmation(uuid,uuid) to a
 Run:
 
 ```bash
-npm run db:reset
-npm run db:types
-npm run db:test -- supabase/tests/database/04_menu_core.test.sql
-npm run typecheck
+./scripts/reset-local-db.sh
+docker compose run --rm app npm run db:types
+docker compose --profile test run --rm db-test supabase/tests/database/04_menu_core.test.sql
+docker compose run --rm --no-deps app npm run typecheck
 ```
 
 Expected: pgTAP prints `1..41` and `Result: PASS`; typecheck exits 0. Browser roles can select every aggregate row they own, update only `menus.is_favorite`, confirm labels only through the owner-checking RPC, and cannot insert/update/delete generated data or `menu_safety_actions`.
@@ -1222,6 +1403,42 @@ describe("pantry contracts", () => {
         name: "にんじん",
         quantity: 2,
         unit: null,
+        expiresOn: null,
+        expirationType: null,
+        openedState: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("canonicalizes ECMAScript padding and counts Unicode code points", () => {
+    expect(
+      pantryItemInputSchema.parse({
+        name: "\u00a0🍳\ufeff",
+        quantity: 1.234,
+        unit: "\ufeff個\u00a0",
+        expiresOn: null,
+        expirationType: null,
+        openedState: null,
+      }),
+    ).toMatchObject({ name: "🍳", quantity: 1.234, unit: "個" });
+    expect(
+      pantryItemInputSchema.safeParse({
+        name: "🍳".repeat(81),
+        quantity: null,
+        unit: null,
+        expiresOn: null,
+        expirationType: null,
+        openedState: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects quantity with more than three decimal places", () => {
+    expect(
+      pantryItemInputSchema.safeParse({
+        name: "牛乳",
+        quantity: 1.2345,
+        unit: "ml",
         expiresOn: null,
         expirationType: null,
         openedState: null,
@@ -1314,6 +1531,37 @@ describe("planner contracts", () => {
   it("limits memo to 200 characters", () => {
     expect(
       plannerDraftInputSchema.safeParse({ ...incompleteDraft, memo: "あ".repeat(201) }).success,
+    ).toBe(false);
+  });
+
+  it("canonicalizes Unicode padding in draft text fields", () => {
+    expect(
+      plannerDraftInputSchema.parse({
+        ...incompleteDraft,
+        mainIngredients: ["\u00a0🍳\ufeff"],
+        avoidIngredients: ["\u2028乳\u2029"],
+        memo: "\ufeffメモ\u00a0",
+      }),
+    ).toMatchObject({
+      mainIngredients: ["🍳"],
+      avoidIngredients: ["乳"],
+      memo: "メモ",
+    });
+  });
+
+  it("counts astral draft text by Unicode code point", () => {
+    expect(
+      plannerDraftInputSchema.safeParse({
+        ...incompleteDraft,
+        mainIngredients: ["🍳".repeat(80)],
+        memo: "🍳".repeat(200),
+      }).success,
+    ).toBe(true);
+    expect(
+      plannerDraftInputSchema.safeParse({
+        ...incompleteDraft,
+        mainIngredients: ["🍳".repeat(81)],
+      }).success,
     ).toBe(false);
   });
 });
@@ -1444,7 +1692,13 @@ describe("validated menu schema", () => {
 
 - [ ] **Step 2 (2–5 min): Run contract tests and verify RED**
 
-Run: `npm test -- --run shared/contracts/pantry.test.ts shared/contracts/planner.test.ts shared/contracts/generation.test.ts`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run \
+  shared/contracts/pantry.test.ts shared/contracts/planner.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: FAIL with module-not-found errors for `./pantry`, `./planner`, and `./generation`.
 
@@ -1460,12 +1714,27 @@ export const expirationTypes = ["use_by", "best_before", "other", "unknown"] as 
 export const openedStates = ["unopened", "opened", "unknown"] as const;
 export const pantryUsageStatuses = ["used", "unused"] as const;
 
-const nullableUnitSchema = z.string().trim().min(1).max(24).nullable();
-const nullableQuantitySchema = z.number().positive().max(999_999).nullable();
+function boundedCanonicalText(min: number, max: number) {
+  return z.string().trim().refine(
+    (value) => {
+      const length = Array.from(value).length;
+      return length >= min && length <= max;
+    },
+    { message: `${min}〜${max}文字で入力してください` },
+  );
+}
+
+const nullableUnitSchema = boundedCanonicalText(1, 24).nullable();
+const nullableQuantitySchema = z
+  .number()
+  .positive()
+  .max(999_999)
+  .multipleOf(0.001)
+  .nullable();
 
 export const pantryItemInputSchema = z
   .object({
-    name: z.string().trim().min(1).max(80),
+    name: boundedCanonicalText(1, 80),
     quantity: nullableQuantitySchema,
     unit: nullableUnitSchema,
     expiresOn: z.string().date().nullable(),
@@ -1501,7 +1770,7 @@ export const pantryUsageSchema = z
   .object({
     selectionId: z.string().uuid(),
     pantryItemId: z.string().uuid().nullable(),
-    pantryItemName: z.string().trim().min(1).max(80),
+    pantryItemName: boundedCanonicalText(1, 80),
     priority: z.enum(pantryPriorities),
     usageStatus: z.enum(pantryUsageStatuses),
     plannedQuantity: nullableQuantitySchema,
@@ -1509,7 +1778,7 @@ export const pantryUsageSchema = z
     shortageQuantity: z.number().min(0).max(999_999).nullable(),
     unit: nullableUnitSchema,
     dishIds: z.array(z.string().uuid()),
-    unusedReason: z.string().trim().min(1).max(200).nullable(),
+    unusedReason: boundedCanonicalText(1, 200).nullable(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -1551,15 +1820,25 @@ import { pantrySelectionDraftSchema } from "./pantry";
 export const plannerTimeLimits = [15, 30, 45] as const;
 export const budgetPreferences = ["economy", "standard"] as const;
 
+function boundedCanonicalText(min: number, max: number) {
+  return z.string().trim().refine(
+    (value) => {
+      const length = Array.from(value).length;
+      return length >= min && length <= max;
+    },
+    { message: `${min}〜${max}文字で入力してください` },
+  );
+}
+
 const draftShape = {
   mealType: z.enum(mealTypes).nullable(),
-  mainIngredients: z.array(z.string().trim().min(1).max(80)).max(8),
+  mainIngredients: z.array(boundedCanonicalText(1, 80)).max(8),
   cuisineGenre: z.enum(cuisineGenres).nullable(),
   targetMemberIds: z.array(z.string().uuid()).max(20),
   timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
   budgetPreference: z.enum(budgetPreferences).nullable(),
-  avoidIngredients: z.array(z.string().trim().min(1).max(80)).max(20),
-  memo: z.string().trim().max(200),
+  avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
+  memo: boundedCanonicalText(0, 200),
   pantrySelections: z.array(pantrySelectionDraftSchema).max(50),
 } satisfies z.ZodRawShape;
 
@@ -1578,13 +1857,13 @@ export const plannerDraftSchema = z
 export const plannerSubmissionSchema = z
   .object({
     mealType: z.enum(mealTypes),
-    mainIngredients: z.array(z.string().trim().min(1).max(80)).min(1).max(8),
+    mainIngredients: z.array(boundedCanonicalText(1, 80)).min(1).max(8),
     cuisineGenre: z.enum(cuisineGenres),
     targetMemberIds: z.array(z.string().uuid()).min(1).max(20),
     timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
     budgetPreference: z.enum(budgetPreferences).nullable(),
-    avoidIngredients: z.array(z.string().trim().min(1).max(80)).max(20),
-    memo: z.string().trim().max(200),
+    avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
+    memo: boundedCanonicalText(0, 200),
     pantrySelections: z.array(pantrySelectionDraftSchema).max(50),
   })
   .strict();
@@ -1793,7 +2072,13 @@ export type MenuValidationResult =
 
 - [ ] **Step 5 (2–5 min): Run contract tests and typecheck for GREEN**
 
-Run: `npm test -- --run shared/contracts/pantry.test.ts shared/contracts/planner.test.ts shared/contracts/generation.test.ts && npm run typecheck`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run \
+  shared/contracts/pantry.test.ts shared/contracts/planner.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: Vitest reports 9 passed tests; typecheck exits 0.
 
@@ -2145,7 +2430,7 @@ it("uses the Japan date and next midnight across UTC", () => {
 
 - [ ] **Step 3 (2–5 min): Run focused safety tests and verify RED**
 
-Run: `npm test -- --run shared/safety shared/time/jst.test.ts`
+Run: `docker compose run --rm --no-deps app npx vitest run shared/safety shared/time/jst.test.ts`
 
 Expected: FAIL with module-not-found errors for the six production modules.
 
@@ -2521,7 +2806,12 @@ export function getNextJstMidnight(now: Date): Date {
 
 - [ ] **Step 7 (2–5 min): Run all safety tests and typecheck for GREEN**
 
-Run: `npm test -- --run shared/safety shared/time/jst.test.ts && npm run typecheck`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run shared/safety shared/time/jst.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: Vitest reports 7 passed tests; typecheck exits 0.
 
@@ -2596,7 +2886,7 @@ Add an API test that updates and deletes with `.eq("updated_at", expectedUpdated
 
 - [ ] **Step 2 (2–5 min): Run the test and verify RED**
 
-Run: `npm test -- --run src/features/pantry/pantry-api.test.ts src/features/pantry/pantry-page.test.tsx`
+Run: `docker compose run --rm --no-deps app npx vitest run src/features/pantry/pantry-api.test.ts src/features/pantry/pantry-page.test.tsx`
 
 Expected: FAIL with missing `pantry-api` / `pantry-page` modules.
 
@@ -2939,7 +3229,13 @@ import { PantryPage } from "@/features/pantry/pantry-page";
 
 - [ ] **Step 6 (2–5 min): Run component test and quality checks for GREEN**
 
-Run: `npm test -- --run src/features/pantry/pantry-api.test.ts src/features/pantry/pantry-page.test.tsx && npm run typecheck && npm run lint`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run src/features/pantry/pantry-api.test.ts src/features/pantry/pantry-page.test.tsx
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+```
 
 Expected: API concurrency and component CRUD tests pass; typecheck and lint exit 0.
 
@@ -2960,6 +3256,7 @@ git commit -m "feat: add pantry CRUD"
 - Test: `src/features/planner/pantry-selector.test.tsx`
 - Create: `src/features/planner/planner-page.tsx`
 - Create: `src/features/planner/planner-route.tsx`
+- Test: `src/features/planner/planner-api.test.ts`
 - Test: `src/features/planner/planner-page.test.tsx`
 - Modify: `src/app/router.tsx`
 
@@ -3024,9 +3321,49 @@ it("shows safety, captures three basic choices, and autosaves optional condition
 });
 ```
 
+Create `src/features/planner/planner-api.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
+import { deletePlannerDraft } from "./planner-api";
+
+function clientWithRpc(result: { error: { message: string } | null }) {
+  const rpc = vi.fn().mockResolvedValue(result);
+  return { client: { rpc } as unknown as BrowserSupabaseClient, rpc };
+}
+
+describe("deletePlannerDraft", () => {
+  it("passes the authoritative revision to the delete RPC", async () => {
+    const { client, rpc } = clientWithRpc({ error: null });
+    await deletePlannerDraft(client, 7);
+    expect(rpc).toHaveBeenCalledWith("delete_generation_draft", {
+      p_expected_revision: 7,
+    });
+  });
+
+  it("maps a stale delete to the shared conflict code", async () => {
+    const { client } = clientWithRpc({
+      error: { message: "draft_revision_conflict" },
+    });
+    await expect(deletePlannerDraft(client, 7)).rejects.toMatchObject({
+      code: "draft_revision_conflict",
+    });
+  });
+});
+```
+
 - [ ] **Step 2 (2–5 min): Run the planner test and verify RED**
 
-Run: `npm test -- --run src/features/planner/planner-page.test.tsx`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run \
+  src/features/planner/planner-page.test.tsx \
+  src/features/planner/planner-api.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+```
 
 Expected: FAIL with `Cannot find module './planner-page'`.
 
@@ -3103,12 +3440,23 @@ export async function savePlannerDraft(
 
 export async function deletePlannerDraft(
   client: BrowserSupabaseClient,
-  userId: string,
+  expectedRevision: number,
 ): Promise<void> {
-  const { error } = await client.from("generation_drafts").delete().eq("user_id", userId);
-  if (error !== null) throw new Error("献立条件の下書きを削除できませんでした");
+  const { error } = await client.rpc("delete_generation_draft", {
+    p_expected_revision: expectedRevision,
+  });
+  if (error?.message.includes("draft_revision_conflict") === true) {
+    throw Object.assign(new Error("別の画面で献立条件が更新されました"), {
+      code: "draft_revision_conflict" as const,
+    });
+  }
+  if (error !== null) {
+    throw new Error("献立条件の下書きを削除できませんでした");
+  }
 }
 ```
+
+生成成功後または明示的破棄のcallerは`deletePlannerDraft(client, draft.revision)`を呼ぶ。`userId`は渡さない。
 
 - [ ] **Step 4 (2–5 min): Implement serialized debounced autosave**
 
@@ -3520,7 +3868,15 @@ import { PlannerPage } from "@/features/planner/planner-route";
 
 - [ ] **Step 8 (2–5 min): Run planner tests and quality checks for GREEN**
 
-Run: `npm test -- --run src/features/planner/planner-page.test.tsx && npm run typecheck && npm run lint`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run \
+  src/features/planner/planner-page.test.tsx \
+  src/features/planner/planner-api.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+```
 
 Expected: component test passes; typecheck and lint exit 0.
 
@@ -3654,7 +4010,7 @@ Add `_shared/current-safety.test.ts` now with a fluent admin-client fake. It cov
 
 - [ ] **Step 2 (2–5 min): Run the focused tests and verify RED**
 
-Run: `npm test -- --run shared/emergency netlify/functions/_shared/current-safety.test.ts netlify/functions/emergency-menus.test.ts src/features/emergency/emergency-menu-api.test.ts src/features/emergency/emergency-menu-page.test.tsx`
+Run: `docker compose run --rm --no-deps app npx vitest run shared/emergency netlify/functions/_shared/current-safety.test.ts netlify/functions/emergency-menus.test.ts src/features/emergency/emergency-menu-api.test.ts src/features/emergency/emergency-menu-page.test.tsx`
 
 Expected: FAIL with module-not-found errors for the emergency filter, Function, and page.
 
@@ -4397,7 +4753,13 @@ import { EmergencyMenuPage } from "@/features/emergency/emergency-menu-page";
 
 - [ ] **Step 8 (2–5 min): Run focused tests and verify GREEN**
 
-Run: `npm test -- --run shared/emergency netlify/functions/_shared/current-safety.test.ts netlify/functions/emergency-menus.test.ts src/features/emergency/emergency-menu-api.test.ts src/features/emergency/emergency-menu-page.test.tsx && npm run typecheck && npm run lint`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run shared/emergency netlify/functions/_shared/current-safety.test.ts netlify/functions/emergency-menus.test.ts src/features/emergency/emergency-menu-api.test.ts src/features/emergency/emergency-menu-page.test.tsx
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+```
 
 Expected: filter, authenticated handler, explicit no-candidate UI, typecheck, and lint all pass; no OpenRouter request or quota row is created.
 
@@ -4515,7 +4877,7 @@ test("keeps an incompatible current allergy as an explicit no-candidate result",
 
 - [ ] **Step 2 (2–5 min): Run E2E and verify RED at the unwired pantry selector**
 
-Run: `npm run e2e -- e2e/specs/menu-domain-pantry.spec.ts`
+Run: `docker compose run --rm app npm run e2e -- e2e/specs/menu-domain-pantry.spec.ts`
 
 Expected: FAIL because `/planner` does not yet render the `キャベツ` checkbox.
 
@@ -4578,7 +4940,7 @@ The attempt key is not written to `generation_drafts`. Reloading creates a new k
 
 - [ ] **Step 4 (2–5 min): Run the focused E2E and verify GREEN**
 
-Run: `npm run e2e -- e2e/specs/menu-domain-pantry.spec.ts`
+Run: `docker compose run --rm app npm run e2e -- e2e/specs/menu-domain-pantry.spec.ts`
 
 Expected at this pre-correction checkpoint: both scenarios pass; the restored draft retains `must_use` but not the expired confirmation; dinner exposes the complete read-only cooking view at 320 px and keyboard-toggles its details; the not-yet-added breakfast fixture and the separately configured incompatible allergy both return explicit condition-preserving no-candidate copy. Task 10 replaces only the catalog-gap assertion after adding the reviewed breakfast/lunch rows.
 
@@ -4587,13 +4949,13 @@ Expected at this pre-correction checkpoint: both scenarios pass; the restored dr
 Run each command separately:
 
 ```bash
-npm run format:check
-npm run lint
-npm run typecheck
-npm test -- --run
-npm run db:test
-npm run e2e
-npm run build
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run e2e
+docker compose run --rm --no-deps app npm run build
 docker compose config --quiet
 ```
 
@@ -4960,9 +5322,9 @@ Extend the draft test with a 51-element `pantry_selections` array and a JSON val
 Run:
 
 ```bash
-npm run db:reset
-npm run db:test -- supabase/tests/database/02_safety_catalogs.test.sql supabase/tests/database/04_menu_core.test.sql
-npm test -- --run shared/contracts/generation.test.ts shared/safety netlify/functions/_shared/http.test.ts netlify/functions/emergency-menus.test.ts
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test supabase/tests/database/02_safety_catalogs.test.sql supabase/tests/database/04_menu_core.test.sql
+docker compose run --rm --no-deps app npx vitest run shared/contracts/generation.test.ts shared/safety netlify/functions/_shared/http.test.ts netlify/functions/emergency-menus.test.ts
 ```
 
 Expected: RED for the generated/stored schema split, normalized ingredient-bound `menu_safety_actions`, canonical kind/instruction checks, cross-owner action FKs, snapshot-preserving member deletion, semantic context, canonical pending records, RPC provenance, body cap, and the missing toddler/senior/processed-food coverage.
@@ -5238,14 +5600,14 @@ The emergency candidate projection test uses a target whose live display name is
 Run each command separately:
 
 ```bash
-npm run format:check
-npm run lint
-npm run typecheck
-npm test -- --run shared/contracts shared/safety shared/emergency src/features/planner src/features/pantry src/features/emergency netlify/functions
-npm run db:reset
-npm run db:test
-npm run e2e -- e2e/specs/menu-domain-pantry.spec.ts
-npm run build
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run shared/contracts shared/safety shared/emergency src/features/planner src/features/pantry src/features/emergency netlify/functions
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run e2e -- e2e/specs/menu-domain-pantry.spec.ts
+docker compose run --rm --no-deps app npm run build
 rg -n 'from "\.\./\.\./shared|from "\.\./\.\./src' netlify/functions/_shared
 rg -n 'validateGeneratedMenu\(' shared src netlify/functions
 rg -n 'confirmationStatus:\s*z\.enum\(\["pending",\s*"confirmed"\]\)|menu\.safetyTags.*required|flatMap\(\(item\) => item\.safetyTags\)' shared
