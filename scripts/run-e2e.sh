@@ -26,7 +26,7 @@ signal_pending=0
 cleanup_started=0
 
 start_watchdog() {
-  if [ "$cleanup_started" -eq 1 ] || [ -n "$watchdog_pid" ]; then
+  if [ -n "$watchdog_pid" ]; then
     return
   fi
   (
@@ -79,7 +79,7 @@ cancel_watchdog() {
 }
 
 force_child_after_grace() {
-  if [ "$cleanup_started" -eq 0 ] && [ -n "$child_pid" ]; then
+  if [ -n "$child_pid" ]; then
     # wrapperが現在所有するPIDだけを参照し、watchdog側で古いPIDを保持しない。
     kill -s KILL "$child_pid" 2>/dev/null || true
   fi
@@ -90,9 +90,12 @@ deliver_signal() {
   if [ -z "$child_pid" ]; then
     return
   fi
-  if [ "$cleanup_started" -eq 1 ] || [ "$signal_count" -gt 1 ]; then
-    # 通常処理の再入力とcleanup中断では、孤児を残さず必ず回収へ進める。
+  if [ "$signal_count" -gt 1 ]; then
+    # 再入力後は復元中でも待機を打ち切り、孤児を残さず回収へ進める。
     kill -s KILL "$child_pid" 2>/dev/null || true
+  elif [ "$cleanup_started" -eq 1 ]; then
+    # 初回signalでは復元を中断せず、grace期限まで正常完了を待つ。
+    start_watchdog
   else
     kill -s "$active_signal" "$child_pid" 2>/dev/null || true
     start_watchdog

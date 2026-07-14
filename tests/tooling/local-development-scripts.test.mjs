@@ -99,6 +99,12 @@ async function installDockerRecorder(root) {
       '    if [ -n "${E2E_CLEANUP_SIGNAL_PARENT:-}" ]; then',
       '      kill -s "$E2E_CLEANUP_SIGNAL_PARENT" "$PPID"',
       "    fi",
+      '    if [ -n "${E2E_CLEANUP_SUCCESS_DELAY:-}" ]; then',
+      '      sleep "$E2E_CLEANUP_SUCCESS_DELAY"',
+      "    fi",
+      '    if [ -n "${E2E_CLEANUP_SUCCESS_MARKER:-}" ]; then',
+      '      printf "%s\\n" restored > "$E2E_CLEANUP_SUCCESS_MARKER"',
+      "    fi",
       '    if [ "${E2E_CLEANUP_WAIT_FOR_SIGNAL:-}" = "1" ]; then',
       '      exec node "$(dirname "$0")/docker-signal-waiter.mjs"',
       "    fi",
@@ -659,10 +665,61 @@ test("E2E runner bounds repeated signals while restoring the base stack", async 
   fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
   process.kill(child.pid, "SIGTERM");
   await delay(20);
-  if (isProcessAlive(child.pid)) process.kill(child.pid, "SIGTERM");
+  assert.equal(isProcessAlive(fakeDockerPid), true);
+  process.kill(child.pid, "SIGTERM");
 
   assert.deepEqual(await waitForCompletion(completion), { code: 143, signal: null });
   assert.equal(isProcessAlive(fakeDockerPid), false);
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root)),
+  );
+});
+
+test("E2E runner bounds one signal while a base restoration is stuck", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "cleanup watchdog log");
+  const readyFile = join(root, "cleanup watchdog ready");
+  await mkdir(logDir);
+  const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      DOCKER_IGNORE_SIGNAL: "1",
+      DOCKER_LOG_DIR: logDir,
+      DOCKER_READY_FILE: readyFile,
+      E2E_CLEANUP_WAIT_FOR_SIGNAL: "1",
+      KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+    stdio: "ignore",
+  });
+  const completion = new Promise((resolveClose, rejectClose) => {
+    child.once("error", rejectClose);
+    child.once("close", (code, signal) => resolveClose({ code, signal }));
+  });
+  let fakeDockerPid;
+  let watchdogPid;
+  let timerPid;
+  t.after(() => {
+    for (const pid of [child.pid, fakeDockerPid, watchdogPid, timerPid])
+      if (pid && isProcessAlive(pid)) process.kill(pid, "SIGKILL");
+  });
+
+  await waitForFile(readyFile);
+  fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
+  process.kill(child.pid, "SIGTERM");
+  watchdogPid = await waitForAdditionalChild(child.pid, fakeDockerPid);
+  [timerPid] = await readProcessChildren(watchdogPid);
+  assert.equal(Number.isSafeInteger(timerPid), true);
+  await delay(20);
+  assert.equal(isProcessAlive(fakeDockerPid), true);
+
+  assert.deepEqual(await waitForCompletion(completion), { code: 143, signal: null });
+  for (const pid of [fakeDockerPid, watchdogPid, timerPid])
+    assert.equal(isProcessAlive(pid), false);
   assert.deepEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root)),
@@ -718,12 +775,19 @@ test("E2E runner preserves a signal delivered as cleanup completes", async (t) =
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
   const logDir = join(root, "cleanup completion signal log");
+  const successMarker = join(root, "cleanup success marker");
 
   await assert.rejects(
-    runE2E(root, bin, logDir, [], { E2E_CLEANUP_SIGNAL_PARENT: "TERM" }),
+    runE2E(root, bin, logDir, [], {
+      E2E_CLEANUP_SIGNAL_PARENT: "TERM",
+      E2E_CLEANUP_SUCCESS_DELAY: "0.05",
+      E2E_CLEANUP_SUCCESS_MARKER: successMarker,
+      KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
+    }),
     (error) => error && typeof error === "object" && error.code === 143,
   );
 
+  assert.equal(await readFile(successMarker, "utf8"), "restored\n");
   assert.deepEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root)),
