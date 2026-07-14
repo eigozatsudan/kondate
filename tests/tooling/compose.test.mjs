@@ -5,6 +5,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+const extractLocalEnvValidationBody = (guide) => {
+  const match = guide.match(/-c 'sh -eu -c '\\''(?<body>[^\n]+)'\\'''/u);
+  assert.ok(match?.groups?.body, "documented local .env validation body is missing");
+  return match.groups.body;
+};
+
+const runLocalEnvValidation = async ({ body, composeFile, mode }) => {
+  const cwd = await mkdtemp(join(tmpdir(), "kondate-local-env-validation-"));
+  const lines = [
+    "API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1",
+    "LOCAL_UID=1234",
+    "LOCAL_GID=5678",
+  ];
+  if (composeFile) lines.push("COMPOSE_FILE=docker-compose.yml");
+  await writeFile(join(cwd, ".env"), `${lines.join("\n")}\n`);
+  await chmod(join(cwd, ".env"), mode);
+
+  return await new Promise((resolveRun, rejectRun) => {
+    const child = spawn("sh", ["-eu", "-c", body], { cwd, stdio: "ignore" });
+    child.once("error", rejectRun);
+    child.once("exit", resolveRun);
+  });
+};
+
 test("root compose owns every local entry-point service", async () => {
   const compose = await readFile("compose.yaml", "utf8");
   for (const name of [
@@ -226,21 +250,35 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.match(guide, /\.\/scripts\/run-e2e\.sh/u);
   assert.match(guide, /PG15データの移行とロールバックはサポートしません/u);
 
-  const cwd = await mkdtemp(join(tmpdir(), "kondate-local-env-validation-"));
-  await writeFile(join(cwd, ".env"), "COMPOSE_FILE=docker-compose.yml\n");
-  await chmod(join(cwd, ".env"), 0o644);
-  const validationBody = [
-    "test -f .env",
-    'test "$(stat -c %a .env)" = 600',
-    "if grep -q '^COMPOSE_FILE=' .env; then exit 1; fi",
-    "grep -q '^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$' .env",
-    "grep -Eq '^LOCAL_UID=[0-9]+$' .env",
-    "grep -Eq '^LOCAL_GID=[0-9]+$' .env",
-  ].join("; ");
-  const status = await new Promise((resolveRun, rejectRun) => {
-    const child = spawn("sh", ["-eu", "-c", validationBody], { cwd, stdio: "ignore" });
-    child.once("error", rejectRun);
-    child.once("exit", resolveRun);
+  assert.ok(extractLocalEnvValidationBody(guide));
+});
+
+test("documented local .env validation accepts a complete private file", async () => {
+  const guide = await readFile("docs/local-development.md", "utf8");
+  const status = await runLocalEnvValidation({
+    body: extractLocalEnvValidationBody(guide),
+    composeFile: false,
+    mode: 0o600,
+  });
+  assert.equal(status, 0);
+});
+
+test("documented local .env validation rejects COMPOSE_FILE", async () => {
+  const guide = await readFile("docs/local-development.md", "utf8");
+  const status = await runLocalEnvValidation({
+    body: extractLocalEnvValidationBody(guide),
+    composeFile: true,
+    mode: 0o600,
+  });
+  assert.notEqual(status, 0);
+});
+
+test("documented local .env validation rejects public permissions", async () => {
+  const guide = await readFile("docs/local-development.md", "utf8");
+  const status = await runLocalEnvValidation({
+    body: extractLocalEnvValidationBody(guide),
+    composeFile: false,
+    mode: 0o644,
   });
   assert.notEqual(status, 0);
 });
