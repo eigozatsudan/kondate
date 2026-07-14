@@ -5,6 +5,8 @@ repository=${SUPABASE_REPOSITORY:-https://github.com/supabase/supabase.git}
 ref=${SUPABASE_REF:-refs/heads/master}
 target=infra/supabase
 version_file=infra/supabase.version
+lock_dir=infra/.supabase-refresh.lock
+data_dir=$target/volumes/db/data
 running_as_root=false
 
 if [ "$(id -u)" = "0" ]; then
@@ -24,13 +26,16 @@ if [ -e "$target" ] && [ "${1:-}" != "--refresh" ]; then
   exit 1
 fi
 
-staging=$(mktemp -d "$(pwd)/infra/.supabase-refresh.XXXXXX")
-checkout="$staging/repository"
-archive="$staging/docker.tar"
-new_target="$staging/supabase"
-new_version="$staging/supabase.version"
-backup_target="$staging/backup-target"
-backup_version="$staging/backup-version"
+staging=
+checkout=
+archive=
+new_target=
+new_version=
+backup_target=
+backup_version=
+lock_acquired=false
+target_existed=false
+version_existed=false
 target_backed_up=false
 version_backed_up=false
 target_installed=false
@@ -46,7 +51,8 @@ restore_signal_traps() {
 
 finish() {
   status=$?
-  trap - EXIT HUP INT TERM
+  trap - EXIT
+  trap '' HUP INT TERM
   if [ "$operation_completed" != true ]; then
     if [ "$target_installed" = true ]; then
       if rm -rf "$target"; then
@@ -82,13 +88,53 @@ finish() {
   fi
   if [ "$preserve_staging" = true ]; then
     echo "rollback incomplete; preserved vendor backup at $staging" >&2
-  elif ! rm -rf "$staging"; then
-    echo "warning: could not remove vendor staging directory: $staging" >&2
+  elif [ -n "$staging" ] && ! rm -rf "$staging"; then
+    echo "vendor cleanup incomplete; preserved staging at $staging" >&2
+    if [ "$status" -eq 0 ]; then
+      status=1
+    fi
+  fi
+  if [ "$lock_acquired" = true ]; then
+    if ! rmdir "$lock_dir"; then
+      echo "vendor cleanup incomplete; could not remove refresh lock: $lock_dir" >&2
+      if [ "$status" -eq 0 ]; then
+        status=1
+      fi
+    fi
   fi
   exit "$status"
 }
 trap finish EXIT
 restore_signal_traps
+
+if [ -e "$data_dir/postmaster.pid" ]; then
+  echo "database appears to be running; use scripts/refresh-supabase.sh" >&2
+  exit 1
+fi
+if [ -d "$data_dir" ] && [ ! -r "$data_dir" ]; then
+  echo "cannot verify database state; run vendor refresh as root" >&2
+  exit 1
+fi
+if ! mkdir "$lock_dir"; then
+  echo "another Supabase vendor refresh is active: $lock_dir" >&2
+  exit 1
+fi
+lock_acquired=true
+
+if [ -e "$target" ]; then
+  target_existed=true
+fi
+if [ -e "$version_file" ]; then
+  version_existed=true
+fi
+
+staging=$(mktemp -d "$(pwd)/infra/.supabase-refresh.XXXXXX")
+checkout="$staging/repository"
+archive="$staging/docker.tar"
+new_target="$staging/supabase"
+new_version="$staging/supabase.version"
+backup_target="$staging/backup-target"
+backup_version="$staging/backup-version"
 
 git -C "$staging" init -q repository
 git -C "$checkout" remote add origin "$repository"
@@ -132,28 +178,44 @@ if [ "$running_as_root" = true ]; then
   chown -R "$local_uid:$local_gid" "$new_target" "$new_version"
 fi
 
-if [ -e "$target" ]; then
+if { [ "$target_existed" = true ] && [ ! -e "$target" ]; } ||
+  { [ "$target_existed" = false ] && [ -e "$target" ]; }; then
+  echo "vendor target changed during refresh: $target" >&2
+  exit 1
+fi
+if { [ "$version_existed" = true ] && [ ! -e "$version_file" ]; } ||
+  { [ "$version_existed" = false ] && [ -e "$version_file" ]; }; then
+  echo "vendor version changed during refresh: $version_file" >&2
+  exit 1
+fi
+
+if [ "$target_existed" = true ]; then
   trap '' HUP INT TERM
   mv "$target" "$backup_target"
   target_backed_up=true
   restore_signal_traps
 fi
-if [ -e "$version_file" ]; then
+if [ "$version_existed" = true ]; then
   trap '' HUP INT TERM
   mv "$version_file" "$backup_version"
   version_backed_up=true
   restore_signal_traps
 fi
+if [ -e "$target" ]; then
+  echo "vendor target destination appeared during refresh: $target" >&2
+  exit 1
+fi
 trap '' HUP INT TERM
 mv "$new_target" "$target"
 target_installed=true
 restore_signal_traps
+if [ -e "$version_file" ]; then
+  echo "vendor version destination appeared during refresh: $version_file" >&2
+  exit 1
+fi
 trap '' HUP INT TERM
 mv "$new_version" "$version_file"
 version_installed=true
 operation_completed=true
-if ! rm -rf "$staging"; then
-  echo "warning: could not remove vendor staging directory: $staging" >&2
-fi
 
 echo "Vendored supabase/supabase $resolved_sha docker/"

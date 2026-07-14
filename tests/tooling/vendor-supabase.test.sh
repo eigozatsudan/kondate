@@ -42,6 +42,10 @@ printf '%s\n' \
 chmod +x "$fixture/bin/mv"
 printf '%s\n' \
   '#!/bin/sh' \
+  'if [ "${WAIT_FETCH:-}" != "" ] && [ "${1:-}" = "-C" ] && [ "${3:-}" = "fetch" ]; then' \
+  '  : > "$WAIT_FETCH_STARTED"' \
+  '  while [ ! -e "$WAIT_FETCH_RELEASE" ]; do sleep 0.05; done' \
+  'fi' \
   'if [ "${SIGNAL_TO_INJECT:-}" != "" ] && [ "${1:-}" = "-C" ] && [ "${3:-}" = "fetch" ]; then' \
   '  case "$SIGNAL_TO_INJECT" in' \
   '    HUP) kill -HUP "$PPID" ;;' \
@@ -54,6 +58,9 @@ printf '%s\n' \
 chmod +x "$fixture/bin/git"
 printf '%s\n' \
   '#!/bin/sh' \
+  'if [ "${FAIL_CLEANUP:-}" != "" ] && [ "${1:-}" = "-rf" ]; then' \
+  '  case "${2:-}" in */.supabase-refresh.*) exit 75 ;; esac' \
+  'fi' \
   'case "${POST_COMMIT_SIGNAL:-}:$1:${2:-}" in' \
   '  TERM:-rf:*/.supabase-refresh.*)' \
   '    if [ -e "$2" ]; then kill -TERM "$PPID"; fi' \
@@ -164,6 +171,68 @@ test ! -e infra/supabase/docker-compose.pg15.yml
 test ! -e infra/supabase/docker-compose.pg17.yml
 test ! -e infra/supabase/utils/upgrade-pg17.sh
 test ! -e infra/supabase/tests/test-pg17-upgrade.sh
+
+mkdir infra/.supabase-refresh.lock
+if SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; then
+  echo "existing refresh lock was accepted" >&2
+  exit 1
+fi
+rmdir infra/.supabase-refresh.lock
+
+wait_started="$fixture/fetch-started"
+wait_release="$fixture/fetch-release"
+PATH="$fixture/bin:$PATH" \
+  WAIT_FETCH=1 \
+  WAIT_FETCH_STARTED="$wait_started" \
+  WAIT_FETCH_RELEASE="$wait_release" \
+  SUPABASE_REPOSITORY="$source_repo" \
+  sh scripts/vendor-supabase.sh --refresh > "$fixture/first-refresh.log" 2>&1 &
+first_refresh_pid=$!
+for _ in $(seq 1 100); do
+  if [ -d infra/.supabase-refresh.lock ] && [ -e "$wait_started" ]; then
+    break
+  fi
+  sleep 0.05
+done
+test -d infra/.supabase-refresh.lock
+test -e "$wait_started"
+if SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; then
+  echo "concurrent refresh was accepted" >&2
+  exit 1
+fi
+: > "$wait_release"
+if ! wait "$first_refresh_pid"; then
+  echo "first concurrent refresh failed" >&2
+  exit 1
+fi
+test ! -e infra/.supabase-refresh.lock
+
+mkdir -p infra/supabase/volumes/db/data
+: > infra/supabase/volumes/db/data/postmaster.pid
+if SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; then
+  echo "running database marker was accepted" >&2
+  exit 1
+fi
+rm -f infra/supabase/volumes/db/data/postmaster.pid
+
+chmod 755 "$fixture" "$workspace" "$workspace/scripts" "$workspace/infra"
+chmod 000 infra/supabase/volumes/db/data
+if su nobody -s /bin/sh -c \
+  "SUPABASE_REPOSITORY='$source_repo' sh scripts/vendor-supabase.sh --refresh"; then
+  echo "unreadable database directory was accepted" >&2
+  exit 1
+fi
+chmod 755 infra/supabase/volumes/db/data
+
+status=0
+PATH="$fixture/bin:$PATH" FAIL_CLEANUP=1 SUPABASE_REPOSITORY="$source_repo" \
+  sh scripts/vendor-supabase.sh --refresh 2> "$fixture/cleanup.log" || status=$?
+test "$status" -ne 0
+grep -q '^vendor cleanup incomplete; preserved staging at ' "$fixture/cleanup.log"
+test "$(cat infra/supabase.version)" = "$expected_sha"
+preserved_cleanup=$(sed -n 's/^vendor cleanup incomplete; preserved staging at //p' "$fixture/cleanup.log" | tail -n 1)
+test -n "$preserved_cleanup"
+/bin/rm -rf "$preserved_cleanup"
 
 printf 'post-commit signal fixture\n' > "$source_repo/docker/README.md"
 git -C "$source_repo" add docker/README.md
