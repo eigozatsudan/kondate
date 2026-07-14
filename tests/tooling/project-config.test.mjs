@@ -55,6 +55,34 @@ test("pins Node 24 and exposes every verification script", async () => {
   assert.equal(await readFile(".nvmrc", "utf8"), "24\n");
 });
 
+test("README provides the supported development and Supabase workflows", async () => {
+  const readme = await readFile("README.md", "utf8");
+
+  for (const heading of [
+    "# こんだて日和",
+    "## 技術構成",
+    "## ローカル開発",
+    "## 開発と検証",
+    "## Supabase公式Docker構成の更新",
+    "## 安全上の注意",
+  ]) {
+    assert.ok(readme.includes(heading), `missing README heading: ${heading}`);
+  }
+
+  for (const command of [
+    "./scripts/generate-local-secrets.sh --force",
+    "./scripts/reset-local-db.sh",
+    "./scripts/run-e2e.sh",
+    "./scripts/refresh-supabase.sh",
+  ]) {
+    assert.ok(readme.includes(command), `missing README command: ${command}`);
+  }
+
+  assert.match(readme, /docs\/local-development\.md/u);
+  assert.match(readme, /Postgres 17/u);
+  assert.match(readme, /ローカルDBを破棄/u);
+});
+
 test("ignores local temporary and refresh files from Git and Docker contexts", async () => {
   const [gitignore, dockerignore] = await Promise.all([
     readFile(".gitignore", "utf8"),
