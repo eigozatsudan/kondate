@@ -419,7 +419,9 @@ docker compose --project-directory "$repo_root" --project-name "$project_name" -
 
 fake daemon childはTERMを無視させ、`kill e2e`でSIGKILLされ、続く`rm --force e2e`がremoved markerを作ることを要求する。kill、rm、restoreの各失敗でも後続phaseをすべて記録し、statusがsignal、元E2E、kill、rm、restoreの順になることを確認する。
 
-同じ`TMPDIR`とcheckoutで1本目をE2E中に待機させ、2本目がDocker invocationを追加せず失敗するfixtureを追加する。1本目をTERMで完了させた後は3本目が成功すること、stale lockはDocker前に拒否されること、成功・通常失敗・signalでlockが消えることを確認する。lock directoryへファイルを置いて`rmdir`を失敗させ、元statusが0の場合は非0になることも確認する。
+同じcheckoutで異なる`TMPDIR`を使い、1本目をE2E中に待機させ、2本目がDocker invocationを追加せず失敗するfixtureを追加する。1本目をTERMで完了させた後は3本目が成功すること、stale lockはDocker前に拒否されること、成功・通常失敗・signalでlockが消えることを確認する。lock directoryへファイルを置いて`rmdir`を失敗させ、元statusが0の場合は非0になることも確認する。
+
+`.gitignore`と`.dockerignore`の両方で`.run-e2e.lock`を要求し、運用文書とstatic runner契約もrepository root固定pathを要求する。
 
 - [ ] **Step 7: 追加REDを確認する**
 
@@ -436,7 +438,7 @@ Expected: `kill e2e`未実行、`rm --stop`使用、lock未実装のため各cas
 最初のCompose操作前に次のlockを獲得し、lock未取得時はcleanupを実行しない。
 
 ```sh
-lock_dir=${TMPDIR:-/tmp}/kondate-run-e2e-$project_name.lock
+lock_dir=$repo_root/.run-e2e.lock
 lock_acquired=0
 if mkdir "$lock_dir"; then
   lock_acquired=1
@@ -480,8 +482,8 @@ Expected: tooling test全件PASS、lint error 0、その他commandもexit 0。
 - [ ] **Step 10: 追加修正をコミットする**
 
 ```bash
-git add scripts/run-e2e.sh tests/tooling/local-development-scripts.test.mjs
-git commit -m "fix: E2E実行を排他して即時cleanup"
+git add .gitignore .dockerignore scripts/run-e2e.sh docs/local-development.md tests/tooling/local-development-scripts.test.mjs tests/tooling/compose.test.mjs tests/tooling/project-config.test.mjs
+git commit -m "fix: E2E lockをcheckout内へ固定"
 ```
 
 ---
