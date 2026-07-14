@@ -234,8 +234,13 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   assert.match(runner, /run --rm --no-deps e2e/u);
   assert.match(runner, /run --rm --no-deps e2e "\$@"/u);
   assert.doesNotMatch(runner, /exec docker compose/u);
-  assert.match(runner, /trap cleanup EXIT/u);
+  assert.match(runner, /trap cleanup_on_exit EXIT/u);
   assert.match(runner, /up -d --wait --force-recreate --no-deps auth app/u);
+  assert.match(
+    runner,
+    /launch_in_progress=1\s+"\$@" &\s+child_pid=\$!\s+launch_in_progress=0\s+if \[ "\$signal_pending" -eq 1 \]; then\s+signal_pending=0\s+deliver_signal/u,
+  );
+  assert.match(runner, /kill -s KILL/u);
 });
 
 test("documents the Docker-only clean initialization and verification workflow", async () => {
