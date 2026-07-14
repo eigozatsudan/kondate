@@ -47,11 +47,17 @@ vendor更新のcommit後から`reset-local-db.sh`完了前にwrapperが中断さ
 
 lockとstagingは`.gitignore`と`.dockerignore`の両方へ追加し、失敗時に意図的に保存されたbackupやstale lockがコミット・build contextへ混入しないようにする。
 
-### E2E終了後の復元
+### E2E排他実行と終了後の復元
 
-`scripts/run-e2e.sh`は`exec`を使わず、E2Eの終了statusを保存する。`EXIT`、`HUP`、`INT`、`TERM`で共通cleanupを実行し、base `compose.yaml`だけを使って`auth`と`app`を`--force-recreate --no-deps`で復元する。
+`scripts/run-e2e.sh`は最初のCompose操作より前に、`${TMPDIR:-/tmp}/kondate-run-e2e-$project_name.lock`を原子的な`mkdir`で獲得する。同じcheckoutの2本目はDockerを呼び出さず失敗する。lock獲得直後から`EXIT`、`HUP`、`INT`、`TERM`のtrapで保護し、正常・失敗・処理済みsignalの全経路で解放する。SIGKILL後のstale lockは安全側に失敗し、自動削除しない。lock未獲得のプロセスは、実行中の1本目を壊さないようCompose cleanupもlock削除も行わない。
 
-cleanup後は元のE2E statusを返す。E2Eが成功しても復元に失敗した場合は非0にする。signal時はcleanup後に標準的な終了status（HUP 129、INT 130、TERM 143）を返す。KongとOAuth mockはE2E overrideで設定が変わらないため、再作成済みの状態をそのまま使用する。
+`scripts/run-e2e.sh`は`exec`を使わず、E2Eの終了statusを保存する。cleanupは同じproject directory、project name、base + E2E Compose files、`e2e` profileを指定し、次の3 phaseを順番にすべて試行する。
+
+1. `docker compose ... kill e2e`でone-off containerへ即時SIGKILLを送る。
+2. `docker compose ... rm --force e2e`で停止済みone-off containerを削除する。`--stop`は使用しない。
+3. base `compose.yaml`だけを使い、`auth`と`app`を`--force-recreate --no-deps`で復元する。
+
+各phaseが失敗しても後続phaseは必ず試行する。終了statusは、処理済みsignal、元のE2E失敗、kill失敗、rm失敗、base復元失敗、lock解放失敗の順に優先する。lock解放だけが失敗した場合も成功とはせず非0にする。signal時はcleanupとlock解放後に標準的な終了status（HUP 129、INT 130、TERM 143）を返す。KongとOAuth mockはE2E overrideで設定が変わらないため、再作成済みの状態をそのまま使用する。
 
 別Compose projectによる完全分離は採用しない。公式vendor構成の固定`container_name`とプロジェクトの固定loopback portsが既存stackと衝突し、変更範囲が大きいためである。
 
@@ -72,6 +78,10 @@ cleanup後は元のE2E statusを返す。E2Eが成功しても復元に失敗し
 - `postmaster.pid`がある直接refreshはswap前に拒否される。
 - 任意のcurrent working directoryからシークレットwrapperを実行しても、正しいproject directoryとCompose pathがDockerへ渡る。
 - E2E成功、通常失敗、INT、TERMの各経路でbase `auth`と`app`の復元commandが実行され、期待するstatusが返る。
+- TERMを無視するdaemon側one-off childでも、cleanupが`kill`、`rm`、base復元の順に完走し、childとcontainer相当markerを残さない。
+- kill、rm、base復元の各失敗時も後続phaseを実行し、規定のstatus優先順位を保つ。
+- 同じcheckoutで1本目を待機させた間は2本目をDocker呼び出し前に拒否し、1本目終了後は3本目を実行できる。
+- 正常、通常失敗、処理済みsignalでlockを解放し、lock解放失敗またはstale lockは安全側に非0終了する。
 
 focusedテストが通った後、toolingテスト全体、vendor shellテスト、Compose config、Vitest、build、lint、typecheck、format checkをDocker内で実行する。実DBとE2E全体はstackを再作成するため、実行前に現在の共有stack状態を確認する。
 
@@ -81,6 +91,7 @@ focusedテストが通った後、toolingテスト全体、vendor shellテスト
 - 直接または並行vendor更新が危険なswapを開始しない。
 - cleanup不全が成功として報告されない。
 - E2E後の通常stackがbase Auth/app設定へ戻る。
+- E2E one-offが即時停止・削除され、同じcheckoutのE2E実行が並行しない。
 - ローカルwrapperが呼び出し元directoryに依存しない。
 - 一時・復旧用vendor資産がGitとDocker contextへ混入しない。
 - 再現テストと既存検証が成功し、worktreeに意図しない生成物が残らない。
