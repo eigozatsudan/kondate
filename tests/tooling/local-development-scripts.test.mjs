@@ -25,11 +25,13 @@ const hasTypescript = await access(typescriptPath).then(
   () => false,
 );
 
-async function createScriptFixture(scriptName) {
+async function createScriptFixture(scriptName, dependencies = []) {
   const root = await mkdtemp(join(tmpdir(), `${scriptName}-`));
   await mkdir(join(root, "scripts"));
-  await copyFile(join("scripts", scriptName), join(root, "scripts", scriptName));
-  await chmod(join(root, "scripts", scriptName), 0o755);
+  for (const fixtureScript of [scriptName, ...dependencies]) {
+    await copyFile(join("scripts", fixtureScript), join(root, "scripts", fixtureScript));
+    await chmod(join(root, "scripts", fixtureScript), 0o755);
+  }
   if (scriptName === "generate-database-types.sh" && hasTypescript) {
     await mkdir(join(root, "node_modules"));
     await symlink(typescriptPath, join(root, "node_modules/typescript"));
@@ -120,6 +122,68 @@ test("reset fixes Compose to its repository when invoked from another directory"
     `${root}|compose --project-directory ${root} -f ${root}/compose.yaml down --volumes --remove-orphans`,
     `${root}|compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 --entrypoint sh vendor-supabase -c rm -rf /workspace/infra/supabase/volumes/db/data`,
     `${root}|compose --project-directory ${root} -f ${root}/compose.yaml up -d --wait`,
+  ]);
+});
+
+test("refresh stops the stack before vendor refresh and clean database reset", async (t) => {
+  const root = await createScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = join(root, "bin");
+  const log = join(root, "docker.log");
+  await mkdir(bin);
+  await writeFile(join(bin, "docker"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n', {
+    mode: 0o755,
+  });
+
+  await execFileAsync(join(root, "scripts", "refresh-supabase.sh"), {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      DOCKER_LOG: log,
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+  });
+
+  assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
+    `compose --project-directory ${root} -f ${root}/compose.yaml down --remove-orphans`,
+    `compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh`,
+    `compose --project-directory ${root} -f ${root}/compose.yaml down --volumes --remove-orphans`,
+    `compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 --entrypoint sh vendor-supabase -c rm -rf /workspace/infra/supabase/volumes/db/data`,
+    `compose --project-directory ${root} -f ${root}/compose.yaml up -d --wait`,
+  ]);
+});
+
+test("refresh preserves vendor failure status and does not reset the database", async (t) => {
+  const root = await createScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = join(root, "bin");
+  const log = join(root, "docker.log");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "docker"),
+    [
+      "#!/bin/sh",
+      'printf "%s\\n" "$*" >> "$DOCKER_LOG"',
+      'case "$*" in *"vendor-supabase --refresh"*) exit 29 ;; esac',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  await assert.rejects(
+    execFileAsync(join(root, "scripts", "refresh-supabase.sh"), {
+      cwd: tmpdir(),
+      env: {
+        ...process.env,
+        DOCKER_LOG: log,
+        PATH: `${bin}:${process.env.PATH}`,
+      },
+    }),
+    (error) => error && typeof error === "object" && error.code === 29,
+  );
+
+  assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
+    `compose --project-directory ${root} -f ${root}/compose.yaml down --remove-orphans`,
+    `compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh`,
   ]);
 });
 

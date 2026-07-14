@@ -51,10 +51,9 @@ E2E wrapperは専用overrideのAuthをhealthyまで待機し、Kong、OAuth mock
 ## Supabase公式Docker構成の更新
 
 ```bash
-LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" \
-  docker compose -f compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh
+./scripts/refresh-supabase.sh
 ```
 
-実更新だけrootへoverrideして異UIDのruntime dataを含む旧backupを削除し、新vendor成果物はスクリプト内で `LOCAL_UID` / `LOCAL_GID` へ戻します。
+wrapperはローカルstackを停止してから、vendor更新だけrootで実行し、ローカルDBを破棄してクリーン再起動します。異UIDのruntime dataを含む旧backupを削除し、新vendor成果物は更新処理内で `LOCAL_UID` / `LOCAL_GID` へ戻します。処理が中断した場合も、同じwrapperを再実行すれば収束します。
 
 更新後はPostgresタグの整合性テストを実行し、ローカル環境を再作成してください。PG15データの移行とロールバックはサポートしません。

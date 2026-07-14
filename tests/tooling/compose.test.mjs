@@ -234,6 +234,7 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.doesNotMatch(guide, /! grep -q ['"]?\^COMPOSE_FILE=/u);
   assert.match(guide, /docker compose pull --quiet --ignore-buildable/u);
   assert.match(guide, /docker compose build/u);
+  assert.match(guide, /\.\/scripts\/refresh-supabase\.sh/u);
   assert.match(guide, /\.\/scripts\/reset-local-db\.sh/u);
   assert.match(packageJson, /"db:reset": "\.\/scripts\/reset-local-db\.sh"/u);
   assert.match(reset, /down --volumes --remove-orphans/u);
