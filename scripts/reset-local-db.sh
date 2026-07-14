@@ -10,6 +10,15 @@ project_name=$("$script_dir/compose-project-name.sh" "$repo_root")
 export KONDATE_COMPOSE_PROJECT_NAME="$project_name"
 
 child_pid=
+container_query=
+cleanup() {
+  if [ -n "$container_query" ]; then
+    rm -f "$container_query" || true
+    container_query=
+  fi
+}
+trap cleanup EXIT
+
 forward_signal() {
   signal=$1
   status=$2
@@ -38,16 +47,19 @@ run_child() {
 
 run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
   -f "$repo_root/compose.yaml" down --volumes --remove-orphans
-if run_child docker container inspect supabase-db > /dev/null 2>&1; then
+container_query=$(mktemp "${TMPDIR:-/tmp}/kondate-supabase-db.XXXXXX")
+if run_child docker container ls --all --quiet --filter 'name=^/supabase-db$' > "$container_query"; then
+  :
+else
+  query_status=$?
+  echo "failed to query Docker for supabase-db" >&2
+  exit "$query_status"
+fi
+if [ -s "$container_query" ]; then
   echo "supabase-db remains after expected project shutdown; stop and remove the legacy/foreign Compose project before retrying" >&2
   exit 1
-else
-  inspect_status=$?
 fi
-if [ "$inspect_status" -ne 1 ]; then
-  echo "failed to verify whether supabase-db still exists" >&2
-  exit "$inspect_status"
-fi
+cleanup
 # 公式ComposeのPGDATAはbind mountのため、named volumeとは別に削除する。
 run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
   -f "$repo_root/compose.tooling.yaml" run --rm --user 0:0 --entrypoint sh \

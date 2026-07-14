@@ -1,3 +1,5 @@
+name: "${KONDATE_COMPOSE_PROJECT_NAME:?KONDATE_COMPOSE_PROJECT_NAME is required}"
+
 services:
   local-secrets:
     image: node:24-bookworm-slim

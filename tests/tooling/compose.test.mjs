@@ -46,11 +46,15 @@ test("root compose owns every local entry-point service", async () => {
 });
 
 test("derives the Compose project name from the checkout directory", async () => {
-  const compose = await readFile("compose.yaml", "utf8");
-  assert.match(
-    compose,
-    /^name: "\$\{KONDATE_COMPOSE_PROJECT_NAME:\?KONDATE_COMPOSE_PROJECT_NAME is required\}"$/mu,
-  );
+  const [compose, tooling] = await Promise.all([
+    readFile("compose.yaml", "utf8"),
+    readFile("compose.tooling.yaml", "utf8"),
+  ]);
+  for (const source of [compose, tooling])
+    assert.match(
+      source,
+      /^name: "\$\{KONDATE_COMPOSE_PROJECT_NAME:\?KONDATE_COMPOSE_PROJECT_NAME is required\}"$/mu,
+    );
 });
 
 test("uses one canonical loopback hostname for public browser services", async () => {

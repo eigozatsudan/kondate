@@ -73,9 +73,10 @@ async function installDockerRecorder(root) {
       "  while :; do sleep 1; done",
       "fi",
       'if [ "${DOCKER_FAIL_AT:-}" = "$index" ]; then exit "$DOCKER_FAIL_STATUS"; fi',
-      'if [ "$*" = "container inspect supabase-db" ]; then',
-      '  if [ "${DOCKER_FOREIGN_CONTAINER:-}" = "1" ]; then exit 0; fi',
-      "  exit 1",
+      'if [ "$*" = "container ls --all --quiet --filter name=^/supabase-db$" ]; then',
+      '  if [ "${DOCKER_QUERY_ERROR:-}" = "1" ]; then exit 57; fi',
+      '  if [ "${DOCKER_FOREIGN_CONTAINER:-}" = "1" ]; then printf "%s\\n" "foreign-container-id"; fi',
+      "  exit 0",
       "fi",
     ].join("\n"),
     { mode: 0o755 },
@@ -135,7 +136,7 @@ function expectedRefreshInvocations(root, projectName) {
       "--volumes",
       "--remove-orphans",
     ],
-    ["container", "inspect", "supabase-db"],
+    ["container", "ls", "--all", "--quiet", "--filter", "name=^/supabase-db$"],
     [
       "compose",
       "--project-directory",
@@ -425,6 +426,30 @@ test("refresh rejects a foreign fixed-name database before deleting PGDATA", asy
     await readDockerInvocations(logDir),
     expectedRefreshInvocations(root, projectName).slice(0, 4),
   );
+});
+
+test("refresh fails closed when the Docker container query fails", async (t) => {
+  const root = await createDatabaseScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "query error log");
+  const temporaryDir = join(root, "temporary");
+  await mkdir(temporaryDir);
+  const projectName = await expectedProjectName(root);
+
+  await assert.rejects(
+    runRefresh(root, bin, logDir, {
+      DOCKER_QUERY_ERROR: "1",
+      TMPDIR: temporaryDir,
+    }),
+    (error) => error && typeof error === "object" && error.code === 57,
+  );
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedRefreshInvocations(root, projectName).slice(0, 4),
+  );
+  assert.deepEqual(await readdir(temporaryDir), []);
 });
 
 test("refresh rejects a copied checkout identity before destructive commands", async (t) => {
