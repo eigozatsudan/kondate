@@ -36,17 +36,39 @@ backup_version=
 lock_acquired=false
 target_existed=false
 version_existed=false
+target_identity=
+version_identity=
+version_hash=
 target_backed_up=false
 version_backed_up=false
 target_installed=false
 version_installed=false
 operation_completed=false
 preserve_staging=false
+pending_signal_status=0
+
+verify_database_stopped() {
+  if [ -e "$data_dir/postmaster.pid" ]; then
+    echo "database appears to be running; use scripts/refresh-supabase.sh" >&2
+    exit 1
+  fi
+  if [ -d "$data_dir" ] && { [ ! -r "$data_dir" ] || [ ! -x "$data_dir" ]; }; then
+    echo "cannot verify database state; run vendor refresh as root" >&2
+    exit 1
+  fi
+}
 
 restore_signal_traps() {
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
+}
+
+defer_signal_traps() {
+  pending_signal_status=0
+  trap 'pending_signal_status=129' HUP
+  trap 'pending_signal_status=130' INT
+  trap 'pending_signal_status=143' TERM
 }
 
 finish() {
@@ -107,25 +129,30 @@ finish() {
 trap finish EXIT
 restore_signal_traps
 
-if [ -e "$data_dir/postmaster.pid" ]; then
-  echo "database appears to be running; use scripts/refresh-supabase.sh" >&2
-  exit 1
+verify_database_stopped
+defer_signal_traps
+lock_created=false
+if mkdir "$lock_dir"; then
+  lock_acquired=true
+  lock_created=true
 fi
-if [ -d "$data_dir" ] && [ ! -r "$data_dir" ]; then
-  echo "cannot verify database state; run vendor refresh as root" >&2
-  exit 1
+restore_signal_traps
+if [ "$pending_signal_status" -ne 0 ]; then
+  exit "$pending_signal_status"
 fi
-if ! mkdir "$lock_dir"; then
+if [ "$lock_created" != true ]; then
   echo "another Supabase vendor refresh is active: $lock_dir" >&2
   exit 1
 fi
-lock_acquired=true
 
 if [ -e "$target" ]; then
   target_existed=true
+  target_identity=$(stat -c '%d:%i' "$target")
 fi
 if [ -e "$version_file" ]; then
   version_existed=true
+  version_identity=$(stat -c '%d:%i' "$version_file")
+  version_hash=$(sha256sum "$version_file" | awk '{print $1}')
 fi
 
 staging=$(mktemp -d "$(pwd)/infra/.supabase-refresh.XXXXXX")
@@ -191,14 +218,24 @@ fi
 
 if [ "$target_existed" = true ]; then
   trap '' HUP INT TERM
+  verify_database_stopped
   mv "$target" "$backup_target"
   target_backed_up=true
+  if [ "$(stat -c '%d:%i' "$backup_target")" != "$target_identity" ]; then
+    echo "vendor target identity changed during refresh: $target" >&2
+    exit 1
+  fi
   restore_signal_traps
 fi
 if [ "$version_existed" = true ]; then
   trap '' HUP INT TERM
   mv "$version_file" "$backup_version"
   version_backed_up=true
+  if [ "$(stat -c '%d:%i' "$backup_version")" != "$version_identity" ] ||
+    [ "$(sha256sum "$backup_version" | awk '{print $1}')" != "$version_hash" ]; then
+    echo "vendor version identity changed during refresh: $version_file" >&2
+    exit 1
+  fi
   restore_signal_traps
 fi
 if [ -e "$target" ]; then

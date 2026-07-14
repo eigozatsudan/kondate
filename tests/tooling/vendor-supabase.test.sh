@@ -3,7 +3,23 @@ set -eu
 
 root=$(pwd)
 fixture=$(mktemp -d)
-trap 'rm -rf "$fixture"' EXIT HUP INT TERM
+first_refresh_pid=
+wait_release=
+
+cleanup_fixture() {
+  if [ -n "$wait_release" ]; then
+    : > "$wait_release"
+  fi
+  if [ -n "$first_refresh_pid" ]; then
+    kill "$first_refresh_pid" 2>/dev/null || true
+    wait "$first_refresh_pid" 2>/dev/null || true
+  fi
+  rm -rf "$fixture"
+}
+trap cleanup_fixture EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 source_repo="$fixture/source"
 workspace="$fixture/workspace"
@@ -30,6 +46,21 @@ cd "$workspace"
 mkdir -p "$fixture/bin"
 printf '%s\n' \
   '#!/bin/sh' \
+  'case "${MUTATE_MV_STEP:-}:$1:$2" in' \
+  '  target_identity:infra/supabase:*/backup-target)' \
+  '    /bin/mv infra/supabase "$MUTATED_ORIGINAL"' \
+  '    /bin/mkdir infra/supabase' \
+  '    printf "%s\n" replacement-target > infra/supabase/replacement-marker' \
+  '    ;;' \
+  '  version_identity:infra/supabase.version:*/backup-version)' \
+  '    /bin/mv infra/supabase.version "$MUTATED_ORIGINAL"' \
+  '    printf "%s\n" replacement-version > infra/supabase.version' \
+  '    ;;' \
+  '  version_content:infra/supabase.version:*/backup-version)' \
+  '    /bin/cp -p infra/supabase.version "$MUTATED_ORIGINAL"' \
+  '    printf "%s\n" replacement-version > infra/supabase.version' \
+  '    ;;' \
+  'esac' \
   'case "${FAIL_MV_STEP:-}:$1:$2" in' \
   '  target_backup:infra/supabase:*/backup-target|target_backup:infra/supabase:infra/.supabase-backup.*) exit 73 ;;' \
   '  version_backup:infra/supabase.version:*/backup-version|version_backup:infra/supabase.version:infra/.supabase-version-backup.*) exit 73 ;;' \
@@ -40,6 +71,15 @@ printf '%s\n' \
   'esac' \
   'exec /bin/mv "$@"' > "$fixture/bin/mv"
 chmod +x "$fixture/bin/mv"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${SIGNAL_AFTER_LOCK_MKDIR:-}" != "" ] && [ "${1:-}" = "infra/.supabase-refresh.lock" ]; then' \
+  '  /bin/mkdir "$@"' \
+  '  kill -"$SIGNAL_AFTER_LOCK_MKDIR" "$PPID"' \
+  '  exit 0' \
+  'fi' \
+  'exec /bin/mkdir "$@"' > "$fixture/bin/mkdir"
+chmod +x "$fixture/bin/mkdir"
 printf '%s\n' \
   '#!/bin/sh' \
   'if [ "${WAIT_FETCH:-}" != "" ] && [ "${1:-}" = "-C" ] && [ "${3:-}" = "fetch" ]; then' \
@@ -163,6 +203,32 @@ assert_failed_restore_preserved() {
   test "$(snapshot_vendor)" = "$before"
 }
 
+assert_identity_replacement_preserved() {
+  step=$1
+  original="$fixture/original-$step"
+  before=$(snapshot_vendor)
+  status=0
+  PATH="$fixture/bin:$PATH" \
+    MUTATE_MV_STEP="$step" \
+    MUTATED_ORIGINAL="$original" \
+    SUPABASE_REPOSITORY="$source_repo" \
+    sh scripts/vendor-supabase.sh --refresh || status=$?
+  test "$status" -ne 0
+  case "$step" in
+    target_identity)
+      grep -q '^replacement-target$' infra/supabase/replacement-marker
+      /bin/rm -rf infra/supabase
+      /bin/mv "$original" infra/supabase
+      ;;
+    version_identity|version_content)
+      test "$(cat infra/supabase.version)" = "replacement-version"
+      /bin/rm -f infra/supabase.version
+      /bin/mv "$original" infra/supabase.version
+      ;;
+  esac
+  test "$(snapshot_vendor)" = "$before"
+}
+
 SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh
 
 test "$(cat infra/supabase.version)" = "$expected_sha"
@@ -205,6 +271,8 @@ if ! wait "$first_refresh_pid"; then
   echo "first concurrent refresh failed" >&2
   exit 1
 fi
+first_refresh_pid=
+wait_release=
 test ! -e infra/.supabase-refresh.lock
 
 mkdir -p infra/supabase/volumes/db/data
@@ -215,21 +283,80 @@ if SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh --refresh; t
 fi
 rm -f infra/supabase/volumes/db/data/postmaster.pid
 
+before=$(snapshot_vendor)
+wait_started="$fixture/pgdata-fetch-started"
+wait_release="$fixture/pgdata-fetch-release"
+PATH="$fixture/bin:$PATH" \
+  WAIT_FETCH=1 \
+  WAIT_FETCH_STARTED="$wait_started" \
+  WAIT_FETCH_RELEASE="$wait_release" \
+  SUPABASE_REPOSITORY="$source_repo" \
+  sh scripts/vendor-supabase.sh --refresh > "$fixture/pgdata-refresh.log" 2>&1 &
+first_refresh_pid=$!
+for _ in $(seq 1 100); do
+  if [ -e "$wait_started" ]; then
+    break
+  fi
+  sleep 0.05
+done
+test -e "$wait_started"
+: > infra/supabase/volumes/db/data/postmaster.pid
+: > "$wait_release"
+status=0
+wait "$first_refresh_pid" || status=$?
+first_refresh_pid=
+wait_release=
+if [ "$status" -eq 0 ]; then
+  echo "database marker introduced during fetch was accepted" >&2
+  exit 1
+fi
+grep -q '^database appears to be running; use scripts/refresh-supabase.sh$' "$fixture/pgdata-refresh.log"
+rm -f infra/supabase/volumes/db/data/postmaster.pid
+test "$(snapshot_vendor)" = "$before"
+
 chmod 755 "$fixture" "$workspace" "$workspace/scripts" "$workspace/infra"
-chmod 000 infra/supabase/volumes/db/data
+chown 65534:65534 infra/supabase/volumes/db/data
+chmod 600 infra/supabase/volumes/db/data
+su nobody -s /bin/sh -c 'test "$(id -u)" != 0'
+su nobody -s /bin/sh -c \
+  'test -r infra/supabase/volumes/db/data && test ! -x infra/supabase/volumes/db/data'
 if su nobody -s /bin/sh -c \
-  "SUPABASE_REPOSITORY='$source_repo' sh scripts/vendor-supabase.sh --refresh"; then
+  "SUPABASE_REPOSITORY='$source_repo' sh scripts/vendor-supabase.sh --refresh" \
+  2> "$fixture/unreadable.log"; then
   echo "unreadable database directory was accepted" >&2
   exit 1
 fi
+grep -q '^cannot verify database state; run vendor refresh as root$' "$fixture/unreadable.log"
 chmod 755 infra/supabase/volumes/db/data
 
+for signal_and_status in HUP:129 INT:130 TERM:143; do
+  signal=${signal_and_status%:*}
+  expected_status=${signal_and_status#*:}
+  status=0
+  PATH="$fixture/bin:$PATH" \
+    SIGNAL_AFTER_LOCK_MKDIR="$signal" \
+    SUPABASE_REPOSITORY="$source_repo" \
+    sh scripts/vendor-supabase.sh --refresh || status=$?
+  if [ "$status" -ne "$expected_status" ]; then
+    echo "unexpected lock acquisition $signal status: $status" >&2
+    exit 1
+  fi
+  test ! -e infra/.supabase-refresh.lock
+done
+
+cleanup_old_sha=$expected_sha
+printf 'cleanup commit marker\n' > "$source_repo/docker/cleanup-marker"
+git -C "$source_repo" add docker/cleanup-marker
+git -C "$source_repo" commit -q -m "fixture: cleanup commit"
+expected_sha=$(git -C "$source_repo" rev-parse HEAD)
+test "$expected_sha" != "$cleanup_old_sha"
 status=0
 PATH="$fixture/bin:$PATH" FAIL_CLEANUP=1 SUPABASE_REPOSITORY="$source_repo" \
   sh scripts/vendor-supabase.sh --refresh 2> "$fixture/cleanup.log" || status=$?
 test "$status" -ne 0
 grep -q '^vendor cleanup incomplete; preserved staging at ' "$fixture/cleanup.log"
 test "$(cat infra/supabase.version)" = "$expected_sha"
+grep -q '^cleanup commit marker$' infra/supabase/cleanup-marker
 preserved_cleanup=$(sed -n 's/^vendor cleanup incomplete; preserved staging at //p' "$fixture/cleanup.log" | tail -n 1)
 test -n "$preserved_cleanup"
 /bin/rm -rf "$preserved_cleanup"
@@ -248,6 +375,9 @@ assert_signal_rollback INT 130
 assert_signal_rollback TERM 143
 for step in target_restore version_restore; do
   assert_failed_restore_preserved "$step"
+done
+for step in target_identity version_identity version_content; do
+  assert_identity_replacement_preserved "$step"
 done
 
 mkdir -p infra/supabase/volumes/db/data
