@@ -15,6 +15,7 @@ const runLocalEnvValidation = async ({ body, composeFile, mode }) => {
   const cwd = await mkdtemp(join(tmpdir(), "kondate-local-env-validation-"));
   const lines = [
     "API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1",
+    "KONDATE_COMPOSE_PROJECT_NAME=kondate-1234-56",
     "LOCAL_UID=1234",
     "LOCAL_GID=5678",
   ];
@@ -46,7 +47,10 @@ test("root compose owns every local entry-point service", async () => {
 
 test("derives the Compose project name from the checkout directory", async () => {
   const compose = await readFile("compose.yaml", "utf8");
-  assert.doesNotMatch(compose, /^name:/mu);
+  assert.match(
+    compose,
+    /^name: "\$\{KONDATE_COMPOSE_PROJECT_NAME:\?KONDATE_COMPOSE_PROJECT_NAME is required\}"$/mu,
+  );
 });
 
 test("uses one canonical loopback hostname for public browser services", async () => {
@@ -234,10 +238,11 @@ test("documents the Docker-only clean initialization and verification workflow",
     guide,
     /Node、npm、Git、Supabase CLI、Postgresクライアント、Playwrightはコンテナ内で実行/u,
   );
-  assert.match(guide, /local-secrets --force/u);
+  assert.match(guide, /\.\/scripts\/generate-local-secrets\.sh --force/u);
   assert.match(guide, /stat -c %a \.env/u);
   assert.match(guide, /sh -eu -c/u);
   assert.match(guide, /if grep -q ['"]?\^COMPOSE_FILE=/u);
+  assert.match(guide, /KONDATE_COMPOSE_PROJECT_NAME=kondate-\[0-9\]\+/u);
   assert.doesNotMatch(guide, /! grep -q ['"]?\^COMPOSE_FILE=/u);
   assert.match(guide, /docker compose pull --quiet --ignore-buildable/u);
   assert.match(guide, /docker compose build/u);

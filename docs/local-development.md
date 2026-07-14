@@ -4,17 +4,16 @@
 
 ホストにはDocker Engine、Docker Compose、POSIXシェルが必要です。Node、npm、Git、Supabase CLI、Postgresクライアント、Playwrightはコンテナ内で実行します。
 
-Compose project名はcheckoutディレクトリ名から決まり、containerとvolumeはcheckoutごとに分離されます。固定portは共有できないため、複数checkoutのstackを同時には起動しないでください。
+Compose project名はcheckoutの絶対pathを `cksum` した `kondate-<CRC>-<bytes>` 形式で、containerとvolumeは同名checkoutを含めて分離されます。`generate-local-secrets.sh`はこの値を `.env` に保存し、refresh/reset wrapperは欠落時だけmode 600を保ってatomic追加します。コピー元と異なる値がある場合は破壊操作前に停止するため、local secretsを再生成してください。固定portは共有できないため、複数checkoutのstackを同時には起動しないでください。
 
 ## 初回セットアップまたはSupabase構成更新後
 
 ローカルDBとローカル専用認証情報を破棄して再作成します。このローカルDBは破棄可能な開発データだけを保存する前提であり、バックアップは作成されません。
 
 ```bash
-LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" \
-  docker compose -f compose.tooling.yaml run --rm local-secrets --force
+./scripts/generate-local-secrets.sh --force
 docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase \
-  -c 'sh -eu -c '\''test -f .env; test "$(stat -c %a .env)" = 600; if grep -q "^COMPOSE_FILE=" .env; then exit 1; fi; grep -q "^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$" .env; grep -Eq "^LOCAL_UID=[0-9]+$" .env; grep -Eq "^LOCAL_GID=[0-9]+$" .env'\'''
+  -c 'sh -eu -c '\''test -f .env; test "$(stat -c %a .env)" = 600; if grep -q "^COMPOSE_FILE=" .env; then exit 1; fi; grep -q "^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$" .env; grep -Eq "^LOCAL_UID=[0-9]+$" .env; grep -Eq "^LOCAL_GID=[0-9]+$" .env; grep -Eq "^KONDATE_COMPOSE_PROJECT_NAME=kondate-[0-9]+-[0-9]+$" .env'\'''
 docker compose pull --quiet --ignore-buildable
 docker compose build
 ./scripts/reset-local-db.sh
@@ -56,7 +55,7 @@ E2E wrapperは専用overrideのAuthをhealthyまで待機し、Kong、OAuth mock
 ./scripts/refresh-supabase.sh
 ```
 
-wrapperはローカルstackを停止してから、vendor更新だけrootで実行し、ローカルDBを破棄してクリーン再起動します。異UIDのruntime dataを含む旧backupを削除し、新vendor成果物は更新処理内で `LOCAL_UID` / `LOCAL_GID` へ戻します。処理が中断した場合も、同じwrapperを再実行すれば収束します。
+wrapperはローカルstackを停止してから、vendor更新だけrootで実行し、ローカルDBを破棄してクリーン再起動します。異UIDのruntime dataを含む旧backupを削除し、新vendor成果物は更新処理内で `LOCAL_UID` / `LOCAL_GID` へ戻します。HUP、INT、TERMは実行中の子processへ転送して回収します。処理が中断した場合も、同じwrapperを再実行すれば収束します。
 
 repository内の `./scripts/refresh-supabase.sh` 実体パスから実行してください。portableな実体パス解決を保証できないため、symbolic link経由の起動はサポートしません。
 

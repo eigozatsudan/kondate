@@ -69,6 +69,11 @@ if (!/^\d+$/u.test(localUid) || !/^\d+$/u.test(localGid)) {
 }
 values.set("LOCAL_UID", localUid);
 values.set("LOCAL_GID", localGid);
+const composeProjectName = process.env.KONDATE_COMPOSE_PROJECT_NAME ?? "";
+if (!/^kondate-\d+-\d+$/u.test(composeProjectName)) {
+  throw new Error("KONDATE_COMPOSE_PROJECT_NAME must be a derived checkout identity");
+}
+values.set("KONDATE_COMPOSE_PROJECT_NAME", composeProjectName);
 values.set("REALTIME_DB_ENC_KEY", randomBytes(8).toString("hex"));
 values.set("PG_META_CRYPTO_KEY", randomBytes(24).toString("base64url"));
 values.set("LOGFLARE_PUBLIC_ACCESS_TOKEN", randomBytes(24).toString("base64url"));

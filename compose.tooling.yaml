@@ -4,6 +4,7 @@ services:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     working_dir: /workspace
     environment:
+      KONDATE_COMPOSE_PROJECT_NAME: "${KONDATE_COMPOSE_PROJECT_NAME:?KONDATE_COMPOSE_PROJECT_NAME is required}"
       LOCAL_UID: "${LOCAL_UID:-1000}"
       LOCAL_GID: "${LOCAL_GID:-1000}"
     volumes:

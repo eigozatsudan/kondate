@@ -1,9 +1,30 @@
 import assert from "node:assert/strict";
+import { execFile, spawn } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { promisify } from "node:util";
 import test from "node:test";
+
+const execFileAsync = promisify(execFile);
+
+test("derives distinct Compose project names for same-basename checkouts", async () => {
+  const firstParent = await mkdtemp(join(tmpdir(), "kondate-project-first-"));
+  const secondParent = await mkdtemp(join(tmpdir(), "kondate-project-second-"));
+  const firstRoot = join(firstParent, "checkout");
+  const secondRoot = join(secondParent, "checkout");
+  await Promise.all([mkdir(firstRoot), mkdir(secondRoot)]);
+  const helper = resolve("scripts/compose-project-name.sh");
+
+  const [{ stdout: first }, { stdout: second }] = await Promise.all([
+    execFileAsync(helper, [firstRoot]),
+    execFileAsync(helper, [secondRoot]),
+  ]);
+
+  assert.match(first.trim(), /^kondate-\d+-\d+$/u);
+  assert.match(second.trim(), /^kondate-\d+-\d+$/u);
+  assert.notEqual(first, second);
+});
 
 test("pins Node 24 and exposes every verification script", async () => {
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
@@ -64,11 +85,16 @@ test("local secret wrapper uses the repository Compose file from any working dir
   });
 
   assert.equal(status, 0);
+  const projectName = (
+    await execFileAsync(join(root, "scripts/compose-project-name.sh"), [root])
+  ).stdout.trim();
   const args = (await readFile(capture, "utf8")).split("\0").slice(0, -1);
   assert.deepEqual(args, [
     "compose",
     "--project-directory",
     root,
+    "--project-name",
+    projectName,
     "-f",
     join(root, "compose.tooling.yaml"),
     "run",
@@ -130,7 +156,12 @@ test("local secret generator emits unquoted Supabase verification paths", async 
   await new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [script, "--force"], {
       cwd,
-      env: { ...process.env, LOCAL_UID: "1234", LOCAL_GID: "5678" },
+      env: {
+        ...process.env,
+        KONDATE_COMPOSE_PROJECT_NAME: "kondate-1234-56",
+        LOCAL_UID: "1234",
+        LOCAL_GID: "5678",
+      },
       stdio: "ignore",
     });
     child.once("error", rejectRun);
@@ -145,6 +176,7 @@ test("local secret generator emits unquoted Supabase verification paths", async 
   assert.doesNotMatch(generated, /^COMPOSE_FILE=/mu);
   assert.match(generated, /^LOCAL_UID=1234$/mu);
   assert.match(generated, /^LOCAL_GID=5678$/mu);
+  assert.match(generated, /^KONDATE_COMPOSE_PROJECT_NAME=kondate-1234-56$/mu);
   assert.match(generated, /^API_EXTERNAL_URL=http:\/\/127\.0\.0\.1:8000\/auth\/v1$/mu);
   assert.match(generated, /^REALTIME_DB_ENC_KEY=[a-f0-9]{16}$/mu);
   assert.match(generated, /^PG_META_CRYPTO_KEY=[A-Za-z0-9_-]{32}$/mu);
@@ -185,6 +217,10 @@ test("runs local-only tooling inside pinned containers", async () => {
     assert.match(service, /^ {6}LOCAL_UID: "\$\{LOCAL_UID:-1000\}"$/mu);
     assert.match(service, /^ {6}LOCAL_GID: "\$\{LOCAL_GID:-1000\}"$/mu);
   }
+  assert.match(
+    compose,
+    /^ {6}KONDATE_COMPOSE_PROJECT_NAME: "\$\{KONDATE_COMPOSE_PROJECT_NAME:\?[^}]+\}"$/mu,
+  );
   assert.match(compose, /entrypoint: \["node", "scripts\/generate-local-secrets\.mjs"\]/u);
   assert.match(compose, /entrypoint: \["\/workspace\/scripts\/vendor-supabase\.sh"\]/u);
   assert.equal((compose.match(/LOCAL_UID: "\$\{LOCAL_UID:-1000\}"/gu) ?? []).length, 2);

@@ -45,6 +45,16 @@ async function createScriptFixture(
   return root;
 }
 
+async function createDatabaseScriptFixture(scriptName, dependencies = []) {
+  const root = await createScriptFixture(
+    scriptName,
+    ["compose-project-name.sh", "ensure-compose-project-env.sh", ...dependencies],
+    "database scripts-",
+  );
+  await writeFile(join(root, ".env"), "EXISTING_VALUE=keep\n", { mode: 0o600 });
+  return root;
+}
+
 async function installDockerRecorder(root) {
   const bin = join(root, "bin");
   await mkdir(bin);
@@ -57,7 +67,7 @@ async function installDockerRecorder(root) {
       'while [ -e "$DOCKER_LOG_DIR/$index" ]; do index=$((index + 1)); done',
       'for argument do printf "%s\\0" "$argument"; done > "$DOCKER_LOG_DIR/$index"',
       'if [ "${DOCKER_WAIT_AT:-}" = "$index" ]; then',
-      '  : > "$DOCKER_READY_FILE"',
+      '  printf "%s\\n" "$$" > "$DOCKER_READY_FILE"',
       '  trap "exit 143" TERM',
       '  trap "exit 130" INT',
       "  while :; do sleep 1; done",
@@ -81,12 +91,14 @@ async function readDockerInvocations(logDir) {
   );
 }
 
-function expectedRefreshInvocations(root) {
+function expectedRefreshInvocations(root, projectName) {
   return [
     [
       "compose",
       "--project-directory",
       root,
+      "--project-name",
+      projectName,
       "-f",
       join(root, "compose.yaml"),
       "down",
@@ -96,6 +108,8 @@ function expectedRefreshInvocations(root) {
       "compose",
       "--project-directory",
       root,
+      "--project-name",
+      projectName,
       "-f",
       join(root, "compose.tooling.yaml"),
       "run",
@@ -109,6 +123,8 @@ function expectedRefreshInvocations(root) {
       "compose",
       "--project-directory",
       root,
+      "--project-name",
+      projectName,
       "-f",
       join(root, "compose.yaml"),
       "down",
@@ -119,6 +135,8 @@ function expectedRefreshInvocations(root) {
       "compose",
       "--project-directory",
       root,
+      "--project-name",
+      projectName,
       "-f",
       join(root, "compose.tooling.yaml"),
       "run",
@@ -135,6 +153,8 @@ function expectedRefreshInvocations(root) {
       "compose",
       "--project-directory",
       root,
+      "--project-name",
+      projectName,
       "-f",
       join(root, "compose.yaml"),
       "up",
@@ -142,6 +162,39 @@ function expectedRefreshInvocations(root) {
       "--wait",
     ],
   ];
+}
+
+function expectedResetInvocations(root, projectName) {
+  return expectedRefreshInvocations(root, projectName).slice(2);
+}
+
+async function expectedProjectName(root) {
+  const child = spawn("cksum", { stdio: ["pipe", "pipe", "ignore"] });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  child.stdin.end(root);
+  const status = await new Promise((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("exit", resolveExit);
+  });
+  assert.equal(status, 0);
+  const [crc, bytes] = output.trim().split(/\s+/u);
+  assert.match(crc, /^\d+$/u);
+  assert.match(bytes, /^\d+$/u);
+  return `kondate-${crc}-${bytes}`;
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ESRCH") return false;
+    throw error;
+  }
 }
 
 async function runRefresh(root, bin, logDir, extraEnv = {}) {
@@ -230,59 +283,55 @@ test("E2E runner is POSIX-compatible and forwards arguments and exit status", as
 });
 
 test("reset fixes Compose to its repository when invoked from another directory", async (t) => {
-  const root = await createScriptFixture("reset-local-db.sh");
+  const root = await createDatabaseScriptFixture("reset-local-db.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
-  const bin = join(root, "bin");
-  const log = join(root, "docker.log");
-  await mkdir(bin);
-  await writeFile(
-    join(bin, "docker"),
-    '#!/bin/sh\nprintf "%s|%s\\n" "$PWD" "$*" >> "$DOCKER_LOG"\n',
-  );
-  await chmod(join(bin, "docker"), 0o755);
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "reset log");
+  await mkdir(logDir);
 
   await execFileAsync(join(root, "scripts", "reset-local-db.sh"), {
     cwd: tmpdir(),
     env: {
       ...process.env,
-      DOCKER_LOG: log,
+      COMPOSE_PROJECT_NAME: "shared",
+      DOCKER_LOG_DIR: logDir,
       PATH: `${bin}:${process.env.PATH}`,
     },
   });
 
-  assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
-    `${root}|compose --project-directory ${root} -f ${root}/compose.yaml down --volumes --remove-orphans`,
-    `${root}|compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 --entrypoint sh vendor-supabase -c rm -rf /workspace/infra/supabase/volumes/db/data`,
-    `${root}|compose --project-directory ${root} -f ${root}/compose.yaml up -d --wait`,
-  ]);
+  const projectName = await expectedProjectName(root);
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedResetInvocations(root, projectName),
+  );
+  assert.match(
+    await readFile(join(root, ".env"), "utf8"),
+    new RegExp(`^KONDATE_COMPOSE_PROJECT_NAME=${projectName}$`, "mu"),
+  );
+  assert.equal((await stat(join(root, ".env"))).mode & 0o777, 0o600);
 });
 
 test("refresh preserves every argument from a path containing spaces", async (t) => {
-  const root = await createScriptFixture(
-    "refresh-supabase.sh",
-    ["reset-local-db.sh"],
-    "refresh supabase-",
-  );
+  const root = await createDatabaseScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
   const logDir = join(root, "success log");
 
-  await runRefresh(root, bin, logDir);
+  await runRefresh(root, bin, logDir, { COMPOSE_PROJECT_NAME: "shared" });
 
-  assert.deepEqual(await readDockerInvocations(logDir), expectedRefreshInvocations(root));
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedRefreshInvocations(root, await expectedProjectName(root)),
+  );
 });
 
 test("refresh preserves every failure and converges when rerun", async (t) => {
   for (let failureStage = 1; failureStage <= 5; failureStage += 1) {
     await t.test(`stage ${failureStage}`, async (subtest) => {
-      const root = await createScriptFixture(
-        "refresh-supabase.sh",
-        ["reset-local-db.sh"],
-        "refresh supabase-",
-      );
+      const root = await createDatabaseScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
       subtest.after(() => rm(root, { recursive: true, force: true }));
       const bin = await installDockerRecorder(root);
-      const expected = expectedRefreshInvocations(root);
+      const expected = expectedRefreshInvocations(root, await expectedProjectName(root));
       const failureStatus = 40 + failureStage;
       const failureLog = join(root, "failure log");
 
@@ -303,11 +352,7 @@ test("refresh preserves every failure and converges when rerun", async (t) => {
 });
 
 test("refresh terminates during vendor wait without starting reset", async (t) => {
-  const root = await createScriptFixture(
-    "refresh-supabase.sh",
-    ["reset-local-db.sh"],
-    "refresh supabase-",
-  );
+  const root = await createDatabaseScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
   const logDir = join(root, "term log");
@@ -315,7 +360,6 @@ test("refresh terminates during vendor wait without starting reset", async (t) =
   await mkdir(logDir);
   const child = spawn(join(root, "scripts", "refresh-supabase.sh"), {
     cwd: tmpdir(),
-    detached: true,
     env: {
       ...process.env,
       DOCKER_LOG_DIR: logDir,
@@ -329,23 +373,45 @@ test("refresh terminates during vendor wait without starting reset", async (t) =
     child.once("error", rejectClose);
     child.once("close", (code, signal) => resolveClose({ code, signal }));
   });
+  let fakeDockerPid;
   t.after(() => {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (error) {
-      if (!error || typeof error !== "object" || error.code !== "ESRCH") throw error;
-    }
+    if (isProcessAlive(child.pid)) process.kill(child.pid, "SIGKILL");
+    if (fakeDockerPid && isProcessAlive(fakeDockerPid)) process.kill(fakeDockerPid, "SIGKILL");
   });
 
   await waitForFile(readyFile);
-  process.kill(-child.pid, "SIGTERM");
+  fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
+  assert.equal(Number.isSafeInteger(fakeDockerPid), true);
+  process.kill(child.pid, "SIGTERM");
   const result = await completion;
 
-  assert.deepEqual(result, { code: null, signal: "SIGTERM" });
+  assert.deepEqual(result, { code: 143, signal: null });
+  assert.equal(isProcessAlive(fakeDockerPid), false);
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedRefreshInvocations(root).slice(0, 2),
+    expectedRefreshInvocations(root, await expectedProjectName(root)).slice(0, 2),
   );
+});
+
+test("refresh rejects a copied checkout identity before destructive commands", async (t) => {
+  const root = await createDatabaseScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    join(root, ".env"),
+    "EXISTING_VALUE=keep\nKONDATE_COMPOSE_PROJECT_NAME=kondate-1-1\n",
+    { mode: 0o600 },
+  );
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "mismatch log");
+
+  await assert.rejects(runRefresh(root, bin, logDir));
+
+  assert.deepEqual(await readdir(logDir), []);
+  assert.equal(
+    await readFile(join(root, ".env"), "utf8"),
+    "EXISTING_VALUE=keep\nKONDATE_COMPOSE_PROJECT_NAME=kondate-1-1\n",
+  );
+  assert.equal((await stat(join(root, ".env"))).mode & 0o777, 0o600);
 });
 
 test("type generation validates output and atomically renames from the destination directory", async (t) => {
