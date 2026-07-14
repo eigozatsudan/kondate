@@ -161,6 +161,113 @@ export type Database = {
         }
         Relationships: []
       }
+      dish_ingredients: {
+        Row: {
+          created_at: string
+          dish_id: string
+          id: string
+          label_confirmation_required: boolean
+          menu_id: string
+          name: string
+          pantry_selection_id: string | null
+          position: number
+          quantity_text: string
+          quantity_value: number | null
+          store_section: string
+          unit: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish_id: string
+          id?: string
+          label_confirmation_required?: boolean
+          menu_id: string
+          name: string
+          pantry_selection_id?: string | null
+          position: number
+          quantity_text: string
+          quantity_value?: number | null
+          store_section: string
+          unit?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          dish_id?: string
+          id?: string
+          label_confirmation_required?: boolean
+          menu_id?: string
+          name?: string
+          pantry_selection_id?: string | null
+          position?: number
+          quantity_text?: string
+          quantity_value?: number | null
+          store_section?: string
+          unit?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dish_ingredients_dish_owner_fkey"
+            columns: ["dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "menu_id", "user_id"]
+          },
+          {
+            foreignKeyName: "dish_ingredients_pantry_owner_fkey"
+            columns: ["pantry_selection_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "generation_pantry_selections"
+            referencedColumns: ["id", "menu_id", "user_id"]
+          },
+        ]
+      }
+      dishes: {
+        Row: {
+          cooking_time_minutes: number
+          created_at: string
+          description: string
+          id: string
+          menu_id: string
+          name: string
+          position: number
+          role: string
+          user_id: string
+        }
+        Insert: {
+          cooking_time_minutes: number
+          created_at?: string
+          description: string
+          id?: string
+          menu_id: string
+          name: string
+          position: number
+          role: string
+          user_id: string
+        }
+        Update: {
+          cooking_time_minutes?: number
+          created_at?: string
+          description?: string
+          id?: string
+          menu_id?: string
+          name?: string
+          position?: number
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dishes_menu_owner_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
       food_safety_rules: {
         Row: {
           applies_to_age_bands: string[]
@@ -247,6 +354,78 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      generation_pantry_selections: {
+        Row: {
+          created_at: string
+          expired_item_check_jst_date: string | null
+          expired_item_checked_at: string | null
+          id: string
+          idempotency_key: string
+          inventory_quantity_snapshot: number | null
+          menu_id: string
+          pantry_item_id: string | null
+          pantry_name_snapshot: string
+          planned_quantity: number | null
+          priority: string
+          shortage_quantity: number | null
+          unit: string | null
+          unused_reason: string | null
+          usage_status: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expired_item_check_jst_date?: string | null
+          expired_item_checked_at?: string | null
+          id?: string
+          idempotency_key: string
+          inventory_quantity_snapshot?: number | null
+          menu_id: string
+          pantry_item_id?: string | null
+          pantry_name_snapshot: string
+          planned_quantity?: number | null
+          priority: string
+          shortage_quantity?: number | null
+          unit?: string | null
+          unused_reason?: string | null
+          usage_status: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expired_item_check_jst_date?: string | null
+          expired_item_checked_at?: string | null
+          id?: string
+          idempotency_key?: string
+          inventory_quantity_snapshot?: number | null
+          menu_id?: string
+          pantry_item_id?: string | null
+          pantry_name_snapshot?: string
+          planned_quantity?: number | null
+          priority?: string
+          shortage_quantity?: number | null
+          unit?: string | null
+          unused_reason?: string | null
+          usage_status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generation_pantry_selections_item_owner_fkey"
+            columns: ["pantry_item_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "pantry_items"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "generation_pantry_selections_menu_owner_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
       }
       household_members: {
         Row: {
@@ -382,6 +561,430 @@ export type Database = {
           },
         ]
       }
+      menu_label_confirmations: {
+        Row: {
+          allergen_id: string
+          anonymous_member_ref: string
+          confirmation_status: string
+          confirmed_at: string | null
+          confirmed_by: string | null
+          created_at: string
+          dictionary_version: string
+          id: string
+          is_current: boolean
+          menu_id: string
+          requirement_safety_fingerprint: string
+          source_id: string
+          source_path: string
+          source_type: string
+          user_id: string
+        }
+        Insert: {
+          allergen_id: string
+          anonymous_member_ref: string
+          confirmation_status?: string
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_at?: string
+          dictionary_version: string
+          id?: string
+          is_current?: boolean
+          menu_id: string
+          requirement_safety_fingerprint: string
+          source_id: string
+          source_path: string
+          source_type: string
+          user_id: string
+        }
+        Update: {
+          allergen_id?: string
+          anonymous_member_ref?: string
+          confirmation_status?: string
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_at?: string
+          dictionary_version?: string
+          id?: string
+          is_current?: boolean
+          menu_id?: string
+          requirement_safety_fingerprint?: string
+          source_id?: string
+          source_path?: string
+          source_type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_label_confirmations_allergen_id_fkey"
+            columns: ["allergen_id"]
+            isOneToOne: false
+            referencedRelation: "allergen_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "menu_label_confirmations_member_owner_fkey"
+            columns: ["menu_id", "user_id", "anonymous_member_ref"]
+            isOneToOne: false
+            referencedRelation: "menu_target_members"
+            referencedColumns: ["menu_id", "user_id", "anonymous_ref"]
+          },
+          {
+            foreignKeyName: "menu_label_confirmations_menu_owner_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      menu_member_adaptations: {
+        Row: {
+          additional_cutting: string | null
+          additional_heating: string | null
+          additional_seasoning: string | null
+          anonymous_member_ref: string
+          branch_before_recipe_step_id: string
+          created_at: string
+          dish_id: string
+          id: string
+          menu_id: string
+          portion_text: string
+          safety_tags: string[]
+          serving_check: string
+          user_id: string
+        }
+        Insert: {
+          additional_cutting?: string | null
+          additional_heating?: string | null
+          additional_seasoning?: string | null
+          anonymous_member_ref: string
+          branch_before_recipe_step_id: string
+          created_at?: string
+          dish_id: string
+          id?: string
+          menu_id: string
+          portion_text: string
+          safety_tags?: string[]
+          serving_check: string
+          user_id: string
+        }
+        Update: {
+          additional_cutting?: string | null
+          additional_heating?: string | null
+          additional_seasoning?: string | null
+          anonymous_member_ref?: string
+          branch_before_recipe_step_id?: string
+          created_at?: string
+          dish_id?: string
+          id?: string
+          menu_id?: string
+          portion_text?: string
+          safety_tags?: string[]
+          serving_check?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_member_adaptations_branch_owner_fkey"
+            columns: [
+              "branch_before_recipe_step_id",
+              "dish_id",
+              "menu_id",
+              "user_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "recipe_steps"
+            referencedColumns: ["id", "dish_id", "menu_id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_member_adaptations_dish_owner_fkey"
+            columns: ["dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "menu_id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_member_adaptations_member_owner_fkey"
+            columns: ["menu_id", "user_id", "anonymous_member_ref"]
+            isOneToOne: false
+            referencedRelation: "menu_target_members"
+            referencedColumns: ["menu_id", "user_id", "anonymous_ref"]
+          },
+        ]
+      }
+      menu_safety_actions: {
+        Row: {
+          anonymous_member_ref: string
+          before_recipe_step_id: string
+          created_at: string
+          dish_id: string
+          id: string
+          ingredient_id: string
+          instruction: string
+          kind: string
+          menu_id: string
+          position: number
+          user_id: string
+        }
+        Insert: {
+          anonymous_member_ref: string
+          before_recipe_step_id: string
+          created_at?: string
+          dish_id: string
+          id?: string
+          ingredient_id: string
+          instruction: string
+          kind: string
+          menu_id: string
+          position: number
+          user_id: string
+        }
+        Update: {
+          anonymous_member_ref?: string
+          before_recipe_step_id?: string
+          created_at?: string
+          dish_id?: string
+          id?: string
+          ingredient_id?: string
+          instruction?: string
+          kind?: string
+          menu_id?: string
+          position?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_safety_actions_adaptation_owner_fkey"
+            columns: ["menu_id", "dish_id", "user_id", "anonymous_member_ref"]
+            isOneToOne: false
+            referencedRelation: "menu_member_adaptations"
+            referencedColumns: [
+              "menu_id",
+              "dish_id",
+              "user_id",
+              "anonymous_member_ref",
+            ]
+          },
+          {
+            foreignKeyName: "menu_safety_actions_dish_owner_fkey"
+            columns: ["dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "menu_id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_safety_actions_ingredient_owner_fkey"
+            columns: ["ingredient_id", "dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "dish_ingredients"
+            referencedColumns: ["id", "dish_id", "menu_id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_safety_actions_member_owner_fkey"
+            columns: ["menu_id", "user_id", "anonymous_member_ref"]
+            isOneToOne: false
+            referencedRelation: "menu_target_members"
+            referencedColumns: ["menu_id", "user_id", "anonymous_ref"]
+          },
+          {
+            foreignKeyName: "menu_safety_actions_menu_owner_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_safety_actions_step_owner_fkey"
+            columns: ["before_recipe_step_id", "dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_steps"
+            referencedColumns: ["id", "dish_id", "menu_id", "user_id"]
+          },
+        ]
+      }
+      menu_target_members: {
+        Row: {
+          anonymous_ref: string
+          created_at: string
+          household_member_id: string | null
+          household_member_user_id: string | null
+          id: string
+          member_display_name_snapshot: string
+          menu_id: string
+          user_id: string
+        }
+        Insert: {
+          anonymous_ref: string
+          created_at?: string
+          household_member_id?: string | null
+          household_member_user_id?: string | null
+          id?: string
+          member_display_name_snapshot: string
+          menu_id: string
+          user_id: string
+        }
+        Update: {
+          anonymous_ref?: string
+          created_at?: string
+          household_member_id?: string | null
+          household_member_user_id?: string | null
+          id?: string
+          member_display_name_snapshot?: string
+          menu_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_target_members_member_owner_fkey"
+            columns: ["household_member_id", "household_member_user_id"]
+            isOneToOne: false
+            referencedRelation: "household_members"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_target_members_menu_owner_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      menu_timeline_steps: {
+        Row: {
+          created_at: string
+          dish_id: string | null
+          duration_minutes: number
+          id: string
+          instruction: string
+          menu_id: string
+          position: number
+          recipe_step_id: string | null
+          start_minute: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish_id?: string | null
+          duration_minutes: number
+          id?: string
+          instruction: string
+          menu_id: string
+          position: number
+          recipe_step_id?: string | null
+          start_minute: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          dish_id?: string | null
+          duration_minutes?: number
+          id?: string
+          instruction?: string
+          menu_id?: string
+          position?: number
+          recipe_step_id?: string | null
+          start_minute?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_timeline_steps_dish_owner_fkey"
+            columns: ["dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "menu_id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_timeline_steps_menu_owner_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "menu_timeline_steps_step_owner_fkey"
+            columns: ["recipe_step_id", "dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_steps"
+            referencedColumns: ["id", "dish_id", "menu_id", "user_id"]
+          },
+        ]
+      }
+      menus: {
+        Row: {
+          allergen_dictionary_version: string
+          change_reason: string | null
+          change_reason_custom: string | null
+          created_at: string
+          cuisine_genre: string
+          derivation_group_id: string
+          food_safety_rule_version: string
+          id: string
+          is_favorite: boolean
+          is_selected: boolean
+          meal_type: string
+          output_schema_version: string
+          parent_menu_id: string | null
+          preference_snapshot: Json
+          safety_fingerprint: string
+          safety_snapshot: Json
+          servings: number
+          total_elapsed_minutes: number
+          user_id: string
+        }
+        Insert: {
+          allergen_dictionary_version: string
+          change_reason?: string | null
+          change_reason_custom?: string | null
+          created_at?: string
+          cuisine_genre: string
+          derivation_group_id: string
+          food_safety_rule_version: string
+          id?: string
+          is_favorite?: boolean
+          is_selected?: boolean
+          meal_type: string
+          output_schema_version: string
+          parent_menu_id?: string | null
+          preference_snapshot: Json
+          safety_fingerprint: string
+          safety_snapshot: Json
+          servings: number
+          total_elapsed_minutes: number
+          user_id: string
+        }
+        Update: {
+          allergen_dictionary_version?: string
+          change_reason?: string | null
+          change_reason_custom?: string | null
+          created_at?: string
+          cuisine_genre?: string
+          derivation_group_id?: string
+          food_safety_rule_version?: string
+          id?: string
+          is_favorite?: boolean
+          is_selected?: boolean
+          meal_type?: string
+          output_schema_version?: string
+          parent_menu_id?: string | null
+          preference_snapshot?: Json
+          safety_fingerprint?: string
+          safety_snapshot?: Json
+          servings?: number
+          total_elapsed_minutes?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menus_parent_owner_fkey"
+            columns: ["parent_menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
       pantry_items: {
         Row: {
           created_at: string
@@ -466,6 +1069,44 @@ export type Database = {
         }
         Relationships: []
       }
+      recipe_steps: {
+        Row: {
+          created_at: string
+          dish_id: string
+          id: string
+          instruction: string
+          menu_id: string
+          position: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish_id: string
+          id?: string
+          instruction: string
+          menu_id: string
+          position: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          dish_id?: string
+          id?: string
+          instruction?: string
+          menu_id?: string
+          position?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_steps_dish_owner_fkey"
+            columns: ["dish_id", "menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "menu_id", "user_id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -510,6 +1151,32 @@ export type Database = {
           to: "household_members"
           isOneToOne: true
           isSetofReturn: false
+        }
+      }
+      confirm_menu_label_confirmation: {
+        Args: { p_confirmation_id: string; p_menu_id: string }
+        Returns: {
+          allergen_id: string
+          anonymous_member_ref: string
+          confirmation_status: string
+          confirmed_at: string | null
+          confirmed_by: string | null
+          created_at: string
+          dictionary_version: string
+          id: string
+          is_current: boolean
+          menu_id: string
+          requirement_safety_fingerprint: string
+          source_id: string
+          source_path: string
+          source_type: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "menu_label_confirmations"
+          isOneToOne: false
+          isSetofReturn: true
         }
       }
       create_auth_continuation: {
