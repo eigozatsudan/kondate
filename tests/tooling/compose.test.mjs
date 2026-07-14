@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { access, chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 test("root compose owns every local entry-point service", async () => {
@@ -202,6 +205,9 @@ test("documents the Docker-only clean initialization and verification workflow",
   );
   assert.match(guide, /local-secrets --force/u);
   assert.match(guide, /stat -c %a \.env/u);
+  assert.match(guide, /sh -eu -c/u);
+  assert.match(guide, /if grep -q ['"]?\^COMPOSE_FILE=/u);
+  assert.doesNotMatch(guide, /! grep -q ['"]?\^COMPOSE_FILE=/u);
   assert.match(guide, /docker compose pull --quiet --ignore-buildable/u);
   assert.match(guide, /docker compose build/u);
   assert.match(guide, /\.\/scripts\/reset-local-db\.sh/u);
@@ -219,4 +225,22 @@ test("documents the Docker-only clean initialization and verification workflow",
   );
   assert.match(guide, /\.\/scripts\/run-e2e\.sh/u);
   assert.match(guide, /PG15データの移行とロールバックはサポートしません/u);
+
+  const cwd = await mkdtemp(join(tmpdir(), "kondate-local-env-validation-"));
+  await writeFile(join(cwd, ".env"), "COMPOSE_FILE=docker-compose.yml\n");
+  await chmod(join(cwd, ".env"), 0o644);
+  const validationBody = [
+    "test -f .env",
+    'test "$(stat -c %a .env)" = 600',
+    "if grep -q '^COMPOSE_FILE=' .env; then exit 1; fi",
+    "grep -q '^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$' .env",
+    "grep -Eq '^LOCAL_UID=[0-9]+$' .env",
+    "grep -Eq '^LOCAL_GID=[0-9]+$' .env",
+  ].join("; ");
+  const status = await new Promise((resolveRun, rejectRun) => {
+    const child = spawn("sh", ["-eu", "-c", validationBody], { cwd, stdio: "ignore" });
+    child.once("error", rejectRun);
+    child.once("exit", resolveRun);
+  });
+  assert.notEqual(status, 0);
 });

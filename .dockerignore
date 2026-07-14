@@ -6,4 +6,6 @@ playwright-report
 test-results
 .env
 .env.tmp-*
+infra/.supabase-refresh.*
+infra/.supabase-refresh.lock
 infra/supabase/volumes

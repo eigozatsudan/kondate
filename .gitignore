@@ -3,6 +3,8 @@ dist/
 coverage/
 .env
 .env.tmp-*
+infra/.supabase-refresh.*
+infra/.supabase-refresh.lock
 .env.local
 playwright-report/
 test-results/

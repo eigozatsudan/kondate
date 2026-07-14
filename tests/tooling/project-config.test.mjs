@@ -25,14 +25,57 @@ test("pins Node 24 and exposes every verification script", async () => {
   assert.equal(await readFile(".nvmrc", "utf8"), "24\n");
 });
 
-test("ignores interrupted local secret temporary files from Git and Docker contexts", async () => {
+test("ignores local temporary and refresh files from Git and Docker contexts", async () => {
   const [gitignore, dockerignore] = await Promise.all([
     readFile(".gitignore", "utf8"),
     readFile(".dockerignore", "utf8"),
   ]);
   for (const ignore of [gitignore, dockerignore]) {
-    assert.ok(ignore.split(/\r?\n/u).includes(".env.tmp-*"));
+    for (const pattern of [
+      ".env.tmp-*",
+      "infra/.supabase-refresh.*",
+      "infra/.supabase-refresh.lock",
+    ]) {
+      assert.ok(ignore.split(/\r?\n/u).includes(pattern));
+    }
   }
+});
+
+test("local secret wrapper uses the repository Compose file from any working directory", async () => {
+  const root = resolve();
+  const cwd = await mkdtemp(join(tmpdir(), "kondate-local-secrets-wrapper-"));
+  const bin = join(cwd, "bin");
+  const capture = join(cwd, "docker-args");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "docker"),
+    ["#!/bin/sh", 'for argument do printf "%s\\0" "$argument"; done > "$CAPTURE"'].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const status = await new Promise((resolveRun, rejectRun) => {
+    const child = spawn("sh", [join(root, "scripts/generate-local-secrets.sh"), "--force"], {
+      cwd,
+      env: { ...process.env, CAPTURE: capture, PATH: `${bin}:${process.env.PATH}` },
+      stdio: "ignore",
+    });
+    child.once("error", rejectRun);
+    child.once("exit", resolveRun);
+  });
+
+  assert.equal(status, 0);
+  const args = (await readFile(capture, "utf8")).split("\0").slice(0, -1);
+  assert.deepEqual(args, [
+    "compose",
+    "--project-directory",
+    root,
+    "-f",
+    join(root, "compose.tooling.yaml"),
+    "run",
+    "--rm",
+    "local-secrets",
+    "--force",
+  ]);
 });
 
 test("E2E mobile project uses Chromium while preserving the iPhone viewport", async () => {
@@ -146,7 +189,7 @@ test("runs local-only tooling inside pinned containers", async () => {
   assert.match(compose, /entrypoint: \["\/workspace\/scripts\/vendor-supabase\.sh"\]/u);
   assert.equal((compose.match(/LOCAL_UID: "\$\{LOCAL_UID:-1000\}"/gu) ?? []).length, 2);
   assert.equal((compose.match(/LOCAL_GID: "\$\{LOCAL_GID:-1000\}"/gu) ?? []).length, 2);
-  assert.match(wrapper, /docker compose -f compose\.tooling\.yaml run --rm local-secrets/u);
+  assert.match(wrapper, /docker compose --project-directory/u);
   assert.match(gitWrapper, /docker compose -f compose\.tooling\.yaml run --rm/u);
   assert.match(gitWrapper, /--entrypoint git/u);
   assert.match(gitWrapper, /vendor-supabase/u);

@@ -12,7 +12,7 @@
 LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" \
   docker compose -f compose.tooling.yaml run --rm local-secrets --force
 docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase \
-  -c 'test -f .env; test "$(stat -c %a .env)" = 600; ! grep -q "^COMPOSE_FILE=" .env; grep -q "^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$" .env; grep -Eq "^LOCAL_UID=[0-9]+$" .env; grep -Eq "^LOCAL_GID=[0-9]+$" .env'
+  -c 'sh -eu -c '\''test -f .env; test "$(stat -c %a .env)" = 600; if grep -q "^COMPOSE_FILE=" .env; then exit 1; fi; grep -q "^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$" .env; grep -Eq "^LOCAL_UID=[0-9]+$" .env; grep -Eq "^LOCAL_GID=[0-9]+$" .env'\'''
 docker compose pull --quiet --ignore-buildable
 docker compose build
 ./scripts/reset-local-db.sh
