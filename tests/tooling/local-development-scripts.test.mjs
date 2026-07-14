@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -8,6 +10,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -74,6 +77,35 @@ async function installDockerRecorder(root) {
     ].join("\n"),
   );
   await writeFile(
+    join(bin, "docker-daemon-child.mjs"),
+    [
+      'import { writeFileSync } from "node:fs";',
+      "writeFileSync(process.env.DOCKER_DAEMON_CHILD_FILE, `${process.pid}\\n`);",
+      'process.on("SIGTERM", () => {',
+      '  writeFileSync(process.env.DOCKER_DAEMON_REMOVED_FILE, "removed\\n");',
+      "  process.exit(0);",
+      "});",
+      "setInterval(() => {}, 1_000);",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(bin, "docker-e2e-cli.mjs"),
+    [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      "const child = spawn(process.execPath, [`${import.meta.dirname}/docker-daemon-child.mjs`], {",
+      "  env: process.env,",
+      '  stdio: "ignore",',
+      "});",
+      "child.unref();",
+      "writeFileSync(process.env.DOCKER_READY_FILE, `${process.pid}\\n`);",
+      'process.on("SIGHUP", () => {});',
+      'process.on("SIGINT", () => {});',
+      'process.on("SIGTERM", () => {});',
+      "setInterval(() => {}, 1_000);",
+    ].join("\n"),
+  );
+  await writeFile(
     join(bin, "docker"),
     [
       "#!/bin/sh",
@@ -90,10 +122,24 @@ async function installDockerRecorder(root) {
       'if [ "${DOCKER_FAIL_AT:-}" = "$index" ]; then exit "$DOCKER_FAIL_STATUS"; fi',
       'case "$*" in',
       '  *"run --rm --no-deps e2e"*)',
+      '    if [ -n "${DOCKER_DAEMON_CHILD_FILE:-}" ]; then',
+      '      exec node "$(dirname "$0")/docker-e2e-cli.mjs"',
+      "    fi",
       '    if [ "${E2E_WAIT_FOR_SIGNAL:-}" = "1" ]; then',
       '      exec node "$(dirname "$0")/docker-signal-waiter.mjs"',
       "    fi",
       '    exit "${E2E_STATUS:-0}"',
+      "    ;;",
+      '  *"rm --force --stop e2e"*)',
+      '    if [ -n "${DOCKER_DAEMON_CHILD_FILE:-}" ] && [ -f "$DOCKER_DAEMON_CHILD_FILE" ]; then',
+      '      kill -s TERM "$(cat "$DOCKER_DAEMON_CHILD_FILE")"',
+      "      attempts=0",
+      '      while [ ! -f "$DOCKER_DAEMON_REMOVED_FILE" ] && [ "$attempts" -lt 100 ]; do',
+      "        attempts=$((attempts + 1))",
+      "        sleep 0.01",
+      "      done",
+      "    fi",
+      '    exit "${E2E_RM_STATUS:-0}"',
       "    ;;",
       '  *"up -d --wait --force-recreate --no-deps auth app"*)',
       '    if [ -n "${E2E_CLEANUP_SIGNAL_PARENT:-}" ]; then',
@@ -106,6 +152,10 @@ async function installDockerRecorder(root) {
       '      printf "%s\\n" restored > "$E2E_CLEANUP_SUCCESS_MARKER"',
       "    fi",
       '    if [ "${E2E_CLEANUP_WAIT_FOR_SIGNAL:-}" = "1" ]; then',
+      '      if [ -n "${E2E_CLEANUP_READY_FILE:-}" ]; then',
+      "        DOCKER_READY_FILE=$E2E_CLEANUP_READY_FILE",
+      "        export DOCKER_READY_FILE",
+      "      fi",
       '      exec node "$(dirname "$0")/docker-signal-waiter.mjs"',
       "    fi",
       '    exit "${E2E_CLEANUP_STATUS:-0}"',
@@ -264,6 +314,19 @@ function expectedE2EInvocations(root, projectName, arguments_ = []) {
       ...compose,
       "-f",
       join(root, "compose.yaml"),
+      "-f",
+      join(root, "compose.e2e.yaml"),
+      "--profile",
+      "e2e",
+      "rm",
+      "--force",
+      "--stop",
+      "e2e",
+    ],
+    [
+      ...compose,
+      "-f",
+      join(root, "compose.yaml"),
       "up",
       "-d",
       "--wait",
@@ -276,30 +339,19 @@ function expectedE2EInvocations(root, projectName, arguments_ = []) {
 }
 
 async function expectedProjectName(root) {
-  const child = spawn("cksum", { stdio: ["pipe", "pipe", "ignore"] });
-  let output = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    output += chunk;
-  });
-  child.stdin.end(root);
-  const status = await new Promise((resolveExit, rejectExit) => {
-    child.once("error", rejectExit);
-    child.once("exit", resolveExit);
-  });
-  assert.equal(status, 0);
-  const [crc, bytes] = output.trim().split(/\s+/u);
-  assert.match(crc, /^\d+$/u);
-  assert.match(bytes, /^\d+$/u);
-  return `kondate-${crc}-${bytes}`;
+  const canonicalRoot = await realpath(root);
+  const digest = createHash("sha256").update(canonicalRoot).digest("hex").slice(0, 32);
+  return `kondate-${digest}`;
 }
 
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
-    return true;
+    const statFields = readFileSync(`/proc/${pid}/stat`, "utf8").split(" ");
+    return statFields[2] !== "Z";
   } catch (error) {
-    if (error && typeof error === "object" && error.code === "ESRCH") return false;
+    if (error && typeof error === "object" && (error.code === "ENOENT" || error.code === "ESRCH"))
+      return false;
     throw error;
   }
 }
@@ -321,6 +373,14 @@ async function waitForAdditionalChild(parentPid, excludedPid) {
     await delay(5);
   }
   assert.fail(`timed out waiting for watchdog child of ${parentPid}`);
+}
+
+async function waitForProcessExit(pid) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (!isProcessAlive(pid)) return;
+    await delay(5);
+  }
+  assert.fail(`timed out waiting for process ${pid} to exit`);
 }
 
 async function runRefresh(root, bin, logDir, extraEnv = {}) {
@@ -747,6 +807,7 @@ test("E2E runner preserves every early failure when cleanup also fails", async (
       const expected = expectedE2EInvocations(root, await expectedProjectName(root));
       assert.deepEqual(await readDockerInvocations(logDir), [
         ...expected.slice(0, failureStage),
+        expected.at(-2),
         expected.at(-1),
       ]);
     });
@@ -764,6 +825,141 @@ test("E2E runner returns cleanup failure only after a successful run", async (t)
     (error) => error && typeof error === "object" && error.code === 47,
   );
 
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root)),
+  );
+});
+
+test("E2E runner removes a daemon-side E2E child before restoring the base stack", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "daemon child log");
+  const readyFile = join(root, "E2E CLI ready");
+  const daemonChildFile = join(root, "daemon child pid");
+  const removedFile = join(root, "daemon child removed");
+  await mkdir(logDir);
+  const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      DOCKER_DAEMON_CHILD_FILE: daemonChildFile,
+      DOCKER_DAEMON_REMOVED_FILE: removedFile,
+      DOCKER_LOG_DIR: logDir,
+      DOCKER_READY_FILE: readyFile,
+      KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+    stdio: "ignore",
+  });
+  const completion = new Promise((resolveClose, rejectClose) => {
+    child.once("error", rejectClose);
+    child.once("close", (code, signal) => resolveClose({ code, signal }));
+  });
+  let dockerCliPid;
+  let daemonChildPid;
+  t.after(() => {
+    for (const pid of [child.pid, dockerCliPid, daemonChildPid])
+      if (pid && isProcessAlive(pid)) process.kill(pid, "SIGKILL");
+  });
+
+  await Promise.all([waitForFile(readyFile), waitForFile(daemonChildFile)]);
+  dockerCliPid = Number((await readFile(readyFile, "utf8")).trim());
+  daemonChildPid = Number((await readFile(daemonChildFile, "utf8")).trim());
+  process.kill(child.pid, "SIGTERM");
+
+  assert.deepEqual(await waitForCompletion(completion), { code: 143, signal: null });
+  await waitForProcessExit(daemonChildPid);
+  assert.equal(isProcessAlive(dockerCliPid), false);
+  assert.equal(await readFile(removedFile, "utf8"), "removed\n");
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root)),
+  );
+});
+
+test("E2E runner restores the base stack when E2E removal fails", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "E2E removal failure log");
+
+  await assert.rejects(
+    runE2E(root, bin, logDir, [], { E2E_RM_STATUS: "46" }),
+    (error) => error && typeof error === "object" && error.code === 46,
+  );
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root)),
+  );
+});
+
+test("E2E runner escalates a second signal across the cleanup phase", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "cross phase signal log");
+  const e2eReadyFile = join(root, "E2E phase ready");
+  const cleanupReadyFile = join(root, "cleanup phase ready");
+  await mkdir(logDir);
+  const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      DOCKER_LOG_DIR: logDir,
+      DOCKER_READY_FILE: e2eReadyFile,
+      E2E_CLEANUP_READY_FILE: cleanupReadyFile,
+      E2E_CLEANUP_WAIT_FOR_SIGNAL: "1",
+      E2E_WAIT_FOR_SIGNAL: "1",
+      KONDATE_E2E_SIGNAL_GRACE_SECONDS: "1",
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+    stdio: "ignore",
+  });
+  const completion = new Promise((resolveClose, rejectClose) => {
+    child.once("error", rejectClose);
+    child.once("close", (code, signal) => resolveClose({ code, signal }));
+  });
+  let cleanupPid;
+  t.after(() => {
+    if (isProcessAlive(child.pid)) process.kill(child.pid, "SIGKILL");
+    if (cleanupPid && isProcessAlive(cleanupPid)) process.kill(cleanupPid, "SIGKILL");
+  });
+
+  await waitForFile(e2eReadyFile);
+  process.kill(child.pid, "SIGTERM");
+  await waitForFile(cleanupReadyFile);
+  cleanupPid = Number((await readFile(cleanupReadyFile, "utf8")).trim());
+  process.kill(child.pid, "SIGTERM");
+
+  assert.deepEqual(await waitForCompletion(completion, 500), { code: 143, signal: null });
+  assert.equal(isProcessAlive(cleanupPid), false);
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root)),
+  );
+});
+
+test("E2E runner prioritizes cleanup signal over an E2E failure", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "signal precedence log");
+  const successMarker = join(root, "signal precedence marker");
+
+  await assert.rejects(
+    runE2E(root, bin, logDir, [], {
+      E2E_CLEANUP_SIGNAL_PARENT: "TERM",
+      E2E_CLEANUP_SUCCESS_MARKER: successMarker,
+      E2E_STATUS: "23",
+      KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
+    }),
+    (error) => error && typeof error === "object" && error.code === 143,
+  );
+
+  assert.equal(await readFile(successMarker, "utf8"), "restored\n");
   assert.deepEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root)),

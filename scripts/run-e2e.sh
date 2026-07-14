@@ -158,23 +158,30 @@ run_child() {
 cleanup() {
   original_status=$1
   cleanup_started=1
-  active_signal=
-  signal_count=0
-  signal_pending=0
-  cleanup_status=0
+  removal_status=0
+  restore_status=0
+  if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+    rm --force --stop e2e; then
+    :
+  else
+    removal_status=$?
+  fi
   if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" \
     up -d --wait --force-recreate --no-deps auth app; then
     :
   else
-    cleanup_status=$?
+    restore_status=$?
   fi
-  if [ "$original_status" -eq 0 ]; then
-    if [ "$termination_status" -ne 0 ]; then
-      original_status=$termination_status
-    elif [ "$cleanup_status" -ne 0 ]; then
-      original_status=$cleanup_status
-    fi
+  if [ "$termination_status" -ne 0 ]; then
+    original_status=$termination_status
+  elif [ "$original_status" -ne 0 ]; then
+    :
+  elif [ "$removal_status" -ne 0 ]; then
+    original_status=$removal_status
+  elif [ "$restore_status" -ne 0 ]; then
+    original_status=$restore_status
   fi
   return "$original_status"
 }
