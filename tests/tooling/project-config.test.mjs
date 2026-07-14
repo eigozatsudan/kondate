@@ -62,6 +62,7 @@ test("ignores local temporary and refresh files from Git and Docker contexts", a
   ]);
   for (const ignore of [gitignore, dockerignore]) {
     for (const pattern of [
+      ".run-e2e.lock",
       ".env.tmp-*",
       "infra/.supabase-refresh.*",
       "infra/.supabase-refresh.lock",

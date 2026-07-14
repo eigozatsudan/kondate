@@ -373,8 +373,8 @@ async function expectedProjectName(root) {
   return `kondate-${digest}`;
 }
 
-async function expectedE2ELockDir(root) {
-  return join(root, `kondate-run-e2e-${await expectedProjectName(root)}.lock`);
+function expectedE2ELockDir(root) {
+  return join(root, ".run-e2e.lock");
 }
 
 function isProcessAlive(pid) {
@@ -541,7 +541,15 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
   const secondLogDir = join(root, "second concurrent log");
   const thirdLogDir = join(root, "third concurrent log");
   const readyFile = join(root, "first concurrent ready");
-  await mkdir(firstLogDir);
+  const firstTmpDir = join(root, "first tmp");
+  const secondTmpDir = join(root, "second tmp");
+  const thirdTmpDir = join(root, "third tmp");
+  await Promise.all([
+    mkdir(firstLogDir),
+    mkdir(firstTmpDir),
+    mkdir(secondTmpDir),
+    mkdir(thirdTmpDir),
+  ]);
   const first = spawn(join(root, "scripts", "run-e2e.sh"), {
     cwd: tmpdir(),
     env: {
@@ -550,7 +558,7 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
       DOCKER_READY_FILE: readyFile,
       E2E_WAIT_FOR_SIGNAL: "1",
       PATH: `${bin}:${process.env.PATH}`,
-      TMPDIR: root,
+      TMPDIR: firstTmpDir,
     },
     stdio: "ignore",
   });
@@ -563,14 +571,14 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
   });
 
   await waitForFile(readyFile);
-  await assert.rejects(runE2E(root, bin, secondLogDir, [], { TMPDIR: root }));
+  await assert.rejects(runE2E(root, bin, secondLogDir, [], { TMPDIR: secondTmpDir }));
   assert.deepEqual(await readdir(secondLogDir), []);
 
   process.kill(first.pid, "SIGTERM");
   assert.deepEqual(await waitForCompletion(firstCompletion), { code: 143, signal: null });
   await assert.rejects(access(await expectedE2ELockDir(root)));
 
-  await runE2E(root, bin, thirdLogDir, [], { TMPDIR: root });
+  await runE2E(root, bin, thirdLogDir, [], { TMPDIR: thirdTmpDir });
   assert.deepEqual(
     await readDockerInvocations(thirdLogDir),
     expectedE2EInvocations(root, await expectedProjectName(root)),

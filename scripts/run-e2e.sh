@@ -8,7 +8,7 @@ cd "$repo_root"
 project_name=$("$script_dir/compose-project-name.sh" "$repo_root")
 "$script_dir/ensure-compose-project-env.sh" "$repo_root" "$project_name"
 export KONDATE_COMPOSE_PROJECT_NAME="$project_name"
-lock_dir=${TMPDIR:-/tmp}/kondate-run-e2e-$project_name.lock
+lock_dir=$repo_root/.run-e2e.lock
 
 signal_grace_seconds=${KONDATE_E2E_SIGNAL_GRACE_SECONDS:-5}
 if ! printf '%s\n' "$signal_grace_seconds" | grep -Eq '^(0|[1-9][0-9]*)([.][0-9]+)?$'; then
