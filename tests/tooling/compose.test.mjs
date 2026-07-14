@@ -241,6 +241,15 @@ test("runs E2E through the base and E2E Compose files in override order", async 
     /launch_in_progress=1\s+"\$@" &\s+child_pid=\$!\s+launch_in_progress=0\s+if \[ "\$signal_pending" -eq 1 \]; then\s+signal_pending=0\s+deliver_signal/u,
   );
   assert.match(runner, /kill -s KILL/u);
+  assert.match(runner, /KONDATE_E2E_SIGNAL_GRACE_SECONDS/u);
+  assert.match(runner, /watchdog_pid/u);
+  assert.match(runner, /trap '' HUP INT TERM ALRM[\s\S]*termination_status/u);
+  assert.match(runner, /cleanup_on_exit[\s\S]*finish "\$final_status"/u);
+  assert.match(
+    runner,
+    /stop_requested=1[\s\S]*sleep "\$signal_grace_seconds" &[\s\S]*timer_pid=\$![\s\S]*if \[ "\$stop_requested" -eq 1 \]/u,
+  );
+  assert.match(runner, /child_pid=\s+cancel_watchdog/u);
 });
 
 test("documents the Docker-only clean initialization and verification workflow", async () => {
