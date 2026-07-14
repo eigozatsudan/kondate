@@ -56,7 +56,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      is_valid_draft_pantry_selections: {
+        Args: { p_value: Json }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
@@ -162,6 +165,57 @@ export type Database = {
           rule_kind?: string
           rule_version?: string
           user_message?: string
+        }
+        Relationships: []
+      }
+      generation_drafts: {
+        Row: {
+          avoid_ingredients: string[]
+          budget_preference: string | null
+          created_at: string
+          cuisine_genre: string | null
+          id: string
+          main_ingredients: string[]
+          meal_type: string | null
+          memo: string
+          pantry_selections: Json
+          revision: number
+          target_member_ids: string[]
+          time_limit_minutes: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avoid_ingredients?: string[]
+          budget_preference?: string | null
+          created_at?: string
+          cuisine_genre?: string | null
+          id?: string
+          main_ingredients?: string[]
+          meal_type?: string | null
+          memo?: string
+          pantry_selections?: Json
+          revision?: number
+          target_member_ids?: string[]
+          time_limit_minutes?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avoid_ingredients?: string[]
+          budget_preference?: string | null
+          created_at?: string
+          cuisine_genre?: string | null
+          id?: string
+          main_ingredients?: string[]
+          meal_type?: string | null
+          memo?: string
+          pantry_selections?: Json
+          revision?: number
+          target_member_ids?: string[]
+          time_limit_minutes?: number | null
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -299,6 +353,45 @@ export type Database = {
           },
         ]
       }
+      pantry_items: {
+        Row: {
+          created_at: string
+          expiration_type: string | null
+          expires_on: string | null
+          id: string
+          name: string
+          opened_state: string | null
+          quantity: number | null
+          unit: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expiration_type?: string | null
+          expires_on?: string | null
+          id?: string
+          name: string
+          opened_state?: string | null
+          quantity?: number | null
+          unit?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expiration_type?: string | null
+          expires_on?: string | null
+          id?: string
+          name?: string
+          opened_state?: string | null
+          quantity?: number | null
+          unit?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       privacy_consents: {
         Row: {
           accepted_at: string
@@ -414,6 +507,42 @@ export type Database = {
           p_state_hash: string
         }
         Returns: boolean
+      }
+      save_generation_draft: {
+        Args: {
+          p_avoid_ingredients: string[]
+          p_budget_preference: string
+          p_cuisine_genre: string
+          p_expected_revision: number
+          p_main_ingredients: string[]
+          p_meal_type: string
+          p_memo: string
+          p_pantry_selections: Json
+          p_target_member_ids: string[]
+          p_time_limit_minutes: number
+        }
+        Returns: {
+          avoid_ingredients: string[]
+          budget_preference: string | null
+          created_at: string
+          cuisine_genre: string | null
+          id: string
+          main_ingredients: string[]
+          meal_type: string | null
+          memo: string
+          pantry_selections: Json
+          revision: number
+          target_member_ids: string[]
+          time_limit_minutes: number | null
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "generation_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       set_onboarding_status: {
         Args: { p_status: string }
