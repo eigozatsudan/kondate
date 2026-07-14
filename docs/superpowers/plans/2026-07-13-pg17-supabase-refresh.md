@@ -549,6 +549,8 @@ Expected: 40文字SHAと単一の `supabase/postgres:17.*` を表示してexit 0
 
 - [ ] **Step 6: 最新公式masterをDocker内からvendorする**
 
+> このStepは実装履歴です。現行運用では直接実行せず、`./scripts/refresh-supabase.sh` を使用してください。
+
 Run:
 
 ```bash
@@ -792,13 +794,12 @@ docker compose run --rm --no-deps app npm run format:check
 ## Supabase公式Docker構成の更新
 
 ```bash
-LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" \\
-  docker compose -f compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh
+./scripts/refresh-supabase.sh
 ```
 
-実更新だけrootへoverrideして異UIDのruntime dataを含む旧backupを削除し、新vendor成果物はスクリプト内で `LOCAL_UID` / `LOCAL_GID` へ戻します。
+wrapperはstackを停止してから実更新だけrootへoverrideし、異UIDのruntime dataを含む旧backupを削除してローカルDBをクリーン再起動します。新vendor成果物はスクリプト内で `LOCAL_UID` / `LOCAL_GID` へ戻します。
 
-更新後はPostgresタグの整合性テストを実行し、ローカル環境を再作成してください。PG15データの移行とロールバックはサポートしません。
+wrapper完了後はPostgresタグの整合性テストを実行してください。PG15データの移行とロールバックはサポートしません。
 ````
 
 - [ ] **Step 2: 最新公式環境変数から `.env` を再生成する**

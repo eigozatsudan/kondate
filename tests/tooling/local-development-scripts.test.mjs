@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   access,
   chmod,
   copyFile,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
@@ -17,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 const execFileAsync = promisify(execFile);
 const typescriptPath = resolve("node_modules/typescript");
@@ -25,8 +27,12 @@ const hasTypescript = await access(typescriptPath).then(
   () => false,
 );
 
-async function createScriptFixture(scriptName, dependencies = []) {
-  const root = await mkdtemp(join(tmpdir(), `${scriptName}-`));
+async function createScriptFixture(
+  scriptName,
+  dependencies = [],
+  fixturePrefix = `${scriptName}-`,
+) {
+  const root = await mkdtemp(join(tmpdir(), fixturePrefix));
   await mkdir(join(root, "scripts"));
   for (const fixtureScript of [scriptName, ...dependencies]) {
     await copyFile(join("scripts", fixtureScript), join(root, "scripts", fixtureScript));
@@ -37,6 +43,132 @@ async function createScriptFixture(scriptName, dependencies = []) {
     await symlink(typescriptPath, join(root, "node_modules/typescript"));
   }
   return root;
+}
+
+async function installDockerRecorder(root) {
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "docker"),
+    [
+      "#!/bin/sh",
+      "set -eu",
+      "index=1",
+      'while [ -e "$DOCKER_LOG_DIR/$index" ]; do index=$((index + 1)); done',
+      'for argument do printf "%s\\0" "$argument"; done > "$DOCKER_LOG_DIR/$index"',
+      'if [ "${DOCKER_WAIT_AT:-}" = "$index" ]; then',
+      '  : > "$DOCKER_READY_FILE"',
+      '  trap "exit 143" TERM',
+      '  trap "exit 130" INT',
+      "  while :; do sleep 1; done",
+      "fi",
+      'if [ "${DOCKER_FAIL_AT:-}" = "$index" ]; then exit "$DOCKER_FAIL_STATUS"; fi',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return bin;
+}
+
+async function readDockerInvocations(logDir) {
+  const files = await readdir(logDir);
+  files.sort((left, right) => Number(left) - Number(right));
+  return Promise.all(
+    files.map(async (file) => {
+      const encoded = await readFile(join(logDir, file), "utf8");
+      assert.equal(encoded.endsWith("\0"), true);
+      return encoded.slice(0, -1).split("\0");
+    }),
+  );
+}
+
+function expectedRefreshInvocations(root) {
+  return [
+    [
+      "compose",
+      "--project-directory",
+      root,
+      "-f",
+      join(root, "compose.yaml"),
+      "down",
+      "--remove-orphans",
+    ],
+    [
+      "compose",
+      "--project-directory",
+      root,
+      "-f",
+      join(root, "compose.tooling.yaml"),
+      "run",
+      "--rm",
+      "--user",
+      "0:0",
+      "vendor-supabase",
+      "--refresh",
+    ],
+    [
+      "compose",
+      "--project-directory",
+      root,
+      "-f",
+      join(root, "compose.yaml"),
+      "down",
+      "--volumes",
+      "--remove-orphans",
+    ],
+    [
+      "compose",
+      "--project-directory",
+      root,
+      "-f",
+      join(root, "compose.tooling.yaml"),
+      "run",
+      "--rm",
+      "--user",
+      "0:0",
+      "--entrypoint",
+      "sh",
+      "vendor-supabase",
+      "-c",
+      "rm -rf /workspace/infra/supabase/volumes/db/data",
+    ],
+    [
+      "compose",
+      "--project-directory",
+      root,
+      "-f",
+      join(root, "compose.yaml"),
+      "up",
+      "-d",
+      "--wait",
+    ],
+  ];
+}
+
+async function runRefresh(root, bin, logDir, extraEnv = {}) {
+  await mkdir(logDir);
+  return execFileAsync(join(root, "scripts", "refresh-supabase.sh"), {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      ...extraEnv,
+      DOCKER_LOG_DIR: logDir,
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+  });
+}
+
+async function waitForFile(path) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (
+      await access(path).then(
+        () => true,
+        () => false,
+      )
+    )
+      return;
+    await delay(10);
+  }
+  assert.fail(`timed out waiting for ${path}`);
 }
 
 async function startResponseServer(status, body) {
@@ -125,66 +257,95 @@ test("reset fixes Compose to its repository when invoked from another directory"
   ]);
 });
 
-test("refresh stops the stack before vendor refresh and clean database reset", async (t) => {
-  const root = await createScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
+test("refresh preserves every argument from a path containing spaces", async (t) => {
+  const root = await createScriptFixture(
+    "refresh-supabase.sh",
+    ["reset-local-db.sh"],
+    "refresh supabase-",
+  );
   t.after(() => rm(root, { recursive: true, force: true }));
-  const bin = join(root, "bin");
-  const log = join(root, "docker.log");
-  await mkdir(bin);
-  await writeFile(join(bin, "docker"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n', {
-    mode: 0o755,
-  });
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "success log");
 
-  await execFileAsync(join(root, "scripts", "refresh-supabase.sh"), {
-    cwd: tmpdir(),
-    env: {
-      ...process.env,
-      DOCKER_LOG: log,
-      PATH: `${bin}:${process.env.PATH}`,
-    },
-  });
+  await runRefresh(root, bin, logDir);
 
-  assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
-    `compose --project-directory ${root} -f ${root}/compose.yaml down --remove-orphans`,
-    `compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh`,
-    `compose --project-directory ${root} -f ${root}/compose.yaml down --volumes --remove-orphans`,
-    `compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 --entrypoint sh vendor-supabase -c rm -rf /workspace/infra/supabase/volumes/db/data`,
-    `compose --project-directory ${root} -f ${root}/compose.yaml up -d --wait`,
-  ]);
+  assert.deepEqual(await readDockerInvocations(logDir), expectedRefreshInvocations(root));
 });
 
-test("refresh preserves vendor failure status and does not reset the database", async (t) => {
-  const root = await createScriptFixture("refresh-supabase.sh", ["reset-local-db.sh"]);
+test("refresh preserves every failure and converges when rerun", async (t) => {
+  for (let failureStage = 1; failureStage <= 5; failureStage += 1) {
+    await t.test(`stage ${failureStage}`, async (subtest) => {
+      const root = await createScriptFixture(
+        "refresh-supabase.sh",
+        ["reset-local-db.sh"],
+        "refresh supabase-",
+      );
+      subtest.after(() => rm(root, { recursive: true, force: true }));
+      const bin = await installDockerRecorder(root);
+      const expected = expectedRefreshInvocations(root);
+      const failureStatus = 40 + failureStage;
+      const failureLog = join(root, "failure log");
+
+      await assert.rejects(
+        runRefresh(root, bin, failureLog, {
+          DOCKER_FAIL_AT: String(failureStage),
+          DOCKER_FAIL_STATUS: String(failureStatus),
+        }),
+        (error) => error && typeof error === "object" && error.code === failureStatus,
+      );
+      assert.deepEqual(await readDockerInvocations(failureLog), expected.slice(0, failureStage));
+
+      const retryLog = join(root, "retry log");
+      await runRefresh(root, bin, retryLog);
+      assert.deepEqual(await readDockerInvocations(retryLog), expected);
+    });
+  }
+});
+
+test("refresh terminates during vendor wait without starting reset", async (t) => {
+  const root = await createScriptFixture(
+    "refresh-supabase.sh",
+    ["reset-local-db.sh"],
+    "refresh supabase-",
+  );
   t.after(() => rm(root, { recursive: true, force: true }));
-  const bin = join(root, "bin");
-  const log = join(root, "docker.log");
-  await mkdir(bin);
-  await writeFile(
-    join(bin, "docker"),
-    [
-      "#!/bin/sh",
-      'printf "%s\\n" "$*" >> "$DOCKER_LOG"',
-      'case "$*" in *"vendor-supabase --refresh"*) exit 29 ;; esac',
-    ].join("\n"),
-    { mode: 0o755 },
-  );
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "term log");
+  const readyFile = join(root, "vendor ready");
+  await mkdir(logDir);
+  const child = spawn(join(root, "scripts", "refresh-supabase.sh"), {
+    cwd: tmpdir(),
+    detached: true,
+    env: {
+      ...process.env,
+      DOCKER_LOG_DIR: logDir,
+      DOCKER_READY_FILE: readyFile,
+      DOCKER_WAIT_AT: "2",
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+    stdio: "ignore",
+  });
+  const completion = new Promise((resolveClose, rejectClose) => {
+    child.once("error", rejectClose);
+    child.once("close", (code, signal) => resolveClose({ code, signal }));
+  });
+  t.after(() => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if (!error || typeof error !== "object" || error.code !== "ESRCH") throw error;
+    }
+  });
 
-  await assert.rejects(
-    execFileAsync(join(root, "scripts", "refresh-supabase.sh"), {
-      cwd: tmpdir(),
-      env: {
-        ...process.env,
-        DOCKER_LOG: log,
-        PATH: `${bin}:${process.env.PATH}`,
-      },
-    }),
-    (error) => error && typeof error === "object" && error.code === 29,
-  );
+  await waitForFile(readyFile);
+  process.kill(-child.pid, "SIGTERM");
+  const result = await completion;
 
-  assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
-    `compose --project-directory ${root} -f ${root}/compose.yaml down --remove-orphans`,
-    `compose --project-directory ${root} -f ${root}/compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh`,
-  ]);
+  assert.deepEqual(result, { code: null, signal: "SIGTERM" });
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedRefreshInvocations(root).slice(0, 2),
+  );
 });
 
 test("type generation validates output and atomically renames from the destination directory", async (t) => {

@@ -44,6 +44,11 @@ test("root compose owns every local entry-point service", async () => {
   assert.match(compose, /infra\/supabase\/docker-compose\.yml/);
 });
 
+test("derives the Compose project name from the checkout directory", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  assert.doesNotMatch(compose, /^name:/mu);
+});
+
 test("uses one canonical loopback hostname for public browser services", async () => {
   const [compose, example, config] = await Promise.all([
     readFile("compose.yaml", "utf8"),
@@ -217,10 +222,12 @@ test("runs E2E through the base and E2E Compose files in override order", async 
 });
 
 test("documents the Docker-only clean initialization and verification workflow", async () => {
-  const [guide, packageJson, reset] = await Promise.all([
+  const [guide, packageJson, reset, refreshDesign, refreshPlan] = await Promise.all([
     readFile("docs/local-development.md", "utf8"),
     readFile("package.json", "utf8"),
     readFile("scripts/reset-local-db.sh", "utf8"),
+    readFile("docs/superpowers/specs/2026-07-13-pg17-supabase-refresh-design.md", "utf8"),
+    readFile("docs/superpowers/plans/2026-07-13-pg17-supabase-refresh.md", "utf8"),
   ]);
 
   assert.match(
@@ -235,6 +242,7 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.match(guide, /docker compose pull --quiet --ignore-buildable/u);
   assert.match(guide, /docker compose build/u);
   assert.match(guide, /\.\/scripts\/refresh-supabase\.sh/u);
+  assert.match(guide, /symbolic link経由の起動はサポートしません/u);
   assert.match(guide, /\.\/scripts\/reset-local-db\.sh/u);
   assert.match(packageJson, /"db:reset": "\.\/scripts\/reset-local-db\.sh"/u);
   assert.match(reset, /down --volumes --remove-orphans/u);
@@ -250,6 +258,16 @@ test("documents the Docker-only clean initialization and verification workflow",
   );
   assert.match(guide, /\.\/scripts\/run-e2e\.sh/u);
   assert.match(guide, /PG15データの移行とロールバックはサポートしません/u);
+  assert.match(refreshDesign, /\.\/scripts\/refresh-supabase\.sh/u);
+  assert.doesNotMatch(refreshDesign, /vendor-supabase --refresh/u);
+  assert.match(
+    refreshPlan,
+    /このStepは実装履歴です。現行運用では直接実行せず、`\.\/scripts\/refresh-supabase\.sh` を使用/u,
+  );
+  assert.match(
+    refreshPlan,
+    /## Supabase公式Docker構成の更新[\s\S]*?\.\/scripts\/refresh-supabase\.sh/u,
+  );
 
   assert.ok(extractLocalEnvValidationBody(guide));
 });

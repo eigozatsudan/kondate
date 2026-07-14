@@ -1,5 +1,3 @@
-name: kondate
-
 include:
   - path:
       - ./infra/supabase/docker-compose.yml

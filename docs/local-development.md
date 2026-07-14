@@ -4,6 +4,8 @@
 
 ホストにはDocker Engine、Docker Compose、POSIXシェルが必要です。Node、npm、Git、Supabase CLI、Postgresクライアント、Playwrightはコンテナ内で実行します。
 
+Compose project名はcheckoutディレクトリ名から決まり、containerとvolumeはcheckoutごとに分離されます。固定portは共有できないため、複数checkoutのstackを同時には起動しないでください。
+
 ## 初回セットアップまたはSupabase構成更新後
 
 ローカルDBとローカル専用認証情報を破棄して再作成します。このローカルDBは破棄可能な開発データだけを保存する前提であり、バックアップは作成されません。
@@ -56,4 +58,6 @@ E2E wrapperは専用overrideのAuthをhealthyまで待機し、Kong、OAuth mock
 
 wrapperはローカルstackを停止してから、vendor更新だけrootで実行し、ローカルDBを破棄してクリーン再起動します。異UIDのruntime dataを含む旧backupを削除し、新vendor成果物は更新処理内で `LOCAL_UID` / `LOCAL_GID` へ戻します。処理が中断した場合も、同じwrapperを再実行すれば収束します。
 
-更新後はPostgresタグの整合性テストを実行し、ローカル環境を再作成してください。PG15データの移行とロールバックはサポートしません。
+repository内の `./scripts/refresh-supabase.sh` 実体パスから実行してください。portableな実体パス解決を保証できないため、symbolic link経由の起動はサポートしません。
+
+wrapper完了後はPostgresタグの整合性テストを実行してください。PG15データの移行とロールバックはサポートしません。

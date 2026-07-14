@@ -32,11 +32,10 @@
 更新時はホストのGitではなく、次のtoolingサービスを入口にする。
 
 ```bash
-LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" \
-  docker compose -f compose.tooling.yaml run --rm --user 0:0 vendor-supabase --refresh
+./scripts/refresh-supabase.sh
 ```
 
-Supabase起動後のvendor treeにはPostgresなどが異なるUIDで作成したmode 700のruntime dataが含まれ得るため、実更新だけrootへoverrideして旧backupを確実に削除する。新しいvendor成果物はswap前に `LOCAL_UID` / `LOCAL_GID` へ戻し、root所有の生成物を残さない。
+wrapperはstackを停止してからvendor更新だけrootへoverrideし、旧backupを確実に削除してローカルDBをクリーン再起動する。新しいvendor成果物はswap前に `LOCAL_UID` / `LOCAL_GID` へ戻し、root所有の生成物を残さない。
 
 除外対象は次の4ファイルとする。
 
