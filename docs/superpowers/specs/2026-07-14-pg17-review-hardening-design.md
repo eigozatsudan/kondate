@@ -49,7 +49,7 @@ lockとstagingは`.gitignore`と`.dockerignore`の両方へ追加し、失敗時
 
 ### E2E排他実行と終了後の復元
 
-`scripts/run-e2e.sh`は最初のCompose操作より前に、`${TMPDIR:-/tmp}/kondate-run-e2e-$project_name.lock`を原子的な`mkdir`で獲得する。同じcheckoutの2本目はDockerを呼び出さず失敗する。lock獲得直後から`EXIT`、`HUP`、`INT`、`TERM`のtrapで保護し、正常・失敗・処理済みsignalの全経路で解放する。SIGKILL後のstale lockは安全側に失敗し、自動削除しない。lock未獲得のプロセスは、実行中の1本目を壊さないようCompose cleanupもlock削除も行わない。
+`scripts/run-e2e.sh`は最初のCompose操作より前に、`$repo_root/.run-e2e.lock`を原子的な`mkdir`で獲得する。同じcheckoutでは`TMPDIR`など呼び出し環境が異なっても2本目をDocker呼び出し前に失敗させ、別checkoutは異なるrepository rootにより分離する。lock directoryは`.gitignore`と`.dockerignore`へ登録する。lock獲得直後から`EXIT`、`HUP`、`INT`、`TERM`のtrapで保護し、正常・失敗・処理済みsignalの全経路で解放する。SIGKILL後のstale lockは安全側に失敗し、自動削除しない。lock未獲得のプロセスは、実行中の1本目を壊さないようCompose cleanupもlock削除も行わない。
 
 `scripts/run-e2e.sh`は`exec`を使わず、E2Eの終了statusを保存する。cleanupは同じproject directory、project name、base + E2E Compose files、`e2e` profileを指定し、次の3 phaseを順番にすべて試行する。
 
@@ -80,7 +80,7 @@ lockとstagingは`.gitignore`と`.dockerignore`の両方へ追加し、失敗時
 - E2E成功、通常失敗、INT、TERMの各経路でbase `auth`と`app`の復元commandが実行され、期待するstatusが返る。
 - TERMを無視するdaemon側one-off childでも、cleanupが`kill`、`rm`、base復元の順に完走し、childとcontainer相当markerを残さない。
 - kill、rm、base復元の各失敗時も後続phaseを実行し、規定のstatus優先順位を保つ。
-- 同じcheckoutで1本目を待機させた間は2本目をDocker呼び出し前に拒否し、1本目終了後は3本目を実行できる。
+- 同じcheckoutで異なる`TMPDIR`を使い、1本目を待機させた間は2本目をDocker呼び出し前に拒否し、1本目終了後は3本目を実行できる。
 - 正常、通常失敗、処理済みsignalでlockを解放し、lock解放失敗またはstale lockは安全側に非0終了する。
 
 focusedテストが通った後、toolingテスト全体、vendor shellテスト、Compose config、Vitest、build、lint、typecheck、format checkをDocker内で実行する。実DBとE2E全体はstackを再作成するため、実行前に現在の共有stack状態を確認する。
