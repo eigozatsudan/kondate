@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - Implement after Plans 1–3 and preserve every shared name in `2026-07-11-kondate-mvp-00-roadmap.md`.
+- Consume Plan 2 after it has removed every duplicate single-column relationship FK. PostgREST embeds and deletion checks use only the final named owner-composite constraints; Plan 4 must not rely on an inferred relationship or recreate a duplicate FK.
 - All regeneration requests require one of `simpler`, `different_ingredient`, `child_friendly`, `different_flavor`, or `custom`.
 - Historical preference snapshots may be reused; current allergies, age bands, mandatory safety constraints, unsupported-diet state, and safety-catalog versions always win.
 - Revalidate the whole menu, including dishes that will remain unchanged, before either regeneration mode.
@@ -39,7 +40,7 @@
 
 ```sql
 begin;
-select plan(18);
+select plan(27);
 
 select has_column('public', 'menus', 'derivation_group_id');
 select has_column('public', 'menus', 'parent_menu_id');
@@ -85,13 +86,153 @@ select ok(exists (
       = array['id','user_id']
 ), 'a privileged writer cannot attach a revalidation to another owner menu');
 select is(
-  (select confdeltype::text from pg_constraint where conname='menus_parent_menu_id_fkey'),
-  'n', 'single-column parent reference sets parent_menu_id null on delete'
+  (select confdeltype::text from pg_constraint where conname='menus_parent_owner_fkey'),
+  'n', 'the sole owner-composite parent reference sets only parent_menu_id null on delete'
+);
+select is_empty(
+  $$select 1 from pg_constraint where conname = 'menus_parent_menu_id_fkey'$$,
+  'Plan 2 removed the duplicate single-column parent relationship FK'
 );
 select is(
-  (select confdeltype::text from pg_constraint where conname='menus_parent_owner_fkey'),
-  'n', 'owner-composite parent reference also sets only parent_menu_id null on delete'
+  (select confdeltype::text from pg_constraint
+    where conname='menu_member_adaptations_branch_owner_fkey'),
+  'c', 'deleting a recipe step cascades its adaptation branch'
 );
+select is(
+  (select confdeltype::text from pg_constraint
+    where conname='menu_safety_actions_ingredient_owner_fkey'),
+  'c', 'deleting an ingredient cascades ingredient-bound safety actions'
+);
+select is(
+  (select confdeltype::text from pg_constraint
+    where conname='menu_safety_actions_step_owner_fkey'),
+  'c', 'deleting a recipe step cascades step-bound safety actions'
+);
+select is(
+  (select confdeltype::text from pg_constraint
+    where conname='menu_safety_actions_adaptation_owner_fkey'),
+  'c', 'deleting an adaptation cascades its safety actions'
+);
+
+insert into auth.users (id,instance_id,aud,role,email) values
+  ('a1000000-0000-4000-8000-000000000001','00000000-0000-0000-0000-000000000000','authenticated','authenticated','delete-owner@example.test'),
+  ('a2000000-0000-4000-8000-000000000002','00000000-0000-0000-0000-000000000000','authenticated','authenticated','other-owner@example.test');
+insert into public.menus (
+  id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
+  preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+  food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,version
+) values
+  ('b1000000-0000-4000-8000-000000000001','a1000000-0000-4000-8000-000000000001',
+    'dinner','japanese',2,30,'{}','{}',repeat('a',64),'allergens-v1','food-v1','menu-v1',
+    'c1000000-0000-4000-8000-000000000001',null,1),
+  ('b1000000-0000-4000-8000-000000000002','a1000000-0000-4000-8000-000000000001',
+    'dinner','japanese',2,30,'{}','{}',repeat('a',64),'allergens-v1','food-v1','menu-v1',
+    'c1000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000001',2),
+  ('b2000000-0000-4000-8000-000000000001','a2000000-0000-4000-8000-000000000002',
+    'dinner','japanese',2,30,'{}','{}',repeat('b',64),'allergens-v1','food-v1','menu-v1',
+    'c1000000-0000-4000-8000-000000000001',null,1);
+insert into public.menu_target_members (
+  id,menu_id,user_id,household_member_id,household_member_user_id,
+  anonymous_ref,member_display_name_snapshot
+) values (
+  'd1000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'a1000000-0000-4000-8000-000000000001',null,null,'member_1','削除テスト'
+);
+insert into public.generation_pantry_selections (
+  id,menu_id,user_id,pantry_item_id,pantry_name_snapshot,priority,idempotency_key,
+  usage_status,planned_quantity,inventory_quantity_snapshot,shortage_quantity,unit
+) values (
+  'd2000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'a1000000-0000-4000-8000-000000000001',null,'にんじん','prefer_use',
+  'd2000000-0000-4000-8000-000000000002','used',1,1,0,'本'
+);
+insert into public.dishes (
+  id,menu_id,user_id,role,position,name,description,cooking_time_minutes
+) values (
+  'd3000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'a1000000-0000-4000-8000-000000000001','main',1,'煮物','削除契約用',20
+);
+insert into public.dish_ingredients (
+  id,menu_id,dish_id,user_id,position,name,quantity_value,quantity_text,unit,
+  store_section,pantry_selection_id
+) values (
+  'd4000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'd3000000-0000-4000-8000-000000000001','a1000000-0000-4000-8000-000000000001',
+  1,'にんじん',1,'1本','本','produce','d2000000-0000-4000-8000-000000000001'
+);
+insert into public.recipe_steps (
+  id,menu_id,dish_id,user_id,position,instruction
+) values (
+  'd5000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'd3000000-0000-4000-8000-000000000001','a1000000-0000-4000-8000-000000000001',
+  1,'にんじんを柔らかく煮る'
+);
+insert into public.menu_timeline_steps (
+  id,menu_id,user_id,position,start_minute,duration_minutes,instruction,dish_id,recipe_step_id
+) values (
+  'd6000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'a1000000-0000-4000-8000-000000000001',1,0,20,'煮物を作る',
+  'd3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000001'
+);
+insert into public.menu_member_adaptations (
+  id,menu_id,dish_id,user_id,anonymous_member_ref,portion_text,
+  branch_before_recipe_step_id,serving_check
+) values (
+  'd7000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'd3000000-0000-4000-8000-000000000001','a1000000-0000-4000-8000-000000000001',
+  'member_1','半量','d5000000-0000-4000-8000-000000000001','柔らかさを確認する'
+);
+insert into public.menu_safety_actions (
+  id,menu_id,dish_id,ingredient_id,user_id,anonymous_member_ref,
+  before_recipe_step_id,position,kind,instruction
+) values (
+  'd8000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002',
+  'd3000000-0000-4000-8000-000000000001','d4000000-0000-4000-8000-000000000001',
+  'a1000000-0000-4000-8000-000000000001','member_1',
+  'd5000000-0000-4000-8000-000000000001',1,'cut_small','小さく切る'
+);
+insert into public.menu_revalidations (
+  id,user_id,menu_id,safety_fingerprint,allergen_catalog_version,food_rule_version,status
+) values (
+  'd9000000-0000-4000-8000-000000000001','a1000000-0000-4000-8000-000000000001',
+  'b1000000-0000-4000-8000-000000000002',repeat('a',64),'allergens-v1','food-v1','valid'
+);
+select is(
+  (select count(*)::integer from public.menus
+    where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+      and derivation_group_id = 'c1000000-0000-4000-8000-000000000001'::uuid),
+  2, 'delete fixture contains parent and child versions'
+);
+select ok(exists(
+  select 1 from public.menu_safety_actions
+  where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+), 'delete fixture contains an ingredient/step-bound safety action');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a1000000-0000-4000-8000-000000000001', true);
+select is(
+  public.delete_menu_group('c1000000-0000-4000-8000-000000000001'::uuid),
+  2, 'owner can delete the complete parent/child derivation group'
+);
+reset role;
+
+select is_empty($$
+  select menu_id from public.menu_target_members where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.generation_pantry_selections where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.dishes where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.dish_ingredients where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.recipe_steps where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.menu_timeline_steps where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.menu_member_adaptations where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.menu_safety_actions where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.menu_label_confirmations where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+  union all select menu_id from public.menu_revalidations where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+$$, 'group deletion leaves no normalized child row');
+select ok(exists(
+  select 1 from public.menus
+  where user_id = 'a2000000-0000-4000-8000-000000000002'::uuid
+    and derivation_group_id = 'c1000000-0000-4000-8000-000000000001'::uuid
+), 'same group UUID belonging to another owner is untouched');
 
 select * from finish();
 rollback;
@@ -99,7 +240,7 @@ rollback;
 
 - [ ] **Step 2: Run the database test and verify it fails**
 
-Run: `npm run db:test -- supabase/tests/database/history_regeneration.test.sql`
+Run: `docker compose --profile test run --rm db-test supabase/tests/database/history_regeneration.test.sql`
 
 Expected: FAIL because `version`, `menu_revalidations`, and regeneration lineage do not exist; the negative RPC assertion remains green because Plan 3's canonical reservation path is the only one allowed.
 
@@ -127,13 +268,14 @@ alter table public.menus alter column version set default 1;
 alter table public.menus add constraint menus_selected_timestamp_consistent
   check (is_selected = (selected_at is not null));
 alter table public.menus
-  drop constraint menus_parent_menu_id_fkey,
   drop constraint menus_parent_owner_fkey,
-  add constraint menus_parent_menu_id_fkey
-    foreign key (parent_menu_id) references public.menus(id) on delete set null,
   add constraint menus_parent_owner_fkey
     foreign key (parent_menu_id,user_id) references public.menus(id,user_id)
     on delete set null (parent_menu_id);
+
+-- 正規化子行、adaptation の分岐、ingredient/step に結び付く safety action の
+-- 最終 owner-composite CASCADE 契約は Plan 2 が所有する。Plan 4 は上で契約を
+-- 検査するだけで、該当する外部キーを削除・再作成しない。
 
 create unique index menus_group_version_unique
   on public.menus(user_id, derivation_group_id, version);
@@ -165,10 +307,10 @@ create policy menu_revalidations_select_own
 alter table private.ai_generation_requests
   add column replace_dish_id uuid references public.dishes(id) on delete set null;
 
--- Do not create reserve_ai_regeneration. Plan 3's canonical reservation RPC accepts the
--- complete GenerationCommand, stores only its server-secret HMAC for idempotency, and
--- reserves success + daily attempt + short-window + global state atomically. Reason text
--- remains in memory until successful finalization and is stored only on the completed menu.
+-- reserve_ai_regeneration は作成しない。Plan 3 の canonical reservation RPC が完全な
+-- GenerationCommand を受け取り、冪等性用には server-secret HMAC だけを保存し、success、
+-- user daily attempt、short-window、global state を原子的に予約する。理由テキストは
+-- finalization 成功までメモリ内だけに保持し、完了した menu にだけ保存する。
 
 create or replace function private.assign_regeneration_lineage(
   p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,
@@ -294,12 +436,12 @@ grant execute on function public.delete_menu_group(uuid) to authenticated;
 Run:
 
 ```bash
-npm run db:push
-npm run db:test -- supabase/tests/database/history_regeneration.test.sql
-npm run db:types
+docker compose run --rm app npm run db:push
+docker compose --profile test run --rm db-test supabase/tests/database/history_regeneration.test.sql
+docker compose run --rm app npm run db:types
 ```
 
-Expected: pgTAP reports 18 successful assertions; repeated checks upsert one latest row, the owner-composite revalidation foreign key rejects a privileged cross-owner write, and both parent foreign keys use `SET NULL`, so deleting a parent/group or cascading account deletion cannot be blocked by a competing `RESTRICT`; generated types contain the new columns, table, RPCs, and function-backed lineage fields without reason text in the generation ledger.
+Expected: pgTAP reports 27 successful assertions; repeated checks upsert one latest row, the owner-composite revalidation foreign key rejects a privileged cross-owner write, the sole parent FK uses partial-column `SET NULL`, and deleting a two-version group with ingredient/step-bound safety actions removes every owned normalized child while preserving another owner that reused the group UUID. Generated types contain the new columns, table, RPCs, and function-backed lineage fields without reason text in the generation ledger.
 
 - [ ] **Step 5: Commit the migration**
 
@@ -377,7 +519,7 @@ describe("regeneration contracts", () => {
 
 - [ ] **Step 2: Run the focused test and verify it fails**
 
-Run: `npm test -- --run shared/contracts/regeneration.test.ts shared/safety/deduplicate.test.ts`
+Run: `docker compose run --rm --no-deps app npm test -- --run shared/contracts/regeneration.test.ts shared/safety/deduplicate.test.ts`
 
 Expected: FAIL because the dedicated local-ref regeneration output schema and duplicate helper do not exist.
 
@@ -528,7 +670,7 @@ export function isMateriallySameMenu(left: MenuSignatureInput, right: MenuSignat
 
 - [ ] **Step 4: Run tests and typecheck**
 
-Run: `npm test -- --run shared/contracts/regeneration.test.ts shared/safety/deduplicate.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run shared/contracts/regeneration.test.ts shared/safety/deduplicate.test.ts && npm run typecheck'`
 
 Expected: the focused tests pass and TypeScript exits 0.
 
@@ -547,6 +689,7 @@ git commit -m "feat: define regeneration contracts"
 - Create: `netlify/functions/_shared/revalidation-adapter.ts`
 - Create: `netlify/functions/_shared/stored-menu-loader.ts`
 - Create: `netlify/functions/_shared/stored-menu-loader.test.ts`
+- Create: `netlify/functions/_shared/stored-menu-loader.types.test.ts`
 - Create: `netlify/functions/revalidate-menu.ts`
 - Create: `netlify/functions/revalidate-menu.test.ts`
 - Modify: `supabase/migrations/20260711003000_history_regeneration.sql`
@@ -611,7 +754,7 @@ it("keeps confirmed provenance in storage but revalidates a pending generated pr
 
 - [ ] **Step 2: Run it and verify the missing-module failure**
 
-Run: `npm test -- --run netlify/functions/_shared/revalidation-service.test.ts`
+Run: `docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/revalidation-service.test.ts`
 
 Expected: FAIL because `revalidation-service.ts` does not exist.
 
@@ -726,12 +869,15 @@ export default async (request: Request, context: Context): Promise<Response> => 
 export const config: Config = { path: "/api/menus/:menuId/revalidate" };
 ```
 
-Create `stored-menu-loader.ts` as the only server normalized-menu loader. Its query is executed with `createUserScopedSupabase(user.accessToken)`, includes `.eq("id",menuId).eq("user_id",userId).maybeSingle()`, and selects the Plan 3 normalized result fields plus `user_id,safety_fingerprint,derivation_group_id,version,preference_snapshot`, normalized `menu_safety_actions`, and `menu_target_members(household_member_id,member_display_name_snapshot,anonymous_ref)`. A nullable live member link is never reconstructed from a snapshot. Move the pure snake-case-to-`ValidatedMenu` mapping from Plan 3's result loader into this server file without changing field names; finish with `validatedMenuSchema.parse(...)` and return this closed result:
+Create `stored-menu-loader.ts` as the only server normalized-menu loader. Its query is executed with `createUserScopedSupabase(user.accessToken)`, includes `.eq("id",menuId).eq("user_id",userId).maybeSingle()`, and selects the Plan 3 normalized result fields plus `user_id,safety_fingerprint,derivation_group_id,version,preference_snapshot`, normalized `menu_safety_actions`, and `menu_target_members(household_member_id,member_display_name_snapshot,anonymous_ref)`. Every PostgREST embed is pinned with an explicit `!constraint` hint using Plan 2's final owner-composite FK name. Because adaptations have only a dish-owner relationship, load them under `dishes!dishes_menu_owner_fkey`, and load safety actions under each adaptation; do not assume a direct menu-to-adaptation relationship. A nullable live member link is never reconstructed from a snapshot. Move the pure snake-case-to-`ValidatedMenu` mapping from Plan 3's result loader into this server file without changing field names; finish with `validatedMenuSchema.parse(...)` and return this closed result:
 
 ```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {generatedMenuSchema,validatedMenuSchema,
   type GeneratedMenu,type ValidatedMenu} from "../../../shared/contracts/generation";
 import {deriveCurrentGeneratedLabelConfirmations} from "../../../shared/safety/allergens";
+import type { Database } from "../../../src/shared/types/database.generated";
+import { HttpError } from "./http";
 
 export type StoredMenuAggregate = {
   menu: ValidatedMenu;
@@ -745,34 +891,46 @@ export type StoredMenuAggregate = {
     displayNameSnapshot: string; displayName: string }[];
 };
 
-const STORED_MENU_SELECT = `
+export const STORED_MENU_SELECT = `
   id,user_id,safety_fingerprint,derivation_group_id,version,preference_snapshot,
   meal_type,cuisine_genre,servings,total_elapsed_minutes,output_schema_version,
-  menu_target_members(household_member_id,member_display_name_snapshot,anonymous_ref,
+  menu_target_members!menu_target_members_menu_owner_fkey(
+    household_member_id,member_display_name_snapshot,anonymous_ref,
     current_member:household_members!menu_target_members_member_owner_fkey(display_name)),
-  dishes(id,role,position,name,description,cooking_time_minutes,
-    dish_ingredients(id,position,name,quantity_value,quantity_text,unit,store_section,
+  dishes!dishes_menu_owner_fkey(id,role,position,name,description,cooking_time_minutes,
+    dish_ingredients!dish_ingredients_dish_owner_fkey(
+      id,position,name,quantity_value,quantity_text,unit,store_section,
       pantry_selection_id,label_confirmation_required),
-    recipe_steps(id,position,instruction)),
-  menu_timeline_steps(id,position,start_minute,duration_minutes,instruction,dish_id,recipe_step_id),
-  menu_member_adaptations(id,dish_id,anonymous_member_ref,portion_text,
-    branch_before_recipe_step_id,additional_cutting,additional_heating,
-    additional_seasoning,serving_check,safety_tags),
-  menu_safety_actions(id,dish_id,ingredient_id,anonymous_member_ref,
-    before_recipe_step_id,position,kind,instruction),
-  generation_pantry_selections(id,pantry_item_id,pantry_name_snapshot,priority,
+    recipe_steps!recipe_steps_dish_owner_fkey(id,position,instruction),
+    menu_member_adaptations!menu_member_adaptations_dish_owner_fkey(
+      id,dish_id,anonymous_member_ref,portion_text,branch_before_recipe_step_id,
+      additional_cutting,additional_heating,additional_seasoning,serving_check,safety_tags,
+      menu_safety_actions!menu_safety_actions_adaptation_owner_fkey(
+        id,dish_id,ingredient_id,anonymous_member_ref,before_recipe_step_id,
+        position,kind,instruction))),
+  menu_timeline_steps!menu_timeline_steps_menu_owner_fkey(
+    id,position,start_minute,duration_minutes,instruction,dish_id,recipe_step_id),
+  generation_pantry_selections!generation_pantry_selections_menu_owner_fkey(
+    id,pantry_item_id,pantry_name_snapshot,priority,
     usage_status,planned_quantity,inventory_quantity_snapshot,shortage_quantity,unit,unused_reason),
-  menu_label_confirmations(source_type,source_id,source_path,allergen_id,
+  menu_label_confirmations!menu_label_confirmations_menu_owner_fkey(
+    source_type,source_id,source_path,allergen_id,
     anonymous_member_ref,dictionary_version,confirmation_status,confirmed_at,confirmed_by)
 ` as const;
+
+export function buildStoredMenuQuery(
+  client: SupabaseClient<Database>, userId: string, menuId: string,
+) {
+  return client.from("menus").select(STORED_MENU_SELECT)
+    .eq("id", menuId).eq("user_id", userId).maybeSingle();
+}
 
 export async function loadStoredMenu(
   client: SupabaseClient<Database>,
   userId: string,
   menuId: string,
 ): Promise<StoredMenuAggregate> {
-  const { data, error } = await client.from("menus").select(STORED_MENU_SELECT)
-    .eq("id", menuId).eq("user_id", userId).maybeSingle();
+  const { data, error } = await buildStoredMenuQuery(client, userId, menuId);
   if (error !== null) throw new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
   if (data === null) throw new HttpError(404, "menu_not_found", "献立が見つかりません");
   const dishes = data.dishes.toSorted((a, b) => a.position - b.position).map((dish) => ({
@@ -794,20 +952,19 @@ export async function loadStoredMenu(
     const ids = pantryDishIds.get(ingredient.pantrySelectionId) ?? new Set<string>();
     ids.add(dish.id); pantryDishIds.set(ingredient.pantrySelectionId, ids);
   }
-  const adaptations = data.menu_member_adaptations.map((item) => ({
+  const adaptations = data.dishes.flatMap((dishRow) =>
+    dishRow.menu_member_adaptations.map((item) => ({
     id: item.id, dishId: item.dish_id, anonymousMemberRef: item.anonymous_member_ref,
     portionText: item.portion_text, branchBeforeRecipeStepId: item.branch_before_recipe_step_id,
     additionalCutting: item.additional_cutting, additionalHeating: item.additional_heating,
     additionalSeasoning: item.additional_seasoning, servingCheck: item.serving_check,
     safetyTags: item.safety_tags,
-    safetyActions: data.menu_safety_actions
-      .filter((action) => action.dish_id === item.dish_id &&
-        action.anonymous_member_ref === item.anonymous_member_ref)
+    safetyActions: item.menu_safety_actions
       .toSorted((a,b) => a.position-b.position)
       .map((action) => ({kind:action.kind,dishId:action.dish_id,
         ingredientId:action.ingredient_id,anonymousMemberRef:action.anonymous_member_ref,
         beforeRecipeStepId:action.before_recipe_step_id,instruction:action.instruction})),
-  }));
+  })));
   const menu = validatedMenuSchema.parse({
     schemaVersion: data.output_schema_version, menuId: data.id, mealType: data.meal_type,
     cuisineGenre: data.cuisine_genre, servings: data.servings,
@@ -857,7 +1014,42 @@ export function toStoredRevalidationCandidate(
 }
 ```
 
-`stored-menu-loader.test.ts` supplies the complete normalized row from Plan 3 and asserts exact reconstruction of dishes, ingredients, steps, timeline, adaptations by joining every normalized `menu_safety_actions` row, pantry usage, label confirmations including `confirmedAt/confirmedBy`, target IDs, preference snapshot, fingerprint, group, and version. A deleted-member fixture has null `household_member_id`/owner link but retains `anonymous_ref`, safety actions, and `member_display_name_snapshot`; it is absent from `targetMemberIds`, uses the snapshot only for display, and is never sent to `loadCurrentSafetyContext`. A live target displays its current name with snapshot fallback. The test separately proves `toStoredRevalidationCandidate(menu,currentContext)` preserves all recipe/safety-action text, discards the historical confirmation set as validator evidence, derives the exact current pending set, and does not mutate the stored `ValidatedMenu`. Removing a current allergy removes its formerly required confirmation without an `extra_label_confirmation`; adding an allergy or updating aliases adds the newly required confirmation before validation. It also asserts `.eq("user_id",userId)` is applied and a missing/foreign row is indistinguishable as `404 menu_not_found`.
+`stored-menu-loader.test.ts` supplies the complete normalized row from Plan 3 in the exact nested PostgREST shape and asserts exact reconstruction of dishes, ingredients, steps, timeline, adaptations by flattening each dish's adaptations and each adaptation's `menu_safety_actions`, pantry usage, label confirmations including `confirmedAt/confirmedBy`, target IDs, preference snapshot, fingerprint, group, and version. A deleted-member fixture has null `household_member_id`/owner link but retains `anonymous_ref`, safety actions, and `member_display_name_snapshot`; it is absent from `targetMemberIds`, uses the snapshot only for display, and is never sent to `loadCurrentSafetyContext`. A live target displays its current name with snapshot fallback. The test separately proves `toStoredRevalidationCandidate(menu,currentContext)` preserves all recipe/safety-action text, discards the historical confirmation set as validator evidence, derives the exact current pending set, and does not mutate the stored `ValidatedMenu`. Removing a current allergy removes its formerly required confirmation without an `extra_label_confirmation`; adding an allergy or updating aliases adds the newly required confirmation before validation. It also asserts `.eq("user_id",userId)` is applied and a missing/foreign row is indistinguishable as `404 menu_not_found`.
+
+Add a compile-time query-shape regression test in `stored-menu-loader.types.test.ts`; do not cast the query result or duplicate a handwritten database-row interface:
+
+```ts
+import type { QueryData } from "@supabase/supabase-js";
+import { describe, expectTypeOf, it } from "vitest";
+import { buildStoredMenuQuery } from "./stored-menu-loader";
+
+type StoredMenuSelectRow = NonNullable<
+  QueryData<ReturnType<typeof buildStoredMenuQuery>>
+>;
+type DishRow = StoredMenuSelectRow["dishes"][number];
+type AdaptationRow = DishRow["menu_member_adaptations"][number];
+
+describe("stored menu PostgREST query types", () => {
+  it("resolves every named owner-composite embed with the required cardinality", () => {
+    expectTypeOf<StoredMenuSelectRow>().not.toMatchTypeOf<{ error: true }>();
+    expectTypeOf<StoredMenuSelectRow["menu_target_members"]>()
+      .toMatchTypeOf<readonly unknown[]>();
+    expectTypeOf<DishRow["dish_ingredients"]>().toMatchTypeOf<readonly unknown[]>();
+    expectTypeOf<DishRow["recipe_steps"]>().toMatchTypeOf<readonly unknown[]>();
+    expectTypeOf<DishRow["menu_member_adaptations"]>().toMatchTypeOf<readonly unknown[]>();
+    expectTypeOf<AdaptationRow["menu_safety_actions"]>()
+      .toMatchTypeOf<readonly unknown[]>();
+    expectTypeOf<StoredMenuSelectRow["menu_timeline_steps"]>()
+      .toMatchTypeOf<readonly unknown[]>();
+    expectTypeOf<StoredMenuSelectRow["generation_pantry_selections"]>()
+      .toMatchTypeOf<readonly unknown[]>();
+    expectTypeOf<StoredMenuSelectRow["menu_label_confirmations"]>()
+      .toMatchTypeOf<readonly unknown[]>();
+  });
+});
+```
+
+This file must fail typechecking if a hint is misspelled, a duplicate FK makes a relation ambiguous again, or an embed's inferred cardinality changes. The runtime loader test additionally asserts the emitted select string contains every exact `!constraint` token and contains no bare embedded relation.
 
 Append two exact RPC corrections to migration `030`. `public.reconcile_menu_label_confirmations(p_user_id uuid,p_menu_id uuid,p_expected_safety_fingerprint text,p_requirements jsonb)` is service-role-only. It locks the owner menu and its live target rows, calls Plan 3's `private.lock_and_assert_current_safety_fingerprint(user_id,target_member_ids,expected)`, validates an array of at most the generated-confirmation cap, and rejects duplicate/unknown keys. In one transaction it marks the menu's prior `is_current` rows false, then upserts the exact current canonical requirements by `(menu,sourceType,sourceId,sourcePath,allergen,member,dictionaryVersion,fingerprint)`. A row with the same fingerprint preserves its user confirmation; every new fingerprint/dictionary/requirement gets a fresh UUID and `pending`. It returns only the resulting current rows. No raw requirement JSON is retained outside the normalized table.
 
@@ -907,14 +1099,14 @@ Define `validateStoredMenuCurrentSafety` as a dedicated history/result validator
 
 - [ ] **Step 4: Run service, function, and type tests**
 
-Run: `npm test -- --run netlify/functions/_shared/stored-menu-loader.test.ts netlify/functions/_shared/revalidation-service.test.ts netlify/functions/revalidate-menu.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/stored-menu-loader.test.ts netlify/functions/_shared/stored-menu-loader.types.test.ts netlify/functions/_shared/revalidation-service.test.ts netlify/functions/revalidate-menu.test.ts && npm run typecheck'`
 
 Expected: both suites pass with no PII in logged errors.
 
 - [ ] **Step 5: Commit the revalidation boundary**
 
 ```bash
-git add netlify/functions/_shared/stored-menu-loader.ts netlify/functions/_shared/stored-menu-loader.test.ts netlify/functions/_shared/revalidation-service.ts netlify/functions/_shared/revalidation-service.test.ts netlify/functions/_shared/revalidation-adapter.ts netlify/functions/revalidate-menu.ts netlify/functions/revalidate-menu.test.ts
+git add netlify/functions/_shared/stored-menu-loader.ts netlify/functions/_shared/stored-menu-loader.test.ts netlify/functions/_shared/stored-menu-loader.types.test.ts netlify/functions/_shared/revalidation-service.ts netlify/functions/_shared/revalidation-service.test.ts netlify/functions/_shared/revalidation-adapter.ts netlify/functions/revalidate-menu.ts netlify/functions/revalidate-menu.test.ts
 git commit -m "feat: revalidate history with current safety"
 ```
 
@@ -1006,7 +1198,7 @@ it("materializes one replacement plus complete local-ref sections into one full 
 
 - [ ] **Step 2: Run and verify both tests fail**
 
-Run: `npm test -- --run netlify/functions/_shared/regeneration-context.test.ts netlify/functions/_shared/regeneration-prompt.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-service.test.ts`
+Run: `docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/regeneration-context.test.ts netlify/functions/_shared/regeneration-prompt.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-service.test.ts`
 
 Expected: FAIL because regeneration context, dedicated replacement-output parsing/materialization, and duplicate enforcement are absent.
 
@@ -1235,7 +1427,7 @@ The already-canonical `GenerationRepository.reserve(command)` replaces only its 
 
 - [ ] **Step 5: Run focused server tests**
 
-Run: `npm test -- --run shared/contracts/regeneration.test.ts netlify/functions/_shared/regeneration-context.test.ts netlify/functions/_shared/regeneration-prompt.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-repository.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/generate-menu.test.ts netlify/functions/generate-dish.test.ts && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run shared/contracts/regeneration.test.ts netlify/functions/_shared/regeneration-context.test.ts netlify/functions/_shared/regeneration-prompt.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-repository.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/generate-menu.test.ts netlify/functions/generate-dish.test.ts && npm run typecheck'`
 
 Expected: current-safety, canonical execution payload, full retained prompt DTO, local-ref replacement output, deterministic full-candidate materialization, exclusion signatures, whole/dish request, duplicate repair, and non-consumption cases pass. A source search finds no Plan 4-local command/execution-union declaration, `reserve_ai_regeneration`, stored-menu direct generated-validator call, stable UUID in a prompt, or alternate request field.
 
@@ -1282,7 +1474,7 @@ it("renders one card per derivation group and prefers the selected version", asy
 
 - [ ] **Step 2: Run and verify the route/component failure**
 
-Run: `npm test -- --run src/features/history/pages/history-page.test.tsx`
+Run: `docker compose run --rm --no-deps app npm test -- --run src/features/history/pages/history-page.test.tsx`
 
 Expected: FAIL because the history feature does not exist.
 
@@ -1374,7 +1566,7 @@ Import `Link` from `react-router`. `HistoryCard` uses native `<article>`, `<Link
 
 - [ ] **Step 5: Run component tests and typecheck**
 
-Run: `npm test -- --run src/features/history && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/history && npm run typecheck'`
 
 Expected: grouped, selected, favorite, confirmed delete, empty, loading, and current-safety-reminder states pass.
 
@@ -1466,8 +1658,8 @@ it.each(["focus","visible-visibilitychange","online","realtime-household-member"
   },
 );
 
-// Test-local helper: it dispatches the DOM event, invokes the mocked Realtime callback,
-// or advances the injected clock to exactly 60_000 ms; production has no global helper.
+// test専用helper。DOM eventのdispatch、mock Realtime callbackの呼出し、または
+// 注入clockの60_000 msまでの進行を行う。productionにglobal helperは置かない。
 function fireSafetySignal(signal:string):void { /* test fixture dispatches the selected signal */ }
 
 it.each(["regenerate_menu","regenerate_dish"] as const)(
@@ -1481,7 +1673,7 @@ it.each(["regenerate_menu","regenerate_dish"] as const)(
 
 - [ ] **Step 2: Run and verify both tests fail**
 
-Run: `npm test -- --run src/features/history/pages/history-detail-page.test.tsx src/features/history/components/regeneration-sheet.test.tsx`
+Run: `docker compose run --rm --no-deps app npm test -- --run src/features/history/pages/history-detail-page.test.tsx src/features/history/components/regeneration-sheet.test.tsx`
 
 Expected: FAIL because detail and regeneration controls are absent.
 
@@ -1575,7 +1767,7 @@ export function useMenuRevalidation(menuId: string) {
     const onFocus=()=>{if(document.visibilityState==="visible")changed();};
     const onOnline=()=>changed();
     const onOffline=()=>{setForcedChecking(true);};
-    // The authenticated Realtime channel is RLS-scoped to this user; no raw owner id is sent by the browser.
+    // 認証済みRealtime channelはRLSでこのuserに限定し、browserからowner IDを直接送らない。
     const channel=getBrowserSupabaseClient().channel(`menu-safety:${menuId}`)
       .on("postgres_changes",{event:"*",schema:"public",table:"household_members"},changed)
       .on("postgres_changes",{event:"*",schema:"public",table:"member_allergies"},changed)
@@ -1603,7 +1795,7 @@ Import `householdSafetyChangedEvent` and `householdSafetyRevisionStorageKey` fro
 
 - [ ] **Step 5: Run feature tests and accessibility assertions**
 
-Run: `npm test -- --run src/features/history src/features/generation/model/pending-generation.test.ts src/features/generation/api/generation-api.test.ts src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/pages/menu-result-page.test.tsx && npm run typecheck`
+Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/history src/features/generation/model/pending-generation.test.ts src/features/generation/api/generation-api.test.ts src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/pages/menu-result-page.test.tsx && npm run typecheck'`
 
 Expected: mount/same-tab/other-tab current-safety blocking on both result routes, valid revalidation, required reason, custom reason, quota copy, whole/dish exact endpoint and byte-identical response-loss recovery, favorite, and accept-version cases pass.
 
@@ -1783,7 +1975,7 @@ test("automatically revalidates on mount and blocks stale history after safety c
 
 - [ ] **Step 3: Run and verify the new E2E tests fail at the first missing product behavior**
 
-Run: `npm run e2e -- e2e/specs/history-regeneration.spec.ts e2e/specs/history-safety-change.spec.ts`
+Run: `docker compose run --rm app npm run e2e -- e2e/specs/history-regeneration.spec.ts e2e/specs/history-safety-change.spec.ts`
 
 Expected: fixture modules compile and authentication/onboarding completes; FAIL at missing automatic revalidation, regeneration action, or duplicate handling, never at an undefined helper or invalid API key.
 
@@ -1796,13 +1988,13 @@ The duplicate fixture returns the same role and primary ingredient set twice so 
 Run:
 
 ```bash
-npm run format:check
-npm run lint
-npm run typecheck
-npm test -- --run
-npm run db:test
-npm run e2e -- e2e/specs/history-regeneration.spec.ts e2e/specs/history-safety-change.spec.ts
-npm run build
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm test -- --run
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run e2e -- e2e/specs/history-regeneration.spec.ts e2e/specs/history-safety-change.spec.ts
+docker compose run --rm --no-deps app npm run build
 ```
 
 Expected: every command exits 0 and all history/regeneration tests report zero failures.

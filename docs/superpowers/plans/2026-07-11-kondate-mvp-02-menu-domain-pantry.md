@@ -276,6 +276,7 @@ select * from finish();
 rollback;
 ```
 
+
 - [ ] **Step 2 (2–5 min): Run the focused DB test and verify RED**
 
 Run: `docker compose --profile test run --rm db-test supabase/tests/database/02_safety_catalogs.test.sql`
@@ -452,17 +453,23 @@ Create `supabase/tests/database/03_pantry_and_planner_drafts.test.sql`:
 begin;
 select plan(26);
 
-select has_table('public', 'pantry_items');
-select has_table('public', 'generation_drafts');
-select has_column('public', 'pantry_items', 'expiration_type');
-select has_column('public', 'pantry_items', 'opened_state');
-select has_column('public', 'generation_drafts', 'pantry_selections');
-select has_column('public', 'generation_drafts', 'revision');
+select has_table('public', 'pantry_items', 'pantry item table exists');
+select has_table('public', 'generation_drafts', 'generation draft table exists');
+select has_column('public', 'pantry_items', 'expiration_type',
+  'pantry item has an expiration type');
+select has_column('public', 'pantry_items', 'opened_state',
+  'pantry item has an opened state');
+select has_column('public', 'generation_drafts', 'pantry_selections',
+  'generation draft has pantry selections');
+select has_column('public', 'generation_drafts', 'revision',
+  'generation draft has a revision');
 select has_column('public', 'generation_drafts', 'deleted_at',
   'generation draft has a deletion tombstone');
 select has_function('public', 'delete_generation_draft', array['bigint']);
-select row_security_is('public', 'pantry_items', true);
-select row_security_is('public', 'generation_drafts', true);
+select ok((select relrowsecurity from pg_class where oid = 'public.pantry_items'::regclass),
+  'pantry item RLS is enabled');
+select ok((select relrowsecurity from pg_class where oid = 'public.generation_drafts'::regclass),
+  'generation draft RLS is enabled');
 select has_function('public','save_generation_draft',
   array['bigint','text','text[]','text','uuid[]','smallint','text','text[]','text','jsonb']);
 
@@ -488,60 +495,60 @@ select throws_ok(
 );
 
 select public.save_generation_draft(0,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-  30,'standard',array[]::text[],'',
+  30::smallint,'standard',array[]::text[],'',
   '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use"}]'::jsonb);
 
 select is((select count(*)::integer from public.generation_drafts), 1, 'owner reads one draft');
 select is((select revision from public.generation_drafts),1::bigint,
   'first authoritative save creates revision one');
 select public.save_generation_draft(1,'dinner',array['鶏肉','白菜'],'japanese',array[]::uuid[],
-  30,'standard',array[]::text[],'更新', '[]'::jsonb);
+  30::smallint,'standard',array[]::text[],'更新', '[]'::jsonb);
 select is((select revision from public.generation_drafts),2::bigint,
   'each serialized save increments revision exactly once');
 select throws_ok($$select public.save_generation_draft(1,'dinner',array[]::text[],
-  'japanese',array[]::uuid[],30,'standard',array[]::text[],'stale','[]'::jsonb)$$,
+  'japanese',array[]::uuid[],30::smallint,'standard',array[]::text[],'stale','[]'::jsonb)$$,
   'P0001','draft_revision_conflict','a stale save cannot overwrite a newer draft');
 select throws_ok($$insert into public.generation_drafts(user_id)
   values('10000000-0000-0000-0000-000000000001')$$,
   '42501',null,'browser cannot bypass the monotonic save RPC');
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-    30,'standard',array[]::text[],'',
+    30::smallint,'standard',array[]::text[],'',
     '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","checkedAt":"2026-07-11T00:00:00Z"}]'::jsonb)$$,
   '23514', null, 'expired confirmation cannot be persisted'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-    30,'standard',array[]::text[],'',
+    30::smallint,'standard',array[]::text[],'',
     '[{"pantryItemId":"not-a-uuid","priority":"must_use"}]'::jsonb)$$,
   '23514', null, 'pantry item ID must be a UUID'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-    30,'standard',array[]::text[],'',
+    30::smallint,'standard',array[]::text[],'',
     '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"optional"}]'::jsonb)$$,
   '23514', null, 'pantry priority must be a declared value'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-    30,'standard',array[]::text[],'','[{"priority":"must_use"}]'::jsonb)$$,
+    30::smallint,'standard',array[]::text[],'','[{"priority":"must_use"}]'::jsonb)$$,
   '23514', null, 'pantry selection requires a pantry item ID'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-    30,'standard',array[]::text[],'',
+    30::smallint,'standard',array[]::text[],'',
     '[{"pantryItemId":"20000000-0000-0000-0000-000000000001"}]'::jsonb)$$,
   '23514', null, 'pantry selection requires a priority'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-    30,'standard',array[]::text[],'',
+    30::smallint,'standard',array[]::text[],'',
     '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","note":"x"}]'::jsonb)$$,
   '23514', null, 'pantry selection rejects undeclared keys'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
-    30,'standard',array[]::text[],'','["invalid"]'::jsonb)$$,
+    30::smallint,'standard',array[]::text[],'','["invalid"]'::jsonb)$$,
   '23514', null, 'pantry selection must be an object'
 );
 
@@ -938,6 +945,7 @@ git commit -m "fix: 献立下書きの保存境界を強化"
 
 **Files:**
 - Create: `supabase/tests/database/04_menu_core.test.sql`
+- Create: `supabase/tests/database/04a_menu_core_hardening.test.sql`
 - Create: `supabase/migrations/20260711001100_menu_core.sql`
 - Modify (generated): `src/shared/types/database.generated.ts`
 
@@ -963,20 +971,29 @@ select has_table('public', 'menu_timeline_steps');
 select has_table('public', 'menu_member_adaptations');
 select has_table('public', 'menu_safety_actions');
 select has_table('public', 'menu_label_confirmations');
-select row_security_is('public', 'menus', true);
-select row_security_is('public', 'menu_target_members', true);
-select row_security_is('public', 'generation_pantry_selections', true);
-select row_security_is('public', 'dishes', true);
-select row_security_is('public', 'dish_ingredients', true);
-select row_security_is('public', 'recipe_steps', true);
-select row_security_is('public', 'menu_timeline_steps', true);
-select row_security_is('public', 'menu_member_adaptations', true);
-select row_security_is('public', 'menu_safety_actions', true);
-select row_security_is('public', 'menu_label_confirmations', true);
-select has_fk('public', 'menu_target_members');
-select has_fk('public', 'dish_ingredients');
-select has_fk('public', 'menu_safety_actions');
-select has_fk('public', 'menu_label_confirmations');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='menus'), 'menus has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='menu_target_members'), 'menu_target_members has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='generation_pantry_selections'), 'generation_pantry_selections has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='dishes'), 'dishes has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='dish_ingredients'), 'dish_ingredients has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='recipe_steps'), 'recipe_steps has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='menu_timeline_steps'), 'menu_timeline_steps has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='menu_member_adaptations'), 'menu_member_adaptations has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='menu_safety_actions'), 'menu_safety_actions has RLS enabled');
+select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='menu_label_confirmations'), 'menu_label_confirmations has RLS enabled');
+select is((select count(*)::integer from pg_constraint where conrelid='public.dishes'::regclass and confrelid='public.menus'::regclass and contype='f'), 1, 'dish to menu has one unambiguous relationship');
+select ok((select confdeltype='c' from pg_constraint where conname='menu_timeline_steps_step_owner_fkey' and conkey=array[
+  (select attnum from pg_attribute where attrelid='public.menu_timeline_steps'::regclass and attname='recipe_step_id'),
+  (select attnum from pg_attribute where attrelid='public.menu_timeline_steps'::regclass and attname='dish_id'),
+  (select attnum from pg_attribute where attrelid='public.menu_timeline_steps'::regclass and attname='menu_id'),
+  (select attnum from pg_attribute where attrelid='public.menu_timeline_steps'::regclass and attname='user_id')
+]::smallint[]), 'timeline step uses the exact owner composite with cascade');
+select ok((select confdeltype='c' from pg_constraint where conname='menu_member_adaptations_member_owner_fkey'), 'adaptation targets a member in the same menu and owner');
+select ok(
+  (select confdeltype='c' from pg_constraint where conname='menu_label_confirmations_member_owner_fkey')
+  and exists(select 1 from pg_trigger where tgname='menu_label_confirmations_source_owner' and not tgisinternal),
+  'label requirement has member ownership and polymorphic source ownership enforcement'
+);
 select ok(has_table_privilege('authenticated', 'public.menus', 'select'), 'menus are readable');
 select ok(has_column_privilege('authenticated', 'public.menus', 'is_favorite', 'update'), 'favorite is browser editable');
 select ok(not has_column_privilege('authenticated', 'public.menus', 'is_selected', 'update'), 'selection is not browser editable');
@@ -998,10 +1015,25 @@ select ok(not has_table_privilege('authenticated', 'public.menu_safety_actions',
 select * from finish();
 rollback;
 ```
+Replace the four broad `has_fk` assertions with catalog assertions over `pg_constraint`, `conkey`, `confkey`, and `confdeltype`. They must prove each exact ordered composite key, its referenced columns, and its delete action: parent menu CASCADE; target menu CASCADE/member SET NULL; pantry selection menu CASCADE/item SET NULL; dish menu CASCADE; ingredient dish CASCADE/selection SET NULL; recipe step dish CASCADE; timeline menu, dish, and recipe-step ownership with CASCADE; adaptation dish, branch step, and member with CASCADE; every safety-action owner edge with CASCADE; and label menu/member CASCADE. Also assert there is exactly one FK relationship for each child/parent pair, so PostgREST cannot infer ambiguous duplicate single/composite relationships. Assert the label-source ownership trigger exists and is enabled.
+
+Create `supabase/tests/database/04a_menu_core_hardening.test.sql` as a separate self-contained `begin; select no_plan(); ... select * from finish(); rollback;` pgTAP file. It must contain all setup, UUID literals, and role/JWT transitions it uses:
+
+- As the migration owner, insert two real `auth.users`; one complete `household_members` row and one `pantry_items` row for each; then one internally valid row in every one of the ten menu aggregate tables for each owner. Use only UUID-form IDs and insert the full graph before `set local role authenticated`.
+- For each of the ten tables, assert authenticated SELECT is granted and table INSERT/UPDATE/DELETE are denied. Separately assert only `menus.is_favorite` has column UPDATE. As authenticated owner 1, assert every table returns exactly its owner-1 row and hides owner 2; favorite update succeeds for owner 1 and affects zero rows for owner 2.
+- Assert each exact FK by `pg_constraint` ordered `conkey`/`confkey` and `confdeltype`, plus exactly one FK per child/parent pair. Exercise rejected cross-owner dish/ingredient/step/member/source graphs. Exercise every polymorphic `source_type` with a same-menu source and reject a foreign or wrong-menu source.
+- For `confirm_menu_label_confirmation`, assert anonymous execution is absent; null-auth, wrong menu ID, foreign confirmation, and replay return zero rows. Assert one owner transition succeeds and records non-null time plus `confirmed_by = user_id`; direct UPDATE remains denied.
+- `reset role` before owner-side deletes. Delete owner 1's household member and assert the target live-link pair becomes null while its display snapshot, adaptation, safety action, and label row remain. Delete its pantry item and assert the selection remains with null live pantry link and the ingredient remains. Delete owner 1's root menu and assert all nine child tables are empty for owner 1 while owner 2's entire graph remains. This proves Plan 4 can delete a derivation root/group without RESTRICT blockers.
+- Add negative CHECK tests for blank `change_reason_custom`, all root/derived/custom reason states, missing shortage when both quantities exist, surplus shortage when either quantity is null, timeline step without dish, and confirmed provenance whose actor differs from `user_id`.
 
 - [ ] **Step 2 (2–5 min): Run the focused DB test and verify RED**
 
-Run: `docker compose --profile test run --rm db-test supabase/tests/database/04_menu_core.test.sql`
+Run:
+
+```bash
+docker compose --profile test run --rm db-test supabase/tests/database/04_menu_core.test.sql
+docker compose --profile test run --rm db-test supabase/tests/database/04a_menu_core_hardening.test.sql
+```
 
 Expected: FAIL with `relation "public.menus" does not exist`.
 
@@ -1024,14 +1056,22 @@ create table public.menus (
   food_safety_rule_version text not null,
   output_schema_version text not null,
   derivation_group_id uuid not null,
-  parent_menu_id uuid references public.menus(id) on delete restrict,
+  parent_menu_id uuid,
   change_reason text check (change_reason in ('simpler','different_ingredient','child_friendly','different_flavor','custom')),
-  change_reason_custom text check (char_length(change_reason_custom) between 1 and 200),
+  change_reason_custom text check (
+    private.is_canonical_bounded_text(change_reason_custom, 1, 200)
+  ),
   is_selected boolean not null default false,
   is_favorite boolean not null default false,
   created_at timestamptz not null default now(),
   unique (id, user_id),
-  check ((change_reason = 'custom') = (change_reason_custom is not null))
+  check (
+    (parent_menu_id is null and change_reason is null and change_reason_custom is null)
+    or (
+      parent_menu_id is not null and change_reason is not null
+      and ((change_reason = 'custom') = (change_reason_custom is not null))
+    )
+  )
 );
 create index menus_owner_created_idx on public.menus (user_id, created_at desc);
 create index menus_owner_derivation_idx on public.menus (user_id, derivation_group_id);
@@ -1040,7 +1080,7 @@ create unique index menus_one_selected_per_group_idx
 
 create table public.menu_target_members (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
+  menu_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   household_member_id uuid,
   household_member_user_id uuid,
@@ -1055,9 +1095,9 @@ create table public.menu_target_members (
 
 create table public.generation_pantry_selections (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
+  menu_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
-  pantry_item_id uuid references public.pantry_items(id) on delete set null,
+  pantry_item_id uuid,
   pantry_name_snapshot text not null check (char_length(btrim(pantry_name_snapshot)) between 1 and 80),
   priority text not null check (priority in ('must_use', 'prefer_use')),
   idempotency_key uuid not null,
@@ -1075,7 +1115,11 @@ create table public.generation_pantry_selections (
   check (priority <> 'must_use' or usage_status = 'used'),
   check ((usage_status = 'unused' and priority = 'prefer_use') = (unused_reason is not null)),
   check (
-    planned_quantity is null or inventory_quantity_snapshot is null
+    (planned_quantity is null or inventory_quantity_snapshot is null)
+    = (shortage_quantity is null)
+  ),
+  check (
+    shortage_quantity is null
     or shortage_quantity = greatest(planned_quantity - inventory_quantity_snapshot, 0)
   )
 );
@@ -1088,7 +1132,7 @@ Complete the same migration before `commit;`:
 ```sql
 create table public.dishes (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
+  menu_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null check (role in ('main','side','soup','staple','other')),
   position smallint not null check (position > 0),
@@ -1101,8 +1145,8 @@ create table public.dishes (
 
 create table public.dish_ingredients (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
-  dish_id uuid not null references public.dishes(id) on delete cascade,
+  menu_id uuid not null,
+  dish_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   position smallint not null check (position > 0),
   name text not null check (char_length(btrim(name)) between 1 and 100),
@@ -1110,7 +1154,7 @@ create table public.dish_ingredients (
   quantity_text text not null check (char_length(btrim(quantity_text)) between 1 and 60),
   unit text check (char_length(btrim(unit)) between 1 and 24),
   store_section text not null check (store_section in ('produce','meat_fish','dairy_eggs','dry_goods','seasonings','other')),
-  pantry_selection_id uuid references public.generation_pantry_selections(id) on delete set null,
+  pantry_selection_id uuid,
   label_confirmation_required boolean not null default false,
   created_at timestamptz not null default now(),
   unique (dish_id, position)
@@ -1118,8 +1162,8 @@ create table public.dish_ingredients (
 
 create table public.recipe_steps (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
-  dish_id uuid not null references public.dishes(id) on delete cascade,
+  menu_id uuid not null,
+  dish_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   position smallint not null check (position > 0),
   instruction text not null check (char_length(btrim(instruction)) between 1 and 500),
@@ -1129,26 +1173,27 @@ create table public.recipe_steps (
 
 create table public.menu_timeline_steps (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
+  menu_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   position smallint not null check (position > 0),
   start_minute smallint not null check (start_minute >= 0),
   duration_minutes smallint not null check (duration_minutes > 0),
   instruction text not null check (char_length(btrim(instruction)) between 1 and 500),
-  dish_id uuid references public.dishes(id) on delete cascade,
-  recipe_step_id uuid references public.recipe_steps(id) on delete cascade,
+  dish_id uuid,
+  recipe_step_id uuid,
   created_at timestamptz not null default now(),
-  unique (menu_id, position)
+  unique (menu_id, position),
+  check (recipe_step_id is null or dish_id is not null)
 );
 
 create table public.menu_member_adaptations (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
-  dish_id uuid not null references public.dishes(id) on delete cascade,
+  menu_id uuid not null,
+  dish_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   anonymous_member_ref text not null check (anonymous_member_ref ~ '^member_[1-9][0-9]*$'),
   portion_text text not null check (char_length(btrim(portion_text)) between 1 and 80),
-  branch_before_recipe_step_id uuid not null references public.recipe_steps(id) on delete restrict,
+  branch_before_recipe_step_id uuid not null,
   additional_cutting text check (char_length(btrim(additional_cutting)) between 1 and 300),
   additional_heating text check (char_length(btrim(additional_heating)) between 1 and 300),
   additional_seasoning text check (char_length(btrim(additional_seasoning)) between 1 and 300),
@@ -1161,12 +1206,12 @@ create table public.menu_member_adaptations (
 
 create table public.menu_safety_actions (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
-  dish_id uuid not null references public.dishes(id) on delete cascade,
-  ingredient_id uuid not null references public.dish_ingredients(id) on delete restrict,
+  menu_id uuid not null,
+  dish_id uuid not null,
+  ingredient_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   anonymous_member_ref text not null check (anonymous_member_ref ~ '^member_[1-9][0-9]*$'),
-  before_recipe_step_id uuid not null references public.recipe_steps(id) on delete restrict,
+  before_recipe_step_id uuid not null,
   position smallint not null check (position between 1 and 20),
   kind text not null check (kind in (
     'remove_bones','cut_small','quarter_round_food','soften','heat_thoroughly'
@@ -1178,7 +1223,7 @@ create table public.menu_safety_actions (
 
 create table public.menu_label_confirmations (
   id uuid primary key default gen_random_uuid(),
-  menu_id uuid not null references public.menus(id) on delete cascade,
+  menu_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   source_type text not null check (source_type in ('dish','ingredient','recipe_step','adaptation','timeline')),
   source_id uuid not null,
@@ -1191,14 +1236,19 @@ create table public.menu_label_confirmations (
   is_current boolean not null default true,
   confirmation_status text not null default 'pending' check (confirmation_status in ('pending','confirmed')),
   confirmed_at timestamptz,
-  confirmed_by uuid references auth.users(id) on delete set null,
+  -- 確認者は同じ所有者であることをCHECKで固定する。auth.usersへの追加FKは、
+  -- アカウント削除時のmenus起点CASCADEと競合させないため意図的に持たない。
+  confirmed_by uuid,
   created_at timestamptz not null default now(),
   constraint menu_label_confirmations_exact_source_unique
     unique (menu_id, source_type, source_id, source_path, allergen_id,
       anonymous_member_ref, dictionary_version, requirement_safety_fingerprint),
   check (
     (confirmation_status = 'pending' and confirmed_at is null and confirmed_by is null)
-    or (confirmation_status = 'confirmed' and confirmed_at is not null and confirmed_by is not null)
+    or (
+      confirmation_status = 'confirmed' and confirmed_at is not null
+      and confirmed_by = user_id
+    )
   )
 );
 create unique index menu_label_confirmations_one_current_requirement
@@ -1206,12 +1256,10 @@ create unique index menu_label_confirmations_one_current_requirement
     menu_id,source_type,source_id,source_path,allergen_id,anonymous_member_ref
   ) where is_current;
 
--- Every privileged writer, including a service-role Function, must preserve tenant ownership.
--- Single-column FKs above retain their deletion semantics; these composite FKs make a
--- cross-owner graph impossible even when RLS is bypassed.
+-- 集約内の各親子には所有者複合FKを一つだけ持たせ、PostgRESTの関係推論を一意にする。
 alter table public.menus
   add constraint menus_parent_owner_fkey
-    foreign key (parent_menu_id, user_id) references public.menus(id, user_id) on delete restrict;
+    foreign key (parent_menu_id, user_id) references public.menus(id, user_id) on delete cascade;
 
 alter table public.menu_target_members
   add unique (menu_id, user_id, anonymous_ref),
@@ -1252,11 +1300,15 @@ alter table public.recipe_steps
     references public.dishes(id, menu_id, user_id) on delete cascade;
 
 alter table public.menu_timeline_steps
+  add unique (id, dish_id, menu_id, user_id),
   add constraint menu_timeline_steps_menu_owner_fkey
     foreign key (menu_id, user_id) references public.menus(id, user_id) on delete cascade,
   add constraint menu_timeline_steps_dish_owner_fkey
     foreign key (dish_id, menu_id, user_id)
-    references public.dishes(id, menu_id, user_id) on delete cascade;
+    references public.dishes(id, menu_id, user_id) on delete cascade,
+  add constraint menu_timeline_steps_step_owner_fkey
+    foreign key (recipe_step_id, dish_id, menu_id, user_id)
+    references public.recipe_steps(id, dish_id, menu_id, user_id) on delete cascade;
 
 alter table public.menu_member_adaptations
   add constraint menu_member_adaptations_dish_owner_fkey
@@ -1264,7 +1316,10 @@ alter table public.menu_member_adaptations
     references public.dishes(id, menu_id, user_id) on delete cascade,
   add constraint menu_member_adaptations_branch_owner_fkey
     foreign key (branch_before_recipe_step_id, dish_id, menu_id, user_id)
-    references public.recipe_steps(id, dish_id, menu_id, user_id) on delete restrict;
+    references public.recipe_steps(id, dish_id, menu_id, user_id) on delete cascade,
+  add constraint menu_member_adaptations_member_owner_fkey
+    foreign key (menu_id, user_id, anonymous_member_ref)
+    references public.menu_target_members(menu_id, user_id, anonymous_ref) on delete cascade;
 
 alter table public.menu_safety_actions
   add constraint menu_safety_actions_menu_owner_fkey
@@ -1275,13 +1330,13 @@ alter table public.menu_safety_actions
     references public.dishes(id, menu_id, user_id) on delete cascade,
   add constraint menu_safety_actions_ingredient_owner_fkey
     foreign key (ingredient_id, dish_id, menu_id, user_id)
-    references public.dish_ingredients(id, dish_id, menu_id, user_id) on delete restrict,
+    references public.dish_ingredients(id, dish_id, menu_id, user_id) on delete cascade,
   add constraint menu_safety_actions_member_owner_fkey
     foreign key (menu_id, user_id, anonymous_member_ref)
     references public.menu_target_members(menu_id, user_id, anonymous_ref) on delete cascade,
   add constraint menu_safety_actions_step_owner_fkey
     foreign key (before_recipe_step_id, dish_id, menu_id, user_id)
-    references public.recipe_steps(id, dish_id, menu_id, user_id) on delete restrict,
+    references public.recipe_steps(id, dish_id, menu_id, user_id) on delete cascade,
   add constraint menu_safety_actions_adaptation_owner_fkey
     foreign key (menu_id, dish_id, user_id, anonymous_member_ref)
     references public.menu_member_adaptations(menu_id, dish_id, user_id, anonymous_member_ref)
@@ -1289,7 +1344,45 @@ alter table public.menu_safety_actions
 
 alter table public.menu_label_confirmations
   add constraint menu_label_confirmations_menu_owner_fkey
-    foreign key (menu_id, user_id) references public.menus(id, user_id) on delete cascade;
+    foreign key (menu_id, user_id) references public.menus(id, user_id) on delete cascade,
+  add constraint menu_label_confirmations_member_owner_fkey
+    foreign key (menu_id, user_id, anonymous_member_ref)
+    references public.menu_target_members(menu_id, user_id, anonymous_ref) on delete cascade;
+
+create or replace function private.assert_menu_label_source_owner()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_exists boolean;
+begin
+  case new.source_type
+    when 'dish' then
+      select exists(select 1 from public.dishes where id=new.source_id and menu_id=new.menu_id and user_id=new.user_id) into v_exists;
+    when 'ingredient' then
+      select exists(select 1 from public.dish_ingredients where id=new.source_id and menu_id=new.menu_id and user_id=new.user_id) into v_exists;
+    when 'recipe_step' then
+      select exists(select 1 from public.recipe_steps where id=new.source_id and menu_id=new.menu_id and user_id=new.user_id) into v_exists;
+    when 'adaptation' then
+      select exists(select 1 from public.menu_member_adaptations where id=new.source_id and menu_id=new.menu_id and user_id=new.user_id) into v_exists;
+    when 'timeline' then
+      select exists(select 1 from public.menu_timeline_steps where id=new.source_id and menu_id=new.menu_id and user_id=new.user_id) into v_exists;
+  end case;
+  if not coalesce(v_exists,false) then
+    raise exception using errcode='23503',message='menu_label_source_owner_mismatch';
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function private.assert_menu_label_source_owner()
+  from public, anon, authenticated, service_role;
+
+create trigger menu_label_confirmations_source_owner
+before insert or update of menu_id,user_id,source_type,source_id
+on public.menu_label_confirmations
+for each row execute function private.assert_menu_label_source_owner();
 
 do $$
 declare
@@ -1327,6 +1420,7 @@ as $$
   update public.menu_label_confirmations
      set confirmation_status = 'confirmed', confirmed_at = statement_timestamp(), confirmed_by = auth.uid()
    where id = p_confirmation_id
+     and (select auth.uid()) is not null
      and menu_id = p_menu_id
      and user_id = auth.uid()
      and is_current
@@ -1346,16 +1440,18 @@ Run:
 ./scripts/reset-local-db.sh
 docker compose run --rm app npm run db:types
 docker compose --profile test run --rm db-test supabase/tests/database/04_menu_core.test.sql
+docker compose --profile test run --rm db-test supabase/tests/database/04a_menu_core_hardening.test.sql
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: pgTAP prints `1..41` and `Result: PASS`; typecheck exits 0. Browser roles can select every aggregate row they own, update only `menus.is_favorite`, confirm labels only through the owner-checking RPC, and cannot insert/update/delete generated data or `menu_safety_actions`.
+Expected: 04 prints `1..41`; 04a dynamically plans and both report `Result: PASS`; typecheck exits 0. Together they prove exact non-ambiguous composite relationships/delete actions, all-ten-table ACL and real owner/foreign RLS, favorite-only mutation, confirmation negative/replay behavior, polymorphic source ownership, member/pantry unlink preservation, and root-menu cascading deletion.
 
 - [ ] **Step 6 (2–5 min): Commit the normalized menu core**
 
 ```bash
 git add supabase/migrations/20260711001100_menu_core.sql \
   supabase/tests/database/04_menu_core.test.sql \
+  supabase/tests/database/04a_menu_core_hardening.test.sql \
   src/shared/types/database.generated.ts
 git commit -m "feat: add normalized menu domain schema"
 ```
@@ -1793,6 +1889,12 @@ export const pantryUsageSchema = z
     }
     if (value.usageStatus === "used" && value.unusedReason !== null) {
       context.addIssue({ code: "custom", path: ["unusedReason"], message: "使用時に未使用理由は保存しません" });
+    }
+    if (
+      (value.plannedQuantity === null || value.inventoryQuantity === null) &&
+      value.shortageQuantity !== null
+    ) {
+      context.addIssue({ code: "custom", path: ["shortageQuantity"], message: "数量未入力時に不足量は保存しません" });
     }
     if (value.plannedQuantity !== null && value.inventoryQuantity !== null) {
       const expected = Math.max(value.plannedQuantity - value.inventoryQuantity, 0);
@@ -5238,82 +5340,9 @@ it("conservatively excludes mochi for a senior target", () => {
 
 Extend `shared/safety/allergens.test.ts` with an exact expected path list for every string-valued food text leaf. The list includes dish `name/description`, ingredient `name/quantityText/unit`, recipe instruction, timeline instruction, all adaptation text and safety-action instruction, and pantry `pantryItemName/unit/unusedReason`; it excludes UUIDs, enum codes, and provenance fields.
 
-- [ ] **Step 2: Write failing database ownership, confirmation, and cap tests (4 minutes)**
+- [ ] **Step 2: Complete non-database cap tests; keep menu-core ownership proof canonical (4 minutes)**
 
-Replace Task 3's `select plan(41)` with `select plan(54)`, then append to `supabase/tests/database/04_menu_core.test.sql` using the existing two-user fixtures:
-
-```sql
-select has_unique('public','menu_label_confirmations',
-  'menu_label_confirmations_exact_source_unique',
-  'different text leaves of one normalized row retain distinct confirmation requirements');
-select throws_ok(
-  $$insert into public.menu_target_members(
-      menu_id,user_id,household_member_id,household_member_user_id,
-      anonymous_ref,member_display_name_snapshot)
-    values ('menu-a','user-a','member-owned-by-b','user-b','member_2','別世帯')$$,
-  '23514', null, 'a live member link cannot name another row owner');
-select throws_ok(
-  $$insert into public.dish_ingredients(menu_id,dish_id,user_id,position,name,quantity_text,store_section,label_confirmation_required)
-    values ('menu-a','dish-owned-by-b','user-a',1,'米','1合','dry_goods',false)$$,
-  '23503', null, 'dish, menu, and child owner must match');
-select throws_ok(
-  $$update public.menu_label_confirmations set confirmation_status='confirmed'
-    where id='confirmation-a'$$,
-  '42501', null, 'direct confirmation update is forbidden');
-
-set local role authenticated;
-select set_config('request.jwt.claim.sub','user-a',true);
-select lives_ok(
-  $$select public.confirm_menu_label_confirmation('menu-a','confirmation-a')$$,
-  'owner confirms through the only transition');
-reset role;
-select is((select confirmed_by from public.menu_label_confirmations where id='confirmation-a'),
-  'user-a'::uuid, 'server records the confirming user');
-
-select lives_ok(
-  $$insert into public.menu_safety_actions(
-      menu_id,dish_id,ingredient_id,user_id,anonymous_member_ref,
-      before_recipe_step_id,position,kind,instruction)
-    values ('menu-a','dish-a','ingredient-a','user-a','member_1',
-      'step-a',1,'remove_bones','骨を完全に除く')$$,
-  'validated canonical action is stored as a normalized row');
-select throws_ok(
-  $$insert into public.menu_safety_actions(
-      menu_id,dish_id,ingredient_id,user_id,anonymous_member_ref,
-      before_recipe_step_id,position,kind,instruction)
-    values ('menu-a','dish-owned-by-b','ingredient-owned-by-b','user-a','member_1',
-      'step-owned-by-b',2,'remove_bones','骨を完全に除く')$$,
-  '23503', null, 'cross-owner dish, ingredient, and step cannot enter an owner action graph');
-select throws_ok(
-  $$insert into public.menu_safety_actions(
-      menu_id,dish_id,ingredient_id,user_id,anonymous_member_ref,
-      before_recipe_step_id,position,kind,instruction)
-    values ('menu-a','dish-a','ingredient-a','user-a','member_1',
-      'step-a',2,'provider_tag','確認する')$$,
-  '23514', null, 'only canonical action kinds are persisted');
-select throws_ok(
-  $$insert into public.menu_safety_actions(
-      menu_id,dish_id,ingredient_id,user_id,anonymous_member_ref,
-      before_recipe_step_id,position,kind,instruction)
-    values ('menu-a','dish-a','ingredient-a','user-a','member_1',
-      'step-a',2,'soften','   ')$$,
-  '23514', null, 'blank action instructions are rejected');
-
-select lives_ok(
-  $$delete from public.household_members where id='member-a' and user_id='user-a'$$,
-  'settings can delete a member referenced by historical menus');
-select is(
-  (select jsonb_build_object(
-      'householdMemberId',household_member_id,
-      'householdMemberUserId',household_member_user_id,
-      'displayNameSnapshot',member_display_name_snapshot)
-   from public.menu_target_members where menu_id='menu-a' and anonymous_ref='member_1'),
-  '{"householdMemberId":null,"householdMemberUserId":null,"displayNameSnapshot":"子どもA"}'::jsonb,
-  'deletion nulls only the live link and retains the immutable human snapshot');
-select is(
-  (select count(*)::integer from public.menu_safety_actions where menu_id='menu-a'),
-  1, 'member deletion preserves normalized actions and menu history');
-```
+Task 3's `04_menu_core.test.sql` is the 41-assertion schema/ACL smoke test and `04a_menu_core_hardening.test.sql` is the self-contained dynamically planned owner/foreign fixture. Do not append a third partial database fixture here. In particular, do not use non-UUID placeholders, undeclared fixtures, or run owner-only DML before switching back from `authenticated`; extend 04a when a new menu-core adversarial case is required.
 
 Extend the draft test with a 51-element `pantry_selections` array and a JSON value over 32 KiB; both must fail with check violation. Extend `_shared/http.test.ts` with declared and undeclared bodies of 65,537 UTF-8 bytes and expect `413/request_too_large`. Extend the emergency handler test with 21 UUIDs and duplicate UUIDs and expect `400/invalid_request` before DB loading.
 
@@ -5323,7 +5352,7 @@ Run:
 
 ```bash
 ./scripts/reset-local-db.sh
-docker compose --profile test run --rm db-test supabase/tests/database/02_safety_catalogs.test.sql supabase/tests/database/04_menu_core.test.sql
+docker compose --profile test run --rm db-test supabase/tests/database/02_safety_catalogs.test.sql supabase/tests/database/04_menu_core.test.sql supabase/tests/database/04a_menu_core_hardening.test.sql
 docker compose run --rm --no-deps app npx vitest run shared/contracts/generation.test.ts shared/safety netlify/functions/_shared/http.test.ts netlify/functions/emergency-menus.test.ts
 ```
 
@@ -5614,7 +5643,7 @@ rg -n 'confirmationStatus:\s*z\.enum\(\["pending",\s*"confirmed"\]\)|menu\.safet
 rg -n '\.eq\("updated_at", expectedUpdatedAt\)' src/features/pantry/pantry-api.ts
 ```
 
-Expected: all verification commands exit 0, safety-catalog pgTAP prints `1..22`, and menu-core pgTAP prints `1..54`. The import-depth and obsolete-proof searches return no output; the validator search shows only the canonical `validateGeneratedMenu(menu, GenerationContext)` definition and typed call sites; the pantry version search returns exactly the update and delete predicates. Provider-confirmed state and tag-only or wrong-ingredient safety are rejected; deterministic records are pending; two requirements sharing a normalized source/allergen/member but using different `sourcePath` values coexist; the single `quarter_round_food` identifier is used everywhere; concrete hard-bean and reviewed-nut spellings are rejected for under-six targets while soft processed bean products remain distinct; normalized action rows reject browser writes and cross-owner graphs; household-member deletion preserves the target snapshot, actions, and history; oversized inputs fail; pantry conflicts never overwrite a newer row; all three emergency meals expose complete read-only cooking details without raw identifiers, and the independent incompatible-allergen journey remains an explicit no-candidate state.
+Expected: all verification commands exit 0, safety-catalog pgTAP prints `1..22`, menu-core 04 prints `1..41`, and dynamically planned 04a reports PASS. The import-depth and obsolete-proof searches return no output; the validator search shows only the canonical `validateGeneratedMenu(menu, GenerationContext)` definition and typed call sites; the pantry version search returns exactly the update and delete predicates. Provider-confirmed state and tag-only or wrong-ingredient safety are rejected; deterministic records are pending; two requirements sharing a normalized source/allergen/member but using different `sourcePath` values coexist; the single `quarter_round_food` identifier is used everywhere; concrete hard-bean and reviewed-nut spellings are rejected for under-six targets while soft processed bean products remain distinct; normalized action rows reject browser writes and cross-owner graphs; household-member deletion preserves the target snapshot, actions, and history; oversized inputs fail; pantry conflicts never overwrite a newer row; all three emergency meals expose complete read-only cooking details without raw identifiers, and the independent incompatible-allergen journey remains an explicit no-candidate state.
 
 - [ ] **Step 10: Commit the reviewed menu-domain corrections (2 minutes)**
 

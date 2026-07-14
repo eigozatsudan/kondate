@@ -1424,7 +1424,7 @@ create or replace function private.persist_validated_menu(
 as $$
 declare v_menu_id uuid := (p_menu->>'menuId')::uuid; v_dish jsonb; v_item jsonb;
   v_step jsonb; v_timeline jsonb; v_adaptation jsonb; v_action jsonb;
-  v_action_position bigint; v_label jsonb; v_usage jsonb;
+  v_action_position bigint; v_label jsonb; v_usage jsonb; v_checked_at timestamptz;
 begin
   insert into public.menus(
     id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
@@ -1450,6 +1450,11 @@ begin
   end loop;
 
   for v_usage in select value from jsonb_array_elements(p_menu->'pantryUsage') loop
+    select nullif(check_->>'checkedAt','')::timestamptz
+      into v_checked_at
+    from jsonb_array_elements(p_expired_checks) as checks(check_)
+    where check_->>'pantryItemId'=v_usage->>'pantryItemId'
+    limit 1;
     insert into public.generation_pantry_selections(
       id,menu_id,user_id,pantry_item_id,pantry_name_snapshot,priority,idempotency_key,
       expired_item_checked_at,expired_item_check_jst_date,usage_status,
@@ -1458,10 +1463,8 @@ begin
       (v_usage->>'selectionId')::uuid,v_menu_id,p_request.user_id,
       nullif(v_usage->>'pantryItemId','')::uuid,v_usage->>'pantryItemName',v_usage->>'priority',
       p_request.idempotency_key,
-      (select nullif(c->>'checkedAt','')::timestamptz from jsonb_array_elements(p_expired_checks) c
-        where c->>'pantryItemId' = v_usage->>'pantryItemId' limit 1),
-      (select nullif(c->>'checkedJstDate','')::date from jsonb_array_elements(p_expired_checks) c
-        where c->>'pantryItemId' = v_usage->>'pantryItemId' limit 1),
+      v_checked_at,
+      (v_checked_at at time zone 'Asia/Tokyo')::date,
       v_usage->>'usageStatus',nullif(v_usage->>'plannedQuantity','')::numeric,
       nullif(v_usage->>'inventoryQuantity','')::numeric,
       nullif(v_usage->>'shortageQuantity','')::numeric,nullif(v_usage->>'unit',''),
@@ -1553,6 +1556,18 @@ begin
   return v_menu_id;
 end;
 $$;
+```
+
+`p_expired_checks`の要素型は最後まで`{pantryItemId,checkedAt}`だけであり、`checkedJstDate`をFunction、repository、HMAC、fixtureへ追加しない。上のpersistenceは一致する`checkedAt`を一度だけ`timestamptz`へ変換し、`(v_checked_at at time zone 'Asia/Tokyo')::date`で保存日を導出する。一致するcheckがなければ`SELECT INTO`で`v_checked_at`がNULLへ戻り、両列ともNULLになる。
+
+Task 15のcanonical success fixtureは、`checkedAt='2026-07-10 15:00:00+00'`が`expired_item_check_jst_date='2026-07-11'`として保存されること、同じ行のpaired-null式がtrueであること、およびcheckを持たない2件目のusageで両列がNULLになることをDO block内の`RAISE`比較で検証する。さらにtable CHECK自体の退行を防ぐため、次のassertionをTask 15のcanonical fixture DO blockとtop-level `pass(...)`の直後、`finish()`より前へ追加する。fixture作成前のTask 4位置へ置いて0行UPDATEにしてはならない。
+
+```sql
+select throws_ok($$
+  update public.generation_pantry_selections
+  set expired_item_check_jst_date=null
+  where id='65000000-0000-4000-8000-000000000080'
+$$,'23514',null,'checked timestamp and derived JST date are paired');
 ```
 
 - [ ] **Step 4 (2–5 min): Add the atomic success finalizer and owner-scoped status projection**
@@ -2336,7 +2351,7 @@ export function validateTransientChecks(
   checks: NewMenuGenerationRequest["expiredPantryConfirmations"],
   expiredSelectedIds: readonly string[],
   now: Date,
-) {
+): NewMenuGenerationRequest["expiredPantryConfirmations"] {
   const byId = new Map(checks.map((check) => [check.pantryItemId, check]));
   return expiredSelectedIds.map((pantryItemId) => {
     const check = byId.get(pantryItemId);
@@ -2344,7 +2359,7 @@ export function validateTransientChecks(
       || new Date(check.checkedAt).getTime() > now.getTime()) {
       throw new HttpError(422, "expired_pantry_unconfirmed", "期限を過ぎた食材は、今回の実物確認が必要です。");
     }
-    return { ...check, checkedJstDate: getJstDateKey(now) };
+    return check;
   });
 }
 
@@ -3391,47 +3406,55 @@ export type MenuResultViewModel = {
   }[];
 };
 
-export async function getMenuResult(menuId: string): Promise<MenuResultViewModel> {
-  const { data, error } = await getBrowserSupabaseClient()
+export function buildMenuResultQuery(
+  client: ReturnType<typeof getBrowserSupabaseClient>,
+  menuId: string,
+) {
+  return client
     .from("menus")
     .select(`
       id, meal_type, cuisine_genre, servings, total_elapsed_minutes, output_schema_version,
-      dishes (
+      dishes!dishes_menu_owner_fkey (
         id, role, position, name, description, cooking_time_minutes,
-        dish_ingredients (
+        dish_ingredients!dish_ingredients_dish_owner_fkey (
           id, position, name, quantity_value, quantity_text, unit, store_section,
           pantry_selection_id, label_confirmation_required
         ),
-        recipe_steps (id, position, instruction)
-      ),
-      menu_timeline_steps (
-        id, position, start_minute, duration_minutes, instruction, dish_id, recipe_step_id
-      ),
-      menu_member_adaptations (
-        id, dish_id, anonymous_member_ref, portion_text, branch_before_recipe_step_id,
-        additional_cutting, additional_heating, additional_seasoning, serving_check, safety_tags,
-        menu_safety_actions!menu_safety_actions_adaptation_owner_fkey (
-          dish_id, ingredient_id, anonymous_member_ref,
-          before_recipe_step_id, position, kind, instruction
+        recipe_steps!recipe_steps_dish_owner_fkey (id, position, instruction),
+        menu_member_adaptations!menu_member_adaptations_dish_owner_fkey (
+          id, dish_id, anonymous_member_ref, portion_text, branch_before_recipe_step_id,
+          additional_cutting, additional_heating, additional_seasoning, serving_check, safety_tags,
+          menu_safety_actions!menu_safety_actions_adaptation_owner_fkey (
+            dish_id, ingredient_id, anonymous_member_ref,
+            before_recipe_step_id, position, kind, instruction
+          )
         )
       ),
-      generation_pantry_selections (
+      menu_timeline_steps!menu_timeline_steps_menu_owner_fkey (
+        id, position, start_minute, duration_minutes, instruction, dish_id, recipe_step_id
+      ),
+      generation_pantry_selections!generation_pantry_selections_menu_owner_fkey (
         id, pantry_item_id, pantry_name_snapshot, priority, usage_status, planned_quantity,
         inventory_quantity_snapshot, shortage_quantity, unit, unused_reason
       ),
-      menu_target_members (
-        anonymous_ref, member_display_name_snapshot, household_members (display_name)
+      menu_target_members!menu_target_members_menu_owner_fkey (
+        anonymous_ref, member_display_name_snapshot,
+        household_members!menu_target_members_member_owner_fkey (display_name)
       ),
-      menu_label_confirmations (
+      menu_label_confirmations!menu_label_confirmations_menu_owner_fkey (
         id, source_type, source_id, source_path, allergen_id, anonymous_member_ref,
         dictionary_version, requirement_safety_fingerprint, is_current,
         confirmation_status, confirmed_at, confirmed_by,
-        allergen_catalog (display_name)
+        allergen_catalog!menu_label_confirmations_allergen_id_fkey (display_name)
       )
     `)
     .eq("id", menuId)
     .eq("menu_label_confirmations.is_current", true)
     .maybeSingle();
+}
+
+export async function getMenuResult(menuId: string): Promise<MenuResultViewModel> {
+  const { data, error } = await buildMenuResultQuery(getBrowserSupabaseClient(), menuId);
 
   if (error || !data) throw new Error("menu_not_found");
   const dishes = [...data.dishes].sort((a, b) => a.position - b.position).map((dish) => ({
@@ -3453,7 +3476,7 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
     const ids = pantryDishIds.get(ingredient.pantrySelectionId) ?? new Set<string>();
     ids.add(dish.id); pantryDishIds.set(ingredient.pantrySelectionId, ids);
   }
-  const adaptations = [...data.menu_member_adaptations]
+  const adaptations = data.dishes.flatMap((dish) => dish.menu_member_adaptations)
     .sort((a, b) => a.id.localeCompare(b.id)).map((item) => ({
       id: item.id, dishId: item.dish_id, anonymousMemberRef: item.anonymous_member_ref,
       portionText: item.portion_text, branchBeforeRecipeStepId: item.branch_before_recipe_step_id,
@@ -3535,6 +3558,31 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
     }),
   };
 }
+```
+
+`menu-result-api.test.ts`はquery builderの生成型も固定する。mockを`any`へ落とすだけのtestでは不可とし、少なくとも次をcompileさせる。これによりowner-composite FKへ統一した後にconstraint hintが消失・改名した場合、実装前に型検査が落ちる。
+
+```ts
+import { expectTypeOf, it } from "vitest";
+import type { QueryData } from "@supabase/supabase-js";
+import { buildMenuResultQuery } from "./menu-result-api";
+
+type MenuResultQueryRow = NonNullable<
+  QueryData<ReturnType<typeof buildMenuResultQuery>>
+>;
+
+it("keeps every nested relation on the named owner-composite FK", () => {
+  expectTypeOf<MenuResultQueryRow["dishes"][number]["dish_ingredients"]>()
+    .toBeArray();
+  expectTypeOf<MenuResultQueryRow["dishes"][number]["recipe_steps"]>()
+    .toBeArray();
+  expectTypeOf<MenuResultQueryRow["dishes"][number]["menu_member_adaptations"]
+    [number]["menu_safety_actions"]>().toBeArray();
+  expectTypeOf<MenuResultQueryRow["menu_target_members"][number]
+    ["household_members"]>().not.toBeAny();
+  expectTypeOf<MenuResultQueryRow["menu_label_confirmations"][number]
+    ["allergen_catalog"]>().not.toBeAny();
+});
 ```
 
 Extend `shared/testing/factories.ts` with the same view-model boundary used by components:
@@ -4342,7 +4390,7 @@ begin
   if p_expected is null then
     raise exception using errcode='22023',message='current_safety_changed';
   end if;
-  -- FOR UPDATE conflicts with the parent KEY SHARE lock taken by a new FK child.
+  -- 親行のFOR UPDATEで、新しい外部キー子行が取得するKEY SHAREと競合させる。
   perform 1 from public.household_members member
     where member.user_id=p_user_id
       and member.id=any(p_target_member_ids)
@@ -4382,7 +4430,8 @@ create temporary table finalize_fixture_context(
 
 create function pg_temp.finalize_ordering_success(
   p_request_id uuid,p_menu_id uuid,p_dish_id uuid,p_ingredient_id uuid,
-  p_step_id uuid,p_timeline_id uuid,p_now timestamptz
+  p_step_id uuid,p_timeline_id uuid,p_pantry_selection_id uuid,
+  p_pantry_item_id uuid,p_checked_at timestamptz,p_now timestamptz
 ) returns jsonb language plpgsql as $fixture$
 declare
   v_context pg_temp.finalize_fixture_context;
@@ -4393,6 +4442,7 @@ declare
   v_side2_dish_id uuid := pg_catalog.gen_random_uuid();
   v_side2_ingredient_id uuid := pg_catalog.gen_random_uuid();
   v_side2_step_id uuid := pg_catalog.gen_random_uuid();
+  v_unchecked_selection_id uuid := pg_catalog.gen_random_uuid();
 begin
   select * into strict v_context from pg_temp.finalize_fixture_context;
   return public.finalize_ai_generation_success(
@@ -4407,7 +4457,7 @@ begin
         'ingredients',jsonb_build_array(jsonb_build_object(
           'id',p_ingredient_id,'position',1,'name','鶏もも肉',
           'quantityValue',200,'quantityText','200g','unit','g',
-          'storeSection','meat_fish','pantrySelectionId',null,
+          'storeSection','meat_fish','pantrySelectionId',p_pantry_selection_id,
           'labelConfirmationRequired',false)),
         'steps',jsonb_build_array(jsonb_build_object(
           'id',p_step_id,'position',1,'instruction','材料を中心まで加熱する'))),
@@ -4417,7 +4467,7 @@ begin
           'ingredients',jsonb_build_array(jsonb_build_object(
             'id',v_side1_ingredient_id,'position',1,'name','白菜',
             'quantityValue',100,'quantityText','100g','unit','g',
-            'storeSection','vegetables','pantrySelectionId',null,
+            'storeSection','produce','pantrySelectionId',null,
             'labelConfirmationRequired',false)),
           'steps',jsonb_build_array(jsonb_build_object(
             'id',v_side1_step_id,'position',1,'instruction','白菜をゆでる'))),
@@ -4446,11 +4496,22 @@ begin
           'ingredientId',p_ingredient_id,'anonymousMemberRef','member_1',
           'beforeRecipeStepId',p_step_id,
           'instruction','鶏肉を中心まで十分に加熱する')))),
-      'pantryUsage','[]'::jsonb,
+      'pantryUsage',jsonb_build_array(jsonb_build_object(
+        'selectionId',p_pantry_selection_id,'pantryItemId',p_pantry_item_id,
+        'pantryItemName','期限確認食材','priority','must_use','usageStatus','used',
+        'plannedQuantity',1,'inventoryQuantity',1,'shortageQuantity',0,'unit','g',
+        'dishIds',jsonb_build_array(p_dish_id),'unusedReason',null),
+        jsonb_build_object(
+          'selectionId',v_unchecked_selection_id,'pantryItemId',null,
+          'pantryItemName','確認不要食材','priority','prefer_use','usageStatus','unused',
+          'plannedQuantity',null,'inventoryQuantity',null,'shortageQuantity',null,
+          'unit',null,'dishIds','[]'::jsonb,'unusedReason','今回は使わない')),
       'labelConfirmations','[]'::jsonb),
     v_context.preference_snapshot,v_context.safety_snapshot,v_context.safety_fingerprint,
     v_context.allergen_version,v_context.food_rule_version,
-    v_context.target_members,'[]'::jsonb,null,null,null,p_now);
+    v_context.target_members,jsonb_build_array(jsonb_build_object(
+      'pantryItemId',p_pantry_item_id,'checkedAt',p_checked_at)),
+    null,null,null,p_now);
 end
 $fixture$;
 
@@ -4458,6 +4519,7 @@ do $test$
 declare
   v_owner constant uuid := '10000000-0000-4000-8000-000000000072';
   v_member constant uuid := '20000000-0000-4000-8000-000000000072';
+  v_pantry_item constant uuid := '22000000-0000-4000-8000-000000000072';
   v_draft public.generation_drafts;
   v_deleted public.generation_drafts;
   v_request_id uuid;
@@ -4468,6 +4530,7 @@ declare
   v_fingerprint text;
   v_before_revision bigint;
   v_recreated_revision bigint;
+  v_pantry_selections jsonb;
 begin
   insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
     raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
@@ -4480,6 +4543,11 @@ begin
     'registered','none',0);
   insert into public.member_allergies(id,user_id,member_id,allergen_id)
   values('21000000-0000-4000-8000-000000000072',v_owner,v_member,'milk');
+  insert into public.pantry_items(
+    id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state
+  ) values(v_pantry_item,v_owner,'期限確認食材',1,'g','2026-07-10','use_by','opened');
+  v_pantry_selections:=jsonb_build_array(jsonb_build_object(
+    'pantryItemId',v_pantry_item,'priority','must_use'));
   select catalog_version into strict v_allergen_version
   from public.allergen_catalog where id='milk';
   select rule_version into strict v_food_rule_version
@@ -4500,9 +4568,9 @@ begin
   );
   perform set_config('request.jwt.claim.sub',v_owner::text,true);
 
-  -- Canonical success prerequisite: real member/allergy/catalog/rule and final 13 arguments.
+  -- 実在member/allergy/catalog/ruleと最終13引数でcanonical successを成立させる。
   v_draft := public.save_generation_draft(0,'dinner',array['canonical'],'japanese',
-    v_target_ids,30,'standard',array[]::text[],'','[]');
+    v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000080',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v1',repeat('e',64),5,45,180,'2026-07-11 00:00:10+00');
@@ -4512,7 +4580,8 @@ begin
   v_result := pg_temp.finalize_ordering_success(v_request_id,
     '60000000-0000-4000-8000-000000000080','61000000-0000-4000-8000-000000000080',
     '62000000-0000-4000-8000-000000000080','63000000-0000-4000-8000-000000000080',
-    '64000000-0000-4000-8000-000000000080','2026-07-11 00:00:12+00');
+    '64000000-0000-4000-8000-000000000080','65000000-0000-4000-8000-000000000080',
+    v_pantry_item,'2026-07-10 15:00:00+00','2026-07-11 00:00:12+00');
   if v_result->>'status' is distinct from 'succeeded' then
     raise exception 'canonical finalizer fixture did not succeed';
   end if;
@@ -4526,16 +4595,28 @@ begin
       'adaptations',(select count(*) from public.menu_member_adaptations where menu_id='60000000-0000-4000-8000-000000000080'),
       'actions',(select count(*) from public.menu_safety_actions
         where menu_id='60000000-0000-4000-8000-000000000080'
-          and ingredient_id='62000000-0000-4000-8000-000000000080')
+          and ingredient_id='62000000-0000-4000-8000-000000000080'),
+      'checkDate',(select expired_item_check_jst_date::text
+        from public.generation_pantry_selections
+        where id='65000000-0000-4000-8000-000000000080'),
+      'paired',(select (expired_item_checked_at is null)=(expired_item_check_jst_date is null)
+        from public.generation_pantry_selections
+        where id='65000000-0000-4000-8000-000000000080'),
+      'unchecked',(select count(*) from public.generation_pantry_selections
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and pantry_name_snapshot='確認不要食材'
+          and expired_item_checked_at is null
+          and expired_item_check_jst_date is null)
     )) is distinct from jsonb_build_object(
       'menus',1,'targets',1,'dishes',3,'ingredients',3,'steps',3,
-      'timeline',1,'adaptations',1,'actions',1) then
+      'timeline',1,'adaptations',1,'actions',1,
+      'checkDate','2026-07-11','paired',true,'unchecked',1) then
     raise exception 'canonical finalizer did not commit every normalized child and ingredient-bound action';
   end if;
 
-  -- helper: active delete -> NULL -> recreation delete, with monotonic revisions.
+  -- 有効行削除、NULL、再作成後削除でもrevisionを単調増加させる。
   v_draft := public.save_generation_draft(0,'dinner',array['helper-1'],'japanese',
-    v_target_ids,30,'standard',array[]::text[],'','[]');
+    v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,v_draft.revision);
   if v_deleted.revision is distinct from v_draft.revision+1 then
     raise exception 'helper did not increment an active draft revision';
@@ -4545,15 +4626,15 @@ begin
     raise exception 'helper did not return NULL for an already deleted draft';
   end if;
   v_draft := public.save_generation_draft(0,'dinner',array['helper-2'],'japanese',
-    v_target_ids,30,'standard',array[]::text[],'','[]');
+    v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,null);
   if v_deleted.revision is distinct from v_draft.revision+1 then
     raise exception 'helper did not advance the recreated draft revision';
   end if;
 
-  -- manual delete first: finalizer must still persist and succeed.
+  -- 手動削除が先でもfinalizerは保存して成功する。
   v_draft := public.save_generation_draft(0,'dinner',array['manual-first'],'japanese',
-    v_target_ids,30,'standard',array[]::text[],'','[]');
+    v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000081',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v1',repeat('b',64),5,45,180,'2026-07-11 00:01:00+00');
@@ -4564,7 +4645,8 @@ begin
   v_result := pg_temp.finalize_ordering_success(v_request_id,
     '60000000-0000-4000-8000-000000000081','61000000-0000-4000-8000-000000000081',
     '62000000-0000-4000-8000-000000000081','63000000-0000-4000-8000-000000000081',
-    '64000000-0000-4000-8000-000000000081','2026-07-11 00:01:02+00');
+    '64000000-0000-4000-8000-000000000081','65000000-0000-4000-8000-000000000081',
+    v_pantry_item,'2026-07-11 00:00:59+00','2026-07-11 00:01:02+00');
   if v_result->>'status' is distinct from 'succeeded' then
     raise exception 'manual-delete-first finalizer did not succeed';
   end if;
@@ -4573,9 +4655,9 @@ begin
     raise exception 'manual-delete-first did not commit the menu';
   end if;
 
-  -- finalizer first: the old public revision is stale.
+  -- finalizerが先なら、以前のpublic revisionはstaleになる。
   v_draft := public.save_generation_draft(0,'dinner',array['finalizer-first'],'japanese',
-    v_target_ids,30,'standard',array[]::text[],'','[]');
+    v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   v_before_revision := v_draft.revision;
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000082',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
@@ -4586,7 +4668,8 @@ begin
   perform pg_temp.finalize_ordering_success(v_request_id,
     '60000000-0000-4000-8000-000000000082','61000000-0000-4000-8000-000000000082',
     '62000000-0000-4000-8000-000000000082','63000000-0000-4000-8000-000000000082',
-    '64000000-0000-4000-8000-000000000082','2026-07-11 00:02:02+00');
+    '64000000-0000-4000-8000-000000000082','65000000-0000-4000-8000-000000000082',
+    v_pantry_item,'2026-07-11 00:01:59+00','2026-07-11 00:02:02+00');
   begin
     perform public.delete_generation_draft(v_before_revision);
     raise exception using errcode='XX000',message='expected_draft_revision_conflict';
@@ -4594,9 +4677,9 @@ begin
     if sqlerrm <> 'draft_revision_conflict' then raise; end if;
   end;
 
-  -- reserve -> manual delete -> recreation -> finalizer deletes the live recreation.
+  -- 予約、手動削除、再作成の後はfinalizerが現在の再作成行を削除する。
   v_draft := public.save_generation_draft(0,'dinner',array['reserved'],'japanese',
-    v_target_ids,30,'standard',array[]::text[],'','[]');
+    v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000083',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v1',repeat('d',64),5,45,180,'2026-07-11 00:03:00+00');
@@ -4604,13 +4687,14 @@ begin
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000083';
   perform public.delete_generation_draft(v_draft.revision);
   v_draft := public.save_generation_draft(0,'dinner',array['recreated'],'japanese',
-    v_target_ids,30,'standard',array[]::text[],'','[]');
+    v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   v_recreated_revision := v_draft.revision;
   perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:03:01+00');
   perform pg_temp.finalize_ordering_success(v_request_id,
     '60000000-0000-4000-8000-000000000083','61000000-0000-4000-8000-000000000083',
     '62000000-0000-4000-8000-000000000083','63000000-0000-4000-8000-000000000083',
-    '64000000-0000-4000-8000-000000000083','2026-07-11 00:03:02+00');
+    '64000000-0000-4000-8000-000000000083','65000000-0000-4000-8000-000000000083',
+    v_pantry_item,'2026-07-11 00:02:59+00','2026-07-11 00:03:02+00');
   if (select revision from public.generation_drafts where id=v_draft.id)
       is distinct from v_recreated_revision+1 then
     raise exception 'finalizer did not advance the live recreation revision';
@@ -5165,8 +5249,8 @@ if found then
   end if;
   return private.ai_request_payload(v_request,true);
 end if;
--- Only a genuinely new key may continue to stale cleanup, the per-user lock,
--- active-request lookup, or success/attempt/window/global quota state.
+-- 本当に新しいkeyだけがstale cleanup、user lock、active request lookup、
+-- success/attempt/window/global quota stateへ進める。
 ```
 
 For `new_menu`, the final RPC also requires `p_draft_revision bigint`; regeneration commands require both draft fields to be null. Immediately after the same-key replay branch above, and before stale cleanup, active-request lookup, or any quota/counter row, it executes this owner/revision gate under the same transaction:
@@ -5246,7 +5330,7 @@ if not found then
    where id=p_request_id and user_id=p_user_id;
   return to_jsonb(v_request); -- immutable replay; do not rewrite succeeded/failed/timeout
 end if;
--- release the outstanding success reservation in this same transaction
+-- 未解放のsuccess予約を同じtransactionで解放する
 ```
 
 - [ ] **Step 6: Add per-user attempt quota, IP rate limit, and bounded retention (5 minutes)**
@@ -5284,7 +5368,7 @@ export class OpenRouterCallError extends Error {
     readonly retryAt: string | null = null,
   ) { super(code); }
 }
-// after envelope parse
+// envelope parseの後
 if (!output.success) throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
 ```
 
@@ -5415,10 +5499,10 @@ Add a required callback to the existing Plan 2 form:
 
 ```ts
 type PlannerFormProps = {
-  // existing props
+  // 既存props
   onGenerate(submission: PlannerSubmission, attempt: PlannerAttempt): Promise<void>;
 };
-// Generate button; never submit from render.
+// 生成button。render中にはsubmitしない。
 onClick={() => void props.onGenerate(plannerSubmissionSchema.parse(value), attempt)}
 ```
 
@@ -5471,7 +5555,7 @@ import type { Config, Context } from "@netlify/functions";
 export default async function confirmLabelConfirmation(
   request: Request, context: Context,
 ): Promise<Response> {
-  // Authenticate first, parse both context.params UUIDs, then invoke the owner RPC.
+  // 最初に認証し、両方のcontext.params UUIDをparseしてからowner RPCを呼ぶ。
   return confirmLabelConfirmationHandler(createConfirmationDependencies)(request, context);
 }
 
@@ -5538,7 +5622,7 @@ const selectByIndex = (index: number) => {
   const next = menu.dishes[(index + menu.dishes.length) % menu.dishes.length];
   if (next !== undefined) { setSelectedId(next.id); document.getElementById(`tab-${next.id}`)?.focus(); }
 };
-// each tab
+// 各tab
 tabIndex={dish.id === selectedId ? 0 : -1}
 onKeyDown={(event) => {
   const index = menu.dishes.findIndex((item) => item.id === dish.id);
