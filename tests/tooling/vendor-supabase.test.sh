@@ -57,6 +57,19 @@ printf '%s\n' \
   'done' \
   'source=${1:-}' \
   'destination=${2:-}' \
+  'case "${MUTATE_QUARANTINE:-}:$source:$destination" in' \
+  '  target:infra/supabase:*/quarantine-installed-target)' \
+  '    /bin/mv infra/supabase "$MUTATED_INSTALLED"' \
+  '    /bin/mkdir infra/supabase' \
+  '    printf "%s\n" external-quarantine-target > infra/supabase/external-marker' \
+  '    { printf "%s " "$(stat -c "%d:%i" infra/supabase)"; (cd infra/supabase && tar -cf - .) | sha256sum | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
+  '    ;;' \
+  '  version:infra/supabase.version:*/quarantine-installed-version)' \
+  '    /bin/mv infra/supabase.version "$MUTATED_INSTALLED"' \
+  '    printf "%s\n" external-quarantine-version > infra/supabase.version' \
+  '    { printf "%s " "$(stat -c "%d:%i" infra/supabase.version)"; /usr/bin/sha256sum infra/supabase.version | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
+  '    ;;' \
+  'esac' \
   'case "${MUTATE_MV_STEP:-}:$source:$destination" in' \
   '  target_identity:infra/supabase:*/backup-target)' \
   '    /bin/mv infra/supabase "$MUTATED_ORIGINAL"' \
@@ -83,7 +96,7 @@ printf '%s\n' \
   '  version:infra/supabase.version:*/backup-version)' \
   '    /bin/mv "$source" "$destination"' \
   '    printf "%s\n" external-version > infra/supabase.version' \
-  '    { printf "%s " "$(stat -c "%d:%i" infra/supabase.version)"; sha256sum infra/supabase.version | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
+  '    { printf "%s " "$(stat -c "%d:%i" infra/supabase.version)"; /usr/bin/sha256sum infra/supabase.version | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
   '    exit 0' \
   '    ;;' \
   'esac' \
@@ -94,6 +107,15 @@ printf '%s\n' \
   '      /bin/mkdir infra/supabase' \
   '      printf "%s\n" external-installed-target > infra/supabase/external-marker' \
   '      { printf "%s " "$(stat -c "%d:%i" infra/supabase)"; (cd infra/supabase && tar -cf - .) | sha256sum | awk "{print \$1}"; } > "$EXTERNAL_SNAPSHOT"' \
+  '      ;;' \
+  '  esac' \
+  'fi' \
+  'if [ "${ARM_INSTALLED_VERSION_HASH_FAILURE:-}" != "" ]; then' \
+  '  case "$source:$destination" in' \
+  '    */supabase.version:infra/supabase.version)' \
+  '      /bin/mv "$source" "$destination"' \
+  '      : > "$HASH_FAILURE_MARKER"' \
+  '      exit 0' \
   '      ;;' \
   '  esac' \
   'fi' \
@@ -112,6 +134,12 @@ printf '%s\n' \
   'if [ "$no_clobber" = true ]; then exec /bin/mv -n "$@"; fi' \
   'exec /bin/mv "$@"' > "$fixture/bin/mv"
 chmod +x "$fixture/bin/mv"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${FAIL_INITIAL_VERSION_HASH:-}" != "" ] && [ "${1:-}" = "infra/supabase.version" ]; then exit 76; fi' \
+  'if [ "${HASH_FAILURE_MARKER:-}" != "" ] && [ -e "$HASH_FAILURE_MARKER" ] && [ "${1:-}" = "infra/supabase.version" ]; then exit 76; fi' \
+  'exec /usr/bin/sha256sum "$@"' > "$fixture/bin/sha256sum"
+chmod +x "$fixture/bin/sha256sum"
 printf '%s\n' \
   '#!/bin/sh' \
   'if [ "${SIGNAL_AFTER_LOCK_MKDIR:-}" != "" ] && [ "${1:-}" = "infra/.supabase-refresh.lock" ]; then' \
@@ -158,10 +186,17 @@ snapshot_tree() {
   (cd "$1" && tar -cf - .) | sha256sum | awk '{print $1}'
 }
 
+test_hash_file() {
+  hash_line=$(sha256sum "$1" 2>/dev/null) || return 1
+  hash_value=$(printf '%s\n' "$hash_line" | awk '{print $1}')
+  printf '%s\n' "$hash_value" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  printf '%s\n' "$hash_value"
+}
+
 snapshot_version() {
   path=$1
   printf '%s ' "$(stat -c '%a:%u:%g' "$path")"
-  sha256sum "$path" | awk '{print $1}'
+  test_hash_file "$path"
 }
 
 snapshot_target_identity_tree() {
@@ -171,7 +206,7 @@ snapshot_target_identity_tree() {
 
 snapshot_version_identity_hash() {
   printf '%s ' "$(stat -c '%d:%i' "$1")"
-  sha256sum "$1" | awk '{print $1}'
+  test_hash_file "$1"
 }
 
 assert_failed_swap_unchanged() {
@@ -336,14 +371,76 @@ assert_installed_replacement_preserved() {
     SUPABASE_REPOSITORY="$source_repo" \
     sh scripts/vendor-supabase.sh --refresh 2> "$log" || status=$?
   test "$status" -ne 0
-  test "$(snapshot_target_identity_tree infra/supabase)" = "$(cat "$external_snapshot")"
-  preserved=$(sed -n 's/^rollback incomplete; preserved vendor backup at //p' "$log")
+  preserved=$(sed -n 's/^rollback verification incomplete; preserved staging at //p' "$log")
   test -n "$preserved"
-  test "$(snapshot_tree "$preserved/backup-target")" = "$tree_before"
-  /bin/rm -rf infra/supabase
-  /bin/mv "$preserved/backup-target" infra/supabase
+  test "$(snapshot_target_identity_tree "$preserved/quarantine-installed-target")" = "$(cat "$external_snapshot")"
+  test "$(snapshot_tree infra/supabase)" = "$tree_before"
   /bin/rm -rf "$preserved"
   test "$(snapshot_vendor)" = "$before"
+}
+
+assert_quarantine_replacement_preserved() {
+  step=$1
+  before=$(snapshot_vendor)
+  tree_before=$(snapshot_tree infra/supabase)
+  version_before=$(snapshot_version infra/supabase.version)
+  external_snapshot="$fixture/$step-quarantine-external.snapshot"
+  log="$fixture/$step-quarantine.log"
+  status=0
+  case "$step" in
+    target)
+      PATH="$fixture/bin:$PATH" \
+        FAIL_MV_STEP=new_version \
+        MUTATE_QUARANTINE=target \
+        MUTATED_INSTALLED="$fixture/quarantined-installed-target" \
+        EXTERNAL_SNAPSHOT="$external_snapshot" \
+        SUPABASE_REPOSITORY="$source_repo" \
+        sh scripts/vendor-supabase.sh --refresh 2> "$log" || status=$?
+      ;;
+    version)
+      hash_failure_marker="$fixture/installed-version-hash-failure"
+      PATH="$fixture/bin:$PATH" \
+        ARM_INSTALLED_VERSION_HASH_FAILURE=1 \
+        HASH_FAILURE_MARKER="$hash_failure_marker" \
+        MUTATE_QUARANTINE=version \
+        MUTATED_INSTALLED="$fixture/quarantined-installed-version" \
+        EXTERNAL_SNAPSHOT="$external_snapshot" \
+        SUPABASE_REPOSITORY="$source_repo" \
+        sh scripts/vendor-supabase.sh --refresh 2> "$log" || status=$?
+      ;;
+  esac
+  test "$status" -ne 0
+  preserved=$(sed -n 's/^rollback verification incomplete; preserved staging at //p' "$log")
+  if [ -z "$preserved" ]; then
+    echo "$step rollback did not preserve the quarantine conflict" >&2
+    exit 1
+  fi
+  case "$step" in
+    target)
+      test "$(snapshot_target_identity_tree "$preserved/quarantine-installed-target")" = "$(cat "$external_snapshot")"
+      ;;
+    version)
+      test "$(snapshot_version_identity_hash "$preserved/quarantine-installed-version")" = "$(cat "$external_snapshot")"
+      ;;
+  esac
+  test "$(snapshot_tree infra/supabase)" = "$tree_before"
+  test "$(snapshot_version infra/supabase.version)" = "$version_before"
+  /bin/rm -rf "$preserved"
+  test "$(snapshot_vendor)" = "$before"
+}
+
+assert_initial_version_hash_failure_unchanged() {
+  before=$(snapshot_vendor)
+  log="$fixture/initial-version-hash.log"
+  status=0
+  PATH="$fixture/bin:$PATH" \
+    FAIL_INITIAL_VERSION_HASH=1 \
+    SUPABASE_REPOSITORY="$source_repo" \
+    sh scripts/vendor-supabase.sh --refresh 2> "$log" || status=$?
+  test "$status" -ne 0
+  grep -q '^cannot verify vendor version state: infra/supabase.version$' "$log"
+  test "$(snapshot_vendor)" = "$before"
+  test ! -e infra/.supabase-refresh.lock
 }
 
 SUPABASE_REPOSITORY="$source_repo" sh scripts/vendor-supabase.sh
@@ -500,6 +597,10 @@ for step in target version; do
   assert_restore_conflict_preserved "$step"
 done
 assert_installed_replacement_preserved
+for step in target version; do
+  assert_quarantine_replacement_preserved "$step"
+done
+assert_initial_version_hash_failure_unchanged
 
 mkdir -p infra/supabase/volumes/db/data
 printf 'runtime data\n' > infra/supabase/volumes/db/data/PG_VERSION

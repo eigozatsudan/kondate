@@ -33,6 +33,8 @@ new_target=
 new_version=
 backup_target=
 backup_version=
+quarantine_target=
+quarantine_version=
 lock_acquired=false
 target_existed=false
 version_existed=false
@@ -48,6 +50,7 @@ target_installed=false
 version_installed=false
 operation_completed=false
 preserve_staging=false
+rollback_conflict=false
 pending_signal_status=0
 
 verify_database_stopped() {
@@ -82,12 +85,20 @@ path_identity_matches() {
   [ "$actual_identity" = "$expected_identity" ]
 }
 
+hash_file() {
+  hash_path=$1
+  hash_line=$(sha256sum "$hash_path" 2>/dev/null) || return 1
+  hash_value=$(printf '%s\n' "$hash_line" | awk '{print $1}')
+  printf '%s\n' "$hash_value" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  printf '%s\n' "$hash_value"
+}
+
 version_state_matches() {
   path=$1
   expected_identity=$2
   expected_hash=$3
   path_identity_matches "$path" "$expected_identity" || return 1
-  actual_hash=$(sha256sum "$path" 2>/dev/null | awk '{print $1}') || return 1
+  actual_hash=$(hash_file "$path") || return 1
   [ "$actual_hash" = "$expected_hash" ]
 }
 
@@ -97,34 +108,63 @@ finish() {
   trap '' HUP INT TERM
   if [ "$operation_completed" != true ]; then
     if [ "$target_installed" = true ]; then
-      if path_identity_matches "$target" "$target_installed_identity" && rm -rf "$target"; then
+      if mv -T -n "$target" "$quarantine_target" && [ ! -e "$target" ]; then
         target_installed=false
+        if path_identity_matches "$quarantine_target" "$target_installed_identity"; then
+          if ! rm -rf "$quarantine_target"; then
+            preserve_staging=true
+          fi
+        else
+          rollback_conflict=true
+          preserve_staging=true
+        fi
       else
         preserve_staging=true
       fi
     fi
     if [ "$version_installed" = true ]; then
-      if version_state_matches "$version_file" "$version_installed_identity" "$version_installed_hash" &&
-        rm -f "$version_file"; then
+      if mv -T -n "$version_file" "$quarantine_version" && [ ! -e "$version_file" ]; then
         version_installed=false
+        if version_state_matches "$quarantine_version" "$version_installed_identity" "$version_installed_hash"; then
+          if ! rm -f "$quarantine_version"; then
+            preserve_staging=true
+          fi
+        else
+          rollback_conflict=true
+          preserve_staging=true
+        fi
       else
         preserve_staging=true
       fi
     fi
     if [ "$target_backed_up" = true ] && [ "$target_installed" = false ]; then
       if path_identity_matches "$backup_target" "$target_identity" && [ ! -e "$target" ] &&
-        mv -T -n "$backup_target" "$target" &&
-        [ ! -e "$backup_target" ] && path_identity_matches "$target" "$target_identity"; then
-        target_backed_up=false
+        mv -T -n "$backup_target" "$target"; then
+        if [ ! -e "$backup_target" ]; then
+          target_backed_up=false
+          if ! path_identity_matches "$target" "$target_identity"; then
+            rollback_conflict=true
+            preserve_staging=true
+          fi
+        else
+          preserve_staging=true
+        fi
       else
         preserve_staging=true
       fi
     fi
     if [ "$version_backed_up" = true ] && [ "$version_installed" = false ]; then
       if version_state_matches "$backup_version" "$version_identity" "$version_hash" &&
-        [ ! -e "$version_file" ] && mv -T -n "$backup_version" "$version_file" &&
-        [ ! -e "$backup_version" ] && version_state_matches "$version_file" "$version_identity" "$version_hash"; then
-        version_backed_up=false
+        [ ! -e "$version_file" ] && mv -T -n "$backup_version" "$version_file"; then
+        if [ ! -e "$backup_version" ]; then
+          version_backed_up=false
+          if ! version_state_matches "$version_file" "$version_identity" "$version_hash"; then
+            rollback_conflict=true
+            preserve_staging=true
+          fi
+        else
+          preserve_staging=true
+        fi
       else
         preserve_staging=true
       fi
@@ -134,7 +174,13 @@ finish() {
     fi
   fi
   if [ "$preserve_staging" = true ]; then
-    echo "rollback incomplete; preserved vendor backup at $staging" >&2
+    if [ "$target_backed_up" = true ] || [ "$version_backed_up" = true ]; then
+      echo "rollback incomplete; preserved vendor backup at $staging" >&2
+    elif [ "$rollback_conflict" = true ]; then
+      echo "rollback verification incomplete; preserved staging at $staging" >&2
+    else
+      echo "rollback cleanup incomplete; preserved staging at $staging" >&2
+    fi
   elif [ -n "$staging" ] && ! rm -rf "$staging"; then
     echo "vendor cleanup incomplete; preserved staging at $staging" >&2
     if [ "$status" -eq 0 ]; then
@@ -177,7 +223,10 @@ fi
 if [ -e "$version_file" ]; then
   version_existed=true
   version_identity=$(stat -c '%d:%i' "$version_file")
-  version_hash=$(sha256sum "$version_file" | awk '{print $1}')
+  if ! version_hash=$(hash_file "$version_file"); then
+    echo "cannot verify vendor version state: $version_file" >&2
+    exit 1
+  fi
 fi
 
 staging=$(mktemp -d "$(pwd)/infra/.supabase-refresh.XXXXXX")
@@ -187,6 +236,8 @@ new_target="$staging/supabase"
 new_version="$staging/supabase.version"
 backup_target="$staging/backup-target"
 backup_version="$staging/backup-version"
+quarantine_target="$staging/quarantine-installed-target"
+quarantine_version="$staging/quarantine-installed-version"
 
 git -C "$staging" init -q repository
 git -C "$checkout" remote add origin "$repository"
@@ -257,7 +308,7 @@ if [ "$version_existed" = true ]; then
   mv "$version_file" "$backup_version"
   version_backed_up=true
   if [ "$(stat -c '%d:%i' "$backup_version")" != "$version_identity" ] ||
-    [ "$(sha256sum "$backup_version" | awk '{print $1}')" != "$version_hash" ]; then
+    ! version_state_matches "$backup_version" "$version_identity" "$version_hash"; then
     echo "vendor version identity changed during refresh: $version_file" >&2
     exit 1
   fi
@@ -280,7 +331,10 @@ trap '' HUP INT TERM
 mv "$new_version" "$version_file"
 version_installed=true
 version_installed_identity=$(stat -c '%d:%i' "$version_file")
-version_installed_hash=$(sha256sum "$version_file" | awk '{print $1}')
+if ! version_installed_hash=$(hash_file "$version_file"); then
+  echo "cannot verify installed vendor version state: $version_file" >&2
+  exit 1
+fi
 operation_completed=true
 
 echo "Vendored supabase/supabase $resolved_sha docker/"
