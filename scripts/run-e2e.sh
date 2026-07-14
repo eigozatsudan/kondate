@@ -135,6 +135,10 @@ run_child() {
     signal_pending=0
     deliver_signal
   fi
+  if [ "$cleanup_started" -eq 1 ] && [ "$termination_status" -ne 0 ] && [ -z "$watchdog_pid" ]; then
+    # cleanupの子が切り替わっても、記録済みsignalのgrace期限を各子へ適用する。
+    start_watchdog
+  fi
   while :; do
     if wait "$child_pid"; then
       child_status=0
