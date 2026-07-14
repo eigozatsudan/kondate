@@ -21,9 +21,18 @@ test("derives distinct Compose project names for same-basename checkouts", async
     execFileAsync(helper, [secondRoot]),
   ]);
 
-  assert.match(first.trim(), /^kondate-\d+-\d+$/u);
-  assert.match(second.trim(), /^kondate-\d+-\d+$/u);
+  assert.match(first.trim(), /^kondate-[0-9a-f]{32}$/u);
+  assert.match(second.trim(), /^kondate-[0-9a-f]{32}$/u);
   assert.notEqual(first, second);
+  assert.equal((await execFileAsync(helper, [firstRoot])).stdout, first);
+});
+
+test("uses a truncated SHA-256 instead of the colliding POSIX cksum identity", async () => {
+  const helper = await readFile("scripts/compose-project-name.sh", "utf8");
+
+  assert.match(helper, /sha256sum/u);
+  assert.doesNotMatch(helper, /\bcksum\b/u);
+  assert.match(helper, /project_name=\$\(printf 'kondate-%\.32s' "\$digest"\)/u);
 });
 
 test("pins Node 24 and exposes every verification script", async () => {
@@ -158,7 +167,7 @@ test("local secret generator emits unquoted Supabase verification paths", async 
       cwd,
       env: {
         ...process.env,
-        KONDATE_COMPOSE_PROJECT_NAME: "kondate-1234-56",
+        KONDATE_COMPOSE_PROJECT_NAME: "kondate-0123456789abcdef0123456789abcdef",
         LOCAL_UID: "1234",
         LOCAL_GID: "5678",
       },
@@ -176,7 +185,10 @@ test("local secret generator emits unquoted Supabase verification paths", async 
   assert.doesNotMatch(generated, /^COMPOSE_FILE=/mu);
   assert.match(generated, /^LOCAL_UID=1234$/mu);
   assert.match(generated, /^LOCAL_GID=5678$/mu);
-  assert.match(generated, /^KONDATE_COMPOSE_PROJECT_NAME=kondate-1234-56$/mu);
+  assert.match(
+    generated,
+    /^KONDATE_COMPOSE_PROJECT_NAME=kondate-0123456789abcdef0123456789abcdef$/mu,
+  );
   assert.match(generated, /^API_EXTERNAL_URL=http:\/\/127\.0\.0\.1:8000\/auth\/v1$/mu);
   assert.match(generated, /^REALTIME_DB_ENC_KEY=[a-f0-9]{16}$/mu);
   assert.match(generated, /^PG_META_CRYPTO_KEY=[A-Za-z0-9_-]{32}$/mu);

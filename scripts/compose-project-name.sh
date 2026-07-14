@@ -20,21 +20,33 @@ if [ ! -d "$repo_root" ]; then
   exit 2
 fi
 
-checksum=$(printf '%s' "$repo_root" | cksum)
-set -- $checksum
-if [ "$#" -ne 2 ]; then
-  echo "cksum returned an invalid result" >&2
+repo_root=$(CDPATH= cd -P "$repo_root" && pwd) || {
+  echo "repository root could not be canonicalized" >&2
+  exit 2
+}
+
+if ! command -v sha256sum > /dev/null 2>&1; then
+  echo "sha256sum is required to derive the Compose project name" >&2
   exit 2
 fi
-case "$1:$2" in
-  *[!0-9:]* | :* | *:)
-    echo "cksum returned an invalid result" >&2
-    exit 2
-    ;;
-esac
 
-project_name="kondate-$1-$2"
-if ! printf '%s\n' "$project_name" | grep -Eq '^kondate-[0-9]+-[0-9]+$'; then
+hash_output=$(printf '%s' "$repo_root" | sha256sum) || {
+  echo "sha256sum failed to derive the Compose project name" >&2
+  exit 2
+}
+set -- $hash_output
+if [ "$#" -ne 2 ]; then
+  echo "sha256sum returned an invalid result" >&2
+  exit 2
+fi
+digest=$1
+if [ "$2" != "-" ] || ! printf '%s\n' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
+  echo "sha256sum returned an invalid result" >&2
+  exit 2
+fi
+
+project_name=$(printf 'kondate-%.32s' "$digest")
+if ! printf '%s\n' "$project_name" | grep -Eq '^kondate-[0-9a-f]{32}$'; then
   echo "derived Compose project name is invalid" >&2
   exit 2
 fi

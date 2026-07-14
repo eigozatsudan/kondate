@@ -4,7 +4,7 @@
 
 ホストにはDocker Engine、Docker Compose、POSIXシェルが必要です。Node、npm、Git、Supabase CLI、Postgresクライアント、Playwrightはコンテナ内で実行します。
 
-Compose project名はcheckoutの絶対pathを `cksum` した `kondate-<CRC>-<bytes>` 形式で、containerとvolumeは同名checkoutを含めて分離されます。`generate-local-secrets.sh`はこの値を `.env` に保存し、refresh/reset wrapperは欠落時だけmode 600を保ってatomic追加します。コピー元と異なる値がある場合は破壊操作前に停止するため、local secretsを再生成してください。固定portは共有できないため、複数checkoutのstackを同時には起動しないでください。
+Compose project名はcheckoutのcanonical絶対pathをSHA-256化した `kondate-<lowercase hex 32桁>` 形式で、containerとvolumeは同名checkoutを含めて分離されます。project名の導出には `sha256sum` が必要で、利用できない場合は破壊操作を始めず停止します。`generate-local-secrets.sh`はこの値を `.env` に保存し、refresh/reset wrapperは欠落時だけmode 600を保ってatomic追加します。コピー元と異なる値がある場合は破壊操作前に停止するため、local secretsを再生成してください。固定portは共有できないため、複数checkoutのstackを同時には起動しないでください。
 
 `COMPOSE_PROJECT_NAME`をdirect入口に設定しないでください。wrapperが絶対pathから導出して明示するproject名を使用します。
 
@@ -15,7 +15,7 @@ Compose project名はcheckoutの絶対pathを `cksum` した `kondate-<CRC>-<byt
 ```bash
 ./scripts/generate-local-secrets.sh --force
 docker compose -f compose.tooling.yaml run --rm --entrypoint sh vendor-supabase \
-  -c 'sh -eu -c '\''test -f .env; test "$(stat -c %a .env)" = 600; if grep -q "^COMPOSE_FILE=" .env; then exit 1; fi; grep -q "^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$" .env; grep -Eq "^LOCAL_UID=[0-9]+$" .env; grep -Eq "^LOCAL_GID=[0-9]+$" .env; grep -Eq "^KONDATE_COMPOSE_PROJECT_NAME=kondate-[0-9]+-[0-9]+$" .env'\'''
+  -c 'sh -eu -c '\''test -f .env; test "$(stat -c %a .env)" = 600; if grep -q "^COMPOSE_FILE=" .env; then exit 1; fi; grep -q "^API_EXTERNAL_URL=http://127.0.0.1:8000/auth/v1$" .env; grep -Eq "^LOCAL_UID=[0-9]+$" .env; grep -Eq "^LOCAL_GID=[0-9]+$" .env; grep -Eq "^KONDATE_COMPOSE_PROJECT_NAME=kondate-[0-9a-f]{32}$" .env'\'''
 docker compose pull --quiet --ignore-buildable
 docker compose build
 ./scripts/reset-local-db.sh

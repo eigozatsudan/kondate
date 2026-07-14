@@ -15,7 +15,7 @@ case "$repo_root" in
     exit 2
     ;;
 esac
-if ! printf '%s\n' "$project_name" | grep -Eq '^kondate-[0-9]+-[0-9]+$'; then
+if ! printf '%s\n' "$project_name" | grep -Eq '^kondate-[0-9a-f]{32}$'; then
   echo "Compose project name is invalid" >&2
   exit 2
 fi

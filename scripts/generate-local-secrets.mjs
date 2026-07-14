@@ -70,7 +70,7 @@ if (!/^\d+$/u.test(localUid) || !/^\d+$/u.test(localGid)) {
 values.set("LOCAL_UID", localUid);
 values.set("LOCAL_GID", localGid);
 const composeProjectName = process.env.KONDATE_COMPOSE_PROJECT_NAME ?? "";
-if (!/^kondate-\d+-\d+$/u.test(composeProjectName)) {
+if (!/^kondate-[0-9a-f]{32}$/u.test(composeProjectName)) {
   throw new Error("KONDATE_COMPOSE_PROJECT_NAME must be a derived checkout identity");
 }
 values.set("KONDATE_COMPOSE_PROJECT_NAME", composeProjectName);
