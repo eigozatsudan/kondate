@@ -235,7 +235,12 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   assert.match(runner, /run --rm --no-deps e2e "\$@"/u);
   assert.doesNotMatch(runner, /exec docker compose/u);
   assert.match(runner, /trap cleanup_on_exit EXIT/u);
+  assert.match(runner, /--profile e2e[\s\\]*kill --signal SIGKILL e2e/u);
+  assert.match(runner, /--profile e2e[\s\\]*rm --force e2e/u);
+  assert.doesNotMatch(runner, /rm --force --stop e2e/u);
   assert.match(runner, /up -d --wait --force-recreate --no-deps auth app/u);
+  assert.match(runner, /kondate-run-e2e-\$project_name\.lock/u);
+  assert.match(runner, /if mkdir "\$lock_dir"/u);
   assert.match(
     runner,
     /launch_in_progress=1\s+"\$@" &\s+child_pid=\$!\s+launch_in_progress=0\s+if \[ "\$signal_pending" -eq 1 \]; then\s+signal_pending=0\s+deliver_signal/u,
@@ -294,6 +299,8 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.match(guide, /\.\/scripts\/run-e2e\.sh/u);
   assert.match(guide, /E2E終了後.*通常構成のAuthとappを復元/u);
   assert.match(guide, /E2Eの終了statusを保持/u);
+  assert.match(guide, /同じcheckout.*並行実行.*拒否/u);
+  assert.match(guide, /SIGKILL.*stale lock.*E2Eプロセスがないことを確認.*手動で削除/u);
   assert.match(guide, /PG15データの移行とロールバックはサポートしません/u);
   assert.match(refreshDesign, /\.\/scripts\/refresh-supabase\.sh/u);
   assert.doesNotMatch(refreshDesign, /vendor-supabase --refresh/u);

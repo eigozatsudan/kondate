@@ -51,7 +51,9 @@ docker compose run --rm --no-deps app npm run typecheck
 
 DB型生成は稼働中の公式Postgres Metaサービスを使用します。コンテナ内でPodmanを起動せず、応答を検証してから生成ファイルを原子的に置き換えます。
 
-E2E wrapperは専用overrideのAuthをhealthyまで待機し、Kong、OAuth mock、appを再作成してからPlaywrightを起動します。E2E終了後は成功、失敗、signalのいずれでも通常構成のAuthとappを復元し、復元に成功した場合はE2Eの終了statusを保持します。通常のstack定義は変更しません。
+E2E wrapperは専用overrideのAuthをhealthyまで待機し、Kong、OAuth mock、appを再作成してからPlaywrightを起動します。同じcheckoutからの並行実行は、共有するone-off、Auth、appを互いに変更しないようDocker起動前に拒否します。E2E終了後は成功、失敗、signalのいずれでもone-offを即時停止・削除してから通常構成のAuthとappを復元し、復元に成功した場合はE2Eの終了statusを保持します。通常のstack定義は変更しません。
+
+SIGKILLでwrapperが終了すると`${TMPDIR:-/tmp}/kondate-run-e2e-<project-name>.lock`にstale lockが残り、次回実行は安全側に停止します。該当checkoutのE2Eプロセスがないことを確認してから、そのlock directoryを手動で削除してください。
 
 ## Supabase公式Docker構成の更新
 

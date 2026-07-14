@@ -8,6 +8,7 @@ cd "$repo_root"
 project_name=$("$script_dir/compose-project-name.sh" "$repo_root")
 "$script_dir/ensure-compose-project-env.sh" "$repo_root" "$project_name"
 export KONDATE_COMPOSE_PROJECT_NAME="$project_name"
+lock_dir=${TMPDIR:-/tmp}/kondate-run-e2e-$project_name.lock
 
 signal_grace_seconds=${KONDATE_E2E_SIGNAL_GRACE_SECONDS:-5}
 if ! printf '%s\n' "$signal_grace_seconds" | grep -Eq '^(0|[1-9][0-9]*)([.][0-9]+)?$'; then
@@ -24,6 +25,7 @@ active_signal=
 signal_count=0
 signal_pending=0
 cleanup_started=0
+lock_acquired=0
 
 start_watchdog() {
   if [ -n "$watchdog_pid" ]; then
@@ -162,11 +164,19 @@ run_child() {
 cleanup() {
   original_status=$1
   cleanup_started=1
+  kill_status=0
   removal_status=0
   restore_status=0
   if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    rm --force --stop e2e; then
+    kill --signal SIGKILL e2e; then
+    :
+  else
+    kill_status=$?
+  fi
+  if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+    rm --force e2e; then
     :
   else
     removal_status=$?
@@ -182,6 +192,8 @@ cleanup() {
     original_status=$termination_status
   elif [ "$original_status" -ne 0 ]; then
     :
+  elif [ "$kill_status" -ne 0 ]; then
+    original_status=$kill_status
   elif [ "$removal_status" -ne 0 ]; then
     original_status=$removal_status
   elif [ "$restore_status" -ne 0 ]; then
@@ -190,11 +202,32 @@ cleanup() {
   return "$original_status"
 }
 
+release_lock() {
+  if [ "$lock_acquired" -eq 0 ]; then
+    return 0
+  fi
+  if rmdir "$lock_dir"; then
+    lock_acquired=0
+    return 0
+  else
+    return $?
+  fi
+}
+
 finish() {
   final_status=$1
   trap '' HUP INT TERM ALRM
+  release_status=0
+  if release_lock; then
+    :
+  else
+    release_status=$?
+  fi
   if [ "$final_status" -eq 0 ] && [ "$termination_status" -ne 0 ]; then
     final_status=$termination_status
+  fi
+  if [ "$final_status" -eq 0 ] && [ "$release_status" -ne 0 ]; then
+    final_status=$release_status
   fi
   exit "$final_status"
 }
@@ -210,6 +243,14 @@ cleanup_on_exit() {
   finish "$final_status"
 }
 trap cleanup_on_exit EXIT
+
+if mkdir "$lock_dir"; then
+  lock_acquired=1
+else
+  trap - EXIT
+  echo "another E2E run is active: $lock_dir" >&2
+  exit 1
+fi
 
 run_e2e_commands() {
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
