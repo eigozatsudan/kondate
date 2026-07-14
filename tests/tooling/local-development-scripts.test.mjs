@@ -59,6 +59,17 @@ async function installDockerRecorder(root) {
   const bin = join(root, "bin");
   await mkdir(bin);
   await writeFile(
+    join(bin, "docker-signal-waiter.mjs"),
+    [
+      'import { writeFileSync } from "node:fs";',
+      "writeFileSync(process.env.DOCKER_READY_FILE, `${process.pid}\\n`);",
+      'process.on("SIGHUP", () => process.exit(129));',
+      'process.on("SIGINT", () => process.exit(130));',
+      'process.on("SIGTERM", () => process.exit(143));',
+      "setInterval(() => {}, 1_000);",
+    ].join("\n"),
+  );
+  await writeFile(
     join(bin, "docker"),
     [
       "#!/bin/sh",
@@ -73,6 +84,17 @@ async function installDockerRecorder(root) {
       "  while :; do sleep 1; done",
       "fi",
       'if [ "${DOCKER_FAIL_AT:-}" = "$index" ]; then exit "$DOCKER_FAIL_STATUS"; fi',
+      'case "$*" in',
+      '  *"run --rm --no-deps e2e"*)',
+      '    if [ "${E2E_WAIT_FOR_SIGNAL:-}" = "1" ]; then',
+      '      exec node "$(dirname "$0")/docker-signal-waiter.mjs"',
+      "    fi",
+      '    exit "${E2E_STATUS:-0}"',
+      "    ;;",
+      '  *"up -d --wait --force-recreate --no-deps auth app"*)',
+      '    exit "${E2E_CLEANUP_STATUS:-0}"',
+      "    ;;",
+      "esac",
       'if [ "$*" = "container ls --all --quiet --filter name=^/supabase-db$" ]; then',
       '  if [ "${DOCKER_QUERY_ERROR:-}" = "1" ]; then exit 57; fi',
       '  if [ "${DOCKER_FOREIGN_CONTAINER:-}" = "1" ]; then printf "%s\\n" "foreign-container-id"; fi',
@@ -174,6 +196,69 @@ function expectedResetInvocations(root, projectName) {
   return expectedRefreshInvocations(root, projectName).slice(2);
 }
 
+function expectedE2EInvocations(root, projectName, arguments_ = []) {
+  const compose = ["compose", "--project-directory", root, "--project-name", projectName];
+  return [
+    [...compose, "-f", join(root, "compose.yaml"), "up", "-d", "--wait"],
+    [
+      ...compose,
+      "-f",
+      join(root, "compose.yaml"),
+      "-f",
+      join(root, "compose.e2e.yaml"),
+      "--profile",
+      "e2e",
+      "up",
+      "-d",
+      "--wait",
+      "auth",
+    ],
+    [
+      ...compose,
+      "-f",
+      join(root, "compose.yaml"),
+      "-f",
+      join(root, "compose.e2e.yaml"),
+      "--profile",
+      "e2e",
+      "up",
+      "-d",
+      "--wait",
+      "--force-recreate",
+      "--no-deps",
+      "kong",
+      "oauth-mock",
+      "app",
+    ],
+    [
+      ...compose,
+      "-f",
+      join(root, "compose.yaml"),
+      "-f",
+      join(root, "compose.e2e.yaml"),
+      "--profile",
+      "e2e",
+      "run",
+      "--rm",
+      "--no-deps",
+      "e2e",
+      ...arguments_,
+    ],
+    [
+      ...compose,
+      "-f",
+      join(root, "compose.yaml"),
+      "up",
+      "-d",
+      "--wait",
+      "--force-recreate",
+      "--no-deps",
+      "auth",
+      "app",
+    ],
+  ];
+}
+
 async function expectedProjectName(root) {
   const child = spawn("cksum", { stdio: ["pipe", "pipe", "ignore"] });
   let output = "";
@@ -210,6 +295,20 @@ async function runRefresh(root, bin, logDir, extraEnv = {}) {
     env: {
       ...process.env,
       ...extraEnv,
+      DOCKER_LOG_DIR: logDir,
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+  });
+}
+
+async function runE2E(root, bin, logDir, arguments_ = [], extraEnv = {}) {
+  await mkdir(logDir);
+  return execFileAsync(join(root, "scripts", "run-e2e.sh"), arguments_, {
+    cwd: tmpdir(),
+    env: {
+      ...process.env,
+      ...extraEnv,
+      COMPOSE_PROJECT_NAME: "shared",
       DOCKER_LOG_DIR: logDir,
       PATH: `${bin}:${process.env.PATH}`,
     },
@@ -255,37 +354,113 @@ async function runTypeGenerator(root, url, extraEnv = {}) {
   });
 }
 
-test("E2E runner is POSIX-compatible and forwards arguments and exit status", async (t) => {
-  const root = await createScriptFixture("run-e2e.sh");
+test("E2E runner restores the base stack and preserves success or failure", async (t) => {
+  for (const fixture of [
+    { name: "success", e2eStatus: 0 },
+    { name: "failure", e2eStatus: 23 },
+  ]) {
+    await t.test(fixture.name, async (subtest) => {
+      const root = await createDatabaseScriptFixture("run-e2e.sh");
+      subtest.after(() => rm(root, { recursive: true, force: true }));
+      const bin = await installDockerRecorder(root);
+      const logDir = join(root, `${fixture.name} log`);
+      const run = runE2E(root, bin, logDir, ["--grep", "space value"], {
+        E2E_STATUS: String(fixture.e2eStatus),
+      });
+
+      if (fixture.e2eStatus === 0) await run;
+      else
+        await assert.rejects(
+          run,
+          (error) => error && typeof error === "object" && error.code === fixture.e2eStatus,
+        );
+
+      assert.deepEqual(
+        await readDockerInvocations(logDir),
+        expectedE2EInvocations(root, await expectedProjectName(root), ["--grep", "space value"]),
+      );
+    });
+  }
+});
+
+test("E2E runner restores the base stack after every forwarded signal", async (t) => {
+  for (const fixture of [
+    { signal: "SIGHUP", status: 129 },
+    { signal: "SIGINT", status: 130 },
+    { signal: "SIGTERM", status: 143 },
+  ]) {
+    await t.test(fixture.signal, async (subtest) => {
+      const root = await createDatabaseScriptFixture("run-e2e.sh");
+      subtest.after(() => rm(root, { recursive: true, force: true }));
+      const bin = await installDockerRecorder(root);
+      const logDir = join(root, `${fixture.signal} log`);
+      const readyFile = join(root, `${fixture.signal} ready`);
+      await mkdir(logDir);
+      const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+        cwd: tmpdir(),
+        env: {
+          ...process.env,
+          COMPOSE_PROJECT_NAME: "shared",
+          DOCKER_LOG_DIR: logDir,
+          DOCKER_READY_FILE: readyFile,
+          E2E_WAIT_FOR_SIGNAL: "1",
+          PATH: `${bin}:${process.env.PATH}`,
+        },
+        stdio: "ignore",
+      });
+      const completion = new Promise((resolveClose, rejectClose) => {
+        child.once("error", rejectClose);
+        child.once("close", (code, signal) => resolveClose({ code, signal }));
+      });
+      let fakeDockerPid;
+      subtest.after(() => {
+        if (isProcessAlive(child.pid)) process.kill(child.pid, "SIGKILL");
+        if (fakeDockerPid && isProcessAlive(fakeDockerPid)) process.kill(fakeDockerPid, "SIGKILL");
+      });
+
+      await waitForFile(readyFile);
+      fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
+      process.kill(child.pid, fixture.signal);
+
+      assert.deepEqual(await completion, { code: fixture.status, signal: null });
+      assert.equal(isProcessAlive(fakeDockerPid), false);
+      assert.deepEqual(
+        await readDockerInvocations(logDir),
+        expectedE2EInvocations(root, await expectedProjectName(root)),
+      );
+    });
+  }
+});
+
+test("E2E runner returns cleanup failure only after a successful run", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
-  const bin = join(root, "bin");
-  const log = join(root, "docker.log");
-  await mkdir(bin);
-  await writeFile(
-    join(bin, "docker"),
-    [
-      "#!/bin/sh",
-      'for argument do printf "%s|" "$argument"; done >> "$DOCKER_LOG"',
-      'printf "\\n" >> "$DOCKER_LOG"',
-      'case "$*" in *"run --rm --no-deps e2e"*) exit 23 ;; esac',
-    ].join("\n"),
-    { mode: 0o755 },
-  );
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "cleanup failure log");
 
   await assert.rejects(
-    execFileAsync("sh", [join(root, "scripts", "run-e2e.sh"), "--grep", "space value"], {
-      cwd: tmpdir(),
-      env: { ...process.env, DOCKER_LOG: log, PATH: `${bin}:${process.env.PATH}` },
-    }),
-    (error) => error && typeof error === "object" && error.code === 23,
+    runE2E(root, bin, logDir, [], { E2E_CLEANUP_STATUS: "47" }),
+    (error) => error && typeof error === "object" && error.code === 47,
   );
 
-  assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
-    "compose|-f|compose.yaml|up|-d|--wait|",
-    "compose|-f|compose.yaml|-f|compose.e2e.yaml|--profile|e2e|up|-d|--wait|auth|",
-    "compose|-f|compose.yaml|-f|compose.e2e.yaml|--profile|e2e|up|-d|--wait|--force-recreate|--no-deps|kong|oauth-mock|app|",
-    "compose|-f|compose.yaml|-f|compose.e2e.yaml|--profile|e2e|run|--rm|--no-deps|e2e|--grep|space value|",
-  ]);
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root)),
+  );
+});
+
+test("E2E runner rejects another checkout identity before starting Docker", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, ".env"), "KONDATE_COMPOSE_PROJECT_NAME=kondate-1-1\n", {
+    mode: 0o600,
+  });
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "identity mismatch log");
+
+  await assert.rejects(runE2E(root, bin, logDir));
+
+  assert.deepEqual(await readdir(logDir), []);
 });
 
 test("reset fixes Compose to its repository when invoked from another directory", async (t) => {

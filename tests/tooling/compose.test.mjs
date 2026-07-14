@@ -222,11 +222,20 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   const runner = await readFile("scripts/run-e2e.sh", "utf8");
   assert.match(runner, /^#!\/bin\/sh\nset -eu$/mu);
   assert.doesNotMatch(runner, /\(docker compose|\[@\]|pipefail/u);
-  assert.match(runner, /docker compose -f compose\.yaml up -d --wait/u);
-  assert.match(runner, /--profile e2e up -d --wait auth/u);
-  assert.match(runner, /up -d --wait --force-recreate --no-deps kong oauth-mock app/u);
+  assert.match(runner, /compose-project-name\.sh/u);
+  assert.match(runner, /ensure-compose-project-env\.sh/u);
+  assert.match(runner, /--project-directory "\$repo_root" --project-name "\$project_name"/u);
+  assert.match(runner, /-f "\$repo_root\/compose\.yaml"[\s\\]*\n?\s*up -d --wait/u);
+  assert.match(runner, /--profile e2e[\s\\]*up -d --wait auth/u);
+  assert.match(
+    runner,
+    /--profile e2e[\s\\]*up -d --wait --force-recreate --no-deps kong oauth-mock app/u,
+  );
   assert.match(runner, /run --rm --no-deps e2e/u);
   assert.match(runner, /run --rm --no-deps e2e "\$@"/u);
+  assert.doesNotMatch(runner, /exec docker compose/u);
+  assert.match(runner, /trap cleanup EXIT/u);
+  assert.match(runner, /up -d --wait --force-recreate --no-deps auth app/u);
 });
 
 test("documents the Docker-only clean initialization and verification workflow", async () => {
@@ -269,6 +278,8 @@ test("documents the Docker-only clean initialization and verification workflow",
     /\.\/scripts\/run-tooling-git\.sh diff --exit-code -- src\/shared\/types\/database\.generated\.ts/u,
   );
   assert.match(guide, /\.\/scripts\/run-e2e\.sh/u);
+  assert.match(guide, /E2E終了後.*通常構成のAuthとappを復元/u);
+  assert.match(guide, /E2Eの終了statusを保持/u);
   assert.match(guide, /PG15データの移行とロールバックはサポートしません/u);
   assert.match(refreshDesign, /\.\/scripts\/refresh-supabase\.sh/u);
   assert.doesNotMatch(refreshDesign, /vendor-supabase --refresh/u);
