@@ -15,6 +15,8 @@ Node 24（`package.json` の `engines` を参照）を使用し、依存関係Do
 - `docker compose run --rm --no-deps app npm test` は Vitest をウォッチモードで実行します。CI スタイルのワンショット実行には `docker compose run --rm --no-deps app npx vitest run` を使用してください。 - `docker compose run --rm --no-deps app npm run e2e` は、設定済みのローカルアプリケーションに対して Playwright テストを実行します。
 - `docker compose up -d --wait` は、ローカルアプリケーション/Supabase スタックを起動します。`docker compose run --rm --no-deps app npm run db:reset` はスタックを再作成し、`docker compose run --rm --no-deps app npm run db:test` は pgTAP データベーステストを実行します。
 
+権限確認を避けるため、Docker コマンドと `git diff --check` などのホスト側コマンドを `&&` などで結合せず、それぞれ独立したツール呼び出しとして実行すること。
+
 テストのような推論を必要としない処理の場合は、より軽量なモデルに切り替えること。
 
 ## コーディングスタイルと命名規則

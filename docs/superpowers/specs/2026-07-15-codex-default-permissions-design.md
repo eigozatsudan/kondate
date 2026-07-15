@@ -27,6 +27,8 @@
 
 `docker compose run` のルールは、引数列が `docker`, `compose`, `run` で始まるすべての呼び出しを対象とする。後続のオプション、サービス名、コンテナ内コマンドを含めて承認なしで実行できる。`docker compose up`、`down`、`exec` および従来形式の `docker-compose run` は対象外とする。Docker経由ではホスト側へ強い操作が可能なため、この例外は信頼済みのCompose構成を前提とする。
 
+`docker compose run ... && git diff --check` のような複合コマンドは、シェルラッパー全体が保守的に権限判定され、許可済みのDockerコマンドでも承認を求められる場合がある。Dockerコマンドとホスト側コマンドは `&&` などで結合せず、それぞれ独立したツール呼び出しとして実行する。`git diff` や `bash -lc` の包括的な許可ルールは追加しない。
+
 ## 検証
 
 `codex execpolicy check` を使い、次を確認する。
@@ -44,9 +46,10 @@
 - `docker compose run --rm app npm test` が `allow` と判定される。
 - `docker compose up -d` が `docker compose run` のルールに一致しない。
 - `docker-compose run --rm app npm test` が `docker compose run` のルールに一致しない。
+- Dockerコマンドと `git diff --check` が、結合されず独立したツール呼び出しとして記載されている。
 
 あわせて、`.codex/config.toml` が有効な TOML として Codex に読み込まれることを確認する。
 
 ## 変更範囲
 
-追加するのは `.codex/config.toml` と `.codex/rules/default.rules` のみとする。アプリケーション、テスト、データベース、デプロイ設定には変更を加えない。
+権限設定は `.codex/config.toml` と `.codex/rules/default.rules` に置き、複合コマンドを避ける運用規約は `AGENTS.md` に記載する。アプリケーション、テスト、データベース、デプロイ設定には変更を加えない。
