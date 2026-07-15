@@ -1,0 +1,2 @@
+# リポジトリ内の通常作業を許可し、境界外の操作は既存の承認フローに委ねる。
+default_permissions = ":workspace"
