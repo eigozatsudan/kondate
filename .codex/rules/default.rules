@@ -12,3 +12,34 @@ prefix_rule(
         "git status",
     ],
 )
+
+# worktreeの作成から削除までを自律実行し、分離した作業環境を承認待ちなしで管理できるようにする。
+prefix_rule(
+    pattern = ["git", "worktree"],
+    decision = "allow",
+    justification = "git worktree の全サブコマンドは、このリポジトリの分離作業環境を管理するため許可されています",
+    match = [
+        "git worktree add -b feature/example .worktrees/example",
+        "git worktree remove .worktrees/example",
+    ],
+    not_match = [
+        "git branch feature/example",
+        "git switch -c feature/example",
+    ],
+)
+
+# 信頼済みのCompose構成で一時コンテナを実行する操作に限り、承認待ちなしで利用できるようにする。
+prefix_rule(
+    pattern = ["docker", "compose", "run"],
+    decision = "allow",
+    justification = "docker compose run は、信頼済みのCompose構成で一時コンテナを実行するため許可されています",
+    match = [
+        "docker compose run --rm app npm test",
+    ],
+    not_match = [
+        "docker compose up -d",
+        "docker compose down",
+        "docker compose exec app npm test",
+        "docker-compose run --rm app npm test",
+    ],
+)
