@@ -27,6 +27,8 @@ const emptyDraft: PlannerDraftInput = {
   pantrySelections: [],
 };
 
+const targetMemberLimit = 20;
+
 const ageLabels: Readonly<Record<string, string>> = {
   post_weaning_to_2: "離乳食完了後〜2歳",
   age_3_5: "3〜5歳",
@@ -131,12 +133,15 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
     const eligibleMemberIds = new Set(safetyQuery.data.eligibleMemberIds);
     setValue(
       draftQuery.data === null
-        ? { ...emptyDraft, targetMemberIds: [...eligibleMemberIds] }
+        ? {
+            ...emptyDraft,
+            targetMemberIds: [...eligibleMemberIds].slice(0, targetMemberLimit),
+          }
         : {
             ...draftQuery.data,
-            targetMemberIds: draftQuery.data.targetMemberIds.filter((id) =>
-              eligibleMemberIds.has(id),
-            ),
+            targetMemberIds: draftQuery.data.targetMemberIds
+              .filter((id) => eligibleMemberIds.has(id))
+              .slice(0, targetMemberLimit),
           },
     );
     setInitialized(true);

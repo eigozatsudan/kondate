@@ -30,6 +30,7 @@ export function useDraftAutosave({
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const timerRef = useRef<number | null>(null);
   const operationNumberRef = useRef(0);
+  const conflictRef = useRef<DraftRevisionConflictError | null>(null);
   const serialized = JSON.stringify(value);
   const latestSerializedRef = useRef(serialized);
   const baselineSerializedRef = useRef(serialized);
@@ -38,6 +39,9 @@ export function useDraftAutosave({
   latestSerializedRef.current = serialized;
 
   useEffect(() => {
+    // 競合後に refetch された revision だけを古い表示値へ結び直すと他画面の保存を上書きするため、
+    // 明示的な再読み込みで画面全体が作り直されるまでは競合時点の revision を保持する。
+    if (conflictRef.current !== null) return;
     revisionRef.current = initialRevision;
     setSavedRevision(initialRevision);
     // サーバーから取得した revision と現在表示値を新しい保存基準とし、
@@ -47,9 +51,17 @@ export function useDraftAutosave({
 
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
+      if (conflictRef.current !== null) {
+        setState("error");
+        return Promise.reject(conflictRef.current);
+      }
       const operationNumber = ++operationNumberRef.current;
       setState("saving");
-      const operation = queueRef.current.then(() => save(next, revisionRef.current));
+      const operation = queueRef.current.then(() => {
+        // 競合前に予約済みだった後続保存も、先行保存の競合判明後は実行しない。
+        if (conflictRef.current !== null) throw conflictRef.current;
+        return save(next, revisionRef.current);
+      });
       queueRef.current = operation.then(
         (saved) => {
           revisionRef.current = saved.revision;
@@ -59,7 +71,10 @@ export function useDraftAutosave({
         },
         (error: unknown) => {
           if (operationNumber === operationNumberRef.current) setState("error");
-          if (error instanceof DraftRevisionConflictError) onConflict?.();
+          if (error instanceof DraftRevisionConflictError && conflictRef.current === null) {
+            conflictRef.current = error;
+            onConflict?.();
+          }
         },
       );
       return operation;

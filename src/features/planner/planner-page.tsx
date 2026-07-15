@@ -14,6 +14,8 @@ const genreLabels = {
   any: "おまかせ",
 } as const;
 const mainIngredientLimit = 8;
+const mainIngredientLengthLimit = 80;
+const targetMemberLimit = 20;
 const avoidIngredientLimit = 20;
 const avoidIngredientLengthLimit = 80;
 
@@ -97,7 +99,11 @@ export function PlannerForm({
               <input
                 type="checkbox"
                 checked={value.targetMemberIds.includes(member.id)}
-                disabled={member.blockedReason !== null}
+                disabled={
+                  member.blockedReason !== null ||
+                  (!value.targetMemberIds.includes(member.id) &&
+                    value.targetMemberIds.length >= targetMemberLimit)
+                }
                 onChange={(event) => {
                   update({
                     targetMemberIds: event.target.checked
@@ -111,6 +117,10 @@ export function PlannerForm({
             {member.blockedReason !== null && <p>{member.blockedReason}</p>}
           </div>
         ))}
+        {value.targetMemberIds.length >= targetMemberLimit &&
+          members.some(
+            (member) => member.blockedReason === null && !value.targetMemberIds.includes(member.id),
+          ) && <p>対象家族は20人までです。選択中の家族を外すと追加できます。</p>}
         {!hasEligibleMembers && (
           <p role="alert">献立を作れる家族がいません。家族設定を確認してください。</p>
         )}
@@ -137,9 +147,16 @@ export function PlannerForm({
           メイン食材
           <input
             value={ingredient}
-            maxLength={80}
             onChange={(event) => {
-              setIngredient(event.target.value);
+              const rawValue = event.target.value;
+              setIngredient(rawValue);
+              if (
+                Array.from(rawValue.normalize("NFKC").trim()).length <= mainIngredientLengthLimit
+              ) {
+                setIngredientError(null);
+              } else {
+                setIngredientError("メイン食材は1件80文字までです。");
+              }
             }}
           />
         </label>
@@ -147,6 +164,10 @@ export function PlannerForm({
           type="button"
           onClick={() => {
             const next = ingredient.normalize("NFKC").trim();
+            if (Array.from(next).length > mainIngredientLengthLimit) {
+              setIngredientError("メイン食材は1件80文字までです。");
+              return;
+            }
             if (
               next !== "" &&
               !value.mainIngredients.includes(next) &&
@@ -314,6 +335,7 @@ export function PlannerForm({
         type="button"
         disabled={
           blocked ||
+          saveState === "error" ||
           hasUnavailablePantrySelections ||
           !requiredChoicesComplete ||
           isGenerating ||

@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
+import { DraftRevisionConflictError } from "./planner-api";
 import { useDraftAutosave } from "./use-draft-autosave";
 
 const base: PlannerDraftInput = {
@@ -120,4 +121,30 @@ it("flush は保留中 timer を置換し最新値の DB row を返す", async (
   expect(save).toHaveBeenCalledTimes(1);
   expect(save).toHaveBeenCalledWith(latest, 4);
   expect(row).toMatchObject({ memo: "野菜を多めに", revision: 5 });
+});
+
+it("競合後は refetch revision に古い表示値を再束縛せず flush も拒否する", async () => {
+  vi.useFakeTimers();
+  const conflict = new DraftRevisionConflictError();
+  const save = vi.fn().mockRejectedValue(conflict);
+  const stale = { ...base, mealType: "dinner" as const, memo: "Aの入力" };
+  const { rerender, result } = renderHook(
+    ({ value, initialRevision }) =>
+      useDraftAutosave({ value, enabled: true, initialRevision, save }),
+    { initialProps: { value: base, initialRevision: 1 } },
+  );
+
+  rerender({ value: stale, initialRevision: 1 });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(result.current.state).toBe("error");
+
+  rerender({ value: stale, initialRevision: 2 });
+  const editedStale = { ...stale, budgetPreference: "economy" as const };
+  rerender({ value: editedStale, initialRevision: 2 });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  await expect(result.current.flush()).rejects.toBe(conflict);
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(stale, 1);
+  expect(result.current.revision).toBe(1);
 });

@@ -238,6 +238,107 @@ it("メイン食材を8件までに制限し契約外の値を作らない", asy
   ).toBe(true);
 });
 
+it("NFKC正規化後に80 Unicode code pointsを超えるメイン食材を追加しない", () => {
+  const onChange = vi.fn();
+  render(
+    <PlannerForm
+      initialValue={initialValue}
+      members={[]}
+      pantryItems={[]}
+      pantryItemsStatus="loading"
+      saveState="saved"
+      onChange={onChange}
+    />,
+  );
+  onChange.mockClear();
+
+  fireEvent.change(screen.getByLabelText("メイン食材"), {
+    target: { value: "㍍".repeat(80) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "追加" }));
+
+  expect(screen.getByText("メイン食材は1件80文字までです。")).toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("メイン食材")).toHaveValue("㍍".repeat(80));
+});
+
+it("対象家族は20人を上限にし、超過候補を理由付きで無効化しつつ選択済みは外せる", async () => {
+  const user = userEvent.setup();
+  const members = Array.from({ length: 21 }, (_, index) => ({
+    id: `70000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    displayName: `家族${String(index + 1)}`,
+    ageBandLabel: "大人",
+    allergyLabel: "アレルギーなし",
+    safetyLabels: [],
+    blockedReason: null,
+  }));
+  const selectedIds = members.slice(0, 20).map((member) => member.id);
+  const onChange = vi.fn();
+  render(
+    <PlannerForm
+      initialValue={{ ...initialValue, targetMemberIds: selectedIds }}
+      members={members}
+      pantryItems={[]}
+      pantryItemsStatus="loading"
+      saveState="saved"
+      onChange={onChange}
+    />,
+  );
+
+  expect(screen.getByRole("checkbox", { name: "家族21" })).toBeDisabled();
+  expect(
+    screen.getByText("対象家族は20人までです。選択中の家族を外すと追加できます。"),
+  ).toBeInTheDocument();
+
+  await user.click(screen.getByRole("checkbox", { name: "家族1" }));
+  expect(onChange).toHaveBeenLastCalledWith(
+    expect.objectContaining({ targetMemberIds: selectedIds.slice(1) }),
+  );
+  expect(
+    plannerDraftInputSchema.safeParse({
+      ...initialValue,
+      targetMemberIds: selectedIds.slice(1),
+    }).success,
+  ).toBe(true);
+});
+
+it("保存競合中は入力を保持したまま生成を開始しない", () => {
+  const flush = vi.fn();
+  const onGenerate = vi.fn();
+  render(
+    <PlannerForm
+      initialValue={{
+        ...initialValue,
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        cuisineGenre: "japanese",
+        memo: "Aの入力",
+      }}
+      members={[
+        {
+          id: initialValue.targetMemberIds[0]!,
+          displayName: "子ども",
+          ageBandLabel: "3〜5歳",
+          allergyLabel: "アレルギーなし",
+          safetyLabels: [],
+          blockedReason: null,
+        },
+      ]}
+      pantryItems={[]}
+      pantryItemsStatus="loading"
+      saveState="error"
+      onChange={vi.fn()}
+      flush={flush}
+      onGenerate={onGenerate}
+    />,
+  );
+
+  expect(screen.getByLabelText("自由メモ")).toHaveValue("Aの入力");
+  expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  expect(flush).not.toHaveBeenCalled();
+  expect(onGenerate).not.toHaveBeenCalled();
+});
+
 it("避ける食材を20件かつ各80 Unicode code points以内へ入力時に制限する", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();
