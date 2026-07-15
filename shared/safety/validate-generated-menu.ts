@@ -36,6 +36,10 @@ function sameSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean
   return left.size === right.size && [...left].every((value) => right.has(value));
 }
 
+function memberPairKey(householdMemberId: string, anonymousRef: string): string {
+  return `${householdMemberId}\u0000${anonymousRef}`;
+}
+
 export function validateGeneratedMenu(
   menu: unknown,
   context: GenerationContext,
@@ -58,7 +62,26 @@ export function validateGeneratedMenu(
   const requestedTargetIds = new Set(context.submission.targetMemberIds);
   const targetRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
   const safetyRefs = new Set(context.safety.members.map((member) => member.anonymousRef));
-  if (!sameSet(targetIds, requestedTargetIds) || !sameSet(targetRefs, safetyRefs)) {
+  const targetPairs = new Set(
+    context.targetMembers.map((member) =>
+      memberPairKey(member.householdMemberId, member.anonymousRef),
+    ),
+  );
+  const safetyPairs = new Set(
+    context.safety.members.map((member) =>
+      memberPairKey(member.householdMemberId, member.anonymousRef),
+    ),
+  );
+  const preferencePairs = new Set(
+    context.memberPreferences.map((member) =>
+      memberPairKey(member.householdMemberId, member.anonymousMemberRef),
+    ),
+  );
+  if (
+    !sameSet(targetIds, requestedTargetIds) ||
+    !sameSet(targetRefs, safetyRefs) ||
+    !sameSet(targetPairs, safetyPairs)
+  ) {
     issues.push({
       code: "target_member_mismatch",
       path: "targetMembers",
@@ -71,6 +94,49 @@ export function validateGeneratedMenu(
       code: "target_member_mismatch",
       path: "adaptations",
       message: "対象メンバーの取り分けが生成条件と一致しません",
+    });
+  }
+  if (!sameSet(targetPairs, preferencePairs)) {
+    issues.push({
+      code: "member_preference_mismatch",
+      path: "memberPreferences",
+      message: "対象メンバーの嗜好条件が不足または不整合です",
+    });
+  }
+
+  const dictionary = context.safety.allergenDictionary;
+  const registeredAllergenIds = new Set(
+    context.safety.members.flatMap((member) =>
+      member.allergyStatus === "registered" ? member.allergenIds : [],
+    ),
+  );
+  const catalogIds = new Set(dictionary.catalog.map((entry) => entry.id));
+  const aliasAllergenIds = new Set(dictionary.aliases.map((alias) => alias.allergenId));
+  const dictionaryInvalid =
+    context.safety.dictionaryVersion !== dictionary.version ||
+    dictionary.catalog.some((entry) => entry.catalogVersion !== dictionary.version) ||
+    dictionary.aliases.some((alias) => alias.dictionaryVersion !== dictionary.version) ||
+    [...registeredAllergenIds].some(
+      (allergenId) => !catalogIds.has(allergenId) || !aliasAllergenIds.has(allergenId),
+    );
+  const childAgeBands = new Set(["post_weaning_to_2", "age_3_5"]);
+  const childRuleMissing = context.safety.members.some(
+    (member) =>
+      childAgeBands.has(member.ageBand) &&
+      !context.safety.foodSafetyRules.some((rule) =>
+        rule.appliesToAgeBands.includes(member.ageBand),
+      ),
+  );
+  const foodRulesInvalid =
+    childRuleMissing ||
+    context.safety.foodSafetyRules.some(
+      (rule) => rule.ruleVersion !== context.safety.foodRuleVersion,
+    );
+  if (dictionaryInvalid || foodRulesInvalid) {
+    issues.push({
+      code: "safety_context_incomplete",
+      path: "safety",
+      message: "最新の安全辞書または食品安全ルールを適用できません",
     });
   }
 
@@ -231,20 +297,21 @@ export function validateGeneratedMenu(
         message: "優先食材を使わない理由がありません",
       });
     }
-    if (usage.usageStatus !== "used") continue;
     const linked = linkedDishIds.get(usage.selectionId) ?? new Set<string>();
     const trustedName = trusted === undefined ? null : normalizeFoodText(trusted.name);
     const linkedNames = linkedIngredientNames.get(usage.selectionId) ?? [];
     const hasTrustedIngredient =
       trustedName !== null && linkedNames.some((name) => normalizeFoodText(name) === trustedName);
-    if (
+    const commonProvenanceInvalid =
       requested === undefined ||
       trusted === undefined ||
       usage.priority !== requested.priority ||
-      normalizeFoodText(usage.pantryItemName) !== trustedName ||
-      !sameSet(linked, new Set(usage.dishIds)) ||
-      !hasTrustedIngredient
-    ) {
+      normalizeFoodText(usage.pantryItemName) !== trustedName;
+    const linkageInvalid =
+      usage.usageStatus === "used"
+        ? !sameSet(linked, new Set(usage.dishIds)) || !hasTrustedIngredient
+        : linked.size > 0 || usage.dishIds.length > 0;
+    if (commonProvenanceInvalid || linkageInvalid) {
       issues.push({
         code: "pantry_usage_link_mismatch",
         path: `pantryUsage.${usage.selectionId}`,

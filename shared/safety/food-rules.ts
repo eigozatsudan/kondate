@@ -43,6 +43,22 @@ export function evaluateFoodSafetyRules(
       [dish.name, dish.description, ...dish.steps.map((step) => step.instruction)],
     ]),
   );
+  const adaptationEvidenceText = (
+    adaptation: (typeof menu.adaptations)[number],
+    kind: SafetyAction["kind"],
+  ): boolean =>
+    actionEvidence[kind].test(
+      [
+        ...(dishText.get(adaptation.dishId) ?? []),
+        adaptation.portionText,
+        adaptation.additionalCutting,
+        adaptation.additionalHeating,
+        adaptation.additionalSeasoning,
+        adaptation.servingCheck,
+      ]
+        .filter((text): text is string => text !== null)
+        .join(" "),
+    );
   for (const member of context.members) {
     const memberActions = menu.adaptations
       .filter((adaptation) => adaptation.anonymousMemberRef === member.anonymousRef)
@@ -54,6 +70,7 @@ export function evaluateFoodSafetyRules(
           action.anonymousMemberRef === member.anonymousRef &&
           stepOwner.get(action.beforeRecipeStepId) === action.dishId &&
           actionEvidence[action.kind].test(action.instruction) &&
+          adaptationEvidenceText(adaptation, action.kind) &&
           !contradictionPattern.test(
             [
               ...(dishText.get(action.dishId) ?? []),
@@ -88,13 +105,14 @@ export function evaluateFoodSafetyRules(
           source.ingredientId === null || source.dishId === null || rule.requiredSafetyTag === null
             ? undefined
             : memberActions.find(
-                ({ action }) =>
+                ({ action, adaptation }) =>
                   action.kind === rule.requiredSafetyTag &&
                   action.dishId === source.dishId &&
                   action.ingredientId === source.ingredientId &&
                   action.anonymousMemberRef === member.anonymousRef &&
                   stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
-                  actionEvidence[action.kind].test(action.instruction),
+                  actionEvidence[action.kind].test(action.instruction) &&
+                  adaptationEvidenceText(adaptation, action.kind),
               );
         const adaptationText = memberActions
           .filter(({ action }) => action.dishId === source.dishId)

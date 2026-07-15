@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { validateGeneratedMenu } from "./validate-generated-menu.js";
 import {
+  hardBeanAndReviewedNutRule,
   makeCurrentSafetyContext,
   makeGeneratedMenu,
   makeGenerationContext,
@@ -234,4 +235,166 @@ it("does not count a negated timeline-only mention as a requested main ingredien
   });
 
   expectIssueCodes(validateGeneratedMenu(menu, context), ["main_ingredient_missing"]);
+});
+
+it("T5-FR-02 rejects missing preferences for a target member", () => {
+  expectIssueCodes(
+    validateGeneratedMenu(makeGeneratedMenu(), makeGenerationContext({ memberPreferences: [] })),
+    ["member_preference_mismatch"],
+  );
+});
+
+it("T5-FR-02 rejects swapped UUID and anonymous-ref ownership", () => {
+  const firstMemberId = "55000000-0000-4000-8000-000000000001";
+  const secondMemberId = "55000000-0000-4000-8000-000000000002";
+  const base = makeGenerationContext();
+  const secondAdaptation = {
+    ...makeGeneratedMenu().adaptations[0]!,
+    id: "57000000-0000-4000-8000-000000000002",
+    anonymousMemberRef: "member_2",
+    safetyActions: [],
+  };
+  const context = makeGenerationContext({
+    submission: {
+      ...base.submission,
+      targetMemberIds: [firstMemberId, secondMemberId],
+    },
+    targetMembers: [
+      { householdMemberId: firstMemberId, anonymousRef: "member_1", displayNameSnapshot: "家族1" },
+      { householdMemberId: secondMemberId, anonymousRef: "member_2", displayNameSnapshot: "家族2" },
+    ],
+    safety: makeCurrentSafetyContext({
+      members: [
+        { ...base.safety.members[0]!, householdMemberId: firstMemberId, anonymousRef: "member_2" },
+        { ...base.safety.members[0]!, householdMemberId: secondMemberId, anonymousRef: "member_1" },
+      ],
+    }),
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        householdMemberId: firstMemberId,
+        anonymousMemberRef: "member_2",
+      },
+      {
+        ...base.memberPreferences[0]!,
+        householdMemberId: secondMemberId,
+        anonymousMemberRef: "member_1",
+      },
+    ],
+  });
+
+  expectIssueCodes(
+    validateGeneratedMenu(
+      makeGeneratedMenu({
+        adaptations: [makeGeneratedMenu().adaptations[0]!, secondAdaptation],
+      }),
+      context,
+    ),
+    ["target_member_mismatch"],
+  );
+});
+
+it("T5-FR-03 rejects an incomplete or mixed-version allergen context", () => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    safety: makeCurrentSafetyContext({
+      dictionaryVersion: "jp-caa-2026-05.v2",
+      members: [
+        {
+          ...base.safety.members[0]!,
+          allergyStatus: "registered",
+          allergenIds: ["egg"],
+        },
+      ],
+      allergenDictionary: {
+        version: "jp-caa-2026-04.v1",
+        catalog: [],
+        aliases: [],
+      },
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), context), [
+    "safety_context_incomplete",
+  ]);
+});
+
+it("T5-FR-03 rejects missing or mixed-version child food rules", () => {
+  const base = makeGenerationContext();
+  const child = { ...base.safety.members[0]!, ageBand: "age_3_5" as const };
+  const missingRules = makeGenerationContext({
+    safety: makeCurrentSafetyContext({ members: [child], foodSafetyRules: [] }),
+  });
+  const mixedRules = makeGenerationContext({
+    safety: makeCurrentSafetyContext({
+      members: [child],
+      foodSafetyRules: [
+        { ...hardBeanAndReviewedNutRule, ruleVersion: "jp-caa-child-shape-2026-06.v0" },
+      ],
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), missingRules), [
+    "safety_context_incomplete",
+  ]);
+  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), mixedRules), [
+    "safety_context_incomplete",
+  ]);
+});
+
+it("T5-FR-05 rejects forged provenance and ingredient linkage on an unused pantry row", () => {
+  const pantryItemId = "58000000-0000-4000-8000-000000000001";
+  const selectionId = "58000000-0000-4000-8000-000000000002";
+  const base = makeGeneratedMenu();
+  const firstDish = base.dishes[0]!;
+  const menu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [
+              { ...dish.ingredients[0]!, name: "にんじん", pantrySelectionId: selectionId },
+            ],
+          }
+        : dish,
+    ),
+    pantryUsage: [
+      {
+        selectionId,
+        pantryItemId,
+        pantryItemName: "偽装食材名",
+        priority: "prefer_use",
+        usageStatus: "unused",
+        plannedQuantity: null,
+        inventoryQuantity: null,
+        shortageQuantity: null,
+        unit: null,
+        dishIds: [firstDish.id],
+        unusedReason: "使わなかった",
+      },
+    ],
+  });
+  const generation = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: {
+      ...generation.submission,
+      pantrySelections: [{ pantryItemId, priority: "prefer_use" }],
+    },
+    pantryItems: [
+      {
+        id: pantryItemId,
+        userId: "59000000-0000-4000-8000-000000000001",
+        name: "にんじん",
+        quantity: 1,
+        unit: "本",
+        expiresOn: null,
+        expirationType: null,
+        openedState: null,
+        createdAt: "2026-07-15T00:00:00+09:00",
+        updatedAt: "2026-07-15T00:00:00+09:00",
+      },
+    ],
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["pantry_usage_link_mismatch"]);
 });

@@ -199,3 +199,49 @@ it("rejects a required household action contradicted by its dish recipe", () => 
     expect.objectContaining({ code: "required_safety_action" }),
   ]);
 });
+
+it("T5-FR-01 rejects action-only mitigation without recipe or adaptation evidence", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const grape = { ...firstDish.ingredients[0]!, name: "ぶどう" };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [grape] } : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: null,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "通常どおり取り分ける",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "quarter_round_food",
+            dishId: firstDish.id,
+            ingredientId: grape.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "4等分する",
+          },
+        ],
+      },
+    ],
+  });
+  const grapeRule = {
+    ...hardBeanAndReviewedNutRule,
+    id: "grapes_under_6",
+    matchTerms: ["ぶどう"],
+    ruleKind: "requires_tag" as const,
+    requiredSafetyTag: "quarter_round_food" as const,
+  };
+
+  expect(
+    evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
+  ).toEqual([expect.objectContaining({ code: "age_shape_rule" })]);
+});
