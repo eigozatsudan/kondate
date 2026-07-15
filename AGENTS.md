@@ -1,39 +1,34 @@
-# Repository Guidelines
+# リポジトリガイドライン
 
-## Project Structure & Module Organization
+## プロジェクト概要
 
-- `src/` contains the React/Vite application, providers, styles, and browser tests.
-- `shared/contracts/` holds domain and HTTP contracts shared by the client and server.
-- `netlify/functions/` contains serverless API handlers; keep secrets and provider calls server-side.
-- `supabase/migrations/`, `supabase/seed.sql`, and `supabase/tests/database/` define and test the database.
-- `tools/` contains local OAuth/OpenRouter mocks and their tests; `tests/tooling/` tests project tooling.
-- `e2e/specs/` is reserved for Playwright browser tests, while `docs/` stores design and implementation notes.
+主に主婦などの家庭料理を作る一般の人向けのメニュー作成WebAppです。
+本番デプロイ先は、NetlifyとSupabaseです。
 
-## Build, Test, and Development Commands
+## ビルド、テスト、開発コマンド
 
-Use Node 24 (`engines` in `package.json`) and install dependencies with `npm ci`.
+Node 24（`package.json` の `engines` を参照）を使用し、依存関係Docker上で `npm ci` でインストールします。
+基本的にコマンドはDocker経由で行うこと。
+- `docker compose run --rm --no-deps app npm run dev` は Vite 開発サーバーを起動します。
+- `docker compose run --rm --no-deps app npm run build` は TypeScript プロジェクトのチェックを実行し、本番環境用の Vite ビルドを作成します。
+- `docker compose run --rm --no-deps app npm run lint`、`docker compose run --rm --no-deps app npm run format:check`、`docker compose run --rm --no-deps app npm run typecheck` は、スタイル、フォーマット、型を検証します。
+- `docker compose run --rm --no-deps app npm test` は Vitest をウォッチモードで実行します。CI スタイルのワンショット実行には `docker compose run --rm --no-deps app npx vitest run` を使用してください。 - `docker compose run --rm --no-deps app npm run e2e` は、設定済みのローカルアプリケーションに対して Playwright テストを実行します。
+- `docker compose up -d --wait` は、ローカルアプリケーション/Supabase スタックを起動します。`docker compose run --rm --no-deps app npm run db:reset` はスタックを再作成し、`docker compose run --rm --no-deps app npm run db:test` は pgTAP データベーステストを実行します。
 
-- `npm run dev` starts the Vite development server.
-- `npm run build` runs TypeScript project checks and creates the production Vite build.
-- `npm run lint`, `npm run format:check`, and `npm run typecheck` validate style, formatting, and types.
-- `npm test` runs Vitest in watch mode; use `npx vitest run` for a one-shot CI-style run.
-- `npm run e2e` runs Playwright tests against the configured local app.
-- `docker compose up -d --wait` starts the local application/Supabase stack; `npm run db:reset` recreates it and `npm run db:test` runs pgTAP database tests.
+## コーディングスタイルと命名規則
 
-## Coding Style & Naming Conventions
+2スペースのインデント、二重引用符、セミコロン、Prettier フォーマットを使用してください。厳密で明示的な TypeScript を推奨し、`any` や安全でないキャストは避けてください。React コンポーネント/型には `PascalCase`、変数/関数には `camelCase` を使用し、`*.test.ts`/`*.test.tsx` のような分かりやすいファイル名を使用してください。適切な箇所で、設定済みの `@/` および `@shared/` エイリアスを使用してください。
 
-Use 2-space indentation, double quotes, semicolons, and Prettier formatting. Prefer strict, explicit TypeScript; avoid `any` and unsafe casts. Use `PascalCase` for React components/types, `camelCase` for variables/functions, and descriptive `*.test.ts`/`*.test.tsx` names. Use the configured `@/` and `@shared/` aliases where appropriate.
+コード内のコメントは必ず日本語で書き、あとから人間がレビューしやすいように、背景・意図・思考を考えかつ具体的に説明する。
 
-コード内のコメントは必ず日本語で書き、あとから人間がレビューしやすいように、背景・意図・制約を簡潔かつ具体的に説明する。コードから明らかな処理の説明や、古くなりやすい実装の逐語的な説明は避ける。
+## テストガイドライン
 
-## Testing Guidelines
+対象となるコードの横に、焦点を絞った Vitest/React Testing Library テストを追加します。ユーザー フローには Playwright を使用し、スキーマ/RLS 動作には pgTAP を使用します。変更を送信する前に、「npx vitest run」、「npm run e2e」、および関連するデータベース テストを実行します。テストを決定論的に保ち、カバレッジに依存する動作が変更された場合は更新します。
 
-Add focused Vitest/React Testing Library tests beside the code they cover. Use Playwright for user flows and pgTAP for schema/RLS behavior. Run `npx vitest run`, `npm run e2e`, and relevant database tests before submitting changes; keep tests deterministic and update coverage-sensitive behavior when it changes.
+## コミットおよびプルリクエストのガイドライン
 
-## Commit & Pull Request Guidelines
+コミットメッセージは必ず日本語で書き、従来のコミット形式（例: `feat: 献立生成を追加`、`fix: 認証状態の復元を修正`、`chore: 開発設定を整理`）にする。ファイル名は短く、変更内容がわかる表現にする。リクエストには内容、実行した検証コマンド、関連問題や設計資料を記載し、UI変更にはスクリーンショットを添付データベース。マイグレーション、環境変数、セキュリティへの影響、ローカルスタックの変更は安全にする。
 
-コミットメッセージは必ず日本語で書き、Conventional Commits形式（例: `feat: 献立生成を追加`、`fix: 認証状態の復元を修正`、`chore: 開発設定を整理`）にする。件名は短く、変更内容が分かる表現にする。Pull Requestには変更内容、実行した検証コマンド、関連Issueや設計資料を記載し、UI変更にはスクリーンショットを添付する。データベースマイグレーション、環境変数、セキュリティへの影響、ローカルスタックの変更は明記する。
+## セキュリティと構成のヒント
 
-## Security & Configuration Tips
-
-Never commit secrets or generated local credentials. Keep OpenRouter and service secrets in server-side environment variables; only publish the intended Supabase client configuration. Treat migrations and RLS policies as production-sensitive, and use the local Docker stack to validate schema changes.
+シークレットや生成されたローカル認証情報は決してコミットしないでください。 OpenRouter とサービスのシークレットをサーバー側の環境変数に保持します。目的の Supabase クライアント構成のみを公開します。移行と RLS ポリシーを運用環境に依存したものとして扱い、ローカルの Docker スタックを使用してスキーマの変更を検証します。
