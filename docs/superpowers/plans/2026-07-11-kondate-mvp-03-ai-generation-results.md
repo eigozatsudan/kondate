@@ -1561,7 +1561,7 @@ $$;
 
 `p_expired_checks`の要素型は最後まで`{pantryItemId,checkedAt}`だけであり、`checkedJstDate`をFunction、repository、HMAC、fixtureへ追加しない。上のpersistenceは一致する`checkedAt`を一度だけ`timestamptz`へ変換し、`(v_checked_at at time zone 'Asia/Tokyo')::date`で保存日を導出する。一致するcheckがなければ`SELECT INTO`で`v_checked_at`がNULLへ戻り、両列ともNULLになる。
 
-Task 15のcanonical success fixtureは、`checkedAt='2026-07-10 15:00:00+00'`が`expired_item_check_jst_date='2026-07-11'`として保存されること、同じ行のpaired-null式がtrueであること、およびcheckを持たない2件目のusageで両列がNULLになることをDO block内の`RAISE`比較で検証する。同じfixtureはcanonical labelの`sourceText='鶏もも肉'`が`source_text_snapshot='鶏もも肉'`として完全一致で保存されることも検証する。さらにtable CHECK自体の退行を防ぐため、次のassertionをTask 15のcanonical fixture DO blockとtop-level `pass(...)`の直後、`finish()`より前へ追加する。fixture作成前のTask 4位置へ置いて0行UPDATEにしてはならない。
+Task 15のcanonical success fixtureは、`checkedAt='2026-07-10 15:00:00+00'`が`expired_item_check_jst_date='2026-07-11'`として保存されること、同じ行のpaired-null式がtrueであること、およびcheckを持たない2件目のusageで両列がNULLになることをDO block内の`RAISE`比較で検証する。同じfixtureはseedで`milk / processed / requires_label_confirmation=true`としてreview済みの`ホワイトソース`を使い、ingredient flag、pantry live row/usage/link、canonical labelの`sourceText`、保存後の`source_text_snapshot`が完全一致することも検証する。さらにtable CHECK自体の退行を防ぐため、次のassertionをTask 15のcanonical fixture DO blockとtop-level `pass(...)`の直後、`finish()`より前へ追加する。fixture作成前のTask 4位置へ置いて0行UPDATEにしてはならない。
 
 ```sql
 select throws_ok($$
@@ -3608,6 +3608,8 @@ export function makeMenuResultViewModel(): MenuResultViewModel {
       allergenName: "小麦",
       memberLabel: "子ども",
       confirmationStatus: item.confirmationStatus,
+      requirementSafetyFingerprint: "a".repeat(64),
+      isCurrent: true,
       confirmedAt: item.confirmedAt,
       confirmedBy: item.confirmedBy,
     }],
@@ -4037,7 +4039,7 @@ git commit -m "test: verify recoverable ai generation"
 - `runGeneration()` executes `validateGenerationPreflight(context)` before `repository.markSent`. Final success re-locks the current member/allergy/catalog/rule/pantry rows and compares the authoritative fingerprint inside the persistence RPC.
 - Final success inserts every validator-returned ingredient-bound action into `menu_safety_actions` and each validator-returned canonical `sourceText` into immutable `menu_label_confirmations.source_text_snapshot` in the same transaction. The normal `success` fixture contains at least one action and one label snapshot; DB count/value, RLS aggregate readback, `MenuResultViewModel`, and rendered instruction/source text must all match exactly.
 - Plan 3's finalizer owns one forward-compatible `private.assign_regeneration_lineage(...)` hook. Migration `020` installs a new-menu no-op stub and calls it inside `finalize_ai_generation_success` after aggregate insertion but before quota/draft/request completion; Plan 4 replaces only that hook in migration `030`. Regeneration reason text travels as typed RPC arguments from the in-memory HMAC-bound command and is never written to the private ledger.
-- `private.lock_and_assert_current_safety_fingerprint(user_id,target_member_ids,expected)` is the sole SQL lock/recompute boundary for household members, allergies, and catalog/rule versions. Finalization calls it before persistence. Plan 3 creates the sole public `confirm_menu_label_confirmation(uuid,uuid,text)` immediately after this helper and its revokes; Plan 4 revalidation reconciliation reuses the same revoked private helper through its owner-checking security-definer RPC.
+- `private.lock_and_assert_current_safety_fingerprint(user_id,target_member_ids,expected)` is the sole SQL lock/recompute boundary for household members, allergies, and catalog/rule versions. Finalization calls it before persistence. Plan 3 creates the sole public `confirm_menu_label_confirmation(uuid,uuid,text)` immediately after this helper and its revokes; its direct database boundary returns empty for a non-canonical or out-of-range expected fingerprint before invoking the helper. Plan 4 revalidation reconciliation reuses the same revoked private helper through its owner-checking security-definer RPC.
 - `releaseQuota` is the only TypeScript source for the release-locked tuple `{ userDailySuccessLimit: 5, userDailyExternalCallLimit: 12, userShortWindowExternalCallLimit: 4, userShortWindowSeconds: 600 }`. All four environment keys are required exact literals; PostgreSQL independently constrains/guards the same values. A higher IP ceiling is only an outer flood control and must not merge distinct users on a shared connection.
 - The authoritative external-attempt tables are exactly `private.ai_user_daily_external_attempts` and `private.ai_user_rate_windows`; Plan 6 reuses those names for operations and cleanup.
 - A synchronous invocation has a 50,000 ms deadline. Each OpenRouter fetch gets at most 20,000 ms. Timeout is terminal and never repaired; repair starts only when at least 20,000 ms plus 2,000 ms finalization reserve remains.
@@ -4433,6 +4435,14 @@ declare
   v_target_member_ids uuid[];
 begin
   if v_user_id is null then return; end if;
+  if p_expected_safety_fingerprint is null
+     or p_expected_safety_fingerprint is distinct from btrim(
+       p_expected_safety_fingerprint,
+       U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+     )
+     or char_length(p_expected_safety_fingerprint) not between 1 and 200 then
+    return;
+  end if;
   select array_agg(target.household_member_id order by target.anonymous_ref)
     into v_target_member_ids
   from public.menu_target_members target
@@ -4466,7 +4476,7 @@ grant execute on function public.confirm_menu_label_confirmation(uuid,uuid,text)
   to authenticated;
 ```
 
-この位置が`confirm_menu_label_confirmation`の唯一の作成箇所である。target member IDは必ず`anonymous_ref`順でhelperへ渡し、helperの現在値lock/recomputeと保存済み行の`requirement_safety_fingerprint`一致の両方を通ったpending current rowだけを更新する。pgTAPはnull auth、wrong menu/owner、unknown ID、archived row、replay、stale stored fingerprint、changed current safety、およびcurrent ownerの成功遷移を個別に検証する。`pg_proc`/`pg_namespace`で同名かつ`pronargs = 2`の関数が0件、3引数関数が1件だけであること、およびauthenticatedだけが3引数関数を実行できることも固定し、2引数overloadは作成・grant・呼出しのいずれにも残さない。
+この位置が`confirm_menu_label_confirmation`の唯一の作成箇所である。direct RPC boundaryはexpected fingerprintをUnicode whitespace trim済み1〜200文字へ制限し、NULL、blank、前後whitespace付き、201文字をhelper呼出し前に空結果で拒否する。target member IDは必ず`anonymous_ref`順でhelperへ渡し、helperの現在値lock/recomputeと保存済み行の`requirement_safety_fingerprint`一致の両方を通ったpending current rowだけを更新する。pgTAPはnull auth、invalid expected fingerprintのexact vector `NULL`、`' '`、`U&'\3000'||repeat('a',64)||U&'\3000'`、`repeat('a',201)`（いずれも行不変かつhelper由来例外なし）、wrong menu/owner、unknown ID、archived row、replay、stale stored fingerprint、changed current safety、およびcurrent ownerの成功遷移を個別に検証する。`pg_proc`/`pg_namespace`で同名かつ`pronargs = 2`の関数が0件、3引数関数が1件だけであること、およびauthenticatedだけが3引数関数を実行できることも固定し、2引数overloadは作成・grant・呼出しのいずれにも残さない。
 
 次のfixtureは実在owner/member、標準allergy、seed済みcatalog/rule versionを作成・参照し、このproduction canonical builderの結果だけをfinalizerへ渡す。test-local fingerprint helperは作らない。
 
@@ -4504,13 +4514,13 @@ begin
       'mealType','dinner','cuisineGenre','japanese','servings',2,
       'totalElapsedMinutes',15,'safetyTags','[]'::jsonb,
       'dishes',jsonb_build_array(jsonb_build_object(
-        'id',p_dish_id,'role','main','position',1,'name','鶏肉と白菜の煮物',
+        'id',p_dish_id,'role','main','position',1,'name','白菜のクリーム煮',
         'description','短時間の煮物','cookingTimeMinutes',15,
         'ingredients',jsonb_build_array(jsonb_build_object(
-          'id',p_ingredient_id,'position',1,'name','鶏もも肉',
+          'id',p_ingredient_id,'position',1,'name','ホワイトソース',
           'quantityValue',200,'quantityText','200g','unit','g',
-          'storeSection','meat_fish','pantrySelectionId',p_pantry_selection_id,
-          'labelConfirmationRequired',false)),
+          'storeSection','seasonings','pantrySelectionId',p_pantry_selection_id,
+          'labelConfirmationRequired',true)),
         'steps',jsonb_build_array(jsonb_build_object(
           'id',p_step_id,'position',1,'instruction','材料を中心まで加熱する'))),
         jsonb_build_object(
@@ -4547,11 +4557,11 @@ begin
           'kind','heat_thoroughly','dishId',p_dish_id,
           'ingredientId',p_ingredient_id,'anonymousMemberRef','member_1',
           'beforeRecipeStepId',p_step_id,
-          'instruction','鶏肉を中心まで十分に加熱する')))),
+          'instruction','材料を中心まで十分に加熱する')))),
       'pantryUsage',jsonb_build_array(jsonb_build_object(
         'selectionId',p_pantry_selection_id,'pantryItemId',p_pantry_item_id,
-        'pantryItemName','期限確認食材','priority','must_use','usageStatus','used',
-        'plannedQuantity',1,'inventoryQuantity',1,'shortageQuantity',0,'unit','g',
+        'pantryItemName','ホワイトソース','priority','must_use','usageStatus','used',
+        'plannedQuantity',200,'inventoryQuantity',200,'shortageQuantity',0,'unit','g',
         'dishIds',jsonb_build_array(p_dish_id),'unusedReason',null),
         jsonb_build_object(
           'selectionId',v_unchecked_selection_id,'pantryItemId',null,
@@ -4560,7 +4570,7 @@ begin
           'unit',null,'dishIds','[]'::jsonb,'unusedReason','今回は使わない')),
       'labelConfirmations',jsonb_build_array(jsonb_build_object(
         'sourceType','ingredient','sourceId',p_ingredient_id,
-        'sourcePath','dishes.0.ingredients.0.name','sourceText','鶏もも肉',
+        'sourcePath','dishes.0.ingredients.0.name','sourceText','ホワイトソース',
         'allergenId','milk','anonymousMemberRef','member_1',
         'dictionaryVersion',v_context.allergen_version,
         'confirmationStatus','pending'))),
@@ -4602,7 +4612,7 @@ begin
   values('21000000-0000-4000-8000-000000000072',v_owner,v_member,'milk');
   insert into public.pantry_items(
     id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state
-  ) values(v_pantry_item,v_owner,'期限確認食材',1,'g','2026-07-10','use_by','opened');
+  ) values(v_pantry_item,v_owner,'ホワイトソース',200,'g','2026-07-10','use_by','opened');
   v_pantry_selections:=jsonb_build_array(jsonb_build_object(
     'pantryItemId',v_pantry_item,'priority','must_use'));
   select catalog_version into strict v_allergen_version
@@ -4653,6 +4663,24 @@ begin
       'actions',(select count(*) from public.menu_safety_actions
         where menu_id='60000000-0000-4000-8000-000000000080'
           and ingredient_id='62000000-0000-4000-8000-000000000080'),
+      'labelRequired',(select label_confirmation_required
+        from public.dish_ingredients
+        where id='62000000-0000-4000-8000-000000000080'),
+      'pantryLinked',(select pantry_selection_id='65000000-0000-4000-8000-000000000080'
+        from public.dish_ingredients
+        where id='62000000-0000-4000-8000-000000000080'),
+      'pantryName',(select pantry_name_snapshot
+        from public.generation_pantry_selections
+        where id='65000000-0000-4000-8000-000000000080'),
+      'pantryLiveName',(select name from public.pantry_items
+        where id='22000000-0000-4000-8000-000000000072'),
+      'reviewedAlias',(select exists(select 1 from public.allergen_aliases alias
+        where alias.allergen_id='milk' and alias.normalized_alias='ホワイトソース'
+          and alias.alias_kind='processed' and alias.requires_label_confirmation)),
+      'labelAllergen',(select allergen_id
+        from public.menu_label_confirmations
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and source_id='62000000-0000-4000-8000-000000000080'),
       'sourceSnapshot',(select source_text_snapshot
         from public.menu_label_confirmations
         where menu_id='60000000-0000-4000-8000-000000000080'
@@ -4671,7 +4699,9 @@ begin
     )) is distinct from jsonb_build_object(
       'menus',1,'targets',1,'dishes',3,'ingredients',3,'steps',3,
       'timeline',1,'adaptations',1,'actions',1,
-      'sourceSnapshot','鶏もも肉',
+      'labelRequired',true,'pantryLinked',true,'pantryName','ホワイトソース',
+      'pantryLiveName','ホワイトソース',
+      'reviewedAlias',true,'labelAllergen','milk','sourceSnapshot','ホワイトソース',
       'checkDate','2026-07-11','paired',true,'unchecked',1) then
     raise exception 'canonical finalizer did not commit every normalized child and ingredient-bound action';
   end if;
@@ -4770,7 +4800,7 @@ $test$;
 select pass('canonical finalization and both manual-delete/finalizer orderings are enforced');
 ```
 
-同じpgTAP fileでcanonical fixtureを複製し、`labelConfirmations[0]`から`sourceText`を削除したfinalizer callと、`sourceText='　鶏もも肉　'`（U+3000で前後をpadding）へ置換したcallを、それぞれ`23502`と`23514`で失敗させる。各caseは独立したrequest/menu UUIDを使い、`menus`、`menu_label_confirmations`、success quota、draft、request terminal stateが一切部分commitされないことを比較する。これによりPlan 2のNOT NULL/canonical CHECKだけでなく、Plan 3 persistenceが`v_label->>'sourceText'`を必ず渡し、canonical snapshotを完全一致で保存することをpgTAPで固定する。
+同じpgTAP fileでcanonical fixtureを複製し、`labelConfirmations[0]`から`sourceText`を削除したfinalizer callと、`sourceText='　ホワイトソース　'`（U+3000で前後をpadding）へ置換したcallを、それぞれ`23502`と`23514`で失敗させる。各caseは独立したrequest/menu UUIDを使い、`menus`、`menu_label_confirmations`、success quota、draft、request terminal stateが一切部分commitされないことを比較する。これによりPlan 2のNOT NULL/canonical CHECKだけでなく、Plan 3 persistenceが`v_label->>'sourceText'`を必ず渡し、canonical snapshotを完全一致で保存することをpgTAPで固定する。
 
 このfixtureはPlan 3 Task 4の旧signature用testを置換し、Task 15の唯一のfinalizer signature
 `public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz)`
@@ -5377,7 +5407,7 @@ if (!sent.sent) return toGenerationStatus(sent.record, key);
 
 `markSent` atomically converts one user-attempt reservation and one global reservation to sent. A sent attempt is never released. Repair calls `reserveRepairAttempt`, which atomically reserves both counters and fails on either limit.
 
-Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Immediately after both private-function revokes, Plan 3 installs the sole `public.confirm_menu_label_confirmation(uuid,uuid,text)` shown above. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation RPC; it consumes, and never recreates or overloads, Plan 3's confirmation RPC.
+Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Immediately after both private-function revokes, Plan 3 installs the sole `public.confirm_menu_label_confirmation(uuid,uuid,text)` shown above, including its helper-before-use expected-fingerprint boundary validation. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation RPC; it consumes, and never recreates or overloads, Plan 3's confirmation RPC.
 
 In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `regeneration_not_implemented`; revoke it from every external role. Replace the public finalizer signature once to append typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now`. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before the draft soft-delete helper call, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The finalizer then calls `private.soft_delete_generation_draft(v_request.user_id,v_request.draft_id,null)` with `PERFORM`; a NULL result is a successful no-op and is neither assigned nor inspected. The repository derives lineage only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Remove the old finalizer overload/grant, regenerate types, and add pgTAP proving a normal generation calls the null no-op while any non-null lineage fails atomically in Plan 3. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
 
