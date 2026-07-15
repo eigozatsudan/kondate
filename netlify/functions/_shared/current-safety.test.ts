@@ -221,6 +221,32 @@ describe("current safety data boundary", () => {
     expectSafetyRulesUnavailable(mutate());
   });
 
+  it.each([
+    [
+      "missing required_safety_tag",
+      (rule: SafetyRuleTestRow) => {
+        Reflect.deleteProperty(rule, "required_safety_tag");
+      },
+    ],
+    [
+      "undefined required_safety_tag",
+      (rule: SafetyRuleTestRow) => {
+        Reflect.set(rule, "required_safety_tag", undefined);
+      },
+    ],
+    [
+      "non-string required_safety_tag",
+      (rule: SafetyRuleTestRow) => {
+        Reflect.set(rule, "required_safety_tag", Number.NaN);
+      },
+    ],
+  ])("fails closed for a malformed rule row with %s", (_case, mutate) => {
+    const rules = completeRows().rules;
+    mutate(firstRule(rules));
+
+    expectSafetyRulesUnavailable(rules);
+  });
+
   it("accepts arbitrary database row order and returns the canonical rule order", () => {
     const rows = completeRows();
     const context = buildCurrentSafetyContext({
@@ -233,6 +259,41 @@ describe("current safety data boundary", () => {
     expect(currentFoodSafetyRuleIds).toEqual([
       ...new Set(currentFoodSafetyRulesV1.map((rule) => rule.id)),
     ]);
+  });
+
+  it("returns an isolated canonical rule copy for every request", () => {
+    const firstContext = buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: completeRows(),
+    });
+    const canonicalRule = currentFoodSafetyRulesV1[0];
+    const firstReturnedRule = firstContext.foodSafetyRules[0];
+    if (canonicalRule === undefined || firstReturnedRule === undefined) {
+      throw new Error("canonical_food_safety_rules_missing");
+    }
+    const canonicalSnapshot = {
+      userMessage: canonicalRule.userMessage,
+      appliesToAgeBands: [...canonicalRule.appliesToAgeBands],
+      matchTerms: [...canonicalRule.matchTerms],
+    };
+
+    expect(firstContext.foodSafetyRules).not.toBe(currentFoodSafetyRulesV1);
+    expect(firstReturnedRule).not.toBe(canonicalRule);
+    expect(firstReturnedRule.appliesToAgeBands).not.toBe(canonicalRule.appliesToAgeBands);
+    expect(firstReturnedRule.matchTerms).not.toBe(canonicalRule.matchTerms);
+
+    Reflect.set(firstReturnedRule, "userMessage", "書き換えられた案内");
+    Reflect.set(firstReturnedRule.appliesToAgeBands, 0, "senior");
+    Reflect.set(firstReturnedRule.matchTerms, 0, "書き換えられた語句");
+
+    const secondContext = buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: completeRows(),
+    });
+    expect(currentFoodSafetyRulesV1[0]).toMatchObject(canonicalSnapshot);
+    expect(secondContext.foodSafetyRules[0]).toMatchObject(canonicalSnapshot);
   });
 
   it("fails closed when only one direct alias per allergen is loaded", () => {

@@ -6,6 +6,7 @@ import {
   unsupportedDietKinds,
   unsupportedDietStatuses,
 } from "../../../shared/contracts/domain.js";
+import { safetyActionKinds } from "../../../shared/contracts/generation.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
 import { HttpError } from "./http.js";
@@ -247,6 +248,18 @@ type SafetyRows = {
 
 type SafetyRuleRow = SafetyRows["rules"][number];
 
+const safetyRuleRowSchema = z
+  .object({
+    id: z.string().min(1),
+    applies_to_age_bands: z.array(ageBandSchema).min(1),
+    match_terms: z.array(z.string().min(1)).min(1),
+    rule_kind: z.enum(["forbidden", "requires_tag"]),
+    required_safety_tag: z.enum(safetyActionKinds).nullable(),
+    user_message: z.string().min(1),
+    rule_version: z.string().min(1),
+  })
+  .strict();
+
 function ruleSignature(rule: SafetyRuleRow): string {
   return JSON.stringify([
     rule.id,
@@ -275,13 +288,16 @@ const expectedRuleSignatures = new Map(
 );
 
 function hasExactCurrentRules(rules: readonly SafetyRuleRow[]): boolean {
+  const parsedRulesResult = z.array(safetyRuleRowSchema).safeParse(rules);
+  if (!parsedRulesResult.success) return false;
+  const parsedRules = parsedRulesResult.data;
   if (
     currentFoodSafetyRuleIds.length !== currentFoodSafetyRulesV1.length ||
-    rules.length !== currentFoodSafetyRulesV1.length
+    parsedRules.length !== currentFoodSafetyRulesV1.length
   ) {
     return false;
   }
-  const rowsById = new Map(rules.map((rule) => [rule.id, rule]));
+  const rowsById = new Map(parsedRules.map((rule) => [rule.id, rule]));
   return (
     rowsById.size === currentFoodSafetyRulesV1.length &&
     currentFoodSafetyRulesV1.every((canonicalRule) => {
