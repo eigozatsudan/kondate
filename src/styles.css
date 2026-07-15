@@ -159,6 +159,10 @@ textarea:focus-visible {
   margin-block: 0 8px;
 }
 
+.pantry-card-text {
+  overflow-wrap: anywhere;
+}
+
 .pantry-actions {
   display: flex;
   flex-wrap: wrap;

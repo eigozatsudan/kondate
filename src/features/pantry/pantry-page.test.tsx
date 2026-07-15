@@ -72,6 +72,32 @@ it("shows entered expiry/open state and confirms before deletion", async () => {
   expect(onDelete).toHaveBeenCalledWith(expired.id, expired.updatedAt);
 });
 
+it("forces schema-maximum unbroken pantry text to wrap inside the card", () => {
+  const maximumName = "W".repeat(80);
+  const maximumUnit = "W".repeat(24);
+  const maximumTextItem: PantryItem = {
+    ...expired,
+    name: maximumName,
+    quantity: 999_999,
+    unit: maximumUnit,
+  };
+
+  render(
+    <PantryPageContent
+      items={[maximumTextItem]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onDelete={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { name: maximumName })).toHaveClass("pantry-card-text");
+  expect(screen.getByText(`999999${maximumUnit}`)).toHaveClass("pantry-card-text");
+});
+
 it("passes the displayed version when saving an edit", async () => {
   const user = userEvent.setup();
   const onUpdate = vi.fn().mockResolvedValue(undefined);

@@ -175,8 +175,8 @@ export function PantryPageContent({
       <ul className="stack pantry-list" aria-label="冷蔵庫の食材">
         {items.map((item) => (
           <li className="card pantry-card" key={item.id}>
-            <h2>{item.name}</h2>
-            <p>
+            <h2 className="pantry-card-text">{item.name}</h2>
+            <p className="pantry-card-text">
               {item.quantity === null ? "分量未入力" : `${String(item.quantity)}${item.unit ?? ""}`}
             </p>
             {item.expiresOn !== null && (
