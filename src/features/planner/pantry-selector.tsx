@@ -31,18 +31,32 @@ export function PantrySelector({
   const triggerRef = useRef<HTMLInputElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
   const safeActionRef = useRef<HTMLButtonElement | null>(null);
+  const attemptKeyRef = useRef(attempt.idempotencyKey);
+  const restoreFocusRef = useRef(false);
 
   useEffect(() => {
-    setPendingItem(null);
-  }, [attempt.idempotencyKey]);
+    if (attemptKeyRef.current === attempt.idempotencyKey) return;
+    attemptKeyRef.current = attempt.idempotencyKey;
+    if (pendingItem !== null) {
+      restoreFocusRef.current = true;
+      setPendingItem(null);
+    }
+  }, [attempt.idempotencyKey, pendingItem]);
 
   useEffect(() => {
-    if (pendingItem !== null) safeActionRef.current?.focus();
+    if (pendingItem !== null) {
+      safeActionRef.current?.focus();
+      return;
+    }
+    if (restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      triggerRef.current?.focus();
+    }
   }, [pendingItem]);
 
   const closeDialog = (): void => {
+    restoreFocusRef.current = true;
     setPendingItem(null);
-    triggerRef.current?.focus();
   };
 
   const select = (item: PantryItem): void => {
@@ -68,6 +82,7 @@ export function PantrySelector({
               <input
                 type="checkbox"
                 checked={selected !== undefined}
+                disabled={pendingItem !== null}
                 onChange={(event) => {
                   if (selected === undefined) {
                     triggerRef.current = event.currentTarget;
@@ -81,6 +96,7 @@ export function PantrySelector({
               <select
                 aria-label={`${item.name}の使い方`}
                 value={selected.priority}
+                disabled={pendingItem !== null}
                 onChange={(event) => {
                   const priority = event.target.value === "must_use" ? "must_use" : "prefer_use";
                   onChange(
@@ -99,55 +115,68 @@ export function PantrySelector({
       })}
       {pendingItem !== null && (
         <div
-          role="alertdialog"
-          aria-label="期限を過ぎた食材の確認"
-          aria-modal="true"
-          aria-describedby={descriptionId}
-          className="card stack"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeDialog();
-              return;
-            }
-            if (event.key !== "Tab") return;
-            event.preventDefault();
-            if (event.shiftKey) {
-              if (document.activeElement === safeActionRef.current) confirmRef.current?.focus();
-              else safeActionRef.current?.focus();
-            } else if (document.activeElement === safeActionRef.current) {
-              confirmRef.current?.focus();
-            } else {
-              safeActionRef.current?.focus();
-            }
+          style={{
+            position: "fixed",
+            zIndex: 20,
+            inset: 0,
+            display: "grid",
+            placeItems: "center",
+            padding: "16px",
+            background: "rgb(51 44 39 / 55%)",
           }}
         >
-          <p id={descriptionId}>
-            入力した期限を過ぎています。アプリは食べられるか判断しません。今回、実物の状態を確認しましたか？
-          </p>
-          <button
-            ref={confirmRef}
-            className="primary-button"
-            type="button"
-            onClick={() => {
-              const checkedAt = now();
-              onAttemptChange(confirmExpiredPantryItem(attempt, pendingItem.id, checkedAt));
-              onChange([...selections, { pantryItemId: pendingItem.id, priority: "prefer_use" }]);
-              closeDialog();
+          <div
+            role="alertdialog"
+            aria-label="期限を過ぎた食材の確認"
+            aria-modal="true"
+            aria-describedby={descriptionId}
+            className="card stack"
+            style={{ width: "min(100%, 520px)", maxHeight: "calc(100vh - 32px)", overflow: "auto" }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeDialog();
+                return;
+              }
+              if (event.key !== "Tab") return;
+              event.preventDefault();
+              if (event.shiftKey) {
+                if (document.activeElement === safeActionRef.current) confirmRef.current?.focus();
+                else safeActionRef.current?.focus();
+              } else if (document.activeElement === safeActionRef.current) {
+                confirmRef.current?.focus();
+              } else {
+                safeActionRef.current?.focus();
+              }
             }}
           >
-            実物を確認して今回だけ選ぶ
-          </button>
-          <button
-            ref={safeActionRef}
-            className="secondary-button"
-            type="button"
-            onClick={() => {
-              closeDialog();
-            }}
-          >
-            選ばない
-          </button>
+            <p id={descriptionId}>
+              入力した期限を過ぎています。アプリは食べられるか判断しません。今回、実物の状態を確認しましたか？
+            </p>
+            <button
+              ref={confirmRef}
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                const checkedAt = now();
+                onAttemptChange(confirmExpiredPantryItem(attempt, pendingItem.id, checkedAt));
+                onChange([...selections, { pantryItemId: pendingItem.id, priority: "prefer_use" }]);
+                closeDialog();
+              }}
+            >
+              実物を確認して今回だけ選ぶ
+            </button>
+            <button
+              ref={safeActionRef}
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                closeDialog();
+              }}
+            >
+              選ばない
+            </button>
+          </div>
         </div>
       )}
     </section>

@@ -85,7 +85,10 @@ vi.mock("./planner-page", () => ({
       >
         確認を反映
       </button>
-      <button type="button" onClick={() => void props.onGenerate(draft, props.attempt)}>
+      <button
+        type="button"
+        onClick={() => void props.onGenerate(draft, props.attempt).catch(() => undefined)}
+      >
         生成
       </button>
       <button
@@ -128,4 +131,55 @@ it("route が更新された exact attempt を生成へ渡し新しい試行で�
   await user.click(screen.getByRole("button", { name: "新しい試行" }));
   expect(screen.getByLabelText("attempt key").textContent).not.toBe(firstKey);
   expect(screen.getByLabelText("check count")).toHaveTextContent("0");
+});
+
+it("生成成功の完了後だけ attempt を新しいキーと空の確認へ更新する", async () => {
+  const user = userEvent.setup();
+  const startGeneration = vi.fn(
+    (draftArg: PlannerDraft, attemptArg: PlannerAttempt): Promise<undefined> => {
+      expect(draftArg).toEqual(draft);
+      expect(attemptArg.expiredPantryChecks).toHaveLength(1);
+      return Promise.resolve(undefined);
+    },
+  );
+  render(<PlannerPage startGeneration={startGeneration} />);
+  const firstKey = screen.getByLabelText("attempt key").textContent;
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+
+  await user.click(screen.getByRole("button", { name: "生成" }));
+
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("attempt key").textContent).not.toBe(firstKey);
+    expect(screen.getByLabelText("check count")).toHaveTextContent("0");
+  });
+  expect(startGeneration.mock.calls[0]).toEqual([
+    draft,
+    {
+      idempotencyKey: firstKey,
+      expiredPantryChecks: [
+        {
+          pantryItemId: "74000000-0000-0000-0000-000000000001",
+          checkedAt: "2026-07-11T03:00:00.000Z",
+        },
+      ],
+    },
+  ]);
+});
+
+it.each([
+  ["拒否", vi.fn().mockRejectedValue(new Error("failed"))],
+  ["失敗結果", vi.fn().mockResolvedValue(false)],
+])("%s した生成は再試行用の exact attempt を保つ", async (_name, startGeneration) => {
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={startGeneration} />);
+  const firstKey = screen.getByLabelText("attempt key").textContent;
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+
+  await user.click(screen.getByRole("button", { name: "生成" }));
+
+  await vi.waitFor(() => {
+    expect(startGeneration).toHaveBeenCalledTimes(1);
+  });
+  expect(screen.getByLabelText("attempt key")).toHaveTextContent(firstKey);
+  expect(screen.getByLabelText("check count")).toHaveTextContent("1");
 });

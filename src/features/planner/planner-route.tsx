@@ -103,7 +103,7 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
 }
 
 export type PlannerPageProps = {
-  startGeneration?: (draft: PlannerDraft, attempt: PlannerAttempt) => void | Promise<void>;
+  startGeneration?: (draft: PlannerDraft, attempt: PlannerAttempt) => unknown;
 };
 
 export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
@@ -184,8 +184,11 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
       onChange={setValue}
       flush={autosave.flush}
       onGenerate={async (draft, currentAttempt) => {
-        if (startGeneration === undefined || currentAttempt === undefined) return;
-        await startGeneration(draft, currentAttempt);
+        if (startGeneration === undefined || currentAttempt === undefined) return false;
+        const result = await startGeneration(draft, currentAttempt);
+        if (result === false) return false;
+        startNewAttempt();
+        return true;
       }}
     />
   );

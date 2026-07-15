@@ -30,7 +30,7 @@ export function PlannerForm({
   onStartNewAttempt?: () => void;
   onChange: (value: PlannerDraftInput) => void;
   flush?: () => Promise<PlannerDraft>;
-  onGenerate?: (draft: PlannerDraft, attempt: PlannerAttempt | undefined) => void | Promise<void>;
+  onGenerate?: (draft: PlannerDraft, attempt: PlannerAttempt | undefined) => unknown;
 }) {
   const [value, setValue] = useState(initialValue);
   const [ingredient, setIngredient] = useState("");
