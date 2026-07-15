@@ -119,16 +119,16 @@ export function validateGeneratedMenu(
     [...registeredAllergenIds].some(
       (allergenId) => !catalogIds.has(allergenId) || !aliasAllergenIds.has(allergenId),
     );
-  const childAgeBands = new Set(["post_weaning_to_2", "age_3_5"]);
-  const childRuleMissing = context.safety.members.some(
+  const vulnerableAgeBands = new Set(["post_weaning_to_2", "age_3_5", "senior"]);
+  const vulnerableRuleMissing = context.safety.members.some(
     (member) =>
-      childAgeBands.has(member.ageBand) &&
+      vulnerableAgeBands.has(member.ageBand) &&
       !context.safety.foodSafetyRules.some((rule) =>
         rule.appliesToAgeBands.includes(member.ageBand),
       ),
   );
   const foodRulesInvalid =
-    childRuleMissing ||
+    vulnerableRuleMissing ||
     context.safety.foodSafetyRules.some(
       (rule) => rule.ruleVersion !== context.safety.foodRuleVersion,
     );

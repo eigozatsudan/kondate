@@ -342,6 +342,43 @@ it("T5-FR-03 rejects missing or mixed-version child food rules", () => {
   ]);
 });
 
+it("T5-FFR-03 rejects a senior safety context without applicable food rules", () => {
+  const base = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [{ ...dish.ingredients[0]!, name: "餅" }],
+          }
+        : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    safety: makeCurrentSafetyContext({
+      members: [
+        {
+          ...makeCurrentSafetyContext().members[0]!,
+          ageBand: "senior",
+        },
+      ],
+      foodSafetyRules: [],
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["safety_context_incomplete"]);
+});
+
+it("T5-FFR-04 rejects a hypertension therapeutic low-sodium request", () => {
+  const context = makeGenerationContext({
+    safety: makeCurrentSafetyContext({ requestText: "高血圧向けの減塩食にして" }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), context), [
+    "unsupported_medical_request",
+  ]);
+});
+
 it("T5-FR-05 rejects forged provenance and ingredient linkage on an unused pantry row", () => {
   const pantryItemId = "58000000-0000-4000-8000-000000000001";
   const selectionId = "58000000-0000-4000-8000-000000000002";

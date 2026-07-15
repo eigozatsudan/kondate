@@ -26,7 +26,8 @@ const actionEvidence: Record<SafetyAction["kind"], RegExp> = {
   heat_thoroughly: /中心まで(?:十分に)?加熱|中心温度/u,
 };
 
-const contradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
+const contradictionPattern =
+  /丸ごと|切らず|骨付きのまま|硬いまま|小さく切らない|細かく刻まない|4等分しない|四等分しない|縦に4つにしない|十分に煮ない|中心まで(?:十分に)?加熱しない|骨を(?:完全に)?除かない|骨を取り除かない/u;
 
 export function evaluateFoodSafetyRules(
   menu: GeneratedMenu | ValidatedMenu,
@@ -43,6 +44,15 @@ export function evaluateFoodSafetyRules(
       [dish.name, dish.description, ...dish.steps.map((step) => step.instruction)],
     ]),
   );
+  const ingredientName = new Map(
+    menu.dishes.flatMap((dish) =>
+      dish.ingredients.map((ingredient) => [ingredient.id, normalizeFoodText(ingredient.name)]),
+    ),
+  );
+  const instructionNamesIngredient = (instruction: string, ingredientId: string): boolean => {
+    const expectedName = ingredientName.get(ingredientId);
+    return expectedName !== undefined && normalizeFoodText(instruction).includes(expectedName);
+  };
   const adaptationEvidenceText = (
     adaptation: (typeof menu.adaptations)[number],
     kind: SafetyAction["kind"],
@@ -112,6 +122,7 @@ export function evaluateFoodSafetyRules(
                   action.anonymousMemberRef === member.anonymousRef &&
                   stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
                   actionEvidence[action.kind].test(action.instruction) &&
+                  instructionNamesIngredient(action.instruction, source.ingredientId) &&
                   adaptationEvidenceText(adaptation, action.kind),
               );
         const adaptationText = memberActions
