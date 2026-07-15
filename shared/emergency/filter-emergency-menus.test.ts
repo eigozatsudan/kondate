@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { AgeBand } from "../contracts/domain.js";
+import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
 import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
-import {
-  makeCurrentSafetyContext,
-  makeGenerationContext,
-  productionFoodSafetyRules,
-} from "../testing/factories.js";
+import { makeCurrentSafetyContext, makeGenerationContext } from "../testing/factories.js";
 import { emergencyFixtureMetadataV1, emergencyMenuFixturesV1 } from "./fixtures.v1.js";
 import { filterEmergencyMenus } from "./filter-emergency-menus.js";
 
@@ -44,7 +41,7 @@ describe("reviewed emergency menus", () => {
         const base = makeGenerationContext();
         const safety = makeCurrentSafetyContext({
           members: [{ ...base.safety.members[0]!, ageBand }],
-          foodSafetyRules: productionFoodSafetyRules,
+          foodSafetyRules: currentFoodSafetyRulesV1,
         });
         const context = makeGenerationContext({
           submission: {

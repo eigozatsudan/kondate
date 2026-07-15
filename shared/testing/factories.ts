@@ -1,7 +1,9 @@
 import type { GeneratedMenu, ValidatedMenu } from "../contracts/generation.js";
 import type { CurrentSafetyContext } from "../safety/context.js";
-import type { FoodSafetyRule } from "../safety/food-rules.js";
+import { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 import type { GenerationContext } from "../safety/generation-context.js";
+
+export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 
 export function makeValidatedMenu(overrides: Partial<ValidatedMenu> = {}): ValidatedMenu {
   const dishId = "50000000-0000-4000-8000-000000000001";
@@ -182,94 +184,6 @@ export function makeGenerationContext(
   };
   return { ...base, ...overrides };
 }
-
-export const hardBeanAndReviewedNutRule: FoodSafetyRule = {
-  id: "hard_beans_and_reviewed_nuts_under_6",
-  appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
-  matchTerms: [
-    "硬い豆",
-    "かたい豆",
-    "炒り大豆",
-    "煎り大豆",
-    "いり大豆",
-    "乾燥大豆",
-    "節分豆",
-    "豆まき豆",
-    "落花生",
-    "ピーナッツ",
-    "ピーナツ",
-    "くるみ",
-    "胡桃",
-    "ウォールナッツ",
-    "アーモンド",
-    "カシューナッツ",
-    "ピスタチオ",
-    "マカダミアナッツ",
-  ],
-  ruleKind: "forbidden",
-  requiredSafetyTag: null,
-  userMessage:
-    "5歳以下を含む献立では、硬い豆とピーナッツ・くるみ・アーモンド・カシューナッツ・ピスタチオ・マカダミアナッツを原則使用できません",
-  ruleVersion: "jp-caa-child-shape-2026-07.v1",
-};
-
-export const productionFoodSafetyRules: readonly FoodSafetyRule[] = [
-  hardBeanAndReviewedNutRule,
-  {
-    id: "grapes_under_6",
-    appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
-    matchTerms: ["ぶどう", "ブドウ"],
-    ruleKind: "requires_tag",
-    requiredSafetyTag: "quarter_round_food",
-    userMessage: "ぶどうは4等分する工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
-  },
-  {
-    id: "cherry_tomato_under_6",
-    appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
-    matchTerms: ["ミニトマト", "プチトマト"],
-    ruleKind: "requires_tag",
-    requiredSafetyTag: "quarter_round_food",
-    userMessage: "ミニトマトは4等分する工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
-  },
-  {
-    id: "mochi_under_6",
-    appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
-    matchTerms: ["餅", "もち"],
-    ruleKind: "forbidden",
-    requiredSafetyTag: null,
-    userMessage: "5歳以下を含む献立では餅を使用できません",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
-  },
-  {
-    id: "mochi_senior",
-    appliesToAgeBands: ["senior"],
-    matchTerms: ["餅", "もち"],
-    ruleKind: "forbidden",
-    requiredSafetyTag: null,
-    userMessage: "高齢者を含む固定候補とAI献立では餅を原則除外します",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
-  },
-  {
-    id: "bones_for_young_and_senior",
-    appliesToAgeBands: ["post_weaning_to_2", "age_3_5", "senior"],
-    matchTerms: ["小骨", "骨付き", "魚"],
-    ruleKind: "requires_tag",
-    requiredSafetyTag: "remove_bones",
-    userMessage: "小骨を完全に除く工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
-  },
-  {
-    id: "hard_food_for_senior",
-    appliesToAgeBands: ["senior"],
-    matchTerms: ["硬い", "かたい", "根菜"],
-    ruleKind: "requires_tag",
-    requiredSafetyTag: "soften",
-    userMessage: "高齢者向けに十分やわらかくする工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
-  },
-];
 
 export function underSixHardBeanAndNutContext(): GenerationContext {
   const base = makeGenerationContext();
