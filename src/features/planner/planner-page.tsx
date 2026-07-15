@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
+import type { PantryItem } from "@shared/contracts/pantry";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import { CurrentSafetySummary, type PlannerSafetyMember } from "./current-safety-summary";
 import type { PlannerAttempt } from "./expired-pantry-checks";
+import { PantrySelector, type PantryItemsStatus } from "./pantry-selector";
 
 const mealLabels = { breakfast: "朝食", lunch: "昼食", dinner: "夕食" } as const;
 const genreLabels = {
@@ -12,12 +14,17 @@ const genreLabels = {
   any: "おまかせ",
 } as const;
 const mainIngredientLimit = 8;
+const avoidIngredientLimit = 20;
+const avoidIngredientLengthLimit = 80;
 
 export function PlannerForm({
   initialValue,
   members,
   saveState,
+  pantryItems,
+  pantryItemsStatus,
   attempt,
+  onAttemptChange,
   onChange,
   flush,
   onGenerate,
@@ -25,6 +32,8 @@ export function PlannerForm({
   initialValue: PlannerDraftInput;
   members: readonly PlannerSafetyMember[];
   saveState: "idle" | "saving" | "saved" | "error";
+  pantryItems: readonly PantryItem[];
+  pantryItemsStatus: PantryItemsStatus;
   attempt?: PlannerAttempt;
   onAttemptChange?: (next: PlannerAttempt) => void;
   onStartNewAttempt?: () => void;
@@ -35,6 +44,7 @@ export function PlannerForm({
   const [value, setValue] = useState(initialValue);
   const [ingredient, setIngredient] = useState("");
   const [ingredientError, setIngredientError] = useState<string | null>(null);
+  const [avoidIngredientError, setAvoidIngredientError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const update = (patch: Partial<PlannerDraftInput>): void => {
@@ -57,6 +67,10 @@ export function PlannerForm({
     value.mainIngredients.length > 0 &&
     value.cuisineGenre !== null &&
     selectedMembers.length > 0;
+  const pantryItemIds = new Set(pantryItems.map((item) => item.id));
+  const hasUnavailablePantrySelections =
+    pantryItemsStatus === "loaded" &&
+    value.pantrySelections.some((selection) => !pantryItemIds.has(selection.pantryItemId));
 
   useEffect(() => {
     const reconciledTargetMemberIds = value.targetMemberIds.filter((id) =>
@@ -228,15 +242,30 @@ export function PlannerForm({
           <input
             value={value.avoidIngredients.join("、")}
             onChange={(event) => {
+              const normalizedItems = event.target.value
+                .split(/[、,]/u)
+                .map((item) => item.normalize("NFKC").trim())
+                .filter((item) => item !== "");
+              const hasTooManyItems = normalizedItems.length > avoidIngredientLimit;
+              const hasTooLongItem = normalizedItems.some(
+                (item) => Array.from(item).length > avoidIngredientLengthLimit,
+              );
               update({
-                avoidIngredients: event.target.value
-                  .split(/[、,]/u)
-                  .map((item) => item.normalize("NFKC").trim())
-                  .filter((item) => item !== ""),
+                avoidIngredients: normalizedItems
+                  .slice(0, avoidIngredientLimit)
+                  .map((item) => Array.from(item).slice(0, avoidIngredientLengthLimit).join("")),
               });
+              setAvoidIngredientError(
+                hasTooManyItems
+                  ? "避ける食材は20件までです。"
+                  : hasTooLongItem
+                    ? "避ける食材は1件80文字までです。"
+                    : null,
+              );
             }}
           />
         </label>
+        {avoidIngredientError !== null && <p role="alert">{avoidIngredientError}</p>}
         <label>
           自由メモ
           <textarea
@@ -250,6 +279,21 @@ export function PlannerForm({
         <p>{value.memo.length}/200</p>
         <p>「やわらかめ」は一般的な食べやすさの希望です。嚥下調整食ではありません。</p>
       </details>
+      {attempt !== undefined && onAttemptChange !== undefined && (
+        <PantrySelector
+          items={pantryItems}
+          itemsStatus={pantryItemsStatus}
+          selections={value.pantrySelections}
+          attempt={attempt}
+          onAttemptChange={onAttemptChange}
+          onChange={(pantrySelections) => {
+            update({ pantrySelections: [...pantrySelections] });
+          }}
+        />
+      )}
+      {hasUnavailablePantrySelections && (
+        <p role="alert">冷蔵庫から削除された食材の選択を解除してから献立を作ってください。</p>
+      )}
       {medicalMatches.length > 0 && (
         <p role="alert">
           離乳食、飲み込み・嚥下、治療食の依頼には対応できません。専門職の指示に従ってください。
@@ -270,6 +314,7 @@ export function PlannerForm({
         type="button"
         disabled={
           blocked ||
+          hasUnavailablePantrySelections ||
           !requiredChoicesComplete ||
           isGenerating ||
           flush === undefined ||

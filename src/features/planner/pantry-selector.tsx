@@ -9,8 +9,11 @@ import {
 
 export type { PlannerAttempt } from "./expired-pantry-checks";
 
+export type PantryItemsStatus = "loading" | "loaded";
+
 export type PantrySelectorProps = {
   items: readonly PantryItem[];
+  itemsStatus: PantryItemsStatus;
   selections: readonly PantrySelectionDraft[];
   attempt: PlannerAttempt;
   onAttemptChange: (next: PlannerAttempt) => void;
@@ -20,6 +23,7 @@ export type PantrySelectorProps = {
 
 export function PantrySelector({
   items,
+  itemsStatus,
   selections,
   attempt,
   onAttemptChange,
@@ -33,6 +37,12 @@ export function PantrySelector({
   const safeActionRef = useRef<HTMLButtonElement | null>(null);
   const attemptKeyRef = useRef(attempt.idempotencyKey);
   const restoreFocusRef = useRef(false);
+  const itemIds = new Set(items.map((item) => item.id));
+  const unavailableSelections =
+    itemsStatus === "loaded"
+      ? selections.filter((selection) => !itemIds.has(selection.pantryItemId))
+      : [];
+  const selectionLimitReached = selections.length >= 50;
 
   useEffect(() => {
     if (attemptKeyRef.current === attempt.idempotencyKey) return;
@@ -74,6 +84,7 @@ export function PantrySelector({
   return (
     <section className="card stack" aria-labelledby="pantry-selector-title">
       <h2 id="pantry-selector-title">冷蔵庫から使う食材</h2>
+      {itemsStatus === "loading" && <p>冷蔵庫の食材を読み込んでいます…</p>}
       {items.map((item) => {
         const selected = selections.find((entry) => entry.pantryItemId === item.id);
         return (
@@ -82,7 +93,7 @@ export function PantrySelector({
               <input
                 type="checkbox"
                 checked={selected !== undefined}
-                disabled={pendingItem !== null}
+                disabled={pendingItem !== null || (selected === undefined && selectionLimitReached)}
                 onChange={(event) => {
                   if (selected === undefined) {
                     triggerRef.current = event.currentTarget;
@@ -113,6 +124,23 @@ export function PantrySelector({
           </div>
         );
       })}
+      {selectionLimitReached && (
+        <p role="status">冷蔵庫の食材は50件まで選べます。選択中の食材は解除できます。</p>
+      )}
+      {unavailableSelections.map((selection) => (
+        <div key={selection.pantryItemId}>
+          <p>冷蔵庫から削除された食材</p>
+          <button
+            type="button"
+            disabled={pendingItem !== null}
+            onClick={() => {
+              onChange(selections.filter((entry) => entry.pantryItemId !== selection.pantryItemId));
+            }}
+          >
+            削除された食材の選択を解除
+          </button>
+        </div>
+      ))}
       {pendingItem !== null && (
         <div
           style={{

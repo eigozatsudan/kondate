@@ -177,6 +177,8 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
     <PlannerForm
       initialValue={value}
       members={safetyQuery.data.members}
+      pantryItems={[]}
+      pantryItemsStatus="loading"
       saveState={autosave.state}
       attempt={attempt}
       onAttemptChange={setAttempt}
