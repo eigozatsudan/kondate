@@ -1993,6 +1993,7 @@ The duplicate fixture returns the same role and primary ingredient set twice so 
 Run:
 
 ```bash
+set -e
 docker compose run --rm --no-deps app npm run format:check
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run typecheck
@@ -2023,7 +2024,7 @@ if rg -n 'collectMenuTextSources|create or replace function public\.confirm_menu
   supabase/migrations/20260711003000_history_regeneration.sql; then exit 1; fi
 ```
 
-Expected: every command exits 0 and all history/regeneration tests report zero failures. The independent source-snapshot searches fail if any one of reconciliation input parsing, SQL insert, SQL return projection, adapter request/response mapping, stored-menu select/mapping, loader assertion, or pgTAP input/saved-value assertion is absent. The forbidden search proves Plan 4 neither dynamically reconstructs warning text nor replaces Plan 3's confirmation RPC.
+Expected: the gate runs fail-fast under `set -e`; every command exits 0 and all history/regeneration tests report zero failures. Any failed positive search immediately makes the whole gate nonzero, so the independent source-snapshot searches fail the gate if any one of reconciliation input parsing, SQL insert, SQL return projection, adapter request/response mapping, stored-menu select/mapping, loader assertion, or pgTAP input/saved-value assertion is absent. The forbidden search proves Plan 4 neither dynamically reconstructs warning text nor replaces Plan 3's confirmation RPC.
 
 - [ ] **Step 6: Commit the verified increment**
 
