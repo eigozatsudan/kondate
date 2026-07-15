@@ -8,78 +8,22 @@ import {
 } from "../../../shared/contracts/domain.js";
 import { safetyActionKinds } from "../../../shared/contracts/generation.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
+import {
+  currentAllergenCatalogV1,
+  currentAllergenCatalogVersion,
+} from "../../../shared/safety/current-allergen-catalog.v1.js";
 import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
 import { HttpError } from "./http.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 
-const dictionaryVersion = "jp-caa-2026-04.v1" as const;
+const dictionaryVersion = currentAllergenCatalogVersion;
 const foodRuleVersion = "jp-caa-child-shape-2026-07.v1" as const;
-export const currentAllergenCatalogIds = [
-  "shrimp",
-  "cashew_nut",
-  "crab",
-  "walnut",
-  "wheat",
-  "buckwheat",
-  "egg",
-  "milk",
-  "peanut",
-  "almond",
-  "abalone",
-  "squid",
-  "salmon_roe",
-  "orange",
-  "kiwi",
-  "beef",
-  "sesame",
-  "salmon",
-  "mackerel",
-  "soy",
-  "chicken",
-  "banana",
-  "pistachio",
-  "pork",
-  "macadamia_nut",
-  "peach",
-  "yam",
-  "apple",
-  "gelatin",
-] as const;
+export const currentAllergenCatalogIds: readonly string[] = Object.freeze([
+  ...new Set(currentAllergenCatalogV1.map((entry) => entry.id)),
+]);
 export const currentFoodSafetyRuleIds: readonly string[] = Object.freeze([
   ...new Set(currentFoodSafetyRulesV1.map((rule) => rule.id)),
 ]);
-
-const currentDirectAliasValues = [
-  ["えび", "えび"],
-  ["カシューナッツ", "カシューナッツ"],
-  ["かに", "かに"],
-  ["くるみ", "くるみ"],
-  ["小麦", "小麦"],
-  ["そば", "そば"],
-  ["卵", "卵"],
-  ["乳", "乳"],
-  ["落花生（ピーナッツ）", "落花生ピーナッツ"],
-  ["アーモンド", "アーモンド"],
-  ["あわび", "あわび"],
-  ["いか", "いか"],
-  ["いくら", "いくら"],
-  ["オレンジ", "オレンジ"],
-  ["キウイフルーツ", "キウイフルーツ"],
-  ["牛肉", "牛肉"],
-  ["ごま", "ごま"],
-  ["さけ", "さけ"],
-  ["さば", "さば"],
-  ["大豆", "大豆"],
-  ["鶏肉", "鶏肉"],
-  ["バナナ", "バナナ"],
-  ["ピスタチオ", "ピスタチオ"],
-  ["豚肉", "豚肉"],
-  ["マカダミアナッツ", "マカダミアナッツ"],
-  ["もも", "もも"],
-  ["やまいも", "やまいも"],
-  ["りんご", "りんご"],
-  ["ゼラチン", "ゼラチン"],
-] as const;
 
 type AliasManifestEntry = {
   allergenId: string;
@@ -144,17 +88,11 @@ const additionalAliasValues: readonly (readonly [
   ["soy", "みそ", "processed", true],
 ];
 
-function currentDirectAliasAt(index: number): (typeof currentDirectAliasValues)[number] {
-  const value = currentDirectAliasValues[index];
-  if (value === undefined) throw new Error("current_allergen_alias_manifest_misaligned");
-  return value;
-}
-
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [
-  ...currentAllergenCatalogIds.map((allergenId, index) => ({
-    allergenId,
-    alias: currentDirectAliasAt(index)[0],
-    normalizedAlias: currentDirectAliasAt(index)[1],
+  ...currentAllergenCatalogV1.map((entry) => ({
+    allergenId: entry.id,
+    alias: entry.displayName,
+    normalizedAlias: entry.displayName.toLowerCase().replace(/[\s（）()]/gu, ""),
     aliasKind: "direct" as const,
     requiresLabelConfirmation: false,
   })),
@@ -183,17 +121,55 @@ const allergenAliasRowSchema = z
     dictionary_version: z.string().min(1),
   })
   .strict();
+const allergenCatalogRowSchema = z
+  .object({
+    id: z.string().regex(/^[a-z][a-z0-9_]*$/u),
+    display_name: z.string().min(1).max(100),
+    catalog_version: z.string().min(1).max(80),
+  })
+  .strict();
 
 const invalidTargets = () =>
   new HttpError(400, "invalid_target_members", "対象メンバーを確認してください");
 const safetyUnavailable = () =>
   new HttpError(500, "safety_context_failed", "現在の安全条件を読み込めませんでした");
 
-function hasExactIds(actual: readonly string[], required: readonly string[]): boolean {
-  return actual.length === required.length && required.every((id) => actual.includes(id));
+type AllergenAliasRow = z.infer<typeof allergenAliasRowSchema>;
+type AllergenCatalogRow = z.infer<typeof allergenCatalogRowSchema>;
+
+function catalogSignature(row: AllergenCatalogRow): string {
+  return [row.id, row.display_name, row.catalog_version].join("\u0000");
 }
 
-type AllergenAliasRow = z.infer<typeof allergenAliasRowSchema>;
+const expectedCatalogSignatures = new Set(
+  currentAllergenCatalogV1.map((entry) =>
+    catalogSignature({
+      id: entry.id,
+      display_name: entry.displayName,
+      catalog_version: entry.catalogVersion,
+    }),
+  ),
+);
+
+function hasExactCurrentCatalog(catalog: SafetyRows["catalog"]): boolean {
+  const parsedResult = z.array(allergenCatalogRowSchema).safeParse(catalog);
+  if (!parsedResult.success) return false;
+  const actualSignatures = new Set(parsedResult.data.map(catalogSignature));
+  return (
+    currentAllergenCatalogIds.length === currentAllergenCatalogV1.length &&
+    parsedResult.data.length === expectedCatalogSignatures.size &&
+    actualSignatures.size === expectedCatalogSignatures.size &&
+    [...expectedCatalogSignatures].every((signature) => actualSignatures.has(signature))
+  );
+}
+
+function copyCurrentAllergenCatalog(): CurrentSafetyContext["allergenDictionary"]["catalog"] {
+  return currentAllergenCatalogV1.map((entry) => ({
+    id: entry.id,
+    displayName: entry.displayName,
+    catalogVersion: entry.catalogVersion,
+  }));
+}
 
 function aliasSignature(alias: AllergenAliasRow): string {
   return [
@@ -358,10 +334,7 @@ export function buildCurrentSafetyContext(input: {
     throw invalidTargets();
   }
   if (
-    !hasExactIds(
-      rows.catalog.map((row) => row.id),
-      currentAllergenCatalogIds,
-    ) ||
+    !hasExactCurrentCatalog(rows.catalog) ||
     !hasExactCurrentRules(rows.rules) ||
     parsedAliases === undefined
   ) {
@@ -402,11 +375,7 @@ export function buildCurrentSafetyContext(input: {
     }),
     allergenDictionary: {
       version: dictionaryVersion,
-      catalog: rows.catalog.map((row) => ({
-        id: row.id,
-        displayName: row.display_name,
-        catalogVersion: row.catalog_version,
-      })),
+      catalog: copyCurrentAllergenCatalog(),
       aliases: parsedAliases.map((row) => ({
         allergenId: row.allergen_id,
         alias: row.alias,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
 import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
 import {
   buildCurrentSafetyContext,
@@ -29,11 +30,14 @@ function completeRows() {
   return {
     members: [completeMember(firstMemberId), completeMember(secondMemberId)],
     allergies: [],
-    catalog: currentAllergenCatalogIds.map((id) => ({
-      id,
-      display_name: id,
-      catalog_version: "jp-caa-2026-04.v1",
-    })),
+    catalog: currentAllergenCatalogV1.map((entry) => {
+      const catalogVersion: string = entry.catalogVersion;
+      return {
+        id: entry.id,
+        display_name: entry.displayName,
+        catalog_version: catalogVersion,
+      };
+    }),
     aliases: currentAllergenAliasManifest.map((entry) => ({
       allergen_id: entry.allergenId,
       alias: entry.alias,
@@ -65,6 +69,7 @@ type SafetyRuleTestRow = {
 };
 
 type AllergenAliasTestRow = ReturnType<typeof completeRows>["aliases"][number];
+type AllergenCatalogTestRow = ReturnType<typeof completeRows>["catalog"][number];
 
 function firstAlias(aliases: readonly AllergenAliasTestRow[]): AllergenAliasTestRow {
   const first = aliases[0];
@@ -98,7 +103,136 @@ function expectAliasesUnavailable(aliases: readonly AllergenAliasTestRow[]): voi
   ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
 }
 
+function expectCatalogUnavailable(catalog: readonly AllergenCatalogTestRow[]): void {
+  expect(() =>
+    buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: { ...completeRows(), catalog },
+    }),
+  ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
+}
+
 describe("current safety data boundary", () => {
+  it.each([
+    [
+      "display name drift",
+      (row: AllergenCatalogTestRow) => {
+        row.display_name = "差し替えられた表示";
+      },
+    ],
+    [
+      "wrong catalog version",
+      (row: AllergenCatalogTestRow) => {
+        row.catalog_version = "obsolete.v1";
+      },
+    ],
+    [
+      "missing display name",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.deleteProperty(row, "display_name");
+      },
+    ],
+    [
+      "undefined display name",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.set(row, "display_name", undefined);
+      },
+    ],
+    [
+      "missing catalog version",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.deleteProperty(row, "catalog_version");
+      },
+    ],
+    [
+      "undefined catalog version",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.set(row, "catalog_version", undefined);
+      },
+    ],
+    [
+      "wrong scalar type",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.set(row, "display_name", 42);
+      },
+    ],
+    [
+      "unknown property",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.set(row, "unexpected", "value");
+      },
+    ],
+  ])("fails closed for a catalog row with %s", (_case, mutate) => {
+    const catalog = completeRows().catalog;
+    const row = catalog[0];
+    if (row === undefined) throw new Error("canonical_allergen_catalog_missing");
+    mutate(row);
+
+    expectCatalogUnavailable(catalog);
+  });
+
+  it.each([
+    ["missing", () => completeRows().catalog.slice(1)],
+    [
+      "extra",
+      () => [
+        ...completeRows().catalog,
+        {
+          id: "unexpected_allergen",
+          display_name: "想定外",
+          catalog_version: "jp-caa-2026-04.v1",
+        },
+      ],
+    ],
+    [
+      "duplicate",
+      () => {
+        const catalog = completeRows().catalog;
+        const first = catalog[0];
+        if (first === undefined) throw new Error("canonical_allergen_catalog_missing");
+        return [...catalog, { ...first }];
+      },
+    ],
+  ])("fails closed when the catalog set contains a %s row", (_case, mutate) => {
+    expectCatalogUnavailable(mutate());
+  });
+
+  it("accepts arbitrary catalog row order and returns an isolated canonical copy", () => {
+    const rows = completeRows();
+    const reversedCatalog = [...rows.catalog].reverse();
+    const firstContext = buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: { ...rows, catalog: reversedCatalog },
+    });
+    const firstReturned = firstContext.allergenDictionary.catalog[0];
+    const canonicalFirst = currentAllergenCatalogV1[0];
+    if (firstReturned === undefined || canonicalFirst === undefined) {
+      throw new Error("canonical_allergen_catalog_missing");
+    }
+
+    expect(currentAllergenCatalogIds).toEqual(currentAllergenCatalogV1.map((entry) => entry.id));
+    expect(firstContext.allergenDictionary.catalog).toEqual(
+      currentAllergenCatalogV1.map((entry) => ({
+        id: entry.id,
+        displayName: entry.displayName,
+        catalogVersion: entry.catalogVersion,
+      })),
+    );
+    expect(firstReturned).not.toBe(canonicalFirst);
+    expect(firstReturned).not.toBe(reversedCatalog[0]);
+
+    Reflect.set(firstReturned, "displayName", "書き換えられた表示");
+    const secondContext = buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: completeRows(),
+    });
+    expect(currentAllergenCatalogV1[0]?.displayName).toBe("えび");
+    expect(secondContext.allergenDictionary.catalog[0]?.displayName).toBe("えび");
+  });
+
   it("preserves requested member order and assigns anonymous refs in that order", () => {
     const context = buildCurrentSafetyContext({
       userId,
