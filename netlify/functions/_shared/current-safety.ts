@@ -173,6 +173,16 @@ const requiredSafetyConstraintSchema = z.enum(requiredSafetyConstraints);
 const unsupportedDietKindSchema = z.enum(unsupportedDietKinds);
 const unsupportedDietStatusSchema = z.enum(unsupportedDietStatuses);
 const aliasKindSchema = z.enum(["direct", "derived", "processed"]);
+const allergenAliasRowSchema = z
+  .object({
+    allergen_id: z.string().min(1),
+    alias: z.string().min(1),
+    normalized_alias: z.string().min(1),
+    alias_kind: aliasKindSchema,
+    requires_label_confirmation: z.boolean(),
+    dictionary_version: z.string().min(1),
+  })
+  .strict();
 
 const invalidTargets = () =>
   new HttpError(400, "invalid_target_members", "対象メンバーを確認してください");
@@ -183,14 +193,9 @@ function hasExactIds(actual: readonly string[], required: readonly string[]): bo
   return actual.length === required.length && required.every((id) => actual.includes(id));
 }
 
-function aliasSignature(alias: {
-  allergen_id: string;
-  alias: string;
-  normalized_alias: string;
-  alias_kind: string;
-  requires_label_confirmation: boolean;
-  dictionary_version: string;
-}): string {
+type AllergenAliasRow = z.infer<typeof allergenAliasRowSchema>;
+
+function aliasSignature(alias: AllergenAliasRow): string {
   return [
     alias.allergen_id,
     alias.alias,
@@ -213,6 +218,22 @@ const expectedAliasSignatures = new Set(
     }),
   ),
 );
+
+function parseExactCurrentAliases(aliases: SafetyRows["aliases"]): AllergenAliasRow[] | undefined {
+  const parsedResult = z.array(allergenAliasRowSchema).safeParse(aliases);
+  if (!parsedResult.success) return undefined;
+
+  const parsedAliases = parsedResult.data;
+  const actualSignatures = new Set(parsedAliases.map(aliasSignature));
+  if (
+    parsedAliases.length !== expectedAliasSignatures.size ||
+    actualSignatures.size !== expectedAliasSignatures.size ||
+    ![...expectedAliasSignatures].every((signature) => actualSignatures.has(signature))
+  ) {
+    return undefined;
+  }
+  return parsedAliases;
+}
 
 type SafetyRows = {
   members: readonly {
@@ -323,6 +344,7 @@ export function buildCurrentSafetyContext(input: {
   rows: SafetyRows;
 }): CurrentSafetyContext {
   const { userId, targetMemberIds, rows } = input;
+  const parsedAliases = parseExactCurrentAliases(rows.aliases);
   if (
     targetMemberIds.length === 0 ||
     targetMemberIds.length > 20 ||
@@ -341,8 +363,7 @@ export function buildCurrentSafetyContext(input: {
       currentAllergenCatalogIds,
     ) ||
     !hasExactCurrentRules(rows.rules) ||
-    rows.aliases.length !== expectedAliasSignatures.size ||
-    rows.aliases.some((alias) => !expectedAliasSignatures.has(aliasSignature(alias)))
+    parsedAliases === undefined
   ) {
     throw safetyUnavailable();
   }
@@ -386,11 +407,11 @@ export function buildCurrentSafetyContext(input: {
         displayName: row.display_name,
         catalogVersion: row.catalog_version,
       })),
-      aliases: rows.aliases.map((row) => ({
+      aliases: parsedAliases.map((row) => ({
         allergenId: row.allergen_id,
         alias: row.alias,
         normalizedAlias: row.normalized_alias,
-        aliasKind: aliasKindSchema.parse(row.alias_kind),
+        aliasKind: row.alias_kind,
         requiresLabelConfirmation: row.requires_label_confirmation,
         dictionaryVersion: row.dictionary_version,
       })),

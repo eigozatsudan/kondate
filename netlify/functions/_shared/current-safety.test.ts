@@ -64,6 +64,14 @@ type SafetyRuleTestRow = {
   rule_version: string;
 };
 
+type AllergenAliasTestRow = ReturnType<typeof completeRows>["aliases"][number];
+
+function firstAlias(aliases: readonly AllergenAliasTestRow[]): AllergenAliasTestRow {
+  const first = aliases[0];
+  if (first === undefined) throw new Error("canonical_allergen_aliases_missing");
+  return first;
+}
+
 function firstRule(rules: readonly SafetyRuleTestRow[]): SafetyRuleTestRow {
   const first = rules[0];
   if (first === undefined) throw new Error("canonical_food_safety_rules_missing");
@@ -76,6 +84,16 @@ function expectSafetyRulesUnavailable(rules: readonly SafetyRuleTestRow[]): void
       userId,
       targetMemberIds: [firstMemberId, secondMemberId],
       rows: { ...completeRows(), rules },
+    }),
+  ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
+}
+
+function expectAliasesUnavailable(aliases: readonly AllergenAliasTestRow[]): void {
+  expect(() =>
+    buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: { ...completeRows(), aliases },
     }),
   ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
 }
@@ -338,6 +356,74 @@ describe("current safety data boundary", () => {
         },
       }),
     ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
+  });
+
+  it("fails closed when a canonical alias is replaced by a duplicate", () => {
+    const aliases = completeRows().aliases;
+    const duplicate = firstAlias(aliases);
+
+    expectAliasesUnavailable([duplicate, ...aliases.slice(2), { ...duplicate }]);
+  });
+
+  it.each([
+    [
+      "missing boolean",
+      (aliases: AllergenAliasTestRow[]) => {
+        Reflect.deleteProperty(firstAlias(aliases), "requires_label_confirmation");
+      },
+    ],
+    [
+      "undefined boolean",
+      (aliases: AllergenAliasTestRow[]) => {
+        Reflect.set(firstAlias(aliases), "requires_label_confirmation", undefined);
+      },
+    ],
+    [
+      "truthy non-boolean",
+      (aliases: AllergenAliasTestRow[]) => {
+        const alias = aliases.find((candidate) => candidate.requires_label_confirmation);
+        if (alias === undefined) throw new Error("canonical_processed_alias_missing");
+        Reflect.set(alias, "requires_label_confirmation", "false");
+      },
+    ],
+    [
+      "unknown property",
+      (aliases: AllergenAliasTestRow[]) => {
+        Reflect.set(firstAlias(aliases), "unexpected", "value");
+      },
+    ],
+    [
+      "wrong string type",
+      (aliases: AllergenAliasTestRow[]) => {
+        Reflect.set(firstAlias(aliases), "normalized_alias", 42);
+      },
+    ],
+  ])("fails closed for an alias row with %s", (_case, mutate) => {
+    const aliases = completeRows().aliases;
+    mutate(aliases);
+
+    expectAliasesUnavailable(aliases);
+  });
+
+  it("accepts arbitrary alias row order and returns isolated validated copies", () => {
+    const rows = completeRows();
+    const reversedAliases = [...rows.aliases].reverse();
+    const context = buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: { ...rows, aliases: reversedAliases },
+    });
+
+    expect(context.allergenDictionary.aliases).toHaveLength(reversedAliases.length);
+    expect(context.allergenDictionary.aliases[0]).not.toBe(reversedAliases[0]);
+    expect(context.allergenDictionary.aliases[0]).toMatchObject({
+      allergenId: reversedAliases[0]?.allergen_id,
+      alias: reversedAliases[0]?.alias,
+      normalizedAlias: reversedAliases[0]?.normalized_alias,
+      aliasKind: reversedAliases[0]?.alias_kind,
+      requiresLabelConfirmation: reversedAliases[0]?.requires_label_confirmation,
+      dictionaryVersion: reversedAliases[0]?.dictionary_version,
+    });
   });
 
   it("captures immutable live names and uses an ordered fallback for a blank name", () => {
