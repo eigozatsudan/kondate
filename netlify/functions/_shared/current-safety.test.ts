@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
 import {
   buildCurrentSafetyContext,
   captureMemberLabels,
@@ -41,16 +42,42 @@ function completeRows() {
       requires_label_confirmation: entry.requiresLabelConfirmation,
       dictionary_version: "jp-caa-2026-04.v1",
     })),
-    rules: currentFoodSafetyRuleIds.map((id) => ({
-      id,
-      applies_to_age_bands: ["adult"],
-      match_terms: ["確認用"],
-      rule_kind: "forbidden",
-      required_safety_tag: null,
-      user_message: "確認用ルール",
-      rule_version: "jp-caa-child-shape-2026-07.v1",
+    rules: currentFoodSafetyRulesV1.map((rule) => ({
+      id: rule.id,
+      applies_to_age_bands: [...rule.appliesToAgeBands],
+      match_terms: [...rule.matchTerms],
+      rule_kind: rule.ruleKind,
+      required_safety_tag: rule.requiredSafetyTag,
+      user_message: rule.userMessage,
+      rule_version: rule.ruleVersion,
     })),
   };
+}
+
+type SafetyRuleTestRow = {
+  id: string;
+  applies_to_age_bands: string[];
+  match_terms: string[];
+  rule_kind: string;
+  required_safety_tag: string | null;
+  user_message: string;
+  rule_version: string;
+};
+
+function firstRule(rules: readonly SafetyRuleTestRow[]): SafetyRuleTestRow {
+  const first = rules[0];
+  if (first === undefined) throw new Error("canonical_food_safety_rules_missing");
+  return first;
+}
+
+function expectSafetyRulesUnavailable(rules: readonly SafetyRuleTestRow[]): void {
+  expect(() =>
+    buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: { ...completeRows(), rules },
+    }),
+  ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
 }
 
 describe("current safety data boundary", () => {
@@ -90,13 +117,122 @@ describe("current safety data boundary", () => {
 
   it("fails closed when the current catalog is incomplete", () => {
     const rows = completeRows();
-    expect(() =>
-      buildCurrentSafetyContext({
-        userId,
-        targetMemberIds: [firstMemberId, secondMemberId],
-        rows: { ...rows, rules: rows.rules.slice(1) },
-      }),
-    ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
+    expectSafetyRulesUnavailable(rows.rules.slice(1));
+  });
+
+  it.each([
+    [
+      "applies_to_age_bands",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule, index) =>
+          index === 0 ? { ...rule, applies_to_age_bands: ["adult"] } : rule,
+        );
+      },
+    ],
+    [
+      "match_terms",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule, index) =>
+          index === 0 ? { ...rule, match_terms: ["差し替えられた語句"] } : rule,
+        );
+      },
+    ],
+    [
+      "applies_to_age_bands order",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule, index) =>
+          index === 0
+            ? { ...rule, applies_to_age_bands: [...rule.applies_to_age_bands].reverse() }
+            : rule,
+        );
+      },
+    ],
+    [
+      "match_terms order",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule, index) =>
+          index === 0 ? { ...rule, match_terms: [...rule.match_terms].reverse() } : rule,
+        );
+      },
+    ],
+    [
+      "rule_kind",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule) =>
+          rule.id === "grapes_under_6"
+            ? { ...rule, rule_kind: "forbidden", required_safety_tag: null }
+            : rule,
+        );
+      },
+    ],
+    [
+      "required_safety_tag",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule) =>
+          rule.id === "grapes_under_6" ? { ...rule, required_safety_tag: "soften" } : rule,
+        );
+      },
+    ],
+    [
+      "user_message",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule, index) =>
+          index === 0 ? { ...rule, user_message: "差し替えられた案内" } : rule,
+        );
+      },
+    ],
+    [
+      "rule_version",
+      () => {
+        const rows = completeRows().rules;
+        return rows.map((rule, index) =>
+          index === 0 ? { ...rule, rule_version: "obsolete.v1" } : rule,
+        );
+      },
+    ],
+  ])("fails closed when a rule's %s differs from the canonical manifest", (_field, mutate) => {
+    expectSafetyRulesUnavailable(mutate());
+  });
+
+  it.each([
+    ["missing", () => completeRows().rules.slice(1)],
+    [
+      "extra",
+      () => {
+        const rules = completeRows().rules;
+        return [...rules, { ...firstRule(rules), id: "unexpected_rule" }];
+      },
+    ],
+    [
+      "duplicate",
+      () => {
+        const rules = completeRows().rules;
+        return [...rules, { ...firstRule(rules) }];
+      },
+    ],
+  ])("fails closed when the rule set contains a %s row", (_case, mutate) => {
+    expectSafetyRulesUnavailable(mutate());
+  });
+
+  it("accepts arbitrary database row order and returns the canonical rule order", () => {
+    const rows = completeRows();
+    const context = buildCurrentSafetyContext({
+      userId,
+      targetMemberIds: [firstMemberId, secondMemberId],
+      rows: { ...rows, rules: [...rows.rules].reverse() },
+    });
+
+    expect(context.foodSafetyRules).toEqual(currentFoodSafetyRulesV1);
+    expect(currentFoodSafetyRuleIds).toEqual([
+      ...new Set(currentFoodSafetyRulesV1.map((rule) => rule.id)),
+    ]);
   });
 
   it("fails closed when only one direct alias per allergen is loaded", () => {

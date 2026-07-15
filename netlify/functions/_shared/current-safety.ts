@@ -7,7 +7,7 @@ import {
   unsupportedDietStatuses,
 } from "../../../shared/contracts/domain.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
-import { safetyActionKinds } from "../../../shared/contracts/generation.js";
+import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
 import { HttpError } from "./http.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 
@@ -44,15 +44,9 @@ export const currentAllergenCatalogIds = [
   "apple",
   "gelatin",
 ] as const;
-export const currentFoodSafetyRuleIds = [
-  "hard_beans_and_reviewed_nuts_under_6",
-  "grapes_under_6",
-  "cherry_tomato_under_6",
-  "mochi_under_6",
-  "mochi_senior",
-  "bones_for_young_and_senior",
-  "hard_food_for_senior",
-] as const;
+export const currentFoodSafetyRuleIds: readonly string[] = Object.freeze([
+  ...new Set(currentFoodSafetyRulesV1.map((rule) => rule.id)),
+]);
 
 const currentDirectAliasValues = [
   ["えび", "えび"],
@@ -178,8 +172,6 @@ const requiredSafetyConstraintSchema = z.enum(requiredSafetyConstraints);
 const unsupportedDietKindSchema = z.enum(unsupportedDietKinds);
 const unsupportedDietStatusSchema = z.enum(unsupportedDietStatuses);
 const aliasKindSchema = z.enum(["direct", "derived", "processed"]);
-const ruleKindSchema = z.enum(["forbidden", "requires_tag"]);
-const safetyActionKindSchema = z.enum(safetyActionKinds);
 
 const invalidTargets = () =>
   new HttpError(400, "invalid_target_members", "対象メンバーを確認してください");
@@ -253,6 +245,62 @@ type SafetyRows = {
   }[];
 };
 
+type SafetyRuleRow = SafetyRows["rules"][number];
+
+function ruleSignature(rule: SafetyRuleRow): string {
+  return JSON.stringify([
+    rule.id,
+    rule.applies_to_age_bands,
+    rule.match_terms,
+    rule.rule_kind,
+    rule.required_safety_tag,
+    rule.user_message,
+    rule.rule_version,
+  ]);
+}
+
+const expectedRuleSignatures = new Map(
+  currentFoodSafetyRulesV1.map((rule) => [
+    rule.id,
+    ruleSignature({
+      id: rule.id,
+      applies_to_age_bands: rule.appliesToAgeBands,
+      match_terms: rule.matchTerms,
+      rule_kind: rule.ruleKind,
+      required_safety_tag: rule.requiredSafetyTag,
+      user_message: rule.userMessage,
+      rule_version: rule.ruleVersion,
+    }),
+  ]),
+);
+
+function hasExactCurrentRules(rules: readonly SafetyRuleRow[]): boolean {
+  if (
+    currentFoodSafetyRuleIds.length !== currentFoodSafetyRulesV1.length ||
+    rules.length !== currentFoodSafetyRulesV1.length
+  ) {
+    return false;
+  }
+  const rowsById = new Map(rules.map((rule) => [rule.id, rule]));
+  return (
+    rowsById.size === currentFoodSafetyRulesV1.length &&
+    currentFoodSafetyRulesV1.every((canonicalRule) => {
+      const row = rowsById.get(canonicalRule.id);
+      return (
+        row !== undefined && ruleSignature(row) === expectedRuleSignatures.get(canonicalRule.id)
+      );
+    })
+  );
+}
+
+function copyCurrentFoodSafetyRules(): CurrentSafetyContext["foodSafetyRules"] {
+  return currentFoodSafetyRulesV1.map((rule) => ({
+    ...rule,
+    appliesToAgeBands: [...rule.appliesToAgeBands],
+    matchTerms: [...rule.matchTerms],
+  }));
+}
+
 export function buildCurrentSafetyContext(input: {
   userId: string;
   targetMemberIds: readonly string[];
@@ -276,10 +324,7 @@ export function buildCurrentSafetyContext(input: {
       rows.catalog.map((row) => row.id),
       currentAllergenCatalogIds,
     ) ||
-    !hasExactIds(
-      rows.rules.map((row) => row.id),
-      currentFoodSafetyRuleIds,
-    ) ||
+    !hasExactCurrentRules(rows.rules) ||
     rows.aliases.length !== expectedAliasSignatures.size ||
     rows.aliases.some((alias) => !expectedAliasSignatures.has(aliasSignature(alias)))
   ) {
@@ -334,18 +379,7 @@ export function buildCurrentSafetyContext(input: {
         dictionaryVersion: row.dictionary_version,
       })),
     },
-    foodSafetyRules: rows.rules.map((row) => ({
-      id: row.id,
-      appliesToAgeBands: row.applies_to_age_bands.map((value) => ageBandSchema.parse(value)),
-      matchTerms: [...row.match_terms],
-      ruleKind: ruleKindSchema.parse(row.rule_kind),
-      requiredSafetyTag:
-        row.required_safety_tag === null
-          ? null
-          : safetyActionKindSchema.parse(row.required_safety_tag),
-      userMessage: row.user_message,
-      ruleVersion: row.rule_version,
-    })),
+    foodSafetyRules: copyCurrentFoodSafetyRules(),
   };
 }
 
