@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from "react-router";
 import { AppShell } from "./layouts/app-shell";
 import { RequireCompletedOnboarding, RequireSession } from "@/features/auth/protected-routes";
+import { PantryPage } from "@/features/pantry/pantry-page";
 import { PlaceholderPage } from "@/shared/ui/placeholder-page";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
@@ -57,12 +58,7 @@ export function createAppRouter(): AppRouter {
                 },
                 {
                   path: "/pantry",
-                  element: (
-                    <PlaceholderPage
-                      title="冷蔵庫"
-                      description="使いたい食材を登録する画面です。"
-                    />
-                  ),
+                  element: <PantryPage />,
                 },
                 {
                   path: "/history",
