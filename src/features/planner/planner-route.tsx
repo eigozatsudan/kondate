@@ -121,7 +121,10 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
   });
   const [value, setValue] = useState<PlannerDraftInput>(emptyDraft);
   const [initialized, setInitialized] = useState(false);
-  const [attempt] = useState<PlannerAttempt>(createPlannerAttempt);
+  const [attempt, setAttempt] = useState<PlannerAttempt>(createPlannerAttempt);
+  const startNewAttempt = useCallback(() => {
+    setAttempt(createPlannerAttempt());
+  }, []);
 
   useEffect(() => {
     if (draftQuery.data === undefined || safetyQuery.data === undefined || initialized) return;
@@ -176,6 +179,8 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
       members={safetyQuery.data.members}
       saveState={autosave.state}
       attempt={attempt}
+      onAttemptChange={setAttempt}
+      onStartNewAttempt={startNewAttempt}
       onChange={setValue}
       flush={autosave.flush}
       onGenerate={async (draft, currentAttempt) => {

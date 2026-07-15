@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
+import { plannerDraftInputSchema } from "@shared/contracts/planner";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import { PlannerForm } from "./planner-page";
 
@@ -131,4 +132,97 @@ it("献立生成は autosave flush の完了後にだけ開始する", async () 
       undefined,
     );
   });
+});
+
+it("安全条件の再取得で対象外になった家族を選択から除き生成を止める", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  const completeValue: PlannerDraftInput = {
+    ...initialValue,
+    mealType: "dinner",
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese",
+  };
+  const member = {
+    id: initialValue.targetMemberIds[0]!,
+    displayName: "子ども",
+    ageBandLabel: "3〜5歳",
+    allergyLabel: "アレルギーなし",
+    safetyLabels: [],
+    blockedReason: null,
+  };
+  const view = render(
+    <PlannerForm
+      initialValue={completeValue}
+      members={[member]}
+      saveState="saved"
+      onChange={onChange}
+      flush={vi.fn()}
+      onGenerate={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "献立を作る" })).toBeEnabled();
+  view.rerender(
+    <PlannerForm
+      initialValue={completeValue}
+      members={[]}
+      saveState="saved"
+      onChange={onChange}
+      flush={vi.fn()}
+      onGenerate={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "献立を作れる家族がいません。家族設定を確認してください。",
+  );
+  await vi.waitFor(() => {
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ targetMemberIds: [] }));
+  });
+  await user.click(screen.getByRole("button", { name: "献立を作る" }));
+});
+
+it("メイン食材を8件までに制限し契約外の値を作らない", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  render(
+    <PlannerForm
+      initialValue={{
+        ...initialValue,
+        mainIngredients: ["食材1", "食材2", "食材3", "食材4", "食材5", "食材6", "食材7", "食材8"],
+      }}
+      members={[]}
+      saveState="saved"
+      onChange={onChange}
+    />,
+  );
+
+  await user.type(screen.getByLabelText("メイン食材"), "食材9");
+  await user.click(screen.getByRole("button", { name: "追加" }));
+
+  expect(screen.getByText("メイン食材は8件までです。")).toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalledWith(
+    expect.objectContaining({
+      mainIngredients: [
+        "食材1",
+        "食材2",
+        "食材3",
+        "食材4",
+        "食材5",
+        "食材6",
+        "食材7",
+        "食材8",
+        "食材9",
+      ],
+    }),
+  );
+  expect(
+    plannerDraftInputSchema.safeParse({
+      ...initialValue,
+      targetMemberIds: [],
+      mainIngredients: ["食材1", "食材2", "食材3", "食材4", "食材5", "食材6", "食材7", "食材8"],
+    }).success,
+  ).toBe(true);
 });

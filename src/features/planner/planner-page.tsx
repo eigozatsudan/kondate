@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import { CurrentSafetySummary, type PlannerSafetyMember } from "./current-safety-summary";
@@ -11,6 +11,7 @@ const genreLabels = {
   chinese: "中華",
   any: "おまかせ",
 } as const;
+const mainIngredientLimit = 8;
 
 export function PlannerForm({
   initialValue,
@@ -25,12 +26,15 @@ export function PlannerForm({
   members: readonly PlannerSafetyMember[];
   saveState: "idle" | "saving" | "saved" | "error";
   attempt?: PlannerAttempt;
+  onAttemptChange?: (next: PlannerAttempt) => void;
+  onStartNewAttempt?: () => void;
   onChange: (value: PlannerDraftInput) => void;
   flush?: () => Promise<PlannerDraft>;
   onGenerate?: (draft: PlannerDraft, attempt: PlannerAttempt | undefined) => void | Promise<void>;
 }) {
   const [value, setValue] = useState(initialValue);
   const [ingredient, setIngredient] = useState("");
+  const [ingredientError, setIngredientError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const update = (patch: Partial<PlannerDraftInput>): void => {
@@ -40,13 +44,29 @@ export function PlannerForm({
   };
   const medicalMatches = detectUnsupportedMedicalRequest(value.memo);
   const selectedMembers = members.filter((member) => value.targetMemberIds.includes(member.id));
+  const eligibleMemberIds = useMemo(
+    () =>
+      new Set(members.filter((member) => member.blockedReason === null).map((member) => member.id)),
+    [members],
+  );
+  const hasEligibleMembers = eligibleMemberIds.size > 0;
   const blocked =
     selectedMembers.some((member) => member.blockedReason !== null) || medicalMatches.length > 0;
   const requiredChoicesComplete =
     value.mealType !== null &&
     value.mainIngredients.length > 0 &&
     value.cuisineGenre !== null &&
-    value.targetMemberIds.length > 0;
+    selectedMembers.length > 0;
+
+  useEffect(() => {
+    const reconciledTargetMemberIds = value.targetMemberIds.filter((id) =>
+      eligibleMemberIds.has(id),
+    );
+    if (reconciledTargetMemberIds.length === value.targetMemberIds.length) return;
+    const next = { ...value, targetMemberIds: reconciledTargetMemberIds };
+    setValue(next);
+    onChange(next);
+  }, [eligibleMemberIds, onChange, value]);
 
   return (
     <main className="page-frame stack">
@@ -77,6 +97,9 @@ export function PlannerForm({
             {member.blockedReason !== null && <p>{member.blockedReason}</p>}
           </div>
         ))}
+        {!hasEligibleMembers && (
+          <p role="alert">献立を作れる家族がいません。家族設定を確認してください。</p>
+        )}
       </section>
       <section className="card">
         <h2>1. 食事</h2>
@@ -110,14 +133,24 @@ export function PlannerForm({
           type="button"
           onClick={() => {
             const next = ingredient.normalize("NFKC").trim();
+            if (
+              next !== "" &&
+              !value.mainIngredients.includes(next) &&
+              value.mainIngredients.length >= mainIngredientLimit
+            ) {
+              setIngredientError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
+              return;
+            }
             if (next !== "" && !value.mainIngredients.includes(next)) {
               update({ mainIngredients: [...value.mainIngredients, next] });
             }
+            setIngredientError(null);
             setIngredient("");
           }}
         >
           追加
         </button>
+        {ingredientError !== null && <p role="alert">{ingredientError}</p>}
         <div>
           {value.mainIngredients.map((item) => (
             <button

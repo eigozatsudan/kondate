@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { PantryItem, PantrySelectionDraft } from "@shared/contracts/pantry";
 import {
   confirmExpiredPantryItem,
@@ -27,10 +27,23 @@ export function PantrySelector({
   now = () => new Date(),
 }: PantrySelectorProps) {
   const [pendingItem, setPendingItem] = useState<PantryItem | null>(null);
+  const descriptionId = useId();
+  const triggerRef = useRef<HTMLInputElement | null>(null);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const safeActionRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     setPendingItem(null);
   }, [attempt.idempotencyKey]);
+
+  useEffect(() => {
+    if (pendingItem !== null) safeActionRef.current?.focus();
+  }, [pendingItem]);
+
+  const closeDialog = (): void => {
+    setPendingItem(null);
+    triggerRef.current?.focus();
+  };
 
   const select = (item: PantryItem): void => {
     const checkedAt = now();
@@ -55,9 +68,11 @@ export function PantrySelector({
               <input
                 type="checkbox"
                 checked={selected !== undefined}
-                onChange={() => {
-                  if (selected === undefined) select(item);
-                  else onChange(selections.filter((entry) => entry.pantryItemId !== item.id));
+                onChange={(event) => {
+                  if (selected === undefined) {
+                    triggerRef.current = event.currentTarget;
+                    select(item);
+                  } else onChange(selections.filter((entry) => entry.pantryItemId !== item.id));
                 }}
               />
               {item.name}
@@ -83,25 +98,52 @@ export function PantrySelector({
         );
       })}
       {pendingItem !== null && (
-        <div role="alertdialog" aria-label="期限を過ぎた食材の確認">
-          <p>
+        <div
+          role="alertdialog"
+          aria-label="期限を過ぎた食材の確認"
+          aria-modal="true"
+          aria-describedby={descriptionId}
+          className="card stack"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeDialog();
+              return;
+            }
+            if (event.key !== "Tab") return;
+            event.preventDefault();
+            if (event.shiftKey) {
+              if (document.activeElement === safeActionRef.current) confirmRef.current?.focus();
+              else safeActionRef.current?.focus();
+            } else if (document.activeElement === safeActionRef.current) {
+              confirmRef.current?.focus();
+            } else {
+              safeActionRef.current?.focus();
+            }
+          }}
+        >
+          <p id={descriptionId}>
             入力した期限を過ぎています。アプリは食べられるか判断しません。今回、実物の状態を確認しましたか？
           </p>
           <button
+            ref={confirmRef}
+            className="primary-button"
             type="button"
             onClick={() => {
               const checkedAt = now();
               onAttemptChange(confirmExpiredPantryItem(attempt, pendingItem.id, checkedAt));
               onChange([...selections, { pantryItemId: pendingItem.id, priority: "prefer_use" }]);
-              setPendingItem(null);
+              closeDialog();
             }}
           >
             実物を確認して今回だけ選ぶ
           </button>
           <button
+            ref={safeActionRef}
+            className="secondary-button"
             type="button"
             onClick={() => {
-              setPendingItem(null);
+              closeDialog();
             }}
           >
             選ばない

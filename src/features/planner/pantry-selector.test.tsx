@@ -81,3 +81,38 @@ it("別 attempt の確認を再利用しない", async () => {
   await user.click(screen.getByRole("checkbox", { name: "豆腐" }));
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
 });
+
+it("期限確認をモーダルとして説明し安全な操作へフォーカスを閉じ込めて戻す", async () => {
+  const user = userEvent.setup();
+  const attempt: PlannerAttempt = {
+    idempotencyKey: "73000000-0000-0000-0000-000000000004",
+    expiredPantryChecks: [],
+  };
+  render(
+    <PantrySelector
+      items={[item]}
+      selections={[]}
+      attempt={attempt}
+      onAttemptChange={vi.fn()}
+      now={() => new Date("2026-07-11T03:00:00.000Z")}
+      onChange={vi.fn()}
+    />,
+  );
+  const trigger = screen.getByRole("checkbox", { name: "豆腐" });
+  await user.click(trigger);
+
+  const dialog = screen.getByRole("alertdialog");
+  const safeAction = screen.getByRole("button", { name: "選ばない" });
+  const confirmAction = screen.getByRole("button", { name: "実物を確認して今回だけ選ぶ" });
+  expect(dialog).toHaveAttribute("aria-modal", "true");
+  expect(dialog).toHaveAttribute("aria-describedby");
+  expect(safeAction).toHaveFocus();
+
+  await user.tab();
+  expect(confirmAction).toHaveFocus();
+  await user.tab();
+  expect(safeAction).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+});
