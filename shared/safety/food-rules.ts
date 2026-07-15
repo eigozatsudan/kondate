@@ -44,6 +44,29 @@ export function evaluateFoodSafetyRules(
       [dish.name, dish.description, ...dish.steps.map((step) => step.instruction)],
     ]),
   );
+  const dishContradictionText = new Map(
+    menu.dishes.map((dish) => [
+      dish.id,
+      sources
+        .filter((source) => source.dishId === dish.id && source.sourceType !== "adaptation")
+        .map((source) => source.text),
+    ]),
+  );
+  const adaptationContradictionText = (dishId: string, anonymousMemberRef: string): string[] =>
+    menu.adaptations
+      .filter(
+        (adaptation) =>
+          adaptation.dishId === dishId && adaptation.anonymousMemberRef === anonymousMemberRef,
+      )
+      .flatMap((adaptation) => [
+        adaptation.portionText,
+        adaptation.additionalCutting,
+        adaptation.additionalHeating,
+        adaptation.additionalSeasoning,
+        adaptation.servingCheck,
+        ...adaptation.safetyActions.map((action) => action.instruction),
+      ])
+      .filter((text): text is string => text !== null);
   const ingredientName = new Map(
     menu.dishes.flatMap((dish) =>
       dish.ingredients.map((ingredient) => [ingredient.id, normalizeFoodText(ingredient.name)]),
@@ -108,16 +131,9 @@ export function evaluateFoodSafetyRules(
           adaptationNamesIngredient(adaptation, action.ingredientId) &&
           !contradictionPattern.test(
             [
-              ...(dishText.get(action.dishId) ?? []),
-              adaptation.portionText,
-              adaptation.additionalCutting,
-              adaptation.additionalHeating,
-              adaptation.additionalSeasoning,
-              adaptation.servingCheck,
-              ...adaptation.safetyActions.map((item) => item.instruction),
-            ]
-              .filter((text): text is string => text !== null)
-              .join(" "),
+              ...(dishContradictionText.get(action.dishId) ?? []),
+              ...adaptationContradictionText(action.dishId, member.anonymousRef),
+            ].join(" "),
           ),
       );
       if (!hasEvidence) {
@@ -150,19 +166,12 @@ export function evaluateFoodSafetyRules(
                   instructionNamesIngredient(action.instruction, source.ingredientId) &&
                   adaptationEvidenceText(adaptation, action.kind, source.ingredientId),
               );
-        const adaptationText = memberActions
-          .filter(({ action }) => action.dishId === source.dishId)
-          .flatMap(({ adaptation }) => [
-            adaptation.portionText,
-            adaptation.additionalCutting,
-            adaptation.additionalHeating,
-            adaptation.additionalSeasoning,
-            adaptation.servingCheck,
-            ...adaptation.safetyActions.map((action) => action.instruction),
-          ])
-          .filter((text): text is string => text !== null);
         const contradictory = contradictionPattern.test(
-          [source.text, ...(dishText.get(source.dishId ?? "") ?? []), ...adaptationText].join(" "),
+          [
+            source.text,
+            ...(dishContradictionText.get(source.dishId ?? "") ?? []),
+            ...adaptationContradictionText(source.dishId ?? "", member.anonymousRef),
+          ].join(" "),
         );
         if (rule.ruleKind === "requires_tag" && contradictory) {
           issues.push({
