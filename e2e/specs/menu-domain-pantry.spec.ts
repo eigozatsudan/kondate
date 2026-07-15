@@ -1,11 +1,50 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
 
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasPantryPriority(body: Readonly<Record<string, unknown>>, priority: string): boolean {
+  const selections = body.p_pantry_selections;
+  return (
+    Array.isArray(selections) &&
+    selections.some((selection) => isRecord(selection) && selection.priority === priority)
+  );
+}
+
+async function updatePlannerAndAwaitAutosave(
+  page: Page,
+  update: () => Promise<unknown>,
+  matchesBody: (body: Readonly<Record<string, unknown>>) => boolean,
+): Promise<void> {
+  const saveResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    const postData = response.request().postData();
+    if (
+      response.request().method() === "POST" &&
+      url.pathname.endsWith("/rest/v1/rpc/save_generation_draft") &&
+      postData !== null
+    ) {
+      const body = JSON.parse(postData) as unknown;
+      return isRecord(body) && matchesBody(body);
+    }
+    return false;
+  });
+  await update();
+  await expect(page.getByText("保存中…", { exact: true })).toBeVisible();
+  expect((await saveResponse).ok()).toBe(true);
+  await expect(page.getByText("保存済み", { exact: true })).toBeVisible();
+}
+
 async function savePlannerMeal(page: Page, mealName: "朝食" | "昼食" | "夕食"): Promise<void> {
   await page.goto("/planner");
-  await page.getByRole("radio", { name: mealName }).check();
-  await expect(page.getByText("保存中…")).toBeVisible();
-  await expect(page.getByText("保存済み")).toBeVisible();
+  const mealType = { 朝食: "breakfast", 昼食: "lunch", 夕食: "dinner" }[mealName];
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByRole("radio", { name: mealName }).check(),
+    (body) => body.p_meal_type === mealType,
+  );
 }
 
 async function expectCompleteCandidate(
@@ -18,7 +57,12 @@ async function expectCompleteCandidate(
       ingredients: readonly (readonly [name: string, quantity: string])[];
       steps: readonly string[];
     }[];
-    adaptation: readonly string[];
+    adaptation: {
+      portion: string;
+      cutting: string | null;
+      heating: string;
+      servingCheck: string;
+    };
     safetyAction: string;
   },
 ): Promise<void> {
@@ -50,11 +94,20 @@ async function expectCompleteCandidate(
       await expect(stepRow).toBeVisible();
     }
   }
-  await expect(candidate.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
-  for (const adaptationText of input.adaptation) {
-    await expect(candidate.getByText(adaptationText, { exact: false })).toBeVisible();
+  const adaptation = candidate.getByRole("heading", { name: "家族向けの取り分け" }).locator("..");
+  await expect(adaptation.getByRole("term")).toContainText(input.adaptation.portion);
+  if (input.adaptation.cutting !== null) {
+    await expect(
+      adaptation.getByText(`切り方: ${input.adaptation.cutting}`, { exact: true }),
+    ).toBeVisible();
   }
-  const safetyAction = candidate.getByText("安全のための手順", { exact: true }).locator("..");
+  await expect(
+    adaptation.getByText(`加熱: ${input.adaptation.heating}`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    adaptation.getByText(`配膳時: ${input.adaptation.servingCheck}`, { exact: true }),
+  ).toBeVisible();
+  const safetyAction = adaptation.getByText("安全のための手順", { exact: true }).locator("..");
   await expect(safetyAction.getByRole("listitem")).toHaveText(input.safetyAction);
   await expect(candidate.getByRole("heading", { name: "冷蔵庫食材の使い方" })).toBeVisible();
   await expect(candidate.getByText("今回選んだ冷蔵庫食材はありません。")).toBeVisible();
@@ -118,9 +171,11 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeEnabled();
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
-  await page.getByLabel("キャベツの使い方").selectOption("must_use");
-  await expect(page.getByText("保存中…")).toBeVisible();
-  await expect(page.getByText("保存済み")).toBeVisible();
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
+    (body) => hasPantryPriority(body, "must_use"),
+  );
 
   await page.reload();
   await expect(page.getByRole("radio", { name: "夕食" })).toBeChecked();
@@ -141,13 +196,17 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
-  await page.getByLabel("キャベツの使い方").selectOption("must_use");
-  await expect(page.getByText("保存中…")).toBeVisible();
-  await expect(page.getByText("保存済み")).toBeVisible();
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
+    (body) => hasPantryPriority(body, "must_use"),
+  );
 
-  await page.getByRole("checkbox", { name: "キャベツ" }).uncheck();
-  await expect(page.getByText("保存中…")).toBeVisible();
-  await expect(page.getByText("保存済み")).toBeVisible();
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
+    (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
+  );
   await page.reload();
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
   await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
@@ -184,12 +243,12 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
         steps: ["薄切りの玉ねぎを水でやわらかく煮、塩で味を整える"],
       },
     ],
-    adaptation: [
-      "年齢と食欲に合わせた量",
-      "鶏肉を食べやすい大きさに切る",
-      "鶏肉の中心まで十分に加熱する",
-      "生焼けがないことを確認する",
-    ],
+    adaptation: {
+      portion: "年齢と食欲に合わせた量",
+      cutting: "鶏肉を食べやすい大きさに切る",
+      heating: "鶏肉の中心まで十分に加熱する",
+      servingCheck: "生焼けがないことを確認する",
+    },
     safetyAction: "鶏肉の中心まで十分に加熱する",
   });
 
@@ -222,12 +281,12 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
         steps: ["野菜を小さく切り、鍋で歯ぐきでつぶせるやわらかさまで煮る"],
       },
     ],
-    adaptation: [
-      "年齢と食欲に合わせた量",
-      "鮭を細かくほぐす",
-      "鮭の中心まで十分に加熱する",
-      "鮭の小骨が残っていないことを確認する",
-    ],
+    adaptation: {
+      portion: "年齢と食欲に合わせた量",
+      cutting: "鮭を細かくほぐす",
+      heating: "鮭の中心まで十分に加熱する",
+      servingCheck: "鮭の小骨が残っていないことを確認する",
+    },
     safetyAction: "鮭の小骨を完全に除く",
   });
 
@@ -257,13 +316,25 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
         steps: ["野菜を小さく切り、歯ぐきでつぶせるやわらかさまで加熱する"],
       },
     ],
-    adaptation: [
-      "年齢と食欲に合わせた量",
-      "鶏ひき肉の中心まで十分に加熱する",
-      "生焼けがないことを確認する",
-    ],
+    adaptation: {
+      portion: "年齢と食欲に合わせた量",
+      cutting: null,
+      heating: "鶏ひき肉の中心まで十分に加熱する",
+      servingCheck: "生焼けがないことを確認する",
+    },
     safetyAction: "鶏ひき肉の中心まで十分に加熱する",
   });
+
+  await page.goto("/planner");
+  await page.getByRole("checkbox", { name: "キャベツ" }).check();
+  await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
+  await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
+  await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
+    (body) => hasPantryPriority(body, "must_use"),
+  );
 
   await page.goto("/pantry");
   page.once("dialog", (dialog) => {
@@ -274,10 +345,12 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await page.goto("/planner");
   await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-  await page.getByRole("button", { name: "削除された食材の選択を解除" }).click();
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByRole("button", { name: "削除された食材の選択を解除" }).click(),
+    (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
+  );
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByText("保存中…")).toBeVisible();
-  await expect(page.getByText("保存済み")).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
   await page.reload();
@@ -291,12 +364,19 @@ test("keeps an incompatible current allergy as an explicit no-candidate result",
   await page.setViewportSize({ width: 320, height: 780 });
   await page.goto("/settings");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
-  await page.getByRole("button", { name: "鶏肉を追加" }).click();
   await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
+  await page.getByRole("button", { name: "鶏肉を追加" }).click();
+  const selectedAllergies = page.getByRole("list", { name: "選択済みアレルギー" });
+  await expect(
+    selectedAllergies.getByRole("button", { name: "鶏肉を削除", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "鶏肉を追加" })).toBeDisabled();
   await page.goto("/planner");
-  await page.getByRole("radio", { name: "夕食" }).check();
-  await expect(page.getByText("保存中…")).toBeVisible();
-  await expect(page.getByText("保存済み")).toBeVisible();
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByRole("radio", { name: "夕食" }).check(),
+    (body) => body.p_meal_type === "dinner",
+  );
   await page.getByRole("link", { name: "AIを使わない緊急献立を見る" }).click();
   await expect(page.getByText("条件に合う緊急献立がありません")).toBeVisible();
   await expect(page.getByText("条件を緩めず、候補を表示していません。")).toBeVisible();

@@ -36,6 +36,17 @@ const routes = new Map([
       default: async (_request, context) => Response.json(context.params),
     },
   ],
+  [
+    "/netlify/functions/emergency-menus.ts",
+    {
+      config: { path: "/api/emergency-menus", method: "GET" },
+      default: async (request) =>
+        Response.json({
+          meal: new URL(request.url).searchParams.get("meal"),
+          authorization: request.headers.get("authorization"),
+        }),
+    },
+  ],
 ]);
 
 async function withServer(loadModule, run) {
@@ -75,6 +86,13 @@ test("routes from exported config, forwards required request fields, and passes 
       );
       assert.deepEqual(await claimResponse.json(), {
         continuationId: "11111111-1111-4111-8111-111111111111",
+      });
+      const emergencyResponse = await fetch(`${origin}/api/emergency-menus?meal=dinner`, {
+        headers: { authorization: "Bearer e2e-token" },
+      });
+      assert.deepEqual(await emergencyResponse.json(), {
+        meal: "dinner",
+        authorization: "Bearer e2e-token",
       });
     },
   );
