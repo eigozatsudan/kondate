@@ -205,6 +205,13 @@ rg -n 'source_text_snapshot|exposes no confirmation transition|three-argument' \
 
 Expected: the stale-contract check exits 0 and the corrected contracts are present.
 
+- [ ] **Step 4: Commit the Plan 2 synchronization**
+
+```bash
+git add docs/superpowers/plans/2026-07-11-kondate-mvp-02-menu-domain-pantry.md
+git commit -m "docs: Plan 2のラベル確認境界を補正"
+```
+
 ---
 
 ### Task 3: Synchronize Plan 3 persistence, display, and RPC ownership
@@ -291,6 +298,13 @@ if rg -n 'sourceText\.get\(canonical\.sourcePath\)|confirm_menu_label_confirmati
 
 Expected: the corrected producer/consumer contracts exist and stale dynamic/two-argument paths are absent.
 
+- [ ] **Step 5: Commit the Plan 3 synchronization**
+
+```bash
+git add docs/superpowers/plans/2026-07-11-kondate-mvp-03-ai-generation-results.md
+git commit -m "docs: Plan 3へ安全なラベル確認RPCを移管"
+```
+
 ---
 
 ### Task 4: Synchronize Plan 4 reconciliation and reuse
@@ -326,10 +340,8 @@ Expected: Plan 4 no longer owns RPC replacement or dynamic source display.
 - [ ] **Step 4: Commit synchronized plans**
 
 ```bash
-git add docs/superpowers/plans/2026-07-11-kondate-mvp-02-menu-domain-pantry.md \
-  docs/superpowers/plans/2026-07-11-kondate-mvp-03-ai-generation-results.md \
-  docs/superpowers/plans/2026-07-11-kondate-mvp-04-history-regeneration.md
-git commit -m "docs: ラベル確認境界を後続計画へ同期"
+git add docs/superpowers/plans/2026-07-11-kondate-mvp-04-history-regeneration.md
+git commit -m "docs: Plan 4のラベル確認契約を同期"
 ```
 
 ---
