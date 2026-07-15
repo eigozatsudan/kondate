@@ -31,7 +31,7 @@ Node 24（`package.json` の `engines` を参照）を使用し、依存関係Do
 
 ## テストガイドライン
 
-対象となるコードの横に、焦点を絞った Vitest/React Testing Library テストを追加します。ユーザー フローには Playwright を使用し、スキーマ/RLS 動作には pgTAP を使用します。変更を送信する前に、「docker compose run --rm --no-deps app npx vitest run」、「docker compose run --rm --no-deps app npm run e2e」、および関連するデータベース テストを実行します。テストを決定論的に保ち、カバレッジに依存する動作が変更された場合は更新します。
+対象となるコードの横に、焦点を絞った Vitest/React Testing Library テストを追加します。ユーザー フローには Playwright を使用し、スキーマ/RLS 動作には pgTAP を使用します。変更を送信する前に、「docker compose run --rm --no-deps app npx vitest run」、「./scripts/run-e2e.sh」、および関連するデータベース テストを実行します。テストを決定論的に保ち、カバレッジに依存する動作が変更された場合は更新します。
 
 ## コミットおよびプルリクエストのガイドライン
 
