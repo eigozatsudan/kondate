@@ -180,7 +180,11 @@ it("serializes rapid draft updates in input order", async () => {
   await waitFor(() => {
     expect(updateDraft).toHaveBeenCalledTimes(2);
   });
-  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { allergy_status: "none" });
+  expect(updateDraft).toHaveBeenNthCalledWith(
+    2,
+    "member-1",
+    expect.objectContaining({ age_band: "adult", allergy_status: "none" }),
+  );
 });
 
 it("preserves rapid changes to the same field while the first save is pending", async () => {
@@ -263,7 +267,7 @@ it("waits for pending draft saves before completing a member", async () => {
   });
 });
 
-it("continues queued saves after an earlier save fails", async () => {
+it("retries unsaved fields with a later queued save after an earlier save fails", async () => {
   const user = userEvent.setup();
   const firstUpdate = deferred<HouseholdMemberRow>();
   const updateDraft = vi
@@ -294,6 +298,51 @@ it("continues queued saves after an earlier save fails", async () => {
   await waitFor(() => {
     expect(updateDraft).toHaveBeenCalledTimes(2);
   });
-  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { allergy_status: "none" });
+  expect(updateDraft).toHaveBeenNthCalledWith(
+    2,
+    "member-1",
+    expect.objectContaining({
+      age_band: "adult",
+      allergy_status: "none",
+    }),
+  );
   expect(await screen.findByText("保存済み")).toBeInTheDocument();
+});
+
+it("does not complete or report saved when the final queued save fails", async () => {
+  const user = userEvent.setup();
+  const pendingUpdate = deferred<HouseholdMemberRow>();
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const completeMember = vi.fn();
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([completableDraft]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn().mockReturnValue(pendingUpdate.promise),
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  await user.type(await screen.findByLabelText("呼び名（任意・AIには送りません）"), "母");
+  await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
+  pendingUpdate.reject(new Error("一時的な保存失敗"));
+
+  expect(
+    await screen.findByText("保存できませんでした。選び直して再試行してください。"),
+  ).toBeInTheDocument();
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(screen.queryByText("保存済み")).not.toBeInTheDocument();
 });

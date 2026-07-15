@@ -89,7 +89,8 @@ export function HouseholdOnboardingForm({
 }) {
   const queryClient = useQueryClient();
   const [saveState, setSaveState] = useState<"saved" | "saving" | "failed">("saved");
-  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
+  const pendingSavePatch = useRef<HouseholdDraftPatch>({});
   const latestSaveVersion = useRef(0);
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
@@ -139,6 +140,7 @@ export function HouseholdOnboardingForm({
     const memberId = draft.id;
     const saveVersion = latestSaveVersion.current + 1;
     latestSaveVersion.current = saveVersion;
+    pendingSavePatch.current = { ...pendingSavePatch.current, ...patch };
     setSaveState("saving");
     // 応答待ちでも連続入力を保持し、後続の保存内容を古い応答で戻さない。
     queryClient.setQueryData<HouseholdMemberRow[]>(householdKeys.members(userId), (current = []) =>
@@ -147,16 +149,20 @@ export function HouseholdOnboardingForm({
 
     const queuedSave = saveQueue.current.then(async () => {
       setSaveState("saving");
+      const patchToSave = { ...pendingSavePatch.current };
       try {
-        const saved = await api.updateDraft(memberId, patch);
+        const saved = await api.updateDraft(memberId, patchToSave);
         if (saveVersion === latestSaveVersion.current) {
+          pendingSavePatch.current = {};
           replaceMember(saved);
           setSaveState("saved");
         }
+        return true;
       } catch {
         if (saveVersion === latestSaveVersion.current) {
           setSaveState("failed");
         }
+        return false;
       }
     });
     // 保存失敗はキュー内で処理し、後続操作を止めない。
@@ -400,13 +406,16 @@ export function HouseholdOnboardingForm({
         className="primary-button"
         type="button"
         disabled={!canComplete}
-        onClick={() =>
-          void saveQueue.current
-            .then(() => api.completeMember(draft.id))
-            .then((member) => {
-              replaceMember(member);
-            })
-        }
+        onClick={() => {
+          void saveQueue.current.then(async (saved) => {
+            if (!saved) return;
+            try {
+              replaceMember(await api.completeMember(draft.id));
+            } catch {
+              setSaveState("failed");
+            }
+          });
+        }}
       >
         残りはあとで設定して完了
       </button>
