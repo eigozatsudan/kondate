@@ -177,7 +177,9 @@ it("serializes rapid draft updates in input order", async () => {
 
   expect(updateDraft).toHaveBeenCalledTimes(1);
   firstUpdate.resolve({ ...draft, age_band: "adult" });
-  await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(2));
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledTimes(2);
+  });
   expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { allergy_status: "none" });
 });
 
@@ -213,7 +215,9 @@ it("preserves rapid changes to the same field while the first save is pending", 
   expect(updateDraft).toHaveBeenNthCalledWith(1, "member-1", { display_name: "母" });
 
   firstUpdate.resolve({ ...draft, display_name: "母" });
-  await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(2));
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledTimes(2);
+  });
   expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { display_name: "母娘" });
   expect(displayName).toHaveValue("母娘");
 });
@@ -254,7 +258,9 @@ it("waits for pending draft saves before completing a member", async () => {
   expect(completeMember).not.toHaveBeenCalled();
 
   pendingUpdate.resolve({ ...completableDraft, display_name: "母" });
-  await waitFor(() => expect(completeMember).toHaveBeenCalledWith("member-1"));
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith("member-1");
+  });
 });
 
 it("continues queued saves after an earlier save fails", async () => {
@@ -285,7 +291,9 @@ it("continues queued saves after an earlier save fails", async () => {
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
   firstUpdate.reject(new Error("一時的な保存失敗"));
 
-  await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(2));
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledTimes(2);
+  });
   expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { allergy_status: "none" });
   expect(await screen.findByText("保存済み")).toBeInTheDocument();
 });
