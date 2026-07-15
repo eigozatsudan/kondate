@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AgeBand } from "../contracts/domain.js";
 import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
-import { makeCurrentSafetyContext, makeGenerationContext } from "../testing/factories.js";
+import {
+  makeCurrentSafetyContext,
+  makeGenerationContext,
+  productionFoodSafetyRules,
+} from "../testing/factories.js";
 import { emergencyFixtureMetadataV1, emergencyMenuFixturesV1 } from "./fixtures.v1.js";
 import { filterEmergencyMenus } from "./filter-emergency-menus.js";
 
@@ -40,6 +44,7 @@ describe("reviewed emergency menus", () => {
         const base = makeGenerationContext();
         const safety = makeCurrentSafetyContext({
           members: [{ ...base.safety.members[0]!, ageBand }],
+          foodSafetyRules: productionFoodSafetyRules,
         });
         const context = makeGenerationContext({
           submission: {
@@ -52,10 +57,65 @@ describe("reviewed emergency menus", () => {
           safety,
         });
 
-        expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+        const result = validateGeneratedMenu(menu, context);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
       }
     },
   );
+
+  it("binds every safety action to the exact protected ingredient and its owner graph", () => {
+    const expectedBindings = [
+      {
+        mealType: "breakfast",
+        kind: "remove_bones",
+        ingredientId: "82200000-0000-4000-8000-000000000012",
+        ingredientName: "鮭",
+      },
+      {
+        mealType: "lunch",
+        kind: "heat_thoroughly",
+        ingredientId: "82200000-0000-4000-8000-000000000021",
+        ingredientName: "鶏ひき肉",
+      },
+      {
+        mealType: "dinner",
+        kind: "heat_thoroughly",
+        ingredientId: "82200000-0000-4000-8000-000000000001",
+        ingredientName: "鶏肉",
+      },
+    ] as const;
+
+    for (const expected of expectedBindings) {
+      const menu = emergencyMenuFixturesV1.find(
+        (candidate) => candidate.mealType === expected.mealType,
+      );
+      expect(menu).toBeDefined();
+      if (menu === undefined) continue;
+      const actions = menu.adaptations.flatMap((adaptation) =>
+        adaptation.safetyActions.map((action) => ({ action, adaptation })),
+      );
+      expect(actions).toHaveLength(1);
+      const binding = actions[0]!;
+      const dish = menu.dishes.find((candidate) => candidate.id === binding.action.dishId);
+      const ingredient = dish?.ingredients.find(
+        (candidate) => candidate.id === binding.action.ingredientId,
+      );
+      const step = dish?.steps.find(
+        (candidate) => candidate.id === binding.action.beforeRecipeStepId,
+      );
+
+      expect(binding.action).toMatchObject({
+        kind: expected.kind,
+        ingredientId: expected.ingredientId,
+        anonymousMemberRef: binding.adaptation.anonymousMemberRef,
+      });
+      expect(binding.adaptation.dishId).toBe(binding.action.dishId);
+      expect(binding.adaptation.branchBeforeRecipeStepId).toBe(binding.action.beforeRecipeStepId);
+      expect(ingredient?.name).toBe(expected.ingredientName);
+      expect(step).toBeDefined();
+      expect(binding.action.instruction).toContain(expected.ingredientName);
+    }
+  });
 
   it("does not relax an unconfirmed or unmapped current safety condition", () => {
     const context = makeCurrentSafetyContext();

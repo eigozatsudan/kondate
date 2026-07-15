@@ -257,7 +257,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
     heading: "鮭おにぎり・やわらか野菜",
     timeline: [
       "0分〜（目安3分） 鮭を焼き始め、野菜を小さく切る",
-      "3分〜（目安9分） 野菜を煮ながら鮭の小骨を完全に除く",
+      "3分〜（目安9分） 野菜を煮ながら鮭の骨を完全に除く",
       "12分〜（目安3分） 鮭をごはんに混ぜて握り、野菜を盛る",
     ],
     dishes: [
@@ -268,7 +268,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
           ["鮭", "1切れ"],
         ],
         steps: [
-          "鮭を中心まで十分に焼き、小骨を完全に除いて細かくほぐす",
+          "鮭を中心まで十分に焼き、骨を完全に除いて細かくほぐす",
           "ごはんに鮭を混ぜ、食べやすい大きさに握る",
         ],
       },
@@ -285,7 +285,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
       portion: "年齢と食欲に合わせた量",
       cutting: "鮭を細かくほぐす",
       heating: "鮭の中心まで十分に加熱する",
-      servingCheck: "鮭の小骨が残っていないことを確認する",
+      servingCheck: "鮭の骨が残っていないことを確認する",
     },
     safetyAction: "鮭の小骨を完全に除く",
   });

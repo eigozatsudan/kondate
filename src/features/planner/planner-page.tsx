@@ -131,31 +131,37 @@ export function PlannerForm({
       <CurrentSafetySummary members={members} />
       <section className="card stack" aria-labelledby="target-members-title">
         <h2 id="target-members-title">献立を作る家族</h2>
-        {members.map((member) => (
-          <div key={member.id}>
-            <label>
-              <input
-                type="checkbox"
-                checked={value.targetMemberIds.includes(member.id)}
-                disabled={
-                  member.blockedReason !== null ||
-                  (!value.targetMemberIds.includes(member.id) &&
-                    value.targetMemberIds.length >= targetMemberLimit)
-                }
-                onChange={(event) => {
-                  update({
-                    targetMemberIds: event.target.checked
-                      ? [...value.targetMemberIds, member.id]
-                      : value.targetMemberIds.filter((id) => id !== member.id),
-                  });
-                }}
-              />
-              {member.displayName}
-            </label>
-            <p>{memberSafetyText(member)}</p>
-            {member.blockedReason !== null && <p>{member.blockedReason}</p>}
-          </div>
-        ))}
+        {members.map((member, memberIndex) => {
+          const descriptionId = `planner-member-${String(memberIndex + 1)}-description`;
+          return (
+            <div key={member.id}>
+              <label>
+                <input
+                  type="checkbox"
+                  aria-describedby={descriptionId}
+                  checked={value.targetMemberIds.includes(member.id)}
+                  disabled={
+                    member.blockedReason !== null ||
+                    (!value.targetMemberIds.includes(member.id) &&
+                      value.targetMemberIds.length >= targetMemberLimit)
+                  }
+                  onChange={(event) => {
+                    update({
+                      targetMemberIds: event.target.checked
+                        ? [...value.targetMemberIds, member.id]
+                        : value.targetMemberIds.filter((id) => id !== member.id),
+                    });
+                  }}
+                />
+                {member.displayName}
+              </label>
+              <div id={descriptionId}>
+                <p>{memberSafetyText(member)}</p>
+                {member.blockedReason !== null && <p>{member.blockedReason}</p>}
+              </div>
+            </div>
+          );
+        })}
         {value.targetMemberIds.length >= targetMemberLimit &&
           members.some(
             (member) => member.blockedReason === null && !value.targetMemberIds.includes(member.id),

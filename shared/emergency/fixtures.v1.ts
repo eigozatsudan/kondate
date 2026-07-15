@@ -57,7 +57,7 @@ const breakfastFixture = {
         {
           id: "82300000-0000-4000-8000-000000000011",
           position: 1,
-          instruction: "鮭を中心まで十分に焼き、小骨を完全に除いて細かくほぐす",
+          instruction: "鮭を中心まで十分に焼き、骨を完全に除いて細かくほぐす",
         },
         {
           id: "82300000-0000-4000-8000-000000000012",
@@ -121,7 +121,7 @@ const breakfastFixture = {
       position: 2,
       startMinute: 3,
       durationMinutes: 9,
-      instruction: "野菜を煮ながら鮭の小骨を完全に除く",
+      instruction: "野菜を煮ながら鮭の骨を完全に除く",
       dishId: null,
       recipeStepId: null,
     },
@@ -145,7 +145,7 @@ const breakfastFixture = {
       additionalCutting: "鮭を細かくほぐす",
       additionalHeating: "鮭の中心まで十分に加熱する",
       additionalSeasoning: null,
-      servingCheck: "鮭の小骨が残っていないことを確認する",
+      servingCheck: "鮭の骨が残っていないことを確認する",
       safetyTags: ["remove_bones"],
       safetyActions: [
         {

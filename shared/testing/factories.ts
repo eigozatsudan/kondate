@@ -208,9 +208,68 @@ export const hardBeanAndReviewedNutRule: FoodSafetyRule = {
   ],
   ruleKind: "forbidden",
   requiredSafetyTag: null,
-  userMessage: "5歳以下には硬い豆やナッツを使用できません",
+  userMessage:
+    "5歳以下を含む献立では、硬い豆とピーナッツ・くるみ・アーモンド・カシューナッツ・ピスタチオ・マカダミアナッツを原則使用できません",
   ruleVersion: "jp-caa-child-shape-2026-07.v1",
 };
+
+export const productionFoodSafetyRules: readonly FoodSafetyRule[] = [
+  hardBeanAndReviewedNutRule,
+  {
+    id: "grapes_under_6",
+    appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
+    matchTerms: ["ぶどう", "ブドウ"],
+    ruleKind: "requires_tag",
+    requiredSafetyTag: "quarter_round_food",
+    userMessage: "ぶどうは4等分する工程が必要です",
+    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+  },
+  {
+    id: "cherry_tomato_under_6",
+    appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
+    matchTerms: ["ミニトマト", "プチトマト"],
+    ruleKind: "requires_tag",
+    requiredSafetyTag: "quarter_round_food",
+    userMessage: "ミニトマトは4等分する工程が必要です",
+    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+  },
+  {
+    id: "mochi_under_6",
+    appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
+    matchTerms: ["餅", "もち"],
+    ruleKind: "forbidden",
+    requiredSafetyTag: null,
+    userMessage: "5歳以下を含む献立では餅を使用できません",
+    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+  },
+  {
+    id: "mochi_senior",
+    appliesToAgeBands: ["senior"],
+    matchTerms: ["餅", "もち"],
+    ruleKind: "forbidden",
+    requiredSafetyTag: null,
+    userMessage: "高齢者を含む固定候補とAI献立では餅を原則除外します",
+    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+  },
+  {
+    id: "bones_for_young_and_senior",
+    appliesToAgeBands: ["post_weaning_to_2", "age_3_5", "senior"],
+    matchTerms: ["小骨", "骨付き", "魚"],
+    ruleKind: "requires_tag",
+    requiredSafetyTag: "remove_bones",
+    userMessage: "小骨を完全に除く工程が必要です",
+    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+  },
+  {
+    id: "hard_food_for_senior",
+    appliesToAgeBands: ["senior"],
+    matchTerms: ["硬い", "かたい", "根菜"],
+    ruleKind: "requires_tag",
+    requiredSafetyTag: "soften",
+    userMessage: "高齢者向けに十分やわらかくする工程が必要です",
+    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+  },
+];
 
 export function underSixHardBeanAndNutContext(): GenerationContext {
   const base = makeGenerationContext();
