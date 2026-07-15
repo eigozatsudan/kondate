@@ -19,6 +19,15 @@ function expectIssueCodes(
   );
 }
 
+function expectOnlyIssueCode(
+  result: ReturnType<typeof validateGeneratedMenu>,
+  expectedCode: string,
+): void {
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("検証エラーを期待しました");
+  expect(result.issues.map((issue) => issue.code)).toEqual([expectedCode]);
+}
+
 function menuWithIngredient(name: string) {
   const base = makeGeneratedMenu();
   return makeGeneratedMenu({
@@ -157,6 +166,95 @@ it("rejects an omitted submitted must-use pantry item", () => {
   });
 
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), context), ["must_use_missing"]);
+});
+
+it.each([
+  {
+    name: "meal type",
+    menu: makeGeneratedMenu(),
+    context: makeGenerationContext({
+      submission: { ...makeGenerationContext().submission, mealType: "lunch" },
+    }),
+    code: "meal_type_mismatch",
+  },
+  {
+    name: "genre",
+    menu: makeGeneratedMenu(),
+    context: makeGenerationContext({
+      submission: { ...makeGenerationContext().submission, cuisineGenre: "western" },
+    }),
+    code: "genre_mismatch",
+  },
+  {
+    name: "time limit",
+    menu: makeGeneratedMenu({ totalElapsedMinutes: 30 }),
+    context: makeGenerationContext({
+      submission: { ...makeGenerationContext().submission, timeLimitMinutes: 15 },
+    }),
+    code: "time_limit_exceeded",
+  },
+  {
+    name: "avoid ingredient",
+    menu: makeGeneratedMenu(),
+    context: makeGenerationContext({
+      submission: { ...makeGenerationContext().submission, avoidIngredients: ["ごはん"] },
+    }),
+    code: "avoid_ingredient_used",
+  },
+  {
+    name: "required dish role",
+    menu: makeGeneratedMenu({
+      dishes: makeGeneratedMenu().dishes.map((dish) => ({ ...dish, role: "main" })),
+    }),
+    context: makeGenerationContext(),
+    code: "required_dish_role_missing",
+  },
+])("T5-RR-01 reports the exact validator issue for $name", ({ menu, context, code }) => {
+  expectOnlyIssueCode(validateGeneratedMenu(menu, context), code);
+});
+
+it("T5-RR-01 reports prefer_use_reason_missing at the validator boundary", () => {
+  const pantryItemId = "58000000-0000-4000-8000-000000000011";
+  const selectionId = "58000000-0000-4000-8000-000000000012";
+  const menu = makeGeneratedMenu({
+    pantryUsage: [
+      {
+        selectionId,
+        pantryItemId,
+        pantryItemName: "にんじん",
+        priority: "prefer_use",
+        usageStatus: "unused",
+        plannedQuantity: 1,
+        inventoryQuantity: 1,
+        shortageQuantity: 0,
+        unit: "本",
+        dishIds: [],
+        unusedReason: null,
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    submission: {
+      ...makeGenerationContext().submission,
+      pantrySelections: [{ pantryItemId, priority: "prefer_use" }],
+    },
+    pantryItems: [
+      {
+        id: pantryItemId,
+        userId: "59000000-0000-4000-8000-000000000001",
+        name: "にんじん",
+        quantity: 1,
+        unit: "本",
+        expiresOn: null,
+        expirationType: null,
+        openedState: null,
+        createdAt: "2026-07-15T00:00:00+09:00",
+        updatedAt: "2026-07-15T00:00:00+09:00",
+      },
+    ],
+  });
+
+  expectOnlyIssueCode(validateGeneratedMenu(menu, context), "prefer_use_reason_missing");
 });
 
 it("rejects forged pantry provenance that disagrees with the trusted item name", () => {

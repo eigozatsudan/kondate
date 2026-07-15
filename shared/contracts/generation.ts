@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { cuisineGenres, mealTypes } from "./domain.js";
-import { pantryUsageSchema } from "./pantry.js";
+import { generatedPantryUsageSchema, pantryUsageSchema } from "./pantry.js";
 
 export const dishRoles = ["main", "side", "soup", "staple", "other"] as const;
 export const storeSections = [
@@ -162,7 +162,7 @@ const generatedMenuObjectSchema = z
     dishes: z.array(dishSchema).min(1).max(5),
     timeline: z.array(menuTimelineStepSchema).min(1).max(60),
     adaptations: z.array(menuMemberAdaptationSchema).max(100),
-    pantryUsage: z.array(pantryUsageSchema).max(50),
+    pantryUsage: z.array(generatedPantryUsageSchema).max(50),
     labelConfirmations: z.array(generatedLabelConfirmationSchema).max(200),
   })
   .strict();
@@ -439,6 +439,7 @@ export const generatedMenuSchema = generatedMenuObjectSchema.superRefine(validat
 
 export const validatedMenuSchema = generatedMenuObjectSchema
   .extend({
+    pantryUsage: z.array(pantryUsageSchema).max(50),
     labelConfirmations: z.array(menuLabelConfirmationSchema).max(200),
   })
   .superRefine(validateMenuReferences)
