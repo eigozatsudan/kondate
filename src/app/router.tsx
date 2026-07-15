@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 import { AppShell } from "./layouts/app-shell";
 import { RequireCompletedOnboarding, RequireSession } from "@/features/auth/protected-routes";
 import { PantryPage } from "@/features/pantry/pantry-page";
+import { PlannerPage } from "@/features/planner/planner-route";
 import { PlaceholderPage } from "@/shared/ui/placeholder-page";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
@@ -49,12 +50,7 @@ export function createAppRouter(): AppRouter {
                 { path: "/", element: <Navigate to="/planner" replace /> },
                 {
                   path: "/planner",
-                  element: (
-                    <PlaceholderPage
-                      title="献立"
-                      description="朝食・昼食・夕食から1食分の献立を作ります。"
-                    />
-                  ),
+                  element: <PlannerPage />,
                 },
                 {
                   path: "/pantry",
