@@ -79,6 +79,7 @@ export function PantryPage() {
       items={query.data ?? []}
       loading={query.isPending}
       saving={createMutation.isPending || updateMutation.isPending || deleteMutation.isPending}
+      synchronizeEditingVersion={updateMutation.error instanceof PantryVersionConflictError}
       error={
         query.isError
           ? "冷蔵庫の食材を読み込めませんでした。通信を確認してください。"
@@ -105,6 +106,7 @@ type PantryPageContentProps = {
   items: readonly PantryItem[];
   loading: boolean;
   saving: boolean;
+  synchronizeEditingVersion?: boolean;
   error: string | null;
   onCreate: (input: PantryItemInput) => Promise<void>;
   onUpdate: (id: string, expectedUpdatedAt: string, input: PantryItemInput) => Promise<void>;
@@ -126,12 +128,17 @@ export function PantryPageContent({
   items,
   loading,
   saving,
+  synchronizeEditingVersion = false,
   error,
   onCreate,
   onUpdate,
   onDelete,
 }: PantryPageContentProps) {
   const [editing, setEditing] = useState<PantryItem | null>(null);
+  const latestEditingVersion =
+    synchronizeEditingVersion && editing !== null
+      ? (items.find((item) => item.id === editing.id)?.updatedAt ?? editing.updatedAt)
+      : editing?.updatedAt;
 
   return (
     <main className="page-frame stack">
@@ -150,7 +157,7 @@ export function PantryPageContent({
           submitLabel="変更を保存"
           initialValue={inputFromItem(editing)}
           onSubmit={async (input) => {
-            await onUpdate(editing.id, editing.updatedAt, input);
+            await onUpdate(editing.id, latestEditingVersion ?? editing.updatedAt, input);
             setEditing(null);
           }}
           onCancel={() => {

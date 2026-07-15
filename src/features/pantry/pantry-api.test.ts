@@ -43,20 +43,33 @@ function mutationClient(data: unknown) {
   chain.eq.mockReturnValue(chain);
   chain.select.mockReturnValue(chain);
   chain.maybeSingle.mockResolvedValue({ data, error: null });
+  const from = vi.fn().mockReturnValue(chain);
   return {
-    client: { from: vi.fn().mockReturnValue(chain) } as never,
+    client: { from } as never,
     chain,
+    from,
   };
 }
 
 describe("pantry optimistic concurrency", () => {
   it("updates with owner, id, and displayed version and returns the written row", async () => {
-    const { client, chain } = mutationClient(pantryRow());
+    const { client, chain, from } = mutationClient(pantryRow());
 
     await expect(
       updatePantryItem(client, userId, itemId, expectedUpdatedAt, input),
     ).resolves.toMatchObject({ id: itemId, updatedAt });
 
+    expect(from).toHaveBeenCalledWith("pantry_items");
+    expect(chain.update).toHaveBeenCalledWith({
+      user_id: userId,
+      name: input.name,
+      quantity: input.quantity,
+      unit: input.unit,
+      expires_on: input.expiresOn,
+      expiration_type: input.expirationType,
+      opened_state: input.openedState,
+    });
+    expect(chain.delete).not.toHaveBeenCalled();
     expect(chain.eq.mock.calls).toEqual([
       ["id", itemId],
       ["user_id", userId],
@@ -66,12 +79,15 @@ describe("pantry optimistic concurrency", () => {
   });
 
   it("deletes with owner, id, and displayed version and returns the deleted id", async () => {
-    const { client, chain } = mutationClient({ id: itemId });
+    const { client, chain, from } = mutationClient({ id: itemId });
 
     await expect(deletePantryItem(client, userId, itemId, expectedUpdatedAt)).resolves.toEqual({
       id: itemId,
     });
 
+    expect(from).toHaveBeenCalledWith("pantry_items");
+    expect(chain.delete).toHaveBeenCalledOnce();
+    expect(chain.update).not.toHaveBeenCalled();
     expect(chain.eq.mock.calls).toEqual([
       ["id", itemId],
       ["user_id", userId],

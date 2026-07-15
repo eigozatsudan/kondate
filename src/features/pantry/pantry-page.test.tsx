@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
 import { PantryPage, PantryPageContent } from "./pantry-page";
 import { PantryVersionConflictError, pantryKeys } from "./pantry-api";
+import { PantryForm } from "./pantry-form";
 
 const userId = "61000000-0000-0000-0000-000000000001";
 const expired: PantryItem = {
@@ -99,9 +100,50 @@ it("passes the displayed version when saving an edit", async () => {
   );
 });
 
+it("does not bypass concurrency when the list refreshes before a conflict", async () => {
+  const user = userEvent.setup();
+  const onUpdate = vi.fn().mockResolvedValue(undefined);
+  const latest = {
+    ...expired,
+    updatedAt: "2026-07-09T01:00:00.000Z",
+  };
+  const { rerender } = render(
+    <PantryPageContent
+      items={[expired]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={vi.fn()}
+      onUpdate={onUpdate}
+      onDelete={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "牛乳を編集" }));
+  rerender(
+    <PantryPageContent
+      items={[latest]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={vi.fn()}
+      onUpdate={onUpdate}
+      onDelete={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "変更を保存" }));
+
+  expect(onUpdate).toHaveBeenCalledWith(expired.id, expired.updatedAt, expect.anything());
+});
+
 it("keeps edited input and refetches only the owner list after a conflict", async () => {
-  api.list.mockResolvedValue([expired]);
-  api.update.mockRejectedValue(new PantryVersionConflictError());
+  const latest = {
+    ...expired,
+    quantity: 450,
+    updatedAt: "2026-07-09T01:00:00.000Z",
+  };
+  api.list.mockResolvedValueOnce([expired]).mockResolvedValue([latest]);
+  api.update.mockRejectedValueOnce(new PantryVersionConflictError()).mockResolvedValueOnce(latest);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -130,5 +172,39 @@ it("keeps edited input and refetches only the owner list after a conflict", asyn
       exact: true,
     });
   });
+  await waitFor(() => {
+    expect(api.list).toHaveBeenCalledTimes(2);
+  });
   expect(api.update).toHaveBeenCalledTimes(1);
+
+  await user.click(screen.getByRole("button", { name: "変更を保存" }));
+
+  expect(api.update).toHaveBeenCalledTimes(2);
+  expect(api.update).toHaveBeenLastCalledWith(
+    expect.anything(),
+    userId,
+    expired.id,
+    latest.updatedAt,
+    expect.objectContaining({ quantity: 400 }),
+  );
+});
+
+it("shows and associates a Japanese schema error, then focuses the invalid field", async () => {
+  const user = userEvent.setup();
+  const onSubmit = vi.fn();
+  render(<PantryForm saving={false} onSubmit={onSubmit} />);
+
+  await user.type(screen.getByRole("textbox", { name: "食材名" }), "牛乳");
+  await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
+  const unit = screen.getByRole("textbox", { name: "単位" });
+  await user.type(unit, "あ".repeat(25));
+  await user.click(screen.getByRole("button", { name: "追加する" }));
+
+  const error = await screen.findByText("1〜24文字で入力してください");
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(unit).toHaveFocus();
+  expect(unit).toHaveAttribute("aria-invalid", "true");
+  expect(unit).toHaveAttribute("aria-describedby", error.id);
+  expect(error).toHaveAttribute("role", "alert");
+  expect(error).toHaveAttribute("lang", "ja");
 });
