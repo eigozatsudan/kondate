@@ -81,19 +81,19 @@ insert into public.menu_safety_actions (
   ('47000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '42000000-0000-0000-0000-000000000002', '43000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'member_1', '44000000-0000-0000-0000-000000000002', 1, 'heat_thoroughly', '中心まで十分に加熱する');
 
 insert into public.menu_label_confirmations (
-  id, menu_id, user_id, source_type, source_id, source_path, allergen_id,
+  id, menu_id, user_id, source_type, source_id, source_path, source_text_snapshot, allergen_id,
   anonymous_member_ref, dictionary_version, requirement_safety_fingerprint
 ) values
-  ('48000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'dish', '42000000-0000-0000-0000-000000000001', 'dishes.0.name', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
-  ('48100000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'ingredient', '43000000-0000-0000-0000-000000000001', 'dishes.0.ingredients.0.name', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
-  ('48200000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'recipe_step', '44000000-0000-0000-0000-000000000001', 'dishes.0.steps.0.instruction', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
-  ('48300000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'adaptation', '46000000-0000-0000-0000-000000000001', 'adaptations.0.servingCheck', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
-  ('48400000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'timeline', '45000000-0000-0000-0000-000000000001', 'timeline.0.instruction', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
-  ('48000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'dish', '42000000-0000-0000-0000-000000000002', 'dishes.0.name', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
-  ('48100000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'ingredient', '43000000-0000-0000-0000-000000000002', 'dishes.0.ingredients.0.name', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
-  ('48200000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'recipe_step', '44000000-0000-0000-0000-000000000002', 'dishes.0.steps.0.instruction', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
-  ('48300000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'adaptation', '46000000-0000-0000-0000-000000000002', 'adaptations.0.servingCheck', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
-  ('48400000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'timeline', '45000000-0000-0000-0000-000000000002', 'timeline.0.instruction', 'egg', 'member_1', 'dict-v1', repeat('b', 64));
+  ('48000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'dish', '42000000-0000-0000-0000-000000000001', 'dishes.0.name', '卵焼き', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
+  ('48100000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'ingredient', '43000000-0000-0000-0000-000000000001', 'dishes.0.ingredients.0.name', '卵', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
+  ('48200000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'recipe_step', '44000000-0000-0000-0000-000000000001', 'dishes.0.steps.0.instruction', '卵を焼く', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
+  ('48300000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'adaptation', '46000000-0000-0000-0000-000000000001', 'adaptations.0.servingCheck', '中心まで確認', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
+  ('48400000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'timeline', '45000000-0000-0000-0000-000000000001', 'timeline.0.instruction', '卵を焼く', 'egg', 'member_1', 'dict-v1', repeat('a', 64)),
+  ('48000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'dish', '42000000-0000-0000-0000-000000000002', 'dishes.0.name', 'スープ', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
+  ('48100000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'ingredient', '43000000-0000-0000-0000-000000000002', 'dishes.0.ingredients.0.name', '牛乳', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
+  ('48200000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'recipe_step', '44000000-0000-0000-0000-000000000002', 'dishes.0.steps.0.instruction', '牛乳を温める', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
+  ('48300000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'adaptation', '46000000-0000-0000-0000-000000000002', 'adaptations.0.servingCheck', '中心まで確認', 'egg', 'member_1', 'dict-v1', repeat('b', 64)),
+  ('48400000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'timeline', '45000000-0000-0000-0000-000000000002', 'timeline.0.instruction', '牛乳を温める', 'egg', 'member_1', 'dict-v1', repeat('b', 64));
 
 select ok(
   has_table_privilege('authenticated', format('public.%I', table_name), 'select')
@@ -125,8 +125,9 @@ select is(
 );
 
 select ok(
-  not has_function_privilege('anon', 'public.confirm_menu_label_confirmation(uuid,uuid)', 'execute'),
-  'anonymous role cannot execute confirmation RPC'
+  to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid)') is null
+  and to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid,text)') is null,
+  'Task 3 exposes no confirmation transition before current-safety locking exists'
 );
 
 select ok(
@@ -222,7 +223,7 @@ select throws_ok(
 );
 select throws_ok(
   format(
-    $$insert into public.menu_label_confirmations (menu_id,user_id,source_type,source_id,source_path,allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint) values ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001',%L,%L::uuid,%L,'egg','member_1','dict-v1',repeat('a',64))$$,
+    $$insert into public.menu_label_confirmations (menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint) values ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001',%L,%L::uuid,%L,'越境','egg','member_1','dict-v1',repeat('a',64))$$,
     source_type, source_id, 'foreign.' || source_type
   ),
   '23503', 'menu_label_source_owner_mismatch',
@@ -289,17 +290,49 @@ select throws_ok(
   '23514', null, 'safety action rejects a blank instruction'
 );
 select throws_ok(
-  $$insert into public.menu_label_confirmations (menu_id,user_id,source_type,source_id,source_path,allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint,confirmation_status,confirmed_at,confirmed_by) values ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','dish','42000000-0000-0000-0000-000000000001','dishes.0.description','egg','member_1','dict-v1',repeat('a',64),'confirmed',now(),'10000000-0000-0000-0000-000000000002')$$,
+  $$insert into public.menu_label_confirmations (menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint,confirmation_status,confirmed_at,confirmed_by) values ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','dish','42000000-0000-0000-0000-000000000001','dishes.0.description','卵の主菜','egg','member_1','dict-v1',repeat('a',64),'confirmed',now(),'10000000-0000-0000-0000-000000000002')$$,
   '23514', null, 'confirmed provenance actor must equal the row owner'
 );
 
-set local role authenticated;
-select set_config('request.jwt.claim.sub', '', true);
-select is(
-  (select count(*)::integer from public.confirm_menu_label_confirmation('40000000-0000-0000-0000-000000000001','48000000-0000-0000-0000-000000000001')),
-  0, 'null auth confirms nothing'
+select throws_ok(
+  $$insert into public.menu_label_confirmations (
+    menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,
+    allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint
+  ) values (
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.name',' ',
+    'egg','member_1','dict-v1',repeat('a',64)
+  )$$,
+  '23514', null, 'source snapshot rejects blank text'
+);
+select throws_ok(
+  $$insert into public.menu_label_confirmations (
+    menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,
+    allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint
+  ) values (
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.name',' 卵焼き',
+    'egg','member_1','dict-v1',repeat('a',64)
+  )$$,
+  '23514', null, 'source snapshot rejects non-canonical surrounding whitespace'
+);
+select throws_ok(
+  format(
+    'insert into public.menu_label_confirmations '
+    '(menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,'
+    'allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint) '
+    'values (%L,%L,%L,%L,%L,%L,%L,%L,%L,%L)',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.name',repeat('あ',501),
+    'egg','member_1','dict-v1',repeat('a',64)
+  ),
+  '23514', null, 'source snapshot rejects text longer than 500 characters'
 );
 
+set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000001', true);
 select is((select count(*)::integer from public.menus), 1, 'owner sees exactly its menu');
 select is((select count(*)::integer from public.menu_target_members), 1, 'owner sees exactly its target');
@@ -320,33 +353,6 @@ with changed as (
 select throws_ok(
   $$update public.menu_label_confirmations set confirmation_status = 'confirmed' where id = '48000000-0000-0000-0000-000000000001'$$,
   '42501', null, 'direct confirmation update is denied'
-);
-
-select is(
-  (select count(*)::integer from public.confirm_menu_label_confirmation('40000000-0000-0000-0000-000000000002','48000000-0000-0000-0000-000000000001')),
-  0, 'wrong menu id confirms nothing'
-);
-select is(
-  (select count(*)::integer from public.confirm_menu_label_confirmation('40000000-0000-0000-0000-000000000002','48000000-0000-0000-0000-000000000002')),
-  0, 'foreign confirmation confirms nothing'
-);
-select is(
-  (select count(*)::integer from public.confirm_menu_label_confirmation('40000000-0000-0000-0000-000000000001','48999999-0000-0000-0000-000000000001')),
-  0, 'unknown confirmation confirms nothing'
-);
-select is(
-  (select count(*)::integer from public.confirm_menu_label_confirmation('40000000-0000-0000-0000-000000000001','48000000-0000-0000-0000-000000000001')),
-  1, 'owner confirmation transitions once'
-);
-select ok(
-  (select confirmation_status = 'confirmed' and confirmed_at is not null
-    and confirmed_by = '10000000-0000-0000-0000-000000000001'
-   from public.menu_label_confirmations where id = '48000000-0000-0000-0000-000000000001'),
-  'confirmation records server time and authenticated owner'
-);
-select is(
-  (select count(*)::integer from public.confirm_menu_label_confirmation('40000000-0000-0000-0000-000000000001','48000000-0000-0000-0000-000000000001')),
-  0, 'confirmation replay changes nothing'
 );
 
 reset role;

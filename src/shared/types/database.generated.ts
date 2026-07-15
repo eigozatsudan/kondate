@@ -576,6 +576,7 @@ export type Database = {
           requirement_safety_fingerprint: string
           source_id: string
           source_path: string
+          source_text_snapshot: string
           source_type: string
           user_id: string
         }
@@ -593,6 +594,7 @@ export type Database = {
           requirement_safety_fingerprint: string
           source_id: string
           source_path: string
+          source_text_snapshot: string
           source_type: string
           user_id: string
         }
@@ -610,6 +612,7 @@ export type Database = {
           requirement_safety_fingerprint?: string
           source_id?: string
           source_path?: string
+          source_text_snapshot?: string
           source_type?: string
           user_id?: string
         }
@@ -1151,32 +1154,6 @@ export type Database = {
           to: "household_members"
           isOneToOne: true
           isSetofReturn: false
-        }
-      }
-      confirm_menu_label_confirmation: {
-        Args: { p_confirmation_id: string; p_menu_id: string }
-        Returns: {
-          allergen_id: string
-          anonymous_member_ref: string
-          confirmation_status: string
-          confirmed_at: string | null
-          confirmed_by: string | null
-          created_at: string
-          dictionary_version: string
-          id: string
-          is_current: boolean
-          menu_id: string
-          requirement_safety_fingerprint: string
-          source_id: string
-          source_path: string
-          source_type: string
-          user_id: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "menu_label_confirmations"
-          isOneToOne: false
-          isSetofReturn: true
         }
       }
       create_auth_continuation: {

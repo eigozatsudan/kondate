@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(41);
+select plan(42);
 
 select has_table('public', 'menus', 'menus exists');
 select has_table('public', 'menu_target_members', 'menu_target_members exists');
@@ -12,6 +12,11 @@ select has_table('public', 'menu_timeline_steps', 'menu_timeline_steps exists');
 select has_table('public', 'menu_member_adaptations', 'menu_member_adaptations exists');
 select has_table('public', 'menu_safety_actions', 'menu_safety_actions exists');
 select has_table('public', 'menu_label_confirmations', 'menu_label_confirmations exists');
+
+select has_column(
+  'public', 'menu_label_confirmations', 'source_text_snapshot',
+  'label confirmations preserve a human-readable source snapshot'
+);
 
 select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relname = 'menus'), 'menus has RLS enabled');
 select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relname = 'menu_target_members'), 'menu_target_members has RLS enabled');
@@ -100,7 +105,11 @@ select ok(not has_table_privilege('authenticated', 'public.menus', 'insert'), 'm
 select ok(not has_table_privilege('authenticated', 'public.menus', 'delete'), 'menus are deleted through an owner-checking RPC');
 select ok(has_table_privilege('authenticated', 'public.menu_label_confirmations', 'select'), 'label confirmations are readable');
 select ok(not has_column_privilege('authenticated', 'public.menu_label_confirmations', 'confirmation_status', 'update'), 'direct confirmation update is forbidden');
-select ok(has_function_privilege('authenticated', 'public.confirm_menu_label_confirmation(uuid,uuid)', 'execute'), 'owner confirmation RPC is executable');
+select ok(
+  to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid)') is null
+  and to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid,text)') is null,
+  'Task 3 exposes no confirmation transition before current-safety locking exists'
+);
 select ok(not has_table_privilege('authenticated', 'public.menu_label_confirmations', 'insert'), 'label records are finalized server-side');
 select ok(has_table_privilege('authenticated', 'public.dishes', 'select'), 'generated children are readable');
 select ok(not has_table_privilege('authenticated', 'public.dishes', 'insert'), 'generated children are not insertable');

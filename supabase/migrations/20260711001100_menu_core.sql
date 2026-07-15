@@ -185,6 +185,13 @@ create table public.menu_label_confirmations (
   source_type text not null check (source_type in ('dish','ingredient','recipe_step','adaptation','timeline')),
   source_id uuid not null,
   source_path text not null check (char_length(source_path) between 1 and 200),
+  source_text_snapshot text not null check (
+    source_text_snapshot = btrim(
+      source_text_snapshot,
+      U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )
+    and char_length(source_text_snapshot) between 1 and 500
+  ),
   allergen_id text not null references public.allergen_catalog(id) on delete restrict,
   anonymous_member_ref text not null check (anonymous_member_ref ~ '^member_[1-9][0-9]*$'),
   dictionary_version text not null,
@@ -395,29 +402,3 @@ create policy menus_owner_update_favorite on public.menus
   for update to authenticated
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
-
-create or replace function public.confirm_menu_label_confirmation(
-  p_menu_id uuid, p_confirmation_id uuid
-)
-returns setof public.menu_label_confirmations
-language sql
-security definer
-set search_path = ''
-as $$
-  update public.menu_label_confirmations
-  set confirmation_status = 'confirmed',
-      confirmed_at = statement_timestamp(),
-      confirmed_by = auth.uid()
-  where id = p_confirmation_id
-    and (select auth.uid()) is not null
-    and menu_id = p_menu_id
-    and user_id = auth.uid()
-    and is_current
-    and confirmation_status = 'pending'
-  returning *;
-$$;
-
-revoke all on function public.confirm_menu_label_confirmation(uuid, uuid)
-  from public, anon;
-grant execute on function public.confirm_menu_label_confirmation(uuid, uuid)
-  to authenticated;
