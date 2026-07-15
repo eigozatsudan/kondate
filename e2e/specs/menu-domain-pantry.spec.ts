@@ -145,6 +145,14 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await expect(page.getByText("保存中…")).toBeVisible();
   await expect(page.getByText("保存済み")).toBeVisible();
 
+  await page.getByRole("checkbox", { name: "キャベツ" }).uncheck();
+  await expect(page.getByText("保存中…")).toBeVisible();
+  await expect(page.getByText("保存済み")).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
+  await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
+
   await expectCompleteCandidate(page, {
     heading: "鶏肉とキャベツの塩蒸し・きゅうりの塩もみ・玉ねぎの塩スープ",
     timeline: [
