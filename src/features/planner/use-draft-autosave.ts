@@ -29,6 +29,8 @@ export function useDraftAutosave({
   const latestRef = useRef(value);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const timerRef = useRef<number | null>(null);
+  const pendingDebounceRef = useRef(false);
+  const mountedRef = useRef(true);
   const operationNumberRef = useRef(0);
   const conflictRef = useRef<DraftRevisionConflictError | null>(null);
   const serialized = JSON.stringify(value);
@@ -47,16 +49,19 @@ export function useDraftAutosave({
     // サーバーから取得した revision と現在表示値を新しい保存基準とし、
     // hydration や競合後の refetch 自体をユーザー編集として再保存しない。
     baselineSerializedRef.current = latestSerializedRef.current;
+    pendingDebounceRef.current = false;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
   }, [initialRevision]);
 
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
       if (conflictRef.current !== null) {
-        setState("error");
+        if (mountedRef.current) setState("error");
         return Promise.reject(conflictRef.current);
       }
       const operationNumber = ++operationNumberRef.current;
-      setState("saving");
+      if (mountedRef.current) setState("saving");
       const operation = queueRef.current.then(() => {
         // 競合前に予約済みだった後続保存も、先行保存の競合判明後は実行しない。
         if (conflictRef.current !== null) throw conflictRef.current;
@@ -66,14 +71,18 @@ export function useDraftAutosave({
         (saved) => {
           revisionRef.current = saved.revision;
           baselineSerializedRef.current = JSON.stringify(next);
-          setSavedRevision(saved.revision);
-          if (operationNumber === operationNumberRef.current) setState("saved");
+          if (mountedRef.current) {
+            setSavedRevision(saved.revision);
+            if (operationNumber === operationNumberRef.current) setState("saved");
+          }
         },
         (error: unknown) => {
-          if (operationNumber === operationNumberRef.current) setState("error");
+          if (mountedRef.current && operationNumber === operationNumberRef.current) {
+            setState("error");
+          }
           if (error instanceof DraftRevisionConflictError && conflictRef.current === null) {
             conflictRef.current = error;
-            onConflict?.();
+            if (mountedRef.current) onConflict?.();
           }
         },
       );
@@ -86,16 +95,23 @@ export function useDraftAutosave({
     if (!enabled) {
       baselineSerializedRef.current = serialized;
       wasEnabledRef.current = false;
+      pendingDebounceRef.current = false;
       return undefined;
     }
     if (!wasEnabledRef.current) {
       wasEnabledRef.current = true;
       baselineSerializedRef.current = serialized;
+      pendingDebounceRef.current = false;
       return undefined;
     }
-    if (serialized === baselineSerializedRef.current) return undefined;
+    if (serialized === baselineSerializedRef.current) {
+      pendingDebounceRef.current = false;
+      return undefined;
+    }
+    pendingDebounceRef.current = true;
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
+      pendingDebounceRef.current = false;
       void enqueue(latestRef.current).catch(() => undefined);
     }, 600);
     return () => {
@@ -104,11 +120,28 @@ export function useDraftAutosave({
     };
   }, [enabled, enqueue, serialized]);
 
+  const enqueueRef = useRef(enqueue);
+  enqueueRef.current = enqueue;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!pendingDebounceRef.current) return;
+      pendingDebounceRef.current = false;
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+      // 画面離脱直前の編集も通常保存と同じ直列キューへ積み、完了後は UI state を更新しない。
+      void enqueueRef.current(latestRef.current).catch(() => undefined);
+    };
+  }, []);
+
   const flush = useCallback((): Promise<PlannerDraft> => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    pendingDebounceRef.current = false;
     return enqueue(latestRef.current);
   }, [enqueue]);
 

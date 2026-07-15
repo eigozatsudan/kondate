@@ -19,6 +19,40 @@ const targetMemberLimit = 20;
 const avoidIngredientLimit = 20;
 const avoidIngredientLengthLimit = 80;
 
+function parseAvoidIngredientInput(rawValue: string): {
+  text: string;
+  items: string[];
+  hasTooManyItems: boolean;
+  hasTooLongItem: boolean;
+} {
+  const segments = rawValue.split(/[、,]/u).map((segment) => segment.normalize("NFKC"));
+  const normalizedItems = segments.map((segment) => segment.trim()).filter((item) => item !== "");
+  const hasTooManyItems = normalizedItems.length > avoidIngredientLimit;
+  const hasTooLongItem = normalizedItems.some(
+    (item) => Array.from(item).length > avoidIngredientLengthLimit,
+  );
+  const items = normalizedItems
+    .slice(0, avoidIngredientLimit)
+    .map((item) => Array.from(item).slice(0, avoidIngredientLengthLimit).join(""));
+
+  if (hasTooManyItems) {
+    return { text: items.join("、"), items, hasTooManyItems, hasTooLongItem };
+  }
+
+  return {
+    text: segments
+      .map((segment) => {
+        const trimmed = segment.trim();
+        if (Array.from(trimmed).length <= avoidIngredientLengthLimit) return segment;
+        return Array.from(trimmed).slice(0, avoidIngredientLengthLimit).join("");
+      })
+      .join("、"),
+    items,
+    hasTooManyItems,
+    hasTooLongItem,
+  };
+}
+
 export function PlannerForm({
   initialValue,
   members,
@@ -46,6 +80,9 @@ export function PlannerForm({
   const [value, setValue] = useState(initialValue);
   const [ingredient, setIngredient] = useState("");
   const [ingredientError, setIngredientError] = useState<string | null>(null);
+  const [avoidIngredientText, setAvoidIngredientText] = useState(
+    initialValue.avoidIngredients.join("、"),
+  );
   const [avoidIngredientError, setAvoidIngredientError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -261,25 +298,20 @@ export function PlannerForm({
         <label>
           今回だけ避ける食材
           <input
-            value={value.avoidIngredients.join("、")}
+            value={avoidIngredientText}
             onChange={(event) => {
-              const normalizedItems = event.target.value
-                .split(/[、,]/u)
-                .map((item) => item.normalize("NFKC").trim())
-                .filter((item) => item !== "");
-              const hasTooManyItems = normalizedItems.length > avoidIngredientLimit;
-              const hasTooLongItem = normalizedItems.some(
-                (item) => Array.from(item).length > avoidIngredientLengthLimit,
-              );
-              update({
-                avoidIngredients: normalizedItems
-                  .slice(0, avoidIngredientLimit)
-                  .map((item) => Array.from(item).slice(0, avoidIngredientLengthLimit).join("")),
-              });
+              const parsed = parseAvoidIngredientInput(event.target.value);
+              setAvoidIngredientText(parsed.text);
+              if (
+                parsed.items.length !== value.avoidIngredients.length ||
+                parsed.items.some((item, index) => item !== value.avoidIngredients[index])
+              ) {
+                update({ avoidIngredients: parsed.items });
+              }
               setAvoidIngredientError(
-                hasTooManyItems
+                parsed.hasTooManyItems
                   ? "避ける食材は20件までです。"
-                  : hasTooLongItem
+                  : parsed.hasTooLongItem
                     ? "避ける食材は1件80文字までです。"
                     : null,
               );

@@ -123,6 +123,43 @@ it("flush は保留中 timer を置換し最新値の DB row を返す", async (
   expect(row).toMatchObject({ memo: "野菜を多めに", revision: 5 });
 });
 
+it("先行保存中に600ms未満で unmount しても最新編集を同じ保存キューへ引き渡す", async () => {
+  vi.useFakeTimers();
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const { rerender, unmount } = renderHook(
+    ({ value }) => useDraftAutosave({ value, enabled: true, initialRevision: 1, save }),
+    { initialProps: { value: base } },
+  );
+
+  const first = { ...base, memo: "先行保存" };
+  rerender({ value: first });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  const edited = { ...base, memo: "離脱直前の編集" };
+  rerender({ value: edited });
+  await act(async () => vi.advanceTimersByTimeAsync(599));
+  unmount();
+  expect(save).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    resolveFirst?.(saved(first, 2));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(1, first, 1);
+  expect(save).toHaveBeenNthCalledWith(2, edited, 2);
+});
+
 it("競合後は refetch revision に古い表示値を再束縛せず flush も拒否する", async () => {
   vi.useFakeTimers();
   const conflict = new DraftRevisionConflictError();
