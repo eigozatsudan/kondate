@@ -92,3 +92,110 @@ it("does not trust a tag or an action for another ingredient", () => {
     expect.objectContaining({ code: "age_shape_rule" }),
   ]);
 });
+
+it("requires mitigation for every matched ingredient occurrence", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const firstIngredient = { ...firstDish.ingredients[0]!, name: "ぶどう" };
+  const secondIngredient = {
+    ...firstIngredient,
+    id: "53000000-0000-4000-8000-000000000003",
+    position: 2,
+  };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [firstIngredient, secondIngredient] } : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "少なめ",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: "4等分する",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "切り方を確認する",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "quarter_round_food",
+            dishId: firstDish.id,
+            ingredientId: firstIngredient.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "1つ目のぶどうを4等分する",
+          },
+        ],
+      },
+    ],
+  });
+  const grapeRule = {
+    ...hardBeanAndReviewedNutRule,
+    id: "grapes_under_6",
+    matchTerms: ["ぶどう"],
+    ruleKind: "requires_tag" as const,
+    requiredSafetyTag: "quarter_round_food" as const,
+  };
+
+  expect(
+    evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
+  ).toEqual([
+    expect.objectContaining({
+      code: "age_shape_rule",
+      path: "dishes.0.ingredients.1.name",
+    }),
+  ]);
+});
+
+it("rejects a required household action contradicted by its dish recipe", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            steps: [{ ...dish.steps[0]!, instruction: "食材は丸ごと盛り付ける" }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "少なめ",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: "小さく切る",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "切り方を確認する",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: firstDish.id,
+            ingredientId: firstDish.ingredients[0]!.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "小さく切る",
+          },
+        ],
+      },
+    ],
+  });
+  const safety = makeCurrentSafetyContext({
+    members: [
+      {
+        ...makeCurrentSafetyContext().members[0]!,
+        requiredSafetyConstraints: ["cut_small"],
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, safety)).toEqual([
+    expect.objectContaining({ code: "required_safety_action" }),
+  ]);
+});

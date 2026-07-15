@@ -37,6 +37,12 @@ export function evaluateFoodSafetyRules(
   const stepOwner = new Map(
     menu.dishes.flatMap((dish) => dish.steps.map((step) => [step.id, dish.id] as const)),
   );
+  const dishText = new Map(
+    menu.dishes.map((dish) => [
+      dish.id,
+      [dish.name, dish.description, ...dish.steps.map((step) => step.instruction)],
+    ]),
+  );
   for (const member of context.members) {
     const memberActions = menu.adaptations
       .filter((adaptation) => adaptation.anonymousMemberRef === member.anonymousRef)
@@ -48,7 +54,19 @@ export function evaluateFoodSafetyRules(
           action.anonymousMemberRef === member.anonymousRef &&
           stepOwner.get(action.beforeRecipeStepId) === action.dishId &&
           actionEvidence[action.kind].test(action.instruction) &&
-          !contradictionPattern.test(`${action.instruction} ${adaptation.servingCheck}`),
+          !contradictionPattern.test(
+            [
+              ...(dishText.get(action.dishId) ?? []),
+              adaptation.portionText,
+              adaptation.additionalCutting,
+              adaptation.additionalHeating,
+              adaptation.additionalSeasoning,
+              adaptation.servingCheck,
+              ...adaptation.safetyActions.map((item) => item.instruction),
+            ]
+              .filter((text): text is string => text !== null)
+              .join(" "),
+          ),
       );
       if (!hasEvidence) {
         issues.push({
@@ -60,35 +78,45 @@ export function evaluateFoodSafetyRules(
     }
     for (const rule of context.foodSafetyRules) {
       if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
-      const source = sources.find((item) =>
+      const matchedSources = sources.filter((item) =>
         rule.matchTerms.some((term) =>
           normalizeFoodText(item.text).includes(normalizeFoodText(term)),
         ),
       );
-      if (source === undefined) continue;
-      const evidence =
-        source.ingredientId === null || source.dishId === null || rule.requiredSafetyTag === null
-          ? undefined
-          : memberActions.find(
-              ({ action }) =>
-                action.kind === rule.requiredSafetyTag &&
-                action.dishId === source.dishId &&
-                action.ingredientId === source.ingredientId &&
-                action.anonymousMemberRef === member.anonymousRef &&
-                stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
-                actionEvidence[action.kind].test(action.instruction),
-            );
-      const dishText = menu.dishes
-        .filter((dish) => dish.id === source.dishId)
-        .flatMap((dish) => [dish.description, ...dish.steps.map((step) => step.instruction)]);
-      const adaptationText = memberActions
-        .filter(({ action }) => action.dishId === source.dishId)
-        .flatMap(({ action, adaptation }) => [action.instruction, adaptation.servingCheck]);
-      const contradictory = contradictionPattern.test(
-        [source.text, ...dishText, ...adaptationText].join(" "),
-      );
-      if (rule.ruleKind === "forbidden" || evidence === undefined || contradictory) {
-        issues.push({ code: "age_shape_rule", path: source.sourcePath, message: rule.userMessage });
+      for (const source of matchedSources) {
+        const evidence =
+          source.ingredientId === null || source.dishId === null || rule.requiredSafetyTag === null
+            ? undefined
+            : memberActions.find(
+                ({ action }) =>
+                  action.kind === rule.requiredSafetyTag &&
+                  action.dishId === source.dishId &&
+                  action.ingredientId === source.ingredientId &&
+                  action.anonymousMemberRef === member.anonymousRef &&
+                  stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
+                  actionEvidence[action.kind].test(action.instruction),
+              );
+        const adaptationText = memberActions
+          .filter(({ action }) => action.dishId === source.dishId)
+          .flatMap(({ adaptation }) => [
+            adaptation.portionText,
+            adaptation.additionalCutting,
+            adaptation.additionalHeating,
+            adaptation.additionalSeasoning,
+            adaptation.servingCheck,
+            ...adaptation.safetyActions.map((action) => action.instruction),
+          ])
+          .filter((text): text is string => text !== null);
+        const contradictory = contradictionPattern.test(
+          [source.text, ...(dishText.get(source.dishId ?? "") ?? []), ...adaptationText].join(" "),
+        );
+        if (rule.ruleKind === "forbidden" || evidence === undefined || contradictory) {
+          issues.push({
+            code: "age_shape_rule",
+            path: source.sourcePath,
+            message: rule.userMessage,
+          });
+        }
       }
     }
   }

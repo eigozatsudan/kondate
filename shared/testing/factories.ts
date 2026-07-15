@@ -86,7 +86,32 @@ export function makeValidatedMenu(overrides: Partial<ValidatedMenu> = {}): Valid
 
 export function makeGeneratedMenu(overrides: Partial<GeneratedMenu> = {}): GeneratedMenu {
   const menu = makeValidatedMenu();
-  return { ...menu, ...overrides, labelConfirmations: overrides.labelConfirmations ?? [] };
+  const firstDish = menu.dishes.at(0);
+  const firstStep = firstDish?.steps.at(0);
+  if (firstDish === undefined || firstStep === undefined) {
+    throw new Error("生成献立factoryに料理と工程が必要です");
+  }
+  const adaptations: GeneratedMenu["adaptations"] = [
+    {
+      id: "57000000-0000-4000-8000-000000000001",
+      dishId: firstDish.id,
+      anonymousMemberRef: "member_1",
+      portionText: "通常量",
+      branchBeforeRecipeStepId: firstStep.id,
+      additionalCutting: null,
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: "通常の取り分けを確認する",
+      safetyTags: [],
+      safetyActions: [],
+    },
+  ];
+  return {
+    ...menu,
+    adaptations,
+    ...overrides,
+    labelConfirmations: overrides.labelConfirmations ?? [],
+  };
 }
 
 export function makeCurrentSafetyContext(

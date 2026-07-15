@@ -6,7 +6,7 @@ import {
   generatedMenuSchema,
   validatedMenuSchema,
 } from "../contracts/generation.js";
-import { collectMenuTextSources, evaluateAllergens, normalizeFoodText } from "./allergens.js";
+import { evaluateAllergens, normalizeFoodText } from "./allergens.js";
 import { createCurrentSafetyFingerprint } from "./fingerprint.js";
 import { evaluateFoodSafetyRules } from "./food-rules.js";
 import type { GenerationContext } from "./generation-context.js";
@@ -66,11 +66,11 @@ export function validateGeneratedMenu(
     });
   }
   const returnedRefs = new Set(generated.adaptations.map((item) => item.anonymousMemberRef));
-  if ([...returnedRefs].some((memberRef) => !targetRefs.has(memberRef))) {
+  if (!sameSet(returnedRefs, targetRefs)) {
     issues.push({
       code: "target_member_mismatch",
       path: "adaptations",
-      message: "対象外メンバーの取り分けが含まれています",
+      message: "対象メンバーの取り分けが生成条件と一致しません",
     });
   }
 
@@ -159,11 +159,12 @@ export function validateGeneratedMenu(
     });
   }
 
-  const foodText = collectMenuTextSources(generated)
-    .map((source) => normalizeFoodText(source.text))
+  const identityFoodText = generated.dishes
+    .flatMap((dish) => [dish.name, dish.description, ...dish.ingredients.map(({ name }) => name)])
+    .map(normalizeFoodText)
     .join("\u0000");
   for (const requested of context.submission.mainIngredients) {
-    if (!foodText.includes(normalizeFoodText(requested))) {
+    if (!identityFoodText.includes(normalizeFoodText(requested))) {
       issues.push({
         code: "main_ingredient_missing",
         path: "dishes",
@@ -172,7 +173,7 @@ export function validateGeneratedMenu(
     }
   }
   for (const avoided of context.submission.avoidIngredients) {
-    if (foodText.includes(normalizeFoodText(avoided))) {
+    if (identityFoodText.includes(normalizeFoodText(avoided))) {
       issues.push({
         code: "avoid_ingredient_used",
         path: "dishes",
@@ -182,23 +183,134 @@ export function validateGeneratedMenu(
   }
 
   const linkedDishIds = new Map<string, Set<string>>();
+  const linkedIngredientNames = new Map<string, string[]>();
   for (const dish of generated.dishes) {
     for (const ingredient of dish.ingredients) {
       if (ingredient.pantrySelectionId !== null) {
         const dishIds = linkedDishIds.get(ingredient.pantrySelectionId) ?? new Set<string>();
         dishIds.add(dish.id);
         linkedDishIds.set(ingredient.pantrySelectionId, dishIds);
+        const names = linkedIngredientNames.get(ingredient.pantrySelectionId) ?? [];
+        names.push(ingredient.name);
+        linkedIngredientNames.set(ingredient.pantrySelectionId, names);
       }
     }
   }
+  const requestedPantry = new Map(
+    context.submission.pantrySelections.map((selection) => [selection.pantryItemId, selection]),
+  );
+  const trustedPantry = new Map(context.pantryItems.map((item) => [item.id, item]));
+  const returnedPantryIds = new Set(
+    generated.pantryUsage.flatMap((usage) =>
+      usage.pantryItemId === null ? [] : [usage.pantryItemId],
+    ),
+  );
+  if (
+    !sameSet(new Set(requestedPantry.keys()), new Set(trustedPantry.keys())) ||
+    !sameSet(new Set(requestedPantry.keys()), returnedPantryIds) ||
+    generated.pantryUsage.some((usage) => usage.pantryItemId === null)
+  ) {
+    issues.push({
+      code: "pantry_selection_mismatch",
+      path: "pantryUsage",
+      message: "在庫選択が生成条件と一致しません",
+    });
+  }
   for (const usage of generated.pantryUsage) {
+    const requested =
+      usage.pantryItemId === null ? undefined : requestedPantry.get(usage.pantryItemId);
+    const trusted = usage.pantryItemId === null ? undefined : trustedPantry.get(usage.pantryItemId);
+    if (
+      requested?.priority === "prefer_use" &&
+      usage.usageStatus === "unused" &&
+      (usage.unusedReason === null || usage.unusedReason.trim() === "")
+    ) {
+      issues.push({
+        code: "prefer_use_reason_missing",
+        path: `pantryUsage.${usage.selectionId}`,
+        message: "優先食材を使わない理由がありません",
+      });
+    }
     if (usage.usageStatus !== "used") continue;
     const linked = linkedDishIds.get(usage.selectionId) ?? new Set<string>();
-    if (!sameSet(linked, new Set(usage.dishIds))) {
+    const trustedName = trusted === undefined ? null : normalizeFoodText(trusted.name);
+    const linkedNames = linkedIngredientNames.get(usage.selectionId) ?? [];
+    const hasTrustedIngredient =
+      trustedName !== null && linkedNames.some((name) => normalizeFoodText(name) === trustedName);
+    if (
+      requested === undefined ||
+      trusted === undefined ||
+      usage.priority !== requested.priority ||
+      normalizeFoodText(usage.pantryItemName) !== trustedName ||
+      !sameSet(linked, new Set(usage.dishIds)) ||
+      !hasTrustedIngredient
+    ) {
       issues.push({
         code: "pantry_usage_link_mismatch",
         path: `pantryUsage.${usage.selectionId}`,
         message: "在庫使用先と料理食材の参照が一致しません",
+      });
+    }
+  }
+  for (const selection of context.submission.pantrySelections) {
+    const usage = generated.pantryUsage.find(
+      (item) => item.pantryItemId === selection.pantryItemId,
+    );
+    if (selection.priority === "must_use" && usage?.usageStatus !== "used") {
+      issues.push({
+        code: "must_use_missing",
+        path: `pantrySelections.${selection.pantryItemId}`,
+        message: "必ず使う在庫食材が使用されていません",
+      });
+    }
+  }
+
+  const easeAction = {
+    small_pieces: "cut_small",
+    boneless: "remove_bones",
+    soft: "soften",
+  } as const;
+  for (const preference of context.memberPreferences) {
+    const adaptations = generated.adaptations.filter(
+      (adaptation) => adaptation.anonymousMemberRef === preference.anonymousMemberRef,
+    );
+    const adaptationText = adaptations
+      .flatMap((adaptation) => [
+        adaptation.portionText,
+        adaptation.additionalCutting,
+        adaptation.additionalHeating,
+        adaptation.additionalSeasoning,
+        adaptation.servingCheck,
+      ])
+      .filter((text): text is string => text !== null)
+      .join(" ");
+    const portionMatches =
+      preference.portionSize === "regular" ||
+      (preference.portionSize === "small" && /少なめ|小盛り|少量/u.test(adaptationText)) ||
+      (preference.portionSize === "large" && /多め|大盛り|増量/u.test(adaptationText));
+    const spiceMatches =
+      preference.spiceLevel === "regular" ||
+      (preference.spiceLevel === "none" &&
+        /辛味なし|香辛料なし|味付けなし|辛くしない/u.test(adaptationText)) ||
+      (preference.spiceLevel === "mild" && /薄味|控えめ|甘口/u.test(adaptationText));
+    const actions = adaptations.flatMap((adaptation) => adaptation.safetyActions);
+    const easeMatches = preference.easePreferences.every((ease) =>
+      actions.some((action) => action.kind === easeAction[ease]),
+    );
+    const dislikeUsed = preference.dislikes.some((dislike) =>
+      identityFoodText.includes(normalizeFoodText(dislike)),
+    );
+    if (
+      adaptations.length === 0 ||
+      !portionMatches ||
+      !spiceMatches ||
+      !easeMatches ||
+      dislikeUsed
+    ) {
+      issues.push({
+        code: "member_preference_mismatch",
+        path: `memberPreferences.${preference.anonymousMemberRef}`,
+        message: "家族の取り分け条件が生成結果に反映されていません",
       });
     }
   }
