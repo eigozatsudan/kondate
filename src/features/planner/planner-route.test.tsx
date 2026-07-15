@@ -36,55 +36,85 @@ const pantryItem: PantryItem = {
 };
 
 const queryState = vi.hoisted(() => ({
+  userId: "72000000-0000-0000-0000-000000000001",
   pantry: {
     data: undefined as PantryItem[] | undefined,
     isError: false,
     isPending: false,
   },
+  ownerBPending: false,
 }));
 
+const ownerBId = "72000000-0000-0000-0000-000000000002";
+const ownerBDraft: PlannerDraft = {
+  ...draft,
+  id: "71000000-0000-0000-0000-000000000002",
+  userId: ownerBId,
+  mainIngredients: ["鮭"],
+  memo: "owner B の下書き",
+  revision: 7,
+};
+
+const savePlannerDraftMock = vi.hoisted(() => vi.fn());
+const autosaveInputs = vi.hoisted(() => [] as unknown[]);
+
 vi.mock("@/features/auth/auth-provider", () => ({
-  useAuth: () => ({ session: { user: { id: draft.userId } } }),
+  useAuth: () => ({ session: { user: { id: queryState.userId } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: ({ queryKey }: { queryKey: readonly string[] }) =>
-    queryKey[0] === "planner"
+  useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
+    const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
+    const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;
+    return queryKey[0] === "planner"
       ? {
-          data: draft,
+          data: isOwnerBPending ? undefined : ownerId === ownerBId ? ownerBDraft : draft,
           isError: false,
-          isPending: false,
+          isPending: isOwnerBPending,
           refetch: vi.fn(),
         }
       : queryKey[0] === "pantry"
-        ? queryState.pantry
+        ? isOwnerBPending
+          ? { data: undefined, isError: false, isPending: true }
+          : queryState.pantry
         : {
-            data: {
-              members: [
-                {
-                  id: draft.targetMemberIds[0],
-                  displayName: "子ども",
-                  ageBandLabel: "3〜5歳",
-                  allergyLabel: "アレルギーなし",
-                  safetyLabels: [],
-                  blockedReason: null,
+            data: isOwnerBPending
+              ? undefined
+              : {
+                  members: [
+                    {
+                      id: draft.targetMemberIds[0],
+                      displayName: "子ども",
+                      ageBandLabel: "3〜5歳",
+                      allergyLabel: "アレルギーなし",
+                      safetyLabels: [],
+                      blockedReason: null,
+                    },
+                  ],
+                  eligibleMemberIds: draft.targetMemberIds,
                 },
-              ],
-              eligibleMemberIds: draft.targetMemberIds,
-            },
             isError: false,
-            isPending: false,
-          },
+            isPending: isOwnerBPending,
+          };
+  },
 }));
+vi.mock("./planner-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./planner-api")>();
+  return { ...original, savePlannerDraft: savePlannerDraftMock };
+});
 vi.mock("./use-draft-autosave", () => ({
-  useDraftAutosave: () => ({
-    state: "saved",
-    revision: 3,
-    flush: vi.fn().mockResolvedValue(draft),
-  }),
+  useDraftAutosave: (input: unknown) => {
+    autosaveInputs.push(input);
+    return {
+      state: "saved",
+      revision: 3,
+      flush: vi.fn().mockResolvedValue(draft),
+    };
+  },
 }));
 vi.mock("./planner-page", () => ({
   PlannerForm: (props: {
+    initialValue: PlannerDraft;
     pantryItems: readonly PantryItem[];
     pantryItemsStatus: "loading" | "loaded";
     attempt: PlannerAttempt;
@@ -97,6 +127,7 @@ vi.mock("./planner-page", () => ({
       <output aria-label="pantry names">
         {props.pantryItems.map((item) => item.name).join("・")}
       </output>
+      <output aria-label="draft memo">{props.initialValue.memo}</output>
       <output aria-label="attempt key">{props.attempt.idempotencyKey}</output>
       <output aria-label="check count">{props.attempt.expiredPantryChecks.length}</output>
       <button
@@ -137,11 +168,50 @@ import { PlannerPage } from "./planner-route";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  autosaveInputs.length = 0;
+  queryState.userId = draft.userId;
+  queryState.ownerBPending = false;
   queryState.pantry = {
     data: [pantryItem],
     isError: false,
     isPending: false,
   };
+});
+
+it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closure を破棄する", async () => {
+  const view = render(<PlannerPage />);
+  const ownerAAttemptKey = screen.getByLabelText("attempt key").textContent;
+
+  await userEvent.click(screen.getByRole("button", { name: "確認を反映" }));
+  expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+
+  queryState.userId = ownerBId;
+  queryState.ownerBPending = true;
+  view.rerender(<PlannerPage />);
+
+  expect(screen.getByText("献立条件を読み込み中…")).toBeInTheDocument();
+  expect(screen.queryByLabelText("draft memo")).not.toBeInTheDocument();
+
+  queryState.ownerBPending = false;
+  view.rerender(<PlannerPage />);
+
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("draft memo")).toHaveTextContent("owner B の下書き");
+  });
+  expect(screen.getByLabelText("attempt key").textContent).not.toBe(ownerAAttemptKey);
+  expect(screen.getByLabelText("check count")).toHaveTextContent("0");
+
+  const latestAutosave = autosaveInputs.at(-1) as {
+    value: PlannerDraft;
+    save(next: PlannerDraft, revision: number): Promise<PlannerDraft>;
+  };
+  await latestAutosave.save(latestAutosave.value, 8);
+  expect(savePlannerDraftMock).toHaveBeenLastCalledWith(
+    {},
+    ownerBId,
+    expect.objectContaining({ memo: "owner B の下書き" }),
+    8,
+  );
 });
 
 it("owner の冷蔵庫一覧を loaded 状態で planner form へ渡す", () => {

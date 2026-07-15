@@ -111,6 +111,21 @@ export type PlannerPageProps = {
 
 export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
   const userId = useAuth().session?.user.id;
+  return (
+    <PlannerPageForOwner
+      key={userId ?? "missing"}
+      userId={userId}
+      startGeneration={startGeneration}
+    />
+  );
+}
+
+type PlannerPageForOwnerProps = {
+  userId: string | undefined;
+  startGeneration: PlannerPageProps["startGeneration"];
+};
+
+function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerProps) {
   const client = getBrowserSupabaseClient();
   const draftQuery = useQuery({
     queryKey: plannerKeys.draft(userId ?? "missing"),
