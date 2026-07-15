@@ -75,19 +75,23 @@ export function evaluateFoodSafetyRules(
   const adaptationEvidenceText = (
     adaptation: (typeof menu.adaptations)[number],
     kind: SafetyAction["kind"],
-  ): boolean =>
-    actionEvidence[kind].test(
-      [
-        ...(dishText.get(adaptation.dishId) ?? []),
-        adaptation.portionText,
-        adaptation.additionalCutting,
-        adaptation.additionalHeating,
-        adaptation.additionalSeasoning,
-        adaptation.servingCheck,
-      ]
-        .filter((text): text is string => text !== null)
-        .join(" "),
-    );
+    ingredientId: string,
+  ): boolean => {
+    const expectedName = ingredientName.get(ingredientId);
+    if (expectedName === undefined) return false;
+    return [
+      ...(dishText.get(adaptation.dishId) ?? []),
+      adaptation.portionText,
+      adaptation.additionalCutting,
+      adaptation.additionalHeating,
+      adaptation.additionalSeasoning,
+      adaptation.servingCheck,
+    ]
+      .filter((text): text is string => text !== null)
+      .some(
+        (text) => actionEvidence[kind].test(text) && normalizeFoodText(text).includes(expectedName),
+      );
+  };
   for (const member of context.members) {
     const memberActions = menu.adaptations
       .filter((adaptation) => adaptation.anonymousMemberRef === member.anonymousRef)
@@ -100,7 +104,7 @@ export function evaluateFoodSafetyRules(
           stepOwner.get(action.beforeRecipeStepId) === action.dishId &&
           actionEvidence[action.kind].test(action.instruction) &&
           instructionNamesIngredient(action.instruction, action.ingredientId) &&
-          adaptationEvidenceText(adaptation, action.kind) &&
+          adaptationEvidenceText(adaptation, action.kind, action.ingredientId) &&
           adaptationNamesIngredient(adaptation, action.ingredientId) &&
           !contradictionPattern.test(
             [
@@ -144,7 +148,7 @@ export function evaluateFoodSafetyRules(
                   stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
                   actionEvidence[action.kind].test(action.instruction) &&
                   instructionNamesIngredient(action.instruction, source.ingredientId) &&
-                  adaptationEvidenceText(adaptation, action.kind),
+                  adaptationEvidenceText(adaptation, action.kind, source.ingredientId),
               );
         const adaptationText = memberActions
           .filter(({ action }) => action.dishId === source.dishId)
@@ -160,7 +164,13 @@ export function evaluateFoodSafetyRules(
         const contradictory = contradictionPattern.test(
           [source.text, ...(dishText.get(source.dishId ?? "") ?? []), ...adaptationText].join(" "),
         );
-        if (rule.ruleKind === "forbidden" || evidence === undefined || contradictory) {
+        if (rule.ruleKind === "requires_tag" && contradictory) {
+          issues.push({
+            code: "safety_action_contradiction",
+            path: source.sourcePath,
+            message: "安全対応と料理手順が矛盾しています",
+          });
+        } else if (rule.ruleKind === "forbidden" || evidence === undefined) {
           issues.push({
             code: "age_shape_rule",
             path: source.sourcePath,

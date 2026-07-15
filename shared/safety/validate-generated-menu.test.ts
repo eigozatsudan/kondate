@@ -401,6 +401,77 @@ it.each(["豆腐", "豆乳", "納豆", "大豆の水煮", "やわらかく煮た
   },
 );
 
+it.each([
+  "煎り大豆",
+  "いり大豆",
+  "節分豆",
+  "落花生",
+  "ﾋﾟｰﾅｯﾂ",
+  "胡桃",
+  "アーモンド",
+  "カシュー ナッツ",
+  "ピスタチオ",
+  "マカダミア ナッツ",
+])("T5-DR-03 rejects an exact reviewed hard bean or nut at the validator boundary: %s", (name) => {
+  expectIssueCodes(
+    validateGeneratedMenu(menuWithIngredient(name), underSixHardBeanAndNutContext()),
+    ["age_shape_rule"],
+  );
+});
+
+it("T5-DR-02 reports a safety action contradiction separately from missing evidence", () => {
+  const base = makeGeneratedMenu();
+  const firstDish = base.dishes[0]!;
+  const grape = { ...firstDish.ingredients[0]!, name: "ぶどう" };
+  const menu = makeGeneratedMenu({
+    safetyTags: ["quarter_round_food"],
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [grape],
+            steps: [{ ...dish.steps[0]!, instruction: "ぶどうは丸ごと盛り付ける" }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        ...base.adaptations[0]!,
+        additionalCutting: "ぶどうを4等分する",
+        servingCheck: "ぶどうの切り方を確認する",
+        safetyTags: ["quarter_round_food"],
+        safetyActions: [
+          {
+            kind: "quarter_round_food",
+            dishId: firstDish.id,
+            ingredientId: grape.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "ぶどうを4等分する",
+          },
+        ],
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    submission: { ...makeGenerationContext().submission, mainIngredients: ["ぶどう"] },
+    safety: makeCurrentSafetyContext({
+      members: [{ ...makeCurrentSafetyContext().members[0]!, ageBand: "age_3_5" }],
+      foodSafetyRules: [
+        {
+          ...hardBeanAndReviewedNutRule,
+          id: "grapes_under_6",
+          matchTerms: ["ぶどう"],
+          ruleKind: "requires_tag",
+          requiredSafetyTag: "quarter_round_food",
+        },
+      ],
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["safety_action_contradiction"]);
+});
+
 it("T5-FFR-04 rejects a hypertension therapeutic low-sodium request", () => {
   const context = makeGenerationContext({
     safety: makeCurrentSafetyContext({ requestText: "高血圧向けの減塩食にして" }),

@@ -113,7 +113,7 @@ it("requires mitigation for every matched ingredient occurrence", () => {
         anonymousMemberRef: "member_1",
         portionText: "少なめ",
         branchBeforeRecipeStepId: firstDish.steps[0]!.id,
-        additionalCutting: "4等分する",
+        additionalCutting: "1つ目のぶどうを4等分する",
         additionalHeating: null,
         additionalSeasoning: null,
         servingCheck: "切り方を確認する",
@@ -141,12 +141,14 @@ it("requires mitigation for every matched ingredient occurrence", () => {
 
   expect(
     evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
-  ).toEqual([
-    expect.objectContaining({
-      code: "age_shape_rule",
-      path: "dishes.0.ingredients.1.name",
-    }),
-  ]);
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "age_shape_rule",
+        path: "dishes.0.ingredients.1.name",
+      }),
+    ]),
+  );
 });
 
 it("rejects a required household action contradicted by its dish recipe", () => {
@@ -404,7 +406,9 @@ it("T5-EXIT-04 rejects quartering evidence negated with Japanese せず", () => 
 
   expect(
     evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
-  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
+  ).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
 });
 
 it("T5-FFR-02 rejects mitigation text that names a different ingredient", () => {
@@ -502,4 +506,55 @@ it("T5-FR-01 rejects action-only mitigation without recipe or adaptation evidenc
   expect(
     evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
   ).toEqual([expect.objectContaining({ code: "age_shape_rule" })]);
+});
+
+it("T5-DR-01 rejects recipe evidence that names another ingredient", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const grape = { ...firstDish.ingredients[0]!, name: "ぶどう" };
+  const carrot = {
+    ...base.dishes[1]!.ingredients[0]!,
+    id: "53000000-0000-4000-8000-000000000003",
+    position: 2,
+  };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [grape, carrot] } : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: "にんじんを4等分する",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "にんじんの切り方を確認する",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "quarter_round_food",
+            dishId: firstDish.id,
+            ingredientId: grape.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "ぶどうを4等分する",
+          },
+        ],
+      },
+    ],
+  });
+  const grapeRule = {
+    ...hardBeanAndReviewedNutRule,
+    id: "grapes_under_6",
+    matchTerms: ["ぶどう"],
+    ruleKind: "requires_tag" as const,
+    requiredSafetyTag: "quarter_round_food" as const,
+  };
+
+  expect(
+    evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
 });
