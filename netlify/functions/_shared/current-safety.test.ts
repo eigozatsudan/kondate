@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCurrentSafetyContext,
   captureMemberLabels,
+  currentAllergenAliasManifest,
   currentAllergenCatalogIds,
   currentFoodSafetyRuleIds,
 } from "./current-safety.js";
@@ -32,12 +33,12 @@ function completeRows() {
       display_name: id,
       catalog_version: "jp-caa-2026-04.v1",
     })),
-    aliases: currentAllergenCatalogIds.map((id) => ({
-      allergen_id: id,
-      alias: id,
-      normalized_alias: id,
-      alias_kind: "direct",
-      requires_label_confirmation: false,
+    aliases: currentAllergenAliasManifest.map((entry) => ({
+      allergen_id: entry.allergenId,
+      alias: entry.alias,
+      normalized_alias: entry.normalizedAlias,
+      alias_kind: entry.aliasKind,
+      requires_label_confirmation: entry.requiresLabelConfirmation,
       dictionary_version: "jp-caa-2026-04.v1",
     })),
     rules: currentFoodSafetyRuleIds.map((id) => ({
@@ -94,6 +95,50 @@ describe("current safety data boundary", () => {
         userId,
         targetMemberIds: [firstMemberId, secondMemberId],
         rows: { ...rows, rules: rows.rules.slice(1) },
+      }),
+    ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
+  });
+
+  it("fails closed when only one direct alias per allergen is loaded", () => {
+    const rows = completeRows();
+    expect(() =>
+      buildCurrentSafetyContext({
+        userId,
+        targetMemberIds: [firstMemberId, secondMemberId],
+        rows: {
+          ...rows,
+          aliases: rows.aliases.filter(
+            (alias, index, aliases) =>
+              alias.alias_kind === "direct" &&
+              !alias.requires_label_confirmation &&
+              aliases.findIndex((candidate) => candidate.allergen_id === alias.allergen_id) ===
+                index,
+          ),
+        },
+      }),
+    ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
+  });
+
+  it("fails closed when an alias from another dictionary version is mixed in", () => {
+    const rows = completeRows();
+    expect(() =>
+      buildCurrentSafetyContext({
+        userId,
+        targetMemberIds: [firstMemberId, secondMemberId],
+        rows: {
+          ...rows,
+          aliases: [
+            ...rows.aliases,
+            {
+              allergen_id: "wheat",
+              alias: "カレールー",
+              normalized_alias: "カレールー",
+              alias_kind: "processed",
+              requires_label_confirmation: true,
+              dictionary_version: "obsolete.v1",
+            },
+          ],
+        },
       }),
     ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
   });

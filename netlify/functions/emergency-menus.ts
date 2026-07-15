@@ -73,6 +73,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
         mealType: parsed.data.meal,
         pantryNames,
         context: loaded.context,
+        memberLabels: loaded.memberLabels,
       });
       const candidates = filtered.menus.map((menu) =>
         buildEmergencyMenuCandidate({

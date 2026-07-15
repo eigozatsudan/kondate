@@ -23,6 +23,25 @@ const emergencyResponseSchema = z.discriminatedUnion("ok", [
     .strict(),
 ]);
 
+export const emergencyMenuKeys = {
+  all: ["emergency-menus"] as const,
+  candidates: (input: {
+    userId: string;
+    mealType: MealType;
+    targetMemberIds: readonly string[];
+    pantryItemIds: readonly string[];
+    householdSafetyRevision: string;
+  }) =>
+    [
+      "emergency-menus",
+      input.userId,
+      input.mealType,
+      [...input.targetMemberIds],
+      [...input.pantryItemIds],
+      input.householdSafetyRevision,
+    ] as const,
+};
+
 export function parseEmergencyMenusResponse(value: unknown): EmergencyMenusData {
   const envelope = emergencyResponseSchema.parse(value);
   if (!envelope.ok) throw new Error(envelope.error.message);

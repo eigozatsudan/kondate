@@ -54,6 +54,124 @@ export const currentFoodSafetyRuleIds = [
   "hard_food_for_senior",
 ] as const;
 
+const currentDirectAliasValues = [
+  ["えび", "えび"],
+  ["カシューナッツ", "カシューナッツ"],
+  ["かに", "かに"],
+  ["くるみ", "くるみ"],
+  ["小麦", "小麦"],
+  ["そば", "そば"],
+  ["卵", "卵"],
+  ["乳", "乳"],
+  ["落花生（ピーナッツ）", "落花生ピーナッツ"],
+  ["アーモンド", "アーモンド"],
+  ["あわび", "あわび"],
+  ["いか", "いか"],
+  ["いくら", "いくら"],
+  ["オレンジ", "オレンジ"],
+  ["キウイフルーツ", "キウイフルーツ"],
+  ["牛肉", "牛肉"],
+  ["ごま", "ごま"],
+  ["さけ", "さけ"],
+  ["さば", "さば"],
+  ["大豆", "大豆"],
+  ["鶏肉", "鶏肉"],
+  ["バナナ", "バナナ"],
+  ["ピスタチオ", "ピスタチオ"],
+  ["豚肉", "豚肉"],
+  ["マカダミアナッツ", "マカダミアナッツ"],
+  ["もも", "もも"],
+  ["やまいも", "やまいも"],
+  ["りんご", "りんご"],
+  ["ゼラチン", "ゼラチン"],
+] as const;
+
+type AliasManifestEntry = {
+  allergenId: string;
+  alias: string;
+  normalizedAlias: string;
+  aliasKind: "direct" | "derived" | "processed";
+  requiresLabelConfirmation: boolean;
+};
+
+const additionalAliasValues: readonly (readonly [
+  string,
+  string,
+  "direct" | "derived" | "processed",
+  boolean,
+])[] = [
+  ["egg", "鶏卵", "derived", false],
+  ["egg", "卵白", "derived", false],
+  ["egg", "卵黄", "derived", false],
+  ["milk", "牛乳", "derived", false],
+  ["milk", "バター", "derived", false],
+  ["milk", "チーズ", "derived", false],
+  ["wheat", "小麦粉", "derived", false],
+  ["shrimp", "海老", "direct", false],
+  ["shrimp", "エビ", "direct", false],
+  ["crab", "蟹", "direct", false],
+  ["crab", "カニ", "direct", false],
+  ["walnut", "胡桃", "direct", false],
+  ["buckwheat", "蕎麦", "direct", false],
+  ["egg", "たまご", "direct", false],
+  ["milk", "乳成分", "derived", false],
+  ["peanut", "落花生", "direct", false],
+  ["peanut", "ピーナッツ", "direct", false],
+  ["sesame", "胡麻", "direct", false],
+  ["salmon", "鮭", "direct", false],
+  ["mackerel", "鯖", "direct", false],
+  ["kiwi", "キウイ", "direct", false],
+  ["peach", "桃", "direct", false],
+  ["yam", "山芋", "direct", false],
+  ["apple", "林檎", "direct", false],
+  ["soy", "豆腐", "derived", false],
+  ["soy", "豆乳", "derived", false],
+  ["wheat", "カレールー", "processed", true],
+  ["milk", "カレールー", "processed", true],
+  ["wheat", "しょうゆ", "processed", true],
+  ["soy", "しょうゆ", "processed", true],
+  ["wheat", "醤油", "processed", true],
+  ["soy", "醤油", "processed", true],
+  ["mackerel", "顆粒だし", "processed", true],
+  ["soy", "顆粒だし", "processed", true],
+  ["egg", "ドレッシング", "processed", true],
+  ["milk", "ドレッシング", "processed", true],
+  ["wheat", "ドレッシング", "processed", true],
+  ["soy", "ドレッシング", "processed", true],
+  ["egg", "マヨネーズ", "processed", true],
+  ["milk", "ホワイトソース", "processed", true],
+  ["wheat", "ホワイトソース", "processed", true],
+  ["wheat", "食パン", "processed", true],
+  ["milk", "食パン", "processed", true],
+  ["egg", "ハム", "processed", true],
+  ["milk", "ハム", "processed", true],
+  ["wheat", "コンソメ", "processed", true],
+  ["soy", "みそ", "processed", true],
+];
+
+function currentDirectAliasAt(index: number): (typeof currentDirectAliasValues)[number] {
+  const value = currentDirectAliasValues[index];
+  if (value === undefined) throw new Error("current_allergen_alias_manifest_misaligned");
+  return value;
+}
+
+export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [
+  ...currentAllergenCatalogIds.map((allergenId, index) => ({
+    allergenId,
+    alias: currentDirectAliasAt(index)[0],
+    normalizedAlias: currentDirectAliasAt(index)[1],
+    aliasKind: "direct" as const,
+    requiresLabelConfirmation: false,
+  })),
+  ...additionalAliasValues.map(([allergenId, alias, aliasKind, requiresLabelConfirmation]) => ({
+    allergenId,
+    alias,
+    normalizedAlias: alias,
+    aliasKind,
+    requiresLabelConfirmation,
+  })),
+];
+
 const ageBandSchema = z.enum(ageBands);
 const allergyStatusSchema = z.enum(allergyStatuses);
 const requiredSafetyConstraintSchema = z.enum(requiredSafetyConstraints);
@@ -71,6 +189,37 @@ const safetyUnavailable = () =>
 function hasExactIds(actual: readonly string[], required: readonly string[]): boolean {
   return actual.length === required.length && required.every((id) => actual.includes(id));
 }
+
+function aliasSignature(alias: {
+  allergen_id: string;
+  alias: string;
+  normalized_alias: string;
+  alias_kind: string;
+  requires_label_confirmation: boolean;
+  dictionary_version: string;
+}): string {
+  return [
+    alias.allergen_id,
+    alias.alias,
+    alias.normalized_alias,
+    alias.alias_kind,
+    alias.requires_label_confirmation ? "1" : "0",
+    alias.dictionary_version,
+  ].join("\u0000");
+}
+
+const expectedAliasSignatures = new Set(
+  currentAllergenAliasManifest.map((alias) =>
+    aliasSignature({
+      allergen_id: alias.allergenId,
+      alias: alias.alias,
+      normalized_alias: alias.normalizedAlias,
+      alias_kind: alias.aliasKind,
+      requires_label_confirmation: alias.requiresLabelConfirmation,
+      dictionary_version: dictionaryVersion,
+    }),
+  ),
+);
 
 type SafetyRows = {
   members: readonly {
@@ -131,16 +280,8 @@ export function buildCurrentSafetyContext(input: {
       rows.rules.map((row) => row.id),
       currentFoodSafetyRuleIds,
     ) ||
-    rows.aliases.length === 0 ||
-    currentAllergenCatalogIds.some(
-      (id) =>
-        !rows.aliases.some(
-          (alias) =>
-            alias.allergen_id === id &&
-            alias.alias_kind === "direct" &&
-            !alias.requires_label_confirmation,
-        ),
-    )
+    rows.aliases.length !== expectedAliasSignatures.size ||
+    rows.aliases.some((alias) => !expectedAliasSignatures.has(aliasSignature(alias)))
   ) {
     throw safetyUnavailable();
   }

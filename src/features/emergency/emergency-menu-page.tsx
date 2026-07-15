@@ -1,9 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import type { EmergencyMenusData } from "@shared/emergency/filter-emergency-menus";
 import { useAuth } from "@/features/auth/auth-provider";
-import { getPlannerDraft } from "@/features/planner/planner-api";
+import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
+import {
+  householdSafetyChangedEvent,
+  householdSafetyRevisionStorageKey,
+} from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
-import { getEmergencyMenus } from "./emergency-menu-api";
+import { emergencyMenuKeys, getEmergencyMenus } from "./emergency-menu-api";
 
 const roleLabels = {
   main: "主菜",
@@ -19,23 +24,59 @@ function quantityText(value: number | null, unit: string | null, fallback: strin
 
 export function EmergencyMenuPage() {
   const userId = useAuth().session?.user.id;
-  const query = useQuery({
-    queryKey: ["emergency-menus", userId],
-    enabled: userId !== undefined,
-    queryFn: async () => {
-      const draft = await getPlannerDraft(getBrowserSupabaseClient(), userId ?? "");
-      return getEmergencyMenus({
-        mealType: draft?.mealType ?? "dinner",
-        targetMemberIds: draft?.targetMemberIds ?? [],
-        pantryItemIds: draft?.pantrySelections.map((item) => item.pantryItemId) ?? [],
-      });
-    },
+  const [householdSafetyRevision, setHouseholdSafetyRevision] = useState(() => {
+    try {
+      return localStorage.getItem(householdSafetyRevisionStorageKey) ?? "initial";
+    } catch {
+      return "initial";
+    }
   });
+  useEffect(() => {
+    const refreshRevision = () => {
+      setHouseholdSafetyRevision((current) => {
+        try {
+          return localStorage.getItem(householdSafetyRevisionStorageKey) ?? `${current}:changed`;
+        } catch {
+          return `${current}:changed`;
+        }
+      });
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === householdSafetyRevisionStorageKey) refreshRevision();
+    };
+    window.addEventListener(householdSafetyChangedEvent, refreshRevision);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener(householdSafetyChangedEvent, refreshRevision);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+  const draftQuery = useQuery({
+    queryKey: plannerKeys.draft(userId ?? "missing"),
+    enabled: userId !== undefined,
+    queryFn: () => getPlannerDraft(getBrowserSupabaseClient(), userId ?? ""),
+  });
+  const request = {
+    mealType: draftQuery.data?.mealType ?? "dinner",
+    targetMemberIds: draftQuery.data?.targetMemberIds ?? [],
+    pantryItemIds: draftQuery.data?.pantrySelections.map((item) => item.pantryItemId) ?? [],
+  } as const;
+  const query = useQuery({
+    queryKey: emergencyMenuKeys.candidates({
+      userId: userId ?? "missing",
+      ...request,
+      householdSafetyRevision,
+    }),
+    enabled: userId !== undefined && draftQuery.isSuccess && !draftQuery.isFetching,
+    queryFn: () => getEmergencyMenus(request),
+  });
+  const loading = draftQuery.isFetching || query.isFetching;
+  const error = draftQuery.isError || query.isError ? "緊急献立を読み込めませんでした" : null;
   return (
     <EmergencyMenuContent
-      loading={query.isPending}
-      error={query.isError ? "緊急献立を読み込めませんでした" : null}
-      response={query.data ?? null}
+      loading={loading}
+      error={error}
+      response={loading || error !== null ? null : (query.data ?? null)}
     />
   );
 }
@@ -49,6 +90,7 @@ export function EmergencyMenuContent({
   error: string | null;
   response: EmergencyMenusData | null;
 }) {
+  const visibleResponse = loading || error !== null ? null : response;
   return (
     <main className="page-frame stack emergency-menu-page">
       <div>
@@ -60,13 +102,13 @@ export function EmergencyMenuContent({
       </p>
       {loading && <p>候補を確認中…</p>}
       {error !== null && <p role="alert">{error}</p>}
-      {response?.candidates.length === 0 && (
+      {visibleResponse?.candidates.length === 0 && (
         <section className="card">
-          <h2>{response.message}</h2>
+          <h2>{visibleResponse.message}</h2>
           <p>条件を緩めず、候補を表示していません。</p>
         </section>
       )}
-      {response?.candidates.map(({ menu, memberLabels, labelWarnings }, candidateIndex) => {
+      {visibleResponse?.candidates.map(({ menu, memberLabels, labelWarnings }, candidateIndex) => {
         const candidateDomId = `emergency-candidate-${String(candidateIndex + 1)}`;
         return (
           <article className="card stack emergency-candidate" key={menu.menuId}>

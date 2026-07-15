@@ -37,4 +37,60 @@ describe("reviewed emergency menus", () => {
     });
     expect(result).toEqual({ menus: [], emptyReason: "current_safety_unavailable" });
   });
+
+  it("assigns every requested member an ordered adaptation before one full-context validation", () => {
+    const base = makeCurrentSafetyContext();
+    const firstMember = base.members[0]!;
+    const secondMemberId = "55000000-0000-4000-8000-000000000002";
+    const result = filterEmergencyMenus({
+      mealType: "breakfast",
+      pantryNames: [],
+      memberLabels: { member_1: "大人", member_2: "子ども" },
+      context: makeCurrentSafetyContext({
+        members: [
+          firstMember,
+          {
+            ...firstMember,
+            householdMemberId: secondMemberId,
+            anonymousRef: "member_2",
+            ageBand: "age_3_5",
+            requiredSafetyConstraints: ["remove_bones"],
+          },
+        ],
+      }),
+    });
+
+    expect(result.menus).toHaveLength(1);
+    expect(result.menus[0]?.adaptations.map((item) => item.anonymousMemberRef)).toEqual([
+      "member_1",
+      "member_2",
+    ]);
+    expect(
+      result.menus[0]?.adaptations.flatMap((item) =>
+        item.safetyActions.map((action) => action.anonymousMemberRef),
+      ),
+    ).toEqual(["member_1", "member_2"]);
+  });
+
+  it("returns no candidate when one member is incompatible with the remapped fixture", () => {
+    const base = makeCurrentSafetyContext();
+    const firstMember = base.members[0]!;
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      pantryNames: [],
+      context: makeCurrentSafetyContext({
+        members: [
+          firstMember,
+          {
+            ...firstMember,
+            householdMemberId: "55000000-0000-4000-8000-000000000002",
+            anonymousRef: "member_2",
+            requiredSafetyConstraints: ["remove_bones"],
+          },
+        ],
+      }),
+    });
+
+    expect(result).toEqual({ menus: [], emptyReason: "no_matching_fixture" });
+  });
 });

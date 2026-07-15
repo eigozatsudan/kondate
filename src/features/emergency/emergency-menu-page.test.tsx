@@ -22,6 +22,27 @@ it("states that no candidate exists without suggesting weaker safety conditions"
   expect(screen.queryByText(/安全確認済み/u)).not.toBeInTheDocument();
 });
 
+it.each([
+  [true, null],
+  [false, "緊急献立を読み込めませんでした"],
+] as const)("hides a prior candidate while refetching or after an error", (loading, error) => {
+  const menu = makeValidatedMenu();
+  render(
+    <EmergencyMenuContent
+      loading={loading}
+      error={error}
+      response={{
+        fixtureVersion: "2026-07-11.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "古い候補",
+        consumesAiQuota: false,
+      }}
+    />,
+  );
+
+  expect(screen.queryByText(menu.dishes[0]!.name, { exact: false })).not.toBeInTheDocument();
+});
+
 it("renders complete human-labelled cooking instructions without raw identifiers", () => {
   const base = makeValidatedMenu();
   const dish = base.dishes[0]!;
@@ -101,11 +122,16 @@ it("renders complete human-labelled cooking instructions without raw identifiers
           {
             menu,
             memberLabels: { member_1: "子ども" },
+            allergenLabels: { wheat: "小麦" },
             labelWarnings: [
               {
                 sourceType: "ingredient",
+                sourceId: ingredient.id,
+                sourcePath: "dishes.0.ingredients.0.name",
                 sourceDisplayName: "カレールー",
+                allergenId: "wheat",
                 allergenDisplayName: "小麦",
+                anonymousMemberRef: "member_1",
                 memberDisplayName: "子ども",
                 dictionaryVersion: "jp-caa-2026-04.v1",
                 confirmationStatus: "pending",
