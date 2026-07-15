@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { PlannerDraft } from "@shared/contracts/planner";
+import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerAttempt } from "./expired-pantry-checks";
 
 const draft: PlannerDraft = {
@@ -21,6 +22,27 @@ const draft: PlannerDraft = {
   updatedAt: "2026-07-01T00:00:00.000Z",
 };
 
+const pantryItem: PantryItem = {
+  id: "74000000-0000-0000-0000-000000000001",
+  userId: draft.userId,
+  name: "キャベツ",
+  quantity: 1,
+  unit: "個",
+  expiresOn: "2026-07-10",
+  expirationType: "use_by",
+  openedState: "opened",
+  createdAt: "2026-07-01T00:00:00.000Z",
+  updatedAt: "2026-07-01T00:00:00.000Z",
+};
+
+const queryState = vi.hoisted(() => ({
+  pantry: {
+    data: undefined as PantryItem[] | undefined,
+    isError: false,
+    isPending: false,
+  },
+}));
+
 vi.mock("@/features/auth/auth-provider", () => ({
   useAuth: () => ({ session: { user: { id: draft.userId } } }),
 }));
@@ -34,23 +56,25 @@ vi.mock("@tanstack/react-query", () => ({
           isPending: false,
           refetch: vi.fn(),
         }
-      : {
-          data: {
-            members: [
-              {
-                id: draft.targetMemberIds[0],
-                displayName: "子ども",
-                ageBandLabel: "3〜5歳",
-                allergyLabel: "アレルギーなし",
-                safetyLabels: [],
-                blockedReason: null,
-              },
-            ],
-            eligibleMemberIds: draft.targetMemberIds,
+      : queryKey[0] === "pantry"
+        ? queryState.pantry
+        : {
+            data: {
+              members: [
+                {
+                  id: draft.targetMemberIds[0],
+                  displayName: "子ども",
+                  ageBandLabel: "3〜5歳",
+                  allergyLabel: "アレルギーなし",
+                  safetyLabels: [],
+                  blockedReason: null,
+                },
+              ],
+              eligibleMemberIds: draft.targetMemberIds,
+            },
+            isError: false,
+            isPending: false,
           },
-          isError: false,
-          isPending: false,
-        },
 }));
 vi.mock("./use-draft-autosave", () => ({
   useDraftAutosave: () => ({
@@ -61,12 +85,18 @@ vi.mock("./use-draft-autosave", () => ({
 }));
 vi.mock("./planner-page", () => ({
   PlannerForm: (props: {
+    pantryItems: readonly PantryItem[];
+    pantryItemsStatus: "loading" | "loaded";
     attempt: PlannerAttempt;
     onAttemptChange(next: PlannerAttempt): void;
     onStartNewAttempt(): void;
     onGenerate(saved: PlannerDraft, attempt: PlannerAttempt): Promise<void>;
   }) => (
     <div>
+      <output aria-label="pantry status">{props.pantryItemsStatus}</output>
+      <output aria-label="pantry names">
+        {props.pantryItems.map((item) => item.name).join("・")}
+      </output>
       <output aria-label="attempt key">{props.attempt.idempotencyKey}</output>
       <output aria-label="check count">{props.attempt.expiredPantryChecks.length}</output>
       <button
@@ -107,6 +137,49 @@ import { PlannerPage } from "./planner-route";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  queryState.pantry = {
+    data: [pantryItem],
+    isError: false,
+    isPending: false,
+  };
+});
+
+it("owner の冷蔵庫一覧を loaded 状態で planner form へ渡す", () => {
+  render(<PlannerPage />);
+
+  expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
+  expect(screen.getByLabelText("pantry names")).toHaveTextContent("キャベツ");
+});
+
+it("冷蔵庫一覧の取得中は planner form を確定表示しない", () => {
+  queryState.pantry = { data: undefined, isError: false, isPending: true };
+
+  render(<PlannerPage />);
+
+  expect(screen.getByText("献立条件を読み込み中…")).toBeInTheDocument();
+  expect(screen.queryByLabelText("pantry status")).not.toBeInTheDocument();
+});
+
+it("冷蔵庫一覧の取得失敗を planner route の読み込み失敗として表示する", () => {
+  queryState.pantry = { data: undefined, isError: true, isPending: false };
+
+  render(<PlannerPage />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "献立条件を読み込めませんでした。再読み込みしてください。",
+  );
+  expect(screen.queryByLabelText("pantry status")).not.toBeInTheDocument();
+});
+
+it("再読み込み相当の remount では下書きと別管理の attempt key を作り直す", () => {
+  const first = render(<PlannerPage />);
+  const firstKey = screen.getByLabelText("attempt key").textContent;
+  first.unmount();
+
+  render(<PlannerPage />);
+
+  expect(screen.getByLabelText("attempt key").textContent).not.toBe(firstKey);
+  expect(screen.getByLabelText("check count")).toHaveTextContent("0");
 });
 
 it("route が更新された exact attempt を生成へ渡し新しい試行ではキーと確認を更新する", async () => {

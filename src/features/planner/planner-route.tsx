@@ -9,6 +9,7 @@ import {
 import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/auth-provider";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import type { PlannerSafetyMember } from "./current-safety-summary";
 import { createPlannerAttempt, type PlannerAttempt } from "./expired-pantry-checks";
 import { getPlannerDraft, plannerKeys, savePlannerDraft } from "./planner-api";
@@ -121,6 +122,11 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
     queryFn: () => loadPlannerSafetyData(userId ?? ""),
     enabled: userId !== undefined,
   });
+  const pantryQuery = useQuery({
+    queryKey: pantryKeys.list(userId ?? "missing"),
+    queryFn: () => listPantryItems(client, userId ?? ""),
+    enabled: userId !== undefined,
+  });
   const [value, setValue] = useState<PlannerDraftInput>(emptyDraft);
   const [initialized, setInitialized] = useState(false);
   const [attempt, setAttempt] = useState<PlannerAttempt>(createPlannerAttempt);
@@ -164,14 +170,14 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
     onConflict,
   });
 
-  if (draftQuery.isError || safetyQuery.isError) {
+  if (draftQuery.isError || safetyQuery.isError || pantryQuery.isError) {
     return (
       <main className="page-frame">
         <p role="alert">献立条件を読み込めませんでした。再読み込みしてください。</p>
       </main>
     );
   }
-  if (draftQuery.isPending || safetyQuery.isPending || !initialized) {
+  if (draftQuery.isPending || safetyQuery.isPending || pantryQuery.isPending || !initialized) {
     return (
       <main className="page-frame">
         <p>献立条件を読み込み中…</p>
@@ -182,8 +188,8 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
     <PlannerForm
       initialValue={value}
       members={safetyQuery.data.members}
-      pantryItems={[]}
-      pantryItemsStatus="loading"
+      pantryItems={pantryQuery.data}
+      pantryItemsStatus="loaded"
       saveState={autosave.state}
       attempt={attempt}
       onAttemptChange={setAttempt}
