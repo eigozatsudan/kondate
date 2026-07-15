@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 import { AppShell } from "./layouts/app-shell";
 import { RequireCompletedOnboarding, RequireSession } from "@/features/auth/protected-routes";
 import { PantryPage } from "@/features/pantry/pantry-page";
+import { EmergencyMenuPage } from "@/features/emergency/emergency-menu-page";
 import { PlannerPage } from "@/features/planner/planner-route";
 import { PlaceholderPage } from "@/shared/ui/placeholder-page";
 
@@ -55,6 +56,10 @@ export function createAppRouter(): AppRouter {
                 {
                   path: "/pantry",
                   element: <PantryPage />,
+                },
+                {
+                  path: "/emergency-menus",
+                  element: <EmergencyMenuPage />,
                 },
                 {
                   path: "/history",

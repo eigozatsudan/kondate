@@ -76,3 +76,14 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
 export function getServerEnv(): ServerEnv {
   return parseServerEnv(process.env);
 }
+
+export const supabaseServerEnvSchema = continuationServerEnvSchema.pick({
+  SUPABASE_URL: true,
+  SUPABASE_SERVICE_ROLE_KEY: true,
+});
+
+export type SupabaseServerEnv = z.infer<typeof supabaseServerEnvSchema>;
+
+export function getSupabaseServerEnv(): SupabaseServerEnv {
+  return supabaseServerEnvSchema.parse(getServerEnv());
+}
