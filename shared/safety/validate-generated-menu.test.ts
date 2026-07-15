@@ -78,6 +78,14 @@ it("rejects provider-confirmed state and canonicalizes pending processed-food pr
       aliases: [
         {
           allergenId: "egg",
+          alias: "卵",
+          normalizedAlias: "卵",
+          aliasKind: "direct",
+          requiresLabelConfirmation: false,
+          dictionaryVersion: "jp-caa-2026-04.v1",
+        },
+        {
+          allergenId: "egg",
           alias: "ドレッシング",
           normalizedAlias: "ドレッシング",
           aliasKind: "processed",
@@ -319,6 +327,44 @@ it("T5-FR-03 rejects an incomplete or mixed-version allergen context", () => {
   ]);
 });
 
+it("T5-EXIT-01 rejects a current dictionary without the direct display alias", () => {
+  const base = makeGenerationContext();
+  const generated = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: generated.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "卵" }] } : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: ["卵"] },
+    safety: makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.safety.members[0]!,
+          allergyStatus: "registered",
+          allergenIds: ["egg"],
+        },
+      ],
+      allergenDictionary: {
+        version: "jp-caa-2026-04.v1",
+        catalog: [{ id: "egg", displayName: "卵", catalogVersion: "jp-caa-2026-04.v1" }],
+        aliases: [
+          {
+            allergenId: "egg",
+            alias: "ドレッシング",
+            normalizedAlias: "ドレッシング",
+            aliasKind: "processed",
+            requiresLabelConfirmation: true,
+            dictionaryVersion: "jp-caa-2026-04.v1",
+          },
+        ],
+      },
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["safety_context_incomplete"]);
+});
+
 it("T5-FR-03 rejects missing or mixed-version child food rules", () => {
   const base = makeGenerationContext();
   const child = { ...base.safety.members[0]!, ageBand: "age_3_5" as const };
@@ -340,6 +386,26 @@ it("T5-FR-03 rejects missing or mixed-version child food rules", () => {
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), mixedRules), [
     "safety_context_incomplete",
   ]);
+});
+
+it("T5-EXIT-02 rejects a current child rule set missing a required rule category", () => {
+  const base = makeGenerationContext();
+  const generated = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: generated.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "ぶどう" }] } : dish,
+    ),
+  });
+  const child = { ...base.safety.members[0]!, ageBand: "age_3_5" as const };
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: ["ぶどう"] },
+    safety: makeCurrentSafetyContext({
+      members: [child],
+      foodSafetyRules: [hardBeanAndReviewedNutRule],
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["safety_context_incomplete"]);
 });
 
 it("T5-FFR-03 rejects a senior safety context without applicable food rules", () => {

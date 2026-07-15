@@ -243,6 +243,52 @@ it("T5-FFR-01 rejects a negated required safety action", () => {
   ]);
 });
 
+it("T5-EXIT-04 rejects quartering evidence negated with Japanese せず", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const grape = { ...firstDish.ingredients[0]!, name: "ぶどう" };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [grape] } : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: "4等分せず盛り付ける",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "切り方を確認する",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "quarter_round_food",
+            dishId: firstDish.id,
+            ingredientId: grape.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "ぶどうを4等分せず盛り付ける",
+          },
+        ],
+      },
+    ],
+  });
+  const grapeRule = {
+    ...hardBeanAndReviewedNutRule,
+    id: "grapes_under_6",
+    matchTerms: ["ぶどう"],
+    ruleKind: "requires_tag" as const,
+    requiredSafetyTag: "quarter_round_food" as const,
+  };
+
+  expect(
+    evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
+});
+
 it("T5-FFR-02 rejects mitigation text that names a different ingredient", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;

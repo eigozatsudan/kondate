@@ -40,6 +40,7 @@ export function normalizeFoodText(value: string): string {
   return value
     .normalize("NFKC")
     .toLocaleLowerCase("ja-JP")
+    .replace(/\p{Cf}/gu, "")
     .replace(/[\s\u3000、。・,./（）()「」『』]/gu, "");
 }
 

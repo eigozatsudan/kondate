@@ -27,7 +27,7 @@ const actionEvidence: Record<SafetyAction["kind"], RegExp> = {
 };
 
 const contradictionPattern =
-  /丸ごと|切らず|骨付きのまま|硬いまま|小さく切らない|細かく刻まない|4等分しない|四等分しない|縦に4つにしない|十分に煮ない|中心まで(?:十分に)?加熱しない|骨を(?:完全に)?除かない|骨を取り除かない/u;
+  /丸ごと|切らず|骨付きのまま|硬いまま|小さく切らない|細かく刻まない|4等分(?:しない|せず)|四等分(?:しない|せず)|縦に4つに(?:しない|せず)|十分に煮ない|中心まで(?:十分に)?加熱しない|骨を(?:完全に)?除かない|骨を取り除かない/u;
 
 export function evaluateFoodSafetyRules(
   menu: GeneratedMenu | ValidatedMenu,

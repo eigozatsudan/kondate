@@ -64,6 +64,21 @@ describe("evaluateAllergens", () => {
       confirmationStatus: "pending",
     });
   });
+
+  it("T5-EXIT-03 rejects a direct allergen split by an invisible format character", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "鶏\u200b卵" }] }
+          : dish,
+      ),
+    });
+
+    expect(evaluateAllergens(menu, context).issues).toEqual([
+      expect.objectContaining({ code: "direct_allergen_match" }),
+    ]);
+  });
 });
 
 it("collects every food-bearing text leaf with canonical paths", () => {
