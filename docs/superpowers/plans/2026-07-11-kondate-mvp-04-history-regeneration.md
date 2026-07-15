@@ -2000,17 +2000,30 @@ docker compose run --rm --no-deps app npm test -- --run
 docker compose --profile test run --rm db-test
 docker compose run --rm app npm run e2e -- e2e/specs/history-regeneration.spec.ts e2e/specs/history-safety-change.spec.ts
 docker compose run --rm --no-deps app npm run build
-rg -n 'source_text_snapshot|sourceTextSnapshot' \
-  supabase/migrations/20260711003000_history_regeneration.sql \
-  netlify/functions/_shared/revalidation-adapter.ts \
-  netlify/functions/_shared/stored-menu-loader.ts \
+rg -n "'sourceTextSnapshot'" supabase/migrations/20260711003000_history_regeneration.sql
+rg -n -U 'insert into public\.menu_label_confirmations\([\s\S]{0,1000}source_text_snapshot' \
+  supabase/migrations/20260711003000_history_regeneration.sql
+rg -n -U '(return query|returning)[\s\S]{0,1000}source_text_snapshot' \
+  supabase/migrations/20260711003000_history_regeneration.sql
+rg -n 'sourceTextSnapshot\s*:\s*[^,]*\.sourceText' \
+  netlify/functions/_shared/revalidation-adapter.ts
+rg -n 'sourceText\s*:\s*[^,]*\.source_text_snapshot' \
+  netlify/functions/_shared/revalidation-adapter.ts
+rg -n 'source_type,source_id,source_path,source_text_snapshot,allergen_id' \
+  netlify/functions/_shared/stored-menu-loader.ts
+rg -n 'sourceText\s*:\s*[^,]*\.source_text_snapshot' \
+  netlify/functions/_shared/stored-menu-loader.ts
+rg -n -U 'expect\([^)]*sourceText\)\.toBe\([^)]*source_text_snapshot\)' \
   netlify/functions/_shared/stored-menu-loader.test.ts
+rg -n "'sourceTextSnapshot'" supabase/tests/database/history_regeneration.test.sql
+rg -n -U '(is|results_eq)\([\s\S]{0,500}source_text_snapshot' \
+  supabase/tests/database/history_regeneration.test.sql
 if rg -n 'collectMenuTextSources|create or replace function public\.confirm_menu_label_confirmation|drop function.*confirm_menu_label_confirmation' \
   netlify/functions/_shared/revalidation-adapter.ts \
   supabase/migrations/20260711003000_history_regeneration.sql; then exit 1; fi
 ```
 
-Expected: every command exits 0 and all history/regeneration tests report zero failures. The source-snapshot search proves reconciliation input, SQL persistence/return, stored loading, and tests use the immutable snapshot; the forbidden search proves Plan 4 neither dynamically reconstructs warning text nor replaces Plan 3's confirmation RPC.
+Expected: every command exits 0 and all history/regeneration tests report zero failures. The independent source-snapshot searches fail if any one of reconciliation input parsing, SQL insert, SQL return projection, adapter request/response mapping, stored-menu select/mapping, loader assertion, or pgTAP input/saved-value assertion is absent. The forbidden search proves Plan 4 neither dynamically reconstructs warning text nor replaces Plan 3's confirmation RPC.
 
 - [ ] **Step 6: Commit the verified increment**
 
