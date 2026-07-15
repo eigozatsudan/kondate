@@ -1,24 +1,44 @@
 import { createBrowserRouter, Navigate } from "react-router";
 import { AppShell } from "./layouts/app-shell";
-import { AuthCallbackPage } from "@/features/auth/auth-callback-page";
-import { LoginPage } from "@/features/auth/login-page";
 import { RequireCompletedOnboarding, RequireSession } from "@/features/auth/protected-routes";
-import { HouseholdOnboardingPage } from "@/features/household/household-onboarding-page";
-import { PrivacyNoticePage } from "@/features/privacy/privacy-notice-page";
-import { HouseholdSettingsPage } from "@/features/household/household-settings-page";
 import { PlaceholderPage } from "@/shared/ui/placeholder-page";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
 
 export function createAppRouter(): AppRouter {
   return createBrowserRouter([
-    { path: "/login", element: <LoginPage /> },
-    { path: "/auth/callback", element: <AuthCallbackPage /> },
+    {
+      path: "/login",
+      lazy: async () => {
+        const { LoginPage } = await import("@/features/auth/login-page");
+        return { Component: LoginPage };
+      },
+    },
+    {
+      path: "/auth/callback",
+      lazy: async () => {
+        const { AuthCallbackPage } = await import("@/features/auth/auth-callback-page");
+        return { Component: AuthCallbackPage };
+      },
+    },
     {
       element: <RequireSession />,
       children: [
-        { path: "/onboarding", element: <HouseholdOnboardingPage /> },
-        { path: "/privacy", element: <PrivacyNoticePage /> },
+        {
+          path: "/onboarding",
+          lazy: async () => {
+            const { HouseholdOnboardingPage } =
+              await import("@/features/household/household-onboarding-page");
+            return { Component: HouseholdOnboardingPage };
+          },
+        },
+        {
+          path: "/privacy",
+          lazy: async () => {
+            const { PrivacyNoticePage } = await import("@/features/privacy/privacy-notice-page");
+            return { Component: PrivacyNoticePage };
+          },
+        },
         {
           element: <RequireCompletedOnboarding />,
           children: [
@@ -64,7 +84,11 @@ export function createAppRouter(): AppRouter {
                 },
                 {
                   path: "/settings",
-                  element: <HouseholdSettingsPage />,
+                  lazy: async () => {
+                    const { HouseholdSettingsPage } =
+                      await import("@/features/household/household-settings-page");
+                    return { Component: HouseholdSettingsPage };
+                  },
                 },
               ],
             },

@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(25);
+select plan(34);
 
 select tests.create_supabase_user('11111111-1111-1111-1111-111111111111', 'one@example.invalid');
 select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@example.invalid');
@@ -75,12 +75,11 @@ select lives_ok(
 );
 select throws_ok(
   $sql$
-    delete from public.member_allergies
-    where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    select public.delete_member_allergy('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
   $sql$,
   '23514',
   'member_registered_allergy_required',
-  'complete registered member cannot delete the last allergy'
+  'deletion RPC cannot delete the last allergy of a complete registered member'
 );
 insert into public.member_allergies(
   id, user_id, member_id, custom_name, custom_aliases, custom_confirmed
@@ -98,6 +97,17 @@ select is(
   (select custom_aliases from public.member_allergies where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
   array['pea protein', 'pea isolate'],
   'custom allergy aliases are stored as NFKC-trimmed canonical values'
+);
+select lives_ok(
+  $sql$
+    select public.delete_member_allergy('dddddddd-dddd-dddd-dddd-dddddddddddd')
+  $sql$,
+  'deletion RPC removes an allergy when another allergy remains'
+);
+select is(
+  (select count(*)::integer from public.member_allergies where member_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  1,
+  'deletion RPC removes only the requested allergy'
 );
 select throws_ok(
   $sql$
@@ -135,6 +145,25 @@ select throws_ok(
   'invalid_custom_allergy_aliases',
   'each custom alias is limited to eighty characters'
 );
+select lives_ok(
+  $sql$
+    update public.household_members
+    set allergy_status = 'none'
+    where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  $sql$,
+  'member can leave registered status before removing the final allergy'
+);
+select lives_ok(
+  $sql$
+    select public.delete_member_allergy('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+  $sql$,
+  'deletion RPC removes the final allergy after registered status is cleared'
+);
+select is(
+  (select count(*)::integer from public.member_allergies where member_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  0,
+  'clearing registered status permits an empty allergy set'
+);
 insert into public.member_dislikes(id, user_id, member_id, ingredient_name) values (
   'cccccccc-cccc-cccc-cccc-cccccccccccc',
   '11111111-1111-1111-1111-111111111111',
@@ -157,14 +186,18 @@ with removed as (
   delete from public.household_members returning 1
 )
 select is((select count(*)::integer from removed), 0, 'second user cannot delete first user member');
-with changed as (
-  update public.member_allergies set custom_name = 'other' returning 1
-)
-select is((select count(*)::integer from changed), 0, 'second user cannot update first user allergy');
-with removed as (
-  delete from public.member_allergies returning 1
-)
-select is((select count(*)::integer from removed), 0, 'second user cannot delete first user allergy');
+select throws_ok(
+  $sql$update public.member_allergies set custom_name = 'other'$sql$,
+  '42501',
+  null,
+  'browser cannot update allergies directly'
+);
+select throws_ok(
+  $sql$delete from public.member_allergies$sql$,
+  '42501',
+  null,
+  'browser cannot delete allergies directly'
+);
 with changed as (
   update public.member_dislikes set ingredient_name = 'other' returning 1
 )
@@ -189,6 +222,22 @@ select ok(
 select ok(
   not has_table_privilege('authenticated', 'public.profiles', 'delete'),
   'browser cannot delete profiles'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.member_allergies', 'delete'),
+  'browser cannot bypass serialized allergy deletion'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.member_allergies', 'update'),
+  'browser cannot move an allergy around the serialized boundary'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.delete_member_allergy(uuid)', 'execute'),
+  'authenticated users can execute the serialized allergy deletion RPC'
+);
+select ok(
+  not has_function_privilege('anon', 'public.delete_member_allergy(uuid)', 'execute'),
+  'anonymous users cannot execute the allergy deletion RPC'
 );
 
 select * from finish();

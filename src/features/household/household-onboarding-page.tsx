@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { AgeBand, UnsupportedDietKind, UnsupportedDietStatus } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/auth-provider";
@@ -8,13 +8,14 @@ import {
   addCustomMemberAllergy,
   addStandardMemberAllergy,
   completeHouseholdMember,
-  createHouseholdMemberDraft,
   listHouseholdMembers,
   listMemberAllergies,
   setOnboardingStatus,
+  startHouseholdOnboarding,
   updateHouseholdMemberDraft,
   deleteMemberAllergy,
   listAllergenCatalog,
+  listAllergenAliases,
   type HouseholdDraftPatch,
   type HouseholdMemberRow,
 } from "./household-api";
@@ -35,6 +36,7 @@ export interface HouseholdOnboardingApi {
   completeMember: (memberId: string) => Promise<HouseholdMemberRow>;
   listAllergies: (memberId: string) => Promise<Awaited<ReturnType<typeof listMemberAllergies>>>;
   listCatalog?: () => Promise<Awaited<ReturnType<typeof listAllergenCatalog>>>;
+  listAliases?: () => Promise<Awaited<ReturnType<typeof listAllergenAliases>>>;
   addStandardAllergy?: (memberId: string, allergenId: string) => Promise<unknown>;
   addCustomAllergy: (memberId: string, name: string, aliases: string[]) => Promise<unknown>;
   removeAllergy?: (allergyId: string) => Promise<unknown>;
@@ -45,11 +47,12 @@ function createHouseholdApi(userId: string): HouseholdOnboardingApi {
   const client = getBrowserSupabaseClient();
   return {
     listMembers: () => listHouseholdMembers(client, userId),
-    createDraft: (sortOrder) => createHouseholdMemberDraft(client, userId, sortOrder),
+    createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
     updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
     listAllergies: (memberId) => listMemberAllergies(client, userId, memberId),
     listCatalog: () => listAllergenCatalog(client),
+    listAliases: () => listAllergenAliases(client),
     addStandardAllergy: (memberId, allergenId) =>
       addStandardMemberAllergy(client, userId, memberId, allergenId),
     addCustomAllergy: (memberId, name, aliases) =>
@@ -86,6 +89,8 @@ export function HouseholdOnboardingForm({
 }) {
   const queryClient = useQueryClient();
   const [saveState, setSaveState] = useState<"saved" | "saving" | "failed">("saved");
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const latestSaveVersion = useRef(0);
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
   const membersQuery = useQuery({
@@ -105,6 +110,11 @@ export function HouseholdOnboardingForm({
     queryFn: () => api.listCatalog?.() ?? Promise.resolve([]),
     enabled: draft !== null && api.listCatalog !== undefined,
   });
+  const aliasesQuery = useQuery({
+    queryKey: ["household", "allergen-aliases"],
+    queryFn: () => api.listAliases?.() ?? Promise.resolve([]),
+    enabled: draft !== null && api.listCatalog !== undefined,
+  });
   const allergies = allergiesQuery.data ?? [];
 
   const replaceMember = (member: HouseholdMemberRow) => {
@@ -114,29 +124,44 @@ export function HouseholdOnboardingForm({
   };
 
   const startMutation = useMutation({
-    mutationFn: async () => {
-      const created = await api.createDraft(members.length);
-      await api.setProgress("in_progress");
-      return created;
-    },
+    mutationFn: () => api.createDraft(members.length),
     onSuccess: (created) => {
       queryClient.setQueryData<HouseholdMemberRow[]>(
         householdKeys.members(userId),
-        (current = []) => [...current, created],
+        (current = []) =>
+          current.some((member) => member.id === created.id) ? current : [...current, created],
       );
     },
   });
 
-  const save = async (patch: HouseholdDraftPatch) => {
-    if (draft === null) return;
+  const save = (patch: HouseholdDraftPatch) => {
+    if (draft === null) return Promise.resolve();
+    const memberId = draft.id;
+    const saveVersion = latestSaveVersion.current + 1;
+    latestSaveVersion.current = saveVersion;
     setSaveState("saving");
-    try {
-      const saved = await api.updateDraft(draft.id, patch);
-      replaceMember(saved);
-      setSaveState("saved");
-    } catch {
-      setSaveState("failed");
-    }
+    // 応答待ちでも連続入力を保持し、後続の保存内容を古い応答で戻さない。
+    queryClient.setQueryData<HouseholdMemberRow[]>(householdKeys.members(userId), (current = []) =>
+      current.map((item) => (item.id === memberId ? { ...item, ...patch } : item)),
+    );
+
+    const queuedSave = saveQueue.current.then(async () => {
+      setSaveState("saving");
+      try {
+        const saved = await api.updateDraft(memberId, patch);
+        if (saveVersion === latestSaveVersion.current) {
+          replaceMember(saved);
+          setSaveState("saved");
+        }
+      } catch {
+        if (saveVersion === latestSaveVersion.current) {
+          setSaveState("failed");
+        }
+      }
+    });
+    // 保存失敗はキュー内で処理し、後続操作を止めない。
+    saveQueue.current = queuedSave;
+    return queuedSave;
   };
 
   const completedRequired = useMemo(() => {
@@ -255,6 +280,7 @@ export function HouseholdOnboardingForm({
           <AllergyEditor
             memberId={draft.id}
             catalog={catalogQuery.data ?? []}
+            aliases={aliasesQuery.data ?? []}
             allergies={allergies}
             addStandard={async (memberId, allergenId) => {
               await api.addStandardAllergy?.(memberId, allergenId);
@@ -375,9 +401,11 @@ export function HouseholdOnboardingForm({
         type="button"
         disabled={!canComplete}
         onClick={() =>
-          void api.completeMember(draft.id).then((member) => {
-            replaceMember(member);
-          })
+          void saveQueue.current
+            .then(() => api.completeMember(draft.id))
+            .then((member) => {
+              replaceMember(member);
+            })
         }
       >
         残りはあとで設定して完了

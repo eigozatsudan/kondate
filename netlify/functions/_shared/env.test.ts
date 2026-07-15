@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { parseManagedSupabaseProjectRef, parseServerEnv } from "./env.js";
 
 const validServerEnv = {
+  VITE_SUPABASE_URL: "http://127.0.0.1:8000",
   SUPABASE_URL: "http://kong:8000",
   SUPABASE_SERVICE_ROLE_KEY: "service-role-key-at-least-twenty-characters",
   SERVER_SITE_ORIGIN: "http://127.0.0.1:5173",
@@ -16,6 +17,7 @@ it("parses the exact five-minute server continuation TTL in seconds", () => {
 it("accepts only an exact managed Supabase origin for an HTTPS deployment", () => {
   const production = {
     ...validServerEnv,
+    VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
     SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
     SERVER_SITE_ORIGIN: "https://kondate.example",
   };
@@ -37,6 +39,26 @@ it("accepts only an exact managed Supabase origin for an HTTPS deployment", () =
       "server_configuration_invalid",
     );
   }
+});
+
+it("rejects different browser and server Supabase projects for an HTTPS deployment", () => {
+  expect(() =>
+    parseServerEnv({
+      ...validServerEnv,
+      VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+      SUPABASE_URL: "https://bcdefghijklmnopqrstu.supabase.co",
+      SERVER_SITE_ORIGIN: "https://kondate.example",
+    }),
+  ).toThrow("server_configuration_invalid");
+});
+
+it("rejects a non-canonical browser Supabase URL for local development", () => {
+  expect(() =>
+    parseServerEnv({
+      ...validServerEnv,
+      VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+    }),
+  ).toThrow("server_configuration_invalid");
 });
 
 it.each(["299", "300000"])("rejects a wrong server TTL unit/value: %s", (value) => {

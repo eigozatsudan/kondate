@@ -1115,6 +1115,20 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_custom_member_allergy: {
+        Args: {
+          p_custom_aliases: string[]
+          p_custom_name: string
+          p_member_id: string
+        }
+        Returns: Database["public"]["Tables"]["member_allergies"]["Row"]
+        SetofOptions: {
+          from: "*"
+          to: "member_allergies"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       claim_auth_continuation: {
         Args: {
           p_id: string
@@ -1130,6 +1144,10 @@ export type Database = {
         }[]
       }
       cleanup_auth_continuations: { Args: { p_now: string }; Returns: number }
+      delete_member_allergy: {
+        Args: { p_allergy_id: string }
+        Returns: undefined
+      }
       complete_household_member: {
         Args: { p_member_id: string }
         Returns: {
@@ -1234,6 +1252,32 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      start_household_onboarding: {
+        Args: { p_sort_order: number }
+        Returns: {
+          age_band: string | null
+          allergy_status: string | null
+          created_at: string
+          display_name: string | null
+          ease_preferences: string[]
+          id: string
+          portion_size: string | null
+          required_safety_constraints: string[]
+          sort_order: number
+          spice_level: string | null
+          status: string
+          unsupported_diet_kinds: string[]
+          unsupported_diet_status: string | null
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "household_members"
           isOneToOne: true
           isSetofReturn: false
         }

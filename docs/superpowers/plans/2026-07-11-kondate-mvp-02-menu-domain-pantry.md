@@ -1501,7 +1501,7 @@ git commit -m "feat: add normalized menu domain schema"
 
 **Interfaces:**
 - Consumes: roadmap `MealType`, `CuisineGenre`, `PantryPriority` and Plan 1 `requiredSafetyConstraints`.
-- Produces: the exact contract exports in “Locked Cross-Plan Interfaces”; Plan 3 maps `ValidatedMenu` camelCase fields to Task 3 columns.
+- Produces: the exact contract exports in “Locked Cross-Plan Interfaces”; Plan 3 maps `ValidatedMenu` camelCase fields to Task 3 columns. Every label confirmation carries canonical nonblank `sourceText` of 1–500 Unicode code points, which Plan 3 persists unchanged as immutable `source_text_snapshot`.
 
 - [ ] **Step 1 (2–5 min): Write failing contract tests**
 
@@ -1816,6 +1816,50 @@ describe("validated menu schema", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("canonicalizes label source text and counts Unicode code points", () => {
+    const confirmation = {
+      sourceType: "ingredient",
+      sourceId: menu.dishes[0].ingredients[0].id,
+      sourcePath: "dishes.0.ingredients.0.name",
+      sourceText: "\u00a0🍳\ufeff",
+      allergenId: "egg",
+      anonymousMemberRef: "member_1",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending",
+    } as const;
+    expect(
+      validatedMenuSchema.parse({ ...menu, labelConfirmations: [confirmation] })
+        .labelConfirmations[0]?.sourceText,
+    ).toBe("🍳");
+    expect(
+      validatedMenuSchema.safeParse({
+        ...menu,
+        labelConfirmations: [{ ...confirmation, sourceText: "🍳".repeat(500) }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("requires label source text and rejects more than 500 Unicode code points", () => {
+    const confirmation = {
+      sourceType: "ingredient",
+      sourceId: menu.dishes[0].ingredients[0].id,
+      sourcePath: "dishes.0.ingredients.0.name",
+      allergenId: "egg",
+      anonymousMemberRef: "member_1",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending",
+    } as const;
+    expect(
+      validatedMenuSchema.safeParse({ ...menu, labelConfirmations: [confirmation] }).success,
+    ).toBe(false);
+    expect(
+      validatedMenuSchema.safeParse({
+        ...menu,
+        labelConfirmations: [{ ...confirmation, sourceText: "🍳".repeat(501) }],
+      }).success,
+    ).toBe(false);
+  });
 });
 ```
 
@@ -1825,7 +1869,8 @@ Run:
 
 ```bash
 docker compose run --rm --no-deps app npx vitest run \
-  shared/contracts/pantry.test.ts shared/contracts/planner.test.ts
+  shared/contracts/pantry.test.ts shared/contracts/planner.test.ts \
+  shared/contracts/generation.test.ts
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
@@ -2029,6 +2074,15 @@ export const storeSections = [
 ] as const;
 export const labelSourceTypes = ["dish", "ingredient", "recipe_step", "adaptation", "timeline"] as const;
 const safetyTagSchema = z.string().regex(/^[a-z][a-z0-9_]*$/);
+function boundedCanonicalText(min: number, max: number) {
+  return z.string().trim().refine(
+    (value) => {
+      const length = Array.from(value).length;
+      return length >= min && length <= max;
+    },
+    { message: `${min}〜${max}文字で入力してください` },
+  );
+}
 export const safetyActionKinds = ["remove_bones", "cut_small", "quarter_round_food", "soften", "heat_thoroughly"] as const;
 export const safetyActionSchema = z.object({
   kind: z.enum(safetyActionKinds),
@@ -2096,6 +2150,7 @@ export const menuLabelConfirmationSchema = z.object({
   sourceType: z.enum(labelSourceTypes),
   sourceId: z.string().uuid(),
   sourcePath: z.string().trim().min(1).max(200),
+  sourceText: boundedCanonicalText(1, 500),
   allergenId: z.string().regex(/^[a-z][a-z0-9_]*$/),
   anonymousMemberRef: z.string().regex(/^member_[1-9][0-9]*$/),
   dictionaryVersion: z.string().trim().min(1).max(80),
@@ -2183,7 +2238,7 @@ export const validatedMenuSchema = z
     }
   });
 
-// Until Task 10 splits stored confirmation provenance, generated output is the pending-only schema.
+// Task 10で保存済み確認の来歴を分離するまでは、生成結果もpending専用schemaを使う。
 export const generatedMenuSchema = validatedMenuSchema;
 
 export type DishIngredient = z.infer<typeof dishIngredientSchema>;
@@ -2211,11 +2266,12 @@ Run:
 
 ```bash
 docker compose run --rm --no-deps app npx vitest run \
-  shared/contracts/pantry.test.ts shared/contracts/planner.test.ts
+  shared/contracts/pantry.test.ts shared/contracts/planner.test.ts \
+  shared/contracts/generation.test.ts
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: Vitest reports 9 passed tests; typecheck exits 0.
+Expected: Vitest reports 15 passed tests across all three contract files; typecheck exits 0.
 
 - [ ] **Step 6 (2–5 min): Commit shared contracts**
 
@@ -2223,7 +2279,7 @@ Expected: Vitest reports 9 passed tests; typecheck exits 0.
 git add shared/contracts/pantry.ts shared/contracts/pantry.test.ts \
   shared/contracts/planner.ts shared/contracts/planner.test.ts \
   shared/contracts/generation.ts shared/contracts/generation.test.ts
-git commit -m "feat: define planner and validated menu contracts"
+git commit -m "feat: 献立生成の共有契約を定義"
 ```
 
 ## Task 5: Deterministic Current-Safety Engine and JST Boundary
@@ -2400,6 +2456,7 @@ describe("evaluateAllergens", () => {
     });
     expect(evaluateAllergens(menu, context).labelConfirmations[0]).toMatchObject({
       sourceType: "ingredient",
+      sourceText: "ドレッシング",
       allergenId: "egg",
       anonymousMemberRef: "member_1",
       dictionaryVersion: "jp-caa-2026-04.v1",
@@ -2714,13 +2771,21 @@ export function evaluateAllergens(
             sourceType: source.sourceType,
             sourceId: source.sourceId,
             sourcePath: source.sourcePath,
+            sourceText: source.text,
             allergenId,
             anonymousMemberRef: member.anonymousRef,
             dictionaryVersion: context.dictionaryVersion,
             confirmationStatus: "pending",
           };
           confirmations.set(
-            [source.sourceType, source.sourceId, allergenId, member.anonymousRef].join(":"),
+            [
+              source.sourceType,
+              source.sourceId,
+              source.sourcePath,
+              allergenId,
+              member.anonymousRef,
+              context.dictionaryVersion,
+            ].join("\u0000"),
             confirmation,
           );
         }
@@ -2860,7 +2925,14 @@ import { evaluateFoodSafetyRules } from "./food-rules";
 import { detectUnsupportedMedicalRequest } from "./medical-scope";
 
 const confirmationKey = (item: MenuLabelConfirmation): string =>
-  [item.sourceType, item.sourceId, item.allergenId, item.anonymousMemberRef, item.dictionaryVersion].join(":");
+  [
+    item.sourceType,
+    item.sourceId,
+    item.sourcePath,
+    item.allergenId,
+    item.anonymousMemberRef,
+    item.dictionaryVersion,
+  ].join("\u0000");
 
 export function validateGeneratedMenu(menu: unknown, context: GenerationContext): MenuValidationResult {
   const parsed = generatedMenuSchema.safeParse(menu);
@@ -4429,12 +4501,10 @@ export function buildEmergencyMenuCandidate(input: {
   context: CurrentSafetyContext;
   memberLabels: Readonly<Record<string, string>>;
 }): EmergencyMenuCandidate {
-  const sources = new Map(collectMenuTextSources(input.menu)
-    .map((source) => [source.sourcePath, source.text.trim()] as const));
   const allergens = new Map(input.context.allergenDictionary.catalog
     .map((item) => [item.id, item.displayName] as const));
   const labelWarnings = input.menu.labelConfirmations.map((confirmation) => {
-    const sourceDisplayName = sources.get(confirmation.sourcePath);
+    const sourceDisplayName = confirmation.sourceText;
     const allergenDisplayName = allergens.get(confirmation.allergenId);
     const memberDisplayName = input.memberLabels[confirmation.anonymousMemberRef];
     if (!sourceDisplayName || !allergenDisplayName || !memberDisplayName) {
@@ -5167,7 +5237,7 @@ git commit -m "test: cover menu domain and pantry increment"
 - Modify: `e2e/specs/menu-domain-pantry.spec.ts`
 
 **Interfaces:**
-- `generatedMenuSchema` parses external AI output and permits only `confirmationStatus: "pending"`. `validatedMenuSchema` parses stored/returned menus and permits `pending | confirmed` together with `confirmedAt`/`confirmedBy` provenance.
+- `generatedMenuSchema` parses external AI output and permits only `confirmationStatus: "pending"`. `validatedMenuSchema` parses stored/returned menus and permits `pending | confirmed` together with `confirmedAt`/`confirmedBy` provenance. Both confirmation schemas require canonical nonblank `sourceText` of 1–500 Unicode code points; validation replaces provider text with the exact canonical collected source leaf, and Plan 3 persists that value unchanged as `source_text_snapshot`.
 - AI `safetyTags` may be stored for display/debugging but are never evidence. `SafetyAction` is `{ kind, dishId, ingredientId, anonymousMemberRef, beforeRecipeStepId, instruction }`; a required constraint is satisfied only by an ingredient/dish/member/step-bound action whose instruction and recipe/adaptation text agree and contain no contradictory instruction. An action for another ingredient in the same dish never satisfies the rule.
 - `quarter_round_food` is the sole four-way-cut action kind across the catalog, schema, normalized table, validator, and fixtures. The under-six hard-particle fixture contains concrete hard-bean forms and the reviewed peanut/walnut/almond/cashew/pistachio/macadamia names and aliases; it excludes bare bean terms and proves soft processed bean products do not match.
 - `menu_safety_actions` is the only persisted representation of `SafetyAction`; `menu_member_adaptations` has no JSON action column. Each row carries `user_id`, canonical `kind`/`instruction`, stable `position`, and owner-composite menu/dish/ingredient/target-member/recipe-step/adaptation FKs. Authenticated browsers have owner SELECT only and no write privilege. Plan 3 must persist every validator-returned action and rebuild the same nested `ValidatedMenu.adaptations[].safetyActions` array on readback.
@@ -5223,8 +5293,8 @@ it("canonicalizes every provider confirmation to deterministic pending provenanc
     dishes: [dishWithIngredient("カレールー")],
     labelConfirmations: [{
       sourceType: "ingredient", sourceId: INGREDIENT_ID,
-      sourcePath: "made.up.path", allergenId: "wheat",
-      anonymousMemberRef: "member_1", dictionaryVersion: "wrong",
+      sourcePath: "dishes.0.ingredients.0.name", sourceText: "偽装された表示名", allergenId: "wheat",
+      anonymousMemberRef: "member_1", dictionaryVersion: "jp-caa-2026-04.v1",
       confirmationStatus: "confirmed",
     }],
   });
@@ -5237,6 +5307,7 @@ it("canonicalizes every provider confirmation to deterministic pending provenanc
   );
   expect(pending).toMatchObject({ ok: true, menu: { labelConfirmations: [{
     sourcePath: "dishes.0.ingredients.0.name", dictionaryVersion: "jp-caa-2026-04.v1",
+    sourceText: "カレールー",
     confirmationStatus: "pending", confirmedAt: null, confirmedBy: null,
   }] } });
 });
@@ -5324,7 +5395,7 @@ it("canonicalizes a used pantry product through its real ingredient leaf",()=>{
   const result=validateGeneratedMenu(menu,wheatContext());
   expect(result).toMatchObject({ok:true,menu:{labelConfirmations:[{
     sourceType:"ingredient",sourceId:menu.dishes[0]?.ingredients[0]?.id,
-    sourcePath:"dishes.0.ingredients.0.name",
+    sourcePath:"dishes.0.ingredients.0.name",sourceText:"カレールー",
   }]}});
   if(!result.ok)throw new Error("expected valid linked pantry fixture");
   expect(JSON.stringify(result.menu.labelConfirmations))
@@ -5415,6 +5486,7 @@ safetyActions: z.array(safetyActionSchema).max(20),
 const labelConfirmationBase = {
   sourceType: z.enum(labelSourceTypes), sourceId: z.string().uuid(),
   sourcePath: z.string().trim().min(1).max(200),
+  sourceText: boundedCanonicalText(1, 500),
   allergenId: z.string().regex(/^[a-z][a-z0-9_]*$/u),
   anonymousMemberRef: z.string().regex(/^member_[1-9][0-9]*$/u),
   dictionaryVersion: z.string().trim().min(1).max(80),
@@ -5541,8 +5613,8 @@ export function evaluateAllergens(
   menu:GeneratedMenu|ValidatedMenu,context:CurrentSafetyContext,
 ):{issues:readonly MenuValidationIssue[];
   labelConfirmations:readonly GeneratedLabelConfirmation[]} {
-  // Keep the existing exhaustive text walk, but construct only
-  // GeneratedLabelConfirmation rows here. Stored provenance is not part of evaluation.
+  // 既存の網羅的なtext走査を維持し、ここではGeneratedLabelConfirmationだけを組み立てる。
+  // 保存済み確認の来歴は現在条件の評価根拠に含めない。
 }
 
 export function deriveCurrentGeneratedLabelConfirmations(

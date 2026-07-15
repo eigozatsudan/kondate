@@ -31,12 +31,14 @@ import {
   deleteMemberAllergy,
   deleteMemberDislike,
   listAllergenCatalog,
+  listAllergenAliases,
   listHouseholdMembers,
   listMemberAllergies,
   listMemberDislikes,
   updateCompleteHouseholdMember,
   updateHouseholdMemberDraft,
   type AllergenCatalogRow,
+  type AllergenAliasRow,
   type HouseholdMemberPatch,
   type HouseholdMemberRow,
   type MemberAllergyRow,
@@ -100,6 +102,7 @@ export interface HouseholdSettingsApi {
   completeMember(memberId: string): Promise<HouseholdMemberRow>;
   deleteMember(memberId: string): Promise<void>;
   listCatalog(): Promise<AllergenCatalogRow[]>;
+  listAliases?(): Promise<AllergenAliasRow[]>;
   listAllergies(memberId: string): Promise<MemberAllergyRow[]>;
   addStandardAllergy(memberId: string, allergenId: string): Promise<MemberAllergyRow>;
   addCustomAllergy(memberId: string, name: string, aliases: string[]): Promise<MemberAllergyRow>;
@@ -119,14 +122,10 @@ function memberValue(member: HouseholdMemberRow): HouseholdSettingsValue {
     allergyStatus: (member.allergy_status ?? "") as AllergyStatus,
     unsupportedDietStatus: (member.unsupported_diet_status ?? "") as UnsupportedDietStatus,
     unsupportedDietKinds: member.unsupported_diet_kinds as UnsupportedDietKind[],
-    requiredSafetyConstraints: member.required_safety_constraints.length
-      ? (member.required_safety_constraints as RequiredSafetyConstraint[])
-      : defaults.required_safety_constraints,
+    requiredSafetyConstraints: member.required_safety_constraints as RequiredSafetyConstraint[],
     portionSize: (member.portion_size ?? defaults.portion_size) as PortionSize,
     spiceLevel: (member.spice_level ?? defaults.spice_level) as SpiceLevel,
-    easePreferences: member.ease_preferences.length
-      ? (member.ease_preferences as EasePreference[])
-      : defaults.ease_preferences,
+    easePreferences: member.ease_preferences as EasePreference[],
   };
 }
 
@@ -159,6 +158,7 @@ function createHouseholdSettingsApi(
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
     deleteMember: (memberId) => deleteHouseholdMember(client, userId, memberId),
     listCatalog: () => listAllergenCatalog(client),
+    listAliases: () => listAllergenAliases(client),
     listAllergies: (memberId) => listMemberAllergies(client, userId, memberId),
     addStandardAllergy: (memberId, allergenId) =>
       addStandardMemberAllergy(client, userId, memberId, allergenId),
@@ -214,6 +214,10 @@ export function HouseholdSettingsForm({
   const catalogQuery = useQuery({
     queryKey: ["settings-catalog"],
     queryFn: () => api.listCatalog(),
+  });
+  const aliasesQuery = useQuery({
+    queryKey: ["settings-allergen-aliases"],
+    queryFn: () => api.listAliases?.() ?? Promise.resolve([]),
   });
   const members = membersQuery.data ?? [];
   const selected =
@@ -349,9 +353,9 @@ export function HouseholdSettingsForm({
     void queueSave(next);
   };
 
-  if (membersQuery.isPending || catalogQuery.isPending)
+  if (membersQuery.isPending || catalogQuery.isPending || aliasesQuery.isPending)
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
-  if (membersQuery.isError || catalogQuery.isError)
+  if (membersQuery.isError || catalogQuery.isError || aliasesQuery.isError)
     return (
       <main className="page-frame">
         <p role="alert">家族設定を読み込めませんでした。</p>
@@ -483,6 +487,7 @@ export function HouseholdSettingsForm({
           <AllergyEditor
             memberId={selected.id}
             catalog={catalogQuery.data}
+            aliases={aliasesQuery.data}
             allergies={currentAllergies}
             addStandard={async (memberId, allergenId) => {
               await api.addStandardAllergy(memberId, allergenId);

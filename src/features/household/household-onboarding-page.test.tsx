@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import type { HouseholdDraftPatch, HouseholdMemberRow } from "./household-api";
@@ -22,6 +22,16 @@ const draft: HouseholdMemberRow = {
   created_at: "2026-07-11T00:00:00.000Z",
   updated_at: "2026-07-11T00:00:00.000Z",
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 it("resumes one draft and saves each required selection", async () => {
   const user = userEvent.setup();
@@ -66,6 +76,51 @@ it("resumes one draft and saves each required selection", async () => {
   expect(completeMember).toHaveBeenCalledWith("member-1");
 });
 
+it("saves an incomplete unsupported diet draft before requiring a kind at completion", async () => {
+  const user = userEvent.setup();
+  let currentDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+  };
+  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
+    currentDraft = { ...currentDraft, ...patch };
+    return Promise.resolve(currentDraft);
+  });
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([currentDraft]),
+    createDraft: vi.fn(),
+    updateDraft,
+    completeMember: vi.fn(),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  await user.selectOptions(await screen.findByLabelText("対象外の食事の確認"), "present");
+
+  expect(updateDraft).toHaveBeenNthCalledWith(1, "member-1", {
+    unsupported_diet_status: "present",
+    unsupported_diet_kinds: [],
+  });
+  const completeButton = screen.getByRole("button", { name: "残りはあとで設定して完了" });
+  expect(completeButton).toBeDisabled();
+
+  await user.click(await screen.findByRole("checkbox", { name: "離乳食" }));
+
+  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", {
+    unsupported_diet_kinds: ["weaning_food"],
+  });
+  expect(completeButton).toBeEnabled();
+});
+
 it("opens the privacy notice without completing onboarding", async () => {
   const user = userEvent.setup();
   const onDone = vi.fn();
@@ -91,4 +146,146 @@ it("opens the privacy notice without completing onboarding", async () => {
 
   expect(onDone).toHaveBeenCalledOnce();
   expect(setProgress).not.toHaveBeenCalled();
+});
+
+it("serializes rapid draft updates in input order", async () => {
+  const user = userEvent.setup();
+  const firstUpdate = deferred<HouseholdMemberRow>();
+  const updateDraft = vi
+    .fn()
+    .mockImplementationOnce(() => firstUpdate.promise)
+    .mockResolvedValueOnce({ ...draft, age_band: "adult", allergy_status: "none" });
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    createDraft: vi.fn(),
+    updateDraft,
+    completeMember: vi.fn(),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  await user.selectOptions(await screen.findByLabelText("年齢区分"), "adult");
+  await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
+
+  expect(updateDraft).toHaveBeenCalledTimes(1);
+  firstUpdate.resolve({ ...draft, age_band: "adult" });
+  await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(2));
+  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { allergy_status: "none" });
+});
+
+it("preserves rapid changes to the same field while the first save is pending", async () => {
+  const user = userEvent.setup();
+  const firstUpdate = deferred<HouseholdMemberRow>();
+  const updateDraft = vi
+    .fn()
+    .mockImplementationOnce(() => firstUpdate.promise)
+    .mockResolvedValueOnce({ ...draft, display_name: "母娘" });
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    createDraft: vi.fn(),
+    updateDraft,
+    completeMember: vi.fn(),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  const displayName = await screen.findByLabelText("呼び名（任意・AIには送りません）");
+  await user.type(displayName, "母娘");
+
+  expect(displayName).toHaveValue("母娘");
+  expect(updateDraft).toHaveBeenCalledTimes(1);
+  expect(updateDraft).toHaveBeenNthCalledWith(1, "member-1", { display_name: "母" });
+
+  firstUpdate.resolve({ ...draft, display_name: "母" });
+  await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(2));
+  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { display_name: "母娘" });
+  expect(displayName).toHaveValue("母娘");
+});
+
+it("waits for pending draft saves before completing a member", async () => {
+  const user = userEvent.setup();
+  const pendingUpdate = deferred<HouseholdMemberRow>();
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const completeMember = vi.fn().mockResolvedValue({
+    ...completableDraft,
+    display_name: "母",
+    status: "complete",
+  });
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([completableDraft]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn().mockReturnValue(pendingUpdate.promise),
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  await user.type(await screen.findByLabelText("呼び名（任意・AIには送りません）"), "母");
+  await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
+  expect(completeMember).not.toHaveBeenCalled();
+
+  pendingUpdate.resolve({ ...completableDraft, display_name: "母" });
+  await waitFor(() => expect(completeMember).toHaveBeenCalledWith("member-1"));
+});
+
+it("continues queued saves after an earlier save fails", async () => {
+  const user = userEvent.setup();
+  const firstUpdate = deferred<HouseholdMemberRow>();
+  const updateDraft = vi
+    .fn()
+    .mockImplementationOnce(() => firstUpdate.promise)
+    .mockResolvedValueOnce({ ...draft, allergy_status: "none" });
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    createDraft: vi.fn(),
+    updateDraft,
+    completeMember: vi.fn(),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  await user.selectOptions(await screen.findByLabelText("年齢区分"), "adult");
+  await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
+  firstUpdate.reject(new Error("一時的な保存失敗"));
+
+  await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(2));
+  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { allergy_status: "none" });
+  expect(await screen.findByText("保存済み")).toBeInTheDocument();
 });

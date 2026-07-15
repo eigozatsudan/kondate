@@ -1,20 +1,40 @@
 import { useMemo, useState } from "react";
-import type { AllergenCatalogRow, MemberAllergyRow } from "./household-api";
+import type { AllergenAliasRow, AllergenCatalogRow, MemberAllergyRow } from "./household-api";
+
+function normalizeAllergenTerm(value: string): string {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase("ja-JP")
+    .replace(/[\s()]/gu, "");
+}
 
 export function filterAllergenCatalog(
   catalog: readonly AllergenCatalogRow[],
   query: string,
+  aliases: readonly AllergenAliasRow[] = [],
 ): AllergenCatalogRow[] {
-  const normalized = query.normalize("NFKC").trim().toLocaleLowerCase("ja-JP");
+  const normalized = normalizeAllergenTerm(query);
   if (normalized.length === 0) return [...catalog];
-  return catalog.filter((item) =>
-    item.display_name.normalize("NFKC").toLocaleLowerCase("ja-JP").includes(normalized),
+  const matchingIds = new Set(
+    aliases
+      .filter(
+        (alias) =>
+          alias.alias_kind !== "processed" &&
+          normalizeAllergenTerm(alias.normalized_alias).includes(normalized),
+      )
+      .map((alias) => alias.allergen_id),
+  );
+  return catalog.filter(
+    (item) =>
+      normalizeAllergenTerm(item.display_name).includes(normalized) || matchingIds.has(item.id),
   );
 }
 
 export type AllergyEditorProps = {
   memberId: string;
   catalog: readonly AllergenCatalogRow[];
+  aliases?: readonly AllergenAliasRow[];
   allergies: readonly MemberAllergyRow[];
   addStandard(memberId: string, allergenId: string): Promise<unknown>;
   addCustom(memberId: string, name: string, aliases: string[]): Promise<unknown>;
@@ -23,16 +43,33 @@ export type AllergyEditorProps = {
 };
 
 export function AllergyEditor(props: AllergyEditorProps) {
-  const { memberId, catalog, allergies, disabled = false } = props;
+  const { memberId, catalog, aliases = [], allergies, disabled = false } = props;
   const [query, setQuery] = useState("");
   const [customName, setCustomName] = useState("");
   const [customAliases, setCustomAliases] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const matches = useMemo(() => filterAllergenCatalog(catalog, query), [catalog, query]);
-  const normalizedCustomName = customName.normalize("NFKC").trim();
-  const exactMatch = catalog.some(
-    (item) => item.display_name.normalize("NFKC").trim() === normalizedCustomName,
+  const matches = useMemo(
+    () => filterAllergenCatalog(catalog, query, aliases),
+    [aliases, catalog, query],
   );
+  const normalizedCustomName = customName.normalize("NFKC").trim();
+  const customTerms = [normalizedCustomName, ...customAliases.split(",")]
+    .map(normalizeAllergenTerm)
+    .filter((term) => term.length > 0);
+  const exactMatchIds = new Set(
+    aliases
+      .filter(
+        (alias) =>
+          alias.alias_kind !== "processed" &&
+          customTerms.includes(normalizeAllergenTerm(alias.normalized_alias)),
+      )
+      .map((alias) => alias.allergen_id),
+  );
+  for (const item of catalog) {
+    if (customTerms.includes(normalizeAllergenTerm(item.display_name))) exactMatchIds.add(item.id);
+  }
+  const exactMatches = catalog.filter((item) => exactMatchIds.has(item.id));
+  const exactMatch = exactMatches.length > 0;
   const aliasValues = customAliases
     .split(",")
     .map((alias) => alias.normalize("NFKC").trim())
@@ -92,7 +129,12 @@ export function AllergyEditor(props: AllergyEditorProps) {
             }}
           />
         </label>
-        {exactMatch && <p role="alert">標準項目を先に選んでください</p>}
+        {exactMatch && (
+          <p role="alert">
+            標準候補: {exactMatches.map((item) => item.display_name).join("、")}（
+            {normalizedCustomName}）。標準項目を先に選んでください
+          </p>
+        )}
         <label>
           <input
             type="checkbox"

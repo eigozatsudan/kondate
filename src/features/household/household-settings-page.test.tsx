@@ -164,6 +164,56 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
 });
 
+it("keeps explicitly empty saved preferences when loading and saving another field", async () => {
+  const savedWithoutPreferences: HouseholdMemberRow = {
+    ...member,
+    age_band: "age_3_5",
+    ease_preferences: [],
+    required_safety_constraints: [],
+  };
+  const updateMember = vi.fn().mockResolvedValue(savedWithoutPreferences);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([savedWithoutPreferences]),
+    updateMember,
+  });
+
+  expect(await screen.findByLabelText("骨を除く")).not.toBeChecked();
+  expect(screen.getByLabelText("小さく切る")).not.toBeChecked();
+  expect(screen.getByLabelText("小さめ")).not.toBeChecked();
+  expect(screen.getByLabelText("boneless")).not.toBeChecked();
+  expect(screen.getByLabelText("soft")).not.toBeChecked();
+
+  fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "子ども" } });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        display_name: "子ども",
+        ease_preferences: [],
+        required_safety_constraints: [],
+      }),
+    );
+  });
+});
+
+it("applies age defaults when the user selects an age band", async () => {
+  const { updateMember } = renderSettings();
+
+  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        age_band: "age_3_5",
+        ease_preferences: ["small_pieces", "boneless", "soft"],
+        required_safety_constraints: ["remove_bones", "cut_small"],
+      }),
+    );
+  });
+});
+
 it("persists an edit that only changes the display name", async () => {
   const { updateMember } = renderSettings();
   const input = await screen.findByLabelText("呼び名");

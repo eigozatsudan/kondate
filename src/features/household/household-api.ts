@@ -7,6 +7,7 @@ export type HouseholdMemberRow = Tables<"household_members">;
 export type MemberAllergyRow = Tables<"member_allergies">;
 export type MemberDislikeRow = Tables<"member_dislikes">;
 export type AllergenCatalogRow = Tables<"allergen_catalog">;
+export type AllergenAliasRow = Tables<"allergen_aliases">;
 
 export type HouseholdMemberPatch = Pick<
   TablesUpdate<"household_members">,
@@ -62,6 +63,17 @@ export async function createHouseholdMemberDraft(
   };
   const { data, error } = await client.from("household_members").insert(input).select("*").single();
   if (error !== null) throw dataError("家族の下書きを作成できませんでした");
+  return data;
+}
+
+export async function startHouseholdOnboarding(
+  client: BrowserSupabaseClient,
+  sortOrder: number,
+): Promise<HouseholdMemberRow> {
+  const { data, error } = await client.rpc("start_household_onboarding", {
+    p_sort_order: sortOrder,
+  });
+  if (error !== null) throw dataError("家族の初回設定を開始できませんでした");
   return data;
 }
 
@@ -137,6 +149,18 @@ export async function listAllergenCatalog(
   return data;
 }
 
+export async function listAllergenAliases(
+  client: BrowserSupabaseClient,
+): Promise<AllergenAliasRow[]> {
+  const { data, error } = await client
+    .from("allergen_aliases")
+    .select("*")
+    .in("alias_kind", ["direct", "derived"])
+    .order("alias");
+  if (error !== null) throw dataError("アレルゲン候補を読み込めませんでした");
+  return data;
+}
+
 export async function listMemberAllergies(
   client: BrowserSupabaseClient,
   userId: string,
@@ -190,16 +214,18 @@ export async function addCustomMemberAllergy(
   ) {
     throw dataError("別名は重複なく10件以内で登録してください");
   }
-  const input: TablesInsert<"member_allergies"> = {
-    user_id: userId,
-    member_id: memberId,
-    allergen_id: null,
-    custom_name: normalizedName,
-    custom_aliases: normalizedAliases,
-    custom_confirmed: true,
-  };
-  const { data, error } = await client.from("member_allergies").insert(input).select("*").single();
-  if (error !== null) throw dataError("自由登録アレルギーを保存できませんでした");
+  void userId;
+  const { data, error } = await client.rpc("add_custom_member_allergy", {
+    p_member_id: memberId,
+    p_custom_name: normalizedName,
+    p_custom_aliases: normalizedAliases,
+  });
+  if (error !== null) {
+    if (error.message.includes("custom_allergy_matches_standard")) {
+      throw dataError("標準候補に一致します。標準項目から選んでください");
+    }
+    throw dataError("自由登録アレルギーを保存できませんでした");
+  }
   return data;
 }
 
@@ -266,13 +292,11 @@ export async function deleteMemberDislike(
 
 export async function deleteMemberAllergy(
   client: BrowserSupabaseClient,
-  userId: string,
+  _userId: string,
   allergyId: string,
 ): Promise<void> {
-  const { error } = await client
-    .from("member_allergies")
-    .delete()
-    .eq("id", allergyId)
-    .eq("user_id", userId);
+  const { error } = await client.rpc("delete_member_allergy", {
+    p_allergy_id: allergyId,
+  });
   if (error !== null) throw dataError("アレルギーを削除できませんでした");
 }
