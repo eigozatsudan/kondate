@@ -332,6 +332,39 @@ select throws_ok(
   '23514', null, 'source snapshot rejects text longer than 500 characters'
 );
 
+select lives_ok(
+  $$insert into public.menu_label_confirmations (
+    id,menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,
+    allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint
+  ) values (
+    '48500000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.boundary.min','卵',
+    'egg','member_1','dict-v1',repeat('a',64)
+  )$$,
+  'source snapshot accepts canonical one-character text'
+);
+delete from public.menu_label_confirmations
+where id = '48500000-0000-0000-0000-000000000001';
+
+select lives_ok(
+  format(
+    'insert into public.menu_label_confirmations '
+    '(id,menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,'
+    'allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint) '
+    'values (%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L)',
+    '48500000-0000-0000-0000-000000000002',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.boundary.max',repeat('あ',500),
+    'egg','member_1','dict-v1',repeat('a',64)
+  ),
+  'source snapshot accepts canonical 500-character text'
+);
+delete from public.menu_label_confirmations
+where id = '48500000-0000-0000-0000-000000000002';
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000001', true);
 select is((select count(*)::integer from public.menus), 1, 'owner sees exactly its menu');

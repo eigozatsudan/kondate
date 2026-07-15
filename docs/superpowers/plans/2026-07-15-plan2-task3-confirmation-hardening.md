@@ -89,6 +89,40 @@ select throws_ok(
   ),
   '23514', null, 'source snapshot rejects text longer than 500 characters'
 );
+
+-- 受理境界は一意なpathで作成し、後続の件数検証へ影響させない。
+select lives_ok(
+  $$insert into public.menu_label_confirmations (
+    id,menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,
+    allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint
+  ) values (
+    '48500000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.boundary.min','卵',
+    'egg','member_1','dict-v1',repeat('a',64)
+  )$$,
+  'source snapshot accepts canonical one-character text'
+);
+delete from public.menu_label_confirmations
+where id = '48500000-0000-0000-0000-000000000001';
+
+select lives_ok(
+  format(
+    'insert into public.menu_label_confirmations '
+    '(id,menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,'
+    'allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint) '
+    'values (%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L)',
+    '48500000-0000-0000-0000-000000000002',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.boundary.max',repeat('あ',500),
+    'egg','member_1','dict-v1',repeat('a',64)
+  ),
+  'source snapshot accepts canonical 500-character text'
+);
+delete from public.menu_label_confirmations
+where id = '48500000-0000-0000-0000-000000000002';
 ```
 
 Delete the old null-auth/wrong-menu/foreign/unknown/success/replay RPC behavior block. Task 3 must no longer claim behavior for a function it does not safely own.
@@ -133,7 +167,7 @@ docker compose --profile test run --rm db-test supabase/tests/database/04_menu_c
 docker compose --profile test run --rm db-test supabase/tests/database/04a_menu_core_hardening.test.sql
 ```
 
-Expected: `04` reports 42 passing assertions; `04a` reports PASS with snapshot boundary, ACL/RLS, graph, unlink, and cascade assertions.
+Expected: `04` reports 42 passing assertions; `04a` reports 84 passing assertions, including canonical 1/500-character acceptance plus rejection boundaries, ACL/RLS, graph, unlink, and cascade assertions.
 
 - [ ] **Step 6: Regenerate database types**
 
@@ -246,7 +280,10 @@ declare
   v_target_member_ids uuid[];
 begin
   if v_user_id is null then return; end if;
-  select array_agg(target.household_member_id order by target.anonymous_ref)
+  select array_agg(
+    target.household_member_id
+    order by substring(target.anonymous_ref from '^member_([1-9][0-9]*)$')::integer
+  )
     into v_target_member_ids
   from public.menu_target_members target
   where target.menu_id = p_menu_id and target.user_id = v_user_id
@@ -279,7 +316,7 @@ grant execute on function public.confirm_menu_label_confirmation(uuid,uuid,text)
   to authenticated;
 ```
 
-The implementation plan must state that pgTAP covers null auth, wrong menu/owner, unknown, archived, replay, stale stored fingerprint, changed current safety, and a successful current owner transition. No two-argument overload may exist.
+The implementation plan must state that pgTAP covers null auth, wrong menu/owner, unknown, archived, replay, stale stored fingerprint, changed current safety, and a successful current owner transition. It also inserts multiple targets in reverse order, including `member_10` before `member_2`, and proves the integer suffix order reconstructs the fingerprint input independently of insertion order. No two-argument overload may exist.
 
 - [ ] **Step 3: Make result display snapshot-based**
 

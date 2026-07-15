@@ -3524,7 +3524,9 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
     })),
   });
   const memberLabels = new Map([...data.menu_target_members]
-    .sort((a, b) => a.anonymous_ref.localeCompare(b.anonymous_ref))
+    .sort((a, b) =>
+      Number(a.anonymous_ref.slice("member_".length)) -
+      Number(b.anonymous_ref.slice("member_".length)))
     .map((item, index) => [
       item.anonymous_ref,
       item.household_members?.display_name?.trim() ||
@@ -4443,7 +4445,10 @@ begin
      or char_length(p_expected_safety_fingerprint) not between 1 and 200 then
     return;
   end if;
-  select array_agg(target.household_member_id order by target.anonymous_ref)
+  select array_agg(
+    target.household_member_id
+    order by substring(target.anonymous_ref from '^member_([1-9][0-9]*)$')::integer
+  )
     into v_target_member_ids
   from public.menu_target_members target
   where target.menu_id = p_menu_id and target.user_id = v_user_id
@@ -4476,7 +4481,7 @@ grant execute on function public.confirm_menu_label_confirmation(uuid,uuid,text)
   to authenticated;
 ```
 
-この位置が`confirm_menu_label_confirmation`の唯一の作成箇所である。direct RPC boundaryはexpected fingerprintをUnicode whitespace trim済み1〜200文字へ制限し、NULL、blank、前後whitespace付き、201文字をhelper呼出し前に空結果で拒否する。target member IDは必ず`anonymous_ref`順でhelperへ渡し、helperの現在値lock/recomputeと保存済み行の`requirement_safety_fingerprint`一致の両方を通ったpending current rowだけを更新する。pgTAPはnull auth、invalid expected fingerprintのexact vector `NULL`、`' '`、`U&'\3000'||repeat('a',64)||U&'\3000'`、`repeat('a',201)`（いずれも行不変かつhelper由来例外なし）、wrong menu/owner、unknown ID、archived row、replay、stale stored fingerprint、changed current safety、およびcurrent ownerの成功遷移を個別に検証する。`pg_proc`/`pg_namespace`で同名かつ`pronargs = 2`の関数が0件、3引数関数が1件だけであること、およびauthenticatedだけが3引数関数を実行できることも固定し、2引数overloadは作成・grant・呼出しのいずれにも残さない。
+この位置が`confirm_menu_label_confirmation`の唯一の作成箇所である。direct RPC boundaryはexpected fingerprintをUnicode whitespace trim済み1〜200文字へ制限し、NULL、blank、前後whitespace付き、201文字をhelper呼出し前に空結果で拒否する。target member IDはregex制約済み`anonymous_ref`の数値suffixをinteger化した昇順でhelperへ渡し、helperの入力ordinalと保存済み`member_N`を一致させる。文字列順は`member_10`を`member_2`より前へ置くため禁止する。helperの現在値lock/recomputeと保存済み行の`requirement_safety_fingerprint`一致の両方を通ったpending current rowだけを更新する。pgTAPはnull auth、invalid expected fingerprintのexact vector `NULL`、`' '`、`U&'\3000'||repeat('a',64)||U&'\3000'`、`repeat('a',201)`（いずれも行不変かつhelper由来例外なし）、wrong menu/owner、unknown ID、archived row、replay、stale stored fingerprint、changed current safety、およびcurrent ownerの成功遷移を個別に検証する。さらに`member_10`を`member_2`より先に挿入した逆挿入順fixtureで、数値suffix順に復元した複数member fingerprintだけが確認成功することを固定する。`pg_proc`/`pg_namespace`で同名かつ`pronargs = 2`の関数が0件、3引数関数が1件だけであること、およびauthenticatedだけが3引数関数を実行できることも固定し、2引数overloadは作成・grant・呼出しのいずれにも残さない。
 
 次のfixtureは実在owner/member、標準allergy、seed済みcatalog/rule versionを作成・参照し、このproduction canonical builderの結果だけをfinalizerへ渡す。test-local fingerprint helperは作らない。
 
@@ -5733,9 +5738,10 @@ onKeyDown={(event) => {
 
 All generation E2E cases consume Plan 1's `completedOnboardingPage`; remove repeated calls to `completeMinimumOnboarding`. Add assertions for one submit click reaching the Function, a `not_started` same-key retry, usage GET without request creation, attempt-limit copy, human member/allergen labels, member deletion followed by snapshot-backed historical read/action rendering, persisted `source_text_snapshot` display even when the reconstructed menu text differs, explicit confirmation, `使い切った` cancel/confirm/undo, `まだある` blank/numeric remainder, pantry version conflict without silent retry, ArrowLeft/ArrowRight/Home/End focus, and 320 px no overflow.
 
-Run each command separately:
+Run the fail-fast gate as one shell block:
 
 ```bash
+set -e
 docker compose run --rm --no-deps app npm run format:check
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run typecheck
@@ -5755,17 +5761,29 @@ if rg -n 'request_(?:body|json)|raw_request|change_reason_custom\s+text' supabas
 if rg -n "p_conflicts jsonb|jsonb_build_object\('conflicts'|changeReasonCustom" supabase/migrations/20260711002000_ai_control_and_quota.sql; then exit 1; fi
 rg -n "p_conflict_codes text\[\]|jsonb_build_object\('conflictCodes'" supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n 'GENERATION_REQUEST_HMAC_KEY|generation-command\.v1|request_hmac' .env.example compose.yaml netlify/functions supabase/migrations/20260711002000_ai_control_and_quota.sql
-rg -n 'source_text_snapshot|confirm_menu_label_confirmation\(uuid,uuid,text\)|lock_and_assert_current_safety_fingerprint' \
-  supabase/migrations/20260711002000_ai_control_and_quota.sql \
-  supabase/tests/database/ai_control_and_quota.test.sql \
+rg -n 'source_text_snapshot' \
+  supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'confirm_menu_label_confirmation\(uuid,uuid,text\)' \
+  supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'lock_and_assert_current_safety_fingerprint' \
+  supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'source_text_snapshot|confirm_menu_label_confirmation|member_10|member_2' \
+  supabase/tests/database/ai_control_and_quota.test.sql
+rg -n 'source_type, source_id, source_path, source_text_snapshot' \
   src/features/generation/api/menu-result-api.ts
+rg -n 'sourceText: item\.source_text_snapshot' \
+  src/features/generation/api/menu-result-api.ts
+rg -n 'sourceText: string' \
+  src/features/generation/api/menu-result-api.ts
+rg -n 'source_text_snapshot|sourceText' \
+  src/features/generation/api/menu-result-api.test.ts
 if rg -n 'sourceText\.get\(canonical\.sourcePath\)|confirm_menu_label_confirmation\(uuid,uuid\)' \
   supabase/migrations/20260711002000_ai_control_and_quota.sql \
   supabase/tests/database/ai_control_and_quota.test.sql \
   src/features/generation; then exit 1; fi
 ```
 
-Expected: all verification commands exit 0; the second generated-type run is byte-for-byte stable; all negative source scans return no matches, the conflict-code scan finds only the closed terminal DTO, the HMAC scan finds the server env, canonicalizer, repository, and migration, and the label scan finds the immutable snapshot projection, sole 3-argument RPC, and current-safety helper without a dynamic-source or 2-argument path. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions and the exact canonical label snapshot; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus persisted source text, human labels, and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
+Expected: all verification commands exit 0; `set -e` makes the gate fail fast, and each migration persistence/RPC/helper search, database pgTAP search, and menu-result select/display/type/test search is independently mandatory. The second generated-type run is byte-for-byte stable; all negative source scans return no matches, the conflict-code scan finds only the closed terminal DTO, and the HMAC scan finds the server env, canonicalizer, repository, and migration. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions and the exact canonical label snapshot; reverse-inserted `member_10`/`member_2` fixtures preserve numeric anonymous-ref order; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus persisted source text, human labels, and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
 
 - [ ] **Step 12: Commit the reviewed generation corrections (2 minutes)**
 

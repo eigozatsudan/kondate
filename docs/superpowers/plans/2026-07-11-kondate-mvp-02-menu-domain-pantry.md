@@ -951,7 +951,7 @@ git commit -m "fix: 献立下書きの保存境界を強化"
 
 **Interfaces:**
 - Consumes: Plan 1 household tables; Task 1 `allergen_catalog`; Task 2 `pantry_items`.
-- Produces: exact menu aggregate tables consumed by Plan 3, including immutable target-member display snapshots and normalized `menu_safety_actions` rows for every validated structured action. A live household-member link is nullable and owner-composite; member deletion nulls only that link while preserving menu ownership, anonymous ref, snapshot, actions, and history. Authenticated browsers receive owner-scoped SELECT on every aggregate table and column-limited UPDATE only on `menus.is_favorite`; no generated-row INSERT/UPDATE/DELETE is granted. Plan 2 stores immutable canonical `source_text_snapshot` provenance but exposes no confirmation transition. Plan 3 creates the sole fingerprint-aware three-argument RPC in the same migration as the canonical current-safety locking helper.
+- Produces: exact menu aggregate tables consumed by Plan 3, including immutable target-member display snapshots and normalized `menu_safety_actions` rows for every validated structured action. A live household-member link is nullable and owner-composite; member deletion nulls only that link while preserving menu ownership, anonymous ref, snapshot, actions, and history. Authenticated browsers receive owner-scoped SELECT on every aggregate table and column-limited UPDATE only on `menus.is_favorite`; no generated-row INSERT/UPDATE/DELETE is granted. Plan 2 stores immutable canonical `source_text_snapshot` provenance but exposes no confirmation transition. Plan 3 creates the sole fingerprint-aware three-argument RPC in the same migration as the canonical current-safety locking helper. Plan 3/4が保存済みtargetからfingerprint入力を復元するときは、regex制約済み`anonymous_ref`の数値suffix昇順を唯一のcanonical orderとし、文字列順やDB返却順を使わない。
 
 - [ ] **Step 1 (2–5 min): Write the failing menu-schema pgTAP test**
 
@@ -1030,9 +1030,46 @@ Create `supabase/tests/database/04a_menu_core_hardening.test.sql` as a separate 
 - As the migration owner, insert two real `auth.users`; one complete `household_members` row and one `pantry_items` row for each; then one internally valid row in every one of the ten menu aggregate tables for each owner. Use only UUID-form IDs and insert the full graph before `set local role authenticated`.
 - For each of the ten tables, assert authenticated SELECT is granted and table INSERT/UPDATE/DELETE are denied. Separately assert only `menus.is_favorite` has column UPDATE. As authenticated owner 1, assert every table returns exactly its owner-1 row and hides owner 2; favorite update succeeds for owner 1 and affects zero rows for owner 2.
 - Assert each exact FK by `pg_constraint` ordered `conkey`/`confkey` and `confdeltype`, plus exactly one FK per child/parent pair. Exercise rejected cross-owner dish/ingredient/step/member/source graphs. Exercise every polymorphic `source_type` with a same-menu source and reject a foreign or wrong-menu source.
-- Assert neither the two-argument nor the three-argument `confirm_menu_label_confirmation` overload exists in Task 3; direct UPDATE remains denied. Reject blank, non-canonical whitespace-padded, and over-500-character `source_text_snapshot` values while accepting immutable canonical snapshots.
+- Assert neither the two-argument nor the three-argument `confirm_menu_label_confirmation` overload exists in Task 3; direct UPDATE remains denied. Reject blank, non-canonical whitespace-padded, and over-500-character `source_text_snapshot` values while accepting canonical 1-character and 500-character boundaries. Each accepted boundary fixture uses a unique source path and is deleted immediately so later owner-count assertions remain unchanged.
 - `reset role` before owner-side deletes. Delete owner 1's household member and assert the target live-link pair becomes null while its display snapshot, adaptation, safety action, and label row remain. Delete its pantry item and assert the selection remains with null live pantry link and the ingredient remains. Delete owner 1's root menu and assert all nine child tables are empty for owner 1 while owner 2's entire graph remains. This proves Plan 4 can delete a derivation root/group without RESTRICT blockers.
 - Add negative CHECK tests for blank `change_reason_custom`, all root/derived/custom reason states, missing shortage when both quantities exist, surplus shortage when either quantity is null, timeline step without dish, and confirmed provenance whose actor differs from `user_id`.
+
+The accepted-boundary portion of `04a` uses the same insert columns as its confirmation fixtures. Keep these exact values and delete each row immediately:
+
+```sql
+select lives_ok(
+  $$insert into public.menu_label_confirmations (
+    id,menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,
+    allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint
+  ) values (
+    '48500000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.boundary.min','卵',
+    'egg','member_1','dict-v1',repeat('a',64)
+  )$$,
+  'source snapshot accepts canonical one-character text'
+);
+delete from public.menu_label_confirmations
+where id = '48500000-0000-0000-0000-000000000001';
+
+select lives_ok(
+  format(
+    'insert into public.menu_label_confirmations '
+    '(id,menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,'
+    'allergen_id,anonymous_member_ref,dictionary_version,requirement_safety_fingerprint) '
+    'values (%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L)',
+    '48500000-0000-0000-0000-000000000002',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','dish',
+    '42000000-0000-0000-0000-000000000001','dishes.0.boundary.max',repeat('あ',500),
+    'egg','member_1','dict-v1',repeat('a',64)
+  ),
+  'source snapshot accepts canonical 500-character text'
+);
+delete from public.menu_label_confirmations
+where id = '48500000-0000-0000-0000-000000000002';
+```
 
 - [ ] **Step 2 (2–5 min): Run the focused DB test and verify RED**
 
@@ -1440,7 +1477,7 @@ docker compose --profile test run --rm db-test supabase/tests/database/04a_menu_
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: 04 prints `1..42`; 04a dynamically plans and both report `Result: PASS`; typecheck exits 0. Together they prove exact non-ambiguous composite relationships/delete actions, all-ten-table ACL and real owner/foreign RLS, favorite-only mutation, immutable canonical source snapshots with blank/non-canonical/overlength rejection, absence of both confirmation RPC overloads, polymorphic source ownership, member/pantry unlink preservation, and root-menu cascading deletion.
+Expected: 04 prints `1..42`; 04a dynamically plans `84` assertions and both report `Result: PASS`; typecheck exits 0. Together they prove exact non-ambiguous composite relationships/delete actions, all-ten-table ACL and real owner/foreign RLS, favorite-only mutation, immutable canonical source snapshots with exact 1/500-character acceptance and blank/non-canonical/overlength rejection, absence of both confirmation RPC overloads, polymorphic source ownership, member/pantry unlink preservation, and root-menu cascading deletion.
 
 - [ ] **Step 6 (2–5 min): Commit the normalized menu core**
 
@@ -5137,6 +5174,7 @@ git commit -m "test: cover menu domain and pantry increment"
 - `menu_target_members` keeps `user_id`, `anonymous_ref`, and `member_display_name_snapshot` permanently. Its live `(household_member_id,household_member_user_id)` link is nullable, owner-matched when present, and both columns become null on member deletion; the target row and its dependent safety actions never cascade from household settings deletion.
 - `GenerationContext` is the only validator context shared with Plan 3. `validateGeneratedMenu(menu: unknown, context: GenerationContext): MenuValidationResult` validates current safety plus meal/time/role/genre/main/avoid/member preference/must-use/prefer-use semantics, then overwrites label confirmations with deterministic canonical pending records.
 - Plan 2 stores immutable canonical `source_text_snapshot` provenance and proves that neither confirmation RPC overload exists. Plan 3 alone creates the fingerprint-aware three-argument confirmation RPC together with the canonical current-safety locking helper, plus the authenticated HTTP/browser API and UI; no browser code in Plan 2 performs a confirmation transition, and no AI or service persistence input may set confirmed.
+- Fingerprint builderは入力ordinalを`member_N`へ割り当てるため、Plan 3/4が`menu_target_members`から入力UUID配列を復元する順序は`anonymous_ref`の数値suffix昇順に固定する。SQLは`^member_[1-9][0-9]*$`制約済みsuffixをinteger化して`ORDER BY`し、TypeScriptはsuffixを数値化して明示sortする。`member_10`を`member_2`より前へ置く文字列sortと、順序未指定のDB返却値は禁止する。
 - `ExpiredPantryCheck` is exactly `{ pantryItemId: string; checkedAt: string }`. It lives in the planner parent attempt state, never in `generation_drafts`. The same attempt's `idempotencyKey` and checks are handed to Plan 3's `PendingGeneration` before POST. `generation_drafts.revision` is authoritative and strictly monotonic: browser INSERT/UPDATE is revoked, `save_generation_draft(expectedRevision,...)` performs the only write, and the generation click awaits `useDraftAutosave().flush()` before constructing a command with the returned `draftRevision`.
 - Every ordinary pantry update/delete, including Plan 3's after-cooking actions, uses the exact rendered row's `updatedAt` as `expectedUpdatedAt`, adds `.eq("updated_at", expectedUpdatedAt)`, selects the affected row/id, and maps a successful zero-row result to `PantryVersionConflictError` (`code: "pantry_version_conflict"`). A conflict refreshes the owner-scoped row and is never retried as an unconditional last-write-wins mutation.
 - `EmergencyMenusData.candidates` contains complete `EmergencyMenuCandidate` objects. The server attaches response-local owner-verified human member snapshots and resolves pending label checks to human source/allergen/member labels. The read-only mobile view renders all dish ingredients with serving quantities, per-dish numbered steps, one integrated timeline, named portion/structured safety actions, pantry usage, label warnings, and the safety disclaimer; anonymous refs, raw catalog IDs, UUIDs, and source paths are never user-facing copy.
@@ -5338,7 +5376,7 @@ Extend `shared/safety/allergens.test.ts` with an exact expected path list for ev
 
 - [ ] **Step 2: Complete non-database cap tests; keep menu-core ownership proof canonical (4 minutes)**
 
-Task 3's `04_menu_core.test.sql` is the 42-assertion schema/ACL and confirmation-transition-absence smoke test, and `04a_menu_core_hardening.test.sql` is the self-contained dynamically planned owner/foreign fixture with blank/non-canonical/overlength `source_text_snapshot` rejection. Do not append a third partial database fixture here. In particular, do not use non-UUID placeholders, undeclared fixtures, or run owner-only DML before switching back from `authenticated`; extend 04a when a new menu-core adversarial case is required.
+Task 3's `04_menu_core.test.sql` is the 42-assertion schema/ACL and confirmation-transition-absence smoke test, and `04a_menu_core_hardening.test.sql` is the self-contained dynamically planned 84-assertion owner/foreign fixture with canonical 1/500-character `source_text_snapshot` acceptance and blank/non-canonical/overlength rejection. The two accepted rows use distinct `dishes.0.boundary.min`/`dishes.0.boundary.max` paths and are deleted immediately before RLS count assertions. Do not append a third partial database fixture here. In particular, do not use non-UUID placeholders, undeclared fixtures, or run owner-only DML before switching back from `authenticated`; extend 04a when a new menu-core adversarial case is required.
 
 Extend the draft test with a 51-element `pantry_selections` array and a JSON value over 32 KiB; both must fail with check violation. Extend `_shared/http.test.ts` with declared and undeclared bodies of 65,537 UTF-8 bytes and expect `413/request_too_large`. Extend the emergency handler test with 21 UUIDs and duplicate UUIDs and expect `400/invalid_request` before DB loading.
 
@@ -5535,7 +5573,7 @@ The validator requires dinner roles `main + side + soup`; breakfast/lunch requir
 
 - [ ] **Step 6: Lock immutable confirmation provenance and defer the transition (4 minutes)**
 
-The migration is the complete Plan 2 deliverable: direct column UPDATE is revoked, immutable canonical `source_text_snapshot` is required, and neither the two- nor three-argument confirmation RPC exists. `menu_safety_actions` is normalized, owner-readable, browser-write-forbidden, and protected by menu/dish/ingredient/member/step/adaptation owner-composite links; no JSON shadow copy remains. The nullable live member link cannot cross owners, while member deletion preserves `member_display_name_snapshot`, target row, action rows, and historical menu. pgTAP proves these deletion semantics, cross-owner graphs, invalid kinds/blank instructions, blank/non-canonical/overlength source-snapshot rejection, and both RPC overloads' absence. Plan 3 creates the sole fingerprint-aware three-argument RPC in the same migration as the canonical current-safety locking helper and exposes the spec-locked authenticated HTTP route; browser code never invokes the RPC directly. Persistence inserts only pending label rows with null provenance, and loading a result never auto-confirms.
+The migration is the complete Plan 2 deliverable: direct column UPDATE is revoked, immutable canonical `source_text_snapshot` is required, and neither the two- nor three-argument confirmation RPC exists. `menu_safety_actions` is normalized, owner-readable, browser-write-forbidden, and protected by menu/dish/ingredient/member/step/adaptation owner-composite links; no JSON shadow copy remains. The nullable live member link cannot cross owners, while member deletion preserves `member_display_name_snapshot`, target row, action rows, and historical menu. pgTAP proves these deletion semantics, cross-owner graphs, invalid kinds/blank instructions, canonical 1/500-character source-snapshot acceptance, blank/non-canonical/overlength rejection, and both RPC overloads' absence. Plan 3 creates the sole fingerprint-aware three-argument RPC in the same migration as the canonical current-safety locking helper and exposes the spec-locked authenticated HTTP route; browser code never invokes the RPC directly. Persistence inserts only pending label rows with null provenance, and loading a result never auto-confirms.
 
 - [ ] **Step 7: Lift expiry checks to the planner attempt and render concrete member safety (5 minutes)**
 
@@ -5639,7 +5677,7 @@ rg -n 'confirmationStatus:\s*z\.enum\(\["pending",\s*"confirmed"\]\)|menu\.safet
 rg -n '\.eq\("updated_at", expectedUpdatedAt\)' src/features/pantry/pantry-api.ts
 ```
 
-Expected: all verification commands exit 0, safety-catalog pgTAP prints `1..22`, menu-core 04 prints `1..42`, and dynamically planned 04a reports PASS. The import-depth and obsolete-proof searches return no output; the validator search shows only the canonical `validateGeneratedMenu(menu, GenerationContext)` definition and typed call sites; the pantry version search returns exactly the update and delete predicates. Provider-confirmed state and tag-only or wrong-ingredient safety are rejected; deterministic records are pending; immutable `source_text_snapshot` rejects blank, non-canonical, and overlength values; Task 3 exposes neither confirmation RPC overload; two requirements sharing a normalized source/allergen/member but using different `sourcePath` values coexist; the single `quarter_round_food` identifier is used everywhere; concrete hard-bean and reviewed-nut spellings are rejected for under-six targets while soft processed bean products remain distinct; normalized action rows reject browser writes and cross-owner graphs; household-member deletion preserves the target snapshot, actions, and history; oversized inputs fail; pantry conflicts never overwrite a newer row; all three emergency meals expose complete read-only cooking details without raw identifiers, and the independent incompatible-allergen journey remains an explicit no-candidate state. Plan 3 owns the sole fingerprint-aware three-argument confirmation RPC and creates it with the canonical current-safety locking helper.
+Expected: all verification commands exit 0, safety-catalog pgTAP prints `1..22`, menu-core 04 prints `1..42`, and dynamically planned 04a reports 84 assertions with PASS. The import-depth and obsolete-proof searches return no output; the validator search shows only the canonical `validateGeneratedMenu(menu, GenerationContext)` definition and typed call sites; the pantry version search returns exactly the update and delete predicates. Provider-confirmed state and tag-only or wrong-ingredient safety are rejected; deterministic records are pending; immutable `source_text_snapshot` accepts exact canonical 1/500-character boundaries and rejects blank, non-canonical, and overlength values; Task 3 exposes neither confirmation RPC overload; two requirements sharing a normalized source/allergen/member but using different `sourcePath` values coexist; the single `quarter_round_food` identifier is used everywhere; concrete hard-bean and reviewed-nut spellings are rejected for under-six targets while soft processed bean products remain distinct; normalized action rows reject browser writes and cross-owner graphs; household-member deletion preserves the target snapshot, actions, and history; oversized inputs fail; pantry conflicts never overwrite a newer row; all three emergency meals expose complete read-only cooking details without raw identifiers, and the independent incompatible-allergen journey remains an explicit no-candidate state. Plan 3 owns the sole fingerprint-aware three-argument confirmation RPC and creates it with the canonical current-safety locking helper.
 
 - [ ] **Step 10: Commit the reviewed menu-domain corrections (2 minutes)**
 
