@@ -2,13 +2,14 @@
 
 ## 目的
 
-このリポジトリを信頼済みプロジェクトとして Codex で開いたとき、通常の作業はワークスペース権限で実行する。`git push` は実行前に毎回ユーザーへ承認を求める一方、`git worktree` の全サブコマンドは承認なしで実行できるようにする。
+このリポジトリを信頼済みプロジェクトとして Codex で開いたとき、通常の作業はワークスペース権限で実行する。`git push` は実行前に毎回ユーザーへ承認を求める一方、`git worktree` の全サブコマンドと `docker compose run` は承認なしで実行できるようにする。
 
 ## 設定構成
 
 - `.codex/config.toml` に `default_permissions = ":workspace"` を設定する。
 - `.codex/rules/default.rules` に `git push` を `prompt` 判定する `prefix_rule` を定義する。
 - `.codex/rules/default.rules` に `git worktree` を `allow` 判定する `prefix_rule` を定義する。
+- `.codex/rules/default.rules` に `docker compose run` を `allow` 判定する `prefix_rule` を定義する。
 - ルールの意図と制約は、日本語のコメントおよび `justification` で記録する。
 
 プロジェクトローカルの `.codex/` 設定は、プロジェクトが信頼済みの場合にだけ読み込まれる。設定変更は Codex の再起動または新しいセッションから反映される。
@@ -21,6 +22,8 @@
 
 `git worktree` のルールは、引数列が `git`, `worktree` で始まるすべての呼び出しを対象とする。これにより、`add -b` によるworktreeと専用ブランチの作成だけでなく、`remove`、`move`、`prune`、`repair`、`lock`、`unlock` も承認なしで実行できる。`git branch` や `git switch -c` による独立したブランチ作成は対象外とする。
 
+`docker compose run` のルールは、引数列が `docker`, `compose`, `run` で始まるすべての呼び出しを対象とする。後続のオプション、サービス名、コンテナ内コマンドを含めて承認なしで実行できる。`docker compose up`、`down`、`exec` および従来形式の `docker-compose run` は対象外とする。Docker経由ではホスト側へ強い操作が可能なため、この例外は信頼済みのCompose構成を前提とする。
+
 ## 検証
 
 `codex execpolicy check` を使い、次を確認する。
@@ -32,6 +35,9 @@
 - `git worktree add -b feature/example .worktrees/example` が `allow` と判定される。
 - `git worktree remove .worktrees/example` が `allow` と判定される。
 - `git branch feature/example` が `git worktree` のルールに一致しない。
+- `docker compose run --rm app npm test` が `allow` と判定される。
+- `docker compose up -d` が `docker compose run` のルールに一致しない。
+- `docker-compose run --rm app npm test` が `docker compose run` のルールに一致しない。
 
 あわせて、`.codex/config.toml` が有効な TOML として Codex に読み込まれることを確認する。
 
