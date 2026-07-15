@@ -1,5 +1,5 @@
 begin;
-select plan(26);
+select plan(28);
 
 select has_table('public', 'pantry_items', 'pantry item table exists');
 select has_table('public', 'generation_drafts', 'generation draft table exists');
@@ -98,6 +98,27 @@ select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
     30::smallint,'standard',array[]::text[],'','["invalid"]'::jsonb)$$,
   '23514', null, 'pantry selection must be an object'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30::smallint,'standard',array[]::text[],'',(
+      select jsonb_agg(jsonb_build_object(
+        'pantryItemId', format(
+          '20000000-0000-4000-8000-%s', lpad(generate_series::text, 12, '0')
+        ),
+        'priority', 'must_use'
+      ))
+      from generate_series(1, 51)
+    ))$$,
+  '23514', null, 'a draft cannot persist more than 50 pantry selections'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',array[]::uuid[],
+    30::smallint,'standard',array[]::text[],'',jsonb_build_array(jsonb_build_object(
+      'pantryItemId', '20000000-0000-4000-8000-000000000001',
+      'priority', repeat('must_use', 5000)
+    )))$$,
+  '23514', null, 'a draft cannot persist pantry selections larger than 32 KiB'
 );
 
 select * from finish();

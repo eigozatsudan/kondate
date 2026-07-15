@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import type { PantryItem } from "@shared/contracts/pantry";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
-import { CurrentSafetySummary, type PlannerSafetyMember } from "./current-safety-summary";
+import { CurrentSafetySummary } from "./current-safety-summary";
 import type { PlannerAttempt } from "./expired-pantry-checks";
 import { PantrySelector, type PantryItemsStatus } from "./pantry-selector";
+import { memberSafetyText, type PlannerSafetyMember } from "./planner-safety-member";
 
 const mealLabels = { breakfast: "朝食", lunch: "昼食", dinner: "夕食" } as const;
 const genreLabels = {
@@ -151,6 +152,7 @@ export function PlannerForm({
               />
               {member.displayName}
             </label>
+            <p>{memberSafetyText(member)}</p>
             {member.blockedReason !== null && <p>{member.blockedReason}</p>}
           </div>
         ))}

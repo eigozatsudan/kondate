@@ -10,7 +10,7 @@ import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/auth-provider";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
-import type { PlannerSafetyMember } from "./current-safety-summary";
+import type { PlannerSafetyMember } from "./planner-safety-member";
 import { createPlannerAttempt, type PlannerAttempt } from "./expired-pantry-checks";
 import { getPlannerDraft, plannerKeys, savePlannerDraft } from "./planner-api";
 import { PlannerForm } from "./planner-page";

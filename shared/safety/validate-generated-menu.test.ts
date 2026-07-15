@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import type { GeneratedMenu } from "../contracts/generation.js";
 import { validateGeneratedMenu } from "./validate-generated-menu.js";
 import {
   hardBeanAndReviewedNutRule,
@@ -35,6 +36,116 @@ function menuWithIngredient(name: string) {
       index === 1 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name }] } : dish,
     ),
   });
+}
+
+function wheatSafetyContext() {
+  const base = makeCurrentSafetyContext();
+  return makeCurrentSafetyContext({
+    members: [
+      {
+        ...base.members[0]!,
+        allergyStatus: "registered",
+        allergenIds: ["wheat"],
+      },
+    ],
+    allergenDictionary: {
+      version: "jp-caa-2026-04.v1",
+      catalog: [{ id: "wheat", displayName: "小麦", catalogVersion: "jp-caa-2026-04.v1" }],
+      aliases: [
+        {
+          allergenId: "wheat",
+          alias: "小麦",
+          normalizedAlias: "小麦",
+          aliasKind: "direct",
+          requiresLabelConfirmation: false,
+          dictionaryVersion: "jp-caa-2026-04.v1",
+        },
+        {
+          allergenId: "wheat",
+          alias: "カレールー",
+          normalizedAlias: "カレールー",
+          aliasKind: "processed",
+          requiresLabelConfirmation: true,
+          dictionaryVersion: "jp-caa-2026-04.v1",
+        },
+      ],
+    },
+  });
+}
+
+type FoodTextLeaf =
+  | "dishName"
+  | "dishDescription"
+  | "ingredientName"
+  | "ingredientQuantityText"
+  | "ingredientUnit"
+  | "recipeInstruction"
+  | "timelineInstruction"
+  | "portionText"
+  | "additionalCutting"
+  | "additionalHeating"
+  | "additionalSeasoning"
+  | "servingCheck"
+  | "safetyActionInstruction";
+
+function menuWithWheatInLeaf(leaf: FoodTextLeaf): GeneratedMenu {
+  const base = makeGeneratedMenu();
+  const firstDish = base.dishes[0]!;
+  const firstIngredient = firstDish.ingredients[0]!;
+  const firstStep = firstDish.steps[0]!;
+  const firstAdaptation = base.adaptations[0]!;
+  const dishes = base.dishes.map((dish, index) =>
+    index !== 0
+      ? dish
+      : {
+          ...dish,
+          name: leaf === "dishName" ? "小麦" : dish.name,
+          description: leaf === "dishDescription" ? "小麦" : dish.description,
+          ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+            ingredientIndex !== 0
+              ? ingredient
+              : {
+                  ...ingredient,
+                  name: leaf === "ingredientName" ? "小麦" : ingredient.name,
+                  quantityText:
+                    leaf === "ingredientQuantityText" ? "小麦" : ingredient.quantityText,
+                  unit: leaf === "ingredientUnit" ? "小麦" : ingredient.unit,
+                },
+          ),
+          steps: dish.steps.map((step, stepIndex) =>
+            stepIndex === 0 && leaf === "recipeInstruction"
+              ? { ...step, instruction: "小麦" }
+              : step,
+          ),
+        },
+  );
+  const timeline = base.timeline.map((step, index) =>
+    index === 0 && leaf === "timelineInstruction" ? { ...step, instruction: "小麦" } : step,
+  );
+  const adaptations = [
+    {
+      ...firstAdaptation,
+      portionText: leaf === "portionText" ? "小麦" : firstAdaptation.portionText,
+      additionalCutting: leaf === "additionalCutting" ? "小麦" : null,
+      additionalHeating: leaf === "additionalHeating" ? "小麦" : null,
+      additionalSeasoning: leaf === "additionalSeasoning" ? "小麦" : null,
+      servingCheck: leaf === "servingCheck" ? "小麦" : firstAdaptation.servingCheck,
+      safetyActions:
+        leaf === "safetyActionInstruction"
+          ? [
+              {
+                kind: "heat_thoroughly" as const,
+                dishId: firstDish.id,
+                ingredientId: firstIngredient.id,
+                anonymousMemberRef: "member_1",
+                beforeRecipeStepId: firstStep.id,
+                instruction: "小麦",
+              },
+            ]
+          : [],
+    },
+  ];
+  return makeGeneratedMenu({ dishes, timeline, adaptations });
 }
 
 it("blocks unconfirmed allergy, unsupported scope, and unsupported memo", () => {
@@ -635,4 +746,163 @@ it("T5-FR-05 rejects forged provenance and ingredient linkage on an unused pantr
   });
 
   expectIssueCodes(validateGeneratedMenu(menu, context), ["pantry_usage_link_mismatch"]);
+});
+
+it.each([
+  ["dish name", "dishName"],
+  ["dish description", "dishDescription"],
+  ["ingredient name", "ingredientName"],
+  ["ingredient quantity", "ingredientQuantityText"],
+  ["ingredient unit", "ingredientUnit"],
+  ["recipe instruction", "recipeInstruction"],
+  ["timeline instruction", "timelineInstruction"],
+  ["portion text", "portionText"],
+  ["additional cutting", "additionalCutting"],
+  ["additional heating", "additionalHeating"],
+  ["additional seasoning", "additionalSeasoning"],
+  ["serving check", "servingCheck"],
+  ["safety action instruction", "safetyActionInstruction"],
+] as const)("T10 scans the actual allergen value in every food-text leaf: %s", (_name, leaf) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [] },
+    safety: wheatSafetyContext(),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithWheatInLeaf(leaf), context), [
+    "direct_allergen_match",
+  ]);
+});
+
+it("T10 canonicalizes a linked pantry product through the ingredient leaf only", () => {
+  const pantryItemId = "58000000-0000-4000-8000-000000000021";
+  const selectionId = "58000000-0000-4000-8000-000000000022";
+  const base = makeGeneratedMenu();
+  const firstDish = base.dishes[0]!;
+  const ingredient = {
+    ...firstDish.ingredients[0]!,
+    name: "カレールー",
+    pantrySelectionId: selectionId,
+  };
+  const generated = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [ingredient] } : dish,
+    ),
+    pantryUsage: [
+      {
+        selectionId,
+        pantryItemId,
+        pantryItemName: "カレールー",
+        priority: "must_use",
+        usageStatus: "used",
+        plannedQuantity: 1,
+        inventoryQuantity: 1,
+        shortageQuantity: 0,
+        unit: "箱",
+        dishIds: [firstDish.id],
+        unusedReason: null,
+      },
+    ],
+    labelConfirmations: [
+      {
+        sourceType: "ingredient",
+        sourceId: ingredient.id,
+        sourcePath: "dishes.0.ingredients.0.name",
+        sourceText: "provider text is ignored",
+        allergenId: "wheat",
+        anonymousMemberRef: "member_1",
+        dictionaryVersion: "jp-caa-2026-04.v1",
+        confirmationStatus: "pending",
+      },
+    ],
+  });
+  const baseContext = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: {
+      ...baseContext.submission,
+      mainIngredients: ["カレールー"],
+      pantrySelections: [{ pantryItemId, priority: "must_use" }],
+    },
+    safety: wheatSafetyContext(),
+    pantryItems: [
+      {
+        id: pantryItemId,
+        userId: "59000000-0000-4000-8000-000000000001",
+        name: "カレールー",
+        quantity: 1,
+        unit: "箱",
+        expiresOn: null,
+        expirationType: null,
+        openedState: null,
+        createdAt: "2026-07-15T00:00:00+09:00",
+        updatedAt: "2026-07-15T00:00:00+09:00",
+      },
+    ],
+  });
+
+  const result = validateGeneratedMenu(generated, context);
+  expect(result).toMatchObject({
+    ok: true,
+    menu: {
+      labelConfirmations: [
+        {
+          sourceType: "ingredient",
+          sourceId: ingredient.id,
+          sourcePath: "dishes.0.ingredients.0.name",
+          sourceText: "カレールー",
+          confirmationStatus: "pending",
+          confirmedAt: null,
+          confirmedBy: null,
+        },
+      ],
+    },
+  });
+  if (!result.ok) throw new Error("在庫食材の正規化成功を期待しました");
+  expect(result.menu.labelConfirmations).toEqual(result.labelConfirmations);
+  expect(JSON.stringify(result.labelConfirmations)).not.toContain(selectionId);
+});
+
+it.each([
+  ["post_weaning_to_2", "cut_small"],
+  ["senior", "remove_bones"],
+] as const)(
+  "T10 requires a structured action for a %s target's %s condition",
+  (ageBand, requiredSafetyConstraint) => {
+    const base = makeGenerationContext();
+    const context = makeGenerationContext({
+      safety: makeCurrentSafetyContext({
+        members: [
+          {
+            ...base.safety.members[0]!,
+            ageBand,
+            requiredSafetyConstraints: [requiredSafetyConstraint],
+          },
+        ],
+      }),
+    });
+
+    expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), context), [
+      "required_safety_action",
+    ]);
+  },
+);
+
+it("T10 conservatively excludes mochi for a senior target", () => {
+  const base = makeGenerationContext();
+  const mochiRule = {
+    ...hardBeanAndReviewedNutRule,
+    id: "mochi_senior",
+    appliesToAgeBands: ["senior" as const],
+    matchTerms: ["餅"],
+    userMessage: "高齢者には餅を使用できません",
+  };
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: ["餅"] },
+    safety: makeCurrentSafetyContext({
+      members: [{ ...base.safety.members[0]!, ageBand: "senior" }],
+      foodSafetyRules: [mochiRule],
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient("餅"), context), ["age_shape_rule"]);
 });

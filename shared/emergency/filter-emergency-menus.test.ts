@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { makeCurrentSafetyContext } from "../testing/factories.js";
-import { emergencyMenuFixturesV1 } from "./fixtures.v1.js";
+import type { AgeBand } from "../contracts/domain.js";
+import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
+import { makeCurrentSafetyContext, makeGenerationContext } from "../testing/factories.js";
+import { emergencyFixtureMetadataV1, emergencyMenuFixturesV1 } from "./fixtures.v1.js";
 import { filterEmergencyMenus } from "./filter-emergency-menus.js";
 
 describe("reviewed emergency menus", () => {
@@ -11,14 +13,49 @@ describe("reviewed emergency menus", () => {
       "lunch",
     ]);
     for (const menu of emergencyMenuFixturesV1) {
+      expect(emergencyFixtureMetadataV1[menu.menuId]).toBeDefined();
       expect(menu.totalElapsedMinutes).toBeLessThanOrEqual(15);
       expect(menu.timeline.length).toBeGreaterThan(0);
+      const roles = new Set(menu.dishes.map((dish) => dish.role));
+      if (menu.mealType === "dinner") {
+        expect(roles).toEqual(new Set(["main", "side", "soup"]));
+      } else {
+        expect(roles.has("main") || roles.has("staple")).toBe(true);
+        expect(roles.has("side")).toBe(true);
+      }
       for (const dish of menu.dishes) {
         expect(dish.ingredients.length).toBeGreaterThan(0);
         expect(dish.steps.length).toBeGreaterThan(0);
       }
     }
+    expect(Object.keys(emergencyFixtureMetadataV1).toSorted()).toEqual(
+      emergencyMenuFixturesV1.map((menu) => menu.menuId).toSorted(),
+    );
   });
+
+  it.each(["post_weaning_to_2", "adult", "senior"] satisfies readonly AgeBand[])(
+    "validates every reviewed fixture in a complete %s generation context",
+    (ageBand) => {
+      for (const menu of emergencyMenuFixturesV1) {
+        const base = makeGenerationContext();
+        const safety = makeCurrentSafetyContext({
+          members: [{ ...base.safety.members[0]!, ageBand }],
+        });
+        const context = makeGenerationContext({
+          submission: {
+            ...base.submission,
+            mealType: menu.mealType,
+            mainIngredients: [],
+            cuisineGenre: menu.cuisineGenre,
+            timeLimitMinutes: 15,
+          },
+          safety,
+        });
+
+        expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+      }
+    },
+  );
 
   it("does not relax an unconfirmed or unmapped current safety condition", () => {
     const context = makeCurrentSafetyContext();
