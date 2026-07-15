@@ -1,0 +1,96 @@
+import type { AgeBand } from "../contracts/domain.js";
+import type {
+  GeneratedMenu,
+  MenuValidationIssue,
+  SafetyAction,
+  ValidatedMenu,
+} from "../contracts/generation.js";
+import { collectMenuTextSources, normalizeFoodText } from "./allergens.js";
+import type { CurrentSafetyContext } from "./context.js";
+
+export type FoodSafetyRule = {
+  id: string;
+  appliesToAgeBands: readonly AgeBand[];
+  matchTerms: readonly string[];
+  ruleKind: "forbidden" | "requires_tag";
+  requiredSafetyTag: SafetyAction["kind"] | null;
+  userMessage: string;
+  ruleVersion: string;
+};
+
+const actionEvidence: Record<SafetyAction["kind"], RegExp> = {
+  remove_bones: /骨を(?:完全に)?除|骨を取り除|骨がないことを確認/u,
+  cut_small: /小さく切|一口大以下|細かく刻/u,
+  quarter_round_food: /4等分|四等分|縦に4つ/u,
+  soften: /やわらかくなるまで|舌でつぶせる|十分に煮る/u,
+  heat_thoroughly: /中心まで(?:十分に)?加熱|中心温度/u,
+};
+
+const contradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
+
+export function evaluateFoodSafetyRules(
+  menu: GeneratedMenu | ValidatedMenu,
+  context: CurrentSafetyContext,
+): readonly MenuValidationIssue[] {
+  const sources = collectMenuTextSources(menu);
+  const issues: MenuValidationIssue[] = [];
+  const stepOwner = new Map(
+    menu.dishes.flatMap((dish) => dish.steps.map((step) => [step.id, dish.id] as const)),
+  );
+  for (const member of context.members) {
+    const memberActions = menu.adaptations
+      .filter((adaptation) => adaptation.anonymousMemberRef === member.anonymousRef)
+      .flatMap((adaptation) => adaptation.safetyActions.map((action) => ({ action, adaptation })));
+    for (const required of member.requiredSafetyConstraints) {
+      const hasEvidence = memberActions.some(
+        ({ action, adaptation }) =>
+          action.kind === required &&
+          action.anonymousMemberRef === member.anonymousRef &&
+          stepOwner.get(action.beforeRecipeStepId) === action.dishId &&
+          actionEvidence[action.kind].test(action.instruction) &&
+          !contradictionPattern.test(`${action.instruction} ${adaptation.servingCheck}`),
+      );
+      if (!hasEvidence) {
+        issues.push({
+          code: "required_safety_action",
+          path: `members.${member.anonymousRef}.requiredSafetyConstraints`,
+          message: `${required} を満たす工程がありません`,
+        });
+      }
+    }
+    for (const rule of context.foodSafetyRules) {
+      if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
+      const source = sources.find((item) =>
+        rule.matchTerms.some((term) =>
+          normalizeFoodText(item.text).includes(normalizeFoodText(term)),
+        ),
+      );
+      if (source === undefined) continue;
+      const evidence =
+        source.ingredientId === null || source.dishId === null || rule.requiredSafetyTag === null
+          ? undefined
+          : memberActions.find(
+              ({ action }) =>
+                action.kind === rule.requiredSafetyTag &&
+                action.dishId === source.dishId &&
+                action.ingredientId === source.ingredientId &&
+                action.anonymousMemberRef === member.anonymousRef &&
+                stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
+                actionEvidence[action.kind].test(action.instruction),
+            );
+      const dishText = menu.dishes
+        .filter((dish) => dish.id === source.dishId)
+        .flatMap((dish) => [dish.description, ...dish.steps.map((step) => step.instruction)]);
+      const adaptationText = memberActions
+        .filter(({ action }) => action.dishId === source.dishId)
+        .flatMap(({ action, adaptation }) => [action.instruction, adaptation.servingCheck]);
+      const contradictory = contradictionPattern.test(
+        [source.text, ...dishText, ...adaptationText].join(" "),
+      );
+      if (rule.ruleKind === "forbidden" || evidence === undefined || contradictory) {
+        issues.push({ code: "age_shape_rule", path: source.sourcePath, message: rule.userMessage });
+      }
+    }
+  }
+  return issues;
+}
