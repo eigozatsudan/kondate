@@ -303,6 +303,154 @@ it("replaces every edit field and version only when the user applies the latest 
   );
 });
 
+it.each([
+  {
+    failedOperation: "追加",
+    successfulOperation: "更新",
+    arrangeFailure: () => {
+      api.create.mockRejectedValueOnce(new Error("create failed"));
+      api.update.mockResolvedValueOnce(expired);
+    },
+    fail: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
+      await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
+      await user.type(screen.getByRole("textbox", { name: "単位" }), "丁");
+      await user.click(screen.getByRole("button", { name: "追加する" }));
+    },
+    succeed: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "牛乳を編集" }));
+      await user.click(screen.getByRole("button", { name: "変更を保存" }));
+    },
+  },
+  {
+    failedOperation: "更新",
+    successfulOperation: "削除",
+    arrangeFailure: () => {
+      api.update.mockRejectedValueOnce(new Error("update failed"));
+      api.delete.mockResolvedValueOnce(undefined);
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+    },
+    fail: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "牛乳を編集" }));
+      await user.click(screen.getByRole("button", { name: "変更を保存" }));
+      await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    },
+    succeed: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "牛乳を削除" }));
+    },
+  },
+  {
+    failedOperation: "削除",
+    successfulOperation: "追加",
+    arrangeFailure: () => {
+      api.delete.mockRejectedValueOnce(new Error("delete failed"));
+      api.create.mockResolvedValueOnce(expired);
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+    },
+    fail: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "牛乳を削除" }));
+    },
+    succeed: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
+      await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
+      await user.type(screen.getByRole("textbox", { name: "単位" }), "丁");
+      await user.click(screen.getByRole("button", { name: "追加する" }));
+    },
+  },
+])(
+  "$failedOperation失敗後に$successfulOperationが成功すると古いエラーを消す",
+  async ({ arrangeFailure, fail, succeed }) => {
+    api.list.mockReset().mockResolvedValue([expired]);
+    api.create.mockReset();
+    api.update.mockReset();
+    api.delete.mockReset();
+    arrangeFailure();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const user = userEvent.setup();
+    render(<PantryPage />, { wrapper });
+
+    await screen.findByRole("heading", { name: "牛乳" });
+    await fail(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "保存に失敗しました。通信を確認してください。",
+    );
+
+    await succeed(user);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+  },
+);
+
+it.each([
+  {
+    nextAction: "キャンセル",
+    leaveConflict: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    },
+    expectedHeading: "食材を追加",
+  },
+  {
+    nextAction: "別の食材へ切替",
+    leaveConflict: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "卵を編集" }));
+    },
+    expectedHeading: "卵を編集",
+  },
+])(
+  "競合後に$nextActionすると競合表示を持ち越さない",
+  async ({ leaveConflict, expectedHeading }) => {
+    const egg = {
+      ...expired,
+      id: "60000000-0000-0000-0000-000000000002",
+      name: "卵",
+    };
+    const latestMilk = {
+      ...expired,
+      name: "低脂肪乳",
+      updatedAt: "2026-07-09T01:00:00.000Z",
+    };
+    api.list.mockReset().mockResolvedValueOnce([expired, egg]).mockResolvedValue([latestMilk, egg]);
+    api.create.mockReset();
+    api.update.mockReset().mockRejectedValueOnce(new PantryVersionConflictError());
+    api.delete.mockReset();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const user = userEvent.setup();
+    render(<PantryPage />, { wrapper });
+
+    await screen.findByRole("heading", { name: "牛乳" });
+    await user.click(screen.getByRole("button", { name: "牛乳を編集" }));
+    const quantity = screen.getByRole("spinbutton", { name: "分量" });
+    await user.clear(quantity);
+    await user.type(quantity, "400");
+    await user.click(screen.getByRole("button", { name: "変更を保存" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "冷蔵庫の内容が変わりました。最新の内容を確認してください",
+    );
+    expect(screen.getByRole("heading", { name: "牛乳を編集" })).toBeInTheDocument();
+    expect(quantity).toHaveValue(400);
+    expect(await screen.findByText("最新の食材名: 低脂肪乳")).toBeInTheDocument();
+
+    await leaveConflict(user);
+
+    expect(screen.getByRole("heading", { name: expectedHeading })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "最新の内容" })).not.toBeInTheDocument();
+  },
+);
+
 it("shows and associates a Japanese schema error, then focuses the invalid field", async () => {
   const user = userEvent.setup();
   const onSubmit = vi.fn();

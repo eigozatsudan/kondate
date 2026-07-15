@@ -31,6 +31,10 @@ export function PantryPage() {
   const client = getBrowserSupabaseClient();
   const queryClient = useQueryClient();
   const ownerListKey = pantryKeys.list(userId ?? "missing");
+  const [mutationFailure, setMutationFailure] = useState<{
+    error: unknown;
+    itemId?: string;
+  } | null>(null);
   const query = useQuery({
     queryKey: ownerListKey,
     queryFn: () => listPantryItems(client, userId ?? ""),
@@ -41,7 +45,13 @@ export function PantryPage() {
   };
   const createMutation = useMutation({
     mutationFn: (input: PantryItemInput) => createPantryItem(client, userId ?? "", input),
-    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ownerListKey, exact: true }),
+    onSuccess: async () => {
+      setMutationFailure(null);
+      await queryClient.invalidateQueries({ queryKey: ownerListKey, exact: true });
+    },
+    onError: (error) => {
+      setMutationFailure({ error });
+    },
     retry: false,
   });
   const updateMutation = useMutation({
@@ -53,8 +63,12 @@ export function PantryPage() {
         command.expectedUpdatedAt,
         command.input,
       ),
-    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ownerListKey, exact: true }),
-    onError: async (error) => {
+    onSuccess: async () => {
+      setMutationFailure(null);
+      await queryClient.invalidateQueries({ queryKey: ownerListKey, exact: true });
+    },
+    onError: async (error, command) => {
+      setMutationFailure({ error, itemId: command.itemId });
       if (error instanceof PantryVersionConflictError) {
         await refreshOwnerListAfterConflict();
       }
@@ -64,22 +78,33 @@ export function PantryPage() {
   const deleteMutation = useMutation({
     mutationFn: (command: { itemId: string; expectedUpdatedAt: string }) =>
       deletePantryItem(client, userId ?? "", command.itemId, command.expectedUpdatedAt),
-    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ownerListKey, exact: true }),
+    onSuccess: async () => {
+      setMutationFailure(null);
+      await queryClient.invalidateQueries({ queryKey: ownerListKey, exact: true });
+    },
     onError: async (error) => {
+      setMutationFailure({ error });
       if (error instanceof PantryVersionConflictError) {
         await refreshOwnerListAfterConflict();
       }
     },
     retry: false,
   });
-  const mutationError = updateMutation.error ?? deleteMutation.error ?? createMutation.error;
+  const clearEditingConflict = () => {
+    setMutationFailure((current) =>
+      current?.error instanceof PantryVersionConflictError ? null : current,
+    );
+  };
+  const mutationError = mutationFailure?.error ?? null;
 
   return (
     <PantryPageContent
       items={query.data ?? []}
       loading={query.isPending}
       saving={createMutation.isPending || updateMutation.isPending || deleteMutation.isPending}
-      synchronizeEditingVersion={updateMutation.error instanceof PantryVersionConflictError}
+      conflictedItemId={
+        mutationError instanceof PantryVersionConflictError ? mutationFailure?.itemId : undefined
+      }
       error={
         query.isError
           ? "冷蔵庫の食材を読み込めませんでした。通信を確認してください。"
@@ -98,6 +123,7 @@ export function PantryPage() {
       onDelete={(itemId, expectedUpdatedAt) => {
         deleteMutation.mutate({ itemId, expectedUpdatedAt });
       }}
+      onEditingSessionChange={clearEditingConflict}
     />
   );
 }
@@ -106,11 +132,12 @@ type PantryPageContentProps = {
   items: readonly PantryItem[];
   loading: boolean;
   saving: boolean;
-  synchronizeEditingVersion?: boolean;
+  conflictedItemId?: string | undefined;
   error: string | null;
   onCreate: (input: PantryItemInput) => Promise<void>;
   onUpdate: (id: string, expectedUpdatedAt: string, input: PantryItemInput) => Promise<void>;
   onDelete: (id: string, expectedUpdatedAt: string) => void;
+  onEditingSessionChange?: () => void;
 };
 
 function inputFromItem(item: PantryItem): PantryItemInput {
@@ -128,15 +155,16 @@ export function PantryPageContent({
   items,
   loading,
   saving,
-  synchronizeEditingVersion = false,
+  conflictedItemId,
   error,
   onCreate,
   onUpdate,
   onDelete,
+  onEditingSessionChange,
 }: PantryPageContentProps) {
   const [editing, setEditing] = useState<PantryItem | null>(null);
   const latestEditingItem =
-    synchronizeEditingVersion && editing !== null
+    editing !== null && conflictedItemId === editing.id
       ? items.find((item) => item.id === editing.id)
       : undefined;
 
@@ -161,6 +189,7 @@ export function PantryPageContent({
             setEditing(null);
           }}
           onCancel={() => {
+            onEditingSessionChange?.();
             setEditing(null);
           }}
         />
@@ -196,6 +225,7 @@ export function PantryPageContent({
             className="secondary-button"
             type="button"
             onClick={() => {
+              onEditingSessionChange?.();
               setEditing(latestEditingItem);
             }}
           >
@@ -225,6 +255,7 @@ export function PantryPageContent({
                 type="button"
                 aria-label={`${item.name}を編集`}
                 onClick={() => {
+                  onEditingSessionChange?.();
                   setEditing(item);
                 }}
               >
