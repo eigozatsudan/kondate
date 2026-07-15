@@ -173,7 +173,7 @@ export function PantryPageContent({
       {latestEditingItem !== undefined && (
         <section className="card stack" aria-labelledby="pantry-latest-item-heading">
           <h2 id="pantry-latest-item-heading">最新の内容</h2>
-          <p>最新の食材名: {latestEditingItem.name}</p>
+          <p className="pantry-card-text">最新の食材名: {latestEditingItem.name}</p>
           <p>
             最新の分量:{" "}
             {latestEditingItem.quantity === null

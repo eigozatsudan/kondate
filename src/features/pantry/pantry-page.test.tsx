@@ -219,7 +219,7 @@ it("keeps edited input and its stale version after a conflict", async () => {
   );
   expect(screen.getByRole("heading", { name: "牛乳を編集" })).toBeInTheDocument();
   expect(quantity).toHaveValue(400);
-  expect(screen.getByText("最新の食材名: 低脂肪乳")).toBeInTheDocument();
+  expect(screen.getByText("最新の食材名: 低脂肪乳")).toHaveClass("pantry-card-text");
   expect(
     screen.getByRole("button", { name: "最新の内容を編集フォームに反映" }),
   ).toBeInTheDocument();
