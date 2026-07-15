@@ -123,7 +123,7 @@ export function PantryForm({
         void submit(event);
       }}
     >
-      <h2>{title}</h2>
+      <h2 className="pantry-form-title">{title}</h2>
       <label className="field">
         食材名
         <input autoComplete="off" {...errorAttributes("name")} {...form.register("name")} />

@@ -135,10 +135,10 @@ export function PantryPageContent({
   onDelete,
 }: PantryPageContentProps) {
   const [editing, setEditing] = useState<PantryItem | null>(null);
-  const latestEditingVersion =
+  const latestEditingItem =
     synchronizeEditingVersion && editing !== null
-      ? (items.find((item) => item.id === editing.id)?.updatedAt ?? editing.updatedAt)
-      : editing?.updatedAt;
+      ? items.find((item) => item.id === editing.id)
+      : undefined;
 
   return (
     <main className="page-frame stack">
@@ -151,13 +151,13 @@ export function PantryPageContent({
         <PantryForm saving={saving} onSubmit={onCreate} />
       ) : (
         <PantryForm
-          key={editing.id}
+          key={`${editing.id}:${editing.updatedAt}`}
           saving={saving}
           title={`${editing.name}を編集`}
           submitLabel="変更を保存"
           initialValue={inputFromItem(editing)}
           onSubmit={async (input) => {
-            await onUpdate(editing.id, latestEditingVersion ?? editing.updatedAt, input);
+            await onUpdate(editing.id, editing.updatedAt, input);
             setEditing(null);
           }}
           onCancel={() => {
@@ -169,6 +169,39 @@ export function PantryPageContent({
         <p role="alert" aria-live="assertive" className="error-message">
           {error}
         </p>
+      )}
+      {latestEditingItem !== undefined && (
+        <section className="card stack" aria-labelledby="pantry-latest-item-heading">
+          <h2 id="pantry-latest-item-heading">最新の内容</h2>
+          <p>最新の食材名: {latestEditingItem.name}</p>
+          <p>
+            最新の分量:{" "}
+            {latestEditingItem.quantity === null
+              ? "未入力"
+              : `${String(latestEditingItem.quantity)}${latestEditingItem.unit ?? ""}`}
+          </p>
+          {latestEditingItem.expiresOn !== null && (
+            <p>
+              最新の期限:{" "}
+              {latestEditingItem.expirationType === null
+                ? "期限"
+                : expiryLabels[latestEditingItem.expirationType]}{" "}
+              {latestEditingItem.expiresOn}
+            </p>
+          )}
+          {latestEditingItem.openedState !== null && (
+            <p>最新の開封状態: {openedLabels[latestEditingItem.openedState]}</p>
+          )}
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              setEditing(latestEditingItem);
+            }}
+          >
+            最新の内容を編集フォームに反映
+          </button>
+        </section>
       )}
       {loading && <p>読み込み中…</p>}
       {!loading && items.length === 0 && <p>登録した食材はありません。</p>}

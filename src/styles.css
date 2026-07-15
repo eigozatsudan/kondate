@@ -163,6 +163,11 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.pantry-form-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .pantry-actions {
   display: flex;
   flex-wrap: wrap;

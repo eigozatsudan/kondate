@@ -98,6 +98,28 @@ it("forces schema-maximum unbroken pantry text to wrap inside the card", () => {
   expect(screen.getByText(`999999${maximumUnit}`)).toHaveClass("pantry-card-text");
 });
 
+it("forces a schema-maximum unbroken pantry name to wrap in the edit heading", async () => {
+  const user = userEvent.setup();
+  const maximumName = "W".repeat(80);
+  render(
+    <PantryPageContent
+      items={[{ ...expired, name: maximumName }]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onDelete={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: `${maximumName}を編集` }));
+
+  expect(screen.getByRole("heading", { name: `${maximumName}を編集` })).toHaveClass(
+    "pantry-form-title",
+  );
+});
+
 it("passes the displayed version when saving an edit", async () => {
   const user = userEvent.setup();
   const onUpdate = vi.fn().mockResolvedValue(undefined);
@@ -162,14 +184,19 @@ it("does not bypass concurrency when the list refreshes before a conflict", asyn
   expect(onUpdate).toHaveBeenCalledWith(expired.id, expired.updatedAt, expect.anything());
 });
 
-it("keeps edited input and refetches only the owner list after a conflict", async () => {
+it("keeps edited input and its stale version after a conflict", async () => {
   const latest = {
     ...expired,
+    name: "低脂肪乳",
     quantity: 450,
+    unit: "g",
+    expiresOn: "2026-07-12",
+    expirationType: "best_before" as const,
+    openedState: "unopened" as const,
     updatedAt: "2026-07-09T01:00:00.000Z",
   };
   api.list.mockResolvedValueOnce([expired]).mockResolvedValue([latest]);
-  api.update.mockRejectedValueOnce(new PantryVersionConflictError()).mockResolvedValueOnce(latest);
+  api.update.mockRejectedValue(new PantryVersionConflictError());
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -192,6 +219,10 @@ it("keeps edited input and refetches only the owner list after a conflict", asyn
   );
   expect(screen.getByRole("heading", { name: "牛乳を編集" })).toBeInTheDocument();
   expect(quantity).toHaveValue(400);
+  expect(screen.getByText("最新の食材名: 低脂肪乳")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "最新の内容を編集フォームに反映" }),
+  ).toBeInTheDocument();
   await waitFor(() => {
     expect(refetch).toHaveBeenCalledWith({
       queryKey: pantryKeys.list(userId),
@@ -210,8 +241,65 @@ it("keeps edited input and refetches only the owner list after a conflict", asyn
     expect.anything(),
     userId,
     expired.id,
+    expired.updatedAt,
+    expect.objectContaining({ name: expired.name, quantity: 400 }),
+  );
+});
+
+it("replaces every edit field and version only when the user applies the latest row", async () => {
+  const latest = {
+    ...expired,
+    name: "低脂肪乳",
+    quantity: 450,
+    unit: "g",
+    expiresOn: "2026-07-12",
+    expirationType: "best_before" as const,
+    openedState: "unopened" as const,
+    updatedAt: "2026-07-09T01:00:00.000Z",
+  };
+  api.list.mockResolvedValueOnce([expired]).mockResolvedValue([latest]);
+  api.update.mockRejectedValueOnce(new PantryVersionConflictError()).mockResolvedValueOnce(latest);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  const user = userEvent.setup();
+  render(<PantryPage />, { wrapper });
+
+  await screen.findByRole("heading", { name: "牛乳" });
+  await user.click(screen.getByRole("button", { name: "牛乳を編集" }));
+  const quantity = screen.getByRole("spinbutton", { name: "分量" });
+  await user.clear(quantity);
+  await user.type(quantity, "400");
+  await user.click(screen.getByRole("button", { name: "変更を保存" }));
+  await screen.findByText("最新の食材名: 低脂肪乳");
+
+  await user.click(screen.getByRole("button", { name: "最新の内容を編集フォームに反映" }));
+
+  expect(screen.getByRole("heading", { name: "低脂肪乳を編集" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "食材名" })).toHaveValue("低脂肪乳");
+  expect(screen.getByRole("spinbutton", { name: "分量" })).toHaveValue(450);
+  expect(screen.getByRole("textbox", { name: "単位" })).toHaveValue("g");
+  expect(screen.getByLabelText("期限日")).toHaveValue("2026-07-12");
+  expect(screen.getByRole("combobox", { name: "期限の種類" })).toHaveValue("best_before");
+  expect(screen.getByRole("combobox", { name: "開封状態" })).toHaveValue("unopened");
+
+  await user.click(screen.getByRole("button", { name: "変更を保存" }));
+  expect(api.update).toHaveBeenLastCalledWith(
+    expect.anything(),
+    userId,
+    expired.id,
     latest.updatedAt,
-    expect.objectContaining({ quantity: 400 }),
+    expect.objectContaining({
+      name: latest.name,
+      quantity: latest.quantity,
+      unit: latest.unit,
+      expiresOn: latest.expiresOn,
+      expirationType: latest.expirationType,
+      openedState: latest.openedState,
+    }),
   );
 });
 
