@@ -200,6 +200,124 @@ it("rejects a required household action contradicted by its dish recipe", () => 
   ]);
 });
 
+it("T5-ER2-01 rejects a required action whose ingredient differs from its evidence text", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const carrot = { ...firstDish.ingredients[0]!, name: "にんじん" };
+  const grape = {
+    ...base.dishes[1]!.ingredients[0]!,
+    id: "53000000-0000-4000-8000-000000000003",
+    name: "ぶどう",
+    position: 2,
+  };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [carrot, grape],
+            steps: [{ ...dish.steps[0]!, instruction: "ぶどうを小さく切る" }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: "ぶどうを小さく切る",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "ぶどうの切り方を確認する",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: firstDish.id,
+            ingredientId: carrot.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "ぶどうを小さく切る",
+          },
+        ],
+      },
+    ],
+  });
+  const safety = makeCurrentSafetyContext({
+    members: [
+      {
+        ...makeCurrentSafetyContext().members[0]!,
+        requiredSafetyConstraints: ["cut_small"],
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, safety)).toEqual([
+    expect.objectContaining({ code: "required_safety_action" }),
+  ]);
+});
+
+it("T5-ER2-01 rejects a required action whose adaptation targets another ingredient", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const carrot = { ...firstDish.ingredients[0]!, name: "にんじん" };
+  const grape = {
+    ...base.dishes[1]!.ingredients[0]!,
+    id: "53000000-0000-4000-8000-000000000003",
+    name: "ぶどう",
+    position: 2,
+  };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [carrot, grape],
+            steps: [{ ...dish.steps[0]!, instruction: "ぶどうを小さく切る" }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: "ぶどうを小さく切る",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "ぶどうの切り方を確認する",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: firstDish.id,
+            ingredientId: carrot.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "にんじんを小さく切る",
+          },
+        ],
+      },
+    ],
+  });
+  const safety = makeCurrentSafetyContext({
+    members: [
+      {
+        ...makeCurrentSafetyContext().members[0]!,
+        requiredSafetyConstraints: ["cut_small"],
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, safety)).toEqual([
+    expect.objectContaining({ code: "required_safety_action" }),
+  ]);
+});
+
 it("T5-FFR-01 rejects a negated required safety action", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;

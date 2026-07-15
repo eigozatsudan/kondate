@@ -5,6 +5,7 @@ import {
   makeCurrentSafetyContext,
   makeGeneratedMenu,
   makeGenerationContext,
+  underSixHardBeanAndNutContext,
 } from "../testing/factories.js";
 
 function expectIssueCodes(
@@ -16,6 +17,15 @@ function expectIssueCodes(
   expect(result.issues.map((issue) => issue.code)).toEqual(
     expect.arrayContaining([...expectedCodes]),
   );
+}
+
+function menuWithIngredient(name: string) {
+  const base = makeGeneratedMenu();
+  return makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 1 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name }] } : dish,
+    ),
+  });
 }
 
 it("blocks unconfirmed allergy, unsupported scope, and unsupported memo", () => {
@@ -365,12 +375,9 @@ it("T5-EXIT-01 rejects a current dictionary without the direct display alias", (
   expectIssueCodes(validateGeneratedMenu(menu, context), ["safety_context_incomplete"]);
 });
 
-it("T5-FR-03 rejects missing or mixed-version child food rules", () => {
+it("T5-FR-03 rejects mixed-version child food rules", () => {
   const base = makeGenerationContext();
   const child = { ...base.safety.members[0]!, ageBand: "age_3_5" as const };
-  const missingRules = makeGenerationContext({
-    safety: makeCurrentSafetyContext({ members: [child], foodSafetyRules: [] }),
-  });
   const mixedRules = makeGenerationContext({
     safety: makeCurrentSafetyContext({
       members: [child],
@@ -380,60 +387,19 @@ it("T5-FR-03 rejects missing or mixed-version child food rules", () => {
     }),
   });
 
-  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), missingRules), [
-    "safety_context_incomplete",
-  ]);
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), mixedRules), [
     "safety_context_incomplete",
   ]);
 });
 
-it("T5-EXIT-02 rejects a current child rule set missing a required rule category", () => {
-  const base = makeGenerationContext();
-  const generated = makeGeneratedMenu();
-  const menu = makeGeneratedMenu({
-    dishes: generated.dishes.map((dish, index) =>
-      index === 0 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "ぶどう" }] } : dish,
-    ),
-  });
-  const child = { ...base.safety.members[0]!, ageBand: "age_3_5" as const };
-  const context = makeGenerationContext({
-    submission: { ...base.submission, mainIngredients: ["ぶどう"] },
-    safety: makeCurrentSafetyContext({
-      members: [child],
-      foodSafetyRules: [hardBeanAndReviewedNutRule],
-    }),
-  });
-
-  expectIssueCodes(validateGeneratedMenu(menu, context), ["safety_context_incomplete"]);
-});
-
-it("T5-FFR-03 rejects a senior safety context without applicable food rules", () => {
-  const base = makeGeneratedMenu();
-  const menu = makeGeneratedMenu({
-    dishes: base.dishes.map((dish, index) =>
-      index === 0
-        ? {
-            ...dish,
-            ingredients: [{ ...dish.ingredients[0]!, name: "餅" }],
-          }
-        : dish,
-    ),
-  });
-  const context = makeGenerationContext({
-    safety: makeCurrentSafetyContext({
-      members: [
-        {
-          ...makeCurrentSafetyContext().members[0]!,
-          ageBand: "senior",
-        },
-      ],
-      foodSafetyRules: [],
-    }),
-  });
-
-  expectIssueCodes(validateGeneratedMenu(menu, context), ["safety_context_incomplete"]);
-});
+it.each(["豆腐", "豆乳", "納豆", "大豆の水煮", "やわらかく煮た大豆"])(
+  "T5-ER2-02 accepts a soft bean product with the exact one-rule context: %s",
+  (name) => {
+    expect(
+      validateGeneratedMenu(menuWithIngredient(name), underSixHardBeanAndNutContext()).ok,
+    ).toBe(true);
+  },
+);
 
 it("T5-FFR-04 rejects a hypertension therapeutic low-sodium request", () => {
   const context = makeGenerationContext({

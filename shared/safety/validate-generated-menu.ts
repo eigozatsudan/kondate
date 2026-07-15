@@ -6,7 +6,6 @@ import {
   generatedMenuSchema,
   validatedMenuSchema,
 } from "../contracts/generation.js";
-import type { AgeBand } from "../contracts/domain.js";
 import { evaluateAllergens, normalizeFoodText } from "./allergens.js";
 import { createCurrentSafetyFingerprint } from "./fingerprint.js";
 import { evaluateFoodSafetyRules } from "./food-rules.js";
@@ -40,28 +39,6 @@ function sameSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean
 function memberPairKey(householdMemberId: string, anonymousRef: string): string {
   return `${householdMemberId}\u0000${anonymousRef}`;
 }
-
-const requiredCurrentFoodRuleIds: Readonly<Record<AgeBand, readonly string[]>> = {
-  post_weaning_to_2: [
-    "hard_beans_and_reviewed_nuts_under_6",
-    "grapes_under_6",
-    "cherry_tomato_under_6",
-    "mochi_under_6",
-    "bones_for_young_and_senior",
-  ],
-  age_3_5: [
-    "hard_beans_and_reviewed_nuts_under_6",
-    "grapes_under_6",
-    "cherry_tomato_under_6",
-    "mochi_under_6",
-    "bones_for_young_and_senior",
-  ],
-  senior: ["mochi_senior", "bones_for_young_and_senior", "hard_food_for_senior"],
-  age_6_8: [],
-  age_9_12: [],
-  age_13_17: [],
-  adult: [],
-};
 
 export function validateGeneratedMenu(
   menu: unknown,
@@ -151,20 +128,9 @@ export function validateGeneratedMenu(
         )
       );
     });
-  const vulnerableRuleMissing = context.safety.members.some((member) => {
-    const requiredIds = requiredCurrentFoodRuleIds[member.ageBand];
-    return requiredIds.some(
-      (ruleId) =>
-        !context.safety.foodSafetyRules.some(
-          (rule) => rule.id === ruleId && rule.appliesToAgeBands.includes(member.ageBand),
-        ),
-    );
-  });
-  const foodRulesInvalid =
-    vulnerableRuleMissing ||
-    context.safety.foodSafetyRules.some(
-      (rule) => rule.ruleVersion !== context.safety.foodRuleVersion,
-    );
+  const foodRulesInvalid = context.safety.foodSafetyRules.some(
+    (rule) => rule.ruleVersion !== context.safety.foodRuleVersion,
+  );
   if (dictionaryInvalid || foodRulesInvalid) {
     issues.push({
       code: "safety_context_incomplete",

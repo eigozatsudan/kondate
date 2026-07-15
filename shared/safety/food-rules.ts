@@ -53,6 +53,25 @@ export function evaluateFoodSafetyRules(
     const expectedName = ingredientName.get(ingredientId);
     return expectedName !== undefined && normalizeFoodText(instruction).includes(expectedName);
   };
+  const adaptationNamesIngredient = (
+    adaptation: (typeof menu.adaptations)[number],
+    ingredientId: string,
+  ): boolean => {
+    const expectedName = ingredientName.get(ingredientId);
+    if (expectedName === undefined) return false;
+    return normalizeFoodText(
+      [
+        ...(dishText.get(adaptation.dishId) ?? []),
+        adaptation.portionText,
+        adaptation.additionalCutting,
+        adaptation.additionalHeating,
+        adaptation.additionalSeasoning,
+        adaptation.servingCheck,
+      ]
+        .filter((text): text is string => text !== null)
+        .join(" "),
+    ).includes(expectedName);
+  };
   const adaptationEvidenceText = (
     adaptation: (typeof menu.adaptations)[number],
     kind: SafetyAction["kind"],
@@ -80,7 +99,9 @@ export function evaluateFoodSafetyRules(
           action.anonymousMemberRef === member.anonymousRef &&
           stepOwner.get(action.beforeRecipeStepId) === action.dishId &&
           actionEvidence[action.kind].test(action.instruction) &&
+          instructionNamesIngredient(action.instruction, action.ingredientId) &&
           adaptationEvidenceText(adaptation, action.kind) &&
+          adaptationNamesIngredient(adaptation, action.ingredientId) &&
           !contradictionPattern.test(
             [
               ...(dishText.get(action.dishId) ?? []),
