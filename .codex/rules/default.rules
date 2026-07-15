@@ -28,6 +28,22 @@ prefix_rule(
     ],
 )
 
+# リンクworktreeの保護されたGit管理領域へ書き込み、変更のステージとローカルコミットを完了できるようにする。
+prefix_rule(
+    pattern = ["git", ["add", "commit"]],
+    decision = "allow",
+    justification = "git add と git commit は、信頼済みリポジトリで変更をステージしローカルコミットを作成するため許可されています",
+    match = [
+        "git add src/example.ts",
+        "git commit -m test",
+    ],
+    not_match = [
+        "git reset --hard",
+        "git rebase main",
+        "git push",
+    ],
+)
+
 # 信頼済みのCompose構成で一時コンテナを実行する操作に限り、承認待ちなしで利用できるようにする。
 prefix_rule(
     pattern = ["docker", "compose", "run"],
