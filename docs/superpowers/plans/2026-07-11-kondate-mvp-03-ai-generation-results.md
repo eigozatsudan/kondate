@@ -1382,7 +1382,7 @@ git commit -m "feat: enforce free openrouter models"
 
 **Interfaces:**
 - Consumes: Plan 2's exact `ValidatedMenu` JSON and normalized menu tables.
-- Produces: internal `private.persist_validated_menu(...)`, service-role-only `public.finalize_ai_generation_success(...)`, and `public.get_ai_generation_status(...)`. The public finalizer is the only callable persistence entry and commits every validator-returned `adaptations[].safetyActions[]` item to Plan 2's normalized `menu_safety_actions`, together with all other menu rows, draft deletion, user quota success, and request success.
+- Produces: internal `private.persist_validated_menu(...)`, service-role-only `public.finalize_ai_generation_success(...)`, and `public.get_ai_generation_status(...)`. The public finalizer is the only callable persistence entry and commits every validator-returned `adaptations[].safetyActions[]` item to Plan 2's normalized `menu_safety_actions` and every canonical label source to immutable `menu_label_confirmations.source_text_snapshot`, together with all other menu rows, draft deletion, user quota success, and request success.
 
 - [ ] **Step 1 (2–5 min): Add a failing transaction and status test**
 
@@ -1544,12 +1544,13 @@ begin
 
   for v_label in select value from jsonb_array_elements(p_menu->'labelConfirmations') loop
     insert into public.menu_label_confirmations(
-      menu_id,user_id,source_type,source_id,source_path,allergen_id,
+      menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,allergen_id,
       anonymous_member_ref,dictionary_version,requirement_safety_fingerprint,
       is_current,confirmation_status
     ) values (
       v_menu_id,p_request.user_id,v_label->>'sourceType',(v_label->>'sourceId')::uuid,
-      v_label->>'sourcePath',v_label->>'allergenId',v_label->>'anonymousMemberRef',
+      v_label->>'sourcePath',v_label->>'sourceText',v_label->>'allergenId',
+      v_label->>'anonymousMemberRef',
       v_label->>'dictionaryVersion',p_safety_fingerprint,true,v_label->>'confirmationStatus'
     );
   end loop;
@@ -1560,7 +1561,7 @@ $$;
 
 `p_expired_checks`の要素型は最後まで`{pantryItemId,checkedAt}`だけであり、`checkedJstDate`をFunction、repository、HMAC、fixtureへ追加しない。上のpersistenceは一致する`checkedAt`を一度だけ`timestamptz`へ変換し、`(v_checked_at at time zone 'Asia/Tokyo')::date`で保存日を導出する。一致するcheckがなければ`SELECT INTO`で`v_checked_at`がNULLへ戻り、両列ともNULLになる。
 
-Task 15のcanonical success fixtureは、`checkedAt='2026-07-10 15:00:00+00'`が`expired_item_check_jst_date='2026-07-11'`として保存されること、同じ行のpaired-null式がtrueであること、およびcheckを持たない2件目のusageで両列がNULLになることをDO block内の`RAISE`比較で検証する。さらにtable CHECK自体の退行を防ぐため、次のassertionをTask 15のcanonical fixture DO blockとtop-level `pass(...)`の直後、`finish()`より前へ追加する。fixture作成前のTask 4位置へ置いて0行UPDATEにしてはならない。
+Task 15のcanonical success fixtureは、`checkedAt='2026-07-10 15:00:00+00'`が`expired_item_check_jst_date='2026-07-11'`として保存されること、同じ行のpaired-null式がtrueであること、およびcheckを持たない2件目のusageで両列がNULLになることをDO block内の`RAISE`比較で検証する。同じfixtureはcanonical labelの`sourceText='鶏もも肉'`が`source_text_snapshot='鶏もも肉'`として完全一致で保存されることも検証する。さらにtable CHECK自体の退行を防ぐため、次のassertionをTask 15のcanonical fixture DO blockとtop-level `pass(...)`の直後、`finish()`より前へ追加する。fixture作成前のTask 4位置へ置いて0行UPDATEにしてはならない。
 
 ```sql
 select throws_ok($$
@@ -1673,6 +1674,8 @@ docker compose run --rm --no-deps app npm run typecheck
 ```
 
 Expected: the private normalized-persistence assertions and final 13-argument signature assertion PASS. Do not execute an empty-target or dummy-fingerprint success call at this intermediate gate. Task 15 installs the canonical fingerprint/lineage helpers and runs the sole complete transaction fixture proving that one menu and every normalized child commit with one user success while any injected violation rolls the aggregate, quota, draft, and request transitions back together.
+
+Regenerated database types must expose `menu_label_confirmations.Row.source_text_snapshot: string` and require `source_text_snapshot: string` on `Insert`; no optional or nullable persistence type is accepted.
 
 - [ ] **Step 6 (2–5 min): Commit transactional persistence**
 
@@ -3314,7 +3317,7 @@ git commit -m "feat: recover interrupted menu generation"
 
 **Interfaces:**
 - Consumes: Plan 2's normalized RLS tables and `validatedMenuSchema`; Plan 1's browser Supabase client; Task 11's `clearPendingGeneration()`.
-- Produces: `getMenuResult(menuId): Promise<MenuResultViewModel>`, `MenuResult`, and `/menus/:menuId`. The aggregate is rebuilt only from validated normalized rows visible through the current user's RLS session, including ordered `menu_safety_actions`; each label row exposes its database `confirmationId`, canonical source text, human allergen name, and human member label. A missing or another user's menu produces `menu_not_found`.
+- Produces: `getMenuResult(menuId): Promise<MenuResultViewModel>`, `MenuResult`, and `/menus/:menuId`. The aggregate is rebuilt only from validated normalized rows visible through the current user's RLS session, including ordered `menu_safety_actions`; each label row exposes its database `confirmationId`, immutable persisted `source_text_snapshot` as `sourceText`, source identity fields, human allergen name, and human member label. A missing or another user's menu produces `menu_not_found`.
 
 - [ ] **Step 1 (2–5 min): Write failing aggregate, ordering, tabs, adaptation, pantry, label, and disclaimer tests**
 
@@ -3384,7 +3387,6 @@ Expected: FAIL because the aggregate loader, result component, and result page d
 
 ```ts
 import { validatedMenuSchema, type ValidatedMenu } from "../../../../shared/contracts/generation";
-import { collectMenuTextSources } from "../../../../shared/safety/allergens";
 import { getBrowserSupabaseClient } from "../../../shared/lib/supabase";
 
 export type MenuResultViewModel = {
@@ -3442,7 +3444,8 @@ export function buildMenuResultQuery(
         household_members!menu_target_members_member_owner_fkey (display_name)
       ),
       menu_label_confirmations!menu_label_confirmations_menu_owner_fkey (
-        id, source_type, source_id, source_path, allergen_id, anonymous_member_ref,
+        id, source_type, source_id, source_path, source_text_snapshot,
+        allergen_id, anonymous_member_ref,
         dictionary_version, requirement_safety_fingerprint, is_current,
         confirmation_status, confirmed_at, confirmed_by,
         allergen_catalog!menu_label_confirmations_allergen_id_fkey (display_name)
@@ -3514,13 +3517,12 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
     })),
     labelConfirmations: data.menu_label_confirmations.map((item) => ({
       sourceType: item.source_type, sourceId: item.source_id, sourcePath: item.source_path,
+      sourceText: item.source_text_snapshot,
       allergenId: item.allergen_id, anonymousMemberRef: item.anonymous_member_ref,
       dictionaryVersion: item.dictionary_version, confirmationStatus: item.confirmation_status,
       confirmedAt: item.confirmed_at, confirmedBy: item.confirmed_by,
     })),
   });
-  const sourceText = new Map(collectMenuTextSources(menu)
-    .map((source) => [source.sourcePath, source.text] as const));
   const memberLabels = new Map([...data.menu_target_members]
     .sort((a, b) => a.anonymous_ref.localeCompare(b.anonymous_ref))
     .map((item, index) => [
@@ -3546,7 +3548,7 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
         sourceType: canonical.sourceType,
         sourceId: canonical.sourceId,
         sourcePath: canonical.sourcePath,
-        sourceText: sourceText.get(canonical.sourcePath) ?? "確認対象の食品表示",
+        sourceText: item.source_text_snapshot,
         allergenName: item.allergen_catalog?.display_name?.trim() || "確認対象アレルゲン",
         memberLabel: memberLabels.get(canonical.anonymousMemberRef) ?? "家族",
         confirmationStatus: canonical.confirmationStatus,
@@ -3582,6 +3584,8 @@ it("keeps every nested relation on the named owner-composite FK", () => {
     ["household_members"]>().not.toBeAny();
   expectTypeOf<MenuResultQueryRow["menu_label_confirmations"][number]
     ["allergen_catalog"]>().not.toBeAny();
+  expectTypeOf<MenuResultQueryRow["menu_label_confirmations"][number]
+    ["source_text_snapshot"]>().toEqualTypeOf<string>();
 });
 ```
 
@@ -3600,7 +3604,7 @@ export function makeMenuResultViewModel(): MenuResultViewModel {
       sourceType: item.sourceType,
       sourceId: item.sourceId,
       sourcePath: item.sourcePath,
-      sourceText: "しょうゆ",
+      sourceText: item.sourceText,
       allergenName: "小麦",
       memberLabel: "子ども",
       confirmationStatus: item.confirmationStatus,
@@ -4031,9 +4035,9 @@ git commit -m "test: verify recoverable ai generation"
 - `PendingGeneration` is one three-variant discriminated union derived from `GenerationCommand`; `postGeneration(command)` is the only browser POST selector. New/whole commands use `/api/generations/menu`, dish commands use `/api/generations/dish`, and every recovery path reads the exact saved variant/body/key. A 409 `idempotency_payload_mismatch` enters one non-retryable `request_conflict` client state; it never falls through to the offline retry loop.
 - `GenerationContext` is imported from `shared/safety/generation-context.ts`. The server loader returns that exact type; there is no second context with the same name.
 - `runGeneration()` executes `validateGenerationPreflight(context)` before `repository.markSent`. Final success re-locks the current member/allergy/catalog/rule/pantry rows and compares the authoritative fingerprint inside the persistence RPC.
-- Final success inserts every validator-returned ingredient-bound action into `menu_safety_actions` in the same transaction. The normal `success` fixture contains at least one action; DB count, RLS aggregate readback, `MenuResultViewModel`, and rendered instruction must all match it exactly.
+- Final success inserts every validator-returned ingredient-bound action into `menu_safety_actions` and each validator-returned canonical `sourceText` into immutable `menu_label_confirmations.source_text_snapshot` in the same transaction. The normal `success` fixture contains at least one action and one label snapshot; DB count/value, RLS aggregate readback, `MenuResultViewModel`, and rendered instruction/source text must all match exactly.
 - Plan 3's finalizer owns one forward-compatible `private.assign_regeneration_lineage(...)` hook. Migration `020` installs a new-menu no-op stub and calls it inside `finalize_ai_generation_success` after aggregate insertion but before quota/draft/request completion; Plan 4 replaces only that hook in migration `030`. Regeneration reason text travels as typed RPC arguments from the in-memory HMAC-bound command and is never written to the private ledger.
-- `private.lock_and_assert_current_safety_fingerprint(user_id,target_member_ids,expected)` is the sole SQL lock/recompute boundary for household members, allergies, and catalog/rule versions. Finalization calls it before persistence; Plan 4 revalidation reconciliation/confirmation reuses the same revoked private function through its security-definer RPCs.
+- `private.lock_and_assert_current_safety_fingerprint(user_id,target_member_ids,expected)` is the sole SQL lock/recompute boundary for household members, allergies, and catalog/rule versions. Finalization calls it before persistence. Plan 3 creates the sole public `confirm_menu_label_confirmation(uuid,uuid,text)` immediately after this helper and its revokes; Plan 4 revalidation reconciliation reuses the same revoked private helper through its owner-checking security-definer RPC.
 - `releaseQuota` is the only TypeScript source for the release-locked tuple `{ userDailySuccessLimit: 5, userDailyExternalCallLimit: 12, userShortWindowExternalCallLimit: 4, userShortWindowSeconds: 600 }`. All four environment keys are required exact literals; PostgreSQL independently constrains/guards the same values. A higher IP ceiling is only an outer flood control and must not merge distinct users on a shared connection.
 - The authoritative external-attempt tables are exactly `private.ai_user_daily_external_attempts` and `private.ai_user_rate_windows`; Plan 6 reuses those names for operations and cleanup.
 - A synchronous invocation has a 50,000 ms deadline. Each OpenRouter fetch gets at most 20,000 ms. Timeout is terminal and never repaired; repair starts only when at least 20,000 ms plus 2,000 ms finalization reserve remains.
@@ -4414,7 +4418,55 @@ revoke all on function private.current_safety_fingerprint(uuid,uuid[])
   from public,anon,authenticated,service_role;
 revoke all on function private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)
   from public,anon,authenticated,service_role;
+
+create or replace function public.confirm_menu_label_confirmation(
+  p_menu_id uuid,
+  p_confirmation_id uuid,
+  p_expected_safety_fingerprint text
+) returns setof public.menu_label_confirmations
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_target_member_ids uuid[];
+begin
+  if v_user_id is null then return; end if;
+  select array_agg(target.household_member_id order by target.anonymous_ref)
+    into v_target_member_ids
+  from public.menu_target_members target
+  where target.menu_id = p_menu_id and target.user_id = v_user_id
+    and target.household_member_id is not null;
+  if coalesce(cardinality(v_target_member_ids), 0) = 0 then return; end if;
+  begin
+    perform private.lock_and_assert_current_safety_fingerprint(
+      v_user_id, v_target_member_ids, p_expected_safety_fingerprint
+    );
+  exception
+    when sqlstate 'P0001' then return;
+  end;
+  return query
+    update public.menu_label_confirmations confirmation
+    set confirmation_status = 'confirmed',
+        confirmed_at = statement_timestamp(),
+        confirmed_by = v_user_id
+    where confirmation.id = p_confirmation_id
+      and confirmation.menu_id = p_menu_id
+      and confirmation.user_id = v_user_id
+      and confirmation.is_current
+      and confirmation.confirmation_status = 'pending'
+      and confirmation.requirement_safety_fingerprint = p_expected_safety_fingerprint
+    returning confirmation.*;
+end;
+$function$;
+revoke all on function public.confirm_menu_label_confirmation(uuid,uuid,text)
+  from public,anon,authenticated,service_role;
+grant execute on function public.confirm_menu_label_confirmation(uuid,uuid,text)
+  to authenticated;
 ```
+
+この位置が`confirm_menu_label_confirmation`の唯一の作成箇所である。target member IDは必ず`anonymous_ref`順でhelperへ渡し、helperの現在値lock/recomputeと保存済み行の`requirement_safety_fingerprint`一致の両方を通ったpending current rowだけを更新する。pgTAPはnull auth、wrong menu/owner、unknown ID、archived row、replay、stale stored fingerprint、changed current safety、およびcurrent ownerの成功遷移を個別に検証する。`pg_proc`/`pg_namespace`で同名かつ`pronargs = 2`の関数が0件、3引数関数が1件だけであること、およびauthenticatedだけが3引数関数を実行できることも固定し、2引数overloadは作成・grant・呼出しのいずれにも残さない。
 
 次のfixtureは実在owner/member、標準allergy、seed済みcatalog/rule versionを作成・参照し、このproduction canonical builderの結果だけをfinalizerへ渡す。test-local fingerprint helperは作らない。
 
@@ -4506,7 +4558,12 @@ begin
           'pantryItemName','確認不要食材','priority','prefer_use','usageStatus','unused',
           'plannedQuantity',null,'inventoryQuantity',null,'shortageQuantity',null,
           'unit',null,'dishIds','[]'::jsonb,'unusedReason','今回は使わない')),
-      'labelConfirmations','[]'::jsonb),
+      'labelConfirmations',jsonb_build_array(jsonb_build_object(
+        'sourceType','ingredient','sourceId',p_ingredient_id,
+        'sourcePath','dishes.0.ingredients.0.name','sourceText','鶏もも肉',
+        'allergenId','milk','anonymousMemberRef','member_1',
+        'dictionaryVersion',v_context.allergen_version,
+        'confirmationStatus','pending'))),
     v_context.preference_snapshot,v_context.safety_snapshot,v_context.safety_fingerprint,
     v_context.allergen_version,v_context.food_rule_version,
     v_context.target_members,jsonb_build_array(jsonb_build_object(
@@ -4596,6 +4653,10 @@ begin
       'actions',(select count(*) from public.menu_safety_actions
         where menu_id='60000000-0000-4000-8000-000000000080'
           and ingredient_id='62000000-0000-4000-8000-000000000080'),
+      'sourceSnapshot',(select source_text_snapshot
+        from public.menu_label_confirmations
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and source_id='62000000-0000-4000-8000-000000000080'),
       'checkDate',(select expired_item_check_jst_date::text
         from public.generation_pantry_selections
         where id='65000000-0000-4000-8000-000000000080'),
@@ -4610,6 +4671,7 @@ begin
     )) is distinct from jsonb_build_object(
       'menus',1,'targets',1,'dishes',3,'ingredients',3,'steps',3,
       'timeline',1,'adaptations',1,'actions',1,
+      'sourceSnapshot','鶏もも肉',
       'checkDate','2026-07-11','paired',true,'unchecked',1) then
     raise exception 'canonical finalizer did not commit every normalized child and ingredient-bound action';
   end if;
@@ -4707,6 +4769,8 @@ end
 $test$;
 select pass('canonical finalization and both manual-delete/finalizer orderings are enforced');
 ```
+
+同じpgTAP fileでcanonical fixtureを複製し、`labelConfirmations[0]`から`sourceText`を削除したfinalizer callと、`sourceText='　鶏もも肉　'`（U+3000で前後をpadding）へ置換したcallを、それぞれ`23502`と`23514`で失敗させる。各caseは独立したrequest/menu UUIDを使い、`menus`、`menu_label_confirmations`、success quota、draft、request terminal stateが一切部分commitされないことを比較する。これによりPlan 2のNOT NULL/canonical CHECKだけでなく、Plan 3 persistenceが`v_label->>'sourceText'`を必ず渡し、canonical snapshotを完全一致で保存することをpgTAPで固定する。
 
 このfixtureはPlan 3 Task 4の旧signature用testを置換し、Task 15の唯一のfinalizer signature
 `public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz)`
@@ -5313,7 +5377,7 @@ if (!sent.sent) return toGenerationStatus(sent.record, key);
 
 `markSent` atomically converts one user-attempt reservation and one global reservation to sent. A sent attempt is never released. Repair calls `reserveRepairAttempt`, which atomically reserves both counters and fails on either limit.
 
-Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation/confirmation RPCs.
+Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Immediately after both private-function revokes, Plan 3 installs the sole `public.confirm_menu_label_confirmation(uuid,uuid,text)` shown above. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation RPC; it consumes, and never recreates or overloads, Plan 3's confirmation RPC.
 
 In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `regeneration_not_implemented`; revoke it from every external role. Replace the public finalizer signature once to append typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now`. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before the draft soft-delete helper call, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The finalizer then calls `private.soft_delete_generation_draft(v_request.user_id,v_request.draft_id,null)` with `PERFORM`; a NULL result is a successful no-op and is neither assigned nor inspected. The repository derives lineage only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Remove the old finalizer overload/grant, regenerate types, and add pgTAP proving a normal generation calls the null no-op while any non-null lineage fails atomically in Plan 3. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
 
@@ -5543,7 +5607,7 @@ Add `{ path: "/menus/:menuId", element: <MenuResultPage /> }` inside `RequireCom
 
 - [ ] **Step 10: Render human labels, explicit user confirmation, post-cook pantry actions, and true keyboard tabs (5 minutes)**
 
-`getMenuResult` loads owner-scoped `menu_target_members → household_members.display_name`, `member_display_name_snapshot`, normalized `menu_safety_actions`, and `menu_label_confirmations → allergen_catalog.display_name`. A live member name wins; after settings deletion the immutable snapshot wins; only then use `家族1`, `家族2`. It returns only the Task 13 `MenuResultViewModel`, never a bare `ValidatedMenu`. Every UI confirmation contains the database row `confirmationId`, canonical `sourcePath` and resolved `sourceText`, human `allergenName`, human `memberLabel`, status, and server provenance; raw `member_1` or allergen IDs never render. The nested validated menu retains every ingredient-bound structured action for recipe rendering.
+`getMenuResult` loads owner-scoped `menu_target_members → household_members.display_name`, `member_display_name_snapshot`, normalized `menu_safety_actions`, and `menu_label_confirmations.source_text_snapshot → allergen_catalog.display_name`. A live member name wins; after settings deletion the immutable snapshot wins; only then use `家族1`, `家族2`. It returns only the Task 13 `MenuResultViewModel`, never a bare `ValidatedMenu`. Every UI confirmation contains the database row `confirmationId`, identity fields `sourceType`/`sourceId`/`sourcePath`, immutable `sourceText` mapped directly from `source_text_snapshot`, human `allergenName`, human `memberLabel`, status, and server provenance; raw `member_1` or allergen IDs never render. The nested validated menu retains every ingredient-bound structured action for recipe rendering. Result loading must not rebuild source text from the current menu aggregate and has no generic source-text fallback.
 
 Pending label rows render the exact source text, human allergen name, and human member label plus a button `本人が原材料表示を確認しました`. Clicking calls `POST /api/menus/:menuId/label-confirmations/:confirmationId/confirm`, invalidates the result query, and only then changes the badge to `確認済み`. The generic disclaimer remains visible even when all rows are confirmed.
 
@@ -5602,7 +5666,7 @@ export type MenuResultViewModel = {
 };
 ```
 
-`getMenuResult()` maps each label row by the exact five-part key `(sourceType,sourceId,sourcePath,allergenId,anonymousMemberRef)`; repeated warnings on different text leaves of the same normalized row never collapse. Its test includes two confirmations sharing source ID/allergen/member but using different paths and asserts each resolves its own source text. It also creates one pantry target for every `used` pantry-usage row and owner-RLS-loads each linked live `pantry_items` row as part of the same result query boundary. `currentPantryRow.updatedAt`, never `inventoryQuantity` or another generation snapshot, is the mutation version. A missing/deleted link returns `pantryItemId:null,currentPantryRow:null`; render `冷蔵庫から削除済み` and no mutation control. After an update, synchronize every result target sharing that pantry ID and refetch `pantryKeys.list(userId)` plus the menu-result query. After deletion, move all matching targets to the deleted state and refetch both; `ON DELETE SET NULL` is authoritative.
+`getMenuResult()` maps each label row by the exact five-part key `(sourceType,sourceId,sourcePath,allergenId,anonymousMemberRef)`; repeated warnings on different text leaves of the same normalized row never collapse. Its test includes two confirmations sharing source ID/allergen/member but using different paths and distinct `source_text_snapshot` values, and asserts each `sourceText` is exactly its own persisted snapshot even if the reconstructed menu text differs. It also creates one pantry target for every `used` pantry-usage row and owner-RLS-loads each linked live `pantry_items` row as part of the same result query boundary. `currentPantryRow.updatedAt`, never `inventoryQuantity` or another generation snapshot, is the mutation version. A missing/deleted link returns `pantryItemId:null,currentPantryRow:null`; render `冷蔵庫から削除済み` and no mutation control. After an update, synchronize every result target sharing that pantry ID and refetch `pantryKeys.list(userId)` plus the menu-result query. After deletion, move all matching targets to the deleted state and refetch both; `ON DELETE SET NULL` is authoritative.
 
 For every non-null target, render two always-visible, 44-pixel-or-larger choices after the recipes: `使い切った` and `まだある`. Do not hide them behind `調理後に冷蔵庫へ反映` and never subtract the planned amount automatically. `MenuResultPage` gets the current Plan 1 session user and browser client, then uses only Plan 2's exported pantry functions.
 
@@ -5637,7 +5701,7 @@ onKeyDown={(event) => {
 
 - [ ] **Step 11: Use completed onboarding E2E and run the final correction gate (5 minutes)**
 
-All generation E2E cases consume Plan 1's `completedOnboardingPage`; remove repeated calls to `completeMinimumOnboarding`. Add assertions for one submit click reaching the Function, a `not_started` same-key retry, usage GET without request creation, attempt-limit copy, human member/allergen labels, member deletion followed by snapshot-backed historical read/action rendering, explicit confirmation, `使い切った` cancel/confirm/undo, `まだある` blank/numeric remainder, pantry version conflict without silent retry, ArrowLeft/ArrowRight/Home/End focus, and 320 px no overflow.
+All generation E2E cases consume Plan 1's `completedOnboardingPage`; remove repeated calls to `completeMinimumOnboarding`. Add assertions for one submit click reaching the Function, a `not_started` same-key retry, usage GET without request creation, attempt-limit copy, human member/allergen labels, member deletion followed by snapshot-backed historical read/action rendering, persisted `source_text_snapshot` display even when the reconstructed menu text differs, explicit confirmation, `使い切った` cancel/confirm/undo, `まだある` blank/numeric remainder, pantry version conflict without silent retry, ArrowLeft/ArrowRight/Home/End focus, and 320 px no overflow.
 
 Run each command separately:
 
@@ -5661,9 +5725,17 @@ if rg -n 'request_(?:body|json)|raw_request|change_reason_custom\s+text' supabas
 if rg -n "p_conflicts jsonb|jsonb_build_object\('conflicts'|changeReasonCustom" supabase/migrations/20260711002000_ai_control_and_quota.sql; then exit 1; fi
 rg -n "p_conflict_codes text\[\]|jsonb_build_object\('conflictCodes'" supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n 'GENERATION_REQUEST_HMAC_KEY|generation-command\.v1|request_hmac' .env.example compose.yaml netlify/functions supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'source_text_snapshot|confirm_menu_label_confirmation\(uuid,uuid,text\)|lock_and_assert_current_safety_fingerprint' \
+  supabase/migrations/20260711002000_ai_control_and_quota.sql \
+  supabase/tests/database/ai_control_and_quota.test.sql \
+  src/features/generation/api/menu-result-api.ts
+if rg -n 'sourceText\.get\(canonical\.sourcePath\)|confirm_menu_label_confirmation\(uuid,uuid\)' \
+  supabase/migrations/20260711002000_ai_control_and_quota.sql \
+  supabase/tests/database/ai_control_and_quota.test.sql \
+  src/features/generation; then exit 1; fi
 ```
 
-Expected: all verification commands exit 0; the second generated-type run is byte-for-byte stable; all three negative source scans return no matches, the conflict-code scan finds only the closed terminal DTO, and the HMAC scan finds the server env, canonicalizer, repository, and migration. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus human labels and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
+Expected: all verification commands exit 0; the second generated-type run is byte-for-byte stable; all negative source scans return no matches, the conflict-code scan finds only the closed terminal DTO, the HMAC scan finds the server env, canonicalizer, repository, and migration, and the label scan finds the immutable snapshot projection, sole 3-argument RPC, and current-safety helper without a dynamic-source or 2-argument path. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions and the exact canonical label snapshot; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus persisted source text, human labels, and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
 
 - [ ] **Step 12: Commit the reviewed generation corrections (2 minutes)**
 
@@ -5684,6 +5756,8 @@ Expected: one correction commit is created only after Step 11 is green; no unrel
 ## Plan 3 Exit and Plan 4 Handoff
 
 Plan 3 is complete only after Task 15's correction gate passes. Plan 4 consumes these exact names without adapters or overloads:
+
+The database boundary is exactly one authenticated `public.confirm_menu_label_confirmation(uuid,uuid,text)` plus the revoked private `private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)`. Plan 4 neither creates a confirmation overload nor reconstructs confirmation source text; it consumes Plan 3's transition and immutable `source_text_snapshot` projection.
 
 ```ts
 export type AuthenticatedUser = Awaited<ReturnType<typeof requireUser>>;
