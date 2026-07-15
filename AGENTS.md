@@ -8,12 +8,14 @@
 ## ビルド、テスト、開発コマンド
 
 Node 24（`package.json` の `engines` を参照）を使用し、依存関係Docker上で `npm ci` でインストールします。
-基本的にコマンドはDocker経由で行うこと。
+基本的にサブエージェントを使って、コマンドはDocker経由で行うこと。
 - `docker compose run --rm --no-deps app npm run dev` は Vite 開発サーバーを起動します。
 - `docker compose run --rm --no-deps app npm run build` は TypeScript プロジェクトのチェックを実行し、本番環境用の Vite ビルドを作成します。
 - `docker compose run --rm --no-deps app npm run lint`、`docker compose run --rm --no-deps app npm run format:check`、`docker compose run --rm --no-deps app npm run typecheck` は、スタイル、フォーマット、型を検証します。
 - `docker compose run --rm --no-deps app npm test` は Vitest をウォッチモードで実行します。CI スタイルのワンショット実行には `docker compose run --rm --no-deps app npx vitest run` を使用してください。 - `docker compose run --rm --no-deps app npm run e2e` は、設定済みのローカルアプリケーションに対して Playwright テストを実行します。
 - `docker compose up -d --wait` は、ローカルアプリケーション/Supabase スタックを起動します。`docker compose run --rm --no-deps app npm run db:reset` はスタックを再作成し、`docker compose run --rm --no-deps app npm run db:test` は pgTAP データベーステストを実行します。
+
+テストのような推論を必要としない処理の場合は、より軽量なモデルに切り替えること。
 
 ## コーディングスタイルと命名規則
 
@@ -25,6 +27,7 @@ Node 24（`package.json` の `engines` を参照）を使用し、依存関係Do
 
 レビューをする際は、設計書に沿っているか、セキュリティに問題はないか、敵対的レビューの観点でサブエージェントを使って実施する。
 レビュー後、異なるサブエージェントを使って、より深い検証と、指摘が正しければ修正するというフローを連続して行うこと。
+レビューの際は、より適切なモデルに切り替えることも検討すること。
 
 ## テストガイドライン
 
