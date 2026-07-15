@@ -19,15 +19,17 @@
 
 ---
 
-### Task 1: Lock the Task 3 schema contract with failing pgTAP
+### Task 1: Lock and implement the fail-closed Task 3 schema
 
 **Files:**
 - Modify: `supabase/tests/database/04_menu_core.test.sql`
 - Modify: `supabase/tests/database/04a_menu_core_hardening.test.sql`
+- Modify: `supabase/migrations/20260711001100_menu_core.sql`
+- Modify (generated): `src/shared/types/database.generated.ts`
 
 **Interfaces:**
 - Consumes: the current Task 3 schema and `tests.create_supabase_user` fixture helper.
-- Produces: a failing proof that `source_text_snapshot` is missing and the unsafe two-argument RPC is still exposed.
+- Produces: red-green proof, `menu_label_confirmations.source_text_snapshot: string`, and no `confirm_menu_label_confirmation` RPC in Task 3 generated types.
 
 - [ ] **Step 1: Add the schema-level failing assertions**
 
@@ -101,32 +103,7 @@ docker compose --profile test run --rm db-test supabase/tests/database/04_menu_c
 
 Expected: FAIL because `source_text_snapshot` does not exist and the two-argument RPC still resolves.
 
-- [ ] **Step 3: Keep the failing test changes uncommitted for Task 2**
-
-Run:
-
-```bash
-git diff --check
-git status --short
-```
-
-Expected: only the two pgTAP files are modified in addition to the already committed design and implementation-plan work.
-
----
-
-### Task 2: Implement the fail-closed Task 3 schema
-
-**Files:**
-- Modify: `supabase/migrations/20260711001100_menu_core.sql`
-- Modify: `supabase/tests/database/04_menu_core.test.sql`
-- Modify: `supabase/tests/database/04a_menu_core_hardening.test.sql`
-- Modify (generated): `src/shared/types/database.generated.ts`
-
-**Interfaces:**
-- Consumes: Task 1's failing pgTAP contract.
-- Produces: `menu_label_confirmations.source_text_snapshot: string`; no `confirm_menu_label_confirmation` RPC in Task 3 generated types.
-
-- [ ] **Step 1: Add the immutable snapshot column**
+- [ ] **Step 3: Add the immutable snapshot column**
 
 Insert the column immediately after `source_path`:
 
@@ -142,11 +119,11 @@ Insert the column immediately after `source_path`:
 
 Do not add the snapshot to either uniqueness key. It is immutable provenance, not source identity.
 
-- [ ] **Step 2: Remove the unsafe Task 3 transition**
+- [ ] **Step 4: Remove the unsafe Task 3 transition**
 
 Delete the complete `public.confirm_menu_label_confirmation(uuid,uuid)` function, its `REVOKE`, and its `GRANT`. Leave direct table UPDATE revoked. Do not add a stub or a three-argument implementation because the canonical current-safety helper is not available until Plan 3.
 
-- [ ] **Step 3: Reset the database and verify GREEN pgTAP**
+- [ ] **Step 5: Reset the database and verify GREEN pgTAP**
 
 Run:
 
@@ -158,7 +135,7 @@ docker compose --profile test run --rm db-test supabase/tests/database/04a_menu_
 
 Expected: `04` reports 42 passing assertions; `04a` reports PASS with snapshot boundary, ACL/RLS, graph, unlink, and cascade assertions.
 
-- [ ] **Step 4: Regenerate database types**
+- [ ] **Step 6: Regenerate database types**
 
 Run:
 
@@ -168,7 +145,7 @@ docker compose run --rm app npm run db:types
 
 Expected: `source_text_snapshot` appears in `menu_label_confirmations.Row/Insert/Update`; `confirm_menu_label_confirmation` is absent from `Database["public"]["Functions"]`.
 
-- [ ] **Step 5: Run type and diff checks**
+- [ ] **Step 7: Run type and diff checks**
 
 Run:
 
@@ -180,7 +157,7 @@ git diff --stat
 
 Expected: typecheck exits 0; only the migration, two pgTAP files, and generated types are implementation changes.
 
-- [ ] **Step 6: Commit the Task 3 implementation correction**
+- [ ] **Step 8: Commit the Task 3 implementation correction**
 
 ```bash
 git add supabase/migrations/20260711001100_menu_core.sql \
@@ -192,7 +169,7 @@ git commit -m "fix: ラベル確認の保存境界を強化"
 
 ---
 
-### Task 3: Synchronize Plan 2 with the corrected Task 3 boundary
+### Task 2: Synchronize Plan 2 with the corrected Task 3 boundary
 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-11-kondate-mvp-02-menu-domain-pantry.md`
@@ -230,7 +207,7 @@ Expected: the stale-contract check exits 0 and the corrected contracts are prese
 
 ---
 
-### Task 4: Synchronize Plan 3 persistence, display, and RPC ownership
+### Task 3: Synchronize Plan 3 persistence, display, and RPC ownership
 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-11-kondate-mvp-03-ai-generation-results.md`
@@ -316,7 +293,7 @@ Expected: the corrected producer/consumer contracts exist and stale dynamic/two-
 
 ---
 
-### Task 5: Synchronize Plan 4 reconciliation and reuse
+### Task 4: Synchronize Plan 4 reconciliation and reuse
 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-11-kondate-mvp-04-history-regeneration.md`
@@ -357,13 +334,13 @@ git commit -m "docs: ラベル確認境界を後続計画へ同期"
 
 ---
 
-### Task 6: Final adversarial verification
+### Task 5: Final adversarial verification
 
 **Files:**
 - Verify only; modify candidate files only if a validated review finding requires it.
 
 **Interfaces:**
-- Consumes: Tasks 1–5.
+- Consumes: Tasks 1–4.
 - Produces: evidence that the original stale-confirmation path and missing-snapshot contract no longer reproduce.
 
 - [ ] **Step 1: Run focused database and type verification**
