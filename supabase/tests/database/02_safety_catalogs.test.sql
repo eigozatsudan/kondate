@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(23);
+select plan(24);
 
 select has_table('public', 'allergen_catalog', '');
 select has_table('public', 'allergen_aliases', '');
@@ -93,6 +93,15 @@ select ok(not exists(select 1 from public.food_safety_rules
   where id='hard_beans_and_reviewed_nuts_under_6'
     and match_terms && array['豆','大豆','豆腐','豆乳','納豆','大豆の水煮']::text[]),
   'the hard-particle rule does not classify soft processed bean products by a bare bean term');
+select is(
+  (select match_terms from public.food_safety_rules where id = 'bones_for_young_and_senior'),
+  array[
+    '小骨','骨付き','魚','鮭','さけ','サケ','鯖','さば','サバ','鯵','あじ','アジ','鰯',
+    'いわし','イワシ','鯛','たい','タイ','ぶり','ブリ','たら','タラ','さんま','サンマ',
+    'ししゃも','うなぎ','穴子'
+  ]::text[],
+  'the deboning rule keeps the exact reviewed fish-name catalog'
+);
 
 select * from finish();
 rollback;

@@ -23,6 +23,284 @@ function underSixContext() {
   });
 }
 
+function requiredConstraintContext(required: "remove_bones" | "cut_small") {
+  const base = makeCurrentSafetyContext();
+  return makeCurrentSafetyContext({
+    members: [
+      {
+        ...base.members[0]!,
+        ageBand: "age_3_5",
+        requiredSafetyConstraints: [required],
+      },
+    ],
+    foodSafetyRules:
+      required === "remove_bones"
+        ? [
+            {
+              ...hardBeanAndReviewedNutRule,
+              id: "bones_for_young_and_senior",
+              matchTerms: ["鮭", "鯖"],
+              ruleKind: "requires_tag",
+              requiredSafetyTag: "remove_bones",
+            },
+          ]
+        : [],
+  });
+}
+
+function sourceBoundSafetyMenu(options: {
+  actionIngredient: "salmon" | "carrot";
+  includeSecondFish?: boolean;
+}) {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const salmon = { ...firstDish.ingredients[0]!, name: "鮭" };
+  const carrot = {
+    ...base.dishes[1]!.ingredients[0]!,
+    id: "53000000-0000-4000-8000-000000000003",
+    position: 2,
+    name: "にんじん",
+  };
+  const mackerel = {
+    ...carrot,
+    id: "53000000-0000-4000-8000-000000000004",
+    position: 3,
+    name: "鯖",
+  };
+  const actionIngredient = options.actionIngredient === "salmon" ? salmon : carrot;
+  const actionInstruction = `${actionIngredient.name}の骨を完全に除く`;
+
+  return makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [
+              salmon,
+              carrot,
+              ...(options.includeSecondFish === true ? [mackerel] : []),
+            ],
+            steps: [{ ...dish.steps[0]!, instruction: actionInstruction }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: actionInstruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: `${actionInstruction}ことを確認する`,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "remove_bones",
+            dishId: firstDish.id,
+            ingredientId: actionIngredient.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: actionInstruction,
+          },
+        ],
+      },
+    ],
+  });
+}
+
+it("rejects required deboning evidence bound to a non-fish ingredient", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({ actionIngredient: "carrot" }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it("rejects deboning text that self-identifies a non-fish ingredient as fish", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const carrot = { ...firstDish.ingredients[0]!, name: "にんじん" };
+  const instruction = "にんじん（魚）の骨を完全に除く";
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [carrot],
+            steps: [{ ...dish.steps[0]!, instruction }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: instruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: instruction,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "remove_bones",
+            dishId: firstDish.id,
+            ingredientId: carrot.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction,
+          },
+        ],
+      },
+    ],
+  });
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menu, {
+      ...safety,
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms: ["魚"] })),
+    }),
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
+});
+
+it("rejects an action that is the only source identifying its ingredient as fish", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const carrot = { ...firstDish.ingredients[0]!, name: "にんじん" };
+  const evidenceInstruction = "にんじんの骨を完全に除く";
+  const actionInstruction = "にんじん（魚）の骨を完全に除く";
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [carrot],
+            steps: [{ ...dish.steps[0]!, instruction: evidenceInstruction }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: evidenceInstruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: evidenceInstruction,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "remove_bones",
+            dishId: firstDish.id,
+            ingredientId: carrot.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: actionInstruction,
+          },
+        ],
+      },
+    ],
+  });
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menu, {
+      ...safety,
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms: ["魚"] })),
+    }),
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
+});
+
+it("accepts required deboning evidence bound to the matched fish ingredient", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({ actionIngredient: "salmon" }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual([]);
+});
+
+it("rejects required deboning evidence whose adaptation branch belongs to another dish", () => {
+  const menu = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const otherDish = menu.dishes[1]!;
+  const mismatchedMenu = makeValidatedMenu({
+    ...menu,
+    adaptations: menu.adaptations.map((adaptation) => ({
+      ...adaptation,
+      branchBeforeRecipeStepId: otherDish.steps[0]!.id,
+    })),
+  });
+
+  expect(
+    evaluateFoodSafetyRules(mismatchedMenu, requiredConstraintContext("remove_bones")),
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "required_safety_action" }),
+      expect.objectContaining({ code: "age_shape_rule" }),
+    ]),
+  );
+});
+
+it("requires deboning evidence for every matched fish ingredient", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({ actionIngredient: "salmon", includeSecondFish: true }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it("requires one ingredient-bound cut-small action in every dish", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const ingredient = firstDish.ingredients[0]!;
+  const instruction = `${ingredient.name}を小さく切る`;
+  const menu = makeValidatedMenu({
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: instruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: `${instruction}ことを確認する`,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: firstDish.id,
+            ingredientId: ingredient.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction,
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("cut_small"))).toEqual([
+    expect.objectContaining({ code: "required_safety_action" }),
+  ]);
+});
+
 it.each([
   "煎り大豆",
   "いり大豆",
@@ -363,6 +641,44 @@ it("T5-FFR-01 rejects a negated required safety action", () => {
   ]);
 });
 
+it("rejects cut-small evidence expressed as an inability in every dish", () => {
+  const base = makeValidatedMenu();
+  const adaptations = base.dishes.map((dish, index) => {
+    const ingredient = dish.ingredients[0]!;
+    const instruction = `${ingredient.name}を小さく切れない`;
+
+    return {
+      id: `57000000-0000-4000-8000-00000000000${index + 1}`,
+      dishId: dish.id,
+      anonymousMemberRef: "member_1",
+      portionText: "通常量",
+      branchBeforeRecipeStepId: dish.steps[0]!.id,
+      additionalCutting: instruction,
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: instruction,
+      safetyTags: [],
+      safetyActions: [
+        {
+          kind: "cut_small" as const,
+          dishId: dish.id,
+          ingredientId: ingredient.id,
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: dish.steps[0]!.id,
+          instruction,
+        },
+      ],
+    };
+  });
+
+  expect(
+    evaluateFoodSafetyRules(
+      makeValidatedMenu({ adaptations }),
+      requiredConstraintContext("cut_small"),
+    ),
+  ).toEqual([expect.objectContaining({ code: "required_safety_action" })]);
+});
+
 it("T5-ADV-05 rejects a required cutting action contradicted by polite negation ません", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;
@@ -419,14 +735,14 @@ it("T5-ADV-05 rejects a required cutting action contradicted by polite negation 
 it("T5-ADV-06 rejects a required deboning action contradicted by polite negation ません", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;
-  const fish = { ...firstDish.ingredients[0]!, name: "さば" };
+  const fish = { ...firstDish.ingredients[0]!, name: "鯖" };
   const menu = makeValidatedMenu({
     dishes: base.dishes.map((dish, index) =>
       index === 0
         ? {
             ...dish,
             ingredients: [fish],
-            steps: [{ ...dish.steps[0]!, instruction: "さばの骨を取り除く" }],
+            steps: [{ ...dish.steps[0]!, instruction: "鯖の骨を取り除く" }],
           }
         : dish,
     ),
@@ -437,10 +753,10 @@ it("T5-ADV-06 rejects a required deboning action contradicted by polite negation
         anonymousMemberRef: "member_1",
         portionText: "通常量",
         branchBeforeRecipeStepId: firstDish.steps[0]!.id,
-        additionalCutting: "さばの骨を取り除く",
+        additionalCutting: "鯖の骨を取り除く",
         additionalHeating: null,
         additionalSeasoning: null,
-        servingCheck: "さばの骨を取り除きません",
+        servingCheck: "鯖の骨を取り除きません",
         safetyTags: [],
         safetyActions: [
           {
@@ -449,24 +765,17 @@ it("T5-ADV-06 rejects a required deboning action contradicted by polite negation
             ingredientId: fish.id,
             anonymousMemberRef: "member_1",
             beforeRecipeStepId: firstDish.steps[0]!.id,
-            instruction: "さばの骨を取り除く",
+            instruction: "鯖の骨を取り除く",
           },
         ],
       },
     ],
   });
-  const safety = makeCurrentSafetyContext({
-    members: [
-      {
-        ...makeCurrentSafetyContext().members[0]!,
-        requiredSafetyConstraints: ["remove_bones"],
-      },
-    ],
-  });
+  const safety = requiredConstraintContext("remove_bones");
 
-  expect(evaluateFoodSafetyRules(menu, safety)).toEqual([
-    expect.objectContaining({ code: "required_safety_action" }),
-  ]);
+  expect(evaluateFoodSafetyRules(menu, safety)).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
 });
 
 it("T5-EXIT-04 rejects quartering evidence negated with Japanese せず", () => {

@@ -9,6 +9,10 @@ const migrationSql = readFileSync(
   "supabase/migrations/20260711000400_safety_catalog_data.sql",
   "utf8",
 );
+const correctiveMigrationSql = readFileSync(
+  "supabase/migrations/20260716000250_expand_fish_safety_terms.sql",
+  "utf8",
+);
 
 function quoteSqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
@@ -69,12 +73,70 @@ function extractFoodSafetyRuleTuples(sql: string): string {
 }
 
 describe("current food safety rules v1 migration contract", () => {
+  it("keeps the reviewed fish-name catalog exact", () => {
+    expect(
+      currentFoodSafetyRulesV1.find((rule) => rule.id === "bones_for_young_and_senior")?.matchTerms,
+    ).toEqual([
+      "小骨",
+      "骨付き",
+      "魚",
+      "鮭",
+      "さけ",
+      "サケ",
+      "鯖",
+      "さば",
+      "サバ",
+      "鯵",
+      "あじ",
+      "アジ",
+      "鰯",
+      "いわし",
+      "イワシ",
+      "鯛",
+      "たい",
+      "タイ",
+      "ぶり",
+      "ブリ",
+      "たら",
+      "タラ",
+      "さんま",
+      "サンマ",
+      "ししゃも",
+      "うなぎ",
+      "穴子",
+    ]);
+  });
+
+  it("applies the exact TypeScript fish-name catalog in a version-preserving correction", () => {
+    const rule = currentFoodSafetyRulesV1.find(
+      (candidate) => candidate.id === "bones_for_young_and_senior",
+    );
+    expect(rule).toBeDefined();
+    if (rule === undefined) return;
+
+    const actual = removeFormattingWhitespace(correctiveMigrationSql);
+    const expectedUpdate = removeFormattingWhitespace(`
+      update public.food_safety_rules
+      set match_terms = ${toSqlArray(rule.matchTerms)}::text[]
+      where id = 'bones_for_young_and_senior';
+    `);
+    expect(actual.split(expectedUpdate)).toHaveLength(2);
+    expect(actual).toContain("ifupdated_rows<>1then");
+    expect(actual).not.toContain("rule_version");
+  });
+
   it("keeps exactly the seven canonical rules and every behavioral field in sync", () => {
     expect(currentFoodSafetyRulesV1).toHaveLength(7);
 
     const actual = removeFormattingWhitespace(extractFoodSafetyRuleTuples(migrationSql));
     const expectedTuples = currentFoodSafetyRulesV1.map((rule) =>
-      removeFormattingWhitespace(toSqlTuple(rule)),
+      removeFormattingWhitespace(
+        toSqlTuple(
+          rule.id === "bones_for_young_and_senior"
+            ? { ...rule, matchTerms: ["小骨", "骨付き", "魚"] }
+            : rule,
+        ),
+      ),
     );
 
     for (const tuple of expectedTuples) {

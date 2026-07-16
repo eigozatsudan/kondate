@@ -27,7 +27,7 @@ const actionEvidence: Record<SafetyAction["kind"], RegExp> = {
 };
 
 const contradictionPattern =
-  /丸ごと|切らず|骨付きのまま|硬いまま|小さく切ら(?:ない|ないで)|小さく切りません|細かく刻ま(?:ない|ないで)|細かく刻みません|4等分(?:しない|せず|しません)|四等分(?:しない|せず|しません)|縦に4つに(?:しない|せず|しません)|十分に煮(?:ない|ません)|やわらかくなるまで(?:加熱)?(?:しない|しません|せず)|中心まで(?:十分に)?加熱(?:しない|しません|せず)|骨を(?:完全に)?除(?:かない|かないで|きません)|骨を取り除(?:かない|かないで|きません)/u;
+  /丸ごと|切らず|骨付きのまま|硬いまま|小さく切ら(?:ない|ないで)|小さく切れない|小さく切りません|細かく刻ま(?:ない|ないで)|細かく刻みません|4等分(?:しない|せず|しません)|四等分(?:しない|せず|しません)|縦に4つに(?:しない|せず|しません)|十分に煮(?:ない|ません)|やわらかくなるまで(?:加熱)?(?:しない|しません|せず)|中心まで(?:十分に)?加熱(?:しない|しません|せず)|骨を(?:完全に)?除(?:かない|かないで|きません)|骨を取り除(?:かない|かないで|きません)/u;
 
 export function evaluateFoodSafetyRules(
   menu: GeneratedMenu | ValidatedMenu,
@@ -70,6 +70,11 @@ export function evaluateFoodSafetyRules(
   const ingredientName = new Map(
     menu.dishes.flatMap((dish) =>
       dish.ingredients.map((ingredient) => [ingredient.id, normalizeFoodText(ingredient.name)]),
+    ),
+  );
+  const ingredientOwner = new Map(
+    menu.dishes.flatMap((dish) =>
+      dish.ingredients.map((ingredient) => [ingredient.id, dish.id] as const),
     ),
   );
   const instructionNamesIngredient = (instruction: string, ingredientId: string): boolean => {
@@ -115,28 +120,83 @@ export function evaluateFoodSafetyRules(
         (text) => actionEvidence[kind].test(text) && normalizeFoodText(text).includes(expectedName),
       );
   };
+  const isVerifiedAction = (
+    entry: {
+      action: SafetyAction;
+      adaptation: (typeof menu.adaptations)[number];
+    },
+    memberRef: string,
+    kind: SafetyAction["kind"],
+    dishId: string,
+    ingredientId: string,
+  ): boolean => {
+    const { action, adaptation } = entry;
+    return (
+      action.kind === kind &&
+      action.dishId === dishId &&
+      action.ingredientId === ingredientId &&
+      action.anonymousMemberRef === memberRef &&
+      adaptation.dishId === dishId &&
+      adaptation.anonymousMemberRef === memberRef &&
+      ingredientOwner.get(ingredientId) === dishId &&
+      stepOwner.get(action.beforeRecipeStepId) === dishId &&
+      stepOwner.get(adaptation.branchBeforeRecipeStepId) === dishId &&
+      actionEvidence[kind].test(action.instruction) &&
+      instructionNamesIngredient(action.instruction, ingredientId) &&
+      adaptationEvidenceText(adaptation, kind, ingredientId) &&
+      adaptationNamesIngredient(adaptation, ingredientId) &&
+      !contradictionPattern.test(
+        [
+          ...(dishContradictionText.get(dishId) ?? []),
+          ...adaptationContradictionText(dishId, memberRef),
+        ].join(" "),
+      )
+    );
+  };
   for (const member of context.members) {
     const memberActions = menu.adaptations
       .filter((adaptation) => adaptation.anonymousMemberRef === member.anonymousRef)
       .flatMap((adaptation) => adaptation.safetyActions.map((action) => ({ action, adaptation })));
     for (const required of member.requiredSafetyConstraints) {
-      const hasEvidence = memberActions.some(
-        ({ action, adaptation }) =>
-          action.kind === required &&
-          action.anonymousMemberRef === member.anonymousRef &&
-          stepOwner.get(action.beforeRecipeStepId) === action.dishId &&
-          actionEvidence[action.kind].test(action.instruction) &&
-          instructionNamesIngredient(action.instruction, action.ingredientId) &&
-          adaptationEvidenceText(adaptation, action.kind, action.ingredientId) &&
-          adaptationNamesIngredient(adaptation, action.ingredientId) &&
-          !contradictionPattern.test(
-            [
-              ...(dishContradictionText.get(action.dishId) ?? []),
-              ...adaptationContradictionText(action.dishId, member.anonymousRef),
-            ].join(" "),
+      const applicableSources = sources.filter(
+        (source) =>
+          source.sourceType === "ingredient" &&
+          source.dishId !== null &&
+          source.ingredientId !== null &&
+          context.foodSafetyRules.some(
+            (rule) =>
+              rule.appliesToAgeBands.includes(member.ageBand) &&
+              rule.requiredSafetyTag === required &&
+              rule.matchTerms.some((term) =>
+                normalizeFoodText(source.text).includes(normalizeFoodText(term)),
+              ),
           ),
       );
-      if (!hasEvidence) {
+      const requiredPairs = new Map<string, { dishId: string; ingredientId: string }>();
+      for (const source of applicableSources) {
+        if (source.dishId === null || source.ingredientId === null) continue;
+        requiredPairs.set(`${source.dishId}\u0000${source.ingredientId}`, {
+          dishId: source.dishId,
+          ingredientId: source.ingredientId,
+        });
+      }
+      const missingEvidence =
+        required === "cut_small"
+          ? menu.dishes.some((dish) =>
+              dish.ingredients.every((ingredient) =>
+                memberActions.every(
+                  (entry) =>
+                    !isVerifiedAction(entry, member.anonymousRef, required, dish.id, ingredient.id),
+                ),
+              ),
+            )
+          : [...requiredPairs.values()].some(({ dishId, ingredientId }) =>
+              memberActions.every(
+                (entry) =>
+                  !isVerifiedAction(entry, member.anonymousRef, required, dishId, ingredientId),
+              ),
+            );
+      if (missingEvidence) {
         issues.push({
           code: "required_safety_action",
           path: `members.${member.anonymousRef}.requiredSafetyConstraints`,
@@ -152,20 +212,47 @@ export function evaluateFoodSafetyRules(
         ),
       );
       for (const source of matchedSources) {
-        const evidence =
-          source.ingredientId === null || source.dishId === null || rule.requiredSafetyTag === null
-            ? undefined
-            : memberActions.find(
-                ({ action, adaptation }) =>
-                  action.kind === rule.requiredSafetyTag &&
-                  action.dishId === source.dishId &&
-                  action.ingredientId === source.ingredientId &&
-                  action.anonymousMemberRef === member.anonymousRef &&
-                  stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
-                  actionEvidence[action.kind].test(action.instruction) &&
-                  instructionNamesIngredient(action.instruction, source.ingredientId) &&
-                  adaptationEvidenceText(adaptation, action.kind, source.ingredientId),
-              );
+        const requiredSafetyTag = rule.requiredSafetyTag;
+        const sourceDishId = source.dishId;
+        const sourceIngredientId = source.ingredientId;
+        const matchingIngredientSources = matchedSources.filter(
+          (candidate) =>
+            candidate.sourceType === "ingredient" &&
+            candidate.dishId === sourceDishId &&
+            candidate.ingredientId !== null,
+        );
+        const hasEvidence =
+          sourceDishId !== null &&
+          requiredSafetyTag !== null &&
+          (sourceIngredientId !== null
+            ? matchingIngredientSources.some(
+                (candidate) => candidate.ingredientId === sourceIngredientId,
+              ) &&
+              memberActions.some((entry) =>
+                isVerifiedAction(
+                  entry,
+                  member.anonymousRef,
+                  requiredSafetyTag,
+                  sourceDishId,
+                  sourceIngredientId,
+                ),
+              )
+            : matchingIngredientSources.length > 0 &&
+              matchingIngredientSources.every((candidate) => {
+                const ingredientId = candidate.ingredientId;
+                return (
+                  ingredientId !== null &&
+                  memberActions.some((entry) =>
+                    isVerifiedAction(
+                      entry,
+                      member.anonymousRef,
+                      requiredSafetyTag,
+                      sourceDishId,
+                      ingredientId,
+                    ),
+                  )
+                );
+              }));
         const contradictory = contradictionPattern.test(
           [
             source.text,
@@ -179,7 +266,7 @@ export function evaluateFoodSafetyRules(
             path: source.sourcePath,
             message: "安全対応と料理手順が矛盾しています",
           });
-        } else if (rule.ruleKind === "forbidden" || evidence === undefined) {
+        } else if (rule.ruleKind === "forbidden" || !hasEvidence) {
           issues.push({
             code: "age_shape_rule",
             path: source.sourcePath,
