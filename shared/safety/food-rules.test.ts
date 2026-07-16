@@ -261,6 +261,150 @@ it.each(["鮭の骨を除く予定はない", "鮭の骨を取り除く必要は
   },
 );
 
+it("安全工程を行わない「ことなく」を除骨の根拠にしない", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({
+      actionIngredient: "salmon",
+      instruction: "鮭の骨を除くことなく提供する",
+    }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it("安全工程を行わない「ことなく」を小切りの根拠にしない", () => {
+  const base = makeValidatedMenu();
+  const adaptations = base.dishes.map((dish, index) => {
+    const ingredient = dish.ingredients[0]!;
+    const instruction = `${ingredient.name}を小さく切ることなく提供する`;
+
+    return {
+      id: `57000000-0000-4000-8000-00000000000${String(index + 1)}`,
+      dishId: dish.id,
+      anonymousMemberRef: "member_1",
+      portionText: "通常量",
+      branchBeforeRecipeStepId: dish.steps[0]!.id,
+      additionalCutting: instruction,
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: instruction,
+      safetyTags: [],
+      safetyActions: [
+        {
+          kind: "cut_small" as const,
+          dishId: dish.id,
+          ingredientId: ingredient.id,
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: dish.steps[0]!.id,
+          instruction,
+        },
+      ],
+    };
+  });
+
+  expect(
+    evaluateFoodSafetyRules(
+      makeValidatedMenu({ adaptations }),
+      requiredConstraintContext("cut_small"),
+    ),
+  ).toEqual([expect.objectContaining({ code: "required_safety_action" })]);
+});
+
+it("長い別食材名の中にある短い食材名を工程の対象根拠にしない", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const firstDish = base.dishes[0]!;
+  const salmon = firstDish.ingredients.find((ingredient) => ingredient.name === "鮭")!;
+  const salmonFlakes = {
+    ...firstDish.ingredients[1]!,
+    id: "53000000-0000-4000-8000-000000000004",
+    position: 2,
+    name: "鮭フレーク",
+  };
+  const instruction = "鮭フレークの骨を完全に除く";
+  const menu = makeValidatedMenu({
+    ...base,
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [salmon, salmonFlakes],
+            steps: [{ ...dish.steps[0]!, instruction }],
+          }
+        : dish,
+    ),
+    adaptations: base.adaptations.map((adaptation) => ({
+      ...adaptation,
+      additionalCutting: instruction,
+      servingCheck: instruction,
+      safetyActions: [
+        {
+          ...adaptation.safetyActions[0]!,
+          ingredientId: salmon.id,
+          instruction,
+        },
+        {
+          ...adaptation.safetyActions[0]!,
+          ingredientId: salmonFlakes.id,
+          instruction,
+        },
+      ],
+    })),
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it("長い食材名の中の短名を別食材参照とみなさず省略工程を引き継ぐ", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const firstDish = base.dishes[0]!;
+  const salmon = firstDish.ingredients.find((ingredient) => ingredient.name === "鮭")!;
+  const salmonFlakes = {
+    ...firstDish.ingredients[1]!,
+    id: "53000000-0000-4000-8000-000000000004",
+    position: 2,
+    name: "鮭フレーク",
+  };
+  const salmonInstruction = "鮭を用意し、骨を完全に除く";
+  const flakesInstruction = "鮭フレークを用意し、骨を完全に除く";
+  const evidenceInstruction = `${salmonInstruction}。${flakesInstruction}`;
+  const menu = makeValidatedMenu({
+    ...base,
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [salmon, salmonFlakes],
+            steps: [{ ...dish.steps[0]!, instruction: evidenceInstruction }],
+          }
+        : dish,
+    ),
+    adaptations: base.adaptations.map((adaptation) => ({
+      ...adaptation,
+      additionalCutting: evidenceInstruction,
+      servingCheck: evidenceInstruction,
+      safetyActions: [
+        {
+          ...adaptation.safetyActions[0]!,
+          ingredientId: salmon.id,
+          instruction: salmonInstruction,
+        },
+        {
+          ...adaptation.safetyActions[0]!,
+          ingredientId: salmonFlakes.id,
+          instruction: flakesInstruction,
+        },
+      ],
+    })),
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
+});
+
 it("accepts locally bound deboning evidence followed by an unrelated sentence", () => {
   const issues = evaluateFoodSafetyRules(
     sourceBoundSafetyMenu({
@@ -355,6 +499,33 @@ it("rejects a local deboning contradiction even when an earlier clause is affirm
   expect(issues).toEqual(
     expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
   );
+});
+
+it.each(["鮭の骨を残す", "鮭の骨を残して提供する", "鮭の骨が残る", "鮭の骨が残ったまま提供する"])(
+  "除骨工程と骨を残す指示の矛盾を検出する: %s",
+  (contradiction) => {
+    const instruction = `鮭の骨を完全に除く。${contradiction}`;
+
+    expect(
+      evaluateFoodSafetyRules(
+        sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+        requiredConstraintContext("remove_bones"),
+      ),
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+    );
+  },
+);
+
+it("別食材の骨を残す指示を鮭の矛盾にしない", () => {
+  const instruction = "鮭の骨を完全に除く、にんじんの骨を残す";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual([]);
 });
 
 it("accepts an ownerless timeline source when the same fish ingredient has verified evidence", () => {
@@ -1069,6 +1240,19 @@ it("accepts deboning evidence followed by a safe fallback without punctuation", 
       requiredConstraintContext("remove_bones"),
     ),
   ).toEqual([]);
+});
+
+it("無関係な異常時の提供中止で除骨の否定を打ち消さない", () => {
+  const instruction = "鮭の骨を除かないが異常の場合は提供しない";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
 });
 
 it("accepts an instruction that avoids cutting ingredients too small", () => {

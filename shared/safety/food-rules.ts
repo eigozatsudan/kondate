@@ -103,14 +103,56 @@ const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAltern
 };
 
 const independentContradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
+const actionSpecificContradictionPattern: Partial<Record<SafetyAction["kind"], RegExp>> = {
+  remove_bones: /骨(?:を残(?:す|して)|が残(?:る|ったまま))/u,
+};
 const periphrasticNegationPattern =
-  /^(?:いたりはしない|(?:(?:く|る|む|する|にする|を確認する)?(?:という)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません)))/u;
+  /^(?:(?:く|る|む|する|にする|を確認する)?ことなく|いたりはしない|(?:(?:く|る|む|する|にする|を確認する)?(?:という)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません)))/u;
 const sentenceBoundaryPattern = /[。！？!?；;\r\n]+/u;
 const localClauseBoundaryPattern = /[、,，:：]+/u;
-const safeFallbackPattern = /場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
+const safeFallbackConsequencePattern = /^場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
 
 function isNegatedActionSuffix(suffix: string, alternative: ActionEvidenceAlternative): boolean {
   return alternative.negatedSuffixPattern.test(suffix) || periphrasticNegationPattern.test(suffix);
+}
+
+function isSafeFallbackSuffix(suffix: string, alternative: ActionEvidenceAlternative): boolean {
+  for (const pattern of [alternative.negatedSuffixPattern, periphrasticNegationPattern]) {
+    const match = pattern.exec(suffix);
+    if (match !== null && safeFallbackConsequencePattern.test(suffix.slice(match[0].length))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasUncoveredIngredientName(
+  text: string,
+  normalizedIngredientName: string,
+  normalizedDishIngredientNames: readonly string[],
+): boolean {
+  const longerIngredientNames = normalizedDishIngredientNames.filter(
+    (name) =>
+      name.length > normalizedIngredientName.length && name.includes(normalizedIngredientName),
+  );
+  let ingredientIndex = text.indexOf(normalizedIngredientName);
+
+  while (ingredientIndex >= 0) {
+    const ingredientEnd = ingredientIndex + normalizedIngredientName.length;
+    const isCoveredByLongerName = longerIngredientNames.some((longerName) => {
+      let longerNameIndex = text.indexOf(longerName);
+      while (longerNameIndex >= 0 && longerNameIndex <= ingredientIndex) {
+        if (longerNameIndex + longerName.length >= ingredientEnd) return true;
+        longerNameIndex = text.indexOf(longerName, longerNameIndex + 1);
+      }
+      return false;
+    });
+    if (!isCoveredByLongerName) return true;
+    ingredientIndex = text.indexOf(normalizedIngredientName, ingredientIndex + 1);
+  }
+
+  return false;
 }
 
 function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
@@ -140,7 +182,9 @@ function hasNegatedActionEvidence(text: string, kind: SafetyAction["kind"]): boo
     return [...text.matchAll(globalAffirmativePattern)].some((match) => {
       const matchEnd = match.index + match[0].length;
       const suffix = text.slice(matchEnd);
-      return isNegatedActionSuffix(suffix, alternative) && !safeFallbackPattern.test(suffix);
+      return (
+        isNegatedActionSuffix(suffix, alternative) && !isSafeFallbackSuffix(suffix, alternative)
+      );
     });
   });
 }
@@ -156,18 +200,35 @@ function hasIngredientBoundActionEvidence(
     return clauses.some((clause, index) => {
       if (!hasAffirmativeActionEvidence(clause, kind)) return false;
       const normalizedClause = normalizeFoodText(clause);
-      if (normalizedClause.includes(normalizedIngredientName)) return true;
+      if (
+        hasUncoveredIngredientName(
+          normalizedClause,
+          normalizedIngredientName,
+          normalizedDishIngredientNames,
+        )
+      ) {
+        return true;
+      }
 
       // 読点後に主語を省略した工程は直前の対象を引き継ぐが、別食材名があれば引き継がない。
       const previousClause = clauses[index - 1];
       const normalizedPreviousClause = normalizeFoodText(previousClause ?? "");
       return (
         previousClause !== undefined &&
-        normalizedPreviousClause.includes(normalizedIngredientName) &&
+        hasUncoveredIngredientName(
+          normalizedPreviousClause,
+          normalizedIngredientName,
+          normalizedDishIngredientNames,
+        ) &&
         !normalizedDishIngredientNames.some(
           (name) =>
             name !== normalizedIngredientName &&
-            (normalizedPreviousClause.includes(name) || normalizedClause.includes(name)),
+            (hasUncoveredIngredientName(
+              normalizedPreviousClause,
+              name,
+              normalizedDishIngredientNames,
+            ) ||
+              hasUncoveredIngredientName(normalizedClause, name, normalizedDishIngredientNames)),
         )
       );
     });
@@ -176,6 +237,7 @@ function hasIngredientBoundActionEvidence(
 
 function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boolean {
   if (independentContradictionPattern.test(text)) return true;
+  if (actionSpecificContradictionPattern[kind]?.test(text) === true) return true;
 
   // 同じ文章に肯定工程があっても、後から明示された否定を相殺させない。
   return hasNegatedActionEvidence(text, kind);
@@ -192,17 +254,34 @@ function hasIngredientBoundActionContradiction(
     return clauses.some((clause, index) => {
       if (!hasActionContradiction(clause, kind)) return false;
       const normalizedClause = normalizeFoodText(clause);
-      if (normalizedClause.includes(normalizedIngredientName)) return true;
+      if (
+        hasUncoveredIngredientName(
+          normalizedClause,
+          normalizedIngredientName,
+          normalizedDishIngredientNames,
+        )
+      ) {
+        return true;
+      }
 
       const previousClause = clauses[index - 1];
       const normalizedPreviousClause = normalizeFoodText(previousClause ?? "");
       return (
         previousClause !== undefined &&
-        normalizedPreviousClause.includes(normalizedIngredientName) &&
+        hasUncoveredIngredientName(
+          normalizedPreviousClause,
+          normalizedIngredientName,
+          normalizedDishIngredientNames,
+        ) &&
         !normalizedDishIngredientNames.some(
           (name) =>
             name !== normalizedIngredientName &&
-            (normalizedPreviousClause.includes(name) || normalizedClause.includes(name)),
+            (hasUncoveredIngredientName(
+              normalizedPreviousClause,
+              name,
+              normalizedDishIngredientNames,
+            ) ||
+              hasUncoveredIngredientName(normalizedClause, name, normalizedDishIngredientNames)),
         )
       );
     });
@@ -274,7 +353,22 @@ export function evaluateFoodSafetyRules(
     const expectedName = ingredientName.get(ingredientId);
     if (expectedName === undefined) return false;
     if (source.ingredientId !== null) {
-      return source.ingredientId === ingredientId && hasActionContradiction(source.text, kind);
+      if (source.ingredientId !== ingredientId) return false;
+      if (source.sourceType === "ingredient") return hasActionContradiction(source.text, kind);
+
+      const normalizedDishNames = dishIngredientNames.get(dishId) ?? [];
+      if (
+        hasIngredientBoundActionContradiction(source.text, kind, expectedName, normalizedDishNames)
+      ) {
+        return true;
+      }
+
+      // 対象IDだけを持つ工程では対象名の省略を許すが、別食材を明記した矛盾は対象へ転嫁しない。
+      const normalizedSource = normalizeFoodText(source.text);
+      return (
+        !normalizedDishNames.some((name) => normalizedSource.includes(name)) &&
+        hasActionContradiction(source.text, kind)
+      );
     }
     if (
       hasIngredientBoundActionContradiction(
