@@ -489,6 +489,93 @@ it.each(["鮭の骨を除いたりはしない", "鮭の骨を除くという予
   },
 );
 
+it.each([
+  "鮭の骨を除こうとしない",
+  "鮭の骨を除くわけではない",
+  "鮭の骨を除くことはない",
+  "鮭の骨を除きはしない",
+  "鮭の骨を除くふりをする",
+  "鮭の骨を除くとは限らない",
+])("rejects an unrecognized or negative deboning suffix: %s", (instruction) => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it("binds deboning evidence to the nearest preceding ingredient", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({
+      actionIngredient: "salmon",
+      instruction: "鮭を焼いた後ににんじんの骨を除く",
+    }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it("does not bind another ingredient's local contradiction to salmon", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const menu = makeValidatedMenu({
+    ...base,
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            steps: [
+              {
+                ...dish.steps[0]!,
+                instruction: "鮭を焼いた後ににんじんの骨を残す",
+              },
+            ],
+          }
+        : dish,
+    ),
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
+});
+
+it("binds a local contradiction to its nearest preceding ingredient", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "carrot" });
+  const menu = makeValidatedMenu({
+    ...base,
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            steps: [
+              {
+                ...dish.steps[0]!,
+                instruction: "鮭を焼いた後ににんじんの骨を残す",
+              },
+            ],
+          }
+        : dish,
+    ),
+  });
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menu, {
+      ...safety,
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({
+        ...rule,
+        matchTerms: ["にんじん"],
+      })),
+    }),
+  ).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
+});
+
 it("rejects a local deboning contradiction even when an earlier clause is affirmative", () => {
   const instruction = "鮭の骨を完全に除く。だが鮭の骨を除かない";
   const issues = evaluateFoodSafetyRules(

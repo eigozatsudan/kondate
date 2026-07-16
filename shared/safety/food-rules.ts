@@ -19,83 +19,101 @@ export type FoodSafetyRule = {
 };
 
 type ActionEvidenceAlternative = {
-  affirmativePattern: RegExp;
+  stemPattern: RegExp;
+  affirmativeSuffixPattern: RegExp;
   negatedSuffixPattern: RegExp;
 };
 
 const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAlternative[]> = {
   remove_bones: [
     {
-      affirmativePattern: /骨を(?:完全に)?除/u,
+      stemPattern: /骨を(?:完全に)?除/u,
+      affirmativeSuffixPattern:
+        /^(?:く(?:ことを確認(?:する|した|してください))?|いた(?:ことを確認(?:する|した))?|(?:き|いて)(?:(?:細かく)?ほぐす|骨がないことを確認(?:できない|できません)場合は(?:提供|配膳|盛り付け)(?:を)?しない)?|去(?:する|した))$/u,
       negatedSuffixPattern:
         /^(?:かない|かず|きません|けない|けません|去できない|去できません|くことができない|くことができません)/u,
     },
     {
-      affirmativePattern: /骨を取り除/u,
+      stemPattern: /骨を取り除/u,
+      affirmativeSuffixPattern:
+        /^(?:く(?:ことを確認(?:する|した|してください))?|いた(?:ことを確認(?:する|した))?|(?:き|いて)(?:(?:細かく)?ほぐす|骨がないことを確認(?:できない|できません)場合は(?:提供|配膳|盛り付け)(?:を)?しない)?)$/u,
       negatedSuffixPattern:
         /^(?:かない|かず|きません|けない|けません|くことができない|くことができません)/u,
     },
     {
-      affirmativePattern: /骨がないことを確認/u,
+      stemPattern: /骨がないことを確認/u,
+      affirmativeSuffixPattern: /^(?:する|した|できた)$/u,
       negatedSuffixPattern: /^(?:しない|せず|しません|できない|できません)/u,
     },
   ],
   cut_small: [
     {
-      affirmativePattern: /小さく切/u,
+      stemPattern: /小さく切/u,
+      affirmativeSuffixPattern:
+        /^(?:る(?:ことを確認(?:する|した))?|ったことを確認(?:する|した)|り(?:すぎないように調整する)?)$/u,
       negatedSuffixPattern:
         /^(?!りすぎない)(?:らない|らず|れない|れません|りません|ることができない|ることができません)/u,
     },
     {
-      affirmativePattern: /一口大以下/u,
+      stemPattern: /一口大以下/u,
+      affirmativeSuffixPattern: /^(?:に(?:切る|する)|)$/u,
       negatedSuffixPattern: /^(?:(?:に|には)?(?:しない|せず|しません|できない|できません))/u,
     },
     {
-      affirmativePattern: /細かく刻/u,
+      stemPattern: /細かく刻/u,
+      affirmativeSuffixPattern: /^(?:む|んだ|み)$/u,
       negatedSuffixPattern:
         /^(?:まない|まず|めない|めません|みません|むことができない|むことができません)/u,
     },
   ],
   quarter_round_food: [
     {
-      affirmativePattern: /4等分/u,
+      stemPattern: /4等分/u,
+      affirmativeSuffixPattern: /^(?:する|した)?$/u,
       negatedSuffixPattern:
         /^(?:しない|せず|しません|できない|できません|することができない|することができません)/u,
     },
     {
-      affirmativePattern: /四等分/u,
+      stemPattern: /四等分/u,
+      affirmativeSuffixPattern: /^(?:する|した)?$/u,
       negatedSuffixPattern:
         /^(?:しない|せず|しません|できない|できません|することができない|することができません)/u,
     },
     {
-      affirmativePattern: /縦に4つ/u,
+      stemPattern: /縦に4つ/u,
+      affirmativeSuffixPattern: /^(?:に切る|にする)?$/u,
       negatedSuffixPattern:
         /^(?:に)?(?:しない|せず|しません|できない|できません|することができない|することができません)/u,
     },
   ],
   soften: [
     {
-      affirmativePattern: /やわらかくなるまで/u,
+      stemPattern: /やわらかくなるまで/u,
+      affirmativeSuffixPattern: /^(?:加熱する|煮る)$/u,
       negatedSuffixPattern:
         /^(?:加熱(?:しない|しません|せず|できない|できません|することができない|することができません)|しない|しません|せず)/u,
     },
     {
-      affirmativePattern: /舌でつぶせる/u,
+      stemPattern: /舌でつぶせる/u,
+      affirmativeSuffixPattern: /^(?:やわらかさまで(?:加熱する|煮る))?$/u,
       negatedSuffixPattern: /(?!)/u,
     },
     {
-      affirmativePattern: /十分に煮/u,
+      stemPattern: /十分に煮/u,
+      affirmativeSuffixPattern: /^(?:る|た)$/u,
       negatedSuffixPattern: /^(?:ない|ません|ることができない|ることができません)/u,
     },
   ],
   heat_thoroughly: [
     {
-      affirmativePattern: /中心まで(?:十分に)?加熱/u,
+      stemPattern: /中心まで(?:十分に)?加熱/u,
+      affirmativeSuffixPattern: /^(?:する|した)$/u,
       negatedSuffixPattern:
         /^(?:しない|しません|せず|できない|できません|することができない|することができません)/u,
     },
     {
-      affirmativePattern: /中心温度/u,
+      stemPattern: /中心温度/u,
+      affirmativeSuffixPattern: /^(?:を確認(?:する|した))$/u,
       negatedSuffixPattern:
         /^(?:(?:を)?(?:確認)?(?:しない|しません|せず)|(?:を)?確認(?:できない|できません|することができない|することができません))/u,
     },
@@ -127,66 +145,122 @@ function isSafeFallbackSuffix(suffix: string, alternative: ActionEvidenceAlterna
   return false;
 }
 
-function hasUncoveredIngredientName(
-  text: string,
-  normalizedIngredientName: string,
-  normalizedDishIngredientNames: readonly string[],
-): boolean {
-  const longerIngredientNames = normalizedDishIngredientNames.filter(
-    (name) =>
-      name.length > normalizedIngredientName.length && name.includes(normalizedIngredientName),
-  );
-  let ingredientIndex = text.indexOf(normalizedIngredientName);
+type TextOccurrence = {
+  index: number;
+  length: number;
+};
 
-  while (ingredientIndex >= 0) {
-    const ingredientEnd = ingredientIndex + normalizedIngredientName.length;
-    const isCoveredByLongerName = longerIngredientNames.some((longerName) => {
-      let longerNameIndex = text.indexOf(longerName);
-      while (longerNameIndex >= 0 && longerNameIndex <= ingredientIndex) {
-        if (longerNameIndex + longerName.length >= ingredientEnd) return true;
-        longerNameIndex = text.indexOf(longerName, longerNameIndex + 1);
-      }
-      return false;
-    });
-    if (!isCoveredByLongerName) return true;
-    ingredientIndex = text.indexOf(normalizedIngredientName, ingredientIndex + 1);
-  }
-
-  return false;
+function findPatternOccurrences(text: string, pattern: RegExp): readonly TextOccurrence[] {
+  const globalPattern = new RegExp(pattern.source, `${pattern.flags.replace("g", "")}g`);
+  return [...text.matchAll(globalPattern)].map((match) => ({
+    index: match.index,
+    length: match[0].length,
+  }));
 }
 
-function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
+function findAffirmativeActionOccurrences(
+  text: string,
+  kind: SafetyAction["kind"],
+): readonly TextOccurrence[] {
+  const normalizedText = normalizeFoodText(text);
+  const occurrences: TextOccurrence[] = [];
+
   for (const alternative of actionEvidence[kind]) {
-    const globalAffirmativePattern = new RegExp(
-      alternative.affirmativePattern.source,
-      `${alternative.affirmativePattern.flags}g`,
-    );
-    for (const match of text.matchAll(globalAffirmativePattern)) {
-      const matchEnd = match.index + match[0].length;
-      const suffix = text.slice(matchEnd);
-      if (!isNegatedActionSuffix(suffix, alternative)) {
-        return true;
+    for (const occurrence of findPatternOccurrences(normalizedText, alternative.stemPattern)) {
+      const suffix = normalizedText.slice(occurrence.index + occurrence.length);
+      const suffixMatch = alternative.affirmativeSuffixPattern.exec(suffix);
+      if (suffixMatch !== null) {
+        occurrences.push({
+          index: occurrence.index,
+          length: occurrence.length + suffixMatch[0].length,
+        });
       }
     }
   }
 
-  return false;
+  return occurrences;
+}
+
+function findNegatedActionOccurrences(
+  text: string,
+  kind: SafetyAction["kind"],
+): readonly TextOccurrence[] {
+  const normalizedText = normalizeFoodText(text);
+  const occurrences: TextOccurrence[] = [];
+
+  for (const alternative of actionEvidence[kind]) {
+    for (const occurrence of findPatternOccurrences(normalizedText, alternative.stemPattern)) {
+      const suffix = normalizedText.slice(occurrence.index + occurrence.length);
+      if (
+        isNegatedActionSuffix(suffix, alternative) &&
+        !isSafeFallbackSuffix(suffix, alternative)
+      ) {
+        occurrences.push(occurrence);
+      }
+    }
+  }
+
+  return occurrences;
 }
 
 function hasNegatedActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
-  return actionEvidence[kind].some((alternative) => {
-    const globalAffirmativePattern = new RegExp(
-      alternative.affirmativePattern.source,
-      `${alternative.affirmativePattern.flags}g`,
-    );
-    return [...text.matchAll(globalAffirmativePattern)].some((match) => {
-      const matchEnd = match.index + match[0].length;
-      const suffix = text.slice(matchEnd);
-      return (
-        isNegatedActionSuffix(suffix, alternative) && !isSafeFallbackSuffix(suffix, alternative)
-      );
-    });
-  });
+  return findNegatedActionOccurrences(text, kind).length > 0;
+}
+
+function findUncoveredIngredientOccurrences(
+  text: string,
+  normalizedDishIngredientNames: readonly string[],
+): readonly { name: string; index: number }[] {
+  const uniqueNames = [...new Set(normalizedDishIngredientNames)];
+  const occurrences: { name: string; index: number }[] = [];
+
+  for (const name of uniqueNames) {
+    let index = text.indexOf(name);
+    while (index >= 0) {
+      const end = index + name.length;
+      const covered = uniqueNames.some((otherName) => {
+        if (otherName.length <= name.length || !otherName.includes(name)) return false;
+        let otherIndex = text.indexOf(otherName);
+        while (otherIndex >= 0 && otherIndex <= index) {
+          if (otherIndex + otherName.length >= end) return true;
+          otherIndex = text.indexOf(otherName, otherIndex + 1);
+        }
+        return false;
+      });
+      if (!covered) occurrences.push({ name, index });
+      index = text.indexOf(name, index + 1);
+    }
+  }
+
+  return occurrences;
+}
+
+function resolveOccurrenceIngredientName(
+  normalizedClause: string,
+  occurrenceIndex: number,
+  normalizedPreviousClause: string,
+  normalizedDishIngredientNames: readonly string[],
+): string | null {
+  const localCandidates = findUncoveredIngredientOccurrences(
+    normalizedClause,
+    normalizedDishIngredientNames,
+  ).filter((candidate) => candidate.index < occurrenceIndex);
+  const nearestIndex = Math.max(...localCandidates.map((candidate) => candidate.index));
+  const nearestNames = new Set(
+    localCandidates
+      .filter((candidate) => candidate.index === nearestIndex)
+      .map((candidate) => candidate.name),
+  );
+  if (nearestNames.size === 1) return [...nearestNames][0] ?? null;
+  if (localCandidates.length > 0) return null;
+
+  // 読点後の省略主語は、直前節で対象食材が一意な場合に限って引き継ぐ。
+  const previousNames = new Set(
+    findUncoveredIngredientOccurrences(normalizedPreviousClause, normalizedDishIngredientNames).map(
+      (candidate) => candidate.name,
+    ),
+  );
+  return previousNames.size === 1 ? ([...previousNames][0] ?? null) : null;
 }
 
 function hasIngredientBoundActionEvidence(
@@ -198,49 +272,43 @@ function hasIngredientBoundActionEvidence(
   return text.split(sentenceBoundaryPattern).some((sentence) => {
     const clauses = sentence.split(localClauseBoundaryPattern);
     return clauses.some((clause, index) => {
-      if (!hasAffirmativeActionEvidence(clause, kind)) return false;
       const normalizedClause = normalizeFoodText(clause);
-      if (
-        hasUncoveredIngredientName(
-          normalizedClause,
-          normalizedIngredientName,
-          normalizedDishIngredientNames,
-        )
-      ) {
-        return true;
-      }
-
-      // 読点後に主語を省略した工程は直前の対象を引き継ぐが、別食材名があれば引き継がない。
-      const previousClause = clauses[index - 1];
-      const normalizedPreviousClause = normalizeFoodText(previousClause ?? "");
-      return (
-        previousClause !== undefined &&
-        hasUncoveredIngredientName(
-          normalizedPreviousClause,
-          normalizedIngredientName,
-          normalizedDishIngredientNames,
-        ) &&
-        !normalizedDishIngredientNames.some(
-          (name) =>
-            name !== normalizedIngredientName &&
-            (hasUncoveredIngredientName(
-              normalizedPreviousClause,
-              name,
-              normalizedDishIngredientNames,
-            ) ||
-              hasUncoveredIngredientName(normalizedClause, name, normalizedDishIngredientNames)),
-        )
+      const normalizedPreviousClause = normalizeFoodText(clauses[index - 1] ?? "");
+      return findAffirmativeActionOccurrences(normalizedClause, kind).some(
+        (occurrence) =>
+          resolveOccurrenceIngredientName(
+            normalizedClause,
+            occurrence.index,
+            normalizedPreviousClause,
+            normalizedDishIngredientNames,
+          ) === normalizedIngredientName,
       );
     });
   });
 }
 
 function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boolean {
-  if (independentContradictionPattern.test(text)) return true;
-  if (actionSpecificContradictionPattern[kind]?.test(text) === true) return true;
+  const normalizedText = normalizeFoodText(text);
+  if (independentContradictionPattern.test(normalizedText)) return true;
+  if (actionSpecificContradictionPattern[kind]?.test(normalizedText) === true) return true;
 
   // 同じ文章に肯定工程があっても、後から明示された否定を相殺させない。
   return hasNegatedActionEvidence(text, kind);
+}
+
+function findActionContradictionOccurrences(
+  text: string,
+  kind: SafetyAction["kind"],
+): readonly TextOccurrence[] {
+  const normalizedText = normalizeFoodText(text);
+  const actionSpecificPattern = actionSpecificContradictionPattern[kind];
+  return [
+    ...findPatternOccurrences(normalizedText, independentContradictionPattern),
+    ...(actionSpecificPattern === undefined
+      ? []
+      : findPatternOccurrences(normalizedText, actionSpecificPattern)),
+    ...findNegatedActionOccurrences(normalizedText, kind),
+  ];
 }
 
 function hasIngredientBoundActionContradiction(
@@ -252,37 +320,16 @@ function hasIngredientBoundActionContradiction(
   return text.split(sentenceBoundaryPattern).some((sentence) => {
     const clauses = sentence.split(localClauseBoundaryPattern);
     return clauses.some((clause, index) => {
-      if (!hasActionContradiction(clause, kind)) return false;
       const normalizedClause = normalizeFoodText(clause);
-      if (
-        hasUncoveredIngredientName(
-          normalizedClause,
-          normalizedIngredientName,
-          normalizedDishIngredientNames,
-        )
-      ) {
-        return true;
-      }
-
-      const previousClause = clauses[index - 1];
-      const normalizedPreviousClause = normalizeFoodText(previousClause ?? "");
-      return (
-        previousClause !== undefined &&
-        hasUncoveredIngredientName(
-          normalizedPreviousClause,
-          normalizedIngredientName,
-          normalizedDishIngredientNames,
-        ) &&
-        !normalizedDishIngredientNames.some(
-          (name) =>
-            name !== normalizedIngredientName &&
-            (hasUncoveredIngredientName(
-              normalizedPreviousClause,
-              name,
-              normalizedDishIngredientNames,
-            ) ||
-              hasUncoveredIngredientName(normalizedClause, name, normalizedDishIngredientNames)),
-        )
+      const normalizedPreviousClause = normalizeFoodText(clauses[index - 1] ?? "");
+      return findActionContradictionOccurrences(normalizedClause, kind).some(
+        (occurrence) =>
+          resolveOccurrenceIngredientName(
+            normalizedClause,
+            occurrence.index,
+            normalizedPreviousClause,
+            normalizedDishIngredientNames,
+          ) === normalizedIngredientName,
       );
     });
   });
