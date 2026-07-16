@@ -273,6 +273,90 @@ it("accepts locally bound deboning evidence followed by an unrelated sentence", 
   expect(issues).toEqual([]);
 });
 
+it("accepts a locally bound fish name omitted from the following action clause", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({
+      actionIngredient: "salmon",
+      instruction: "鮭を中心まで十分に焼き、骨を完全に除いて細かくほぐす",
+    }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual([]);
+});
+
+it.each(["鮭は焼く、にんじんの骨を完全に除く", "鮭は焼く：にんじんの骨を完全に除く"])(
+  "rejects deboning evidence bound to another ingredient across a local boundary: %s",
+  (instruction) => {
+    const issues = evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    );
+
+    expect(issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+    );
+  },
+);
+
+it("requires each fish action to name that fish in the local action clause", () => {
+  const instruction = "鮭と鯖を用意し、鮭の骨を完全に除く";
+  const base = sourceBoundSafetyMenu({
+    actionIngredient: "salmon",
+    includeSecondFish: true,
+    instruction,
+  });
+  const firstDish = base.dishes[0]!;
+  const mackerel = firstDish.ingredients.find((ingredient) => ingredient.name === "鯖")!;
+  const menu = makeValidatedMenu({
+    ...base,
+    adaptations: base.adaptations.map((adaptation) => ({
+      ...adaptation,
+      safetyActions: [
+        ...adaptation.safetyActions,
+        {
+          kind: "remove_bones",
+          dishId: firstDish.id,
+          ingredientId: mackerel.id,
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: firstDish.steps[0]!.id,
+          instruction,
+        },
+      ],
+    })),
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it.each(["鮭の骨を除いたりはしない", "鮭の骨を除くという予定はない"])(
+  "rejects indirectly negated deboning evidence: %s",
+  (instruction) => {
+    const issues = evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    );
+
+    expect(issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+    );
+  },
+);
+
+it("rejects a local deboning contradiction even when an earlier clause is affirmative", () => {
+  const instruction = "鮭の骨を完全に除く。だが鮭の骨を除かない";
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
+});
+
 it("accepts an ownerless timeline source when the same fish ingredient has verified evidence", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
@@ -288,6 +372,25 @@ it("accepts an ownerless timeline source when the same fish ingredient has verif
   });
 
   expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
+});
+
+it("rejects an ownerless timeline contradiction bound to a matched fish ingredient", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const menu = makeValidatedMenu({
+    ...base,
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: "鮭は骨付きのまま焼く",
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
 });
 
 it("rejects an ownerless source when one of its matched fish terms has no real ingredient", () => {
@@ -1419,6 +1522,65 @@ const grapeQuarteringRule = {
   ruleKind: "requires_tag" as const,
   requiredSafetyTag: "quarter_round_food" as const,
 };
+
+it("does not apply another ingredient's whole-shape contradiction to a cut-small action", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const grape = { ...firstDish.ingredients[0]!, name: "ぶどう" };
+  const carrot = {
+    ...base.dishes[1]!.ingredients[0]!,
+    id: "53000000-0000-4000-8000-000000000003",
+    position: 2,
+    name: "にんじん",
+  };
+  const instruction = "ぶどうを小さく切る、にんじんは丸ごと盛り付ける";
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [grape, carrot],
+            steps: [{ ...dish.steps[0]!, instruction }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: instruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "ぶどうを小さく切ったことを確認する",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: firstDish.id,
+            ingredientId: grape.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "ぶどうを小さく切る",
+          },
+        ],
+      },
+    ],
+  });
+  const grapeRule = {
+    ...hardBeanAndReviewedNutRule,
+    id: "grapes_cut_small",
+    matchTerms: ["ぶどう"],
+    ruleKind: "requires_tag" as const,
+    requiredSafetyTag: "cut_small" as const,
+  };
+
+  expect(
+    evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [grapeRule] }),
+  ).toEqual([]);
+});
 
 it.each([
   ["quantityText", { quantityText: "丸ごと1個" }],

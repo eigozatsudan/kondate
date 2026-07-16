@@ -5,7 +5,7 @@ import type {
   SafetyAction,
   ValidatedMenu,
 } from "../contracts/generation.js";
-import { collectMenuTextSources, normalizeFoodText } from "./allergens.js";
+import { collectMenuTextSources, normalizeFoodText, type MenuTextSource } from "./allergens.js";
 import type { CurrentSafetyContext } from "./context.js";
 
 export type FoodSafetyRule = {
@@ -104,8 +104,14 @@ const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAltern
 
 const independentContradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
 const periphrasticNegationPattern =
-  /^(?:(?:く|る|む|する|にする|を確認する)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません))/u;
-const localEvidenceBoundaryPattern = /[。！？!?；;\r\n]+/u;
+  /^(?:いたりはしない|(?:(?:く|る|む|する|にする|を確認する)?(?:という)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません)))/u;
+const sentenceBoundaryPattern = /[。！？!?；;\r\n]+/u;
+const localClauseBoundaryPattern = /[、,，:：]+/u;
+const safeFallbackPattern = /場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
+
+function isNegatedActionSuffix(suffix: string, alternative: ActionEvidenceAlternative): boolean {
+  return alternative.negatedSuffixPattern.test(suffix) || periphrasticNegationPattern.test(suffix);
+}
 
 function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
   for (const alternative of actionEvidence[kind]) {
@@ -116,10 +122,7 @@ function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]):
     for (const match of text.matchAll(globalAffirmativePattern)) {
       const matchEnd = match.index + match[0].length;
       const suffix = text.slice(matchEnd);
-      if (
-        !alternative.negatedSuffixPattern.test(suffix) &&
-        !periphrasticNegationPattern.test(suffix)
-      ) {
+      if (!isNegatedActionSuffix(suffix, alternative)) {
         return true;
       }
     }
@@ -128,28 +131,82 @@ function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]):
   return false;
 }
 
+function hasNegatedActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
+  return actionEvidence[kind].some((alternative) => {
+    const globalAffirmativePattern = new RegExp(
+      alternative.affirmativePattern.source,
+      `${alternative.affirmativePattern.flags}g`,
+    );
+    return [...text.matchAll(globalAffirmativePattern)].some((match) => {
+      const matchEnd = match.index + match[0].length;
+      const suffix = text.slice(matchEnd);
+      return isNegatedActionSuffix(suffix, alternative) && !safeFallbackPattern.test(suffix);
+    });
+  });
+}
+
 function hasIngredientBoundActionEvidence(
   text: string,
   kind: SafetyAction["kind"],
   normalizedIngredientName: string,
+  normalizedDishIngredientNames: readonly string[],
 ): boolean {
-  // 食材名と安全動作を文全体から別々に拾うと、別の食材への処置を対象食材の処置と誤認する。
-  return text.split(localEvidenceBoundaryPattern).some((unit) => {
-    const normalizedUnit = normalizeFoodText(unit);
-    return (
-      normalizedUnit.includes(normalizedIngredientName) && hasAffirmativeActionEvidence(unit, kind)
-    );
+  return text.split(sentenceBoundaryPattern).some((sentence) => {
+    const clauses = sentence.split(localClauseBoundaryPattern);
+    return clauses.some((clause, index) => {
+      if (!hasAffirmativeActionEvidence(clause, kind)) return false;
+      const normalizedClause = normalizeFoodText(clause);
+      if (normalizedClause.includes(normalizedIngredientName)) return true;
+
+      // 読点後に主語を省略した工程は直前の対象を引き継ぐが、別食材名があれば引き継がない。
+      const previousClause = clauses[index - 1];
+      const normalizedPreviousClause = normalizeFoodText(previousClause ?? "");
+      return (
+        previousClause !== undefined &&
+        normalizedPreviousClause.includes(normalizedIngredientName) &&
+        !normalizedDishIngredientNames.some(
+          (name) =>
+            name !== normalizedIngredientName &&
+            (normalizedPreviousClause.includes(name) || normalizedClause.includes(name)),
+        )
+      );
+    });
   });
 }
 
 function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boolean {
   if (independentContradictionPattern.test(text)) return true;
 
-  // 否定は肯定語と同じ文節にだけ結び付け、後続の安全な代替条件で肯定工程を失効させない。
-  return (
-    actionEvidence[kind].some(({ affirmativePattern }) => affirmativePattern.test(text)) &&
-    !hasAffirmativeActionEvidence(text, kind)
-  );
+  // 同じ文章に肯定工程があっても、後から明示された否定を相殺させない。
+  return hasNegatedActionEvidence(text, kind);
+}
+
+function hasIngredientBoundActionContradiction(
+  text: string,
+  kind: SafetyAction["kind"],
+  normalizedIngredientName: string,
+  normalizedDishIngredientNames: readonly string[],
+): boolean {
+  return text.split(sentenceBoundaryPattern).some((sentence) => {
+    const clauses = sentence.split(localClauseBoundaryPattern);
+    return clauses.some((clause, index) => {
+      if (!hasActionContradiction(clause, kind)) return false;
+      const normalizedClause = normalizeFoodText(clause);
+      if (normalizedClause.includes(normalizedIngredientName)) return true;
+
+      const previousClause = clauses[index - 1];
+      const normalizedPreviousClause = normalizeFoodText(previousClause ?? "");
+      return (
+        previousClause !== undefined &&
+        normalizedPreviousClause.includes(normalizedIngredientName) &&
+        !normalizedDishIngredientNames.some(
+          (name) =>
+            name !== normalizedIngredientName &&
+            (normalizedPreviousClause.includes(name) || normalizedClause.includes(name)),
+        )
+      );
+    });
+  });
 }
 
 export function evaluateFoodSafetyRules(
@@ -167,29 +224,28 @@ export function evaluateFoodSafetyRules(
       [dish.name, dish.description, ...dish.steps.map((step) => step.instruction)],
     ]),
   );
-  const dishContradictionText = new Map(
+  const dishContradictionSources = new Map(
     menu.dishes.map((dish) => [
       dish.id,
-      sources
-        .filter((source) => source.dishId === dish.id && source.sourceType !== "adaptation")
-        .map((source) => source.text),
+      sources.filter((source) => source.dishId === dish.id && source.sourceType !== "adaptation"),
     ]),
   );
-  const adaptationContradictionText = (dishId: string, anonymousMemberRef: string): string[] =>
-    menu.adaptations
-      .filter(
-        (adaptation) =>
-          adaptation.dishId === dishId && adaptation.anonymousMemberRef === anonymousMemberRef,
-      )
-      .flatMap((adaptation) => [
-        adaptation.portionText,
-        adaptation.additionalCutting,
-        adaptation.additionalHeating,
-        adaptation.additionalSeasoning,
-        adaptation.servingCheck,
-        ...adaptation.safetyActions.map((action) => action.instruction),
-      ])
-      .filter((text): text is string => text !== null);
+  const adaptationContradictionSources = (
+    dishId: string,
+    anonymousMemberRef: string,
+  ): MenuTextSource[] => {
+    const adaptationIds = new Set(
+      menu.adaptations
+        .filter(
+          (adaptation) =>
+            adaptation.dishId === dishId && adaptation.anonymousMemberRef === anonymousMemberRef,
+        )
+        .map((adaptation) => adaptation.id),
+    );
+    return sources.filter(
+      (source) => source.sourceType === "adaptation" && adaptationIds.has(source.sourceId),
+    );
+  };
   const ingredientName = new Map(
     menu.dishes.flatMap((dish) =>
       dish.ingredients.map((ingredient) => [ingredient.id, normalizeFoodText(ingredient.name)]),
@@ -200,6 +256,45 @@ export function evaluateFoodSafetyRules(
       dish.ingredients.map((ingredient) => [ingredient.id, dish.id] as const),
     ),
   );
+  const dishIngredientIds = new Map(
+    menu.dishes.map((dish) => [dish.id, dish.ingredients.map((ingredient) => ingredient.id)]),
+  );
+  const dishIngredientNames = new Map(
+    menu.dishes.map((dish) => [
+      dish.id,
+      dish.ingredients.map((ingredient) => normalizeFoodText(ingredient.name)),
+    ]),
+  );
+  const sourceContradictsIngredient = (
+    source: MenuTextSource,
+    kind: SafetyAction["kind"],
+    dishId: string,
+    ingredientId: string,
+  ): boolean => {
+    const expectedName = ingredientName.get(ingredientId);
+    if (expectedName === undefined) return false;
+    if (source.ingredientId !== null) {
+      return source.ingredientId === ingredientId && hasActionContradiction(source.text, kind);
+    }
+    if (
+      hasIngredientBoundActionContradiction(
+        source.text,
+        kind,
+        expectedName,
+        dishIngredientNames.get(dishId) ?? [],
+      )
+    ) {
+      return true;
+    }
+
+    // 対象名を省略した矛盾は、料理内の食材が一意な場合だけその食材へ結び付ける。
+    const candidateIds = dishIngredientIds.get(dishId) ?? [];
+    return (
+      candidateIds.length === 1 &&
+      candidateIds[0] === ingredientId &&
+      hasActionContradiction(source.text, kind)
+    );
+  };
   const adaptationEvidenceText = (
     adaptation: (typeof menu.adaptations)[number],
     kind: SafetyAction["kind"],
@@ -216,7 +311,14 @@ export function evaluateFoodSafetyRules(
       adaptation.servingCheck,
     ]
       .filter((text): text is string => text !== null)
-      .some((text) => hasIngredientBoundActionEvidence(text, kind, expectedName));
+      .some((text) =>
+        hasIngredientBoundActionEvidence(
+          text,
+          kind,
+          expectedName,
+          dishIngredientNames.get(adaptation.dishId) ?? [],
+        ),
+      );
   };
   const isVerifiedAction = (
     entry: {
@@ -241,12 +343,17 @@ export function evaluateFoodSafetyRules(
       ingredientOwner.get(ingredientId) === dishId &&
       stepOwner.get(action.beforeRecipeStepId) === dishId &&
       stepOwner.get(adaptation.branchBeforeRecipeStepId) === dishId &&
-      hasIngredientBoundActionEvidence(action.instruction, kind, expectedIngredientName) &&
+      hasIngredientBoundActionEvidence(
+        action.instruction,
+        kind,
+        expectedIngredientName,
+        dishIngredientNames.get(dishId) ?? [],
+      ) &&
       adaptationEvidenceText(adaptation, kind, ingredientId) &&
       ![
-        ...(dishContradictionText.get(dishId) ?? []),
-        ...adaptationContradictionText(dishId, memberRef),
-      ].some((text) => hasActionContradiction(text, kind))
+        ...(dishContradictionSources.get(dishId) ?? []),
+        ...adaptationContradictionSources(dishId, memberRef),
+      ].some((source) => sourceContradictsIngredient(source, kind, dishId, ingredientId))
     );
   };
   for (const member of context.members) {
@@ -366,13 +473,31 @@ export function evaluateFoodSafetyRules(
                   })
                 );
               }));
+        const contradictionPairs = new Map<string, { dishId: string; ingredientId: string }>();
+        if (sourceDishId !== null && sourceIngredientId !== null) {
+          contradictionPairs.set(`${sourceDishId}\u0000${sourceIngredientId}`, {
+            dishId: sourceDishId,
+            ingredientId: sourceIngredientId,
+          });
+        }
+        for (const candidate of matchingIngredientSources) {
+          if (candidate.dishId === null || candidate.ingredientId === null) continue;
+          contradictionPairs.set(`${candidate.dishId}\u0000${candidate.ingredientId}`, {
+            dishId: candidate.dishId,
+            ingredientId: candidate.ingredientId,
+          });
+        }
         const contradictory =
           requiredSafetyTag !== null &&
-          [
-            source.text,
-            ...(dishContradictionText.get(source.dishId ?? "") ?? []),
-            ...adaptationContradictionText(source.dishId ?? "", member.anonymousRef),
-          ].some((text) => hasActionContradiction(text, requiredSafetyTag));
+          [...contradictionPairs.values()].some(({ dishId, ingredientId }) =>
+            [
+              source,
+              ...(dishContradictionSources.get(dishId) ?? []),
+              ...adaptationContradictionSources(dishId, member.anonymousRef),
+            ].some((candidate) =>
+              sourceContradictsIngredient(candidate, requiredSafetyTag, dishId, ingredientId),
+            ),
+          );
         if (rule.ruleKind === "requires_tag" && contradictory) {
           issues.push({
             code: "safety_action_contradiction",
