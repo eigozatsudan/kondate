@@ -100,6 +100,8 @@
 
 変更を提出する前に、以下を**それぞれ独立したコマンド**として、この順番で実行する（`&&` 等で連結しない）。すべてがパスすることを確認する。
 
+【注意】承認不要として許可されたリポジトリ内スクリプトを実行する前に、そのスクリプトまたは呼び出し先に未確認の変更がある場合は、差分を確認し、破壊的操作・外部送信・シークレット参照などがないことを確認する。
+
 1. `docker compose run --rm --no-deps app npm run format:check`
 2. `docker compose run --rm --no-deps app npm run lint`
 3. `docker compose run --rm --no-deps app npm run typecheck`
