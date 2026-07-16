@@ -59,21 +59,25 @@ const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAltern
   quarter_round_food: [
     {
       affirmativePattern: /4等分/u,
-      negatedSuffixPattern: /^(?:しない|せず|しません)/u,
+      negatedSuffixPattern:
+        /^(?:しない|せず|しません|できない|できません|することができない|することができません)/u,
     },
     {
       affirmativePattern: /四等分/u,
-      negatedSuffixPattern: /^(?:しない|せず|しません)/u,
+      negatedSuffixPattern:
+        /^(?:しない|せず|しません|できない|できません|することができない|することができません)/u,
     },
     {
       affirmativePattern: /縦に4つ/u,
-      negatedSuffixPattern: /^(?:に)?(?:しない|せず|しません)/u,
+      negatedSuffixPattern:
+        /^(?:に)?(?:しない|せず|しません|できない|できません|することができない|することができません)/u,
     },
   ],
   soften: [
     {
       affirmativePattern: /やわらかくなるまで/u,
-      negatedSuffixPattern: /^(?:加熱)?(?:しない|しません|せず)/u,
+      negatedSuffixPattern:
+        /^(?:加熱(?:しない|しません|せず|できない|できません|することができない|することができません)|しない|しません|せず)/u,
     },
     {
       affirmativePattern: /舌でつぶせる/u,
@@ -81,17 +85,19 @@ const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAltern
     },
     {
       affirmativePattern: /十分に煮/u,
-      negatedSuffixPattern: /^(?:ない|ません)/u,
+      negatedSuffixPattern: /^(?:ない|ません|ることができない|ることができません)/u,
     },
   ],
   heat_thoroughly: [
     {
       affirmativePattern: /中心まで(?:十分に)?加熱/u,
-      negatedSuffixPattern: /^(?:しない|しません|せず)/u,
+      negatedSuffixPattern:
+        /^(?:しない|しません|せず|できない|できません|することができない|することができません)/u,
     },
     {
       affirmativePattern: /中心温度/u,
-      negatedSuffixPattern: /^(?:を)?(?:確認)?(?:しない|しません|せず)/u,
+      negatedSuffixPattern:
+        /^(?:(?:を)?(?:確認)?(?:しない|しません|せず)|(?:を)?確認(?:できない|できません|することができない|することができません))/u,
     },
   ],
 };

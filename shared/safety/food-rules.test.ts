@@ -807,6 +807,58 @@ it("accepts an instruction that avoids cutting ingredients too small", () => {
   ).toEqual([]);
 });
 
+it.each([
+  ["quarter_round_food", "対象食材を4等分できません"],
+  ["soften", "対象食材を十分に煮ることができません"],
+  ["soften", "対象食材をやわらかくなるまで加熱できません"],
+  ["heat_thoroughly", "対象食材を中心まで加熱できません"],
+  ["heat_thoroughly", "対象食材の中心温度を確認できません"],
+] as const)("rejects impossible %s evidence: %s", (kind, instruction) => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const ingredient = { ...firstDish.ingredients[0]!, name: "対象食材" };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [ingredient] } : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: instruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: instruction,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind,
+            dishId: firstDish.id,
+            ingredientId: ingredient.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction,
+          },
+        ],
+      },
+    ],
+  });
+  const rule = {
+    ...hardBeanAndReviewedNutRule,
+    id: `impossible_${kind}`,
+    matchTerms: ["対象食材"],
+    ruleKind: "requires_tag" as const,
+    requiredSafetyTag: kind,
+  };
+
+  expect(evaluateFoodSafetyRules(menu, { ...underSixContext(), foodSafetyRules: [rule] })).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
+});
+
 it("T5-ADV-05 rejects a required cutting action contradicted by polite negation ません", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;
