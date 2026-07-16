@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { PlannerDraft } from "@shared/contracts/planner";
+import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerAttempt } from "./expired-pantry-checks";
 
@@ -37,6 +37,7 @@ const pantryItem: PantryItem = {
 
 const queryState = vi.hoisted(() => ({
   userId: "72000000-0000-0000-0000-000000000001",
+  draft: undefined as PlannerDraft | null | undefined,
   pantry: {
     data: undefined as PantryItem[] | undefined,
     isError: false,
@@ -57,18 +58,27 @@ const ownerBDraft: PlannerDraft = {
 
 const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
+const navigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/features/auth/auth-provider", () => ({
   useAuth: () => ({ session: { user: { id: queryState.userId } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
+vi.mock("react-router", async (importOriginal) => {
+  const original = await importOriginal<typeof import("react-router")>();
+  return { ...original, useNavigate: () => navigateMock };
+});
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
     const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
     const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;
     return queryKey[0] === "planner"
       ? {
-          data: isOwnerBPending ? undefined : ownerId === ownerBId ? ownerBDraft : draft,
+          data: isOwnerBPending
+            ? undefined
+            : ownerId === ownerBId
+              ? ownerBDraft
+              : (queryState.draft ?? (queryState.draft === null ? null : draft)),
           isError: false,
           isPending: isOwnerBPending,
           refetch: vi.fn().mockResolvedValue({ isError: false, data: draft }),
@@ -103,24 +113,30 @@ vi.mock("./planner-api", async (importOriginal) => {
   return { ...original, savePlannerDraft: savePlannerDraftMock };
 });
 vi.mock("./use-draft-autosave", () => ({
-  useDraftAutosave: (input: unknown) => {
+  useDraftAutosave: (input: {
+    value: PlannerDraftInput;
+    baselineRevision: number;
+    save(value: PlannerDraftInput, revision: number): Promise<PlannerDraft>;
+  }) => {
     autosaveInputs.push(input);
     return {
       state: "saved",
       revision: 3,
-      flush: vi.fn().mockResolvedValue(draft),
+      flush: vi.fn(() => input.save(input.value, input.baselineRevision)),
     };
   },
 }));
 vi.mock("./planner-page", () => ({
   PlannerForm: (props: {
-    initialValue: PlannerDraft;
+    initialValue: PlannerDraftInput;
     pantryItems: readonly PantryItem[];
     pantryItemsStatus: "loading" | "loaded";
     attempt: PlannerAttempt;
     onAttemptChange(next: PlannerAttempt): void;
     onStartNewAttempt(): void;
     onGenerate(saved: PlannerDraft, attempt: PlannerAttempt): Promise<void>;
+    flush(): Promise<PlannerDraft>;
+    onOpenEmergencyMenus?(): Promise<void>;
   }) => (
     <div>
       <output aria-label="pantry status">{props.pantryItemsStatus}</output>
@@ -160,6 +176,16 @@ vi.mock("./planner-page", () => ({
       >
         新しい試行
       </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (props.onOpenEmergencyMenus !== undefined) {
+            void props.flush().then(props.onOpenEmergencyMenus);
+          }
+        }}
+      >
+        緊急献立
+      </button>
     </div>
   ),
 }));
@@ -184,12 +210,31 @@ beforeEach(() => {
   vi.clearAllMocks();
   autosaveInputs.length = 0;
   queryState.userId = draft.userId;
+  queryState.draft = draft;
   queryState.ownerBPending = false;
   queryState.pantry = {
     data: [pantryItem],
     isError: false,
     isPending: false,
   };
+  savePlannerDraftMock.mockResolvedValue(draft);
+});
+
+it("下書き未作成でも対象家族を含む revision 0 の初回保存後に緊急献立へ移動する", async () => {
+  queryState.draft = null;
+  render(<PlannerPage />);
+
+  await userEvent.click(screen.getByRole("button", { name: "緊急献立" }));
+
+  await vi.waitFor(() => {
+    expect(savePlannerDraftMock).toHaveBeenCalledWith(
+      {},
+      draft.userId,
+      expect.objectContaining({ targetMemberIds: draft.targetMemberIds }),
+      0,
+    );
+    expect(navigateMock).toHaveBeenCalledWith("/emergency-menus");
+  });
 });
 
 it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closure を破棄する", async () => {

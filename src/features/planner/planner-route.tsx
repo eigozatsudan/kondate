@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import {
   listAllergenCatalog,
@@ -144,6 +145,7 @@ type PlannerPageForOwnerProps = {
 };
 
 function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerProps) {
+  const navigate = useNavigate();
   const client = getBrowserSupabaseClient();
   const draftQuery = useQuery({
     queryKey: plannerKeys.draft(userId ?? "missing"),
@@ -258,6 +260,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onStartNewAttempt={startNewAttempt}
       onChange={setValue}
       flush={autosave.flush}
+      onOpenEmergencyMenus={async () => {
+        navigate("/emergency-menus");
+      }}
       draftConflict={hasDraftConflict}
       canResolveDraftConflict={latestConflictDraft !== undefined}
       draftConflictRefetchError={draftConflictRefetchError}

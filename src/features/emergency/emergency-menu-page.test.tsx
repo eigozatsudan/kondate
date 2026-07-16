@@ -1,8 +1,43 @@
 import { render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { makeValidatedMenu } from "@shared/testing/factories";
 import type { ValidatedMenu } from "@shared/contracts/generation";
-import { EmergencyMenuContent } from "./emergency-menu-page";
+
+const useQueryMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tanstack/react-query", () => ({ useQuery: useQueryMock }));
+vi.mock("@/features/auth/auth-provider", () => ({
+  useAuth: () => ({ session: { user: { id: "72000000-0000-4000-8000-000000000001" } } }),
+}));
+vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
+
+import { EmergencyMenuContent, EmergencyMenuPage } from "./emergency-menu-page";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+it("下書きがない直接アクセスでは候補を取得せず献立画面への導線を表示する", () => {
+  useQueryMock
+    .mockReturnValueOnce({
+      data: null,
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  render(<EmergencyMenuPage />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent("献立条件の下書きがありません");
+  expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
+  expect(useQueryMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
+});
 
 it("states that no candidate exists without suggesting weaker safety conditions", () => {
   render(

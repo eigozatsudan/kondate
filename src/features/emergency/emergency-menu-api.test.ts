@@ -1,6 +1,40 @@
-import { expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { makeValidatedMenu } from "@shared/testing/factories";
-import { emergencyMenuKeys, parseEmergencyMenusResponse } from "./emergency-menu-api";
+import {
+  emergencyMenuKeys,
+  getEmergencyMenus,
+  parseEmergencyMenusResponse,
+} from "./emergency-menu-api";
+
+const requireAccessTokenMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/features/auth/session", () => ({ requireAccessToken: requireAccessTokenMock }));
+vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  requireAccessTokenMock.mockResolvedValue("token");
+  vi.stubGlobal("fetch", vi.fn());
+});
+
+it.each([
+  ["空", []],
+  ["重複", ["70000000-0000-4000-8000-000000000001", "70000000-0000-4000-8000-000000000001"]],
+  [
+    "21件",
+    Array.from(
+      { length: 21 },
+      (_, index) => `70000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    ),
+  ],
+])("対象家族IDが%sなら認証や通信の前に拒否する", async (_, targetMemberIds) => {
+  await expect(
+    getEmergencyMenus({ mealType: "dinner", targetMemberIds, pantryItemIds: [] }),
+  ).rejects.toThrow();
+
+  expect(requireAccessTokenMock).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+});
 
 it("keys candidates by every ordered request dimension and the household safety revision", () => {
   expect(

@@ -67,11 +67,24 @@ export function EmergencyMenuPage() {
       ...request,
       householdSafetyRevision,
     }),
-    enabled: userId !== undefined && draftQuery.isSuccess && !draftQuery.isFetching,
+    enabled:
+      userId !== undefined &&
+      draftQuery.isSuccess &&
+      draftQuery.data !== null &&
+      !draftQuery.isFetching,
     queryFn: () => getEmergencyMenus(request),
   });
   const loading = draftQuery.isFetching || query.isFetching;
   const error = draftQuery.isError || query.isError ? "緊急献立を読み込めませんでした" : null;
+  if (draftQuery.isSuccess && draftQuery.data === null) {
+    return (
+      <main className="page-frame stack emergency-menu-page">
+        <h1>15分緊急献立</h1>
+        <p role="alert">献立条件の下書きがありません。献立画面で条件を保存してください。</p>
+        <a href="/planner">献立画面へ戻る</a>
+      </main>
+    );
+  }
   return (
     <EmergencyMenuContent
       loading={loading}

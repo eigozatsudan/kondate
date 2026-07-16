@@ -1,4 +1,4 @@
-import type { MealType } from "@shared/contracts/domain";
+import { mealTypes, type MealType } from "@shared/contracts/domain";
 import {
   emergencyMenusDataSchema,
   type EmergencyMenusData,
@@ -22,6 +22,18 @@ const emergencyResponseSchema = z.discriminatedUnion("ok", [
     })
     .strict(),
 ]);
+
+const emergencyMenuRequestSchema = z
+  .object({
+    mealType: z.enum(mealTypes),
+    targetMemberIds: z
+      .array(z.uuid())
+      .min(1)
+      .max(20)
+      .refine((ids) => new Set(ids).size === ids.length),
+    pantryItemIds: z.array(z.uuid()),
+  })
+  .strict();
 
 export const emergencyMenuKeys = {
   all: ["emergency-menus"] as const,
@@ -53,11 +65,12 @@ export async function getEmergencyMenus(input: {
   targetMemberIds: readonly string[];
   pantryItemIds: readonly string[];
 }): Promise<EmergencyMenusData> {
+  const validatedInput = emergencyMenuRequestSchema.parse(input);
   const token = await requireAccessToken(getBrowserSupabaseClient());
   const query = new URLSearchParams({
-    meal: input.mealType,
-    targetMemberIds: input.targetMemberIds.join(","),
-    pantryItemIds: input.pantryItemIds.join(","),
+    meal: validatedInput.mealType,
+    targetMemberIds: validatedInput.targetMemberIds.join(","),
+    pantryItemIds: validatedInput.pantryItemIds.join(","),
   });
   const response = await fetch(`/api/emergency-menus?${query.toString()}`, {
     headers: { authorization: `Bearer ${token}` },

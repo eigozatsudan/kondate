@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { collectPlannerRequestText } from "@shared/contracts/planner";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import type { PantryItem } from "@shared/contracts/pantry";
@@ -66,6 +66,7 @@ export function PlannerForm({
   onChange,
   flush,
   onGenerate,
+  onOpenEmergencyMenus,
   draftConflict = false,
   canResolveDraftConflict = false,
   draftConflictRefetchError = false,
@@ -83,6 +84,7 @@ export function PlannerForm({
   onChange: (value: PlannerDraftInput) => void;
   flush?: () => Promise<PlannerDraft>;
   onGenerate?: (draft: PlannerDraft, attempt: PlannerAttempt | undefined) => unknown;
+  onOpenEmergencyMenus?: () => Promise<void>;
   draftConflict?: boolean;
   canResolveDraftConflict?: boolean;
   draftConflictRefetchError?: boolean;
@@ -97,6 +99,8 @@ export function PlannerForm({
   );
   const [avoidIngredientError, setAvoidIngredientError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isOpeningEmergencyMenus, setIsOpeningEmergencyMenus] = useState(false);
+  const emergencyPendingRef = useRef(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const update = (patch: Partial<PlannerDraftInput>): void => {
     const next = { ...value, ...patch };
@@ -434,16 +438,44 @@ export function PlannerForm({
         献立を作る
       </button>
       {generationError !== null && <p role="alert">{generationError}</p>}
-      <a
-        href={draftConflict ? undefined : "/emergency-menus"}
-        aria-disabled={draftConflict ? "true" : undefined}
-        tabIndex={draftConflict ? -1 : undefined}
-        onClick={(event) => {
-          if (draftConflict) event.preventDefault();
+      <button
+        type="button"
+        disabled={
+          blocked ||
+          draftConflict ||
+          saveState === "error" ||
+          hasUnavailablePantrySelections ||
+          selectedMembers.length === 0 ||
+          isGenerating ||
+          isOpeningEmergencyMenus ||
+          flush === undefined ||
+          onOpenEmergencyMenus === undefined
+        }
+        onClick={() => {
+          if (
+            emergencyPendingRef.current ||
+            flush === undefined ||
+            onOpenEmergencyMenus === undefined
+          ) {
+            return;
+          }
+          emergencyPendingRef.current = true;
+          setIsOpeningEmergencyMenus(true);
+          setGenerationError(null);
+          void (async () => {
+            try {
+              await flush();
+              await onOpenEmergencyMenus();
+            } catch {
+              emergencyPendingRef.current = false;
+              setIsOpeningEmergencyMenus(false);
+              setGenerationError("献立条件を保存できなかったため、生成を開始しませんでした。");
+            }
+          })();
         }}
       >
         AIを使わない緊急献立を見る
-      </a>
+      </button>
     </main>
   );
 }
