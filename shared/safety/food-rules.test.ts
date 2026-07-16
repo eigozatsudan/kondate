@@ -250,6 +250,73 @@ it("accepts an ownerless timeline source when the same fish ingredient has verif
   expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
 });
 
+it("rejects an ownerless source when one of its matched fish terms has no real ingredient", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const menu = makeValidatedMenu({
+    ...base,
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: "鮭と鯖を焼き始める",
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "age_shape_rule", path: "timeline.0.instruction" }),
+    ]),
+  );
+});
+
+it("accepts an ownerless source when every matched fish term has verified ingredients", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon", includeSecondFish: true });
+  const firstDish = base.dishes[0]!;
+  const mackerel = firstDish.ingredients.find((ingredient) => ingredient.name === "鯖")!;
+  const salmonInstruction = "鮭の骨を完全に除く";
+  const mackerelInstruction = "鯖の骨を完全に除く";
+  const evidenceInstruction = `${salmonInstruction}。${mackerelInstruction}`;
+  const menu = makeValidatedMenu({
+    ...base,
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            steps: [{ ...dish.steps[0]!, instruction: evidenceInstruction }],
+          }
+        : dish,
+    ),
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: "鮭と鯖を焼き始める",
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+    adaptations: base.adaptations.map((adaptation) => ({
+      ...adaptation,
+      additionalCutting: evidenceInstruction,
+      servingCheck: `${evidenceInstruction}ことを確認する`,
+      safetyActions: [
+        ...adaptation.safetyActions,
+        {
+          kind: "remove_bones",
+          dishId: firstDish.id,
+          ingredientId: mackerel.id,
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: firstDish.steps[0]!.id,
+          instruction: mackerelInstruction,
+        },
+      ],
+    })),
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
+});
+
 it("rejects an ownerless timeline source for a different fish ingredient", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
@@ -267,6 +334,60 @@ it("rejects an ownerless timeline source for a different fish ingredient", () =>
   expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ code: "age_shape_rule", path: "timeline.0.instruction" }),
+    ]),
+  );
+});
+
+it("does not use a matched ingredient from another dish for a dish-owned source", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const secondDish = base.dishes[1]!;
+  const carrot = { ...firstDish.ingredients[0]!, name: "にんじん" };
+  const mackerel = { ...secondDish.ingredients[0]!, name: "鯖" };
+  const instruction = "鯖の骨を完全に除く";
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [carrot],
+            steps: [{ ...dish.steps[0]!, instruction: "鯖を焼き始める" }],
+          }
+        : {
+            ...dish,
+            ingredients: [mackerel],
+            steps: [{ ...dish.steps[0]!, instruction }],
+          },
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: secondDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: secondDish.steps[0]!.id,
+        additionalCutting: instruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: `${instruction}ことを確認する`,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "remove_bones",
+            dishId: secondDish.id,
+            ingredientId: mackerel.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: secondDish.steps[0]!.id,
+            instruction,
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "age_shape_rule", path: "dishes.0.steps.0.instruction" }),
     ]),
   );
 });

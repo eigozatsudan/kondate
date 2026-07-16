@@ -317,14 +317,18 @@ export function evaluateFoodSafetyRules(
         const sourceMatchTerms = normalizedMatchTerms.filter((term) =>
           normalizeFoodText(source.text).includes(term),
         );
-        const matchingIngredientSources = matchedSources.filter(
-          (candidate) =>
-            candidate.sourceType === "ingredient" &&
-            candidate.dishId !== null &&
-            candidate.ingredientId !== null &&
-            (sourceDishId === null || candidate.dishId === sourceDishId) &&
-            // 所属料理のない工程は、同じ語で特定できる実食材だけへmenu全体で結合する。
-            sourceMatchTerms.some((term) => normalizeFoodText(candidate.text).includes(term)),
+        const matchingIngredientSourcesForTerm = (term: string) =>
+          matchedSources.filter(
+            (candidate) =>
+              candidate.sourceType === "ingredient" &&
+              candidate.dishId !== null &&
+              candidate.ingredientId !== null &&
+              (sourceDishId === null || candidate.dishId === sourceDishId) &&
+              // 所属料理のない工程は、同じ語で特定できる実食材だけへmenu全体で結合する。
+              normalizeFoodText(candidate.text).includes(term),
+          );
+        const matchingIngredientSources = sourceMatchTerms.flatMap(
+          matchingIngredientSourcesForTerm,
         );
         const hasEvidence =
           requiredSafetyTag !== null &&
@@ -342,22 +346,28 @@ export function evaluateFoodSafetyRules(
                   sourceIngredientId,
                 ),
               )
-            : matchingIngredientSources.length > 0 &&
-              matchingIngredientSources.every((candidate) => {
-                const dishId = candidate.dishId;
-                const ingredientId = candidate.ingredientId;
+            : sourceMatchTerms.length > 0 &&
+              sourceMatchTerms.every((term) => {
+                const termCandidates = matchingIngredientSourcesForTerm(term);
                 return (
-                  dishId !== null &&
-                  ingredientId !== null &&
-                  memberActions.some((entry) =>
-                    isVerifiedAction(
-                      entry,
-                      member.anonymousRef,
-                      requiredSafetyTag,
-                      dishId,
-                      ingredientId,
-                    ),
-                  )
+                  termCandidates.length > 0 &&
+                  termCandidates.every((candidate) => {
+                    const dishId = candidate.dishId;
+                    const ingredientId = candidate.ingredientId;
+                    return (
+                      dishId !== null &&
+                      ingredientId !== null &&
+                      memberActions.some((entry) =>
+                        isVerifiedAction(
+                          entry,
+                          member.anonymousRef,
+                          requiredSafetyTag,
+                          dishId,
+                          ingredientId,
+                        ),
+                      )
+                    );
+                  })
                 );
               }));
         const contradictory =
