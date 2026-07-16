@@ -511,6 +511,70 @@ it("緊急献立の保存待ち中は生成を開始しない", () => {
   expect(onGenerate).not.toHaveBeenCalled();
 });
 
+it("緊急献立の保存開始から遷移まで家族・医療入力を含む全条件を変更できない", async () => {
+  const pantryItem: PantryItem = {
+    id: "71000000-0000-0000-0000-000000000001",
+    userId: "72000000-0000-0000-0000-000000000001",
+    name: "豆腐",
+    quantity: 1,
+    unit: "丁",
+    expiresOn: null,
+    expirationType: null,
+    openedState: null,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+  const onChange = vi.fn();
+  render(
+    <PlannerForm
+      initialValue={{
+        ...initialValue,
+        mainIngredients: ["鶏肉"],
+        pantrySelections: [{ pantryItemId: pantryItem.id, priority: "prefer_use" }],
+      }}
+      members={[
+        {
+          id: initialValue.targetMemberIds[0]!,
+          displayName: "子ども",
+          ageBandLabel: "3〜5歳",
+          allergyLabel: "アレルギーなし",
+          safetyLabels: [],
+          blockedReason: null,
+        },
+      ]}
+      pantryItems={[pantryItem]}
+      pantryItemsStatus="loaded"
+      saveState="saved"
+      attempt={{ idempotencyKey: "73000000-0000-0000-0000-000000000011", expiredPantryChecks: [] }}
+      onAttemptChange={vi.fn()}
+      onChange={onChange}
+      flush={() =>
+        new Promise(() => {
+          // 保存待ちを維持し、遷移対象の条件が固定され続けることを確認する。
+        })
+      }
+      onOpenEmergencyMenus={vi.fn()}
+    />,
+  );
+
+  await userEvent.click(screen.getByText("追加条件"));
+  fireEvent.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+
+  expect(screen.getByRole("checkbox", { name: "子ども" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "夕食" })).toBeDisabled();
+  expect(screen.getByLabelText("メイン食材")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "追加" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "和食" })).toBeDisabled();
+  expect(screen.getByLabelText("献立全体の調理時間")).toBeDisabled();
+  expect(screen.getByLabelText("予算")).toBeDisabled();
+  expect(screen.getByLabelText("今回だけ避ける食材")).toBeDisabled();
+  expect(screen.getByLabelText("自由メモ")).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: "豆腐" })).toBeDisabled();
+  expect(screen.getByLabelText("豆腐の使い方")).toBeDisabled();
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 it("生成中は緊急献立を開始しない", async () => {
   const generationMayComplete = new Promise<void>(() => {
     // 生成中の状態を維持し、逆方向の操作も相互排他になることを確認する。

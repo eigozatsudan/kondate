@@ -16,26 +16,31 @@ import { handleError, json, methodNotAllowed } from "./_shared/http.js";
 import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
 const uuidSchema = z.uuid();
-const uuidListSchema = z
-  .string()
-  .min(1)
-  .transform((value, context) => {
-    const values = value.split(",");
-    if (
-      values.length > 20 ||
-      new Set(values).size !== values.length ||
-      values.some((item) => !uuidSchema.safeParse(item).success)
-    ) {
-      context.addIssue({ code: "custom", message: "IDは重複なしで20件以内にしてください" });
-      return z.NEVER;
-    }
-    return values;
-  });
+function uuidListSchema(maxItems: number) {
+  return z
+    .string()
+    .min(1)
+    .transform((value, context) => {
+      const values = value.split(",");
+      if (
+        values.length > maxItems ||
+        new Set(values).size !== values.length ||
+        values.some((item) => !uuidSchema.safeParse(item).success)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: `IDは重複なしで${String(maxItems)}件以内にしてください`,
+        });
+        return z.NEVER;
+      }
+      return values;
+    });
+}
 
 const querySchema = z.object({
   meal: z.enum(mealTypes),
-  targetMemberIds: uuidListSchema,
-  pantryItemIds: uuidListSchema.optional().default([]),
+  targetMemberIds: uuidListSchema(20),
+  pantryItemIds: uuidListSchema(50).optional().default([]),
 });
 
 export type EmergencyHandlerDeps = {

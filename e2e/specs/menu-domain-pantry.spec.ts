@@ -71,7 +71,13 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await page.getByLabel("年齢区分").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
   await page.getByLabel("対象外の食事の確認").selectOption("none");
+  const memberCompleted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/complete_household_member"),
+  );
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
+  expect((await memberCompleted).ok()).toBe(true);
 
   await page.goto("/pantry");
   const pantryItemCreated = page.waitForResponse(

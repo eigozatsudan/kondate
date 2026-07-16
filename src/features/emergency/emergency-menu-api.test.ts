@@ -36,6 +36,34 @@ it.each([
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it("冷蔵庫食材が空なら空のクエリ値を送らずサーバーの省略時契約に合わせる", async () => {
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: {
+          fixtureVersion: "2026-07-11.v1",
+          candidates: [],
+          message: "条件に合う緊急献立がありません",
+          consumesAiQuota: false,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await getEmergencyMenus({
+    mealType: "dinner",
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+    pantryItemIds: [],
+  });
+
+  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
+  if (typeof requestedUrl !== "string")
+    throw new Error("緊急献立のリクエストURLを確認できませんでした");
+  expect(new URL(requestedUrl, "http://localhost").searchParams.has("pantryItemIds")).toBe(false);
+});
+
 it("keys candidates by every ordered request dimension and the household safety revision", () => {
   expect(
     emergencyMenuKeys.candidates({

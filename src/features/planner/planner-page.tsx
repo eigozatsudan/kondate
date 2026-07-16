@@ -167,6 +167,7 @@ export function PlannerForm({
                   aria-describedby={descriptionId}
                   checked={value.targetMemberIds.includes(member.id)}
                   disabled={
+                    isOpeningEmergencyMenus ||
                     member.blockedReason !== null ||
                     (!value.targetMemberIds.includes(member.id) &&
                       value.targetMemberIds.length >= targetMemberLimit)
@@ -203,6 +204,7 @@ export function PlannerForm({
             <input
               type="radio"
               name="meal"
+              disabled={isOpeningEmergencyMenus}
               checked={value.mealType === key}
               onChange={() => {
                 update({ mealType: key as PlannerDraftInput["mealType"] });
@@ -218,6 +220,7 @@ export function PlannerForm({
           メイン食材
           <input
             value={ingredient}
+            disabled={isOpeningEmergencyMenus}
             onChange={(event) => {
               const rawValue = event.target.value;
               setIngredient(rawValue);
@@ -233,6 +236,7 @@ export function PlannerForm({
         </label>
         <button
           type="button"
+          disabled={isOpeningEmergencyMenus}
           onClick={() => {
             const next = ingredient.normalize("NFKC").trim();
             if (Array.from(next).length > mainIngredientLengthLimit) {
@@ -262,6 +266,7 @@ export function PlannerForm({
             <button
               type="button"
               key={item}
+              disabled={isOpeningEmergencyMenus}
               onClick={() => {
                 update({
                   mainIngredients: value.mainIngredients.filter((value) => value !== item),
@@ -280,6 +285,7 @@ export function PlannerForm({
             <input
               type="radio"
               name="genre"
+              disabled={isOpeningEmergencyMenus}
               checked={value.cuisineGenre === key}
               onChange={() => {
                 update({ cuisineGenre: key as PlannerDraftInput["cuisineGenre"] });
@@ -295,6 +301,7 @@ export function PlannerForm({
           献立全体の調理時間
           <select
             value={value.timeLimitMinutes ?? ""}
+            disabled={isOpeningEmergencyMenus}
             onChange={(event) => {
               const selected = event.target.value;
               update({
@@ -313,6 +320,7 @@ export function PlannerForm({
           予算
           <select
             value={value.budgetPreference ?? ""}
+            disabled={isOpeningEmergencyMenus}
             onChange={(event) => {
               update({
                 budgetPreference:
@@ -333,6 +341,7 @@ export function PlannerForm({
           今回だけ避ける食材
           <input
             value={avoidIngredientText}
+            disabled={isOpeningEmergencyMenus}
             onChange={(event) => {
               const parsed = parseAvoidIngredientInput(event.target.value);
               setAvoidIngredientText(parsed.text);
@@ -358,6 +367,7 @@ export function PlannerForm({
           <textarea
             maxLength={200}
             value={value.memo}
+            disabled={isOpeningEmergencyMenus}
             onChange={(event) => {
               update({ memo: event.target.value });
             }}
@@ -373,6 +383,7 @@ export function PlannerForm({
           selections={value.pantrySelections}
           attempt={attempt}
           onAttemptChange={onAttemptChange}
+          disabled={isOpeningEmergencyMenus}
           onChange={(pantrySelections) => {
             update({ pantrySelections: [...pantrySelections] });
           }}

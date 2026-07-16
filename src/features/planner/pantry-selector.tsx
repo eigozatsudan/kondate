@@ -18,6 +18,7 @@ export type PantrySelectorProps = {
   attempt: PlannerAttempt;
   onAttemptChange: (next: PlannerAttempt) => void;
   onChange: (next: readonly PantrySelectionDraft[]) => void;
+  disabled?: boolean;
   now?: () => Date;
 };
 
@@ -28,6 +29,7 @@ export function PantrySelector({
   attempt,
   onAttemptChange,
   onChange,
+  disabled = false,
   now = () => new Date(),
 }: PantrySelectorProps) {
   const [pendingItem, setPendingItem] = useState<PantryItem | null>(null);
@@ -93,7 +95,11 @@ export function PantrySelector({
               <input
                 type="checkbox"
                 checked={selected !== undefined}
-                disabled={pendingItem !== null || (selected === undefined && selectionLimitReached)}
+                disabled={
+                  disabled ||
+                  pendingItem !== null ||
+                  (selected === undefined && selectionLimitReached)
+                }
                 onChange={(event) => {
                   if (selected === undefined) {
                     triggerRef.current = event.currentTarget;
@@ -107,7 +113,7 @@ export function PantrySelector({
               <select
                 aria-label={`${item.name}の使い方`}
                 value={selected.priority}
-                disabled={pendingItem !== null}
+                disabled={disabled || pendingItem !== null}
                 onChange={(event) => {
                   const priority = event.target.value === "must_use" ? "must_use" : "prefer_use";
                   onChange(
@@ -132,7 +138,7 @@ export function PantrySelector({
           <p>冷蔵庫から削除された食材</p>
           <button
             type="button"
-            disabled={pendingItem !== null}
+            disabled={disabled || pendingItem !== null}
             onClick={() => {
               onChange(selections.filter((entry) => entry.pantryItemId !== selection.pantryItemId));
             }}
@@ -185,6 +191,7 @@ export function PantrySelector({
               ref={confirmRef}
               className="primary-button"
               type="button"
+              disabled={disabled}
               onClick={() => {
                 const checkedAt = now();
                 onAttemptChange(confirmExpiredPantryItem(attempt, pendingItem.id, checkedAt));
@@ -198,6 +205,7 @@ export function PantrySelector({
               ref={safeActionRef}
               className="secondary-button"
               type="button"
+              disabled={disabled}
               onClick={() => {
                 closeDialog();
               }}

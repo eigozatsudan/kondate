@@ -66,4 +66,30 @@ describe("GET /api/emergency-menus", () => {
     });
     expect(loadContext).not.toHaveBeenCalled();
   });
+
+  it("冷蔵庫食材はPlannerの上限と同じ50件まで受け付ける", async () => {
+    const pantryItemIds = Array.from(
+      { length: 50 },
+      (_, index) => `82000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    );
+    const loadPantryNames = vi.fn().mockResolvedValue([]);
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext: () =>
+        Promise.resolve({
+          context: makeCurrentSafetyContext(),
+          memberLabels: Object.freeze({ member_1: "家族1" }),
+        }),
+      loadPantryNames,
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&pantryItemIds=${pantryItemIds.join(",")}`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(loadPantryNames).toHaveBeenCalledWith(userId, pantryItemIds);
+  });
 });

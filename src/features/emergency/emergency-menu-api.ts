@@ -70,8 +70,10 @@ export async function getEmergencyMenus(input: {
   const query = new URLSearchParams({
     meal: validatedInput.mealType,
     targetMemberIds: validatedInput.targetMemberIds.join(","),
-    pantryItemIds: validatedInput.pantryItemIds.join(","),
   });
+  if (validatedInput.pantryItemIds.length > 0) {
+    query.set("pantryItemIds", validatedInput.pantryItemIds.join(","));
+  }
   const response = await fetch(`/api/emergency-menus?${query.toString()}`, {
     headers: { authorization: `Bearer ${token}` },
   });
