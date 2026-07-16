@@ -35,6 +35,7 @@ function completeRows() {
       return {
         id: entry.id,
         display_name: entry.displayName,
+        regulatory_class: entry.regulatoryClass,
         catalog_version: catalogVersion,
       };
     }),
@@ -116,6 +117,36 @@ function expectCatalogUnavailable(catalog: readonly AllergenCatalogTestRow[]): v
 describe("current safety data boundary", () => {
   it.each([
     [
+      "regulatory class drift",
+      (row: AllergenCatalogTestRow) => {
+        row.regulatory_class = row.regulatory_class === "mandatory" ? "recommended" : "mandatory";
+      },
+    ],
+    [
+      "missing regulatory class",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.deleteProperty(row, "regulatory_class");
+      },
+    ],
+    [
+      "undefined regulatory class",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.set(row, "regulatory_class", undefined);
+      },
+    ],
+    [
+      "invalid regulatory class",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.set(row, "regulatory_class", "optional");
+      },
+    ],
+    [
+      "wrong regulatory class scalar type",
+      (row: AllergenCatalogTestRow) => {
+        Reflect.set(row, "regulatory_class", 42);
+      },
+    ],
+    [
       "display name drift",
       (row: AllergenCatalogTestRow) => {
         row.display_name = "差し替えられた表示";
@@ -181,6 +212,7 @@ describe("current safety data boundary", () => {
         {
           id: "unexpected_allergen",
           display_name: "想定外",
+          regulatory_class: "recommended" as const,
           catalog_version: "jp-caa-2026-04.v1",
         },
       ],

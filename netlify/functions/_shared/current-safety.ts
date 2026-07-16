@@ -125,6 +125,7 @@ const allergenCatalogRowSchema = z
   .object({
     id: z.string().regex(/^[a-z][a-z0-9_]*$/u),
     display_name: z.string().min(1).max(100),
+    regulatory_class: z.enum(["mandatory", "recommended"]),
     catalog_version: z.string().min(1).max(80),
   })
   .strict();
@@ -138,7 +139,7 @@ type AllergenAliasRow = z.infer<typeof allergenAliasRowSchema>;
 type AllergenCatalogRow = z.infer<typeof allergenCatalogRowSchema>;
 
 function catalogSignature(row: AllergenCatalogRow): string {
-  return [row.id, row.display_name, row.catalog_version].join("\u0000");
+  return [row.id, row.display_name, row.regulatory_class, row.catalog_version].join("\u0000");
 }
 
 const expectedCatalogSignatures = new Set(
@@ -146,6 +147,7 @@ const expectedCatalogSignatures = new Set(
     catalogSignature({
       id: entry.id,
       display_name: entry.displayName,
+      regulatory_class: entry.regulatoryClass,
       catalog_version: entry.catalogVersion,
     }),
   ),
@@ -223,7 +225,12 @@ type SafetyRows = {
     unsupported_diet_kinds: readonly string[];
   }[];
   allergies: readonly { user_id: string; member_id: string; allergen_id: string | null }[];
-  catalog: readonly { id: string; display_name: string; catalog_version: string }[];
+  catalog: readonly {
+    id: string;
+    display_name: string;
+    regulatory_class: "mandatory" | "recommended";
+    catalog_version: string;
+  }[];
   aliases: readonly {
     allergen_id: string;
     alias: string;
@@ -442,7 +449,7 @@ export async function loadCurrentSafetyContext(
         .in("member_id", [...targetMemberIds]),
       admin
         .from("allergen_catalog")
-        .select("id,display_name,catalog_version")
+        .select("id,display_name,regulatory_class,catalog_version")
         .eq("catalog_version", dictionaryVersion),
       admin
         .from("allergen_aliases")
@@ -465,6 +472,8 @@ export async function loadCurrentSafetyContext(
     rulesResult.error,
   ].find((error) => error !== null);
   if (firstError !== undefined) throw safetyUnavailable();
+  const parsedCatalogResult = z.array(allergenCatalogRowSchema).safeParse(catalogResult.data ?? []);
+  if (!parsedCatalogResult.success) throw safetyUnavailable();
 
   return buildCurrentSafetyContext({
     userId,
@@ -472,7 +481,7 @@ export async function loadCurrentSafetyContext(
     rows: {
       members: membersResult.data ?? [],
       allergies: allergiesResult.data ?? [],
-      catalog: catalogResult.data ?? [],
+      catalog: parsedCatalogResult.data,
       aliases: aliasesResult.data ?? [],
       rules: rulesResult.data ?? [],
     },
