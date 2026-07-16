@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { PlannerDraft } from "@shared/contracts/planner";
@@ -71,7 +71,7 @@ vi.mock("@tanstack/react-query", () => ({
           data: isOwnerBPending ? undefined : ownerId === ownerBId ? ownerBDraft : draft,
           isError: false,
           isPending: isOwnerBPending,
-          refetch: vi.fn(),
+          refetch: vi.fn().mockResolvedValue({ isError: false, data: draft }),
         }
       : queryKey[0] === "pantry"
         ? isOwnerBPending
@@ -165,6 +165,20 @@ vi.mock("./planner-page", () => ({
 }));
 
 import { PlannerPage } from "./planner-route";
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolvePromise: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: (value) => resolvePromise?.(value),
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -261,15 +275,19 @@ it("route が更新された exact attempt を生成へ渡し新しい試行で�
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   await user.click(screen.getByRole("button", { name: "生成" }));
-  expect(startGeneration).toHaveBeenCalledWith(draft, {
-    idempotencyKey: firstKey,
-    expiredPantryChecks: [
-      {
-        pantryItemId: "74000000-0000-0000-0000-000000000001",
-        checkedAt: "2026-07-11T03:00:00.000Z",
-      },
-    ],
-  });
+  expect(startGeneration).toHaveBeenCalledWith(
+    draft,
+    {
+      idempotencyKey: firstKey,
+      expiredPantryChecks: [
+        {
+          pantryItemId: "74000000-0000-0000-0000-000000000001",
+          checkedAt: "2026-07-11T03:00:00.000Z",
+        },
+      ],
+    },
+    expect.any(AbortSignal),
+  );
 
   await user.click(screen.getByRole("button", { name: "新しい試行" }));
   expect(screen.getByLabelText("attempt key").textContent).not.toBe(firstKey);
@@ -306,7 +324,40 @@ it("生成成功の完了後だけ attempt を新しいキーと空の確認へ�
         },
       ],
     },
+    expect.any(AbortSignal),
   ]);
+});
+
+it("生成開始後に下書き競合が確定したら処理を中止し遅延成功でも attempt を更新しない", async () => {
+  const user = userEvent.setup();
+  const deferredGeneration = createDeferred<undefined>();
+  const startGeneration = vi.fn(
+    (_draft: PlannerDraft, _attempt: PlannerAttempt, _signal: AbortSignal) =>
+      deferredGeneration.promise,
+  );
+  render(<PlannerPage startGeneration={startGeneration} />);
+  const firstKey = screen.getByLabelText("attempt key").textContent;
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+
+  await user.click(screen.getByRole("button", { name: "生成" }));
+  await vi.waitFor(() => expect(startGeneration).toHaveBeenCalledTimes(1));
+  const signal = startGeneration.mock.calls[0]?.[2];
+
+  const latestAutosave = autosaveInputs.at(-1) as {
+    onConflict(): Promise<void>;
+  };
+  await act(async () => latestAutosave.onConflict());
+
+  expect(signal).toBeInstanceOf(AbortSignal);
+  expect(signal?.aborted).toBe(true);
+
+  await act(async () => {
+    deferredGeneration.resolve(undefined);
+    await deferredGeneration.promise;
+  });
+
+  expect(screen.getByLabelText("attempt key")).toHaveTextContent(firstKey);
+  expect(screen.getByLabelText("check count")).toHaveTextContent("1");
 });
 
 it.each([

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import {
@@ -124,7 +124,7 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
 }
 
 export type PlannerPageProps = {
-  startGeneration?: (draft: PlannerDraft, attempt: PlannerAttempt) => unknown;
+  startGeneration?: (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal) => unknown;
 };
 
 export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
@@ -170,9 +170,17 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [hasDraftConflict, setHasDraftConflict] = useState(false);
   const [draftConflictRefetchError, setDraftConflictRefetchError] = useState(false);
   const [attempt, setAttempt] = useState<PlannerAttempt>(createPlannerAttempt);
+  const generationAbortControllerRef = useRef<AbortController | null>(null);
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
   }, []);
+
+  useEffect(
+    () => () => {
+      generationAbortControllerRef.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (draftQuery.data === undefined || safetyQuery.data === undefined || initialized) return;
@@ -197,6 +205,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setLatestConflictDraft(result.data);
   }, [refetchDraft]);
   const onConflict = useCallback(async (): Promise<void> => {
+    generationAbortControllerRef.current?.abort();
     setHasDraftConflict(true);
     setLatestConflictDraft(undefined);
     await loadLatestConflictDraft();
@@ -256,10 +265,19 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onRetryDraftConflict={() => void loadLatestConflictDraft()}
       onGenerate={async (draft, currentAttempt) => {
         if (startGeneration === undefined || currentAttempt === undefined) return false;
-        const result = await startGeneration(draft, currentAttempt);
-        if (result === false) return false;
-        startNewAttempt();
-        return true;
+        const controller = new AbortController();
+        generationAbortControllerRef.current?.abort();
+        generationAbortControllerRef.current = controller;
+        try {
+          const result = await startGeneration(draft, currentAttempt, controller.signal);
+          if (controller.signal.aborted || result === false) return false;
+          startNewAttempt();
+          return true;
+        } finally {
+          if (generationAbortControllerRef.current === controller) {
+            generationAbortControllerRef.current = null;
+          }
+        }
       }}
     />
   );
