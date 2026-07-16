@@ -100,7 +100,9 @@ export function PlannerForm({
   const [avoidIngredientError, setAvoidIngredientError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isOpeningEmergencyMenus, setIsOpeningEmergencyMenus] = useState(false);
-  const emergencyPendingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const operationGenerationRef = useRef(0);
+  const activeOperationRef = useRef<"idle" | "generation" | "emergency">("idle");
   const [generationError, setGenerationError] = useState<string | null>(null);
   const update = (patch: Partial<PlannerDraftInput>): void => {
     const next = { ...value, ...patch };
@@ -126,6 +128,15 @@ export function PlannerForm({
   const hasUnavailablePantrySelections =
     pantryItemsStatus === "loaded" &&
     value.pantrySelections.some((selection) => !pantryItemIds.has(selection.pantryItemId));
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      operationGenerationRef.current += 1;
+      activeOperationRef.current = "idle";
+    };
+  }, []);
 
   useEffect(() => {
     const reconciledTargetMemberIds = value.targetMemberIds.filter((id) =>
@@ -416,21 +427,42 @@ export function PlannerForm({
           hasUnavailablePantrySelections ||
           !requiredChoicesComplete ||
           isGenerating ||
+          isOpeningEmergencyMenus ||
           flush === undefined ||
           onGenerate === undefined
         }
         onClick={() => {
-          if (flush === undefined || onGenerate === undefined) return;
+          if (
+            activeOperationRef.current !== "idle" ||
+            flush === undefined ||
+            onGenerate === undefined
+          ) {
+            return;
+          }
+          activeOperationRef.current = "generation";
+          const operationGeneration = ++operationGenerationRef.current;
           setGenerationError(null);
           setIsGenerating(true);
           void (async () => {
             try {
               const draft = await flush();
+              if (
+                !mountedRef.current ||
+                operationGeneration !== operationGenerationRef.current ||
+                activeOperationRef.current !== "generation"
+              ) {
+                return;
+              }
               await onGenerate(draft, attempt);
             } catch {
-              setGenerationError("献立条件を保存できなかったため、生成を開始しませんでした。");
+              if (mountedRef.current && operationGeneration === operationGenerationRef.current) {
+                setGenerationError("献立条件を保存できなかったため、生成を開始しませんでした。");
+              }
             } finally {
-              setIsGenerating(false);
+              if (mountedRef.current && operationGeneration === operationGenerationRef.current) {
+                activeOperationRef.current = "idle";
+                setIsGenerating(false);
+              }
             }
           })();
         }}
@@ -453,23 +485,33 @@ export function PlannerForm({
         }
         onClick={() => {
           if (
-            emergencyPendingRef.current ||
+            activeOperationRef.current !== "idle" ||
             flush === undefined ||
             onOpenEmergencyMenus === undefined
           ) {
             return;
           }
-          emergencyPendingRef.current = true;
+          activeOperationRef.current = "emergency";
+          const operationGeneration = ++operationGenerationRef.current;
           setIsOpeningEmergencyMenus(true);
           setGenerationError(null);
           void (async () => {
             try {
               await flush();
+              if (
+                !mountedRef.current ||
+                operationGeneration !== operationGenerationRef.current ||
+                activeOperationRef.current !== "emergency"
+              ) {
+                return;
+              }
               await onOpenEmergencyMenus();
             } catch {
-              emergencyPendingRef.current = false;
-              setIsOpeningEmergencyMenus(false);
-              setGenerationError("献立条件を保存できなかったため、生成を開始しませんでした。");
+              if (mountedRef.current && operationGeneration === operationGenerationRef.current) {
+                activeOperationRef.current = "idle";
+                setIsOpeningEmergencyMenus(false);
+                setGenerationError("献立条件を保存できなかったため、生成を開始しませんでした。");
+              }
             }
           })();
         }}

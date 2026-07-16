@@ -186,3 +186,19 @@ it("競合 refetch の失敗後に再試行しても明示読込までは retain
   expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeEnabled();
 });
+
+it("緊急献立へ移動する前に保存結果を同じQueryClientの下書きcacheへ反映する", async () => {
+  getPlannerDraftMock.mockResolvedValue(revisionOne);
+  savePlannerDraftMock.mockResolvedValue(revisionTwo);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  renderRetainedDraft(queryClient);
+  await act(async () => Promise.resolve());
+
+  fireEvent.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+  await act(async () => Promise.resolve());
+
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionTwo);
+});

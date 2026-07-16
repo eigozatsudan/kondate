@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import {
@@ -146,6 +146,7 @@ type PlannerPageForOwnerProps = {
 
 function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const client = getBrowserSupabaseClient();
   const draftQuery = useQuery({
     queryKey: plannerKeys.draft(userId ?? "missing"),
@@ -220,6 +221,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     save,
     onConflict,
   });
+  const flushAutosave = autosave.flush;
+  const flushDraft = useCallback(async (): Promise<PlannerDraft> => {
+    const saved = await flushAutosave();
+    // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
+    queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
+    return saved;
+  }, [flushAutosave, queryClient, userId]);
 
   const resolveDraftConflict = useCallback((): void => {
     if (latestConflictDraft === undefined || safetyQuery.data === undefined) return;
@@ -259,9 +267,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onAttemptChange={setAttempt}
       onStartNewAttempt={startNewAttempt}
       onChange={setValue}
-      flush={autosave.flush}
-      onOpenEmergencyMenus={async () => {
-        navigate("/emergency-menus");
+      flush={flushDraft}
+      onOpenEmergencyMenus={() => {
+        void navigate("/emergency-menus");
+        return Promise.resolve();
       }}
       draftConflict={hasDraftConflict}
       canResolveDraftConflict={latestConflictDraft !== undefined}

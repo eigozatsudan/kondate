@@ -59,6 +59,7 @@ const ownerBDraft: PlannerDraft = {
 const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 const navigateMock = vi.hoisted(() => vi.fn());
+const setQueryDataMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/features/auth/auth-provider", () => ({
   useAuth: () => ({ session: { user: { id: queryState.userId } } }),
@@ -69,6 +70,7 @@ vi.mock("react-router", async (importOriginal) => {
   return { ...original, useNavigate: () => navigateMock };
 });
 vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ setQueryData: setQueryDataMock }),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
     const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
     const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;
@@ -180,7 +182,7 @@ vi.mock("./planner-page", () => ({
         type="button"
         onClick={() => {
           if (props.onOpenEmergencyMenus !== undefined) {
-            void props.flush().then(props.onOpenEmergencyMenus);
+            void props.flush().then(() => props.onOpenEmergencyMenus?.());
           }
         }}
       >
@@ -377,15 +379,21 @@ it("生成開始後に下書き競合が確定したら処理を中止し遅延�
   const user = userEvent.setup();
   const deferredGeneration = createDeferred<undefined>();
   const startGeneration = vi.fn(
-    (_draft: PlannerDraft, _attempt: PlannerAttempt, _signal: AbortSignal) =>
-      deferredGeneration.promise,
+    (draftArg: PlannerDraft, attemptArg: PlannerAttempt, signalArg: AbortSignal) => {
+      void draftArg;
+      void attemptArg;
+      void signalArg;
+      return deferredGeneration.promise;
+    },
   );
   render(<PlannerPage startGeneration={startGeneration} />);
   const firstKey = screen.getByLabelText("attempt key").textContent;
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
 
   await user.click(screen.getByRole("button", { name: "生成" }));
-  await vi.waitFor(() => expect(startGeneration).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => {
+    expect(startGeneration).toHaveBeenCalledTimes(1);
+  });
   const signal = startGeneration.mock.calls[0]?.[2];
 
   const latestAutosave = autosaveInputs.at(-1) as {

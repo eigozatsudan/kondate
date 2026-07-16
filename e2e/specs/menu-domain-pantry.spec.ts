@@ -13,6 +13,15 @@ function hasPantryPriority(body: Readonly<Record<string, unknown>>, priority: st
   );
 }
 
+async function readCreatedId(response: import("@playwright/test").Response): Promise<string> {
+  const body = JSON.parse(await response.text()) as unknown;
+  const row: unknown = Array.isArray(body) ? (body as unknown[]).at(0) : body;
+  if (!isRecord(row) || typeof row.id !== "string") {
+    throw new Error("作成した行のIDを取得できませんでした");
+  }
+  return row.id;
+}
+
 async function updatePlannerAndAwaitAutosave(
   page: Page,
   update: () => Promise<unknown>,
@@ -50,6 +59,32 @@ async function savePlannerMeal(page: Page, mealName: "朝食" | "昼食" | "夕�
 test("waits for the latest draft save before requesting emergency menus", async ({
   completedOnboardingPage: page,
 }) => {
+  await page.goto("/settings");
+  const memberCreated = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/household_members"),
+  );
+  await page.getByRole("button", { name: "家族を追加" }).click();
+  const selectedMemberId = await readCreatedId(await memberCreated);
+  await page.getByLabel("呼び名").fill("緊急用家族");
+  await page.getByLabel("年齢区分").selectOption("adult");
+  await page.getByLabel("アレルギーの確認").selectOption("none");
+  await page.getByLabel("対象外の食事の確認").selectOption("none");
+  await page.getByRole("button", { name: "この家族の設定を完了" }).click();
+
+  await page.goto("/pantry");
+  const pantryItemCreated = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/pantry_items"),
+  );
+  await page.getByLabel("食材名").fill("緊急用豆腐");
+  await page.getByLabel("分量").fill("1");
+  await page.getByLabel("単位").fill("丁");
+  await page.getByRole("button", { name: "追加する" }).click();
+  const selectedPantryItemId = await readCreatedId(await pantryItemCreated);
+
   let releaseSave: (() => void) | undefined;
   const saveMayComplete = new Promise<void>((resolve) => {
     releaseSave = resolve;
@@ -73,21 +108,31 @@ test("waits for the latest draft save before requesting emergency menus", async 
   });
 
   await page.goto("/planner");
+  const targetMemberSection = page.getByRole("heading", { name: "献立を作る家族" }).locator("..");
+  await targetMemberSection.getByRole("checkbox").first().uncheck();
+  await expect(page.getByRole("checkbox", { name: "緊急用家族" })).toBeChecked();
+  await page.getByRole("checkbox", { name: "緊急用豆腐" }).check();
   await page.getByRole("radio", { name: "昼食" }).check();
   await page.getByRole("button", { name: "AIを使わない緊急献立を見る" }).click();
   const savedBody = await observedSave;
 
+  expect(savedBody.p_meal_type).toBe("lunch");
+  expect(savedBody.p_target_member_ids).toEqual([selectedMemberId]);
+  expect(savedBody.p_pantry_selections).toEqual([
+    { pantryItemId: selectedPantryItemId, priority: "prefer_use" },
+  ]);
   expect(emergencyRequests).toHaveLength(0);
   await expect(page).toHaveURL(/\/planner$/u);
 
   releaseSave?.();
   await expect(page).toHaveURL(/\/emergency-menus$/u);
   await expect.poll(() => emergencyRequests.length).toBe(1);
-  const requestUrl = new URL(emergencyRequests[0]!);
-  expect(requestUrl.searchParams.get("meal")).toBe(savedBody.p_meal_type);
-  expect(requestUrl.searchParams.get("targetMemberIds")?.split(",")).toEqual(
-    savedBody.p_target_member_ids,
-  );
+  const emergencyRequest = emergencyRequests.at(0);
+  if (emergencyRequest === undefined) throw new Error("緊急献立のリクエストを確認できませんでした");
+  const requestUrl = new URL(emergencyRequest);
+  expect(requestUrl.searchParams.get("meal")).toBe("lunch");
+  expect(requestUrl.searchParams.get("targetMemberIds")?.split(",")).toEqual([selectedMemberId]);
+  expect(requestUrl.searchParams.get("pantryItemIds")?.split(",")).toEqual([selectedPantryItemId]);
 });
 
 async function expectCompleteCandidate(
