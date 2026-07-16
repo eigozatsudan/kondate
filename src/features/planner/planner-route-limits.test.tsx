@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import { plannerDraftInputSchema, type PlannerDraftInput } from "@shared/contracts/planner";
 
@@ -52,7 +53,11 @@ vi.mock("./planner-page", () => ({
 import { PlannerPage } from "./planner-route";
 
 it("新規下書きの対象家族を適格な先頭20人までで初期化する", async () => {
-  render(<PlannerPage />);
+  render(
+    <MemoryRouter>
+      <PlannerPage />
+    </MemoryRouter>,
+  );
 
   expect(await screen.findByLabelText("対象家族数")).toHaveTextContent("20");
   expect(

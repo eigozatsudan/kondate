@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import { householdKeys } from "@/features/household/household-queries";
@@ -82,9 +83,11 @@ function renderRetainedDraft(queryClient: QueryClient) {
   });
   queryClient.setQueryData(pantryKeys.list(userId), []);
   return render(
-    <QueryClientProvider client={queryClient}>
-      <PlannerPage startGeneration={vi.fn()} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <PlannerPage startGeneration={vi.fn()} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -170,10 +173,7 @@ it("競合 refetch の失敗後に再試行しても明示読込までは retain
   expect(screen.getByRole("alert")).toHaveTextContent("最新の下書きを取得できませんでした。");
   expect(screen.getByLabelText("自由メモ")).toHaveValue("Aの入力");
   expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-  const emergencyLink = screen.getByText("AIを使わない緊急献立を見る").closest("a");
-  expect(emergencyLink).not.toBeNull();
-  expect(emergencyLink).toHaveAttribute("aria-disabled", "true");
-  expect(emergencyLink).not.toHaveAttribute("href");
+  expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
 
   fireEvent.click(screen.getByRole("button", { name: "再試行" }));
   await act(async () => {
