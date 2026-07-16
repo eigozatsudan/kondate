@@ -25,6 +25,8 @@
 
 `./scripts/run-tooling-git.sh` は自動承認の対象から除外するが、この個別除外は、許可済みの変更可能な `./scripts/reset-local-db.sh` または `./scripts/run-e2e.sh` を経由する一般的な迂回可能性を解消しない。ユーザーは2026-07-16にこの残存リスクを明示的に受容し、2スクリプトの自動承認を維持する選択肢を選んだ。
 
+`prefix_rule` はリテラルな引数列へ一致し、実行時のカレントディレクトリやリポジトリルートには結び付かない。このため、別のカレントディレクトリに同じ `./scripts/reset-local-db.sh` または `./scripts/run-e2e.sh` が存在すれば、その引数列も `allow` に一致する。また、許可済みのパス名にあるファイルをシンボリックリンクへ置き換えても引数列は変わらず、リンク先が実行される。ユーザーは2026-07-16にこの2つの残存リスクを明示的に受容し、相対パスのルールを維持する選択肢を選んだ。
+
 `git worktree` のルールは、引数列が `git`, `worktree` で始まるすべての呼び出しを対象とする。これにより、`add -b` によるworktreeと専用ブランチの作成だけでなく、`remove`、`move`、`prune`、`repair`、`lock`、`unlock` も承認なしで実行できる。`git branch` や `git switch -c` による独立したブランチ作成は対象外とする。
 
 `:workspace` では、リンクworktreeの `.git` ポインタが参照する共通Git管理領域もread-onlyとして保護される。サブエージェントがworktree内で変更をステージし、ローカルコミットを作成できるように、`git add` と `git commit` を承認なしで実行できる対象に加える。このルールはサブエージェントやworktreeだけには限定できず、信頼済みのこのリポジトリを扱うすべてのCodexセッションへ適用される。sandbox外でGit hooksやclean filterも実行され得るため、リポジトリとGit設定が信頼済みであることを前提とする。`git reset`、`git rebase` など、その他のGitサブコマンドは対象外とする。
