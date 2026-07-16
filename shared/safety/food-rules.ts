@@ -306,26 +306,31 @@ export function evaluateFoodSafetyRules(
     }
     for (const rule of context.foodSafetyRules) {
       if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
+      const normalizedMatchTerms = rule.matchTerms.map(normalizeFoodText);
       const matchedSources = sources.filter((item) =>
-        rule.matchTerms.some((term) =>
-          normalizeFoodText(item.text).includes(normalizeFoodText(term)),
-        ),
+        normalizedMatchTerms.some((term) => normalizeFoodText(item.text).includes(term)),
       );
       for (const source of matchedSources) {
         const requiredSafetyTag = rule.requiredSafetyTag;
         const sourceDishId = source.dishId;
         const sourceIngredientId = source.ingredientId;
+        const sourceMatchTerms = normalizedMatchTerms.filter((term) =>
+          normalizeFoodText(source.text).includes(term),
+        );
         const matchingIngredientSources = matchedSources.filter(
           (candidate) =>
             candidate.sourceType === "ingredient" &&
-            candidate.dishId === sourceDishId &&
-            candidate.ingredientId !== null,
+            candidate.dishId !== null &&
+            candidate.ingredientId !== null &&
+            (sourceDishId === null || candidate.dishId === sourceDishId) &&
+            // 所属料理のない工程は、同じ語で特定できる実食材だけへmenu全体で結合する。
+            sourceMatchTerms.some((term) => normalizeFoodText(candidate.text).includes(term)),
         );
         const hasEvidence =
-          sourceDishId !== null &&
           requiredSafetyTag !== null &&
           (sourceIngredientId !== null
-            ? matchingIngredientSources.some(
+            ? sourceDishId !== null &&
+              matchingIngredientSources.some(
                 (candidate) => candidate.ingredientId === sourceIngredientId,
               ) &&
               memberActions.some((entry) =>
@@ -339,15 +344,17 @@ export function evaluateFoodSafetyRules(
               )
             : matchingIngredientSources.length > 0 &&
               matchingIngredientSources.every((candidate) => {
+                const dishId = candidate.dishId;
                 const ingredientId = candidate.ingredientId;
                 return (
+                  dishId !== null &&
                   ingredientId !== null &&
                   memberActions.some((entry) =>
                     isVerifiedAction(
                       entry,
                       member.anonymousRef,
                       requiredSafetyTag,
-                      sourceDishId,
+                      dishId,
                       ingredientId,
                     ),
                   )

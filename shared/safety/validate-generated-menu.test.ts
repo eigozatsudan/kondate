@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import type { GeneratedMenu } from "../contracts/generation.js";
 import { collectPlannerRequestText } from "../contracts/planner.js";
+import { currentFoodSafetyRulesV1 } from "./current-food-safety-rules.v1.js";
 import { validateGeneratedMenu } from "./validate-generated-menu.js";
 import {
   hardBeanAndReviewedNutRule,
@@ -881,30 +882,60 @@ it("T10 canonicalizes a linked pantry product through the ingredient leaf only",
   expect(JSON.stringify(result.labelConfirmations)).not.toContain(selectionId);
 });
 
-it.each([
-  ["post_weaning_to_2", "cut_small"],
-  ["senior", "remove_bones"],
-] as const)(
-  "T10 requires a structured action for a %s target's %s condition",
-  (ageBand, requiredSafetyConstraint) => {
-    const base = makeGenerationContext();
-    const context = makeGenerationContext({
-      safety: makeCurrentSafetyContext({
-        members: [
-          {
-            ...base.safety.members[0]!,
-            ageBand,
-            requiredSafetyConstraints: [requiredSafetyConstraint],
-          },
-        ],
-      }),
-    });
+it("T10 requires a structured action for a post_weaning_to_2 target's cut_small condition", () => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    safety: makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.safety.members[0]!,
+          ageBand: "post_weaning_to_2",
+          requiredSafetyConstraints: ["cut_small"],
+        },
+      ],
+    }),
+  });
 
-    expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), context), [
-      "required_safety_action",
-    ]);
-  },
-);
+  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), context), ["required_safety_action"]);
+});
+
+it("T10 requires a structured remove_bones action when a senior menu contains fish", () => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    safety: makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.safety.members[0]!,
+          ageBand: "senior",
+          requiredSafetyConstraints: ["remove_bones"],
+        },
+      ],
+      foodSafetyRules: currentFoodSafetyRulesV1,
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient("鮭"), context), [
+    "required_safety_action",
+  ]);
+});
+
+it("T10 does not require a fabricated remove_bones action when a senior menu has no fish", () => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    safety: makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.safety.members[0]!,
+          ageBand: "senior",
+          requiredSafetyConstraints: ["remove_bones"],
+        },
+      ],
+      foodSafetyRules: currentFoodSafetyRulesV1,
+    }),
+  });
+
+  expect(validateGeneratedMenu(makeGeneratedMenu(), context)).toMatchObject({ ok: true });
+});
 
 it("T10 conservatively excludes mochi for a senior target", () => {
   const base = makeGenerationContext();

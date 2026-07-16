@@ -233,6 +233,44 @@ it("accepts required deboning evidence bound to the matched fish ingredient", ()
   expect(issues).toEqual([]);
 });
 
+it("accepts an ownerless timeline source when the same fish ingredient has verified evidence", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const menu = makeValidatedMenu({
+    ...base,
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: "鮭を焼き始める",
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
+});
+
+it("rejects an ownerless timeline source for a different fish ingredient", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const menu = makeValidatedMenu({
+    ...base,
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: "鯖を焼き始める",
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+  });
+
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "age_shape_rule", path: "timeline.0.instruction" }),
+    ]),
+  );
+});
+
 it("rejects required deboning evidence whose adaptation branch belongs to another dish", () => {
   const menu = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const otherDish = menu.dishes[1]!;
