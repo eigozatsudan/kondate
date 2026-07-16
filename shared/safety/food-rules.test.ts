@@ -683,8 +683,10 @@ it("rejects cut-small evidence expressed as an inability in every dish", () => {
 it.each([
   "鮭の骨を除かずに提供する",
   "鮭の骨を除けません",
+  "鮭の骨を除去できません",
   "鮭の骨を取り除けない",
   "鮭の骨を取り除かずに提供する",
+  "鮭の骨を取り除くことができません",
   "鮭の骨がないことを確認しない",
   "鮭の骨がないことを確認できません",
 ])("rejects negated or impossible deboning evidence: %s", (instruction) => {
@@ -701,10 +703,12 @@ it.each([
 it.each([
   "小さく切らずに提供する",
   "小さく切れません",
+  "小さく切ることができません",
   "一口大以下にはしない",
   "一口大以下にできません",
   "細かく刻まずに提供する",
   "細かく刻めない",
+  "細かく刻むことができません",
 ])("rejects negated or impossible cut-small evidence: %s", (evidence) => {
   const base = makeValidatedMenu();
   const adaptations = base.dishes.map((dish, index) => {
@@ -741,6 +745,17 @@ it.each([
       requiredConstraintContext("cut_small"),
     ),
   ).toEqual([expect.objectContaining({ code: "required_safety_action" })]);
+});
+
+it("accepts deboning evidence followed by a separate safe fallback clause", () => {
+  const instruction = "鮭の骨を取り除き、骨がないことを確認できない場合は提供しない";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual([]);
 });
 
 it("T5-ADV-05 rejects a required cutting action contradicted by polite negation ません", () => {

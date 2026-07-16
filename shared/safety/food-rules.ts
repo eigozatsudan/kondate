@@ -26,8 +26,29 @@ const actionEvidence: Record<SafetyAction["kind"], RegExp> = {
   heat_thoroughly: /中心まで(?:十分に)?加熱|中心温度/u,
 };
 
-const contradictionPattern =
-  /丸ごと|切らず|骨付きのまま|硬いまま|小さく切ら(?:ない|ないで)|小さく切れ(?:ない|ません)|小さく切りません|一口大以下(?:に|には)?(?:しない|しません|せず|できない|できません)|細かく刻ま(?:ない|ないで|ず)|細かく刻みません|細かく刻め(?:ない|ません)|4等分(?:しない|せず|しません)|四等分(?:しない|せず|しません)|縦に4つに(?:しない|せず|しません)|十分に煮(?:ない|ません)|やわらかくなるまで(?:加熱)?(?:しない|しません|せず)|中心まで(?:十分に)?加熱(?:しない|しません|せず)|骨を(?:完全に)?除(?:かない|かないで|かず|きません|けない|けません)|骨を取り除(?:かない|かないで|かず|きません|けない|けません)|骨がないことを確認(?:しない|しません|せず|できない|できません)/u;
+const independentContradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
+const clauseBoundaryPattern = /[、。,.，；;！？!?]/u;
+const evidenceNegationPattern = /ない|ません|ず/u;
+
+function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
+  const evidencePattern = actionEvidence[kind];
+  const globalEvidencePattern = new RegExp(evidencePattern.source, `${evidencePattern.flags}g`);
+
+  for (const match of text.matchAll(globalEvidencePattern)) {
+    const matchEnd = (match.index ?? 0) + match[0].length;
+    const clauseSuffix = text.slice(matchEnd).split(clauseBoundaryPattern, 1)[0] ?? "";
+    if (!evidenceNegationPattern.test(clauseSuffix)) return true;
+  }
+
+  return false;
+}
+
+function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boolean {
+  if (independentContradictionPattern.test(text)) return true;
+
+  // 否定は肯定語と同じ文節にだけ結び付け、後続の安全な代替条件で肯定工程を失効させない。
+  return actionEvidence[kind].test(text) && !hasAffirmativeActionEvidence(text, kind);
+}
 
 export function evaluateFoodSafetyRules(
   menu: GeneratedMenu | ValidatedMenu,
@@ -117,7 +138,9 @@ export function evaluateFoodSafetyRules(
     ]
       .filter((text): text is string => text !== null)
       .some(
-        (text) => actionEvidence[kind].test(text) && normalizeFoodText(text).includes(expectedName),
+        (text) =>
+          hasAffirmativeActionEvidence(text, kind) &&
+          normalizeFoodText(text).includes(expectedName),
       );
   };
   const isVerifiedAction = (
@@ -141,16 +164,14 @@ export function evaluateFoodSafetyRules(
       ingredientOwner.get(ingredientId) === dishId &&
       stepOwner.get(action.beforeRecipeStepId) === dishId &&
       stepOwner.get(adaptation.branchBeforeRecipeStepId) === dishId &&
-      actionEvidence[kind].test(action.instruction) &&
+      hasAffirmativeActionEvidence(action.instruction, kind) &&
       instructionNamesIngredient(action.instruction, ingredientId) &&
       adaptationEvidenceText(adaptation, kind, ingredientId) &&
       adaptationNamesIngredient(adaptation, ingredientId) &&
-      !contradictionPattern.test(
-        [
-          ...(dishContradictionText.get(dishId) ?? []),
-          ...adaptationContradictionText(dishId, memberRef),
-        ].join(" "),
-      )
+      ![
+        ...(dishContradictionText.get(dishId) ?? []),
+        ...adaptationContradictionText(dishId, memberRef),
+      ].some((text) => hasActionContradiction(text, kind))
     );
   };
   for (const member of context.members) {
@@ -253,13 +274,13 @@ export function evaluateFoodSafetyRules(
                   )
                 );
               }));
-        const contradictory = contradictionPattern.test(
+        const contradictory =
+          requiredSafetyTag !== null &&
           [
             source.text,
             ...(dishContradictionText.get(source.dishId ?? "") ?? []),
             ...adaptationContradictionText(source.dishId ?? "", member.anonymousRef),
-          ].join(" "),
-        );
+          ].some((text) => hasActionContradiction(text, requiredSafetyTag));
         if (rule.ruleKind === "requires_tag" && contradictory) {
           issues.push({
             code: "safety_action_contradiction",
