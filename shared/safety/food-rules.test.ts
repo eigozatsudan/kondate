@@ -615,6 +615,69 @@ it("別食材の骨を残す指示を鮭の矛盾にしない", () => {
   ).toEqual([]);
 });
 
+it("比較対象として現れた鮭を除骨工程の対象にしない", () => {
+  const instruction = "にんじんは鮭より先に骨を除く";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]));
+});
+
+it.each(["鮭の骨を完全に除く？", "鮭の骨を完全に除くか？"])(
+  "疑問文を除骨済みの根拠にしない: %s",
+  (instruction) => {
+    expect(
+      evaluateFoodSafetyRules(
+        sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+        requiredConstraintContext("remove_bones"),
+      ),
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+    );
+  },
+);
+
+it.each(["鮭の骨を抜かずに提供する", "鮭の骨を抜かないまま提供する"])(
+  "自然な除骨否定を矛盾として検出する: %s",
+  (contradiction) => {
+    const instruction = `鮭の骨を完全に除く。${contradiction}`;
+
+    expect(
+      evaluateFoodSafetyRules(
+        sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+        requiredConstraintContext("remove_bones"),
+      ),
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+    );
+  },
+);
+
+it("除骨と無関係な切らずという指示を除骨矛盾にしない", () => {
+  const instruction = "鮭の骨を完全に除く。鮭は切らずに焼く";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual([]);
+});
+
+it("食材名に結び付いた小骨の除去を除骨根拠として扱う", () => {
+  const instruction = "鮭の小骨を完全に除く";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual([]);
+});
+
 it("accepts an ownerless timeline source when the same fish ingredient has verified evidence", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
@@ -630,6 +693,62 @@ it("accepts an ownerless timeline source when the same fish ingredient has verif
   });
 
   expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
+});
+
+it("汎用魚語のownerless工程を同一rule内の具体魚食材へ結合する", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
+  const menu = makeValidatedMenu({
+    ...base,
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: "魚を焼き始める",
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+  });
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menu, {
+      ...safety,
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({
+        ...rule,
+        matchTerms: ["魚", "鮭", "鯖"],
+      })),
+    }),
+  ).toEqual([]);
+});
+
+it("汎用魚語のownerless工程は料理内の全具体魚に除骨根拠を要求する", () => {
+  const base = sourceBoundSafetyMenu({ actionIngredient: "salmon", includeSecondFish: true });
+  const menu = makeValidatedMenu({
+    ...base,
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: "魚を焼き始める",
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+  });
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menu, {
+      ...safety,
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({
+        ...rule,
+        matchTerms: ["魚", "鮭", "鯖"],
+      })),
+    }),
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "age_shape_rule", path: "timeline.0.instruction" }),
+    ]),
+  );
 });
 
 it("rejects an ownerless timeline contradiction bound to a matched fish ingredient", () => {

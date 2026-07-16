@@ -120,15 +120,19 @@ const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAltern
   ],
 };
 
-const independentContradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
-const actionSpecificContradictionPattern: Partial<Record<SafetyAction["kind"], RegExp>> = {
-  remove_bones: /骨(?:を残(?:す|して)|が残(?:る|ったまま))/u,
+const actionSpecificContradictionPattern: Record<SafetyAction["kind"], RegExp> = {
+  remove_bones: /骨(?:付きのまま|を(?:残(?:す|して)|抜(?:かず|かない))|が残(?:る|ったまま))/u,
+  cut_small: /丸ごと|切らず/u,
+  quarter_round_food: /丸ごと|切らず/u,
+  soften: /硬いまま/u,
+  heat_thoroughly: /生焼け|加熱(?:しない|せず)/u,
 };
 const periphrasticNegationPattern =
   /^(?:(?:く|る|む|する|にする|を確認する)?ことなく|いたりはしない|(?:(?:く|る|む|する|にする|を確認する)?(?:という)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません)))/u;
-const sentenceBoundaryPattern = /[。！？!?；;\r\n]+/u;
+const sentenceBoundaryPattern = /[。！!；;\r\n]+/u;
 const localClauseBoundaryPattern = /[、,，:：]+/u;
 const safeFallbackConsequencePattern = /^場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
+const genericIngredientMatchTerms = new Set(["魚", "魚介", "魚類"]);
 
 function isNegatedActionSuffix(suffix: string, alternative: ActionEvidenceAlternative): boolean {
   return alternative.negatedSuffixPattern.test(suffix) || periphrasticNegationPattern.test(suffix);
@@ -240,18 +244,32 @@ function resolveOccurrenceIngredientName(
   occurrenceIndex: number,
   normalizedPreviousClause: string,
   normalizedDishIngredientNames: readonly string[],
+  kind: SafetyAction["kind"],
 ): string | null {
   const localCandidates = findUncoveredIngredientOccurrences(
     normalizedClause,
     normalizedDishIngredientNames,
   ).filter((candidate) => candidate.index < occurrenceIndex);
-  const nearestIndex = Math.max(...localCandidates.map((candidate) => candidate.index));
-  const nearestNames = new Set(
+  const explicitNames = new Set(
     localCandidates
-      .filter((candidate) => candidate.index === nearestIndex)
+      .filter((candidate) => {
+        const between = normalizedClause.slice(
+          candidate.index + candidate.name.length,
+          occurrenceIndex,
+        );
+        if (kind === "remove_bones") {
+          // 除骨は「食材の骨」または食材を主題にした「食材は…骨」に限り、比較対象を除外する。
+          return (
+            /^の(?:小)?$/u.test(between) || /^は(?!.*(?:より|ほど|比べ))[\s\S]*$/u.test(between)
+          );
+        }
+
+        // 切断・加熱工程は「食材を工程」の目的語構文か、明示的な主題構文だけを採用する。
+        return /^を[\s\S]*$/u.test(between) || /^は(?!.*(?:より|ほど|比べ))[\s\S]*$/u.test(between);
+      })
       .map((candidate) => candidate.name),
   );
-  if (nearestNames.size === 1) return [...nearestNames][0] ?? null;
+  if (explicitNames.size === 1) return [...explicitNames][0] ?? null;
   if (localCandidates.length > 0) return null;
 
   // 読点後の省略主語は、直前節で対象食材が一意な場合に限って引き継ぐ。
@@ -270,6 +288,7 @@ function hasIngredientBoundActionEvidence(
   normalizedDishIngredientNames: readonly string[],
 ): boolean {
   return text.split(sentenceBoundaryPattern).some((sentence) => {
+    if (/[？?]/u.test(sentence)) return false;
     const clauses = sentence.split(localClauseBoundaryPattern);
     return clauses.some((clause, index) => {
       const normalizedClause = normalizeFoodText(clause);
@@ -281,6 +300,7 @@ function hasIngredientBoundActionEvidence(
             occurrence.index,
             normalizedPreviousClause,
             normalizedDishIngredientNames,
+            kind,
           ) === normalizedIngredientName,
       );
     });
@@ -289,8 +309,7 @@ function hasIngredientBoundActionEvidence(
 
 function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boolean {
   const normalizedText = normalizeFoodText(text);
-  if (independentContradictionPattern.test(normalizedText)) return true;
-  if (actionSpecificContradictionPattern[kind]?.test(normalizedText) === true) return true;
+  if (actionSpecificContradictionPattern[kind].test(normalizedText)) return true;
 
   // 同じ文章に肯定工程があっても、後から明示された否定を相殺させない。
   return hasNegatedActionEvidence(text, kind);
@@ -301,12 +320,8 @@ function findActionContradictionOccurrences(
   kind: SafetyAction["kind"],
 ): readonly TextOccurrence[] {
   const normalizedText = normalizeFoodText(text);
-  const actionSpecificPattern = actionSpecificContradictionPattern[kind];
   return [
-    ...findPatternOccurrences(normalizedText, independentContradictionPattern),
-    ...(actionSpecificPattern === undefined
-      ? []
-      : findPatternOccurrences(normalizedText, actionSpecificPattern)),
+    ...findPatternOccurrences(normalizedText, actionSpecificContradictionPattern[kind]),
     ...findNegatedActionOccurrences(normalizedText, kind),
   ];
 }
@@ -329,6 +344,7 @@ function hasIngredientBoundActionContradiction(
             occurrence.index,
             normalizedPreviousClause,
             normalizedDishIngredientNames,
+            kind,
           ) === normalizedIngredientName,
       );
     });
@@ -571,9 +587,9 @@ export function evaluateFoodSafetyRules(
               // 所属料理のない工程は、同じ語で特定できる実食材だけへmenu全体で結合する。
               normalizeFoodText(candidate.text).includes(term),
           );
-        const matchingIngredientSources = sourceMatchTerms.flatMap(
-          matchingIngredientSourcesForTerm,
-        );
+        const matchingIngredientSources = (
+          sourceIngredientId === null ? normalizedMatchTerms : sourceMatchTerms
+        ).flatMap(matchingIngredientSourcesForTerm);
         const hasEvidence =
           requiredSafetyTag !== null &&
           (sourceIngredientId !== null
@@ -591,27 +607,28 @@ export function evaluateFoodSafetyRules(
                 ),
               )
             : sourceMatchTerms.length > 0 &&
-              sourceMatchTerms.every((term) => {
-                const termCandidates = matchingIngredientSourcesForTerm(term);
+              // 「魚」のような総称は同じruleの具体語候補へ展開する一方、鯖など明示語の不在は許可しない。
+              sourceMatchTerms.every(
+                (term) =>
+                  genericIngredientMatchTerms.has(term) ||
+                  matchingIngredientSourcesForTerm(term).length > 0,
+              ) &&
+              matchingIngredientSources.length > 0 &&
+              matchingIngredientSources.every((candidate) => {
+                const dishId = candidate.dishId;
+                const ingredientId = candidate.ingredientId;
                 return (
-                  termCandidates.length > 0 &&
-                  termCandidates.every((candidate) => {
-                    const dishId = candidate.dishId;
-                    const ingredientId = candidate.ingredientId;
-                    return (
-                      dishId !== null &&
-                      ingredientId !== null &&
-                      memberActions.some((entry) =>
-                        isVerifiedAction(
-                          entry,
-                          member.anonymousRef,
-                          requiredSafetyTag,
-                          dishId,
-                          ingredientId,
-                        ),
-                      )
-                    );
-                  })
+                  dishId !== null &&
+                  ingredientId !== null &&
+                  memberActions.some((entry) =>
+                    isVerifiedAction(
+                      entry,
+                      member.anonymousRef,
+                      requiredSafetyTag,
+                      dishId,
+                      ingredientId,
+                    ),
+                  )
                 );
               }));
         const contradictionPairs = new Map<string, { dishId: string; ingredientId: string }>();
