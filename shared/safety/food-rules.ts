@@ -103,6 +103,9 @@ const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAltern
 };
 
 const independentContradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
+const periphrasticNegationPattern =
+  /^(?:(?:く|る|む|する|にする|を確認する)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません))/u;
+const localEvidenceBoundaryPattern = /[。！？!?；;\r\n]+/u;
 
 function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
   for (const alternative of actionEvidence[kind]) {
@@ -112,11 +115,31 @@ function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]):
     );
     for (const match of text.matchAll(globalAffirmativePattern)) {
       const matchEnd = match.index + match[0].length;
-      if (!alternative.negatedSuffixPattern.test(text.slice(matchEnd))) return true;
+      const suffix = text.slice(matchEnd);
+      if (
+        !alternative.negatedSuffixPattern.test(suffix) &&
+        !periphrasticNegationPattern.test(suffix)
+      ) {
+        return true;
+      }
     }
   }
 
   return false;
+}
+
+function hasIngredientBoundActionEvidence(
+  text: string,
+  kind: SafetyAction["kind"],
+  normalizedIngredientName: string,
+): boolean {
+  // 食材名と安全動作を文全体から別々に拾うと、別の食材への処置を対象食材の処置と誤認する。
+  return text.split(localEvidenceBoundaryPattern).some((unit) => {
+    const normalizedUnit = normalizeFoodText(unit);
+    return (
+      normalizedUnit.includes(normalizedIngredientName) && hasAffirmativeActionEvidence(unit, kind)
+    );
+  });
 }
 
 function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boolean {
@@ -177,29 +200,6 @@ export function evaluateFoodSafetyRules(
       dish.ingredients.map((ingredient) => [ingredient.id, dish.id] as const),
     ),
   );
-  const instructionNamesIngredient = (instruction: string, ingredientId: string): boolean => {
-    const expectedName = ingredientName.get(ingredientId);
-    return expectedName !== undefined && normalizeFoodText(instruction).includes(expectedName);
-  };
-  const adaptationNamesIngredient = (
-    adaptation: (typeof menu.adaptations)[number],
-    ingredientId: string,
-  ): boolean => {
-    const expectedName = ingredientName.get(ingredientId);
-    if (expectedName === undefined) return false;
-    return normalizeFoodText(
-      [
-        ...(dishText.get(adaptation.dishId) ?? []),
-        adaptation.portionText,
-        adaptation.additionalCutting,
-        adaptation.additionalHeating,
-        adaptation.additionalSeasoning,
-        adaptation.servingCheck,
-      ]
-        .filter((text): text is string => text !== null)
-        .join(" "),
-    ).includes(expectedName);
-  };
   const adaptationEvidenceText = (
     adaptation: (typeof menu.adaptations)[number],
     kind: SafetyAction["kind"],
@@ -216,11 +216,7 @@ export function evaluateFoodSafetyRules(
       adaptation.servingCheck,
     ]
       .filter((text): text is string => text !== null)
-      .some(
-        (text) =>
-          hasAffirmativeActionEvidence(text, kind) &&
-          normalizeFoodText(text).includes(expectedName),
-      );
+      .some((text) => hasIngredientBoundActionEvidence(text, kind, expectedName));
   };
   const isVerifiedAction = (
     entry: {
@@ -233,7 +229,9 @@ export function evaluateFoodSafetyRules(
     ingredientId: string,
   ): boolean => {
     const { action, adaptation } = entry;
+    const expectedIngredientName = ingredientName.get(ingredientId);
     return (
+      expectedIngredientName !== undefined &&
       action.kind === kind &&
       action.dishId === dishId &&
       action.ingredientId === ingredientId &&
@@ -243,10 +241,8 @@ export function evaluateFoodSafetyRules(
       ingredientOwner.get(ingredientId) === dishId &&
       stepOwner.get(action.beforeRecipeStepId) === dishId &&
       stepOwner.get(adaptation.branchBeforeRecipeStepId) === dishId &&
-      hasAffirmativeActionEvidence(action.instruction, kind) &&
-      instructionNamesIngredient(action.instruction, ingredientId) &&
+      hasIngredientBoundActionEvidence(action.instruction, kind, expectedIngredientName) &&
       adaptationEvidenceText(adaptation, kind, ingredientId) &&
-      adaptationNamesIngredient(adaptation, ingredientId) &&
       ![
         ...(dishContradictionText.get(dishId) ?? []),
         ...adaptationContradictionText(dishId, memberRef),

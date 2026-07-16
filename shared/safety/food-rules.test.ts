@@ -233,6 +233,46 @@ it("accepts required deboning evidence bound to the matched fish ingredient", ()
   expect(issues).toEqual([]);
 });
 
+it("rejects deboning evidence whose fish name and action belong to different sentences", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({
+      actionIngredient: "salmon",
+      instruction: "鮭は焼く。にんじんの骨を完全に除く",
+    }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+  );
+});
+
+it.each(["鮭の骨を除く予定はない", "鮭の骨を取り除く必要はない"])(
+  "rejects periphrastically negated deboning evidence: %s",
+  (instruction) => {
+    const issues = evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    );
+
+    expect(issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+    );
+  },
+);
+
+it("accepts locally bound deboning evidence followed by an unrelated sentence", () => {
+  const issues = evaluateFoodSafetyRules(
+    sourceBoundSafetyMenu({
+      actionIngredient: "salmon",
+      instruction: "鮭の骨を完全に除く。にんじんはやわらかく煮る",
+    }),
+    requiredConstraintContext("remove_bones"),
+  );
+
+  expect(issues).toEqual([]);
+});
+
 it("accepts an ownerless timeline source when the same fish ingredient has verified evidence", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
