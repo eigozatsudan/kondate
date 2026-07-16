@@ -11,6 +11,7 @@
 - `.codex/rules/default.rules` に `git worktree` を `allow` 判定する `prefix_rule` を定義する。
 - `.codex/rules/default.rules` に `git add` と `git commit` を `allow` 判定する `prefix_rule` を定義する。
 - `.codex/rules/default.rules` に `docker compose run` を `allow` 判定する `prefix_rule` を定義する。
+- `.codex/rules/default.rules` は、`./scripts/reset-local-db.sh` と `./scripts/run-e2e.sh` を直接実行するリテラルな相対パス引数列を `allow` 判定する。
 - ルールの意図と制約は、日本語のコメントおよび `justification` で記録する。
 
 プロジェクトローカルの `.codex/` 設定は、プロジェクトが信頼済みの場合にだけ読み込まれる。設定変更は Codex の再起動または新しいセッションから反映される。
