@@ -60,7 +60,7 @@ prefix_rule(
     ],
 )
 
-# 最終検証で使用する信頼済みスクリプトに限り、リポジトリ直下からの直接実行を承認待ちなしで利用できるようにする。
+# 最終検証で使用する信頼済みスクリプトに限り、列挙した2つのリテラルな相対パスargvによる直接実行を承認待ちなしで利用できるようにする。
 prefix_rule(
     pattern = [["./scripts/reset-local-db.sh", "./scripts/run-e2e.sh"]],
     decision = "allow",
