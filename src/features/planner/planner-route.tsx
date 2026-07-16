@@ -50,6 +50,24 @@ type PlannerSafetyData = {
   eligibleMemberIds: readonly string[];
 };
 
+function sanitizeDraft(
+  draft: PlannerDraft | null,
+  eligibleMemberIds: readonly string[],
+): PlannerDraftInput {
+  const eligibleIds = new Set(eligibleMemberIds);
+  return draft === null
+    ? {
+        ...emptyDraft,
+        targetMemberIds: [...eligibleIds].slice(0, targetMemberLimit),
+      }
+    : {
+        ...draft,
+        targetMemberIds: draft.targetMemberIds
+          .filter((id) => eligibleIds.has(id))
+          .slice(0, targetMemberLimit),
+      };
+}
+
 async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData> {
   const client = getBrowserSupabaseClient();
   const [memberRows, catalog] = await Promise.all([
@@ -144,6 +162,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   });
   const [value, setValue] = useState<PlannerDraftInput>(emptyDraft);
   const [initialized, setInitialized] = useState(false);
+  const [baselineRevision, setBaselineRevision] = useState(0);
+  const [resetToken, setResetToken] = useState(0);
+  const [latestConflictDraft, setLatestConflictDraft] = useState<PlannerDraft | null | undefined>(
+    undefined,
+  );
+  const [hasDraftConflict, setHasDraftConflict] = useState(false);
+  const [draftConflictRefetchError, setDraftConflictRefetchError] = useState(false);
   const [attempt, setAttempt] = useState<PlannerAttempt>(createPlannerAttempt);
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
@@ -151,20 +176,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   useEffect(() => {
     if (draftQuery.data === undefined || safetyQuery.data === undefined || initialized) return;
-    const eligibleMemberIds = new Set(safetyQuery.data.eligibleMemberIds);
-    setValue(
-      draftQuery.data === null
-        ? {
-            ...emptyDraft,
-            targetMemberIds: [...eligibleMemberIds].slice(0, targetMemberLimit),
-          }
-        : {
-            ...draftQuery.data,
-            targetMemberIds: draftQuery.data.targetMemberIds
-              .filter((id) => eligibleMemberIds.has(id))
-              .slice(0, targetMemberLimit),
-          },
-    );
+    setValue(sanitizeDraft(draftQuery.data, safetyQuery.data.eligibleMemberIds));
+    setBaselineRevision(draftQuery.data?.revision ?? 0);
     setInitialized(true);
   }, [draftQuery.data, initialized, safetyQuery.data]);
 
@@ -174,21 +187,42 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     [client, userId],
   );
   const { refetch: refetchDraft } = draftQuery;
-  const onConflict = useCallback(() => {
-    // 競合時点の表示値は失われた保存前提のため、サーバーの最新下書きが届き次第
-    // 初期化フローをやり直して value と revision を作り直す（自動保存も再開する）。
-    setInitialized(false);
-    void refetchDraft();
+  const loadLatestConflictDraft = useCallback(async (): Promise<void> => {
+    setDraftConflictRefetchError(false);
+    const result = await refetchDraft();
+    if (result.isError) {
+      setDraftConflictRefetchError(true);
+      return;
+    }
+    setLatestConflictDraft(result.data);
   }, [refetchDraft]);
+  const onConflict = useCallback(async (): Promise<void> => {
+    setHasDraftConflict(true);
+    setLatestConflictDraft(undefined);
+    await loadLatestConflictDraft();
+  }, [loadLatestConflictDraft]);
   const autosave = useDraftAutosave({
     value,
     enabled: initialized && userId !== undefined,
-    initialRevision: draftQuery.data?.revision ?? 0,
+    baselineRevision,
+    resetToken,
     save,
     onConflict,
   });
 
-  if (draftQuery.isError || safetyQuery.isError || pantryQuery.isError) {
+  const resolveDraftConflict = useCallback((): void => {
+    if (latestConflictDraft === undefined || safetyQuery.data === undefined) return;
+    const sanitized = sanitizeDraft(latestConflictDraft, safetyQuery.data.eligibleMemberIds);
+    // 同じ render で表示値・保存 baseline・reset 世代を切り替え、混在状態を作らない。
+    setValue(sanitized);
+    setBaselineRevision(latestConflictDraft?.revision ?? 0);
+    setResetToken((current) => current + 1);
+    setLatestConflictDraft(undefined);
+    setHasDraftConflict(false);
+    setDraftConflictRefetchError(false);
+  }, [latestConflictDraft, safetyQuery.data]);
+
+  if ((!initialized && draftQuery.isError) || safetyQuery.isError || pantryQuery.isError) {
     return (
       <main className="page-frame">
         <p role="alert">献立条件を読み込めませんでした。再読み込みしてください。</p>
@@ -204,6 +238,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }
   return (
     <PlannerForm
+      key={resetToken}
       initialValue={value}
       members={safetyQuery.data.members}
       pantryItems={pantryQuery.data}
@@ -214,6 +249,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onStartNewAttempt={startNewAttempt}
       onChange={setValue}
       flush={autosave.flush}
+      draftConflict={hasDraftConflict}
+      canResolveDraftConflict={latestConflictDraft !== undefined}
+      draftConflictRefetchError={draftConflictRefetchError}
+      onResolveDraftConflict={resolveDraftConflict}
+      onRetryDraftConflict={() => void loadLatestConflictDraft()}
       onGenerate={async (draft, currentAttempt) => {
         if (startGeneration === undefined || currentAttempt === undefined) return false;
         const result = await startGeneration(draft, currentAttempt);

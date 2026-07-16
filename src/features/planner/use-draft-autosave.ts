@@ -10,28 +10,39 @@ export type DraftAutosaveController = {
   flush: () => Promise<PlannerDraft>;
 };
 
+class SupersededDraftSaveError extends Error {
+  constructor() {
+    super("reset 前の下書き保存は無効化されました");
+    this.name = "SupersededDraftSaveError";
+  }
+}
+
 export function useDraftAutosave({
   value,
   enabled,
-  initialRevision,
+  baselineRevision,
+  resetToken,
   save,
   onConflict,
 }: {
   value: PlannerDraftInput;
   enabled: boolean;
-  initialRevision: number;
+  baselineRevision: number;
+  resetToken: number;
   save: (value: PlannerDraftInput, revision: number) => Promise<PlannerDraft>;
-  onConflict?: () => void;
+  onConflict?: () => void | Promise<void>;
 }): DraftAutosaveController {
   const [state, setState] = useState<DraftSaveState>("idle");
-  const [savedRevision, setSavedRevision] = useState(initialRevision);
-  const revisionRef = useRef(initialRevision);
+  const [savedRevision, setSavedRevision] = useState(baselineRevision);
+  const revisionRef = useRef(baselineRevision);
   const latestRef = useRef(value);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const timerRef = useRef<number | null>(null);
   const pendingDebounceRef = useRef(false);
   const mountedRef = useRef(true);
   const operationNumberRef = useRef(0);
+  const resetGenerationRef = useRef(0);
+  const baselineRevisionRef = useRef(baselineRevision);
   const conflictRef = useRef<DraftRevisionConflictError | null>(null);
   const serialized = JSON.stringify(value);
   const latestSerializedRef = useRef(serialized);
@@ -39,20 +50,30 @@ export function useDraftAutosave({
   const wasEnabledRef = useRef(false);
   latestRef.current = value;
   latestSerializedRef.current = serialized;
+  baselineRevisionRef.current = baselineRevision;
 
-  useEffect(() => {
-    // initialRevision はサーバー revision が実際に変わった時だけ変化するプリミティブ値のため、
-    // 競合後の refetch で新しい revision が届いた場合もここで再ベースライン化し、
-    // 競合状態を解除する（呼び出し側が表示値も新しいサーバー値へ更新している前提）。
-    revisionRef.current = initialRevision;
-    setSavedRevision(initialRevision);
+  const resetBaseline = useCallback((revision: number): void => {
+    revisionRef.current = revision;
+    setSavedRevision(revision);
     baselineSerializedRef.current = latestSerializedRef.current;
     pendingDebounceRef.current = false;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (conflictRef.current !== null) return;
+    resetBaseline(baselineRevision);
+  }, [baselineRevision, resetBaseline]);
+
+  useEffect(() => {
+    // reset より前の非同期継続を、競合や revision を触る前に一括で失効させる。
+    resetGenerationRef.current += 1;
+    operationNumberRef.current += 1;
     conflictRef.current = null;
+    resetBaseline(baselineRevisionRef.current);
     if (mountedRef.current) setState("idle");
-  }, [initialRevision]);
+  }, [resetBaseline, resetToken]);
 
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
@@ -60,15 +81,31 @@ export function useDraftAutosave({
         if (mountedRef.current) setState("error");
         return Promise.reject(conflictRef.current);
       }
+      const resetGeneration = resetGenerationRef.current;
       const operationNumber = ++operationNumberRef.current;
       if (mountedRef.current) setState("saving");
-      const operation = queueRef.current.then(() => {
+      const operation = queueRef.current.then(async () => {
+        if (resetGeneration !== resetGenerationRef.current) {
+          throw new SupersededDraftSaveError();
+        }
         // 競合前に予約済みだった後続保存も、先行保存の競合判明後は実行しない。
         if (conflictRef.current !== null) throw conflictRef.current;
-        return save(next, revisionRef.current);
+        try {
+          const saved = await save(next, revisionRef.current);
+          if (resetGeneration !== resetGenerationRef.current) {
+            throw new SupersededDraftSaveError();
+          }
+          return saved;
+        } catch (error: unknown) {
+          if (resetGeneration !== resetGenerationRef.current) {
+            throw new SupersededDraftSaveError();
+          }
+          throw error;
+        }
       });
       queueRef.current = operation.then(
         (saved) => {
+          if (resetGeneration !== resetGenerationRef.current) return;
           revisionRef.current = saved.revision;
           baselineSerializedRef.current = JSON.stringify(next);
           if (mountedRef.current) {
@@ -77,6 +114,12 @@ export function useDraftAutosave({
           }
         },
         (error: unknown) => {
+          if (
+            resetGeneration !== resetGenerationRef.current ||
+            error instanceof SupersededDraftSaveError
+          ) {
+            return;
+          }
           if (mountedRef.current && operationNumber === operationNumberRef.current) {
             setState("error");
           }

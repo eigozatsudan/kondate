@@ -66,6 +66,11 @@ export function PlannerForm({
   onChange,
   flush,
   onGenerate,
+  draftConflict = false,
+  canResolveDraftConflict = false,
+  draftConflictRefetchError = false,
+  onResolveDraftConflict,
+  onRetryDraftConflict,
 }: {
   initialValue: PlannerDraftInput;
   members: readonly PlannerSafetyMember[];
@@ -78,6 +83,11 @@ export function PlannerForm({
   onChange: (value: PlannerDraftInput) => void;
   flush?: () => Promise<PlannerDraft>;
   onGenerate?: (draft: PlannerDraft, attempt: PlannerAttempt | undefined) => unknown;
+  draftConflict?: boolean;
+  canResolveDraftConflict?: boolean;
+  draftConflictRefetchError?: boolean;
+  onResolveDraftConflict?: () => void;
+  onRetryDraftConflict?: () => void;
 }) {
   const [value, setValue] = useState(initialValue);
   const [ingredient, setIngredient] = useState("");
@@ -371,11 +381,33 @@ export function PlannerForm({
           }[saveState]
         }
       </p>
+      {draftConflict && (
+        <section className="card stack" aria-labelledby="draft-conflict-title">
+          <h2 id="draft-conflict-title">下書きが別の画面で更新されました</h2>
+          <p>現在の入力を保持しています。内容を確認してから最新の下書きを読み込んでください。</p>
+          {draftConflictRefetchError && (
+            <>
+              <p role="alert">最新の下書きを取得できませんでした。</p>
+              <button type="button" onClick={onRetryDraftConflict}>
+                再試行
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            disabled={!canResolveDraftConflict}
+            onClick={onResolveDraftConflict}
+          >
+            最新の下書きを読み込む
+          </button>
+        </section>
+      )}
       <button
         className="primary-button"
         type="button"
         disabled={
           blocked ||
+          draftConflict ||
           saveState === "error" ||
           hasUnavailablePantrySelections ||
           !requiredChoicesComplete ||
@@ -402,7 +434,16 @@ export function PlannerForm({
         献立を作る
       </button>
       {generationError !== null && <p role="alert">{generationError}</p>}
-      <a href="/emergency-menus">AIを使わない緊急献立を見る</a>
+      <a
+        href={draftConflict ? undefined : "/emergency-menus"}
+        aria-disabled={draftConflict ? "true" : undefined}
+        tabIndex={draftConflict ? -1 : undefined}
+        onClick={(event) => {
+          if (draftConflict) event.preventDefault();
+        }}
+      >
+        AIを使わない緊急献立を見る
+      </a>
     </main>
   );
 }
