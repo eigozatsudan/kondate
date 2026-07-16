@@ -18,26 +18,96 @@ export type FoodSafetyRule = {
   ruleVersion: string;
 };
 
-const actionEvidence: Record<SafetyAction["kind"], RegExp> = {
-  remove_bones: /骨を(?:完全に)?除|骨を取り除|骨がないことを確認/u,
-  cut_small: /小さく切|一口大以下|細かく刻/u,
-  quarter_round_food: /4等分|四等分|縦に4つ/u,
-  soften: /やわらかくなるまで|舌でつぶせる|十分に煮る/u,
-  heat_thoroughly: /中心まで(?:十分に)?加熱|中心温度/u,
+type ActionEvidenceAlternative = {
+  affirmativePattern: RegExp;
+  negatedSuffixPattern: RegExp;
+};
+
+const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAlternative[]> = {
+  remove_bones: [
+    {
+      affirmativePattern: /骨を(?:完全に)?除/u,
+      negatedSuffixPattern:
+        /^(?:かない|かず|きません|けない|けません|去できない|去できません|くことができない|くことができません)/u,
+    },
+    {
+      affirmativePattern: /骨を取り除/u,
+      negatedSuffixPattern:
+        /^(?:かない|かず|きません|けない|けません|くことができない|くことができません)/u,
+    },
+    {
+      affirmativePattern: /骨がないことを確認/u,
+      negatedSuffixPattern: /^(?:しない|せず|しません|できない|できません)/u,
+    },
+  ],
+  cut_small: [
+    {
+      affirmativePattern: /小さく切/u,
+      negatedSuffixPattern:
+        /^(?!りすぎない)(?:らない|らず|れない|れません|りません|ることができない|ることができません)/u,
+    },
+    {
+      affirmativePattern: /一口大以下/u,
+      negatedSuffixPattern: /^(?:(?:に|には)?(?:しない|せず|しません|できない|できません))/u,
+    },
+    {
+      affirmativePattern: /細かく刻/u,
+      negatedSuffixPattern:
+        /^(?:まない|まず|めない|めません|みません|むことができない|むことができません)/u,
+    },
+  ],
+  quarter_round_food: [
+    {
+      affirmativePattern: /4等分/u,
+      negatedSuffixPattern: /^(?:しない|せず|しません)/u,
+    },
+    {
+      affirmativePattern: /四等分/u,
+      negatedSuffixPattern: /^(?:しない|せず|しません)/u,
+    },
+    {
+      affirmativePattern: /縦に4つ/u,
+      negatedSuffixPattern: /^(?:に)?(?:しない|せず|しません)/u,
+    },
+  ],
+  soften: [
+    {
+      affirmativePattern: /やわらかくなるまで/u,
+      negatedSuffixPattern: /^(?:加熱)?(?:しない|しません|せず)/u,
+    },
+    {
+      affirmativePattern: /舌でつぶせる/u,
+      negatedSuffixPattern: /(?!)/u,
+    },
+    {
+      affirmativePattern: /十分に煮/u,
+      negatedSuffixPattern: /^(?:ない|ません)/u,
+    },
+  ],
+  heat_thoroughly: [
+    {
+      affirmativePattern: /中心まで(?:十分に)?加熱/u,
+      negatedSuffixPattern: /^(?:しない|しません|せず)/u,
+    },
+    {
+      affirmativePattern: /中心温度/u,
+      negatedSuffixPattern: /^(?:を)?(?:確認)?(?:しない|しません|せず)/u,
+    },
+  ],
 };
 
 const independentContradictionPattern = /丸ごと|切らず|骨付きのまま|硬いまま/u;
-const clauseBoundaryPattern = /[、。,.，；;！？!?]/u;
-const evidenceNegationPattern = /ない|ません|ず/u;
 
 function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
-  const evidencePattern = actionEvidence[kind];
-  const globalEvidencePattern = new RegExp(evidencePattern.source, `${evidencePattern.flags}g`);
-
-  for (const match of text.matchAll(globalEvidencePattern)) {
-    const matchEnd = (match.index ?? 0) + match[0].length;
-    const clauseSuffix = text.slice(matchEnd).split(clauseBoundaryPattern, 1)[0] ?? "";
-    if (!evidenceNegationPattern.test(clauseSuffix)) return true;
+  for (const alternative of actionEvidence[kind]) {
+    const globalAffirmativePattern = new RegExp(
+      alternative.affirmativePattern.source,
+      `${alternative.affirmativePattern.flags}g`,
+    );
+    for (const match of text.matchAll(globalAffirmativePattern)) {
+      const matchEnd = (match.index ?? 0) + match[0].length;
+      if (!alternative.negatedSuffixPattern.test(text.slice(matchEnd))) return true;
+    }
   }
 
   return false;
@@ -47,7 +117,10 @@ function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boole
   if (independentContradictionPattern.test(text)) return true;
 
   // 否定は肯定語と同じ文節にだけ結び付け、後続の安全な代替条件で肯定工程を失効させない。
-  return actionEvidence[kind].test(text) && !hasAffirmativeActionEvidence(text, kind);
+  return (
+    actionEvidence[kind].some(({ affirmativePattern }) => affirmativePattern.test(text)) &&
+    !hasAffirmativeActionEvidence(text, kind)
+  );
 }
 
 export function evaluateFoodSafetyRules(

@@ -758,6 +758,55 @@ it("accepts deboning evidence followed by a separate safe fallback clause", () =
   ).toEqual([]);
 });
 
+it("accepts deboning evidence followed by a safe fallback without punctuation", () => {
+  const instruction = "鮭の骨を取り除き骨がないことを確認できない場合は提供しない";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual([]);
+});
+
+it("accepts an instruction that avoids cutting ingredients too small", () => {
+  const base = makeValidatedMenu();
+  const adaptations = base.dishes.map((dish, index) => {
+    const ingredient = dish.ingredients[0]!;
+    const instruction = `${ingredient.name}を小さく切りすぎないように調整する`;
+
+    return {
+      id: `57000000-0000-4000-8000-00000000000${index + 1}`,
+      dishId: dish.id,
+      anonymousMemberRef: "member_1",
+      portionText: "通常量",
+      branchBeforeRecipeStepId: dish.steps[0]!.id,
+      additionalCutting: instruction,
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: instruction,
+      safetyTags: [],
+      safetyActions: [
+        {
+          kind: "cut_small" as const,
+          dishId: dish.id,
+          ingredientId: ingredient.id,
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: dish.steps[0]!.id,
+          instruction,
+        },
+      ],
+    };
+  });
+
+  expect(
+    evaluateFoodSafetyRules(
+      makeValidatedMenu({ adaptations }),
+      requiredConstraintContext("cut_small"),
+    ),
+  ).toEqual([]);
+});
+
 it("T5-ADV-05 rejects a required cutting action contradicted by polite negation ません", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;
