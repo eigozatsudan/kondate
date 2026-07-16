@@ -15,7 +15,7 @@ vi.mock("@/features/auth/auth-provider", () => ({
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useQueryClient: () => ({ cancelQueries: vi.fn(), setQueryData: vi.fn() }),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) =>
     queryKey[0] === "planner"
       ? { data: null, isError: false, isPending: false, refetch: vi.fn() }

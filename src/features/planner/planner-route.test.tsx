@@ -60,6 +60,7 @@ const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
+const cancelQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("@/features/auth/auth-provider", () => ({
   useAuth: () => ({ session: { user: { id: queryState.userId } } }),
@@ -70,7 +71,10 @@ vi.mock("react-router", async (importOriginal) => {
   return { ...original, useNavigate: () => navigateMock };
 });
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ setQueryData: setQueryDataMock }),
+  useQueryClient: () => ({
+    cancelQueries: cancelQueriesMock,
+    setQueryData: setQueryDataMock,
+  }),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
     const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
     const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;

@@ -224,6 +224,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const flushAutosave = autosave.flush;
   const flushDraft = useCallback(async (): Promise<PlannerDraft> => {
     const saved = await flushAutosave();
+    // 保存完了前に始まった古い再取得で revision を逆行させないよう、cache 更新前に停止する。
+    await queryClient.cancelQueries({
+      queryKey: plannerKeys.draft(userId ?? "missing"),
+      exact: true,
+    });
     // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
     queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
     return saved;

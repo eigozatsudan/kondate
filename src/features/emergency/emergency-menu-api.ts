@@ -31,7 +31,10 @@ const emergencyMenuRequestSchema = z
       .min(1)
       .max(20)
       .refine((ids) => new Set(ids).size === ids.length),
-    pantryItemIds: z.array(z.uuid()),
+    pantryItemIds: z
+      .array(z.uuid())
+      .max(50)
+      .refine((ids) => new Set(ids).size === ids.length),
   })
   .strict();
 

@@ -36,6 +36,58 @@ it.each([
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["重複", ["74000000-0000-4000-8000-000000000001", "74000000-0000-4000-8000-000000000001"]],
+  [
+    "51件",
+    Array.from(
+      { length: 51 },
+      (_, index) => `74000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    ),
+  ],
+])("冷蔵庫食材IDが%sなら認証や通信の前に拒否する", async (_, pantryItemIds) => {
+  await expect(
+    getEmergencyMenus({
+      mealType: "dinner",
+      targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+      pantryItemIds,
+    }),
+  ).rejects.toThrow();
+
+  expect(requireAccessTokenMock).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("冷蔵庫食材IDは上限50件まで通信に使える", async () => {
+  const pantryItemIds = Array.from(
+    { length: 50 },
+    (_, index) => `74000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+  );
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: {
+          fixtureVersion: "2026-07-11.v1",
+          candidates: [],
+          message: "条件に合う緊急献立がありません",
+          consumesAiQuota: false,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await getEmergencyMenus({
+    mealType: "dinner",
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+    pantryItemIds,
+  });
+
+  expect(requireAccessTokenMock).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 it("冷蔵庫食材が空なら空のクエリ値を送らずサーバーの省略時契約に合わせる", async () => {
   vi.mocked(fetch).mockResolvedValue(
     new Response(
