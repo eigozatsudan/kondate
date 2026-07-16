@@ -1,9 +1,15 @@
+// ローカル開発用の .env を生成する。infra/supabase/.env.example をベースに、
+// パスワード・JWT・APIキーなどのローカル専用シークレットを都度ランダム生成して
+// 上書きし、既存の .env は --force を渡さない限り保護する（誤って
+// 本番相当の設定を上書きしないため）。生成後は一時ファイル経由でアトミックに
+// .env へリネームする。
 import { createHmac, randomBytes } from "node:crypto";
 import { access, open, readFile, rename, unlink } from "node:fs/promises";
 
 const force = process.argv.includes("--force");
 const output = ".env";
 
+// --force なしで既存の .env がある場合は上書きせず失敗させる。
 if (!force) {
   try {
     await access(output);
@@ -22,6 +28,8 @@ for (const line of source.split(/\r?\n/u)) {
 }
 values.delete("COMPOSE_FILE");
 if (force) {
+  // --force での再生成時は、既存のOAuthモック用パスワードだけは維持する
+  // （ローテーションのたびにモックログイン情報が変わると不便なため）。
   let existing = "";
   try {
     existing = await readFile(output, "utf8");
@@ -45,6 +53,8 @@ if (force) {
 const base64url = (value) => Buffer.from(value).toString("base64url");
 const jwtSecret = randomBytes(32).toString("hex");
 const now = Math.floor(Date.now() / 1000);
+// ローカルSupabase用のanon/service_roleロールJWTを自前で署名する
+// （本番のSupabase発行鍵とは無関係な、このチェックアウト限定の鍵）。
 const signRole = (role) => {
   const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = base64url(
@@ -118,12 +128,16 @@ values.set("VITE_AUTH_PROVIDER_MODE", "oauth_mock");
 values.set("VITE_OAUTH_MOCK_ORIGIN", "http://127.0.0.1:8788");
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787");
 
+// 値に特殊文字が含まれる場合のみJSON文字列としてクォートし、通常の
+// KEY=VALUE 行との互換性を保つ。
 const rendered = [...values.entries()]
   .map(
     ([key, value]) =>
       `${key}=${/[^A-Za-z0-9_./:*@?=-]/u.test(value) ? JSON.stringify(value) : value}`,
   )
   .join("\n");
+// 一時ファイルへ書き込んでから rename でアトミックに .env を差し替える
+// （書き込み途中でのプロセス中断による破損や、他プロセスとの競合を防ぐ）。
 const temporaryOutput = `.env.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
 let temporaryFile;
 try {

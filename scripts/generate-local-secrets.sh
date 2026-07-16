@@ -1,4 +1,7 @@
 #!/bin/sh
+# ローカル用 .env を生成する generate-local-secrets.mjs を、tooling Compose の
+# local-secrets サービス（コンテナ内のNode）経由で実行する薄いラッパー。
+# ホスト側にNodeのインストールを要求せずに済むようにする。
 set -eu
 
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)

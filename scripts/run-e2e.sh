@@ -1,4 +1,14 @@
 #!/bin/sh
+# E2Eテスト用Composeプロファイルを起動し、Playwrightコンテナ(e2e)を実行して、
+# 成功・失敗・中断のいずれの経路でも必ずE2E専用コンテナを片付け、
+# 通常の開発スタック(auth/app)を元の状態に復元するラッパー。
+#
+# 多重起動防止のディレクトリロック(lock_dir)、二重の後始末を避けるための
+# シグナル処理（1回目は猶予期間中に子の自然終了を待ち、2回目以降は即killする）、
+# 猶予時間切れをwatchdogサブシェルからALRMで通知する仕組みを持つため、
+# 全体が長く複雑になっている。読む際は「run_child = 子プロセスの起動と
+# シグナル/終了待ち」「cleanup = E2Eコンテナの後始末」「finish = ロック解放と
+# 最終exit」の3層構造として捉えるとよい。
 set -eu
 
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
@@ -10,6 +20,7 @@ project_name=$("$script_dir/compose-project-name.sh" "$repo_root")
 export KONDATE_COMPOSE_PROJECT_NAME="$project_name"
 lock_dir=$repo_root/.run-e2e.lock
 
+# シグナル受信後、子プロセスの自然終了をどれだけ待つかの猶予秒数。
 signal_grace_seconds=${KONDATE_E2E_SIGNAL_GRACE_SECONDS:-5}
 if ! printf '%s\n' "$signal_grace_seconds" | grep -Eq '^(0|[1-9][0-9]*)([.][0-9]+)?$'; then
   echo "KONDATE_E2E_SIGNAL_GRACE_SECONDS must be a non-negative number" >&2
@@ -27,6 +38,8 @@ signal_pending=0
 cleanup_started=0
 lock_acquired=0
 
+# signal_grace_seconds経過しても子プロセスが自然終了しない場合に、
+# 現在のwrapperプロセス自身へALRMを送って強制killを促すサブシェル。
 start_watchdog() {
   if [ -n "$watchdog_pid" ]; then
     return
@@ -66,6 +79,7 @@ start_watchdog() {
   watchdog_pid=$!
 }
 
+# 子プロセスが猶予内に終了した場合、不要になったwatchdogを止めて回収する。
 cancel_watchdog() {
   if [ -z "$watchdog_pid" ]; then
     return
@@ -80,6 +94,7 @@ cancel_watchdog() {
   watchdog_pid=
 }
 
+# watchdogからのALRM受信時に呼ばれる: 猶予切れなので現在の子を強制killする。
 force_child_after_grace() {
   if [ -n "$child_pid" ]; then
     # wrapperが現在所有するPIDだけを参照し、watchdog側で古いPIDを保持しない。
@@ -88,6 +103,8 @@ force_child_after_grace() {
 }
 trap force_child_after_grace ALRM
 
+# 受信したシグナルを現在の子プロセスへ実際に転送する。1回目は対象シグナルを
+# 送って猶予期間だけ待ち、2回目以降（再度Ctrl-C等）はためらわず強制killする。
 deliver_signal() {
   if [ -z "$child_pid" ]; then
     return
@@ -104,6 +121,9 @@ deliver_signal() {
   fi
 }
 
+# HUP/INT/TERMのtrapから呼ばれる。最初に受けたシグナル種別と終了コードを
+# 記録し、子プロセスが起動済みなら即座に配送、未起動ならフラグだけ立てて
+# run_child起動直後に配送させる。
 record_signal() {
   signal=$1
   received_status=$2
@@ -124,6 +144,9 @@ trap 'record_signal HUP 129' HUP
 trap 'record_signal INT 130' INT
 trap 'record_signal TERM 143' TERM
 
+# コマンドをバックグラウンドで起動し、終了(またはシグナルによる中断)まで
+# 待つ共通ヘルパー。cleanupフェーズ以外で既に中断が確定していれば
+# 新規コマンドを起動せず即座に失敗を返す。
 run_child() {
   if [ "$termination_status" -ne 0 ] && [ "$cleanup_started" -eq 0 ]; then
     return "$termination_status"
@@ -161,6 +184,9 @@ run_child() {
   return "$child_status"
 }
 
+# E2E用コンテナをkill・削除し、通常の開発スタック(auth/app)を
+# force-recreateで復元する。成否に関わらず全ステップを実行し、
+# 最初に発生した失敗のステータスを返す。
 cleanup() {
   original_status=$1
   cleanup_started=1
@@ -202,6 +228,7 @@ cleanup() {
   return "$original_status"
 }
 
+# 多重起動防止用のロックディレクトリを解放する（自身が取得した場合のみ）。
 release_lock() {
   if [ "$lock_acquired" -eq 0 ]; then
     return 0
@@ -214,6 +241,8 @@ release_lock() {
   fi
 }
 
+# ロック解放後の最終的なexitコードを決定して終了する。シグナルによる
+# 中断やロック解放失敗があれば、それを最終ステータスに反映する。
 finish() {
   final_status=$1
   trap '' HUP INT TERM ALRM
@@ -232,6 +261,8 @@ finish() {
   exit "$final_status"
 }
 
+# EXIT trap: run_e2e_commandsの通常経路をバイパスして早期returnした場合の
+# 保険として、未実施ならcleanupとfinishを実行する。
 cleanup_on_exit() {
   unexpected_status=$?
   trap - EXIT
@@ -252,6 +283,9 @@ else
   exit 1
 fi
 
+# 通常の開発スタックを起動したうえで、E2E専用プロファイルのauthを追加起動し、
+# kong/oauth-mock/appをE2E向け設定で強制再作成してから、実際のPlaywright
+# テストランナー(e2e)を実行する。
 run_e2e_commands() {
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" up -d --wait || return $?

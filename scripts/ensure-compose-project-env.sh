@@ -1,4 +1,8 @@
 #!/bin/sh
+# リポジトリの .env に KONDATE_COMPOSE_PROJECT_NAME を記録・検証する。
+# 未記入なら追記し、既に記入済みなら compose-project-name.sh が導出した
+# 値と一致するか確認する。これにより .env を他のチェックアウトからコピーして
+# きた場合など、Composeプロジェクトの取り違えを検出できる。
 set -eu
 
 if [ "$#" -ne 2 ]; then
@@ -32,6 +36,7 @@ if [ "$entry_count" -gt 1 ]; then
   exit 2
 fi
 if [ "$entry_count" -eq 1 ]; then
+  # 既に記録済みなら、今回導出した値と一致するかだけ確認して終了する。
   existing=$(sed -n 's/^KONDATE_COMPOSE_PROJECT_NAME=//p' "$env_file")
   if [ "$existing" != "$project_name" ]; then
     echo ".env belongs to a different checkout; regenerate local secrets before continuing" >&2
@@ -40,6 +45,8 @@ if [ "$entry_count" -eq 1 ]; then
   exit 0
 fi
 
+# 未記入の場合のみ、一時ファイル経由でアトミックに追記する
+# （書き込み途中でのプロセス中断による .env 破損を防ぐ）。
 temporary=$(mktemp "$repo_root/.env.tmp-XXXXXX")
 cleanup() {
   rm -f "$temporary"

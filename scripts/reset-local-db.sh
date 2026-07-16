@@ -1,4 +1,7 @@
 #!/bin/sh
+# ローカルのSupabase/Postgresを完全に作り直す: Composeスタックをvolumeごと
+# 停止し、他プロジェクトのDBコンテナが残っていないことを確認したうえで
+# PGDATAのbind mountを削除し、スタックを再起動する。
 set -eu
 
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
@@ -11,6 +14,7 @@ export KONDATE_COMPOSE_PROJECT_NAME="$project_name"
 
 child_pid=
 container_query=
+# mktempで作った一時ファイル（コンテナ有無の確認結果）を確実に削除する。
 cleanup() {
   if [ -n "$container_query" ]; then
     rm -f "$container_query" || true
@@ -45,8 +49,11 @@ run_child() {
   return "$status"
 }
 
+# このプロジェクトのCompose named volumeを含めて停止・削除する。
 run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
   -f "$repo_root/compose.yaml" down --volumes --remove-orphans
+# コンテナ名 "supabase-db" は固定名のため、別プロジェクト由来のコンテナが
+# 残っているとPGDATA削除が事故になる。down後もまだ残っていないか確認する。
 container_query=$(mktemp "${TMPDIR:-/tmp}/kondate-supabase-db.XXXXXX")
 if run_child docker container ls --all --quiet --filter 'name=^/supabase-db$' > "$container_query"; then
   :
@@ -64,5 +71,6 @@ cleanup
 run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
   -f "$repo_root/compose.tooling.yaml" run --rm --user 0:0 --entrypoint sh \
   vendor-supabase -c 'if [ -e /workspace/infra/supabase/volumes/db/data/postmaster.pid ]; then echo "PGDATA is still active; stop the owning database before retrying" >&2; exit 1; fi; rm -rf /workspace/infra/supabase/volumes/db/data'
+# PGDATAが空の状態からスタックを再起動し、DBを初期化させる。
 run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
   -f "$repo_root/compose.yaml" up -d --wait
