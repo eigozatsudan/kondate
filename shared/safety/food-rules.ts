@@ -111,7 +111,7 @@ function hasAffirmativeActionEvidence(text: string, kind: SafetyAction["kind"]):
       `${alternative.affirmativePattern.flags}g`,
     );
     for (const match of text.matchAll(globalAffirmativePattern)) {
-      const matchEnd = (match.index ?? 0) + match[0].length;
+      const matchEnd = match.index + match[0].length;
       if (!alternative.negatedSuffixPattern.test(text.slice(matchEnd))) return true;
     }
   }

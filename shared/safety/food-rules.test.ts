@@ -649,7 +649,7 @@ it("rejects cut-small evidence expressed as an inability in every dish", () => {
     const instruction = `${ingredient.name}を小さく切れない`;
 
     return {
-      id: `57000000-0000-4000-8000-00000000000${index + 1}`,
+      id: `57000000-0000-4000-8000-00000000000${String(index + 1)}`,
       dishId: dish.id,
       anonymousMemberRef: "member_1",
       portionText: "通常量",
@@ -716,7 +716,7 @@ it.each([
     const instruction = `${ingredient.name}を${evidence}`;
 
     return {
-      id: `57000000-0000-4000-8000-00000000000${index + 1}`,
+      id: `57000000-0000-4000-8000-00000000000${String(index + 1)}`,
       dishId: dish.id,
       anonymousMemberRef: "member_1",
       portionText: "通常量",
@@ -776,7 +776,7 @@ it("accepts an instruction that avoids cutting ingredients too small", () => {
     const instruction = `${ingredient.name}を小さく切りすぎないように調整する`;
 
     return {
-      id: `57000000-0000-4000-8000-00000000000${index + 1}`,
+      id: `57000000-0000-4000-8000-00000000000${String(index + 1)}`,
       dishId: dish.id,
       anonymousMemberRef: "member_1",
       portionText: "通常量",
