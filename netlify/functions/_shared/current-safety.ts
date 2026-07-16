@@ -2,7 +2,10 @@ import { z } from "zod";
 import {
   ageBands,
   allergyStatuses,
+  easePreferences,
+  portionSizes,
   requiredSafetyConstraints,
+  spiceLevels,
   unsupportedDietKinds,
   unsupportedDietStatuses,
 } from "../../../shared/contracts/domain.js";
@@ -18,6 +21,7 @@ import type { AdminSupabaseClient } from "./supabase-admin.js";
 
 const dictionaryVersion = currentAllergenCatalogVersion;
 const foodRuleVersion = "jp-caa-child-shape-2026-07.v1" as const;
+
 export const currentAllergenCatalogIds: readonly string[] = Object.freeze([
   ...new Set(currentAllergenCatalogV1.map((entry) => entry.id)),
 ]);
@@ -105,41 +109,113 @@ export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [
   })),
 ];
 
-const ageBandSchema = z.enum(ageBands);
-const allergyStatusSchema = z.enum(allergyStatuses);
-const requiredSafetyConstraintSchema = z.enum(requiredSafetyConstraints);
-const unsupportedDietKindSchema = z.enum(unsupportedDietKinds);
-const unsupportedDietStatusSchema = z.enum(unsupportedDietStatuses);
-const aliasKindSchema = z.enum(["direct", "derived", "processed"]);
-const allergenAliasRowSchema = z
+const standardAllergySchema = z
+  .object({
+    kind: z.literal("standard"),
+    allergen_id: z.string().min(1),
+  })
+  .strict();
+const customAllergySchema = z
+  .object({
+    kind: z.literal("custom"),
+    name: z.string().min(1),
+    aliases: z.array(z.string().min(1)),
+  })
+  .strict();
+const memberSchema = z
+  .object({
+    id: z.uuid(),
+    display_name: z.string(),
+    age_band: z.enum(ageBands),
+    portion_size: z.enum(portionSizes).nullable(),
+    spice_level: z.enum(spiceLevels).nullable(),
+    ease_preferences: z.array(z.enum(easePreferences)),
+    allergy_status: z.enum(allergyStatuses).refine((value) => value !== "unconfirmed"),
+    required_safety_constraints: z.array(z.enum(requiredSafetyConstraints)),
+    unsupported_diet_status: z
+      .enum(unsupportedDietStatuses)
+      .refine((value) => value !== "unconfirmed"),
+    unsupported_diet_kinds: z.array(z.enum(unsupportedDietKinds)),
+    allergies: z.array(z.discriminatedUnion("kind", [standardAllergySchema, customAllergySchema])),
+  })
+  .strict();
+const catalogRowSchema = z
+  .object({
+    id: z.string().regex(/^[a-z][a-z0-9_]*$/u),
+    display_name: z.string().min(1),
+    regulatory_class: z.enum(["mandatory", "recommended"]),
+    catalog_version: z.string().min(1),
+  })
+  .strict();
+const aliasRowSchema = z
   .object({
     allergen_id: z.string().min(1),
     alias: z.string().min(1),
     normalized_alias: z.string().min(1),
-    alias_kind: aliasKindSchema,
+    alias_kind: z.enum(["direct", "derived", "processed"]),
     requires_label_confirmation: z.boolean(),
     dictionary_version: z.string().min(1),
   })
   .strict();
-const allergenCatalogRowSchema = z
+const ruleRowSchema = z
   .object({
-    id: z.string().regex(/^[a-z][a-z0-9_]*$/u),
-    display_name: z.string().min(1).max(100),
-    regulatory_class: z.enum(["mandatory", "recommended"]),
-    catalog_version: z.string().min(1).max(80),
+    id: z.string().min(1),
+    applies_to_age_bands: z.array(z.enum(ageBands)).min(1),
+    match_terms: z.array(z.string().min(1)).min(1),
+    rule_kind: z.enum(["forbidden", "requires_tag"]),
+    required_safety_tag: z.enum(safetyActionKinds).nullable(),
+    user_message: z.string().min(1),
+    rule_version: z.string().min(1),
   })
   .strict();
+const currentSafetySnapshotSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("unavailable") }).strict(),
+  z
+    .object({
+      status: z.literal("available"),
+      dictionary_version: z.string().min(1),
+      food_rule_version: z.string().min(1),
+      members: z.array(memberSchema).min(1).max(20),
+      catalog: z.array(catalogRowSchema),
+      aliases: z.array(aliasRowSchema),
+      rules: z.array(ruleRowSchema),
+    })
+    .strict(),
+]);
 
-const invalidTargets = () =>
-  new HttpError(400, "invalid_target_members", "対象メンバーを確認してください");
+type AvailableSnapshot = Extract<
+  z.infer<typeof currentSafetySnapshotSchema>,
+  { status: "available" }
+>;
+
 const safetyUnavailable = () =>
   new HttpError(500, "safety_context_failed", "現在の安全条件を読み込めませんでした");
 
-type AllergenAliasRow = z.infer<typeof allergenAliasRowSchema>;
-type AllergenCatalogRow = z.infer<typeof allergenCatalogRowSchema>;
-
-function catalogSignature(row: AllergenCatalogRow): string {
+function catalogSignature(row: AvailableSnapshot["catalog"][number]): string {
   return [row.id, row.display_name, row.regulatory_class, row.catalog_version].join("\u0000");
+}
+
+function aliasSignature(row: AvailableSnapshot["aliases"][number]): string {
+  return [
+    row.allergen_id,
+    row.alias,
+    row.normalized_alias,
+    row.alias_kind,
+    row.requires_label_confirmation ? "1" : "0",
+    row.dictionary_version,
+  ].join("\u0000");
+}
+
+function ruleSignature(row: AvailableSnapshot["rules"][number]): string {
+  return JSON.stringify([
+    row.id,
+    row.applies_to_age_bands,
+    row.match_terms,
+    row.rule_kind,
+    row.required_safety_tag,
+    row.user_message,
+    row.rule_version,
+  ]);
 }
 
 const expectedCatalogSignatures = new Set(
@@ -152,238 +228,88 @@ const expectedCatalogSignatures = new Set(
     }),
   ),
 );
-
-function hasExactCurrentCatalog(catalog: SafetyRows["catalog"]): boolean {
-  const parsedResult = z.array(allergenCatalogRowSchema).safeParse(catalog);
-  if (!parsedResult.success) return false;
-  const actualSignatures = new Set(parsedResult.data.map(catalogSignature));
-  return (
-    currentAllergenCatalogIds.length === currentAllergenCatalogV1.length &&
-    parsedResult.data.length === expectedCatalogSignatures.size &&
-    actualSignatures.size === expectedCatalogSignatures.size &&
-    [...expectedCatalogSignatures].every((signature) => actualSignatures.has(signature))
-  );
-}
-
-function copyCurrentAllergenCatalog(): CurrentSafetyContext["allergenDictionary"]["catalog"] {
-  return currentAllergenCatalogV1.map((entry) => ({
-    id: entry.id,
-    displayName: entry.displayName,
-    catalogVersion: entry.catalogVersion,
-  }));
-}
-
-function aliasSignature(alias: AllergenAliasRow): string {
-  return [
-    alias.allergen_id,
-    alias.alias,
-    alias.normalized_alias,
-    alias.alias_kind,
-    alias.requires_label_confirmation ? "1" : "0",
-    alias.dictionary_version,
-  ].join("\u0000");
-}
-
 const expectedAliasSignatures = new Set(
-  currentAllergenAliasManifest.map((alias) =>
+  currentAllergenAliasManifest.map((entry) =>
     aliasSignature({
-      allergen_id: alias.allergenId,
-      alias: alias.alias,
-      normalized_alias: alias.normalizedAlias,
-      alias_kind: alias.aliasKind,
-      requires_label_confirmation: alias.requiresLabelConfirmation,
+      allergen_id: entry.allergenId,
+      alias: entry.alias,
+      normalized_alias: entry.normalizedAlias,
+      alias_kind: entry.aliasKind,
+      requires_label_confirmation: entry.requiresLabelConfirmation,
       dictionary_version: dictionaryVersion,
     }),
   ),
 );
-
-function parseExactCurrentAliases(aliases: SafetyRows["aliases"]): AllergenAliasRow[] | undefined {
-  const parsedResult = z.array(allergenAliasRowSchema).safeParse(aliases);
-  if (!parsedResult.success) return undefined;
-
-  const parsedAliases = parsedResult.data;
-  const actualSignatures = new Set(parsedAliases.map(aliasSignature));
-  if (
-    parsedAliases.length !== expectedAliasSignatures.size ||
-    actualSignatures.size !== expectedAliasSignatures.size ||
-    ![...expectedAliasSignatures].every((signature) => actualSignatures.has(signature))
-  ) {
-    return undefined;
-  }
-  return parsedAliases;
-}
-
-type SafetyRows = {
-  members: readonly {
-    id: string;
-    user_id: string;
-    status: string;
-    age_band: string | null;
-    allergy_status: string | null;
-    required_safety_constraints: readonly string[];
-    unsupported_diet_status: string | null;
-    unsupported_diet_kinds: readonly string[];
-  }[];
-  allergies: readonly { user_id: string; member_id: string; allergen_id: string | null }[];
-  catalog: readonly {
-    id: string;
-    display_name: string;
-    regulatory_class: "mandatory" | "recommended";
-    catalog_version: string;
-  }[];
-  aliases: readonly {
-    allergen_id: string;
-    alias: string;
-    normalized_alias: string;
-    alias_kind: string;
-    requires_label_confirmation: boolean;
-    dictionary_version: string;
-  }[];
-  rules: readonly {
-    id: string;
-    applies_to_age_bands: readonly string[];
-    match_terms: readonly string[];
-    rule_kind: string;
-    required_safety_tag: string | null;
-    user_message: string;
-    rule_version: string;
-  }[];
-};
-
-type SafetyRuleRow = SafetyRows["rules"][number];
-
-const safetyRuleRowSchema = z
-  .object({
-    id: z.string().min(1),
-    applies_to_age_bands: z.array(ageBandSchema).min(1),
-    match_terms: z.array(z.string().min(1)).min(1),
-    rule_kind: z.enum(["forbidden", "requires_tag"]),
-    required_safety_tag: z.enum(safetyActionKinds).nullable(),
-    user_message: z.string().min(1),
-    rule_version: z.string().min(1),
-  })
-  .strict();
-
-function ruleSignature(rule: SafetyRuleRow): string {
-  return JSON.stringify([
-    rule.id,
-    rule.applies_to_age_bands,
-    rule.match_terms,
-    rule.rule_kind,
-    rule.required_safety_tag,
-    rule.user_message,
-    rule.rule_version,
-  ]);
-}
-
-const expectedRuleSignatures = new Map(
-  currentFoodSafetyRulesV1.map((rule) => [
-    rule.id,
+const expectedRuleSignatures = new Set(
+  currentFoodSafetyRulesV1.map((rule) =>
     ruleSignature({
       id: rule.id,
-      applies_to_age_bands: rule.appliesToAgeBands,
-      match_terms: rule.matchTerms,
+      applies_to_age_bands: [...rule.appliesToAgeBands],
+      match_terms: [...rule.matchTerms],
       rule_kind: rule.ruleKind,
       required_safety_tag: rule.requiredSafetyTag,
       user_message: rule.userMessage,
       rule_version: rule.ruleVersion,
     }),
-  ]),
+  ),
 );
 
-function hasExactCurrentRules(rules: readonly SafetyRuleRow[]): boolean {
-  const parsedRulesResult = z.array(safetyRuleRowSchema).safeParse(rules);
-  if (!parsedRulesResult.success) return false;
-  const parsedRules = parsedRulesResult.data;
-  if (
-    currentFoodSafetyRuleIds.length !== currentFoodSafetyRulesV1.length ||
-    parsedRules.length !== currentFoodSafetyRulesV1.length
-  ) {
-    return false;
-  }
-  const rowsById = new Map(parsedRules.map((rule) => [rule.id, rule]));
+function hasExactSignatures<T>(
+  rows: readonly T[],
+  expected: ReadonlySet<string>,
+  signature: (row: T) => string,
+): boolean {
+  const actual = new Set(rows.map(signature));
   return (
-    rowsById.size === currentFoodSafetyRulesV1.length &&
-    currentFoodSafetyRulesV1.every((canonicalRule) => {
-      const row = rowsById.get(canonicalRule.id);
-      return (
-        row !== undefined && ruleSignature(row) === expectedRuleSignatures.get(canonicalRule.id)
-      );
-    })
+    rows.length === expected.size &&
+    actual.size === expected.size &&
+    [...expected].every((value) => actual.has(value))
   );
 }
 
-function copyCurrentFoodSafetyRules(): CurrentSafetyContext["foodSafetyRules"] {
-  return currentFoodSafetyRulesV1.map((rule) => ({
-    ...rule,
-    appliesToAgeBands: [...rule.appliesToAgeBands],
-    matchTerms: [...rule.matchTerms],
-  }));
-}
-
-export function buildCurrentSafetyContext(input: {
-  userId: string;
-  targetMemberIds: readonly string[];
-  rows: SafetyRows;
-}): CurrentSafetyContext {
-  const { userId, targetMemberIds, rows } = input;
-  const parsedAliases = parseExactCurrentAliases(rows.aliases);
+function validateSnapshot(snapshot: AvailableSnapshot, targetMemberIds: readonly string[]): void {
   if (
-    targetMemberIds.length === 0 ||
-    targetMemberIds.length > 20 ||
-    new Set(targetMemberIds).size !== targetMemberIds.length ||
-    rows.members.length !== targetMemberIds.length ||
-    rows.members.some((member) => member.user_id !== userId || member.status !== "complete") ||
-    rows.allergies.some(
-      (allergy) => allergy.user_id !== userId || !targetMemberIds.includes(allergy.member_id),
-    )
-  ) {
-    throw invalidTargets();
-  }
-  if (
-    !hasExactCurrentCatalog(rows.catalog) ||
-    !hasExactCurrentRules(rows.rules) ||
-    parsedAliases === undefined
+    snapshot.dictionary_version !== dictionaryVersion ||
+    snapshot.food_rule_version !== foodRuleVersion ||
+    snapshot.members.length !== targetMemberIds.length ||
+    snapshot.members.some((member, index) => member.id !== targetMemberIds[index]) ||
+    snapshot.catalog.some((row) => row.catalog_version !== snapshot.dictionary_version) ||
+    snapshot.aliases.some((row) => row.dictionary_version !== snapshot.dictionary_version) ||
+    snapshot.rules.some((row) => row.rule_version !== snapshot.food_rule_version) ||
+    !hasExactSignatures(snapshot.catalog, expectedCatalogSignatures, catalogSignature) ||
+    !hasExactSignatures(snapshot.aliases, expectedAliasSignatures, aliasSignature) ||
+    !hasExactSignatures(snapshot.rules, expectedRuleSignatures, ruleSignature)
   ) {
     throw safetyUnavailable();
   }
+}
+
+function mapContext(snapshot: AvailableSnapshot): CurrentSafetyContext {
   return {
-    dictionaryVersion,
-    foodRuleVersion,
+    dictionaryVersion: snapshot.dictionary_version,
+    foodRuleVersion: snapshot.food_rule_version,
     requestText: "",
-    members: targetMemberIds.map((memberId, index) => {
-      const member = rows.members.find((row) => row.id === memberId);
-      if (
-        member === undefined ||
-        member.age_band === null ||
-        member.allergy_status === null ||
-        member.unsupported_diet_status === null
-      ) {
-        throw invalidTargets();
-      }
-      const memberAllergies = rows.allergies.filter((row) => row.member_id === memberId);
-      return {
-        householdMemberId: member.id,
-        anonymousRef: `member_${String(index + 1)}`,
-        ageBand: ageBandSchema.parse(member.age_band),
-        allergyStatus: allergyStatusSchema.parse(member.allergy_status),
-        allergenIds: memberAllergies.flatMap((row) =>
-          row.allergen_id === null ? [] : [row.allergen_id],
-        ),
-        hasUnmappedCustomAllergy: memberAllergies.some((row) => row.allergen_id === null),
-        requiredSafetyConstraints: z
-          .array(requiredSafetyConstraintSchema)
-          .parse(member.required_safety_constraints),
-        unsupportedDietStatus: unsupportedDietStatusSchema.parse(member.unsupported_diet_status),
-        unsupportedDietKinds: z
-          .array(unsupportedDietKindSchema)
-          .parse(member.unsupported_diet_kinds),
-      };
-    }),
+    members: snapshot.members.map((member, index) => ({
+      householdMemberId: member.id,
+      anonymousRef: `member_${String(index + 1)}`,
+      ageBand: member.age_band,
+      allergyStatus: member.allergy_status,
+      allergenIds: member.allergies.flatMap((allergy) =>
+        allergy.kind === "standard" ? [allergy.allergen_id] : [],
+      ),
+      hasUnmappedCustomAllergy: member.allergies.some((allergy) => allergy.kind === "custom"),
+      requiredSafetyConstraints: [...member.required_safety_constraints],
+      unsupportedDietStatus: member.unsupported_diet_status,
+      unsupportedDietKinds: [...member.unsupported_diet_kinds],
+    })),
     allergenDictionary: {
-      version: dictionaryVersion,
-      catalog: copyCurrentAllergenCatalog(),
-      aliases: parsedAliases.map((row) => ({
+      version: snapshot.dictionary_version,
+      catalog: snapshot.catalog.map((row) => ({
+        id: row.id,
+        displayName: row.display_name,
+        catalogVersion: row.catalog_version,
+      })),
+      aliases: snapshot.aliases.map((row) => ({
         allergenId: row.allergen_id,
         alias: row.alias,
         normalizedAlias: row.normalized_alias,
@@ -392,32 +318,45 @@ export function buildCurrentSafetyContext(input: {
         dictionaryVersion: row.dictionary_version,
       })),
     },
-    foodSafetyRules: copyCurrentFoodSafetyRules(),
+    foodSafetyRules: snapshot.rules.map((row) => ({
+      id: row.id,
+      appliesToAgeBands: [...row.applies_to_age_bands],
+      matchTerms: [...row.match_terms],
+      ruleKind: row.rule_kind,
+      requiredSafetyTag: row.required_safety_tag,
+      userMessage: row.user_message,
+      ruleVersion: row.rule_version,
+    })),
   };
 }
 
-export function captureMemberLabels(input: {
-  context: CurrentSafetyContext;
-  userId: string;
-  rows: readonly { id: string; user_id: string; status: string; display_name: string | null }[];
-}): Readonly<Record<string, string>> {
-  if (
-    input.rows.length !== input.context.members.length ||
-    input.rows.some((row) => row.user_id !== input.userId || row.status !== "complete")
-  ) {
-    throw invalidTargets();
-  }
-  const rows = new Map(input.rows.map((member) => [member.id, member] as const));
+function captureLabels(snapshot: AvailableSnapshot): Readonly<Record<string, string>> {
   return Object.freeze(
     Object.fromEntries(
-      input.context.members.map((member, index) => {
-        const liveName = rows.get(member.householdMemberId)?.display_name?.trim();
-        if (!rows.has(member.householdMemberId)) throw invalidTargets();
-        // レスポンス生成時点の所有者確認済み名称を固定し、後続更新の影響を遮断する。
-        return [member.anonymousRef, liveName || `家族${String(index + 1)}`] as const;
+      snapshot.members.map((member, index) => {
+        const displayName = member.display_name.trim();
+        // RPCと同じスナップショットの名称を固定し、後続更新との混在を防ぐ。
+        return [`member_${String(index + 1)}`, displayName || `家族${String(index + 1)}`];
       }),
     ),
   );
+}
+
+async function loadSnapshot(
+  admin: AdminSupabaseClient,
+  userId: string,
+  targetMemberIds: readonly string[],
+): Promise<{ snapshot: AvailableSnapshot; context: CurrentSafetyContext }> {
+  const { data, error } = await admin.rpc("get_current_safety_snapshot", {
+    p_user_id: userId,
+    p_target_member_ids: [...targetMemberIds],
+  });
+  if (error !== null || data === null) throw safetyUnavailable();
+
+  const parsed = currentSafetySnapshotSchema.safeParse(data);
+  if (!parsed.success || parsed.data.status === "unavailable") throw safetyUnavailable();
+  validateSnapshot(parsed.data, targetMemberIds);
+  return { snapshot: parsed.data, context: mapContext(parsed.data) };
 }
 
 export async function loadCurrentSafetyContext(
@@ -425,67 +364,7 @@ export async function loadCurrentSafetyContext(
   userId: string,
   targetMemberIds: readonly string[],
 ): Promise<CurrentSafetyContext> {
-  if (
-    targetMemberIds.length === 0 ||
-    targetMemberIds.length > 20 ||
-    new Set(targetMemberIds).size !== targetMemberIds.length
-  ) {
-    throw invalidTargets();
-  }
-  const [membersResult, allergiesResult, catalogResult, aliasesResult, rulesResult] =
-    await Promise.all([
-      admin
-        .from("household_members")
-        .select(
-          "id,user_id,status,age_band,allergy_status,required_safety_constraints,unsupported_diet_status,unsupported_diet_kinds",
-        )
-        .eq("user_id", userId)
-        .eq("status", "complete")
-        .in("id", [...targetMemberIds]),
-      admin
-        .from("member_allergies")
-        .select("user_id,member_id,allergen_id")
-        .eq("user_id", userId)
-        .in("member_id", [...targetMemberIds]),
-      admin
-        .from("allergen_catalog")
-        .select("id,display_name,regulatory_class,catalog_version")
-        .eq("catalog_version", dictionaryVersion),
-      admin
-        .from("allergen_aliases")
-        .select(
-          "allergen_id,alias,normalized_alias,alias_kind,requires_label_confirmation,dictionary_version",
-        )
-        .eq("dictionary_version", dictionaryVersion),
-      admin
-        .from("food_safety_rules")
-        .select(
-          "id,applies_to_age_bands,match_terms,rule_kind,required_safety_tag,user_message,rule_version",
-        )
-        .eq("rule_version", foodRuleVersion),
-    ]);
-  const firstError = [
-    membersResult.error,
-    allergiesResult.error,
-    catalogResult.error,
-    aliasesResult.error,
-    rulesResult.error,
-  ].find((error) => error !== null);
-  if (firstError !== undefined) throw safetyUnavailable();
-  const parsedCatalogResult = z.array(allergenCatalogRowSchema).safeParse(catalogResult.data ?? []);
-  if (!parsedCatalogResult.success) throw safetyUnavailable();
-
-  return buildCurrentSafetyContext({
-    userId,
-    targetMemberIds,
-    rows: {
-      members: membersResult.data ?? [],
-      allergies: allergiesResult.data ?? [],
-      catalog: parsedCatalogResult.data,
-      aliases: aliasesResult.data ?? [],
-      rules: rulesResult.data ?? [],
-    },
-  });
+  return (await loadSnapshot(admin, userId, targetMemberIds)).context;
 }
 
 export type EmergencyCurrentSafety = {
@@ -498,16 +377,6 @@ export async function loadEmergencyCurrentSafety(
   userId: string,
   targetMemberIds: readonly string[],
 ): Promise<EmergencyCurrentSafety> {
-  const context = await loadCurrentSafetyContext(admin, userId, targetMemberIds);
-  const { data, error } = await admin
-    .from("household_members")
-    .select("id,user_id,status,display_name")
-    .eq("user_id", userId)
-    .eq("status", "complete")
-    .in("id", [...targetMemberIds]);
-  if (error !== null || data.length !== targetMemberIds.length) {
-    throw invalidTargets();
-  }
-  const memberLabels = captureMemberLabels({ context, userId, rows: data });
-  return { context, memberLabels };
+  const { snapshot, context } = await loadSnapshot(admin, userId, targetMemberIds);
+  return { context, memberLabels: captureLabels(snapshot) };
 }

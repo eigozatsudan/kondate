@@ -1213,6 +1213,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      get_current_safety_snapshot: {
+        Args: { p_target_member_ids: string[]; p_user_id: string }
+        Returns: Json
+      }
       save_generation_draft: {
         Args: {
           p_avoid_ingredients: string[]

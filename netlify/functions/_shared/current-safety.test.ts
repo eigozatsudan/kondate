@@ -1,51 +1,60 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
 import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
+import type { AdminSupabaseClient } from "./supabase-admin.js";
 import {
-  buildCurrentSafetyContext,
-  captureMemberLabels,
   currentAllergenAliasManifest,
-  currentAllergenCatalogIds,
-  currentFoodSafetyRuleIds,
+  loadCurrentSafetyContext,
+  loadEmergencyCurrentSafety,
 } from "./current-safety.js";
 
 const userId = "70000000-0000-4000-8000-000000000001";
 const firstMemberId = "71000000-0000-4000-8000-000000000001";
 const secondMemberId = "71000000-0000-4000-8000-000000000002";
+const dictionaryVersion = "jp-caa-2026-04.v1";
+const foodRuleVersion = "jp-caa-child-shape-2026-07.v1";
 
-function completeMember(id: string, owner = userId, status = "complete") {
+function member(id: string, displayName: string) {
   return {
     id,
-    user_id: owner,
-    status,
-    age_band: "adult",
-    allergy_status: "none",
-    required_safety_constraints: [],
-    unsupported_diet_status: "none",
-    unsupported_diet_kinds: [],
+    display_name: displayName,
+    age_band: id === firstMemberId ? ("age_3_5" as const) : ("adult" as const),
+    portion_size: id === firstMemberId ? ("small" as const) : null,
+    spice_level: id === firstMemberId ? ("none" as const) : null,
+    ease_preferences: id === firstMemberId ? (["small_pieces"] as const) : [],
+    allergy_status: id === firstMemberId ? ("registered" as const) : ("none" as const),
+    required_safety_constraints: id === firstMemberId ? (["cut_small"] as const) : [],
+    unsupported_diet_status: id === firstMemberId ? ("none" as const) : ("present" as const),
+    unsupported_diet_kinds: id === firstMemberId ? [] : (["therapeutic_diet"] as const),
+    allergies:
+      id === firstMemberId
+        ? [
+            { kind: "standard" as const, allergen_id: "egg" },
+            { kind: "custom" as const, name: "独自食材", aliases: ["別名A", "別名B"] },
+          ]
+        : [],
   };
 }
 
-function completeRows() {
+function availableSnapshot(ids: readonly string[] = [secondMemberId, firstMemberId]) {
   return {
-    members: [completeMember(firstMemberId), completeMember(secondMemberId)],
-    allergies: [],
-    catalog: currentAllergenCatalogV1.map((entry) => {
-      const catalogVersion: string = entry.catalogVersion;
-      return {
-        id: entry.id,
-        display_name: entry.displayName,
-        regulatory_class: entry.regulatoryClass,
-        catalog_version: catalogVersion,
-      };
-    }),
+    status: "available" as const,
+    dictionary_version: dictionaryVersion,
+    food_rule_version: foodRuleVersion,
+    members: ids.map((id, index) => member(id, index === 0 ? "大人" : "子ども")),
+    catalog: currentAllergenCatalogV1.map((entry) => ({
+      id: entry.id,
+      display_name: entry.displayName,
+      regulatory_class: entry.regulatoryClass,
+      catalog_version: entry.catalogVersion,
+    })),
     aliases: currentAllergenAliasManifest.map((entry) => ({
       allergen_id: entry.allergenId,
       alias: entry.alias,
       normalized_alias: entry.normalizedAlias,
       alias_kind: entry.aliasKind,
       requires_label_confirmation: entry.requiresLabelConfirmation,
-      dictionary_version: "jp-caa-2026-04.v1",
+      dictionary_version: dictionaryVersion,
     })),
     rules: currentFoodSafetyRulesV1.map((rule) => ({
       id: rule.id,
@@ -59,564 +68,98 @@ function completeRows() {
   };
 }
 
-type SafetyRuleTestRow = {
-  id: string;
-  applies_to_age_bands: string[];
-  match_terms: string[];
-  rule_kind: string;
-  required_safety_tag: string | null;
-  user_message: string;
-  rule_version: string;
-};
-
-type AllergenAliasTestRow = ReturnType<typeof completeRows>["aliases"][number];
-type AllergenCatalogTestRow = ReturnType<typeof completeRows>["catalog"][number];
-
-function firstAlias(aliases: readonly AllergenAliasTestRow[]): AllergenAliasTestRow {
-  const first = aliases[0];
-  if (first === undefined) throw new Error("canonical_allergen_aliases_missing");
-  return first;
+function adminWithRpc(result: { data: unknown; error: unknown }) {
+  const rpc = vi.fn().mockResolvedValue(result);
+  const from = vi.fn();
+  return {
+    admin: { rpc, from } as unknown as AdminSupabaseClient,
+    rpc,
+    from,
+  };
 }
 
-function firstRule(rules: readonly SafetyRuleTestRow[]): SafetyRuleTestRow {
-  const first = rules[0];
-  if (first === undefined) throw new Error("canonical_food_safety_rules_missing");
-  return first;
-}
-
-function expectSafetyRulesUnavailable(rules: readonly SafetyRuleTestRow[]): void {
-  expect(() =>
-    buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: { ...completeRows(), rules },
-    }),
-  ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
-}
-
-function expectAliasesUnavailable(aliases: readonly AllergenAliasTestRow[]): void {
-  expect(() =>
-    buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: { ...completeRows(), aliases },
-    }),
-  ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
-}
-
-function expectCatalogUnavailable(catalog: readonly AllergenCatalogTestRow[]): void {
-  expect(() =>
-    buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: { ...completeRows(), catalog },
-    }),
-  ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
-}
-
-describe("current safety data boundary", () => {
-  it.each([
-    [
-      "regulatory class drift",
-      (row: AllergenCatalogTestRow) => {
-        row.regulatory_class = row.regulatory_class === "mandatory" ? "recommended" : "mandatory";
-      },
-    ],
-    [
-      "missing regulatory class",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.deleteProperty(row, "regulatory_class");
-      },
-    ],
-    [
-      "undefined regulatory class",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.set(row, "regulatory_class", undefined);
-      },
-    ],
-    [
-      "invalid regulatory class",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.set(row, "regulatory_class", "optional");
-      },
-    ],
-    [
-      "wrong regulatory class scalar type",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.set(row, "regulatory_class", 42);
-      },
-    ],
-    [
-      "display name drift",
-      (row: AllergenCatalogTestRow) => {
-        row.display_name = "差し替えられた表示";
-      },
-    ],
-    [
-      "wrong catalog version",
-      (row: AllergenCatalogTestRow) => {
-        row.catalog_version = "obsolete.v1";
-      },
-    ],
-    [
-      "missing display name",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.deleteProperty(row, "display_name");
-      },
-    ],
-    [
-      "undefined display name",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.set(row, "display_name", undefined);
-      },
-    ],
-    [
-      "missing catalog version",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.deleteProperty(row, "catalog_version");
-      },
-    ],
-    [
-      "undefined catalog version",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.set(row, "catalog_version", undefined);
-      },
-    ],
-    [
-      "wrong scalar type",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.set(row, "display_name", 42);
-      },
-    ],
-    [
-      "unknown property",
-      (row: AllergenCatalogTestRow) => {
-        Reflect.set(row, "unexpected", "value");
-      },
-    ],
-  ])("fails closed for a catalog row with %s", (_case, mutate) => {
-    const catalog = completeRows().catalog;
-    const row = catalog[0];
-    if (row === undefined) throw new Error("canonical_allergen_catalog_missing");
-    mutate(row);
-
-    expectCatalogUnavailable(catalog);
+function expectClosedFailure(action: Promise<unknown>): Promise<void> {
+  return expect(action).rejects.toMatchObject({
+    status: 500,
+    code: "safety_context_failed",
   });
+}
 
-  it.each([
-    ["missing", () => completeRows().catalog.slice(1)],
-    [
-      "extra",
-      () => [
-        ...completeRows().catalog,
-        {
-          id: "unexpected_allergen",
-          display_name: "想定外",
-          regulatory_class: "recommended" as const,
-          catalog_version: "jp-caa-2026-04.v1",
-        },
-      ],
-    ],
-    [
-      "duplicate",
-      () => {
-        const catalog = completeRows().catalog;
-        const first = catalog[0];
-        if (first === undefined) throw new Error("canonical_allergen_catalog_missing");
-        return [...catalog, { ...first }];
-      },
-    ],
-  ])("fails closed when the catalog set contains a %s row", (_case, mutate) => {
-    expectCatalogUnavailable(mutate());
-  });
+describe("current safety snapshot RPC boundary", () => {
+  it("loads context and labels from exactly one strict snapshot in requested order", async () => {
+    const targetMemberIds = [secondMemberId, firstMemberId] as const;
+    const { admin, rpc, from } = adminWithRpc({ data: availableSnapshot(), error: null });
 
-  it("accepts arbitrary catalog row order and returns an isolated canonical copy", () => {
-    const rows = completeRows();
-    const reversedCatalog = [...rows.catalog].reverse();
-    const firstContext = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: { ...rows, catalog: reversedCatalog },
+    const result = await loadEmergencyCurrentSafety(admin, userId, targetMemberIds);
+
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("get_current_safety_snapshot", {
+      p_user_id: userId,
+      p_target_member_ids: [...targetMemberIds],
     });
-    const firstReturned = firstContext.allergenDictionary.catalog[0];
-    const canonicalFirst = currentAllergenCatalogV1[0];
-    if (firstReturned === undefined || canonicalFirst === undefined) {
-      throw new Error("canonical_allergen_catalog_missing");
-    }
-
-    expect(currentAllergenCatalogIds).toEqual(currentAllergenCatalogV1.map((entry) => entry.id));
-    expect(firstContext.allergenDictionary.catalog).toEqual(
-      currentAllergenCatalogV1.map((entry) => ({
-        id: entry.id,
-        displayName: entry.displayName,
-        catalogVersion: entry.catalogVersion,
-      })),
-    );
-    expect(firstReturned).not.toBe(canonicalFirst);
-    expect(firstReturned).not.toBe(reversedCatalog[0]);
-
-    Reflect.set(firstReturned, "displayName", "書き換えられた表示");
-    const secondContext = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: completeRows(),
-    });
-    expect(currentAllergenCatalogV1[0]?.displayName).toBe("えび");
-    expect(secondContext.allergenDictionary.catalog[0]?.displayName).toBe("えび");
-  });
-
-  it("preserves requested member order and assigns anonymous refs in that order", () => {
-    const context = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [secondMemberId, firstMemberId],
-      rows: completeRows(),
-    });
+    expect(from).not.toHaveBeenCalled();
     expect(
-      context.members.map((member) => [member.householdMemberId, member.anonymousRef]),
+      result.context.members.map((entry) => [entry.householdMemberId, entry.anonymousRef]),
     ).toEqual([
       [secondMemberId, "member_1"],
       [firstMemberId, "member_2"],
     ]);
+    expect(result.context.members[1]).toMatchObject({
+      allergenIds: ["egg"],
+      hasUnmappedCustomAllergy: true,
+    });
+    expect(result.memberLabels).toEqual({ member_1: "大人", member_2: "子ども" });
+    expect(Object.isFrozen(result.memberLabels)).toBe(true);
+  });
+
+  it("uses the display-name fallback captured in the same snapshot", async () => {
+    const snapshot = availableSnapshot();
+    snapshot.members[0] = { ...snapshot.members[0]!, display_name: "   " };
+    const { admin } = adminWithRpc({ data: snapshot, error: null });
+
+    const result = await loadEmergencyCurrentSafety(admin, userId, [secondMemberId, firstMemberId]);
+
+    expect(result.memberLabels).toEqual({ member_1: "家族1", member_2: "子ども" });
   });
 
   it.each([
-    ["missing", [completeMember(firstMemberId)]],
+    ["RPC error", { data: null, error: { message: "database unavailable" } }],
+    ["null RPC data", { data: null, error: null }],
+    ["unavailable status", { data: { status: "unavailable" }, error: null }],
     [
-      "foreign",
-      [
-        completeMember(firstMemberId),
-        completeMember(secondMemberId, "70000000-0000-4000-8000-000000000002"),
-      ],
+      "strict-shape violation",
+      { data: { ...availableSnapshot(), unexpected: "must be rejected" }, error: null },
     ],
-    ["draft", [completeMember(firstMemberId), completeMember(secondMemberId, userId, "draft")]],
-  ])("rejects a %s target member", (_name, members) => {
-    expect(() =>
-      buildCurrentSafetyContext({
-        userId,
-        targetMemberIds: [firstMemberId, secondMemberId],
-        rows: { ...completeRows(), members },
-      }),
-    ).toThrow(expect.objectContaining({ status: 400, code: "invalid_target_members" }));
+  ])("fails closed for %s without a table fallback", async (_case, rpcResult) => {
+    const { admin, rpc, from } = adminWithRpc(rpcResult);
+
+    await expectClosedFailure(
+      loadCurrentSafetyContext(admin, userId, [secondMemberId, firstMemberId]),
+    );
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(from).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the current catalog is incomplete", () => {
-    const rows = completeRows();
-    expectSafetyRulesUnavailable(rows.rules.slice(1));
-  });
-
-  it.each([
-    [
-      "applies_to_age_bands",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule, index) =>
-          index === 0 ? { ...rule, applies_to_age_bands: ["adult"] } : rule,
-        );
-      },
-    ],
-    [
-      "match_terms",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule, index) =>
-          index === 0 ? { ...rule, match_terms: ["差し替えられた語句"] } : rule,
-        );
-      },
-    ],
-    [
-      "applies_to_age_bands order",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule, index) =>
-          index === 0
-            ? { ...rule, applies_to_age_bands: [...rule.applies_to_age_bands].reverse() }
-            : rule,
-        );
-      },
-    ],
-    [
-      "match_terms order",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule, index) =>
-          index === 0 ? { ...rule, match_terms: [...rule.match_terms].reverse() } : rule,
-        );
-      },
-    ],
-    [
-      "rule_kind",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule) =>
-          rule.id === "grapes_under_6"
-            ? { ...rule, rule_kind: "forbidden", required_safety_tag: null }
-            : rule,
-        );
-      },
-    ],
-    [
-      "required_safety_tag",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule) =>
-          rule.id === "grapes_under_6" ? { ...rule, required_safety_tag: "soften" } : rule,
-        );
-      },
-    ],
-    [
-      "user_message",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule, index) =>
-          index === 0 ? { ...rule, user_message: "差し替えられた案内" } : rule,
-        );
-      },
-    ],
-    [
-      "rule_version",
-      () => {
-        const rows = completeRows().rules;
-        return rows.map((rule, index) =>
-          index === 0 ? { ...rule, rule_version: "obsolete.v1" } : rule,
-        );
-      },
-    ],
-  ])("fails closed when a rule's %s differs from the canonical manifest", (_field, mutate) => {
-    expectSafetyRulesUnavailable(mutate());
-  });
-
-  it.each([
-    ["missing", () => completeRows().rules.slice(1)],
-    [
-      "extra",
-      () => {
-        const rules = completeRows().rules;
-        return [...rules, { ...firstRule(rules), id: "unexpected_rule" }];
-      },
-    ],
-    [
-      "duplicate",
-      () => {
-        const rules = completeRows().rules;
-        return [...rules, { ...firstRule(rules) }];
-      },
-    ],
-  ])("fails closed when the rule set contains a %s row", (_case, mutate) => {
-    expectSafetyRulesUnavailable(mutate());
-  });
-
-  it.each([
-    [
-      "missing required_safety_tag",
-      (rule: SafetyRuleTestRow) => {
-        Reflect.deleteProperty(rule, "required_safety_tag");
-      },
-    ],
-    [
-      "undefined required_safety_tag",
-      (rule: SafetyRuleTestRow) => {
-        Reflect.set(rule, "required_safety_tag", undefined);
-      },
-    ],
-    [
-      "non-string required_safety_tag",
-      (rule: SafetyRuleTestRow) => {
-        Reflect.set(rule, "required_safety_tag", Number.NaN);
-      },
-    ],
-  ])("fails closed for a malformed rule row with %s", (_case, mutate) => {
-    const rules = completeRows().rules;
-    mutate(firstRule(rules));
-
-    expectSafetyRulesUnavailable(rules);
-  });
-
-  it("accepts arbitrary database row order and returns the canonical rule order", () => {
-    const rows = completeRows();
-    const context = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: { ...rows, rules: [...rows.rules].reverse() },
+  it("fails closed when snapshot member identity or order differs from the request", async () => {
+    const { admin, from } = adminWithRpc({
+      data: availableSnapshot([firstMemberId, secondMemberId]),
+      error: null,
     });
 
-    expect(context.foodSafetyRules).toEqual(currentFoodSafetyRulesV1);
-    expect(currentFoodSafetyRuleIds).toEqual([
-      ...new Set(currentFoodSafetyRulesV1.map((rule) => rule.id)),
-    ]);
+    await expectClosedFailure(
+      loadCurrentSafetyContext(admin, userId, [secondMemberId, firstMemberId]),
+    );
+    expect(from).not.toHaveBeenCalled();
   });
 
-  it("returns an isolated canonical rule copy for every request", () => {
-    const firstContext = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: completeRows(),
-    });
-    const canonicalRule = currentFoodSafetyRulesV1[0];
-    const firstReturnedRule = firstContext.foodSafetyRules[0];
-    if (canonicalRule === undefined || firstReturnedRule === undefined) {
-      throw new Error("canonical_food_safety_rules_missing");
-    }
-    const canonicalSnapshot = {
-      userMessage: canonicalRule.userMessage,
-      appliesToAgeBands: [...canonicalRule.appliesToAgeBands],
-      matchTerms: [...canonicalRule.matchTerms],
-    };
+  it("fails closed when a catalog row drifts from the top-level dictionary version", async () => {
+    const snapshot = availableSnapshot();
+    Reflect.set(snapshot.catalog[0]!, "catalog_version", "obsolete.v1");
+    const { admin, from } = adminWithRpc({ data: snapshot, error: null });
 
-    expect(firstContext.foodSafetyRules).not.toBe(currentFoodSafetyRulesV1);
-    expect(firstReturnedRule).not.toBe(canonicalRule);
-    expect(firstReturnedRule.appliesToAgeBands).not.toBe(canonicalRule.appliesToAgeBands);
-    expect(firstReturnedRule.matchTerms).not.toBe(canonicalRule.matchTerms);
-
-    Reflect.set(firstReturnedRule, "userMessage", "書き換えられた案内");
-    Reflect.set(firstReturnedRule.appliesToAgeBands, 0, "senior");
-    Reflect.set(firstReturnedRule.matchTerms, 0, "書き換えられた語句");
-
-    const secondContext = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: completeRows(),
-    });
-    expect(currentFoodSafetyRulesV1[0]).toMatchObject(canonicalSnapshot);
-    expect(secondContext.foodSafetyRules[0]).toMatchObject(canonicalSnapshot);
-  });
-
-  it("fails closed when only one direct alias per allergen is loaded", () => {
-    const rows = completeRows();
-    expect(() =>
-      buildCurrentSafetyContext({
-        userId,
-        targetMemberIds: [firstMemberId, secondMemberId],
-        rows: {
-          ...rows,
-          aliases: rows.aliases.filter(
-            (alias, index, aliases) =>
-              alias.alias_kind === "direct" &&
-              !alias.requires_label_confirmation &&
-              aliases.findIndex((candidate) => candidate.allergen_id === alias.allergen_id) ===
-                index,
-          ),
-        },
-      }),
-    ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
-  });
-
-  it("fails closed when an alias from another dictionary version is mixed in", () => {
-    const rows = completeRows();
-    expect(() =>
-      buildCurrentSafetyContext({
-        userId,
-        targetMemberIds: [firstMemberId, secondMemberId],
-        rows: {
-          ...rows,
-          aliases: [
-            ...rows.aliases,
-            {
-              allergen_id: "wheat",
-              alias: "カレールー",
-              normalized_alias: "カレールー",
-              alias_kind: "processed",
-              requires_label_confirmation: true,
-              dictionary_version: "obsolete.v1",
-            },
-          ],
-        },
-      }),
-    ).toThrow(expect.objectContaining({ status: 500, code: "safety_context_failed" }));
-  });
-
-  it("fails closed when a canonical alias is replaced by a duplicate", () => {
-    const aliases = completeRows().aliases;
-    const duplicate = firstAlias(aliases);
-
-    expectAliasesUnavailable([duplicate, ...aliases.slice(2), { ...duplicate }]);
-  });
-
-  it.each([
-    [
-      "missing boolean",
-      (aliases: AllergenAliasTestRow[]) => {
-        Reflect.deleteProperty(firstAlias(aliases), "requires_label_confirmation");
-      },
-    ],
-    [
-      "undefined boolean",
-      (aliases: AllergenAliasTestRow[]) => {
-        Reflect.set(firstAlias(aliases), "requires_label_confirmation", undefined);
-      },
-    ],
-    [
-      "truthy non-boolean",
-      (aliases: AllergenAliasTestRow[]) => {
-        const alias = aliases.find((candidate) => candidate.requires_label_confirmation);
-        if (alias === undefined) throw new Error("canonical_processed_alias_missing");
-        Reflect.set(alias, "requires_label_confirmation", "false");
-      },
-    ],
-    [
-      "unknown property",
-      (aliases: AllergenAliasTestRow[]) => {
-        Reflect.set(firstAlias(aliases), "unexpected", "value");
-      },
-    ],
-    [
-      "wrong string type",
-      (aliases: AllergenAliasTestRow[]) => {
-        Reflect.set(firstAlias(aliases), "normalized_alias", 42);
-      },
-    ],
-  ])("fails closed for an alias row with %s", (_case, mutate) => {
-    const aliases = completeRows().aliases;
-    mutate(aliases);
-
-    expectAliasesUnavailable(aliases);
-  });
-
-  it("accepts arbitrary alias row order and returns isolated validated copies", () => {
-    const rows = completeRows();
-    const reversedAliases = [...rows.aliases].reverse();
-    const context = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: { ...rows, aliases: reversedAliases },
-    });
-
-    expect(context.allergenDictionary.aliases).toHaveLength(reversedAliases.length);
-    expect(context.allergenDictionary.aliases[0]).not.toBe(reversedAliases[0]);
-    expect(context.allergenDictionary.aliases[0]).toMatchObject({
-      allergenId: reversedAliases[0]?.allergen_id,
-      alias: reversedAliases[0]?.alias,
-      normalizedAlias: reversedAliases[0]?.normalized_alias,
-      aliasKind: reversedAliases[0]?.alias_kind,
-      requiresLabelConfirmation: reversedAliases[0]?.requires_label_confirmation,
-      dictionaryVersion: reversedAliases[0]?.dictionary_version,
-    });
-  });
-
-  it("captures immutable live names and uses an ordered fallback for a blank name", () => {
-    const context = buildCurrentSafetyContext({
-      userId,
-      targetMemberIds: [firstMemberId, secondMemberId],
-      rows: completeRows(),
-    });
-    const first = captureMemberLabels({
-      context,
-      userId,
-      rows: [
-        { id: firstMemberId, user_id: userId, status: "complete", display_name: "子ども" },
-        { id: secondMemberId, user_id: userId, status: "complete", display_name: "  " },
-      ],
-    });
-    const second = captureMemberLabels({
-      context,
-      userId,
-      rows: [
-        { id: firstMemberId, user_id: userId, status: "complete", display_name: "大人" },
-        { id: secondMemberId, user_id: userId, status: "complete", display_name: "祖父" },
-      ],
-    });
-    expect(first).toEqual({ member_1: "子ども", member_2: "家族2" });
-    expect(second).toEqual({ member_1: "大人", member_2: "祖父" });
-    expect(first.member_1).toBe("子ども");
-    expect(Object.isFrozen(first)).toBe(true);
+    await expectClosedFailure(
+      loadCurrentSafetyContext(admin, userId, [secondMemberId, firstMemberId]),
+    );
+    expect(from).not.toHaveBeenCalled();
   });
 });
