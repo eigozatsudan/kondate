@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { collectPlannerRequestText } from "@shared/contracts/planner";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import type { PantryItem } from "@shared/contracts/pantry";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
@@ -92,7 +93,7 @@ export function PlannerForm({
     setValue(next);
     onChange(next);
   };
-  const medicalMatches = detectUnsupportedMedicalRequest(value.memo);
+  const medicalMatches = detectUnsupportedMedicalRequest(collectPlannerRequestText(value));
   const selectedMembers = members.filter((member) => value.targetMemberIds.includes(member.id));
   const eligibleMemberIds = useMemo(
     () =>

@@ -2339,7 +2339,7 @@ Expected: FAIL because the current-state loader and prompt builder do not exist.
 import type { CurrentSafetyContext } from "../../../shared/safety/context";
 import type { GenerationContext } from "../../../shared/safety/generation-context";
 import { privacyNoticeVersion } from "../../../shared/contracts/domain";
-import { plannerDraftSchema, plannerSubmissionSchema, type PlannerSubmission } from "../../../shared/contracts/planner";
+import { collectPlannerRequestText, plannerDraftSchema, plannerSubmissionSchema, type PlannerSubmission } from "../../../shared/contracts/planner";
 import { pantryItemSchema, type PantryItem } from "../../../shared/contracts/pantry";
 import { detectUnsupportedMedicalRequest } from "../../../shared/safety/medical-scope";
 import { getJstDateKey } from "../../../shared/time/jst";
@@ -2388,9 +2388,15 @@ export async function loadGenerationContext(
     revision: draftRow.revision, createdAt: draftRow.created_at, updatedAt: draftRow.updated_at,
   });
   const submission = plannerSubmissionSchema.parse(draft);
-  if (detectUnsupportedMedicalRequest(submission.memo).length !== 0) {
+  const loadedSafety = await loadCurrentSafetyContext(
+    getSupabaseAdmin(), user.userId, submission.targetMemberIds,
+  );
+  const requestText = collectPlannerRequestText(submission);
+  const unsupportedDietKinds = detectUnsupportedMedicalRequest(requestText);
+  if (unsupportedDietKinds.length > 0) {
     throw new HttpError(422, "unsupported_diet", "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。");
   }
+  const safety = { ...loadedSafety, requestText };
   const selectedIds = submission.pantrySelections.map((selection) => selection.pantryItemId);
   const pantryQuery = selectedIds.length === 0
     ? { data: [], error: null }
@@ -2406,12 +2412,11 @@ export async function loadGenerationContext(
   const expiredIds = pantryItems.filter((item) => item.expiresOn !== null
     && item.expiresOn < getJstDateKey(now)).map((item) => item.id);
   const expiredChecks = validateTransientChecks(request.expiredPantryConfirmations, expiredIds, now);
-  const [{ data: preferenceRows, error: preferenceError }, { data: dislikeRows, error: dislikeError }, safety] = await Promise.all([
+  const [{ data: preferenceRows, error: preferenceError }, { data: dislikeRows, error: dislikeError }] = await Promise.all([
     userClient.from("household_members").select("id,display_name,portion_size,spice_level,ease_preferences")
       .eq("user_id", user.userId).in("id", submission.targetMemberIds),
     userClient.from("member_dislikes").select("member_id,ingredient_name")
       .eq("user_id", user.userId).in("member_id", submission.targetMemberIds),
-    loadCurrentSafetyContext(getSupabaseAdmin(), user.userId, submission.targetMemberIds),
   ]);
   if (preferenceError || dislikeError || preferenceRows.length !== submission.targetMemberIds.length) {
     throw new HttpError(422, "invalid_request", "現在の家族設定を確認できませんでした。");

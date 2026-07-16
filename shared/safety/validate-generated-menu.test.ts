@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import type { GeneratedMenu } from "../contracts/generation.js";
+import { collectPlannerRequestText } from "../contracts/planner.js";
 import { validateGeneratedMenu } from "./validate-generated-menu.js";
 import {
   hardBeanAndReviewedNutRule,
@@ -172,6 +173,24 @@ it("blocks unconfirmed allergy, unsupported scope, and unsupported memo", () => 
       "unsupported_medical_request",
     ]),
   );
+});
+
+it.each([
+  { mainIngredients: ["離乳食"], avoidIngredients: [], memo: "" },
+  { mainIngredients: ["鶏肉"], avoidIngredients: ["嚥下食"], memo: "" },
+])("rejects unsupported medical requests projected from planner fields", (submissionPatch) => {
+  const base = makeGenerationContext();
+  const submission = { ...base.submission, ...submissionPatch };
+  const context = makeGenerationContext({
+    submission,
+    safety: makeCurrentSafetyContext({
+      requestText: collectPlannerRequestText(submission),
+    }),
+  });
+
+  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu(), context), [
+    "unsupported_medical_request",
+  ]);
 });
 
 it("rejects provider-confirmed state and canonicalizes pending processed-food provenance", () => {

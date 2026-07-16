@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { plannerDraftInputSchema, plannerSubmissionSchema } from "./planner.js";
+import { detectUnsupportedMedicalRequest } from "../safety/medical-scope.js";
+import {
+  collectPlannerRequestText,
+  plannerDraftInputSchema,
+  plannerSubmissionSchema,
+} from "./planner.js";
 
 const incompleteDraft = {
   mealType: null,
@@ -66,5 +71,27 @@ describe("planner contracts", () => {
         mainIngredients: ["🍳".repeat(81)],
       }).success,
     ).toBe(false);
+  });
+
+  it("projects every planner free-text field into canonical request text", () => {
+    expect(
+      collectPlannerRequestText({
+        mainIngredients: [" 鶏肉 ", "離乳食"],
+        avoidIngredients: [" 嚥下食 "],
+        memo: " 治療食 ",
+      }),
+    ).toBe("鶏肉\n離乳食\n嚥下食\n治療食");
+  });
+
+  it("exposes main-ingredient medical requests to the shared detector", () => {
+    expect(
+      detectUnsupportedMedicalRequest(
+        collectPlannerRequestText({
+          mainIngredients: ["離乳食"],
+          avoidIngredients: [],
+          memo: "",
+        }),
+      ),
+    ).toContain("weaning_food");
   });
 });

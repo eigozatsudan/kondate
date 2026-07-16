@@ -401,6 +401,43 @@ it("保存競合中は入力を保持したまま生成を開始しない", () =
   expect(onGenerate).not.toHaveBeenCalled();
 });
 
+it.each<[string, Pick<PlannerDraftInput, "mainIngredients" | "avoidIngredients">]>([
+  ["メイン食材", { mainIngredients: ["離乳食"], avoidIngredients: [] }],
+  ["避ける食材", { mainIngredients: ["鶏肉"], avoidIngredients: ["嚥下食"] }],
+])("%sだけに医療対象外依頼がある場合も警告を表示して生成を止める", (_, patch) => {
+  render(
+    <PlannerForm
+      initialValue={{
+        ...initialValue,
+        mealType: "dinner",
+        cuisineGenre: "japanese",
+        ...patch,
+      }}
+      members={[
+        {
+          id: initialValue.targetMemberIds[0]!,
+          displayName: "子ども",
+          ageBandLabel: "3〜5歳",
+          allergyLabel: "アレルギーなし",
+          safetyLabels: [],
+          blockedReason: null,
+        },
+      ]}
+      pantryItems={[]}
+      pantryItemsStatus="loaded"
+      saveState="saved"
+      onChange={vi.fn()}
+      flush={vi.fn()}
+      onGenerate={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。専門職の指示に従ってください。",
+  );
+  expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+});
+
 it("避ける食材を20件かつ各80 Unicode code points以内へ入力時に制限する", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();

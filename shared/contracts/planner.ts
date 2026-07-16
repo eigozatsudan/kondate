@@ -60,3 +60,12 @@ export type BudgetPreference = (typeof budgetPreferences)[number];
 export type PlannerDraftInput = z.infer<typeof plannerDraftInputSchema>;
 export type PlannerDraft = z.infer<typeof plannerDraftSchema>;
 export type PlannerSubmission = z.infer<typeof plannerSubmissionSchema>;
+
+export function collectPlannerRequestText(
+  input: Pick<PlannerDraftInput, "mainIngredients" | "avoidIngredients" | "memo">,
+): string {
+  return [...input.mainIngredients, ...input.avoidIngredients, input.memo]
+    .map((value) => value.normalize("NFKC").trim())
+    .filter((value) => value.length > 0)
+    .join("\n");
+}
