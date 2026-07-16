@@ -1,4 +1,9 @@
 #!/bin/sh
+# ホストのgitをコンテナ内では使わず、vendor-supabaseツーリングイメージに
+# 積まれたgitをComposeコンテナ経由で実行する薄いラッパー。カレントの
+# リポジトリがlinked worktreeの場合、gitfileが指すcommon dirを
+# コンテナ内にも同じ絶対パスでマウントし、worktree特有のgit操作
+# （commondirを参照するもの等）が動くようにする。
 set -eu
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
@@ -9,6 +14,7 @@ export KONDATE_COMPOSE_PROJECT_NAME="$project_name"
 export LOCAL_UID="${LOCAL_UID:-$(id -u)}"
 export LOCAL_GID="${LOCAL_GID:-$(id -g)}"
 
+# base相対 or 絶対の値を、実在パスとして正規化(realpath化)して返す。
 resolve_directory() (
   base=$1
   value=$2
