@@ -61,11 +61,14 @@ as $function$
         'unsupported_diet_status', member.unsupported_diet_status,
         'unsupported_diet_kinds', to_jsonb(member.unsupported_diet_kinds),
         'allergies', coalesce((
-          select jsonb_agg(allergy.dto order by allergy.sort_kind, allergy.sort_value)
+          select jsonb_agg(
+            allergy.dto order by allergy.sort_kind, allergy.sort_value, allergy.sort_id
+          )
           from (
             select
               0 as sort_kind,
               registered.allergen_id as sort_value,
+              registered.id as sort_id,
               jsonb_build_object(
                 'kind', 'standard',
                 'allergen_id', registered.allergen_id
@@ -78,6 +81,7 @@ as $function$
             select
               1 as sort_kind,
               registered.custom_name as sort_value,
+              registered.id as sort_id,
               jsonb_build_object(
                 'kind', 'custom',
                 'name', registered.custom_name,
