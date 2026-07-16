@@ -6,6 +6,7 @@ const functionModulePaths = [
   "/netlify/functions/auth-continuation-create.ts",
   "/netlify/functions/auth-continuation-deposit.ts",
   "/netlify/functions/auth-continuation-claim.ts",
+  "/netlify/functions/emergency-menus.ts",
 ];
 
 function escapeRegex(value) {

@@ -16,6 +16,36 @@
   --border: #d9cabc;
 }
 
+.emergency-menu-page,
+.emergency-candidate {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.emergency-candidate summary {
+  display: flex;
+  min-height: 44px;
+  cursor: pointer;
+  align-items: center;
+  font-weight: 700;
+}
+
+.emergency-ingredient {
+  display: flex;
+  min-height: 44px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.emergency-label-warning {
+  border: 1px solid #a16207;
+  border-radius: 12px;
+  background: #fffbeb;
+  padding: 12px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -141,6 +171,43 @@ textarea:focus-visible {
 .error-message {
   color: var(--danger);
   font-weight: 700;
+}
+
+.pantry-field-row {
+  display: grid;
+  gap: 16px;
+}
+
+.pantry-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pantry-card h2,
+.pantry-card p {
+  margin-block: 0 8px;
+}
+
+.pantry-card-text {
+  overflow-wrap: anywhere;
+}
+
+.pantry-form-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pantry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (min-width: 480px) {
+  .pantry-field-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (min-width: 720px) {

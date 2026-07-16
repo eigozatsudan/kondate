@@ -142,7 +142,8 @@ create table public.generation_drafts (
   check (private.is_canonical_bounded_text(memo, 0, 200)),
   check (private.is_valid_draft_pantry_selections(pantry_selections)),
   check (jsonb_array_length(pantry_selections) <= 50),
-  check (pg_column_size(pantry_selections) <= 32768),
+  constraint generation_drafts_pantry_selections_size_check
+    check (pg_column_size(pantry_selections) <= 32768),
   check (
     not jsonb_path_exists(
       pantry_selections,

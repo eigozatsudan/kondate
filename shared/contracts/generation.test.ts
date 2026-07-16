@@ -126,6 +126,8 @@ describe("validated menu schema", () => {
       anonymousMemberRef: "member_1",
       dictionaryVersion: "jp-caa-2026-04.v1",
       confirmationStatus: "pending",
+      confirmedAt: null,
+      confirmedBy: null,
     } as const;
     expect(
       validatedMenuSchema.parse({ ...menu, labelConfirmations: [confirmation] })
@@ -158,6 +160,8 @@ describe("validated menu schema", () => {
       anonymousMemberRef: "member_1",
       dictionaryVersion: "jp-caa-2026-04.v1",
       confirmationStatus: "pending",
+      confirmedAt: null,
+      confirmedBy: null,
     } as const;
     expect(
       validatedMenuSchema.safeParse({ ...menu, labelConfirmations: [confirmation] }).success,
@@ -221,6 +225,16 @@ describe("validated menu schema", () => {
       additionalSeasoning: "薄味にする",
       servingCheck: "温度を確認する",
       safetyTags: [],
+      safetyActions: [
+        {
+          kind: "cut_small",
+          dishId,
+          ingredientId: menu.dishes[0].ingredients[0].id,
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: stepId,
+          instruction: "一口大以下に切る",
+        },
+      ],
     } as const;
     const sources = [
       ["dish", dishId, "dishes.0.name", "おにぎり"],
@@ -239,6 +253,12 @@ describe("validated menu schema", () => {
       ["adaptation", adaptation.id, "adaptations.0.additionalHeating", "十分に加熱する"],
       ["adaptation", adaptation.id, "adaptations.0.additionalSeasoning", "薄味にする"],
       ["adaptation", adaptation.id, "adaptations.0.servingCheck", "温度を確認する"],
+      [
+        "adaptation",
+        adaptation.id,
+        "adaptations.0.safetyActions.0.instruction",
+        "一口大以下に切る",
+      ],
       ["timeline", menu.timeline[0].id, "timeline.0.instruction", "おにぎりを作る"],
     ] as const;
     const labelConfirmations = sources.map(
@@ -251,6 +271,8 @@ describe("validated menu schema", () => {
         anonymousMemberRef: "member_1" as const,
         dictionaryVersion: "jp-caa-2026-04.v1",
         confirmationStatus: "pending" as const,
+        confirmedAt: null,
+        confirmedBy: null,
       }),
     );
 

@@ -55,7 +55,7 @@ export const pantrySelectionDraftSchema = z
   })
   .strict();
 
-export const pantryUsageSchema = z
+const pantryUsageObjectSchema = z
   .object({
     selectionId: z.uuid(),
     pantryItemId: z.uuid().nullable(),
@@ -69,72 +69,86 @@ export const pantryUsageSchema = z
     dishIds: z.array(z.uuid()),
     unusedReason: boundedCanonicalText(1, 200).nullable(),
   })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.priority === "must_use" && value.usageStatus === "unused") {
-      context.addIssue({
-        code: "custom",
-        path: ["usageStatus"],
-        message: "必ず使う食材が未使用です",
-      });
-    }
-    if (value.usageStatus === "used" && value.dishIds.length === 0) {
-      context.addIssue({
-        code: "custom",
-        path: ["dishIds"],
-        message: "使用先の料理が必要です",
-      });
-    }
-    if (value.usageStatus === "unused" && value.unusedReason === null) {
-      context.addIssue({
-        code: "custom",
-        path: ["unusedReason"],
-        message: "未使用理由が必要です",
-      });
-    }
-    if (value.usageStatus === "used" && value.unusedReason !== null) {
-      context.addIssue({
-        code: "custom",
-        path: ["unusedReason"],
-        message: "使用時に未使用理由は保存しません",
-      });
-    }
-    if (
-      (value.plannedQuantity === null || value.inventoryQuantity === null) &&
-      value.shortageQuantity !== null
-    ) {
+  .strict();
+
+function validatePantryUsage(
+  value: z.infer<typeof pantryUsageObjectSchema>,
+  context: z.RefinementCtx,
+  requireUnusedReason: boolean,
+): void {
+  if (value.priority === "must_use" && value.usageStatus === "unused") {
+    context.addIssue({
+      code: "custom",
+      path: ["usageStatus"],
+      message: "必ず使う食材が未使用です",
+    });
+  }
+  if (value.usageStatus === "used" && value.dishIds.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["dishIds"],
+      message: "使用先の料理が必要です",
+    });
+  }
+  if (requireUnusedReason && value.usageStatus === "unused" && value.unusedReason === null) {
+    context.addIssue({
+      code: "custom",
+      path: ["unusedReason"],
+      message: "未使用理由が必要です",
+    });
+  }
+  if (value.usageStatus === "used" && value.unusedReason !== null) {
+    context.addIssue({
+      code: "custom",
+      path: ["unusedReason"],
+      message: "使用時に未使用理由は保存しません",
+    });
+  }
+  if (
+    (value.plannedQuantity === null || value.inventoryQuantity === null) &&
+    value.shortageQuantity !== null
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["shortageQuantity"],
+      message: "数量未入力時に不足量は保存しません",
+    });
+  }
+  const hasQuantity =
+    value.plannedQuantity !== null ||
+    value.inventoryQuantity !== null ||
+    value.shortageQuantity !== null;
+  if (hasQuantity !== (value.unit !== null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["unit"],
+      message: "数量がある場合だけ単位を入力してください",
+    });
+  }
+  if (value.plannedQuantity !== null && value.inventoryQuantity !== null) {
+    const plannedQuantityUnits = Math.round(value.plannedQuantity * 1000);
+    const inventoryQuantityUnits = Math.round(value.inventoryQuantity * 1000);
+    const shortageQuantityUnits =
+      value.shortageQuantity === null ? null : Math.round(value.shortageQuantity * 1000);
+    const expectedQuantityUnits = Math.max(plannedQuantityUnits - inventoryQuantityUnits, 0);
+    if (shortageQuantityUnits !== expectedQuantityUnits) {
       context.addIssue({
         code: "custom",
         path: ["shortageQuantity"],
-        message: "数量未入力時に不足量は保存しません",
+        message: "不足量が在庫量と一致しません",
       });
     }
-    const hasQuantity =
-      value.plannedQuantity !== null ||
-      value.inventoryQuantity !== null ||
-      value.shortageQuantity !== null;
-    if (hasQuantity !== (value.unit !== null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["unit"],
-        message: "数量がある場合だけ単位を入力してください",
-      });
-    }
-    if (value.plannedQuantity !== null && value.inventoryQuantity !== null) {
-      const plannedQuantityUnits = Math.round(value.plannedQuantity * 1000);
-      const inventoryQuantityUnits = Math.round(value.inventoryQuantity * 1000);
-      const shortageQuantityUnits =
-        value.shortageQuantity === null ? null : Math.round(value.shortageQuantity * 1000);
-      const expectedQuantityUnits = Math.max(plannedQuantityUnits - inventoryQuantityUnits, 0);
-      if (shortageQuantityUnits !== expectedQuantityUnits) {
-        context.addIssue({
-          code: "custom",
-          path: ["shortageQuantity"],
-          message: "不足量が在庫量と一致しません",
-        });
-      }
-    }
-  });
+  }
+}
+
+// AI出力では未使用理由の意味エラーを validator の専用コードへ委ねます。
+export const generatedPantryUsageSchema = pantryUsageObjectSchema.superRefine((value, context) => {
+  validatePantryUsage(value, context, false);
+});
+
+export const pantryUsageSchema = pantryUsageObjectSchema.superRefine((value, context) => {
+  validatePantryUsage(value, context, true);
+});
 
 export type ExpirationType = (typeof expirationTypes)[number];
 export type OpenedState = (typeof openedStates)[number];

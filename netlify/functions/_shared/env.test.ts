@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { parseManagedSupabaseProjectRef, parseServerEnv } from "./env.js";
+import { parseManagedSupabaseProjectRef, parseServerEnv, supabaseServerEnvSchema } from "./env.js";
 
 const validServerEnv = {
   VITE_SUPABASE_URL: "http://127.0.0.1:8000",
@@ -12,6 +12,17 @@ const validServerEnv = {
 
 it("parses the exact five-minute server continuation TTL in seconds", () => {
   expect(parseServerEnv(validServerEnv).AUTH_CONTINUATION_TTL_SECONDS).toBe(300);
+});
+
+it("projects only the Supabase server credentials for authenticated functions", () => {
+  expect(supabaseServerEnvSchema.parse(validServerEnv)).toEqual({
+    SUPABASE_URL: validServerEnv.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: validServerEnv.SUPABASE_SERVICE_ROLE_KEY,
+  });
+  expect(parseServerEnv(validServerEnv)).toMatchObject({
+    SERVER_SITE_ORIGIN: validServerEnv.SERVER_SITE_ORIGIN,
+    AUTH_CONTINUATION_TTL_SECONDS: 300,
+  });
 });
 
 it("accepts only an exact managed Supabase origin for an HTTPS deployment", () => {

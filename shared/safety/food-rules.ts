@@ -1,0 +1,193 @@
+import type { AgeBand } from "../contracts/domain.js";
+import type {
+  GeneratedMenu,
+  MenuValidationIssue,
+  SafetyAction,
+  ValidatedMenu,
+} from "../contracts/generation.js";
+import { collectMenuTextSources, normalizeFoodText } from "./allergens.js";
+import type { CurrentSafetyContext } from "./context.js";
+
+export type FoodSafetyRule = {
+  id: string;
+  appliesToAgeBands: readonly AgeBand[];
+  matchTerms: readonly string[];
+  ruleKind: "forbidden" | "requires_tag";
+  requiredSafetyTag: SafetyAction["kind"] | null;
+  userMessage: string;
+  ruleVersion: string;
+};
+
+const actionEvidence: Record<SafetyAction["kind"], RegExp> = {
+  remove_bones: /骨を(?:完全に)?除|骨を取り除|骨がないことを確認/u,
+  cut_small: /小さく切|一口大以下|細かく刻/u,
+  quarter_round_food: /4等分|四等分|縦に4つ/u,
+  soften: /やわらかくなるまで|舌でつぶせる|十分に煮る/u,
+  heat_thoroughly: /中心まで(?:十分に)?加熱|中心温度/u,
+};
+
+const contradictionPattern =
+  /丸ごと|切らず|骨付きのまま|硬いまま|小さく切ら(?:ない|ないで)|小さく切りません|細かく刻ま(?:ない|ないで)|細かく刻みません|4等分(?:しない|せず|しません)|四等分(?:しない|せず|しません)|縦に4つに(?:しない|せず|しません)|十分に煮(?:ない|ません)|やわらかくなるまで(?:加熱)?(?:しない|しません|せず)|中心まで(?:十分に)?加熱(?:しない|しません|せず)|骨を(?:完全に)?除(?:かない|かないで|きません)|骨を取り除(?:かない|かないで|きません)/u;
+
+export function evaluateFoodSafetyRules(
+  menu: GeneratedMenu | ValidatedMenu,
+  context: CurrentSafetyContext,
+): readonly MenuValidationIssue[] {
+  const sources = collectMenuTextSources(menu);
+  const issues: MenuValidationIssue[] = [];
+  const stepOwner = new Map(
+    menu.dishes.flatMap((dish) => dish.steps.map((step) => [step.id, dish.id] as const)),
+  );
+  const dishText = new Map(
+    menu.dishes.map((dish) => [
+      dish.id,
+      [dish.name, dish.description, ...dish.steps.map((step) => step.instruction)],
+    ]),
+  );
+  const dishContradictionText = new Map(
+    menu.dishes.map((dish) => [
+      dish.id,
+      sources
+        .filter((source) => source.dishId === dish.id && source.sourceType !== "adaptation")
+        .map((source) => source.text),
+    ]),
+  );
+  const adaptationContradictionText = (dishId: string, anonymousMemberRef: string): string[] =>
+    menu.adaptations
+      .filter(
+        (adaptation) =>
+          adaptation.dishId === dishId && adaptation.anonymousMemberRef === anonymousMemberRef,
+      )
+      .flatMap((adaptation) => [
+        adaptation.portionText,
+        adaptation.additionalCutting,
+        adaptation.additionalHeating,
+        adaptation.additionalSeasoning,
+        adaptation.servingCheck,
+        ...adaptation.safetyActions.map((action) => action.instruction),
+      ])
+      .filter((text): text is string => text !== null);
+  const ingredientName = new Map(
+    menu.dishes.flatMap((dish) =>
+      dish.ingredients.map((ingredient) => [ingredient.id, normalizeFoodText(ingredient.name)]),
+    ),
+  );
+  const instructionNamesIngredient = (instruction: string, ingredientId: string): boolean => {
+    const expectedName = ingredientName.get(ingredientId);
+    return expectedName !== undefined && normalizeFoodText(instruction).includes(expectedName);
+  };
+  const adaptationNamesIngredient = (
+    adaptation: (typeof menu.adaptations)[number],
+    ingredientId: string,
+  ): boolean => {
+    const expectedName = ingredientName.get(ingredientId);
+    if (expectedName === undefined) return false;
+    return normalizeFoodText(
+      [
+        ...(dishText.get(adaptation.dishId) ?? []),
+        adaptation.portionText,
+        adaptation.additionalCutting,
+        adaptation.additionalHeating,
+        adaptation.additionalSeasoning,
+        adaptation.servingCheck,
+      ]
+        .filter((text): text is string => text !== null)
+        .join(" "),
+    ).includes(expectedName);
+  };
+  const adaptationEvidenceText = (
+    adaptation: (typeof menu.adaptations)[number],
+    kind: SafetyAction["kind"],
+    ingredientId: string,
+  ): boolean => {
+    const expectedName = ingredientName.get(ingredientId);
+    if (expectedName === undefined) return false;
+    return [
+      ...(dishText.get(adaptation.dishId) ?? []),
+      adaptation.portionText,
+      adaptation.additionalCutting,
+      adaptation.additionalHeating,
+      adaptation.additionalSeasoning,
+      adaptation.servingCheck,
+    ]
+      .filter((text): text is string => text !== null)
+      .some(
+        (text) => actionEvidence[kind].test(text) && normalizeFoodText(text).includes(expectedName),
+      );
+  };
+  for (const member of context.members) {
+    const memberActions = menu.adaptations
+      .filter((adaptation) => adaptation.anonymousMemberRef === member.anonymousRef)
+      .flatMap((adaptation) => adaptation.safetyActions.map((action) => ({ action, adaptation })));
+    for (const required of member.requiredSafetyConstraints) {
+      const hasEvidence = memberActions.some(
+        ({ action, adaptation }) =>
+          action.kind === required &&
+          action.anonymousMemberRef === member.anonymousRef &&
+          stepOwner.get(action.beforeRecipeStepId) === action.dishId &&
+          actionEvidence[action.kind].test(action.instruction) &&
+          instructionNamesIngredient(action.instruction, action.ingredientId) &&
+          adaptationEvidenceText(adaptation, action.kind, action.ingredientId) &&
+          adaptationNamesIngredient(adaptation, action.ingredientId) &&
+          !contradictionPattern.test(
+            [
+              ...(dishContradictionText.get(action.dishId) ?? []),
+              ...adaptationContradictionText(action.dishId, member.anonymousRef),
+            ].join(" "),
+          ),
+      );
+      if (!hasEvidence) {
+        issues.push({
+          code: "required_safety_action",
+          path: `members.${member.anonymousRef}.requiredSafetyConstraints`,
+          message: `${required} を満たす工程がありません`,
+        });
+      }
+    }
+    for (const rule of context.foodSafetyRules) {
+      if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
+      const matchedSources = sources.filter((item) =>
+        rule.matchTerms.some((term) =>
+          normalizeFoodText(item.text).includes(normalizeFoodText(term)),
+        ),
+      );
+      for (const source of matchedSources) {
+        const evidence =
+          source.ingredientId === null || source.dishId === null || rule.requiredSafetyTag === null
+            ? undefined
+            : memberActions.find(
+                ({ action, adaptation }) =>
+                  action.kind === rule.requiredSafetyTag &&
+                  action.dishId === source.dishId &&
+                  action.ingredientId === source.ingredientId &&
+                  action.anonymousMemberRef === member.anonymousRef &&
+                  stepOwner.get(action.beforeRecipeStepId) === source.dishId &&
+                  actionEvidence[action.kind].test(action.instruction) &&
+                  instructionNamesIngredient(action.instruction, source.ingredientId) &&
+                  adaptationEvidenceText(adaptation, action.kind, source.ingredientId),
+              );
+        const contradictory = contradictionPattern.test(
+          [
+            source.text,
+            ...(dishContradictionText.get(source.dishId ?? "") ?? []),
+            ...adaptationContradictionText(source.dishId ?? "", member.anonymousRef),
+          ].join(" "),
+        );
+        if (rule.ruleKind === "requires_tag" && contradictory) {
+          issues.push({
+            code: "safety_action_contradiction",
+            path: source.sourcePath,
+            message: "安全対応と料理手順が矛盾しています",
+          });
+        } else if (rule.ruleKind === "forbidden" || evidence === undefined) {
+          issues.push({
+            code: "age_shape_rule",
+            path: source.sourcePath,
+            message: rule.userMessage,
+          });
+        }
+      }
+    }
+  }
+  return issues;
+}
