@@ -114,7 +114,7 @@ export function HouseholdOnboardingForm({
   const aliasesQuery = useQuery({
     queryKey: ["household", "allergen-aliases"],
     queryFn: () => api.listAliases?.() ?? Promise.resolve([]),
-    enabled: draft !== null && api.listCatalog !== undefined,
+    enabled: draft !== null && api.listAliases !== undefined,
   });
   const allergies = allergiesQuery.data ?? [];
 

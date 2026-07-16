@@ -72,6 +72,7 @@ export type Database = {
         Args: { p_max_count: number; p_value: string[] }
         Returns: boolean
       }
+      normalize_allergen_term: { Args: { p_value: string }; Returns: string }
       soft_delete_generation_draft: {
         Args: {
           p_draft_id: string
@@ -1117,11 +1118,20 @@ export type Database = {
     Functions: {
       add_custom_member_allergy: {
         Args: {
-          p_custom_aliases: string[]
+          p_custom_aliases?: string[]
           p_custom_name: string
           p_member_id: string
         }
-        Returns: Database["public"]["Tables"]["member_allergies"]["Row"]
+        Returns: {
+          allergen_id: string | null
+          created_at: string
+          custom_aliases: string[]
+          custom_confirmed: boolean
+          custom_name: string | null
+          id: string
+          member_id: string
+          user_id: string
+        }
         SetofOptions: {
           from: "*"
           to: "member_allergies"
@@ -1144,10 +1154,6 @@ export type Database = {
         }[]
       }
       cleanup_auth_continuations: { Args: { p_now: string }; Returns: number }
-      delete_member_allergy: {
-        Args: { p_allergy_id: string }
-        Returns: undefined
-      }
       complete_household_member: {
         Args: { p_member_id: string }
         Returns: {
@@ -1191,6 +1197,10 @@ export type Database = {
       delete_generation_draft: {
         Args: { p_expected_revision: number }
         Returns: number
+      }
+      delete_member_allergy: {
+        Args: { p_allergy_id: string }
+        Returns: undefined
       }
       deposit_auth_continuation: {
         Args: {

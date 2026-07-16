@@ -175,6 +175,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   );
   const { refetch: refetchDraft } = draftQuery;
   const onConflict = useCallback(() => {
+    // 競合時点の表示値は失われた保存前提のため、サーバーの最新下書きが届き次第
+    // 初期化フローをやり直して value と revision を作り直す（自動保存も再開する）。
+    setInitialized(false);
     void refetchDraft();
   }, [refetchDraft]);
   const autosave = useDraftAutosave({

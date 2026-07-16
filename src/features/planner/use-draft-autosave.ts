@@ -41,17 +41,17 @@ export function useDraftAutosave({
   latestSerializedRef.current = serialized;
 
   useEffect(() => {
-    // 競合後に refetch された revision だけを古い表示値へ結び直すと他画面の保存を上書きするため、
-    // 明示的な再読み込みで画面全体が作り直されるまでは競合時点の revision を保持する。
-    if (conflictRef.current !== null) return;
+    // initialRevision はサーバー revision が実際に変わった時だけ変化するプリミティブ値のため、
+    // 競合後の refetch で新しい revision が届いた場合もここで再ベースライン化し、
+    // 競合状態を解除する（呼び出し側が表示値も新しいサーバー値へ更新している前提）。
     revisionRef.current = initialRevision;
     setSavedRevision(initialRevision);
-    // サーバーから取得した revision と現在表示値を新しい保存基準とし、
-    // hydration や競合後の refetch 自体をユーザー編集として再保存しない。
     baselineSerializedRef.current = latestSerializedRef.current;
     pendingDebounceRef.current = false;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
+    conflictRef.current = null;
+    if (mountedRef.current) setState("idle");
   }, [initialRevision]);
 
   const enqueue = useCallback(

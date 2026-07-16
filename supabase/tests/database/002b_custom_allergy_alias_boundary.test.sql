@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(7);
+select plan(9);
 
 select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',
@@ -71,6 +71,30 @@ select is(
   ),
   'えんどう豆たんぱく',
   'the RPC returns and stores the confirmed custom term'
+);
+select throws_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      'えんどう豆たんぱく',
+      array[]::text[]
+    )
+  $sql$,
+  '23514',
+  'custom_allergy_already_registered',
+  'the same custom allergy name cannot be registered twice for one member'
+);
+select throws_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      '別名義の豆たんぱく',
+      array['ピープロテイン']::text[]
+    )
+  $sql$,
+  '23514',
+  'custom_allergy_already_registered',
+  'a new custom allergy cannot reuse an alias already stored for the member'
 );
 select throws_ok(
   $sql$

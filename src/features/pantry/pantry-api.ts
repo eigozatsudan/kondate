@@ -43,6 +43,11 @@ export class PantryVersionConflictError extends Error {
   }
 }
 
+function requireUserId(userId: string): string {
+  if (userId === "") throw new Error("ログイン状態を確認できませんでした");
+  return userId;
+}
+
 export async function listPantryItems(
   client: BrowserSupabaseClient,
   userId: string,
@@ -50,7 +55,7 @@ export async function listPantryItems(
   const { data, error } = await client
     .from("pantry_items")
     .select("*")
-    .eq("user_id", userId)
+    .eq("user_id", requireUserId(userId))
     .order("expires_on", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false });
   if (error !== null) throw new Error("冷蔵庫の食材を読み込めませんでした");
@@ -64,7 +69,7 @@ export async function createPantryItem(
 ): Promise<PantryItem> {
   const { data, error } = await client
     .from("pantry_items")
-    .insert(writeRow(userId, input))
+    .insert(writeRow(requireUserId(userId), input))
     .select("*")
     .single();
   if (error !== null) throw new Error("食材を追加できませんでした");
@@ -78,6 +83,7 @@ export async function updatePantryItem(
   expectedUpdatedAt: string,
   input: PantryItemInput,
 ): Promise<PantryItem> {
+  requireUserId(userId);
   const { data, error } = await client
     .from("pantry_items")
     .update(writeRow(userId, input))
@@ -97,6 +103,7 @@ export async function deletePantryItem(
   itemId: string,
   expectedUpdatedAt: string,
 ): Promise<{ id: string }> {
+  requireUserId(userId);
   const { data, error } = await client
     .from("pantry_items")
     .delete()

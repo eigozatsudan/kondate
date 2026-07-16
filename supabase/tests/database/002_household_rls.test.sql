@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(34);
+select plan(38);
 
 select tests.create_supabase_user('11111111-1111-1111-1111-111111111111', 'one@example.invalid');
 select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@example.invalid');
@@ -58,12 +58,15 @@ select throws_ok(
   'complete registered member requires an allergy at the table boundary'
 );
 
-insert into public.member_allergies(
-  id, user_id, member_id, custom_name, custom_confirmed
-) values (
-  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-  '11111111-1111-1111-1111-111111111111',
-  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'えんどう豆たんぱく', true
+-- allergies_insert_own は allergen_id is not null を要求するため、カスタムアレルギーの
+-- 直接 INSERT はもはや許可されない（20260715000200 以降）。以下はすべて RPC 経由で登録する。
+select lives_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'えんどう豆たんぱく', array[]::text[]
+    )
+  $sql$,
+  'the custom allergy RPC stores a first allergy for the member'
 );
 select lives_ok(
   $sql$
@@ -75,32 +78,43 @@ select lives_ok(
 );
 select throws_ok(
   $sql$
-    select public.delete_member_allergy('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+    select public.delete_member_allergy(
+      (select id from public.member_allergies
+       where member_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and custom_name = 'えんどう豆たんぱく')
+    )
   $sql$,
   '23514',
   'member_registered_allergy_required',
   'deletion RPC cannot delete the last allergy of a complete registered member'
 );
-insert into public.member_allergies(
-  id, user_id, member_id, custom_name, custom_aliases, custom_confirmed
-) values (
-  'dddddddd-dddd-dddd-dddd-dddddddddddd',
-  '11111111-1111-1111-1111-111111111111',
-  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '  Ｐｅａたんぱく  ', array['  ｐｅａ protein  ', '  pea isolate  '], true
+select lives_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      '  Ｐｅａたんぱく  ',
+      array['  ｐｅａ protein  ', '  pea isolate  ']
+    )
+  $sql$,
+  'the custom allergy RPC stores a second allergy for the member'
 );
 select is(
-  (select custom_name from public.member_allergies where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
+  (select custom_name from public.member_allergies
+   where member_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and custom_name = 'Peaたんぱく'),
   'Peaたんぱく',
   'custom allergy name is stored as the NFKC-trimmed canonical value'
 );
 select is(
-  (select custom_aliases from public.member_allergies where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
+  (select custom_aliases from public.member_allergies
+   where member_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and custom_name = 'Peaたんぱく'),
   array['pea protein', 'pea isolate'],
   'custom allergy aliases are stored as NFKC-trimmed canonical values'
 );
 select lives_ok(
   $sql$
-    select public.delete_member_allergy('dddddddd-dddd-dddd-dddd-dddddddddddd')
+    select public.delete_member_allergy(
+      (select id from public.member_allergies
+       where member_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and custom_name = 'Peaたんぱく')
+    )
   $sql$,
   'deletion RPC removes an allergy when another allergy remains'
 );
@@ -111,38 +125,42 @@ select is(
 );
 select throws_ok(
   $sql$
-    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
-    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array['  '], true)
+    select public.add_custom_member_allergy(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array['  ']
+    )
   $sql$,
   '23514',
-  'invalid_custom_allergy_aliases',
+  'invalid_custom_allergy',
   'custom aliases cannot contain blanks'
 );
 select throws_ok(
   $sql$
-    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
-    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array['same', ' same '], true)
+    select public.add_custom_member_allergy(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array['same', ' same ']
+    )
   $sql$,
   '23514',
-  'invalid_custom_allergy_aliases',
+  'invalid_custom_allergy',
   'custom aliases must be unique after canonical trimming'
 );
 select throws_ok(
   $sql$
-    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
-    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array_fill('alias'::text, array[11]), true)
+    select public.add_custom_member_allergy(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array_fill('alias'::text, array[11])
+    )
   $sql$,
   '23514',
-  'invalid_custom_allergy_aliases',
+  'invalid_custom_allergy',
   'custom aliases are limited to ten entries'
 );
 select throws_ok(
   $sql$
-    insert into public.member_allergies(user_id, member_id, custom_name, custom_aliases, custom_confirmed)
-    values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array[repeat('a', 81)], true)
+    select public.add_custom_member_allergy(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'custom', array[repeat('a', 81)]
+    )
   $sql$,
   '23514',
-  'invalid_custom_allergy_aliases',
+  'invalid_custom_allergy',
   'each custom alias is limited to eighty characters'
 );
 select lives_ok(
@@ -155,7 +173,10 @@ select lives_ok(
 );
 select lives_ok(
   $sql$
-    select public.delete_member_allergy('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+    select public.delete_member_allergy(
+      (select id from public.member_allergies
+       where member_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and custom_name = 'えんどう豆たんぱく')
+    )
   $sql$,
   'deletion RPC removes the final allergy after registered status is cleared'
 );
@@ -234,6 +255,20 @@ select ok(
 select ok(
   has_function_privilege('authenticated', 'public.delete_member_allergy(uuid)', 'execute'),
   'authenticated users can execute the serialized allergy deletion RPC'
+);
+select ok(
+  not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'member_allergies' and policyname = 'allergies_update_own'
+  ),
+  'the dead owner-scoped update policy was removed, not just made unreachable by revoke'
+);
+select ok(
+  not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'member_allergies' and policyname = 'allergies_delete_own'
+  ),
+  'the dead owner-scoped delete policy was removed, not just made unreachable by revoke'
 );
 select ok(
   not has_function_privilege('anon', 'public.delete_member_allergy(uuid)', 'execute'),
