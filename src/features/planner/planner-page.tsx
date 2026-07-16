@@ -143,6 +143,13 @@ export function PlannerForm({
       eligibleMemberIds.has(id),
     );
     if (reconciledTargetMemberIds.length === value.targetMemberIds.length) return;
+    if (activeOperationRef.current === "emergency") {
+      // 保存開始後に対象可否が変わった場合、古い対象での遷移を無効化して再確認を促す。
+      operationGenerationRef.current += 1;
+      activeOperationRef.current = "idle";
+      setIsOpeningEmergencyMenus(false);
+      setGenerationError("対象家族の条件が変わったため、緊急献立への移動を中止しました。");
+    }
     const next = { ...value, targetMemberIds: reconciledTargetMemberIds };
     setValue(next);
     onChange(next);

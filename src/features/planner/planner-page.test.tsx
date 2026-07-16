@@ -511,6 +511,71 @@ it("緊急献立の保存待ち中は生成を開始しない", () => {
   expect(onGenerate).not.toHaveBeenCalled();
 });
 
+it("緊急献立の保存待ち中に対象家族が対象外になった場合は遷移を中止して選択を同期する", async () => {
+  let resolveFlush: ((draft: import("@shared/contracts/planner").PlannerDraft) => void) | undefined;
+  const flush = vi.fn(
+    () =>
+      new Promise<import("@shared/contracts/planner").PlannerDraft>((resolve) => {
+        resolveFlush = resolve;
+      }),
+  );
+  const onChange = vi.fn();
+  const onOpenEmergencyMenus = vi.fn().mockResolvedValue(undefined);
+  const member = {
+    id: initialValue.targetMemberIds[0]!,
+    displayName: "子ども",
+    ageBandLabel: "3〜5歳",
+    allergyLabel: "アレルギーなし",
+    safetyLabels: [],
+    blockedReason: null,
+  };
+  const { rerender } = render(
+    <PlannerForm
+      initialValue={initialValue}
+      members={[member]}
+      pantryItems={[]}
+      pantryItemsStatus="loaded"
+      saveState="saved"
+      onChange={onChange}
+      flush={flush}
+      onOpenEmergencyMenus={onOpenEmergencyMenus}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+  rerender(
+    <PlannerForm
+      initialValue={initialValue}
+      members={[{ ...member, blockedReason: "対応対象の確認が完了していません" }]}
+      pantryItems={[]}
+      pantryItemsStatus="loaded"
+      saveState="saved"
+      onChange={onChange}
+      flush={flush}
+      onOpenEmergencyMenus={onOpenEmergencyMenus}
+    />,
+  );
+
+  expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ targetMemberIds: [] }));
+  expect(
+    screen.getByText("対象家族の条件が変わったため、緊急献立への移動を中止しました。"),
+  ).toHaveAttribute("role", "alert");
+
+  await act(async () => {
+    resolveFlush?.({
+      id: "71000000-0000-0000-0000-000000000001",
+      userId: "72000000-0000-0000-0000-000000000001",
+      ...initialValue,
+      revision: 1,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    await Promise.resolve();
+  });
+
+  expect(onOpenEmergencyMenus).not.toHaveBeenCalled();
+});
+
 it("緊急献立の保存開始から遷移まで家族・医療入力を含む全条件を変更できない", async () => {
   const pantryItem: PantryItem = {
     id: "71000000-0000-0000-0000-000000000001",

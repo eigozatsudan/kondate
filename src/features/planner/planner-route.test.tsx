@@ -60,6 +60,7 @@ const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
+const getQueryDataMock = vi.hoisted(() => vi.fn());
 const cancelQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("@/features/auth/auth-provider", () => ({
@@ -73,6 +74,7 @@ vi.mock("react-router", async (importOriginal) => {
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     cancelQueries: cancelQueriesMock,
+    getQueryData: getQueryDataMock,
     setQueryData: setQueryDataMock,
   }),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {

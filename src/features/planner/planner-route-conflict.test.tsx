@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import { householdKeys } from "@/features/household/household-queries";
@@ -32,6 +32,12 @@ const revisionTwo: PlannerDraft = {
   memo: "revision 2",
   revision: 2,
   updatedAt: "2026-07-01T01:00:00.000Z",
+};
+const revisionThree: PlannerDraft = {
+  ...revisionTwo,
+  memo: "revision 3",
+  revision: 3,
+  updatedAt: "2026-07-01T02:00:00.000Z",
 };
 
 const getPlannerDraftMock = vi.hoisted(() => vi.fn());
@@ -83,12 +89,17 @@ function renderRetainedDraft(queryClient: QueryClient) {
   });
   queryClient.setQueryData(pantryKeys.list(userId), []);
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/planner"]}>
       <QueryClientProvider client={queryClient}>
         <PlannerPage startGeneration={vi.fn()} />
+        <CurrentPath />
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+function CurrentPath() {
+  return <output data-testid="current-path">{useLocation().pathname}</output>;
 }
 
 beforeEach(() => {
@@ -238,4 +249,30 @@ it("保存中に開始した古い下書き再取得が完了しても保存結�
   });
 
   expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionTwo);
+});
+
+it("保存応答より新しいcacheがある場合は上書きも緊急献立への移動もせず競合として扱う", async () => {
+  const deferredSave = createDeferred<PlannerDraft>();
+  getPlannerDraftMock.mockResolvedValue(revisionThree);
+  savePlannerDraftMock.mockReturnValue(deferredSave.promise);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  renderRetainedDraft(queryClient);
+  await act(async () => Promise.resolve());
+
+  fireEvent.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+  await act(async () => Promise.resolve());
+  queryClient.setQueryData(plannerKeys.draft(userId), revisionThree);
+
+  await act(async () => {
+    deferredSave.resolve(revisionTwo);
+    await deferredSave.promise;
+    await Promise.resolve();
+  });
+
+  expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionThree);
+  expect(screen.getByTestId("current-path")).toHaveTextContent("/planner");
+  expect(screen.getByRole("heading", { name: "下書きが別の画面で更新されました" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeEnabled();
 });

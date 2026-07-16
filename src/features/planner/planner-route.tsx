@@ -13,7 +13,12 @@ import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import type { PlannerSafetyMember } from "./planner-safety-member";
 import { createPlannerAttempt, type PlannerAttempt } from "./expired-pantry-checks";
-import { getPlannerDraft, plannerKeys, savePlannerDraft } from "./planner-api";
+import {
+  DraftRevisionConflictError,
+  getPlannerDraft,
+  plannerKeys,
+  savePlannerDraft,
+} from "./planner-api";
 import { PlannerForm } from "./planner-page";
 import { useDraftAutosave } from "./use-draft-autosave";
 
@@ -229,10 +234,18 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       queryKey: plannerKeys.draft(userId ?? "missing"),
       exact: true,
     });
+    const current = queryClient.getQueryData<PlannerDraft | null>(
+      plannerKeys.draft(userId ?? "missing"),
+    );
+    if (current !== undefined && current !== null && current.revision > saved.revision) {
+      // 遅延した保存応答で別画面の新しい下書きを消さず、既存の明示的な競合解決へ合流させる。
+      await onConflict();
+      throw new DraftRevisionConflictError();
+    }
     // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
     queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
     return saved;
-  }, [flushAutosave, queryClient, userId]);
+  }, [flushAutosave, onConflict, queryClient, userId]);
 
   const resolveDraftConflict = useCallback((): void => {
     if (latestConflictDraft === undefined || safetyQuery.data === undefined) return;

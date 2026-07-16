@@ -107,7 +107,24 @@ test("waits for the latest draft save before requesting emergency menus", async 
   });
   await page.route("**/rest/v1/rpc/save_generation_draft", async (route) => {
     const body = JSON.parse(route.request().postData() ?? "null") as unknown;
-    if (isRecord(body)) observeSave?.(body);
+    const targetMemberIds = isRecord(body) ? body.p_target_member_ids : undefined;
+    const pantrySelections = isRecord(body) ? body.p_pantry_selections : undefined;
+    const isLatestInput =
+      isRecord(body) &&
+      body.p_meal_type === "lunch" &&
+      Array.isArray(targetMemberIds) &&
+      targetMemberIds.length === 1 &&
+      targetMemberIds[0] === selectedMemberId &&
+      Array.isArray(pantrySelections) &&
+      pantrySelections.length === 1 &&
+      isRecord(pantrySelections[0]) &&
+      pantrySelections[0].pantryItemId === selectedPantryItemId &&
+      pantrySelections[0].priority === "prefer_use";
+    if (!isLatestInput) {
+      await route.continue();
+      return;
+    }
+    observeSave?.(body);
     await saveMayComplete;
     const response = await route.fetch();
     await route.fulfill({ response });
