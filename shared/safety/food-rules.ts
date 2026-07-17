@@ -136,11 +136,11 @@ const safeFallbackConsequencePattern = /^場合は(?:提供|配膳|盛り付け)
 const genericIngredientMatchTerms = new Set(["魚", "魚介", "魚類"]);
 const genericFishCutForms = ["切り身", "フィレ"] as const;
 const fishNameModifierPattern = /^\p{Script=Han}+$/u;
-const unambiguousFishNamePattern = /[\p{Script=Han}\p{Script=Katakana}]/u;
 const sourceFoodExpressionBoundaryPattern = /[\s、。・,./（）()「」『』]/u;
 const sourceFoodExpressionParticlePattern = /[をはがのとへでに]/u;
 const universalIngredientScopePattern =
   /(?:(?:すべて|全て)の食材|全食材|食材(?:は|を)?(?:すべて|全て))/u;
+const ingredientExclusionSuffixPattern = /^を除いて/u;
 const inverseStateNegationPattern = /^(?:には?(?:せず|しない)|ではない)/u;
 
 function doesGenericIngredientMatch(ingredientText: string, normalizedTerm: string): boolean {
@@ -165,13 +165,6 @@ function doesConcreteFishIngredientMatch(ingredientText: string, normalizedTerm:
 
   const prefix = ingredientText.slice(0, -normalizedTerm.length);
   if (ingredientText.endsWith(normalizedTerm) && fishNameModifierPattern.test(prefix)) {
-    return true;
-  }
-
-  if (
-    ingredientText.startsWith(normalizedTerm) &&
-    unambiguousFishNamePattern.test(normalizedTerm)
-  ) {
     return true;
   }
 
@@ -379,6 +372,7 @@ function resolveOccurrenceIngredientName(
           candidate.index + candidate.name.length,
           occurrenceIndex,
         );
+        if (ingredientExclusionSuffixPattern.test(between)) return false;
         if (kind === "remove_bones") {
           // 除骨は「食材の骨」「食材から骨」または明示的な主題に限り、比較対象を除外する。
           return (
@@ -454,6 +448,7 @@ function findActionContradictionOccurrences(
 function hasUniversallyScopedActionContradiction(
   text: string,
   kind: SafetyAction["kind"],
+  normalizedIngredientName: string,
   normalizedDishIngredientNames: readonly string[],
 ): boolean {
   return text.split(sentenceBoundaryPattern).some((sentence) =>
@@ -472,10 +467,25 @@ function hasUniversallyScopedActionContradiction(
         // 全称語より後で別食材へ明示結合された逆状態は、全食材へ展開せず通常の食材別判定へ委ねる。
         const scopedStart = applicableScope.index + applicableScope.length;
         const scopedClause = normalizedClause.slice(scopedStart);
+        const scopedOccurrenceIndex = occurrence.index - scopedStart;
+        const excludedIngredientNames = new Set(
+          findUncoveredIngredientOccurrences(scopedClause, normalizedDishIngredientNames)
+            .filter((candidate) => {
+              if (candidate.index >= scopedOccurrenceIndex) return false;
+              const suffix = scopedClause.slice(
+                candidate.index + candidate.name.length,
+                scopedOccurrenceIndex,
+              );
+              return ingredientExclusionSuffixPattern.test(suffix);
+            })
+            .map((candidate) => candidate.name),
+        );
+        if (excludedIngredientNames.has(normalizedIngredientName)) return false;
+
         return (
           resolveOccurrenceIngredientName(
             scopedClause,
-            occurrence.index - scopedStart,
+            scopedOccurrenceIndex,
             "",
             normalizedDishIngredientNames,
             kind,
@@ -582,6 +592,7 @@ export function evaluateFoodSafetyRules(
       hasUniversallyScopedActionContradiction(
         source.text,
         kind,
+        expectedName,
         dishIngredientNames.get(dishId) ?? [],
       )
     ) {
