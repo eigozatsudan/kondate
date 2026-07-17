@@ -885,6 +885,64 @@ it("汎用魚語と完全一致する食材には除骨要件を適用する", (
   ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]));
 });
 
+it.each(["白身魚", "青魚", "焼き魚", "魚の切り身"])(
+  "汎用魚語は実食材名 %s の除骨必須条件へ適用する",
+  (ingredientName) => {
+    const safety = requiredConstraintContext("remove_bones");
+
+    expect(
+      evaluateFoodSafetyRules(menuWithNamedIngredient(ingredientName), {
+        ...safety,
+        foodSafetyRules: safety.foodSafetyRules.map((rule) => ({
+          ...rule,
+          matchTerms: ["魚"],
+        })),
+      }),
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]),
+    );
+  },
+);
+
+it.each(["白身魚", "青魚", "焼き魚", "魚の切り身"])(
+  "汎用魚語は実食材名 %s の年齢別ルールへ適用する",
+  (ingredientName) => {
+    const safety = requiredConstraintContext("remove_bones");
+
+    expect(
+      evaluateFoodSafetyRules(menuWithNamedIngredient(ingredientName), {
+        ...safety,
+        members: safety.members.map((member) => ({
+          ...member,
+          requiredSafetyConstraints: [],
+        })),
+        foodSafetyRules: safety.foodSafetyRules.map((rule) => ({
+          ...rule,
+          matchTerms: ["魚"],
+        })),
+      }),
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
+  },
+);
+
+it("汎用魚語は加工食品名を年齢別ルールへ誤適用しない", () => {
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menuWithNamedIngredient("魚肉ソーセージ"), {
+      ...safety,
+      members: safety.members.map((member) => ({
+        ...member,
+        requiredSafetyConstraints: [],
+      })),
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({
+        ...rule,
+        matchTerms: ["魚"],
+      })),
+    }),
+  ).toEqual([]);
+});
+
 it("rejects an ownerless timeline contradiction bound to a matched fish ingredient", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
@@ -2078,6 +2136,46 @@ it.each(inverseServingStateCases)("$kind の工程と対象食材の逆状態を
   expect(menuWithBoundActionContradiction(testCase)).toEqual(
     expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
   );
+});
+
+it.each([
+  "すべての食材は丸ごと盛り付ける",
+  "全ての食材は丸ごと盛り付ける",
+  "全食材を丸ごと盛り付ける",
+  "食材はすべて丸ごと盛り付ける",
+])("料理内の全食材を対象にした逆状態を対象食材の矛盾として扱う: %s", (instruction) => {
+  expect(
+    menuWithBoundActionContradiction({
+      kind: "cut_small",
+      targetName: "ぶどう",
+      positiveInstruction: "ぶどうを小さく切る",
+      contradictionInstruction: instruction,
+    }),
+  ).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
+});
+
+it("対象を明示しない逆状態は複数食材へ一律適用しない", () => {
+  expect(
+    menuWithBoundActionContradiction({
+      kind: "cut_small",
+      targetName: "ぶどう",
+      positiveInstruction: "ぶどうを小さく切る",
+      contradictionInstruction: "食材は丸ごと盛り付ける",
+    }),
+  ).toEqual([]);
+});
+
+it("全食材を対象にした安全工程を逆状態として扱わない", () => {
+  expect(
+    menuWithBoundActionContradiction({
+      kind: "cut_small",
+      targetName: "ぶどう",
+      positiveInstruction: "ぶどうを小さく切る",
+      contradictionInstruction: "食材はすべて小さく切る",
+    }),
+  ).toEqual([]);
 });
 
 it("やわらかさ要件の対象を硬く仕上げる指示は矛盾として扱う", () => {

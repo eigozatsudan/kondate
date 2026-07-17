@@ -134,14 +134,22 @@ const sentenceBoundaryPattern = /[。！!；;\r\n]+/u;
 const localClauseBoundaryPattern = /[、,，:：]+/u;
 const safeFallbackConsequencePattern = /^場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
 const genericIngredientMatchTerms = new Set(["魚", "魚介", "魚類"]);
+const universalIngredientScopePattern =
+  /(?:(?:すべて|全て)の食材|全食材|食材(?:は|を)?(?:すべて|全て))/u;
 
 function doesIngredientMatchTerm(ingredientText: string, normalizedTerm: string): boolean {
   const normalizedIngredient = normalizeFoodText(ingredientText);
 
-  // 総称は加工食品名の一部にも現れるため、食材名との完全一致だけを適用対象にする。
+  // 総称は加工食品名の一部にも現れるため、食材名として境界が確認できる形だけを適用対象にする。
   return genericIngredientMatchTerms.has(normalizedTerm)
-    ? normalizedIngredient === normalizedTerm
+    ? normalizedIngredient === normalizedTerm ||
+        normalizedIngredient.endsWith(normalizedTerm) ||
+        normalizedIngredient.startsWith(`${normalizedTerm}の`)
     : normalizedIngredient.includes(normalizedTerm);
+}
+
+function hasUniversalIngredientScope(text: string): boolean {
+  return universalIngredientScopePattern.test(normalizeFoodText(text));
 }
 
 function isNegatedActionSuffix(suffix: string, alternative: ActionEvidenceAlternative): boolean {
@@ -426,6 +434,16 @@ export function evaluateFoodSafetyRules(
   ): boolean => {
     const expectedName = ingredientName.get(ingredientId);
     if (expectedName === undefined) return false;
+
+    // 料理に所属する明示的な全称指示だけは、食材名の省略ではなく料理内の全食材への指示として扱う。
+    if (
+      source.dishId === dishId &&
+      hasUniversalIngredientScope(source.text) &&
+      hasActionContradiction(source.text, kind)
+    ) {
+      return true;
+    }
+
     if (source.ingredientId !== null) {
       if (source.ingredientId !== ingredientId) return false;
       if (source.sourceType === "ingredient") return hasActionContradiction(source.text, kind);
