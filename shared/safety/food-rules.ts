@@ -134,18 +134,51 @@ const sentenceBoundaryPattern = /[。！!；;\r\n]+/u;
 const localClauseBoundaryPattern = /[、,，:：]+/u;
 const safeFallbackConsequencePattern = /^場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
 const genericIngredientMatchTerms = new Set(["魚", "魚介", "魚類"]);
+const genericFishCutForms = ["切り身", "フィレ"] as const;
+const concreteFishHomographExclusions = new Map<string, readonly RegExp[]>([
+  ["たい", [/^たい焼き/u]],
+  ["さけ", [/^さけるチーズ/u]],
+]);
 const universalIngredientScopePattern =
   /(?:(?:すべて|全て)の食材|全食材|食材(?:は|を)?(?:すべて|全て))/u;
+const inverseStateNegationPattern = /^(?:には?(?:せず|しない)|ではない)/u;
+
+function doesGenericIngredientMatch(ingredientText: string, normalizedTerm: string): boolean {
+  if (
+    ingredientText === normalizedTerm ||
+    ingredientText.endsWith(normalizedTerm) ||
+    ingredientText.startsWith(`${normalizedTerm}の`)
+  ) {
+    return true;
+  }
+
+  // 「白身魚切り身」のように魚種の後へ形態が続く名称だけを許し、加工食品への部分一致を避ける。
+  return genericFishCutForms.some(
+    (form) =>
+      ingredientText.includes(`${normalizedTerm}${form}`) ||
+      ingredientText.includes(`${normalizedTerm}の${form}`),
+  );
+}
+
+function isKnownNonFishHomograph(ingredientText: string, normalizedTerm: string): boolean {
+  return (concreteFishHomographExclusions.get(normalizedTerm) ?? []).some((pattern) =>
+    pattern.test(ingredientText),
+  );
+}
 
 function doesIngredientMatchTerm(ingredientText: string, normalizedTerm: string): boolean {
   const normalizedIngredient = normalizeFoodText(ingredientText);
 
   // 総称は加工食品名の一部にも現れるため、食材名として境界が確認できる形だけを適用対象にする。
-  return genericIngredientMatchTerms.has(normalizedTerm)
-    ? normalizedIngredient === normalizedTerm ||
-        normalizedIngredient.endsWith(normalizedTerm) ||
-        normalizedIngredient.startsWith(`${normalizedTerm}の`)
-    : normalizedIngredient.includes(normalizedTerm);
+  if (genericIngredientMatchTerms.has(normalizedTerm)) {
+    return doesGenericIngredientMatch(normalizedIngredient, normalizedTerm);
+  }
+
+  // 平仮名の魚名は一般語にも現れるため、既知の非魚食材名を構造的に除外する。
+  return (
+    !isKnownNonFishHomograph(normalizedIngredient, normalizedTerm) &&
+    normalizedIngredient.includes(normalizedTerm)
+  );
 }
 
 function hasUniversalIngredientScope(text: string): boolean {
@@ -223,10 +256,6 @@ function findNegatedActionOccurrences(
   }
 
   return occurrences;
-}
-
-function hasNegatedActionEvidence(text: string, kind: SafetyAction["kind"]): boolean {
-  return findNegatedActionOccurrences(text, kind).length > 0;
 }
 
 function findUncoveredIngredientOccurrences(
@@ -327,11 +356,8 @@ function hasIngredientBoundActionEvidence(
 }
 
 function hasActionContradiction(text: string, kind: SafetyAction["kind"]): boolean {
-  const normalizedText = normalizeFoodText(text);
-  if (actionSpecificContradictionPattern[kind].test(normalizedText)) return true;
-
   // 同じ文章に肯定工程があっても、後から明示された否定を相殺させない。
-  return hasNegatedActionEvidence(text, kind);
+  return findActionContradictionOccurrences(text, kind).length > 0;
 }
 
 function findActionContradictionOccurrences(
@@ -339,10 +365,15 @@ function findActionContradictionOccurrences(
   kind: SafetyAction["kind"],
 ): readonly TextOccurrence[] {
   const normalizedText = normalizeFoodText(text);
-  return [
-    ...findPatternOccurrences(normalizedText, actionSpecificContradictionPattern[kind]),
-    ...findNegatedActionOccurrences(normalizedText, kind),
-  ];
+  const inverseStateOccurrences = findPatternOccurrences(
+    normalizedText,
+    actionSpecificContradictionPattern[kind],
+  ).filter((occurrence) => {
+    const suffix = normalizedText.slice(occurrence.index + occurrence.length);
+    return !inverseStateNegationPattern.test(suffix);
+  });
+
+  return [...inverseStateOccurrences, ...findNegatedActionOccurrences(normalizedText, kind)];
 }
 
 function hasIngredientBoundActionContradiction(
