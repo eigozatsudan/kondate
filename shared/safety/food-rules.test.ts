@@ -2583,6 +2583,30 @@ it("全称逆状態の除外対象には矛盾を適用しない", () => {
   expect(issues.filter((issue) => issue.code === "safety_action_contradiction")).toEqual([]);
 });
 
+it("全称逆状態で連言された先頭の除外対象にも矛盾を適用しない", () => {
+  const issues = menuWithBoundActionContradiction({
+    kind: "cut_small",
+    targetName: "にんじん",
+    otherName: "ぶどう",
+    positiveInstruction: "にんじんを小さく切る",
+    contradictionInstruction: "すべての食材はにんじんとぶどうを除いて丸ごと盛り付ける",
+  });
+
+  expect(issues.filter((issue) => issue.code === "safety_action_contradiction")).toEqual([]);
+});
+
+it("全称逆状態で連言された末尾の除外対象にも矛盾を適用しない", () => {
+  const issues = menuWithBoundActionContradiction({
+    kind: "cut_small",
+    targetName: "ぶどう",
+    otherName: "にんじん",
+    positiveInstruction: "ぶどうを小さく切る",
+    contradictionInstruction: "すべての食材はにんじんとぶどうを除いて丸ごと盛り付ける",
+  });
+
+  expect(issues.filter((issue) => issue.code === "safety_action_contradiction")).toEqual([]);
+});
+
 it("全称範囲と逆状態が同じ文にある指示は対象食材の矛盾として扱う", () => {
   expect(
     menuWithBoundActionContradiction({

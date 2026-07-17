@@ -141,6 +141,8 @@ const sourceFoodExpressionParticlePattern = /[をはがのとへでに]/u;
 const universalIngredientScopePattern =
   /(?:(?:すべて|全て)の食材|全食材|食材(?:は|を)?(?:すべて|全て))/u;
 const ingredientExclusionSuffixPattern = /^を除いて/u;
+const ingredientExclusionClauseSuffixPattern = /を除いて$/u;
+const ingredientConjunctionPattern = /^と$/u;
 const inverseStateNegationPattern = /^(?:には?(?:せず|しない)|ではない)/u;
 
 function doesGenericIngredientMatch(ingredientText: string, normalizedTerm: string): boolean {
@@ -445,6 +447,49 @@ function findActionContradictionOccurrences(
   return [...inverseStateOccurrences, ...findNegatedActionOccurrences(normalizedText, kind)];
 }
 
+function findExcludedIngredientNamesBeforeOccurrence(
+  normalizedClause: string,
+  occurrenceIndex: number,
+  normalizedDishIngredientNames: readonly string[],
+): ReadonlySet<string> {
+  const prefix = normalizedClause.slice(0, occurrenceIndex);
+  const exclusionMarker = ingredientExclusionClauseSuffixPattern.exec(prefix);
+  if (exclusionMarker === null) return new Set();
+
+  const exclusionListEnd = exclusionMarker.index;
+  const candidates = findUncoveredIngredientOccurrences(
+    normalizedClause,
+    normalizedDishIngredientNames,
+  )
+    .filter((candidate) => candidate.index + candidate.name.length <= exclusionListEnd)
+    .sort((left, right) => left.index - right.index);
+  const lastCandidate = candidates.at(-1);
+  if (
+    lastCandidate === undefined ||
+    lastCandidate.index + lastCandidate.name.length !== exclusionListEnd
+  ) {
+    return new Set();
+  }
+
+  const excludedIngredientNames = new Set([lastCandidate.name]);
+  let followingCandidate = lastCandidate;
+  for (let index = candidates.length - 2; index >= 0; index -= 1) {
+    const candidate = candidates[index];
+    if (candidate === undefined) break;
+    const conjunction = normalizedClause.slice(
+      candidate.index + candidate.name.length,
+      followingCandidate.index,
+    );
+    if (!ingredientConjunctionPattern.test(conjunction)) break;
+
+    // 除外句を末尾からたどり、連言で結ばれた食材だけを同じ除外集合へ含める。
+    excludedIngredientNames.add(candidate.name);
+    followingCandidate = candidate;
+  }
+
+  return excludedIngredientNames;
+}
+
 function hasUniversallyScopedActionContradiction(
   text: string,
   kind: SafetyAction["kind"],
@@ -468,17 +513,10 @@ function hasUniversallyScopedActionContradiction(
         const scopedStart = applicableScope.index + applicableScope.length;
         const scopedClause = normalizedClause.slice(scopedStart);
         const scopedOccurrenceIndex = occurrence.index - scopedStart;
-        const excludedIngredientNames = new Set(
-          findUncoveredIngredientOccurrences(scopedClause, normalizedDishIngredientNames)
-            .filter((candidate) => {
-              if (candidate.index >= scopedOccurrenceIndex) return false;
-              const suffix = scopedClause.slice(
-                candidate.index + candidate.name.length,
-                scopedOccurrenceIndex,
-              );
-              return ingredientExclusionSuffixPattern.test(suffix);
-            })
-            .map((candidate) => candidate.name),
+        const excludedIngredientNames = findExcludedIngredientNamesBeforeOccurrence(
+          scopedClause,
+          scopedOccurrenceIndex,
+          normalizedDishIngredientNames,
         );
         if (excludedIngredientNames.has(normalizedIngredientName)) return false;
 
