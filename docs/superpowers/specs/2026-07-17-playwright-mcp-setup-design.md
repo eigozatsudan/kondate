@@ -56,6 +56,7 @@ Playwright MCP は `--isolated` で起動し、セッション間で Cookie、Lo
 ブラウザーの許可オリジンは、既存 Compose 構成で利用する次のローカル URL に限定する。
 
 - `http://127.0.0.1:5173`: Vite アプリ
+- `ws://127.0.0.1:5173`: Vite HMR
 - `http://127.0.0.1:8000`: Supabase API
 - `ws://127.0.0.1:8000`: Supabase Realtime
 - `http://127.0.0.1:8025`: Mailpit UI
