@@ -8,6 +8,8 @@
 
 **Tech Stack:** Codex CLI 0.144.5、TOML、Markdown、Git
 
+> **2026-07-18同期:** Task 2とTask 3は、`docs/superpowers/specs/2026-07-18-codex-subagent-responsibility-separation-design.md` に基づき、surface capability別の責任分離へ改訂した。
+
 ## Global Constraints
 
 - 親モデルはリポジトリ設定で固定せず、グローバルCodex設定から継承する。
@@ -36,6 +38,7 @@
 - Create: `.codex/agents/implementer.toml` — 親モデルを継承する唯一の書き込み役を定義する。
 - Create: `.codex/agents/reviewer.toml` — 親モデルを継承する読み取り専用レビュー役を定義する。
 - Modify: `AGENTS.md` — 各カスタムエージェントの選択基準と禁止事項を示す。
+- Modify: `SubAgents.md` — custom agent TOML、親継承、surface overrideのモデル選択優先順位を示す。
 
 ---
 
