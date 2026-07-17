@@ -15,7 +15,7 @@
 - `.codex/config.toml` の既存 `default_permissions = ":workspace"` を維持する。
 - `agents.max_threads = 4` とするが、親スレッドを数えるかは未確定として扱う。
 - `agents.max_depth = 1` とし、サブエージェントから孫エージェントを生成させない。
-- 並列化は独立した読み取り作業に限定し、リポジトリを書き込むImplementerは常に1体だけにする。
+- 並列化は独立した読み取り作業に限定する。single-writerはCodex設定による役別同時数の技術的制限ではなく、親が維持するオーケストレーション不変条件とする。親はImplementerのdispatch前にactive agent threadを確認し、既存Implementerが完了またはcloseされるまで2体目をdispatchしない。active状態を確認できない場合はdispatchを停止して報告する。
 - 親のlive runtime permission overrideはcustom agentの既定権限を上書きし得る。読み取り専用役を起動する前に親がread-onlyを選び、選択できないsurfaceでは編集禁止が指示上の制約だけであると報告する。
 - `explorer`、`reviewer`、`fast-worker` は、live overrideで書き込み可能になっていてもリポジトリ編集を拒否する。
 - Verifier役の定型検証と、Reviewerによるレビュー指摘の二次検証を別概念として扱う。
@@ -125,7 +125,8 @@ default_permissions = ":workspace"
 
 developer_instructions = """
 SubAgents.mdのImplementer役として、Task briefに記載された範囲だけを実装してください。
-同時に書き込みを行う他エージェントがいないことを前提とし、対象外ファイルや既存の未コミット変更には触れないでください。
+この定義はImplementerを技術的に1体へ制限しません。どのファイルも編集する前に、利用可能なagent状態と親から渡されたdispatch情報を確認し、自分が唯一のactive Implementerであることを確認してください。排他性を確認できない、または別のactive Implementerがいる場合は編集を停止し、親へ報告してください。
+対象外ファイルや既存の未コミット変更には触れないでください。
 REDテスト、期待どおりの失敗確認、最小GREEN実装、Task内リファクタリング、focused検証の順序を守ってください。
 設計書にない仕様変更やロック済みインターフェースの再定義を行わないでください。
 変更ファイル、実行した検証、未解決事項を親エージェントへ報告してください。
@@ -210,7 +211,7 @@ Expected: `## 5. サブエージェント運用` が存在し、既存の親、`
 - 親のlive runtime permission overrideはカスタムエージェントの既定権限を上書きし得る。`explorer`、`reviewer`、`fast-worker` を起動する前に、親はlive runtime permissionとしてread-onlyを選択する。利用中のsurfaceで選択できない場合、その役割の編集禁止は技術的な権限境界ではなく指示上の制約に留まることを報告する。
 - コードベースや設計書の読み取り調査には、読み取り専用の `explorer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
 - Node/npmによる定型テスト、型チェック、Lint、フォーマット検証と、指定されたCodex CLI、`rg`、Git等のホストコマンドの実行・ログ要約には、読み取り専用の `fast-worker` を使用する。これは `SubAgents.md` の Verifier 役であり、live overrideで書き込み可能になっていてもリポジトリファイルの編集を拒否させる。
-- Taskのコード変更には `implementer` を使用する。Implementerは常に1体だけとし、他エージェントとの並列書き込みを禁止する。
+- Taskのコード変更には `implementer` を使用する。single-writerはCodex設定による役別同時数の技術的制限ではなく、親が維持するオーケストレーション不変条件である。親はImplementerを起動する前にactive agent threadを確認し、既存Implementerが完了またはcloseされるまで2体目を起動してはいけない。active状態を確認できない場合は起動を停止し、その制約を報告する。
 - 設計適合性、セキュリティ、敵対的入力、境界条件、回帰、テスト不足の確認には、読み取り専用の `reviewer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
 - 独立した読み取り作業だけを並列化し、サブエージェントの報告は親エージェントが根拠を確認してから採用する。
 - 一次レビューと、その指摘を深掘りする二次検証には、コンテキストを共有しない別々の Reviewer エージェントを使用する。この二次検証は、Dockerコマンドを再実行する Verifier 役の検証とは別である。
@@ -308,9 +309,9 @@ Run: `git diff --check`
 
 Expected: 出力なし、終了コード0。
 
-Run: 新しいCodexプロセスを起動し、親のlive runtime permissionとしてread-onlyを選択して `explorer`、`reviewer`、`fast-worker` を実際にspawnする。各エージェントでリポジトリ書き込みが拒否されることを確認する。可能なら書き込み可能なlive overrideでもdeveloper instructionに従って編集を拒否することを確認する。
+Run: 新しいCodexプロセスを起動し、`explorer`、`reviewer`、`fast-worker`、`implementer` の4種類すべてを実際にspawnする。読み取り専用3役は親のlive runtime permissionとしてread-onlyを選択し、各エージェントでリポジトリ書き込みが拒否されることを確認する。可能なら書き込み可能なlive overrideでもdeveloper instructionに従って編集を拒否することを確認する。Implementerは親がactive agent threadを確認し、他のImplementerがactiveでない状態だけで起動する。承認されたdisposable worktree上のsentinel操作など安全な方法で、親model/reasoningの継承と`:workspace`の実効値を観測する。
 
-Expected: 各custom agentの読込、役割、spawn後の実効権限を観測できる。この検証を実行できないsurfaceでは完全検証済みとせず、未解決制約として記録する。
+Expected: 4種類すべてについてcustom agent名と固有の役割指示がloadされた証拠があり、読み取り専用3役の拒否とImplementerの継承・`:workspace`が観測される。Implementerは同時に1体だけで、編集前の排他確認も観測される。1種類でもloadまたは期待する実効値を観測できない場合や、この検証を実行できないsurfaceでは完全検証済みとせず、未解決制約として記録する。
 
 Run: `git status --short --branch`
 
