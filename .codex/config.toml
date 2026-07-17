@@ -1,2 +1,25 @@
 # リポジトリ内の通常作業を許可し、境界外の操作は既存の承認フローに委ねる。
 default_permissions = ":workspace"
+
+# ブラウザー状態を残さず、既存のローカル開発用オリジンだけを操作対象にする。
+[mcp_servers.playwright]
+command = "docker"
+args = [
+  "run",
+  "-i",
+  "--rm",
+  "--init",
+  "--network",
+  "host",
+  "mcr.microsoft.com/playwright/mcp@sha256:3d871c22ea2d4cca0966e2cfb1860e1cb03eb7353725a3d6cffd133296fb04eb",
+  "--headless",
+  "--browser",
+  "chromium",
+  "--no-sandbox",
+  "--isolated",
+  "--allowed-origins",
+  "http://127.0.0.1:5173;ws://127.0.0.1:5173;http://127.0.0.1:8000;ws://127.0.0.1:8000;http://127.0.0.1:8025;http://127.0.0.1:8788",
+]
+enabled = true
+startup_timeout_sec = 120
+tool_timeout_sec = 120

@@ -34,6 +34,18 @@ docker compose ps --all
 
 healthcheckを持つサービスがhealthyで、`migrate` がexit 0であることを確認します。
 
+## Codex から Playwright MCP を使う
+
+Playwright MCP は、Docker 上のヘッドレス Chromium からローカル開発環境だけを操作します。ブラウザー状態はセッション終了時に破棄され、リポジトリやホストのファイルはコンテナへ共有されません。
+
+初回は、`.codex/config.toml` に固定された公式 Playwright MCP イメージの取得が発生することがあります。ローカルスタックを起動してから、Codexを再起動するか新しいセッションを開始してください。
+
+```bash
+docker compose up -d --wait
+```
+
+利用時はCodexへ、Playwright MCPで `http://127.0.0.1:5173` を確認するよう依頼します。アクセス許可はViteアプリ、Supabase、Mailpit、OAuth mockの既存ローカルオリジンに限定されています。外部Webサイトの調査には使用しないでください。
+
 ## 通常の検証
 
 ```bash
