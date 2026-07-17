@@ -91,8 +91,21 @@ Critical/Important finding.
 - **Final whole-branch review** (end of a Plan, not a Task): most capable
   available model.
 
-Always pass `model` explicitly on dispatch; an omitted value inherits the
-session's model and defeats the cost/latency point of this split.
+Apply model selection in this order:
+
+1. If the surface can select a named custom agent, use the model and
+   `model_reasoning_effort` explicitly defined by that agent TOML. An omitted
+   value intentionally inherits the parent session setting.
+2. If the surface exposes a per-dispatch model override, the controller may
+   override the inherited or agent-file value to match the Task tier above.
+3. If neither custom-agent selection nor a model override is available, do not
+   infer the effective model. Use the available generic subagent with the exact
+   role constraints and report the fallback only when it materially affects the
+   final confidence or cost claim.
+
+Treat custom-agent selection, model selection, reasoning effort, and permission
+as independent capabilities. A matching `task_name` labels a thread; it is not
+evidence that a same-named custom agent or its TOML settings were loaded.
 
 ## File handoffs (keep the controller's context clean)
 
