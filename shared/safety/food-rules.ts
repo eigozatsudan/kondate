@@ -125,8 +125,8 @@ const actionSpecificContradictionPattern: Record<SafetyAction["kind"], RegExp> =
     /骨(?:付きのまま|を(?:残(?:す|して|したまま)|抜(?:かず|かない))|が残(?:る|ったまま))/u,
   cut_small: /丸ごと|切らず|大きいまま/u,
   quarter_round_food: /丸ごと|切らず|[2２二]等分/u,
-  soften: /硬いまま|硬さを残(?:す|して)/u,
-  heat_thoroughly: /生焼け|生のまま|加熱(?:しない|せず)/u,
+  soften: /硬いまま|硬さを残(?:す|して)|硬く仕上げ(?:る|た)/u,
+  heat_thoroughly: /生焼け|生のまま|生で提供(?:する|した)|加熱(?:しない|せず)/u,
 };
 const periphrasticNegationPattern =
   /^(?:(?:く|る|む|する|にする|を確認する)?ことなく|いたりはしない|(?:(?:く|る|む|する|にする|を確認する)?(?:という)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません)))/u;
@@ -134,6 +134,15 @@ const sentenceBoundaryPattern = /[。！!；;\r\n]+/u;
 const localClauseBoundaryPattern = /[、,，:：]+/u;
 const safeFallbackConsequencePattern = /^場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
 const genericIngredientMatchTerms = new Set(["魚", "魚介", "魚類"]);
+
+function doesIngredientMatchTerm(ingredientText: string, normalizedTerm: string): boolean {
+  const normalizedIngredient = normalizeFoodText(ingredientText);
+
+  // 総称は加工食品名の一部にも現れるため、食材名との完全一致だけを適用対象にする。
+  return genericIngredientMatchTerms.has(normalizedTerm)
+    ? normalizedIngredient === normalizedTerm
+    : normalizedIngredient.includes(normalizedTerm);
+}
 
 function isNegatedActionSuffix(suffix: string, alternative: ActionEvidenceAlternative): boolean {
   return alternative.negatedSuffixPattern.test(suffix) || periphrasticNegationPattern.test(suffix);
@@ -530,7 +539,7 @@ export function evaluateFoodSafetyRules(
               rule.appliesToAgeBands.includes(member.ageBand) &&
               rule.requiredSafetyTag === required &&
               rule.matchTerms.some((term) =>
-                normalizeFoodText(source.text).includes(normalizeFoodText(term)),
+                doesIngredientMatchTerm(source.text, normalizeFoodText(term)),
               ),
           ),
       );
@@ -570,14 +579,20 @@ export function evaluateFoodSafetyRules(
       if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
       const normalizedMatchTerms = rule.matchTerms.map(normalizeFoodText);
       const matchedSources = sources.filter((item) =>
-        normalizedMatchTerms.some((term) => normalizeFoodText(item.text).includes(term)),
+        normalizedMatchTerms.some((term) =>
+          item.sourceType === "ingredient"
+            ? doesIngredientMatchTerm(item.text, term)
+            : normalizeFoodText(item.text).includes(term),
+        ),
       );
       for (const source of matchedSources) {
         const requiredSafetyTag = rule.requiredSafetyTag;
         const sourceDishId = source.dishId;
         const sourceIngredientId = source.ingredientId;
         const sourceMatchTerms = normalizedMatchTerms.filter((term) =>
-          normalizeFoodText(source.text).includes(term),
+          source.sourceType === "ingredient"
+            ? doesIngredientMatchTerm(source.text, term)
+            : normalizeFoodText(source.text).includes(term),
         );
         const matchingIngredientSourcesForTerm = (term: string) =>
           matchedSources.filter(
@@ -587,7 +602,7 @@ export function evaluateFoodSafetyRules(
               candidate.ingredientId !== null &&
               (sourceDishId === null || candidate.dishId === sourceDishId) &&
               // 所属料理のない工程は、同じ語で特定できる実食材だけへmenu全体で結合する。
-              normalizeFoodText(candidate.text).includes(term),
+              doesIngredientMatchTerm(candidate.text, term),
           );
         const matchingIngredientSources = (
           sourceIngredientId === null ? normalizedMatchTerms : sourceMatchTerms
