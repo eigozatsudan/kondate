@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(28);
+select plan(30);
 
 select tests.create_supabase_user(
   '70000000-0000-4000-8000-000000000001',
@@ -44,6 +44,12 @@ insert into public.household_members (
     '70000000-0000-4000-8000-000000000001',
     'complete', '食事制限未確認', 'adult', null, null, '{}',
     'none', '{}', 'unconfirmed', '{}'
+  ),
+  (
+    '71000000-0000-4000-8000-000000000006',
+    '70000000-0000-4000-8000-000000000001',
+    'complete', null, 'adult', null, null, '{}',
+    'none', '{}', 'none', '{}'
   ),
   (
     '72000000-0000-4000-8000-000000000001',
@@ -165,6 +171,22 @@ select is(
     "allergies":[]
   }'::jsonb,
   'member DTO contains display and safety data without owner fields'
+);
+select is(
+  public.get_current_safety_snapshot(
+    '70000000-0000-4000-8000-000000000001',
+    array['71000000-0000-4000-8000-000000000006']::uuid[]
+  ) #>> '{status}',
+  'available',
+  'an owned complete member with an optional display name produces an available snapshot'
+);
+select is(
+  public.get_current_safety_snapshot(
+    '70000000-0000-4000-8000-000000000001',
+    array['71000000-0000-4000-8000-000000000006']::uuid[]
+  ) #>> '{members,0,display_name}',
+  '',
+  'an omitted display name is represented as an empty DTO string'
 );
 select is(
   public.get_current_safety_snapshot(

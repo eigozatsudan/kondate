@@ -381,6 +381,11 @@ export function HouseholdSettingsForm({
   }
   const currentAllergies = allergiesQuery.data ?? [];
   const currentDislikes = dislikesQuery.data ?? [];
+  const saveRegisteredStatusAfterFirstAllergy = async () => {
+    if (values.allergyStatus === "registered" && currentAllergies.length === 0) {
+      await queueSave(values);
+    }
+  };
   const setArray = (
     key: "unsupportedDietKinds" | "requiredSafetyConstraints" | "easePreferences",
     item: string,
@@ -474,7 +479,12 @@ export function HouseholdSettingsForm({
             ref={allergyStatusRef}
             value={values.allergyStatus}
             onChange={(event) => {
-              updateAndSave({ allergyStatus: event.target.value as AllergyStatus });
+              const allergyStatus = event.target.value as AllergyStatus;
+              if (allergyStatus === "registered" && currentAllergies.length === 0) {
+                update({ allergyStatus });
+                return;
+              }
+              updateAndSave({ allergyStatus });
             }}
           >
             <option value="">選んでください</option>
@@ -491,6 +501,7 @@ export function HouseholdSettingsForm({
             allergies={currentAllergies}
             addStandard={async (memberId, allergenId) => {
               await api.addStandardAllergy(memberId, allergenId);
+              await saveRegisteredStatusAfterFirstAllergy();
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies("settings", memberId),
               });
@@ -498,6 +509,7 @@ export function HouseholdSettingsForm({
             }}
             addCustom={async (memberId, name, aliases) => {
               await api.addCustomAllergy(memberId, name, aliases);
+              await saveRegisteredStatusAfterFirstAllergy();
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies("settings", memberId),
               });

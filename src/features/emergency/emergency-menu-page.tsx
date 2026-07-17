@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { EmergencyMenusData } from "@shared/emergency/filter-emergency-menus";
+import type { EmergencyMenusData } from "@shared/emergency/contracts";
 import { useAuth } from "@/features/auth/auth-provider";
 import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
 import {

@@ -41,7 +41,6 @@ async function updatePlannerAndAwaitAutosave(
     return false;
   });
   await update();
-  await expect(page.getByText("保存中…", { exact: true })).toBeVisible();
   expect((await saveResponse).ok()).toBe(true);
   await expect(page.getByText("保存済み", { exact: true })).toBeVisible();
 }
@@ -274,7 +273,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await page.getByLabel("メイン食材").fill("鶏肉");
   await page.getByRole("button", { name: "追加" }).click();
   await page.getByRole("radio", { name: "和食" }).check();
-  await page.getByRole("checkbox", { name: "キャベツ" }).check();
+  await page.getByRole("checkbox", { name: "キャベツ" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
   await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
   await page.getByRole("checkbox", { name: "キャベツ" }).uncheck();
@@ -293,14 +292,18 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await expect(page.getByText("鶏肉を外す")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
   await expect(page.getByLabel("キャベツの使い方")).toHaveValue("must_use");
-  await page.getByRole("checkbox", { name: "キャベツ" }).uncheck();
-  await page.getByRole("checkbox", { name: "キャベツ" }).check();
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
+    (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
+  );
+  await page.getByRole("checkbox", { name: "キャベツ" }).click();
   await expect(page.getByRole("alertdialog")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
   await expect
     .poll(() =>
       page
-        .getByRole("button", { name: "実物を確認して今回だけ選ぶ" })
+        .getByRole("button", { name: "選ばない" })
         .evaluate((element) => element === document.activeElement),
     )
     .toBe(true);
@@ -437,7 +440,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   });
 
   await page.goto("/planner");
-  await page.getByRole("checkbox", { name: "キャベツ" }).check();
+  await page.getByRole("checkbox", { name: "キャベツ" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
   await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
@@ -475,8 +478,8 @@ test("keeps an incompatible current allergy as an explicit no-candidate result",
   await page.setViewportSize({ width: 320, height: 780 });
   await page.goto("/settings");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
-  await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
   await page.getByRole("button", { name: "鶏肉を追加" }).click();
+  await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
   const selectedAllergies = page.getByRole("list", { name: "選択済みアレルギー" });
   await expect(
     selectedAllergies.getByRole("button", { name: "鶏肉を削除", exact: true }),

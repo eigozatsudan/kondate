@@ -29,7 +29,7 @@ as $function$
     select
       requested.ordinality,
       member.id,
-      member.display_name,
+      coalesce(member.display_name, '') as display_name,
       member.age_band,
       member.portion_size,
       member.spice_level,
@@ -43,7 +43,6 @@ as $function$
       on member.id = requested.member_id
       and member.user_id = p_user_id
       and member.status = 'complete'
-      and member.display_name is not null
       and member.allergy_status in ('none', 'registered')
       and member.unsupported_diet_status in ('none', 'present')
   ),

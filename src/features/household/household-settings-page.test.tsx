@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import type { AllergenCatalogRow, HouseholdMemberRow } from "./household-api";
+import type { AllergenCatalogRow, HouseholdMemberRow, MemberAllergyRow } from "./household-api";
+import { householdKeys } from "./household-queries";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
 
 const member: HouseholdMemberRow = {
@@ -32,6 +33,17 @@ const catalog: AllergenCatalogRow[] = [
     created_at: "2026-07-11T00:00:00.000Z",
   },
 ];
+
+const standardAllergy: MemberAllergyRow = {
+  id: "allergy-1",
+  user_id: "user-1",
+  member_id: "member-1",
+  allergen_id: "walnut",
+  custom_name: null,
+  custom_aliases: [],
+  custom_confirmed: false,
+  created_at: "2026-07-11T00:00:00.000Z",
+};
 
 function renderSettings(overrides: Partial<HouseholdSettingsApi> = {}) {
   const updateMember = vi.fn().mockResolvedValue(member);
@@ -161,6 +173,67 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
   await waitFor(() => {
     expect(invalidateSafety.mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
+it.each(["standard", "custom"] as const)(
+  "defers a registered allergy status until the first %s allergy is saved",
+  async (allergyKind) => {
+    const registeredMember = { ...member, allergy_status: "registered" as const };
+    const updateMember = vi.fn().mockResolvedValue(registeredMember);
+    const addStandardAllergy = vi.fn().mockResolvedValue(undefined);
+    const addCustomAllergy = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
+
+    await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+    expect(updateMember).not.toHaveBeenCalled();
+
+    if (allergyKind === "standard") {
+      await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+    } else {
+      await userEvent.type(screen.getByLabelText("自由登録名"), "えんどう豆たんぱく");
+      await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+      await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
+    }
+
+    const addAllergy = allergyKind === "standard" ? addStandardAllergy : addCustomAllergy;
+    await waitFor(() => {
+      expect(updateMember).toHaveBeenCalledWith(
+        "member-1",
+        expect.objectContaining({ allergy_status: "registered" }),
+      );
+    });
+    const [addCallOrder] = addAllergy.mock.invocationCallOrder;
+    const [updateCallOrder] = updateMember.mock.invocationCallOrder;
+    if (addCallOrder === undefined || updateCallOrder === undefined) {
+      throw new Error("アレルギー追加と状態保存の呼び出し順を確認できませんでした");
+    }
+    expect(addCallOrder).toBeLessThan(updateCallOrder);
+  },
+);
+
+it("saves a registered allergy status immediately when an allergy already exists", async () => {
+  const updateMember = vi.fn().mockResolvedValue({ ...member, allergy_status: "registered" });
+  const { queryClient } = renderSettings({
+    updateMember,
+    listAllergies: vi.fn().mockResolvedValue([standardAllergy]),
+  });
+
+  const allergyStatus = await screen.findByLabelText("アレルギーの確認");
+  await waitFor(() => {
+    expect(queryClient.getQueryData(householdKeys.allergies("settings", "member-1"))).toEqual([
+      standardAllergy,
+    ]);
+  });
+  await userEvent.selectOptions(allergyStatus, "registered");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ allergy_status: "registered" }),
+    );
   });
 });
 
