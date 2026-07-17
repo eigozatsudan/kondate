@@ -1,6 +1,13 @@
 # リポジトリ内の通常作業を許可し、境界外の操作は既存の承認フローに委ねる。
 default_permissions = ":workspace"
 
+[features]
+multi_agent = true
+
+[agents]
+max_threads = 4
+max_depth = 1
+
 # ブラウザー状態を残さず、既存のローカル開発用オリジンだけを操作対象にする。
 [mcp_servers.playwright]
 command = "docker"
