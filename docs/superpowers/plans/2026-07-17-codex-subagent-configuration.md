@@ -321,13 +321,13 @@ Expected: 終了コード0。正確なコマンド、host-native Gitの実行経
 
 Run: 読み取り専用3役が完了した後、親のlive runtime permissionをworkspace-capable modeへ明示的に切り替えて実効状態を確認する。同じworktreeを操作するCodex親プロセス／セッションが1つだけであることと、active Implementerがいないことを確認する。どちらかを確認できなければImplementerをspawnしない。確認できた場合だけ `implementer` を1体spawnし、承認されたdisposable worktree上のsentinel書き込みで、親model/reasoningの継承と`:workspace`の実効値を観測する。
 
-Run: Implementer検証後、検証開始時に記録した希望する通常permissionへ明示的に戻し、実効状態を確認する。開始時、read-only選択、workspace-capable選択、通常permission復元の各遷移と確認結果を記録する。
+Run: workspace-capable permissionへの切替を試みた後は、Implementer検証の成功・失敗・skipを問わず、すべての終了経路でcleanupを実行する。検証開始時に記録した希望する通常permissionへ明示的に戻し、実効状態を確認する。開始時、read-only選択、workspace-capable選択、通常permission復元の各遷移と確認結果を記録する。復元または確認に失敗した場合は新しい作業を開始せず、完全検証済みとせずに未解決制約として報告する。
 
-Expected: 4種類すべてについてcustom agent名と固有の役割指示がloadされ、読み取り専用3役の拒否、fast-workerのDocker経路とhost-native経路の成功、Implementerの継承・`:workspace`・sentinel書き込み、全permission遷移が観測される。同じworktreeには親が1つ、Implementerは同時に1体だけである。1種類でもloadまたは期待する実効値を観測できない、いずれかのpermissionを選択・確認できない、worktreeの排他性を確認できない、またはこの検証を実行できないsurfaceでは完全検証済みとせず、未解決制約として記録する。
+Expected: 4種類すべてについてcustom agent名と固有の役割指示がloadされ、読み取り専用3役の拒否、fast-workerのDocker経路とhost-native経路の成功、Implementerの継承・`:workspace`・sentinel書き込み、全permission遷移が観測される。同じworktreeには親が1つ、Implementerは同時に1体だけである。1種類でもloadまたは期待する実効値を観測できない、いずれかのpermissionを選択・確認できない、worktreeの排他性を確認できない、通常permissionの復元を確認できない、またはこの検証を実行できないsurfaceでは完全検証済みとせず、未解決制約として記録する。
 
-Run: `git status --short --branch`
+Run: 検証用sentinelをcleanupした後、実装worktreeとdisposable runtime worktreeでそれぞれ `git status --short --branch` を実行する。元checkoutに検証開始時からユーザー所有の未コミットPlanが存在する場合は、そのstatusと差分が変わっていないことも確認する。
 
-Expected: 設定変更と `AGENTS.md` はコミット済みで、ユーザー所有の未コミットPlan文書だけが残る。
+Expected: 実装worktreeはclean、disposable runtime worktreeはcleanである。元checkoutでは、ユーザー所有の未コミットPlanが検証開始時に存在する場合に限り、その差分だけが未変更のまま残り、検証による新しい差分はない。
 
 - [ ] **Step 4: 検証対象外を記録して完了報告する**
 
