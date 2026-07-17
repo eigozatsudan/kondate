@@ -137,9 +137,8 @@ const genericIngredientMatchTerms = new Set(["魚", "魚介", "魚類"]);
 const genericFishCutForms = ["切り身", "フィレ"] as const;
 const fishNameModifierPattern = /^\p{Script=Han}+$/u;
 const unambiguousFishNamePattern = /[\p{Script=Han}\p{Script=Katakana}]/u;
-const sourceTermBoundaryPattern = /[\s、。・,./（）()「」『』]/u;
-const sourceTermLeadingParticlePattern = /[と]/u;
-const sourceTermTrailingParticlePattern = /[をはがのとへでに]/u;
+const sourceFoodExpressionBoundaryPattern = /[\s、。・,./（）()「」『』]/u;
+const sourceFoodExpressionParticlePattern = /[をはがのとへでに]/u;
 const universalIngredientScopePattern =
   /(?:(?:すべて|全て)の食材|全食材|食材(?:は|を)?(?:すべて|全て))/u;
 const inverseStateNegationPattern = /^(?:には?(?:せず|しない)|ではない)/u;
@@ -204,24 +203,53 @@ function doesIngredientMatchTerm(
   return normalizedIngredient.includes(normalizedTerm);
 }
 
-function hasStandaloneSourceTerm(text: string, normalizedTerm: string): boolean {
+function hasStructuredSourceTerm(
+  text: string,
+  normalizedTerm: string,
+  requiredSafetyTag: SafetyAction["kind"] | null,
+): boolean {
   const normalizedText = text
     .normalize("NFKC")
     .toLocaleLowerCase("ja-JP")
     .replace(/\p{Cf}/gu, "");
   let index = normalizedText.indexOf(normalizedTerm);
   while (index >= 0) {
-    const previous = normalizedText[index - 1];
-    const next = normalizedText[index + normalizedTerm.length];
-    const hasLeadingBoundary =
-      previous === undefined ||
-      sourceTermBoundaryPattern.test(previous) ||
-      sourceTermLeadingParticlePattern.test(previous);
-    const hasTrailingBoundary =
-      next === undefined ||
-      sourceTermBoundaryPattern.test(next) ||
-      sourceTermTrailingParticlePattern.test(next);
-    if (hasLeadingBoundary && hasTrailingBoundary) return true;
+    let expressionStart = index;
+    while (expressionStart > 0) {
+      const previous = normalizedText[expressionStart - 1];
+      if (
+        previous === undefined ||
+        sourceFoodExpressionBoundaryPattern.test(previous) ||
+        sourceFoodExpressionParticlePattern.test(previous)
+      ) {
+        break;
+      }
+      expressionStart -= 1;
+    }
+
+    let expressionEnd = index + normalizedTerm.length;
+    while (expressionEnd < normalizedText.length) {
+      const next = normalizedText[expressionEnd];
+      if (
+        next === undefined ||
+        sourceFoodExpressionBoundaryPattern.test(next) ||
+        sourceFoodExpressionParticlePattern.test(next)
+      ) {
+        break;
+      }
+      expressionEnd += 1;
+    }
+
+    // source側も食材名と同じ判定へ局所表現を渡し、修飾語・形態語と埋込み同音語を対称に扱う。
+    if (
+      doesIngredientMatchTerm(
+        normalizedText.slice(expressionStart, expressionEnd),
+        normalizedTerm,
+        requiredSafetyTag,
+      )
+    ) {
+      return true;
+    }
     index = normalizedText.indexOf(normalizedTerm, index + 1);
   }
 
@@ -724,7 +752,7 @@ export function evaluateFoodSafetyRules(
 
         return normalizedMatchTerms.filter(
           (term) =>
-            hasStandaloneSourceTerm(source.text, term) &&
+            hasStructuredSourceTerm(source.text, term, rule.requiredSafetyTag) &&
             matchingIngredientSourcesForSourceTerm(source, term).length > 0,
         );
       };

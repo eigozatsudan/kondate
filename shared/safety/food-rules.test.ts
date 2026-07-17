@@ -113,6 +113,60 @@ function sourceBoundSafetyMenu(options: {
   });
 }
 
+function menuWithOwnerlessFishContradiction(options: {
+  ingredientName: string;
+  contradictionInstruction: string;
+}) {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const ingredient = { ...firstDish.ingredients[0]!, name: options.ingredientName };
+  const evidenceInstruction = `${ingredient.name}の骨を完全に除く`;
+
+  return makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [ingredient],
+            steps: [{ ...dish.steps[0]!, instruction: evidenceInstruction }],
+          }
+        : dish,
+    ),
+    timeline: [
+      {
+        ...base.timeline[0]!,
+        instruction: options.contradictionInstruction,
+        dishId: null,
+        recipeStepId: null,
+      },
+    ],
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: evidenceInstruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: `${evidenceInstruction}ことを確認する`,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "remove_bones",
+            dishId: firstDish.id,
+            ingredientId: ingredient.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: evidenceInstruction,
+          },
+        ],
+      },
+    ],
+  });
+}
+
 function menuWithBoundActionContradiction(options: {
   kind: SafetyAction["kind"];
   targetName: string;
@@ -1125,6 +1179,52 @@ it.each(["温かいうちに食べたい", "めんたいこを添える"])(
     expect(issues).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "age_shape_rule", path: "dishes.0.description" }),
+      ]),
+    );
+  },
+);
+
+it.each([
+  {
+    ingredientName: "真鯛",
+    matchTerms: ["鯛"],
+    contradictionInstruction: "真鯛は骨付きのまま焼く",
+  },
+  {
+    ingredientName: "塩鮭",
+    matchTerms: ["鮭"],
+    contradictionInstruction: "塩鮭は骨付きのまま焼く",
+  },
+  {
+    ingredientName: "たいフィレ",
+    matchTerms: ["たい"],
+    contradictionInstruction: "たいフィレは骨付きのまま焼く",
+  },
+  {
+    ingredientName: "鮭",
+    matchTerms: ["魚", "鮭"],
+    contradictionInstruction: "魚フィレは骨付きのまま焼く",
+  },
+] as const)(
+  "修飾・形態付き魚名をownerless矛盾sourceとして評価する: $contradictionInstruction",
+  ({ ingredientName, matchTerms, contradictionInstruction }) => {
+    const safety = requiredConstraintContext("remove_bones");
+    const menu = menuWithOwnerlessFishContradiction({
+      ingredientName,
+      contradictionInstruction,
+    });
+
+    expect(
+      evaluateFoodSafetyRules(menu, {
+        ...safety,
+        foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms })),
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "safety_action_contradiction",
+          path: "timeline.0.instruction",
+        }),
       ]),
     );
   },
