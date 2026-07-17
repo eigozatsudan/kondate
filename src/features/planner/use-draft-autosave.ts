@@ -125,7 +125,7 @@ export function useDraftAutosave({
           }
           if (error instanceof DraftRevisionConflictError && conflictRef.current === null) {
             conflictRef.current = error;
-            if (mountedRef.current) onConflict?.();
+            if (mountedRef.current) void onConflict?.();
           }
         },
       );
