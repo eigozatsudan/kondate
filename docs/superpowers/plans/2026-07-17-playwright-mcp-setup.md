@@ -31,6 +31,75 @@
 
 ---
 
+### Task 0: 既存 AGENTS.md のフォーマット是正
+
+**Files:**
+- Modify: `AGENTS.md`
+
+**Interfaces:**
+- Consumes: リポジトリ既定のPrettier設定と、ユーザーが明示的に承認したフォーマットのみの変更。
+- Produces: 内容と指示の意味を維持した、`npm run format:check` に合格する `AGENTS.md`。
+
+- [ ] **Step 1: 既知のフォーマット不一致を再現する**
+
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx prettier --check AGENTS.md
+```
+
+Expected: 終了コード1で `AGENTS.md` のフォーマット不一致だけが表示される。
+
+- [ ] **Step 2: Prettierで対象ファイルだけを整形する**
+
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx prettier --write AGENTS.md
+```
+
+Expected: `AGENTS.md` だけが整形される。
+
+- [ ] **Step 3: 指示内容が変わっていないことを確認する**
+
+Run: `git diff --word-diff=plain -- AGENTS.md`
+
+Expected: Markdownの折り返しや空白だけが変わり、コマンド、順序、要件、禁止事項、見出し、意味のある文言は変わらない。
+
+- [ ] **Step 4: フォーマットと差分を検証する**
+
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx prettier --check AGENTS.md
+```
+
+Expected: `All matched files use Prettier code style!`
+
+Run: `git diff --check -- AGENTS.md`
+
+Expected: 出力なし、終了コード0。
+
+- [ ] **Step 5: Task 0をコミットする**
+
+Run: `git add AGENTS.md`
+
+Run: `git commit -m "style: AGENTS.mdを整形"`
+
+作者情報が未設定で失敗した場合だけ、次を実行する。
+
+```bash
+git -c user.name=takahashi -c user.email=tkhstmykii@gmail.com commit -m "style: AGENTS.mdを整形"
+```
+
+Expected: `AGENTS.md` だけを含む日本語Conventional Commitが作成される。
+
+- [ ] **Step 6: Task 0完了後のコンテキスト整理と照合レビューを行う**
+
+親エージェントが `/compact` を実行する。整形前後のword diffを照合し、指示内容が変わっていないことを確認する。意味のある変更があればTask 1へ進まず元へ戻して再整形する。
+
+---
+
 ### Task 1: Playwright MCP のプロジェクト設定と利用手順
 
 **Files:**
