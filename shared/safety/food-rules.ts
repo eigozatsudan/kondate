@@ -203,15 +203,16 @@ function doesIngredientMatchTerm(
   return normalizedIngredient.includes(normalizedTerm);
 }
 
-function hasStructuredSourceTerm(
+function findStructuredSourceTermExpressions(
   text: string,
   normalizedTerm: string,
   requiredSafetyTag: SafetyAction["kind"] | null,
-): boolean {
+): readonly string[] {
   const normalizedText = text
     .normalize("NFKC")
     .toLocaleLowerCase("ja-JP")
     .replace(/\p{Cf}/gu, "");
+  const expressions = new Set<string>();
   let index = normalizedText.indexOf(normalizedTerm);
   while (index >= 0) {
     let expressionStart = index;
@@ -241,19 +242,22 @@ function hasStructuredSourceTerm(
     }
 
     // source側も食材名と同じ判定へ局所表現を渡し、修飾語・形態語と埋込み同音語を対称に扱う。
-    if (
-      doesIngredientMatchTerm(
-        normalizedText.slice(expressionStart, expressionEnd),
-        normalizedTerm,
-        requiredSafetyTag,
-      )
-    ) {
-      return true;
+    const expression = normalizedText.slice(expressionStart, expressionEnd);
+    if (doesIngredientMatchTerm(expression, normalizedTerm, requiredSafetyTag)) {
+      expressions.add(expression);
     }
     index = normalizedText.indexOf(normalizedTerm, index + 1);
   }
 
-  return false;
+  return [...expressions];
+}
+
+function hasStructuredSourceTerm(
+  text: string,
+  normalizedTerm: string,
+  requiredSafetyTag: SafetyAction["kind"] | null,
+): boolean {
+  return findStructuredSourceTermExpressions(text, normalizedTerm, requiredSafetyTag).length > 0;
 }
 
 function hasUniversalIngredientScope(text: string): boolean {
@@ -773,6 +777,25 @@ export function evaluateFoodSafetyRules(
             ? matchingIngredientSourcesForTerm(term, sourceDishId, sourceIngredientId)
             : matchingIngredientSourcesForSourceTerm(source, term),
         );
+        const resolvedGenericSourceExpressions = new Map<string, Set<string>>();
+        if (source.sourceType !== "ingredient") {
+          for (const term of matchedSourceTerms.filter((candidateTerm) =>
+            genericIngredientMatchTerms.has(candidateTerm),
+          )) {
+            const expressions = findStructuredSourceTermExpressions(
+              source.text,
+              term,
+              requiredSafetyTag,
+            );
+            for (const candidate of matchingIngredientSourcesForSourceTerm(source, term)) {
+              if (candidate.dishId === null || candidate.ingredientId === null) continue;
+              const pairKey = `${candidate.dishId}\u0000${candidate.ingredientId}`;
+              const pairExpressions = resolvedGenericSourceExpressions.get(pairKey) ?? new Set();
+              for (const expression of expressions) pairExpressions.add(expression);
+              resolvedGenericSourceExpressions.set(pairKey, pairExpressions);
+            }
+          }
+        }
         const hasEvidence =
           requiredSafetyTag !== null &&
           (sourceIngredientId !== null
@@ -824,15 +847,27 @@ export function evaluateFoodSafetyRules(
         }
         const contradictory =
           requiredSafetyTag !== null &&
-          [...contradictionPairs.values()].some(({ dishId, ingredientId }) =>
-            [
-              source,
-              ...(dishContradictionSources.get(dishId) ?? []),
-              ...adaptationContradictionSources(dishId, member.anonymousRef),
-            ].some((candidate) =>
-              sourceContradictsIngredient(candidate, requiredSafetyTag, dishId, ingredientId),
-            ),
-          );
+          [...contradictionPairs.entries()].some(([pairKey, { dishId, ingredientId }]) => {
+            // 総称sourceは解決済みの実食材pairへ直接結び、複数食材時も一意食材fallbackへ戻さない。
+            const genericSourceContradictsPair = [
+              ...(resolvedGenericSourceExpressions.get(pairKey) ?? []),
+            ].some((expression) =>
+              hasIngredientBoundActionContradiction(source.text, requiredSafetyTag, expression, [
+                ...(dishIngredientNames.get(dishId) ?? []),
+                expression,
+              ]),
+            );
+            return (
+              genericSourceContradictsPair ||
+              [
+                source,
+                ...(dishContradictionSources.get(dishId) ?? []),
+                ...adaptationContradictionSources(dishId, member.anonymousRef),
+              ].some((candidate) =>
+                sourceContradictsIngredient(candidate, requiredSafetyTag, dishId, ingredientId),
+              )
+            );
+          });
         if (rule.ruleKind === "requires_tag" && contradictory) {
           issues.push({
             code: "safety_action_contradiction",
