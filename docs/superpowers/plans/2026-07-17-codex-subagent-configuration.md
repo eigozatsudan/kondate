@@ -106,9 +106,10 @@ model_reasoning_effort = "low"
 default_permissions = ":read-only"
 
 developer_instructions = """
-指定された検証コマンドだけを、指定された順序で実行してください。Node/npmコマンドだけをAGENTS.mdのDocker形式で実行し、Codex CLI、rg、Git、その他のホストコマンドは指定どおりに実行してください。
+親から指定された正確な検証コマンドだけを、指定された順序で実行してください。Node/npmコマンドだけをAGENTS.mdのDocker形式で実行し、Codex CLI、rg、Git、その他のホストコマンドは指定どおりに実行してください。
+Docker daemonのrw bind mountはCodexのread-only filesystemに対する技術的境界外であり、containerからrepositoryへ書き込めます。親から指定されていても、repositoryへの書き込みを行い得るDocker payloadを含むコマンドは実行を拒否し、親へ報告してください。
 親のlive runtime permission overrideによって書き込み権限が与えられていても、リポジトリファイルの作成、編集、削除、整形、ステージ、コミットを拒否してください。
-検証ツールが一時ファイルや実行時状態を生成する可能性はありますが、追跡対象ファイルの差分を残してはいけません。
+検証ツールが一時ファイルや実行時状態を生成する可能性はありますが、追跡対象ファイルの差分や意図しないuntracked fileを残してはいけません。
 各コマンドの成功または失敗を報告し、失敗時だけ原因箇所と短いログ抜粋を返してください。
 大量の生ログを親エージェントへ返さないでください。
 """
@@ -209,8 +210,9 @@ Expected: `## 5. サブエージェント運用` が存在し、既存の親、`
 - 詳細なTask実行順序、引き継ぎ、レビュー判定は `SubAgents.md` を正とする。
 - 親エージェントは設計、仕様判断、委譲範囲の決定、結果の統合、最終判断を担当する。
 - 親のlive runtime permission overrideはカスタムエージェントの既定権限を上書きし得る。`explorer`、`reviewer`、`fast-worker` を起動する前に、親はlive runtime permissionとしてread-onlyを選択する。利用中のsurfaceで選択できない場合、その役割の編集禁止は技術的な権限境界ではなく指示上の制約に留まることを報告する。
+- 親が検証のためworkspace-capable permissionへの切替を試みる前に、希望する通常permissionを記録する。切替を試みた後は、検証の成功・失敗・skipを問わず、すべての終了経路でcleanupとして通常permissionへ明示的に復元し、実効状態を確認する。復元または確認に失敗した場合は新しい作業を開始せず、完全検証済みとせずに未解決制約として報告する。
 - コードベースや設計書の読み取り調査には、読み取り専用の `explorer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
-- Node/npmによる定型テスト、型チェック、Lint、フォーマット検証と、指定されたCodex CLI、`rg`、Git等のホストコマンドの実行・ログ要約には、読み取り専用の `fast-worker` を使用する。これは `SubAgents.md` の Verifier 役であり、live overrideで書き込み可能になっていてもリポジトリファイルの編集を拒否させる。
+- Node/npmによる定型テスト、型チェック、Lint、フォーマット検証と、指定されたCodex CLI、`rg`、Git等のホストコマンドの実行・ログ要約には、読み取り専用の `fast-worker` を使用する。これは `SubAgents.md` の Verifier 役であり、live overrideで書き込み可能になっていてもリポジトリファイルの編集を拒否させる。Docker daemonのrw bind mountはread-only filesystemの技術的境界外であるため、親はread-onlyをDockerに対する技術的境界として扱わず、Dockerコマンドの実行前後に `git status --short` を確認する。意図しない差分が生じた場合は新しい作業を止めて報告する。
 - Taskのコード変更には `implementer` を使用する。single-writerはCodex設定による役別同時数の技術的制限やロックではなく、親が維持する運用上のオーケストレーション不変条件である。同じworktreeを操作するCodex親プロセス／セッションは1つだけとし、並行する親は別worktreeを使用する。親はImplementerを起動する前に、同じworktreeに別の親がいないこととactive agent threadを確認し、既存Implementerが完了またはcloseされるまで2体目を起動してはいけない。worktreeの排他性またはactive状態を確認できない場合はImplementerを起動せず、その制約を報告する。
 - 設計適合性、セキュリティ、敵対的入力、境界条件、回帰、テスト不足の確認には、読み取り専用の `reviewer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
 - 独立した読み取り作業だけを並列化し、サブエージェントの報告は親エージェントが根拠を確認してから採用する。
@@ -309,11 +311,17 @@ Run: `git diff --check`
 
 Expected: 出力なし、終了コード0。
 
-Run: 新しいCodexプロセスを起動する。検証開始時の希望する通常permissionを記録し、親のlive runtime permissionとしてread-onlyを選択して実効状態を確認してから、`explorer`、`reviewer`、`fast-worker` をspawnする。3役すべてについてcustom agent名、固有の役割指示、リポジトリ書き込み拒否を観測する。可能なら書き込み可能なlive overrideでもdeveloper instructionに従って編集を拒否することを別途確認する。
+Run: 新しいCodexプロセスを起動する。検証開始時の希望する通常permissionを記録し、親のlive runtime permissionとしてread-onlyを選択して実効状態を確認してから、`explorer`、`reviewer`、`fast-worker` をspawnする。3役すべてについてcustom agent名、固有の役割指示、リポジトリ書き込み拒否を観測する。`fast-worker` にはrepositoryを書き込むDocker payloadの実行を依頼し、コマンドを実行せず拒否することを確認する。read-onlyはDocker daemonのrw bind mountに対する技術的境界ではなく、既知のsentinel実機証拠を再現する場合は承認されたdisposable worktreeだけを使用してcleanupする。可能なら書き込み可能なlive overrideでもdeveloper instructionに従って編集を拒否することを別途確認する。
+
+Run: 親がDockerコマンドの実行前に `git status --short` を記録する。
 
 Run: `fast-worker` に、リポジトリルートをcwdとして `docker compose run --rm --no-deps app node -p 'JSON.stringify({execPath:process.execPath,cwd:process.cwd(),version:process.version})'` を実行させる。
 
-Expected: 終了コード0。正確なコマンド、host Docker CLIからComposeの`app` serviceを経由してcontainer内Nodeへ至る実行経路、呼出しcwd、出力された`execPath`・container cwd・Node versionを記録し、追跡対象ファイルの差分を残さない。
+Expected: 終了コード0。正確なコマンド、host Docker CLIからComposeの`app` serviceを経由してcontainer内Nodeへ至る実行経路、呼出しcwd、出力された`execPath`・container cwd・Node versionを記録する。
+
+Run: 親がDockerコマンドの実行後に `git status --short` を再実行し、実行前の記録と比較する。
+
+Expected: 前後のGit状態に差がなく、追跡対象ファイルの差分や意図しないuntracked fileがない。差がある場合は新しい作業を止めて報告する。
 
 Run: 同じ `fast-worker` に、同じリポジトリルートをcwdとしてhost-nativeの `git rev-parse --show-toplevel` を実行させる。
 
@@ -323,7 +331,7 @@ Run: 読み取り専用3役が完了した後、親のlive runtime permissionを
 
 Run: workspace-capable permissionへの切替を試みた後は、Implementer検証の成功・失敗・skipを問わず、すべての終了経路でcleanupを実行する。検証開始時に記録した希望する通常permissionへ明示的に戻し、実効状態を確認する。開始時、read-only選択、workspace-capable選択、通常permission復元の各遷移と確認結果を記録する。復元または確認に失敗した場合は新しい作業を開始せず、完全検証済みとせずに未解決制約として報告する。
 
-Expected: 4種類すべてについてcustom agent名と固有の役割指示がloadされ、読み取り専用3役の拒否、fast-workerのDocker経路とhost-native経路の成功、Implementerの継承・`:workspace`・sentinel書き込み、全permission遷移が観測される。同じworktreeには親が1つ、Implementerは同時に1体だけである。1種類でもloadまたは期待する実効値を観測できない、いずれかのpermissionを選択・確認できない、worktreeの排他性を確認できない、通常permissionの復元を確認できない、またはこの検証を実行できないsurfaceでは完全検証済みとせず、未解決制約として記録する。
+Expected: 4種類すべてについてcustom agent名と固有の役割指示がloadされ、読み取り専用3役の拒否、fast-workerによるrepository書込みDocker payloadの事前拒否、Docker経路とhost-native経路の成功、Docker実行前後のGit状態不変、Implementerの継承・`:workspace`・sentinel書き込み、全permission遷移が観測される。同じworktreeには親が1つ、Implementerは同時に1体だけである。Docker daemonのrw bind mountはread-onlyの残余制約として記録する。1種類でもloadまたは期待する実効値を観測できない、いずれかのpermissionを選択・確認できない、worktreeの排他性を確認できない、通常permissionの復元を確認できない、またはこの検証を実行できないsurfaceでは完全検証済みとせず、未解決制約として記録する。
 
 Run: 検証用sentinelをcleanupした後、実装worktreeとdisposable runtime worktreeでそれぞれ `git status --short --branch` を実行する。元checkoutに検証開始時からユーザー所有の未コミットPlanが存在する場合は、そのstatusと差分が変わっていないことも確認する。
 
