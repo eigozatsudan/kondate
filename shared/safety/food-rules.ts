@@ -135,10 +135,11 @@ const localClauseBoundaryPattern = /[、,，:：]+/u;
 const safeFallbackConsequencePattern = /^場合は(?:提供|配膳|盛り付け)(?:を)?しない/u;
 const genericIngredientMatchTerms = new Set(["魚", "魚介", "魚類"]);
 const genericFishCutForms = ["切り身", "フィレ"] as const;
-const concreteFishHomographExclusions = new Map<string, readonly RegExp[]>([
-  ["たい", [/^たい焼き/u]],
-  ["さけ", [/^さけるチーズ/u]],
-]);
+const fishNameModifierPattern = /^\p{Script=Han}+$/u;
+const unambiguousFishNamePattern = /[\p{Script=Han}\p{Script=Katakana}]/u;
+const sourceTermBoundaryPattern = /[\s、。・,./（）()「」『』]/u;
+const sourceTermLeadingParticlePattern = /[と]/u;
+const sourceTermTrailingParticlePattern = /[をはがのとへでに]/u;
 const universalIngredientScopePattern =
   /(?:(?:すべて|全て)の食材|全食材|食材(?:は|を)?(?:すべて|全て))/u;
 const inverseStateNegationPattern = /^(?:には?(?:せず|しない)|ではない)/u;
@@ -160,13 +161,34 @@ function doesGenericIngredientMatch(ingredientText: string, normalizedTerm: stri
   );
 }
 
-function isKnownNonFishHomograph(ingredientText: string, normalizedTerm: string): boolean {
-  return (concreteFishHomographExclusions.get(normalizedTerm) ?? []).some((pattern) =>
-    pattern.test(ingredientText),
+function doesConcreteFishIngredientMatch(ingredientText: string, normalizedTerm: string): boolean {
+  if (ingredientText === normalizedTerm) return true;
+
+  const prefix = ingredientText.slice(0, -normalizedTerm.length);
+  if (ingredientText.endsWith(normalizedTerm) && fishNameModifierPattern.test(prefix)) {
+    return true;
+  }
+
+  if (
+    ingredientText.startsWith(normalizedTerm) &&
+    unambiguousFishNamePattern.test(normalizedTerm)
+  ) {
+    return true;
+  }
+
+  // 魚種名の直後に食材形態が続く場合だけを許し、加工食品中の任意の部分一致を避ける。
+  return genericFishCutForms.some(
+    (form) =>
+      ingredientText === `${normalizedTerm}${form}` ||
+      ingredientText === `${normalizedTerm}の${form}`,
   );
 }
 
-function doesIngredientMatchTerm(ingredientText: string, normalizedTerm: string): boolean {
+function doesIngredientMatchTerm(
+  ingredientText: string,
+  normalizedTerm: string,
+  requiredSafetyTag: SafetyAction["kind"] | null,
+): boolean {
   const normalizedIngredient = normalizeFoodText(ingredientText);
 
   // 総称は加工食品名の一部にも現れるため、食材名として境界が確認できる形だけを適用対象にする。
@@ -174,11 +196,36 @@ function doesIngredientMatchTerm(ingredientText: string, normalizedTerm: string)
     return doesGenericIngredientMatch(normalizedIngredient, normalizedTerm);
   }
 
-  // 平仮名の魚名は一般語にも現れるため、既知の非魚食材名を構造的に除外する。
-  return (
-    !isKnownNonFishHomograph(normalizedIngredient, normalizedTerm) &&
-    normalizedIngredient.includes(normalizedTerm)
-  );
+  // 除骨ルールの魚種語は、魚種名として確認できる食材境界だけを対象にする。
+  if (requiredSafetyTag === "remove_bones" && !normalizedTerm.includes("骨")) {
+    return doesConcreteFishIngredientMatch(normalizedIngredient, normalizedTerm);
+  }
+
+  return normalizedIngredient.includes(normalizedTerm);
+}
+
+function hasStandaloneSourceTerm(text: string, normalizedTerm: string): boolean {
+  const normalizedText = text
+    .normalize("NFKC")
+    .toLocaleLowerCase("ja-JP")
+    .replace(/\p{Cf}/gu, "");
+  let index = normalizedText.indexOf(normalizedTerm);
+  while (index >= 0) {
+    const previous = normalizedText[index - 1];
+    const next = normalizedText[index + normalizedTerm.length];
+    const hasLeadingBoundary =
+      previous === undefined ||
+      sourceTermBoundaryPattern.test(previous) ||
+      sourceTermLeadingParticlePattern.test(previous);
+    const hasTrailingBoundary =
+      next === undefined ||
+      sourceTermBoundaryPattern.test(next) ||
+      sourceTermTrailingParticlePattern.test(next);
+    if (hasLeadingBoundary && hasTrailingBoundary) return true;
+    index = normalizedText.indexOf(normalizedTerm, index + 1);
+  }
+
+  return false;
 }
 
 function hasUniversalIngredientScope(text: string): boolean {
@@ -376,6 +423,21 @@ function findActionContradictionOccurrences(
   return [...inverseStateOccurrences, ...findNegatedActionOccurrences(normalizedText, kind)];
 }
 
+function hasUniversallyScopedActionContradiction(
+  text: string,
+  kind: SafetyAction["kind"],
+): boolean {
+  return text
+    .split(sentenceBoundaryPattern)
+    .some((sentence) =>
+      sentence
+        .split(localClauseBoundaryPattern)
+        .some(
+          (clause) => hasUniversalIngredientScope(clause) && hasActionContradiction(clause, kind),
+        ),
+    );
+}
+
 function hasIngredientBoundActionContradiction(
   text: string,
   kind: SafetyAction["kind"],
@@ -467,11 +529,7 @@ export function evaluateFoodSafetyRules(
     if (expectedName === undefined) return false;
 
     // 料理に所属する明示的な全称指示だけは、食材名の省略ではなく料理内の全食材への指示として扱う。
-    if (
-      source.dishId === dishId &&
-      hasUniversalIngredientScope(source.text) &&
-      hasActionContradiction(source.text, kind)
-    ) {
+    if (source.dishId === dishId && hasUniversallyScopedActionContradiction(source.text, kind)) {
       return true;
     }
 
@@ -588,7 +646,11 @@ export function evaluateFoodSafetyRules(
               rule.appliesToAgeBands.includes(member.ageBand) &&
               rule.requiredSafetyTag === required &&
               rule.matchTerms.some((term) =>
-                doesIngredientMatchTerm(source.text, normalizeFoodText(term)),
+                doesIngredientMatchTerm(
+                  source.text,
+                  normalizeFoodText(term),
+                  rule.requiredSafetyTag,
+                ),
               ),
           ),
       );
@@ -627,20 +689,56 @@ export function evaluateFoodSafetyRules(
     for (const rule of context.foodSafetyRules) {
       if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
       const normalizedMatchTerms = rule.matchTerms.map(normalizeFoodText);
-      const matchedSources = sources.filter((item) =>
+      const matchingIngredientSourcesForTerm = (term: string, dishId: string | null) =>
+        sources.filter(
+          (candidate) =>
+            candidate.sourceType === "ingredient" &&
+            candidate.dishId !== null &&
+            candidate.ingredientId !== null &&
+            (dishId === null || candidate.dishId === dishId) &&
+            doesIngredientMatchTerm(candidate.text, term, rule.requiredSafetyTag),
+        );
+      const rawMatchedSources = sources.filter((item) =>
         normalizedMatchTerms.some((term) =>
           item.sourceType === "ingredient"
-            ? doesIngredientMatchTerm(item.text, term)
+            ? doesIngredientMatchTerm(item.text, term, rule.requiredSafetyTag)
             : normalizeFoodText(item.text).includes(term),
         ),
       );
+      const matchedSources = rawMatchedSources.filter((source) => {
+        if (
+          rule.ruleKind === "forbidden" ||
+          source.sourceType === "ingredient" ||
+          source.ingredientId !== null
+        ) {
+          return true;
+        }
+
+        const sourceMatchTerms = normalizedMatchTerms.filter((term) =>
+          normalizeFoodText(source.text).includes(term),
+        );
+        return (
+          sourceMatchTerms.some((term) => {
+            if (!genericIngredientMatchTerms.has(term)) {
+              return matchingIngredientSourcesForTerm(term, source.dishId).length > 0;
+            }
+
+            // 総称は、同じルールにある具体語で実食材を特定できる場合だけ展開する。
+            return normalizedMatchTerms.some(
+              (candidateTerm) =>
+                !genericIngredientMatchTerms.has(candidateTerm) &&
+                matchingIngredientSourcesForTerm(candidateTerm, source.dishId).length > 0,
+            );
+          }) || sourceMatchTerms.some((term) => hasStandaloneSourceTerm(source.text, term))
+        );
+      });
       for (const source of matchedSources) {
         const requiredSafetyTag = rule.requiredSafetyTag;
         const sourceDishId = source.dishId;
         const sourceIngredientId = source.ingredientId;
         const sourceMatchTerms = normalizedMatchTerms.filter((term) =>
           source.sourceType === "ingredient"
-            ? doesIngredientMatchTerm(source.text, term)
+            ? doesIngredientMatchTerm(source.text, term, rule.requiredSafetyTag)
             : normalizeFoodText(source.text).includes(term),
         );
         const matchingIngredientSourcesForTerm = (term: string) =>
@@ -651,7 +749,7 @@ export function evaluateFoodSafetyRules(
               candidate.ingredientId !== null &&
               (sourceDishId === null || candidate.dishId === sourceDishId) &&
               // 所属料理のない工程は、同じ語で特定できる実食材だけへmenu全体で結合する。
-              doesIngredientMatchTerm(candidate.text, term),
+              doesIngredientMatchTerm(candidate.text, term, rule.requiredSafetyTag),
           );
         const matchingIngredientSources = (
           sourceIngredientId === null ? normalizedMatchTerms : sourceMatchTerms
