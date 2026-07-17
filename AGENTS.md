@@ -22,7 +22,7 @@
 ### コマンド実行の重要ルール
 
 1. **コマンドを結合しない**: 権限確認のプロンプトを避けるため、Docker コマンドやホスト側コマンド（`git diff --check` など）を `&&` や `;` で連結せず、**1コマンド＝1ツール呼び出し**で独立して実行する。
-2. **モデルの選択**: custom agent種別を選択できる場合は、そのagent TOMLの明示値または意図的な親継承を正とする。per-dispatch model overrideを公開するsurfaceではTaskの難易度に応じて軽量または高性能なモデルへ切り替えてよい。どちらも選択・確認できない場合は実効モデルを推測しない。
+2. **モデルの選択**: custom agent種別の選択と読み込みを確認できる場合は、そのagent TOMLの明示値または意図的な親継承を正とする。per-dispatch model overrideはモデルだけに適用し、推論強度は独立した設定またはoverrideを確認できる場合だけ適用済みとする。各実効値を確認できない場合は個別に未確認として扱い、推測しない。
 
 ---
 
@@ -64,13 +64,13 @@
 
 - 詳細なTask実行順序、引き継ぎ、レビュー判定は `SubAgents.md` を正とする。
 - 親エージェントは設計、仕様判断、委譲範囲の決定、結果の統合、最終判断を担当する。
-- custom agent種別、モデル、推論強度、permissionは独立して判定する。利用中のsurfaceでcustom agent種別を選択できる場合は役割に対応するagentを選び、`task_name`の一致だけをcustom agentの選択・読み込みの証拠にしない。種別を選択できない場合は汎用subagentに同じ役割、対象範囲、編集可否を指示する。
-- custom agentを選択した場合、モデルと推論強度はそのagent TOMLの明示値または意図的な親継承を正とする。per-dispatch model overrideを公開するsurfaceではTaskの難易度に応じて上書きしてよい。どちらも選択・確認できない場合は実効モデルや推論強度を推測せず、必要な場合だけ実際に使用した代替手段を最終報告へ記載する。
-- 親のlive runtime permission overrideはcustom agentの既定権限を上書きし得る。`explorer`、`reviewer`、`fast-worker`の起動前にread-onlyのlive runtime permissionを選択・確認できた場合だけ、Codex filesystemに対する技術的境界として扱う。選択・確認できない場合も編集禁止を指示するが、技術的read-onlyとは扱わない。同じsurface制約を起動ごとに定型報告せず、作業の信頼性判断に影響する場合に最終報告で一度記載する。技術的read-onlyが必須の検証を実施できない場合は直ちに停止して報告する。
+- custom agent種別、モデル、推論強度、permissionは独立して判定する。利用中のsurfaceでcustom agent種別の選択と読み込みを確認できる場合は役割に対応するagentを使用し、`task_name`の一致だけをcustom agentの選択・読み込みの証拠にしない。種別を選択・確認できない場合は汎用subagentに同じ役割、対象範囲、編集可否を指示する。
+- custom agentの読み込みを確認できた場合、モデルと推論強度はそのagent TOMLの明示値または意図的な親継承をそれぞれの設定根拠とする。per-dispatch model overrideはモデルだけに適用し、推論強度は独立した設定またはoverrideを確認できる場合だけ適用済みとする。各実効値を確認できない場合は個別に未確認として扱い、必要な場合だけ実際に使用した代替手段を最終報告へ記載する。
+- 親のlive runtime permission overrideはcustom agentの既定権限を上書きし得る。`explorer`、`reviewer`、`fast-worker`の起動前にread-onlyのlive runtime permissionを選択・確認できた場合だけ、Codex filesystemに対する技術的境界として扱う。選択・確認できない場合も編集禁止を指示するが、技術的read-onlyとは扱わない。技術的read-onlyを確認できない読み取り役はImplementerと同時実行せず、完了またはcloseしてからImplementerを起動する。同じsurface制約を起動ごとに定型報告せず、作業の信頼性判断に影響する場合に最終報告で一度記載する。技術的read-onlyが必須の検証を実施できない場合は直ちに停止して報告する。
 - 親が検証のためworkspace-capable permissionへの切替を試みる前に、希望する通常permissionを記録する。切替を試みた後は、検証の成功・失敗・skipを問わず、すべての終了経路でcleanupとして通常permissionへ明示的に復元し、実効状態を確認する。復元または確認に失敗した場合は新しい作業を開始せず、完全検証済みとせずに未解決制約として報告する。
 - コードベースや設計書の読み取り調査には `explorer` 役を使用する。custom agent種別を選択できない場合は汎用subagentへ読み取り専用の調査役を指示する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
 - Node/npmによる定型テスト、型チェック、Lint、フォーマット検証と、指定されたCodex CLI、`rg`、Git等のホストコマンドの実行・ログ要約には `fast-worker` 役を使用する。これは `SubAgents.md` の Verifier 役であり、custom agent種別を選択できない場合は汎用subagentへ同じ役割を指示する。Docker daemonのrw bind mountはCodexのread-only filesystemに対する技術的境界外である。`fast-worker` 役は、コマンド自体または既知の通常動作がhost worktreeの作成・変更・削除を意図するDocker payloadだけを拒否する。親はclean baselineでのみDockerコマンドを開始し、実行前後のstaged diff、unstaged diff、untracked一覧を保存して比較する。ignored pathは比較対象外とし、意図しない差分が生じた場合は新しい作業を止めて報告する。
-- Taskのコード変更には `implementer` 役を使用する。single-writerはCodex設定による役別同時数の技術的制限やロックではなく、親が維持する運用上のオーケストレーション不変条件である。同じworktreeを操作するCodex親プロセス／セッションは1つだけとし、並行する親は別worktreeを使用する。親はImplementerを起動する前に、同じworktreeに別の親がいないこととactive agent threadを確認し、既存Implementerが完了またはcloseされるまで2体目を起動してはいけない。worktreeの排他性またはactive状態を確認できない場合はImplementerを起動せず、その制約を報告する。
+- Taskのコード変更には `implementer` 役を使用する。single-writerはCodex設定による役別同時数の技術的制限やロックではなく、親が維持する運用上のオーケストレーション不変条件である。同じworktreeを操作するCodex親プロセス／セッションは1つだけとし、並行する親は別worktreeを使用する。親はImplementerを起動する前に、同じworktreeに別の親がいないこと、active Implementerがいないこと、技術的read-onlyを確認できない読み取り役がactiveでないことを確認する。既存Implementerまたは該当する読み取り役が完了またはcloseされるまでImplementerを起動してはいけない。worktreeの排他性またはactive状態を確認できない場合はImplementerを起動せず、その制約を報告する。
 - 設計適合性、セキュリティ、敵対的入力、境界条件、回帰、テスト不足の確認には `reviewer` 役を使用する。custom agent種別を選択できない場合は汎用subagentへ読み取り専用のレビュー役を指示する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
 - 独立した読み取り作業だけを並列化し、サブエージェントの報告は親エージェントが根拠を確認してから採用する。
 - 一次レビューと、その指摘を深掘りする二次検証には、コンテキストを共有しない別々の Reviewer エージェントを使用する。この二次検証は、Dockerコマンドを再実行する Verifier 役の検証とは別である。

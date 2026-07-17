@@ -93,12 +93,17 @@ Critical/Important finding.
 
 Apply model selection in this order:
 
-1. If the surface can select a named custom agent, use the model and
-   `model_reasoning_effort` explicitly defined by that agent TOML. An omitted
-   value intentionally inherits the parent session setting.
+1. If the surface can select a named custom agent and confirm that it was
+   loaded, use its explicit `model` and `model_reasoning_effort` as the
+   configuration sources for those separate values. An omitted value
+   intentionally inherits the parent session setting, but do not claim the
+   effective inherited value unless it can be confirmed.
 2. If the surface exposes a per-dispatch model override, the controller may
-   override the inherited or agent-file value to match the Task tier above.
-3. If neither custom-agent selection nor a model override is available, do not
+   override only the model to match the Task tier above. Treat reasoning effort
+   as unchanged unless a separate setting or override can be confirmed.
+3. Evaluate permission independently from both model values. A model or
+   reasoning setting does not prove that the agent TOML permission took effect.
+4. If neither custom-agent selection nor a model override is available, do not
    infer the effective model. Use the available generic subagent with the exact
    role constraints and report the fallback only when it materially affects the
    final confidence or cost claim.
@@ -121,8 +126,12 @@ evidence that a same-named custom agent or its TOML settings were loaded.
 
 ## Hard rules specific to this project
 
-- Never let two subagents (implementer + anyone else) hold write access to the
-  repo at the same time. Reviewer and verifier are strictly read + Docker-run.
+- Never run an implementer concurrently with an agent whose effective
+  permission is workspace-capable or whose technical read-only permission could
+  not be confirmed. An instruction-only reviewer or verifier must finish or be
+  closed before the implementer starts. Reviewer and verifier remain
+  operationally prohibited from editing even when their technical read-only
+  permission cannot be confirmed.
 - Never dispatch a reviewer or verifier without a generated diff/package file —
   no subagent re-derives the diff with ad hoc `git diff` calls in its own prompt.
 - Never pre-judge a finding in the dispatch prompt ("don't flag X", "treat as
