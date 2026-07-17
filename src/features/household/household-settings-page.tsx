@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   ageBands,
@@ -80,6 +80,11 @@ export const householdSettingsSchema = z
 
 export type HouseholdSettingsValue = z.infer<typeof householdSettingsSchema>;
 export type HouseholdFieldErrors = Partial<Record<keyof HouseholdSettingsValue, string>>;
+
+type PendingRegisteredIntent = {
+  member: HouseholdMemberRow;
+  values: HouseholdSettingsValue;
+};
 
 export function toHouseholdFieldErrors(
   error: z.ZodError<HouseholdSettingsValue>,
@@ -201,6 +206,7 @@ export function HouseholdSettingsForm({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveQueue = useRef(Promise.resolve(true));
+  const pendingRegisteredIntents = useRef(new Map<string, PendingRegisteredIntent>());
   const initializedMemberId = useRef<string | undefined>(undefined);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
@@ -265,55 +271,64 @@ export function HouseholdSettingsForm({
   const update = (patch: Partial<HouseholdSettingsValue>) => {
     setValues((current) => (current === undefined ? current : { ...current, ...patch }));
   };
-  const save = async (next: HouseholdSettingsValue): Promise<boolean> => {
-    if (selected === undefined) return false;
-    const parsed = householdSettingsSchema.safeParse(next);
-    if (!parsed.success) {
-      setErrors(toHouseholdFieldErrors(parsed.error));
-      return false;
-    }
-    setErrors({});
-    try {
-      const saved =
-        selected.status === "draft"
-          ? await api.updateDraft(selected.id, toMemberPatch(parsed.data))
-          : await api.updateMember(selected.id, toMemberPatch(parsed.data));
-      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-        current.map((member) => (member.id === saved.id ? saved : member)),
-      );
-      await api.invalidateSafety();
-      setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
-      return true;
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
-      return false;
-    }
-  };
-  const queueSave = (next: HouseholdSettingsValue) => {
-    saveQueue.current = saveQueue.current.then(() => save(next)).catch(() => false);
-    return saveQueue.current;
-  };
-  const savePendingRegisteredStatus = async (): Promise<boolean | undefined> => {
-    if (
-      selected === undefined ||
-      values === undefined ||
-      selected.status !== "complete" ||
-      selected.allergy_status === "registered" ||
-      values.allergyStatus !== "registered"
-    ) {
-      return undefined;
-    }
-    return queueSave(values);
-  };
-  const finalizeAllergyChange = async (memberId: string): Promise<void> => {
-    await queryClient.invalidateQueries({
-      queryKey: householdKeys.allergies("settings", memberId),
-    });
-    const registeredStatusSaved = await savePendingRegisteredStatus();
-    if (registeredStatusSaved !== true) {
-      await api.invalidateSafety();
-    }
-  };
+  const save = useCallback(
+    async (member: HouseholdMemberRow, next: HouseholdSettingsValue): Promise<boolean> => {
+      const parsed = householdSettingsSchema.safeParse(next);
+      if (!parsed.success) {
+        setErrors(toHouseholdFieldErrors(parsed.error));
+        return false;
+      }
+      setErrors({});
+      try {
+        const saved =
+          member.status === "draft"
+            ? await api.updateDraft(member.id, toMemberPatch(parsed.data))
+            : await api.updateMember(member.id, toMemberPatch(parsed.data));
+        queryClient.setQueryData<HouseholdMemberRow[]>(
+          householdKeys.members(userId),
+          (current = []) =>
+            current.map((currentMember) => (currentMember.id === saved.id ? saved : currentMember)),
+        );
+        await api.invalidateSafety();
+        setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
+        return true;
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
+        return false;
+      }
+    },
+    [api, queryClient, userId],
+  );
+  const queueSave = useCallback(
+    (member: HouseholdMemberRow, next: HouseholdSettingsValue) => {
+      saveQueue.current = saveQueue.current.then(() => save(member, next)).catch(() => false);
+      return saveQueue.current;
+    },
+    [save],
+  );
+  const savePendingRegisteredStatus = useCallback(
+    async (memberId: string): Promise<boolean | undefined> => {
+      const pending = pendingRegisteredIntents.current.get(memberId);
+      if (pending === undefined || pending.values.allergyStatus !== "registered") {
+        return undefined;
+      }
+      pendingRegisteredIntents.current.delete(memberId);
+      return queueSave(pending.member, pending.values);
+    },
+    [queueSave],
+  );
+  const finalizeAllergyChange = useCallback(
+    async (memberId: string): Promise<void> => {
+      await queryClient.invalidateQueries({
+        queryKey: householdKeys.allergies("settings", memberId),
+      });
+      const registeredStatusSaved = await savePendingRegisteredStatus(memberId);
+      if (registeredStatusSaved !== true) {
+        await api.invalidateSafety();
+      }
+    },
+    [api, queryClient, savePendingRegisteredStatus],
+  );
   const createDraft = useMutation({
     mutationFn: () => api.createDraft(members.length),
     onSuccess: (created) => {
@@ -343,13 +358,22 @@ export function HouseholdSettingsForm({
       fieldRefs[firstInvalidField as keyof typeof fieldRefs]?.current?.focus();
       return;
     }
-    if (parsed.data.allergyStatus === "registered" && (allergiesQuery.data?.length ?? 0) === 0) {
+    if (parsed.data.allergyStatus === "registered" && !allergiesQuery.isSuccess) {
+      setMessage(
+        allergiesQuery.isError
+          ? "アレルギー情報を確認できませんでした。もう一度お試しください"
+          : "アレルギー情報を確認しています",
+      );
+      if (allergiesQuery.isError) void allergiesQuery.refetch();
+      return;
+    }
+    if (parsed.data.allergyStatus === "registered" && currentAllergies.length === 0) {
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
     setSaving(true);
     await saveQueue.current;
-    const saved = await save(parsed.data);
+    const saved = await save(selected, parsed.data);
     if (!saved) {
       setSaving(false);
       return;
@@ -372,16 +396,47 @@ export function HouseholdSettingsForm({
   const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
     const next = { ...(values as HouseholdSettingsValue), ...patch };
     update(patch);
-    if (
+    const requiresRegisteredIntent =
       selected?.status === "complete" &&
-      next.allergyStatus === "registered" &&
-      currentAllergies.length === 0
-    ) {
+      selected.allergy_status !== "registered" &&
+      next.allergyStatus === "registered";
+    if (!requiresRegisteredIntent) {
+      if (selected !== undefined) pendingRegisteredIntents.current.delete(selected.id);
+      if (selected !== undefined) void queueSave(selected, next);
+      return;
+    }
+    pendingRegisteredIntents.current.set(selected.id, { member: selected, values: next });
+    if (allergiesQuery.isError) {
+      setMessage("アレルギー情報を確認できませんでした。もう一度お試しください");
+      void allergiesQuery.refetch();
+      return;
+    }
+    if (!allergiesQuery.isSuccess) {
+      setMessage("アレルギー情報を確認しています");
+      return;
+    }
+    if (currentAllergies.length === 0) {
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
-    void queueSave(next);
+    void savePendingRegisteredStatus(selected.id);
   };
+
+  const selectedMemberId = selected?.id;
+  useEffect(() => {
+    if (selectedMemberId === undefined || !allergiesQuery.isSuccess) return;
+    if (!pendingRegisteredIntents.current.has(selectedMemberId)) return;
+    if (allergiesQuery.data.length === 0) {
+      setMessage("登録ありの場合は1つ以上選んでください");
+      return;
+    }
+    void savePendingRegisteredStatus(selectedMemberId);
+  }, [
+    allergiesQuery.data,
+    allergiesQuery.isSuccess,
+    savePendingRegisteredStatus,
+    selectedMemberId,
+  ]);
 
   if (membersQuery.isPending || catalogQuery.isPending || aliasesQuery.isPending)
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
@@ -519,12 +574,24 @@ export function HouseholdSettingsForm({
             aliases={aliasesQuery.data}
             allergies={currentAllergies}
             addStandard={async (memberId, allergenId) => {
-              await api.addStandardAllergy(memberId, allergenId);
-              await finalizeAllergyChange(memberId);
+              try {
+                await api.addStandardAllergy(memberId, allergenId);
+                await finalizeAllergyChange(memberId);
+              } catch (error) {
+                setMessage(
+                  error instanceof Error ? error.message : "アレルギーを追加できませんでした",
+                );
+              }
             }}
             addCustom={async (memberId, name, aliases) => {
-              await api.addCustomAllergy(memberId, name, aliases);
-              await finalizeAllergyChange(memberId);
+              try {
+                await api.addCustomAllergy(memberId, name, aliases);
+                await finalizeAllergyChange(memberId);
+              } catch (error) {
+                setMessage(
+                  error instanceof Error ? error.message : "アレルギーを追加できませんでした",
+                );
+              }
             }}
             remove={async (allergyId) => {
               await api.removeAllergy(allergyId);
