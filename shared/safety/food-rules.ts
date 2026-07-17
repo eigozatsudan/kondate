@@ -121,11 +121,12 @@ const actionEvidence: Record<SafetyAction["kind"], readonly ActionEvidenceAltern
 };
 
 const actionSpecificContradictionPattern: Record<SafetyAction["kind"], RegExp> = {
-  remove_bones: /骨(?:付きのまま|を(?:残(?:す|して)|抜(?:かず|かない))|が残(?:る|ったまま))/u,
-  cut_small: /丸ごと|切らず/u,
-  quarter_round_food: /丸ごと|切らず/u,
-  soften: /硬いまま/u,
-  heat_thoroughly: /生焼け|加熱(?:しない|せず)/u,
+  remove_bones:
+    /骨(?:付きのまま|を(?:残(?:す|して|したまま)|抜(?:かず|かない))|が残(?:る|ったまま))/u,
+  cut_small: /丸ごと|切らず|大きいまま/u,
+  quarter_round_food: /丸ごと|切らず|[2２二]等分/u,
+  soften: /硬いまま|硬さを残(?:す|して)/u,
+  heat_thoroughly: /生焼け|生のまま|加熱(?:しない|せず)/u,
 };
 const periphrasticNegationPattern =
   /^(?:(?:く|る|む|する|にする|を確認する)?ことなく|いたりはしない|(?:(?:く|る|む|する|にする|を確認する)?(?:という)?(?:予定|必要|つもり)(?:では|は|が)?(?:ない|ないです|ありません)))/u;
@@ -258,9 +259,10 @@ function resolveOccurrenceIngredientName(
           occurrenceIndex,
         );
         if (kind === "remove_bones") {
-          // 除骨は「食材の骨」または食材を主題にした「食材は…骨」に限り、比較対象を除外する。
+          // 除骨は「食材の骨」「食材から骨」または明示的な主題に限り、比較対象を除外する。
           return (
-            /^の(?:小)?$/u.test(between) || /^は(?!.*(?:より|ほど|比べ))[\s\S]*$/u.test(between)
+            /^(?:の|から)(?:小)?$/u.test(between) ||
+            /^は(?!.*(?:より|ほど|比べ))[\s\S]*$/u.test(between)
           );
         }
 

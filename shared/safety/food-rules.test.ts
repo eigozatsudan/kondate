@@ -5,6 +5,7 @@ import {
   makeCurrentSafetyContext,
   makeValidatedMenu,
 } from "../testing/factories.js";
+import type { SafetyAction } from "../contracts/generation.js";
 
 function menuWithNamedIngredient(name: string) {
   const base = makeValidatedMenu();
@@ -109,6 +110,75 @@ function sourceBoundSafetyMenu(options: {
         ],
       },
     ],
+  });
+}
+
+function menuWithBoundActionContradiction(options: {
+  kind: SafetyAction["kind"];
+  targetName: string;
+  positiveInstruction: string;
+  contradictionInstruction: string;
+  contradictionTarget?: "target" | "other";
+}) {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const target = { ...firstDish.ingredients[0]!, name: options.targetName };
+  const other = {
+    ...base.dishes[1]!.ingredients[0]!,
+    id: "53000000-0000-4000-8000-000000000003",
+    position: 2,
+    name: "別の食材",
+  };
+  const contradiction =
+    options.contradictionTarget === "other"
+      ? options.contradictionInstruction.replace(options.targetName, other.name)
+      : options.contradictionInstruction;
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [target, other],
+            steps: [{ ...dish.steps[0]!, instruction: options.positiveInstruction }],
+          }
+        : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: options.positiveInstruction,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: contradiction,
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: options.kind,
+            dishId: firstDish.id,
+            ingredientId: target.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: options.positiveInstruction,
+          },
+        ],
+      },
+    ],
+  });
+  const rule = {
+    ...hardBeanAndReviewedNutRule,
+    id: `bound_${options.kind}`,
+    matchTerms: [options.targetName],
+    ruleKind: "requires_tag" as const,
+    requiredSafetyTag: options.kind,
+  };
+
+  return evaluateFoodSafetyRules(menu, {
+    ...underSixContext(),
+    foodSafetyRules: [rule],
   });
 }
 
@@ -624,6 +694,42 @@ it("比較対象として現れた鮭を除骨工程の対象にしない", () =
       requiredConstraintContext("remove_bones"),
     ),
   ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "required_safety_action" })]));
+});
+
+it("食材から骨を除く自然な表現を対象食材の除骨工程として扱う", () => {
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({
+        actionIngredient: "salmon",
+        instruction: "鮭から骨を完全に除く",
+      }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual([]);
+});
+
+it("骨を残したまま提供する指示を対象食材の除骨矛盾として扱う", () => {
+  const instruction = "鮭の骨を完全に除く。鮭の骨を残したまま提供する";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
+});
+
+it("別食材の骨を残したままにする指示を除骨対象の矛盾にしない", () => {
+  const instruction = "鮭の骨を完全に除く。にんじんの骨を残したまま提供する";
+
+  expect(
+    evaluateFoodSafetyRules(
+      sourceBoundSafetyMenu({ actionIngredient: "salmon", instruction }),
+      requiredConstraintContext("remove_bones"),
+    ),
+  ).toEqual([]);
 });
 
 it.each(["鮭の骨を完全に除く？", "鮭の骨を完全に除くか？"])(
@@ -1912,6 +2018,59 @@ const grapeQuarteringRule = {
   ruleKind: "requires_tag" as const,
   requiredSafetyTag: "quarter_round_food" as const,
 };
+
+const inverseServingStateCases = [
+  {
+    kind: "cut_small",
+    targetName: "ぶどう",
+    positiveInstruction: "ぶどうを小さく切る",
+    contradictionInstruction: "ぶどうは大きいまま提供する",
+  },
+  {
+    kind: "quarter_round_food",
+    targetName: "ぶどう",
+    positiveInstruction: "ぶどうを4等分する",
+    contradictionInstruction: "ぶどうは2等分して提供する",
+  },
+  {
+    kind: "soften",
+    targetName: "かぼちゃ",
+    positiveInstruction: "かぼちゃを十分に煮る",
+    contradictionInstruction: "かぼちゃは硬さを残して提供する",
+  },
+  {
+    kind: "heat_thoroughly",
+    targetName: "鶏肉",
+    positiveInstruction: "鶏肉を中心まで加熱する",
+    contradictionInstruction: "鶏肉は生のまま提供する",
+  },
+] as const;
+
+it.each(inverseServingStateCases)("$kind の工程と対象食材の逆状態を矛盾として扱う", (testCase) => {
+  expect(menuWithBoundActionContradiction(testCase)).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "safety_action_contradiction" })]),
+  );
+});
+
+it.each(inverseServingStateCases)(
+  "$kind の逆状態が別食材に結び付く場合は対象食材の矛盾にしない",
+  (testCase) => {
+    expect(menuWithBoundActionContradiction({ ...testCase, contradictionTarget: "other" })).toEqual(
+      [],
+    );
+  },
+);
+
+it("2個という数量を4等分工程の矛盾にしない", () => {
+  expect(
+    menuWithBoundActionContradiction({
+      kind: "quarter_round_food",
+      targetName: "ぶどう",
+      positiveInstruction: "ぶどうを4等分する",
+      contradictionInstruction: "ぶどうは2個を用意して提供する",
+    }),
+  ).toEqual([]);
+});
 
 it("does not apply another ingredient's whole-shape contradiction to a cut-small action", () => {
   const base = makeValidatedMenu();
