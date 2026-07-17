@@ -1,4 +1,16 @@
 #!/bin/sh
+# 公式 supabase/supabase リポジトリの docker/ ディレクトリを infra/supabase に
+# ベンダリング（取り込み）する。infra/supabase が既に存在する場合は
+# --refresh を渡さない限り失敗する（誤って上書きしないため）。
+#
+# 処理はステージング領域(staging)に一旦全て準備してから、既存の
+# infra/supabase・infra/supabase.version を退避(backup)しつつ新しい内容を
+# 設置(install)する。途中で失敗した場合はfinish()が退避物から元の状態への
+# ロールバックを試み、それでも安全に戻せない場合はstagingを残して
+# エラーメッセージで手動対応を促す（rollback_conflict/preserve_staging）。
+# stat の inode/デバイス番号("%d:%i")比較や sha256 ハッシュ比較を多用しているのは、
+# mv によるファイル差し替えの前後で「想定した実体のままか」を検証し、
+# 並行実行や外部からの変更を検知するため。
 set -eu
 
 repository=${SUPABASE_REPOSITORY:-https://github.com/supabase/supabase.git}
@@ -53,6 +65,8 @@ preserve_staging=false
 rollback_conflict=false
 pending_signal_status=0
 
+# PGDATA配下のpostmaster.pidがあればDBが稼働中とみなし中断する
+# （稼働中のデータディレクトリをベンダー更新で壊さないため）。
 verify_database_stopped() {
   if [ -e "$data_dir/postmaster.pid" ]; then
     echo "database appears to be running; use scripts/refresh-supabase.sh" >&2
@@ -64,12 +78,15 @@ verify_database_stopped() {
   fi
 }
 
+# 通常運用時のシグナルトラップ: そのまま該当exitコードで終了する。
 restore_signal_traps() {
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
 }
 
+# mv等の一瞬だけ中断されると困る操作の直前に使う: シグナルを即exitに
+# 変換せず、pending_signal_statusに記録して後で処理する。
 defer_signal_traps() {
   pending_signal_status=0
   trap 'pending_signal_status=129' HUP
@@ -77,6 +94,8 @@ defer_signal_traps() {
   trap 'pending_signal_status=143' TERM
 }
 
+# パスの実体（デバイス番号+inode）が期待値と一致するかを確認する。
+# mvの前後で「他プロセスに差し替えられていないか」を検出するために使う。
 path_identity_matches() {
   path=$1
   expected_identity=$2
@@ -85,6 +104,8 @@ path_identity_matches() {
   [ "$actual_identity" = "$expected_identity" ]
 }
 
+# ファイルのSHA-256ハッシュ値を求める。version_state_matchesで、
+# infra/supabase.version の中身が変わっていないかの検証に使う。
 hash_file() {
   hash_path=$1
   hash_line=$(sha256sum "$hash_path" 2>/dev/null) || return 1
@@ -93,6 +114,8 @@ hash_file() {
   printf '%s\n' "$hash_value"
 }
 
+# infra/supabase.version は実体(inode)だけでなく中身も1バイトのバージョン
+# 文字列なので、identity一致に加えてハッシュも一致することを確認する。
 version_state_matches() {
   path=$1
   expected_identity=$2
@@ -102,6 +125,10 @@ version_state_matches() {
   [ "$actual_hash" = "$expected_hash" ]
 }
 
+# EXIT trap: operation_completedがfalseのまま終了した場合、退避しておいた
+# 旧infra/supabase・infra/supabase.versionを可能な限り元の場所へ戻す。
+# 各段階でidentity/ハッシュを再検証し、想定外の状態変化を検知したら
+# rollback_conflictを立てstagingを残す（自動では触らず手動対応に委ねる）。
 finish() {
   status=$?
   trap - EXIT
@@ -229,6 +256,8 @@ if [ -e "$version_file" ]; then
   fi
 fi
 
+# ここから先はすべてstaging配下で準備し、既存のinfra/supabaseや
+# infra/supabase.versionへは検証済みの最終段階でしか触れない。
 staging=$(mktemp -d "$(pwd)/infra/.supabase-refresh.XXXXXX")
 checkout="$staging/repository"
 archive="$staging/docker.tar"
@@ -239,16 +268,21 @@ backup_version="$staging/backup-version"
 quarantine_target="$staging/quarantine-installed-target"
 quarantine_version="$staging/quarantine-installed-version"
 
+# shallow fetchで対象refのみ取得し、解決済みSHAを記録する
+# （infra/supabase.versionに書き込み、取り込み元コミットを追跡可能にする）。
 git -C "$staging" init -q repository
 git -C "$checkout" remote add origin "$repository"
 git -C "$checkout" fetch -q --depth 1 origin "$ref"
 resolved_sha=$(git -C "$checkout" rev-parse FETCH_HEAD)
 printf '%s\n' "$resolved_sha" | grep -Eq '^[0-9a-f]{40}$'
 
+# 取り込むのはリポジトリ全体ではなく docker/ ディレクトリのみ。
 git -C "$checkout" archive --format=tar --output="$archive" FETCH_HEAD:docker
 mkdir -p "$new_target"
 tar -xf "$archive" -C "$new_target"
 
+# docker-compose.yml の services.db.image を抽出し、想定するPostgres 17系の
+# タグと一致するか後段で検証する（意図しないメジャーバージョン混入を防ぐ）。
 db_images=$(awk '
   /^services:[[:space:]]*(#.*)?$/ { in_services = 1; next }
   in_services && /^[^[:space:]]/ { in_services = 0; in_db = 0 }
@@ -271,6 +305,8 @@ if ! printf '%s\n' "$db_images" | grep -Eq '^supabase/postgres:17\.[0-9]+(\.[0-9
   exit 1
 fi
 
+# このプロジェクトではPostgres 17系のみをサポートするため、pg15/移行関連の
+# 補助ファイルは取り込まず削除する。
 rm -f \
   "$new_target/docker-compose.pg15.yml" \
   "$new_target/docker-compose.pg17.yml" \

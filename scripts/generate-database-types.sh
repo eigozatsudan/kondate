@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# 稼働中のPostgres Meta（Supabaseのスキーマ内省サービス）からTypeScript型定義を
+# 取得し、src/shared/types/database.generated.ts を上書き生成する。
+# 取得結果はTypeScriptとしてパースし、期待するJson/Database型が
+# エクスポートされていることまで確認してから書き込む。
 set -euo pipefail
 types_url="${PG_META_TYPES_URL:-http://meta:8080/generators/typescript?included_schemas=public,private&detect_one_to_one_relationships=true}"
 destination="src/shared/types/database.generated.ts"
@@ -14,6 +18,8 @@ PG_META_TYPES_URL="$types_url" node --input-type=module -e '
     throw new Error(`Postgres Meta type generation failed: ${response.status}`);
   }
   const types = await response.text();
+  // 単なる文字列としてではなく実際にTypeScriptとしてパースし、
+  // 破損・空・エラーレスポンスをそのまま書き込まないようにする。
   const source = ts.createSourceFile(
     "database.generated.ts",
     types,
@@ -30,6 +36,8 @@ PG_META_TYPES_URL="$types_url" node --input-type=module -e '
       )
       .map((statement) => statement.name.text),
   );
+  // 呼び出し側が依存する契約（Json/Database型のエクスポート）が
+  // 揃っているかを最低限確認する。
   if (
     source.parseDiagnostics.length !== 0 ||
     !exportedAliases.has("Json") ||
@@ -40,6 +48,7 @@ PG_META_TYPES_URL="$types_url" node --input-type=module -e '
   process.stdout.write(types);
 ' > "$tmp_file"
 chmod 0644 "$tmp_file"
+# 一時ファイルへ書き切ってから mv でアトミックに差し替える。
 mv "$tmp_file" "$destination"
 trap - EXIT
 echo "Generated $destination"

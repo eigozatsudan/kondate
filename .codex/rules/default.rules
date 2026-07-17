@@ -59,3 +59,23 @@ prefix_rule(
         "docker-compose run --rm app npm test",
     ],
 )
+
+# 最終検証で使用する信頼済みスクリプトに限り、列挙した2つのリテラルな相対パスargvによる直接実行を承認待ちなしで利用できるようにする。
+prefix_rule(
+    pattern = [["./scripts/reset-local-db.sh", "./scripts/run-e2e.sh"]],
+    decision = "allow",
+    justification = "選択した検証スクリプトの直接実行は、信頼済みのローカル検証を完了するため許可されています",
+    match = [
+        "./scripts/reset-local-db.sh",
+        "./scripts/run-e2e.sh",
+        "./scripts/run-e2e.sh --project chromium",
+    ],
+    not_match = [
+        "sh ./scripts/reset-local-db.sh",
+        "bash ./scripts/run-e2e.sh",
+        "scripts/run-e2e.sh",
+        "/home/dev/projects/kondate/scripts/run-e2e.sh",
+        "./scripts/../scripts/run-e2e.sh",
+        "./scripts/run-tooling-git.sh push",
+    ],
+)

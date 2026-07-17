@@ -1,4 +1,8 @@
 #!/bin/sh
+# Composeスタックを停止し、ベンダー取り込み済みのSupabaseソース
+# （infra/supabase）を最新に更新してから、ローカルDBをリセットする一連の
+# 手順をまとめて実行する。各ステップは子プロセスとして起動し、シグナルを
+# 転送しつつ終了を待つ（run_child/forward_signal）。
 set -eu
 
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
@@ -12,6 +16,8 @@ export LOCAL_UID="${LOCAL_UID:-$(id -u)}"
 export LOCAL_GID="${LOCAL_GID:-$(id -g)}"
 
 child_pid=
+# HUP/INT/TERM受信時、実行中の子プロセスへ同じシグナルを転送してから
+# 完了を待つ。子を放置したまま自身だけ終了しないようにするため。
 forward_signal() {
   signal=$1
   status=$2
@@ -38,8 +44,11 @@ run_child() {
   return "$status"
 }
 
+# 1) 現行のCompose開発スタックを停止する。
 run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
   -f "$repo_root/compose.yaml" down --remove-orphans
+# 2) vendor-supabase.sh を --refresh 付きで実行し、infra/supabase を最新化する。
 run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
   -f "$repo_root/compose.tooling.yaml" run --rm --user 0:0 vendor-supabase --refresh
+# 3) 更新後のスキーマ/イメージでローカルDBを作り直す。
 run_child "$script_dir/reset-local-db.sh"
