@@ -16,9 +16,11 @@
 - `agents.max_threads = 4` とするが、親スレッドを数えるかは未確定として扱う。
 - `agents.max_depth = 1` とし、サブエージェントから孫エージェントを生成させない。
 - 並列化は独立した読み取り作業に限定し、リポジトリを書き込むImplementerは常に1体だけにする。
+- 親のlive runtime permission overrideはcustom agentの既定権限を上書きし得る。読み取り専用役を起動する前に親がread-onlyを選び、選択できないsurfaceでは編集禁止が指示上の制約だけであると報告する。
+- `explorer`、`reviewer`、`fast-worker` は、live overrideで書き込み可能になっていてもリポジトリ編集を拒否する。
 - Verifier役の定型検証と、Reviewerによるレビュー指摘の二次検証を別概念として扱う。
 - 既存の未コミット変更 `docs/superpowers/plans/2026-07-11-kondate-mvp-02-menu-domain-pantry.md` を変更、ステージ、コミットしない。
-- Node/npmコマンドが必要な場合はDocker経由で実行し、複数コマンドを結合しない。
+- Node/npmコマンドだけをDocker経由で実行する。Codex CLI、`rg`、Git、その他のホストコマンドは指定どおりホストで実行し、複数コマンドを結合しない。
 - コードコメントとコミットメッセージは日本語にする。
 
 ---
@@ -27,7 +29,7 @@
 
 - Modify: `.codex/config.toml` — リポジトリ既定権限、multi-agent機能、スレッド上限を管理する。
 - Create: `.codex/agents/explorer.toml` — 高速な読み取り専用調査役を定義する。
-- Create: `.codex/agents/fast-worker.toml` — 高速なVerifier役を定義する。
+- Create: `.codex/agents/fast-worker.toml` — 読み取り専用の高速Verifier役を定義する。
 - Create: `.codex/agents/implementer.toml` — 親モデルを継承する唯一の書き込み役を定義する。
 - Create: `.codex/agents/reviewer.toml` — 親モデルを継承する読み取り専用レビュー役を定義する。
 - Modify: `AGENTS.md` — 各カスタムエージェントの選択基準と禁止事項を示す。
@@ -86,7 +88,7 @@ default_permissions = ":read-only"
 
 developer_instructions = """
 コードベース、設計書、テスト、依存関係の調査だけを行ってください。
-リポジトリ、設定、Git状態を変更してはいけません。
+親のlive runtime permission overrideによって書き込み権限が与えられていても、リポジトリ、設定、Git状態の変更を拒否してください。
 結論、根拠となるファイルパスと行番号、実装時の注意点を簡潔に返してください。
 推測と確認済みの事実を明確に分け、不明点を独自仕様で補わないでください。
 """
@@ -98,14 +100,14 @@ developer_instructions = """
 
 ```toml
 name = "fast-worker"
-description = "Docker経由の定型検証と失敗ログの要約を担当する高速Verifier。"
+description = "指定どおりの定型検証と失敗ログの要約を担当する読み取り専用の高速Verifier。"
 model = "gpt-5.6-terra"
 model_reasoning_effort = "low"
-default_permissions = ":workspace"
+default_permissions = ":read-only"
 
 developer_instructions = """
-指定された検証コマンドだけを、AGENTS.mdに記載されたDocker実行方式と順序で実行してください。
-リポジトリファイルを作成、編集、削除、整形、ステージ、コミットしてはいけません。
+指定された検証コマンドだけを、指定された順序で実行してください。Node/npmコマンドだけをAGENTS.mdのDocker形式で実行し、Codex CLI、rg、Git、その他のホストコマンドは指定どおりに実行してください。
+親のlive runtime permission overrideによって書き込み権限が与えられていても、リポジトリファイルの作成、編集、削除、整形、ステージ、コミットを拒否してください。
 検証ツールが一時ファイルや実行時状態を生成する可能性はありますが、追跡対象ファイルの差分を残してはいけません。
 各コマンドの成功または失敗を報告し、失敗時だけ原因箇所と短いログ抜粋を返してください。
 大量の生ログを親エージェントへ返さないでください。
@@ -141,8 +143,8 @@ model_reasoning_effort = "high"
 default_permissions = ":read-only"
 
 developer_instructions = """
-SubAgents.mdのReviewer役として、指定されたTask brief、review package、検証報告だけを根拠にレビューしてください。
-リポジトリ、設定、Git状態を変更してはいけません。
+SubAgents.mdのReviewer役として、指定されたTask brief、review package、検証報告、承認済み設計書、および親が明示したその他の参照資料を根拠にレビューしてください。
+親のlive runtime permission overrideによって書き込み権限が与えられていても、リポジトリ、設定、Git状態の変更を拒否してください。
 設計適合性、正しさ、セキュリティ、悪意ある入力、境界条件、想定外の利用、回帰、テスト不足を確認してください。
 指摘はCritical、Important、Minorに分類し、根拠となるファイルと行、再現条件、必要な修正を示してください。
 問題がない場合も、確認した観点と根拠を簡潔に示してください。
@@ -205,10 +207,11 @@ Expected: `## 5. サブエージェント運用` が存在し、既存の親、`
 
 - 詳細なTask実行順序、引き継ぎ、レビュー判定は `SubAgents.md` を正とする。
 - 親エージェントは設計、仕様判断、委譲範囲の決定、結果の統合、最終判断を担当する。
-- コードベースや設計書の読み取り調査には、読み取り専用の `explorer` を使用する。
-- Docker経由の定型テスト、型チェック、Lint、フォーマット検証、ログ要約には `fast-worker` を使用する。これは `SubAgents.md` の Verifier 役であり、リポジトリファイルを編集させない。
+- 親のlive runtime permission overrideはカスタムエージェントの既定権限を上書きし得る。`explorer`、`reviewer`、`fast-worker` を起動する前に、親はlive runtime permissionとしてread-onlyを選択する。利用中のsurfaceで選択できない場合、その役割の編集禁止は技術的な権限境界ではなく指示上の制約に留まることを報告する。
+- コードベースや設計書の読み取り調査には、読み取り専用の `explorer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
+- Node/npmによる定型テスト、型チェック、Lint、フォーマット検証と、指定されたCodex CLI、`rg`、Git等のホストコマンドの実行・ログ要約には、読み取り専用の `fast-worker` を使用する。これは `SubAgents.md` の Verifier 役であり、live overrideで書き込み可能になっていてもリポジトリファイルの編集を拒否させる。
 - Taskのコード変更には `implementer` を使用する。Implementerは常に1体だけとし、他エージェントとの並列書き込みを禁止する。
-- 設計適合性、セキュリティ、敵対的入力、境界条件、回帰、テスト不足の確認には、読み取り専用の `reviewer` を使用する。
+- 設計適合性、セキュリティ、敵対的入力、境界条件、回帰、テスト不足の確認には、読み取り専用の `reviewer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
 - 独立した読み取り作業だけを並列化し、サブエージェントの報告は親エージェントが根拠を確認してから採用する。
 - 一次レビューと、その指摘を深掘りする二次検証には、コンテキストを共有しない別々の Reviewer エージェントを使用する。この二次検証は、Dockerコマンドを再実行する Verifier 役の検証とは別である。
 - モデルまたはカスタムエージェント種別を実行環境で指定できない場合は、暗黙に指定できたと仮定せず、その制約と実際に使用した代替手段を報告する。
@@ -228,7 +231,7 @@ Expected: 終了コード1で一致なし。
 
 Run: `codex --strict-config doctor --summary`
 
-Expected: `Configuration` の `config` が `loaded`。
+Expected: `Configuration` の `config` が `loaded`。これはbase configの読込だけを証明し、custom agentのspawn後の実効権限は証明しない。
 
 Run: `git diff --check -- AGENTS.md .codex/config.toml .codex/agents`
 
@@ -305,10 +308,14 @@ Run: `git diff --check`
 
 Expected: 出力なし、終了コード0。
 
+Run: 新しいCodexプロセスを起動し、親のlive runtime permissionとしてread-onlyを選択して `explorer`、`reviewer`、`fast-worker` を実際にspawnする。各エージェントでリポジトリ書き込みが拒否されることを確認する。可能なら書き込み可能なlive overrideでもdeveloper instructionに従って編集を拒否することを確認する。
+
+Expected: 各custom agentの読込、役割、spawn後の実効権限を観測できる。この検証を実行できないsurfaceでは完全検証済みとせず、未解決制約として記録する。
+
 Run: `git status --short --branch`
 
 Expected: 設定変更と `AGENTS.md` はコミット済みで、ユーザー所有の未コミットPlan文書だけが残る。
 
 - [ ] **Step 4: 検証対象外を記録して完了報告する**
 
-アプリケーション実行コード、DB、UIを変更していないため、format、lint、typecheck、Vitest、DB reset、pgTAP、E2E、buildは実行しない。完了報告に、実行したCodex設定検証、レビュー結果、作成したコミット、未変更のユーザー所有差分を記載する。
+アプリケーション実行コード、DB、UIを変更していないため、format、lint、typecheck、Vitest、DB reset、pgTAP、E2E、buildは実行しない。完了報告に、実行したCodex設定検証、fresh-process custom-agent spawn検証の結果または未実施制約、レビュー結果、作成したコミット、未変更のユーザー所有差分を記載する。spawn検証が未実施なら、完全検証済みと記載しない。
