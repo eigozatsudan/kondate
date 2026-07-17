@@ -25,5 +25,7 @@ it("完全な緊急献立レスポンスを検証する", () => {
 
 it("サーバー専用モジュールへ依存しない", async () => {
   const source = await readFile(new URL("./contracts.ts", import.meta.url), "utf8");
-  expect(source).not.toMatch(/filter-emergency-menus|validate-generated-menu|fingerprint|node:/u);
+  expect(source).not.toMatch(
+    /filter-emergency-menus|validate-generated-menu|fingerprint|node:|netlify|supabase/u,
+  );
 });
