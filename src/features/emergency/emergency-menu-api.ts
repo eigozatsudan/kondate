@@ -1,8 +1,5 @@
 import type { MealType } from "@shared/contracts/domain";
-import {
-  emergencyMenusDataSchema,
-  type EmergencyMenusData,
-} from "@shared/emergency/filter-emergency-menus";
+import { emergencyMenusDataSchema, type EmergencyMenusData } from "@shared/emergency/contracts";
 import { z } from "zod";
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";

@@ -1,11 +1,11 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import { mealTypes } from "../../shared/contracts/domain.js";
+import type { EmergencyMenusData } from "../../shared/emergency/contracts.js";
 import { emergencyFixtureVersion } from "../../shared/emergency/fixtures.v1.js";
 import {
   buildEmergencyMenuCandidate,
   filterEmergencyMenus,
-  type EmergencyMenusData,
 } from "../../shared/emergency/filter-emergency-menus.js";
 import { requireUser } from "./_shared/auth.js";
 import {
