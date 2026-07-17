@@ -689,71 +689,62 @@ export function evaluateFoodSafetyRules(
     for (const rule of context.foodSafetyRules) {
       if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
       const normalizedMatchTerms = rule.matchTerms.map(normalizeFoodText);
-      const matchingIngredientSourcesForTerm = (term: string, dishId: string | null) =>
+      const matchingIngredientSourcesForTerm = (
+        term: string,
+        dishId: string | null,
+        ingredientId: string | null = null,
+      ) =>
         sources.filter(
           (candidate) =>
             candidate.sourceType === "ingredient" &&
             candidate.dishId !== null &&
             candidate.ingredientId !== null &&
             (dishId === null || candidate.dishId === dishId) &&
+            (ingredientId === null || candidate.ingredientId === ingredientId) &&
             doesIngredientMatchTerm(candidate.text, term, rule.requiredSafetyTag),
         );
-      const rawMatchedSources = sources.filter((item) =>
-        normalizedMatchTerms.some((term) =>
-          item.sourceType === "ingredient"
-            ? doesIngredientMatchTerm(item.text, term, rule.requiredSafetyTag)
-            : normalizeFoodText(item.text).includes(term),
-        ),
-      );
-      const matchedSources = rawMatchedSources.filter((source) => {
-        if (
-          rule.ruleKind === "forbidden" ||
-          source.sourceType === "ingredient" ||
-          source.ingredientId !== null
-        ) {
-          return true;
+      const matchingIngredientSourcesForSourceTerm = (source: MenuTextSource, term: string) => {
+        if (!genericIngredientMatchTerms.has(term)) {
+          return matchingIngredientSourcesForTerm(term, source.dishId, source.ingredientId);
         }
 
-        const sourceMatchTerms = normalizedMatchTerms.filter((term) =>
-          normalizeFoodText(source.text).includes(term),
-        );
-        return (
-          sourceMatchTerms.some((term) => {
-            if (!genericIngredientMatchTerms.has(term)) {
-              return matchingIngredientSourcesForTerm(term, source.dishId).length > 0;
-            }
+        // 総称は、同じルールにある具体語で特定できる実食材だけへ展開する。
+        return normalizedMatchTerms
+          .filter((candidateTerm) => !genericIngredientMatchTerms.has(candidateTerm))
+          .flatMap((candidateTerm) =>
+            matchingIngredientSourcesForTerm(candidateTerm, source.dishId, source.ingredientId),
+          );
+      };
+      const sourceMatchTerms = (source: MenuTextSource): readonly string[] => {
+        if (source.sourceType === "ingredient") {
+          return normalizedMatchTerms.filter((term) =>
+            doesIngredientMatchTerm(source.text, term, rule.requiredSafetyTag),
+          );
+        }
 
-            // 総称は、同じルールにある具体語で実食材を特定できる場合だけ展開する。
-            return normalizedMatchTerms.some(
-              (candidateTerm) =>
-                !genericIngredientMatchTerms.has(candidateTerm) &&
-                matchingIngredientSourcesForTerm(candidateTerm, source.dishId).length > 0,
-            );
-          }) || sourceMatchTerms.some((term) => hasStandaloneSourceTerm(source.text, term))
+        return normalizedMatchTerms.filter(
+          (term) =>
+            hasStandaloneSourceTerm(source.text, term) &&
+            matchingIngredientSourcesForSourceTerm(source, term).length > 0,
         );
+      };
+      const matchedSources = sources.filter((source) => {
+        if (rule.ruleKind === "forbidden") {
+          return normalizedMatchTerms.some((term) => normalizeFoodText(source.text).includes(term));
+        }
+
+        return sourceMatchTerms(source).length > 0;
       });
       for (const source of matchedSources) {
         const requiredSafetyTag = rule.requiredSafetyTag;
         const sourceDishId = source.dishId;
         const sourceIngredientId = source.ingredientId;
-        const sourceMatchTerms = normalizedMatchTerms.filter((term) =>
+        const matchedSourceTerms = sourceMatchTerms(source);
+        const matchingIngredientSources = matchedSourceTerms.flatMap((term) =>
           source.sourceType === "ingredient"
-            ? doesIngredientMatchTerm(source.text, term, rule.requiredSafetyTag)
-            : normalizeFoodText(source.text).includes(term),
+            ? matchingIngredientSourcesForTerm(term, sourceDishId, sourceIngredientId)
+            : matchingIngredientSourcesForSourceTerm(source, term),
         );
-        const matchingIngredientSourcesForTerm = (term: string) =>
-          matchedSources.filter(
-            (candidate) =>
-              candidate.sourceType === "ingredient" &&
-              candidate.dishId !== null &&
-              candidate.ingredientId !== null &&
-              (sourceDishId === null || candidate.dishId === sourceDishId) &&
-              // 所属料理のない工程は、同じ語で特定できる実食材だけへmenu全体で結合する。
-              doesIngredientMatchTerm(candidate.text, term, rule.requiredSafetyTag),
-          );
-        const matchingIngredientSources = (
-          sourceIngredientId === null ? normalizedMatchTerms : sourceMatchTerms
-        ).flatMap(matchingIngredientSourcesForTerm);
         const hasEvidence =
           requiredSafetyTag !== null &&
           (sourceIngredientId !== null
@@ -770,13 +761,7 @@ export function evaluateFoodSafetyRules(
                   sourceIngredientId,
                 ),
               )
-            : sourceMatchTerms.length > 0 &&
-              // 「魚」のような総称は同じruleの具体語候補へ展開する一方、鯖など明示語の不在は許可しない。
-              sourceMatchTerms.every(
-                (term) =>
-                  genericIngredientMatchTerms.has(term) ||
-                  matchingIngredientSourcesForTerm(term).length > 0,
-              ) &&
+            : matchedSourceTerms.length > 0 &&
               matchingIngredientSources.length > 0 &&
               matchingIngredientSources.every((candidate) => {
                 const dishId = candidate.dishId;

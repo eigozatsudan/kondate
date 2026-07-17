@@ -193,7 +193,7 @@ it("rejects required deboning evidence bound to a non-fish ingredient", () => {
   );
 });
 
-it("rejects deboning text that self-identifies a non-fish ingredient as fish", () => {
+it("does not apply a deboning rule when non-ingredient text alone identifies an ingredient as fish", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;
   const carrot = { ...firstDish.ingredients[0]!, name: "にんじん" };
@@ -240,10 +240,10 @@ it("rejects deboning text that self-identifies a non-fish ingredient as fish", (
       ...safety,
       foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms: ["魚"] })),
     }),
-  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
+  ).toEqual([]);
 });
 
-it("rejects an action that is the only source identifying its ingredient as fish", () => {
+it("does not let an ingredient-bound action fabricate a matching fish ingredient", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;
   const carrot = { ...firstDish.ingredients[0]!, name: "にんじん" };
@@ -291,7 +291,7 @@ it("rejects an action that is the only source identifying its ingredient as fish
       ...safety,
       foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms: ["魚"] })),
     }),
-  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]));
+  ).toEqual([]);
 });
 
 it("accepts required deboning evidence bound to the matched fish ingredient", () => {
@@ -1030,6 +1030,106 @@ it("必須工程ルールは実食材へ結び付かない説明文中の魚語�
   ).toEqual([]);
 });
 
+it("実食材へ結び付かない説明文中の独立した具体魚語を必須工程の対象にしない", () => {
+  const base = makeValidatedMenu();
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            description: "たいを添える",
+            ingredients: [{ ...dish.ingredients[0]!, name: "ごはん" }],
+          }
+        : dish,
+    ),
+  });
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menu, {
+      ...safety,
+      members: safety.members.map((member) => ({
+        ...member,
+        requiredSafetyConstraints: [],
+      })),
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms: ["たい"] })),
+    }),
+  ).toEqual([]);
+});
+
+it("食材ID付きの非ingredient sourceでも未結合の具体魚語を必須工程の対象にしない", () => {
+  const base = makeValidatedMenu();
+  const firstDish = base.dishes[0]!;
+  const rice = { ...firstDish.ingredients[0]!, name: "ごはん" };
+  const menu = makeValidatedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, ingredients: [rice] } : dish,
+    ),
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: firstDish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "通常量",
+        branchBeforeRecipeStepId: firstDish.steps[0]!.id,
+        additionalCutting: null,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "確認済み",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "remove_bones",
+            dishId: firstDish.id,
+            ingredientId: rice.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: firstDish.steps[0]!.id,
+            instruction: "たいを添える",
+          },
+        ],
+      },
+    ],
+  });
+  const safety = requiredConstraintContext("remove_bones");
+
+  expect(
+    evaluateFoodSafetyRules(menu, {
+      ...safety,
+      members: safety.members.map((member) => ({
+        ...member,
+        requiredSafetyConstraints: [],
+      })),
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms: ["たい"] })),
+    }),
+  ).toEqual([]);
+});
+
+it.each(["温かいうちに食べたい", "めんたいこを添える"])(
+  "同じ料理に実食材があっても説明文の埋込み魚語を結合しない: %s",
+  (description) => {
+    const base = menuWithNamedIngredient("たい");
+    const menu = makeValidatedMenu({
+      ...base,
+      dishes: base.dishes.map((dish, index) => (index === 0 ? { ...dish, description } : dish)),
+    });
+    const safety = requiredConstraintContext("remove_bones");
+    const issues = evaluateFoodSafetyRules(menu, {
+      ...safety,
+      members: safety.members.map((member) => ({
+        ...member,
+        requiredSafetyConstraints: [],
+      })),
+      foodSafetyRules: safety.foodSafetyRules.map((rule) => ({ ...rule, matchTerms: ["たい"] })),
+    });
+
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "age_shape_rule", path: "dishes.0.description" }),
+      ]),
+    );
+  },
+);
+
 it("rejects an ownerless timeline contradiction bound to a matched fish ingredient", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
@@ -1049,7 +1149,7 @@ it("rejects an ownerless timeline contradiction bound to a matched fish ingredie
   );
 });
 
-it("rejects an ownerless source when one of its matched fish terms has no real ingredient", () => {
+it("ignores an unbound fish term in an ownerless source", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
     ...base,
@@ -1063,11 +1163,7 @@ it("rejects an ownerless source when one of its matched fish terms has no real i
     ],
   });
 
-  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ code: "age_shape_rule", path: "timeline.0.instruction" }),
-    ]),
-  );
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
 });
 
 it("accepts an ownerless source when every matched fish term has verified ingredients", () => {
@@ -1116,7 +1212,7 @@ it("accepts an ownerless source when every matched fish term has verified ingred
   expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
 });
 
-it("rejects an ownerless timeline source for a different fish ingredient", () => {
+it("ignores an ownerless timeline source with no matching real ingredient", () => {
   const base = sourceBoundSafetyMenu({ actionIngredient: "salmon" });
   const menu = makeValidatedMenu({
     ...base,
@@ -1130,14 +1226,10 @@ it("rejects an ownerless timeline source for a different fish ingredient", () =>
     ],
   });
 
-  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ code: "age_shape_rule", path: "timeline.0.instruction" }),
-    ]),
-  );
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
 });
 
-it("does not use a matched ingredient from another dish for a dish-owned source", () => {
+it("ignores a dish-owned source whose matching ingredient belongs to another dish", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;
   const secondDish = base.dishes[1]!;
@@ -1184,11 +1276,7 @@ it("does not use a matched ingredient from another dish for a dish-owned source"
     ],
   });
 
-  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ code: "age_shape_rule", path: "dishes.0.steps.0.instruction" }),
-    ]),
-  );
+  expect(evaluateFoodSafetyRules(menu, requiredConstraintContext("remove_bones"))).toEqual([]);
 });
 
 it("rejects required deboning evidence whose adaptation branch belongs to another dish", () => {
