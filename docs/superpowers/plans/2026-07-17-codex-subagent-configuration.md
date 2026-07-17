@@ -107,7 +107,7 @@ default_permissions = ":read-only"
 
 developer_instructions = """
 親から指定された正確な検証コマンドだけを、指定された順序で実行してください。Node/npmコマンドだけをAGENTS.mdのDocker形式で実行し、Codex CLI、rg、Git、その他のホストコマンドは指定どおりに実行してください。
-Docker daemonのrw bind mountはCodexのread-only filesystemに対する技術的境界外であり、containerからrepositoryへ書き込めます。親から指定されていても、repositoryへの書き込みを行い得るDocker payloadを含むコマンドは実行を拒否し、親へ報告してください。
+Docker daemonのrw bind mountはCodexのread-only filesystemに対する技術的境界外であり、containerからrepositoryへ書き込めます。拒否対象は、コマンド自体または既知の通常動作がhost worktreeのファイル作成・変更・削除を意図するDocker payloadです。`node -p`、`format:check`、`lint`、`typecheck`、通常テストのように書き込みを意図しない検証は実行してかまいません。ファイル書込コード、`format`、スナップショット更新のようにhost worktreeへの書き込みを意図するpayloadは、親から指定されていても実行を拒否し、親へ報告してください。
 親のlive runtime permission overrideによって書き込み権限が与えられていても、リポジトリファイルの作成、編集、削除、整形、ステージ、コミットを拒否してください。
 検証ツールが一時ファイルや実行時状態を生成する可能性はありますが、追跡対象ファイルの差分や意図しないuntracked fileを残してはいけません。
 各コマンドの成功または失敗を報告し、失敗時だけ原因箇所と短いログ抜粋を返してください。
@@ -212,7 +212,7 @@ Expected: `## 5. サブエージェント運用` が存在し、既存の親、`
 - 親のlive runtime permission overrideはカスタムエージェントの既定権限を上書きし得る。`explorer`、`reviewer`、`fast-worker` を起動する前に、親はlive runtime permissionとしてread-onlyを選択する。利用中のsurfaceで選択できない場合、その役割の編集禁止は技術的な権限境界ではなく指示上の制約に留まることを報告する。
 - 親が検証のためworkspace-capable permissionへの切替を試みる前に、希望する通常permissionを記録する。切替を試みた後は、検証の成功・失敗・skipを問わず、すべての終了経路でcleanupとして通常permissionへ明示的に復元し、実効状態を確認する。復元または確認に失敗した場合は新しい作業を開始せず、完全検証済みとせずに未解決制約として報告する。
 - コードベースや設計書の読み取り調査には、読み取り専用の `explorer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
-- Node/npmによる定型テスト、型チェック、Lint、フォーマット検証と、指定されたCodex CLI、`rg`、Git等のホストコマンドの実行・ログ要約には、読み取り専用の `fast-worker` を使用する。これは `SubAgents.md` の Verifier 役であり、live overrideで書き込み可能になっていてもリポジトリファイルの編集を拒否させる。Docker daemonのrw bind mountはread-only filesystemの技術的境界外であるため、親はread-onlyをDockerに対する技術的境界として扱わず、Dockerコマンドの実行前後に `git status --short` を確認する。意図しない差分が生じた場合は新しい作業を止めて報告する。
+- Node/npmによる定型テスト、型チェック、Lint、フォーマット検証と、指定されたCodex CLI、`rg`、Git等のホストコマンドの実行・ログ要約には、読み取り専用の `fast-worker` を使用する。これは `SubAgents.md` の Verifier 役であり、live overrideで書き込み可能になっていてもリポジトリファイルの編集を拒否させる。Docker daemonのrw bind mountはread-only filesystemの技術的境界外である。`fast-worker` は、コマンド自体または既知の通常動作がhost worktreeの作成・変更・削除を意図するDocker payloadだけを拒否する。親はclean baselineでのみDockerコマンドを開始し、実行前後のstaged diff、unstaged diff、untracked一覧を保存して比較する。ignored pathは比較対象外とし、意図しない差分が生じた場合は新しい作業を止めて報告する。
 - Taskのコード変更には `implementer` を使用する。single-writerはCodex設定による役別同時数の技術的制限やロックではなく、親が維持する運用上のオーケストレーション不変条件である。同じworktreeを操作するCodex親プロセス／セッションは1つだけとし、並行する親は別worktreeを使用する。親はImplementerを起動する前に、同じworktreeに別の親がいないこととactive agent threadを確認し、既存Implementerが完了またはcloseされるまで2体目を起動してはいけない。worktreeの排他性またはactive状態を確認できない場合はImplementerを起動せず、その制約を報告する。
 - 設計適合性、セキュリティ、敵対的入力、境界条件、回帰、テスト不足の確認には、読み取り専用の `reviewer` を使用する。live overrideで書き込み可能になっていても、リポジトリの編集を拒否させる。
 - 独立した読み取り作業だけを並列化し、サブエージェントの報告は親エージェントが根拠を確認してから採用する。
@@ -313,15 +313,15 @@ Expected: 出力なし、終了コード0。
 
 Run: 新しいCodexプロセスを起動する。検証開始時の希望する通常permissionを記録し、親のlive runtime permissionとしてread-onlyを選択して実効状態を確認してから、`explorer`、`reviewer`、`fast-worker` をspawnする。3役すべてについてcustom agent名、固有の役割指示、リポジトリ書き込み拒否を観測する。`fast-worker` にはrepositoryを書き込むDocker payloadの実行を依頼し、コマンドを実行せず拒否することを確認する。read-onlyはDocker daemonのrw bind mountに対する技術的境界ではなく、既知のsentinel実機証拠を再現する場合は承認されたdisposable worktreeだけを使用してcleanupする。可能なら書き込み可能なlive overrideでもdeveloper instructionに従って編集を拒否することを別途確認する。
 
-Run: 親がDockerコマンドの実行前に `git status --short` を記録する。
+Run: 親が `git status --short` でclean baselineを確認する。cleanでなければDockerコマンドを実行しない。clean確認後、staged diff、unstaged diff、untracked一覧をそれぞれ保存する。untracked一覧はignored pathを除外する。
 
 Run: `fast-worker` に、リポジトリルートをcwdとして `docker compose run --rm --no-deps app node -p 'JSON.stringify({execPath:process.execPath,cwd:process.cwd(),version:process.version})'` を実行させる。
 
 Expected: 終了コード0。正確なコマンド、host Docker CLIからComposeの`app` serviceを経由してcontainer内Nodeへ至る実行経路、呼出しcwd、出力された`execPath`・container cwd・Node versionを記録する。
 
-Run: 親がDockerコマンドの実行後に `git status --short` を再実行し、実行前の記録と比較する。
+Run: 親がDockerコマンドの実行後にstaged diff、unstaged diff、untracked一覧を再取得し、実行前の記録と比較する。untracked一覧はignored pathを除外する。
 
-Expected: 前後のGit状態に差がなく、追跡対象ファイルの差分や意図しないuntracked fileがない。差がある場合は新しい作業を止めて報告する。
+Expected: 前後のstaged diff、unstaged diff、untracked一覧に差がなく、追跡対象ファイルの差分や意図しないuntracked fileがない。ignored pathは比較対象外である。差がある場合は新しい作業を止めて報告する。
 
 Run: 同じ `fast-worker` に、同じリポジトリルートをcwdとしてhost-nativeの `git rev-parse --show-toplevel` を実行させる。
 
