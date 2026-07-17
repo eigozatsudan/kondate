@@ -260,10 +260,6 @@ function hasStructuredSourceTerm(
   return findStructuredSourceTermExpressions(text, normalizedTerm, requiredSafetyTag).length > 0;
 }
 
-function hasUniversalIngredientScope(text: string): boolean {
-  return universalIngredientScopePattern.test(normalizeFoodText(text));
-}
-
 function isNegatedActionSuffix(suffix: string, alternative: ActionEvidenceAlternative): boolean {
   return alternative.negatedSuffixPattern.test(suffix) || periphrasticNegationPattern.test(suffix);
 }
@@ -458,16 +454,36 @@ function findActionContradictionOccurrences(
 function hasUniversallyScopedActionContradiction(
   text: string,
   kind: SafetyAction["kind"],
+  normalizedDishIngredientNames: readonly string[],
 ): boolean {
-  return text
-    .split(sentenceBoundaryPattern)
-    .some((sentence) =>
-      sentence
-        .split(localClauseBoundaryPattern)
-        .some(
-          (clause) => hasUniversalIngredientScope(clause) && hasActionContradiction(clause, kind),
-        ),
-    );
+  return text.split(sentenceBoundaryPattern).some((sentence) =>
+    sentence.split(localClauseBoundaryPattern).some((clause) => {
+      const normalizedClause = normalizeFoodText(clause);
+      const universalScopes = findPatternOccurrences(
+        normalizedClause,
+        universalIngredientScopePattern,
+      );
+      return findActionContradictionOccurrences(normalizedClause, kind).some((occurrence) => {
+        const applicableScope = universalScopes
+          .filter((scope) => scope.index + scope.length <= occurrence.index)
+          .at(-1);
+        if (applicableScope === undefined) return false;
+
+        // 全称語より後で別食材へ明示結合された逆状態は、全食材へ展開せず通常の食材別判定へ委ねる。
+        const scopedStart = applicableScope.index + applicableScope.length;
+        const scopedClause = normalizedClause.slice(scopedStart);
+        return (
+          resolveOccurrenceIngredientName(
+            scopedClause,
+            occurrence.index - scopedStart,
+            "",
+            normalizedDishIngredientNames,
+            kind,
+          ) === null
+        );
+      });
+    }),
+  );
 }
 
 function hasIngredientBoundActionContradiction(
@@ -561,7 +577,14 @@ export function evaluateFoodSafetyRules(
     if (expectedName === undefined) return false;
 
     // 料理に所属する明示的な全称指示だけは、食材名の省略ではなく料理内の全食材への指示として扱う。
-    if (source.dishId === dishId && hasUniversallyScopedActionContradiction(source.text, kind)) {
+    if (
+      source.dishId === dishId &&
+      hasUniversallyScopedActionContradiction(
+        source.text,
+        kind,
+        dishIngredientNames.get(dishId) ?? [],
+      )
+    ) {
       return true;
     }
 
