@@ -229,6 +229,7 @@ export function HouseholdSettingsForm({
     queryFn: () => api.listAllergies(selected?.id ?? "none"),
     enabled: selected !== undefined,
   });
+  const currentAllergies = allergiesQuery.data ?? [];
   const dislikesQuery = useQuery({
     queryKey: selected
       ? householdKeys.dislikes("settings", selected.id)
@@ -292,6 +293,27 @@ export function HouseholdSettingsForm({
     saveQueue.current = saveQueue.current.then(() => save(next)).catch(() => false);
     return saveQueue.current;
   };
+  const savePendingRegisteredStatus = async (): Promise<boolean | undefined> => {
+    if (
+      selected === undefined ||
+      values === undefined ||
+      selected.status !== "complete" ||
+      selected.allergy_status === "registered" ||
+      values.allergyStatus !== "registered"
+    ) {
+      return undefined;
+    }
+    return queueSave(values);
+  };
+  const finalizeAllergyChange = async (memberId: string): Promise<void> => {
+    await queryClient.invalidateQueries({
+      queryKey: householdKeys.allergies("settings", memberId),
+    });
+    const registeredStatusSaved = await savePendingRegisteredStatus();
+    if (registeredStatusSaved !== true) {
+      await api.invalidateSafety();
+    }
+  };
   const createDraft = useMutation({
     mutationFn: () => api.createDraft(members.length),
     onSuccess: (created) => {
@@ -350,6 +372,14 @@ export function HouseholdSettingsForm({
   const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
     const next = { ...(values as HouseholdSettingsValue), ...patch };
     update(patch);
+    if (
+      selected?.status === "complete" &&
+      next.allergyStatus === "registered" &&
+      currentAllergies.length === 0
+    ) {
+      setMessage("登録ありの場合は1つ以上選んでください");
+      return;
+    }
     void queueSave(next);
   };
 
@@ -379,7 +409,6 @@ export function HouseholdSettingsForm({
       </main>
     );
   }
-  const currentAllergies = allergiesQuery.data ?? [];
   const currentDislikes = dislikesQuery.data ?? [];
   const setArray = (
     key: "unsupportedDietKinds" | "requiredSafetyConstraints" | "easePreferences",
@@ -491,17 +520,11 @@ export function HouseholdSettingsForm({
             allergies={currentAllergies}
             addStandard={async (memberId, allergenId) => {
               await api.addStandardAllergy(memberId, allergenId);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies("settings", memberId),
-              });
-              await api.invalidateSafety();
+              await finalizeAllergyChange(memberId);
             }}
             addCustom={async (memberId, name, aliases) => {
               await api.addCustomAllergy(memberId, name, aliases);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies("settings", memberId),
-              });
-              await api.invalidateSafety();
+              await finalizeAllergyChange(memberId);
             }}
             remove={async (allergyId) => {
               await api.removeAllergy(allergyId);

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import type { AllergenCatalogRow, HouseholdMemberRow } from "./household-api";
+import type { AllergenCatalogRow, HouseholdMemberRow, MemberAllergyRow } from "./household-api";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
 
 const member: HouseholdMemberRow = {
@@ -32,6 +32,17 @@ const catalog: AllergenCatalogRow[] = [
     created_at: "2026-07-11T00:00:00.000Z",
   },
 ];
+
+const walnutAllergy: MemberAllergyRow = {
+  id: "allergy-1",
+  user_id: "user-1",
+  member_id: "member-1",
+  allergen_id: "walnut",
+  custom_name: null,
+  custom_aliases: [],
+  custom_confirmed: false,
+  created_at: "2026-07-11T00:00:00.000Z",
+};
 
 function renderSettings(overrides: Partial<HouseholdSettingsApi> = {}) {
   const updateMember = vi.fn().mockResolvedValue(member);
@@ -161,6 +172,50 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
   await waitFor(() => {
     expect(invalidateSafety.mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
+it("アレルギー0件のcomplete家族ではregisteredの保存を保留する", async () => {
+  const { updateMember } = renderSettings();
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+
+  expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+it("最初のアレルギー追加成功後に保留したregisteredを保存する", async () => {
+  let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  const addStandardAllergy = vi.fn(
+    () =>
+      new Promise<MemberAllergyRow>((resolve) => {
+        resolveAdd = resolve;
+      }),
+  );
+  const { updateMember, invalidateSafety } = renderSettings({ addStandardAllergy });
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+
+  expect(addStandardAllergy).toHaveBeenCalledWith("member-1", "walnut");
+  expect(updateMember).not.toHaveBeenCalled();
+
+  await act(async () => {
+    resolveAdd?.(walnutAllergy);
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ allergy_status: "registered" }),
+    );
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
   });
 });
 
