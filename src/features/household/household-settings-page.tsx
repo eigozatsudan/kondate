@@ -84,6 +84,8 @@ export type HouseholdFieldErrors = Partial<Record<keyof HouseholdSettingsValue, 
 type PendingRegisteredIntent = {
   member: HouseholdMemberRow;
   values: HouseholdSettingsValue;
+  revision: number;
+  inFlight?: Promise<boolean>;
 };
 
 export function toHouseholdFieldErrors(
@@ -249,7 +251,9 @@ export function HouseholdSettingsForm({
       setSelectedId(selected.id);
       if (initializedMemberId.current !== selected.id) {
         initializedMemberId.current = selected.id;
-        setValues(memberValue(selected));
+        setValues(
+          pendingRegisteredIntents.current.get(selected.id)?.values ?? memberValue(selected),
+        );
       }
     }
   }, [selected]);
@@ -307,13 +311,30 @@ export function HouseholdSettingsForm({
     [save],
   );
   const savePendingRegisteredStatus = useCallback(
-    async (memberId: string): Promise<boolean | undefined> => {
+    (memberId: string): Promise<boolean | undefined> => {
       const pending = pendingRegisteredIntents.current.get(memberId);
-      if (pending === undefined || pending.values.allergyStatus !== "registered") {
-        return undefined;
-      }
-      pendingRegisteredIntents.current.delete(memberId);
-      return queueSave(pending.member, pending.values);
+      if (pending === undefined) return Promise.resolve(undefined);
+      if (pending.inFlight !== undefined) return pending.inFlight;
+      const inFlight = (async (): Promise<boolean> => {
+        for (;;) {
+          const current = pendingRegisteredIntents.current.get(memberId);
+          if (current !== pending) return false;
+          const revision = current.revision;
+          const saved = await queueSave(current.member, current.values);
+          const latest = pendingRegisteredIntents.current.get(memberId);
+          if (latest !== pending) return saved;
+          if (!saved) {
+            delete latest.inFlight;
+            return false;
+          }
+          if (latest.revision === revision) {
+            pendingRegisteredIntents.current.delete(memberId);
+            return true;
+          }
+        }
+      })();
+      pending.inFlight = inFlight;
+      return inFlight;
     },
     [queueSave],
   );
@@ -400,12 +421,27 @@ export function HouseholdSettingsForm({
       selected?.status === "complete" &&
       selected.allergy_status !== "registered" &&
       next.allergyStatus === "registered";
-    if (!requiresRegisteredIntent) {
-      if (selected !== undefined) pendingRegisteredIntents.current.delete(selected.id);
-      if (selected !== undefined) void queueSave(selected, next);
+    if (selected === undefined) return;
+    const existingIntent = pendingRegisteredIntents.current.get(selected.id);
+    if (!requiresRegisteredIntent && existingIntent === undefined) {
+      void queueSave(selected, next);
       return;
     }
-    pendingRegisteredIntents.current.set(selected.id, { member: selected, values: next });
+    if (existingIntent === undefined) {
+      pendingRegisteredIntents.current.set(selected.id, {
+        member: selected,
+        values: next,
+        revision: 0,
+      });
+    } else {
+      existingIntent.member = selected;
+      existingIntent.values = next;
+      existingIntent.revision += 1;
+    }
+    if (!requiresRegisteredIntent) {
+      void savePendingRegisteredStatus(selected.id);
+      return;
+    }
     if (allergiesQuery.isError) {
       setMessage("アレルギー情報を確認できませんでした。もう一度お試しください");
       void allergiesQuery.refetch();
@@ -586,10 +622,17 @@ export function HouseholdSettingsForm({
             addCustom={async (memberId, name, aliases) => {
               try {
                 await api.addCustomAllergy(memberId, name, aliases);
-                await finalizeAllergyChange(memberId);
               } catch (error) {
                 setMessage(
                   error instanceof Error ? error.message : "アレルギーを追加できませんでした",
+                );
+                throw error;
+              }
+              try {
+                await finalizeAllergyChange(memberId);
+              } catch (error) {
+                setMessage(
+                  error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
                 );
               }
             }}
