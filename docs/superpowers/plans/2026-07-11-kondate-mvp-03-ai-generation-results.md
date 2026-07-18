@@ -1155,6 +1155,14 @@ with the final 14-argument HMAC/lineage RPC and retains the stronger replay orde
 attempt/window quotas, and final retention rules specified there; do not front-load
 those unrelated Task 15 changes.
 
+The corrective Task 2 commit includes the migration, pgTAP file, regenerated database
+type, application database overlay and its type test, and the admin-client import:
+
+```bash
+git add supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tests/database/ai_control_and_quota.test.sql src/shared/types/database.generated.ts src/shared/types/database.ts src/shared/types/database.test.ts netlify/functions/_shared/supabase-admin.ts
+git commit -m "fix: 新規献立のAI予約を修正"
+```
+
 ### Task 3: Reject paid model configuration and verify structured-output support
 
 **Files:**
