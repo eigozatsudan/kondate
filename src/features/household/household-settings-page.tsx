@@ -85,6 +85,9 @@ type PendingRegisteredIntent = {
   member: HouseholdMemberRow;
   values: HouseholdSettingsValue;
   revision: number;
+  allergyRefetchPending: boolean;
+  allergyRefetchStarted: boolean;
+  allergyRefetchToken?: { settled: boolean };
   registeredSaveEvidence:
     "known-empty" | "unknown" | "query-error" | "allergy-query" | "allergy-insert";
   inFlight?: Promise<boolean | undefined>;
@@ -214,6 +217,7 @@ export function HouseholdSettingsForm({
   const membersKey = householdKeys.members(userId);
   const [selectedId, setSelectedId] = useState<string>();
   const [values, setValues] = useState<HouseholdSettingsValue>();
+  const [allergyRefetchEpoch, setAllergyRefetchEpoch] = useState(0);
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
   const [message, setMessage] = useState("");
   const [dislike, setDislike] = useState("");
@@ -493,13 +497,18 @@ export function HouseholdSettingsForm({
         member: selected,
         values: next,
         revision: 0,
-        registeredSaveEvidence: allergiesQuery.isError
-          ? "query-error"
-          : !allergiesQuery.isSuccess
+        allergyRefetchPending: false,
+        allergyRefetchStarted: false,
+        registeredSaveEvidence:
+          allergiesQuery.isFetching || allergiesQuery.isRefetching
             ? "unknown"
-            : currentAllergies.length > 0
-              ? "allergy-query"
-              : "known-empty",
+            : allergiesQuery.isError
+              ? "query-error"
+              : !allergiesQuery.isSuccess
+                ? "unknown"
+                : currentAllergies.length > 0
+                  ? "allergy-query"
+                  : "known-empty",
       });
     } else {
       existingIntent.member = selected;
@@ -507,15 +516,19 @@ export function HouseholdSettingsForm({
       existingIntent.revision += 1;
       if (
         next.allergyStatus === "registered" &&
+        !existingIntent.allergyRefetchPending &&
         existingIntent.registeredSaveEvidence !== "allergy-insert"
       ) {
-        existingIntent.registeredSaveEvidence = allergiesQuery.isError
-          ? "query-error"
-          : !allergiesQuery.isSuccess
+        existingIntent.registeredSaveEvidence =
+          allergiesQuery.isFetching || allergiesQuery.isRefetching
             ? "unknown"
-            : currentAllergies.length > 0
-              ? "allergy-query"
-              : "known-empty";
+            : allergiesQuery.isError
+              ? "query-error"
+              : !allergiesQuery.isSuccess
+                ? "unknown"
+                : currentAllergies.length > 0
+                  ? "allergy-query"
+                  : "known-empty";
       }
     }
     if (!requiresRegisteredIntent) {
@@ -549,6 +562,30 @@ export function HouseholdSettingsForm({
     if (selectedMemberId === undefined) return;
     const pending = pendingRegisteredIntents.current.get(selectedMemberId);
     if (pending === undefined || pending.values.allergyStatus !== "registered") return;
+    if (pending.allergyRefetchToken !== undefined) {
+      if (!pending.allergyRefetchToken.settled) return;
+      delete pending.allergyRefetchToken;
+      pending.allergyRefetchPending = false;
+      pending.allergyRefetchStarted = false;
+    }
+    if (pending.allergyRefetchPending) {
+      if (allergiesQuery.isFetching || allergiesQuery.isRefetching) {
+        pending.allergyRefetchStarted = true;
+        if (pending.registeredSaveEvidence !== "allergy-insert") {
+          pending.registeredSaveEvidence = "unknown";
+        }
+        return;
+      }
+      if (!pending.allergyRefetchStarted) return;
+      delete pending.allergyRefetchToken;
+      pending.allergyRefetchPending = false;
+      pending.allergyRefetchStarted = false;
+    } else if (allergiesQuery.isFetching || allergiesQuery.isRefetching) {
+      if (pending.registeredSaveEvidence !== "allergy-insert") {
+        pending.registeredSaveEvidence = "unknown";
+      }
+      return;
+    }
     if (!allergiesQuery.isSuccess) {
       if (pending.registeredSaveEvidence !== "allergy-insert") {
         pending.registeredSaveEvidence = allergiesQuery.isError ? "query-error" : "unknown";
@@ -569,9 +606,12 @@ export function HouseholdSettingsForm({
   }, [
     allergiesQuery.data,
     allergiesQuery.isError,
+    allergiesQuery.isFetching,
+    allergiesQuery.isRefetching,
     allergiesQuery.isSuccess,
     savePendingRegisteredStatus,
     selectedMemberId,
+    allergyRefetchEpoch,
   ]);
 
   if (membersQuery.isPending || catalogQuery.isPending || aliasesQuery.isPending)
@@ -740,12 +780,19 @@ export function HouseholdSettingsForm({
               await api.removeAllergy(allergyId);
               const pending = pendingRegisteredIntents.current.get(selected.id);
               if (pending?.values.allergyStatus === "registered") {
+                pending.allergyRefetchPending = true;
+                pending.allergyRefetchStarted = false;
                 pending.registeredSaveEvidence = "unknown";
                 pending.revision += 1;
+                pending.allergyRefetchToken = { settled: false };
               }
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies("settings", selected.id),
               });
+              if (pending?.allergyRefetchToken !== undefined) {
+                pending.allergyRefetchToken.settled = true;
+                setAllergyRefetchEpoch((current) => current + 1);
+              }
               await api.invalidateSafety();
             }}
           />
