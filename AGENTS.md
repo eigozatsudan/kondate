@@ -56,18 +56,20 @@
 2. 各Taskでは、`SubAgents.md` が定める役割ごとに**新しいサブエージェントスレッド**を使用する。完了したTaskのImplementer、Verifier、Reviewerの各スレッドを次Taskへ再利用しない。
 3. **各 Task 完了ごとに**、直前のTaskの変更が次のTaskに悪影響を与えていないか、**コードベースと設計書を照合してレビュー**し、必要なら修正する。レビューと検証が完了するまで次Taskを開始しない。
 4. 次Taskが存在する場合、親エージェントは `.superpowers/sdd/handoff-plan-<plan>-task-<completed>-to-task-<next>-<head7>.md` 形式の一意な短いファイルを新規作成する。各placeholderには実値を入れ、`plan`、`completed`、`next` は数字、`head7` は完了時HEADの小文字hex 7文字とする。
-5. handoffは一度だけ新規作成するwrite-onceとし、既存ファイルを上書き、削除、再利用しない。同名ファイルが存在する場合または新規作成に失敗した場合はblockerとして報告し、解消するまで次Taskの開始を停止する。
-6. handoffには次の情報だけを記録する:
+5. producerは作成前にGitの正本からworktree rootを解決し、作成先までの全祖先が実directoryかつ非symlinkであり、作成先directoryのcanonical pathがworktree内にあることをsymlink非追従方式で確認する。
+6. 作成には、symlink解決後のworkspace外操作を拒否できるworkspace-scoped file toolを使用し、検証済みdirectory handle相当へ束縛した `O_CREAT|O_EXCL` 相当の単一の排他新規作成を行う。存在確認と書込を別操作へ分離しない。surface上でworkspace境界の強制またはexclusive createを確認できない場合は作成せず、blockerとして報告して次Taskの開始を停止する。
+7. handoffは一度だけ新規作成するwrite-onceとし、既存leafは型や内容に関係なく一切変更せずblockerとして報告する。既存ファイルを上書き、削除、再利用せず、新規作成に失敗した場合もblockerが解消するまで次Taskの開始を停止する。
+8. handoffには次の情報だけを記録する:
    - 完了したPlan / Taskとcommit。
    - 検証、一次レビュー、二次検証の結論と未解決ブロッカー。
    - 次のPlan / Taskと、設計書、Task brief、reportのパス。
    - 次Taskが使用する確定済みinterfaceと設計判断。
    - worktree、branch、HEAD。
-7. handoffにはraw diff、raw log、設計書本文、過去Taskの累積要約を記載しない。
-8. 親エージェントは次Taskの新規スレッドへ発行したhandoffのexact pathだけを渡す。glob、directory listing、自動探索、mtimeまたはファイル名の順序による「最新」ファイルの選択は禁止する。古いhandoffは残るが、exact pathを明示して渡されない限りauthorityとして扱わない。
-9. 次Taskの新規スレッドは、明示されたhandoffが通常ファイルかつ非symlinkであり、canonical pathがworktree内にあることを確認する。条件不成立、欠損、malformed、stale、改ざん、handoff内容と `AGENTS.md`、`SubAgents.md`、対象Task、承認済み設計書、`.superpowers/sdd/progress.md`、`git log`、branch、HEAD、worktreeの状態との不一致、読取中の状態変化はblockerとして報告する。安全な新規発行と正本との再照合に成功するまで、次Taskの作業を一切開始しない。
-10. 次Taskが存在しない場合、handoffは作成せず、既存handoffも削除せずにPlanの完了フローへ進む。
-11. 設計書に記載のない仕様変更を勝手に行わない。判断に迷う場合は設計書を正とし、設計書自体の不備が疑われる場合は明示的に指摘する。
+9. handoffにはraw diff、raw log、設計書本文、過去Taskの累積要約を記載しない。
+10. 親エージェントは次Taskの新規スレッドへ発行したhandoffのexact pathだけを渡す。glob、directory listing、自動探索、mtimeまたはファイル名の順序による「最新」ファイルの選択は禁止する。古いhandoffは残るが、exact pathを明示して渡されない限りauthorityとして扱わない。
+11. 次Taskの新規スレッドは、明示されたhandoffが通常ファイルかつ非symlinkであり、canonical pathがworktree内にあることを確認する。条件不成立、欠損、malformed、stale、改ざん、handoff内容と `AGENTS.md`、`SubAgents.md`、対象Task、承認済み設計書、`.superpowers/sdd/progress.md`、`git log`、branch、HEAD、worktreeの状態との不一致、読取中の状態変化はblockerとして報告する。安全な新規発行と正本との再照合に成功するまで、次Taskの作業を一切開始しない。
+12. 次Taskが存在しない場合、handoffは作成せず、既存handoffも削除せずにPlanの完了フローへ進む。
+13. 設計書に記載のない仕様変更を勝手に行わない。判断に迷う場合は設計書を正とし、設計書自体の不備が疑われる場合は明示的に指摘する。
 
 ---
 
