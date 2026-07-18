@@ -147,6 +147,141 @@ it("shows the empty add screen immediately after deleting the last member", asyn
   expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([]);
 });
 
+it("closes a member delete confirmation when another member is selected", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    deleteMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  const staleConfirm = screen.getByRole("button", { name: "家族だけを削除" });
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
+  });
+  fireEvent.click(staleConfirm);
+  expect(deleteMember).not.toHaveBeenCalled();
+});
+
+it("does not delete either member after switching during the delete target's allergy add", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  const addStandardAllergy = vi.fn(
+    () =>
+      new Promise<MemberAllergyRow>((resolve) => {
+        resolveAdd = resolve;
+      }),
+  );
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+    deleteMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  const staleConfirm = screen.getByRole("button", { name: "家族だけを削除" });
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+
+  expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
+  fireEvent.click(staleConfirm);
+  expect(deleteMember).not.toHaveBeenCalled();
+  await act(async () => {
+    resolveAdd?.(standardAllergy);
+    await Promise.resolve();
+  });
+});
+
+it("deletes only the captured member and preserves a newly selected member", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  let resolveDelete: (() => void) | undefined;
+  const pendingDelete = new Promise<void>((resolve) => {
+    resolveDelete = resolve;
+  });
+  const deleteMember = vi.fn().mockReturnValue(pendingDelete);
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member, secondMember])
+    .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
+  const { queryClient } = renderSettings({ listMembers, deleteMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await waitFor(() => {
+    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
+  });
+
+  await act(async () => {
+    resolveDelete?.();
+    await pendingDelete;
+  });
+
+  await waitFor(() => {
+    expect(deleteMember).toHaveBeenCalledWith(member.id);
+    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
+  });
+  expect(queryClient.getQueryData(householdKeys.members("settings"))).toEqual([secondMember]);
+});
+
+it("closes a delete confirmation when its target disappears from the member cache", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  const { queryClient } = renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    deleteMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  const staleConfirm = screen.getByRole("button", { name: "家族だけを削除" });
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [secondMember]);
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
+  });
+
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [member, secondMember]);
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
+  });
+  expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
+  fireEvent.click(staleConfirm);
+  expect(deleteMember).not.toHaveBeenCalled();
+});
+
+it("submits a member delete confirmation only once", async () => {
+  let resolveDelete: (() => void) | undefined;
+  const pendingDelete = new Promise<void>((resolve) => {
+    resolveDelete = resolve;
+  });
+  const deleteMember = vi.fn().mockReturnValue(pendingDelete);
+  renderSettings({ deleteMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  const confirm = screen.getByRole("button", { name: "家族だけを削除" });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+
+  expect(deleteMember).toHaveBeenCalledTimes(1);
+  expect(confirm).toBeDisabled();
+  await act(async () => {
+    resolveDelete?.();
+    await pendingDelete;
+  });
+});
+
 it("prevents duplicate draft creation from the empty add screen", async () => {
   let resolveCreate: ((member: HouseholdMemberRow) => void) | undefined;
   const createDraft = vi.fn(

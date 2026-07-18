@@ -198,7 +198,8 @@ export function HouseholdSettingsForm({
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
   const [message, setMessage] = useState("");
   const [dislike, setDislike] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<HouseholdMemberRow>();
+  const [deletingMemberIds, setDeletingMemberIds] = useState<ReadonlySet<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [pendingOperationVersion, setPendingOperationVersion] = useState(0);
   const [allergyMutationPendingMemberIds, setAllergyMutationPendingMemberIds] = useState<
@@ -210,6 +211,8 @@ export function HouseholdSettingsForm({
   const failedSaveMemberIdsRef = useRef(new Set<string>());
   const deferredRegisteredMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
+  const deletingMemberIdsRef = useRef(new Set<string>());
+  const selectedMemberIdRef = useRef<string | undefined>(undefined);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
   const ageBandRef = useRef<HTMLSelectElement>(null);
@@ -227,9 +230,10 @@ export function HouseholdSettingsForm({
     queryKey: ["settings-allergen-aliases"],
     queryFn: () => api.listAliases?.() ?? Promise.resolve([]),
   });
-  const members = membersQuery.data ?? [];
+  const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
   const selected =
     selectedId === undefined ? members[0] : members.find((member) => member.id === selectedId);
+  selectedMemberIdRef.current = selected?.id;
   const allergiesQuery = useQuery({
     queryKey: selected
       ? householdKeys.allergies("settings", selected.id)
@@ -266,10 +270,22 @@ export function HouseholdSettingsForm({
   }, [membersKey, pendingOperationVersion, queryClient, selected]);
 
   useEffect(() => {
-    if (!confirmDelete) return;
+    if (deleteTarget === undefined) return;
+    if (
+      selected?.id !== deleteTarget.id ||
+      !members.some((member) => member.id === deleteTarget.id)
+    ) {
+      setDeleteTarget(undefined);
+    }
+  }, [deleteTarget, members, selected?.id]);
+
+  useEffect(() => {
+    if (deleteTarget === undefined) return;
     const trigger = deleteTrigger.current;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setConfirmDelete(false);
+      if (event.key === "Escape" && !deletingMemberIdsRef.current.has(deleteTarget.id)) {
+        setDeleteTarget(undefined);
+      }
     };
     deleteConfirm.current?.focus();
     document.addEventListener("keydown", onKeyDown);
@@ -277,7 +293,7 @@ export function HouseholdSettingsForm({
       document.removeEventListener("keydown", onKeyDown);
       trigger?.focus();
     };
-  }, [confirmDelete]);
+  }, [deleteTarget]);
 
   const update = (patch: Partial<HouseholdSettingsValue>) => {
     if (selected === undefined) return undefined;
@@ -549,7 +565,10 @@ export function HouseholdSettingsForm({
           <select
             value={selected.id}
             onChange={(event) => {
-              setSelectedId(event.target.value);
+              const nextSelectedId = event.target.value;
+              selectedMemberIdRef.current = nextSelectedId;
+              setDeleteTarget(undefined);
+              setSelectedId(nextSelectedId);
             }}
           >
             {members.map((member) => (
@@ -877,44 +896,79 @@ export function HouseholdSettingsForm({
         ref={deleteTrigger}
         className="secondary-button"
         type="button"
-        disabled={selectedAllergyMutationPending}
+        disabled={selectedAllergyMutationPending || deletingMemberIds.has(selected.id)}
         onClick={() => {
-          if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
-          setConfirmDelete(true);
+          if (
+            allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
+            deletingMemberIdsRef.current.has(selected.id)
+          ) {
+            return;
+          }
+          setDeleteTarget(selected);
         }}
       >
         家族を削除
       </button>
-      {confirmDelete && (
+      {deleteTarget !== undefined && (
         <div role="dialog" aria-modal="true" aria-label="家族の削除確認" className="card stack">
           <p>この家族の設定だけを削除します。</p>
           <button
             ref={deleteConfirm}
             className="primary-button"
             type="button"
-            disabled={selectedAllergyMutationPending}
+            disabled={
+              allergyMutationPendingMemberIdsRef.current.has(deleteTarget.id) ||
+              deletingMemberIds.has(deleteTarget.id)
+            }
             onClick={() => {
-              if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
+              const targetId = deleteTarget.id;
+              if (
+                allergyMutationPendingMemberIdsRef.current.has(targetId) ||
+                deletingMemberIdsRef.current.has(targetId)
+              ) {
+                return;
+              }
+              const targetExists = queryClient
+                .getQueryData<HouseholdMemberRow[]>(membersKey)
+                ?.some((member) => member.id === targetId);
+              if (targetExists !== true) {
+                setDeleteTarget(undefined);
+                return;
+              }
+              deletingMemberIdsRef.current.add(targetId);
+              setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
               void api
-                .deleteMember(selected.id)
-                .then(() => {
-                  setConfirmDelete(false);
+                .deleteMember(targetId)
+                .then(async () => {
+                  setDeleteTarget((current) => (current?.id === targetId ? undefined : current));
                   queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-                    current.filter((member) => member.id !== selected.id),
+                    current.filter((member) => member.id !== targetId),
                   );
-                  setSelectedId(undefined);
-                  valuesByMemberRef.current.delete(selected.id);
-                  pendingOperationCountsRef.current.delete(selected.id);
-                  failedSaveMemberIdsRef.current.delete(selected.id);
-                  deferredRegisteredMemberIdsRef.current.delete(selected.id);
-                  allergyMutationPendingMemberIdsRef.current.delete(selected.id);
+                  valuesByMemberRef.current.delete(targetId);
+                  pendingOperationCountsRef.current.delete(targetId);
+                  failedSaveMemberIdsRef.current.delete(targetId);
+                  deferredRegisteredMemberIdsRef.current.delete(targetId);
+                  allergyMutationPendingMemberIdsRef.current.delete(targetId);
                   setAllergyMutationPendingMemberIds(
                     new Set(allergyMutationPendingMemberIdsRef.current),
                   );
-                  setValues(undefined);
-                  return queryClient.invalidateQueries({ queryKey: membersKey });
+                  if (selectedMemberIdRef.current === targetId) {
+                    selectedMemberIdRef.current = undefined;
+                    setSelectedId(undefined);
+                    setValues(undefined);
+                  }
+                  await queryClient.invalidateQueries({ queryKey: membersKey });
+                  await api.invalidateSafety();
                 })
-                .then(() => api.invalidateSafety());
+                .catch((error: unknown) => {
+                  setMessage(
+                    error instanceof Error ? error.message : "家族設定を削除できませんでした",
+                  );
+                })
+                .finally(() => {
+                  deletingMemberIdsRef.current.delete(targetId);
+                  setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
+                });
             }}
           >
             家族だけを削除
@@ -922,8 +976,10 @@ export function HouseholdSettingsForm({
           <button
             className="text-button"
             type="button"
+            disabled={deletingMemberIds.has(deleteTarget.id)}
             onClick={() => {
-              setConfirmDelete(false);
+              if (deletingMemberIdsRef.current.has(deleteTarget.id)) return;
+              setDeleteTarget(undefined);
             }}
           >
             キャンセル
