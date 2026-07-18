@@ -1184,7 +1184,8 @@ import { releaseQuota } from "../../../shared/contracts/generation";
 import { parseOpenRouterModels, parseServerEnv } from "./env";
 
 const base = {
-  SUPABASE_URL: "http://127.0.0.1:54321",
+  VITE_SUPABASE_URL: "http://127.0.0.1:8000",
+  SUPABASE_URL: "http://kong:8000",
   SUPABASE_PUBLISHABLE_KEY: "publishable-test",
   SUPABASE_SERVICE_ROLE_KEY: "service-role-test-at-least-twenty",
   SERVER_SITE_ORIGIN: "http://127.0.0.1:5173",
@@ -1240,6 +1241,11 @@ describe("parseOpenRouterModels", () => {
   it.each(["0", "46"])("rejects out-of-range global quota %s", (value) => {
     expect(() => parseServerEnv({ ...base, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
   });
+
+  it("allows the operator to lower the global quota", () => {
+    expect(parseServerEnv({ ...base, GLOBAL_DAILY_AI_LIMIT: "1" }).openRouter.globalDailyLimit)
+      .toBe(1);
+  });
 });
 ```
 
@@ -1250,6 +1256,14 @@ Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/fu
 Expected: FAIL because `parseOpenRouterModels` and the `openRouter` configuration do not exist.
 
 - [ ] **Step 3 (2–5 min): Extend the complete server parser without exposing secrets**
+
+This is an additive extension of the current hardened continuation parser. Preserve its
+canonical local `VITE_SUPABASE_URL=http://127.0.0.1:8000` and
+`SUPABASE_URL=http://kong:8000`, managed-project-ref equality, HTTPS/site-origin checks,
+secret-prefix rejection, exported `supabaseServerEnvSchema`, and existing top-level
+continuation fields. Refactor shared validation if needed, but do not replace those
+checks with a bare `rawServerEnvSchema.parse(source)` projection. The excerpt below
+shows the new fields and final projection, not permission to remove the existing guards.
 
 ```ts
 import { z } from "zod";
@@ -1432,7 +1446,7 @@ Expected: Vitest PASS; the free config exits 0 with `Verified 1 free OpenRouter 
 
 ```bash
 git add netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts .env.example scripts/verify-openrouter-models.mjs package.json package-lock.json
-git commit -m "feat: enforce free openrouter models"
+git commit -m "feat: 無料OpenRouterモデルを強制"
 ```
 
 ### Task 4: Persist a validated menu and terminal success in one transaction
