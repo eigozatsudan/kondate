@@ -2,7 +2,8 @@ import type { Session } from "@supabase/supabase-js";
 import { act, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { AuthProvider, type AuthProviderClient, useAuth } from "./auth-provider";
+import { AuthProvider, type AuthProviderClient } from "./auth-provider";
+import { useAuth } from "./use-auth";
 
 const session = { access_token: "token", user: { id: "user-1" } } as Session;
 type AuthSubscription = ReturnType<

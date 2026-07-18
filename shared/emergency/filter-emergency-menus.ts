@@ -4,15 +4,14 @@ import type { CurrentSafetyContext, CurrentSafetyMember } from "../safety/contex
 import type { GenerationContext } from "../safety/generation-context.js";
 import { collectMenuTextSources, normalizeFoodText } from "../safety/allergens.js";
 import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
-import {
-  emergencyMenuCandidateSchema,
-  type EmergencyLabelWarning,
-  type EmergencyMenuCandidate,
-  type EmergencyMenusData,
-} from "./contracts.js";
+import { emergencyMenuCandidateSchema, type EmergencyMenuCandidate } from "./contracts.js";
 import { emergencyFixtureMetadataV1, emergencyMenuFixturesV1 } from "./fixtures.v1.js";
 
-export type { EmergencyLabelWarning, EmergencyMenuCandidate, EmergencyMenusData };
+export type {
+  EmergencyLabelWarning,
+  EmergencyMenuCandidate,
+  EmergencyMenusData,
+} from "./contracts.js";
 
 export type EmergencyFilterResult = {
   menus: readonly ValidatedMenu[];

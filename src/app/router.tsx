@@ -43,10 +43,14 @@ export function createAppRouter(): AppRouter {
           },
         },
         {
-          element: <RequireCompletedOnboarding />,
+          element: <AppShell />,
           children: [
             {
-              element: <AppShell />,
+              path: "/emergency-menus",
+              element: <EmergencyMenuPage />,
+            },
+            {
+              element: <RequireCompletedOnboarding />,
               children: [
                 { path: "/", element: <Navigate to="/planner" replace /> },
                 {
@@ -56,10 +60,6 @@ export function createAppRouter(): AppRouter {
                 {
                   path: "/pantry",
                   element: <PantryPage />,
-                },
-                {
-                  path: "/emergency-menus",
-                  element: <EmergencyMenuPage />,
                 },
                 {
                   path: "/history",

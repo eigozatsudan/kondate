@@ -115,9 +115,7 @@ const handler = createEmergencyMenusHandler({
       .select("name")
       .eq("user_id", userId)
       .in("id", [...ids]);
-    if (error !== null || data.length !== ids.length) {
-      throw new Error("pantry_items_unavailable");
-    }
+    if (error !== null || data.length !== new Set(ids).size) return [];
     return data.map((row) => row.name);
   },
 });

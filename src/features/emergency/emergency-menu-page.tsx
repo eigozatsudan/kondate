@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
-import { useAuth } from "@/features/auth/auth-provider";
+import { useAuth } from "@/features/auth/use-auth";
 import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
 import {
   householdSafetyChangedEvent,

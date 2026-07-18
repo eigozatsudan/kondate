@@ -13,6 +13,7 @@ export default tseslint.config(
       "playwright-report",
       "test-results",
       "infra/supabase",
+      ".worktrees",
       "src/shared/types/database.generated.ts",
       "eslint.config.js",
     ],

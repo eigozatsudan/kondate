@@ -6,7 +6,7 @@ import type { ValidatedMenu } from "@shared/contracts/generation";
 const useQueryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({ useQuery: useQueryMock }));
-vi.mock("@/features/auth/auth-provider", () => ({
+vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "72000000-0000-4000-8000-000000000001" } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
