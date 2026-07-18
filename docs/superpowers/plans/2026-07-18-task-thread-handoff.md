@@ -28,7 +28,9 @@
 - Consumes: `SubAgents.md` の役割分離、レビュー、検証、progress ledger、single-writer規則
 - Produces: Taskごとのfresh subagent threadと `.superpowers/sdd/next-task.md` を使うリポジトリ共通運用
 
-- [ ] **Step 1: 現行ルールが実行不能な `/compact` を要求していることを確認する**
+- [ ] **Step 1: Implementerが現行ルールの実行不能な `/compact` 要求を変更前に確認する**
+
+このStepは変更前の状態に依存するImplementer専用の確認とし、commit後のVerifierは実行しない。
 
 Run: `rg -n '/compact|各 Task 完了ごと' AGENTS.md`
 
@@ -73,7 +75,7 @@ Expected: 終了コード0、出力なし。
 
 Run: `git diff -- AGENTS.md`
 
-Expected: `## 4. 実装の進め方` だけが設計どおりに変更され、`SubAgents.md` を含む他ファイルに変更がない。
+Expected: `## 4. 実装の進め方` だけが設計どおりに変更され、`SubAgents.md` を含む他ファイルに変更がない。この未コミットdiff確認はImplementer専用とし、commit後のVerifierは実行しない。
 
 - [ ] **Step 5: 変更をコミットする**
 
@@ -82,3 +84,21 @@ Run: `git add AGENTS.md`
 Run: `git commit -m "docs: Task間の引き継ぎ運用を更新"`
 
 Expected: `AGENTS.md` の変更だけを含む日本語Conventional Commitが作成される。
+
+- [ ] **Step 6: Verifierがcommit後も安定する確認を独立して実行する**
+
+Run: `rg -n '/compact' AGENTS.md`
+
+Expected: 終了コード1、出力なし。
+
+Run: `rg -n '新しいサブエージェントスレッド|next-task\.md|raw diff|progress\.md' AGENTS.md`
+
+Expected: 終了コード0。新規スレッド、引き継ぎファイル、禁止内容、正本照合の各規則が表示される。
+
+Run: `git diff --check 285c6c0..HEAD`
+
+Expected: 終了コード0、出力なし。
+
+Run: `git status --short`
+
+Expected: 終了コード0、出力なし（clean）。
