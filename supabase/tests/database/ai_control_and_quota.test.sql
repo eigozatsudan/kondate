@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(33);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password,
@@ -32,6 +32,35 @@ select throws_ok($$
 $$, '22023', 'release_quota_mismatch',
   'the database rejects an environment-only success-limit override');
 
+select is((select count(*) from private.ai_generation_requests
+  where idempotency_key in (
+    '20000000-0000-4000-8000-000000000097',
+    '20000000-0000-4000-8000-000000000098'
+  )), 0::bigint);
+select is((select count(*) from private.ai_global_daily_usage), 0::bigint);
+select throws_ok($$
+  select public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000002',
+    '20000000-0000-4000-8000-000000000097',
+    'regenerate_menu', null, 5, 0, 180, '2026-07-10 15:00:00+00'
+  )
+$$, '22023', 'invalid_quota_configuration',
+  'the database rejects a zero global limit before generation reservation');
+select throws_ok($$
+  select public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000002',
+    '20000000-0000-4000-8000-000000000098',
+    'regenerate_menu', null, 5, 46, 180, '2026-07-10 15:00:00+00'
+  )
+$$, '22023', 'invalid_quota_configuration',
+  'the database rejects a global limit above the release maximum before generation reservation');
+select is((select count(*) from private.ai_generation_requests
+  where idempotency_key in (
+    '20000000-0000-4000-8000-000000000097',
+    '20000000-0000-4000-8000-000000000098'
+  )), 0::bigint);
+select is((select count(*) from private.ai_global_daily_usage), 0::bigint);
+
 select is(
   public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000001',
@@ -61,6 +90,68 @@ select is(
   )->>'failure_code',
   'generation_in_progress'
 );
+
+select lives_ok($$
+  select public.mark_ai_global_sent(
+    (select id from private.ai_generation_requests
+      where idempotency_key = '20000000-0000-4000-8000-000000000001'),
+    '2026-07-10 15:00:03+00'
+  )
+$$);
+select is((select jsonb_build_object(
+  'status', status,
+  'repair_attempted', repair_attempted,
+  'global_reserved_day', global_reserved_day,
+  'global_sent_calls', global_sent_calls
+) from private.ai_generation_requests
+  where idempotency_key = '20000000-0000-4000-8000-000000000001'),
+  jsonb_build_object(
+    'status', 'processing',
+    'repair_attempted', false,
+    'global_reserved_day', null,
+    'global_sent_calls', 1
+  ));
+select is((select jsonb_build_object(
+  'reserved_count', reserved_count,
+  'sent_count', sent_count
+) from private.ai_global_daily_usage
+  where usage_day = date '2026-07-11'),
+  jsonb_build_object('reserved_count', 0, 'sent_count', 1));
+select throws_ok($$
+  select public.reserve_ai_repair_call(
+    (select id from private.ai_generation_requests
+      where idempotency_key = '20000000-0000-4000-8000-000000000001'),
+    0, '2026-07-10 15:00:04+00'
+  )
+$$, '22023', 'invalid_quota_configuration',
+  'the database rejects a zero global limit before repair reservation');
+select throws_ok($$
+  select public.reserve_ai_repair_call(
+    (select id from private.ai_generation_requests
+      where idempotency_key = '20000000-0000-4000-8000-000000000001'),
+    46, '2026-07-10 15:00:05+00'
+  )
+$$, '22023', 'invalid_quota_configuration',
+  'the database rejects a global limit above the release maximum before repair reservation');
+select is((select jsonb_build_object(
+  'status', status,
+  'repair_attempted', repair_attempted,
+  'global_reserved_day', global_reserved_day,
+  'global_sent_calls', global_sent_calls
+) from private.ai_generation_requests
+  where idempotency_key = '20000000-0000-4000-8000-000000000001'),
+  jsonb_build_object(
+    'status', 'processing',
+    'repair_attempted', false,
+    'global_reserved_day', null,
+    'global_sent_calls', 1
+  ));
+select is((select jsonb_build_object(
+  'reserved_count', reserved_count,
+  'sent_count', sent_count
+) from private.ai_global_daily_usage
+  where usage_day = date '2026-07-11'),
+  jsonb_build_object('reserved_count', 0, 'sent_count', 1));
 
 select lives_ok($$
   select public.finalize_ai_generation_failure(

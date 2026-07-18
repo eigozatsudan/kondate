@@ -170,7 +170,8 @@ begin
   if p_user_limit <> 5 then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
-  if p_global_limit < 1 or p_stale_after_seconds < 30 then
+  if p_global_limit is null or p_global_limit not between 1 and 45
+     or p_stale_after_seconds < 30 then
     raise exception using errcode = '22023', message = 'invalid_quota_configuration';
   end if;
   if p_request_kind not in ('new_menu', 'regenerate_menu', 'regenerate_dish') then
@@ -272,6 +273,9 @@ as $$
 declare v_request private.ai_generation_requests; v_usage private.ai_global_daily_usage;
   v_day date := private.ai_jst_day(p_now);
 begin
+  if p_global_limit is null or p_global_limit not between 1 and 45 then
+    raise exception using errcode = '22023', message = 'invalid_quota_configuration';
+  end if;
   select * into v_request from private.ai_generation_requests where id = p_request_id for update;
   if not found or v_request.status <> 'processing' or v_request.repair_attempted
      or v_request.global_reserved_day is not null then
