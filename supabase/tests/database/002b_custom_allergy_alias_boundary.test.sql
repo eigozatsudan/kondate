@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(9);
+select plan(10);
 
 select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',
@@ -113,6 +113,13 @@ select throws_ok(
   '42501',
   'new row violates row-level security policy for table "member_allergies"',
   'direct custom inserts cannot bypass alias validation'
+);
+
+select has_index(
+  'public',
+  'member_allergies',
+  'member_allergies_custom_name_unique',
+  'a unique index blocks concurrent duplicate custom allergy names as a TOCTOU backstop'
 );
 
 select * from finish();
