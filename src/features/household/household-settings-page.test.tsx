@@ -2,7 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import type { AllergenCatalogRow, HouseholdMemberRow, MemberAllergyRow } from "./household-api";
+import type {
+  AllergenCatalogRow,
+  HouseholdMemberPatch,
+  HouseholdMemberRow,
+  MemberAllergyRow,
+} from "./household-api";
 import { householdKeys } from "./household-queries";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
 
@@ -176,9 +181,12 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
 });
 
-it.each(["standard", "custom"] as const)(
-  "defers a registered allergy status until the first %s allergy is saved",
-  async (allergyKind) => {
+it.each([
+  { allergyKind: "standard" as const, label: "standard allergy" },
+  { allergyKind: "custom" as const, label: "custom allergy" },
+])(
+  "defers a registered allergy status until the first $label is saved",
+  async ({ allergyKind }) => {
     const registeredMember = { ...member, allergy_status: "registered" as const };
     const updateMember = vi.fn().mockResolvedValue(registeredMember);
     const addStandardAllergy = vi.fn().mockResolvedValue(undefined);
@@ -213,6 +221,88 @@ it.each(["standard", "custom"] as const)(
     expect(addCallOrder).toBeLessThan(updateCallOrder);
   },
 );
+
+it("disables the allergy status until existing allergies finish loading", async () => {
+  let resolveAllergies: ((allergies: MemberAllergyRow[]) => void) | undefined;
+  const listAllergies = vi.fn(
+    () =>
+      new Promise<MemberAllergyRow[]>((resolve) => {
+        resolveAllergies = resolve;
+      }),
+  );
+  const updateMember = vi.fn().mockResolvedValue({ ...member, allergy_status: "registered" });
+  renderSettings({ listAllergies, updateMember });
+
+  const allergyStatus = await screen.findByLabelText("アレルギーの確認");
+  expect(allergyStatus).toBeDisabled();
+
+  await act(async () => {
+    resolveAllergies?.([standardAllergy]);
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(allergyStatus).toBeEnabled();
+  });
+  await userEvent.selectOptions(allergyStatus, "registered");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ allergy_status: "registered" }),
+    );
+  });
+});
+
+it("keeps newer edits in the registered save after a delayed standard allergy add", async () => {
+  let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  const addStandardAllergy = vi.fn(
+    () =>
+      new Promise<MemberAllergyRow>((resolve) => {
+        resolveAdd = resolve;
+      }),
+  );
+  const savedPatches: HouseholdMemberPatch[] = [];
+  const updateMember = vi
+    .fn()
+    .mockImplementation((_memberId: string, patch: HouseholdMemberPatch) => {
+      savedPatches.push(patch);
+      return Promise.resolve({
+        ...member,
+        display_name: patch.display_name ?? member.display_name,
+        spice_level: patch.spice_level ?? member.spice_level,
+        allergy_status: patch.allergy_status ?? member.allergy_status,
+      });
+    });
+  renderSettings({ addStandardAllergy, updateMember });
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "保護者" } });
+  await userEvent.selectOptions(screen.getByLabelText("辛さ"), "mild");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ display_name: "保護者", spice_level: "mild" }),
+    );
+  });
+  await act(async () => {
+    resolveAdd?.(standardAllergy);
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(updateMember.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  const registeredPatches = savedPatches.filter((patch) => patch.allergy_status === "registered");
+  expect(registeredPatches.at(-1)).toEqual(
+    expect.objectContaining({
+      allergy_status: "registered",
+      display_name: "保護者",
+      spice_level: "mild",
+    }),
+  );
+});
 
 it("saves a registered allergy status immediately when an allergy already exists", async () => {
   const updateMember = vi.fn().mockResolvedValue({ ...member, allergy_status: "registered" });
