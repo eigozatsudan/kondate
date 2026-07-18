@@ -1254,7 +1254,12 @@ it("連続削除では古い再取得完了でregistered保存を確定しない
       () => new Promise<MemberAllergyRow[]>((resolve) => (resolveFetchB = resolve)),
     );
   const registeredMember: HouseholdMemberRow = { ...member, allergy_status: "registered" };
-  const updateMember = vi.fn().mockResolvedValue(registeredMember);
+  let resolveInitialUpdate: ((saved: HouseholdMemberRow) => void) | undefined;
+  const updateMember = vi
+    .fn()
+    .mockImplementationOnce(
+      () => new Promise<HouseholdMemberRow>((resolve) => (resolveInitialUpdate = resolve)),
+    );
   const removeAllergy = vi.fn().mockResolvedValue(undefined);
   const { queryClient } = renderSettings({ listAllergies, removeAllergy, updateMember });
 
@@ -1263,7 +1268,6 @@ it("連続削除では古い再取得完了でregistered保存を確定しない
   await waitFor(() => {
     expect(updateMember).toHaveBeenCalledTimes(1);
   });
-  updateMember.mockClear();
 
   const removeButton = () => screen.getByRole("button", { name: "くるみを削除" });
   await userEvent.click(removeButton());
@@ -1277,12 +1281,16 @@ it("連続削除では古い再取得完了でregistered保存を確定しない
 
   await act(async () => {
     resolveFetchA?.([walnutAllergy]);
+    resolveInitialUpdate?.(registeredMember);
     await Promise.resolve();
   });
-  expect(updateMember).not.toHaveBeenCalled();
+  expect(updateMember).toHaveBeenCalledTimes(1);
   await act(async () => {
     resolveFetchB?.([]);
     await Promise.resolve();
   });
-  expect(updateMember).not.toHaveBeenCalled();
+  expect(updateMember).toHaveBeenCalledTimes(1);
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+  });
 });
