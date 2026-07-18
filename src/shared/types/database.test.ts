@@ -4,6 +4,45 @@ import type { Database } from "./database";
 import type { Database as GeneratedDatabase } from "./database.generated";
 
 type SaveDraftArgs = Database["public"]["Functions"]["save_generation_draft"]["Args"];
+type ReserveGeneration = Database["public"]["Functions"]["reserve_ai_generation"];
+type ReserveGenerationArgs = ReserveGeneration["Args"];
+type FinalizeGenerationFailure = Database["public"]["Functions"]["finalize_ai_generation_failure"];
+type FinalizeGenerationFailureArgs = FinalizeGenerationFailure["Args"];
+
+it("accepts nullable draft references for regeneration reservations", () => {
+  const args = {
+    p_user_id: "10000000-0000-4000-8000-000000000001",
+    p_idempotency_key: "20000000-0000-4000-8000-000000000001",
+    p_request_kind: "regenerate_menu",
+    p_draft_id: null,
+    p_draft_revision: null,
+    p_user_limit: 5,
+    p_global_limit: 45,
+  } satisfies ReserveGenerationArgs;
+
+  expectTypeOf(args).toExtend<ReserveGenerationArgs>();
+  expect(args.p_draft_id).toBeNull();
+});
+
+it("accepts a null retry time for terminal failures", () => {
+  const args = {
+    p_request_id: "40000000-0000-4000-8000-000000000001",
+    p_failure_code: "model_unavailable",
+    p_retry_at: null,
+  } satisfies FinalizeGenerationFailureArgs;
+
+  expectTypeOf(args).toExtend<FinalizeGenerationFailureArgs>();
+  expect(args.p_retry_at).toBeNull();
+});
+
+const invalidUndefinedRetry = {
+  p_request_id: "40000000-0000-4000-8000-000000000002",
+  p_failure_code: "model_unavailable",
+  p_retry_at: undefined,
+  // @ts-expect-error retry時刻は省略かstring/nullであり、明示undefinedは許可しない
+} satisfies FinalizeGenerationFailureArgs;
+
+void invalidUndefinedRetry;
 
 it("未完成下書きのnullable項目をRPC引数として表現できる", () => {
   const args = {
@@ -51,6 +90,10 @@ type GeneratedSaveDraft = GeneratedDatabase["public"]["Functions"]["save_generat
 type AppSaveDraft = Database["public"]["Functions"]["save_generation_draft"];
 type NullableDraftArg =
   "p_meal_type" | "p_cuisine_genre" | "p_time_limit_minutes" | "p_budget_preference";
+type GeneratedReserveGeneration = GeneratedDatabase["public"]["Functions"]["reserve_ai_generation"];
+type NullableReserveGenerationArg = "p_draft_id" | "p_draft_revision";
+type GeneratedFinalizeGenerationFailure =
+  GeneratedDatabase["public"]["Functions"]["finalize_ai_generation_failure"];
 
 it("nullable 4項目以外のRPC契約を変更しない", () => {
   expectTypeOf<Omit<AppSaveDraft["Args"], NullableDraftArg>>().toEqualTypeOf<
@@ -60,6 +103,24 @@ it("nullable 4項目以外のRPC契約を変更しない", () => {
   expectTypeOf<AppSaveDraft["SetofOptions"]>().toEqualTypeOf<GeneratedSaveDraft["SetofOptions"]>();
   expectTypeOf<Database["public"]["Functions"]["set_onboarding_status"]>().toEqualTypeOf<
     GeneratedDatabase["public"]["Functions"]["set_onboarding_status"]
+  >();
+});
+
+it("preserves every other reservation argument and return contract", () => {
+  expectTypeOf<Omit<ReserveGeneration["Args"], NullableReserveGenerationArg>>().toEqualTypeOf<
+    Omit<GeneratedReserveGeneration["Args"], NullableReserveGenerationArg>
+  >();
+  expectTypeOf<ReserveGeneration["Returns"]>().toEqualTypeOf<
+    GeneratedReserveGeneration["Returns"]
+  >();
+});
+
+it("preserves every other failure argument and return contract", () => {
+  expectTypeOf<Omit<FinalizeGenerationFailure["Args"], "p_retry_at">>().toEqualTypeOf<
+    Omit<GeneratedFinalizeGenerationFailure["Args"], "p_retry_at">
+  >();
+  expectTypeOf<FinalizeGenerationFailure["Returns"]>().toEqualTypeOf<
+    GeneratedFinalizeGenerationFailure["Returns"]
   >();
 });
 

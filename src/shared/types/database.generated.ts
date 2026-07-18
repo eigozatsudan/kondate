@@ -1436,6 +1436,7 @@ export type Database = {
       reserve_ai_generation: {
         Args: {
           p_draft_id: string
+          p_draft_revision: number
           p_global_limit: number
           p_idempotency_key: string
           p_now?: string

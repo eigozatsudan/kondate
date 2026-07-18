@@ -1134,6 +1134,16 @@ actual successful `new_menu` reservation, exact snapshot capture, replay, invali
 cases with no side effects, and the nine-argument ACL/signature. Regenerate database
 types after the SQL change.
 
+Postgres Meta does not preserve function-argument nullability in generated TypeScript.
+Keep `database.generated.ts` byte-for-byte generated and extend the existing application
+overlay in `src/shared/types/database.ts` so `reserve_ai_generation` accepts
+`p_draft_id: string | null` and `p_draft_revision: number | null`, and
+`finalize_ai_generation_failure` accepts `p_retry_at?: string | null`. Add focused type
+assertions to `src/shared/types/database.test.ts` that permit only those nullable
+extensions and preserve every other generated argument/return contract. Change
+`netlify/functions/_shared/supabase-admin.ts` to import the overlay `Database`; no
+unsafe cast or generated-file hand edit is allowed.
+
 The regression fixture must include an unrelated stale processing request and prove that
 an invalid draft attempt does not clean it up or mutate its quota rows. This ordering is
 an intentional Task 2 correction; Task 15 later moves same-key replay ahead of all
@@ -1423,6 +1433,8 @@ git commit -m "feat: enforce free openrouter models"
 - Modify: `supabase/tests/database/ai_control_and_quota.test.sql`
 - Modify: `supabase/migrations/20260711002000_ai_control_and_quota.sql`
 - Regenerate: `src/shared/types/database.generated.ts`
+- Modify: `src/shared/types/database.ts`
+- Modify: `src/shared/types/database.test.ts`
 
 **Interfaces:**
 - Consumes: Plan 2's exact `ValidatedMenu` JSON and normalized menu tables.
@@ -1721,10 +1733,16 @@ Expected: the private normalized-persistence assertions and final 13-argument si
 
 Regenerated database types must expose `menu_label_confirmations.Row.source_text_snapshot: string` and require `source_text_snapshot: string` on `Insert`; no optional or nullable persistence type is accepted.
 
+Postgres Meta also emits Task 4's nullable lineage parameters as non-nullable. Extend the
+application `Database` overlay so `finalize_ai_generation_success` accepts
+`p_source_menu_id`, `p_change_reason`, and `p_change_reason_custom` as their generated
+types union `null`. Type tests must prove those three extensions and that every other
+argument and the return contract remain identical to the generated function.
+
 - [ ] **Step 6 (2–5 min): Commit transactional persistence**
 
 ```bash
-git add supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tests/database/ai_control_and_quota.test.sql src/shared/types/database.generated.ts
+git add supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tests/database/ai_control_and_quota.test.sql src/shared/types/database.generated.ts src/shared/types/database.ts src/shared/types/database.test.ts
 git commit -m "feat: persist validated generation atomically"
 ```
 
@@ -1782,7 +1800,7 @@ Expected: FAIL because the user client, logger, and repository modules do not ex
 
 ```ts
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "../../../src/shared/types/database.generated";
+import type { Database } from "../../../src/shared/types/database";
 import { getServerEnv } from "./env";
 
 export type UserSupabaseClient = SupabaseClient<Database>;
@@ -1826,7 +1844,7 @@ export function logGenerationEvent(
 ```ts
 import { z } from "zod";
 import { releaseQuota, type ValidatedMenu } from "../../../shared/contracts/generation";
-import type { Database } from "../../../src/shared/types/database.generated";
+import type { Database } from "../../../src/shared/types/database";
 import { HttpError } from "./http";
 import { getServerEnv } from "./env";
 import { getSupabaseAdmin } from "./supabase-admin";

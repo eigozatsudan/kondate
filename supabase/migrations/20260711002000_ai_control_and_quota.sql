@@ -153,6 +153,7 @@ create or replace function public.reserve_ai_generation(
   p_idempotency_key uuid,
   p_request_kind text,
   p_draft_id uuid,
+  p_draft_revision bigint,
   p_user_limit integer,
   p_global_limit integer,
   p_stale_after_seconds integer default 180,
@@ -164,6 +165,7 @@ declare
   v_day date := private.ai_jst_day(p_now);
   v_request private.ai_generation_requests;
   v_active private.ai_generation_requests;
+  v_draft public.generation_drafts;
   v_user private.ai_user_daily_usage;
   v_global private.ai_global_daily_usage;
 begin
@@ -178,22 +180,47 @@ begin
     raise exception using errcode = '22023', message = 'invalid_request_kind';
   end if;
 
-  perform public.cleanup_stale_ai_generations(p_now);
   perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
 
   select * into v_request from private.ai_generation_requests
   where user_id = p_user_id and idempotency_key = p_idempotency_key;
   if found then return private.ai_request_payload(v_request, true); end if;
 
+  if p_request_kind = 'new_menu' then
+    select * into v_draft
+    from public.generation_drafts
+    where id = p_draft_id and user_id = p_user_id and revision = p_draft_revision
+      and deleted_at is null
+    for update;
+    if not found then
+      raise exception using errcode = 'P0001', message = 'draft_unavailable';
+    end if;
+    insert into private.generation_draft_submission_versions(
+      draft_id, user_id, draft_revision, meal_type, main_ingredients, cuisine_genre,
+      target_member_ids, time_limit_minutes, budget_preference, avoid_ingredients,
+      memo, pantry_selections, captured_at
+    ) values (
+      v_draft.id, v_draft.user_id, v_draft.revision, v_draft.meal_type,
+      v_draft.main_ingredients, v_draft.cuisine_genre, v_draft.target_member_ids,
+      v_draft.time_limit_minutes, v_draft.budget_preference,
+      v_draft.avoid_ingredients, v_draft.memo, v_draft.pantry_selections, p_now
+    ) on conflict (draft_id, user_id, draft_revision) do nothing;
+  elsif p_draft_id is not null or p_draft_revision is not null then
+    raise exception using errcode = '22023', message = 'invalid_draft_reference';
+  end if;
+
+  perform public.cleanup_stale_ai_generations(p_now);
+
   select * into v_active from private.ai_generation_requests
   where user_id = p_user_id and status = 'processing';
   if found then
     insert into private.ai_generation_requests(
-      user_id, idempotency_key, request_kind, status, draft_id, user_usage_day,
-      failure_code, retry_at, started_at, completed_at
+      user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+      user_usage_day, failure_code, retry_at, started_at, completed_at
     ) values (
-      p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id, v_day,
-      'generation_in_progress', v_active.processing_expires_at, p_now, p_now
+      p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id,
+      p_draft_revision, v_day, 'generation_in_progress',
+      v_active.processing_expires_at, p_now, p_now
     ) returning * into v_request;
     return private.ai_request_payload(v_request, false);
   end if;
@@ -209,22 +236,24 @@ begin
 
   if v_user.success_count + v_user.reserved_count >= p_user_limit then
     insert into private.ai_generation_requests(
-      user_id, idempotency_key, request_kind, status, draft_id, user_usage_day,
-      failure_code, retry_at, started_at, completed_at
+      user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+      user_usage_day, failure_code, retry_at, started_at, completed_at
     ) values (
-      p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id, v_day,
-      'user_daily_limit', private.ai_next_jst_midnight(p_now), p_now, p_now
+      p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id,
+      p_draft_revision, v_day, 'user_daily_limit',
+      private.ai_next_jst_midnight(p_now), p_now, p_now
     ) returning * into v_request;
     return private.ai_request_payload(v_request, false);
   end if;
 
   if v_global.sent_count + v_global.reserved_count >= p_global_limit then
     insert into private.ai_generation_requests(
-      user_id, idempotency_key, request_kind, status, draft_id, user_usage_day,
-      failure_code, retry_at, started_at, completed_at
+      user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+      user_usage_day, failure_code, retry_at, started_at, completed_at
     ) values (
-      p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id, v_day,
-      'global_daily_limit', private.ai_next_jst_midnight(p_now), p_now, p_now
+      p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id,
+      p_draft_revision, v_day, 'global_daily_limit',
+      private.ai_next_jst_midnight(p_now), p_now, p_now
     ) returning * into v_request;
     return private.ai_request_payload(v_request, false);
   end if;
@@ -234,11 +263,13 @@ begin
   update private.ai_global_daily_usage set reserved_count = reserved_count + 1, updated_at = p_now
   where usage_day = v_day;
   insert into private.ai_generation_requests(
-    user_id, idempotency_key, request_kind, status, draft_id, user_usage_day,
-    user_quota_reserved, global_reserved_day, processing_expires_at, started_at
+    user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+    user_usage_day, user_quota_reserved, global_reserved_day,
+    processing_expires_at, started_at
   ) values (
-    p_user_id, p_idempotency_key, p_request_kind, 'processing', p_draft_id, v_day,
-    true, v_day, p_now + make_interval(secs => p_stale_after_seconds), p_now
+    p_user_id, p_idempotency_key, p_request_kind, 'processing', p_draft_id,
+    p_draft_revision, v_day, true, v_day,
+    p_now + make_interval(secs => p_stale_after_seconds), p_now
   ) returning * into v_request;
   return private.ai_request_payload(v_request, false);
 end;
@@ -361,14 +392,14 @@ end;
 $$;
 
 revoke all on function public.cleanup_stale_ai_generations(timestamptz) from public, anon, authenticated;
-revoke all on function public.reserve_ai_generation(uuid, uuid, text, uuid, integer, integer, integer, timestamptz) from public, anon, authenticated;
+revoke all on function public.reserve_ai_generation(uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz) from public, anon, authenticated;
 revoke all on function public.reserve_ai_repair_call(uuid, integer, timestamptz) from public, anon, authenticated;
 revoke all on function public.mark_ai_global_sent(uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.record_ai_generation_model(uuid, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_failure(uuid, text, timestamptz, timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz) from public, anon, authenticated;
 grant execute on function public.cleanup_stale_ai_generations(timestamptz) to service_role;
-grant execute on function public.reserve_ai_generation(uuid, uuid, text, uuid, integer, integer, integer, timestamptz) to service_role;
+grant execute on function public.reserve_ai_generation(uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz) to service_role;
 grant execute on function public.reserve_ai_repair_call(uuid, integer, timestamptz) to service_role;
 grant execute on function public.mark_ai_global_sent(uuid, timestamptz) to service_role;
 grant execute on function public.record_ai_generation_model(uuid, text, timestamptz) to service_role;

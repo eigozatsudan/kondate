@@ -1,9 +1,13 @@
-import type { Database as GeneratedDatabase } from "./database.generated";
+import type { Database as GeneratedDatabase } from "./database.generated.js";
 
 type GeneratedPublic = GeneratedDatabase["public"];
 type GeneratedFunctions = GeneratedPublic["Functions"];
 type GeneratedSaveDraft = GeneratedFunctions["save_generation_draft"];
 type GeneratedSaveDraftArgs = GeneratedSaveDraft["Args"];
+type GeneratedReserveGeneration = GeneratedFunctions["reserve_ai_generation"];
+type GeneratedReserveGenerationArgs = GeneratedReserveGeneration["Args"];
+type GeneratedFinalizeGenerationFailure = GeneratedFunctions["finalize_ai_generation_failure"];
+type GeneratedFinalizeGenerationFailureArgs = GeneratedFinalizeGenerationFailure["Args"];
 
 type NullableDraftArgs =
   "p_meal_type" | "p_cuisine_genre" | "p_time_limit_minutes" | "p_budget_preference";
@@ -15,11 +19,31 @@ type SaveDraftArgs = Omit<GeneratedSaveDraftArgs, NullableDraftArgs> & {
   p_budget_preference: GeneratedSaveDraftArgs["p_budget_preference"] | null;
 };
 
+type NullableReserveGenerationArgs = "p_draft_id" | "p_draft_revision";
+
+type ReserveGenerationArgs = Omit<GeneratedReserveGenerationArgs, NullableReserveGenerationArgs> & {
+  p_draft_id: GeneratedReserveGenerationArgs["p_draft_id"] | null;
+  p_draft_revision: GeneratedReserveGenerationArgs["p_draft_revision"] | null;
+};
+
+type FinalizeGenerationFailureArgs = Omit<GeneratedFinalizeGenerationFailureArgs, "p_retry_at"> & {
+  p_retry_at?: NonNullable<GeneratedFinalizeGenerationFailureArgs["p_retry_at"]> | null;
+};
+
 export type Database = Omit<GeneratedDatabase, "public"> & {
   public: Omit<GeneratedPublic, "Functions"> & {
-    Functions: Omit<GeneratedFunctions, "save_generation_draft"> & {
+    Functions: Omit<
+      GeneratedFunctions,
+      "save_generation_draft" | "reserve_ai_generation" | "finalize_ai_generation_failure"
+    > & {
       save_generation_draft: Omit<GeneratedSaveDraft, "Args"> & {
         Args: SaveDraftArgs;
+      };
+      reserve_ai_generation: Omit<GeneratedReserveGeneration, "Args"> & {
+        Args: ReserveGenerationArgs;
+      };
+      finalize_ai_generation_failure: Omit<GeneratedFinalizeGenerationFailure, "Args"> & {
+        Args: FinalizeGenerationFailureArgs;
       };
     };
   };
