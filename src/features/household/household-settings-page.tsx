@@ -201,7 +201,7 @@ export function HouseholdSettingsForm({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveQueue = useRef(Promise.resolve(true));
-  const valuesRef = useRef<HouseholdSettingsValue | undefined>(undefined);
+  const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
   const initializedMemberId = useRef<string | undefined>(undefined);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
@@ -243,8 +243,8 @@ export function HouseholdSettingsForm({
       setSelectedId(selected.id);
       if (initializedMemberId.current !== selected.id) {
         initializedMemberId.current = selected.id;
-        const initialValues = memberValue(selected);
-        valuesRef.current = initialValues;
+        const initialValues = valuesByMemberRef.current.get(selected.id) ?? memberValue(selected);
+        valuesByMemberRef.current.set(selected.id, initialValues);
         setValues(initialValues);
       }
     }
@@ -265,14 +265,18 @@ export function HouseholdSettingsForm({
   }, [confirmDelete]);
 
   const update = (patch: Partial<HouseholdSettingsValue>) => {
-    if (valuesRef.current === undefined) return undefined;
-    const next = { ...valuesRef.current, ...patch };
-    valuesRef.current = next;
+    if (selected === undefined) return undefined;
+    const current = valuesByMemberRef.current.get(selected.id);
+    if (current === undefined) return undefined;
+    const next = { ...current, ...patch };
+    valuesByMemberRef.current.set(selected.id, next);
     setValues(next);
     return next;
   };
-  const save = async (next: HouseholdSettingsValue): Promise<boolean> => {
-    if (selected === undefined) return false;
+  const save = async (
+    targetMember: HouseholdMemberRow,
+    next: HouseholdSettingsValue,
+  ): Promise<boolean> => {
     const parsed = householdSettingsSchema.safeParse(next);
     if (!parsed.success) {
       setErrors(toHouseholdFieldErrors(parsed.error));
@@ -281,9 +285,9 @@ export function HouseholdSettingsForm({
     setErrors({});
     try {
       const saved =
-        selected.status === "draft"
-          ? await api.updateDraft(selected.id, toMemberPatch(parsed.data))
-          : await api.updateMember(selected.id, toMemberPatch(parsed.data));
+        targetMember.status === "draft"
+          ? await api.updateDraft(targetMember.id, toMemberPatch(parsed.data))
+          : await api.updateMember(targetMember.id, toMemberPatch(parsed.data));
       queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
         current.map((member) => (member.id === saved.id ? saved : member)),
       );
@@ -295,8 +299,8 @@ export function HouseholdSettingsForm({
       return false;
     }
   };
-  const queueSave = (next: HouseholdSettingsValue) => {
-    saveQueue.current = saveQueue.current.then(() => save(next)).catch(() => false);
+  const queueSave = (targetMember: HouseholdMemberRow, next: HouseholdSettingsValue) => {
+    saveQueue.current = saveQueue.current.then(() => save(targetMember, next)).catch(() => false);
     return saveQueue.current;
   };
   const createDraft = useMutation({
@@ -334,7 +338,7 @@ export function HouseholdSettingsForm({
     }
     setSaving(true);
     await saveQueue.current;
-    const saved = await save(parsed.data);
+    const saved = await save(selected, parsed.data);
     if (!saved) {
       setSaving(false);
       return;
@@ -356,7 +360,7 @@ export function HouseholdSettingsForm({
 
   const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
     const next = update(patch);
-    if (next !== undefined) void queueSave(next);
+    if (selected !== undefined && next !== undefined) void queueSave(selected, next);
   };
 
   if (membersQuery.isPending || catalogQuery.isPending || aliasesQuery.isPending)
@@ -385,22 +389,22 @@ export function HouseholdSettingsForm({
       </main>
     );
   }
-  const currentAllergies = allergiesQuery.data ?? [];
+  const currentAllergies = allergiesQuery.isSuccess ? allergiesQuery.data : [];
   const currentDislikes = dislikesQuery.data ?? [];
-  const saveRegisteredStatusAfterFirstAllergy = async () => {
-    const latestValues = valuesRef.current;
+  const saveRegisteredStatusAfterFirstAllergy = async (targetMember: HouseholdMemberRow) => {
+    const latestValues = valuesByMemberRef.current.get(targetMember.id);
     if (latestValues?.allergyStatus === "registered" && currentAllergies.length === 0) {
-      await queueSave({ ...latestValues, allergyStatus: "registered" });
+      await queueSave(targetMember, { ...latestValues, allergyStatus: "registered" });
     }
   };
   const addAllergyAndSaveRegisteredStatus = async (
-    memberId: string,
+    targetMember: HouseholdMemberRow,
     addAllergy: () => Promise<unknown>,
   ) => {
     await addAllergy();
-    await saveRegisteredStatusAfterFirstAllergy();
+    await saveRegisteredStatusAfterFirstAllergy(targetMember);
     await queryClient.invalidateQueries({
-      queryKey: householdKeys.allergies("settings", memberId),
+      queryKey: householdKeys.allergies("settings", targetMember.id),
     });
     await api.invalidateSafety();
   };
@@ -496,7 +500,7 @@ export function HouseholdSettingsForm({
           <select
             ref={allergyStatusRef}
             value={values.allergyStatus}
-            disabled={allergiesQuery.isPending}
+            disabled={!allergiesQuery.isSuccess}
             onChange={(event) => {
               const allergyStatus = event.target.value as AllergyStatus;
               if (allergyStatus === "registered" && currentAllergies.length === 0) {
@@ -512,6 +516,23 @@ export function HouseholdSettingsForm({
             <option value="unconfirmed">未確認</option>
           </select>
         </label>
+        {allergiesQuery.isError && (
+          <div className="stack">
+            <p className="error-message" role="alert">
+              アレルギー情報を読み込めませんでした
+            </p>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={allergiesQuery.isFetching}
+              onClick={() => {
+                void allergiesQuery.refetch();
+              }}
+            >
+              アレルギー情報を再読み込み
+            </button>
+          </div>
+        )}
         {values.allergyStatus === "registered" && (
           <AllergyEditor
             memberId={selected.id}
@@ -519,12 +540,12 @@ export function HouseholdSettingsForm({
             aliases={aliasesQuery.data}
             allergies={currentAllergies}
             addStandard={(memberId, allergenId) =>
-              addAllergyAndSaveRegisteredStatus(memberId, () =>
+              addAllergyAndSaveRegisteredStatus(selected, () =>
                 api.addStandardAllergy(memberId, allergenId),
               )
             }
             addCustom={(memberId, name, aliases) =>
-              addAllergyAndSaveRegisteredStatus(memberId, () =>
+              addAllergyAndSaveRegisteredStatus(selected, () =>
                 api.addCustomAllergy(memberId, name, aliases),
               )
             }
@@ -535,6 +556,7 @@ export function HouseholdSettingsForm({
               });
               await api.invalidateSafety();
             }}
+            disabled={!allergiesQuery.isSuccess}
           />
         )}
         <label className="field">
@@ -736,7 +758,7 @@ export function HouseholdSettingsForm({
                   );
                   setSelectedId(undefined);
                   initializedMemberId.current = undefined;
-                  valuesRef.current = undefined;
+                  valuesByMemberRef.current.delete(selected.id);
                   setValues(undefined);
                   return queryClient.invalidateQueries({ queryKey: membersKey });
                 })

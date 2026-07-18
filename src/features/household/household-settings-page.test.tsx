@@ -304,6 +304,205 @@ it("keeps newer edits in the registered save after a delayed standard allergy ad
   );
 });
 
+it.each([
+  {
+    label: "none status",
+    secondMember: {
+      ...member,
+      id: "member-2",
+      display_name: "子ども",
+      spice_level: "mild" as const,
+      allergy_status: "none" as const,
+      sort_order: 1,
+    },
+    secondAllergies: [] as MemberAllergyRow[],
+  },
+  {
+    label: "registered status with different values",
+    secondMember: {
+      ...member,
+      id: "member-2",
+      display_name: "高齢者",
+      spice_level: "none" as const,
+      allergy_status: "registered" as const,
+      sort_order: 1,
+    },
+    secondAllergies: [
+      { ...standardAllergy, id: "allergy-2", member_id: "member-2" },
+    ] as MemberAllergyRow[],
+  },
+])(
+  "saves a delayed allergy transition with the initiating member when the next member has $label",
+  async ({ secondMember, secondAllergies }) => {
+    let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+    const addStandardAllergy = vi.fn(
+      () =>
+        new Promise<MemberAllergyRow>((resolve) => {
+          resolveAdd = resolve;
+        }),
+    );
+    const updateCalls: Array<{ memberId: string; patch: HouseholdMemberPatch }> = [];
+    const updateMember = vi.fn((memberId: string, patch: HouseholdMemberPatch) => {
+      updateCalls.push({ memberId, patch });
+      const source = memberId === member.id ? member : secondMember;
+      return Promise.resolve({
+        ...source,
+        display_name: patch.display_name ?? source.display_name,
+        spice_level: patch.spice_level ?? source.spice_level,
+        allergy_status: patch.allergy_status ?? source.allergy_status,
+      });
+    });
+    renderSettings({
+      listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+      listAllergies: vi.fn((memberId: string) =>
+        Promise.resolve(memberId === member.id ? [] : secondAllergies),
+      ),
+      addStandardAllergy,
+      updateMember,
+    });
+
+    await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+    await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+    await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+    await waitFor(() => {
+      expect(screen.getByLabelText("呼び名")).toHaveValue(secondMember.display_name);
+    });
+
+    await act(async () => {
+      resolveAdd?.(standardAllergy);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(updateCalls.length).toBe(1);
+    });
+    const [updateCall] = updateCalls;
+    expect(updateCall?.memberId).toBe(member.id);
+    expect(updateCall?.patch).toEqual(
+      expect.objectContaining({
+        allergy_status: "registered",
+        display_name: member.display_name,
+        spice_level: member.spice_level,
+      }),
+    );
+  },
+);
+
+it("disables every allergy operation while a registered member allergy query is pending", async () => {
+  let resolveAllergies: ((allergies: MemberAllergyRow[]) => void) | undefined;
+  const listAllergies = vi.fn(
+    () =>
+      new Promise<MemberAllergyRow[]>((resolve) => {
+        resolveAllergies = resolve;
+      }),
+  );
+  const addStandardAllergy = vi.fn();
+  const addCustomAllergy = vi.fn();
+  const removeAllergy = vi.fn();
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([{ ...member, allergy_status: "registered" }]),
+    listAllergies,
+    addStandardAllergy,
+    addCustomAllergy,
+    removeAllergy,
+  });
+
+  expect(await screen.findByLabelText("アレルギーの確認")).toBeDisabled();
+  const standardAdd = screen.getByRole("button", { name: "くるみを追加" });
+  const customName = screen.getByLabelText("自由登録名");
+  const customConfirm = screen.getByLabelText("標準候補に該当しないことを確認");
+  const customAdd = screen.getByRole("button", { name: "自由登録を追加" });
+  expect(standardAdd).toBeDisabled();
+  expect(customName).toBeDisabled();
+  expect(customConfirm).toBeDisabled();
+  expect(customAdd).toBeDisabled();
+
+  fireEvent.click(standardAdd);
+  fireEvent.click(customConfirm);
+  fireEvent.click(customAdd);
+  expect(addStandardAllergy).not.toHaveBeenCalled();
+  expect(addCustomAllergy).not.toHaveBeenCalled();
+  expect(removeAllergy).not.toHaveBeenCalled();
+
+  await act(async () => {
+    resolveAllergies?.([]);
+    await Promise.resolve();
+  });
+});
+
+it("keeps allergy operations disabled after failure and enables them only after retry succeeds", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  const listAllergies = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("temporary failure"))
+    .mockResolvedValue([standardAllergy]);
+  const updateMember = vi.fn().mockResolvedValue(registeredMember);
+  const addStandardAllergy = vi.fn().mockResolvedValue(standardAllergy);
+  const addCustomAllergy = vi.fn().mockResolvedValue(customAllergy);
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([registeredMember]),
+    listAllergies,
+    updateMember,
+    addStandardAllergy,
+    addCustomAllergy,
+    removeAllergy,
+  });
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "アレルギー情報を読み込めませんでした",
+  );
+  const allergyStatus = screen.getByLabelText("アレルギーの確認");
+  const standardAdd = screen.getByRole("button", { name: "くるみを追加" });
+  const customName = screen.getByLabelText("自由登録名");
+  const customConfirm = screen.getByLabelText("標準候補に該当しないことを確認");
+  const customAdd = screen.getByRole("button", { name: "自由登録を追加" });
+  expect(allergyStatus).toBeDisabled();
+  expect(standardAdd).toBeDisabled();
+  expect(customName).toBeDisabled();
+  expect(customConfirm).toBeDisabled();
+  expect(customAdd).toBeDisabled();
+  fireEvent.click(standardAdd);
+  fireEvent.click(customAdd);
+  expect(updateMember).not.toHaveBeenCalled();
+  expect(addStandardAllergy).not.toHaveBeenCalled();
+  expect(addCustomAllergy).not.toHaveBeenCalled();
+  expect(removeAllergy).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByRole("button", { name: "アレルギー情報を再読み込み" }));
+  await waitFor(() => {
+    expect(listAllergies).toHaveBeenCalledTimes(2);
+  });
+  expect(await screen.findByRole("button", { name: "くるみを削除" })).toBeEnabled();
+  expect(allergyStatus).toBeEnabled();
+  expect(customName).toBeEnabled();
+  expect(customConfirm).toBeEnabled();
+
+  await userEvent.type(customName, "えんどう豆たんぱく");
+  await userEvent.click(customConfirm);
+  await userEvent.click(customAdd);
+  await waitFor(() => {
+    expect(addCustomAllergy).toHaveBeenCalledWith(member.id, "えんどう豆たんぱく", []);
+  });
+  await userEvent.click(screen.getByRole("button", { name: "くるみを削除" }));
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  await userEvent.selectOptions(allergyStatus, "none");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      member.id,
+      expect.objectContaining({ allergy_status: "none" }),
+    );
+  });
+});
+
 it("saves a registered allergy status immediately when an allergy already exists", async () => {
   const updateMember = vi.fn().mockResolvedValue({ ...member, allergy_status: "registered" });
   const { queryClient } = renderSettings({
