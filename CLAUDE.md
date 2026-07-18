@@ -5,6 +5,16 @@ Claude-Code-specific and supplements `AGENTS.md` (general contributor convention
 build/test commands, coding style). Read both; this file governs _process_, `AGENTS.md`
 governs _style_.
 
+Where AGENTS.md itself contains process content that conflicts with this file, this
+file wins. In particular, AGENTS.md §4 ("実装の進め方") step 2's instruction to run
+`/compact` after each Task does not apply here: `/compact` is a user-invoked harness
+command that an agent cannot trigger on itself or on a dispatched subagent, and Claude
+Code already auto-compacts context as it approaches its limit (see "Context
+management" below). Follow this file's "Required per-Task workflow" as the
+authoritative per-Task process instead — including its own review-against-the-prior-Task
+step, which replaces AGENTS.md §4 step 2's review instruction — and skip the `/compact`
+step entirely.
+
 ## What this repository is
 
 こんだて日和 (Kondate) MVP — a mobile-first React/Vite SPA backed by Supabase and
@@ -134,11 +144,31 @@ docker compose run --rm --no-deps app npm run format:check
 
 `--no-deps` is safe only for these host-independent commands (pure unit tests,
 typecheck, lint, format:check) that don't talk to Postgres or the local mocks.
-Anything that hits the real stack — `db:test`, `db:push`, `e2e`, or a Vitest
-spec that itself calls Supabase/oauth-mock/openrouter-mock — needs the full
-stack already up (`docker compose up -d --wait`) and should run as
-`docker compose run --rm app npm run <script>` (no `--no-deps`), or via the
-already-running `app`/`db-test` containers, not in isolation.
+
+A Vitest spec that itself calls Supabase/oauth-mock/openrouter-mock needs the full
+stack already up (`docker compose up -d --wait`) and can then run inside the `app`
+container without `--no-deps`, e.g. `docker compose run --rm app npx vitest run
+<file>` — this only makes network calls to already-running sibling containers, so
+routing it through `app` is fine.
+
+`db:test`, `db:push`, and `e2e` are different: their `npm run` scripts each shell
+out to `docker compose` themselves (`db:test` → `docker compose run --rm db-test`;
+`db:push` → `docker compose run --rm migrate`; `e2e` → `playwright test`, normally
+invoked via `./scripts/run-e2e.sh`, which itself drives a dedicated `e2e` Compose
+service). The `app` container has no Docker socket mounted (see `compose.yaml` —
+no `docker.sock` bind, not `privileged`), so `docker compose run --rm app npm run
+db:test` (or `db:push`/`e2e`) cannot reach the Docker daemon and fails or hangs.
+Run these as the underlying `docker compose` command directly on the host instead,
+never wrapped in `npm run` inside `app`:
+
+```bash
+docker compose --profile test run --rm db-test
+docker compose run --rm migrate
+./scripts/run-e2e.sh
+```
+
+This matches `AGENTS.md` §8's own verification-flow commands and is the only
+combination confirmed to work end-to-end.
 
 If a Docker prerequisite is missing (e.g. `pg_prove` in the runner image, a
 local password mismatch), record it as a known blocker in the progress ledger
