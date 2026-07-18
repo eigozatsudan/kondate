@@ -1107,6 +1107,44 @@ git add supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tes
 git commit -m "feat: add atomic ai generation quota"
 ```
 
+#### Task 2 corrective clarification: make the `new_menu` reservation executable
+
+The original eight-argument `reserve_ai_generation` cannot insert any `new_menu`
+request: the request constraint and composite foreign key require both a draft revision
+and its immutable submission snapshot, but that overload accepts and stores neither.
+Before Task 3 starts, replace it with the following interim nine-argument overload by
+adding `p_draft_revision bigint` immediately after `p_draft_id uuid`:
+
+```sql
+public.reserve_ai_generation(
+  uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz
+)
+```
+
+Preserve Task 2's existing lifecycle except for moving stale cleanup after the draft
+gate. After the same-key replay branch and before stale cleanup, the active-request
+lookup, or any quota mutation, `new_menu` must lock
+the owned, non-deleted exact draft revision and insert the typed immutable row into
+`private.generation_draft_submission_versions` using the Task 15 snapshot columns.
+Missing, foreign, deleted, or stale revisions raise `draft_unavailable` and leave the
+request, snapshot, and every quota table unchanged. Non-`new_menu` requests require both
+draft arguments to be null. Every request insert stores both `draft_id` and
+`draft_revision`; the old overload and its grants are removed. pgTAP must exercise an
+actual successful `new_menu` reservation, exact snapshot capture, replay, invalid draft
+cases with no side effects, and the nine-argument ACL/signature. Regenerate database
+types after the SQL change.
+
+The regression fixture must include an unrelated stale processing request and prove that
+an invalid draft attempt does not clean it up or mutate its quota rows. This ordering is
+an intentional Task 2 correction; Task 15 later moves same-key replay ahead of all
+HMAC-independent work using its final per-key lock.
+
+Task 5's interim repository accepts and passes `draftRevision`, and Task 9 passes
+`command.request.draftRevision` into it. Task 15 still replaces this interim overload
+with the final 14-argument HMAC/lineage RPC and retains the stronger replay ordering,
+attempt/window quotas, and final retention rules specified there; do not front-load
+those unrelated Task 15 changes.
+
 ### Task 3: Reject paid model configuration and verify structured-output support
 
 **Files:**
@@ -1180,6 +1218,10 @@ describe("parseOpenRouterModels", () => {
   ] as const)("rejects missing or changed release quota %s=%s", (key, value) => {
     expect(() => parseServerEnv({ ...base, [key]: value })).toThrow();
   });
+
+  it.each(["0", "46"])("rejects out-of-range global quota %s", (value) => {
+    expect(() => parseServerEnv({ ...base, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
+  });
 });
 ```
 
@@ -1201,6 +1243,8 @@ const positiveInteger = (fallback: number) =>
 const releaseLockedInteger = <const Value extends number, const Text extends string>(
   value: Value, text: Text,
 ) => z.union([z.literal(value), z.literal(text)]).transform(() => value);
+const globalDailyLimit = (max: number) =>
+  z.coerce.number().int().min(1).max(max).default(max);
 
 export function parseOpenRouterModels(value: string): readonly string[] {
   const models = value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -1225,7 +1269,7 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   USER_DAILY_EXTERNAL_CALL_LIMIT: releaseLockedInteger(releaseQuota.userDailyExternalCallLimit, "12"),
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: releaseLockedInteger(releaseQuota.userShortWindowExternalCallLimit, "4"),
   USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
-  GLOBAL_DAILY_AI_LIMIT: positiveInteger(45),
+  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(45),
   OPENROUTER_TIMEOUT_MS: positiveInteger(20_000),
   FUNCTION_TOTAL_BUDGET_MS: positiveInteger(50_000),
   AI_PROCESSING_STALE_SECONDS: positiveInteger(180),
@@ -1830,12 +1874,13 @@ export function createGenerationRepository(user: AuthenticatedUser) {
   const userClient = createUserScopedSupabase(user.accessToken);
   return {
     userClient,
-    async reserve(input: { idempotencyKey: string; kind: "new_menu" | "regenerate_menu" | "regenerate_dish"; draftId: string | null }) {
+    async reserve(input: { idempotencyKey: string; kind: "new_menu" | "regenerate_menu" | "regenerate_dish"; draftId: string | null; draftRevision: number | null }) {
       return requestPayloadSchema.parse(await rpc("reserve_ai_generation", {
         p_user_id: user.userId,
         p_idempotency_key: input.idempotencyKey,
         p_request_kind: input.kind,
         p_draft_id: input.draftId,
+        p_draft_revision: input.draftRevision,
         p_user_limit: env.openRouter.userDailyLimit,
         p_global_limit: env.openRouter.globalDailyLimit,
         p_stale_after_seconds: env.openRouter.staleAfterSeconds,
@@ -1870,6 +1915,7 @@ export function createGenerationRepository(user: AuthenticatedUser) {
       requestId: string; menu: ValidatedMenu; preferenceSnapshot: unknown;
       safetySnapshot: unknown; safetyFingerprint: string; allergenVersion: string;
       foodRuleVersion: string; targetMembers: unknown[]; expiredChecks: unknown[];
+      sourceMenuId: string | null; changeReason: string | null; changeReasonCustom: string | null;
     }) {
       return requestPayloadSchema.parse(await rpc("finalize_ai_generation_success", {
         p_request_id: input.requestId, p_menu: input.menu,
@@ -1877,6 +1923,8 @@ export function createGenerationRepository(user: AuthenticatedUser) {
         p_safety_fingerprint: input.safetyFingerprint, p_allergen_version: input.allergenVersion,
         p_food_rule_version: input.foodRuleVersion, p_target_members: input.targetMembers,
         p_expired_checks: input.expiredChecks,
+        p_source_menu_id: input.sourceMenuId, p_change_reason: input.changeReason,
+        p_change_reason_custom: input.changeReasonCustom,
       }));
     },
     async status(idempotencyKey: string) {
@@ -2573,7 +2621,7 @@ git commit -m "feat: build current anonymous generation context"
 
 ```ts
 import { expect, it, vi } from "vitest";
-import { runGeneration } from "./generation-service";
+import { runGeneration, toGenerationStatus } from "./generation-service";
 
 it("marks the global call sent immediately before fetch", async () => {
   const order: string[] = [];
@@ -2605,6 +2653,24 @@ it("uses one repair global slot, excludes the first model, and reserves no secon
   expect(repository.markSent).toHaveBeenCalledTimes(2);
   expect(callOpenRouter.mock.calls[1]?.[0].models).toEqual(["second/model:free"]);
   expect(result.status).toBe("succeeded");
+});
+
+it.each([
+  ["user_attempt_limit", "本日のAI通信試行上限に達しました。明日0:00（日本時間）から利用できます"],
+  ["user_short_window_limit", "10分間の通信試行上限に達しました。しばらくしてから再度お試しください"],
+  ["allergy_unconfirmed", "アレルギー確認が必要な項目があります。確認してからもう一度お試しください。"],
+  ["allergen_missing", "アレルギー情報の登録が必要です。家族の設定を確認してください。"],
+  ["unmapped_custom_allergy", "登録されたアレルギー内容を確認できませんでした。家族の設定を確認してください。"],
+  ["unsupported_diet_unconfirmed", "離乳食・飲み込み/嚥下・治療食の確認が必要です。"],
+  ["regeneration_not_implemented", "再生成は次の計画で有効になります。"],
+] as const)("projects the closed failure copy for %s", (code, message) => {
+  const result = toGenerationStatus({
+    request_id: "50000000-0000-4000-8000-000000000001",
+    idempotency_key: "60000000-0000-4000-8000-000000000001",
+    status: "failed",
+    failure_code: code,
+  }, "60000000-0000-4000-8000-000000000001");
+  expect(result).toMatchObject({ status: "failed", error: { code, message } });
 });
 ```
 
@@ -2657,7 +2723,14 @@ const failureCopy: Record<string, { message: string; retryable: boolean }> = {
   invalid_request: { message: "献立条件を確認してください。", retryable: false },
   generation_in_progress: { message: "別の献立を作成中です。", retryable: true },
   user_daily_limit: { message: "今日は5回利用しました。明日0:00（日本時間）から利用できます", retryable: false },
+  user_attempt_limit: { message: "本日のAI通信試行上限に達しました。明日0:00（日本時間）から利用できます", retryable: false },
+  user_short_window_limit: { message: "10分間の通信試行上限に達しました。しばらくしてから再度お試しください", retryable: false },
   global_daily_limit: { message: "本日分のAI受付がいっぱいです。成功回数には含まれません。明日0:00から再開します", retryable: false },
+  allergy_unconfirmed: { message: "アレルギー確認が必要な項目があります。確認してからもう一度お試しください。", retryable: false },
+  allergen_missing: { message: "アレルギー情報の登録が必要です。家族の設定を確認してください。", retryable: false },
+  unmapped_custom_allergy: { message: "登録されたアレルギー内容を確認できませんでした。家族の設定を確認してください。", retryable: false },
+  unsupported_diet_unconfirmed: { message: "離乳食・飲み込み/嚥下・治療食の確認が必要です。", retryable: false },
+  regeneration_not_implemented: { message: "再生成は次の計画で有効になります。", retryable: false },
   unsupported_diet: { message: "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。", retryable: false },
   allergy_conflict: { message: "アレルギー食材が、使いたい食材に含まれています", retryable: false },
   expired_pantry_unconfirmed: { message: "期限を過ぎた食材は、今回の実物確認が必要です。", retryable: false },
@@ -2734,7 +2807,10 @@ export async function runGeneration(
 ): Promise<GenerationStatusData> {
   const key = command.request.idempotencyKey;
   const reserved = await deps.repository.reserve({
-    idempotencyKey: key, kind: command.kind, draftId: command.request.draftId,
+    idempotencyKey: key,
+    kind: command.kind,
+    draftId: command.kind === "new_menu" ? command.request.draftId : null,
+    draftRevision: command.kind === "new_menu" ? command.request.draftRevision : null,
   });
   if (reserved.status !== "processing" || reserved.replayed) return toGenerationStatus(reserved, key);
   const requestId = reserved.request_id;
@@ -2805,6 +2881,8 @@ export async function runGeneration(
     foodRuleVersion: context.safety.foodRuleVersion,
     targetMembers: context.targetMembers,
     expiredChecks: context.expiredPantryChecks,
+    // Plan 4で再生成ハンドラーを追加するまでは、command.kindは常にnew_menuになる。
+    sourceMenuId: null, changeReason: null, changeReasonCustom: null,
   });
   return toGenerationStatus(completed, key);
 }
@@ -2839,6 +2917,7 @@ git commit -m "feat: orchestrate validated menu generation"
 
 ```ts
 import { expect, it, vi } from "vitest";
+import { generationResponse } from "./_shared/generation-service";
 import handler from "./generation-status";
 
 it("rejects status without a verified access token", async () => {
@@ -2854,6 +2933,18 @@ it("returns not_started for an owner-scoped missing key", async () => {
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ ok: true, data: { status: "not_started" } });
 });
+
+it.each(["user_daily_limit", "user_attempt_limit", "user_short_window_limit"] as const)(
+  "returns 429 for %s",
+  (code) => expect(generationResponse({
+    status: "failed",
+    idempotencyKey: "60000000-0000-4000-8000-000000000001",
+    requestId: "50000000-0000-4000-8000-000000000001",
+    quota: { consumed: false, remaining: 5, userDailyLimit: 5, limitKind: "user", retryAt: null },
+    error: { code, message: "上限に達しました。", retryable: false },
+    completedAt: "2026-07-11T00:00:00.000Z",
+  })).status).toBe(429),
+);
 ```
 
 - [ ] **Step 2 (2–5 min): Run handler tests and observe missing function modules**
@@ -2869,7 +2960,7 @@ import { json } from "./http";
 
 export function generationResponse(result: GenerationStatusData): Response {
   const status = result.status === "processing" ? 202
-    : result.status === "failed" && result.error.code === "user_daily_limit" ? 429
+    : result.status === "failed" && ["user_daily_limit", "user_attempt_limit", "user_short_window_limit"].includes(result.error.code) ? 429
     : result.status === "failed" && ["global_daily_limit", "model_unavailable", "generation_timeout"].includes(result.error.code) ? 503
     : result.status === "failed" ? 422 : 200;
   return json(status, { ok: true, data: result });
@@ -4165,7 +4256,7 @@ Extend pgTAP with a same-HMAC replay and a mismatched-HMAC transaction. Before t
 
 同じStep 5のpgTAPへ追加する前に、ファイル先頭の固定`plan(...)`を`select no_plan();`へ置換し、末尾の`select * from finish();`は維持する。次のblockはすべての変数を宣言し、呼出しは上の最終シグネチャである。DO block内の比較失敗は例外にし、成功時だけtop-levelの`pass()`がTAP assertionを1行出力する。`v_before`はrequest ledger、immutable submission snapshot、success quota、daily external attempt、fixed window、global counterの全行をPK順で保持する。
 
-Task 2 Step 1で中間migrationをRED/GREENにする旧8引数lifecycle blockはその時点では維持する。Task 15で最終migrationへ置換するとき、同じtest fileの`select throws_ok($$ select public.reserve_ai_generation(`から、最初の`finalize_ai_generation_failure`後のuser daily `reserved_count = 0`検査までを、次の完全なblockへ置換する。旧8引数呼出しを最終test fileへ1つも残さない。
+Task 2の補正でRED/GREENにする暫定9引数lifecycle blockはその時点では維持する。Task 15で最終migrationへ置換するとき、同じtest fileの`select throws_ok($$ select public.reserve_ai_generation(`から、最初の`finalize_ai_generation_failure`後のuser daily `reserved_count = 0`検査までを、次の完全なblockへ置換する。暫定9引数呼出しを最終test fileへ1つも残さない。
 
 ```sql
 insert into public.generation_drafts(
@@ -4238,7 +4329,7 @@ begin
     raise exception 'the final reservation signature is missing';
   end if;
   if to_regprocedure(
-    'public.reserve_ai_generation(uuid,uuid,text,uuid,integer,integer,integer,timestamptz)'
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
   ) is not null then
     raise exception 'the obsolete reservation overload still exists';
   end if;
@@ -5314,7 +5405,7 @@ request_hmac text not null check (request_hmac ~ '^[a-f0-9]{64}$'),
 
 It has no raw request JSON/body/prompt column and no custom-reason free-text column. It may retain the non-free-text `request_kind`, `draft_id`, `source_menu_id`, `replace_dish_id`, and `change_reason` enum needed for ownership/lineage. Replace Task 2's object-only `terminal_details` check with a private immutable validator used by the table constraint: every non-conflict row requires `null`; a conflict row permits exactly `{ "conflictCodes": [<generationConflictCode>...] }`, with 1–12 unique entries from the shared closed enum and no additional key. Change the final conflict RPC to accept only that validated `text[]`; it constructs the JSON itself, so `message`, `conditionRefs`, `changeReasonCustom`, and arbitrary prose never cross the persistence boundary. The repository reduces the validated wire conflicts to unique codes, and `toGenerationStatus` recreates each Japanese `message` from the shared code-to-copy map with `conditionRefs: []` when reading either the immediate or recovered terminal payload. Plan 4 passes `changeReasonCustom` from the in-memory validated execution command directly to atomic success persistence; only the completed `public.menus.change_reason_custom` stores it, while failed/conflict/timeout ledgers retain only the HMAC.
 
-Change `reserve_ai_generation` and the repository adapter together. Drop the obsolete eight-argument overload. The one final RPC, its revoke/grant statements, repository named arguments, generated database type, and pgTAP `to_regprocedure` assertion use exactly this signature; `change_reason_custom` is deliberately absent:
+Change `reserve_ai_generation` and the repository adapter together. Drop the obsolete interim nine-argument overload. The one final RPC, its revoke/grant statements, repository named arguments, generated database type, and pgTAP `to_regprocedure` assertion use exactly this signature; `change_reason_custom` is deliberately absent:
 
 ```sql
 create or replace function public.reserve_ai_generation(
@@ -5419,13 +5510,14 @@ if (!sent.sent) return toGenerationStatus(sent.record, key);
 
 Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Immediately after both private-function revokes, Plan 3 installs the sole `public.confirm_menu_label_confirmation(uuid,uuid,text)` shown above, including its helper-before-use expected-fingerprint boundary validation. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation RPC; it consumes, and never recreates or overloads, Plan 3's confirmation RPC.
 
-In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `regeneration_not_implemented`; revoke it from every external role. Replace the public finalizer signature once to append typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now`. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before the draft soft-delete helper call, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The finalizer then calls `private.soft_delete_generation_draft(v_request.user_id,v_request.draft_id,null)` with `PERFORM`; a NULL result is a successful no-op and is neither assigned nor inspected. The repository derives lineage only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Remove the old finalizer overload/grant, regenerate types, and add pgTAP proving a normal generation calls the null no-op while any non-null lineage fails atomically in Plan 3. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
+In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `regeneration_not_implemented`; revoke it from every external role. `finalize_ai_generation_success` already carries the typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now` from Task 4; its signature does not change here. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before the draft soft-delete helper call, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The finalizer then calls `private.soft_delete_generation_draft(v_request.user_id,v_request.draft_id,null)` with `PERFORM`; a NULL result is a successful no-op and is neither assigned nor inspected. The repository derives lineage only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Regenerate types after adding the hook, and add pgTAP proving a normal generation calls the null no-op while any non-null lineage fails atomically in Plan 3. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
 
-Replace the two-step conflict wrapper with one RPC:
+Replace the two-step conflict wrapper with one RPC. Its parameter is the validated `p_conflict_codes text[]` from Step 5, not the old `p_conflicts jsonb`, and it writes into the existing `terminal_details` column as `{ "conflictCodes": [...] }`, not a new column:
 
 ```sql
 update private.ai_generation_requests
-   set status='constraint_conflict', conflict_json=p_conflicts,
+   set status='constraint_conflict',
+       terminal_details=jsonb_build_object('conflictCodes',p_conflict_codes),
        completed_at=p_now, updated_at=p_now
  where id=p_request_id and user_id=p_user_id and status='processing'
 returning * into v_request;
@@ -5610,7 +5702,7 @@ type PlannerFormProps = {
 onClick={() => void props.onGenerate(plannerSubmissionSchema.parse(value), attempt)}
 ```
 
-Task 11 already implements the final owner-bound three-variant record and kind-aware `postGeneration`; Task 15 must not replace or overload either API. Keep only storage key `kondate:generation:v2` and remove the old `v1` key during the first read. `PENDING_GENERATION_TTL_MS` is exactly `1_800_000`; `readPendingGeneration(currentUserId,now)` deletes and returns null for `age >= TTL`, a future timestamp, another user, malformed JSON, or schema failure before any status/POST effect. Tests cover 29:59.999 retained, 30:00.000 deleted, wrong user, corruption, and byte-identical recovery for all three kinds. Sign-out, account switch, account deletion, explicit cancel, and terminal success/failure/conflict clear the record. It may contain only canonical command fields, `ownerUserId`, `createdAt`, and optional `requestId`: no name, email, allergy, prompt, safety snapshot, or raw AI result. The already-schema-bounded custom reason is the sole free text and remains capped at 200 characters.
+Task 11 already implements the final owner-bound three-variant record and kind-aware `postGeneration`; Task 15 must not replace or overload either API. Keep only storage key `kondate:generation:v2`, as Task 11 already established. `PENDING_GENERATION_TTL_MS` is exactly `1_800_000`; `readPendingGeneration(currentUserId,now)` deletes and returns null for `age >= TTL`, a future timestamp, another user, malformed JSON, or schema failure before any status/POST effect. Tests cover 29:59.999 retained, 30:00.000 deleted, wrong user, corruption, and byte-identical recovery for all three kinds. Sign-out, account switch, account deletion, explicit cancel, and terminal success/failure/conflict clear the record. It may contain only canonical command fields, `ownerUserId`, `createdAt`, and optional `requestId`: no name, email, allergy, prompt, safety snapshot, or raw AI result. The already-schema-bounded custom reason is the sole free text and remains capped at 200 characters.
 
 No API serializes the outer `kind`; `postGeneration` selects the owned endpoint and sends only the exact schema-parsed `request` body. Plan 4 makes the menu handler distinguish the disjoint new/whole request schemas and creates the dish handler; it does not create another browser API or pending schema.
 
