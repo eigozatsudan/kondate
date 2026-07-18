@@ -200,9 +200,10 @@ export function HouseholdSettingsForm({
   const [dislike, setDislike] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingOperationVersion, setPendingOperationVersion] = useState(0);
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
-  const initializedMemberId = useRef<string | undefined>(undefined);
+  const pendingOperationCountsRef = useRef(new Map<string, number>());
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
   const ageBandRef = useRef<HTMLSelectElement>(null);
@@ -241,14 +242,14 @@ export function HouseholdSettingsForm({
   useEffect(() => {
     if (selected !== undefined) {
       setSelectedId(selected.id);
-      if (initializedMemberId.current !== selected.id) {
-        initializedMemberId.current = selected.id;
-        const initialValues = valuesByMemberRef.current.get(selected.id) ?? memberValue(selected);
-        valuesByMemberRef.current.set(selected.id, initialValues);
-        setValues(initialValues);
-      }
+      const initialValues =
+        (pendingOperationCountsRef.current.get(selected.id) ?? 0) > 0
+          ? (valuesByMemberRef.current.get(selected.id) ?? memberValue(selected))
+          : memberValue(selected);
+      valuesByMemberRef.current.set(selected.id, initialValues);
+      setValues(initialValues);
     }
-  }, [selected]);
+  }, [pendingOperationVersion, selected]);
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -284,12 +285,14 @@ export function HouseholdSettingsForm({
     }
     setErrors({});
     try {
+      const patch = toMemberPatch(parsed.data);
       const saved =
         targetMember.status === "draft"
-          ? await api.updateDraft(targetMember.id, toMemberPatch(parsed.data))
-          : await api.updateMember(targetMember.id, toMemberPatch(parsed.data));
+          ? await api.updateDraft(targetMember.id, patch)
+          : await api.updateMember(targetMember.id, patch);
+      const cachedMember = { ...saved, ...patch };
       queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-        current.map((member) => (member.id === saved.id ? saved : member)),
+        current.map((member) => (member.id === saved.id ? cachedMember : member)),
       );
       await api.invalidateSafety();
       setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
@@ -299,8 +302,35 @@ export function HouseholdSettingsForm({
       return false;
     }
   };
+  const beginPendingOperation = (
+    targetMember: HouseholdMemberRow,
+    next?: HouseholdSettingsValue,
+  ) => {
+    const currentCount = pendingOperationCountsRef.current.get(targetMember.id) ?? 0;
+    pendingOperationCountsRef.current.set(targetMember.id, currentCount + 1);
+    valuesByMemberRef.current.set(
+      targetMember.id,
+      next ?? valuesByMemberRef.current.get(targetMember.id) ?? memberValue(targetMember),
+    );
+  };
+  const finishPendingOperation = (memberId: string) => {
+    const currentCount = pendingOperationCountsRef.current.get(memberId);
+    if (currentCount === undefined) return;
+    if (currentCount <= 1) {
+      pendingOperationCountsRef.current.delete(memberId);
+    } else {
+      pendingOperationCountsRef.current.set(memberId, currentCount - 1);
+    }
+    setPendingOperationVersion((current) => current + 1);
+  };
   const queueSave = (targetMember: HouseholdMemberRow, next: HouseholdSettingsValue) => {
-    saveQueue.current = saveQueue.current.then(() => save(targetMember, next)).catch(() => false);
+    beginPendingOperation(targetMember, next);
+    saveQueue.current = saveQueue.current
+      .then(() => save(targetMember, next))
+      .catch(() => false)
+      .finally(() => {
+        finishPendingOperation(targetMember.id);
+      });
     return saveQueue.current;
   };
   const createDraft = useMutation({
@@ -401,12 +431,17 @@ export function HouseholdSettingsForm({
     targetMember: HouseholdMemberRow,
     addAllergy: () => Promise<unknown>,
   ) => {
-    await addAllergy();
-    await saveRegisteredStatusAfterFirstAllergy(targetMember);
-    await queryClient.invalidateQueries({
-      queryKey: householdKeys.allergies("settings", targetMember.id),
-    });
-    await api.invalidateSafety();
+    beginPendingOperation(targetMember);
+    try {
+      await addAllergy();
+      await saveRegisteredStatusAfterFirstAllergy(targetMember);
+      await queryClient.invalidateQueries({
+        queryKey: householdKeys.allergies("settings", targetMember.id),
+      });
+      await api.invalidateSafety();
+    } finally {
+      finishPendingOperation(targetMember.id);
+    }
   };
   const setArray = (
     key: "unsupportedDietKinds" | "requiredSafetyConstraints" | "easePreferences",
@@ -757,8 +792,8 @@ export function HouseholdSettingsForm({
                     current.filter((member) => member.id !== selected.id),
                   );
                   setSelectedId(undefined);
-                  initializedMemberId.current = undefined;
                   valuesByMemberRef.current.delete(selected.id);
+                  pendingOperationCountsRef.current.delete(selected.id);
                   setValues(undefined);
                   return queryClient.invalidateQueries({ queryKey: membersKey });
                 })

@@ -610,3 +610,49 @@ it("keeps newer local edits when an older save response updates the member query
     expect(input).toHaveValue("新しい入力");
   });
 });
+
+it("uses the latest member query values after switching away and back", async () => {
+  const secondMember: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  const latestMember: HouseholdMemberRow = {
+    ...member,
+    display_name: "保護者",
+    portion_size: "large",
+    spice_level: "mild",
+    updated_at: "2026-07-18T00:00:00.000Z",
+  };
+  const updateMember = vi.fn().mockResolvedValue(latestMember);
+  const { queryClient } = renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    updateMember,
+  });
+
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("大人");
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [latestMember, secondMember]);
+    await Promise.resolve();
+  });
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), member.id);
+
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("保護者");
+  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
+  await userEvent.selectOptions(screen.getByLabelText("食べる量"), "small");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      member.id,
+      expect.objectContaining({
+        display_name: "保護者",
+        portion_size: "small",
+        spice_level: "mild",
+      }),
+    );
+  });
+});
