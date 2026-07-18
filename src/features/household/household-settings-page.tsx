@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import {
   ageBands,
@@ -192,7 +192,7 @@ export function HouseholdSettingsForm({
   userId?: string;
 }) {
   const queryClient = useQueryClient();
-  const membersKey = householdKeys.members(userId);
+  const membersKey = useMemo(() => householdKeys.members(userId), [userId]);
   const [selectedId, setSelectedId] = useState<string>();
   const [values, setValues] = useState<HouseholdSettingsValue>();
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
@@ -204,6 +204,7 @@ export function HouseholdSettingsForm({
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
+  const failedSaveMemberIdsRef = useRef(new Set<string>());
   const deferredRegisteredMemberIdsRef = useRef(new Set<string>());
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
@@ -243,17 +244,22 @@ export function HouseholdSettingsForm({
   useEffect(() => {
     if (selected !== undefined) {
       setSelectedId(selected.id);
+      const latestSelected =
+        queryClient
+          .getQueryData<HouseholdMemberRow[]>(membersKey)
+          ?.find((member) => member.id === selected.id) ?? selected;
       const baseValues =
-        (pendingOperationCountsRef.current.get(selected.id) ?? 0) > 0
-          ? (valuesByMemberRef.current.get(selected.id) ?? memberValue(selected))
-          : memberValue(selected);
+        (pendingOperationCountsRef.current.get(selected.id) ?? 0) > 0 ||
+        failedSaveMemberIdsRef.current.has(selected.id)
+          ? (valuesByMemberRef.current.get(selected.id) ?? memberValue(latestSelected))
+          : memberValue(latestSelected);
       const initialValues = deferredRegisteredMemberIdsRef.current.has(selected.id)
         ? { ...baseValues, allergyStatus: "registered" as const }
         : baseValues;
       valuesByMemberRef.current.set(selected.id, initialValues);
       setValues(initialValues);
     }
-  }, [pendingOperationVersion, selected]);
+  }, [membersKey, pendingOperationVersion, queryClient, selected]);
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -352,6 +358,11 @@ export function HouseholdSettingsForm({
     saveQueue.current = saveQueue.current
       .then(() => save(targetMember, persistedValues))
       .catch(() => false)
+      .then((saved) => {
+        if (saved) failedSaveMemberIdsRef.current.delete(targetMember.id);
+        else failedSaveMemberIdsRef.current.add(targetMember.id);
+        return saved;
+      })
       .finally(() => {
         finishPendingOperation(targetMember.id);
       });
@@ -394,9 +405,11 @@ export function HouseholdSettingsForm({
     await saveQueue.current;
     const saved = await save(selected, parsed.data);
     if (!saved) {
+      failedSaveMemberIdsRef.current.add(selected.id);
       setSaving(false);
       return;
     }
+    failedSaveMemberIdsRef.current.delete(selected.id);
     if (parsed.data.allergyStatus === "registered") {
       deferredRegisteredMemberIdsRef.current.delete(selected.id);
     }
@@ -634,6 +647,15 @@ export function HouseholdSettingsForm({
               )
             }
             remove={async (allergyId) => {
+              if (
+                selected.status === "complete" &&
+                values.allergyStatus === "registered" &&
+                allergiesQuery.isSuccess &&
+                currentAllergies.length <= 1
+              ) {
+                setMessage("登録ありの場合は1つ以上選んでください");
+                return;
+              }
               await api.removeAllergy(allergyId);
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies("settings", selected.id),
@@ -848,6 +870,7 @@ export function HouseholdSettingsForm({
                   setSelectedId(undefined);
                   valuesByMemberRef.current.delete(selected.id);
                   pendingOperationCountsRef.current.delete(selected.id);
+                  failedSaveMemberIdsRef.current.delete(selected.id);
                   deferredRegisteredMemberIdsRef.current.delete(selected.id);
                   setValues(undefined);
                   return queryClient.invalidateQueries({ queryKey: membersKey });

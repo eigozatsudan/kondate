@@ -170,6 +170,91 @@ it("prevents duplicate draft creation from the empty add screen", async () => {
   expect(await screen.findByLabelText("呼び名")).toBeVisible();
 });
 
+it("keeps every new draft field through consecutive autosaves and completes with the latest payload", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "member-draft",
+    status: "draft",
+    display_name: "子ども",
+    age_band: null,
+    allergy_status: null,
+    unsupported_diet_status: null,
+  };
+  const pendingSaves: Array<{
+    patch: HouseholdMemberPatch;
+    resolve(savedMember: HouseholdMemberRow): void;
+  }> = [];
+  const updateDraft = vi.fn(
+    (_memberId: string, patch: HouseholdMemberPatch) =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        pendingSaves.push({ patch, resolve });
+      }),
+  );
+  const completeMember = vi.fn().mockResolvedValue({ ...draft, status: "complete" });
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([]),
+    createDraft: vi.fn().mockResolvedValue(draft),
+    updateDraft,
+    completeMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "adult");
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
+  await userEvent.selectOptions(screen.getByLabelText("対象外の食事の確認"), "none");
+  await userEvent.click(screen.getByLabelText("骨を除く"));
+
+  for (let index = 0; index < 2; index += 1) {
+    await waitFor(() => {
+      expect(updateDraft).toHaveBeenCalledTimes(index + 1);
+    });
+    const pendingSave = pendingSaves[index];
+    if (pendingSave === undefined) throw new Error("保留中の下書き保存を確認できませんでした");
+    await act(async () => {
+      pendingSave.resolve({ ...draft, ...pendingSave.patch });
+      await Promise.resolve();
+    });
+  }
+
+  await waitFor(() => {
+    expect(screen.getByLabelText("年齢区分")).toHaveValue("adult");
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
+    expect(screen.getByLabelText("対象外の食事の確認")).toHaveValue("none");
+    expect(screen.getByLabelText("骨を除く")).toBeChecked();
+  });
+  expect(updateDraft.mock.calls[1]?.[1]).toEqual(
+    expect.objectContaining({
+      age_band: "adult",
+      allergy_status: "none",
+      unsupported_diet_status: "none",
+      required_safety_constraints: ["remove_bones"],
+    }),
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledTimes(3);
+  });
+  const completionSave = pendingSaves[2];
+  if (completionSave === undefined) throw new Error("完了前の下書き保存を確認できませんでした");
+  await act(async () => {
+    completionSave.resolve({ ...draft, ...completionSave.patch });
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith(draft.id);
+  });
+  expect(completionSave.patch).toEqual(
+    expect.objectContaining({
+      age_band: "adult",
+      allergy_status: "none",
+      unsupported_diet_status: "none",
+      required_safety_constraints: ["remove_bones"],
+    }),
+  );
+});
+
 it("saves a changed safety field and invalidates dependents", async () => {
   const { updateMember, invalidateSafety } = renderSettings();
   await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
@@ -408,6 +493,47 @@ it("keeps a deferred registered status when saving it after the first allergy fa
   expect(await screen.findByRole("status")).toHaveTextContent("家族設定を保存できませんでした");
   expect(allergyStatus).toHaveValue("registered");
   expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+});
+
+it("rejects removing the last allergy from a complete registered member", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([registeredMember]),
+    listAllergies: vi.fn().mockResolvedValue([standardAllergy]),
+    removeAllergy,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  expect(removeAllergy).not.toHaveBeenCalled();
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "登録ありの場合は1つ以上選んでください",
+  );
+});
+
+it("shows a remove error when deleting from multiple registered allergies fails", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  const removeAllergy = vi.fn().mockRejectedValue(new Error("アレルギーを削除できませんでした"));
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([registeredMember]),
+    listAllergies: vi.fn().mockResolvedValue([standardAllergy, customAllergy]),
+    removeAllergy,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent("アレルギーを削除できませんでした");
 });
 
 it("cleans up a deferred registered status when its member is deleted", async () => {
@@ -656,7 +782,7 @@ it("keeps allergy operations disabled after failure and enables them only after 
   const listAllergies = vi
     .fn()
     .mockRejectedValueOnce(new Error("temporary failure"))
-    .mockResolvedValue([standardAllergy]);
+    .mockResolvedValue([standardAllergy, customAllergy]);
   const updateMember = vi.fn().mockResolvedValue(registeredMember);
   const addStandardAllergy = vi.fn().mockResolvedValue(standardAllergy);
   const addCustomAllergy = vi.fn().mockResolvedValue(customAllergy);
@@ -823,6 +949,68 @@ it("keeps newer local edits when an older save response updates the member query
   });
   await waitFor(() => {
     expect(input).toHaveValue("新しい入力");
+  });
+});
+
+it("keeps the latest local snapshot after a queued success then failure", async () => {
+  const updateMember = vi
+    .fn()
+    .mockImplementationOnce((_memberId: string, patch: HouseholdMemberPatch) =>
+      Promise.resolve({ ...member, ...patch }),
+    )
+    .mockRejectedValueOnce(new Error("後の保存に失敗しました"));
+  const { queryClient } = renderSettings({ updateMember });
+  const displayName = await screen.findByLabelText("呼び名");
+
+  fireEvent.change(displayName, { target: { value: "保護者" } });
+  fireEvent.change(screen.getByLabelText("辛さ"), { target: { value: "mild" } });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent("後の保存に失敗しました");
+  expect(displayName).toHaveValue("保護者");
+  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
+
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [
+      { ...member, display_name: "外部更新", spice_level: "regular" },
+    ]);
+    await Promise.resolve();
+  });
+  expect(displayName).toHaveValue("保護者");
+  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
+});
+
+it("clears a failed local snapshot after the next queued full save succeeds", async () => {
+  const updateMember = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("先の保存に失敗しました"))
+    .mockImplementationOnce((_memberId: string, patch: HouseholdMemberPatch) =>
+      Promise.resolve({ ...member, ...patch }),
+    );
+  const { queryClient } = renderSettings({ updateMember });
+  const displayName = await screen.findByLabelText("呼び名");
+
+  fireEvent.change(displayName, { target: { value: "保護者" } });
+  fireEvent.change(screen.getByLabelText("辛さ"), { target: { value: "mild" } });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+  expect(updateMember.mock.calls[1]?.[1]).toEqual(
+    expect.objectContaining({ display_name: "保護者", spice_level: "mild" }),
+  );
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [
+      { ...member, display_name: "外部更新", spice_level: "none" },
+    ]);
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(displayName).toHaveValue("外部更新");
+    expect(screen.getByLabelText("辛さ")).toHaveValue("none");
   });
 });
 

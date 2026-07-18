@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AllergyEditor } from "./allergy-editor";
@@ -140,4 +140,105 @@ it("does not treat a processed-food label term as the user's standard allergen",
   await userEvent.type(screen.getByLabelText("自由登録名"), "マヨネーズ");
 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it.each(["success", "failure"] as const)(
+  "serializes every allergy mutation and re-enables operations after %s",
+  async (outcome) => {
+    let resolveAdd: (() => void) | undefined;
+    let rejectAdd: ((error: Error) => void) | undefined;
+    const pendingAdd = new Promise<void>((resolve, reject) => {
+      resolveAdd = resolve;
+      rejectAdd = reject;
+    });
+    const addStandard = vi.fn().mockReturnValue(pendingAdd);
+    const addCustom = vi.fn().mockResolvedValue(undefined);
+    const remove = vi.fn().mockResolvedValue(undefined);
+    const onError = vi.fn();
+    render(
+      <AllergyEditor
+        memberId="member-1"
+        catalog={catalog}
+        allergies={[allergy({ id: "allergy-custom" })]}
+        addStandard={addStandard}
+        addCustom={addCustom}
+        remove={remove}
+        onError={onError}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText("自由登録名"), "ひよこ豆");
+    await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+
+    await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+
+    expect(screen.getByRole("searchbox", { name: "標準29品目を検索" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "項目1を追加" })).toBeDisabled();
+    expect(screen.getByLabelText("自由登録名")).toBeDisabled();
+    expect(screen.getByLabelText("別名（カンマ区切り・任意）")).toBeDisabled();
+    expect(screen.getByLabelText("標準候補に該当しないことを確認")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "自由登録を追加" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "えんどう豆たんぱくを削除" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "項目1を追加" }));
+    fireEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
+    fireEvent.click(screen.getByRole("button", { name: "えんどう豆たんぱくを削除" }));
+    expect(addStandard).toHaveBeenCalledTimes(1);
+    expect(addCustom).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+
+    await act(async () => {
+      if (outcome === "success") resolveAdd?.();
+      else rejectAdd?.(new Error("追加に失敗しました"));
+      await pendingAdd.catch(() => undefined);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "項目1を追加" })).toBeEnabled();
+    });
+    expect(screen.getByLabelText("自由登録名")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "えんどう豆たんぱくを削除" })).toBeEnabled();
+    expect(onError).toHaveBeenCalledTimes(outcome === "failure" ? 1 : 0);
+  },
+);
+
+it("ignores a rapid second allergy mutation click", () => {
+  const addStandard = vi.fn(() => new Promise<void>(() => undefined));
+  render(
+    <AllergyEditor
+      memberId="member-1"
+      catalog={catalog}
+      allergies={[]}
+      addStandard={addStandard}
+      addCustom={vi.fn()}
+      remove={vi.fn()}
+    />,
+  );
+  const add = screen.getByRole("button", { name: "くるみを追加" });
+
+  fireEvent.click(add);
+  fireEvent.click(add);
+
+  expect(addStandard).toHaveBeenCalledTimes(1);
+});
+
+it("reports a remove rejection exactly once", async () => {
+  const error = new Error("削除に失敗しました");
+  const onError = vi.fn();
+  render(
+    <AllergyEditor
+      memberId="member-1"
+      catalog={catalog}
+      allergies={[allergy({ allergen_id: "walnut", custom_name: null })]}
+      addStandard={vi.fn()}
+      addCustom={vi.fn()}
+      remove={vi.fn().mockRejectedValue(error)}
+      onError={onError}
+    />,
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+  expect(onError).toHaveBeenCalledWith(error);
 });

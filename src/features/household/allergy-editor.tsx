@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { AllergenAliasRow, AllergenCatalogRow, MemberAllergyRow } from "./household-api";
 
 function normalizeAllergenTerm(value: string): string {
@@ -49,6 +49,8 @@ export function AllergyEditor(props: AllergyEditorProps) {
   const [customName, setCustomName] = useState("");
   const [customAliases, setCustomAliases] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [mutationPending, setMutationPending] = useState(false);
+  const mutationPendingRef = useRef(false);
   const matches = useMemo(
     () => filterAllergenCatalog(catalog, query, aliases),
     [aliases, catalog, query],
@@ -75,6 +77,33 @@ export function AllergyEditor(props: AllergyEditorProps) {
     .split(",")
     .map((alias) => alias.normalize("NFKC").trim())
     .filter((alias) => alias.length > 0);
+  const mutationDisabled = disabled || mutationPending;
+  const runMutation = (operation: () => Promise<unknown>, onSuccess?: () => void) => {
+    // React の再描画前に連続クリックされても、アレルギー更新を同時送信しない。
+    if (mutationPendingRef.current) return;
+    mutationPendingRef.current = true;
+    setMutationPending(true);
+    let result: Promise<unknown>;
+    try {
+      result = operation();
+    } catch (error) {
+      props.onError?.(error);
+      mutationPendingRef.current = false;
+      setMutationPending(false);
+      return;
+    }
+    void result
+      .then(() => {
+        onSuccess?.();
+      })
+      .catch((error: unknown) => {
+        props.onError?.(error);
+      })
+      .finally(() => {
+        mutationPendingRef.current = false;
+        setMutationPending(false);
+      });
+  };
 
   return (
     <section className="stack" aria-label="アレルギー編集">
@@ -84,7 +113,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
           aria-label="標準29品目を検索"
           role="searchbox"
           value={query}
-          disabled={disabled}
+          disabled={mutationDisabled}
           onChange={(event) => {
             setQuery(event.target.value);
           }}
@@ -99,16 +128,11 @@ export function AllergyEditor(props: AllergyEditorProps) {
             <button
               className="secondary-button"
               type="button"
-              disabled={disabled || allergies.some((allergy) => allergy.allergen_id === item.id)}
+              disabled={
+                mutationDisabled || allergies.some((allergy) => allergy.allergen_id === item.id)
+              }
               onClick={() => {
-                const operation = props.addStandard(memberId, item.id);
-                if (props.onError === undefined) {
-                  void operation;
-                  return;
-                }
-                void operation.catch((error: unknown) => {
-                  props.onError?.(error);
-                });
+                runMutation(() => props.addStandard(memberId, item.id));
               }}
             >
               {item.display_name}を追加
@@ -123,7 +147,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
           <span>自由登録名</span>
           <input
             value={customName}
-            disabled={disabled}
+            disabled={mutationDisabled}
             onChange={(event) => {
               setCustomName(event.target.value);
             }}
@@ -133,7 +157,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
           <span>別名（カンマ区切り・任意）</span>
           <input
             value={customAliases}
-            disabled={disabled}
+            disabled={mutationDisabled}
             onChange={(event) => {
               setCustomAliases(event.target.value);
             }}
@@ -150,7 +174,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
             type="checkbox"
             aria-label="標準候補に該当しないことを確認"
             checked={confirmed}
-            disabled={disabled}
+            disabled={mutationDisabled}
             onChange={(event) => {
               setConfirmed(event.target.checked);
             }}
@@ -161,7 +185,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
           className="secondary-button"
           type="button"
           disabled={
-            disabled ||
+            mutationDisabled ||
             !confirmed ||
             exactMatch ||
             normalizedCustomName.length < 1 ||
@@ -169,20 +193,14 @@ export function AllergyEditor(props: AllergyEditorProps) {
             aliasValues.length > 10
           }
           onClick={() => {
-            const operation = props
-              .addCustom(memberId, normalizedCustomName, aliasValues)
-              .then(() => {
+            runMutation(
+              () => props.addCustom(memberId, normalizedCustomName, aliasValues),
+              () => {
                 setCustomName("");
                 setCustomAliases("");
                 setConfirmed(false);
-              });
-            if (props.onError === undefined) {
-              void operation;
-              return;
-            }
-            void operation.catch((error: unknown) => {
-              props.onError?.(error);
-            });
+              },
+            );
           }}
         >
           自由登録を追加
@@ -202,8 +220,10 @@ export function AllergyEditor(props: AllergyEditorProps) {
                 className="text-button"
                 type="button"
                 aria-label={`${displayName}を削除`}
-                disabled={disabled}
-                onClick={() => void props.remove(allergy.id)}
+                disabled={mutationDisabled}
+                onClick={() => {
+                  runMutation(() => props.remove(allergy.id));
+                }}
               >
                 削除
               </button>
