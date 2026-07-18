@@ -4,7 +4,7 @@ import { RouterProvider } from "react-router/dom";
 import { expect, it, vi } from "vitest";
 import { RequireSession } from "./protected-routes";
 
-vi.mock("./auth-provider", () => ({
+vi.mock("./use-auth", () => ({
   useAuth: vi.fn(() => ({
     status: "unauthenticated",
     session: null,

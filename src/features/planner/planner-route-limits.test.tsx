@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock("@/features/auth/auth-provider", () => ({
+vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "72000000-0000-4000-8000-000000000001" } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));

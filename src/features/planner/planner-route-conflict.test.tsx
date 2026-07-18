@@ -43,7 +43,7 @@ const revisionThree: PlannerDraft = {
 const getPlannerDraftMock = vi.hoisted(() => vi.fn());
 const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/features/auth/auth-provider", () => ({
+vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: userId } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));

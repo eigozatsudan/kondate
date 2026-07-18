@@ -29,7 +29,7 @@ const api = vi.hoisted(() => ({
   delete: vi.fn(),
 }));
 
-vi.mock("@/features/auth/auth-provider", () => ({
+vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: userId } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({

@@ -63,7 +63,7 @@ const setQueryDataMock = vi.hoisted(() => vi.fn());
 const getQueryDataMock = vi.hoisted(() => vi.fn());
 const cancelQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
-vi.mock("@/features/auth/auth-provider", () => ({
+vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: queryState.userId } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));

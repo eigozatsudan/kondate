@@ -15,7 +15,7 @@ const completeOnboarding =
   vi.fn<(client: unknown, userId: string, status: "complete") => Promise<Profile>>();
 const acceptConsent = vi.fn<(client: unknown, userId: string) => Promise<Consent>>();
 
-vi.mock("@/features/auth/auth-provider", () => ({
+vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "user-1" } } }),
 }));
 
