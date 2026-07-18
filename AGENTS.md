@@ -61,9 +61,10 @@
    - 次のPlan / Taskと、設計書、Task brief、reportのパス。
    - 次Taskが使用する確定済みinterfaceと設計判断。
    - worktree、branch、HEAD。
-5. `.superpowers/sdd/next-task.md` にはraw diff、raw log、設計書本文、過去Taskの累積要約を記載しない。次Taskの新規スレッドには引き継ぎファイルと必要資料のパスだけを渡す。
-6. 次Taskの新規スレッドは、引き継ぎ内容を `AGENTS.md`、`SubAgents.md`、対象Task、承認済み設計書、`.superpowers/sdd/progress.md`、`git log`、branch、HEAD、worktreeの状態と照合してから作業を始める。不一致は独自判断で補わず、親エージェントへ報告する。
-7. 設計書に記載のない仕様変更を勝手に行わない。判断に迷う場合は設計書を正とし、設計書自体の不備が疑われる場合は明示的に指摘する。
+5. 次Taskが存在しない場合、親エージェントはexact path `.superpowers/sdd/next-task.md` が通常ファイルであり、かつsymlinkでないことを確認してから削除し、古い引き継ぎを失効させる。パスが存在しない場合は何もしない。symlink、directory、その他の通常ファイルでない場合は削除せず、blockerとして報告する。
+6. `.superpowers/sdd/next-task.md` にはraw diff、raw log、設計書本文、過去Taskの累積要約を記載しない。次Taskの新規スレッドには引き継ぎファイルと必要資料のパスだけを渡す。
+7. 次Taskの新規スレッドは、引き継ぎ内容を `AGENTS.md`、`SubAgents.md`、対象Task、承認済み設計書、`.superpowers/sdd/progress.md`、`git log`、branch、HEAD、worktreeの状態と照合してから作業を始める。不一致は独自判断で補わず、親エージェントへ報告する。
+8. 設計書に記載のない仕様変更を勝手に行わない。判断に迷う場合は設計書を正とし、設計書自体の不備が疑われる場合は明示的に指摘する。
 
 ---
 
