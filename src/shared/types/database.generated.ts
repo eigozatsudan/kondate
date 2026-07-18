@@ -9,6 +9,140 @@ export type Json =
 export type Database = {
   private: {
     Tables: {
+      ai_generation_requests: {
+        Row: {
+          actual_model_ids: string[]
+          completed_at: string | null
+          completed_menu_id: string | null
+          created_at: string
+          draft_id: string | null
+          draft_revision: number | null
+          duration_ms: number | null
+          failure_code: string | null
+          global_reserved_day: string | null
+          global_sent_calls: number
+          id: string
+          idempotency_key: string
+          processing_expires_at: string | null
+          repair_attempted: boolean
+          request_kind: string
+          retry_at: string | null
+          source_menu_id: string | null
+          started_at: string
+          status: string
+          terminal_details: Json | null
+          updated_at: string
+          user_id: string
+          user_quota_reserved: boolean
+          user_usage_day: string
+        }
+        Insert: {
+          actual_model_ids?: string[]
+          completed_at?: string | null
+          completed_menu_id?: string | null
+          created_at?: string
+          draft_id?: string | null
+          draft_revision?: number | null
+          duration_ms?: number | null
+          failure_code?: string | null
+          global_reserved_day?: string | null
+          global_sent_calls?: number
+          id?: string
+          idempotency_key: string
+          processing_expires_at?: string | null
+          repair_attempted?: boolean
+          request_kind: string
+          retry_at?: string | null
+          source_menu_id?: string | null
+          started_at: string
+          status: string
+          terminal_details?: Json | null
+          updated_at?: string
+          user_id: string
+          user_quota_reserved?: boolean
+          user_usage_day: string
+        }
+        Update: {
+          actual_model_ids?: string[]
+          completed_at?: string | null
+          completed_menu_id?: string | null
+          created_at?: string
+          draft_id?: string | null
+          draft_revision?: number | null
+          duration_ms?: number | null
+          failure_code?: string | null
+          global_reserved_day?: string | null
+          global_sent_calls?: number
+          id?: string
+          idempotency_key?: string
+          processing_expires_at?: string | null
+          repair_attempted?: boolean
+          request_kind?: string
+          retry_at?: string | null
+          source_menu_id?: string | null
+          started_at?: string
+          status?: string
+          terminal_details?: Json | null
+          updated_at?: string
+          user_id?: string
+          user_quota_reserved?: boolean
+          user_usage_day?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_generation_requests_draft_id_user_id_draft_revision_fkey"
+            columns: ["draft_id", "user_id", "draft_revision"]
+            isOneToOne: false
+            referencedRelation: "generation_draft_submission_versions"
+            referencedColumns: ["draft_id", "user_id", "draft_revision"]
+          },
+        ]
+      }
+      ai_global_daily_usage: {
+        Row: {
+          reserved_count: number
+          sent_count: number
+          updated_at: string
+          usage_day: string
+        }
+        Insert: {
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          usage_day: string
+        }
+        Update: {
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          usage_day?: string
+        }
+        Relationships: []
+      }
+      ai_user_daily_usage: {
+        Row: {
+          reserved_count: number
+          success_count: number
+          updated_at: string
+          usage_day: string
+          user_id: string
+        }
+        Insert: {
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day: string
+          user_id: string
+        }
+        Update: {
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       auth_continuations: {
         Row: {
           claimed_at: string | null
@@ -51,11 +185,68 @@ export type Database = {
         }
         Relationships: []
       }
+      generation_draft_submission_versions: {
+        Row: {
+          avoid_ingredients: string[]
+          budget_preference: string
+          captured_at: string
+          cuisine_genre: string
+          draft_id: string
+          draft_revision: number
+          main_ingredients: string[]
+          meal_type: string
+          memo: string
+          pantry_selections: Json
+          target_member_ids: string[]
+          time_limit_minutes: number
+          user_id: string
+        }
+        Insert: {
+          avoid_ingredients: string[]
+          budget_preference: string
+          captured_at?: string
+          cuisine_genre: string
+          draft_id: string
+          draft_revision: number
+          main_ingredients: string[]
+          meal_type: string
+          memo: string
+          pantry_selections: Json
+          target_member_ids: string[]
+          time_limit_minutes: number
+          user_id: string
+        }
+        Update: {
+          avoid_ingredients?: string[]
+          budget_preference?: string
+          captured_at?: string
+          cuisine_genre?: string
+          draft_id?: string
+          draft_revision?: number
+          main_ingredients?: string[]
+          meal_type?: string
+          memo?: string
+          pantry_selections?: Json
+          target_member_ids?: string[]
+          time_limit_minutes?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      ai_jst_day: { Args: { p_now: string }; Returns: string }
+      ai_next_jst_midnight: { Args: { p_now: string }; Returns: string }
+      ai_request_payload: {
+        Args: {
+          p_replayed?: boolean
+          p_request: Database["private"]["Tables"]["ai_generation_requests"]["Row"]
+        }
+        Returns: Json
+      }
       is_canonical_bounded_text: {
         Args: { p_max_length: number; p_min_length: number; p_value: string }
         Returns: boolean
@@ -1154,6 +1345,10 @@ export type Database = {
         }[]
       }
       cleanup_auth_continuations: { Args: { p_now: string }; Returns: number }
+      cleanup_stale_ai_generations: {
+        Args: { p_now?: string }
+        Returns: number
+      }
       complete_household_member: {
         Args: { p_member_id: string }
         Returns: {
@@ -1213,8 +1408,46 @@ export type Database = {
         }
         Returns: boolean
       }
+      finalize_ai_generation_conflict: {
+        Args: { p_conflicts: Json; p_now?: string; p_request_id: string }
+        Returns: Json
+      }
+      finalize_ai_generation_failure: {
+        Args: {
+          p_failure_code: string
+          p_now?: string
+          p_request_id: string
+          p_retry_at?: string
+        }
+        Returns: Json
+      }
       get_current_safety_snapshot: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
+        Returns: Json
+      }
+      mark_ai_global_sent: {
+        Args: { p_now?: string; p_request_id: string }
+        Returns: Json
+      }
+      record_ai_generation_model: {
+        Args: { p_model_id: string; p_now?: string; p_request_id: string }
+        Returns: undefined
+      }
+      reserve_ai_generation: {
+        Args: {
+          p_draft_id: string
+          p_global_limit: number
+          p_idempotency_key: string
+          p_now?: string
+          p_request_kind: string
+          p_stale_after_seconds?: number
+          p_user_id: string
+          p_user_limit: number
+        }
+        Returns: Json
+      }
+      reserve_ai_repair_call: {
+        Args: { p_global_limit: number; p_now?: string; p_request_id: string }
         Returns: Json
       }
       save_generation_draft: {
