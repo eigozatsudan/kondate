@@ -738,6 +738,11 @@ export function HouseholdSettingsForm({
             }}
             remove={async (allergyId) => {
               await api.removeAllergy(allergyId);
+              const pending = pendingRegisteredIntents.current.get(selected.id);
+              if (pending?.values.allergyStatus === "registered") {
+                pending.registeredSaveEvidence = "unknown";
+                pending.revision += 1;
+              }
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies("settings", selected.id),
               });
