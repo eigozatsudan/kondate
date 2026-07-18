@@ -54,10 +54,23 @@
 ## 4. 実装の進め方
 
 1. 実装は **Plan 単位**で管理し、各 Plan 内の **Task を1つずつ順番に**進める。
-2. **各 Task 完了ごとに**、以下を必ず実施する:
-   - `/compact` でコンテキストを圧縮する。
-   - 直前の Task の変更が次の Task に悪影響を与えていないか、**コードベースと設計書を照合してレビュー**し、必要なら修正する。
-3. 設計書に記載のない仕様変更を勝手に行わない。判断に迷う場合は設計書を正とし、設計書自体の不備が疑われる場合は明示的に指摘する。
+2. 各Taskでは、`SubAgents.md` が定める役割ごとに**新しいサブエージェントスレッド**を使用する。完了したTaskのImplementer、Verifier、Reviewerの各スレッドを次Taskへ再利用しない。
+3. **各 Task 完了ごとに**、直前のTaskの変更が次のTaskに悪影響を与えていないか、**コードベースと設計書を照合してレビュー**し、必要なら修正する。レビューと検証が完了するまで次Taskを開始しない。
+4. 次Taskが存在する場合、親エージェントは `.superpowers/sdd/handoff-plan-<plan>-task-<completed>-to-task-<next>-<head7>.md` 形式の一意な短いファイルを新規作成する。各placeholderには実値を入れ、`plan`、`completed`、`next` は数字、`head7` は完了時HEADの小文字hex 7文字とする。
+5. handoff運用では同一worktreeを単一のCodex親だけが操作する。同一ユーザー権限の別プロセスが検査・作成・読取中にsymlink、rename、内容差替えを並行実行する状況は脅威モデル外とする。このsingle-writer前提を満たせない場合はhandoffを作成・読取せずblockerとして次Taskの開始を停止する。
+6. producerは作成前にGitの正本からworktree rootを解決し、作成先までの全祖先が実directoryかつ非symlink、作成先directoryのcanonical pathがworktree内、同名leafが不存在であることを確認する。その後、通常のCodex surfaceが提供するworkspace-scoped file creationで一意なhandoffを新規作成する。
+7. handoffは一度だけ新規作成するwrite-onceとし、既存leafは型や内容に関係なく一切変更せずblockerとして報告する。静的検査はfail-closedとし、既存ファイルを上書き、削除、再利用せず、新規作成に失敗した場合や予期しない状態変化を検出した場合もblockerが解消するまで次Taskの開始を停止する。
+8. handoffには次の情報だけを記録する:
+   - 完了したPlan / Taskとcommit。
+   - 検証、一次レビュー、二次検証の結論と未解決ブロッカー。
+   - 次のPlan / Taskと、設計書、Task brief、reportのパス。
+   - 次Taskが使用する確定済みinterfaceと設計判断。
+   - worktree、branch、HEAD。
+9. handoffにはraw diff、raw log、設計書本文、過去Taskの累積要約を記載しない。
+10. 親エージェントは次Taskの新規スレッドへ発行したhandoffのexact pathだけを渡す。glob、directory listing、自動探索、mtimeまたはファイル名の順序による「最新」ファイルの選択は禁止する。古いhandoffは残るが、exact pathを明示して渡されない限りauthorityとして扱わない。
+11. 次Taskの新規スレッドは、同じ非並行の脅威モデルの下で、Git正本からworktree rootを解決し、worktree rootからhandoff leafの親までの全祖先が実directoryかつ非symlinkであることを静的に確認する。どれかがsymlinkまたは非directoryなら内容を読まずblockerとしてTask開始を停止する。次に、明示されたexact pathが通常ファイルかつ非symlinkであり、canonical pathがworktree内にあることを確認してからそのfileだけを読む。条件不成立、欠損、malformed、stale、改ざん、handoff内容と `AGENTS.md`、`SubAgents.md`、対象Task、承認済み設計書、`.superpowers/sdd/progress.md`、`git log`、branch、HEAD、worktreeの状態との不一致、予期しない状態変化はblockerとして報告する。安全な新規発行と正本との再照合に成功するまで、次Taskの作業を一切開始しない。
+12. 次Taskが存在しない場合、handoffは作成せず、既存handoffも削除せずにPlanの完了フローへ進む。
+13. 設計書に記載のない仕様変更を勝手に行わない。判断に迷う場合は設計書を正とし、設計書自体の不備が疑われる場合は明示的に指摘する。
 
 ---
 
