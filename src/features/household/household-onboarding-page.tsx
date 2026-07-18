@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { AgeBand, UnsupportedDietKind, UnsupportedDietStatus } from "@shared/contracts/domain";
-import { useAuth } from "@/features/auth/auth-provider";
+import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
   addCustomMemberAllergy,

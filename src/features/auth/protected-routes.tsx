@@ -3,7 +3,7 @@ import { Navigate, Outlet, useLocation } from "react-router";
 import { getProfile } from "@/features/household/household-api";
 import { householdKeys } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
-import { useAuth } from "./auth-provider";
+import { useAuth } from "./use-auth";
 import { sanitizeReturnPath } from "./auth-flow";
 
 export function RequireSession() {

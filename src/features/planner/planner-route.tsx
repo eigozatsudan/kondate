@@ -7,7 +7,7 @@ import {
   listMemberAllergies,
 } from "@/features/household/household-api";
 import { householdKeys } from "@/features/household/household-queries";
-import { useAuth } from "@/features/auth/auth-provider";
+import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import type { PlannerSafetyMember } from "./planner-safety-member";

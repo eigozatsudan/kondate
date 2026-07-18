@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { NavLink, Outlet } from "react-router";
-import { useAuth } from "@/features/auth/auth-provider";
+import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
   householdSafetyRevisionStorageKey,

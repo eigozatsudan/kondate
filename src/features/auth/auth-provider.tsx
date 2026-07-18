@@ -1,15 +1,8 @@
 import type { Session } from "@supabase/supabase-js";
-import {
-  createContext,
-  type ReactNode,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { getPublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
+import { AuthContext, type AuthContextValue } from "./auth-context";
 import {
   startAuthContinuationRecovery,
   type AuthContinuationRecoveryGateway,
@@ -19,14 +12,6 @@ import {
   startAuthContinuationCompletionListener,
 } from "./auth-continuation-completion";
 import { createAuthGateway } from "./auth-gateway";
-
-export type AuthContextValue = {
-  status: "loading" | "authenticated" | "unauthenticated";
-  session: Session | null;
-  refreshSession(): Promise<void>;
-};
-
-const AuthContext = createContext<AuthContextValue | null>(null);
 
 export type AuthProviderClient = {
   auth: Pick<BrowserSupabaseClient["auth"], "getSession" | "onAuthStateChange">;
@@ -111,10 +96,4 @@ export function AuthProvider({
     [loaded, refreshSession, session],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const value = useContext(AuthContext);
-  if (value === null) throw new Error("AuthProvider が必要です");
-  return value;
 }
