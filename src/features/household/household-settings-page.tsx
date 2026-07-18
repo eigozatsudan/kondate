@@ -779,18 +779,22 @@ export function HouseholdSettingsForm({
             remove={async (allergyId) => {
               await api.removeAllergy(allergyId);
               const pending = pendingRegisteredIntents.current.get(selected.id);
+              const refetchToken = { settled: false };
               if (pending?.values.allergyStatus === "registered") {
                 pending.allergyRefetchPending = true;
                 pending.allergyRefetchStarted = false;
                 pending.registeredSaveEvidence = "unknown";
                 pending.revision += 1;
-                pending.allergyRefetchToken = { settled: false };
+                pending.allergyRefetchToken = refetchToken;
               }
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies("settings", selected.id),
               });
-              if (pending?.allergyRefetchToken !== undefined) {
-                pending.allergyRefetchToken.settled = true;
+              if (
+                pendingRegisteredIntents.current.get(selected.id) === pending &&
+                pending?.allergyRefetchToken === refetchToken
+              ) {
+                refetchToken.settled = true;
                 setAllergyRefetchEpoch((current) => current + 1);
               }
               await api.invalidateSafety();
