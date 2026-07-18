@@ -1240,3 +1240,43 @@ it("keeps newer local edits when an older save response updates the member query
     expect(input).toHaveValue("新しい入力");
   });
 });
+
+it("連続削除では古い再取得完了でregistered保存を確定しない", async () => {
+  let resolveFetchA: ((rows: MemberAllergyRow[]) => void) | undefined;
+  let resolveFetchB: ((rows: MemberAllergyRow[]) => void) | undefined;
+  const listAllergies = vi
+    .fn()
+    .mockResolvedValueOnce([walnutAllergy])
+    .mockImplementationOnce(
+      () => new Promise<MemberAllergyRow[]>((resolve) => (resolveFetchA = resolve)),
+    )
+    .mockImplementationOnce(
+      () => new Promise<MemberAllergyRow[]>((resolve) => (resolveFetchB = resolve)),
+    );
+  const registeredMember: HouseholdMemberRow = { ...member, allergy_status: "registered" };
+  const updateMember = vi.fn().mockResolvedValue(registeredMember);
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const { queryClient } = renderSettings({ listAllergies, removeAllergy, updateMember });
+
+  await waitForAllergies(queryClient);
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
+  await waitFor(() => expect(updateMember).toHaveBeenCalledTimes(1));
+  updateMember.mockClear();
+
+  const removeButton = () => screen.getByRole("button", { name: "くるみを削除" });
+  await userEvent.click(removeButton());
+  await waitFor(() => expect(listAllergies).toHaveBeenCalledTimes(2));
+  await userEvent.click(removeButton());
+  await waitFor(() => expect(listAllergies).toHaveBeenCalledTimes(3));
+
+  await act(async () => {
+    resolveFetchA?.([walnutAllergy]);
+    await Promise.resolve();
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+  await act(async () => {
+    resolveFetchB?.([]);
+    await Promise.resolve();
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+});
