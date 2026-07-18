@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { cuisineGenres, mealTypes } from "./domain.js";
+import { aiGeneratedMenuPayloadSchema } from "./ai-generation-output.js";
+import { cuisineGenres, generationStatuses, mealTypes, privacyNoticeVersion } from "./domain.js";
 import { generatedPantryUsageSchema, pantryUsageSchema } from "./pantry.js";
 
 export const dishRoles = ["main", "side", "soup", "staple", "other"] as const;
@@ -515,3 +516,223 @@ export type MenuValidationResult =
       safetyFingerprint: string;
     }
   | { ok: false; issues: readonly MenuValidationIssue[] };
+
+const uuidSchema = z.uuid();
+const isoDateTimeSchema = z.iso.datetime({ offset: true });
+
+export const releaseQuota = {
+  userDailySuccessLimit: 5,
+  userDailyExternalCallLimit: 12,
+  userShortWindowExternalCallLimit: 4,
+  userShortWindowSeconds: 600,
+} as const;
+
+export const generationFailureCodes = [
+  "consent_required",
+  "draft_not_found",
+  "invalid_request",
+  "generation_in_progress",
+  "user_daily_limit",
+  "user_attempt_limit",
+  "user_short_window_limit",
+  "global_daily_limit",
+  "allergy_unconfirmed",
+  "allergen_missing",
+  "unmapped_custom_allergy",
+  "unsupported_diet_unconfirmed",
+  "regeneration_not_implemented",
+  "unsupported_diet",
+  "allergy_conflict",
+  "expired_pantry_unconfirmed",
+  "model_unavailable",
+  "invalid_ai_response",
+  "generation_timeout",
+  "internal_error",
+] as const;
+export type GenerationFailureCode = (typeof generationFailureCodes)[number];
+
+export const generationConflictCodes = [
+  "must_use_conflict",
+  "allergen_pantry_conflict",
+  "dish_count_conflict",
+  "mandatory_safety_conflict",
+  "current_safety_changed",
+] as const;
+export type GenerationConflictCode = (typeof generationConflictCodes)[number];
+
+export const quotaLimitKinds = ["user", "global", "provider"] as const;
+export type QuotaLimitKind = (typeof quotaLimitKinds)[number];
+
+export const expiredPantryConfirmationSchema = z
+  .object({
+    pantryItemId: uuidSchema,
+    checkedAt: isoDateTimeSchema,
+  })
+  .strict();
+export type ExpiredPantryConfirmation = z.infer<typeof expiredPantryConfirmationSchema>;
+
+export const newMenuGenerationRequestSchema = z
+  .object({
+    idempotencyKey: uuidSchema,
+    draftId: uuidSchema,
+    draftRevision: z.number().int().positive(),
+    privacyNoticeVersion: z.literal(privacyNoticeVersion),
+    expiredPantryConfirmations: z.array(expiredPantryConfirmationSchema).max(50),
+  })
+  .strict();
+export type NewMenuGenerationRequest = z.infer<typeof newMenuGenerationRequestSchema>;
+
+const regenerationBase = {
+  idempotencyKey: uuidSchema,
+  sourceMenuId: uuidSchema,
+  changeReason: z.enum([
+    "simpler",
+    "different_ingredient",
+    "child_friendly",
+    "different_flavor",
+    "custom",
+  ]),
+  changeReasonCustom: z.string().trim().min(1).max(200).nullable(),
+  expiredPantryConfirmations: z.array(expiredPantryConfirmationSchema).max(50),
+};
+
+const refineRegenerationRequest = (
+  value: {
+    changeReason: string;
+    changeReasonCustom: string | null;
+    expiredPantryConfirmations: readonly ExpiredPantryConfirmation[];
+  },
+  context: z.RefinementCtx,
+) => {
+  if ((value.changeReason === "custom") !== (value.changeReasonCustom !== null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["changeReasonCustom"],
+      message: "custom reason mismatch",
+    });
+  }
+  const ids = value.expiredPantryConfirmations.map((item) => item.pantryItemId);
+  if (new Set(ids).size !== ids.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["expiredPantryConfirmations"],
+      message: "duplicate pantry checks",
+    });
+  }
+};
+
+export const regenerateMenuRequestSchema = z
+  .object(regenerationBase)
+  .strict()
+  .superRefine(refineRegenerationRequest);
+export const regenerateDishRequestSchema = z
+  .object({ ...regenerationBase, dishId: uuidSchema })
+  .strict()
+  .superRefine(refineRegenerationRequest);
+export const generationCommandSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("new_menu"), request: newMenuGenerationRequestSchema }).strict(),
+  z.object({ kind: z.literal("regenerate_menu"), request: regenerateMenuRequestSchema }).strict(),
+  z.object({ kind: z.literal("regenerate_dish"), request: regenerateDishRequestSchema }).strict(),
+]);
+export type RegenerateMenuRequest = z.infer<typeof regenerateMenuRequestSchema>;
+export type RegenerateDishRequest = z.infer<typeof regenerateDishRequestSchema>;
+export type GenerationCommand = z.infer<typeof generationCommandSchema>;
+
+export const generationQuotaSchema = z
+  .object({
+    consumed: z.boolean(),
+    remaining: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
+    userDailyLimit: z.literal(releaseQuota.userDailySuccessLimit),
+    limitKind: z.enum(quotaLimitKinds).nullable(),
+    retryAt: isoDateTimeSchema.nullable(),
+  })
+  .strict();
+export type GenerationQuota = z.infer<typeof generationQuotaSchema>;
+
+export const generationConflictSchema = z
+  .object({
+    code: z.enum(generationConflictCodes),
+    message: z.string().min(1).max(200),
+    conditionRefs: z.array(z.string().min(1).max(80)).max(24),
+  })
+  .strict();
+
+const statusBase = {
+  idempotencyKey: uuidSchema,
+  quota: generationQuotaSchema,
+} as const;
+
+export const generationStatusDataSchema = z.discriminatedUnion("status", [
+  z.object({ ...statusBase, status: z.literal(generationStatuses[0]) }).strict(),
+  z
+    .object({
+      ...statusBase,
+      status: z.literal(generationStatuses[1]),
+      requestId: uuidSchema,
+      startedAt: isoDateTimeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...statusBase,
+      status: z.literal(generationStatuses[2]),
+      requestId: uuidSchema,
+      menuId: uuidSchema,
+      completedAt: isoDateTimeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...statusBase,
+      status: z.literal(generationStatuses[3]),
+      requestId: uuidSchema,
+      error: z
+        .object({
+          code: z.enum(generationFailureCodes),
+          message: z.string().min(1).max(200),
+          retryable: z.boolean(),
+        })
+        .strict(),
+      completedAt: isoDateTimeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...statusBase,
+      status: z.literal(generationStatuses[4]),
+      requestId: uuidSchema,
+      conflicts: z.array(generationConflictSchema).min(1).max(12),
+      completedAt: isoDateTimeSchema,
+    })
+    .strict(),
+]);
+export type GenerationStatusData = z.infer<typeof generationStatusDataSchema>;
+
+export const aiGenerationResponseSchema = z.discriminatedUnion("outcome", [
+  z
+    .object({
+      outcome: z.literal("success"),
+      menu: aiGeneratedMenuPayloadSchema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("constraint_conflict"),
+      conflicts: z.array(generationConflictSchema).min(1).max(12),
+    })
+    .strict(),
+]);
+export type AiGenerationResponse = z.infer<typeof aiGenerationResponseSchema>;
+
+const aiGenerationJsonSchema = z.toJSONSchema(aiGenerationResponseSchema, {
+  target: "draft-2020-12",
+});
+
+export const menuResponseFormat = {
+  type: "json_schema",
+  json_schema: {
+    name: "kondate_menu_generation",
+    strict: true,
+    schema: aiGenerationJsonSchema,
+  },
+} as const;

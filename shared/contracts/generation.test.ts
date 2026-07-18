@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { validatedMenuSchema } from "./generation.js";
+import {
+  aiGenerationResponseSchema,
+  generationStatusDataSchema,
+  menuResponseFormat,
+  newMenuGenerationRequestSchema,
+  releaseQuota,
+  validatedMenuSchema,
+} from "./generation.js";
 
 const dishId = "40000000-0000-4000-8000-000000000001";
 const stepId = "41000000-0000-4000-8000-000000000001";
@@ -79,6 +86,101 @@ const menu = {
   pantryUsage: [],
   labelConfirmations: [],
 } as const;
+
+it("locks the MVP quota tuple into the shared contract", () => {
+  expect(releaseQuota).toEqual({
+    userDailySuccessLimit: 5,
+    userDailyExternalCallLimit: 12,
+    userShortWindowExternalCallLimit: 4,
+    userShortWindowSeconds: 600,
+  });
+});
+
+describe("newMenuGenerationRequestSchema", () => {
+  const valid = {
+    idempotencyKey: "10000000-0000-4000-8000-000000000001",
+    draftId: "20000000-0000-4000-8000-000000000001",
+    draftRevision: 3,
+    privacyNoticeVersion: "2026-07-11.v1",
+    expiredPantryConfirmations: [
+      {
+        pantryItemId: "30000000-0000-4000-8000-000000000001",
+        checkedAt: "2026-07-11T09:00:00+09:00",
+      },
+    ],
+  };
+
+  it("accepts identifiers and transient expiry confirmations", () => {
+    expect(newMenuGenerationRequestSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("rejects client-supplied identity and safety data", () => {
+    expect(
+      newMenuGenerationRequestSchema.safeParse({
+        ...valid,
+        userId: "40000000-0000-4000-8000-000000000001",
+        allergens: ["egg"],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("generationStatusDataSchema", () => {
+  const quota = {
+    consumed: false,
+    remaining: 4,
+    userDailyLimit: 5,
+    limitKind: null,
+    retryAt: null,
+  };
+
+  it("requires a menu id for succeeded", () => {
+    expect(
+      generationStatusDataSchema.safeParse({
+        status: "succeeded",
+        idempotencyKey: "10000000-0000-4000-8000-000000000001",
+        requestId: "50000000-0000-4000-8000-000000000001",
+        quota: { ...quota, consumed: true },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("represents a missing server record as not_started", () => {
+    expect(
+      generationStatusDataSchema.parse({
+        status: "not_started",
+        idempotencyKey: "10000000-0000-4000-8000-000000000001",
+        quota,
+      }),
+    ).toMatchObject({ status: "not_started", quota: { remaining: 4 } });
+  });
+});
+
+describe("aiGenerationResponseSchema", () => {
+  it("rejects unknown fields in a conflict response", () => {
+    expect(
+      aiGenerationResponseSchema.safeParse({
+        outcome: "constraint_conflict",
+        conflicts: [
+          {
+            code: "must_use_conflict",
+            message: "必須食材と安全条件を同時に満たせません。",
+            conditionRefs: ["pantry_1"],
+          },
+        ],
+        prompt: "leak",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("publishes strict JSON Schema for OpenRouter", () => {
+    expect(menuResponseFormat.type).toBe("json_schema");
+    expect(menuResponseFormat.json_schema.strict).toBe(true);
+    expect(JSON.stringify(menuResponseFormat.json_schema.schema)).toContain(
+      '"additionalProperties":false',
+    );
+  });
+});
 
 describe("validated menu schema", () => {
   it("accepts a complete two-dish breakfast", () => {
