@@ -316,8 +316,13 @@ export function HouseholdSettingsForm({
     [api, queryClient, userId],
   );
   const queueSave = useCallback(
-    (member: HouseholdMemberRow, next: HouseholdSettingsValue) => {
-      saveQueue.current = saveQueue.current.then(() => save(member, next)).catch(() => false);
+    (member: HouseholdMemberRow, next: HouseholdSettingsValue, shouldSave?: () => boolean) => {
+      saveQueue.current = saveQueue.current
+        .then(() => {
+          if (shouldSave !== undefined && !shouldSave()) return true;
+          return save(member, next);
+        })
+        .catch(() => false);
       return saveQueue.current;
     },
     [save],
@@ -341,7 +346,34 @@ export function HouseholdSettingsForm({
             return undefined;
           }
           const revision = current.revision;
-          const saved = await queueSave(current.member, current.values);
+          let skipReason: "intent" | "revision" | "blocked" | undefined;
+          const saved = await queueSave(current.member, current.values, () => {
+            const latest = pendingRegisteredIntents.current.get(memberId);
+            if (latest !== pending) {
+              skipReason = "intent";
+              return false;
+            }
+            if (latest.revision !== revision) {
+              skipReason = "revision";
+              return false;
+            }
+            if (
+              latest.values.allergyStatus === "registered" &&
+              latest.registeredSaveEvidence !== "allergy-query" &&
+              latest.registeredSaveEvidence !== "allergy-insert"
+            ) {
+              skipReason = "blocked";
+              setMessage(registeredSaveBlockedMessage(latest.registeredSaveEvidence) ?? "");
+              return false;
+            }
+            return true;
+          });
+          if (skipReason === "intent") return saved;
+          if (skipReason === "revision") continue;
+          if (skipReason === "blocked") {
+            delete pending.inFlight;
+            return undefined;
+          }
           const latest = pendingRegisteredIntents.current.get(memberId);
           if (latest !== pending) return saved;
           if (!saved) {
