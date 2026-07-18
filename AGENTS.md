@@ -67,7 +67,7 @@
    - worktree、branch、HEAD。
 9. handoffにはraw diff、raw log、設計書本文、過去Taskの累積要約を記載しない。
 10. 親エージェントは次Taskの新規スレッドへ発行したhandoffのexact pathだけを渡す。glob、directory listing、自動探索、mtimeまたはファイル名の順序による「最新」ファイルの選択は禁止する。古いhandoffは残るが、exact pathを明示して渡されない限りauthorityとして扱わない。
-11. 次Taskの新規スレッドは、同じ非並行の脅威モデルの下で、明示されたexact pathが通常ファイルかつ非symlinkであり、canonical pathがworktree内にあることを静的に確認してからそのfileだけを読む。条件不成立、欠損、malformed、stale、改ざん、handoff内容と `AGENTS.md`、`SubAgents.md`、対象Task、承認済み設計書、`.superpowers/sdd/progress.md`、`git log`、branch、HEAD、worktreeの状態との不一致、予期しない状態変化はblockerとして報告する。安全な新規発行と正本との再照合に成功するまで、次Taskの作業を一切開始しない。
+11. 次Taskの新規スレッドは、同じ非並行の脅威モデルの下で、Git正本からworktree rootを解決し、worktree rootからhandoff leafの親までの全祖先が実directoryかつ非symlinkであることを静的に確認する。どれかがsymlinkまたは非directoryなら内容を読まずblockerとしてTask開始を停止する。次に、明示されたexact pathが通常ファイルかつ非symlinkであり、canonical pathがworktree内にあることを確認してからそのfileだけを読む。条件不成立、欠損、malformed、stale、改ざん、handoff内容と `AGENTS.md`、`SubAgents.md`、対象Task、承認済み設計書、`.superpowers/sdd/progress.md`、`git log`、branch、HEAD、worktreeの状態との不一致、予期しない状態変化はblockerとして報告する。安全な新規発行と正本との再照合に成功するまで、次Taskの作業を一切開始しない。
 12. 次Taskが存在しない場合、handoffは作成せず、既存handoffも削除せずにPlanの完了フローへ進む。
 13. 設計書に記載のない仕様変更を勝手に行わない。判断に迷う場合は設計書を正とし、設計書自体の不備が疑われる場合は明示的に指摘する。
 
