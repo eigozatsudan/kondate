@@ -158,13 +158,16 @@ export function AllergyEditor(props: AllergyEditorProps) {
             normalizedCustomName.length > 80 ||
             aliasValues.length > 10
           }
-          onClick={() =>
-            void props.addCustom(memberId, normalizedCustomName, aliasValues).then(() => {
-              setCustomName("");
-              setCustomAliases("");
-              setConfirmed(false);
-            })
-          }
+          onClick={() => {
+            void props
+              .addCustom(memberId, normalizedCustomName, aliasValues)
+              .then(() => {
+                setCustomName("");
+                setCustomAliases("");
+                setConfirmed(false);
+              })
+              .catch(() => undefined);
+          }}
         >
           自由登録を追加
         </button>

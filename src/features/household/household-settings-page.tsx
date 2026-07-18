@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   ageBands,
@@ -80,6 +80,28 @@ export const householdSettingsSchema = z
 
 export type HouseholdSettingsValue = z.infer<typeof householdSettingsSchema>;
 export type HouseholdFieldErrors = Partial<Record<keyof HouseholdSettingsValue, string>>;
+
+type PendingRegisteredIntent = {
+  member: HouseholdMemberRow;
+  values: HouseholdSettingsValue;
+  revision: number;
+  allergyRefetchPending: boolean;
+  allergyRefetchStarted: boolean;
+  allergyRefetchToken?: { settled: boolean };
+  registeredSaveEvidence:
+    "known-empty" | "unknown" | "query-error" | "allergy-query" | "allergy-insert";
+  inFlight?: Promise<boolean | undefined>;
+};
+
+function registeredSaveBlockedMessage(
+  evidence: PendingRegisteredIntent["registeredSaveEvidence"],
+): string | undefined {
+  if (evidence === "known-empty") return "登録ありの場合は1つ以上選んでください";
+  if (evidence === "unknown") return "アレルギー情報を確認しています";
+  if (evidence === "query-error")
+    return "アレルギー情報を確認できませんでした。もう一度お試しください";
+  return undefined;
+}
 
 export function toHouseholdFieldErrors(
   error: z.ZodError<HouseholdSettingsValue>,
@@ -195,12 +217,14 @@ export function HouseholdSettingsForm({
   const membersKey = householdKeys.members(userId);
   const [selectedId, setSelectedId] = useState<string>();
   const [values, setValues] = useState<HouseholdSettingsValue>();
+  const [allergyRefetchEpoch, setAllergyRefetchEpoch] = useState(0);
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
   const [message, setMessage] = useState("");
   const [dislike, setDislike] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveQueue = useRef(Promise.resolve(true));
+  const pendingRegisteredIntents = useRef(new Map<string, PendingRegisteredIntent>());
   const initializedMemberId = useRef<string | undefined>(undefined);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
@@ -229,6 +253,7 @@ export function HouseholdSettingsForm({
     queryFn: () => api.listAllergies(selected?.id ?? "none"),
     enabled: selected !== undefined,
   });
+  const currentAllergies = allergiesQuery.data ?? [];
   const dislikesQuery = useQuery({
     queryKey: selected
       ? householdKeys.dislikes("settings", selected.id)
@@ -242,7 +267,9 @@ export function HouseholdSettingsForm({
       setSelectedId(selected.id);
       if (initializedMemberId.current !== selected.id) {
         initializedMemberId.current = selected.id;
-        setValues(memberValue(selected));
+        setValues(
+          pendingRegisteredIntents.current.get(selected.id)?.values ?? memberValue(selected),
+        );
       }
     }
   }, [selected]);
@@ -264,34 +291,130 @@ export function HouseholdSettingsForm({
   const update = (patch: Partial<HouseholdSettingsValue>) => {
     setValues((current) => (current === undefined ? current : { ...current, ...patch }));
   };
-  const save = async (next: HouseholdSettingsValue): Promise<boolean> => {
-    if (selected === undefined) return false;
-    const parsed = householdSettingsSchema.safeParse(next);
-    if (!parsed.success) {
-      setErrors(toHouseholdFieldErrors(parsed.error));
-      return false;
-    }
-    setErrors({});
-    try {
-      const saved =
-        selected.status === "draft"
-          ? await api.updateDraft(selected.id, toMemberPatch(parsed.data))
-          : await api.updateMember(selected.id, toMemberPatch(parsed.data));
-      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-        current.map((member) => (member.id === saved.id ? saved : member)),
-      );
-      await api.invalidateSafety();
-      setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
-      return true;
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
-      return false;
-    }
-  };
-  const queueSave = (next: HouseholdSettingsValue) => {
-    saveQueue.current = saveQueue.current.then(() => save(next)).catch(() => false);
-    return saveQueue.current;
-  };
+  const save = useCallback(
+    async (member: HouseholdMemberRow, next: HouseholdSettingsValue): Promise<boolean> => {
+      const parsed = householdSettingsSchema.safeParse(next);
+      if (!parsed.success) {
+        setErrors(toHouseholdFieldErrors(parsed.error));
+        return false;
+      }
+      setErrors({});
+      try {
+        const saved =
+          member.status === "draft"
+            ? await api.updateDraft(member.id, toMemberPatch(parsed.data))
+            : await api.updateMember(member.id, toMemberPatch(parsed.data));
+        queryClient.setQueryData<HouseholdMemberRow[]>(
+          householdKeys.members(userId),
+          (current = []) =>
+            current.map((currentMember) => (currentMember.id === saved.id ? saved : currentMember)),
+        );
+        await api.invalidateSafety();
+        setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
+        return true;
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
+        return false;
+      }
+    },
+    [api, queryClient, userId],
+  );
+  const queueSave = useCallback(
+    (member: HouseholdMemberRow, next: HouseholdSettingsValue, shouldSave?: () => boolean) => {
+      saveQueue.current = saveQueue.current
+        .then(() => {
+          if (shouldSave !== undefined && !shouldSave()) return true;
+          return save(member, next);
+        })
+        .catch(() => false);
+      return saveQueue.current;
+    },
+    [save],
+  );
+  const savePendingRegisteredStatus = useCallback(
+    (memberId: string): Promise<boolean | undefined> => {
+      const pending = pendingRegisteredIntents.current.get(memberId);
+      if (pending === undefined) return Promise.resolve(undefined);
+      if (pending.inFlight !== undefined) return pending.inFlight;
+      const inFlight = (async (): Promise<boolean | undefined> => {
+        for (;;) {
+          const current = pendingRegisteredIntents.current.get(memberId);
+          if (current !== pending) return false;
+          if (
+            current.values.allergyStatus === "registered" &&
+            current.registeredSaveEvidence !== "allergy-query" &&
+            current.registeredSaveEvidence !== "allergy-insert"
+          ) {
+            delete current.inFlight;
+            setMessage(registeredSaveBlockedMessage(current.registeredSaveEvidence) ?? "");
+            return undefined;
+          }
+          const revision = current.revision;
+          let skipReason: "intent" | "revision" | "blocked" | undefined;
+          const saved = await queueSave(current.member, current.values, () => {
+            const latest = pendingRegisteredIntents.current.get(memberId);
+            if (latest !== pending) {
+              skipReason = "intent";
+              return false;
+            }
+            if (latest.revision !== revision) {
+              skipReason = "revision";
+              return false;
+            }
+            if (
+              latest.values.allergyStatus === "registered" &&
+              latest.registeredSaveEvidence !== "allergy-query" &&
+              latest.registeredSaveEvidence !== "allergy-insert"
+            ) {
+              skipReason = "blocked";
+              setMessage(registeredSaveBlockedMessage(latest.registeredSaveEvidence) ?? "");
+              return false;
+            }
+            return true;
+          });
+          if (skipReason === "intent") return saved;
+          if (skipReason === "revision") continue;
+          if (skipReason === "blocked") {
+            delete pending.inFlight;
+            return undefined;
+          }
+          const latest = pendingRegisteredIntents.current.get(memberId);
+          if (latest !== pending) return saved;
+          if (!saved) {
+            delete latest.inFlight;
+            return false;
+          }
+          if (latest.revision === revision) {
+            pendingRegisteredIntents.current.delete(memberId);
+            return true;
+          }
+        }
+      })();
+      pending.inFlight = inFlight;
+      return inFlight;
+    },
+    [queueSave],
+  );
+  const finalizeAllergyChange = useCallback(
+    async (memberId: string): Promise<void> => {
+      const pending = pendingRegisteredIntents.current.get(memberId);
+      if (pending !== undefined) pending.registeredSaveEvidence = "allergy-insert";
+      await queryClient.invalidateQueries({
+        queryKey: householdKeys.allergies("settings", memberId),
+      });
+      const registeredStatusSaved = await savePendingRegisteredStatus(memberId);
+      if (registeredStatusSaved === false) {
+        try {
+          await api.invalidateSafety();
+        } catch {
+          return;
+        }
+      } else if (registeredStatusSaved === undefined) {
+        await api.invalidateSafety();
+      }
+    },
+    [api, queryClient, savePendingRegisteredStatus],
+  );
   const createDraft = useMutation({
     mutationFn: () => api.createDraft(members.length),
     onSuccess: (created) => {
@@ -321,13 +444,22 @@ export function HouseholdSettingsForm({
       fieldRefs[firstInvalidField as keyof typeof fieldRefs]?.current?.focus();
       return;
     }
-    if (parsed.data.allergyStatus === "registered" && (allergiesQuery.data?.length ?? 0) === 0) {
+    if (parsed.data.allergyStatus === "registered" && !allergiesQuery.isSuccess) {
+      setMessage(
+        allergiesQuery.isError
+          ? "アレルギー情報を確認できませんでした。もう一度お試しください"
+          : "アレルギー情報を確認しています",
+      );
+      if (allergiesQuery.isError) void allergiesQuery.refetch();
+      return;
+    }
+    if (parsed.data.allergyStatus === "registered" && currentAllergies.length === 0) {
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
     setSaving(true);
     await saveQueue.current;
-    const saved = await save(parsed.data);
+    const saved = await save(selected, parsed.data);
     if (!saved) {
       setSaving(false);
       return;
@@ -350,8 +482,137 @@ export function HouseholdSettingsForm({
   const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
     const next = { ...(values as HouseholdSettingsValue), ...patch };
     update(patch);
-    void queueSave(next);
+    const requiresRegisteredIntent =
+      selected?.status === "complete" &&
+      selected.allergy_status !== "registered" &&
+      next.allergyStatus === "registered";
+    if (selected === undefined) return;
+    const existingIntent = pendingRegisteredIntents.current.get(selected.id);
+    if (!requiresRegisteredIntent && existingIntent === undefined) {
+      void queueSave(selected, next);
+      return;
+    }
+    if (existingIntent === undefined) {
+      pendingRegisteredIntents.current.set(selected.id, {
+        member: selected,
+        values: next,
+        revision: 0,
+        allergyRefetchPending: false,
+        allergyRefetchStarted: false,
+        registeredSaveEvidence:
+          allergiesQuery.isFetching || allergiesQuery.isRefetching
+            ? "unknown"
+            : allergiesQuery.isError
+              ? "query-error"
+              : !allergiesQuery.isSuccess
+                ? "unknown"
+                : currentAllergies.length > 0
+                  ? "allergy-query"
+                  : "known-empty",
+      });
+    } else {
+      existingIntent.member = selected;
+      existingIntent.values = next;
+      existingIntent.revision += 1;
+      if (
+        next.allergyStatus === "registered" &&
+        !existingIntent.allergyRefetchPending &&
+        existingIntent.registeredSaveEvidence !== "allergy-insert"
+      ) {
+        existingIntent.registeredSaveEvidence =
+          allergiesQuery.isFetching || allergiesQuery.isRefetching
+            ? "unknown"
+            : allergiesQuery.isError
+              ? "query-error"
+              : !allergiesQuery.isSuccess
+                ? "unknown"
+                : currentAllergies.length > 0
+                  ? "allergy-query"
+                  : "known-empty";
+      }
+    }
+    if (!requiresRegisteredIntent) {
+      void savePendingRegisteredStatus(selected.id);
+      return;
+    }
+    if (
+      pendingRegisteredIntents.current.get(selected.id)?.registeredSaveEvidence === "allergy-insert"
+    ) {
+      void savePendingRegisteredStatus(selected.id);
+      return;
+    }
+    if (allergiesQuery.isError) {
+      setMessage("アレルギー情報を確認できませんでした。もう一度お試しください");
+      void allergiesQuery.refetch();
+      return;
+    }
+    if (!allergiesQuery.isSuccess) {
+      setMessage("アレルギー情報を確認しています");
+      return;
+    }
+    if (currentAllergies.length === 0) {
+      setMessage("登録ありの場合は1つ以上選んでください");
+      return;
+    }
+    void savePendingRegisteredStatus(selected.id);
   };
+
+  const selectedMemberId = selected?.id;
+  useEffect(() => {
+    if (selectedMemberId === undefined) return;
+    const pending = pendingRegisteredIntents.current.get(selectedMemberId);
+    if (pending === undefined || pending.values.allergyStatus !== "registered") return;
+    if (pending.allergyRefetchToken !== undefined) {
+      if (!pending.allergyRefetchToken.settled) return;
+      delete pending.allergyRefetchToken;
+      pending.allergyRefetchPending = false;
+      pending.allergyRefetchStarted = false;
+    }
+    if (pending.allergyRefetchPending) {
+      if (allergiesQuery.isFetching || allergiesQuery.isRefetching) {
+        pending.allergyRefetchStarted = true;
+        if (pending.registeredSaveEvidence !== "allergy-insert") {
+          pending.registeredSaveEvidence = "unknown";
+        }
+        return;
+      }
+      if (!pending.allergyRefetchStarted) return;
+      delete pending.allergyRefetchToken;
+      pending.allergyRefetchPending = false;
+      pending.allergyRefetchStarted = false;
+    } else if (allergiesQuery.isFetching || allergiesQuery.isRefetching) {
+      if (pending.registeredSaveEvidence !== "allergy-insert") {
+        pending.registeredSaveEvidence = "unknown";
+      }
+      return;
+    }
+    if (!allergiesQuery.isSuccess) {
+      if (pending.registeredSaveEvidence !== "allergy-insert") {
+        pending.registeredSaveEvidence = allergiesQuery.isError ? "query-error" : "unknown";
+      }
+      return;
+    }
+    if (allergiesQuery.data.length === 0) {
+      if (pending.registeredSaveEvidence === "allergy-insert") {
+        void savePendingRegisteredStatus(selectedMemberId);
+        return;
+      }
+      pending.registeredSaveEvidence = "known-empty";
+      setMessage("登録ありの場合は1つ以上選んでください");
+      return;
+    }
+    pending.registeredSaveEvidence = "allergy-query";
+    void savePendingRegisteredStatus(selectedMemberId);
+  }, [
+    allergiesQuery.data,
+    allergiesQuery.isError,
+    allergiesQuery.isFetching,
+    allergiesQuery.isRefetching,
+    allergiesQuery.isSuccess,
+    savePendingRegisteredStatus,
+    selectedMemberId,
+    allergyRefetchEpoch,
+  ]);
 
   if (membersQuery.isPending || catalogQuery.isPending || aliasesQuery.isPending)
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
@@ -379,7 +640,6 @@ export function HouseholdSettingsForm({
       </main>
     );
   }
-  const currentAllergies = allergiesQuery.data ?? [];
   const currentDislikes = dislikesQuery.data ?? [];
   const setArray = (
     key: "unsupportedDietKinds" | "requiredSafetyConstraints" | "easePreferences",
@@ -490,24 +750,53 @@ export function HouseholdSettingsForm({
             aliases={aliasesQuery.data}
             allergies={currentAllergies}
             addStandard={async (memberId, allergenId) => {
-              await api.addStandardAllergy(memberId, allergenId);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies("settings", memberId),
-              });
-              await api.invalidateSafety();
+              try {
+                await api.addStandardAllergy(memberId, allergenId);
+                await finalizeAllergyChange(memberId);
+              } catch (error) {
+                setMessage(
+                  error instanceof Error ? error.message : "アレルギーを追加できませんでした",
+                );
+              }
             }}
             addCustom={async (memberId, name, aliases) => {
-              await api.addCustomAllergy(memberId, name, aliases);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies("settings", memberId),
-              });
-              await api.invalidateSafety();
+              try {
+                await api.addCustomAllergy(memberId, name, aliases);
+              } catch (error) {
+                setMessage(
+                  error instanceof Error ? error.message : "アレルギーを追加できませんでした",
+                );
+                throw error;
+              }
+              try {
+                await finalizeAllergyChange(memberId);
+              } catch (error) {
+                setMessage(
+                  error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+                );
+              }
             }}
             remove={async (allergyId) => {
               await api.removeAllergy(allergyId);
+              const pending = pendingRegisteredIntents.current.get(selected.id);
+              const refetchToken = { settled: false };
+              if (pending?.values.allergyStatus === "registered") {
+                pending.allergyRefetchPending = true;
+                pending.allergyRefetchStarted = false;
+                pending.registeredSaveEvidence = "unknown";
+                pending.revision += 1;
+                pending.allergyRefetchToken = refetchToken;
+              }
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies("settings", selected.id),
               });
+              if (
+                pendingRegisteredIntents.current.get(selected.id) === pending &&
+                pending?.allergyRefetchToken === refetchToken
+              ) {
+                refetchToken.settled = true;
+                setAllergyRefetchEpoch((current) => current + 1);
+              }
               await api.invalidateSafety();
             }}
           />
