@@ -1260,14 +1260,20 @@ it("連続削除では古い再取得完了でregistered保存を確定しない
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
-  await waitFor(() => expect(updateMember).toHaveBeenCalledTimes(1));
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+  });
   updateMember.mockClear();
 
   const removeButton = () => screen.getByRole("button", { name: "くるみを削除" });
   await userEvent.click(removeButton());
-  await waitFor(() => expect(listAllergies).toHaveBeenCalledTimes(2));
+  await waitFor(() => {
+    expect(listAllergies).toHaveBeenCalledTimes(2);
+  });
   await userEvent.click(removeButton());
-  await waitFor(() => expect(listAllergies).toHaveBeenCalledTimes(3));
+  await waitFor(() => {
+    expect(listAllergies).toHaveBeenCalledTimes(3);
+  });
 
   await act(async () => {
     resolveFetchA?.([walnutAllergy]);
