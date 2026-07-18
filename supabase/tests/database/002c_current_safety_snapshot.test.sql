@@ -71,13 +71,13 @@ insert into public.member_allergies (
     '73000000-0000-4000-8000-000000000002',
     '70000000-0000-4000-8000-000000000001',
     '71000000-0000-4000-8000-000000000001',
-    null, '独自食材', array['別名B', '別名A'], true
+    null, '独自食材B', array['別名B', '別名A'], true
   ),
   (
     '73000000-0000-4000-8000-000000000000',
     '70000000-0000-4000-8000-000000000001',
     '71000000-0000-4000-8000-000000000001',
-    null, '独自食材', array['もう一つの別名'], true
+    null, '独自食材A', array['もう一つの別名'], true
   );
 
 update public.household_members
@@ -193,7 +193,7 @@ select is(
     '70000000-0000-4000-8000-000000000001',
     array['71000000-0000-4000-8000-000000000001']::uuid[]
   ) #> '{members,0,allergies}',
-  '[{"kind":"standard","allergen_id":"egg"},{"kind":"custom","name":"独自食材","aliases":["もう一つの別名"]},{"kind":"custom","name":"独自食材","aliases":["別名A","別名B"]}]'::jsonb,
+  '[{"kind":"standard","allergen_id":"egg"},{"kind":"custom","name":"独自食材A","aliases":["もう一つの別名"]},{"kind":"custom","name":"独自食材B","aliases":["別名A","別名B"]}]'::jsonb,
   'standard and confirmed custom allergies use the exact ordered DTO'
 );
 select ok(
