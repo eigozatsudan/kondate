@@ -12,7 +12,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "format": "find . -path './.git' -prune -o -path './node_modules' -prune -o -path './.netlify' -prune -o -path './infra/supabase/volumes' -prune -o -type f \\( -name '*.js' -o -name '*.mjs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.json' -o -name '*.css' -o -name '*.md' -o -name '*.yml' -o -name '*.yaml' \\) -print0 | xargs -0 prettier --write",
     "format:check": "find . -path './.git' -prune -o -path './node_modules' -prune -o -path './.netlify' -prune -o -path './infra/supabase/volumes' -prune -o -type f \\( -name '*.js' -o -name '*.mjs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.json' -o -name '*.css' -o -name '*.md' -o -name '*.yml' -o -name '*.yaml' \\) -print0 | xargs -0 prettier --check",
-    "lint": "eslint .",
+    "lint": "NODE_OPTIONS=--max-old-space-size=4096 eslint .",
     "typecheck": "tsc -b",
     "test": "vitest",
     "db:push": "docker compose run --rm migrate",
