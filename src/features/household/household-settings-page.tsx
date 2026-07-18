@@ -204,6 +204,7 @@ export function HouseholdSettingsForm({
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
+  const deferredRegisteredMemberIdsRef = useRef(new Set<string>());
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
   const ageBandRef = useRef<HTMLSelectElement>(null);
@@ -242,10 +243,13 @@ export function HouseholdSettingsForm({
   useEffect(() => {
     if (selected !== undefined) {
       setSelectedId(selected.id);
-      const initialValues =
+      const baseValues =
         (pendingOperationCountsRef.current.get(selected.id) ?? 0) > 0
           ? (valuesByMemberRef.current.get(selected.id) ?? memberValue(selected))
           : memberValue(selected);
+      const initialValues = deferredRegisteredMemberIdsRef.current.has(selected.id)
+        ? { ...baseValues, allergyStatus: "registered" as const }
+        : baseValues;
       valuesByMemberRef.current.set(selected.id, initialValues);
       setValues(initialValues);
     }
@@ -273,6 +277,22 @@ export function HouseholdSettingsForm({
     valuesByMemberRef.current.set(selected.id, next);
     setValues(next);
     return next;
+  };
+  const persistedAllergyStatus = (targetMember: HouseholdMemberRow) => {
+    const currentMember = queryClient
+      .getQueryData<HouseholdMemberRow[]>(membersKey)
+      ?.find((member) => member.id === targetMember.id);
+    return memberValue(currentMember ?? targetMember).allergyStatus;
+  };
+  const clearDeferredRegisteredStatus = (targetMember: HouseholdMemberRow) => {
+    deferredRegisteredMemberIdsRef.current.delete(targetMember.id);
+    const currentValues = valuesByMemberRef.current.get(targetMember.id);
+    if (currentValues !== undefined) {
+      valuesByMemberRef.current.set(targetMember.id, {
+        ...currentValues,
+        allergyStatus: persistedAllergyStatus(targetMember),
+      });
+    }
   };
   const save = async (
     targetMember: HouseholdMemberRow,
@@ -323,10 +343,14 @@ export function HouseholdSettingsForm({
     }
     setPendingOperationVersion((current) => current + 1);
   };
-  const queueSave = (targetMember: HouseholdMemberRow, next: HouseholdSettingsValue) => {
-    beginPendingOperation(targetMember, next);
+  const queueSave = (
+    targetMember: HouseholdMemberRow,
+    localSnapshot: HouseholdSettingsValue,
+    persistedValues: HouseholdSettingsValue = localSnapshot,
+  ) => {
+    beginPendingOperation(targetMember, localSnapshot);
     saveQueue.current = saveQueue.current
-      .then(() => save(targetMember, next))
+      .then(() => save(targetMember, persistedValues))
       .catch(() => false)
       .finally(() => {
         finishPendingOperation(targetMember.id);
@@ -373,6 +397,9 @@ export function HouseholdSettingsForm({
       setSaving(false);
       return;
     }
+    if (parsed.data.allergyStatus === "registered") {
+      deferredRegisteredMemberIdsRef.current.delete(selected.id);
+    }
     if (selected.status === "draft") {
       try {
         const completed = await api.completeMember(selected.id);
@@ -390,7 +417,11 @@ export function HouseholdSettingsForm({
 
   const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
     const next = update(patch);
-    if (selected !== undefined && next !== undefined) void queueSave(selected, next);
+    if (selected === undefined || next === undefined) return;
+    const persistedValues = deferredRegisteredMemberIdsRef.current.has(selected.id)
+      ? { ...next, allergyStatus: persistedAllergyStatus(selected) }
+      : next;
+    void queueSave(selected, next, persistedValues);
   };
 
   if (membersQuery.isPending || catalogQuery.isPending || aliasesQuery.isPending)
@@ -421,24 +452,38 @@ export function HouseholdSettingsForm({
   }
   const currentAllergies = allergiesQuery.isSuccess ? allergiesQuery.data : [];
   const currentDislikes = dislikesQuery.data ?? [];
-  const saveRegisteredStatusAfterFirstAllergy = async (targetMember: HouseholdMemberRow) => {
+  const saveRegisteredStatusAfterFirstAllergy = async (
+    targetMember: HouseholdMemberRow,
+  ): Promise<boolean> => {
     const latestValues = valuesByMemberRef.current.get(targetMember.id);
-    if (latestValues?.allergyStatus === "registered" && currentAllergies.length === 0) {
-      await queueSave(targetMember, { ...latestValues, allergyStatus: "registered" });
+    if (
+      latestValues?.allergyStatus !== "registered" ||
+      !deferredRegisteredMemberIdsRef.current.has(targetMember.id)
+    ) {
+      return false;
     }
+    const registeredValues = { ...latestValues, allergyStatus: "registered" as const };
+    const saved = await queueSave(targetMember, registeredValues);
+    if (saved) deferredRegisteredMemberIdsRef.current.delete(targetMember.id);
+    return saved;
   };
   const addAllergyAndSaveRegisteredStatus = async (
     targetMember: HouseholdMemberRow,
     addAllergy: () => Promise<unknown>,
   ) => {
     beginPendingOperation(targetMember);
+    let allergyAdded = false;
     try {
       await addAllergy();
+      allergyAdded = true;
       await saveRegisteredStatusAfterFirstAllergy(targetMember);
       await queryClient.invalidateQueries({
         queryKey: householdKeys.allergies("settings", targetMember.id),
       });
       await api.invalidateSafety();
+    } catch (error) {
+      if (!allergyAdded) clearDeferredRegisteredStatus(targetMember);
+      throw error;
     } finally {
       finishPendingOperation(targetMember.id);
     }
@@ -538,7 +583,11 @@ export function HouseholdSettingsForm({
             disabled={!allergiesQuery.isSuccess}
             onChange={(event) => {
               const allergyStatus = event.target.value as AllergyStatus;
+              if (allergyStatus !== "registered") {
+                deferredRegisteredMemberIdsRef.current.delete(selected.id);
+              }
               if (allergyStatus === "registered" && currentAllergies.length === 0) {
+                deferredRegisteredMemberIdsRef.current.add(selected.id);
                 update({ allergyStatus });
                 return;
               }
@@ -590,6 +639,11 @@ export function HouseholdSettingsForm({
                 queryKey: householdKeys.allergies("settings", selected.id),
               });
               await api.invalidateSafety();
+            }}
+            onError={(error) => {
+              setMessage(
+                error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+              );
             }}
             disabled={!allergiesQuery.isSuccess}
           />
@@ -794,6 +848,7 @@ export function HouseholdSettingsForm({
                   setSelectedId(undefined);
                   valuesByMemberRef.current.delete(selected.id);
                   pendingOperationCountsRef.current.delete(selected.id);
+                  deferredRegisteredMemberIdsRef.current.delete(selected.id);
                   setValues(undefined);
                   return queryClient.invalidateQueries({ queryKey: membersKey });
                 })

@@ -222,6 +222,221 @@ it.each([
   },
 );
 
+it.each([
+  { allergyKind: "standard" as const, label: "standard allergy" },
+  { allergyKind: "custom" as const, label: "custom allergy" },
+])(
+  "keeps a deferred registered intent while an earlier save settles before the first $label",
+  async ({ allergyKind }) => {
+    let resolveEarlierSave: ((savedMember: HouseholdMemberRow) => void) | undefined;
+    const earlierSave = new Promise<HouseholdMemberRow>((resolve) => {
+      resolveEarlierSave = resolve;
+    });
+    const updateMember = vi
+      .fn()
+      .mockReturnValueOnce(earlierSave)
+      .mockResolvedValue({ ...member, allergy_status: "registered" });
+    const addStandardAllergy = vi.fn().mockResolvedValue(standardAllergy);
+    const addCustomAllergy = vi.fn().mockResolvedValue({
+      ...standardAllergy,
+      id: "allergy-custom",
+      allergen_id: null,
+      custom_name: "えんどう豆たんぱく",
+      custom_confirmed: true,
+    });
+    renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
+
+    await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+    await waitFor(() => {
+      expect(updateMember).toHaveBeenCalledTimes(1);
+    });
+    expect(updateMember.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ allergy_status: "none" }),
+    );
+    await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
+
+    await act(async () => {
+      resolveEarlierSave?.({ ...member, age_band: "age_3_5", allergy_status: "none" });
+      await earlierSave;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+    });
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+
+    if (allergyKind === "standard") {
+      await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+    } else {
+      await userEvent.type(screen.getByLabelText("自由登録名"), "えんどう豆たんぱく");
+      await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+      await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
+    }
+
+    await waitFor(() => {
+      expect(updateMember).toHaveBeenCalledTimes(2);
+    });
+    expect(updateMember.mock.calls[1]?.[1]).toEqual(
+      expect.objectContaining({ allergy_status: "registered" }),
+    );
+  },
+);
+
+it("keeps only the deferred registered status over newer member query values", async () => {
+  const latestMember: HouseholdMemberRow = {
+    ...member,
+    display_name: "保護者",
+    portion_size: "large",
+    spice_level: "mild",
+    updated_at: "2026-07-18T00:00:00.000Z",
+  };
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({ ...latestMember, ...patch }),
+  );
+  const { queryClient } = renderSettings({ updateMember });
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [latestMember]);
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+  });
+  expect(screen.getByLabelText("呼び名")).toHaveValue("保護者");
+  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
+  await userEvent.selectOptions(screen.getByLabelText("食べる量"), "small");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      member.id,
+      expect.objectContaining({
+        allergy_status: "none",
+        display_name: "保護者",
+        portion_size: "small",
+        spice_level: "mild",
+      }),
+    );
+  });
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+});
+
+it.each(["none", "unconfirmed"] as const)(
+  "clears a deferred registered status when it is changed to %s",
+  async (allergyStatus) => {
+    const savedMember = { ...member, allergy_status: allergyStatus };
+    const updateMember = vi.fn().mockResolvedValue(savedMember);
+    const { queryClient } = renderSettings({ updateMember });
+
+    const allergyStatusSelect = await screen.findByLabelText("アレルギーの確認");
+    await userEvent.selectOptions(allergyStatusSelect, "registered");
+    await userEvent.selectOptions(allergyStatusSelect, allergyStatus);
+
+    await waitFor(() => {
+      expect(updateMember).toHaveBeenCalledWith(
+        member.id,
+        expect.objectContaining({ allergy_status: allergyStatus }),
+      );
+    });
+    await act(async () => {
+      queryClient.setQueryData(householdKeys.members("settings"), [savedMember]);
+      await Promise.resolve();
+    });
+    expect(allergyStatusSelect).toHaveValue(allergyStatus);
+  },
+);
+
+it("clears a deferred registered status when the first allergy add fails", async () => {
+  let resolveEarlierSave: ((savedMember: HouseholdMemberRow) => void) | undefined;
+  const earlierSave = new Promise<HouseholdMemberRow>((resolve) => {
+    resolveEarlierSave = resolve;
+  });
+  let rejectAdd: ((error: Error) => void) | undefined;
+  const addFailure = new Promise<MemberAllergyRow>((_resolve, reject) => {
+    rejectAdd = reject;
+  });
+  const addStandardAllergy = vi.fn().mockReturnValue(addFailure);
+  const updateMember = vi
+    .fn()
+    .mockReturnValueOnce(earlierSave)
+    .mockImplementation((_memberId: string, patch: HouseholdMemberPatch) =>
+      Promise.resolve({ ...member, ...patch }),
+    );
+  renderSettings({ addStandardAllergy, updateMember });
+
+  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+  });
+  const allergyStatus = await screen.findByLabelText("アレルギーの確認");
+  await userEvent.selectOptions(allergyStatus, "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  await act(async () => {
+    rejectAdd?.(new Error("アレルギーを追加できませんでした"));
+    await addFailure.catch(() => undefined);
+  });
+
+  await waitFor(() => {
+    expect(allergyStatus).toHaveValue("none");
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent("アレルギーを追加できませんでした");
+  await userEvent.selectOptions(screen.getByLabelText("辛さ"), "mild");
+  await act(async () => {
+    resolveEarlierSave?.({ ...member, age_band: "age_3_5", allergy_status: "none" });
+    await earlierSave;
+  });
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+  expect(updateMember.mock.calls[1]?.[1]).toEqual(
+    expect.objectContaining({ allergy_status: "none", spice_level: "mild" }),
+  );
+});
+
+it("keeps a deferred registered status when saving it after the first allergy fails", async () => {
+  const updateMember = vi.fn().mockRejectedValue(new Error("家族設定を保存できませんでした"));
+  renderSettings({
+    updateMember,
+    addStandardAllergy: vi.fn().mockResolvedValue(standardAllergy),
+  });
+
+  const allergyStatus = await screen.findByLabelText("アレルギーの確認");
+  await userEvent.selectOptions(allergyStatus, "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("家族設定を保存できませんでした");
+  expect(allergyStatus).toHaveValue("registered");
+  expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+});
+
+it("cleans up a deferred registered status when its member is deleted", async () => {
+  const remainingMember: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member, remainingMember])
+    .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
+  const { queryClient } = renderSettings({ listMembers });
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "家族を削除" }));
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [member, remainingMember]);
+    await Promise.resolve();
+  });
+  await userEvent.selectOptions(await screen.findByLabelText("設定する家族"), member.id);
+
+  expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("none");
+});
+
 it("disables the allergy status until existing allergies finish loading", async () => {
   let resolveAllergies: ((allergies: MemberAllergyRow[]) => void) | undefined;
   const listAllergies = vi.fn(

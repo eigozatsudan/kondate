@@ -39,6 +39,7 @@ export type AllergyEditorProps = {
   addStandard(memberId: string, allergenId: string): Promise<unknown>;
   addCustom(memberId: string, name: string, aliases: string[]): Promise<unknown>;
   remove(allergyId: string): Promise<unknown>;
+  onError?(error: unknown): void;
   disabled?: boolean;
 };
 
@@ -99,7 +100,16 @@ export function AllergyEditor(props: AllergyEditorProps) {
               className="secondary-button"
               type="button"
               disabled={disabled || allergies.some((allergy) => allergy.allergen_id === item.id)}
-              onClick={() => void props.addStandard(memberId, item.id)}
+              onClick={() => {
+                const operation = props.addStandard(memberId, item.id);
+                if (props.onError === undefined) {
+                  void operation;
+                  return;
+                }
+                void operation.catch((error: unknown) => {
+                  props.onError?.(error);
+                });
+              }}
             >
               {item.display_name}を追加
             </button>
@@ -158,13 +168,22 @@ export function AllergyEditor(props: AllergyEditorProps) {
             normalizedCustomName.length > 80 ||
             aliasValues.length > 10
           }
-          onClick={() =>
-            void props.addCustom(memberId, normalizedCustomName, aliasValues).then(() => {
-              setCustomName("");
-              setCustomAliases("");
-              setConfirmed(false);
-            })
-          }
+          onClick={() => {
+            const operation = props
+              .addCustom(memberId, normalizedCustomName, aliasValues)
+              .then(() => {
+                setCustomName("");
+                setCustomAliases("");
+                setConfirmed(false);
+              });
+            if (props.onError === undefined) {
+              void operation;
+              return;
+            }
+            void operation.catch((error: unknown) => {
+              props.onError?.(error);
+            });
+          }}
         >
           自由登録を追加
         </button>
