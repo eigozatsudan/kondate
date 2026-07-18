@@ -259,9 +259,63 @@ docs/superpowers/plans/2026-07-17-codex-subagent-configuration.md
 docs/superpowers/plans/2026-07-17-codex-subagent-handoff.md
 ```
 
-Run for each file: `rg --pcre2 -U -l '(?s)(?=.*(?:選択と読み込み|select a named custom agent and confirm that it was\s+loaded))(?=.*task_name.*(?:証拠|not\s+evidence))(?=.*(?:per-dispatch(?: model)? override.{0,100}モデルだけ|override only the model))(?=.*(?:推論強度.{0,100}(?:独立|個別)|reasoning effort.{0,100}(?:unchanged|separate)))(?=.*(?:技術的\s*read-only|technical\s+read-only))(?=.*Implementer)' <file>`
+positive check は次の5条件を別々に検証する。条件1は「選択と読み込みの確認」と「TOMLを設定根拠にする」のANDを保つため、必要な文書では1-aと1-bの2コマンドに分ける。各Runは他のRunと結合せず、1コマンドずつ実行する。
 
-Expected for each file: そのファイル名が1行出力され、終了コード0。5条件のどれか1つでも欠ければ終了コード1になる。
+`AGENTS.md`:
+
+- 1-a Run: ``rg -F -n '利用中のsurfaceでcustom agent種別の選択と読み込みを確認できる場合は役割に対応するagentを使用し' AGENTS.md``
+- 1-b Run: ``rg -F -n 'custom agentの読み込みを確認できた場合、モデルと推論強度はそのagent TOMLの明示値または意図的な親継承をそれぞれの設定根拠とする' AGENTS.md``
+- 2 Run: ``rg -F -n '`task_name`の一致だけをcustom agentの選択・読み込みの証拠にしない' AGENTS.md``
+- 3 Run: `rg -F -n 'per-dispatch model overrideはモデルだけに適用し' AGENTS.md`
+- 4 Run: `rg -F -n '推論強度は独立した設定またはoverrideを確認できる場合だけ適用済みとする' AGENTS.md`
+- 5 Run: `rg -F -n '技術的read-onlyを確認できない読み取り役はImplementerと同時実行せず、完了またはcloseしてからImplementerを起動する' AGENTS.md`
+
+`SubAgents.md`:
+
+- 1-a Run: `rg -F -n 'If the surface can select a named custom agent and confirm that it was' SubAgents.md`
+- 1-b Run: ``rg -F -n 'loaded, use its explicit `model` and `model_reasoning_effort` as the' SubAgents.md``
+- 1-c Run: `rg -F -n 'configuration sources for those separate values.' SubAgents.md`
+- 2-a Run: ``rg -F -n 'A matching `task_name` labels a thread; it is not' SubAgents.md``
+- 2-b Run: `rg -F -n 'evidence that a same-named custom agent or its TOML settings were loaded.' SubAgents.md`
+- 3 Run: `rg -F -n 'override only the model to match the Task tier above.' SubAgents.md`
+- 4 Run: `rg -F -n 'as unchanged unless a separate setting or override can be confirmed.' SubAgents.md`
+- 5-a Run: `rg -F -n 'permission is workspace-capable or whose technical read-only permission could' SubAgents.md`
+- 5-b Run: `rg -F -n 'not be confirmed. An instruction-only reviewer or verifier must finish or be' SubAgents.md`
+- 5-c Run: `rg -F -n 'closed before the implementer starts.' SubAgents.md`
+
+`docs/superpowers/specs/2026-07-17-codex-subagent-configuration-design.md`:
+
+- 1 Run: `rg -F -n '対応surfaceで選択・読み込みを確認できた各custom agentのモデル、推論強度、権限、専門指示を定める' docs/superpowers/specs/2026-07-17-codex-subagent-configuration-design.md`
+- 2 Run: ``rg -F -n '`task_name`の一致だけをcustom agentの選択・読み込みの証拠にしない' docs/superpowers/specs/2026-07-17-codex-subagent-configuration-design.md``
+- 3 Run: `rg -F -n 'per-dispatch model overrideはモデルだけに適用する' docs/superpowers/specs/2026-07-17-codex-subagent-configuration-design.md`
+- 4 Run: `rg -F -n '推論強度は独立した設定またはoverrideを確認できる場合だけ適用済みとし' docs/superpowers/specs/2026-07-17-codex-subagent-configuration-design.md`
+- 5 Run: `rg -F -n '技術的read-onlyを確認できない読み取り役がactiveでないことを確認する。既存Implementerまたは該当する読み取り役がactiveなら、完了またはcloseされるまでImplementerをdispatchしない' docs/superpowers/specs/2026-07-17-codex-subagent-configuration-design.md`
+
+`docs/superpowers/specs/2026-07-18-codex-subagent-responsibility-separation-design.md`:
+
+- 1 Run: `rg -F -n 'custom agent TOML は種別の選択と読み込みを確認できた場合だけ設定根拠となること' docs/superpowers/specs/2026-07-18-codex-subagent-responsibility-separation-design.md`
+- 2 Run: ``rg -F -n '`task_name` が一致しただけで該当 TOML を読み込んだとみなさない' docs/superpowers/specs/2026-07-18-codex-subagent-responsibility-separation-design.md``
+- 3 Run: `rg -F -n 'モデルだけを明示上書きしてよい' docs/superpowers/specs/2026-07-18-codex-subagent-responsibility-separation-design.md`
+- 4 Run: `rg -F -n '推論強度は独立した設定または override を確認できる場合だけ適用済みとする' docs/superpowers/specs/2026-07-18-codex-subagent-responsibility-separation-design.md`
+- 5 Run: `rg -F -n '技術的 read-only を確認できない読み取り役は Implementer と同時実行せず、完了または close してから Implementer を起動する' docs/superpowers/specs/2026-07-18-codex-subagent-responsibility-separation-design.md`
+
+`docs/superpowers/plans/2026-07-17-codex-subagent-configuration.md`:
+
+- 1 Run: `rg -F -n 'custom agent種別の選択と読み込みを確認できる場合だけTOML設定を根拠とし' docs/superpowers/plans/2026-07-17-codex-subagent-configuration.md`
+- 2 Run: ``rg -F -n '`task_name`の一致を読み込み証拠にしない' docs/superpowers/plans/2026-07-17-codex-subagent-configuration.md``
+- 3 Run: `rg -F -n 'per-dispatch model overrideはモデルだけに適用し' docs/superpowers/plans/2026-07-17-codex-subagent-configuration.md`
+- 4 Run: `rg -F -n '推論強度とpermissionは独立して確認する' docs/superpowers/plans/2026-07-17-codex-subagent-configuration.md`
+- 5 Run: `rg -F -n '技術的read-onlyを確認できない読み取り役はImplementerと直列化し、完了またはclose前にImplementerを起動しない' docs/superpowers/plans/2026-07-17-codex-subagent-configuration.md`
+
+`docs/superpowers/plans/2026-07-17-codex-subagent-handoff.md`:
+
+- 1 Run: `rg -F -n '選択と読み込みを確認できたcustom agent TOML、意図的な親継承、利用可能なsurface overrideの優先順位' docs/superpowers/plans/2026-07-17-codex-subagent-handoff.md`
+- 2 Run: ``rg -F -n '`task_name`をcustom agent loadの証拠にしない' docs/superpowers/plans/2026-07-17-codex-subagent-handoff.md``
+- 3 Run: `rg -F -n 'per-dispatch overrideはmodelだけに適用し' docs/superpowers/plans/2026-07-17-codex-subagent-handoff.md`
+- 4 Run: `rg -F -n 'reasoningは独立した設定またはoverrideを確認できる場合だけ適用済みとする' docs/superpowers/plans/2026-07-17-codex-subagent-handoff.md`
+- 5 Run: `rg -F -n 'technical read-onlyを確認できない場合は、それらを完了またはcloseしてからImplementerを起動する' docs/superpowers/plans/2026-07-17-codex-subagent-handoff.md`
+
+Expected for every positive Run: 対象句を含む行だけが出力され、終了コード0。条件内のsubcheckを含む選択・読み込み確認、TOML設定根拠、否定語、model-only制約、推論強度の独立確認、またはread-only未確認役の直列化・完了条件のどれかを削除または逆転すると、対応するRunだけが終了コード1になる。
 
 Run for each file: ``rg -n 'Always pass `model` explicitly|モデルまたはカスタムエージェント種別を実行環境|利用可能なカスタムエージェントを選び' <file>``
 
