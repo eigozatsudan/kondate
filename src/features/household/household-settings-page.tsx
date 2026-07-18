@@ -85,8 +85,20 @@ type PendingRegisteredIntent = {
   member: HouseholdMemberRow;
   values: HouseholdSettingsValue;
   revision: number;
-  inFlight?: Promise<boolean>;
+  registeredSaveEvidence:
+    "known-empty" | "unknown" | "query-error" | "allergy-query" | "allergy-insert";
+  inFlight?: Promise<boolean | undefined>;
 };
+
+function registeredSaveBlockedMessage(
+  evidence: PendingRegisteredIntent["registeredSaveEvidence"],
+): string | undefined {
+  if (evidence === "known-empty") return "登録ありの場合は1つ以上選んでください";
+  if (evidence === "unknown") return "アレルギー情報を確認しています";
+  if (evidence === "query-error")
+    return "アレルギー情報を確認できませんでした。もう一度お試しください";
+  return undefined;
+}
 
 export function toHouseholdFieldErrors(
   error: z.ZodError<HouseholdSettingsValue>,
@@ -315,10 +327,19 @@ export function HouseholdSettingsForm({
       const pending = pendingRegisteredIntents.current.get(memberId);
       if (pending === undefined) return Promise.resolve(undefined);
       if (pending.inFlight !== undefined) return pending.inFlight;
-      const inFlight = (async (): Promise<boolean> => {
+      const inFlight = (async (): Promise<boolean | undefined> => {
         for (;;) {
           const current = pendingRegisteredIntents.current.get(memberId);
           if (current !== pending) return false;
+          if (
+            current.values.allergyStatus === "registered" &&
+            current.registeredSaveEvidence !== "allergy-query" &&
+            current.registeredSaveEvidence !== "allergy-insert"
+          ) {
+            delete current.inFlight;
+            setMessage(registeredSaveBlockedMessage(current.registeredSaveEvidence) ?? "");
+            return undefined;
+          }
           const revision = current.revision;
           const saved = await queueSave(current.member, current.values);
           const latest = pendingRegisteredIntents.current.get(memberId);
@@ -340,11 +361,19 @@ export function HouseholdSettingsForm({
   );
   const finalizeAllergyChange = useCallback(
     async (memberId: string): Promise<void> => {
+      const pending = pendingRegisteredIntents.current.get(memberId);
+      if (pending !== undefined) pending.registeredSaveEvidence = "allergy-insert";
       await queryClient.invalidateQueries({
         queryKey: householdKeys.allergies("settings", memberId),
       });
       const registeredStatusSaved = await savePendingRegisteredStatus(memberId);
-      if (registeredStatusSaved !== true) {
+      if (registeredStatusSaved === false) {
+        try {
+          await api.invalidateSafety();
+        } catch {
+          return;
+        }
+      } else if (registeredStatusSaved === undefined) {
         await api.invalidateSafety();
       }
     },
@@ -432,13 +461,38 @@ export function HouseholdSettingsForm({
         member: selected,
         values: next,
         revision: 0,
+        registeredSaveEvidence: allergiesQuery.isError
+          ? "query-error"
+          : !allergiesQuery.isSuccess
+            ? "unknown"
+            : currentAllergies.length > 0
+              ? "allergy-query"
+              : "known-empty",
       });
     } else {
       existingIntent.member = selected;
       existingIntent.values = next;
       existingIntent.revision += 1;
+      if (
+        next.allergyStatus === "registered" &&
+        existingIntent.registeredSaveEvidence !== "allergy-insert"
+      ) {
+        existingIntent.registeredSaveEvidence = allergiesQuery.isError
+          ? "query-error"
+          : !allergiesQuery.isSuccess
+            ? "unknown"
+            : currentAllergies.length > 0
+              ? "allergy-query"
+              : "known-empty";
+      }
     }
     if (!requiresRegisteredIntent) {
+      void savePendingRegisteredStatus(selected.id);
+      return;
+    }
+    if (
+      pendingRegisteredIntents.current.get(selected.id)?.registeredSaveEvidence === "allergy-insert"
+    ) {
       void savePendingRegisteredStatus(selected.id);
       return;
     }
@@ -460,15 +514,29 @@ export function HouseholdSettingsForm({
 
   const selectedMemberId = selected?.id;
   useEffect(() => {
-    if (selectedMemberId === undefined || !allergiesQuery.isSuccess) return;
-    if (!pendingRegisteredIntents.current.has(selectedMemberId)) return;
+    if (selectedMemberId === undefined) return;
+    const pending = pendingRegisteredIntents.current.get(selectedMemberId);
+    if (pending === undefined || pending.values.allergyStatus !== "registered") return;
+    if (!allergiesQuery.isSuccess) {
+      if (pending.registeredSaveEvidence !== "allergy-insert") {
+        pending.registeredSaveEvidence = allergiesQuery.isError ? "query-error" : "unknown";
+      }
+      return;
+    }
     if (allergiesQuery.data.length === 0) {
+      if (pending.registeredSaveEvidence === "allergy-insert") {
+        void savePendingRegisteredStatus(selectedMemberId);
+        return;
+      }
+      pending.registeredSaveEvidence = "known-empty";
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
+    pending.registeredSaveEvidence = "allergy-query";
     void savePendingRegisteredStatus(selectedMemberId);
   }, [
     allergiesQuery.data,
+    allergiesQuery.isError,
     allergiesQuery.isSuccess,
     savePendingRegisteredStatus,
     selectedMemberId,
