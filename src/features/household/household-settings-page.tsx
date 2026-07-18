@@ -562,9 +562,7 @@ export function HouseholdSettingsForm({
       return;
     }
     const requiresRegisteredIntent =
-      selected.status === "complete" &&
-      persistedAllergyStatus !== "registered" &&
-      next.allergyStatus === "registered";
+      selected.status === "complete" && persistedAllergyStatus !== "registered";
     if (!requiresRegisteredIntent && existingIntent === undefined) {
       void queueSave(selected, next);
       return;
@@ -592,7 +590,6 @@ export function HouseholdSettingsForm({
       existingIntent.values = next;
       existingIntent.revision += 1;
       if (
-        next.allergyStatus === "registered" &&
         !existingIntent.allergyRefetchPending &&
         existingIntent.registeredSaveEvidence !== "allergy-insert"
       ) {
