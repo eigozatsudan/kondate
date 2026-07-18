@@ -95,9 +95,9 @@ Run: `rg -n '新しいサブエージェントスレッド|next-task\.md|raw dif
 
 Expected: 終了コード0。新規スレッド、引き継ぎファイル、禁止内容、正本照合の各規則が表示される。
 
-Run: `git diff --check 285c6c0..HEAD`
+Run: `git diff --check 285c6c0..5429ce5`
 
-Expected: 終了コード0、出力なし。
+Expected: 終了コード0、出力なし。Task実装commit `5429ce5` までの固定範囲だけを検証する。
 
 Run: `git status --short`
 
