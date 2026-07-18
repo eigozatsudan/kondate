@@ -201,11 +201,15 @@ export function HouseholdSettingsForm({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingOperationVersion, setPendingOperationVersion] = useState(0);
+  const [allergyMutationPendingMemberIds, setAllergyMutationPendingMemberIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
   const failedSaveMemberIdsRef = useRef(new Set<string>());
   const deferredRegisteredMemberIdsRef = useRef(new Set<string>());
+  const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
   const ageBandRef = useRef<HTMLSelectElement>(null);
@@ -349,6 +353,28 @@ export function HouseholdSettingsForm({
     }
     setPendingOperationVersion((current) => current + 1);
   };
+  const beginAllergyMutation = (memberId: string) => {
+    // Editorが家族切替で再生成されても、同じ家族のアレルギー更新は重複開始させない。
+    if (allergyMutationPendingMemberIdsRef.current.has(memberId)) return false;
+    allergyMutationPendingMemberIdsRef.current.add(memberId);
+    setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
+    return true;
+  };
+  const finishAllergyMutation = (memberId: string) => {
+    allergyMutationPendingMemberIdsRef.current.delete(memberId);
+    setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
+  };
+  const runAllergyMutation = async (
+    targetMember: HouseholdMemberRow,
+    operation: () => Promise<void>,
+  ) => {
+    if (!beginAllergyMutation(targetMember.id)) return;
+    try {
+      await operation();
+    } finally {
+      finishAllergyMutation(targetMember.id);
+    }
+  };
   const queueSave = (
     targetMember: HouseholdMemberRow,
     localSnapshot: HouseholdSettingsValue,
@@ -465,6 +491,7 @@ export function HouseholdSettingsForm({
   }
   const currentAllergies = allergiesQuery.isSuccess ? allergiesQuery.data : [];
   const currentDislikes = dislikesQuery.data ?? [];
+  const selectedAllergyMutationPending = allergyMutationPendingMemberIds.has(selected.id);
   const saveRegisteredStatusAfterFirstAllergy = async (
     targetMember: HouseholdMemberRow,
   ): Promise<boolean> => {
@@ -483,24 +510,25 @@ export function HouseholdSettingsForm({
   const addAllergyAndSaveRegisteredStatus = async (
     targetMember: HouseholdMemberRow,
     addAllergy: () => Promise<unknown>,
-  ) => {
-    beginPendingOperation(targetMember);
-    let allergyAdded = false;
-    try {
-      await addAllergy();
-      allergyAdded = true;
-      await saveRegisteredStatusAfterFirstAllergy(targetMember);
-      await queryClient.invalidateQueries({
-        queryKey: householdKeys.allergies("settings", targetMember.id),
-      });
-      await api.invalidateSafety();
-    } catch (error) {
-      if (!allergyAdded) clearDeferredRegisteredStatus(targetMember);
-      throw error;
-    } finally {
-      finishPendingOperation(targetMember.id);
-    }
-  };
+  ) =>
+    runAllergyMutation(targetMember, async () => {
+      beginPendingOperation(targetMember);
+      let allergyAdded = false;
+      try {
+        await addAllergy();
+        allergyAdded = true;
+        await saveRegisteredStatusAfterFirstAllergy(targetMember);
+        await queryClient.invalidateQueries({
+          queryKey: householdKeys.allergies("settings", targetMember.id),
+        });
+        await api.invalidateSafety();
+      } catch (error) {
+        if (!allergyAdded) clearDeferredRegisteredStatus(targetMember);
+        throw error;
+      } finally {
+        finishPendingOperation(targetMember.id);
+      }
+    });
   const setArray = (
     key: "unsupportedDietKinds" | "requiredSafetyConstraints" | "easePreferences",
     item: string,
@@ -593,8 +621,9 @@ export function HouseholdSettingsForm({
           <select
             ref={allergyStatusRef}
             value={values.allergyStatus}
-            disabled={!allergiesQuery.isSuccess}
+            disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
             onChange={(event) => {
+              if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
               const allergyStatus = event.target.value as AllergyStatus;
               if (allergyStatus !== "registered") {
                 deferredRegisteredMemberIdsRef.current.delete(selected.id);
@@ -646,28 +675,30 @@ export function HouseholdSettingsForm({
                 api.addCustomAllergy(memberId, name, aliases),
               )
             }
-            remove={async (allergyId) => {
-              if (
-                selected.status === "complete" &&
-                values.allergyStatus === "registered" &&
-                allergiesQuery.isSuccess &&
-                currentAllergies.length <= 1
-              ) {
-                setMessage("登録ありの場合は1つ以上選んでください");
-                return;
-              }
-              await api.removeAllergy(allergyId);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies("settings", selected.id),
-              });
-              await api.invalidateSafety();
-            }}
+            remove={(allergyId) =>
+              runAllergyMutation(selected, async () => {
+                if (
+                  selected.status === "complete" &&
+                  values.allergyStatus === "registered" &&
+                  allergiesQuery.isSuccess &&
+                  currentAllergies.length <= 1
+                ) {
+                  setMessage("登録ありの場合は1つ以上選んでください");
+                  return;
+                }
+                await api.removeAllergy(allergyId);
+                await queryClient.invalidateQueries({
+                  queryKey: householdKeys.allergies("settings", selected.id),
+                });
+                await api.invalidateSafety();
+              })
+            }
             onError={(error) => {
               setMessage(
                 error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
               );
             }}
-            disabled={!allergiesQuery.isSuccess}
+            disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
           />
         )}
         <label className="field">
@@ -846,7 +877,9 @@ export function HouseholdSettingsForm({
         ref={deleteTrigger}
         className="secondary-button"
         type="button"
+        disabled={selectedAllergyMutationPending}
         onClick={() => {
+          if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
           setConfirmDelete(true);
         }}
       >
@@ -859,7 +892,9 @@ export function HouseholdSettingsForm({
             ref={deleteConfirm}
             className="primary-button"
             type="button"
-            onClick={() =>
+            disabled={selectedAllergyMutationPending}
+            onClick={() => {
+              if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
               void api
                 .deleteMember(selected.id)
                 .then(() => {
@@ -872,11 +907,15 @@ export function HouseholdSettingsForm({
                   pendingOperationCountsRef.current.delete(selected.id);
                   failedSaveMemberIdsRef.current.delete(selected.id);
                   deferredRegisteredMemberIdsRef.current.delete(selected.id);
+                  allergyMutationPendingMemberIdsRef.current.delete(selected.id);
+                  setAllergyMutationPendingMemberIds(
+                    new Set(allergyMutationPendingMemberIdsRef.current),
+                  );
                   setValues(undefined);
                   return queryClient.invalidateQueries({ queryKey: membersKey });
                 })
-                .then(() => api.invalidateSafety())
-            }
+                .then(() => api.invalidateSafety());
+            }}
           >
             家族だけを削除
           </button>

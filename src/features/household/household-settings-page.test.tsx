@@ -388,9 +388,9 @@ it("keeps only the deferred registered status over newer member query values", a
 
   await waitFor(() => {
     expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+    expect(screen.getByLabelText("呼び名")).toHaveValue("保護者");
+    expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
   });
-  expect(screen.getByLabelText("呼び名")).toHaveValue("保護者");
-  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
   await userEvent.selectOptions(screen.getByLabelText("食べる量"), "small");
 
   await waitFor(() => {
@@ -727,6 +727,135 @@ it.each([
     );
   },
 );
+
+it("keeps an allergy add locked for its member across switching until success", async () => {
+  const secondMember: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  const addStandardAllergy = vi.fn(
+    () =>
+      new Promise<MemberAllergyRow>((resolve) => {
+        resolveAdd = resolve;
+      }),
+  );
+  const updateMember = vi.fn((memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({ ...(memberId === member.id ? member : secondMember), ...patch }),
+  );
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+    updateMember,
+  });
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await waitFor(() => {
+    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
+  });
+  expect(screen.getByLabelText("アレルギーの確認")).toBeEnabled();
+  expect(screen.getByRole("button", { name: "家族を削除" })).toBeEnabled();
+
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), member.id);
+  await waitFor(() => {
+    expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
+  });
+  expect(screen.getByLabelText("アレルギーの確認")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "くるみを追加" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "家族を削除" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  expect(addStandardAllergy).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    resolveAdd?.(standardAllergy);
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("アレルギーの確認")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "くるみを追加" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "家族を削除" })).toBeEnabled();
+  });
+  expect(updateMember).toHaveBeenCalledWith(
+    member.id,
+    expect.objectContaining({ allergy_status: "registered" }),
+  );
+});
+
+it("rolls back and unlocks a switched member after its allergy add fails", async () => {
+  const secondMember: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  let rejectAdd: ((error: Error) => void) | undefined;
+  const pendingAdd = new Promise<MemberAllergyRow>((_resolve, reject) => {
+    rejectAdd = reject;
+  });
+  const addStandardAllergy = vi.fn().mockReturnValue(pendingAdd);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+  });
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), member.id);
+
+  expect(screen.getByLabelText("アレルギーの確認")).toBeDisabled();
+  await act(async () => {
+    rejectAdd?.(new Error("アレルギーを追加できませんでした"));
+    await pendingAdd.catch(() => undefined);
+  });
+
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
+    expect(screen.getByLabelText("アレルギーの確認")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "家族を削除" })).toBeEnabled();
+  });
+  expect(screen.queryByRole("region", { name: "アレルギー編集" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("アレルギーを追加できませんでした");
+});
+
+it("blocks a previously opened member delete confirmation during an allergy add", async () => {
+  let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  const addStandardAllergy = vi.fn(
+    () =>
+      new Promise<MemberAllergyRow>((resolve) => {
+        resolveAdd = resolve;
+      }),
+  );
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  renderSettings({ addStandardAllergy, deleteMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  const confirmDelete = screen.getByRole("button", { name: "家族だけを削除" });
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+
+  expect(screen.getByRole("button", { name: "家族を削除" })).toBeDisabled();
+  expect(confirmDelete).toBeDisabled();
+  fireEvent.click(confirmDelete);
+  expect(deleteMember).not.toHaveBeenCalled();
+
+  await act(async () => {
+    resolveAdd?.(standardAllergy);
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "家族を削除" })).toBeEnabled();
+    expect(confirmDelete).toBeEnabled();
+  });
+});
 
 it("disables every allergy operation while a registered member allergy query is pending", async () => {
   let resolveAllergies: ((allergies: MemberAllergyRow[]) => void) | undefined;
