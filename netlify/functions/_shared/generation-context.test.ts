@@ -31,6 +31,7 @@ const draftId = "71000000-0000-4000-8000-000000000001";
 const requestId = "72000000-0000-4000-8000-000000000001";
 const memberId = "73000000-0000-4000-8000-000000000001";
 const pantryId = "74000000-0000-4000-8000-000000000001";
+const secondMemberId = "73000000-0000-4000-8000-000000000002";
 const now = new Date("2026-07-11T03:00:00.000Z");
 
 beforeEach(() => {
@@ -74,6 +75,63 @@ const completeMember = {
   unsupported_diet_status: "none",
   unsupported_diet_kinds: [],
 };
+
+function pantryRow(ownerId: string = userId) {
+  return {
+    id: pantryId,
+    user_id: ownerId,
+    name: "牛乳",
+    quantity: 1,
+    unit: "本",
+    expires_on: null,
+    expiration_type: null,
+    opened_state: null,
+    created_at: now.toISOString(),
+    updated_at: now.toISOString(),
+  };
+}
+
+function makeTwoMemberGenerationContext(): ReturnType<typeof makeGenerationContext> {
+  const base = makeGenerationContext();
+  const firstTarget = base.targetMembers.at(0);
+  const firstSafety = base.safety.members.at(0);
+  const firstPreference = base.memberPreferences.at(0);
+  if (firstTarget === undefined || firstSafety === undefined || firstPreference === undefined) {
+    throw new Error("member fixture is empty");
+  }
+  return {
+    ...base,
+    submission: {
+      ...base.submission,
+      targetMemberIds: [firstTarget.householdMemberId, secondMemberId],
+    },
+    targetMembers: [
+      firstTarget,
+      { ...firstTarget, householdMemberId: secondMemberId, anonymousRef: "member_2" },
+    ],
+    safety: {
+      ...base.safety,
+      members: [
+        firstSafety,
+        { ...firstSafety, householdMemberId: secondMemberId, anonymousRef: "member_2" },
+      ],
+    },
+    memberPreferences: [
+      firstPreference,
+      {
+        ...firstPreference,
+        householdMemberId: secondMemberId,
+        anonymousMemberRef: "member_2",
+      },
+    ],
+  };
+}
+
+function duplicateFirst<T>(values: readonly T[]): readonly T[] {
+  const first = values.at(0);
+  if (first === undefined) throw new Error("member fixture is empty");
+  return [first, first];
+}
 
 type TableResult = { data: unknown; error: unknown };
 
@@ -169,6 +227,8 @@ describe("loadGenerationContext", () => {
   it.each([
     ["extra RPC key", [{ ...snapshot, raw_request: "secret" }]],
     ["unknown meal", [{ ...snapshot, meal_type: "snack" }]],
+    ["unknown cuisine", [{ ...snapshot, cuisine_genre: "mediterranean" }]],
+    ["unknown budget", [{ ...snapshot, budget_preference: "premium" }]],
     ["malformed pantry", [{ ...snapshot, pantry_selections: { invalid: true } }]],
   ])("fails closed for %s", async (_case, snapshotData) => {
     const { from } = arrangeLoader({ snapshotData });
@@ -179,8 +239,11 @@ describe("loadGenerationContext", () => {
     expect(from).not.toHaveBeenCalledWith("generation_drafts");
   });
 
-  it("rejects a snapshot whose draft revision differs from the HMAC-bound request", async () => {
-    arrangeLoader({ snapshotData: [{ ...snapshot, draft_revision: 3 }] });
+  it.each([
+    ["draft ID", { ...snapshot, draft_id: "71000000-0000-4000-8000-000000000002" }],
+    ["draft revision", { ...snapshot, draft_revision: 3 }],
+  ])("rejects a snapshot whose %s differs from the HMAC-bound request", async (_case, row) => {
+    arrangeLoader({ snapshotData: [row] });
 
     await expect(
       loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
@@ -214,6 +277,11 @@ describe("loadGenerationContext", () => {
   it.each([
     ["missing", [] as unknown[], "invalid_request"],
     ["draft", [{ ...completeMember, status: "draft" }], "invalid_request"],
+    [
+      "foreign owner",
+      [{ ...completeMember, user_id: "70000000-0000-4000-8000-000000000002" }],
+      "invalid_request",
+    ],
     [
       "allergy unconfirmed",
       [{ ...completeMember, allergy_status: "unconfirmed" }],
@@ -252,6 +320,22 @@ describe("loadGenerationContext", () => {
         },
       ],
       pantry: [],
+    });
+
+    await expect(
+      loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+  });
+
+  it("rejects a selected pantry item owned by another user", async () => {
+    arrangeLoader({
+      snapshotData: [
+        {
+          ...snapshot,
+          pantry_selections: [{ pantryItemId: pantryId, priority: "must_use" }],
+        },
+      ],
+      pantry: [pantryRow("70000000-0000-4000-8000-000000000002")],
     });
 
     await expect(
@@ -394,6 +478,80 @@ describe("validateGenerationPreflight", () => {
     });
   });
 
+  it.each([
+    [
+      "unequal target-member length",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        targetMembers: context.targetMembers.slice(0, 1),
+      }),
+    ],
+    [
+      "unequal safety-member length",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        safety: { ...context.safety, members: context.safety.members.slice(0, 1) },
+      }),
+    ],
+    [
+      "unequal preference length",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        memberPreferences: context.memberPreferences.slice(0, 1),
+      }),
+    ],
+    [
+      "reordered target members",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        targetMembers: [...context.targetMembers].reverse(),
+      }),
+    ],
+    [
+      "reordered safety members",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        safety: { ...context.safety, members: [...context.safety.members].reverse() },
+      }),
+    ],
+    [
+      "reordered preferences",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        memberPreferences: [...context.memberPreferences].reverse(),
+      }),
+    ],
+    [
+      "duplicate target ID and canonical ref",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        targetMembers: duplicateFirst(context.targetMembers),
+      }),
+    ],
+    [
+      "duplicate safety ID and canonical ref",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        safety: { ...context.safety, members: duplicateFirst(context.safety.members) },
+      }),
+    ],
+    [
+      "duplicate preference ID and canonical ref",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        memberPreferences: duplicateFirst(context.memberPreferences),
+      }),
+    ],
+  ])("fails closed for %s", (_case, mutate) => {
+    expect(
+      validateGenerationPreflight(mutate(makeTwoMemberGenerationContext()), now),
+    ).toMatchObject({
+      ok: false,
+      terminal: "failed",
+      primaryCode: "invalid_request",
+    });
+  });
+
   it("recalculates expired selections against trusted preflight time", () => {
     const base = makeGenerationContext();
     const context = {
@@ -446,6 +604,39 @@ describe("validateGenerationPreflight", () => {
           updatedAt: now.toISOString(),
         },
       ],
+    };
+
+    expect(validateGenerationPreflight(context, now)).toMatchObject({
+      ok: false,
+      terminal: "failed",
+      primaryCode: "invalid_request",
+    });
+  });
+
+  it("rejects 51 otherwise exact pantry selections", () => {
+    const base = makeGenerationContext();
+    const pantryItems = Array.from({ length: 51 }, (_, index) => ({
+      id: `74000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      userId,
+      name: `食材${String(index + 1)}`,
+      quantity: 1,
+      unit: "個",
+      expiresOn: null,
+      expirationType: null,
+      openedState: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    }));
+    const context = {
+      ...base,
+      submission: {
+        ...base.submission,
+        pantrySelections: pantryItems.map((item) => ({
+          pantryItemId: item.id,
+          priority: "prefer_use" as const,
+        })),
+      },
+      pantryItems,
     };
 
     expect(validateGenerationPreflight(context, now)).toMatchObject({
@@ -535,6 +726,71 @@ describe("validateGenerationPreflight", () => {
         primaryCode: "internal_error",
         issueCodes: ["internal_error"],
       })),
+    );
+  });
+
+  it.each([
+    ["derived alias in a main ingredient", "卵白", "derived", false],
+    ["processed alias in selected pantry", "マヨネーズ", "processed", true],
+  ] as const)("detects an allergen conflict from %s", (_case, alias, aliasKind, pantrySource) => {
+    const base = makeGenerationContext();
+    const selectedPantry = pantrySource
+      ? [
+          {
+            id: pantryId,
+            userId,
+            name: alias,
+            quantity: 1,
+            unit: "個",
+            expiresOn: null,
+            expirationType: null,
+            openedState: null,
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+          },
+        ]
+      : [];
+    const context = {
+      ...base,
+      submission: {
+        ...base.submission,
+        mainIngredients: pantrySource ? base.submission.mainIngredients : [alias],
+        pantrySelections: pantrySource
+          ? [{ pantryItemId: pantryId, priority: "prefer_use" as const }]
+          : [],
+      },
+      pantryItems: selectedPantry,
+      safety: {
+        ...base.safety,
+        members: base.safety.members.map((member) => ({
+          ...member,
+          allergyStatus: "registered" as const,
+          allergenIds: ["egg"],
+        })),
+        allergenDictionary: {
+          ...base.safety.allergenDictionary,
+          aliases: [
+            {
+              allergenId: "egg",
+              alias,
+              normalizedAlias: alias,
+              aliasKind,
+              requiresLabelConfirmation: aliasKind === "processed",
+              dictionaryVersion: base.safety.dictionaryVersion,
+            },
+          ],
+        },
+      },
+    };
+
+    expect(validateGenerationPreflight(context, now)).toMatchObject(
+      pantrySource
+        ? {
+            ok: false,
+            terminal: "constraint_conflict",
+            primaryCode: "allergen_pantry_conflict",
+          }
+        : { ok: false, terminal: "failed", primaryCode: "allergy_conflict" },
     );
   });
 
