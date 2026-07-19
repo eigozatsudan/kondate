@@ -2853,7 +2853,7 @@ git commit -m "test: 敵対的なOpenRouterモックを追加"
 
 **Interfaces:**
 - Consumes: Task 2 reservation's immutable `private.generation_draft_submission_versions` row, `loadCurrentSafetyContext(admin,userId,targetMemberIds)`, `plannerSubmissionSchema`, `pantryItemSchema`, `privacyNoticeVersion`, `detectUnsupportedMedicalRequest()`, `getJstDateKey()`, the user-scoped client, and admin client. It never reads `public.generation_drafts` after reservation.
-- Produces: service-role-only `public.get_ai_generation_submission_snapshot(uuid,uuid)`, canonical `GenerationContext`, `loadGenerationContext(user,requestId,request,now?)`, `validateTransientChecks(...)`, closed `GenerationPreflightResult`, `validateGenerationPreflight(context)`, `GenerationPromptDto`, and `buildGenerationMessages(context)`.
+- Produces: service-role-only `public.get_ai_generation_submission_snapshot(uuid,uuid)`, canonical `GenerationContext`, `loadGenerationContext(user,requestId,request,now?)`, `validateTransientChecks(...)`, Task 8-local `GenerationPreflightConflict`, closed `GenerationPreflightResult`, `validateGenerationPreflight(context)`, `GenerationPromptDto`, and `buildGenerationMessages(context)`.
 - Plan 2's locked `CurrentSafetyMember.anonymousRef` and
   `GenerationContext.targetMembers[].anonymousRef` remain canonical. Only
   `GenerationMemberPreference.anonymousMemberRef` uses the longer field, mapped
@@ -2991,6 +2991,7 @@ type from the tuple:
 
 ```ts
 export const generationPreflightIssuePriority = [
+  "internal_error",
   "allergy_unconfirmed",
   "allergen_missing",
   "unmapped_custom_allergy",
@@ -3006,12 +3007,31 @@ export const generationPreflightIssuePriority = [
 
 `validateGenerationPreflight(context)` accumulates a set, returns each code once in
 that canonical order regardless of member/pantry/input order, and places the first code
-in `primaryCode`. Its closed `GenerationPreflightResult` is `{ok:true}` or an
-`{ok:false}` arm that explicitly selects `terminal:"failed"` with a
-`GenerationFailureCode`, or `terminal:"constraint_conflict"` with canonical
-`GenerationConflict[]`. It never returns provider/user text. Tests permute members,
-selections, and source arrays and require byte-identical ordered issue codes and the
-same primary code. They also assert
+in `primaryCode`. Dictionary/rule version, allergen catalog, or rule completeness
+mismatches are server-safety completeness failures and add
+`internal_error`; its first position makes that failure deterministic and fail-closed.
+Define the conflict type locally in `generation-context.ts` without expanding the
+ownership of the Task 1 contract module:
+
+```ts
+import { z } from "zod";
+import { generationConflictSchema } from "../../../shared/contracts/generation.js";
+
+export type GenerationPreflightConflict = z.infer<
+  typeof generationConflictSchema
+>;
+```
+
+Its closed `GenerationPreflightResult` is `{ok:true}` or an `{ok:false}` arm that
+explicitly selects `terminal:"failed"` with a `GenerationFailureCode`, or
+`terminal:"constraint_conflict"` with `GenerationPreflightConflict[]`. The primary
+code's kind determines the terminal: every `GenerationFailureCode`, including
+`internal_error`, selects `failed`; `allergen_pantry_conflict` and `must_use_conflict`
+select `constraint_conflict`. It never returns provider/user text. Tests permute
+members, selections, and source arrays and require byte-identical ordered issue codes,
+the same primary code, and the same terminal. Include dictionary/rule version,
+allergen-catalog, and rule-completeness mismatch fixtures and prove that every
+permutation returns `primaryCode:"internal_error"` with `terminal:"failed"`. They also assert
 `new Set(generationPreflightIssuePriority).size === generationPreflightIssuePriority.length`
 and `issueCodes[0] === primaryCode` for every failure. Where Plan 2's current-safety RPC
 cannot represent an incomplete member,
@@ -3158,11 +3178,11 @@ git commit -m "feat: 匿名の現行生成コンテキストを追加"
 - Create: `netlify/functions/_shared/generation-materializer.ts`
 
 **Interfaces:**
-- Consumes: Tasks 1–8, including Task 8's immutable-snapshot
+- Consumes: Tasks 1–8, including Task 1's canonical `GenerationCommand` union and Task 8's immutable-snapshot
   `loadGenerationContext(user,requestId,request,now?)` and complete
   `validateGenerationPreflight(context)`, plus Plan 2's `validateGeneratedMenu()` and
   authoritative fingerprint contract.
-- Produces: `GenerationCommand`, `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, `toGenerationStatus(record,idempotencyKey)`, and the sole provider-local-to-internal boundary `materializeAiGeneratedMenu(output,context,uuid)`. Plan 4 extends the command union and reuses the same reservation, repair, materialization, validation, and persistence path.
+- Produces: `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, `toGenerationStatus(record,idempotencyKey)`, and the sole provider-local-to-internal boundary `materializeAiGeneratedMenu(output,context,uuid)`. Plan 4 extends the Task 1 command union and reuses the same reservation, repair, materialization, validation, and persistence path.
 
 - [ ] **Step 1 (2–5 min): Write failing materialization, quota-order, pre-send-release, repair-once, and success tests**
 
