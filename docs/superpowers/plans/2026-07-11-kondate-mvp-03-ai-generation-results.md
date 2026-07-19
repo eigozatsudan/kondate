@@ -1465,8 +1465,9 @@ git commit -m "feat: 無料OpenRouterモデルを強制"
 - [ ] **Step 1 (2–5 min): Add a failing transaction and status test**
 
 Task 15 is the mandatory correction gate for this transaction test. Do not add the
-old empty-target/dummy-fingerprint fixture here. At this point add only a RED
-signature assertion for the one final public entry point; Task 15 replaces it with
+old empty-target/dummy-fingerprint fixture here. At this point add only RED
+assertions for the one final public entry point and the private helper's closed
+execution boundary; update the file plan from 48 to 50. Task 15 replaces the public-entry assertion with
 the complete canonical success and ordering fixture before this test file may be
 considered GREEN.
 
@@ -1477,13 +1478,41 @@ select ok(
   ) is not null,
   'the final 13-argument success finalizer exists'
 );
+
+select ok(
+  coalesce(
+    not has_function_privilege(
+      'service_role',
+      to_regprocedure(
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+      ),
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'anon',
+      to_regprocedure(
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+      ),
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'authenticated',
+      to_regprocedure(
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+      ),
+      'EXECUTE'
+    ),
+    false
+  ),
+  'the private persistence helper is not externally executable'
+);
 ```
 
 - [ ] **Step 2 (2–5 min): Run pgTAP and observe the missing-finalizer failure**
 
 Run: `docker compose --profile test run --rm db-test supabase/tests/database/ai_control_and_quota.test.sql`
 
-Expected: FAIL because the final 13-argument `finalize_ai_generation_success` does not exist. Task 15 owns the only executable success fixture; no eight-argument reservation or ten-argument finalizer call is introduced here.
+Expected: FAIL because the final 13-argument `finalize_ai_generation_success` and the closed private-helper boundary do not exist. Task 15 owns the only executable success fixture; no eight-argument reservation or ten-argument finalizer call is introduced here.
 
 - [ ] **Step 3 (2–5 min): Add the complete normalized private persistence function**
 
@@ -1635,6 +1664,10 @@ begin
   return v_menu_id;
 end;
 $$;
+
+revoke all on function private.persist_validated_menu(
+  private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb
+) from public,anon,authenticated,service_role;
 ```
 
 `p_expired_checks`の要素型は最後まで`{pantryItemId,checkedAt}`だけであり、`checkedJstDate`をFunction、repository、HMAC、fixtureへ追加しない。上のpersistenceは一致する`checkedAt`を一度だけ`timestamptz`へ変換し、`(v_checked_at at time zone 'Asia/Tokyo')::date`で保存日を導出する。一致するcheckがなければ`SELECT INTO`で`v_checked_at`がNULLへ戻り、両列ともNULLになる。
@@ -1751,7 +1784,7 @@ docker compose run --rm app npm run db:types
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: the private normalized-persistence assertions and final 13-argument signature assertion PASS. Do not execute an empty-target or dummy-fingerprint success call at this intermediate gate. Task 15 installs the canonical fingerprint/lineage helpers and runs the sole complete transaction fixture proving that one menu and every normalized child commit with one user success while any injected violation rolls the aggregate, quota, draft, and request transitions back together.
+Expected: all 50 assertions PASS, including the private helper execution boundary and final 13-argument signature. Do not execute an empty-target or dummy-fingerprint success call at this intermediate gate. Task 15 installs the canonical fingerprint/lineage helpers and runs the sole complete transaction fixture proving that one menu and every normalized child commit with one user success while any injected violation rolls the aggregate, quota, draft, and request transitions back together.
 
 Regenerated database types must expose `menu_label_confirmations.Row.source_text_snapshot: string` and require `source_text_snapshot: string` on `Insert`; no optional or nullable persistence type is accepted.
 
@@ -1765,7 +1798,7 @@ argument and the return contract remain identical to the generated function.
 
 ```bash
 git add supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tests/database/ai_control_and_quota.test.sql src/shared/types/database.generated.ts src/shared/types/database.ts src/shared/types/database.test.ts
-git commit -m "feat: persist validated generation atomically"
+git commit -m "feat: 検証済み献立を原子的に保存"
 ```
 
 ### Task 5: Add the user-scoped client, sanitized logger, and typed quota repository
