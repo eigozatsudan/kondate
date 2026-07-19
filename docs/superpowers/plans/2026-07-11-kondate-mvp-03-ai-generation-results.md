@@ -1714,11 +1714,13 @@ begin
   perform private.assign_regeneration_lineage(
     v_request.user_id,p_source_menu_id,v_menu_id,p_change_reason,p_change_reason_custom
   );
-  perform private.soft_delete_generation_draft(
-    v_request.user_id,
-    v_request.draft_id,
-    null
-  );
+  if v_request.draft_id is not null and v_request.draft_revision is not null then
+    perform private.soft_delete_generation_draft(
+      v_request.user_id,
+      v_request.draft_id,
+      v_request.draft_revision
+    );
+  end if;
   update private.ai_user_daily_usage set
     reserved_count = reserved_count - 1, success_count = success_count + 1, updated_at = p_now
   where user_id = v_request.user_id and usage_day = v_request.user_usage_day and reserved_count > 0;
@@ -4667,7 +4669,9 @@ create temporary table finalize_fixture_context(
 create function pg_temp.finalize_ordering_success(
   p_request_id uuid,p_menu_id uuid,p_dish_id uuid,p_ingredient_id uuid,
   p_step_id uuid,p_timeline_id uuid,p_pantry_selection_id uuid,
-  p_pantry_item_id uuid,p_checked_at timestamptz,p_now timestamptz
+  p_pantry_item_id uuid,p_checked_at timestamptz,p_now timestamptz,
+  p_source_menu_id uuid default null,p_change_reason text default null,
+  p_change_reason_custom text default null
 ) returns jsonb language plpgsql as $fixture$
 declare
   v_context pg_temp.finalize_fixture_context;
@@ -4752,7 +4756,7 @@ begin
     v_context.allergen_version,v_context.food_rule_version,
     v_context.target_members,jsonb_build_array(jsonb_build_object(
       'pantryItemId',p_pantry_item_id,'checkedAt',p_checked_at)),
-    null,null,null,p_now);
+    p_source_menu_id,p_change_reason,p_change_reason_custom,p_now);
 end
 $fixture$;
 
@@ -4771,6 +4775,8 @@ declare
   v_fingerprint text;
   v_before_revision bigint;
   v_recreated_revision bigint;
+  v_before jsonb;
+  v_after jsonb;
   v_pantry_selections jsonb;
 begin
   insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
@@ -4936,6 +4942,14 @@ begin
     '62000000-0000-4000-8000-000000000082','63000000-0000-4000-8000-000000000082',
     '64000000-0000-4000-8000-000000000082','65000000-0000-4000-8000-000000000082',
     v_pantry_item,'2026-07-11 00:01:59+00','2026-07-11 00:02:02+00');
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_before_revision+1 then
+    raise exception 'matching finalizer did not advance the draft revision';
+  end if;
+  if not coalesce((select deleted_at is not null
+      from public.generation_drafts where id=v_draft.id),false) then
+    raise exception 'matching finalizer did not soft-delete the draft';
+  end if;
   begin
     perform public.delete_generation_draft(v_before_revision);
     raise exception using errcode='XX000',message='expected_draft_revision_conflict';
@@ -4943,7 +4957,7 @@ begin
     if sqlerrm <> 'draft_revision_conflict' then raise; end if;
   end;
 
-  -- 予約、手動削除、再作成の後はfinalizerが現在の再作成行を削除する。
+  -- 予約後に別タブ保存された新revisionはfinalizerが削除しない。
   v_draft := public.save_generation_draft(0,'dinner',array['reserved'],'japanese',
     v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000083',
@@ -4951,8 +4965,7 @@ begin
     'generation-command.v1',repeat('d',64),5,45,180,'2026-07-11 00:03:00+00');
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000083';
-  perform public.delete_generation_draft(v_draft.revision);
-  v_draft := public.save_generation_draft(0,'dinner',array['recreated'],'japanese',
+  v_draft := public.save_generation_draft(v_draft.revision,'dinner',array['updated'],'japanese',
     v_target_ids,30,'standard',array[]::text[],'',v_pantry_selections);
   v_recreated_revision := v_draft.revision;
   perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:03:01+00');
@@ -4962,16 +4975,86 @@ begin
     '64000000-0000-4000-8000-000000000083','65000000-0000-4000-8000-000000000083',
     v_pantry_item,'2026-07-11 00:02:59+00','2026-07-11 00:03:02+00');
   if (select revision from public.generation_drafts where id=v_draft.id)
-      is distinct from v_recreated_revision+1 then
-    raise exception 'finalizer did not advance the live recreation revision';
+      is distinct from v_recreated_revision then
+    raise exception 'finalizer changed the post-reservation draft revision';
   end if;
-  if not coalesce((select deleted_at is not null
-      from public.generation_drafts where id=v_draft.id),false) then
-    raise exception 'finalizer did not soft-delete the live recreation';
+  if coalesce((select deleted_at is not null
+      from public.generation_drafts where id=v_draft.id),true) then
+    raise exception 'finalizer deleted the post-reservation draft';
+  end if;
+
+  -- draft参照を持たない再生成は無関係なactive draftを変更しない。
+  v_before_revision := v_draft.revision;
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000084',
+    'regenerate_menu',null,null,'60000000-0000-4000-8000-000000000080',null,'simpler',
+    'generation-command.v1',repeat('e',64),5,45,180,'2026-07-11 00:14:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000084';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:14:01+00');
+  select jsonb_build_object(
+    'request',(select to_jsonb(r) from private.ai_generation_requests r where r.id=v_request_id),
+    'usage',(select to_jsonb(u) from private.ai_user_daily_usage u
+      where u.user_id=v_owner and u.usage_day=private.ai_jst_day('2026-07-11 00:14:01+00')),
+    'draft',(select to_jsonb(d) from public.generation_drafts d where d.id=v_draft.id),
+    'menuCount',(select count(*) from public.menus
+      where id='60000000-0000-4000-8000-000000000084')
+  ) into v_before;
+  begin
+    perform pg_temp.finalize_ordering_success(v_request_id,
+      '60000000-0000-4000-8000-000000000084','61000000-0000-4000-8000-000000000084',
+      '62000000-0000-4000-8000-000000000084','63000000-0000-4000-8000-000000000084',
+      '64000000-0000-4000-8000-000000000084','65000000-0000-4000-8000-000000000084',
+      v_pantry_item,'2026-07-11 00:13:59+00','2026-07-11 00:14:02+00',
+      '60000000-0000-4000-8000-000000000080','simpler',null);
+    raise exception using errcode='XX000',message='expected_regeneration_not_implemented';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> 'regeneration_not_implemented' then raise; end if;
+  end;
+  select jsonb_build_object(
+    'request',(select to_jsonb(r) from private.ai_generation_requests r where r.id=v_request_id),
+    'usage',(select to_jsonb(u) from private.ai_user_daily_usage u
+      where u.user_id=v_owner and u.usage_day=private.ai_jst_day('2026-07-11 00:14:01+00')),
+    'draft',(select to_jsonb(d) from public.generation_drafts d where d.id=v_draft.id),
+    'menuCount',(select count(*) from public.menus
+      where id='60000000-0000-4000-8000-000000000084')
+  ) into v_after;
+  if v_after is distinct from v_before then
+    raise exception 'regeneration failure changed menu, quota, request, or unrelated draft state';
+  end if;
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_before_revision
+     or coalesce((select deleted_at is not null
+       from public.generation_drafts where id=v_draft.id),true) then
+    raise exception 'regeneration did not preserve the unrelated active draft';
+  end if;
+  perform public.finalize_ai_generation_failure(
+    v_request_id,'regeneration_not_implemented',null,'2026-07-11 00:14:03+00');
+
+  -- null lineageで成功する内部境界でもnull draft参照はhelperを呼ばない。
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000085',
+    'regenerate_menu',null,null,'60000000-0000-4000-8000-000000000080',null,'simpler',
+    'generation-command.v1',repeat('f',64),5,45,180,'2026-07-11 00:25:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000085';
+  v_before_revision := v_draft.revision;
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:25:01+00');
+  v_result := pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000085','61000000-0000-4000-8000-000000000085',
+    '62000000-0000-4000-8000-000000000085','63000000-0000-4000-8000-000000000085',
+    '64000000-0000-4000-8000-000000000085','65000000-0000-4000-8000-000000000085',
+    v_pantry_item,'2026-07-11 00:24:59+00','2026-07-11 00:25:02+00');
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'null-lineage regeneration boundary did not succeed';
+  end if;
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_before_revision
+     or coalesce((select deleted_at is not null
+       from public.generation_drafts where id=v_draft.id),true) then
+    raise exception 'null-draft success changed an unrelated active draft';
   end if;
 end
 $test$;
-select pass('canonical finalization and both manual-delete/finalizer orderings are enforced');
+select pass('canonical finalization preserves matching, updated, and unrelated draft boundaries');
 ```
 
 同じpgTAP fileでcanonical fixtureを複製し、`labelConfirmations[0]`から`sourceText`を削除したfinalizer callと、`sourceText='　ホワイトソース　'`（U+3000で前後をpadding）へ置換したcallを、それぞれ`23502`と`23514`で失敗させる。各caseは独立したrequest/menu UUIDを使い、`menus`、`menu_label_confirmations`、success quota、draft、request terminal stateが一切部分commitされないことを比較する。これによりPlan 2のNOT NULL/canonical CHECKだけでなく、Plan 3 persistenceが`v_label->>'sourceText'`を必ず渡し、canonical snapshotを完全一致で保存することをpgTAPで固定する。
@@ -5583,7 +5666,7 @@ if (!sent.sent) return toGenerationStatus(sent.record, key);
 
 Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Immediately after both private-function revokes, Plan 3 installs the sole `public.confirm_menu_label_confirmation(uuid,uuid,text)` shown above, including its helper-before-use expected-fingerprint boundary validation. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation RPC; it consumes, and never recreates or overloads, Plan 3's confirmation RPC.
 
-In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `regeneration_not_implemented`; revoke it from every external role. `finalize_ai_generation_success` already carries the typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now` from Task 4; its signature does not change here. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before the draft soft-delete helper call, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The finalizer then calls `private.soft_delete_generation_draft(v_request.user_id,v_request.draft_id,null)` with `PERFORM`; a NULL result is a successful no-op and is neither assigned nor inspected. The repository derives lineage only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Regenerate types after adding the hook, and add pgTAP proving a normal generation calls the null no-op while any non-null lineage fails atomically in Plan 3. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
+In migration `020`, create `private.assign_regeneration_lineage(p_user_id uuid,p_source_menu_id uuid,p_completed_menu_id uuid,p_change_reason text,p_change_reason_custom text)`. The Plan 3 body returns only when source/reason/custom are all null and otherwise raises `P0001/regeneration_not_implemented`; revoke it from every external role. `finalize_ai_generation_success` already carries the typed `p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text` before `p_now` from Task 4; its signature does not change here. Immediately after `private.persist_validated_menu` returns the completed menu ID—and before the draft soft-delete helper call, success count, or terminal request update—call the private hook with the authenticated request owner and those arguments. The finalizer calls `private.soft_delete_generation_draft` only when both request draft fields are non-null and passes `v_request.draft_revision` as the expected revision. A NULL helper result from an already deleted or subsequently updated draft is a successful no-op and is neither assigned nor inspected; a request with null draft fields never calls the helper. The repository derives lineage only from the parsed `GenerationCommand` (`null,null,null` for `new_menu`) and never from provider output. Regenerate types after adding the hook. The canonical pgTAP fixture must prove that a matching new-menu revision is soft-deleted, a draft updated after reservation remains active, and a regeneration request with null draft fields leaves an unrelated active draft untouched; it also proves that any non-null lineage fails atomically with `P0001/regeneration_not_implemented` and leaves menu, quota, request, and draft state unchanged. Plan 4's forward migration replaces the hook body, not migration `020` or the public finalizer.
 
 Replace the two-step conflict wrapper with one RPC. Its parameter is the validated `p_conflict_codes text[]` from Step 5, not the old `p_conflicts jsonb`, and it writes into the existing `terminal_details` column as `{ "conflictCodes": [...] }`, not a new column:
 
