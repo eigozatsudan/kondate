@@ -43,12 +43,12 @@
 
 ## File Structure
 
-Implementation is split into five boundaries before task decomposition: `shared/contracts/generation.ts` owns every generation wire type; `supabase/migrations/20260711002000_ai_control_and_quota.sql` exclusively owns private request/quota state and its security-definer transitions; `netlify/functions/_shared/` owns authentication, current-state loading, OpenRouter, validation, and orchestration; `src/features/generation/` owns browser recovery and results; and `tools/openrouter-mock/` plus `e2e/` own deterministic external-boundary verification. The detailed per-file responsibility map and cross-plan interface ledger follow Task 1, before any task that consumes those boundaries.
+Implementation is split into five boundaries before task decomposition: `shared/contracts/generation.ts` owns every generation wire type and shared conflict copy; `supabase/migrations/20260711002000_ai_control_and_quota.sql` exclusively owns private request/quota state and its security-definer transitions; `netlify/functions/_shared/` owns authentication, current-state loading, OpenRouter, validation, and orchestration, with dependency-neutral repair DTO/error ownership isolated in `generation-repair.ts`; `src/features/generation/` owns browser recovery and results; and `tools/openrouter-mock/` plus `e2e/` own deterministic external-boundary verification. The detailed per-file responsibility map and cross-plan interface ledger follow Task 1, before any task that consumes those boundaries.
 
 ```text
 shared/contracts/generation.ts
 supabase/migrations/20260711002000_ai_control_and_quota.sql
-netlify/functions/{_shared,generate-menu.ts,generation-status.ts}
+netlify/functions/{_shared/generation-repair.ts,_shared,generate-menu.ts,generation-status.ts}
 src/features/generation/{api,model,hooks,components,pages}
 tools/openrouter-mock/{server.mjs,fixtures}
 e2e/specs/generation-recovery-results.spec.ts
@@ -496,6 +496,10 @@ netlify/functions/
 │   ├── generation-prompt.test.ts
 │   ├── openrouter.ts                  # models fallback, strict schema, timeout, response parsing
 │   ├── openrouter.test.ts
+│   ├── generation-repair.ts           # closed repair DTO/error/path leaf
+│   ├── generation-repair.test.ts
+│   ├── generation-materializer.ts     # provider-local refs to fresh internal IDs
+│   ├── generation-materializer.test.ts
 │   ├── generation-service.ts          # reserve/preflight/send/repair/validate/persist/finalize orchestration
 │   └── generation-service.test.ts
 ├── generate-menu.ts                   # POST /api/generations/menu
@@ -1959,6 +1963,7 @@ export function logGenerationEvent(
 ```ts
 import { z } from "zod";
 import {
+  generationConflictCopy,
   generationConflictSchema,
   releaseQuota,
   type ValidatedMenu,
@@ -3205,6 +3210,10 @@ git commit -m "feat: 匿名の現行生成コンテキストを追加"
 ### Task 9: Orchestrate reserve, preflight, send, one repair, validation, and finalization
 
 **Files:**
+- Modify: `shared/contracts/generation.test.ts`
+- Modify: `shared/contracts/generation.ts`
+- Create: `netlify/functions/_shared/generation-repair.test.ts`
+- Create: `netlify/functions/_shared/generation-repair.ts`
 - Create: `netlify/functions/_shared/generation-service.test.ts`
 - Create: `netlify/functions/_shared/generation-service.ts`
 - Create: `netlify/functions/_shared/generation-materializer.test.ts`
@@ -3222,7 +3231,15 @@ git commit -m "feat: 匿名の現行生成コンテキストを追加"
   `reserve` returns a replay/denial, and after every `fail`, `conflict`, or `succeed`,
   it reloads `status(key)` and only then calls `toGenerationStatus`. A failed status
   hydration rejects; no stale transition payload is used as a fallback.
-- Provider repair diagnostics are a bounded, value-free DTO. A single exported
+- `generation-repair.ts` is the dependency-neutral owner of `generationRepairCodes`,
+  `GenerationRepairCode`, `GenerationRepairDiagnostic`, the exhaustive fixed
+  `repairPathByCode`, `toRepairDiagnostics()`, and `GenerationOutputError`.
+  `shared/contracts/generation.ts`, the existing conflict-code owner, owns the shared
+  all-five-code `generationConflictCopy`. `generation-service.ts` and
+  `generation-materializer.ts` both import this leaf; the materializer must never
+  runtime-import the service. Task 15 extends/reuses these owners and never redefines
+  the tuples, paths, error, or copy map.
+- Provider repair diagnostics are a bounded, value-free DTO. This single exported
   closed code tuple owns both materializer and deterministic-validator repair codes;
   each code maps to one fixed structural path chosen by application code. Diagnostics
   are stable-first-occurrence deduplicated and capped at 64. Provider values, local
@@ -3360,6 +3377,14 @@ it.each([
 The RED service matrix also covers every boundary below. Use a fresh repository mock
 per row and assert exact call counts and ordering, not only the returned status:
 
+- `generation-repair.test.ts` imports only `generation-repair.ts` and proves the
+  closed tuple, exhaustive fixed-path ownership, unknown-code collapse, stable
+  deduplication, 64-item cap, and common `GenerationOutputError`.
+  `shared/contracts/generation.test.ts` proves all-five conflict-copy completeness.
+  An import-boundary test proves `generation-repair.ts` imports
+  neither service nor materializer and `generation-materializer.ts` has no runtime
+  import of `generation-service.ts`.
+
 - A successful reservation followed by a throw/rejection from context load,
   preflight, prompt construction, `markSent`, provider call, `recordModel`, provider
   conflict projection, materialization, deterministic validation, `reserveRepair`,
@@ -3386,12 +3411,16 @@ per row and assert exact call counts and ordering, not only the returned status:
   a null/unknown model may consume the one repair with no exclusion; it still cannot
   create a third send.
 - Provider conflicts accept every provider-allowed code with fixed Japanese copy and
-  deduplicated current refs. Reject `current_safety_changed`, unknown codes, foreign
-  or out-of-range `member_N`/`pantry_N`, UUID-looking refs, sentinel refs, and more
-  than the bounded conflict/ref counts as `invalid_ai_response`. Inject raw-message
-  canaries and prove they are ignored and replaced by fixed copy. The first invalid
-  conflict may use the shared one-repair budget; an invalid repaired conflict
-  terminalizes, with no raw message persisted.
+  deduplicated current refs. Call `projectProviderConflicts()` directly with `unknown`
+  values, bypassing Task 6 parsing, and reject non-arrays, 0 or 13 conflicts,
+  non-objects/unknown keys, duplicate codes, `current_safety_changed`, unknown codes,
+  non-array refs, 25 refs, foreign/out-of-range `member_N`/`pantry_N`, UUID-looking
+  refs, sentinel refs, and malformed refs through the common `GenerationOutputError`
+  as `invalid_ai_response`. The projector itself owns the 1..12 and per-conflict
+  0..24 bounds and must not trust `generationConflictSchema` as a precondition.
+  Inject raw-message canaries and prove they are ignored and replaced by the shared
+  fixed copy. The first invalid conflict may use the shared one-repair budget; an
+  invalid repaired conflict terminalizes, with no raw message persisted.
 - The repair DTO test feeds provider refs, UUIDs, array indexes, arbitrary validator
   paths/messages, duplicates, unknown codes, and more than 64 issues. Assert the
   prompt contains only allowlisted codes and their code-derived fixed paths, in
@@ -3417,66 +3446,32 @@ case/width-different units, and null trusted inventory.
 
 - [ ] **Step 2 (2–5 min): Run the service tests and observe the missing orchestrator failure**
 
-Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-service.test.ts`
+Run: `docker compose run --rm --no-deps app npx vitest run shared/contracts/generation.test.ts netlify/functions/_shared/generation-repair.test.ts netlify/functions/_shared/generation-materializer.test.ts netlify/functions/_shared/generation-service.test.ts`
 
-Expected: FAIL because `runGeneration` and its dependency contract do not exist.
+Expected: FAIL because the repair leaf, materializer, `runGeneration`, and its
+dependency contract do not exist.
 
 - [ ] **Step 3 (2–5 min): Implement status mapping and the complete dependency contract**
 
+First extend the existing shared conflict-code owner in
+`shared/contracts/generation.ts`; browser/server code imports this one map:
+
 ```ts
-import { randomUUID } from "node:crypto";
+export const generationConflictCopy = {
+  must_use_conflict: "必須食材と安全条件を同時に満たせません。",
+  allergen_pantry_conflict: "アレルギー条件と選択した食材を同時に満たせません。",
+  dish_count_conflict: "指定した品数と条件を同時に満たせません。",
+  mandatory_safety_conflict: "必須の安全条件を満たす献立を作成できません。",
+  current_safety_changed: "安全条件が更新されました。もう一度作成してください。",
+} as const satisfies Record<GenerationConflictCode, string>;
+```
+
+First implement the dependency-neutral `generation-repair.ts` leaf. It imports only
+shared contracts plus Zod; it never imports service, materializer, repository,
+OpenRouter, or environment modules:
+
+```ts
 import { z } from "zod";
-import {
-  generationConflictSchema,
-  generationFailureCodes,
-  releaseQuota,
-  type GenerationCommand,
-  type GenerationStatusData,
-} from "../../../shared/contracts/generation.js";
-import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
-import type { GenerationContext } from "../../../shared/safety/generation-context.js";
-import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
-import { getServerEnv } from "./env.js";
-import {
-  loadGenerationContext,
-  validateGenerationPreflight,
-  type GenerationPreflightResult,
-} from "./generation-context.js";
-import { buildGenerationMessages } from "./generation-prompt.js";
-import {
-  GenerationMaterializationError,
-  materializeAiGeneratedMenu,
-} from "./generation-materializer.js";
-import { createGenerationRepository, type AuthenticatedUser, type GenerationRepository, type QuotaRequestRecord } from "./generation-repository.js";
-import { HttpError } from "./http.js";
-import {
-  sendMenuGeneration,
-  OpenRouterCallError,
-  type OpenRouterGenerationResult,
-  type OpenRouterMessage,
-} from "./openrouter.js";
-
-export type GenerationDependencies = {
-  user: AuthenticatedUser;
-  repository: GenerationRepository;
-  models: readonly string[];
-  loadExecutionContext(
-    command: GenerationCommand,
-    requestId: string,
-    deadlineAtMonotonicMs: number,
-  ): Promise<{ generationContext: GenerationContext }>;
-  validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
-  buildMessages(context: GenerationContext): readonly OpenRouterMessage[];
-  callOpenRouter(input: Parameters<typeof sendMenuGeneration>[0]): Promise<OpenRouterGenerationResult>;
-  now(): Date;
-  openRouterTimeoutMs: number;
-  requestStartedAtMonotonicMs: number;
-  functionTotalBudgetMs: number;
-  uuid(): string;
-};
-
-const generationFailureCodeSchema = z.enum(generationFailureCodes);
-
 // repair promptへ渡せる語彙とpathはアプリケーションが固定し、入力値から組み立てない。
 export const generationRepairCodes = [
   "invalid_provider_menu", "uuid_in_provider_output", "duplicate_ref",
@@ -3499,7 +3494,7 @@ export type GenerationRepairDiagnostic = Readonly<{
   path: string;
 }>;
 
-const repairPathByCode = {
+export const repairPathByCode = {
   invalid_provider_menu: "menu", uuid_in_provider_output: "menu",
   duplicate_ref: "menu.references", dangling_ref: "menu.references",
   wrong_kind_ref: "menu.labelConfirmations.source",
@@ -3530,7 +3525,9 @@ const repairPathByCode = {
   safety_action_contradiction: "menu.safetyActions",
 } as const satisfies Record<GenerationRepairCode, string>;
 
-function toRepairDiagnostics(issues: readonly { code: string }[]): readonly GenerationRepairDiagnostic[] {
+export function toRepairDiagnostics(
+  issues: readonly { code: string }[],
+): readonly GenerationRepairDiagnostic[] {
   const seen = new Set<GenerationRepairCode>();
   const diagnostics: GenerationRepairDiagnostic[] = [];
   for (const issue of issues) {
@@ -3544,47 +3541,115 @@ function toRepairDiagnostics(issues: readonly { code: string }[]): readonly Gene
   return diagnostics;
 }
 
+export class GenerationOutputError extends Error {
+  readonly issues: readonly GenerationRepairDiagnostic[];
+  constructor(codes: readonly GenerationRepairCode[]) {
+    super("invalid_generation_output");
+    this.issues = toRepairDiagnostics(codes.map((code) => ({ code })));
+  }
+}
+```
+
+Then implement `generation-service.ts`; it consumes the leaf instead of owning or
+re-exporting repair contracts:
+
+```ts
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import {
+  generationConflictSchema,
+  generationFailureCodes,
+  releaseQuota,
+  type GenerationCommand,
+  type GenerationStatusData,
+} from "../../../shared/contracts/generation.js";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import { getServerEnv } from "./env.js";
+import {
+  loadGenerationContext,
+  validateGenerationPreflight,
+  type GenerationPreflightResult,
+} from "./generation-context.js";
+import { buildGenerationMessages } from "./generation-prompt.js";
+import { materializeAiGeneratedMenu } from "./generation-materializer.js";
+import {
+  GenerationOutputError,
+  toRepairDiagnostics,
+} from "./generation-repair.js";
+import { createGenerationRepository, type AuthenticatedUser, type GenerationRepository, type QuotaRequestRecord } from "./generation-repository.js";
+import { HttpError } from "./http.js";
+import {
+  sendMenuGeneration,
+  OpenRouterCallError,
+  type OpenRouterGenerationResult,
+  type OpenRouterMessage,
+} from "./openrouter.js";
+
+export type GenerationDependencies = {
+  user: AuthenticatedUser;
+  repository: GenerationRepository;
+  models: readonly string[];
+  loadExecutionContext(
+    command: GenerationCommand,
+    requestId: string,
+    deadlineAtMonotonicMs: number,
+  ): Promise<{ generationContext: GenerationContext }>;
+  validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
+  buildMessages(context: GenerationContext): readonly OpenRouterMessage[];
+  callOpenRouter(input: Parameters<typeof sendMenuGeneration>[0]): Promise<OpenRouterGenerationResult>;
+  now(): Date;
+  openRouterTimeoutMs: number;
+  requestStartedAtMonotonicMs: number;
+  functionTotalBudgetMs: number;
+  uuid(): string;
+};
+
+const generationFailureCodeSchema = z.enum(generationFailureCodes);
+
 function closedFailureCode(error: unknown): (typeof generationFailureCodes)[number] {
   if (!(error instanceof HttpError)) return "internal_error";
   const parsed = generationFailureCodeSchema.safeParse(error.code);
   return parsed.success ? parsed.data : "internal_error";
 }
 
-const providerConflictCopy = {
-  must_use_conflict: "必須食材と安全条件を同時に満たせません。",
-  allergen_pantry_conflict: "アレルギー条件と選択した食材を同時に満たせません。",
-  dish_count_conflict: "指定した品数と条件を同時に満たせません。",
-  mandatory_safety_conflict: "必須の安全条件を満たす献立を作成できません。",
-} as const;
 const providerConflictCodeSchema = z.enum([
   "must_use_conflict", "allergen_pantry_conflict", "dish_count_conflict",
   "mandatory_safety_conflict",
 ]);
+const providerConflictInputSchema = z.array(z.object({
+  code: z.string(),
+  message: z.unknown(),
+  conditionRefs: z.array(z.string()).max(24),
+}).strict()).min(1).max(12);
 
 function projectProviderConflicts(
-  conflicts: readonly z.infer<typeof generationConflictSchema>[],
+  input: unknown,
   context: GenerationContext,
 ): readonly z.infer<typeof generationConflictSchema>[] {
+  const parsedConflicts = providerConflictInputSchema.safeParse(input);
+  if (!parsedConflicts.success) throw new GenerationOutputError(["invalid_provider_menu"]);
   const allowedRefs = new Set([
     ...context.targetMembers.map((member) => member.anonymousRef),
     ...context.submission.pantrySelections.map((_, index) => `pantry_${index + 1}`),
   ]);
-  const seenCodes = new Set<keyof typeof providerConflictCopy>();
-  return conflicts.map((conflict) => {
+  const seenCodes = new Set<z.infer<typeof providerConflictCodeSchema>>();
+  return parsedConflicts.data.map((conflict) => {
     const parsedCode = providerConflictCodeSchema.safeParse(conflict.code);
     if (!parsedCode.success) {
-      throw new GenerationMaterializationError(["invalid_provider_menu"]);
+      throw new GenerationOutputError(["invalid_provider_menu"]);
     }
     const code = parsedCode.data;
     if (seenCodes.has(code)) {
-      throw new GenerationMaterializationError(["invalid_provider_menu"]);
+      throw new GenerationOutputError(["invalid_provider_menu"]);
     }
     seenCodes.add(code);
     const conditionRefs = [...new Set(conflict.conditionRefs)];
     if (conditionRefs.some((ref) => !allowedRefs.has(ref))) {
-      throw new GenerationMaterializationError(["invalid_provider_menu"]);
+      throw new GenerationOutputError(["invalid_provider_menu"]);
     }
-    return { code, message: providerConflictCopy[code], conditionRefs };
+    return { code, message: generationConflictCopy[code], conditionRefs };
   });
 }
 
@@ -3644,7 +3709,7 @@ export function toGenerationStatus(record: QuotaRequestRecord, idempotencyKey: s
 }
 ```
 
-Create `generation-materializer.ts` now, before orchestration uses the Task 1 provider contract. `materializeAiGeneratedMenu(output: AiGeneratedMenuPayload, context: GenerationContext, uuid: () => string): GeneratedMenu` accepts only the success arm's `menu`, never the top-level union. Its thrown `GenerationMaterializationError` exposes only `GenerationRepairDiagnostic[]`; its constructor accepts only `readonly GenerationRepairCode[]` and derives each fixed path through `repairPathByCode`, so a call site cannot attach a provider-derived path. Materializer codes are `invalid_provider_menu`, `uuid_in_provider_output`, `duplicate_ref`, `dangling_ref`, `wrong_kind_ref`, `unknown_member_ref`, `unknown_pantry_ref`, `pantry_priority_mismatch`, `pantry_usage_duplicate`, `must_use_missing`, `pantry_usage_link_mismatch`, `label_source_invalid`, `pantry_name_mismatch`, and `pantry_unit_mismatch`. All are members of the one service-wide `generationRepairCodes` tuple above.
+Create `generation-materializer.ts` now, before orchestration uses the Task 1 provider contract. It runtime-imports `GenerationOutputError` and repair types only from `generation-repair.ts`, never from `generation-service.ts`. `materializeAiGeneratedMenu(output: AiGeneratedMenuPayload, context: GenerationContext, uuid: () => string): GeneratedMenu` accepts only the success arm's `menu`, never the top-level union. Its thrown `GenerationOutputError` exposes only `GenerationRepairDiagnostic[]`; its constructor accepts only `readonly GenerationRepairCode[]` and derives each fixed path through the repair leaf, so a call site cannot attach a provider-derived path. Materializer codes are `invalid_provider_menu`, `uuid_in_provider_output`, `duplicate_ref`, `dangling_ref`, `wrong_kind_ref`, `unknown_member_ref`, `unknown_pantry_ref`, `pantry_priority_mismatch`, `pantry_usage_duplicate`, `must_use_missing`, `pantry_usage_link_mismatch`, `label_source_invalid`, `pantry_name_mismatch`, and `pantry_unit_mismatch`. All are members of the one repair-leaf `generationRepairCodes` tuple above.
 
 Materialize in this fixed order:
 
@@ -3833,7 +3898,7 @@ export async function runGeneration(
   if (first.output.outcome === "constraint_conflict") {
     try { return await conflict(projectProviderConflicts(first.output.conflicts, context)); }
     catch (error) {
-      if (!(error instanceof GenerationMaterializationError)) throw error;
+      if (!(error instanceof GenerationOutputError)) throw error;
       checked = { ok: false as const, issues: error.issues };
     }
   } else {
@@ -3843,7 +3908,7 @@ export async function runGeneration(
         context,
       );
     } catch (error) {
-      if (!(error instanceof GenerationMaterializationError)) throw error;
+      if (!(error instanceof GenerationOutputError)) throw error;
       checked = { ok: false as const, issues: error.issues };
     }
   }
@@ -3860,7 +3925,7 @@ export async function runGeneration(
       if (repaired.output.outcome === "constraint_conflict") {
         try { return await conflict(projectProviderConflicts(repaired.output.conflicts, context)); }
         catch (error) {
-          if (!(error instanceof GenerationMaterializationError)) throw error;
+          if (!(error instanceof GenerationOutputError)) throw error;
           checked = { ok: false as const, issues: error.issues };
         }
       } else {
@@ -3870,7 +3935,7 @@ export async function runGeneration(
             context,
           );
         } catch (error) {
-          if (!(error instanceof GenerationMaterializationError)) throw error;
+          if (!(error instanceof GenerationOutputError)) throw error;
           checked = { ok: false as const, issues: error.issues };
         }
       }
@@ -3911,7 +3976,7 @@ once before prompt construction. The trusted dependency clock is the sole prefli
 time source; do not call `new Date()` inside preflight or reuse the loader's earlier
 timestamp because pantry expiry and confirmation validity may change while queued.
 
-Only `GenerationMaterializationError.issues` and the deterministic validator's issues
+Only `GenerationOutputError.issues` and the deterministic validator's issues
 enter the internal invalid-output branch, and both pass through
 `toRepairDiagnostics()` before prompt construction. Guard every application operation
 after a successful reservation—including context load, preflight, prompt construction,
@@ -3939,7 +4004,7 @@ pass and cannot reserve a third send.
 Run each command separately:
 
 ```bash
-docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-materializer.test.ts netlify/functions/_shared/generation-service.test.ts shared/safety/validate-generated-menu.test.ts
+docker compose run --rm --no-deps app npx vitest run shared/contracts/generation.test.ts netlify/functions/_shared/generation-repair.test.ts netlify/functions/_shared/generation-materializer.test.ts netlify/functions/_shared/generation-service.test.ts shared/safety/validate-generated-menu.test.ts
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
@@ -3966,7 +4031,7 @@ zero `markSent`, and zero fetch.
 - [ ] **Step 6 (2–5 min): Commit the generation orchestrator**
 
 ```bash
-git add netlify/functions/_shared/generation-materializer.ts netlify/functions/_shared/generation-materializer.test.ts netlify/functions/_shared/generation-service.ts netlify/functions/_shared/generation-service.test.ts shared/safety/validate-generated-menu.test.ts
+git add shared/contracts/generation.ts shared/contracts/generation.test.ts netlify/functions/_shared/generation-repair.ts netlify/functions/_shared/generation-repair.test.ts netlify/functions/_shared/generation-materializer.ts netlify/functions/_shared/generation-materializer.test.ts netlify/functions/_shared/generation-service.ts netlify/functions/_shared/generation-service.test.ts shared/safety/validate-generated-menu.test.ts
 git commit -m "feat: 検証済み献立生成を統合"
 ```
 
@@ -4922,10 +4987,8 @@ git commit -m "feat: 段取り優先の献立結果を表示"
 import { describe, expect, it } from "vitest";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
-import {
-  GenerationMaterializationError,
-  materializeAiGeneratedMenu,
-} from "./generation-materializer.js";
+import { materializeAiGeneratedMenu } from "./generation-materializer.js";
+import { GenerationOutputError } from "./generation-repair.js";
 
 describe("fixed OpenRouter adversarial outputs", () => {
   it.each([
@@ -4945,8 +5008,8 @@ describe("fixed OpenRouter adversarial outputs", () => {
       materialized = materializeAiGeneratedMenu(fixture.menu, context, deterministicUuid);
     } catch (error) {
       expect(expectedStage).toBe("materializer");
-      expect(error).toBeInstanceOf(GenerationMaterializationError);
-      if (error instanceof GenerationMaterializationError) {
+      expect(error).toBeInstanceOf(GenerationOutputError);
+      if (error instanceof GenerationOutputError) {
         expect(error.issues.map((issue) => issue.code)).toContain(issueCode);
       }
       return;
@@ -5167,6 +5230,8 @@ git commit -m "test: 復旧可能なAI献立生成を検証"
 - Create: `netlify/functions/_shared/generation-command-integrity.ts`
 - Modify: `netlify/functions/_shared/openrouter.test.ts`
 - Modify: `netlify/functions/_shared/openrouter.ts`
+- Modify: `netlify/functions/_shared/generation-repair.test.ts`
+- Modify: `netlify/functions/_shared/generation-repair.ts`
 - Modify: `netlify/functions/_shared/generation-service.test.ts`
 - Modify: `netlify/functions/_shared/generation-service.ts`
 - Modify: `netlify/functions/_shared/generation-materializer.test.ts`
@@ -5208,14 +5273,17 @@ git commit -m "test: 復旧可能なAI献立生成を検証"
 - `GenerationCommand` is the one canonical discriminated union exported by Plan 3. Plan 4 adds handlers for the already-declared regeneration variants; it does not redeclare or wrap the union.
 - `canonicalizeGenerationCommandV1(command)` is the only canonical idempotency representation. `generationRequestHmac(command,key)` applies HMAC-SHA-256 to that representation; request JSON, prompt content, and custom reason text are never persisted in the generation ledger.
 - `aiGeneratedMenuPayloadSchema` is the sole new/whole provider-output payload contract and contains local refs only. Task 1 owns that schema and Task 9 owns `materializeAiGeneratedMenu(output,context,uuid)` as the sole boundary that creates an internal `GeneratedMenu`; Task 15 hardens but does not recreate either contract. No OpenRouter schema contains `format:"uuid"` or an owner ID.
-- Task 9 also owns the closed/value-free repair diagnostic projector, provider-conflict
-  trusted projector, common post-reservation terminal guard, closed exception-code
-  classifier, eligible-model-before-repair rule, trusted model recording order,
+- Task 9's dependency-neutral `generation-repair.ts` owns the closed/value-free repair
+  tuple/type/path projector and common `GenerationOutputError`; the existing shared
+  conflict-code owner `shared/contracts/generation.ts` owns the all-five
+  code-to-Japanese-copy map. Task 9's service owns the provider-conflict trusted
+  projector, common post-reservation terminal guard, closed exception-code classifier,
+  eligible-model-before-repair rule, trusted model recording order,
   integer-thousandths pantry arithmetic, and authoritative `repository.status(key)`
-  hydration after replay/deny/terminal mutations. Task 15 preserves and tests these
-  boundaries while adding HMAC, deadline/attempt accounting, codes-only conflict
+  hydration after replay/deny/terminal mutations. Task 15 preserves and imports these
+  owners while adding HMAC, deadline/attempt accounting, codes-only conflict
   persistence, and the final safety lock; it does not recreate or defer the Task 9
-  protections.
+  protections. Materializer-to-service runtime imports remain forbidden.
 - `private.ai_generation_requests.request_hmac_version/request_hmac` bind all three command kinds to an idempotency key. Same-HMAC replay and different-HMAC rejection happen under an idempotency-key transaction lock before stale cleanup, active-request lookup, or quota/counter access.
 - `PendingGeneration` is one three-variant discriminated union derived from `GenerationCommand`; `postGeneration(command)` is the only browser POST selector. New/whole commands use `/api/generations/menu`, dish commands use `/api/generations/dish`, and every recovery path reads the exact saved variant/body/key. A 409 `idempotency_payload_mismatch` enters one non-retryable `request_conflict` client state; it never falls through to the offline retry loop.
 - `GenerationContext` is imported from `shared/safety/generation-context.ts`. The server loader returns that exact type; there is no second context with the same name.
@@ -6375,7 +6443,7 @@ it("shows no attempt-consumption claim for a request mismatch when usage cannot 
 
 Extend the final `GenerationClientState` with `{ phase: "request_conflict"; code: "idempotency_payload_mismatch"; message: string; effect: "none" }` and its matching reducer event. In that phase, `online`, `recover`, visibility, and auth events return the same state; only the explicit fresh-start/clear event may leave it. The API/hook test makes a 409 standard envelope with that exact code, asserts this terminal state, and proves that online, visibility, auth refresh, and the polling timer cause no POST or status retry. `requestConflictState` in the component table above is this exact state.
 
-Create one shared `generationIssueCodes` tuple containing all preflight, deterministic validator, provider, timeout, quota, and conflict codes. Zod schemas, `issueMessages`, mock scenarios, repository SQL checks, and UI switch statements derive from it. Add a test that every mock scenario's expected code belongs to the tuple and every tuple entry has Japanese copy; remove the stale hand-written mapping in Task 14.
+Create one shared `generationIssueCodes` tuple containing all preflight, deterministic validator, provider, timeout, quota, and conflict codes. Zod schemas, mock scenarios, repository SQL checks, and UI switch statements derive from it. Extend `issueMessages` for non-conflict codes, but import and spread Task 9's all-five `generationConflictCopy` for every conflict entry; redefining any of those five strings in Task 15 or the UI is forbidden. Add a test that every mock scenario's expected code belongs to the tuple, every tuple entry has Japanese copy, and the five conflict entries are referentially/value-identical to `generationConflictCopy`; remove the stale hand-written mapping in Task 14.
 
 For `usage-today.test.ts`, require 401 without bearer, 405 for non-GET, owner-only daily and fixed-window counts, both retry times, `cache-control: no-store`, and no row in `ai_generation_requests`. Two users sharing an IP receive independent short-window usage. For retention, seed terminal rows 31 and 29 days old plus a processing row; cleanup deletes only the 31-day terminal row.
 
@@ -6384,7 +6452,7 @@ For `usage-today.test.ts`, require 401 without bearer, 405 for non-GET, owner-on
 Run:
 
 ```bash
-docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/env.test.ts netlify/functions/_shared/generation-command-integrity.test.ts netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts netlify/functions/_shared/generation-repository.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/usage-today.test.ts shared/contracts/generation.test.ts src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx
+docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/env.test.ts netlify/functions/_shared/generation-command-integrity.test.ts netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts netlify/functions/_shared/generation-repository.test.ts netlify/functions/_shared/openrouter.test.ts netlify/functions/_shared/generation-repair.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/usage-today.test.ts shared/contracts/generation.test.ts src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx
 docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
 docker compose --profile test run --rm db-test supabase/tests/database/ai_control_and_quota.test.sql
 ```
@@ -6597,7 +6665,7 @@ Harden Task 1's `ai-generation-output.ts` contract and Task 9's `materializeAiGe
 3. Allocate fresh UUIDs for the menu and every dish, ingredient, step, timeline row, adaptation, and pantry selection. Safety actions have no independent ID. Resolve every cross-reference through field-specific maps. An ingredient `pantryRef` resolves to the freshly allocated selection UUID; `pantryUsage.dishRefs` must equal the dishes whose ingredients use that ref.
 4. Resolve provider label candidates from local source refs and exact source paths to the freshly allocated source UUIDs. A pantry selection ID is never a label source. A processed food selected from the pantry is confirmable only through the real linked `dishIngredient` source: its trusted pantry-name snapshot and ingredient name must be equal after the one canonical normalizer. Alias tables, synonyms, fuzzy matching, case-only exceptions, and width-only exceptions are forbidden. Then pass the complete internal value through `generatedMenuSchema`; Plan 2's canonical validator still discards provider status and derives the exact current pending set.
 
-`openrouter.ts` sends Task 1's `menuResponseFormat` and parses `aiGenerationResponseSchema`; it never parses `generatedMenuSchema` directly. `runGeneration` branches on that top-level success/constraint-conflict union, sends provider conflicts through Task 9's trusted projector, materializes only a success payload immediately after each initial/repair response, and does so before `validateGeneratedMenu`. Provider conflict codes exclude server-only `current_safety_changed`; fixed copy and current anonymous refs are application-derived, while an invalid provider conflict shares the single `invalid_ai_response` repair budget. Whole-menu regeneration reuses this same full-menu local payload/materializer with its Plan 4 prompt constraints; one-dish regeneration keeps Plan 4's narrower replacement schema. Tests cover a normal pantry selection, all cross-ref kinds, two ingredients sharing one pantry selection, must/prefer semantics, malicious UUID output, foreign/unknown pantry refs, duplicate refs, label-only polymorphic wrong-kind refs, typed-prefix schema rejection, missing must-use, inconsistent dish links, attempted pantry label sources, normalized-exact pantry-name/ingredient-name mismatches, trimmed exact unit mismatches, null trusted inventory, excess precision, integer-thousandths shortage, fresh-ID allocation, and successful persistence. The recursive prompt and provider-output tests prove no stable UUID crosses either OpenRouter direction.
+`openrouter.ts` sends Task 1's `menuResponseFormat` and parses `aiGenerationResponseSchema`; it never parses `generatedMenuSchema` directly. `runGeneration` branches on that top-level success/constraint-conflict union, sends provider conflicts through Task 9's trusted projector, materializes only a success payload immediately after each initial/repair response, and does so before `validateGeneratedMenu`. The projector accepts `unknown` and independently enforces array 1..12, strict entries, unique provider-subset codes, conditionRefs <=24, and exact current anonymous-ref membership; Task 6 parsing is defense in depth, not a projector precondition. Provider conflict codes exclude server-only `current_safety_changed`; fixed copy comes from Task 9's all-five `generationConflictCopy`, while current anonymous refs are application-derived and an invalid provider conflict throws the shared `GenerationOutputError` into the single `invalid_ai_response` repair budget. Whole-menu regeneration reuses this same full-menu local payload/materializer with its Plan 4 prompt constraints; one-dish regeneration keeps Plan 4's narrower replacement schema. Tests cover a normal pantry selection, all cross-ref kinds, two ingredients sharing one pantry selection, must/prefer semantics, malicious UUID output, foreign/unknown pantry refs, duplicate refs, label-only polymorphic wrong-kind refs, typed-prefix schema rejection, missing must-use, inconsistent dish links, attempted pantry label sources, normalized-exact pantry-name/ingredient-name mismatches, trimmed exact unit mismatches, null trusted inventory, excess precision, integer-thousandths shortage, fresh-ID allocation, and successful persistence. The recursive prompt and provider-output tests prove no stable UUID crosses either OpenRouter direction.
 
 Extend `_shared/env.ts` with required `GENERATION_REQUEST_HMAC_KEY`, parsed only through `parseGenerationRequestHmacKey`. Add `generationIntegrity: { requestHmacKey: Uint8Array }` to `ServerEnv`; do not retain a browser-prefixed alias. Tests reject missing, non-canonical base64, 31/33-byte keys, and any defined `VITE_GENERATION_REQUEST_HMAC_KEY`. `scripts/generate-local-secrets.mjs` writes `randomBytes(32).toString("base64")` to the gitignored local `.env`; `.env.example` uses only `generated-32-byte-base64-secret`, and Compose requires/interpolates that key into the Function runtime. `tests/tooling/compose.test.mjs` proves the generated decoded length and that the browser/app build environment has no `VITE_` alias. Production never uses a committed sample value. No logger receives this field.
 
@@ -6609,7 +6677,7 @@ request_hmac_version text not null
 request_hmac text not null check (request_hmac ~ '^[a-f0-9]{64}$'),
 ```
 
-It has no raw request JSON/body/prompt column and no custom-reason free-text column. It may retain the non-free-text `request_kind`, `draft_id`, `source_menu_id`, `replace_dish_id`, and `change_reason` enum needed for ownership/lineage. Replace Task 2's object-only `terminal_details` check with a private immutable validator used by the table constraint: every non-conflict row requires `null`; a conflict row permits exactly `{ "conflictCodes": [<generationConflictCode>...] }`, with 1–12 unique entries from the shared closed enum and no additional key. Change the final conflict RPC to accept only that validated `text[]`; it constructs the JSON itself, so `message`, `conditionRefs`, `changeReasonCustom`, and arbitrary prose never cross the persistence boundary. Task 9's provider projector still runs first, replaces provider prose with fixed copy, and rejects provider-forbidden codes/refs through the one repair budget; Task 15 then reduces the trusted conflicts to unique codes at the repository boundary. `toGenerationStatus` recreates each Japanese `message` from the shared code-to-copy map with `conditionRefs: []` after the mandatory authoritative `status(key)` read for both immediate and recovered terminal results. Plan 4 passes `changeReasonCustom` from the in-memory validated execution command directly to atomic success persistence; only the completed `public.menus.change_reason_custom` stores it, while failed/conflict/timeout ledgers retain only the HMAC.
+It has no raw request JSON/body/prompt column and no custom-reason free-text column. It may retain the non-free-text `request_kind`, `draft_id`, `source_menu_id`, `replace_dish_id`, and `change_reason` enum needed for ownership/lineage. Replace Task 2's object-only `terminal_details` check with a private immutable validator used by the table constraint: every non-conflict row requires `null`; a conflict row permits exactly `{ "conflictCodes": [<generationConflictCode>...] }`, with 1–12 unique entries from the shared closed enum and no additional key. Change the final conflict RPC to accept only that validated `text[]`; it constructs the JSON itself, so `message`, `conditionRefs`, `changeReasonCustom`, and arbitrary prose never cross the persistence boundary. Task 9's provider projector still runs first, replaces provider prose with imported `generationConflictCopy`, and rejects provider-forbidden codes/refs through the one repair budget; Task 15 then reduces the trusted conflicts to unique codes at the repository boundary. `toGenerationStatus` imports the same copy map to recreate each Japanese `message` with `conditionRefs: []` after the mandatory authoritative `status(key)` read for both immediate and recovered terminal results; a second conflict-copy map is forbidden. Plan 4 passes `changeReasonCustom` from the in-memory validated execution command directly to atomic success persistence; only the completed `public.menus.change_reason_custom` stores it, while failed/conflict/timeout ledgers retain only the HMAC.
 
 Change `reserve_ai_generation` and the repository adapter together. Drop the obsolete interim nine-argument overload. The one final RPC, its revoke/grant statements, repository named arguments, generated database type, and pgTAP `to_regprocedure` assertion use exactly this signature; `change_reason_custom` is deliberately absent:
 
@@ -7117,6 +7185,9 @@ rg -n 'request_(?:body|json)|raw_request|change_reason_custom\s+text' supabase/m
 rg -n "p_conflicts jsonb|jsonb_build_object\('conflicts'|changeReasonCustom" supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n "p_conflict_codes text\[\]|jsonb_build_object\('conflictCodes'" supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n 'GENERATION_REQUEST_HMAC_KEY|generation-command\.v1|request_hmac' .env.example compose.yaml netlify/functions supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'generationRepairCodes|repairPathByCode|GenerationOutputError' netlify/functions/_shared/generation-repair.ts netlify/functions/_shared/generation-repair.test.ts
+rg -n 'generationConflictCopy' shared/contracts/generation.ts shared/contracts/generation.test.ts netlify/functions src/features/generation
+rg -n 'generation-service' netlify/functions/_shared/generation-materializer.ts
 rg -n 'source_text_snapshot' supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n 'confirm_menu_label_confirmation\(uuid,uuid,text\)' supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n 'lock_and_assert_current_safety_fingerprint' supabase/migrations/20260711002000_ai_control_and_quota.sql
@@ -7142,7 +7213,7 @@ docker compose run --rm --no-deps app npm run build
 git diff --check
 ```
 
-Expected: every independently executed verification command has its documented result, and each migration persistence/RPC/helper search, database pgTAP search, and menu-result select/display/type/test search is mandatory. The second generated-type run is byte-for-byte stable; all negative source scans return no matches, the conflict-code scan finds only the closed terminal DTO, and the HMAC scan finds the server env, canonicalizer, repository, and migration. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions and the exact canonical label snapshot; reverse-inserted `member_10`/`member_2` fixtures preserve numeric anonymous-ref order; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus persisted source text, human labels, and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
+Expected: every independently executed verification command has its documented result, and each migration persistence/RPC/helper search, database pgTAP search, repair/shared-copy ownership/import-direction search, and menu-result select/display/type/test search is mandatory. The second generated-type run is byte-for-byte stable; all negative source scans—including the materializer-to-service import scan—return no matches, the repair-leaf scan finds its three owners, the shared-copy scan finds one definition plus imports/reuse, the conflict-code scan finds only the closed terminal DTO, and the HMAC scan finds the server env, canonicalizer, repository, and migration. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions and the exact canonical label snapshot; reverse-inserted `member_10`/`member_2` fixtures preserve numeric anonymous-ref order; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus persisted source text, human labels, and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
 
 - [ ] **Step 12: Commit the reviewed generation corrections (2 minutes)**
 
