@@ -234,6 +234,20 @@ describe("materializeAiGeneratedMenu", () => {
       [
         "pantry_unit_mismatch",
         (payload) => {
+          payload.pantryUsage[0]!.unit = "G";
+        },
+        makeContext(),
+      ],
+      [
+        "pantry_unit_mismatch",
+        (payload) => {
+          payload.pantryUsage[0]!.unit = "ｇ";
+        },
+        makeContext(),
+      ],
+      [
+        "pantry_unit_mismatch",
+        (payload) => {
           payload.pantryUsage[0]!.plannedQuantity = 0.0001;
         },
         makeContext(),
@@ -321,5 +335,106 @@ describe("materializeAiGeneratedMenu", () => {
       () => materializeAiGeneratedMenu(payload, makeContext(), uuidFactory()),
       "pantry_name_mismatch",
     );
+  });
+
+  it("checks every pantry-backed ingredient even when labels omit the mismatch", () => {
+    const withoutLabels = makePayload();
+    withoutLabels.dishes[0]!.ingredients[0]!.name = "パン";
+    expectOutputError(
+      () => materializeAiGeneratedMenu(withoutLabels, makeContext(), uuidFactory()),
+      "pantry_name_mismatch",
+    );
+
+    const mixed = makePayload();
+    mixed.dishes[0]!.ingredients.push({
+      ...mixed.dishes[0]!.ingredients[0]!,
+      ingredientRef: "ingredient_3",
+      position: 2,
+      name: "パン",
+    });
+    mixed.labelConfirmations = [
+      {
+        sourceType: "ingredient",
+        sourceRef: "ingredient_1",
+        sourcePath: "dishes.0.ingredients.0.name",
+        allergenId: "wheat",
+        anonymousMemberRef: "member_1",
+        dictionaryVersion: "jp-caa-2026-04.v1",
+        confirmationStatus: "pending",
+      },
+    ];
+    expectOutputError(
+      () => materializeAiGeneratedMenu(mixed, makeContext(), uuidFactory()),
+      "pantry_name_mismatch",
+    );
+  });
+
+  it.each([0.1, 0.2, 0.3, 1.001])("accepts exact thousandth quantity %s", (quantity) => {
+    const payload = makePayload();
+    payload.pantryUsage[0]!.plannedQuantity = quantity;
+    expect(() =>
+      materializeAiGeneratedMenu(payload, makeContext(quantity), uuidFactory()),
+    ).not.toThrow();
+  });
+
+  it("distinguishes declared wrong-kind refs from undeclared refs", () => {
+    const undeclared = makePayload();
+    undeclared.labelConfirmations = [
+      {
+        sourceType: "dish",
+        sourceRef: "ingredient_99",
+        sourcePath: "dishes.0.name",
+        allergenId: "wheat",
+        anonymousMemberRef: "member_1",
+        dictionaryVersion: "jp-caa-2026-04.v1",
+        confirmationStatus: "pending",
+      },
+    ];
+    expectOutputError(
+      () => materializeAiGeneratedMenu(undeclared, makeContext(), uuidFactory()),
+      "label_source_invalid",
+    );
+
+    const declared = makePayload();
+    declared.labelConfirmations = [
+      {
+        ...undeclared.labelConfirmations[0]!,
+        sourceRef: "ingredient_1",
+      },
+    ];
+    expectOutputError(
+      () => materializeAiGeneratedMenu(declared, makeContext(), uuidFactory()),
+      "wrong_kind_ref",
+    );
+  });
+
+  it("rejects a wrong prefix in a typed ref as invalid provider structure", () => {
+    const payload = makePayload();
+    payload.dishes[0]!.steps[0]!.stepRef = "dish_9";
+    expectOutputError(
+      () => materializeAiGeneratedMenu(payload, makeContext(), uuidFactory()),
+      "invalid_provider_menu",
+    );
+  });
+
+  it("resolves every safety action ref to the fresh internal graph", () => {
+    const payload = makePayload();
+    payload.adaptations[0]!.safetyActions = [
+      {
+        kind: "remove_bones",
+        dishRef: "dish_1",
+        ingredientRef: "ingredient_1",
+        anonymousMemberRef: "member_1",
+        beforeStepRef: "step_1",
+        instruction: "骨を除く",
+      },
+    ];
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.adaptations[0]?.safetyActions[0]).toMatchObject({
+      dishId: menu.dishes[0]?.id,
+      ingredientId: menu.dishes[0]?.ingredients[0]?.id,
+      beforeRecipeStepId: menu.dishes[0]?.steps[0]?.id,
+      anonymousMemberRef: "member_1",
+    });
   });
 });

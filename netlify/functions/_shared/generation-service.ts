@@ -329,6 +329,16 @@ class StatusHydrationError extends Error {
   }
 }
 
+class TerminalTransitionError extends Error {
+  constructor(readonly cause: unknown) {
+    super("terminal_transition_failed");
+  }
+}
+
+function unwrapStatusHydration(error: unknown): unknown {
+  return error instanceof StatusHydrationError ? error.cause : error;
+}
+
 export async function runGeneration(
   deps: GenerationDependencies,
   command: GenerationCommand,
@@ -358,12 +368,20 @@ export async function runGeneration(
   const requestId = reserved.request_id;
   if (requestId === undefined) throw new Error("request_id_missing");
   const fail = async (code: GenerationFailureCode, retryAt: string | null) => {
-    await deps.repository.fail(requestId, code, retryAt);
-    return await hydrate();
+    try {
+      await deps.repository.fail(requestId, code, retryAt);
+      return await hydrate();
+    } catch (error) {
+      throw new TerminalTransitionError(unwrapStatusHydration(error));
+    }
   };
   const conflict = async (conflicts: readonly z.infer<typeof generationConflictSchema>[]) => {
-    await deps.repository.conflict(requestId, [...conflicts]);
-    return await hydrate();
+    try {
+      await deps.repository.conflict(requestId, [...conflicts]);
+      return await hydrate();
+    } catch (error) {
+      throw new TerminalTransitionError(unwrapStatusHydration(error));
+    }
   };
 
   try {
@@ -493,10 +511,12 @@ export async function runGeneration(
     });
     return await hydrate();
   } catch (error) {
+    if (error instanceof TerminalTransitionError) throw error.cause;
     if (error instanceof StatusHydrationError) throw error.cause;
     try {
       return await fail(closedFailureCode(error), null);
     } catch (terminalError) {
+      if (terminalError instanceof TerminalTransitionError) throw terminalError.cause;
       if (terminalError instanceof StatusHydrationError) throw terminalError.cause;
       throw terminalError;
     }

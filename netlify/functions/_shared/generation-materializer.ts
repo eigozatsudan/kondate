@@ -37,8 +37,10 @@ function required<T>(map: ReadonlyMap<string, T>, ref: string): T {
 }
 
 function exactThousandths(value: number): number {
-  const scaled = value * 1000;
-  if (!Number.isSafeInteger(scaled)) outputError("pantry_unit_mismatch");
+  const scaled = Math.round(value * 1000);
+  if (!Number.isSafeInteger(scaled) || scaled / 1000 !== value) {
+    outputError("pantry_unit_mismatch");
+  }
   return scaled;
 }
 
@@ -138,6 +140,15 @@ export function materializeAiGeneratedMenu(
     ingredients: dish.ingredients.map((ingredient) => {
       if (ingredient.pantryRef !== null && !usageByRef.has(ingredient.pantryRef)) {
         outputError("dangling_ref");
+      }
+      if (ingredient.pantryRef !== null) {
+        const trusted = pantryByRef.get(ingredient.pantryRef);
+        if (
+          trusted === undefined ||
+          normalizeFoodText(trusted.item.name) !== normalizeFoodText(ingredient.name)
+        ) {
+          outputError("pantry_name_mismatch");
+        }
       }
       return {
         id: required(ingredientIdByRef, ingredient.ingredientRef),
@@ -262,8 +273,12 @@ export function materializeAiGeneratedMenu(
   });
 
   const sourceByKey = new Map<string, { id: string; paths: ReadonlyMap<string, string> }>();
+  const sourceTypesByRef = new Map<string, Set<string>>();
   const addSource = (type: string, ref: string, id: string, paths: readonly [string, string][]) => {
     sourceByKey.set(`${type}:${ref}`, { id, paths: new Map(paths) });
+    const sourceTypes = sourceTypesByRef.get(ref) ?? new Set<string>();
+    sourceTypes.add(type);
+    sourceTypesByRef.set(ref, sourceTypes);
   };
   menu.dishes.forEach((dish, dishIndex) => {
     addSource("dish", dish.dishRef, required(dishIdByRef, dish.dishRef), [
@@ -330,7 +345,11 @@ export function materializeAiGeneratedMenu(
       adaptation: "adaptation_",
       timeline: "timeline_",
     }[label.sourceType];
-    if (!label.sourceRef.startsWith(expectedPrefix)) outputError("wrong_kind_ref");
+    if (!label.sourceRef.startsWith(expectedPrefix)) {
+      outputError(
+        sourceTypesByRef.has(label.sourceRef) ? "wrong_kind_ref" : "label_source_invalid",
+      );
+    }
     const source = sourceByKey.get(`${label.sourceType}:${label.sourceRef}`);
     if (source === undefined) outputError("label_source_invalid");
     const sourceText = source.paths.get(label.sourcePath);

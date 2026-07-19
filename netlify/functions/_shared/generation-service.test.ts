@@ -69,7 +69,9 @@ function makeRepository() {
     reserveRepair: vi.fn<GenerationDependencies["repository"]["reserveRepair"]>(() =>
       Promise.resolve({ reserved: true, retry_at: null }),
     ),
-    recordModel: vi.fn(() => Promise.resolve(undefined)),
+    recordModel: vi.fn<GenerationDependencies["repository"]["recordModel"]>(() =>
+      Promise.resolve(undefined),
+    ),
     fail: vi.fn((_id: string, code: string, retryAt: string | null) => {
       current = { ...record("failed"), failure_code: code, retry_at: retryAt };
       return Promise.resolve(current);
@@ -142,6 +144,8 @@ describe("projectProviderConflicts", () => {
   });
 
   const invalidProviderConflicts: readonly unknown[] = [
+    null,
+    { code: "must_use_conflict" },
     [],
     Array.from({ length: 13 }, () => ({
       code: "must_use_conflict",
@@ -150,7 +154,16 @@ describe("projectProviderConflicts", () => {
     })),
     [{ code: "current_safety_changed", message: "x", conditionRefs: [] }],
     [{ code: "unknown", message: "x", conditionRefs: [] }],
+    [{ code: "must_use_conflict", message: "x", conditionRefs: [], extra: true }],
+    [
+      {
+        code: "must_use_conflict",
+        message: "x",
+        conditionRefs: Array.from({ length: 25 }, (_, index) => `member_${String(index + 1)}`),
+      },
+    ],
     [{ code: "must_use_conflict", message: "x", conditionRefs: ["member_2"] }],
+    [{ code: "must_use_conflict", message: "x", conditionRefs: ["pantry_1"] }],
     [{ code: "must_use_conflict", message: "x", conditionRefs: [requestId] }],
     [
       { code: "must_use_conflict", message: "x", conditionRefs: [] },
@@ -166,6 +179,85 @@ describe("projectProviderConflicts", () => {
 });
 
 describe("runGeneration", () => {
+  const thrownBoundaryCases = [
+    ["load", 0, 0],
+    ["preflight", 0, 0],
+    ["prompt", 0, 0],
+    ["markSent", 1, 0],
+    ["provider", 1, 1],
+    ["recordModel", 1, 1],
+    ["materializer", 1, 1],
+    ["validator", 1, 1],
+    ["reserveRepair", 1, 1],
+    ["repairedProcessing", 2, 2],
+    ["succeed", 1, 1],
+  ] as const;
+
+  it.each(thrownBoundaryCases)(
+    "terminalizes a thrown %s boundary exactly once",
+    async (boundary, expectedMarkSent, expectedFetch) => {
+      const repository = makeRepository();
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+        Promise.resolve({ output: scenarios.success, modelId: models[0] }),
+      );
+      const overrides: Partial<Omit<GenerationDependencies, "repository">> = {
+        callOpenRouter,
+      };
+      if (boundary === "load") {
+        overrides.loadExecutionContext = vi.fn().mockRejectedValue(new Error("canary"));
+      } else if (boundary === "preflight") {
+        overrides.validatePreflight = vi.fn(() => {
+          throw new Error("canary");
+        });
+      } else if (boundary === "prompt") {
+        overrides.buildMessages = vi.fn(() => {
+          throw new Error("canary");
+        });
+      } else if (boundary === "markSent") {
+        repository.markSent.mockRejectedValue(new Error("canary"));
+      } else if (boundary === "provider") {
+        callOpenRouter.mockRejectedValue(new Error("canary"));
+      } else if (boundary === "recordModel") {
+        repository.recordModel.mockRejectedValue(new Error("canary"));
+      } else if (boundary === "materializer") {
+        vi.mocked(materializeAiGeneratedMenu).mockImplementation(() => {
+          throw new Error("canary");
+        });
+      } else if (boundary === "validator") {
+        vi.mocked(validateGeneratedMenu).mockImplementation(() => {
+          throw new Error("canary");
+        });
+      } else if (boundary === "reserveRepair") {
+        vi.mocked(validateGeneratedMenu).mockReturnValue({
+          ok: false,
+          issues: [{ code: "time_limit_exceeded", path: "raw", message: "canary" }],
+        });
+        repository.reserveRepair.mockRejectedValue(new Error("canary"));
+      } else if (boundary === "repairedProcessing") {
+        vi.mocked(validateGeneratedMenu).mockReturnValueOnce({
+          ok: false,
+          issues: [{ code: "time_limit_exceeded", path: "raw", message: "canary" }],
+        });
+        vi.mocked(materializeAiGeneratedMenu)
+          .mockReturnValueOnce(makeGeneratedMenu())
+          .mockImplementationOnce(() => {
+            throw new Error("canary");
+          });
+      } else {
+        repository.succeed.mockRejectedValue(new Error("canary"));
+      }
+
+      const deps = makeDeps({ repository, ...overrides });
+      const result = await runGeneration(deps, command);
+      expect(result).toMatchObject({ status: "failed", error: { code: "internal_error" } });
+      expect(repository.fail).toHaveBeenCalledTimes(1);
+      expect(repository.status).toHaveBeenCalledTimes(1);
+      expect(repository.markSent).toHaveBeenCalledTimes(expectedMarkSent);
+      expect(callOpenRouter).toHaveBeenCalledTimes(expectedFetch);
+      expect(JSON.stringify(result)).not.toContain("canary");
+    },
+  );
+
   it("marks sent immediately before fetch and hydrates success", async () => {
     const order: string[] = [];
     const repository = makeRepository();
@@ -324,6 +416,55 @@ describe("runGeneration", () => {
     expect(order.slice(0, 2)).toEqual(["record", "repair"]);
   });
 
+  it.each([
+    ["null", new OpenRouterCallError("invalid_ai_response")],
+    ["unknown", new OpenRouterCallError("invalid_ai_response", "foreign/model:free")],
+  ] as const)(
+    "repairs a %s first model without recording or excluding it",
+    async (_kind, error) => {
+      const repository = makeRepository();
+      const callOpenRouter = vi
+        .fn<GenerationDependencies["callOpenRouter"]>()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValueOnce({ output: scenarios.success, modelId: models[1] });
+      const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
+      expect(callOpenRouter.mock.calls[1]?.[0].excludedModelIds).toEqual([]);
+      expect(repository.recordModel).toHaveBeenCalledTimes(1);
+      expect(repository.recordModel).toHaveBeenCalledWith(requestId, models[1]);
+      expect(result.status).toBe("succeeded");
+    },
+  );
+
+  it("records a trusted invalid repaired model before terminalizing without a third send", async () => {
+    const order: string[] = [];
+    const repository = makeRepository();
+    repository.recordModel.mockImplementation((_requestId, modelId) => {
+      order.push(`record:${modelId}`);
+      return Promise.resolve(undefined);
+    });
+    repository.fail.mockImplementation((_requestId, code, retryAt) => {
+      order.push("fail");
+      return Promise.resolve({
+        ...record("failed"),
+        failure_code: code,
+        retry_at: retryAt,
+      });
+    });
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: false,
+      issues: [{ code: "time_limit_exceeded", path: "raw", message: "canary" }],
+    });
+    const callOpenRouter = vi
+      .fn<GenerationDependencies["callOpenRouter"]>()
+      .mockResolvedValueOnce({ output: scenarios.success, modelId: models[0] })
+      .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[1]));
+    await runGeneration(makeDeps({ repository, callOpenRouter }), command);
+    expect(order).toEqual([`record:${models[0]}`, `record:${models[1]}`, "fail"]);
+    expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
+    expect(repository.markSent).toHaveBeenCalledTimes(2);
+    expect(callOpenRouter).toHaveBeenCalledTimes(2);
+  });
+
   it("does not reserve repair when a known model is the sole model", async () => {
     const repository = makeRepository();
     const result = await runGeneration(
@@ -404,6 +545,43 @@ describe("runGeneration", () => {
     expect(repository.fail).toHaveBeenCalledTimes(1);
   });
 
+  it("does not repeat a terminal transition when fail transport rejects", async () => {
+    const repository = makeRepository();
+    const transportError = new Error("terminal transport failed");
+    repository.fail.mockRejectedValue(transportError);
+    await expect(
+      runGeneration(
+        makeDeps({
+          repository,
+          validatePreflight: vi.fn<GenerationDependencies["validatePreflight"]>(() => ({
+            ok: false,
+            terminal: "failed",
+            primaryCode: "allergy_conflict",
+            issueCodes: ["allergy_conflict"],
+          })),
+        }),
+        command,
+      ),
+    ).rejects.toBe(transportError);
+    expect(repository.fail).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates fail transport after a load rejection with one transition", async () => {
+    const repository = makeRepository();
+    const transportError = new Error("terminal transport failed");
+    repository.fail.mockRejectedValue(transportError);
+    await expect(
+      runGeneration(
+        makeDeps({
+          repository,
+          loadExecutionContext: vi.fn().mockRejectedValue(new Error("load failed")),
+        }),
+        command,
+      ),
+    ).rejects.toBe(transportError);
+    expect(repository.fail).toHaveBeenCalledTimes(1);
+  });
+
   it("hydrates a replay without executing generation", async () => {
     const repository = makeRepository();
     repository.reserve.mockResolvedValue({ ...record("processing"), replayed: true });
@@ -415,6 +593,117 @@ describe("runGeneration", () => {
     expect(loadExecutionContext).not.toHaveBeenCalled();
     expect(repository.markSent).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["failed", false],
+    ["constraint_conflict", false],
+    ["succeeded", false],
+    ["processing", true],
+  ] as const)(
+    "ignores a stale %s reservation return and hydrates authoritative status",
+    async (status, replayed) => {
+      const repository = makeRepository();
+      repository.reserve.mockResolvedValue({ ...record(status), replayed });
+      repository.status.mockResolvedValue(record("succeeded"));
+      const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
+      const result = await runGeneration(makeDeps({ repository, loadExecutionContext }), command);
+      expect(result).toMatchObject({ status: "succeeded", menuId });
+      expect(repository.status).toHaveBeenCalledTimes(1);
+      expect(loadExecutionContext).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["failure", "failed"],
+    ["conflict", "constraint_conflict"],
+    ["success", "succeeded"],
+  ] as const)("ignores a stale %s mutation return", async (transition, hydratedStatus) => {
+    const repository = makeRepository();
+    if (transition === "failure") {
+      repository.fail.mockResolvedValue(record("succeeded"));
+    } else if (transition === "conflict") {
+      repository.conflict.mockResolvedValue(record("succeeded"));
+    } else {
+      repository.succeed.mockResolvedValue(record("failed"));
+    }
+    const hydrated = record(hydratedStatus);
+    if (hydratedStatus === "constraint_conflict") {
+      hydrated.terminal_details = {
+        conflicts: [
+          {
+            code: "must_use_conflict",
+            message: generationConflictCopy.must_use_conflict,
+            conditionRefs: [],
+          },
+        ],
+      };
+    }
+    repository.status.mockResolvedValue(hydrated);
+    const validatePreflight: GenerationDependencies["validatePreflight"] =
+      transition === "failure"
+        ? () => ({
+            ok: false,
+            terminal: "failed",
+            primaryCode: "allergy_conflict",
+            issueCodes: ["allergy_conflict"],
+          })
+        : transition === "conflict"
+          ? () => ({
+              ok: false,
+              terminal: "constraint_conflict",
+              primaryCode: "must_use_conflict",
+              issueCodes: ["must_use_conflict"],
+              conflicts: [
+                {
+                  code: "must_use_conflict",
+                  message: generationConflictCopy.must_use_conflict,
+                  conditionRefs: [],
+                },
+              ],
+            })
+          : () => ({ ok: true });
+    const result = await runGeneration(makeDeps({ repository, validatePreflight }), command);
+    expect(result.status).toBe(hydratedStatus);
+    expect(repository.status).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["failure", "conflict", "success"] as const)(
+    "rejects a %s status hydration without a second terminal transition",
+    async (transition) => {
+      const repository = makeRepository();
+      const statusError = new Error("status unavailable");
+      repository.status.mockRejectedValue(statusError);
+      const validatePreflight: GenerationDependencies["validatePreflight"] =
+        transition === "failure"
+          ? () => ({
+              ok: false,
+              terminal: "failed",
+              primaryCode: "allergy_conflict",
+              issueCodes: ["allergy_conflict"],
+            })
+          : transition === "conflict"
+            ? () => ({
+                ok: false,
+                terminal: "constraint_conflict",
+                primaryCode: "must_use_conflict",
+                issueCodes: ["must_use_conflict"],
+                conflicts: [
+                  {
+                    code: "must_use_conflict",
+                    message: generationConflictCopy.must_use_conflict,
+                    conditionRefs: [],
+                  },
+                ],
+              })
+            : () => ({ ok: true });
+      await expect(
+        runGeneration(makeDeps({ repository, validatePreflight }), command),
+      ).rejects.toBe(statusError);
+      expect(repository.fail).toHaveBeenCalledTimes(transition === "failure" ? 1 : 0);
+      expect(repository.conflict).toHaveBeenCalledTimes(transition === "conflict" ? 1 : 0);
+      expect(repository.succeed).toHaveBeenCalledTimes(transition === "success" ? 1 : 0);
+    },
+  );
 });
 
 describe("toGenerationStatus", () => {

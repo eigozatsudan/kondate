@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   GenerationOutputError,
@@ -37,5 +38,16 @@ describe("generation repair boundary", () => {
     const error = new GenerationOutputError(["unknown_pantry_ref", "unknown_pantry_ref"]);
     expect(error.message).toBe("invalid_generation_output");
     expect(error.issues).toEqual([{ code: "unknown_pantry_ref", path: "menu.pantryUsage" }]);
+  });
+
+  it("keeps the repair leaf independent and the materializer service-free", () => {
+    const repairSource = readFileSync("netlify/functions/_shared/generation-repair.ts", "utf8");
+    const materializerSource = readFileSync(
+      "netlify/functions/_shared/generation-materializer.ts",
+      "utf8",
+    );
+    expect(repairSource).not.toContain("generation-service");
+    expect(repairSource).not.toContain("generation-materializer");
+    expect(materializerSource).not.toContain("generation-service");
   });
 });
