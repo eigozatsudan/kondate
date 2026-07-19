@@ -143,24 +143,31 @@ export async function sendMenuGeneration(
       throw new OpenRouterCallError("model_unavailable", null, retryAt(response, Date.now()));
     }
 
-    let rawEnvelope: unknown;
+    let rawBody: string;
     try {
-      rawEnvelope = JSON.parse(await response.text()) as unknown;
+      rawBody = await response.text();
     } catch {
       if (controller.signal.aborted) {
         throw new OpenRouterCallError("generation_timeout");
       }
+      throw new OpenRouterCallError("model_unavailable");
+    }
+
+    let rawEnvelope: unknown;
+    try {
+      rawEnvelope = JSON.parse(rawBody) as unknown;
+    } catch {
       throw new OpenRouterCallError("invalid_ai_response");
     }
 
     const knownModel = modelOnlySchema.safeParse(rawEnvelope);
     const modelId = knownModel.success ? knownModel.data.model : null;
+    if (modelId !== null && !models.includes(modelId)) {
+      throw new OpenRouterCallError("model_unavailable");
+    }
     const envelope = responseSchema.safeParse(rawEnvelope);
     if (!envelope.success) {
       throw new OpenRouterCallError("invalid_ai_response", modelId);
-    }
-    if (!models.includes(envelope.data.model)) {
-      throw new OpenRouterCallError("model_unavailable");
     }
 
     const firstChoice = envelope.data.choices[0];

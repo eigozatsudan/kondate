@@ -156,6 +156,19 @@ it("rejects an unconfigured response model without repair metadata", async () =>
   );
 });
 
+it("rejects a malformed envelope from an unconfigured model as terminal", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(
+      new Response(JSON.stringify({ model: "other/model:free", choices: [] }), { status: 200 }),
+    );
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+    new OpenRouterCallError("model_unavailable"),
+  );
+});
+
 it.each([
   ["3", "2026-07-11T00:00:03.000Z"],
   ["Sat, 11 Jul 2026 00:00:05 GMT", "2026-07-11T00:00:05.000Z"],
@@ -227,6 +240,24 @@ it("maps an HTTP failure without exposing the provider response body", async () 
   );
   expect(error).toEqual(new OpenRouterCallError("model_unavailable"));
   expect(String(error)).not.toContain("provider secret response body");
+});
+
+it("maps a response body read failure to terminal model_unavailable", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error("body connection lost"));
+        },
+      }),
+      { status: 200 },
+    ),
+  );
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+    new OpenRouterCallError("model_unavailable"),
+  );
 });
 
 it("keeps configured order while excluding only the actual model", async () => {
@@ -366,6 +397,11 @@ it.each([
   ["http://openrouter-mock:8787@evil.example/api/v1", false],
   ["http://openrouter-mock.evil.example:8787/api/v1", false],
   ["https://openrouter-mock:8787/api/v1", false],
+  ["http://user@openrouter-mock:8787/api/v1", false],
+  ["http://user:password@openrouter-mock:8787/api/v1", false],
+  ["http://openrouter-mock:8787/api/v1/extra", false],
+  ["http://openrouter-mock:8787/api/v1?scenario=success", false],
+  ["http://openrouter-mock:8787/api/v1#fragment", false],
 ] as const)(
   "sends the mock scenario header only to the exact local base %s",
   async (baseUrl, expected) => {
