@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { EventEmitter } from "node:events";
-import { request as requestHttp } from "node:http";
+import { createServer as createHttpServer, request as requestHttp } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { menuResponseFormat } from "../../shared/contracts/generation.js";
 import { createOpenRouterMockServer } from "./server.mjs";
@@ -92,11 +92,17 @@ const createUnfinishedOversizedRequest = (origin) => {
     request.once("error", onRequestError);
     request.write("x".repeat(1_000_001));
   });
-  const cleanup = () => {
+  const cleanup = async () => {
     clearTimeout(timeout);
     response?.off("end", onResponseEnd);
-    request?.off("error", onRequestError);
-    request?.destroy();
+    if (request) {
+      const closed = request.closed
+        ? Promise.resolve()
+        : new Promise((resolve) => request.once("close", resolve));
+      request.destroy();
+      await closed;
+      request.off("error", onRequestError);
+    }
   };
   return { promise, cleanup };
 };
@@ -254,11 +260,32 @@ describe("strict chat completion protocol", () => {
       expect(unhandledRejections).toEqual([]);
       expect(spies.flatMap((spy) => spy.mock.calls.flat())).toEqual([]);
     } finally {
-      for (const client of clients) client.cleanup();
+      await Promise.all(clients.map((client) => client.cleanup()));
       process.off("unhandledRejection", onUnhandledRejection);
       for (const spy of spies) spy.mockRestore();
     }
-  });
+  }, 10_000);
+
+  it("surfaces the unfinished request deadline before the test timeout", async () => {
+    const silentServer = createHttpServer((request) => request.resume());
+    await new Promise((resolve) => silentServer.listen(0, "127.0.0.1", resolve));
+    const address = silentServer.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Silent server did not bind a TCP port");
+    }
+    const client = createUnfinishedOversizedRequest(`http://127.0.0.1:${address.port}`);
+
+    try {
+      await expect(client.promise).rejects.toThrow(
+        "oversized unfinished request did not receive a prompt response",
+      );
+    } finally {
+      await client.cleanup();
+      await new Promise((resolve, reject) =>
+        silentServer.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  }, 10_000);
 
   it.each(["unknown", "__proto__", "constructor"])(
     "rejects unknown scenario %s",
