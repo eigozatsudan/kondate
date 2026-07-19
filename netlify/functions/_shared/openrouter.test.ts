@@ -399,6 +399,8 @@ it.each([
   ["https://openrouter-mock:8787/api/v1", false],
   ["http://user@openrouter-mock:8787/api/v1", false],
   ["http://user:password@openrouter-mock:8787/api/v1", false],
+  ["http://:password@openrouter-mock:8787/api/v1", false],
+  ["http://openrouter-mock:8788/api/v1", false],
   ["http://openrouter-mock:8787/api/v1/extra", false],
   ["http://openrouter-mock:8787/api/v1?scenario=success", false],
   ["http://openrouter-mock:8787/api/v1#fragment", false],
