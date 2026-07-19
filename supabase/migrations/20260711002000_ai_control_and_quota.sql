@@ -577,11 +577,13 @@ begin
   perform private.assign_regeneration_lineage(
     v_request.user_id,p_source_menu_id,v_menu_id,p_change_reason,p_change_reason_custom
   );
-  perform private.soft_delete_generation_draft(
-    v_request.user_id,
-    v_request.draft_id,
-    null
-  );
+  if v_request.draft_id is not null and v_request.draft_revision is not null then
+    perform private.soft_delete_generation_draft(
+      v_request.user_id,
+      v_request.draft_id,
+      v_request.draft_revision
+    );
+  end if;
   update private.ai_user_daily_usage set
     reserved_count = reserved_count - 1, success_count = success_count + 1, updated_at = p_now
   where user_id = v_request.user_id and usage_day = v_request.user_usage_day and reserved_count > 0;
