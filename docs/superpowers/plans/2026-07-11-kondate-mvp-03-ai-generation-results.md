@@ -2543,100 +2543,119 @@ git commit -m "feat: 厳格なOpenRouter生成クライアントを追加"
 
 **Files:**
 - Create: `tools/openrouter-mock/fixtures/scenarios.mjs`
+- Create: `tools/openrouter-mock/fixtures/scenarios.d.mts`
+- Create: `tools/openrouter-mock/fixtures/menu-response-format.json`
 - Create: `tools/openrouter-mock/fixtures/duplicate-menu.json`
 - Modify: `tools/openrouter-mock/server.mjs`
+- Modify: `tools/openrouter-mock/server.test.mjs`
 - Create: `netlify/functions/_shared/openrouter-mock.test.ts`
 - Modify: `compose.yaml`
+- Modify: `tests/tooling/compose.test.mjs`
+- Modify: `.env.example`
+- Modify: `scripts/generate-local-secrets.mjs`
 
 **Interfaces:**
 - Consumes: the exact OpenRouter request made by `sendMenuGeneration()`.
-- Produces: fixed scenarios `success`, `constraint-conflict`, `malformed-json`, `direct-allergen`, `alias-in-step`, `missing-label-confirmation`, `unsafe-age-shape`, `invalid-adaptation-branch`, `pantry-shortage-mismatch`, `over-time-limit`, and `invalid-then-success`; plus an owned `duplicate-menu.json` fixture that Plan 4 extends for duplicate-regeneration rejection. `X-Kondate-Mock-Scenario` is honored only by the local mock.
+- Produces: fixed scenarios `success`, `constraint-conflict`, `malformed-json`, `direct-allergen`, `alias-in-step`, `missing-label-confirmation`, `unsafe-age-shape`, `invalid-adaptation-branch`, `invalid-pantry-dish-link`, `over-time-limit`, and `invalid-then-success`; plus an owned `duplicate-menu.json` fixture that Plan 4 extends for duplicate-regeneration rejection. `X-Kondate-Mock-Scenario` is honored only by the exact local mock URL. `success` and every non-malformed adversarial fixture use only Task 1's provider-local refs and pass `aiGenerationResponseSchema`; persistent UUIDs and trusted pantry snapshots never appear in these fixtures. Shortage is later derived from trusted inventory and is not provider-controlled.
 
-- [ ] **Step 1 (2–5 min): Write the failing mock protocol test**
+- [ ] **Step 1 (2–5 min): Write failing provider-schema and mock protocol tests**
 
 ```ts
-import { expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
+import {
+  aiGenerationResponseSchema,
+  menuResponseFormat,
+} from "../../../shared/contracts/generation.js";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
 
 it("keeps every required adversarial scenario fixed in source control", () => {
   expect(Object.keys(scenarios).sort()).toEqual([
     "alias-in-step", "constraint-conflict", "direct-allergen",
     "invalid-adaptation-branch", "malformed-json", "missing-label-confirmation",
-    "over-time-limit", "pantry-shortage-mismatch", "success", "unsafe-age-shape",
+    "invalid-pantry-dish-link", "over-time-limit", "success", "unsafe-age-shape",
   ]);
+});
+
+describe("schema-valid fixed outputs", () => {
+  const schemaValidScenarioNames = [
+    "success", "constraint-conflict", "direct-allergen", "alias-in-step",
+    "missing-label-confirmation", "unsafe-age-shape", "invalid-adaptation-branch",
+    "invalid-pantry-dish-link", "over-time-limit",
+  ] as const;
+  it.each(schemaValidScenarioNames)(
+    "parses %s at the provider boundary",
+    (name) => expect(aiGenerationResponseSchema.safeParse(scenarios[name]).success).toBe(true),
+  );
+});
+
+it("keeps the standalone mock response format equal to the checked contract", async () => {
+  const artifact = JSON.parse(await readFile(
+    new URL("../../../tools/openrouter-mock/fixtures/menu-response-format.json", import.meta.url),
+    "utf8",
+  ));
+  expect(artifact).toEqual(menuResponseFormat);
 });
 ```
 
+Create `menu-response-format.json` as the mock runtime's canonical JSON artifact. The checked TypeScript test reads it and proves deep equality with Task 1's `menuResponseFormat`; the standalone server reads the same mounted JSON instead of hand-copying the generated JSON Schema. Extend `tools/openrouter-mock/server.test.mjs` rather than replacing its existing factory-based health test. Cover the exact `POST /api/v1/chat/completions` request sent by Task 6, method/path rejection, invalid JSON, oversized bodies, missing/extra/wrong-typed fields, non-free and duplicate models, unknown scenarios including `__proto__` and `constructor`, and the stateless repair sequence. Assert exact response model IDs and repeated parallel pairs: `[primary,repair]` always yields malformed content from `primary`, and `[repair]` always yields success from `repair`. During adversarial requests, spy console/stdout/stderr and prove that the bearer value, message sentinel, and fixture sentinel are absent; the existing CLI startup line may continue to log only the listening port. Keep the server factory importable without binding a port.
+
 - [ ] **Step 2 (2–5 min): Run the test and observe the missing-fixture failure**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter-mock.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/openrouter-mock.test.ts tools/openrouter-mock/server.test.mjs`
 
 Expected: FAIL because `tools/openrouter-mock/fixtures/scenarios.mjs` does not exist.
 
-- [ ] **Step 3 (2–5 min): Add the fixed valid base and every explicit adversarial mutation**
+- [ ] **Step 3 (2–5 min): Add the provider-local valid base and explicit adversarial mutations**
 
 ```js
-const ids = {
-  menu: "70000000-0000-4000-8000-000000000001",
-  main: "71000000-0000-4000-8000-000000000001",
-  side: "71000000-0000-4000-8000-000000000002",
-  mainIngredient: "72000000-0000-4000-8000-000000000001",
-  processedIngredient: "72000000-0000-4000-8000-000000000002",
-  sideIngredient: "72000000-0000-4000-8000-000000000003",
-  mainStep: "73000000-0000-4000-8000-000000000001",
-  sideStep: "73000000-0000-4000-8000-000000000002",
-  timeline1: "74000000-0000-4000-8000-000000000001",
-  timeline2: "74000000-0000-4000-8000-000000000002",
-  adaptation: "75000000-0000-4000-8000-000000000001",
-};
-
 const success = {
   outcome: "success",
   menu: {
-    schemaVersion: "2026-07-11.v1", menuId: ids.menu,
+    schemaVersion: "2026-07-11.v1",
     mealType: "breakfast", cuisineGenre: "japanese", servings: 2,
-    totalElapsedMinutes: 15, safetyTags: ["small_cut"],
+    totalElapsedMinutes: 15, safetyTags: ["cut_small"],
     dishes: [
       {
-        id: ids.main, role: "main", position: 1, name: "鶏肉と白菜のやわらか煮",
+        dishRef: "dish_1", role: "main", position: 1, name: "鶏肉と白菜のやわらか煮",
         description: "朝の短時間煮物", cookingTimeMinutes: 15,
         ingredients: [
-          { id: ids.mainIngredient, position: 1, name: "鶏もも肉", quantityValue: 200,
+          { ingredientRef: "ingredient_1", position: 1, name: "鶏もも肉", quantityValue: 200,
             quantityText: "200g", unit: "g", storeSection: "meat_fish",
-            pantrySelectionId: null, labelConfirmationRequired: false },
-          { id: ids.processedIngredient, position: 2, name: "しょうゆ", quantityValue: 1,
+            pantryRef: null, labelConfirmationRequired: false },
+          { ingredientRef: "ingredient_2", position: 2, name: "しょうゆ", quantityValue: 1,
             quantityText: "小さじ1", unit: "tsp", storeSection: "seasonings",
-            pantrySelectionId: null, labelConfirmationRequired: true },
+            pantryRef: null, labelConfirmationRequired: true },
         ],
-        steps: [{ id: ids.mainStep, position: 1, instruction: "鶏肉を小さく切り、白菜と十分に加熱する" }],
+        steps: [{ stepRef: "step_1", position: 1, instruction: "鶏肉を小さく切り、白菜と十分に加熱する" }],
       },
       {
-        id: ids.side, role: "side", position: 2, name: "にんじんの温サラダ",
+        dishRef: "dish_2", role: "side", position: 2, name: "にんじんの温サラダ",
         description: "やわらかい副菜", cookingTimeMinutes: 8,
-        ingredients: [{ id: ids.sideIngredient, position: 1, name: "にんじん", quantityValue: 1,
+        ingredients: [{ ingredientRef: "ingredient_3", position: 1, name: "にんじん", quantityValue: 1,
           quantityText: "1本", unit: "piece", storeSection: "produce",
-          pantrySelectionId: null, labelConfirmationRequired: false }],
-        steps: [{ id: ids.sideStep, position: 1, instruction: "にんじんを薄く切り、やわらかく加熱する" }],
+          pantryRef: null, labelConfirmationRequired: false }],
+        steps: [{ stepRef: "step_2", position: 1, instruction: "にんじんを薄く切り、やわらかく加熱する" }],
       },
     ],
     timeline: [
-      { id: ids.timeline1, position: 1, startMinute: 0, durationMinutes: 7,
-        instruction: "主菜の材料を切って加熱を始める", dishId: ids.main, recipeStepId: ids.mainStep },
-      { id: ids.timeline2, position: 2, startMinute: 7, durationMinutes: 8,
-        instruction: "主菜を煮ながら副菜を仕上げる", dishId: ids.side, recipeStepId: ids.sideStep },
+      { timelineRef: "timeline_1", position: 1, startMinute: 0, durationMinutes: 7,
+        instruction: "主菜の材料を切って加熱を始める", dishRef: "dish_1", stepRef: "step_1" },
+      { timelineRef: "timeline_2", position: 2, startMinute: 7, durationMinutes: 8,
+        instruction: "主菜を煮ながら副菜を仕上げる", dishRef: "dish_2", stepRef: "step_2" },
     ],
-    adaptations: [{ id: ids.adaptation, dishId: ids.main, anonymousMemberRef: "member_1",
-      portionText: "1人分", branchBeforeRecipeStepId: ids.mainStep,
+    adaptations: [{ adaptationRef: "adaptation_1", dishRef: "dish_1", anonymousMemberRef: "member_1",
+      portionText: "1人分", beforeStepRef: "step_1",
       additionalCutting: "1cm角", additionalHeating: "中心まで十分に加熱",
-      additionalSeasoning: null, servingCheck: "骨がないことを確認", safetyTags: ["small_cut"],
-      safetyActions: [{ kind: "remove_bones", dishId: ids.main,
-        ingredientId: ids.mainIngredient,
-        anonymousMemberRef: "member_1", beforeRecipeStepId: ids.mainStep,
+      additionalSeasoning: null, servingCheck: "骨がないことを確認", safetyTags: ["cut_small"],
+      safetyActions: [{ kind: "remove_bones", dishRef: "dish_1",
+        ingredientRef: "ingredient_1",
+        anonymousMemberRef: "member_1", beforeStepRef: "step_1",
         instruction: "骨を完全に除く" }] }],
     pantryUsage: [],
-    labelConfirmations: [{ sourceType: "ingredient", sourceId: ids.processedIngredient,
+    labelConfirmations: [{ sourceType: "ingredient", sourceRef: "ingredient_2",
       sourcePath: "dishes.0.ingredients.1.name", allergenId: "wheat",
-      anonymousMemberRef: "member_1", dictionaryVersion: "allergen-v1", confirmationStatus: "pending" }],
+      anonymousMemberRef: "member_1", dictionaryVersion: "jp-caa-2026-04.v1", confirmationStatus: "pending" }],
   },
 };
 
@@ -2645,12 +2664,12 @@ const directAllergen = clone(); directAllergen.menu.dishes[0].ingredients[0].nam
 const aliasInStep = clone(); aliasInStep.menu.dishes[0].steps[0].instruction = "マヨネーズを混ぜる";
 const missingLabel = clone(); missingLabel.menu.labelConfirmations = [];
 const unsafeAge = clone(); unsafeAge.menu.dishes[1].ingredients[0].name = "丸ごとのミニトマト";
-const badBranch = clone(); badBranch.menu.adaptations[0].branchBeforeRecipeStepId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-const pantryMismatch = clone(); pantryMismatch.menu.pantryUsage = [{
-  selectionId: "76000000-0000-4000-8000-000000000001", pantryItemId: null,
-  pantryItemName: "白菜", priority: "must_use", usageStatus: "used", plannedQuantity: 300,
-  inventoryQuantity: 100, shortageQuantity: 0, unit: "g", dishIds: [ids.main], unusedReason: null,
-}];
+const badBranch = clone(); badBranch.menu.adaptations[0].beforeStepRef = "step_999";
+const pantryMismatch = clone();
+pantryMismatch.menu.dishes[0].ingredients[0].pantryRef = "pantry_1";
+pantryMismatch.menu.pantryUsage = [{ pantryRef: "pantry_1", priority: "must_use",
+  usageStatus: "used", plannedQuantity: 300, unit: "g", dishRefs: ["dish_2"],
+  unusedReason: null }];
 const overTime = clone(); overTime.menu.totalElapsedMinutes = 30;
 
 export const scenarios = Object.freeze({
@@ -2664,10 +2683,12 @@ export const scenarios = Object.freeze({
   "missing-label-confirmation": missingLabel,
   "unsafe-age-shape": unsafeAge,
   "invalid-adaptation-branch": badBranch,
-  "pantry-shortage-mismatch": pantryMismatch,
+  "invalid-pantry-dish-link": pantryMismatch,
   "over-time-limit": overTime,
 });
 ```
+
+Recursively freeze the source fixtures and return a `structuredClone` for every response so one test/request cannot mutate a later response. `invalid-then-success` is a server-only derived scenario, not a stored fixture key. Add `scenarios.d.mts` with exact keys: only `malformed-json` is `string`; every other value is `AiGenerationResponse`. It exists only to make the checked TypeScript import explicit.
 
 Create `tools/openrouter-mock/fixtures/duplicate-menu.json` as the owned Plan 4 extension point:
 
@@ -2685,16 +2706,22 @@ Create `tools/openrouter-mock/fixtures/duplicate-menu.json` as the owned Plan 4 
 }
 ```
 
-- [ ] **Step 4 (2–5 min): Implement a strict local mock with deterministic repair sequencing**
+- [ ] **Step 4 (2–5 min): Implement a strict stateless local mock with deterministic repair sequencing**
 
 ```js
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { isDeepStrictEqual } from "node:util";
 import { scenarios } from "./fixtures/scenarios.mjs";
 
-const counts = new Map();
-const port = Number(process.env.PORT ?? 8787);
+const primaryModel = "mock/kondate-primary:free";
+const repairModel = "mock/kondate-repair:free";
+const maximumBodyBytes = 1_000_000;
+const menuResponseFormat = JSON.parse(await readFile(
+  new URL("./fixtures/menu-response-format.json", import.meta.url), "utf8",
+));
 
-createServer(async (request, response) => {
+async function handleRequest(request, response) {
   if (request.method === "GET" && request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ status: "ok" }));
@@ -2703,33 +2730,67 @@ createServer(async (request, response) => {
   if (request.method !== "POST" || request.url !== "/api/v1/chat/completions") {
     response.writeHead(404).end(); return;
   }
-  const chunks = []; for await (const chunk of request) chunks.push(chunk);
-  const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  const models = Array.isArray(body.models)
-    ? body.models.filter((model) => typeof model === "string")
-    : [];
-  const valid = models.length !== 0
+  const chunks = []; let received = 0;
+  for await (const chunk of request) {
+    received += chunk.length;
+    if (received > maximumBodyBytes) { response.writeHead(413).end(); return; }
+    chunks.push(chunk);
+  }
+  let body;
+  try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+  catch { response.writeHead(400).end(); return; }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    response.writeHead(400).end(); return;
+  }
+  const models = body.models;
+  const modelSequenceValid = Array.isArray(models) &&
+    ((models.length === 2 && models[0] === primaryModel && models[1] === repairModel) ||
+      (models.length === 1 && models[0] === repairModel));
+  const valid = Array.isArray(models)
+    && models.length !== 0
+    && models.every((model) => typeof model === "string")
+    && new Set(models).size === models.length
     && models.every((model) => model.endsWith(":free"))
+    && modelSequenceValid
+    && Array.isArray(body.messages)
     && body.provider?.require_parameters === true
-    && body.response_format?.type === "json_schema"
-    && body.response_format?.json_schema?.strict === true;
+    && isDeepStrictEqual(body.response_format, menuResponseFormat);
   if (!valid) { response.writeHead(400, { "content-type": "application/json" });
     response.end(JSON.stringify({ error: { message: "invalid structured request" } })); return; }
   const header = request.headers["x-kondate-mock-scenario"] ?? "success";
   const scenario = Array.isArray(header) ? header[0] : header;
-  const count = counts.get(scenario) ?? 0; counts.set(scenario, count + 1);
-  const key = scenario === "invalid-then-success" ? (count === 0 ? "malformed-json" : "success") : scenario;
-  const fixture = scenarios[key];
-  if (fixture === undefined) { response.writeHead(404).end(); return; }
+  const repairRequest = models.length === 1 && models[0] === repairModel;
+  const key = scenario === "invalid-then-success"
+    ? (repairRequest ? "success" : "malformed-json") : scenario;
+  if (!Object.hasOwn(scenarios, key)) { response.writeHead(404).end(); return; }
+  const fixture = structuredClone(scenarios[key]);
   const content = typeof fixture === "string" ? fixture : JSON.stringify(fixture);
   response.writeHead(200, { "content-type": "application/json" });
   response.end(JSON.stringify({
-    id: `mock-${count + 1}`, object: "chat.completion", created: 0,
-    model: body.models[Math.min(count, body.models.length - 1)],
+    id: "mock-fixed", object: "chat.completion", created: 0,
+    model: repairRequest ? repairModel : models[0],
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }],
   }));
-}).listen(port, "0.0.0.0");
+}
+
+export function createOpenRouterMockServer() {
+  return createServer((request, response) => {
+    void handleRequest(request, response).catch(() => {
+      if (!response.headersSent && !response.writableEnded) {
+        response.writeHead(400).end();
+      } else if (!response.writableEnded) {
+        response.destroy();
+      }
+    });
+  });
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  createOpenRouterMockServer().listen(Number(process.env.PORT ?? 8787), "0.0.0.0");
+}
 ```
+
+The implementation must validate every untrusted nested property before access. Require a plain-object body with exactly `models`, `messages`, `response_format`, `provider`, `temperature`, and `stream`; exact `Authorization: Bearer local-mock-key`; JSON content type; role/content-only message objects; `{provider:{require_parameters:true}}`; `temperature:0.2`; `stream:false`; and deep equality with the mounted `menu-response-format.json`. Reject missing/extra/wrong-typed protocol fields with a closed 4xx response. JSON Schema keywords inside the exact `json_schema.schema` value are canonical artifact data, not arbitrary protocol extras. Use `Object.hasOwn(scenarios,key)` before indexing so prototype properties are not scenarios. For `invalid-then-success`, `[primaryModel, repairModel]` always returns malformed content from `primaryModel`, while `[repairModel]` always returns success from `repairModel`. Repeated and parallel requests therefore have no shared counter or ordering state. Implement `createServer` with a non-async callback that invokes an async request handler and attaches a terminal rejection handler: respond 400 only while headers/body remain writable, otherwise destroy/close the connection. Test client abort/malformed-stream handling without an unhandled rejection. Preserve the existing exported factory and CLI guard, and never log headers, messages, fixture content, prompts, or raw responses.
 
 Keep Plan 1's single `openrouter-mock` service and port `8787`; do not add a second service. Extend only the existing `app.environment` mapping with the complete server variables:
 
@@ -2740,7 +2801,7 @@ Keep Plan 1's single `openrouter-mock` service and port `8787`; do not add a sec
       SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       OPENROUTER_API_KEY: local-mock-key
-      OPENROUTER_MODELS: mock/kondate:free
+      OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
       OPENROUTER_BASE_URL: http://openrouter-mock:8787/api/v1
       USER_DAILY_AI_LIMIT: "5"
       USER_DAILY_EXTERNAL_CALL_LIMIT: "12"
@@ -2752,17 +2813,29 @@ Keep Plan 1's single `openrouter-mock` service and port `8787`; do not add a sec
       AI_PROCESSING_STALE_SECONDS: "180"
 ```
 
+Mount both `/app/server.mjs` and `/app/fixtures` read-only in the existing `openrouter-mock` service. Update `tests/tooling/compose.test.mjs` to assert the fixture mount and the complete locked environment in the rendered service blocks, not by unscoped text presence. Align `.env.example` and `scripts/generate-local-secrets.mjs` to `http://openrouter-mock:8787/api/v1`; neither file may preserve the obsolete base URL.
+
 - [ ] **Step 5 (2–5 min): Run fixture, mock integration, and Compose checks**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter-mock.test.ts && docker compose config --quiet'`
-
-Expected: fixed-scenario test PASS and Compose exits 0 with a read-only mock source mount.
-
-- [ ] **Step 6 (2–5 min): Commit the deterministic external boundary**
+Run each command separately:
 
 ```bash
-git add tools/openrouter-mock netlify/functions/_shared/openrouter-mock.test.ts compose.yaml
-git commit -m "test: add adversarial openrouter mock"
+docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/openrouter-mock.test.ts tools/openrouter-mock/server.test.mjs
+docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
+docker compose config --quiet
+```
+
+Expected: every schema fixture and protocol test passes; the two-model repair sequence is repeatable in parallel; Compose exits 0 with read-only mock source and fixture mounts and the locked 5/12/4/600/45 environment.
+
+- [ ] **Step 6 (10–20 min): Run the complete Task gate**
+
+Run the nine commands from `AGENTS.md` section 8 in order and independently. Task 7 must make `reset-local-db.sh`, pgTAP, E2E, and build pass; the `OPENROUTER_MODELS` blocker deferred from Tasks 3–6 is not an accepted skip after this Compose change. Preserve the clean baseline by comparing staged, unstaged, and untracked state before and after every Docker verifier command.
+
+- [ ] **Step 7 (2–5 min): Commit the deterministic external boundary**
+
+```bash
+git add tools/openrouter-mock netlify/functions/_shared/openrouter-mock.test.ts compose.yaml tests/tooling/compose.test.mjs .env.example scripts/generate-local-secrets.mjs
+git commit -m "test: 敵対的なOpenRouterモックを追加"
 ```
 
 ### Task 8: Reload current server state, reject unsafe input before send, and anonymize the prompt
@@ -2811,7 +2884,7 @@ it("keeps names, email, and database ids out of the prompt", () => {
 
 - [ ] **Step 2 (2–5 min): Run the focused tests and observe missing context modules**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts`
 
 Expected: FAIL because the current-state loader and prompt builder do not exist.
 
@@ -3030,7 +3103,12 @@ export function buildGenerationMessages(context: GenerationContext): readonly Op
 
 - [ ] **Step 5 (2–5 min): Run context, prompt, and type tests**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts && npm run typecheck'`
+Run each command separately:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: tests PASS for current profile reload, incomplete/foreign member rejection, current consent, unsupported medical text, expired pantry JST reset, missing pantry row, anonymous references, and absence of DB IDs/names/email in prompts.
 
@@ -3038,7 +3116,7 @@ Expected: tests PASS for current profile reload, incomplete/foreign member rejec
 
 ```bash
 git add netlify/functions/_shared/generation-context.ts netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.ts netlify/functions/_shared/generation-prompt.test.ts
-git commit -m "feat: build current anonymous generation context"
+git commit -m "feat: 匿名の現行生成コンテキストを追加"
 ```
 
 ### Task 9: Orchestrate reserve, preflight, send, one repair, validation, and finalization
@@ -3046,12 +3124,14 @@ git commit -m "feat: build current anonymous generation context"
 **Files:**
 - Create: `netlify/functions/_shared/generation-service.test.ts`
 - Create: `netlify/functions/_shared/generation-service.ts`
+- Create: `netlify/functions/_shared/generation-materializer.test.ts`
+- Create: `netlify/functions/_shared/generation-materializer.ts`
 
 **Interfaces:**
 - Consumes: Tasks 1–8 plus Plan 2's `validateGeneratedMenu()` and authoritative fingerprint contract.
-- Produces: `GenerationCommand`, `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, and `toGenerationStatus(record,idempotencyKey)`. Plan 4 extends the command union and reuses the same reservation, repair, validation, and persistence path.
+- Produces: `GenerationCommand`, `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, `toGenerationStatus(record,idempotencyKey)`, and the sole provider-local-to-internal boundary `materializeAiGeneratedMenu(output,context,uuid)`. Plan 4 extends the command union and reuses the same reservation, repair, materialization, validation, and persistence path.
 
-- [ ] **Step 1 (2–5 min): Write failing quota-order, pre-send-release, repair-once, and success tests**
+- [ ] **Step 1 (2–5 min): Write failing materialization, quota-order, pre-send-release, repair-once, and success tests**
 
 ```ts
 import { expect, it, vi } from "vitest";
@@ -3109,15 +3189,18 @@ it.each([
 });
 ```
 
+In `generation-materializer.test.ts`, first prove that Task 7's provider-local `success.menu` materializes to a `generatedMenuSchema` value with fresh UUIDs and then passes `validateGeneratedMenu` under an explicitly matching generation context. Cover every ref kind, duplicate/dangling/wrong-kind refs, unknown/foreign pantry refs, priority mismatch, repeated pantry use, missing `must_use`, inconsistent pantry dish links, unknown member refs, invalid label source/path, pantry-name/ingredient-name mismatch, and a UUID-looking provider string. Prove that a trusted inventory quantity of 100 and provider planned quantity of 300 deterministically creates shortage 200; provider output never supplies inventory or shortage. Conflict responses are branched before this function and are never passed to it.
+
 - [ ] **Step 2 (2–5 min): Run the service tests and observe the missing orchestrator failure**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-service.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-service.test.ts`
 
 Expected: FAIL because `runGeneration` and its dependency contract do not exist.
 
 - [ ] **Step 3 (2–5 min): Implement status mapping and the complete dependency contract**
 
 ```ts
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   generationConflictSchema,
@@ -3132,9 +3215,18 @@ import { validateGeneratedMenu } from "../../../shared/safety/validate-generated
 import { getServerEnv } from "./env.js";
 import { loadGenerationContext } from "./generation-context.js";
 import { buildGenerationMessages } from "./generation-prompt.js";
+import {
+  GenerationMaterializationError,
+  materializeAiGeneratedMenu,
+} from "./generation-materializer.js";
 import { createGenerationRepository, type AuthenticatedUser, type GenerationRepository, type QuotaRequestRecord } from "./generation-repository.js";
 import { HttpError } from "./http.js";
-import { sendMenuGeneration, OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
+import {
+  sendMenuGeneration,
+  OpenRouterCallError,
+  type OpenRouterGenerationResult,
+  type OpenRouterMessage,
+} from "./openrouter.js";
 
 export type GenerationDependencies = {
   user: AuthenticatedUser;
@@ -3150,6 +3242,7 @@ export type GenerationDependencies = {
   openRouterTimeoutMs: number;
   requestStartedAtMonotonicMs: number;
   functionTotalBudgetMs: number;
+  uuid(): string;
 };
 
 const failureCopy: Record<string, { message: string; retryable: boolean }> = {
@@ -3208,6 +3301,17 @@ export function toGenerationStatus(record: QuotaRequestRecord, idempotencyKey: s
 }
 ```
 
+Create `generation-materializer.ts` now, before orchestration uses the Task 1 provider contract. `materializeAiGeneratedMenu(output: AiGeneratedMenuPayload, context: GenerationContext, uuid: () => string): GeneratedMenu` accepts only the success arm's `menu`, never the top-level union. Its thrown `GenerationMaterializationError` exposes only a closed array of `{code,path}` repair diagnostics and never embeds provider values. Use these closed codes: `invalid_provider_menu`, `uuid_in_provider_output`, `duplicate_ref`, `dangling_ref`, `wrong_kind_ref`, `unknown_member_ref`, `unknown_pantry_ref`, `pantry_priority_mismatch`, `pantry_usage_duplicate`, `must_use_missing`, `pantry_usage_link_mismatch`, `label_source_invalid`, and `pantry_name_mismatch`.
+
+Materialize in this fixed order:
+
+1. Parse `aiGeneratedMenuPayloadSchema`; reject UUID-looking strings anywhere, duplicate declarations, dangling/wrong-kind refs, and anonymous member refs not present in the current context.
+2. Build the pantry allowlist from numerically ordered prompt refs (`pantry_1`, `pantry_2`, ...) mapped to `context.submission.pantrySelections` joined with owner-proven `context.pantryItems`. Require exact priority equality, one usage per referenced pantry ref, and every `must_use` exactly once as `used`.
+3. Allocate one fresh UUID for the menu and each dish, ingredient, step, timeline, adaptation, and pantry selection. Safety actions have no independent ID. Resolve field-specific cross-references; an ingredient pantry ref resolves to the fresh selection ID, and `pantryUsage.dishRefs` must equal exactly the dishes containing ingredients linked to that ref.
+4. Copy trusted pantry ID/name/current quantity/unit, use only provider `plannedQuantity`, and compute `shortageQuantity = max(planned - inventory, 0)` at the contract's thousandth-unit precision when both quantities exist; otherwise shortage is null. Provider output never controls inventory or shortage.
+5. Resolve label candidates from local source refs and exact source paths to fresh source UUIDs and derive `sourceText` from that resolved leaf. Pantry selections are never label sources. For a pantry-backed processed ingredient, the trusted pantry name must normalize-match its ingredient name or a reviewed alias.
+6. Parse the complete internal value with `generatedMenuSchema`. Any structural failure becomes `invalid_provider_menu`; the current deterministic validator remains the sole owner of allergen, food-rule, label-set, preference, and time-limit decisions.
+
 - [ ] **Step 4 (2–5 min): Implement the reserve-to-terminal orchestration with exactly one repair**
 
 ```ts
@@ -3227,6 +3331,7 @@ export function createGenerationDeps(
     openRouterTimeoutMs: env.openRouter.timeoutMs,
     requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
     functionTotalBudgetMs: env.openRouter.functionTotalBudgetMs,
+    uuid: randomUUID,
   };
 }
 
@@ -3258,7 +3363,14 @@ export async function runGeneration(
     return toGenerationStatus(await deps.repository.fail(requestId, code, null), key);
   }
 
-  const originalMessages = buildGenerationMessages(context);
+  let originalMessages: readonly OpenRouterMessage[];
+  try {
+    originalMessages = buildGenerationMessages(context);
+  } catch {
+    return toGenerationStatus(
+      await deps.repository.fail(requestId, "internal_error", null), key,
+    );
+  }
   const call = async (
     excludedModelIds: readonly string[] = [],
     messages = originalMessages,
@@ -3274,17 +3386,53 @@ export async function runGeneration(
   };
 
   let first: OpenRouterGenerationResult;
+  let repairUsed = false;
   try { first = await call(); }
   catch (error) {
     const failure = error instanceof OpenRouterCallError ? error : new OpenRouterCallError("model_unavailable");
-    return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
+    if (failure.code !== "invalid_ai_response") {
+      return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
+    }
+    const repair = await deps.repository.reserveRepair(requestId);
+    if (repair.reserved !== true) {
+      return toGenerationStatus(await deps.repository.fail(
+        requestId, "invalid_ai_response", repair.retry_at ?? null,
+      ), key);
+    }
+    repairUsed = true;
+    try {
+      first = await call(
+        failure.modelId === null ? [] : [failure.modelId],
+        [...originalMessages, { role: "user", content:
+          "前の結果はJSON構造を確認できませんでした。指定スキーマの全体JSONを一度だけ再生成してください。" }],
+      );
+    } catch (repairError) {
+      const terminal = repairError instanceof OpenRouterCallError
+        ? repairError : new OpenRouterCallError("model_unavailable");
+      return toGenerationStatus(
+        await deps.repository.fail(requestId, terminal.code, terminal.retryAt), key,
+      );
+    }
   }
   if (first.output.outcome === "constraint_conflict") {
     return toGenerationStatus(await deps.repository.conflict(requestId, first.output.conflicts), key);
   }
 
-  let checked = validateGeneratedMenu(first.output.menu, context);
-  if (!checked.ok) {
+  let checked;
+  try {
+    checked = validateGeneratedMenu(
+      materializeAiGeneratedMenu(first.output.menu, context, deps.uuid),
+      context,
+    );
+  } catch (error) {
+    if (!(error instanceof GenerationMaterializationError)) {
+      return toGenerationStatus(
+        await deps.repository.fail(requestId, "internal_error", null), key,
+      );
+    }
+    checked = { ok: false, issues: error.issues };
+  }
+  if (!checked.ok && !repairUsed) {
     const repair = await deps.repository.reserveRepair(requestId);
     const models = deps.models.filter((model) => model !== first.modelId);
     if (repair.reserved !== true || models.length === 0) {
@@ -3298,7 +3446,19 @@ export async function runGeneration(
       if (repaired.output.outcome === "constraint_conflict") {
         return toGenerationStatus(await deps.repository.conflict(requestId, repaired.output.conflicts), key);
       }
-      checked = validateGeneratedMenu(repaired.output.menu, context);
+      try {
+        checked = validateGeneratedMenu(
+          materializeAiGeneratedMenu(repaired.output.menu, context, deps.uuid),
+          context,
+        );
+      } catch (error) {
+        if (!(error instanceof GenerationMaterializationError)) {
+          return toGenerationStatus(
+            await deps.repository.fail(requestId, "internal_error", null), key,
+          );
+        }
+        checked = { ok: false, issues: error.issues };
+      }
     } catch (error) {
       const failure = error instanceof OpenRouterCallError ? error : new OpenRouterCallError("model_unavailable");
       return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
@@ -3307,32 +3467,46 @@ export async function runGeneration(
   if (!checked.ok) {
     return toGenerationStatus(await deps.repository.fail(requestId, "invalid_ai_response", null), key);
   }
-  const completed = await deps.repository.succeed({
-    requestId, menu: checked.menu, preferenceSnapshot: context.preferenceSnapshot,
-    safetySnapshot: context.safetySnapshot,
-    safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
-    allergenVersion: context.safety.dictionaryVersion,
-    foodRuleVersion: context.safety.foodRuleVersion,
-    targetMembers: context.targetMembers,
-    expiredChecks: context.expiredPantryChecks,
-    // Plan 4で再生成ハンドラーを追加するまでは、command.kindは常にnew_menuになる。
-    sourceMenuId: null, changeReason: null, changeReasonCustom: null,
-  });
+  let completed: QuotaRequestRecord;
+  try {
+    completed = await deps.repository.succeed({
+      requestId, menu: checked.menu, preferenceSnapshot: context.preferenceSnapshot,
+      safetySnapshot: context.safetySnapshot,
+      safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+      allergenVersion: context.safety.dictionaryVersion,
+      foodRuleVersion: context.safety.foodRuleVersion,
+      targetMembers: context.targetMembers,
+      expiredChecks: context.expiredPantryChecks,
+      // Plan 4で再生成ハンドラーを追加するまでは、command.kindは常にnew_menuになる。
+      sourceMenuId: null, changeReason: null, changeReasonCustom: null,
+    });
+  } catch {
+    return toGenerationStatus(
+      await deps.repository.fail(requestId, "internal_error", null), key,
+    );
+  }
   return toGenerationStatus(completed, key);
 }
 ```
 
+Only `GenerationMaterializationError.issues` may enter the existing `{ok:false,issues}` validation shape. Guard every application operation after a successful reservation—including prompt construction, materialization, validation, conflict projection, and success finalization—so an unexpected exception attempts `repository.fail(...,"internal_error",null)` and cannot silently leave a processing request. Tests inject failures at each boundary and prove no exception text enters a repair prompt or response. A transport failure of the terminal `repository.fail` itself may still reject because no second durable channel exists; do not falsely map that database outage to a completed status. `invalid_ai_response` from Task 6, materialization failures, and deterministic validation failures all share the same single repair budget. Provider unavailability and timeout never repair. If the first model ID is known, exclude it; if the malformed envelope did not expose a model ID, still permit only the one reserved repair without inventing an ID. A repaired response is terminal after its one materialize/validate pass and cannot reserve a third send.
+
 - [ ] **Step 5 (2–5 min): Run orchestration, adversarial validation, and type tests**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-service.test.ts shared/safety/generation-validation.test.ts && npm run typecheck'`
+Run each command separately:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-materializer.test.ts netlify/functions/_shared/generation-service.test.ts shared/safety/generation-validation.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: tests PASS for idempotent replay, one active request, pre-send release, send-before-fetch accounting, sent-call non-release, one repair, first-model exclusion, repair quota denial, conflict, timeout, raw-output non-persistence, validated transaction, and current-safety validation.
 
 - [ ] **Step 6 (2–5 min): Commit the generation orchestrator**
 
 ```bash
-git add netlify/functions/_shared/generation-service.ts netlify/functions/_shared/generation-service.test.ts shared/safety/generation-validation.test.ts
-git commit -m "feat: orchestrate validated menu generation"
+git add netlify/functions/_shared/generation-materializer.ts netlify/functions/_shared/generation-materializer.test.ts netlify/functions/_shared/generation-service.ts netlify/functions/_shared/generation-service.test.ts shared/safety/generation-validation.test.ts
+git commit -m "feat: 検証済み献立生成を統合"
 ```
 
 ### Task 10: Expose authenticated menu generation and owner-scoped recovery status
@@ -3351,8 +3525,8 @@ git commit -m "feat: orchestrate validated menu generation"
 
 ```ts
 import { expect, it, vi } from "vitest";
-import { generationResponse } from "./_shared/generation-service";
-import handler from "./generation-status";
+import { generationResponse } from "./_shared/generation-service.js";
+import handler from "./generation-status.js";
 
 it("rejects status without a verified access token", async () => {
   const response = await handler(new Request("http://127.0.0.1:5173/api/generations/10000000-0000-4000-8000-000000000001/status"));
@@ -3383,14 +3557,14 @@ it.each(["user_daily_limit", "user_attempt_limit", "user_short_window_limit"] as
 
 - [ ] **Step 2 (2–5 min): Run handler tests and observe missing function modules**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts`
 
 Expected: FAIL because both fetch-style Functions are missing.
 
 - [ ] **Step 3 (2–5 min): Add one canonical HTTP projection to the generation service**
 
 ```ts
-import { json } from "./http";
+import { json } from "./http.js";
 
 export function generationResponse(result: GenerationStatusData): Response {
   const status = result.status === "processing" ? 202
@@ -3405,10 +3579,10 @@ export function generationResponse(result: GenerationStatusData): Response {
 
 ```ts
 import type { Config } from "@netlify/functions";
-import { newMenuGenerationRequestSchema } from "../../shared/contracts/generation";
-import { requireUser } from "./_shared/auth";
-import { handleError, methodNotAllowed, parseJson } from "./_shared/http";
-import { createGenerationDeps, generationResponse, runGeneration } from "./_shared/generation-service";
+import { newMenuGenerationRequestSchema } from "../../shared/contracts/generation.js";
+import { requireUser } from "./_shared/auth.js";
+import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
+import { createGenerationDeps, generationResponse, runGeneration } from "./_shared/generation-service.js";
 
 export default async function generateMenu(request: Request): Promise<Response> {
   const requestStartedAtMonotonicMs = performance.now();
@@ -3430,10 +3604,10 @@ export const config: Config = { path: "/api/generations/menu", method: "POST" };
 ```ts
 import type { Config, Context } from "@netlify/functions";
 import { z } from "zod";
-import { requireUser } from "./_shared/auth";
-import { handleError, json, methodNotAllowed } from "./_shared/http";
-import { createGenerationRepository } from "./_shared/generation-repository";
-import { toGenerationStatus } from "./_shared/generation-service";
+import { requireUser } from "./_shared/auth.js";
+import { handleError, json, methodNotAllowed } from "./_shared/http.js";
+import { createGenerationRepository } from "./_shared/generation-repository.js";
+import { toGenerationStatus } from "./_shared/generation-service.js";
 
 const idempotencyKeySchema = z.string().uuid();
 
@@ -3455,7 +3629,12 @@ export const config: Config = {
 
 - [ ] **Step 5 (2–5 min): Run handler, auth-envelope, and type tests**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/http.test.ts && npm run typecheck'`
+Run each command separately:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/http.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: tests PASS for 401, 405, invalid JSON, unknown fields, consent, not_started, processing, succeeded, failed, constraint conflict, same-key replay, another user's indistinguishable missing key, and no duplicated OpenRouter call.
 
@@ -3463,7 +3642,7 @@ Expected: tests PASS for 401, 405, invalid JSON, unknown fields, consent, not_st
 
 ```bash
 git add netlify/functions/generate-menu.ts netlify/functions/generate-menu.test.ts netlify/functions/generation-status.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/generation-service.ts
-git commit -m "feat: expose recoverable menu generation api"
+git commit -m "feat: 復旧可能な献立生成APIを公開"
 ```
 
 ### Task 11: Create the browser API, minimal idempotency storage, and pure recovery machine
@@ -3530,7 +3709,7 @@ it("resends only from not_started and never from processing", () => {
 
 - [ ] **Step 2 (2–5 min): Run the three focused suites and observe missing modules**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run src/features/generation/api/generation-api.test.ts src/features/generation/model/pending-generation.test.ts src/features/generation/model/generation-machine.test.ts`
 
 Expected: FAIL because browser generation modules do not exist.
 
@@ -3665,7 +3844,12 @@ export function generationReducer(state: GenerationClientState, event: Generatio
 
 - [ ] **Step 6 (2–5 min): Run browser boundary tests and typecheck**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/api src/features/generation/model && npm run typecheck'`
+Run each command separately:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run src/features/generation/api src/features/generation/model
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST, auth expiry, envelope failure, all five statuses, offline/online, not_started-only resend, and no processing resend.
 
@@ -3673,7 +3857,7 @@ Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST
 
 ```bash
 git add src/features/generation/api src/features/generation/model
-git commit -m "feat: add generation recovery state machine"
+git commit -m "feat: 献立生成の復旧状態機械を追加"
 ```
 
 ### Task 12: Recover on mount, online, visibility, and auth events and show truthful quota state
@@ -3714,7 +3898,7 @@ it("shows returned quota and Japan retry time after failure", () => {
 
 - [ ] **Step 2 (2–5 min): Run hook/component tests and observe missing modules**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx'`
+Run: `docker compose run --rm --no-deps app npx vitest run src/features/generation/hooks/use-generation-recovery.test.tsx src/features/generation/components/generation-status-panel.test.tsx`
 
 Expected: FAIL because the recovery controller and status panel do not exist.
 
@@ -3823,7 +4007,12 @@ Wire the planner submit callback to await Plan 2's `autosave.flush()`, build `{k
 
 - [ ] **Step 5 (2–5 min): Run planner, recovery, component, and route tests**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/planner src/features/generation/hooks src/features/generation/components && npm run typecheck'`
+Run each command separately:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run src/features/planner src/features/generation/hooks src/features/generation/components
+docker compose run --rm --no-deps app npm run typecheck
+```
 
 Expected: tests PASS for save-before-send, POST-before-accept tab destruction, not_started re-confirm/resend, processing no-resend, response loss, online, visibility, auth return, succeeded navigation, every quota message, and 44px controls.
 
@@ -3831,7 +4020,7 @@ Expected: tests PASS for save-before-send, POST-before-accept tab destruction, n
 
 ```bash
 git add src/features/generation/hooks src/features/generation/components src/features/generation/pages/generation-page.tsx src/features/planner src/app/router.tsx
-git commit -m "feat: recover interrupted menu generation"
+git commit -m "feat: 中断した献立生成を復旧"
 ```
 
 ### Task 13: Read the RLS-protected aggregate and render timeline-first mobile results
@@ -3909,7 +4098,7 @@ it("renders confirmation ids through human source, allergen, and member labels",
 
 - [ ] **Step 2 (2–5 min): Run the focused API and component tests and observe missing modules**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run src/features/generation/api/menu-result-api.test.ts src/features/generation/components/menu-result.test.tsx src/features/generation/pages/menu-result-page.test.tsx'`
+Run: `docker compose run --rm --no-deps app npx vitest run src/features/generation/api/menu-result-api.test.ts src/features/generation/components/menu-result.test.tsx src/features/generation/pages/menu-result-page.test.tsx`
 
 Expected: FAIL because the aggregate loader, result component, and result page do not exist.
 
@@ -4250,7 +4439,7 @@ Expected: tests PASS for owner aggregate mapping, another-user/missing result, t
 
 ```bash
 git add shared/testing/factories.ts src/features/generation/api/menu-result-api.ts src/features/generation/api/menu-result-api.test.ts src/features/generation/components/menu-result.tsx src/features/generation/components/menu-result.test.tsx src/features/generation/pages/menu-result-page.tsx src/features/generation/pages/menu-result-page.test.tsx
-git commit -m "feat: show timeline-first menu results"
+git commit -m "feat: 段取り優先の献立結果を表示"
 ```
 
 ### Task 14: Prove disconnect recovery, adversarial rejection, results, and the complete plan gate
@@ -4258,11 +4447,12 @@ git commit -m "feat: show timeline-first menu results"
 **Files:**
 - Create: `netlify/functions/_shared/generation-adversarial.integration.test.ts`
 - Create: `netlify/functions/_shared/openrouter.smoke.test.ts`
+- Modify: `netlify/functions/_shared/generation-service.test.ts`
 - Create: `e2e/specs/generation-recovery-results.spec.ts`
 - Modify: `package.json`
 
 **Interfaces:**
-- Consumes: all Tasks 1–13, the fixed mock scenarios, `makeCurrentSafetyContext()`, Plan 1's `authenticatedPage` Playwright fixture, and the root verification scripts.
+- Consumes: all Tasks 1–13, the fixed mock scenarios, Task 9's `materializeAiGeneratedMenu()`, an explicitly matching adversarial `GenerationContext`, Plan 1's `authenticatedPage` Playwright fixture, and the root verification scripts.
 - Produces: deterministic adversarial regression coverage, an opt-in one-request real OpenRouter smoke command, and the independently testable Plan 3 exit gate. Normal gates never contact OpenRouter.
 
 - [ ] **Step 1 (2–5 min): Add failing fixed-adversarial validation and quota-semantics integration tests**
@@ -4270,25 +4460,49 @@ git commit -m "feat: show timeline-first menu results"
 ```ts
 import { describe, expect, it } from "vitest";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
-import { makeCurrentSafetyContext } from "../../../shared/testing/factories";
-import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import {
+  GenerationMaterializationError,
+  materializeAiGeneratedMenu,
+} from "./generation-materializer.js";
 
 describe("fixed OpenRouter adversarial outputs", () => {
-  const context = makeCurrentSafetyContext();
   it.each([
-    ["direct-allergen", "allergen_direct_match"],
-    ["alias-in-step", "allergen_alias_match"],
-    ["missing-label-confirmation", "label_confirmation_missing"],
-    ["unsafe-age-shape", "food_safety_rule"],
-    ["invalid-adaptation-branch", "adaptation_branch"],
-    ["pantry-shortage-mismatch", "shortage_quantity"],
-    ["over-time-limit", "total_elapsed_minutes"],
-  ] as const)("rejects %s without a persistable menu", (scenario, issueCode) => {
+    ["direct-allergen", "validator", "direct_allergen_match"],
+    ["alias-in-step", "validator", "missing_label_confirmation"],
+    ["missing-label-confirmation", "validator", "missing_label_confirmation"],
+    ["unsafe-age-shape", "validator", "age_shape_rule"],
+    ["invalid-adaptation-branch", "materializer", "dangling_ref"],
+    ["invalid-pantry-dish-link", "materializer", "pantry_usage_link_mismatch"],
+    ["over-time-limit", "validator", "time_limit_exceeded"],
+  ] as const)("rejects %s at the %s stage", (scenario, expectedStage, issueCode) => {
     const fixture = scenarios[scenario];
     if (typeof fixture === "string" || fixture.outcome !== "success") throw new Error("invalid_test_fixture");
-    const result = validateGeneratedMenu(fixture.menu, makeGenerationContext({ safety: context }));
+    const context = makeAdversarialGenerationContext(scenario);
+    let materialized;
+    try {
+      materialized = materializeAiGeneratedMenu(fixture.menu, context, deterministicUuid);
+    } catch (error) {
+      expect(expectedStage).toBe("materializer");
+      expect(error).toBeInstanceOf(GenerationMaterializationError);
+      if (error instanceof GenerationMaterializationError) {
+        expect(error.issues.map((issue) => issue.code)).toContain(issueCode);
+      }
+      return;
+    }
+    expect(expectedStage).toBe("validator");
+    const result = validateGeneratedMenu(materialized, context);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.map((issue) => issue.code)).toContain(issueCode);
+  });
+
+  it("materializes and validates the baseline success fixture", () => {
+    const fixture = scenarios.success;
+    if (typeof fixture === "string" || fixture.outcome !== "success") throw new Error("invalid_test_fixture");
+    const context = makeAdversarialGenerationContext("success");
+    expect(validateGeneratedMenu(
+      materializeAiGeneratedMenu(fixture.menu, context, deterministicUuid), context,
+    ).ok).toBe(true);
   });
 
   it("keeps a model-declared conflict out of menu persistence", () => {
@@ -4301,7 +4515,7 @@ Extend `generation-service.test.ts` with these exact terminal assertions:
 
 ```ts
 it.each(["malformed-json", "direct-allergen", "alias-in-step", "missing-label-confirmation",
-  "unsafe-age-shape", "invalid-adaptation-branch", "pantry-shortage-mismatch", "over-time-limit"])(
+  "unsafe-age-shape", "invalid-adaptation-branch", "invalid-pantry-dish-link", "over-time-limit"])(
   "%s performs at most one repair and never consumes user success when still invalid",
   async (scenario) => {
     const result = await runScenarioThroughService(scenario);
@@ -4315,57 +4529,17 @@ it.each(["malformed-json", "direct-allergen", "alias-in-step", "missing-label-co
 );
 ```
 
+`makeAdversarialGenerationContext()` is explicit test data, not the empty default factory: use `mainIngredients:["鶏肉"]`; registered wheat/egg catalog entries; direct display aliases; processed aliases for the baseline soy sauce and mayonnaise; current matching dictionary/rule versions; a child age band plus the reviewed tomato shape rule for `unsafe-age-shape`; and an owner-proven `pantry_1` selection/item for `invalid-pantry-dish-link`. Each scenario changes only its intended semantic. The baseline success fixture must pass materialization and validation before any rejection matrix is trusted. Reset the deterministic UUID allocator for every test.
+
 - [ ] **Step 2 (2–5 min): Run adversarial integration and observe any missing structural-repair path**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/generation-adversarial.integration.test.ts netlify/functions/_shared/generation-service.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-adversarial.integration.test.ts netlify/functions/_shared/generation-service.test.ts`
 
-Expected before the final red-green correction: malformed JSON reports only one sent call, proving structural parse failures are not yet routed through the single repair path.
+Expected: FAIL because the new test intentionally references missing test-only `makeAdversarialGenerationContext`, `deterministicUuid`, and `runScenarioThroughService` helpers. Task 9 already owns the structural and deterministic single-repair path; no production orchestration change is deferred to this verification Task.
 
-- [ ] **Step 3 (2–5 min): Route structural and deterministic failures through the same one-repair helper**
+- [ ] **Step 3 (2–5 min): Prove the shared one-repair helper at the HTTP mock boundary**
 
-Use this complete helper in `generation-service.ts` for both `OpenRouterCallError("invalid_ai_response")` and a failed canonical deterministic validation; provider unavailability and timeout remain terminal without repair:
-
-```ts
-async function repairOnce(
-  deps: GenerationDependencies,
-  requestId: string,
-  firstModelId: string | null,
-  originalMessages: Parameters<typeof sendMenuGeneration>[0]["messages"],
-  issueCodes: readonly { code: string; path: string }[],
-): Promise<OpenRouterGenerationResult | null> {
-  const repair = await deps.repository.reserveRepair(requestId);
-  const models = firstModelId === null ? deps.models : deps.models.filter((model) => model !== firstModelId);
-  if (repair.reserved !== true || models.length === 0) return null;
-  await deps.repository.markSent(requestId);
-  const result = await deps.callOpenRouter({
-    timeoutMs: deps.openRouterTimeoutMs,
-    excludedModelIds: firstModelId === null ? [] : [firstModelId],
-    messages: [...originalMessages, {
-      role: "user",
-      content: `前の結果は検証に失敗しました。次の項目だけ修正して全体JSONを再生成してください: ${JSON.stringify(issueCodes)}`,
-    }],
-  });
-  await deps.repository.recordModel(requestId, result.modelId);
-  return result;
-}
-```
-
-The initial-call catch becomes:
-
-```ts
-} catch (error) {
-  if (!(error instanceof OpenRouterCallError) || error.code !== "invalid_ai_response") {
-    const failure = error instanceof OpenRouterCallError ? error : new OpenRouterCallError("model_unavailable");
-    return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
-  }
-  const repaired = await repairOnce(deps, requestId, error.modelId, originalMessages,
-    [{ code: "invalid_ai_response", path: "$" }]);
-  if (repaired === null) {
-    return toGenerationStatus(await deps.repository.fail(requestId, "invalid_ai_response", null), key);
-  }
-  first = repaired;
-}
-```
+Implement only the three test-harness helpers introduced in Step 1, then exercise Task 9's existing helper for both `OpenRouterCallError("invalid_ai_response")` and failed materialization/deterministic validation. Provider unavailability and timeout remain terminal without repair. Do not add or modify a second production repair helper in Task 14. Through the real local HTTP mock, assert two sends at most, one `reserveRepair`, first-model exclusion when known, primary/repair response model IDs, no third send after an invalid repaired response, and no success persistence or success-quota consumption for every terminal adversarial scenario. Re-run the Step 2 command and observe GREEN before adding E2E.
 
 - [ ] **Step 4 (2–5 min): Add disconnect, POST-loss, tab-reopen, result-recovery, and result-detail E2E**
 
@@ -4423,12 +4597,12 @@ test("shows timeline, tabs, ingredients, steps, adaptations, pantry reasons, lab
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("AIが作成した献立です。")).toBeVisible();
   await expect(page.getByRole("heading", { name: "全体の段取り" })).toBeVisible();
+  await expect(page.getByText("加工品は原材料表示を確認してください")).toBeVisible();
   await page.getByRole("tab").nth(1).click();
   await expect(page.getByRole("heading", { name: "材料" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "作り方" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "冷蔵庫食材の使い方" })).toBeVisible();
-  await expect(page.getByText("加工品は原材料表示を確認してください")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 ```
@@ -4468,6 +4642,7 @@ docker compose run --rm --no-deps \
   -e RUN_OPENROUTER_SMOKE=1 \
   -e OPENROUTER_API_KEY='<explicit secret>' \
   -e OPENROUTER_MODELS='<explicit-model-id>:free' \
+  -e OPENROUTER_BASE_URL='https://openrouter.ai/api/v1' \
   app npm run test:openrouter:smoke
 ```
 
@@ -4475,17 +4650,24 @@ Expected: exactly one application call to `/chat/completions`; PASS with a struc
 
 - [ ] **Step 6 (2–5 min): Run the complete Plan 3 verification gate**
 
-Run:
+First run the additional Compose parse check:
+
+```bash
+docker compose config --quiet
+```
+
+Then run the mandatory nine commands from `AGENTS.md` section 8 in exact order, independently:
 
 ```bash
 docker compose run --rm --no-deps app npm run format:check
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run typecheck
-docker compose run --rm --no-deps app npm test -- --run
+docker compose run --rm --no-deps app npx vitest run
+./scripts/reset-local-db.sh
 docker compose --profile test run --rm db-test
-docker compose run --rm app npm run e2e
+./scripts/run-e2e.sh
 docker compose run --rm --no-deps app npm run build
-docker compose config --quiet
+git diff --check
 ```
 
 Expected: every command exits 0; Vitest includes all fixed adversarial scenarios with zero failures; pgTAP covers JST boundary, concurrent-safe reservations, idempotency, send/release/finalize/stale transitions and reports zero failures; Playwright passes disconnect, tab destruction, recovery, quota, RLS result, and 320px result journeys; Vite writes `dist/`; Compose reports no configuration error. No real OpenRouter request occurs.
@@ -4493,8 +4675,8 @@ Expected: every command exits 0; Vitest includes all fixed adversarial scenarios
 - [ ] **Step 7 (2–5 min): Commit the Plan 3 verification suite**
 
 ```bash
-git add netlify/functions/_shared/generation-adversarial.integration.test.ts netlify/functions/_shared/generation-service.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/_shared/openrouter.smoke.test.ts e2e/specs/generation-recovery-results.spec.ts package.json package-lock.json
-git commit -m "test: verify recoverable ai generation"
+git add netlify/functions/_shared/generation-adversarial.integration.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/_shared/openrouter.smoke.test.ts e2e/specs/generation-recovery-results.spec.ts package.json package-lock.json
+git commit -m "test: 復旧可能なAI献立生成を検証"
 ```
 
 ### Task 15: Close the reviewed integrity, orchestration, deadline, recovery, usage, and result-action contracts
@@ -4503,8 +4685,8 @@ git commit -m "test: verify recoverable ai generation"
 - Modify: `shared/contracts/generation.test.ts`
 - Modify: `shared/contracts/generation.ts`
 - Modify: `shared/testing/factories.ts`
-- Create: `shared/contracts/ai-generation-output.test.ts`
-- Create: `shared/contracts/ai-generation-output.ts`
+- Modify: `shared/contracts/ai-generation-output.test.ts`
+- Modify: `shared/contracts/ai-generation-output.ts`
 - Modify: `supabase/tests/database/ai_control_and_quota.test.sql`
 - Modify: `supabase/migrations/20260711002000_ai_control_and_quota.sql`
 - Regenerate: `src/shared/types/database.generated.ts`
@@ -4526,6 +4708,8 @@ git commit -m "test: verify recoverable ai generation"
 - Modify: `netlify/functions/_shared/openrouter.ts`
 - Modify: `netlify/functions/_shared/generation-service.test.ts`
 - Modify: `netlify/functions/_shared/generation-service.ts`
+- Modify: `netlify/functions/_shared/generation-materializer.test.ts`
+- Modify: `netlify/functions/_shared/generation-materializer.ts`
 - Modify: `netlify/functions/generate-menu.test.ts`
 - Modify: `netlify/functions/generate-menu.ts`
 - Create: `netlify/functions/usage-today.test.ts`
@@ -4562,7 +4746,7 @@ git commit -m "test: verify recoverable ai generation"
 **Interfaces:**
 - `GenerationCommand` is the one canonical discriminated union exported by Plan 3. Plan 4 adds handlers for the already-declared regeneration variants; it does not redeclare or wrap the union.
 - `canonicalizeGenerationCommandV1(command)` is the only canonical idempotency representation. `generationRequestHmac(command,key)` applies HMAC-SHA-256 to that representation; request JSON, prompt content, and custom reason text are never persisted in the generation ledger.
-- `aiGeneratedMenuOutputSchema` is the sole new/whole provider-output contract and contains local refs only. `materializeAiGeneratedMenu(output,context,uuid)` is the sole boundary that creates an internal `GeneratedMenu`; no OpenRouter schema contains `format:"uuid"` or an owner ID.
+- `aiGeneratedMenuPayloadSchema` is the sole new/whole provider-output payload contract and contains local refs only. Task 1 owns that schema and Task 9 owns `materializeAiGeneratedMenu(output,context,uuid)` as the sole boundary that creates an internal `GeneratedMenu`; Task 15 hardens but does not recreate either contract. No OpenRouter schema contains `format:"uuid"` or an owner ID.
 - `private.ai_generation_requests.request_hmac_version/request_hmac` bind all three command kinds to an idempotency key. Same-HMAC replay and different-HMAC rejection happen under an idempotency-key transaction lock before stale cleanup, active-request lookup, or quota/counter access.
 - `PendingGeneration` is one three-variant discriminated union derived from `GenerationCommand`; `postGeneration(command)` is the only browser POST selector. New/whole commands use `/api/generations/menu`, dish commands use `/api/generations/dish`, and every recovery path reads the exact saved variant/body/key. A 409 `idempotency_payload_mismatch` enters one non-retryable `request_conflict` client state; it never falls through to the offline retry loop.
 - `GenerationContext` is imported from `shared/safety/generation-context.ts`. The server loader returns that exact type; there is no second context with the same name.
@@ -4586,11 +4770,11 @@ import { describe, expect, it } from "vitest";
 import {
   generationCommandSchema,
   type GenerationCommand,
-} from "../../../shared/contracts/generation";
+} from "../../../shared/contracts/generation.js";
 import {
   canonicalizeGenerationCommandV1,
   generationRequestHmac,
-} from "./generation-command-integrity";
+} from "./generation-command-integrity.js";
 
 const key = Buffer.alloc(32, 7);
 const checks = [
@@ -5583,7 +5767,7 @@ it("serializes only the allowlisted prompt DTO and no UUID at any depth", () => 
 Export these exact shared fixtures from `shared/testing/factories.ts` and import them in `shared/contracts/generation.test.ts`, `usage-today.test.ts`, and `usage-today-api.test.ts`; do not redefine the shape in each layer:
 
 ```ts
-import { releaseQuota } from "../contracts/generation";
+import { releaseQuota } from "../contracts/generation.js";
 
 export const availableUsageTodayFixture = {
   success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 4 },
@@ -5831,7 +6015,7 @@ import { createHmac } from "node:crypto";
 import type {
   ExpiredPantryConfirmation,
   GenerationCommand,
-} from "../../../shared/contracts/generation";
+} from "../../../shared/contracts/generation.js";
 
 export const generationRequestHmacVersion = "generation-command.v1" as const;
 
@@ -5885,16 +6069,14 @@ export function generationRequestHmac(
 
 The canonicalizer receives a successfully parsed `generationCommandSchema`; therefore Zod trimming, strict unknown-field rejection, duplicate-check rejection, and custom-reason consistency occur before HMAC construction. Do not stringify a request object with incidental property order. The only set-like command field is `expiredPantryConfirmations`; sort it as above without mutating the saved/browser body. A changed kind, draft, privacy version, source, dish, reason, custom reason, expiry timestamp, or pantry ID changes the HMAC.
 
-Create `ai-generation-output.ts` as the only new/whole OpenRouter response schema. It mirrors every bounded user-visible leaf of Plan 2's `GeneratedMenu`, but declares unique local refs (`dish_1`, `ingredient_1`, `step_1`, `adaptation_1`, `timeline_1`) and accepts only prompt-issued pantry refs (`pantry_1`). Timeline, adaptation, structured safety action, pantry-use dish links, and label-source links use typed local refs; provider output has no UUID-shaped field. `pantryUsage` uses `pantryRef`, priority/status/planned/shortage/unit/reason and dish refs; it never supplies `pantryItemId`, `selectionId`, or inventory snapshot. Ingredients use nullable `pantryRef`, not `pantrySelectionId`.
-
-Implement `materializeAiGeneratedMenu(output: AiGeneratedMenuPayload,context: GenerationContext,uuid: () => string): GeneratedMenu` with this fixed order. `AiGeneratedMenuPayload` comes from Task 1's `aiGeneratedMenuPayloadSchema`; the service must first branch on the top-level `AiGenerationResponse`, return a constraint conflict without materialization, and pass only the success arm's `menu` payload here:
+Harden Task 1's `ai-generation-output.ts` contract and Task 9's `materializeAiGeneratedMenu(output: AiGeneratedMenuPayload,context: GenerationContext,uuid: () => string)` without recreating them. `AiGeneratedMenuPayload` comes from `aiGeneratedMenuPayloadSchema`; the service first branches on the top-level `AiGenerationResponse`, returns a constraint conflict without materialization, and passes only the success arm's `menu` payload to the existing Task 9 boundary. Preserve this fixed order:
 
 1. Parse the strict local schema, reject duplicate declarations, dangling/wrong-kind refs, undeclared prompt pantry refs, repeated pantry use, and any UUID-looking string anywhere in provider output.
-2. Build the pantry allowlist from `context.submission.pantrySelections` joined to owner-proven `context.pantryItems`. Require exact priority equality. Allocate one fresh selection UUID per referenced pantry ref, copy the owner pantry ID/name/current quantity/unit, and deterministically compute shortage; a `must_use` ref must be `used` and every selected `must_use` must appear exactly once.
-3. Allocate fresh UUIDs for the menu and every dish, ingredient, step, timeline row, adaptation, and action. Resolve every cross-reference through field-specific maps. An ingredient `pantryRef` resolves to the freshly allocated selection UUID; `pantryUsage.dishRefs` must equal the dishes whose ingredients use that ref.
+2. Build the pantry allowlist from `context.submission.pantrySelections` joined to owner-proven `context.pantryItems`. Require exact priority equality. Allocate one fresh selection UUID per referenced pantry ref, copy the owner pantry ID/name/current quantity/unit, and deterministically compute shortage from trusted inventory plus provider planned quantity; a `must_use` ref must be `used` and every selected `must_use` must appear exactly once. Provider output never contains inventory or shortage.
+3. Allocate fresh UUIDs for the menu and every dish, ingredient, step, timeline row, adaptation, and pantry selection. Safety actions have no independent ID. Resolve every cross-reference through field-specific maps. An ingredient `pantryRef` resolves to the freshly allocated selection UUID; `pantryUsage.dishRefs` must equal the dishes whose ingredients use that ref.
 4. Resolve provider label candidates from local source refs and exact source paths to the freshly allocated source UUIDs. A pantry selection ID is never a label source. A processed food selected from the pantry is confirmable only through the real linked `dishIngredient` source: its trusted pantry-name snapshot must normalize-match that ingredient name or a reviewed alias before the ingredient text may be used. Then pass the complete internal value through `generatedMenuSchema`; Plan 2's canonical validator still discards provider status and derives the exact current pending set.
 
-`openrouter.ts` sends `aiGeneratedMenuPayloadJsonSchema` and parses `aiGeneratedMenuPayloadSchema`; it never parses `generatedMenuSchema` directly. `runGeneration` parses the top-level success/constraint-conflict union, materializes only a success payload immediately after each initial/repair response, and does so before `validateGeneratedMenu`. Whole-menu regeneration reuses this same full-menu local payload/materializer with its Plan 4 prompt constraints; one-dish regeneration keeps Plan 4's narrower replacement schema. Tests cover a normal pantry selection, all cross-ref kinds, two ingredients sharing one pantry selection, must/prefer semantics, malicious UUID output, foreign/unknown pantry refs, duplicate refs, wrong-kind refs, missing must-use, inconsistent dish links, attempted `pantry_selection` label sources, pantry-name/ingredient-name mismatches, fresh-ID allocation, and successful persistence. The recursive prompt and provider-output tests prove no stable UUID crosses either OpenRouter direction.
+`openrouter.ts` sends Task 1's `menuResponseFormat` and parses `aiGenerationResponseSchema`; it never parses `generatedMenuSchema` directly. `runGeneration` branches on that top-level success/constraint-conflict union, materializes only a success payload immediately after each initial/repair response, and does so before `validateGeneratedMenu`. Whole-menu regeneration reuses this same full-menu local payload/materializer with its Plan 4 prompt constraints; one-dish regeneration keeps Plan 4's narrower replacement schema. Tests cover a normal pantry selection, all cross-ref kinds, two ingredients sharing one pantry selection, must/prefer semantics, malicious UUID output, foreign/unknown pantry refs, duplicate refs, wrong-kind refs, missing must-use, inconsistent dish links, attempted pantry label sources, pantry-name/ingredient-name mismatches, fresh-ID allocation, trusted shortage calculation, and successful persistence. The recursive prompt and provider-output tests prove no stable UUID crosses either OpenRouter direction.
 
 Extend `_shared/env.ts` with required `GENERATION_REQUEST_HMAC_KEY`, parsed only through `parseGenerationRequestHmacKey`. Add `generationIntegrity: { requestHmacKey: Uint8Array }` to `ServerEnv`; do not retain a browser-prefixed alias. Tests reject missing, non-canonical base64, 31/33-byte keys, and any defined `VITE_GENERATION_REQUEST_HMAC_KEY`. `scripts/generate-local-secrets.mjs` writes `randomBytes(32).toString("base64")` to the gitignored local `.env`; `.env.example` uses only `generated-32-byte-base64-secret`, and Compose requires/interpolates that key into the Function runtime. `tests/tooling/compose.test.mjs` proves the generated decoded length and that the browser/app build environment has no `VITE_` alias. Production never uses a committed sample value. No logger receives this field.
 
@@ -6271,7 +6453,7 @@ The injected handler accepts POST only, calls `requireUser(request)` before any 
 Replace Task 13's provisional result type with Plan 2's exact live-inventory addition:
 
 ```ts
-import type { PantryItem } from "../../../../shared/contracts/pantry";
+import type { PantryItem } from "../../../../shared/contracts/pantry.js";
 
 export type PantryPostCookTarget = {
   selectionId: string;
@@ -6340,52 +6522,45 @@ onKeyDown={(event) => {
 
 All generation E2E cases consume Plan 1's `completedOnboardingPage`; remove repeated calls to `completeMinimumOnboarding`. Add assertions for one submit click reaching the Function, a `not_started` same-key retry, usage GET without request creation, attempt-limit copy, human member/allergen labels, member deletion followed by snapshot-backed historical read/action rendering, persisted `source_text_snapshot` display even when the reconstructed menu text differs, explicit confirmation, `使い切った` cancel/confirm/undo, `まだある` blank/numeric remainder, pantry version conflict without silent retry, ArrowLeft/ArrowRight/Home/End focus, and 320 px no overflow.
 
-Run the fail-fast gate as one shell block:
+Run correction-specific checks first, each as a separate command/tool call. The two database-type generations must be byte-for-byte stable. Negative `rg` scans are successful only when they find no match; positive scans must find every named contract. Do not join these commands with `&&`, `;`, a shell block, or `set -e`:
 
 ```bash
-set -e
-docker compose run --rm --no-deps app npm run format:check
-docker compose run --rm --no-deps app npm run lint
-docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
-docker compose run --rm --no-deps app npm test -- --run shared/contracts shared/safety netlify/functions src/features/generation src/features/planner
-./scripts/reset-local-db.sh
-docker compose --profile test run --rm db-test
 docker compose run --rm app npm run db:types
 cp src/shared/types/database.generated.ts /tmp/kondate-database.generated.ts
 docker compose run --rm app npm run db:types
 diff -u /tmp/kondate-database.generated.ts src/shared/types/database.generated.ts
-docker compose run --rm --no-deps app npm run typecheck
-docker compose run --rm app npm run e2e -- e2e/specs/generation-recovery-results.spec.ts
-docker compose run --rm --no-deps app npm run build
-if rg -n 'preferences:\s*context\.submission|authenticatedPage: page|timeoutMs:\s*60_000|USER_DAILY_AI_LIMIT:\s*positiveInteger|USER_DAILY_EXTERNAL_CALL_LIMIT:\s*positiveInteger|USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT:\s*positiveInteger|USER_SHORT_WINDOW_SECONDS:\s*positiveInteger|postMenuGeneration\(|pendingGenerationRequest\(' netlify/functions src shared; then exit 1; fi
-if rg -n 'request_(?:body|json)|raw_request|change_reason_custom\s+text' supabase/migrations/20260711002000_ai_control_and_quota.sql; then exit 1; fi
-if rg -n "p_conflicts jsonb|jsonb_build_object\('conflicts'|changeReasonCustom" supabase/migrations/20260711002000_ai_control_and_quota.sql; then exit 1; fi
+rg -n 'preferences:\s*context\.submission|authenticatedPage: page|timeoutMs:\s*60_000|USER_DAILY_AI_LIMIT:\s*positiveInteger|USER_DAILY_EXTERNAL_CALL_LIMIT:\s*positiveInteger|USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT:\s*positiveInteger|USER_SHORT_WINDOW_SECONDS:\s*positiveInteger|postMenuGeneration\(|pendingGenerationRequest\(' netlify/functions src shared
+rg -n 'request_(?:body|json)|raw_request|change_reason_custom\s+text' supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n "p_conflicts jsonb|jsonb_build_object\('conflicts'|changeReasonCustom" supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n "p_conflict_codes text\[\]|jsonb_build_object\('conflictCodes'" supabase/migrations/20260711002000_ai_control_and_quota.sql
 rg -n 'GENERATION_REQUEST_HMAC_KEY|generation-command\.v1|request_hmac' .env.example compose.yaml netlify/functions supabase/migrations/20260711002000_ai_control_and_quota.sql
-rg -n 'source_text_snapshot' \
-  supabase/migrations/20260711002000_ai_control_and_quota.sql
-rg -n 'confirm_menu_label_confirmation\(uuid,uuid,text\)' \
-  supabase/migrations/20260711002000_ai_control_and_quota.sql
-rg -n 'lock_and_assert_current_safety_fingerprint' \
-  supabase/migrations/20260711002000_ai_control_and_quota.sql
-rg -n 'source_text_snapshot|confirm_menu_label_confirmation|member_10|member_2' \
-  supabase/tests/database/ai_control_and_quota.test.sql
-rg -n 'source_type, source_id, source_path, source_text_snapshot' \
-  src/features/generation/api/menu-result-api.ts
-rg -n 'sourceText: item\.source_text_snapshot' \
-  src/features/generation/api/menu-result-api.ts
-rg -n 'sourceText: string' \
-  src/features/generation/api/menu-result-api.ts
-rg -n 'source_text_snapshot|sourceText' \
-  src/features/generation/api/menu-result-api.test.ts
-if rg -n 'sourceText\.get\(canonical\.sourcePath\)|confirm_menu_label_confirmation\(uuid,uuid\)' \
-  supabase/migrations/20260711002000_ai_control_and_quota.sql \
-  supabase/tests/database/ai_control_and_quota.test.sql \
-  src/features/generation; then exit 1; fi
+rg -n 'source_text_snapshot' supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'confirm_menu_label_confirmation\(uuid,uuid,text\)' supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'lock_and_assert_current_safety_fingerprint' supabase/migrations/20260711002000_ai_control_and_quota.sql
+rg -n 'source_text_snapshot|confirm_menu_label_confirmation|member_10|member_2' supabase/tests/database/ai_control_and_quota.test.sql
+rg -n 'source_type, source_id, source_path, source_text_snapshot' src/features/generation/api/menu-result-api.ts
+rg -n 'sourceText: item\.source_text_snapshot' src/features/generation/api/menu-result-api.ts
+rg -n 'sourceText: string' src/features/generation/api/menu-result-api.ts
+rg -n 'source_text_snapshot|sourceText' src/features/generation/api/menu-result-api.test.ts
+rg -n 'sourceText\.get\(canonical\.sourcePath\)|confirm_menu_label_confirmation\(uuid,uuid\)' supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tests/database/ai_control_and_quota.test.sql src/features/generation
 ```
 
-Expected: all verification commands exit 0; `set -e` makes the gate fail fast, and each migration persistence/RPC/helper search, database pgTAP search, and menu-result select/display/type/test search is independently mandatory. The second generated-type run is byte-for-byte stable; all negative source scans return no matches, the conflict-code scan finds only the closed terminal DTO, and the HMAC scan finds the server env, canonicalizer, repository, and migration. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions and the exact canonical label snapshot; reverse-inserted `member_10`/`member_2` fixtures preserve numeric anonymous-ref order; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus persisted source text, human labels, and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
+After those checks, run the mandatory nine-command gate from `AGENTS.md` section 8 in this exact order, with one command per tool call:
+
+```bash
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test
+./scripts/run-e2e.sh
+docker compose run --rm --no-deps app npm run build
+git diff --check
+```
+
+Expected: every independently executed verification command has its documented result, and each migration persistence/RPC/helper search, database pgTAP search, and menu-result select/display/type/test search is mandatory. The second generated-type run is byte-for-byte stable; all negative source scans return no matches, the conflict-code scan finds only the closed terminal DTO, and the HMAC scan finds the server env, canonicalizer, repository, and migration. Same-HMAC replay precedes every quota/counter access, a changed command fails closed without cleanup/counter or unrelated request-state drift, and no raw/free-text request column exists. New/whole/dish pending commands survive response loss, `not_started`, and tab reopen with the exact endpoint/body/key. Deterministic failures occur before send; the release-locked 5/12/4/600 tuple is identical in env, preflight/repository, SQL checks, usage schema, and fixtures; auth and reservation consume the original 50-second budget; timeout never repairs; finalization cannot persist a stale-safety menu; the normal fixture persists and reads non-empty ingredient-bound actions and the exact canonical label snapshot; reverse-inserted `member_10`/`member_2` fixtures preserve numeric anonymous-ref order; terminal failure/conflict UI distinguishes current success/attempt/window/global usage and makes no attempt-consumption claim when usage loading fails; the real planner and result routes are connected; result actions use confirmation IDs plus persisted source text, human labels, and explicit user gestures; and after-cooking pantry controls use only live row versions, confirm destructive removal, support recreation undo, never auto-subtract, and preserve user input across a version conflict.
 
 - [ ] **Step 12: Commit the reviewed generation corrections (2 minutes)**
 
@@ -6398,7 +6573,7 @@ git add shared/contracts/generation.ts shared/contracts/generation.test.ts \
   netlify/functions src/features/generation src/features/planner src/app/router.tsx \
   scripts/generate-local-secrets.mjs tests/tooling/compose.test.mjs \
   tools/openrouter-mock e2e/specs/generation-recovery-results.spec.ts compose.yaml .env.example
-git commit -m "fix: harden generation orchestration and recovery"
+git commit -m "fix: 献立生成の統合と復旧を堅牢化"
 ```
 
 Expected: one correction commit is created only after Step 11 is green; no unrelated path is staged.
