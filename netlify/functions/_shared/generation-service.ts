@@ -1,0 +1,504 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import {
+  generationConflictCopy,
+  generationConflictSchema,
+  generationFailureCodes,
+  releaseQuota,
+  type GenerationCommand,
+  type GenerationFailureCode,
+  type GenerationStatusData,
+  type MenuValidationResult,
+} from "../../../shared/contracts/generation.js";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import { getServerEnv } from "./env.js";
+import {
+  loadGenerationContext,
+  validateGenerationPreflight,
+  type GenerationPreflightResult,
+} from "./generation-context.js";
+import { materializeAiGeneratedMenu } from "./generation-materializer.js";
+import { buildGenerationMessages } from "./generation-prompt.js";
+import {
+  GenerationOutputError,
+  toRepairDiagnostics,
+  type GenerationRepairDiagnostic,
+} from "./generation-repair.js";
+import {
+  createGenerationRepository,
+  type AuthenticatedUser,
+  type GenerationRepository,
+  type QuotaRequestRecord,
+} from "./generation-repository.js";
+import { HttpError } from "./http.js";
+import {
+  OpenRouterCallError,
+  sendMenuGeneration,
+  type OpenRouterGenerationResult,
+  type OpenRouterMessage,
+} from "./openrouter.js";
+
+export type GenerationDependencies = {
+  user: AuthenticatedUser;
+  repository: Omit<GenerationRepository, "userClient">;
+  models: readonly string[];
+  loadExecutionContext(
+    command: GenerationCommand,
+    requestId: string,
+    deadlineAtMonotonicMs: number,
+  ): Promise<{ generationContext: GenerationContext }>;
+  validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
+  buildMessages(context: GenerationContext): readonly OpenRouterMessage[];
+  callOpenRouter(
+    input: Parameters<typeof sendMenuGeneration>[0],
+  ): Promise<OpenRouterGenerationResult>;
+  now(): Date;
+  openRouterTimeoutMs: number;
+  requestStartedAtMonotonicMs: number;
+  functionTotalBudgetMs: number;
+  uuid(): string;
+};
+
+const generationFailureCodeSchema = z.enum(generationFailureCodes);
+const providerConflictCodeSchema = z.enum([
+  "must_use_conflict",
+  "allergen_pantry_conflict",
+  "dish_count_conflict",
+  "mandatory_safety_conflict",
+]);
+const providerConflictInputSchema = z
+  .array(
+    z
+      .object({
+        code: z.string(),
+        message: z.unknown(),
+        conditionRefs: z.array(z.string()).max(24),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(12);
+
+const failureCopy: Record<GenerationFailureCode, { message: string; retryable: boolean }> = {
+  consent_required: { message: "AIへ送る情報の説明を確認してください。", retryable: false },
+  draft_not_found: { message: "保存した献立条件が見つかりませんでした。", retryable: false },
+  invalid_request: { message: "献立条件を確認してください。", retryable: false },
+  generation_in_progress: { message: "別の献立を作成中です。", retryable: true },
+  user_daily_limit: {
+    message: "今日は5回利用しました。明日0:00（日本時間）から利用できます",
+    retryable: false,
+  },
+  user_attempt_limit: {
+    message: "本日のAI通信試行上限に達しました。明日0:00（日本時間）から利用できます",
+    retryable: false,
+  },
+  user_short_window_limit: {
+    message: "10分間の通信試行上限に達しました。しばらくしてから再度お試しください",
+    retryable: false,
+  },
+  global_daily_limit: {
+    message: "本日分のAI受付がいっぱいです。成功回数には含まれません。明日0:00から再開します",
+    retryable: false,
+  },
+  allergy_unconfirmed: {
+    message: "アレルギー確認が必要な項目があります。確認してからもう一度お試しください。",
+    retryable: false,
+  },
+  allergen_missing: {
+    message: "アレルギー情報の登録が必要です。家族の設定を確認してください。",
+    retryable: false,
+  },
+  unmapped_custom_allergy: {
+    message: "登録されたアレルギー内容を確認できませんでした。家族の設定を確認してください。",
+    retryable: false,
+  },
+  unsupported_diet_unconfirmed: {
+    message: "離乳食・飲み込み/嚥下・治療食の確認が必要です。",
+    retryable: false,
+  },
+  regeneration_not_implemented: {
+    message: "再生成は次の計画で有効になります。",
+    retryable: false,
+  },
+  unsupported_diet: {
+    message: "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。",
+    retryable: false,
+  },
+  allergy_conflict: {
+    message: "アレルギー食材が、使いたい食材に含まれています",
+    retryable: false,
+  },
+  expired_pantry_unconfirmed: {
+    message: "期限を過ぎた食材は、今回の実物確認が必要です。",
+    retryable: false,
+  },
+  model_unavailable: {
+    message: "AIが混み合っています。成功回数には含まれません。",
+    retryable: true,
+  },
+  invalid_ai_response: {
+    message: "献立を正しく確認できませんでした。成功回数には含まれません。",
+    retryable: true,
+  },
+  generation_timeout: {
+    message: "作成に時間がかかりました。成功回数には含まれません。",
+    retryable: true,
+  },
+  internal_error: {
+    message: "献立を作成できませんでした。成功回数には含まれません。",
+    retryable: true,
+  },
+};
+
+function closedFailureCode(error: unknown): GenerationFailureCode {
+  if (!(error instanceof HttpError)) return "internal_error";
+  const parsed = generationFailureCodeSchema.safeParse(error.code);
+  return parsed.success ? parsed.data : "internal_error";
+}
+
+export function projectProviderConflicts(
+  input: unknown,
+  context: GenerationContext,
+): readonly z.infer<typeof generationConflictSchema>[] {
+  const parsed = providerConflictInputSchema.safeParse(input);
+  if (!parsed.success) throw new GenerationOutputError(["invalid_provider_menu"]);
+  const allowedRefs = new Set([
+    ...context.targetMembers.map((member) => member.anonymousRef),
+    ...context.submission.pantrySelections.map((_, index) => `pantry_${String(index + 1)}`),
+  ]);
+  const seen = new Set<z.infer<typeof providerConflictCodeSchema>>();
+  return parsed.data.map((conflict) => {
+    const code = providerConflictCodeSchema.safeParse(conflict.code);
+    if (!code.success || seen.has(code.data)) {
+      throw new GenerationOutputError(["invalid_provider_menu"]);
+    }
+    seen.add(code.data);
+    const conditionRefs = [...new Set(conflict.conditionRefs)];
+    if (conditionRefs.some((ref) => !allowedRefs.has(ref))) {
+      throw new GenerationOutputError(["invalid_provider_menu"]);
+    }
+    return {
+      code: code.data,
+      message: generationConflictCopy[code.data],
+      conditionRefs,
+    };
+  });
+}
+
+export function toGenerationStatus(
+  record: QuotaRequestRecord,
+  idempotencyKey: string,
+): GenerationStatusData {
+  const quota = {
+    consumed: record.consumed ?? record.status === "succeeded",
+    remaining: record.remaining ?? 0,
+    userDailyLimit: record.user_daily_limit ?? releaseQuota.userDailySuccessLimit,
+    limitKind:
+      record.failure_code === "user_daily_limit"
+        ? ("user" as const)
+        : record.failure_code === "global_daily_limit"
+          ? ("global" as const)
+          : record.failure_code === "model_unavailable"
+            ? ("provider" as const)
+            : null,
+    retryAt: record.retry_at ?? null,
+  };
+  if (record.status === "not_started") return { status: "not_started", idempotencyKey, quota };
+  const requestId = record.request_id;
+  if (requestId === undefined) throw new Error("request_id_missing");
+  if (record.status === "processing") {
+    return {
+      status: "processing",
+      idempotencyKey,
+      requestId,
+      quota,
+      startedAt: record.started_at ?? new Date().toISOString(),
+    };
+  }
+  const completedAt = record.completed_at ?? new Date().toISOString();
+  if (
+    record.status === "succeeded" &&
+    record.completed_menu_id !== null &&
+    record.completed_menu_id !== undefined
+  ) {
+    return {
+      status: "succeeded",
+      idempotencyKey,
+      requestId,
+      quota,
+      menuId: record.completed_menu_id,
+      completedAt,
+    };
+  }
+  if (record.status === "constraint_conflict") {
+    return {
+      status: "constraint_conflict",
+      idempotencyKey,
+      requestId,
+      quota,
+      completedAt,
+      conflicts: generationConflictSchema
+        .array()
+        .min(1)
+        .max(12)
+        .parse(record.terminal_details?.conflicts),
+    };
+  }
+  const parsedCode = generationFailureCodeSchema.safeParse(record.failure_code);
+  const code = parsedCode.success ? parsedCode.data : "internal_error";
+  return {
+    status: "failed",
+    idempotencyKey,
+    requestId,
+    quota,
+    completedAt,
+    error: { code, ...failureCopy[code] },
+  };
+}
+
+export function createGenerationDeps(
+  user: AuthenticatedUser,
+  timing: { requestStartedAtMonotonicMs: number },
+): GenerationDependencies {
+  const env = getServerEnv();
+  return {
+    user,
+    repository: createGenerationRepository(user),
+    models: env.openRouter.models,
+    loadExecutionContext: async (command, requestId) => {
+      if (command.kind !== "new_menu") {
+        throw new HttpError(
+          422,
+          "regeneration_not_implemented",
+          "再生成は次の計画で有効になります。",
+        );
+      }
+      return {
+        generationContext: await loadGenerationContext(user, requestId, command.request),
+      };
+    },
+    validatePreflight: validateGenerationPreflight,
+    buildMessages: buildGenerationMessages,
+    callOpenRouter: sendMenuGeneration,
+    now: () => new Date(),
+    openRouterTimeoutMs: env.openRouter.timeoutMs,
+    requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+    functionTotalBudgetMs: env.openRouter.functionTotalBudgetMs,
+    uuid: randomUUID,
+  };
+}
+
+type CheckedOutput =
+  | { kind: "valid"; checked: Extract<MenuValidationResult, { ok: true }> }
+  | { kind: "conflict"; conflicts: readonly z.infer<typeof generationConflictSchema>[] }
+  | { kind: "invalid"; issues: readonly { code: string; path?: string; message?: string }[] };
+
+function checkOutput(
+  result: OpenRouterGenerationResult,
+  context: GenerationContext,
+  uuid: () => string,
+): CheckedOutput {
+  if (result.output.outcome === "constraint_conflict") {
+    try {
+      return {
+        kind: "conflict",
+        conflicts: projectProviderConflicts(result.output.conflicts, context),
+      };
+    } catch (error) {
+      if (!(error instanceof GenerationOutputError)) throw error;
+      return { kind: "invalid", issues: error.issues };
+    }
+  }
+  try {
+    const checked = validateGeneratedMenu(
+      materializeAiGeneratedMenu(result.output.menu, context, uuid),
+      context,
+    );
+    return checked.ok ? { kind: "valid", checked } : { kind: "invalid", issues: checked.issues };
+  } catch (error) {
+    if (!(error instanceof GenerationOutputError)) throw error;
+    return { kind: "invalid", issues: error.issues };
+  }
+}
+
+class StatusHydrationError extends Error {
+  constructor(readonly cause: unknown) {
+    super("status_hydration_failed");
+  }
+}
+
+export async function runGeneration(
+  deps: GenerationDependencies,
+  command: GenerationCommand,
+): Promise<GenerationStatusData> {
+  const key = command.request.idempotencyKey;
+  const reserved = await deps.repository.reserve({
+    idempotencyKey: key,
+    kind: command.kind,
+    draftId: command.kind === "new_menu" ? command.request.draftId : null,
+    draftRevision: command.kind === "new_menu" ? command.request.draftRevision : null,
+  });
+  const hydrate = async () => {
+    try {
+      return toGenerationStatus(await deps.repository.status(key), key);
+    } catch (error) {
+      throw new StatusHydrationError(error);
+    }
+  };
+  if (reserved.status !== "processing" || reserved.replayed === true) {
+    try {
+      return await hydrate();
+    } catch (error) {
+      if (error instanceof StatusHydrationError) throw error.cause;
+      throw error;
+    }
+  }
+  const requestId = reserved.request_id;
+  if (requestId === undefined) throw new Error("request_id_missing");
+  const fail = async (code: GenerationFailureCode, retryAt: string | null) => {
+    await deps.repository.fail(requestId, code, retryAt);
+    return await hydrate();
+  };
+  const conflict = async (conflicts: readonly z.infer<typeof generationConflictSchema>[]) => {
+    await deps.repository.conflict(requestId, [...conflicts]);
+    return await hydrate();
+  };
+
+  try {
+    const execution = await deps.loadExecutionContext(
+      command,
+      requestId,
+      deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs,
+    );
+    const context = execution.generationContext;
+    const preflight = deps.validatePreflight(context, deps.now());
+    if (!preflight.ok) {
+      if (preflight.terminal === "constraint_conflict") {
+        return await conflict(preflight.conflicts);
+      }
+      const code = generationFailureCodeSchema.safeParse(preflight.primaryCode);
+      return await fail(code.success ? code.data : "internal_error", null);
+    }
+    const originalMessages = deps.buildMessages(context);
+
+    const call = async (
+      excludedModelIds: readonly string[] = [],
+      messages: readonly OpenRouterMessage[] = originalMessages,
+    ) => {
+      await deps.repository.markSent(requestId);
+      let result: OpenRouterGenerationResult;
+      try {
+        result = await deps.callOpenRouter({
+          messages,
+          timeoutMs: deps.openRouterTimeoutMs,
+          excludedModelIds,
+        });
+      } catch (error) {
+        if (
+          error instanceof OpenRouterCallError &&
+          error.code === "invalid_ai_response" &&
+          error.modelId !== null &&
+          deps.models.includes(error.modelId)
+        ) {
+          await deps.repository.recordModel(requestId, error.modelId);
+        }
+        throw error;
+      }
+      if (!deps.models.includes(result.modelId)) {
+        throw new OpenRouterCallError("invalid_ai_response");
+      }
+      await deps.repository.recordModel(requestId, result.modelId);
+      return result;
+    };
+
+    let firstResult: OpenRouterGenerationResult | null = null;
+    let firstIssues: readonly { code: string; path?: string; message?: string }[] | null = null;
+    let firstModelId: string | null = null;
+    try {
+      firstResult = await call();
+      firstModelId = firstResult.modelId;
+    } catch (error) {
+      if (!(error instanceof OpenRouterCallError)) throw error;
+      const code = generationFailureCodeSchema.safeParse(error.code);
+      if (!code.success) return await fail("internal_error", null);
+      if (code.data !== "invalid_ai_response") return await fail(code.data, error.retryAt);
+      firstModelId =
+        error.modelId !== null && deps.models.includes(error.modelId) ? error.modelId : null;
+      firstIssues = [{ code: "invalid_provider_menu" }];
+    }
+
+    if (firstResult !== null) {
+      const output = checkOutput(firstResult, context, () => deps.uuid());
+      if (output.kind === "conflict") return await conflict(output.conflicts);
+      if (output.kind === "valid") {
+        await deps.repository.succeed({
+          requestId,
+          menu: output.checked.menu,
+          preferenceSnapshot: context.preferenceSnapshot,
+          safetySnapshot: context.safetySnapshot,
+          safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+          allergenVersion: context.safety.dictionaryVersion,
+          foodRuleVersion: context.safety.foodRuleVersion,
+          targetMembers: [...context.targetMembers],
+          expiredChecks: [...context.expiredPantryChecks],
+          sourceMenuId: null,
+          changeReason: null,
+          changeReasonCustom: null,
+        });
+        return await hydrate();
+      }
+      firstIssues = output.issues;
+    }
+
+    const excludedModelIds = firstModelId === null ? [] : [firstModelId];
+    const eligibleModels = deps.models.filter((model) => !excludedModelIds.includes(model));
+    if (eligibleModels.length === 0) return await fail("invalid_ai_response", null);
+    const repair = await deps.repository.reserveRepair(requestId);
+    if (!repair.reserved) return await fail("invalid_ai_response", repair.retry_at);
+    const diagnostics: readonly GenerationRepairDiagnostic[] = toRepairDiagnostics(
+      firstIssues ?? [{ code: "invalid_provider_menu" }],
+    );
+    let repaired: OpenRouterGenerationResult;
+    try {
+      repaired = await call(excludedModelIds, [
+        ...originalMessages,
+        {
+          role: "user",
+          content: `前の結果を次の項目だけ修正し、全体JSONを一度だけ再生成してください: ${JSON.stringify(diagnostics)}`,
+        },
+      ]);
+    } catch (error) {
+      if (!(error instanceof OpenRouterCallError)) throw error;
+      const code = generationFailureCodeSchema.safeParse(error.code);
+      return await fail(code.success ? code.data : "internal_error", error.retryAt);
+    }
+    const repairedOutput = checkOutput(repaired, context, () => deps.uuid());
+    if (repairedOutput.kind === "conflict") return await conflict(repairedOutput.conflicts);
+    if (repairedOutput.kind === "invalid") return await fail("invalid_ai_response", null);
+    await deps.repository.succeed({
+      requestId,
+      menu: repairedOutput.checked.menu,
+      preferenceSnapshot: context.preferenceSnapshot,
+      safetySnapshot: context.safetySnapshot,
+      safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+      allergenVersion: context.safety.dictionaryVersion,
+      foodRuleVersion: context.safety.foodRuleVersion,
+      targetMembers: [...context.targetMembers],
+      expiredChecks: [...context.expiredPantryChecks],
+      sourceMenuId: null,
+      changeReason: null,
+      changeReasonCustom: null,
+    });
+    return await hydrate();
+  } catch (error) {
+    if (error instanceof StatusHydrationError) throw error.cause;
+    try {
+      return await fail(closedFailureCode(error), null);
+    } catch (terminalError) {
+      if (terminalError instanceof StatusHydrationError) throw terminalError.cause;
+      throw terminalError;
+    }
+  }
+}

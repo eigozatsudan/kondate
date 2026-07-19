@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   aiGenerationResponseSchema,
+  generationConflictCodes,
+  generationConflictCopy,
   generationStatusDataSchema,
   menuResponseFormat,
   newMenuGenerationRequestSchema,
@@ -93,6 +95,15 @@ it("locks the MVP quota tuple into the shared contract", () => {
     userDailyExternalCallLimit: 12,
     userShortWindowExternalCallLimit: 4,
     userShortWindowSeconds: 600,
+  });
+});
+
+describe("generationConflictCopy", () => {
+  it("defines Japanese copy for every conflict code", () => {
+    expect(Object.keys(generationConflictCopy)).toEqual(generationConflictCodes);
+    expect(Object.values(generationConflictCopy)).toSatisfy((messages: string[]) =>
+      messages.every((message) => message.length > 0),
+    );
   });
 });
 

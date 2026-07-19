@@ -560,6 +560,14 @@ export const generationConflictCodes = [
 ] as const;
 export type GenerationConflictCode = (typeof generationConflictCodes)[number];
 
+export const generationConflictCopy = {
+  must_use_conflict: "必須食材と安全条件を同時に満たせません。",
+  allergen_pantry_conflict: "アレルギー条件と選択した食材を同時に満たせません。",
+  dish_count_conflict: "指定した品数と条件を同時に満たせません。",
+  mandatory_safety_conflict: "必須の安全条件を満たす献立を作成できません。",
+  current_safety_changed: "安全条件が更新されました。もう一度作成してください。",
+} as const satisfies Record<GenerationConflictCode, string>;
+
 export const quotaLimitKinds = ["user", "global", "provider"] as const;
 export type QuotaLimitKind = (typeof quotaLimitKinds)[number];
 
