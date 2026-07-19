@@ -480,6 +480,36 @@ describe("validateGenerationPreflight", () => {
 
   it.each([
     [
+      "unequal submission target ID length",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        submission: {
+          ...context.submission,
+          targetMemberIds: context.submission.targetMemberIds.slice(0, 1),
+        },
+      }),
+    ],
+    [
+      "reordered submission target IDs",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        submission: {
+          ...context.submission,
+          targetMemberIds: [...context.submission.targetMemberIds].reverse(),
+        },
+      }),
+    ],
+    [
+      "duplicate submission target IDs",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        submission: {
+          ...context.submission,
+          targetMemberIds: [...duplicateFirst(context.submission.targetMemberIds)],
+        },
+      }),
+    ],
+    [
       "unequal target-member length",
       (context: ReturnType<typeof makeGenerationContext>) => ({
         ...context,
