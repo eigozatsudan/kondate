@@ -2913,7 +2913,8 @@ The TypeScript suites then cover all of the following before implementation:
 - adversarial tests cover zero/unequal/duplicate/reordered submission, target, safety,
   and preference member sets; wrong/gapped/duplicate `member_N` refs; missing and extra
   pantry rows; expiry changes after loading; stale/future/wrong-JST/extra checks;
-  consent-owner mismatch; and every semantic catalog/alias/rule field drift;
+  consent-owner mismatch; raw `regulatory_class` drift; every canonical
+  catalog/alias/rule field drift; and missing, extra, or duplicate manifest rows;
 - prompt refs follow submission selection order even when the pantry query returns the
   rows in reverse order.
 - `targetMembers[].anonymousRef`, `safety.members[].anonymousRef`, and
@@ -3017,12 +3018,17 @@ export const generationPreflightIssuePriority = [
 ] as const;
 ```
 
-Export `hasExactCurrentSafetyManifest(context)` from `current-safety.ts` and reuse it
-both in the current-safety RPC boundary and preflight. It compares exact-set signatures
-for every semantic catalog field (`id`, display name, regulatory class/version), alias
-field (`allergenId`, alias, normalized alias, kind, label-confirmation flag, version),
-and rule field (ID, age bands, terms, kind, required tag, user message, version). Do not
-maintain a weaker second manifest checker in `generation-context.ts`.
+Keep the raw and canonical exact boundaries explicit. The current-safety loader's raw
+snapshot signature continues to compare every DB field, including catalog
+`regulatory_class`. Export `hasExactCurrentSafetyManifest(context)` from
+`current-safety.ts` for the canonical context and reuse it in preflight. Its exact-set
+signatures cover canonical catalog fields (`id`, `displayName`, `catalogVersion`), every
+canonical alias field (`allergenId`, alias, normalized alias, kind,
+label-confirmation flag, version), and every canonical rule field (ID, age bands,
+terms, kind, required tag, user message, version). It rejects missing, extra, and
+duplicate rows. Do not add `regulatoryClass` to `GenerationContext` or
+`AllergenCatalogEntry`, and do not maintain a weaker second canonical checker in
+`generation-context.ts`.
 
 `validateGenerationPreflight(context,now)` accumulates a set, returns each code once in
 that canonical order regardless of member/pantry/input order, and places the first code
