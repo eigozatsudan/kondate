@@ -28,10 +28,22 @@ describe("generation repair boundary", () => {
   });
 
   it("caps diagnostics at 64", () => {
-    const issues = Array.from({ length: 100 }, (_, index) => ({
-      code: generationRepairCodes[index % generationRepairCodes.length] ?? "unknown",
-    }));
-    expect(toRepairDiagnostics(issues).length).toBeLessThanOrEqual(64);
+    expect(generationRepairCodes.length).toBeLessThanOrEqual(64);
+    const canary = "55000000-0000-4000-8000-000000000001/provider_ref.99";
+    const issues = [
+      ...generationRepairCodes.map((code) => ({ code, path: canary, message: canary })),
+      { code: "unknown", path: canary, message: canary },
+      ...Array.from({ length: 100 }, (_, index) => ({
+        code: generationRepairCodes[index % generationRepairCodes.length] ?? "unknown",
+        path: canary,
+        message: canary,
+      })),
+    ];
+    const diagnostics = toRepairDiagnostics(issues);
+    expect(diagnostics).toEqual(
+      generationRepairCodes.map((code) => ({ code, path: repairPathByCode[code] })),
+    );
+    expect(JSON.stringify(diagnostics)).not.toContain(canary);
   });
 
   it("exposes only sanitized diagnostics from the common error", () => {

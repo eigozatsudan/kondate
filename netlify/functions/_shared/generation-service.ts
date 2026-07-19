@@ -376,12 +376,8 @@ export async function runGeneration(
     }
   };
   const conflict = async (conflicts: readonly z.infer<typeof generationConflictSchema>[]) => {
-    try {
-      await deps.repository.conflict(requestId, [...conflicts]);
-      return await hydrate();
-    } catch (error) {
-      throw new TerminalTransitionError(unwrapStatusHydration(error));
-    }
+    await deps.repository.conflict(requestId, [...conflicts]);
+    return await hydrate();
   };
 
   try {
