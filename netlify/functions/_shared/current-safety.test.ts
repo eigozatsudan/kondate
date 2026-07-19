@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
 import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
@@ -85,6 +86,239 @@ function expectClosedFailure(action: Promise<unknown>): Promise<void> {
     code: "safety_context_failed",
   });
 }
+
+type CatalogEntry = CurrentSafetyContext["allergenDictionary"]["catalog"][number];
+type AliasEntry = CurrentSafetyContext["allergenDictionary"]["aliases"][number];
+type RuleEntry = CurrentSafetyContext["foodSafetyRules"][number];
+type ManifestMutation = readonly [string, (context: CurrentSafetyContext) => CurrentSafetyContext];
+
+function requireFirst<T>(values: readonly T[], fixture: string): T {
+  const first = values.at(0);
+  if (first === undefined) throw new Error(`${fixture} fixture is empty`);
+  return first;
+}
+
+function withFirstCatalog(
+  context: CurrentSafetyContext,
+  mutate: (entry: CatalogEntry) => CatalogEntry,
+): CurrentSafetyContext {
+  const first = requireFirst(context.allergenDictionary.catalog, "catalog");
+  return {
+    ...context,
+    allergenDictionary: {
+      ...context.allergenDictionary,
+      catalog: [mutate(first), ...context.allergenDictionary.catalog.slice(1)],
+    },
+  };
+}
+
+function withFirstAlias(
+  context: CurrentSafetyContext,
+  mutate: (entry: AliasEntry) => AliasEntry,
+): CurrentSafetyContext {
+  const first = requireFirst(context.allergenDictionary.aliases, "alias");
+  return {
+    ...context,
+    allergenDictionary: {
+      ...context.allergenDictionary,
+      aliases: [mutate(first), ...context.allergenDictionary.aliases.slice(1)],
+    },
+  };
+}
+
+function withFirstRule(
+  context: CurrentSafetyContext,
+  mutate: (entry: RuleEntry) => RuleEntry,
+): CurrentSafetyContext {
+  const first = requireFirst(context.foodSafetyRules, "rule");
+  return { ...context, foodSafetyRules: [mutate(first), ...context.foodSafetyRules.slice(1)] };
+}
+
+const manifestMutations: readonly ManifestMutation[] = [
+  ["dictionary version", (context) => ({ ...context, dictionaryVersion: "obsolete" })],
+  [
+    "dictionary manifest version",
+    (context) => ({
+      ...context,
+      allergenDictionary: { ...context.allergenDictionary, version: "obsolete" },
+    }),
+  ],
+  ["food rule version", (context) => ({ ...context, foodRuleVersion: "obsolete" })],
+  ["catalog id", (context) => withFirstCatalog(context, (entry) => ({ ...entry, id: "drift" }))],
+  [
+    "catalog display name",
+    (context) => withFirstCatalog(context, (entry) => ({ ...entry, displayName: "改ざん名" })),
+  ],
+  [
+    "catalog version",
+    (context) => withFirstCatalog(context, (entry) => ({ ...entry, catalogVersion: "obsolete" })),
+  ],
+  [
+    "alias allergen id",
+    (context) => withFirstAlias(context, (entry) => ({ ...entry, allergenId: "drift" })),
+  ],
+  ["alias", (context) => withFirstAlias(context, (entry) => ({ ...entry, alias: "改ざん" }))],
+  [
+    "normalized alias",
+    (context) => withFirstAlias(context, (entry) => ({ ...entry, normalizedAlias: "drift" })),
+  ],
+  [
+    "alias kind",
+    (context) =>
+      withFirstAlias(context, (entry) => ({
+        ...entry,
+        aliasKind: entry.aliasKind === "direct" ? "processed" : "direct",
+      })),
+  ],
+  [
+    "alias confirmation flag",
+    (context) =>
+      withFirstAlias(context, (entry) => ({
+        ...entry,
+        requiresLabelConfirmation: !entry.requiresLabelConfirmation,
+      })),
+  ],
+  [
+    "alias dictionary version",
+    (context) => withFirstAlias(context, (entry) => ({ ...entry, dictionaryVersion: "obsolete" })),
+  ],
+  ["rule id", (context) => withFirstRule(context, (entry) => ({ ...entry, id: "drift" }))],
+  [
+    "rule age bands",
+    (context) =>
+      withFirstRule(context, (entry) => ({
+        ...entry,
+        appliesToAgeBands: entry.appliesToAgeBands.includes("senior")
+          ? (["adult"] as const)
+          : (["senior"] as const),
+      })),
+  ],
+  [
+    "rule match terms",
+    (context) =>
+      withFirstRule(context, (entry) => ({
+        ...entry,
+        matchTerms: [...entry.matchTerms, "__drift__"],
+      })),
+  ],
+  [
+    "rule kind",
+    (context) =>
+      withFirstRule(context, (entry) => ({
+        ...entry,
+        ruleKind: entry.ruleKind === "forbidden" ? "requires_tag" : "forbidden",
+      })),
+  ],
+  [
+    "rule required safety tag",
+    (context) =>
+      withFirstRule(context, (entry) => ({
+        ...entry,
+        requiredSafetyTag: entry.requiredSafetyTag === null ? "cut_small" : null,
+      })),
+  ],
+  [
+    "rule user message",
+    (context) => withFirstRule(context, (entry) => ({ ...entry, userMessage: "改ざん文" })),
+  ],
+  [
+    "rule version",
+    (context) => withFirstRule(context, (entry) => ({ ...entry, ruleVersion: "obsolete" })),
+  ],
+  [
+    "missing catalog row",
+    (context) => ({
+      ...context,
+      allergenDictionary: {
+        ...context.allergenDictionary,
+        catalog: context.allergenDictionary.catalog.slice(1),
+      },
+    }),
+  ],
+  [
+    "extra catalog row",
+    (context) => {
+      const first = requireFirst(context.allergenDictionary.catalog, "catalog");
+      return {
+        ...context,
+        allergenDictionary: {
+          ...context.allergenDictionary,
+          catalog: [...context.allergenDictionary.catalog, { ...first, id: "unexpected" }],
+        },
+      };
+    },
+  ],
+  [
+    "duplicate catalog row",
+    (context) => {
+      const first = requireFirst(context.allergenDictionary.catalog, "catalog");
+      return {
+        ...context,
+        allergenDictionary: {
+          ...context.allergenDictionary,
+          catalog: [...context.allergenDictionary.catalog, first],
+        },
+      };
+    },
+  ],
+  [
+    "missing alias row",
+    (context) => ({
+      ...context,
+      allergenDictionary: {
+        ...context.allergenDictionary,
+        aliases: context.allergenDictionary.aliases.slice(1),
+      },
+    }),
+  ],
+  [
+    "extra alias row",
+    (context) => {
+      const first = requireFirst(context.allergenDictionary.aliases, "alias");
+      return {
+        ...context,
+        allergenDictionary: {
+          ...context.allergenDictionary,
+          aliases: [...context.allergenDictionary.aliases, { ...first, alias: "unexpected" }],
+        },
+      };
+    },
+  ],
+  [
+    "duplicate alias row",
+    (context) => {
+      const first = requireFirst(context.allergenDictionary.aliases, "alias");
+      return {
+        ...context,
+        allergenDictionary: {
+          ...context.allergenDictionary,
+          aliases: [...context.allergenDictionary.aliases, first],
+        },
+      };
+    },
+  ],
+  [
+    "missing rule row",
+    (context) => ({ ...context, foodSafetyRules: context.foodSafetyRules.slice(1) }),
+  ],
+  [
+    "extra rule row",
+    (context) => {
+      const first = requireFirst(context.foodSafetyRules, "rule");
+      return {
+        ...context,
+        foodSafetyRules: [...context.foodSafetyRules, { ...first, id: "unexpected" }],
+      };
+    },
+  ],
+  [
+    "duplicate rule row",
+    (context) => {
+      const first = requireFirst(context.foodSafetyRules, "rule");
+      return { ...context, foodSafetyRules: [...context.foodSafetyRules, first] };
+    },
+  ],
+];
 
 describe("current safety snapshot RPC boundary", () => {
   it("loads context and labels from exactly one strict snapshot in requested order", async () => {
@@ -180,73 +414,11 @@ describe("current safety snapshot RPC boundary", () => {
     expect(from).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      "catalog display name",
-      (context: Awaited<ReturnType<typeof loadCurrentSafetyContext>>) => ({
-        ...context,
-        allergenDictionary: {
-          ...context.allergenDictionary,
-          catalog: context.allergenDictionary.catalog.map((entry, index) =>
-            index === 0 ? { ...entry, displayName: "改ざん名" } : entry,
-          ),
-        },
-      }),
-    ],
-    [
-      "alias confirmation flag",
-      (context: Awaited<ReturnType<typeof loadCurrentSafetyContext>>) => ({
-        ...context,
-        allergenDictionary: {
-          ...context.allergenDictionary,
-          aliases: context.allergenDictionary.aliases.map((entry, index) =>
-            index === 0
-              ? { ...entry, requiresLabelConfirmation: !entry.requiresLabelConfirmation }
-              : entry,
-          ),
-        },
-      }),
-    ],
-    [
-      "rule user message",
-      (context: Awaited<ReturnType<typeof loadCurrentSafetyContext>>) => ({
-        ...context,
-        foodSafetyRules: context.foodSafetyRules.map((entry, index) =>
-          index === 0 ? { ...entry, userMessage: "改ざん文" } : entry,
-        ),
-      }),
-    ],
-  ])("shares exact semantic manifest rejection for %s", async (_case, mutate) => {
+  it.each(manifestMutations)("rejects canonical manifest drift for %s", async (_case, mutate) => {
     const { admin } = adminWithRpc({ data: availableSnapshot(), error: null });
     const context = await loadCurrentSafetyContext(admin, userId, [secondMemberId, firstMemberId]);
 
     expect(hasExactCurrentSafetyManifest(context)).toBe(true);
     expect(hasExactCurrentSafetyManifest(mutate(context))).toBe(false);
   });
-
-  it.each(["missing", "extra", "duplicate"] as const)(
-    "rejects %s canonical manifest rows",
-    async (variant) => {
-      const { admin } = adminWithRpc({ data: availableSnapshot(), error: null });
-      const context = await loadCurrentSafetyContext(admin, userId, [
-        secondMemberId,
-        firstMemberId,
-      ]);
-      const firstCatalog = context.allergenDictionary.catalog.at(0);
-      if (firstCatalog === undefined) throw new Error("catalog fixture is empty");
-      const catalog =
-        variant === "missing"
-          ? context.allergenDictionary.catalog.slice(1)
-          : variant === "extra"
-            ? [...context.allergenDictionary.catalog, { ...firstCatalog, id: "unexpected" }]
-            : [...context.allergenDictionary.catalog, firstCatalog];
-
-      expect(
-        hasExactCurrentSafetyManifest({
-          ...context,
-          allergenDictionary: { ...context.allergenDictionary, catalog },
-        }),
-      ).toBe(false);
-    },
-  );
 });
