@@ -267,6 +267,72 @@ function hasExactSignatures<T>(
   );
 }
 
+function canonicalCatalogSignature(
+  row: CurrentSafetyContext["allergenDictionary"]["catalog"][number],
+): string {
+  return [row.id, row.displayName, row.catalogVersion].join("\u0000");
+}
+
+function canonicalAliasSignature(
+  row: CurrentSafetyContext["allergenDictionary"]["aliases"][number],
+): string {
+  return [
+    row.allergenId,
+    row.alias,
+    row.normalizedAlias,
+    row.aliasKind,
+    row.requiresLabelConfirmation ? "1" : "0",
+    row.dictionaryVersion,
+  ].join("\u0000");
+}
+
+function canonicalRuleSignature(row: CurrentSafetyContext["foodSafetyRules"][number]): string {
+  return JSON.stringify([
+    row.id,
+    row.appliesToAgeBands,
+    row.matchTerms,
+    row.ruleKind,
+    row.requiredSafetyTag,
+    row.userMessage,
+    row.ruleVersion,
+  ]);
+}
+
+const expectedCanonicalCatalogSignatures = new Set(
+  currentAllergenCatalogV1.map(canonicalCatalogSignature),
+);
+const expectedCanonicalAliasSignatures = new Set(
+  currentAllergenAliasManifest.map((entry) =>
+    canonicalAliasSignature({ ...entry, dictionaryVersion }),
+  ),
+);
+const expectedCanonicalRuleSignatures = new Set(
+  currentFoodSafetyRulesV1.map(canonicalRuleSignature),
+);
+
+export function hasExactCurrentSafetyManifest(context: CurrentSafetyContext): boolean {
+  return (
+    context.dictionaryVersion === dictionaryVersion &&
+    context.allergenDictionary.version === dictionaryVersion &&
+    context.foodRuleVersion === foodRuleVersion &&
+    hasExactSignatures(
+      context.allergenDictionary.catalog,
+      expectedCanonicalCatalogSignatures,
+      canonicalCatalogSignature,
+    ) &&
+    hasExactSignatures(
+      context.allergenDictionary.aliases,
+      expectedCanonicalAliasSignatures,
+      canonicalAliasSignature,
+    ) &&
+    hasExactSignatures(
+      context.foodSafetyRules,
+      expectedCanonicalRuleSignatures,
+      canonicalRuleSignature,
+    )
+  );
+}
+
 function validateSnapshot(snapshot: AvailableSnapshot, targetMemberIds: readonly string[]): void {
   if (
     snapshot.dictionary_version !== dictionaryVersion ||

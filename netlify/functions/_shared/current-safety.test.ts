@@ -4,6 +4,7 @@ import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-sa
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 import {
   currentAllergenAliasManifest,
+  hasExactCurrentSafetyManifest,
   loadCurrentSafetyContext,
   loadEmergencyCurrentSafety,
 } from "./current-safety.js";
@@ -162,4 +163,90 @@ describe("current safety snapshot RPC boundary", () => {
     );
     expect(from).not.toHaveBeenCalled();
   });
+
+  it("fails closed when a raw catalog regulatory class drifts", async () => {
+    const snapshot = availableSnapshot();
+    const firstCatalog = snapshot.catalog.at(0);
+    if (firstCatalog === undefined) throw new Error("catalog fixture is empty");
+    snapshot.catalog[0] = {
+      ...firstCatalog,
+      regulatory_class: firstCatalog.regulatory_class === "mandatory" ? "recommended" : "mandatory",
+    };
+    const { admin, from } = adminWithRpc({ data: snapshot, error: null });
+
+    await expectClosedFailure(
+      loadCurrentSafetyContext(admin, userId, [secondMemberId, firstMemberId]),
+    );
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "catalog display name",
+      (context: Awaited<ReturnType<typeof loadCurrentSafetyContext>>) => ({
+        ...context,
+        allergenDictionary: {
+          ...context.allergenDictionary,
+          catalog: context.allergenDictionary.catalog.map((entry, index) =>
+            index === 0 ? { ...entry, displayName: "改ざん名" } : entry,
+          ),
+        },
+      }),
+    ],
+    [
+      "alias confirmation flag",
+      (context: Awaited<ReturnType<typeof loadCurrentSafetyContext>>) => ({
+        ...context,
+        allergenDictionary: {
+          ...context.allergenDictionary,
+          aliases: context.allergenDictionary.aliases.map((entry, index) =>
+            index === 0
+              ? { ...entry, requiresLabelConfirmation: !entry.requiresLabelConfirmation }
+              : entry,
+          ),
+        },
+      }),
+    ],
+    [
+      "rule user message",
+      (context: Awaited<ReturnType<typeof loadCurrentSafetyContext>>) => ({
+        ...context,
+        foodSafetyRules: context.foodSafetyRules.map((entry, index) =>
+          index === 0 ? { ...entry, userMessage: "改ざん文" } : entry,
+        ),
+      }),
+    ],
+  ])("shares exact semantic manifest rejection for %s", async (_case, mutate) => {
+    const { admin } = adminWithRpc({ data: availableSnapshot(), error: null });
+    const context = await loadCurrentSafetyContext(admin, userId, [secondMemberId, firstMemberId]);
+
+    expect(hasExactCurrentSafetyManifest(context)).toBe(true);
+    expect(hasExactCurrentSafetyManifest(mutate(context))).toBe(false);
+  });
+
+  it.each(["missing", "extra", "duplicate"] as const)(
+    "rejects %s canonical manifest rows",
+    async (variant) => {
+      const { admin } = adminWithRpc({ data: availableSnapshot(), error: null });
+      const context = await loadCurrentSafetyContext(admin, userId, [
+        secondMemberId,
+        firstMemberId,
+      ]);
+      const firstCatalog = context.allergenDictionary.catalog.at(0);
+      if (firstCatalog === undefined) throw new Error("catalog fixture is empty");
+      const catalog =
+        variant === "missing"
+          ? context.allergenDictionary.catalog.slice(1)
+          : variant === "extra"
+            ? [...context.allergenDictionary.catalog, { ...firstCatalog, id: "unexpected" }]
+            : [...context.allergenDictionary.catalog, firstCatalog];
+
+      expect(
+        hasExactCurrentSafetyManifest({
+          ...context,
+          allergenDictionary: { ...context.allergenDictionary, catalog },
+        }),
+      ).toBe(false);
+    },
+  );
 });

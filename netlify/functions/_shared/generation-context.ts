@@ -6,17 +6,18 @@ import {
   type NewMenuGenerationRequest,
 } from "../../../shared/contracts/generation.js";
 import { pantryItemSchema, pantrySelectionDraftSchema } from "../../../shared/contracts/pantry.js";
-import { plannerSubmissionSchema } from "../../../shared/contracts/planner.js";
+import {
+  collectPlannerRequestText,
+  plannerSubmissionSchema,
+} from "../../../shared/contracts/planner.js";
 import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import { normalizeFoodText } from "../../../shared/safety/allergens.js";
-import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
-import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
 import { detectUnsupportedMedicalRequest } from "../../../shared/safety/medical-scope.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { getJstDateKey } from "../../../shared/time/jst.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import { HttpError } from "./http.js";
-import { loadCurrentSafetyContext } from "./current-safety.js";
+import { hasExactCurrentSafetyManifest, loadCurrentSafetyContext } from "./current-safety.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
 
@@ -251,7 +252,8 @@ export async function loadGenerationContext(
     .eq("user_id", user.userId)
     .eq("notice_version", privacyNoticeVersion)
     .maybeSingle();
-  if (consentResult.error !== null || !consentRowSchema.safeParse(consentResult.data).success) {
+  const consent = consentRowSchema.safeParse(consentResult.data);
+  if (consentResult.error !== null || !consent.success || consent.data.user_id !== user.userId) {
     throw new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。");
   }
 
@@ -385,50 +387,42 @@ export async function loadGenerationContext(
   };
 }
 
-const expectedCatalogIds = new Set(currentAllergenCatalogV1.map((entry) => entry.id));
-const expectedRuleIds = new Set(currentFoodSafetyRulesV1.map((rule) => rule.id));
-function isCompleteSafety(context: GenerationContext): boolean {
-  const catalogIds = new Set(context.safety.allergenDictionary.catalog.map((entry) => entry.id));
-  const ruleIds = new Set(context.safety.foodSafetyRules.map((rule) => rule.id));
-  return (
-    context.safety.dictionaryVersion === currentAllergenCatalogV1[0]?.catalogVersion &&
-    context.safety.allergenDictionary.version === context.safety.dictionaryVersion &&
-    catalogIds.size === expectedCatalogIds.size &&
-    [...expectedCatalogIds].every((id) => catalogIds.has(id)) &&
-    context.safety.allergenDictionary.catalog.every(
-      (entry) => entry.catalogVersion === context.safety.dictionaryVersion,
-    ) &&
-    context.safety.allergenDictionary.aliases.every(
-      (alias) => alias.dictionaryVersion === context.safety.dictionaryVersion,
-    ) &&
-    context.safety.foodRuleVersion === currentFoodSafetyRulesV1[0]?.ruleVersion &&
-    ruleIds.size === expectedRuleIds.size &&
-    [...expectedRuleIds].every((id) => ruleIds.has(id)) &&
-    context.safety.foodSafetyRules.every(
-      (rule) => rule.ruleVersion === context.safety.foodRuleVersion,
-    )
-  );
-}
-
 function containsAlias(text: string, aliases: readonly { normalizedAlias: string }[]): boolean {
   const normalized = normalizeFoodText(text);
   return aliases.some((alias) => normalized.includes(normalizeFoodText(alias.normalizedAlias)));
 }
 
-export function validateGenerationPreflight(context: GenerationContext): GenerationPreflightResult {
+export function validateGenerationPreflight(
+  context: GenerationContext,
+  now: Date,
+): GenerationPreflightResult {
   const issues = new Set<GenerationPreflightIssueCode>();
-  if (!isCompleteSafety(context)) issues.add("internal_error");
+  if (!hasExactCurrentSafetyManifest(context.safety)) issues.add("internal_error");
+  const submissionIds = context.submission.targetMemberIds;
   const targetIds = context.targetMembers.map((member) => member.householdMemberId);
   const safetyIds = context.safety.members.map((member) => member.householdMemberId);
+  const preferenceIds = context.memberPreferences.map((member) => member.householdMemberId);
+  const memberCount = submissionIds.length;
   if (
-    targetIds.length !== context.submission.targetMemberIds.length ||
-    targetIds.some((id, index) => id !== context.submission.targetMemberIds[index]) ||
-    safetyIds.some((id, index) => id !== targetIds[index]) ||
-    context.memberPreferences.some(
-      (preference, index) =>
-        preference.householdMemberId !== targetIds[index] ||
-        preference.anonymousMemberRef !== context.targetMembers[index]?.anonymousRef,
-    )
+    memberCount === 0 ||
+    targetIds.length !== memberCount ||
+    safetyIds.length !== memberCount ||
+    preferenceIds.length !== memberCount ||
+    new Set(submissionIds).size !== memberCount ||
+    new Set(targetIds).size !== memberCount ||
+    new Set(safetyIds).size !== memberCount ||
+    new Set(preferenceIds).size !== memberCount ||
+    submissionIds.some((id, index) => {
+      const expectedRef = `member_${String(index + 1)}`;
+      return (
+        targetIds[index] !== id ||
+        safetyIds[index] !== id ||
+        preferenceIds[index] !== id ||
+        context.targetMembers[index]?.anonymousRef !== expectedRef ||
+        context.safety.members[index]?.anonymousRef !== expectedRef ||
+        context.memberPreferences[index]?.anonymousMemberRef !== expectedRef
+      );
+    })
   ) {
     issues.add("invalid_request");
   }
@@ -466,12 +460,25 @@ export function validateGenerationPreflight(context: GenerationContext): Generat
   const selectedIds = context.submission.pantrySelections.map(
     (selection) => selection.pantryItemId,
   );
+  const pantryIds = context.pantryItems.map((item) => item.id);
   if (
     selectedIds.length > 50 ||
     new Set(selectedIds).size !== selectedIds.length ||
-    selectedIds.some((id) => !context.pantryItems.some((item) => item.id === id))
+    new Set(pantryIds).size !== pantryIds.length ||
+    pantryIds.length !== selectedIds.length ||
+    selectedIds.some((id) => !pantryIds.includes(id))
   ) {
     issues.add("invalid_request");
+  }
+  const today = getJstDateKey(now);
+  const expiredIds = selectedIds.filter((id) => {
+    const item = context.pantryItems.find((candidate) => candidate.id === id);
+    return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
+  });
+  try {
+    validateTransientChecks(context.expiredPantryChecks, selectedIds, expiredIds, now);
+  } catch {
+    issues.add("expired_pantry_unconfirmed");
   }
   for (const avoided of context.submission.avoidIngredients) {
     if (
@@ -495,7 +502,7 @@ export function validateGenerationPreflight(context: GenerationContext): Generat
       issues.add("must_use_conflict");
     }
   }
-  if (detectUnsupportedMedicalRequest(context.safety.requestText).length > 0) {
+  if (detectUnsupportedMedicalRequest(collectPlannerRequestText(context.submission)).length > 0) {
     issues.add("unsupported_diet");
   }
 

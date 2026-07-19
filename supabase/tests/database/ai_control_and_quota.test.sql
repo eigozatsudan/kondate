@@ -1,5 +1,5 @@
 begin;
-select plan(60);
+select plan(64);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password,
@@ -132,6 +132,28 @@ select ok(
   ),
   'only service_role can read an immutable generation submission snapshot'
 );
+select throws_ok($$
+  set local role anon;
+  select * from public.get_ai_generation_submission_snapshot(
+    '20000000-0000-4000-8000-000000000099',
+    '10000000-0000-4000-8000-000000000001'
+  )
+$$, '42501', null, 'anon is actually denied snapshot RPC execution');
+select throws_ok($$
+  set local role authenticated;
+  select * from public.get_ai_generation_submission_snapshot(
+    '20000000-0000-4000-8000-000000000099',
+    '10000000-0000-4000-8000-000000000001'
+  )
+$$, '42501', null, 'authenticated is actually denied snapshot RPC execution');
+select lives_ok($$
+  set local role service_role;
+  select * from public.get_ai_generation_submission_snapshot(
+    '20000000-0000-4000-8000-000000000099',
+    '10000000-0000-4000-8000-000000000001'
+  );
+  reset role
+$$, 'service_role can actually execute the snapshot RPC');
 select table_privs_are('private', 'ai_generation_requests', 'authenticated', array[]::text[]);
 select is(private.ai_jst_day('2026-07-10 14:59:59+00'), date '2026-07-10');
 select is(private.ai_jst_day('2026-07-10 15:00:00+00'), date '2026-07-11');
@@ -389,6 +411,14 @@ select is(
   )),
   0::bigint,
   'the snapshot RPC returns no row for a wrong owner'
+);
+select is(
+  (select count(*) from public.get_ai_generation_submission_snapshot(
+    '20000000-0000-4000-8000-000000000099',
+    '10000000-0000-4000-8000-000000000001'
+  )),
+  0::bigint,
+  'the snapshot RPC returns no row for a wrong request ID'
 );
 
 update public.generation_drafts

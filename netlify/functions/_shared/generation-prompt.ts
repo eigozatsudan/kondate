@@ -35,6 +35,46 @@ export type GenerationPromptDto = {
 };
 
 export function buildGenerationMessages(context: GenerationContext): readonly OpenRouterMessage[] {
+  for (const member of context.safety.members) {
+    if (
+      !context.memberPreferences.some(
+        (candidate) => candidate.householdMemberId === member.householdMemberId,
+      )
+    ) {
+      throw new Error("member_preferences_missing");
+    }
+  }
+  const submissionIds = context.submission.targetMemberIds;
+  const memberCount = submissionIds.length;
+  const hasMemberMismatch =
+    memberCount === 0 ||
+    context.targetMembers.length !== memberCount ||
+    context.safety.members.length !== memberCount ||
+    context.memberPreferences.length !== memberCount ||
+    new Set(submissionIds).size !== memberCount ||
+    new Set(context.targetMembers.map((member) => member.householdMemberId)).size !== memberCount ||
+    new Set(context.safety.members.map((member) => member.householdMemberId)).size !==
+      memberCount ||
+    new Set(context.memberPreferences.map((member) => member.householdMemberId)).size !==
+      memberCount ||
+    submissionIds.some((id, index) => {
+      const expectedRef = `member_${String(index + 1)}`;
+      const target = context.targetMembers[index];
+      const safety = context.safety.members[index];
+      const preference = context.memberPreferences[index];
+      return (
+        target === undefined ||
+        target.householdMemberId !== id ||
+        target.anonymousRef !== expectedRef ||
+        safety === undefined ||
+        safety.householdMemberId !== id ||
+        safety.anonymousRef !== expectedRef ||
+        preference === undefined ||
+        preference.householdMemberId !== id ||
+        preference.anonymousMemberRef !== expectedRef
+      );
+    });
+  if (hasMemberMismatch) throw new Error("member_context_mismatch");
   const safeMembers = context.safety.members.map((member) => {
     const preferences = context.memberPreferences.find(
       (candidate) => candidate.householdMemberId === member.householdMemberId,

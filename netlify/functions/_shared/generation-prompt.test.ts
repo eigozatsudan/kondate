@@ -139,4 +139,48 @@ describe("buildGenerationMessages", () => {
       "member_preferences_missing",
     );
   });
+
+  it.each([
+    [
+      "target ref mismatch",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        targetMembers: context.targetMembers.map((member) => ({
+          ...member,
+          anonymousRef: "member_9",
+        })),
+      }),
+    ],
+    [
+      "safety ref mismatch",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        safety: {
+          ...context.safety,
+          members: context.safety.members.map((member) => ({
+            ...member,
+            anonymousRef: "member_9",
+          })),
+        },
+      }),
+    ],
+    [
+      "extra preference",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        memberPreferences: [
+          ...context.memberPreferences,
+          {
+            ...context.memberPreferences[0]!,
+            householdMemberId: "55000000-0000-4000-8000-000000000002",
+            anonymousMemberRef: "member_2",
+          },
+        ],
+      }),
+    ],
+  ])("fails closed for %s", (_case, mutate) => {
+    expect(() => buildGenerationMessages(mutate(makeGenerationContext()))).toThrow(
+      "member_context_mismatch",
+    );
+  });
 });

@@ -7,7 +7,7 @@ import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { makeGenerationContext } from "../../../shared/testing/factories.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
-import { loadCurrentSafetyContext } from "./current-safety.js";
+import { hasExactCurrentSafetyManifest, loadCurrentSafetyContext } from "./current-safety.js";
 import {
   generationPreflightIssuePriority,
   loadGenerationContext,
@@ -17,7 +17,14 @@ import {
 
 vi.mock("./supabase-admin.js", () => ({ getSupabaseAdmin: vi.fn() }));
 vi.mock("./supabase-user.js", () => ({ createUserScopedSupabase: vi.fn() }));
-vi.mock("./current-safety.js", () => ({ loadCurrentSafetyContext: vi.fn() }));
+vi.mock("./current-safety.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./current-safety.js")>();
+  return {
+    ...actual,
+    hasExactCurrentSafetyManifest: vi.fn(actual.hasExactCurrentSafetyManifest),
+    loadCurrentSafetyContext: vi.fn(),
+  };
+});
 
 const userId = "70000000-0000-4000-8000-000000000001";
 const draftId = "71000000-0000-4000-8000-000000000001";
@@ -28,6 +35,7 @@ const now = new Date("2026-07-11T03:00:00.000Z");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(hasExactCurrentSafetyManifest).mockReturnValue(true);
 });
 
 const request: NewMenuGenerationRequest = {
@@ -188,6 +196,21 @@ describe("loadGenerationContext", () => {
     expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
   });
 
+  it("rejects a current-version consent row owned by another user", async () => {
+    arrangeLoader({
+      consent: {
+        user_id: "70000000-0000-4000-8000-000000000002",
+        notice_version: "2026-07-11.v1",
+        accepted_at: now.toISOString(),
+      },
+    });
+
+    await expect(
+      loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
+    ).rejects.toMatchObject({ code: "consent_required" });
+    expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["missing", [] as unknown[], "invalid_request"],
     ["draft", [{ ...completeMember, status: "draft" }], "invalid_request"],
@@ -305,16 +328,187 @@ describe("validateTransientChecks", () => {
 });
 
 describe("validateGenerationPreflight", () => {
+  it.each([
+    [
+      "zero member sets",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        submission: { ...context.submission, targetMemberIds: [] },
+        targetMembers: [],
+        safety: { ...context.safety, members: [] },
+        memberPreferences: [],
+      }),
+    ],
+    [
+      "missing preferences",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        memberPreferences: [],
+      }),
+    ],
+    [
+      "non-canonical paired refs",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        targetMembers: context.targetMembers.map((member) => ({
+          ...member,
+          anonymousRef: "member_9",
+        })),
+        safety: {
+          ...context.safety,
+          members: context.safety.members.map((member) => ({
+            ...member,
+            anonymousRef: "member_9",
+          })),
+        },
+        memberPreferences: context.memberPreferences.map((member) => ({
+          ...member,
+          anonymousMemberRef: "member_9",
+        })),
+      }),
+    ],
+    [
+      "duplicate ordered member IDs",
+      (context: ReturnType<typeof makeGenerationContext>) => ({
+        ...context,
+        submission: {
+          ...context.submission,
+          targetMemberIds: [
+            context.submission.targetMemberIds[0]!,
+            context.submission.targetMemberIds[0]!,
+          ],
+        },
+        targetMembers: [context.targetMembers[0]!, context.targetMembers[0]!],
+        safety: {
+          ...context.safety,
+          members: [context.safety.members[0]!, context.safety.members[0]!],
+        },
+        memberPreferences: [context.memberPreferences[0]!, context.memberPreferences[0]!],
+      }),
+    ],
+  ])("fails closed for %s", (_case, mutate) => {
+    expect(validateGenerationPreflight(mutate(makeGenerationContext()), now)).toMatchObject({
+      ok: false,
+      terminal: "failed",
+      primaryCode: "invalid_request",
+    });
+  });
+
+  it("recalculates expired selections against trusted preflight time", () => {
+    const base = makeGenerationContext();
+    const context = {
+      ...base,
+      submission: {
+        ...base.submission,
+        pantrySelections: [{ pantryItemId: pantryId, priority: "prefer_use" as const }],
+      },
+      pantryItems: [
+        {
+          id: pantryId,
+          userId,
+          name: "牛乳",
+          quantity: 1,
+          unit: "本",
+          expiresOn: "2026-07-11",
+          expirationType: "use_by" as const,
+          openedState: "unopened" as const,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        },
+      ],
+      expiredPantryChecks: [],
+    };
+
+    expect(
+      validateGenerationPreflight(context, new Date("2026-07-11T15:00:00.000Z")),
+    ).toMatchObject({
+      ok: false,
+      terminal: "failed",
+      primaryCode: "expired_pantry_unconfirmed",
+    });
+  });
+
+  it("rejects pantry rows outside the exact selected set", () => {
+    const base = makeGenerationContext();
+    const context = {
+      ...base,
+      pantryItems: [
+        {
+          id: pantryId,
+          userId,
+          name: "牛乳",
+          quantity: 1,
+          unit: "本",
+          expiresOn: null,
+          expirationType: null,
+          openedState: null,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        },
+      ],
+    };
+
+    expect(validateGenerationPreflight(context, now)).toMatchObject({
+      ok: false,
+      terminal: "failed",
+      primaryCode: "invalid_request",
+    });
+  });
+
+  it("rebuilds unsupported medical text from the immutable submission", () => {
+    const base = makeGenerationContext();
+    const context = {
+      ...base,
+      submission: { ...base.submission, memo: "糖尿病の治療食" },
+      safety: { ...base.safety, requestText: "" },
+    };
+
+    expect(validateGenerationPreflight(context, now)).toMatchObject({
+      ok: false,
+      terminal: "failed",
+      primaryCode: "unsupported_diet",
+    });
+  });
+
+  it("rejects semantic manifest drift through the shared exact helper", () => {
+    vi.mocked(hasExactCurrentSafetyManifest).mockReturnValueOnce(false);
+    const base = makeGenerationContext();
+    const context = {
+      ...base,
+      safety: {
+        ...base.safety,
+        allergenDictionary: {
+          ...base.safety.allergenDictionary,
+          aliases: base.safety.allergenDictionary.aliases.map((alias, index) =>
+            index === 0
+              ? { ...alias, requiresLabelConfirmation: !alias.requiresLabelConfirmation }
+              : alias,
+          ),
+        },
+      },
+    };
+
+    expect(validateGenerationPreflight(context, now)).toMatchObject({
+      ok: false,
+      terminal: "failed",
+      primaryCode: "internal_error",
+    });
+  });
+
   it("exports a unique priority and keeps primary first", () => {
+    vi.mocked(hasExactCurrentSafetyManifest).mockReturnValueOnce(false);
     expect(new Set(generationPreflightIssuePriority).size).toBe(
       generationPreflightIssuePriority.length,
     );
     const base = makeGenerationContext();
-    const result = validateGenerationPreflight({
-      ...base,
-      submission: { ...base.submission, memo: "糖尿病の治療食", targetMemberIds: [] },
-      safety: { ...base.safety, dictionaryVersion: "obsolete" },
-    });
+    const result = validateGenerationPreflight(
+      {
+        ...base,
+        submission: { ...base.submission, memo: "糖尿病の治療食", targetMemberIds: [] },
+        safety: { ...base.safety, dictionaryVersion: "obsolete" },
+      },
+      now,
+    );
     expect(result).toMatchObject({
       ok: false,
       terminal: "failed",
@@ -324,6 +518,7 @@ describe("validateGenerationPreflight", () => {
   });
 
   it("returns deterministic failed internal_error for completeness permutations", () => {
+    vi.mocked(hasExactCurrentSafetyManifest).mockReturnValue(false);
     const base = makeGenerationContext();
     const variants = [
       { ...base.safety, dictionaryVersion: "obsolete" },
@@ -333,7 +528,7 @@ describe("validateGenerationPreflight", () => {
       },
       { ...base.safety, foodRuleVersion: "obsolete" },
     ];
-    expect(variants.map((safety) => validateGenerationPreflight({ ...base, safety }))).toEqual(
+    expect(variants.map((safety) => validateGenerationPreflight({ ...base, safety }, now))).toEqual(
       variants.map(() => ({
         ok: false,
         terminal: "failed",
@@ -390,7 +585,7 @@ describe("validateGenerationPreflight", () => {
       },
     };
 
-    expect(validateGenerationPreflight(context)).toMatchObject({
+    expect(validateGenerationPreflight(context, now)).toMatchObject({
       ok: false,
       terminal: "failed",
       primaryCode: "allergy_conflict",
@@ -430,7 +625,7 @@ describe("validateGenerationPreflight", () => {
       },
     };
 
-    expect(validateGenerationPreflight(context)).toEqual({
+    expect(validateGenerationPreflight(context, now)).toEqual({
       ok: false,
       terminal: "constraint_conflict",
       primaryCode: "allergen_pantry_conflict",
@@ -459,18 +654,21 @@ describe("validateGenerationPreflight", () => {
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
     }));
-    const result = validateGenerationPreflight({
-      ...base,
-      submission: {
-        ...base.submission,
-        avoidIngredients: ["牛乳"],
-        pantrySelections: pantryItems.map((item) => ({
-          pantryItemId: item.id,
-          priority: "must_use" as const,
-        })),
+    const result = validateGenerationPreflight(
+      {
+        ...base,
+        submission: {
+          ...base.submission,
+          avoidIngredients: ["牛乳"],
+          pantrySelections: pantryItems.map((item) => ({
+            pantryItemId: item.id,
+            priority: "must_use" as const,
+          })),
+        },
+        pantryItems,
       },
-      pantryItems,
-    });
+      now,
+    );
 
     expect(result).toMatchObject({ ok: false, terminal: "constraint_conflict" });
     if (!result.ok && result.terminal === "constraint_conflict") {
@@ -495,13 +693,16 @@ describe("validateGenerationPreflight", () => {
       }),
     ],
   ])("fails closed for %s completeness", (_case, mutateSafety) => {
+    vi.mocked(hasExactCurrentSafetyManifest).mockReturnValueOnce(false);
     const base = makeGenerationContext();
-    expect(validateGenerationPreflight({ ...base, safety: mutateSafety(base) })).toMatchObject({
-      ok: false,
-      terminal: "failed",
-      primaryCode: "internal_error",
-      issueCodes: ["internal_error"],
-    });
+    expect(validateGenerationPreflight({ ...base, safety: mutateSafety(base) }, now)).toMatchObject(
+      {
+        ok: false,
+        terminal: "failed",
+        primaryCode: "internal_error",
+        issueCodes: ["internal_error"],
+      },
+    );
   });
 
   it("keeps issue order, primary code, and terminal invariant under source permutation", () => {
@@ -549,17 +750,20 @@ describe("validateGenerationPreflight", () => {
         allergenIds: ["egg"],
       })),
     };
-    const first = validateGenerationPreflight({ ...base, submission, pantryItems, safety });
-    const permuted = validateGenerationPreflight({
-      ...base,
-      submission: {
-        ...submission,
-        mainIngredients: [...submission.mainIngredients].reverse(),
-        pantrySelections: [...submission.pantrySelections].reverse(),
+    const first = validateGenerationPreflight({ ...base, submission, pantryItems, safety }, now);
+    const permuted = validateGenerationPreflight(
+      {
+        ...base,
+        submission: {
+          ...submission,
+          mainIngredients: [...submission.mainIngredients].reverse(),
+          pantrySelections: [...submission.pantrySelections].reverse(),
+        },
+        pantryItems: [...pantryItems].reverse(),
+        safety: { ...safety, members: [...safety.members].reverse() },
       },
-      pantryItems: [...pantryItems].reverse(),
-      safety: { ...safety, members: [...safety.members].reverse() },
-    });
+      now,
+    );
 
     expect(permuted).toMatchObject({
       ok: first.ok,
