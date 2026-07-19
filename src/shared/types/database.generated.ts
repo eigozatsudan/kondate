@@ -188,7 +188,7 @@ export type Database = {
       generation_draft_submission_versions: {
         Row: {
           avoid_ingredients: string[]
-          budget_preference: string
+          budget_preference: string | null
           captured_at: string
           cuisine_genre: string
           draft_id: string
@@ -198,12 +198,12 @@ export type Database = {
           memo: string
           pantry_selections: Json
           target_member_ids: string[]
-          time_limit_minutes: number
+          time_limit_minutes: number | null
           user_id: string
         }
         Insert: {
           avoid_ingredients: string[]
-          budget_preference: string
+          budget_preference?: string | null
           captured_at?: string
           cuisine_genre: string
           draft_id: string
@@ -213,12 +213,12 @@ export type Database = {
           memo: string
           pantry_selections: Json
           target_member_ids: string[]
-          time_limit_minutes: number
+          time_limit_minutes?: number | null
           user_id: string
         }
         Update: {
           avoid_ingredients?: string[]
-          budget_preference?: string
+          budget_preference?: string | null
           captured_at?: string
           cuisine_genre?: string
           draft_id?: string
@@ -228,7 +228,7 @@ export type Database = {
           memo?: string
           pantry_selections?: Json
           target_member_ids?: string[]
-          time_limit_minutes?: number
+          time_limit_minutes?: number | null
           user_id?: string
         }
         Relationships: []
@@ -1461,6 +1461,23 @@ export type Database = {
           p_user_limit: number
         }
         Returns: Json
+      }
+      get_ai_generation_submission_snapshot: {
+        Args: { p_request_id: string; p_user_id: string }
+        Returns: {
+          avoid_ingredients: string[]
+          budget_preference: string
+          captured_at: string
+          cuisine_genre: string
+          draft_id: string
+          draft_revision: number
+          main_ingredients: string[]
+          meal_type: string
+          memo: string
+          pantry_selections: Json
+          target_member_ids: string[]
+          time_limit_minutes: number
+        }[]
       }
       get_current_safety_snapshot: {
         Args: { p_target_member_ids: string[]; p_user_id: string }

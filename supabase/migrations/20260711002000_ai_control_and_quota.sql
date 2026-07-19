@@ -6,8 +6,12 @@ create table private.generation_draft_submission_versions (
   main_ingredients text[] not null,
   cuisine_genre text not null check (cuisine_genre in ('japanese','western','chinese','any')),
   target_member_ids uuid[] not null,
-  time_limit_minutes smallint not null check (time_limit_minutes in (15,30,45)),
-  budget_preference text not null check (budget_preference in ('economy','standard')),
+  time_limit_minutes smallint check (
+    time_limit_minutes is null or time_limit_minutes in (15,30,45)
+  ),
+  budget_preference text check (
+    budget_preference is null or budget_preference in ('economy','standard')
+  ),
   avoid_ingredients text[] not null,
   memo text not null check (char_length(memo) <= 200),
   pantry_selections jsonb not null check (jsonb_typeof(pantry_selections) = 'array'),
@@ -632,6 +636,48 @@ begin
 end;
 $$;
 
+create or replace function public.get_ai_generation_submission_snapshot(
+  p_request_id uuid,
+  p_user_id uuid
+) returns table (
+  draft_id uuid,
+  draft_revision bigint,
+  meal_type text,
+  main_ingredients text[],
+  cuisine_genre text,
+  target_member_ids uuid[],
+  time_limit_minutes smallint,
+  budget_preference text,
+  avoid_ingredients text[],
+  memo text,
+  pantry_selections jsonb,
+  captured_at timestamptz
+) language sql stable security definer
+set search_path = pg_catalog, pg_temp
+as $$
+  select
+    snapshot.draft_id,
+    snapshot.draft_revision,
+    snapshot.meal_type,
+    snapshot.main_ingredients,
+    snapshot.cuisine_genre,
+    snapshot.target_member_ids,
+    snapshot.time_limit_minutes,
+    snapshot.budget_preference,
+    snapshot.avoid_ingredients,
+    snapshot.memo,
+    snapshot.pantry_selections,
+    snapshot.captured_at
+  from private.ai_generation_requests as request
+  join private.generation_draft_submission_versions as snapshot
+    on snapshot.draft_id = request.draft_id
+   and snapshot.user_id = request.user_id
+   and snapshot.draft_revision = request.draft_revision
+  where request.id = p_request_id
+    and request.user_id = p_user_id
+    and request.request_kind = 'new_menu'
+$$;
+
 revoke all on function private.persist_validated_menu(
   private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb
 ) from public,anon,authenticated,service_role;
@@ -645,6 +691,7 @@ revoke all on function public.finalize_ai_generation_failure(uuid, text, timesta
 revoke all on function public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) from public,anon,authenticated;
 revoke all on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) from public,anon,authenticated;
+revoke all on function public.get_ai_generation_submission_snapshot(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.cleanup_stale_ai_generations(timestamptz) to service_role;
 grant execute on function public.reserve_ai_generation(uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz) to service_role;
 grant execute on function public.reserve_ai_repair_call(uuid, integer, timestamptz) to service_role;
@@ -654,3 +701,4 @@ grant execute on function public.finalize_ai_generation_failure(uuid, text, time
 grant execute on function public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz) to service_role;
 grant execute on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) to service_role;
 grant execute on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) to service_role;
+grant execute on function public.get_ai_generation_submission_snapshot(uuid,uuid) to service_role;

@@ -1,5 +1,5 @@
 begin;
-select plan(50);
+select plan(60);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password,
@@ -44,6 +44,7 @@ select has_function('public'::name, 'reserve_ai_repair_call'::name);
 select has_function('public'::name, 'mark_ai_global_sent'::name);
 select has_function('public'::name, 'finalize_ai_generation_failure'::name);
 select has_function('public'::name, 'cleanup_stale_ai_generations'::name);
+select has_function('public'::name, 'get_ai_generation_submission_snapshot'::name);
 select ok(
   to_regprocedure(
     'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
@@ -112,6 +113,24 @@ select ok(
     'EXECUTE'
   ),
   'only service_role can execute the interim reservation RPC'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    to_regprocedure('public.get_ai_generation_submission_snapshot(uuid,uuid)'),
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    to_regprocedure('public.get_ai_generation_submission_snapshot(uuid,uuid)'),
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    to_regprocedure('public.get_ai_generation_submission_snapshot(uuid,uuid)'),
+    'EXECUTE'
+  ),
+  'only service_role can read an immutable generation submission snapshot'
 );
 select table_privs_are('private', 'ai_generation_requests', 'authenticated', array[]::text[]);
 select is(private.ai_jst_day('2026-07-10 14:59:59+00'), date '2026-07-10');
@@ -327,6 +346,50 @@ select is(
   1::bigint,
   'a new-menu request stores the accepted draft revision'
 );
+select is(
+  (select jsonb_build_object(
+    'draft_id', draft_id,
+    'draft_revision', draft_revision,
+    'meal_type', meal_type,
+    'main_ingredients', main_ingredients,
+    'cuisine_genre', cuisine_genre,
+    'target_member_ids', target_member_ids,
+    'time_limit_minutes', time_limit_minutes,
+    'budget_preference', budget_preference,
+    'avoid_ingredients', avoid_ingredients,
+    'memo', memo,
+    'pantry_selections', pantry_selections,
+    'captured_at', captured_at
+  ) from public.get_ai_generation_submission_snapshot(
+    (select id from private.ai_generation_requests
+      where idempotency_key = '20000000-0000-4000-8000-000000000001'),
+    '10000000-0000-4000-8000-000000000001'
+  )),
+  jsonb_build_object(
+    'draft_id', '30000000-0000-4000-8000-000000000001'::uuid,
+    'draft_revision', 1,
+    'meal_type', 'dinner',
+    'main_ingredients', array['鶏肉'],
+    'cuisine_genre', 'japanese',
+    'target_member_ids', array['10000000-0000-4000-8000-000000000001'::uuid],
+    'time_limit_minutes', 30,
+    'budget_preference', 'standard',
+    'avoid_ingredients', array[]::text[],
+    'memo', '',
+    'pantry_selections', '[]'::jsonb,
+    'captured_at', '2026-07-10 15:00:00+00'::timestamptz
+  ),
+  'the typed RPC returns the exact immutable submission for its request and owner'
+);
+select is(
+  (select count(*) from public.get_ai_generation_submission_snapshot(
+    (select id from private.ai_generation_requests
+      where idempotency_key = '20000000-0000-4000-8000-000000000001'),
+    '10000000-0000-4000-8000-000000000002'
+  )),
+  0::bigint,
+  'the snapshot RPC returns no row for a wrong owner'
+);
 
 update public.generation_drafts
 set deleted_at = '2026-07-10 15:00:00.500+00'
@@ -425,6 +488,75 @@ select lives_ok($$
 $$);
 select is((select reserved_count from private.ai_user_daily_usage
   where user_id = '10000000-0000-4000-8000-000000000001'), 0);
+
+update public.generation_drafts
+set meal_type = 'breakfast', main_ingredients = array['ごはん'], cuisine_genre = 'any',
+    target_member_ids = array['10000000-0000-4000-8000-000000000002'::uuid],
+    time_limit_minutes = null, budget_preference = null, avoid_ingredients = array[]::text[],
+    memo = '', pantry_selections = '[]'::jsonb, revision = 3, deleted_at = null
+where id = '30000000-0000-4000-8000-000000000002';
+select is(
+  public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000002',
+    '20000000-0000-4000-8000-000000000003',
+    'new_menu', '30000000-0000-4000-8000-000000000002',
+    3, 5, 45, 180, '2026-07-10 15:10:00+00'
+  )->>'status',
+  'processing',
+  'a new-menu reservation accepts nullable optional submission fields'
+);
+select is(
+  (select jsonb_build_object(
+    'time_limit_minutes', time_limit_minutes,
+    'budget_preference', budget_preference
+  ) from public.get_ai_generation_submission_snapshot(
+    (select id from private.ai_generation_requests
+      where idempotency_key = '20000000-0000-4000-8000-000000000003'),
+    '10000000-0000-4000-8000-000000000002'
+  )),
+  jsonb_build_object('time_limit_minutes', null, 'budget_preference', null),
+  'nullable optional submission fields round-trip through the typed RPC'
+);
+select throws_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_member_ids,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', array['10000000-0000-4000-8000-000000000002'::uuid], 20,
+    'standard', array[]::text[], '', '[]'::jsonb
+  )
+$$, '23514', null, 'the immutable snapshot rejects an invalid time limit');
+select throws_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_member_ids,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000005',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', array['10000000-0000-4000-8000-000000000002'::uuid], 15,
+    'luxury', array[]::text[], '', '[]'::jsonb
+  )
+$$, '23514', null, 'the immutable snapshot rejects an invalid budget preference');
+select is(
+  (select count(*) from information_schema.routine_privileges
+    where routine_schema = 'public'
+      and routine_name = 'get_ai_generation_submission_snapshot'
+      and grantee in ('PUBLIC', 'anon', 'authenticated')),
+  0::bigint,
+  'the snapshot RPC has no broad routine grants'
+);
+select is(
+  (select count(*) from information_schema.routines
+    where routine_schema = 'public'
+      and routine_name = 'get_ai_generation_submission_snapshot'
+      and security_type = 'DEFINER'),
+  1::bigint,
+  'the snapshot RPC is a security-definer owner boundary'
+);
 
 select * from finish();
 rollback;

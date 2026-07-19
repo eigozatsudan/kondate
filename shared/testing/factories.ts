@@ -1,6 +1,8 @@
 import type { GeneratedMenu, ValidatedMenu } from "../contracts/generation.js";
 import type { CurrentSafetyContext } from "../safety/context.js";
+import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.js";
 import { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
+import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
 import type { GenerationContext } from "../safety/generation-context.js";
 
 export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
@@ -136,8 +138,23 @@ export function makeCurrentSafetyContext(
         unsupportedDietKinds: [],
       },
     ],
-    allergenDictionary: { version: "jp-caa-2026-04.v1", catalog: [], aliases: [] },
-    foodSafetyRules: [],
+    allergenDictionary: {
+      version: "jp-caa-2026-04.v1",
+      catalog: currentAllergenCatalogV1.map((entry) => ({
+        id: entry.id,
+        displayName: entry.displayName,
+        catalogVersion: entry.catalogVersion,
+      })),
+      aliases: currentAllergenCatalogV1.map((entry) => ({
+        allergenId: entry.id,
+        alias: entry.displayName,
+        normalizedAlias: entry.displayName,
+        aliasKind: "direct" as const,
+        requiresLabelConfirmation: false,
+        dictionaryVersion: entry.catalogVersion,
+      })),
+    },
+    foodSafetyRules: [...currentFoodSafetyRulesV1],
   };
   return { ...base, ...overrides };
 }
