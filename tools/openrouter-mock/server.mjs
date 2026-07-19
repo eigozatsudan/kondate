@@ -62,6 +62,65 @@ const jsonResponse = (response, status, payload) => {
   response.end(JSON.stringify(payload));
 };
 
+const readRequestBody = (request, response) =>
+  new Promise((resolve, reject) => {
+    const chunks = [];
+    let received = 0;
+    let settled = false;
+    let oversized = false;
+
+    const cleanup = () => {
+      request.off("data", onData);
+      request.off("end", onEnd);
+      request.off("error", onError);
+      request.off("aborted", onAborted);
+      response.off("close", discardOversizedRequest);
+    };
+    const settle = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const discardOversizedRequest = () => {
+      request.destroy();
+      settle(resolve, { oversized: true, body: null });
+    };
+    const onData = (chunk) => {
+      received += chunk.length;
+      if (received > maximumBodyBytes) {
+        oversized = true;
+        request.pause();
+        response.shouldKeepAlive = false;
+        response.writeHead(413, { connection: "close" });
+        response.once("close", discardOversizedRequest);
+        response.end(discardOversizedRequest);
+        return;
+      }
+      chunks.push(chunk);
+    };
+    const onEnd = () => settle(resolve, { oversized: false, body: Buffer.concat(chunks) });
+    const onError = (error) => {
+      if (oversized) {
+        discardOversizedRequest();
+      } else {
+        settle(reject, error);
+      }
+    };
+    const onAborted = () => {
+      if (oversized) {
+        discardOversizedRequest();
+      } else {
+        settle(reject, new Error("request aborted"));
+      }
+    };
+
+    request.on("data", onData);
+    request.once("end", onEnd);
+    request.once("error", onError);
+    request.once("aborted", onAborted);
+  });
+
 async function handleRequest(request, response) {
   if (request.method === "GET" && request.url === "/health") {
     jsonResponse(response, 200, { status: "ok" });
@@ -84,25 +143,12 @@ async function handleRequest(request, response) {
     return;
   }
 
-  const chunks = [];
-  let received = 0;
-  let oversized = false;
-  for await (const chunk of request) {
-    received += chunk.length;
-    if (received > maximumBodyBytes) {
-      oversized = true;
-    } else {
-      chunks.push(chunk);
-    }
-  }
-  if (oversized) {
-    response.writeHead(413).end();
-    return;
-  }
+  const requestBody = await readRequestBody(request, response);
+  if (requestBody.oversized) return;
 
   let body;
   try {
-    body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    body = JSON.parse(requestBody.body.toString("utf8"));
   } catch {
     jsonResponse(response, 400, { error: { message: "invalid json" } });
     return;

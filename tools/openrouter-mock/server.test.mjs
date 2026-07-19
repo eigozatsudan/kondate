@@ -45,6 +45,44 @@ const send = async (origin, options = {}) =>
         : (options.body ?? JSON.stringify(validRequest(options))),
   });
 
+const sendUnfinishedOversizedBody = (origin) =>
+  new Promise((resolve, reject) => {
+    const url = new URL(origin);
+    let responseReceived = false;
+    const request = requestHttp(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: "/api/v1/chat/completions",
+        method: "POST",
+        headers: {
+          Authorization: "Bearer local-mock-key",
+          "Content-Type": "application/json",
+          "Transfer-Encoding": "chunked",
+        },
+      },
+      (response) => {
+        responseReceived = true;
+        response.resume();
+        response.once("end", () => {
+          clearTimeout(timeout);
+          resolve({ status: response.statusCode, connection: response.headers.connection });
+        });
+      },
+    );
+    const timeout = setTimeout(() => {
+      request.destroy();
+      reject(new Error("oversized unfinished request did not receive a prompt response"));
+    }, 750);
+    request.once("error", (error) => {
+      if (!responseReceived) {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
+    request.write("x".repeat(1_000_001));
+  });
+
 afterEach(async () => {
   if (server) {
     await new Promise((resolve, reject) =>
@@ -114,6 +152,38 @@ describe("strict chat completion protocol", () => {
     const origin = await startServer();
     const response = await send(origin, { body: `{"padding":"${"x".repeat(1_000_001)}"}` });
     expect(response.status).toBe(413);
+  });
+
+  it("closes parallel oversized unfinished streams after flushing 413", async () => {
+    const origin = await startServer();
+    const unhandledRejections = [];
+    const onUnhandledRejection = (reason) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "error").mockImplementation(() => {}),
+      vi.spyOn(process.stdout, "write").mockImplementation(() => true),
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true),
+    ];
+
+    try {
+      const results = await Promise.all([
+        sendUnfinishedOversizedBody(origin),
+        sendUnfinishedOversizedBody(origin),
+      ]);
+      expect(results).toEqual([
+        { status: 413, connection: "close" },
+        { status: 413, connection: "close" },
+      ]);
+      const health = await fetch(`${origin}/health`);
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ status: "ok" });
+      expect(unhandledRejections).toEqual([]);
+      expect(spies.flatMap((spy) => spy.mock.calls.flat())).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      for (const spy of spies) spy.mockRestore();
+    }
   });
 
   it.each(["unknown", "__proto__", "constructor"])(
