@@ -2553,6 +2553,7 @@ git commit -m "feat: 厳格なOpenRouter生成クライアントを追加"
 - Modify: `tests/tooling/compose.test.mjs`
 - Modify: `.env.example`
 - Modify: `scripts/generate-local-secrets.mjs`
+- Modify: `eslint.config.js`
 
 **Interfaces:**
 - Consumes: the exact OpenRouter request made by `sendMenuGeneration()`.
@@ -2688,7 +2689,7 @@ export const scenarios = Object.freeze({
 });
 ```
 
-Recursively freeze the source fixtures and return a `structuredClone` for every response so one test/request cannot mutate a later response. `invalid-then-success` is a server-only derived scenario, not a stored fixture key. Add `scenarios.d.mts` with exact keys: only `malformed-json` is `string`; every other value is `AiGenerationResponse`. It exists only to make the checked TypeScript import explicit.
+Recursively freeze the source fixtures and return a `structuredClone` for every response so one test/request cannot mutate a later response. `invalid-then-success` is a server-only derived scenario, not a stored fixture key. Add `scenarios.d.mts` with exact keys: only `malformed-json` is `string`; every other value is `AiGenerationResponse`. It exists only to make the checked TypeScript import explicit. Keep the typed ESLint project block on `ts`/`tsx`; because this declaration lives under `tools/` outside application tsconfig includes, add only `**/*.d.mts` to the existing `disableTypeChecked` Node-file block. Do not broaden all `.mts` files into project service, and do not use an inline disable comment.
 
 Create `tools/openrouter-mock/fixtures/duplicate-menu.json` as the owned Plan 4 extension point:
 
@@ -2834,7 +2835,7 @@ Run the nine commands from `AGENTS.md` section 8 in order and independently. Tas
 - [ ] **Step 7 (2–5 min): Commit the deterministic external boundary**
 
 ```bash
-git add tools/openrouter-mock netlify/functions/_shared/openrouter-mock.test.ts compose.yaml tests/tooling/compose.test.mjs .env.example scripts/generate-local-secrets.mjs
+git add tools/openrouter-mock netlify/functions/_shared/openrouter-mock.test.ts compose.yaml tests/tooling/compose.test.mjs .env.example scripts/generate-local-secrets.mjs eslint.config.js
 git commit -m "test: 敵対的なOpenRouterモックを追加"
 ```
 
