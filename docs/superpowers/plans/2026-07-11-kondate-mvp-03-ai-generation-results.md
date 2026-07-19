@@ -2843,6 +2843,8 @@ git commit -m "test: 敵対的なOpenRouterモックを追加"
 
 **Files:**
 - Modify: `shared/testing/factories.ts`
+- Modify: `netlify/functions/_shared/current-safety.test.ts`
+- Modify: `netlify/functions/_shared/current-safety.ts`
 - Modify: `supabase/migrations/20260711002000_ai_control_and_quota.sql`
 - Modify: `supabase/tests/database/ai_control_and_quota.test.sql`
 - Regenerate: `src/shared/types/database.generated.ts`
@@ -2853,7 +2855,7 @@ git commit -m "test: 敵対的なOpenRouterモックを追加"
 
 **Interfaces:**
 - Consumes: Task 2 reservation's immutable `private.generation_draft_submission_versions` row, `loadCurrentSafetyContext(admin,userId,targetMemberIds)`, `plannerSubmissionSchema`, `pantryItemSchema`, `privacyNoticeVersion`, `detectUnsupportedMedicalRequest()`, `getJstDateKey()`, the user-scoped client, and admin client. It never reads `public.generation_drafts` after reservation.
-- Produces: service-role-only `public.get_ai_generation_submission_snapshot(uuid,uuid)`, canonical `GenerationContext`, `loadGenerationContext(user,requestId,request,now?)`, `validateTransientChecks(...)`, Task 8-local `GenerationPreflightConflict`, closed `GenerationPreflightResult`, `validateGenerationPreflight(context)`, `GenerationPromptDto`, and `buildGenerationMessages(context)`.
+- Produces: service-role-only `public.get_ai_generation_submission_snapshot(uuid,uuid)`, shared `hasExactCurrentSafetyManifest(context)`, canonical `GenerationContext`, `loadGenerationContext(user,requestId,request,now?)`, `validateTransientChecks(...)`, Task 8-local `GenerationPreflightConflict`, closed `GenerationPreflightResult`, `validateGenerationPreflight(context,now)`, `GenerationPromptDto`, and `buildGenerationMessages(context)`.
 - Plan 2's locked `CurrentSafetyMember.anonymousRef` and
   `GenerationContext.targetMembers[].anonymousRef` remain canonical. Only
   `GenerationMemberPreference.anonymousMemberRef` uses the longer field, mapped
@@ -2867,7 +2869,9 @@ git commit -m "test: 敵対的なOpenRouterモックを追加"
 In pgTAP, first prove that a valid `new_menu` reservation captures a typed immutable
 submission and that `public.get_ai_generation_submission_snapshot(request_id,user_id)`
 returns it only to `service_role`. `anon` and `authenticated` have no execute privilege;
-a wrong user/request pair returns zero rows. `time_limit_minutes` and
+execute the RPC under each actual role and assert permission denial, not only
+`has_function_privilege`. A wrong owner, wrong request ID, or mismatched request/owner
+pair returns zero rows. `time_limit_minutes` and
 `budget_preference` are nullable in the private snapshot because both are optional in
 `plannerSubmissionSchema`; their CHECK constraints remain closed when non-null. A
 reservation with both values null must round-trip successfully, while an invalid enum
@@ -2890,25 +2894,32 @@ The TypeScript suites then cover all of the following before implementation:
   the specific closed generation issue code rather than collapsing into a generic DB
   or safety-context error;
 - consent is a loader-owned current-version gate: the loader requires the current
-  `privacyNoticeVersion` row and fails with `consent_required` before it constructs a
-  context. Do not add consent state/version to canonical `GenerationContext` and do not
-  repeat this check inside the pure preflight;
+  `privacyNoticeVersion` row whose `user_id` exactly equals the authenticated user and
+  fails with `consent_required` before it constructs a context. Do not add consent
+  state/version to canonical `GenerationContext` and do not repeat this check inside
+  the pure preflight;
 - `validateTransientChecks(checks,selectedIds,expiredSelectedIds,now)` accepts exactly
   one check for every and only currently expired selected item. It rejects duplicate
   checks, missing checks, non-selected or non-expired extras, invalid/future timestamps,
   a different JST day, duplicate selections, and day-boundary expiry;
-- `validateGenerationPreflight(context)` rejects every deterministic provider-
+- `validateGenerationPreflight(context,now)` rejects every deterministic provider-
   independent condition available in canonical context before send: target/member
-  mismatch, incomplete allergy or unsupported-diet state, incomplete catalog/rule
-  versions, missing/foreign/duplicate/oversized pantry selections, invalid transient
-  checks, registered-allergen conflicts against every main ingredient and every
-  selected pantry item using direct/derived/processed alias rules, avoid-vs-main and
-  avoid-vs-`must_use` conflicts, and unsupported medical text;
+  mismatch, incomplete allergy or unsupported-diet state, incomplete catalog/alias/rule
+  manifests, missing/foreign/duplicate/oversized pantry selections, invalid transient
+  checks recalculated against `now`, registered-allergen conflicts against every main
+  ingredient and every selected pantry item using direct/derived/processed alias rules,
+  avoid-vs-main and avoid-vs-`must_use` conflicts, and unsupported medical text
+  re-derived from `submission` rather than trusting `safety.requestText`;
+- adversarial tests cover zero/unequal/duplicate/reordered submission, target, safety,
+  and preference member sets; wrong/gapped/duplicate `member_N` refs; missing and extra
+  pantry rows; expiry changes after loading; stale/future/wrong-JST/extra checks;
+  consent-owner mismatch; and every semantic catalog/alias/rule field drift;
 - prompt refs follow submission selection order even when the pantry query returns the
   rows in reverse order.
 - `targetMembers[].anonymousRef`, `safety.members[].anonymousRef`, and
   `memberPreferences[].anonymousMemberRef` are paired explicitly in tests; the SQL
-  `p_target_members` parser continues to consume `anonymousRef`.
+  `p_target_members` parser continues to consume `anonymousRef`. The prompt builder
+  independently fails closed on any ID/ref/length pairing mismatch before serialization.
 
 For the prompt test, recursively assert the exact key allowlist at every DTO level and
 insert distinct structural/persistence canaries into user ID, request/draft/member/
@@ -2976,9 +2987,10 @@ dislikes, and selected pantry rows; calls the locked
 prompt boundary.
 
 The current-consent lookup is complete in this loader. It requires the exact current
-`privacyNoticeVersion` and returns `consent_required` before context construction when
-missing or stale. Canonical `GenerationContext` gains no consent field, and the pure
-preflight never queries or rechecks consent.
+`privacyNoticeVersion` and an exact `user_id === user.userId` owner match, and returns
+`consent_required` before context construction when missing, stale, or mismatched.
+Canonical `GenerationContext` gains no consent field, and the pure preflight never
+queries or rechecks consent.
 
 Keep the locked `GenerationContext.targetMembers[].anonymousRef` field and the SQL
 `p_target_members[].anonymousRef` parser unchanged. Map that value explicitly into
@@ -3005,7 +3017,14 @@ export const generationPreflightIssuePriority = [
 ] as const;
 ```
 
-`validateGenerationPreflight(context)` accumulates a set, returns each code once in
+Export `hasExactCurrentSafetyManifest(context)` from `current-safety.ts` and reuse it
+both in the current-safety RPC boundary and preflight. It compares exact-set signatures
+for every semantic catalog field (`id`, display name, regulatory class/version), alias
+field (`allergenId`, alias, normalized alias, kind, label-confirmation flag, version),
+and rule field (ID, age bands, terms, kind, required tag, user message, version). Do not
+maintain a weaker second manifest checker in `generation-context.ts`.
+
+`validateGenerationPreflight(context,now)` accumulates a set, returns each code once in
 that canonical order regardless of member/pantry/input order, and places the first code
 in `primaryCode`. Dictionary/rule version, allergen catalog, or rule completeness
 mismatches are server-safety completeness failures and add
@@ -3038,6 +3057,14 @@ cannot represent an incomplete member,
 the loader's preceding strict household-status projection raises the corresponding
 closed code; this is part of the same pre-send boundary and does not change
 `CurrentSafetyContext`.
+
+The preflight requires equal nonzero lengths across submission target IDs, target
+members, safety members, and preferences; unique ordered IDs; and exact canonical
+`member_${index + 1}` equality for both anonymous-ref fields. Selected pantry IDs and
+`pantryItems` are an exact set, so missing and extra rows both fail. Using trusted
+`now`, it recalculates the currently expired selected IDs from pantry dates and reruns
+the exact transient-check validation, including future/JST/extra rejection. Medical
+scope text is rebuilt directly from submission main/avoid/memo values.
 
 Use the shared allergen normalizer and all reviewed alias kinds. A registered match in
 any main ingredient maps to `failed/allergy_conflict`; a match in any selected pantry
@@ -3165,7 +3192,7 @@ UUID-shaped free text round-trips exactly.
 - [ ] **Step 7 (2–5 min): Commit immutable current-state generation input**
 
 ```bash
-git add shared/testing/factories.ts supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tests/database/ai_control_and_quota.test.sql src/shared/types/database.generated.ts netlify/functions/_shared/generation-context.ts netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.ts netlify/functions/_shared/generation-prompt.test.ts
+git add shared/testing/factories.ts supabase/migrations/20260711002000_ai_control_and_quota.sql supabase/tests/database/ai_control_and_quota.test.sql src/shared/types/database.generated.ts netlify/functions/_shared/current-safety.ts netlify/functions/_shared/current-safety.test.ts netlify/functions/_shared/generation-context.ts netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.ts netlify/functions/_shared/generation-prompt.test.ts
 git commit -m "feat: 匿名の現行生成コンテキストを追加"
 ```
 
@@ -3180,7 +3207,7 @@ git commit -m "feat: 匿名の現行生成コンテキストを追加"
 **Interfaces:**
 - Consumes: Tasks 1–8, including Task 1's canonical `GenerationCommand` union and Task 8's immutable-snapshot
   `loadGenerationContext(user,requestId,request,now?)` and complete
-  `validateGenerationPreflight(context)`, plus Plan 2's `validateGeneratedMenu()` and
+  `validateGenerationPreflight(context,now)`, plus Plan 2's `validateGeneratedMenu()` and
   authoritative fingerprint contract.
 - Produces: `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, `toGenerationStatus(record,idempotencyKey)`, and the sole provider-local-to-internal boundary `materializeAiGeneratedMenu(output,context,uuid)`. Plan 4 extends the Task 1 command union and reuses the same reservation, repair, materialization, validation, and persistence path.
 
@@ -3355,7 +3382,7 @@ export type GenerationDependencies = {
     requestId: string,
     deadlineAtMonotonicMs: number,
   ): Promise<{ generationContext: GenerationContext }>;
-  validatePreflight(context: GenerationContext): GenerationPreflightResult;
+  validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
   buildMessages(context: GenerationContext): readonly OpenRouterMessage[];
   callOpenRouter(input: Parameters<typeof sendMenuGeneration>[0]): Promise<OpenRouterGenerationResult>;
   now(): Date;
@@ -3495,7 +3522,7 @@ export async function runGeneration(
 
   let preflight: GenerationPreflightResult;
   try {
-    preflight = deps.validatePreflight(context);
+    preflight = deps.validatePreflight(context, deps.now());
   } catch {
     return toGenerationStatus(
       await deps.repository.fail(requestId, "internal_error", null),
@@ -3640,6 +3667,11 @@ export async function runGeneration(
   return toGenerationStatus(completed, key);
 }
 ```
+
+`runGeneration` invokes `deps.validatePreflight(generationContext,deps.now())` exactly
+once before prompt construction. The trusted dependency clock is the sole preflight
+time source; do not call `new Date()` inside preflight or reuse the loader's earlier
+timestamp because pantry expiry and confirmation validity may change while queued.
 
 Only `GenerationMaterializationError.issues` may enter the existing `{ok:false,issues}` validation shape. Guard every application operation after a successful reservation—including prompt construction, materialization, validation, conflict projection, and success finalization—so an unexpected exception attempts `repository.fail(...,"internal_error",null)` and cannot silently leave a processing request. Tests inject failures at each boundary and prove no exception text enters a repair prompt or response. A transport failure of the terminal `repository.fail` itself may still reject because no second durable channel exists; do not falsely map that database outage to a completed status. `invalid_ai_response` from Task 6, materialization failures, and deterministic validation failures all share the same single repair budget. Provider unavailability and timeout never repair. If the first model ID is known, exclude it; if the malformed envelope did not expose a model ID, still permit only the one reserved repair without inventing an ID. A repaired response is terminal after its one materialize/validate pass and cannot reserve a third send.
 
@@ -4914,7 +4946,7 @@ git commit -m "test: 復旧可能なAI献立生成を検証"
 - `GenerationContext` is imported from `shared/safety/generation-context.ts`. The server loader returns that exact type; there is no second context with the same name.
 - Task 8 owns the immutable submission-snapshot loader, exact transient-check set,
   recursive prompt allowlist/escaping, and complete
-  `validateGenerationPreflight(context)`. Task 15 only hardens those existing
+  `validateGenerationPreflight(context,now)`. Task 15 only hardens those existing
   boundaries for command HMAC, final deadline/accounting, and current-safety locking;
   it does not create or defer them. `runGeneration()` executes preflight before prompt
   construction and `repository.markSent`. Final success re-locks the current
@@ -5783,7 +5815,7 @@ it("runs every deterministic preflight before the first sent transition", async 
       order.push("load");
       return unsafeUnconfirmedExecutionContext();
     },
-    validatePreflight: (context) => { order.push("preflight"); return validateGenerationPreflight(context); },
+    validatePreflight: (context, now) => { order.push("preflight"); return validateGenerationPreflight(context, now); },
     repository: makeRepository({ markSent: vi.fn(async () => { order.push("sent"); }) }),
   });
   const result = await runGeneration(deps, newMenuCommand());
@@ -6158,7 +6190,7 @@ export type GenerationDependencies = {
     command: GenerationCommand, requestId: string,
     deadlineAtMonotonicMs: number,
   ): Promise<GenerationExecutionContext>;
-  validatePreflight(context: GenerationContext): GenerationPreflightResult;
+  validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
   buildMessages(context: GenerationContext): readonly OpenRouterMessage[];
   repository: GenerationRepository;
   callOpenRouter: typeof sendMenuGeneration;
@@ -6388,13 +6420,14 @@ pgTAP runs missing, foreign, stale, and concurrent-save cases and snapshots ever
 
 `createGenerationRepository(user).reserve(command)` parses the canonical command, computes the HMAC with `getServerEnv().generationIntegrity.requestHmacKey`, and passes only the HMAC/version plus typed non-free-text columns to the RPC. It never passes the raw command/body or canonical string. Map the database mismatch to the standard non-retryable `HttpError(409, "idempotency_payload_mismatch", "同じ操作番号で異なる内容は送信できません。最初からやり直してください。")`; never convert it into a ledger failure or retry it. The recovery controller enters its terminal request-conflict branch, offers an explicit fresh-start action, and removes the mismatched local pending command only when that action is chosen. Same-HMAC replay returns before HMAC-independent context loading and does not require the custom reason to be recoverable from the ledger.
 
-Harden Task 8's existing `validateGenerationPreflight(context)` without replacing its
+Harden Task 8's existing `validateGenerationPreflight(context,now)` without replacing its
 signature or moving any check later. Current consent remains exclusively the Task 8
 loader-owned current-version gate and is not added to canonical context or pure
 preflight. The provider-independent preflight set remains: complete/owned target
 members; allergy registered/non-empty, no unconfirmed or unmapped custom allergy; no
-unsupported diet; current catalog/rule versions; selected pantry ownership; exact
-expired-selected checks bound to `context.idempotencyKey` and current JST date;
+unsupported diet; exact current catalog/alias/rule semantic manifests; exact selected
+pantry set with no missing or extra rows; exact expired-selected checks recalculated
+from trusted `now`, bound to `context.idempotencyKey` and current JST date;
 registered-allergen matching against every main and selected pantry item using all
 reviewed alias kinds; avoid-vs-main and avoid-vs-`must_use`; medical-scope text; and
 duplicate/oversized selections. Preserve Task 8's explicit unique
@@ -6402,6 +6435,14 @@ duplicate/oversized selections. Preserve Task 8's explicit unique
 failed/constraint terminal projection. Add HMAC/deadline/accounting assertions around
 this boundary; do not create a second preflight implementation or describe it as
 deferred work.
+
+The hardened boundary requires equal nonzero submission/target/safety/preference member
+lengths, unique ordered IDs, and exact `member_N` refs; rebuilds medical text from the
+submission; and reuses Task 8's exported `hasExactCurrentSafetyManifest` rather than a
+weaker manifest check. `buildGenerationMessages` independently rejects every member
+ID/ref/length mismatch. Adversarial tests mutate every catalog, alias, and rule semantic
+field; add/remove/reorder/duplicate members and pantry rows; advance `now` across expiry
+and JST boundaries; and prove prompt construction, `markSent`, and fetch remain absent.
 
 Dependency construction is also the configuration preflight: `parseServerEnv()` must have accepted all four exact `releaseQuota` literals before `createGenerationDeps()` can build a repository. Repository calls pass `releaseQuota.userDailySuccessLimit`; they never accept request/body overrides or fall back to a response-provided limit. SQL rejects a non-5 legacy success-limit argument before idempotency lookup, and the attempt/window transitions use the locked 12/4/600 literals.
 
@@ -6418,7 +6459,7 @@ const execution = await deps.loadExecutionContext(
 const context = execution.generationContext;
 let preflight: GenerationPreflightResult;
 try {
-  preflight = deps.validatePreflight(context);
+  preflight = deps.validatePreflight(context, deps.now());
 } catch {
   return toGenerationStatus(await deps.repository.failBeforeSend(
     reservation.requestId, "internal_error"), key);
