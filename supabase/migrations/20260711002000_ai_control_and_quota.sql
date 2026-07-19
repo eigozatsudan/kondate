@@ -391,6 +391,249 @@ begin
 end;
 $$;
 
+create or replace function private.persist_validated_menu(
+  p_request private.ai_generation_requests,
+  p_menu jsonb,
+  p_preference_snapshot jsonb,
+  p_safety_snapshot jsonb,
+  p_safety_fingerprint text,
+  p_allergen_version text,
+  p_food_rule_version text,
+  p_target_members jsonb,
+  p_expired_checks jsonb
+) returns uuid language plpgsql set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_menu_id uuid := (p_menu->>'menuId')::uuid;
+  v_dish jsonb;
+  v_item jsonb;
+  v_step jsonb;
+  v_timeline jsonb;
+  v_adaptation jsonb;
+  v_action jsonb;
+  v_action_position bigint;
+  v_label jsonb;
+  v_usage jsonb;
+  v_checked_at timestamptz;
+begin
+  insert into public.menus(
+    id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
+    preference_snapshot,safety_snapshot,safety_fingerprint,
+    allergen_dictionary_version,food_safety_rule_version,output_schema_version,
+    derivation_group_id,parent_menu_id,change_reason,change_reason_custom
+  ) values (
+    v_menu_id,p_request.user_id,p_menu->>'mealType',p_menu->>'cuisineGenre',
+    (p_menu->>'servings')::integer,(p_menu->>'totalElapsedMinutes')::integer,
+    p_preference_snapshot,p_safety_snapshot,p_safety_fingerprint,
+    p_allergen_version,p_food_rule_version,p_menu->>'schemaVersion',
+    v_menu_id,null,null,null
+  );
+
+  for v_item in select value from jsonb_array_elements(p_target_members) loop
+    insert into public.menu_target_members(
+      menu_id,user_id,household_member_id,household_member_user_id,
+      anonymous_ref,member_display_name_snapshot
+    ) values (
+      v_menu_id,p_request.user_id,(v_item->>'householdMemberId')::uuid,p_request.user_id,
+      v_item->>'anonymousRef',v_item->>'displayNameSnapshot'
+    );
+  end loop;
+
+  for v_usage in select value from jsonb_array_elements(p_menu->'pantryUsage') loop
+    select nullif(check_->>'checkedAt','')::timestamptz
+      into v_checked_at
+    from jsonb_array_elements(p_expired_checks) as checks(check_)
+    where check_->>'pantryItemId'=v_usage->>'pantryItemId'
+    limit 1;
+    insert into public.generation_pantry_selections(
+      id,menu_id,user_id,pantry_item_id,pantry_name_snapshot,priority,idempotency_key,
+      expired_item_checked_at,expired_item_check_jst_date,usage_status,
+      planned_quantity,inventory_quantity_snapshot,shortage_quantity,unit,unused_reason
+    ) values (
+      (v_usage->>'selectionId')::uuid,v_menu_id,p_request.user_id,
+      nullif(v_usage->>'pantryItemId','')::uuid,v_usage->>'pantryItemName',v_usage->>'priority',
+      p_request.idempotency_key,
+      v_checked_at,
+      (v_checked_at at time zone 'Asia/Tokyo')::date,
+      v_usage->>'usageStatus',nullif(v_usage->>'plannedQuantity','')::numeric,
+      nullif(v_usage->>'inventoryQuantity','')::numeric,
+      nullif(v_usage->>'shortageQuantity','')::numeric,nullif(v_usage->>'unit',''),
+      nullif(v_usage->>'unusedReason','')
+    );
+  end loop;
+
+  for v_dish in select value from jsonb_array_elements(p_menu->'dishes') loop
+    insert into public.dishes(id,menu_id,user_id,role,position,name,description,cooking_time_minutes)
+    values((v_dish->>'id')::uuid,v_menu_id,p_request.user_id,v_dish->>'role',
+      (v_dish->>'position')::integer,v_dish->>'name',v_dish->>'description',
+      (v_dish->>'cookingTimeMinutes')::integer);
+    for v_item in select value from jsonb_array_elements(v_dish->'ingredients') loop
+      insert into public.dish_ingredients(
+        id,menu_id,dish_id,user_id,position,name,quantity_value,quantity_text,unit,
+        store_section,pantry_selection_id,label_confirmation_required
+      ) values (
+        (v_item->>'id')::uuid,v_menu_id,(v_dish->>'id')::uuid,p_request.user_id,
+        (v_item->>'position')::integer,v_item->>'name',nullif(v_item->>'quantityValue','')::numeric,
+        v_item->>'quantityText',nullif(v_item->>'unit',''),v_item->>'storeSection',
+        nullif(v_item->>'pantrySelectionId','')::uuid,
+        (v_item->>'labelConfirmationRequired')::boolean
+      );
+    end loop;
+    for v_step in select value from jsonb_array_elements(v_dish->'steps') loop
+      insert into public.recipe_steps(id,menu_id,dish_id,user_id,position,instruction)
+      values((v_step->>'id')::uuid,v_menu_id,(v_dish->>'id')::uuid,p_request.user_id,
+        (v_step->>'position')::integer,v_step->>'instruction');
+    end loop;
+  end loop;
+
+  for v_timeline in select value from jsonb_array_elements(p_menu->'timeline') loop
+    insert into public.menu_timeline_steps(
+      id,menu_id,user_id,position,start_minute,duration_minutes,instruction,dish_id,recipe_step_id
+    ) values (
+      (v_timeline->>'id')::uuid,v_menu_id,p_request.user_id,
+      (v_timeline->>'position')::integer,(v_timeline->>'startMinute')::integer,
+      (v_timeline->>'durationMinutes')::integer,v_timeline->>'instruction',
+      nullif(v_timeline->>'dishId','')::uuid,nullif(v_timeline->>'recipeStepId','')::uuid
+    );
+  end loop;
+
+  for v_adaptation in select value from jsonb_array_elements(p_menu->'adaptations') loop
+    insert into public.menu_member_adaptations(
+      id,menu_id,dish_id,user_id,anonymous_member_ref,portion_text,
+      branch_before_recipe_step_id,additional_cutting,additional_heating,
+      additional_seasoning,serving_check,safety_tags
+    ) values (
+      (v_adaptation->>'id')::uuid,v_menu_id,(v_adaptation->>'dishId')::uuid,p_request.user_id,
+      v_adaptation->>'anonymousMemberRef',v_adaptation->>'portionText',
+      (v_adaptation->>'branchBeforeRecipeStepId')::uuid,
+      nullif(v_adaptation->>'additionalCutting',''),nullif(v_adaptation->>'additionalHeating',''),
+      nullif(v_adaptation->>'additionalSeasoning',''),v_adaptation->>'servingCheck',
+      array(select jsonb_array_elements_text(v_adaptation->'safetyTags'))
+    );
+    for v_action, v_action_position in
+      select action, ordinality
+      from jsonb_array_elements(v_adaptation->'safetyActions')
+        with ordinality as actions(action, ordinality)
+    loop
+      insert into public.menu_safety_actions(
+        menu_id,dish_id,ingredient_id,user_id,anonymous_member_ref,before_recipe_step_id,
+        position,kind,instruction
+      ) values (
+        v_menu_id,(v_action->>'dishId')::uuid,(v_action->>'ingredientId')::uuid,p_request.user_id,
+        v_action->>'anonymousMemberRef',(v_action->>'beforeRecipeStepId')::uuid,
+        v_action_position::smallint,v_action->>'kind',v_action->>'instruction'
+      );
+    end loop;
+  end loop;
+
+  if (select count(*) from public.menu_safety_actions where menu_id = v_menu_id)
+     <> (select count(*) from jsonb_path_query(
+       p_menu, '$.adaptations[*].safetyActions[*]'::jsonpath)) then
+    raise exception using errcode = '23514', message = 'menu_safety_action_count_mismatch';
+  end if;
+
+  for v_label in select value from jsonb_array_elements(p_menu->'labelConfirmations') loop
+    insert into public.menu_label_confirmations(
+      menu_id,user_id,source_type,source_id,source_path,source_text_snapshot,allergen_id,
+      anonymous_member_ref,dictionary_version,requirement_safety_fingerprint,
+      is_current,confirmation_status
+    ) values (
+      v_menu_id,p_request.user_id,v_label->>'sourceType',(v_label->>'sourceId')::uuid,
+      v_label->>'sourcePath',v_label->>'sourceText',v_label->>'allergenId',
+      v_label->>'anonymousMemberRef',
+      v_label->>'dictionaryVersion',p_safety_fingerprint,true,v_label->>'confirmationStatus'
+    );
+  end loop;
+  return v_menu_id;
+end;
+$$;
+
+create or replace function public.finalize_ai_generation_success(
+  p_request_id uuid,p_menu jsonb,p_preference_snapshot jsonb,p_safety_snapshot jsonb,
+  p_safety_fingerprint text,p_allergen_version text,p_food_rule_version text,
+  p_target_members jsonb,p_expired_checks jsonb,
+  p_source_menu_id uuid,p_change_reason text,p_change_reason_custom text,
+  p_now timestamptz default clock_timestamp()
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp
+as $$
+declare v_request private.ai_generation_requests; v_menu_id uuid;
+begin
+  select * into v_request from private.ai_generation_requests where id = p_request_id for update;
+  if not found then raise exception using errcode = 'P0002', message = 'request_not_found'; end if;
+  if v_request.status <> 'processing' then return private.ai_request_payload(v_request, true); end if;
+  if not v_request.user_quota_reserved then
+    raise exception using errcode = '23514', message = 'user_reservation_missing';
+  end if;
+  perform private.lock_and_assert_current_safety_fingerprint(
+    v_request.user_id,
+    array(select (target->>'householdMemberId')::uuid
+      from jsonb_array_elements(p_target_members) as targets(target)),
+    p_safety_fingerprint
+  );
+  v_menu_id := private.persist_validated_menu(
+    v_request,p_menu,p_preference_snapshot,p_safety_snapshot,p_safety_fingerprint,
+    p_allergen_version,p_food_rule_version,p_target_members,p_expired_checks
+  );
+  perform private.assign_regeneration_lineage(
+    v_request.user_id,p_source_menu_id,v_menu_id,p_change_reason,p_change_reason_custom
+  );
+  perform private.soft_delete_generation_draft(
+    v_request.user_id,
+    v_request.draft_id,
+    null
+  );
+  update private.ai_user_daily_usage set
+    reserved_count = reserved_count - 1, success_count = success_count + 1, updated_at = p_now
+  where user_id = v_request.user_id and usage_day = v_request.user_usage_day and reserved_count > 0;
+  if not found then raise exception using errcode = '23514', message = 'user_reservation_corrupt'; end if;
+  if v_request.global_reserved_day is not null then
+    update private.ai_global_daily_usage set reserved_count = reserved_count - 1, updated_at = p_now
+    where usage_day = v_request.global_reserved_day and reserved_count > 0;
+  end if;
+  update private.ai_generation_requests set
+    status = 'succeeded',completed_menu_id = v_menu_id,user_quota_reserved = false,
+    global_reserved_day = null,completed_at = p_now,updated_at = p_now,
+    duration_ms = greatest(0, floor(extract(epoch from (p_now - started_at)) * 1000)::integer)
+  where id = p_request_id returning * into v_request;
+  return private.ai_request_payload(v_request, false);
+end;
+$$;
+
+create or replace function public.get_ai_generation_status(
+  p_user_id uuid,p_idempotency_key uuid,p_user_limit integer,
+  p_now timestamptz default clock_timestamp()
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp
+as $$
+declare v_request private.ai_generation_requests; v_success integer := 0; v_reserved integer := 0;
+  v_day date := private.ai_jst_day(p_now);
+begin
+  if p_user_limit <> 5 then
+    raise exception using errcode = '22023', message = 'release_quota_mismatch';
+  end if;
+  perform public.cleanup_stale_ai_generations(p_now);
+  select * into v_request from private.ai_generation_requests
+    where user_id = p_user_id and idempotency_key = p_idempotency_key;
+  select coalesce(success_count,0),coalesce(reserved_count,0) into v_success,v_reserved
+    from private.ai_user_daily_usage where user_id = p_user_id and usage_day = v_day;
+  if not found then v_success := 0; v_reserved := 0; end if;
+  if v_request.id is null then
+    return jsonb_build_object('status','not_started','idempotency_key',p_idempotency_key,
+      'remaining',greatest(p_user_limit-v_success-v_reserved,0),'user_daily_limit',p_user_limit,
+      'consumed',false,'retry_at',null);
+  end if;
+  return private.ai_request_payload(v_request,false) || jsonb_build_object(
+    'remaining',greatest(p_user_limit-v_success-v_reserved,0),
+    'user_daily_limit',p_user_limit,'consumed',v_request.status='succeeded',
+    'terminal_details',v_request.terminal_details,'actual_model_ids',v_request.actual_model_ids,
+    'started_at',v_request.started_at,'completed_at',v_request.completed_at
+  );
+end;
+$$;
+
+revoke all on function private.persist_validated_menu(
+  private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb
+) from public,anon,authenticated,service_role;
+
 revoke all on function public.cleanup_stale_ai_generations(timestamptz) from public, anon, authenticated;
 revoke all on function public.reserve_ai_generation(uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz) from public, anon, authenticated;
 revoke all on function public.reserve_ai_repair_call(uuid, integer, timestamptz) from public, anon, authenticated;
@@ -398,6 +641,8 @@ revoke all on function public.mark_ai_global_sent(uuid, timestamptz) from public
 revoke all on function public.record_ai_generation_model(uuid, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_failure(uuid, text, timestamptz, timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) from public,anon,authenticated;
+revoke all on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) from public,anon,authenticated;
 grant execute on function public.cleanup_stale_ai_generations(timestamptz) to service_role;
 grant execute on function public.reserve_ai_generation(uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz) to service_role;
 grant execute on function public.reserve_ai_repair_call(uuid, integer, timestamptz) to service_role;
@@ -405,3 +650,5 @@ grant execute on function public.mark_ai_global_sent(uuid, timestamptz) to servi
 grant execute on function public.record_ai_generation_model(uuid, text, timestamptz) to service_role;
 grant execute on function public.finalize_ai_generation_failure(uuid, text, timestamptz, timestamptz) to service_role;
 grant execute on function public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz) to service_role;
+grant execute on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) to service_role;
+grant execute on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) to service_role;

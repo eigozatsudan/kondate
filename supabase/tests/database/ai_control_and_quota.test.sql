@@ -1,5 +1,5 @@
 begin;
-select plan(48);
+select plan(50);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password,
@@ -55,6 +55,39 @@ select ok(
     'public.reserve_ai_generation(uuid,uuid,text,uuid,integer,integer,integer,timestamptz)'
   ) is null,
   'the obsolete eight-argument reservation RPC is absent'
+);
+select ok(
+  to_regprocedure(
+    'public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz)'
+  ) is not null,
+  'the final 13-argument success finalizer exists'
+);
+select ok(
+  coalesce(
+    not has_function_privilege(
+      'service_role',
+      to_regprocedure(
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+      ),
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'anon',
+      to_regprocedure(
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+      ),
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'authenticated',
+      to_regprocedure(
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+      ),
+      'EXECUTE'
+    ),
+    false
+  ),
+  'the private persistence helper is not externally executable'
 );
 select ok(
   has_function_privilege(

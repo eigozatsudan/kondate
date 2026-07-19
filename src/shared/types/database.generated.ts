@@ -264,6 +264,20 @@ export type Database = {
         Returns: boolean
       }
       normalize_allergen_term: { Args: { p_value: string }; Returns: string }
+      persist_validated_menu: {
+        Args: {
+          p_allergen_version: string
+          p_expired_checks: Json
+          p_food_rule_version: string
+          p_menu: Json
+          p_preference_snapshot: Json
+          p_request: Database["private"]["Tables"]["ai_generation_requests"]["Row"]
+          p_safety_fingerprint: string
+          p_safety_snapshot: Json
+          p_target_members: Json
+        }
+        Returns: string
+      }
       soft_delete_generation_draft: {
         Args: {
           p_draft_id: string
@@ -1418,6 +1432,33 @@ export type Database = {
           p_now?: string
           p_request_id: string
           p_retry_at?: string
+        }
+        Returns: Json
+      }
+      finalize_ai_generation_success: {
+        Args: {
+          p_allergen_version: string
+          p_change_reason: string
+          p_change_reason_custom: string
+          p_expired_checks: Json
+          p_food_rule_version: string
+          p_menu: Json
+          p_now?: string
+          p_preference_snapshot: Json
+          p_request_id: string
+          p_safety_fingerprint: string
+          p_safety_snapshot: Json
+          p_source_menu_id: string
+          p_target_members: Json
+        }
+        Returns: Json
+      }
+      get_ai_generation_status: {
+        Args: {
+          p_idempotency_key: string
+          p_now?: string
+          p_user_id: string
+          p_user_limit: number
         }
         Returns: Json
       }

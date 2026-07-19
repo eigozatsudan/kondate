@@ -8,6 +8,8 @@ type ReserveGeneration = Database["public"]["Functions"]["reserve_ai_generation"
 type ReserveGenerationArgs = ReserveGeneration["Args"];
 type FinalizeGenerationFailure = Database["public"]["Functions"]["finalize_ai_generation_failure"];
 type FinalizeGenerationFailureArgs = FinalizeGenerationFailure["Args"];
+type FinalizeGenerationSuccess = Database["public"]["Functions"]["finalize_ai_generation_success"];
+type FinalizeGenerationSuccessArgs = FinalizeGenerationSuccess["Args"];
 
 it("accepts nullable draft references for regeneration reservations", () => {
   const args = {
@@ -33,6 +35,26 @@ it("accepts a null retry time for terminal failures", () => {
 
   expectTypeOf(args).toExtend<FinalizeGenerationFailureArgs>();
   expect(args.p_retry_at).toBeNull();
+});
+
+it("accepts nullable lineage for new-menu finalization", () => {
+  const args = {
+    p_request_id: "40000000-0000-4000-8000-000000000003",
+    p_menu: {},
+    p_preference_snapshot: {},
+    p_safety_snapshot: {},
+    p_safety_fingerprint: "fingerprint",
+    p_allergen_version: "allergen-v1",
+    p_food_rule_version: "food-rule-v1",
+    p_target_members: [],
+    p_expired_checks: [],
+    p_source_menu_id: null,
+    p_change_reason: null,
+    p_change_reason_custom: null,
+  } satisfies FinalizeGenerationSuccessArgs;
+
+  expectTypeOf(args).toExtend<FinalizeGenerationSuccessArgs>();
+  expect(args.p_source_menu_id).toBeNull();
 });
 
 const invalidUndefinedRetry = {
@@ -94,6 +116,10 @@ type GeneratedReserveGeneration = GeneratedDatabase["public"]["Functions"]["rese
 type NullableReserveGenerationArg = "p_draft_id" | "p_draft_revision";
 type GeneratedFinalizeGenerationFailure =
   GeneratedDatabase["public"]["Functions"]["finalize_ai_generation_failure"];
+type GeneratedFinalizeGenerationSuccess =
+  GeneratedDatabase["public"]["Functions"]["finalize_ai_generation_success"];
+type NullableFinalizeGenerationSuccessArg =
+  "p_source_menu_id" | "p_change_reason" | "p_change_reason_custom";
 
 it("nullable 4項目以外のRPC契約を変更しない", () => {
   expectTypeOf<Omit<AppSaveDraft["Args"], NullableDraftArg>>().toEqualTypeOf<
@@ -121,6 +147,17 @@ it("preserves every other failure argument and return contract", () => {
   >();
   expectTypeOf<FinalizeGenerationFailure["Returns"]>().toEqualTypeOf<
     GeneratedFinalizeGenerationFailure["Returns"]
+  >();
+});
+
+it("preserves every other success argument and return contract", () => {
+  expectTypeOf<
+    Omit<FinalizeGenerationSuccess["Args"], NullableFinalizeGenerationSuccessArg>
+  >().toEqualTypeOf<
+    Omit<GeneratedFinalizeGenerationSuccess["Args"], NullableFinalizeGenerationSuccessArg>
+  >();
+  expectTypeOf<FinalizeGenerationSuccess["Returns"]>().toEqualTypeOf<
+    GeneratedFinalizeGenerationSuccess["Returns"]
   >();
 });
 
