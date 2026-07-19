@@ -19,7 +19,11 @@
     "db:reset": "./scripts/reset-local-db.sh",
     "db:test": "docker compose run --rm db-test",
     "db:types": "bash scripts/generate-database-types.sh",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "verify:openrouter:config": "node scripts/verify-openrouter-models.mjs",
+    "verify:openrouter:models": "node scripts/verify-openrouter-models.mjs --remote",
+    "predev": "npm run verify:openrouter:config",
+    "prebuild": "npm run verify:openrouter:config"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

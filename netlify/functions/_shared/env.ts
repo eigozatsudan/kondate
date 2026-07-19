@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
+import { releaseQuota } from "../../../shared/contracts/generation.js";
 
 const localServerSupabaseUrl = "http://kong:8000";
 const localBrowserSupabaseUrl = "http://127.0.0.1:8000";
@@ -29,17 +30,82 @@ export const continuationServerEnvSchema = z.object({
     .refine((value) => value === 300),
 });
 
-export type ServerEnv = z.infer<typeof continuationServerEnvSchema>;
+const positiveInteger = (fallback: number) => z.coerce.number().int().positive().default(fallback);
+const releaseLockedInteger = <const Value extends number, const Text extends string>(
+  value: Value,
+  text: Text,
+) => z.union([z.literal(value), z.literal(text)]).transform(() => value);
+const globalDailyLimit = (max: number) => z.coerce.number().int().min(1).max(max).default(max);
+
+const rawServerEnvSchema = continuationServerEnvSchema.extend({
+  SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
+  OPENROUTER_API_KEY: z.string().min(1),
+  OPENROUTER_MODELS: z.string(),
+  OPENROUTER_BASE_URL: z.url().default("https://openrouter.ai/api/v1"),
+  USER_DAILY_AI_LIMIT: releaseLockedInteger(releaseQuota.userDailySuccessLimit, "5"),
+  USER_DAILY_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
+    releaseQuota.userDailyExternalCallLimit,
+    "12",
+  ),
+  USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
+    releaseQuota.userShortWindowExternalCallLimit,
+    "4",
+  ),
+  USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
+  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(45),
+  OPENROUTER_TIMEOUT_MS: positiveInteger(20_000),
+  FUNCTION_TOTAL_BUDGET_MS: positiveInteger(50_000),
+  AI_PROCESSING_STALE_SECONDS: positiveInteger(180),
+});
+
+type ParsedServerEnv = z.infer<typeof rawServerEnvSchema>;
+export type ServerEnv = ParsedServerEnv & {
+  supabase: {
+    url: string;
+    publishableKey: string;
+    serviceRoleKey: string;
+  };
+  openRouter: {
+    apiKey: string;
+    baseUrl: string;
+    models: readonly string[];
+    userDailyLimit: typeof releaseQuota.userDailySuccessLimit;
+    userDailyAttemptLimit: typeof releaseQuota.userDailyExternalCallLimit;
+    userShortWindowLimit: typeof releaseQuota.userShortWindowExternalCallLimit;
+    userShortWindowSeconds: typeof releaseQuota.userShortWindowSeconds;
+    globalDailyLimit: number;
+    timeoutMs: number;
+    functionTotalBudgetMs: number;
+    staleAfterSeconds: number;
+  };
+};
 
 export function parseManagedSupabaseProjectRef(value: string): string | null {
   return managedSupabaseOrigin.exec(value)?.[1] ?? null;
+}
+
+export function parseOpenRouterModels(value: string): readonly string[] {
+  const models = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (models.length === 0) throw new Error("OPENROUTER_MODELS must not be empty");
+  if (new Set(models).size !== models.length) {
+    throw new Error("OPENROUTER_MODELS must not contain duplicates");
+  }
+  for (const model of models) {
+    if (model === "openrouter/auto" || !model.endsWith(":free")) {
+      throw new Error(`OPENROUTER_MODELS contains a non-free model: ${model}`);
+    }
+  }
+  return models;
 }
 
 export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (source.VITE_AUTH_CONTINUATION_ENCRYPTION_KEY !== undefined) {
     throw new Error("server_configuration_invalid");
   }
-  const result = continuationServerEnvSchema.safeParse(source);
+  const result = rawServerEnvSchema.safeParse(source);
   if (!result.success) throw new Error("server_configuration_invalid");
 
   let site: URL;
@@ -70,7 +136,27 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   ) {
     throw new Error("server_configuration_invalid");
   }
-  return result.data;
+  return {
+    ...result.data,
+    supabase: {
+      url: result.data.SUPABASE_URL,
+      publishableKey: result.data.SUPABASE_PUBLISHABLE_KEY,
+      serviceRoleKey: result.data.SUPABASE_SERVICE_ROLE_KEY,
+    },
+    openRouter: {
+      apiKey: result.data.OPENROUTER_API_KEY,
+      baseUrl: result.data.OPENROUTER_BASE_URL.replace(/\/$/u, ""),
+      models: parseOpenRouterModels(result.data.OPENROUTER_MODELS),
+      userDailyLimit: result.data.USER_DAILY_AI_LIMIT,
+      userDailyAttemptLimit: result.data.USER_DAILY_EXTERNAL_CALL_LIMIT,
+      userShortWindowLimit: result.data.USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT,
+      userShortWindowSeconds: result.data.USER_SHORT_WINDOW_SECONDS,
+      globalDailyLimit: result.data.GLOBAL_DAILY_AI_LIMIT,
+      timeoutMs: result.data.OPENROUTER_TIMEOUT_MS,
+      functionTotalBudgetMs: result.data.FUNCTION_TOTAL_BUDGET_MS,
+      staleAfterSeconds: result.data.AI_PROCESSING_STALE_SECONDS,
+    },
+  };
 }
 
 export function getServerEnv(): ServerEnv {

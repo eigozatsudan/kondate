@@ -1,5 +1,11 @@
-import { expect, it } from "vitest";
-import { parseManagedSupabaseProjectRef, parseServerEnv, supabaseServerEnvSchema } from "./env.js";
+import { describe, expect, it } from "vitest";
+import { releaseQuota } from "../../../shared/contracts/generation.js";
+import {
+  parseManagedSupabaseProjectRef,
+  parseOpenRouterModels,
+  parseServerEnv,
+  supabaseServerEnvSchema,
+} from "./env.js";
 
 const validServerEnv = {
   VITE_SUPABASE_URL: "http://127.0.0.1:8000",
@@ -8,7 +14,71 @@ const validServerEnv = {
   SERVER_SITE_ORIGIN: "http://127.0.0.1:5173",
   AUTH_CONTINUATION_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   AUTH_CONTINUATION_TTL_SECONDS: "300",
+  SUPABASE_PUBLISHABLE_KEY: "publishable-test",
+  OPENROUTER_API_KEY: "mock-key",
+  OPENROUTER_MODELS: "google/gemma-3-27b-it:free,mistralai/mistral-small-3.2-24b-instruct:free",
+  USER_DAILY_AI_LIMIT: "5",
+  USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
+  USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
+  USER_SHORT_WINDOW_SECONDS: "600",
+  FUNCTION_TOTAL_BUDGET_MS: "50000",
 };
+
+describe("parseOpenRouterModels", () => {
+  it("preserves an explicit free-model order", () => {
+    expect(parseOpenRouterModels(validServerEnv.OPENROUTER_MODELS)).toEqual([
+      "google/gemma-3-27b-it:free",
+      "mistralai/mistral-small-3.2-24b-instruct:free",
+    ]);
+  });
+
+  it.each(["", "openrouter/auto", "openai/gpt-4o", "a/model:free,a/model:free"])(
+    "rejects unsafe model configuration %s",
+    (value) => {
+      expect(() => parseOpenRouterModels(value)).toThrow("OPENROUTER_MODELS");
+    },
+  );
+
+  it("requires the exact release-locked quota tuple", () => {
+    const parsed = parseServerEnv(validServerEnv);
+    expect(parsed.AUTH_CONTINUATION_TTL_SECONDS).toBe(300);
+    expect(parsed.SERVER_SITE_ORIGIN).toBe("http://127.0.0.1:5173");
+    expect(parsed.openRouter).toMatchObject({
+      userDailyLimit: releaseQuota.userDailySuccessLimit,
+      userDailyAttemptLimit: releaseQuota.userDailyExternalCallLimit,
+      userShortWindowLimit: releaseQuota.userShortWindowExternalCallLimit,
+      userShortWindowSeconds: releaseQuota.userShortWindowSeconds,
+      globalDailyLimit: 45,
+      timeoutMs: 20_000,
+      functionTotalBudgetMs: 50_000,
+      staleAfterSeconds: 180,
+    });
+  });
+
+  it.each([
+    ["USER_DAILY_AI_LIMIT", undefined],
+    ["USER_DAILY_AI_LIMIT", "6"],
+    ["USER_DAILY_AI_LIMIT", "05"],
+    ["USER_DAILY_EXTERNAL_CALL_LIMIT", undefined],
+    ["USER_DAILY_EXTERNAL_CALL_LIMIT", "13"],
+    ["USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT", undefined],
+    ["USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT", "5"],
+    ["USER_SHORT_WINDOW_SECONDS", undefined],
+    ["USER_SHORT_WINDOW_SECONDS", "601"],
+  ] as const)("rejects missing or changed release quota %s=%s", (key, value) => {
+    expect(() => parseServerEnv({ ...validServerEnv, [key]: value })).toThrow();
+  });
+
+  it.each(["0", "46"])("rejects out-of-range global quota %s", (value) => {
+    expect(() => parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
+  });
+
+  it("allows the operator to lower the global quota", () => {
+    expect(
+      parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: "1" }).openRouter.globalDailyLimit,
+    ).toBe(1);
+  });
+});
 
 it("parses the exact five-minute server continuation TTL in seconds", () => {
   expect(parseServerEnv(validServerEnv).AUTH_CONTINUATION_TTL_SECONDS).toBe(300);
