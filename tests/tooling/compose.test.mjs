@@ -177,12 +177,37 @@ test("runs mock services with only their required read-only files and environmen
   assert.ok(openrouter, "openrouter mock service is missing");
   assert.ok(oauth, "OAuth mock service is missing");
   assert.match(openrouter, /tools\/openrouter-mock\/server\.mjs:\/app\/server\.mjs:ro/u);
+  assert.match(openrouter, /tools\/openrouter-mock\/fixtures:\/app\/fixtures:ro/u);
   assert.doesNotMatch(openrouter, /\.:\/workspace/u);
   assert.doesNotMatch(openrouter, /working_dir:/u);
   assert.match(oauth, /tools\/oauth-mock\/server\.mjs:\/app\/server\.mjs:ro/u);
   assert.match(oauth, /tools\/oauth-mock\/fixtures:\/app\/fixtures:ro/u);
   assert.doesNotMatch(oauth, /\.:\/workspace/u);
   assert.doesNotMatch(oauth, /working_dir:/u);
+});
+
+test("provides the complete locked generation environment to the app service", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  const app = compose.match(/^ {2}app:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
+  assert.ok(app, "app service is missing");
+  for (const line of [
+    "SUPABASE_URL: http://kong:8000",
+    "SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}",
+    "SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}",
+    "OPENROUTER_API_KEY: local-mock-key",
+    "OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free",
+    "OPENROUTER_BASE_URL: http://openrouter-mock:8787/api/v1",
+    'USER_DAILY_AI_LIMIT: "5"',
+    'USER_DAILY_EXTERNAL_CALL_LIMIT: "12"',
+    'USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4"',
+    'USER_SHORT_WINDOW_SECONDS: "600"',
+    'GLOBAL_DAILY_AI_LIMIT: "45"',
+    'OPENROUTER_TIMEOUT_MS: "20000"',
+    'FUNCTION_TOTAL_BUDGET_MS: "50000"',
+    'AI_PROCESSING_STALE_SECONDS: "180"',
+  ]) {
+    assert.match(app, new RegExp(`^ {6}${line.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "mu"));
+  }
 });
 
 test("runs the development app as the node user and keeps generated Vite cache outside mounted dependencies", async () => {
@@ -220,7 +245,7 @@ test("uses the isolated E2E Function server without changing the public origin",
 
 test("runs E2E through the base and E2E Compose files in override order", async () => {
   const runner = await readFile("scripts/run-e2e.sh", "utf8");
-  assert.match(runner, /^#!\/bin\/sh\nset -eu$/mu);
+  assert.match(runner, /^#!\/bin\/sh\n(?:#[^\n]*\n)*set -eu$/mu);
   assert.doesNotMatch(runner, /\(docker compose|\[@\]|pipefail/u);
   assert.match(runner, /compose-project-name\.sh/u);
   assert.match(runner, /ensure-compose-project-env\.sh/u);

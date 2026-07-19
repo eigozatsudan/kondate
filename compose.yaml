@@ -34,6 +34,7 @@ services:
     command: ["node", "/app/server.mjs"]
     volumes:
       - ./tools/openrouter-mock/server.mjs:/app/server.mjs:ro
+      - ./tools/openrouter-mock/fixtures:/app/fixtures:ro
     ports:
       - "127.0.0.1:8787:8787"
     healthcheck:
@@ -125,11 +126,22 @@ services:
       VITE_AUTH_PROVIDER_MODE: ${VITE_AUTH_PROVIDER_MODE:-oauth_mock}
       VITE_OAUTH_MOCK_ORIGIN: ${VITE_OAUTH_MOCK_ORIGIN:-http://127.0.0.1:8788}
       SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       SERVER_SITE_ORIGIN: ${SERVER_SITE_ORIGIN:-http://127.0.0.1:5173}
       AUTH_CONTINUATION_ENCRYPTION_KEY: ${AUTH_CONTINUATION_ENCRYPTION_KEY}
       AUTH_CONTINUATION_TTL_SECONDS: ${AUTH_CONTINUATION_TTL_SECONDS:-300}
-      OPENROUTER_BASE_URL: http://openrouter-mock:8787
+      OPENROUTER_API_KEY: local-mock-key
+      OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
+      OPENROUTER_BASE_URL: http://openrouter-mock:8787/api/v1
+      USER_DAILY_AI_LIMIT: "5"
+      USER_DAILY_EXTERNAL_CALL_LIMIT: "12"
+      USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4"
+      USER_SHORT_WINDOW_SECONDS: "600"
+      GLOBAL_DAILY_AI_LIMIT: "45"
+      OPENROUTER_TIMEOUT_MS: "20000"
+      FUNCTION_TOTAL_BUDGET_MS: "50000"
+      AI_PROCESSING_STALE_SECONDS: "180"
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     ports:
       - "127.0.0.1:5173:5173"

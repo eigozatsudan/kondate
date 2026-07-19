@@ -21,7 +21,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
-    files: ["**/*.{js,mjs}"],
+    files: ["**/*.{js,mjs}", "**/*.d.mts"],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: {
       globals: globals.node,

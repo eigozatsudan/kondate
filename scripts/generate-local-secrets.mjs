@@ -126,7 +126,7 @@ values.set("VITE_MAGIC_LINK_RESEND_SECONDS", "60");
 values.set("VITE_AUTH_CONTINUATION_TTL_MS", "300000");
 values.set("VITE_AUTH_PROVIDER_MODE", "oauth_mock");
 values.set("VITE_OAUTH_MOCK_ORIGIN", "http://127.0.0.1:8788");
-values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787");
+values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787/api/v1");
 
 // 値に特殊文字が含まれる場合のみJSON文字列としてクォートし、通常の
 // KEY=VALUE 行との互換性を保つ。

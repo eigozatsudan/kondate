@@ -1,0 +1,7 @@
+{
+  "scenario": "duplicate-menu",
+  "sourceMenuId": "72000000-0000-4000-8000-000000000001",
+  "duplicateOfMenuId": "72000000-0000-4000-8000-000000000002",
+  "menuSignature": "main:鶏肉の照り焼き|side:青菜のおひたし|soup:豆腐のみそ汁",
+  "dishSignatures": ["main:鶏肉の照り焼き", "side:青菜のおひたし", "soup:豆腐のみそ汁"]
+}

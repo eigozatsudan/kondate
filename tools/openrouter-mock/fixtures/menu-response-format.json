@@ -1,0 +1,633 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "kondate_menu_generation",
+    "strict": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "success"
+            },
+            "menu": {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "string",
+                  "const": "2026-07-11.v1"
+                },
+                "mealType": {
+                  "type": "string",
+                  "enum": ["breakfast", "lunch", "dinner"]
+                },
+                "cuisineGenre": {
+                  "type": "string",
+                  "enum": ["japanese", "western", "chinese", "any"]
+                },
+                "servings": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20
+                },
+                "totalElapsedMinutes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 180
+                },
+                "safetyTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  }
+                },
+                "dishes": {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "dishRef": {
+                        "type": "string",
+                        "pattern": "^dish_[1-9][0-9]*$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["main", "side", "soup", "staple", "other"]
+                      },
+                      "position": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "cookingTimeMinutes": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 180
+                      },
+                      "ingredients": {
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "ingredientRef": {
+                              "type": "string",
+                              "pattern": "^ingredient_[1-9][0-9]*$"
+                            },
+                            "position": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 100
+                            },
+                            "quantityValue": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "quantityText": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 60
+                            },
+                            "unit": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 24
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "storeSection": {
+                              "type": "string",
+                              "enum": [
+                                "produce",
+                                "meat_fish",
+                                "dairy_eggs",
+                                "dry_goods",
+                                "seasonings",
+                                "other"
+                              ]
+                            },
+                            "pantryRef": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^pantry_[1-9][0-9]*$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "labelConfirmationRequired": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "ingredientRef",
+                            "position",
+                            "name",
+                            "quantityValue",
+                            "quantityText",
+                            "unit",
+                            "storeSection",
+                            "pantryRef",
+                            "labelConfirmationRequired"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "steps": {
+                        "minItems": 1,
+                        "maxItems": 30,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "stepRef": {
+                              "type": "string",
+                              "pattern": "^step_[1-9][0-9]*$"
+                            },
+                            "position": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "instruction": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            }
+                          },
+                          "required": ["stepRef", "position", "instruction"],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "dishRef",
+                      "role",
+                      "position",
+                      "name",
+                      "description",
+                      "cookingTimeMinutes",
+                      "ingredients",
+                      "steps"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "timeline": {
+                  "minItems": 1,
+                  "maxItems": 60,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "timelineRef": {
+                        "type": "string",
+                        "pattern": "^timeline_[1-9][0-9]*$"
+                      },
+                      "position": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "startMinute": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "durationMinutes": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "instruction": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "dishRef": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^dish_[1-9][0-9]*$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "stepRef": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^step_[1-9][0-9]*$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "timelineRef",
+                      "position",
+                      "startMinute",
+                      "durationMinutes",
+                      "instruction",
+                      "dishRef",
+                      "stepRef"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "adaptations": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "adaptationRef": {
+                        "type": "string",
+                        "pattern": "^adaptation_[1-9][0-9]*$"
+                      },
+                      "dishRef": {
+                        "type": "string",
+                        "pattern": "^dish_[1-9][0-9]*$"
+                      },
+                      "anonymousMemberRef": {
+                        "type": "string",
+                        "pattern": "^member_[1-9][0-9]*$"
+                      },
+                      "portionText": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "beforeStepRef": {
+                        "type": "string",
+                        "pattern": "^step_[1-9][0-9]*$"
+                      },
+                      "additionalCutting": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "additionalHeating": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "additionalSeasoning": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "servingCheck": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "safetyTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]*$"
+                        }
+                      },
+                      "safetyActions": {
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "remove_bones",
+                                "cut_small",
+                                "quarter_round_food",
+                                "soften",
+                                "heat_thoroughly"
+                              ]
+                            },
+                            "dishRef": {
+                              "type": "string",
+                              "pattern": "^dish_[1-9][0-9]*$"
+                            },
+                            "ingredientRef": {
+                              "type": "string",
+                              "pattern": "^ingredient_[1-9][0-9]*$"
+                            },
+                            "anonymousMemberRef": {
+                              "type": "string",
+                              "pattern": "^member_[1-9][0-9]*$"
+                            },
+                            "beforeStepRef": {
+                              "type": "string",
+                              "pattern": "^step_[1-9][0-9]*$"
+                            },
+                            "instruction": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 300
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "dishRef",
+                            "ingredientRef",
+                            "anonymousMemberRef",
+                            "beforeStepRef",
+                            "instruction"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "adaptationRef",
+                      "dishRef",
+                      "anonymousMemberRef",
+                      "portionText",
+                      "beforeStepRef",
+                      "additionalCutting",
+                      "additionalHeating",
+                      "additionalSeasoning",
+                      "servingCheck",
+                      "safetyTags",
+                      "safetyActions"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "pantryUsage": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pantryRef": {
+                        "type": "string",
+                        "pattern": "^pantry_[1-9][0-9]*$"
+                      },
+                      "priority": {
+                        "type": "string",
+                        "enum": ["must_use", "prefer_use"]
+                      },
+                      "usageStatus": {
+                        "type": "string",
+                        "enum": ["used", "unused"]
+                      },
+                      "plannedQuantity": {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 999999
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 24
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "dishRefs": {
+                        "maxItems": 5,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^dish_[1-9][0-9]*$"
+                        }
+                      },
+                      "unusedReason": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "pantryRef",
+                      "priority",
+                      "usageStatus",
+                      "plannedQuantity",
+                      "unit",
+                      "dishRefs",
+                      "unusedReason"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "labelConfirmations": {
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sourceType": {
+                        "type": "string",
+                        "enum": ["dish", "ingredient", "recipe_step", "adaptation", "timeline"]
+                      },
+                      "sourceRef": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^dish_[1-9][0-9]*$"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^ingredient_[1-9][0-9]*$"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^step_[1-9][0-9]*$"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^timeline_[1-9][0-9]*$"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^adaptation_[1-9][0-9]*$"
+                          }
+                        ]
+                      },
+                      "sourcePath": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "allergenId": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "anonymousMemberRef": {
+                        "type": "string",
+                        "pattern": "^member_[1-9][0-9]*$"
+                      },
+                      "dictionaryVersion": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "confirmationStatus": {
+                        "type": "string",
+                        "const": "pending"
+                      }
+                    },
+                    "required": [
+                      "sourceType",
+                      "sourceRef",
+                      "sourcePath",
+                      "allergenId",
+                      "anonymousMemberRef",
+                      "dictionaryVersion",
+                      "confirmationStatus"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "mealType",
+                "cuisineGenre",
+                "servings",
+                "totalElapsedMinutes",
+                "safetyTags",
+                "dishes",
+                "timeline",
+                "adaptations",
+                "pantryUsage",
+                "labelConfirmations"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": ["outcome", "menu"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "constraint_conflict"
+            },
+            "conflicts": {
+              "minItems": 1,
+              "maxItems": 12,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "must_use_conflict",
+                      "allergen_pantry_conflict",
+                      "dish_count_conflict",
+                      "mandatory_safety_conflict",
+                      "current_safety_changed"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "conditionRefs": {
+                    "maxItems": 24,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    }
+                  }
+                },
+                "required": ["code", "message", "conditionRefs"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["outcome", "conflicts"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
