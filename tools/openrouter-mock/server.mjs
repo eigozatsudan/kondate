@@ -99,7 +99,13 @@ const readRequestBody = (request, response) =>
       }
       chunks.push(chunk);
     };
-    const onEnd = () => settle(resolve, { oversized: false, body: Buffer.concat(chunks) });
+    const onEnd = () =>
+      settle(
+        resolve,
+        oversized
+          ? { oversized: true, body: null }
+          : { oversized: false, body: Buffer.concat(chunks) },
+      );
     const onError = (error) => {
       if (oversized) {
         discardOversizedRequest();

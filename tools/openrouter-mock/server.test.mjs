@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { EventEmitter } from "node:events";
 import { request as requestHttp } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { menuResponseFormat } from "../../shared/contracts/generation.js";
@@ -11,6 +12,7 @@ const repairModel = "mock/kondate-repair:free";
 const messageSentinel = "PRIVATE_MESSAGE_SENTINEL";
 const bearerSentinel = "local-mock-key";
 const invalidBearer = "PRIVATE_BEARER_SENTINEL";
+const unfinishedRequestDeadlineMs = 5_000;
 
 const startServer = async () => {
   server = createOpenRouterMockServer();
@@ -45,11 +47,16 @@ const send = async (origin, options = {}) =>
         : (options.body ?? JSON.stringify(validRequest(options))),
   });
 
-const sendUnfinishedOversizedBody = (origin) =>
-  new Promise((resolve, reject) => {
+const createUnfinishedOversizedRequest = (origin) => {
+  let request;
+  let response;
+  let timeout;
+  let onResponseEnd = () => {};
+  let onRequestError = () => {};
+  const promise = new Promise((resolve, reject) => {
     const url = new URL(origin);
     let responseReceived = false;
-    const request = requestHttp(
+    request = requestHttp(
       {
         hostname: url.hostname,
         port: url.port,
@@ -61,32 +68,45 @@ const sendUnfinishedOversizedBody = (origin) =>
           "Transfer-Encoding": "chunked",
         },
       },
-      (response) => {
+      (incomingResponse) => {
+        response = incomingResponse;
         responseReceived = true;
         response.resume();
-        response.once("end", () => {
+        onResponseEnd = () => {
           clearTimeout(timeout);
           resolve({ status: response.statusCode, connection: response.headers.connection });
-        });
+        };
+        response.once("end", onResponseEnd);
       },
     );
-    const timeout = setTimeout(() => {
+    timeout = setTimeout(() => {
       request.destroy();
       reject(new Error("oversized unfinished request did not receive a prompt response"));
-    }, 750);
-    request.once("error", (error) => {
+    }, unfinishedRequestDeadlineMs);
+    onRequestError = (error) => {
       if (!responseReceived) {
         clearTimeout(timeout);
         reject(error);
       }
-    });
+    };
+    request.once("error", onRequestError);
     request.write("x".repeat(1_000_001));
   });
+  const cleanup = () => {
+    clearTimeout(timeout);
+    response?.off("end", onResponseEnd);
+    request?.off("error", onRequestError);
+    request?.destroy();
+  };
+  return { promise, cleanup };
+};
 
 afterEach(async () => {
-  if (server) {
+  const activeServer = server;
+  server = undefined;
+  if (activeServer) {
     await new Promise((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
+      activeServer.close((error) => (error ? reject(error) : resolve())),
     );
   }
 });
@@ -154,6 +174,58 @@ describe("strict chat completion protocol", () => {
     expect(response.status).toBe(413);
   });
 
+  it("writes only one 413 for a completely sent oversized body", async () => {
+    const isolatedServer = createOpenRouterMockServer();
+    const statuses = [];
+    const unhandledRejections = [];
+    const { promise: flushed, resolve: resolveFlushed } = Promise.withResolvers();
+    const request = Object.assign(new EventEmitter(), {
+      method: "POST",
+      url: "/api/v1/chat/completions",
+      headers: {
+        authorization: "Bearer local-mock-key",
+        "content-type": "application/json",
+      },
+      pause: vi.fn(),
+      destroy: vi.fn(),
+    });
+    const response = Object.assign(new EventEmitter(), {
+      headersSent: false,
+      writableEnded: false,
+      shouldKeepAlive: true,
+      writeHead(status) {
+        statuses.push(status);
+        if (this.headersSent) throw new Error("headers already sent");
+        this.headersSent = true;
+        return this;
+      },
+      end(...args) {
+        this.writableEnded = true;
+        const callback = args.find((argument) => typeof argument === "function");
+        queueMicrotask(() => {
+          callback?.();
+          resolveFlushed();
+        });
+        return this;
+      },
+      destroy: vi.fn(),
+    });
+    const onUnhandledRejection = (reason) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      isolatedServer.emit("request", request, response);
+      request.emit("data", Buffer.alloc(1_000_001));
+      request.emit("end");
+      await flushed;
+      expect(statuses.filter((status) => status === 413)).toHaveLength(1);
+      expect(statuses).not.toContain(400);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
   it("closes parallel oversized unfinished streams after flushing 413", async () => {
     const origin = await startServer();
     const unhandledRejections = [];
@@ -165,12 +237,13 @@ describe("strict chat completion protocol", () => {
       vi.spyOn(process.stdout, "write").mockImplementation(() => true),
       vi.spyOn(process.stderr, "write").mockImplementation(() => true),
     ];
+    const clients = [
+      createUnfinishedOversizedRequest(origin),
+      createUnfinishedOversizedRequest(origin),
+    ];
 
     try {
-      const results = await Promise.all([
-        sendUnfinishedOversizedBody(origin),
-        sendUnfinishedOversizedBody(origin),
-      ]);
+      const results = await Promise.all(clients.map((client) => client.promise));
       expect(results).toEqual([
         { status: 413, connection: "close" },
         { status: 413, connection: "close" },
@@ -181,6 +254,7 @@ describe("strict chat completion protocol", () => {
       expect(unhandledRejections).toEqual([]);
       expect(spies.flatMap((spy) => spy.mock.calls.flat())).toEqual([]);
     } finally {
+      for (const client of clients) client.cleanup();
       process.off("unhandledRejection", onUnhandledRejection);
       for (const spy of spies) spy.mockRestore();
     }
