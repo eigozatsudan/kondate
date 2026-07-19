@@ -2133,52 +2133,222 @@ git commit -m "feat: AI生成のサーバー境界を追加"
 - Create: `netlify/functions/_shared/openrouter.ts`
 
 **Interfaces:**
-- Consumes: `AiGenerationResponse`, `aiGenerationResponseSchema`, `menuResponseFormat`, and validated `ServerEnv.openRouter`.
-- Produces: `OpenRouterMessage`, `OpenRouterGenerationResult`, `OpenRouterCallError`, `sendMenuGeneration(input, deps?)`; no caller can select an unvalidated model or disable `require_parameters`.
+- Consumes: `AiGenerationResponse`, `aiGenerationResponseSchema`, `menuResponseFormat`, `getServerEnv()`, and validated `ServerEnv.openRouter`.
+- Produces: `OpenRouterMessage`, `OpenRouterGenerationInput`, `OpenRouterGenerationResult`, `OpenRouterCallError`, `sendMenuGeneration(input)`; production call-sites can only lower the timeout and exclude configured model IDs while preserving the validated order. They cannot provide a model, API key, base URL, fetch implementation, environment loader, or disable `require_parameters`.
 
 - [ ] **Step 1 (2–5 min): Write failing request-shape, actual-model, invalid-output, and timeout tests**
 
 ```ts
-import { describe, expect, it, vi } from "vitest";
-import { sendMenuGeneration } from "./openrouter";
+import { afterEach, expect, it, vi } from "vitest";
+import { menuResponseFormat } from "../../../shared/contracts/generation.js";
+import { parseServerEnv, type ServerEnv } from "./env.js";
+import { OpenRouterCallError, sendMenuGeneration } from "./openrouter.js";
+
+const { getServerEnvMock } = vi.hoisted(() => ({
+  getServerEnvMock: vi.fn<() => ServerEnv>(),
+}));
+
+vi.mock("./env.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./env.js")>();
+  return { ...actual, getServerEnv: getServerEnvMock };
+});
+
+const models = ["first/model:free", "second/model:free"] as const;
+const config = parseServerEnv({
+  VITE_SUPABASE_URL: "http://127.0.0.1:8000",
+  SUPABASE_URL: "http://kong:8000",
+  SUPABASE_SERVICE_ROLE_KEY: "service-role-key-at-least-twenty-characters",
+  SERVER_SITE_ORIGIN: "http://127.0.0.1:5173",
+  AUTH_CONTINUATION_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  AUTH_CONTINUATION_TTL_SECONDS: "300",
+  SUPABASE_PUBLISHABLE_KEY: "publishable-test",
+  OPENROUTER_API_KEY: "secret",
+  OPENROUTER_MODELS: models.join(","),
+  OPENROUTER_BASE_URL: "http://mock.invalid/v1",
+  USER_DAILY_AI_LIMIT: "5",
+  USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
+  USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
+  USER_SHORT_WINDOW_SECONDS: "600",
+});
+
+getServerEnvMock.mockReturnValue(config);
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 it("uses models fallback, strict schema, and required parameters", async () => {
-  const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
     model: "second/model:free",
     choices: [{ message: { content: JSON.stringify({ outcome: "constraint_conflict", conflicts: [{
       code: "must_use_conflict", message: "条件を同時に満たせません。", conditionRefs: ["pantry_1"],
     }] }) } }],
   }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchImpl);
   const result = await sendMenuGeneration({
-    models: ["first/model:free", "second/model:free"],
-    messages: [{ role: "user", content: "data" }], timeoutMs: 1_000,
-    apiKey: "secret", baseUrl: "http://mock.invalid/v1",
-  }, { fetchImpl });
-  const body = JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string);
-  expect(body).toMatchObject({
-    models: ["first/model:free", "second/model:free"],
+    messages: [{ role: "user", content: "data" }],
+    timeoutMs: 1_000,
+  });
+  expect(fetchImpl).toHaveBeenCalledWith("http://mock.invalid/v1/chat/completions", expect.objectContaining({
+    method: "POST",
+    headers: {
+      Authorization: "Bearer secret",
+      "Content-Type": "application/json",
+    },
+  }));
+  const body = fetchImpl.mock.calls[0]?.[1]?.body;
+  expect(body).toBeTypeOf("string");
+  if (typeof body !== "string") throw new Error("Expected OpenRouter request body to be a string");
+  const requestPayload = JSON.parse(body) as unknown;
+  expect(requestPayload).toEqual({
+    models,
+    messages: [{ role: "user", content: "data" }],
     provider: { require_parameters: true },
-    response_format: { type: "json_schema", json_schema: { strict: true } },
+    response_format: menuResponseFormat,
+    temperature: 0.2,
+    stream: false,
   });
   expect(result.modelId).toBe("second/model:free");
 });
 
-it("does not return malformed content", async () => {
-  const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    model: "first/model:free", choices: [{ message: { content: "not-json" } }],
+it.each([
+  ["top-level JSON", new Response("not-json", { status: 200 }), null],
+  ["envelope", new Response(JSON.stringify({ model: models[0], choices: [] }), { status: 200 }), models[0]],
+  ["content JSON", new Response(JSON.stringify({ model: models[0], choices: [{ message: { content: "not-json" } }] }), { status: 200 }), models[0]],
+  ["content schema", new Response(JSON.stringify({ model: models[0], choices: [{ message: { content: "{}" } }] }), { status: 200 }), models[0]],
+] as const)("maps invalid %s to invalid_ai_response", async (_case, response, modelId) => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response);
+  vi.stubGlobal("fetch", fetchImpl);
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 }))
+    .rejects.toMatchObject({ code: "invalid_ai_response", modelId });
+});
+
+it("rejects an unconfigured response model without repair metadata", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    model: "other/model:free",
+    choices: [{ message: { content: JSON.stringify({
+      outcome: "constraint_conflict",
+      conflicts: [{
+        code: "must_use_conflict",
+        message: "条件を同時に満たせません。",
+        conditionRefs: ["pantry_1"],
+      }],
+    }) } }],
   }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchImpl);
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 }))
+    .rejects.toEqual(new OpenRouterCallError("model_unavailable"));
+});
+
+it.each([
+  ["3", "2026-07-11T00:00:03.000Z"],
+  ["Sat, 11 Jul 2026 00:00:05 GMT", "2026-07-11T00:00:05.000Z"],
+  ["invalid", null],
+  ["-1", null],
+  ["Fri, 10 Jul 2026 00:00:00 GMT", null],
+  ["2026-07-11T00:00:05.000Z", null],
+  ["999999999999999999999999", null],
+  ["Sat, 31 Feb 2026 00:00:05 GMT", null],
+  ["Fri, 11 Jul 2026 00:00:05 GMT", null],
+] as const)("parses Retry-After %s", async (value, retryAt) => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-07-11T00:00:00.000Z");
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response("provider error", {
+    status: 429, headers: { "Retry-After": value },
+  }));
+  vi.stubGlobal("fetch", fetchImpl);
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 }))
+    .rejects.toMatchObject({ code: "model_unavailable", retryAt });
+});
+
+it("maps a signal-aware timeout to generation_timeout and clears its timer", async () => {
+  vi.useFakeTimers();
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementation((_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+  vi.stubGlobal("fetch", fetchImpl);
+  const pending = sendMenuGeneration({ messages: [], timeoutMs: 10 });
+  await vi.advanceTimersByTimeAsync(10);
+  await expect(pending).rejects.toMatchObject({ code: "generation_timeout" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("maps a network rejection to model_unavailable", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error("network secret"));
+  vi.stubGlobal("fetch", fetchImpl);
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 }))
+    .rejects.toEqual(new OpenRouterCallError("model_unavailable"));
+});
+
+it("keeps configured order while excluding only the actual model", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response("provider error", { status: 503 }));
+  vi.stubGlobal("fetch", fetchImpl);
   await expect(sendMenuGeneration({
-    models: ["first/model:free"], messages: [], timeoutMs: 1_000,
-    apiKey: "secret", baseUrl: "http://mock.invalid/v1",
-  }, { fetchImpl })).rejects.toMatchObject({
-    code: "invalid_ai_response", modelId: "first/model:free",
+    messages: [], timeoutMs: 1_000, excludedModelIds: [models[0]],
+  })).rejects.toMatchObject({ code: "model_unavailable" });
+  const body = fetchImpl.mock.calls[0]?.[1]?.body;
+  expect(body).toBeTypeOf("string");
+  if (typeof body !== "string") throw new Error("Expected OpenRouter request body to be a string");
+  expect(JSON.parse(body) as unknown).toMatchObject({ models: [models[1]] });
+});
+
+it("uses the lower configured timeout and classifies body abort as terminal timeout", async () => {
+  vi.useFakeTimers();
+  getServerEnvMock.mockReturnValueOnce({
+    ...config,
+    openRouter: { ...config.openRouter, timeoutMs: 5 },
   });
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementation((_url, init) =>
+    Promise.resolve(new Response(new ReadableStream({
+      start(controller) {
+        init?.signal?.addEventListener("abort", () => {
+          controller.error(new DOMException("Aborted", "AbortError"));
+        });
+      },
+    }), { status: 200 })));
+  vi.stubGlobal("fetch", fetchImpl);
+  const pending = sendMenuGeneration({ messages: [], timeoutMs: 100 });
+  await vi.advanceTimersByTimeAsync(5);
+  await expect(pending).rejects.toMatchObject({ code: "generation_timeout" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([
+  ["http://openrouter-mock:8787/api/v1", true],
+  ["http://openrouter-mock:8787@evil.example/api/v1", false],
+  ["http://openrouter-mock.evil.example:8787/api/v1", false],
+  ["https://openrouter-mock:8787/api/v1", false],
+] as const)("sends the mock scenario header only to the exact local base %s", async (
+  baseUrl,
+  expected,
+) => {
+  vi.stubEnv("OPENROUTER_MOCK_SCENARIO", "success");
+  getServerEnvMock.mockReturnValueOnce({
+    ...config,
+    openRouter: { ...config.openRouter, baseUrl },
+  });
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response("provider error", { status: 503 }),
+  );
+  vi.stubGlobal("fetch", fetchImpl);
+  await expect(sendMenuGeneration({
+    messages: [], timeoutMs: 1_000,
+  })).rejects.toMatchObject({ code: "model_unavailable" });
+  expect(fetchImpl).toHaveBeenCalledOnce();
+  const headers = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers);
+  expect(headers.has("X-Kondate-Mock-Scenario")).toBe(expected);
 });
 ```
 
+上記に加え、空・重複・non-freeの設定、全model除外、未知excluded ID、0以下のtimeout、overflow/負/過去/ISO形式の`Retry-After`は独立テストで固定する。前4ケースはfetch前にclosed error、未知excluded IDはconfigured orderを変えず、非正規`Retry-After`は`null`となる。
+
 - [ ] **Step 2 (2–5 min): Run the client tests and observe the missing-module failure**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/openrouter.test.ts`
 
 Expected: FAIL because `openrouter.ts` does not exist.
 
@@ -2190,9 +2360,15 @@ import {
   aiGenerationResponseSchema,
   menuResponseFormat,
   type AiGenerationResponse,
-} from "../../../shared/contracts/generation";
+} from "../../../shared/contracts/generation.js";
+import { getServerEnv } from "./env.js";
 
 export type OpenRouterMessage = { role: "system" | "user" | "assistant"; content: string };
+export type OpenRouterGenerationInput = {
+  messages: readonly OpenRouterMessage[];
+  timeoutMs: number;
+  excludedModelIds?: readonly string[];
+};
 export type OpenRouterGenerationResult = { output: AiGenerationResponse; modelId: string };
 
 export class OpenRouterCallError extends Error {
@@ -2207,78 +2383,160 @@ const responseSchema = z.object({
   model: z.string().min(1),
   choices: z.array(z.object({ message: z.object({ content: z.string() }) })).min(1),
 });
+const modelOnlySchema = z.object({ model: z.string().min(1) });
+const httpDatePattern = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/u;
 
-function retryAt(response: Response): string | null {
+function isExactLocalMockBaseUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" &&
+      parsed.hostname === "openrouter-mock" &&
+      parsed.port === "8787" &&
+      parsed.pathname === "/api/v1" &&
+      parsed.username === "" && parsed.password === "" &&
+      parsed.search === "" && parsed.hash === "";
+  } catch {
+    return false;
+  }
+}
+
+function retryAt(response: Response, now: number): string | null {
   const retryAfter = response.headers.get("retry-after");
   if (!retryAfter) return null;
-  const seconds = Number(retryAfter);
-  return Number.isFinite(seconds)
-    ? new Date(Date.now() + seconds * 1_000).toISOString()
-    : new Date(retryAfter).toISOString();
+  if (/^\d+$/u.test(retryAfter)) {
+    const target = now + Number(retryAfter) * 1_000;
+    return Number.isFinite(target) && !Number.isNaN(new Date(target).getTime())
+      ? new Date(target).toISOString()
+      : null;
+  }
+  if (!httpDatePattern.test(retryAfter)) return null;
+  const parsed = Date.parse(retryAfter);
+  if (!Number.isFinite(parsed)) return null;
+  const date = new Date(parsed);
+  return date.toUTCString() === retryAfter && parsed >= now ? date.toISOString() : null;
 }
 
 export async function sendMenuGeneration(
-  input: {
-    apiKey: string; baseUrl: string; models: readonly string[];
-    messages: readonly OpenRouterMessage[]; timeoutMs: number; testScenario?: string;
-  },
-  deps: { fetchImpl?: typeof fetch } = {},
+  input: OpenRouterGenerationInput,
 ): Promise<OpenRouterGenerationResult> {
-  if (input.models.length === 0 || input.models.some((model) => !model.endsWith(":free"))) {
+  const config = getServerEnv().openRouter;
+  if (
+    config.models.length === 0 ||
+    new Set(config.models).size !== config.models.length ||
+    config.models.some((model) => model === "openrouter/auto" || !model.endsWith(":free"))
+  ) {
     throw new OpenRouterCallError("model_unavailable");
   }
+  const excluded = new Set(input.excludedModelIds ?? []);
+  const models = config.models.filter((model) => !excluded.has(model));
+  if (models.length === 0) throw new OpenRouterCallError("model_unavailable");
+  if (!Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0) {
+    throw new OpenRouterCallError("generation_timeout");
+  }
+  if (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0) {
+    throw new OpenRouterCallError("generation_timeout");
+  }
+  const timeoutMs = Math.min(config.timeoutMs, input.timeoutMs);
+  const testScenario = process.env.OPENROUTER_MOCK_SCENARIO;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), input.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await (deps.fetchImpl ?? fetch)(`${input.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${input.apiKey}`,
-        "Content-Type": "application/json",
-        ...(input.testScenario && input.baseUrl.startsWith("http://")
-          ? { "X-Kondate-Mock-Scenario": input.testScenario }
-          : {}),
-      },
-      body: JSON.stringify({
-        models: input.models,
-        messages: input.messages,
-        response_format: menuResponseFormat,
-        provider: { require_parameters: true },
-        temperature: 0.2,
-        stream: false,
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new OpenRouterCallError("model_unavailable", null, retryAt(response));
-    const envelope = responseSchema.safeParse(await response.json());
-    if (!envelope.success) throw new OpenRouterCallError("invalid_ai_response");
+    let response: Response;
+    try {
+      response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+          ...(testScenario && isExactLocalMockBaseUrl(config.baseUrl)
+            ? { "X-Kondate-Mock-Scenario": testScenario }
+            : {}),
+        },
+        body: JSON.stringify({
+          models,
+          messages: input.messages,
+          response_format: menuResponseFormat,
+          provider: { require_parameters: true },
+          temperature: 0.2,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+    } catch {
+      if (controller.signal.aborted) throw new OpenRouterCallError("generation_timeout");
+      throw new OpenRouterCallError("model_unavailable");
+    }
+    if (!response.ok) {
+      throw new OpenRouterCallError(
+        "model_unavailable",
+        null,
+        retryAt(response, Date.now()),
+      );
+    }
+    let rawEnvelope: unknown;
+    try { rawEnvelope = JSON.parse(await response.text()) as unknown; }
+    catch {
+      if (controller.signal.aborted) throw new OpenRouterCallError("generation_timeout");
+      throw new OpenRouterCallError("invalid_ai_response");
+    }
+    const knownModel = modelOnlySchema.safeParse(rawEnvelope);
+    const modelId = knownModel.success ? knownModel.data.model : null;
+    const envelope = responseSchema.safeParse(rawEnvelope);
+    if (!envelope.success) throw new OpenRouterCallError("invalid_ai_response", modelId);
+    if (!models.includes(envelope.data.model)) {
+      throw new OpenRouterCallError("model_unavailable");
+    }
+    const firstChoice = envelope.data.choices[0];
+    if (firstChoice === undefined) {
+      throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
+    }
     let decoded: unknown;
-    try { decoded = JSON.parse(envelope.data.choices[0].message.content); }
+    try { decoded = JSON.parse(firstChoice.message.content) as unknown; }
     catch { throw new OpenRouterCallError("invalid_ai_response", envelope.data.model); }
     const output = aiGenerationResponseSchema.safeParse(decoded);
     if (!output.success) throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     return { output: output.data, modelId: envelope.data.model };
-  } catch (error) {
-    if (error instanceof OpenRouterCallError) throw error;
-    if (controller.signal.aborted) throw new OpenRouterCallError("generation_timeout");
-    throw new OpenRouterCallError("model_unavailable");
   } finally {
     clearTimeout(timeout);
   }
 }
 ```
 
-- [ ] **Step 4 (2–5 min): Run the exact client tests and typecheck**
+- [ ] **Step 4 (2–5 min): Run the exact client tests**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/openrouter.test.ts && npm run typecheck'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/openrouter.test.ts`
 
-Expected: request body, ordered fallback, strict schema, `require_parameters`, malformed JSON, provider failure, actual model, and abort cases PASS; typecheck exits 0.
+Expected: request body, ordered fallback, strict schema, `require_parameters`, malformed JSON, invalid envelope/content, provider failure, Retry-After, actual model, unconfigured model, network rejection, timeout, timer cleanup, and model exclusion cases PASS.
 
-- [ ] **Step 5 (2–5 min): Commit the OpenRouter boundary**
+- [ ] **Step 5 (2–5 min): Run typecheck**
+
+Run: `docker compose run --rm --no-deps app npm run typecheck`
+
+Expected: PASS with no NodeNext import or fetch mock type errors.
+
+- [ ] **Step 6 (2–5 min): Run the repository per-Task verification gate**
+
+Run each command in its own tool call, in this exact order:
+
+```bash
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test
+./scripts/run-e2e.sh
+docker compose run --rm --no-deps app npm run build
+git diff --check
+```
+
+Expected: Task 6に起因するfailureは0件。Task 3で既知の`OPENROUTER_MODELS` Compose供給不足によりapp healthだけが停止する場合はreportへ記録し、Task 7のCompose補正後に同じgateを再実行する。
+
+- [ ] **Step 7 (2–5 min): Commit the OpenRouter boundary**
 
 ```bash
 git add netlify/functions/_shared/openrouter.ts netlify/functions/_shared/openrouter.test.ts
-git commit -m "feat: add strict openrouter generation client"
+git commit -m "feat: 厳格なOpenRouter生成クライアントを追加"
 ```
 
 ### Task 7: Add deterministic mock scenarios and fixed adversarial outputs
@@ -2523,9 +2781,12 @@ git commit -m "test: add adversarial openrouter mock"
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { makeCurrentSafetyContext } from "../../../shared/testing/factories";
-import { buildGenerationMessages } from "./generation-prompt";
-import { validateTransientChecks } from "./generation-context";
+import {
+  makeCurrentSafetyContext,
+  makeGenerationContext,
+} from "../../../shared/testing/factories.js";
+import { validateTransientChecks } from "./generation-context.js";
+import { buildGenerationMessages } from "./generation-prompt.js";
 
 it("expires pantry confirmation at the Japan-day boundary", () => {
   expect(() => validateTransientChecks(
@@ -2557,19 +2818,19 @@ Expected: FAIL because the current-state loader and prompt builder do not exist.
 - [ ] **Step 3 (2–5 min): Implement the authenticated current-state loader and transient expiry guard**
 
 ```ts
-import type { CurrentSafetyContext } from "../../../shared/safety/context";
-import type { GenerationContext } from "../../../shared/safety/generation-context";
-import { privacyNoticeVersion } from "../../../shared/contracts/domain";
-import { collectPlannerRequestText, plannerDraftSchema, plannerSubmissionSchema, type PlannerSubmission } from "../../../shared/contracts/planner";
-import { pantryItemSchema, type PantryItem } from "../../../shared/contracts/pantry";
-import { detectUnsupportedMedicalRequest } from "../../../shared/safety/medical-scope";
-import { getJstDateKey } from "../../../shared/time/jst";
-import type { NewMenuGenerationRequest } from "../../../shared/contracts/generation";
-import { HttpError } from "./http";
-import { getSupabaseAdmin } from "./supabase-admin";
-import { createUserScopedSupabase } from "./supabase-user";
-import { loadCurrentSafetyContext } from "./current-safety";
-import type { AuthenticatedUser } from "./generation-repository";
+import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
+import type { NewMenuGenerationRequest } from "../../../shared/contracts/generation.js";
+import { pantryItemSchema, type PantryItem } from "../../../shared/contracts/pantry.js";
+import { collectPlannerRequestText, plannerDraftSchema, plannerSubmissionSchema, type PlannerSubmission } from "../../../shared/contracts/planner.js";
+import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { detectUnsupportedMedicalRequest } from "../../../shared/safety/medical-scope.js";
+import { getJstDateKey } from "../../../shared/time/jst.js";
+import { loadCurrentSafetyContext } from "./current-safety.js";
+import type { AuthenticatedUser } from "./generation-repository.js";
+import { HttpError } from "./http.js";
+import { createUserScopedSupabase } from "./supabase-user.js";
+import { getSupabaseAdmin } from "./supabase-admin.js";
 
 export function validateTransientChecks(
   checks: NewMenuGenerationRequest["expiredPantryConfirmations"],
@@ -2695,8 +2956,8 @@ export async function loadGenerationContext(
 - [ ] **Step 4 (2–5 min): Implement the complete allowlisted, data-delimited prompt builder**
 
 ```ts
-import type { OpenRouterMessage } from "./openrouter";
-import type { GenerationContext } from "../../../shared/safety/generation-context";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import type { OpenRouterMessage } from "./openrouter.js";
 
 export type PromptPreferences = {
   mealType: GenerationContext["submission"]["mealType"];
@@ -2794,7 +3055,8 @@ git commit -m "feat: build current anonymous generation context"
 
 ```ts
 import { expect, it, vi } from "vitest";
-import { runGeneration, toGenerationStatus } from "./generation-service";
+import { runGeneration, toGenerationStatus } from "./generation-service.js";
+import { sendMenuGeneration } from "./openrouter.js";
 
 it("marks the global call sent immediately before fetch", async () => {
   const order: string[] = [];
@@ -2817,14 +3079,14 @@ it("releases an unsent reservation when current-state validation fails", async (
 
 it("uses one repair global slot, excludes the first model, and reserves no second user slot", async () => {
   const repository = makeRepository();
-  const callOpenRouter = vi.fn()
+  const callOpenRouter = vi.fn<typeof sendMenuGeneration>()
     .mockResolvedValueOnce({ output: invalidMenuOutput, modelId: "first/model:free" })
     .mockResolvedValueOnce({ output: validMenuOutput, modelId: "second/model:free" });
   const result = await runGeneration(makeGenerationDeps({ repository, callOpenRouter }), newCommand);
   expect(repository.reserve).toHaveBeenCalledTimes(1);
   expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
   expect(repository.markSent).toHaveBeenCalledTimes(2);
-  expect(callOpenRouter.mock.calls[1]?.[0].models).toEqual(["second/model:free"]);
+  expect(callOpenRouter.mock.calls[1]?.[0].excludedModelIds).toEqual(["first/model:free"]);
   expect(result.status).toBe("succeeded");
 });
 
@@ -2862,17 +3124,17 @@ import {
   generationFailureCodes,
   releaseQuota,
   type GenerationCommand,
-  type NewMenuGenerationRequest,
   type GenerationStatusData,
-} from "../../../shared/contracts/generation";
-import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu";
-import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint";
-import { getServerEnv } from "./env";
-import type { GenerationContext } from "../../../shared/safety/generation-context";
-import { loadGenerationContext } from "./generation-context";
-import { buildGenerationMessages } from "./generation-prompt";
-import { createGenerationRepository, type AuthenticatedUser, type GenerationRepository, type QuotaRequestRecord } from "./generation-repository";
-import { sendMenuGeneration, OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter";
+} from "../../../shared/contracts/generation.js";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import { getServerEnv } from "./env.js";
+import { loadGenerationContext } from "./generation-context.js";
+import { buildGenerationMessages } from "./generation-prompt.js";
+import { createGenerationRepository, type AuthenticatedUser, type GenerationRepository, type QuotaRequestRecord } from "./generation-repository.js";
+import { HttpError } from "./http.js";
+import { sendMenuGeneration, OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
 
 export type GenerationDependencies = {
   user: AuthenticatedUser;
@@ -2885,7 +3147,7 @@ export type GenerationDependencies = {
   ): Promise<{ generationContext: GenerationContext }>;
   callOpenRouter(input: Parameters<typeof sendMenuGeneration>[0]): Promise<OpenRouterGenerationResult>;
   now(): Date;
-  openRouter: { apiKey: string; baseUrl: string; timeoutMs: number; testScenario?: string };
+  openRouterTimeoutMs: number;
   requestStartedAtMonotonicMs: number;
   functionTotalBudgetMs: number;
 };
@@ -2962,13 +3224,7 @@ export function createGenerationDeps(
       return { generationContext, requestId, deadlineAtMonotonicMs };
     },
     callOpenRouter: sendMenuGeneration, now: () => new Date(),
-    openRouter: {
-      apiKey: env.openRouter.apiKey, baseUrl: env.openRouter.baseUrl,
-      timeoutMs: env.openRouter.timeoutMs,
-      ...(env.openRouter.baseUrl.startsWith("http://openrouter-mock") &&
-          process.env.OPENROUTER_MOCK_SCENARIO !== undefined
-        ? { testScenario: process.env.OPENROUTER_MOCK_SCENARIO } : {}),
-    },
+    openRouterTimeoutMs: env.openRouter.timeoutMs,
     requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
     functionTotalBudgetMs: env.openRouter.functionTotalBudgetMs,
   };
@@ -3003,17 +3259,22 @@ export async function runGeneration(
   }
 
   const originalMessages = buildGenerationMessages(context);
-  const call = async (models: readonly string[], messages = originalMessages) => {
+  const call = async (
+    excludedModelIds: readonly string[] = [],
+    messages = originalMessages,
+  ) => {
     await deps.repository.markSent(requestId);
     const result = await deps.callOpenRouter({
-      ...deps.openRouter, models, messages, timeoutMs: deps.openRouter.timeoutMs,
+      messages,
+      timeoutMs: deps.openRouterTimeoutMs,
+      excludedModelIds,
     });
     await deps.repository.recordModel(requestId, result.modelId);
     return result;
   };
 
   let first: OpenRouterGenerationResult;
-  try { first = await call(deps.models); }
+  try { first = await call(); }
   catch (error) {
     const failure = error instanceof OpenRouterCallError ? error : new OpenRouterCallError("model_unavailable");
     return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
@@ -3031,7 +3292,7 @@ export async function runGeneration(
     }
     const issueCodes = checked.issues.map((issue) => ({ code: issue.code, path: issue.path }));
     try {
-      const repaired = await call(models, [...originalMessages, {
+      const repaired = await call([first.modelId], [...originalMessages, {
         role: "user", content: `前の結果は検証に失敗しました。次の項目だけ修正して全体JSONを再生成してください: ${JSON.stringify(issueCodes)}`,
       }]);
       if (repaired.output.outcome === "constraint_conflict") {
@@ -4069,7 +4330,7 @@ async function repairOnce(
   deps: GenerationDependencies,
   requestId: string,
   firstModelId: string | null,
-  originalMessages: readonly OpenRouterMessage[],
+  originalMessages: Parameters<typeof sendMenuGeneration>[0]["messages"],
   issueCodes: readonly { code: string; path: string }[],
 ): Promise<OpenRouterGenerationResult | null> {
   const repair = await deps.repository.reserveRepair(requestId);
@@ -4077,7 +4338,8 @@ async function repairOnce(
   if (repair.reserved !== true || models.length === 0) return null;
   await deps.repository.markSent(requestId);
   const result = await deps.callOpenRouter({
-    ...deps.openRouter, models, timeoutMs: deps.openRouter.timeoutMs,
+    timeoutMs: deps.openRouterTimeoutMs,
+    excludedModelIds: firstModelId === null ? [] : [firstModelId],
     messages: [...originalMessages, {
       role: "user",
       content: `前の結果は検証に失敗しました。次の項目だけ修正して全体JSONを再生成してください: ${JSON.stringify(issueCodes)}`,
@@ -4096,7 +4358,7 @@ The initial-call catch becomes:
     const failure = error instanceof OpenRouterCallError ? error : new OpenRouterCallError("model_unavailable");
     return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
   }
-  const repaired = await repairOnce(deps, requestId, null, originalMessages,
+  const repaired = await repairOnce(deps, requestId, error.modelId, originalMessages,
     [{ code: "invalid_ai_response", path: "$" }]);
   if (repaired === null) {
     return toGenerationStatus(await deps.repository.fail(requestId, "invalid_ai_response", null), key);
@@ -4175,16 +4437,13 @@ test("shows timeline, tabs, ingredients, steps, adaptations, pantry reasons, lab
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { parseOpenRouterModels } from "./env";
-import { sendMenuGeneration } from "./openrouter";
+import { sendMenuGeneration } from "./openrouter.js";
 
 describe.skipIf(process.env.RUN_OPENROUTER_SMOKE !== "1")("real OpenRouter", () => {
   it("returns one structurally valid response through one application HTTP request", async () => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new Error("OPENROUTER_API_KEY is required");
+    if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is required");
     const result = await sendMenuGeneration({
-      apiKey, baseUrl: "https://openrouter.ai/api/v1",
-      models: parseOpenRouterModels(process.env.OPENROUTER_MODELS ?? ""), timeoutMs: 20_000,
+      timeoutMs: 20_000,
       messages: [
         { role: "system", content: "指定されたJSON Schemaだけを返してください。" },
         { role: "user", content: "匿名の大人1人向け、15分の和食朝食2品を生成してください。" },
@@ -5228,12 +5487,11 @@ it("keeps the supplementary Netlify IP window within the platform maximum", () =
   });
 });
 
-it("adapts every OpenRouter runtime field through the final dependency factory", () => {
+it("adapts only the safe OpenRouter call controls through the final dependency factory", () => {
   const deps = createGenerationDeps(user, { requestStartedAtMonotonicMs: 1_000 });
-  expect(deps.openRouter).toEqual({
-    apiKey: "mock-key", baseUrl: "http://openrouter-mock:8787/api/v1",
-    timeoutMs: 20_000, testScenario: "success",
-  });
+  expect(deps.openRouterTimeoutMs).toBe(20_000);
+  expect(deps).not.toHaveProperty("openRouter.apiKey");
+  expect(deps).not.toHaveProperty("openRouter.baseUrl");
   expect(deps.requestStartedAtMonotonicMs).toBe(1_000);
   expect(deps.functionTotalBudgetMs).toBe(50_000);
   expect(deps.callOpenRouter).toBe(sendMenuGeneration);
@@ -5266,11 +5524,16 @@ it("counts authentication and reservation inside the one handler-entry budget", 
 });
 
 it("excludes the actual model even when its body is malformed", async () => {
-  server.respondOnce({ model: "fallback/model-b:free", choices: [{ message: { content: "{" } }] });
-  await expect(sendMenuGeneration(callInput)).rejects.toMatchObject({
-    code: "invalid_ai_response", modelId: "fallback/model-b:free",
-  });
-  expect(modelsForRepair(caughtError)).not.toContain("fallback/model-b:free");
+  const callOpenRouter = vi.fn<typeof sendMenuGeneration>()
+    .mockRejectedValueOnce(new OpenRouterCallError(
+      "invalid_ai_response",
+      "fallback/model-b:free",
+    ))
+    .mockResolvedValueOnce(validOutput);
+  await runGeneration(makeDeps({ callOpenRouter }), newMenuCommand());
+  expect(callOpenRouter).toHaveBeenCalledTimes(2);
+  expect(callOpenRouter.mock.calls[1]?.[0].excludedModelIds)
+    .toEqual(["fallback/model-b:free"]);
 });
 
 it("persists and reads every ingredient-bound action from the normal success fixture", async () => {
@@ -5515,12 +5778,7 @@ export type GenerationDependencies = {
   validatePreflight(context: GenerationContext): GenerationPreflightResult;
   repository: GenerationRepository;
   callOpenRouter: typeof sendMenuGeneration;
-  openRouter: {
-    apiKey: string;
-    baseUrl: string;
-    timeoutMs: number;
-    testScenario?: string;
-  };
+  openRouterTimeoutMs: number;
   models: readonly string[];
   requestStartedAtMonotonicMs: number;
   functionTotalBudgetMs: number;
@@ -5533,15 +5791,6 @@ export function createGenerationDeps(
   timing: { requestStartedAtMonotonicMs: number },
 ): GenerationDependencies {
   const env = getServerEnv();
-  const openRouter = {
-    apiKey: env.openRouter.apiKey,
-    baseUrl: env.openRouter.baseUrl,
-    timeoutMs: env.openRouter.timeoutMs,
-    ...(env.openRouter.baseUrl.startsWith("http://openrouter-mock") &&
-        process.env.OPENROUTER_MOCK_SCENARIO !== undefined
-      ? { testScenario: process.env.OPENROUTER_MOCK_SCENARIO }
-      : {}),
-  };
   return {
     loadExecutionContext: async (command, requestId, deadlineAtMonotonicMs) => {
       if (command.kind !== "new_menu") {
@@ -5562,7 +5811,7 @@ export function createGenerationDeps(
     validatePreflight: validateGenerationPreflight,
     repository: createGenerationRepository(user),
     callOpenRouter: sendMenuGeneration,
-    openRouter,
+    openRouterTimeoutMs: env.openRouter.timeoutMs,
     models: env.openRouter.models,
     requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
     functionTotalBudgetMs: env.openRouter.functionTotalBudgetMs,
@@ -5832,20 +6081,22 @@ const deadlineAtMonotonicMs =
   deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs;
 const remainingMs = () => deadlineAtMonotonicMs - deps.monotonicNow();
 const timeoutForAttempt = () => Math.min(ATTEMPT_TIMEOUT_MS,
-  deps.openRouter.timeoutMs,
+  deps.openRouterTimeoutMs,
   Math.max(0, remainingMs() - FINALIZE_RESERVE_MS));
 const canRepair = () => remainingMs() >= REQUIRED_SEND_BUDGET_MS;
 
-const callProvider = (models: readonly string[], messages: readonly ChatMessage[]) =>
+const callProvider = (
+  excludedModelIds: readonly string[],
+  messages: Parameters<typeof sendMenuGeneration>[0]["messages"],
+) =>
   deps.callOpenRouter({
-    ...deps.openRouter,
-    models,
+    excludedModelIds,
     messages,
     timeoutMs: timeoutForAttempt(),
   });
 ```
 
-`sendMenuGeneration` uses `AbortSignal.timeout(input.timeoutMs)`. A `generation_timeout` never enters repair. For invalid structure/rules, repair requires `canRepair()` and filters `error.modelId` or the successful first response's actual model. The handler test advances fake monotonic time during auth and reservation, proving those phases consume the same 50-second budget and the response still completes by the original deadline with at most two sends.
+`sendMenuGeneration` keeps the Task 6 `AbortController` timer contract and applies the smaller of validated `ServerEnv.openRouter.timeoutMs` and `input.timeoutMs`; body-read aborts are also `generation_timeout`, and the timer is always cleared in `finally`. A `generation_timeout` never enters repair. For invalid structure/rules, repair requires `canRepair()` and passes `error.modelId` or the successful first response's actual model as the sole `excludedModelIds` entry. The handler test advances fake monotonic time during auth and reservation, proving those phases consume the same 50-second budget and the response still completes by the original deadline with at most two sends.
 
 There is also a hard pre-send gate after context loading, deterministic preflight, and prompt construction, immediately before `markSent`: if `remainingMs() < REQUIRED_SEND_BUDGET_MS`, call `repository.failBeforeSend(requestId,"generation_timeout")` and return its terminal status. That transition atomically releases the user-success reservation, the unsent user-attempt reservation, and the unsent global reservation; it performs no OpenRouter HTTP call and never calls `markSent`. At equality the send is allowed. `timeoutForAttempt()` must always be positive on the send path, and every success/conflict/failure path stops provider work once `remainingMs() <= FINALIZE_RESERVE_MS` so the atomic finalizer retains its full 2-second reserve.
 
