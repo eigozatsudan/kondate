@@ -3216,6 +3216,27 @@ git commit -m "feat: 匿名の現行生成コンテキストを追加"
   `validateGenerationPreflight(context,now)`, plus Plan 2's `validateGeneratedMenu()` and
   authoritative fingerprint contract.
 - Produces: `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, `toGenerationStatus(record,idempotencyKey)`, and the sole provider-local-to-internal boundary `materializeAiGeneratedMenu(output,context,uuid)`. Plan 4 extends the Task 1 command union and reuses the same reservation, repair, materialization, validation, and persistence path.
+- `repository.status(idempotencyKey)` is the owner-scoped authoritative hydration
+  boundary after a repository mutation. `runGeneration` never projects a replay,
+  denial, or terminal transition from that mutation's returned record: after
+  `reserve` returns a replay/denial, and after every `fail`, `conflict`, or `succeed`,
+  it reloads `status(key)` and only then calls `toGenerationStatus`. A failed status
+  hydration rejects; no stale transition payload is used as a fallback.
+- Provider repair diagnostics are a bounded, value-free DTO. A single exported
+  closed code tuple owns both materializer and deterministic-validator repair codes;
+  each code maps to one fixed structural path chosen by application code. Diagnostics
+  are stable-first-occurrence deduplicated and capped at 64. Provider values, local
+  refs, UUIDs, array indexes, exception text, validator messages, and raw paths never
+  enter a repair prompt.
+- Provider conflicts pass through a trusted projector before terminalization. It
+  accepts only provider-allowed conflict codes (`must_use_conflict`,
+  `allergen_pantry_conflict`, `dish_count_conflict`,
+  `mandatory_safety_conflict`; never server-only `current_safety_changed`), derives
+  fixed Japanese copy by code, and permits only current `member_N`/`pantry_N` refs.
+  Invalid codes/refs, UUID-looking refs, and sentinel refs become the same
+  `invalid_ai_response` repair candidate as malformed menu output. Provider messages
+  are ignored and replaced by fixed copy; raw provider messages are never persisted,
+  returned, or included in a repair prompt.
 
 - [ ] **Step 1 (2–5 min): Write failing materialization, quota-order, pre-send-release, repair-once, and success tests**
 
@@ -3336,7 +3357,63 @@ it.each([
 });
 ```
 
+The RED service matrix also covers every boundary below. Use a fresh repository mock
+per row and assert exact call counts and ordering, not only the returned status:
+
+- A successful reservation followed by a throw/rejection from context load,
+  preflight, prompt construction, `markSent`, provider call, `recordModel`, provider
+  conflict projection, materialization, deterministic validation, `reserveRepair`,
+  repaired-response processing, or `succeed` attempts exactly one
+  `fail(requestId,"internal_error",null)` unless the error already maps to a trusted
+  closed generation failure. Only transport failure from that terminal `fail` may
+  reject. Exception text is absent from status, persistence, and repair messages.
+- `HttpError` codes inside `generationFailureCodes` keep their code; an unknown
+  `HttpError.code`, an ordinary `Error`, and an object shaped like either one become
+  `internal_error`. Unknown exceptions never become `model_unavailable`.
+- Every replay, reservation denial, failure/conflict/success transition, and repair
+  denial calls `repository.status(key)` after the repository operation and projects
+  only the hydrated record. Give the mutation a deliberately stale/different return
+  record to prove it is ignored. Make `status` reject after each branch and prove the
+  service rejects without falling back to the mutation result or attempting a second
+  terminal transition.
+- For `invalid_ai_response` with a trusted configured model ID, `recordModel` occurs
+  before the eligible-model/repair decision. The same is true when the repair call
+  returns an invalid response. A `recordModel` rejection terminalizes once as
+  `internal_error`. A null model ID is neither recorded nor excluded. A non-null ID
+  not in `deps.models` is untrusted and is likewise neither recorded nor excluded.
+- If excluding a known first model leaves no configured model, terminalize as
+  `invalid_ai_response` before `reserveRepair`, the second `markSent`, or fetch. Only
+  a null/unknown model may consume the one repair with no exclusion; it still cannot
+  create a third send.
+- Provider conflicts accept every provider-allowed code with fixed Japanese copy and
+  deduplicated current refs. Reject `current_safety_changed`, unknown codes, foreign
+  or out-of-range `member_N`/`pantry_N`, UUID-looking refs, sentinel refs, and more
+  than the bounded conflict/ref counts as `invalid_ai_response`. Inject raw-message
+  canaries and prove they are ignored and replaced by fixed copy. The first invalid
+  conflict may use the shared one-repair budget; an invalid repaired conflict
+  terminalizes, with no raw message persisted.
+- The repair DTO test feeds provider refs, UUIDs, array indexes, arbitrary validator
+  paths/messages, duplicates, unknown codes, and more than 64 issues. Assert the
+  prompt contains only allowlisted codes and their code-derived fixed paths, in
+  stable deduplicated order, capped at 64; every canary is absent.
+- Load failures explicitly distinguish
+  `new HttpError(422,"unsupported_diet",...)` (closed `unsupported_diet`) from
+  `new Error("unsupported_diet")` (`internal_error`). A message string never selects
+  a failure code.
+
 In `generation-materializer.test.ts`, first prove that Task 7's provider-local `success.menu` materializes to a `generatedMenuSchema` value with fresh UUIDs and then passes `validateGeneratedMenu` under an explicitly matching generation context. Cover every ref kind, duplicate/dangling/wrong-kind refs, unknown/foreign pantry refs, priority mismatch, repeated pantry use, missing `must_use`, inconsistent pantry dish links, unknown member refs, invalid label source/path, pantry-name/ingredient-name mismatch, and a UUID-looking provider string. Prove that a trusted inventory quantity of 100 and provider planned quantity of 300 deterministically creates shortage 200; provider output never supplies inventory or shortage. Conflict responses are branched before this function and are never passed to it.
+
+Materializer RED cases additionally prove that `wrong_kind_ref` is reserved for the
+polymorphic label pair where `sourceType` and the otherwise valid `sourceRef` kind do
+not agree. A wrong typed prefix in a typed field (for example `stepRef:"dish_1"`) is
+rejected by Task 6's provider schema as `invalid_ai_response` and never reaches the
+materializer. Pantry units are compared after trim with exact equality only; no unit
+alias/conversion is accepted. A planned non-null quantity with trusted inventory
+quantity null is rejected, every quantity must be exactly representable in
+integer-thousandths, and shortage is computed by integer subtraction before division
+by 1000. Unit failures use the closed `pantry_unit_mismatch` diagnostic. Tests include
+floating-point edges (`0.1`, `0.2`, `0.3`), excess precision, trimmed equal units,
+case/width-different units, and null trusted inventory.
 
 - [ ] **Step 2 (2–5 min): Run the service tests and observe the missing orchestrator failure**
 
@@ -3398,6 +3475,119 @@ export type GenerationDependencies = {
   uuid(): string;
 };
 
+const generationFailureCodeSchema = z.enum(generationFailureCodes);
+
+// repair promptへ渡せる語彙とpathはアプリケーションが固定し、入力値から組み立てない。
+export const generationRepairCodes = [
+  "invalid_provider_menu", "uuid_in_provider_output", "duplicate_ref",
+  "dangling_ref", "wrong_kind_ref", "unknown_member_ref", "unknown_pantry_ref",
+  "pantry_priority_mismatch", "pantry_usage_duplicate", "must_use_missing",
+  "pantry_usage_link_mismatch", "label_source_invalid", "pantry_name_mismatch",
+  "pantry_unit_mismatch", "invalid_menu_structure", "target_member_mismatch",
+  "member_preference_mismatch", "safety_context_incomplete", "allergy_unconfirmed",
+  "allergen_missing", "unmapped_custom_allergy", "unsupported_diet_unconfirmed",
+  "unsupported_diet_present", "unsupported_medical_request", "meal_type_mismatch",
+  "genre_mismatch", "time_limit_exceeded", "required_dish_role_missing",
+  "main_ingredient_missing", "avoid_ingredient_used", "pantry_selection_mismatch",
+  "prefer_use_reason_missing", "direct_allergen_match",
+  "missing_label_confirmation", "unexpected_label_confirmation", "age_shape_rule",
+  "required_safety_action", "safety_action_contradiction",
+] as const;
+export type GenerationRepairCode = (typeof generationRepairCodes)[number];
+export type GenerationRepairDiagnostic = Readonly<{
+  code: GenerationRepairCode;
+  path: string;
+}>;
+
+const repairPathByCode = {
+  invalid_provider_menu: "menu", uuid_in_provider_output: "menu",
+  duplicate_ref: "menu.references", dangling_ref: "menu.references",
+  wrong_kind_ref: "menu.labelConfirmations.source",
+  unknown_member_ref: "menu.members", unknown_pantry_ref: "menu.pantryUsage",
+  pantry_priority_mismatch: "menu.pantryUsage.priority",
+  pantry_usage_duplicate: "menu.pantryUsage", must_use_missing: "menu.pantryUsage",
+  pantry_usage_link_mismatch: "menu.pantryUsage.dishRefs",
+  label_source_invalid: "menu.labelConfirmations.source",
+  pantry_name_mismatch: "menu.labelConfirmations.sourceText",
+  pantry_unit_mismatch: "menu.pantryUsage.unit",
+  invalid_menu_structure: "menu", target_member_mismatch: "menu.members",
+  member_preference_mismatch: "menu.adaptations",
+  safety_context_incomplete: "menu.safety", allergy_unconfirmed: "menu.safety",
+  allergen_missing: "menu.safety", unmapped_custom_allergy: "menu.safety",
+  unsupported_diet_unconfirmed: "menu.safety",
+  unsupported_diet_present: "menu.safety",
+  unsupported_medical_request: "menu.safety", meal_type_mismatch: "menu.mealType",
+  genre_mismatch: "menu.cuisineGenre", time_limit_exceeded: "menu.timeline",
+  required_dish_role_missing: "menu.dishes", main_ingredient_missing: "menu.dishes",
+  avoid_ingredient_used: "menu.dishes.ingredients",
+  pantry_selection_mismatch: "menu.pantryUsage",
+  prefer_use_reason_missing: "menu.pantryUsage.unusedReason",
+  direct_allergen_match: "menu.dishes.ingredients",
+  missing_label_confirmation: "menu.labelConfirmations",
+  unexpected_label_confirmation: "menu.labelConfirmations",
+  age_shape_rule: "menu.safetyActions",
+  required_safety_action: "menu.safetyActions",
+  safety_action_contradiction: "menu.safetyActions",
+} as const satisfies Record<GenerationRepairCode, string>;
+
+function toRepairDiagnostics(issues: readonly { code: string }[]): readonly GenerationRepairDiagnostic[] {
+  const seen = new Set<GenerationRepairCode>();
+  const diagnostics: GenerationRepairDiagnostic[] = [];
+  for (const issue of issues) {
+    const parsed = z.enum(generationRepairCodes).safeParse(issue.code);
+    const code: GenerationRepairCode = parsed.success ? parsed.data : "invalid_provider_menu";
+    if (seen.has(code)) continue;
+    seen.add(code);
+    diagnostics.push({ code, path: repairPathByCode[code] });
+    if (diagnostics.length === 64) break;
+  }
+  return diagnostics;
+}
+
+function closedFailureCode(error: unknown): (typeof generationFailureCodes)[number] {
+  if (!(error instanceof HttpError)) return "internal_error";
+  const parsed = generationFailureCodeSchema.safeParse(error.code);
+  return parsed.success ? parsed.data : "internal_error";
+}
+
+const providerConflictCopy = {
+  must_use_conflict: "必須食材と安全条件を同時に満たせません。",
+  allergen_pantry_conflict: "アレルギー条件と選択した食材を同時に満たせません。",
+  dish_count_conflict: "指定した品数と条件を同時に満たせません。",
+  mandatory_safety_conflict: "必須の安全条件を満たす献立を作成できません。",
+} as const;
+const providerConflictCodeSchema = z.enum([
+  "must_use_conflict", "allergen_pantry_conflict", "dish_count_conflict",
+  "mandatory_safety_conflict",
+]);
+
+function projectProviderConflicts(
+  conflicts: readonly z.infer<typeof generationConflictSchema>[],
+  context: GenerationContext,
+): readonly z.infer<typeof generationConflictSchema>[] {
+  const allowedRefs = new Set([
+    ...context.targetMembers.map((member) => member.anonymousRef),
+    ...context.submission.pantrySelections.map((_, index) => `pantry_${index + 1}`),
+  ]);
+  const seenCodes = new Set<keyof typeof providerConflictCopy>();
+  return conflicts.map((conflict) => {
+    const parsedCode = providerConflictCodeSchema.safeParse(conflict.code);
+    if (!parsedCode.success) {
+      throw new GenerationMaterializationError(["invalid_provider_menu"]);
+    }
+    const code = parsedCode.data;
+    if (seenCodes.has(code)) {
+      throw new GenerationMaterializationError(["invalid_provider_menu"]);
+    }
+    seenCodes.add(code);
+    const conditionRefs = [...new Set(conflict.conditionRefs)];
+    if (conditionRefs.some((ref) => !allowedRefs.has(ref))) {
+      throw new GenerationMaterializationError(["invalid_provider_menu"]);
+    }
+    return { code, message: providerConflictCopy[code], conditionRefs };
+  });
+}
+
 const failureCopy: Record<string, { message: string; retryable: boolean }> = {
   consent_required: { message: "AIへ送る情報の説明を確認してください。", retryable: false },
   draft_not_found: { message: "保存した献立条件が見つかりませんでした。", retryable: false },
@@ -3454,19 +3644,31 @@ export function toGenerationStatus(record: QuotaRequestRecord, idempotencyKey: s
 }
 ```
 
-Create `generation-materializer.ts` now, before orchestration uses the Task 1 provider contract. `materializeAiGeneratedMenu(output: AiGeneratedMenuPayload, context: GenerationContext, uuid: () => string): GeneratedMenu` accepts only the success arm's `menu`, never the top-level union. Its thrown `GenerationMaterializationError` exposes only a closed array of `{code,path}` repair diagnostics and never embeds provider values. Use these closed codes: `invalid_provider_menu`, `uuid_in_provider_output`, `duplicate_ref`, `dangling_ref`, `wrong_kind_ref`, `unknown_member_ref`, `unknown_pantry_ref`, `pantry_priority_mismatch`, `pantry_usage_duplicate`, `must_use_missing`, `pantry_usage_link_mismatch`, `label_source_invalid`, and `pantry_name_mismatch`.
+Create `generation-materializer.ts` now, before orchestration uses the Task 1 provider contract. `materializeAiGeneratedMenu(output: AiGeneratedMenuPayload, context: GenerationContext, uuid: () => string): GeneratedMenu` accepts only the success arm's `menu`, never the top-level union. Its thrown `GenerationMaterializationError` exposes only `GenerationRepairDiagnostic[]`; its constructor accepts only `readonly GenerationRepairCode[]` and derives each fixed path through `repairPathByCode`, so a call site cannot attach a provider-derived path. Materializer codes are `invalid_provider_menu`, `uuid_in_provider_output`, `duplicate_ref`, `dangling_ref`, `wrong_kind_ref`, `unknown_member_ref`, `unknown_pantry_ref`, `pantry_priority_mismatch`, `pantry_usage_duplicate`, `must_use_missing`, `pantry_usage_link_mismatch`, `label_source_invalid`, `pantry_name_mismatch`, and `pantry_unit_mismatch`. All are members of the one service-wide `generationRepairCodes` tuple above.
 
 Materialize in this fixed order:
 
-1. Parse `aiGeneratedMenuPayloadSchema`; reject UUID-looking strings anywhere, duplicate declarations, dangling/wrong-kind refs, and anonymous member refs not present in the current context.
+1. Parse `aiGeneratedMenuPayloadSchema`; reject UUID-looking strings anywhere,
+   duplicate declarations, dangling refs, and anonymous member refs not present in
+   the current context. `wrong_kind_ref` applies only to a polymorphic label whose
+   valid `sourceRef` prefix disagrees with its `sourceType`. Task 6's strict typed
+   field regexes reject wrong prefixes before materialization as
+   `invalid_ai_response`.
 2. Build the pantry allowlist by assigning `pantry_N` from the immutable
    `context.submission.pantrySelections` array index, then joining each selected ID to
    the owner-proven `context.pantryItems`. Never assign refs from DB result order and
    never lexically sort `pantry_10` before `pantry_2`. Require exact priority equality,
    one usage per referenced pantry ref, and every `must_use` exactly once as `used`.
 3. Allocate one fresh UUID for the menu and each dish, ingredient, step, timeline, adaptation, and pantry selection. Safety actions have no independent ID. Resolve field-specific cross-references; an ingredient pantry ref resolves to the fresh selection ID, and `pantryUsage.dishRefs` must equal exactly the dishes containing ingredients linked to that ref.
-4. Copy trusted pantry ID/name/current quantity/unit, use only provider `plannedQuantity`, and compute `shortageQuantity = max(planned - inventory, 0)` at the contract's thousandth-unit precision when both quantities exist; otherwise shortage is null. Provider output never controls inventory or shortage.
-5. Resolve label candidates from local source refs and exact source paths to fresh source UUIDs and derive `sourceText` from that resolved leaf. Pantry selections are never label sources. For a pantry-backed processed ingredient, the trusted pantry name must normalize-match its ingredient name or a reviewed alias.
+4. Copy trusted pantry ID/name/current quantity/unit. Compare the trimmed provider and
+   trusted units by exact equality; do not use aliases, case folding, width folding,
+   conversion, or fuzzy matching. Reject a non-null provider planned quantity when
+   trusted inventory is null. Require planned and trusted quantities to be exactly
+   representable as integer-thousandths, then compute
+   `max(plannedThousandths - inventoryThousandths,0) / 1000`; otherwise shortage is
+   null. Provider output never controls inventory or shortage. Unit/precision
+   inconsistencies use `pantry_unit_mismatch` rather than a provider-derived message.
+5. Resolve label candidates from local source refs and exact source paths to fresh source UUIDs and derive `sourceText` from that resolved leaf. Pantry selections are never label sources. For a pantry-backed processed ingredient, the trusted pantry name and ingredient name must be equal after the one canonical name normalizer; no reviewed-alias table, synonym, or fuzzy match is permitted.
 6. Parse the complete internal value with `generatedMenuSchema`. Any structural failure becomes `invalid_provider_menu`; the current deterministic validator remains the sole owner of allergen, food-rule, label-set, preference, and time-limit decisions.
 
 - [ ] **Step 4 (2–5 min): Implement the reserve-to-terminal orchestration with exactly one repair**
@@ -3509,9 +3711,31 @@ export async function runGeneration(
     draftId: command.kind === "new_menu" ? command.request.draftId : null,
     draftRevision: command.kind === "new_menu" ? command.request.draftRevision : null,
   });
-  if (reserved.status !== "processing" || reserved.replayed) return toGenerationStatus(reserved, key);
+  class StatusHydrationError extends Error {
+    constructor(readonly cause: unknown) { super("status_hydration_failed"); }
+  }
+  const hydrate = async () => {
+    try { return toGenerationStatus(await deps.repository.status(key), key); }
+    catch (error) { throw new StatusHydrationError(error); }
+  };
+  if (reserved.status !== "processing" || reserved.replayed) return hydrate();
   const requestId = reserved.request_id;
   if (!requestId) throw new Error("request_id_missing");
+
+  const fail = async (code: (typeof generationFailureCodes)[number], retryAt: string | null) => {
+    await deps.repository.fail(requestId, code, retryAt);
+    try { return await hydrate(); }
+    catch (error) {
+      if (error instanceof StatusHydrationError) throw error.cause;
+      throw error;
+    }
+  };
+  const conflict = async (conflicts: readonly z.infer<typeof generationConflictSchema>[]) => {
+    await deps.repository.conflict(requestId, [...conflicts]);
+    return hydrate();
+  };
+
+  try {
 
   let context: GenerationContext;
   try {
@@ -3522,50 +3746,52 @@ export async function runGeneration(
     context = execution.generationContext;
   }
   catch (error) {
-    const code = error instanceof HttpError ? error.code : "internal_error";
-    return toGenerationStatus(await deps.repository.fail(requestId, code, null), key);
+    return fail(closedFailureCode(error), null);
   }
 
   let preflight: GenerationPreflightResult;
   try {
     preflight = deps.validatePreflight(context, deps.now());
   } catch {
-    return toGenerationStatus(
-      await deps.repository.fail(requestId, "internal_error", null),
-      key,
-    );
+    return fail("internal_error", null);
   }
   if (!preflight.ok) {
     if (preflight.terminal === "constraint_conflict") {
-      return toGenerationStatus(
-        await deps.repository.conflict(requestId, preflight.conflicts),
-        key,
-      );
+      return await conflict(preflight.conflicts);
     }
-    return toGenerationStatus(
-      await deps.repository.fail(requestId, preflight.primaryCode, null),
-      key,
-    );
+    const code = generationFailureCodeSchema.safeParse(preflight.primaryCode);
+    return fail(code.success ? code.data : "internal_error", null);
   }
 
   let originalMessages: readonly OpenRouterMessage[];
   try {
     originalMessages = deps.buildMessages(context);
   } catch {
-    return toGenerationStatus(
-      await deps.repository.fail(requestId, "internal_error", null), key,
-    );
+    return fail("internal_error", null);
   }
   const call = async (
     excludedModelIds: readonly string[] = [],
     messages = originalMessages,
   ) => {
     await deps.repository.markSent(requestId);
-    const result = await deps.callOpenRouter({
-      messages,
-      timeoutMs: deps.openRouterTimeoutMs,
-      excludedModelIds,
-    });
+    let result: OpenRouterGenerationResult;
+    try {
+      result = await deps.callOpenRouter({
+        messages,
+        timeoutMs: deps.openRouterTimeoutMs,
+        excludedModelIds,
+      });
+    } catch (error) {
+      if (error instanceof OpenRouterCallError &&
+          error.code === "invalid_ai_response" &&
+          error.modelId !== null && deps.models.includes(error.modelId)) {
+        await deps.repository.recordModel(requestId, error.modelId);
+      }
+      throw error;
+    }
+    if (!deps.models.includes(result.modelId)) {
+      throw new OpenRouterCallError("invalid_ai_response");
+    }
     await deps.repository.recordModel(requestId, result.modelId);
     return result;
   };
@@ -3574,87 +3800,91 @@ export async function runGeneration(
   let repairUsed = false;
   try { first = await call(); }
   catch (error) {
-    const failure = error instanceof OpenRouterCallError ? error : new OpenRouterCallError("model_unavailable");
+    if (!(error instanceof OpenRouterCallError)) return fail("internal_error", null);
+    const parsedFailure = generationFailureCodeSchema.safeParse(error.code);
+    if (!parsedFailure.success) return fail("internal_error", null);
+    const failure = error;
     if (failure.code !== "invalid_ai_response") {
-      return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
+      return fail(parsedFailure.data, failure.retryAt);
     }
+    const trustedModelId = failure.modelId !== null && deps.models.includes(failure.modelId)
+      ? failure.modelId : null;
+    const eligibleModels = trustedModelId === null
+      ? deps.models : deps.models.filter((model) => model !== trustedModelId);
+    if (eligibleModels.length === 0) return fail("invalid_ai_response", null);
     const repair = await deps.repository.reserveRepair(requestId);
     if (repair.reserved !== true) {
-      return toGenerationStatus(await deps.repository.fail(
-        requestId, "invalid_ai_response", repair.retry_at ?? null,
-      ), key);
+      return fail("invalid_ai_response", repair.retry_at ?? null);
     }
     repairUsed = true;
     try {
       first = await call(
-        failure.modelId === null ? [] : [failure.modelId],
+        trustedModelId === null ? [] : [trustedModelId],
         [...originalMessages, { role: "user", content:
           "前の結果はJSON構造を確認できませんでした。指定スキーマの全体JSONを一度だけ再生成してください。" }],
       );
     } catch (repairError) {
-      const terminal = repairError instanceof OpenRouterCallError
-        ? repairError : new OpenRouterCallError("model_unavailable");
-      return toGenerationStatus(
-        await deps.repository.fail(requestId, terminal.code, terminal.retryAt), key,
-      );
+      if (!(repairError instanceof OpenRouterCallError)) return fail("internal_error", null);
+      const code = generationFailureCodeSchema.safeParse(repairError.code);
+      return fail(code.success ? code.data : "internal_error", repairError.retryAt);
     }
   }
-  if (first.output.outcome === "constraint_conflict") {
-    return toGenerationStatus(await deps.repository.conflict(requestId, first.output.conflicts), key);
-  }
-
   let checked;
-  try {
-    checked = validateGeneratedMenu(
-      materializeAiGeneratedMenu(first.output.menu, context, deps.uuid),
-      context,
-    );
-  } catch (error) {
-    if (!(error instanceof GenerationMaterializationError)) {
-      return toGenerationStatus(
-        await deps.repository.fail(requestId, "internal_error", null), key,
-      );
+  if (first.output.outcome === "constraint_conflict") {
+    try { return await conflict(projectProviderConflicts(first.output.conflicts, context)); }
+    catch (error) {
+      if (!(error instanceof GenerationMaterializationError)) throw error;
+      checked = { ok: false as const, issues: error.issues };
     }
-    checked = { ok: false, issues: error.issues };
+  } else {
+    try {
+      checked = validateGeneratedMenu(
+        materializeAiGeneratedMenu(first.output.menu, context, deps.uuid),
+        context,
+      );
+    } catch (error) {
+      if (!(error instanceof GenerationMaterializationError)) throw error;
+      checked = { ok: false as const, issues: error.issues };
+    }
   }
   if (!checked.ok && !repairUsed) {
-    const repair = await deps.repository.reserveRepair(requestId);
     const models = deps.models.filter((model) => model !== first.modelId);
-    if (repair.reserved !== true || models.length === 0) {
-      return toGenerationStatus(await deps.repository.fail(requestId, "invalid_ai_response", repair.retry_at ?? null), key);
-    }
-    const issueCodes = checked.issues.map((issue) => ({ code: issue.code, path: issue.path }));
+    if (models.length === 0) return fail("invalid_ai_response", null);
+    const repair = await deps.repository.reserveRepair(requestId);
+    if (repair.reserved !== true) return fail("invalid_ai_response", repair.retry_at ?? null);
+    const issueCodes = toRepairDiagnostics(checked.issues);
     try {
       const repaired = await call([first.modelId], [...originalMessages, {
         role: "user", content: `前の結果は検証に失敗しました。次の項目だけ修正して全体JSONを再生成してください: ${JSON.stringify(issueCodes)}`,
       }]);
       if (repaired.output.outcome === "constraint_conflict") {
-        return toGenerationStatus(await deps.repository.conflict(requestId, repaired.output.conflicts), key);
-      }
-      try {
-        checked = validateGeneratedMenu(
-          materializeAiGeneratedMenu(repaired.output.menu, context, deps.uuid),
-          context,
-        );
-      } catch (error) {
-        if (!(error instanceof GenerationMaterializationError)) {
-          return toGenerationStatus(
-            await deps.repository.fail(requestId, "internal_error", null), key,
-          );
+        try { return await conflict(projectProviderConflicts(repaired.output.conflicts, context)); }
+        catch (error) {
+          if (!(error instanceof GenerationMaterializationError)) throw error;
+          checked = { ok: false as const, issues: error.issues };
         }
-        checked = { ok: false, issues: error.issues };
+      } else {
+        try {
+          checked = validateGeneratedMenu(
+            materializeAiGeneratedMenu(repaired.output.menu, context, deps.uuid),
+            context,
+          );
+        } catch (error) {
+          if (!(error instanceof GenerationMaterializationError)) throw error;
+          checked = { ok: false as const, issues: error.issues };
+        }
       }
     } catch (error) {
-      const failure = error instanceof OpenRouterCallError ? error : new OpenRouterCallError("model_unavailable");
-      return toGenerationStatus(await deps.repository.fail(requestId, failure.code, failure.retryAt), key);
+      if (!(error instanceof OpenRouterCallError)) throw error;
+      const code = generationFailureCodeSchema.safeParse(error.code);
+      return fail(code.success ? code.data : "internal_error", error.retryAt);
     }
   }
   if (!checked.ok) {
-    return toGenerationStatus(await deps.repository.fail(requestId, "invalid_ai_response", null), key);
+    return fail("invalid_ai_response", null);
   }
-  let completed: QuotaRequestRecord;
   try {
-    completed = await deps.repository.succeed({
+    await deps.repository.succeed({
       requestId, menu: checked.menu, preferenceSnapshot: context.preferenceSnapshot,
       safetySnapshot: context.safetySnapshot,
       safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
@@ -3666,11 +3896,13 @@ export async function runGeneration(
       sourceMenuId: null, changeReason: null, changeReasonCustom: null,
     });
   } catch {
-    return toGenerationStatus(
-      await deps.repository.fail(requestId, "internal_error", null), key,
-    );
+    return fail("internal_error", null);
   }
-  return toGenerationStatus(completed, key);
+  return await hydrate();
+  } catch (error) {
+    if (error instanceof StatusHydrationError) throw error.cause;
+    return fail("internal_error", null);
+  }
 }
 ```
 
@@ -3679,7 +3911,28 @@ once before prompt construction. The trusted dependency clock is the sole prefli
 time source; do not call `new Date()` inside preflight or reuse the loader's earlier
 timestamp because pantry expiry and confirmation validity may change while queued.
 
-Only `GenerationMaterializationError.issues` may enter the existing `{ok:false,issues}` validation shape. Guard every application operation after a successful reservation—including prompt construction, materialization, validation, conflict projection, and success finalization—so an unexpected exception attempts `repository.fail(...,"internal_error",null)` and cannot silently leave a processing request. Tests inject failures at each boundary and prove no exception text enters a repair prompt or response. A transport failure of the terminal `repository.fail` itself may still reject because no second durable channel exists; do not falsely map that database outage to a completed status. `invalid_ai_response` from Task 6, materialization failures, and deterministic validation failures all share the same single repair budget. Provider unavailability and timeout never repair. If the first model ID is known, exclude it; if the malformed envelope did not expose a model ID, still permit only the one reserved repair without inventing an ID. A repaired response is terminal after its one materialize/validate pass and cannot reserve a third send.
+Only `GenerationMaterializationError.issues` and the deterministic validator's issues
+enter the internal invalid-output branch, and both pass through
+`toRepairDiagnostics()` before prompt construction. Guard every application operation
+after a successful reservation—including context load, preflight, prompt construction,
+repository mutations, provider calls, model recording, materialization, validation,
+conflict projection, repair handling, and success finalization—so an unexpected
+exception attempts `repository.fail(...,"internal_error",null)` exactly once and
+cannot silently leave a processing request. The terminal fail and the following
+authoritative `status(key)` hydration are the only operations whose transport failure
+rejects directly; the guard must not recursively call fail or use a stale transition
+record. Tests inject failures at each boundary and prove no exception text enters a
+repair prompt or response.
+
+`invalid_ai_response` from Task 6, invalid provider conflicts, materialization
+failures, and deterministic validation failures all share the same single repair
+budget. Provider unavailability and timeout never repair. Record a trusted configured
+model ID exposed by an `invalid_ai_response` before deciding repair. Determine the
+eligible configured models before `reserveRepair`: if excluding a known model leaves
+none, terminalize without reserving or sending; only a null model ID permits a repair
+with no exclusion. Apply the same record-before-terminal rule to an invalid repaired
+response. A repaired response is terminal after its one project/materialize/validate
+pass and cannot reserve a third send.
 
 - [ ] **Step 5 (2–5 min): Run orchestration, adversarial validation, and type tests**
 
@@ -3695,6 +3948,14 @@ context load, complete preflight before prompt/`markSent`/fetch, pre-send releas
 send-before-fetch accounting, sent-call non-release, one repair, first-model exclusion,
 repair quota denial, conflict, timeout, raw-output non-persistence, validated
 transaction, and current-safety validation.
+
+The full Step 1 RED matrix is mandatory GREEN: common post-reservation guard,
+closed-code error mapping, trusted provider-conflict projection, value-free bounded
+repair diagnostics, trusted model recording before repair/terminalization,
+eligible-model check before repair reservation, unit/name exactness,
+integer-thousandths shortage, typed-prefix versus polymorphic wrong-kind ownership,
+and authoritative `status(key)` hydration (including status failure) are not optional
+follow-up hardening.
 
 Both preflight terminal transitions release the success reservation and every unsent
 external/global reservation through the existing repository RPC. A thrown preflight is
@@ -4947,6 +5208,14 @@ git commit -m "test: 復旧可能なAI献立生成を検証"
 - `GenerationCommand` is the one canonical discriminated union exported by Plan 3. Plan 4 adds handlers for the already-declared regeneration variants; it does not redeclare or wrap the union.
 - `canonicalizeGenerationCommandV1(command)` is the only canonical idempotency representation. `generationRequestHmac(command,key)` applies HMAC-SHA-256 to that representation; request JSON, prompt content, and custom reason text are never persisted in the generation ledger.
 - `aiGeneratedMenuPayloadSchema` is the sole new/whole provider-output payload contract and contains local refs only. Task 1 owns that schema and Task 9 owns `materializeAiGeneratedMenu(output,context,uuid)` as the sole boundary that creates an internal `GeneratedMenu`; Task 15 hardens but does not recreate either contract. No OpenRouter schema contains `format:"uuid"` or an owner ID.
+- Task 9 also owns the closed/value-free repair diagnostic projector, provider-conflict
+  trusted projector, common post-reservation terminal guard, closed exception-code
+  classifier, eligible-model-before-repair rule, trusted model recording order,
+  integer-thousandths pantry arithmetic, and authoritative `repository.status(key)`
+  hydration after replay/deny/terminal mutations. Task 15 preserves and tests these
+  boundaries while adding HMAC, deadline/attempt accounting, codes-only conflict
+  persistence, and the final safety lock; it does not recreate or defer the Task 9
+  protections.
 - `private.ai_generation_requests.request_hmac_version/request_hmac` bind all three command kinds to an idempotency key. Same-HMAC replay and different-HMAC rejection happen under an idempotency-key transaction lock before stale cleanup, active-request lookup, or quota/counter access.
 - `PendingGeneration` is one three-variant discriminated union derived from `GenerationCommand`; `postGeneration(command)` is the only browser POST selector. New/whole commands use `/api/generations/menu`, dish commands use `/api/generations/dish`, and every recovery path reads the exact saved variant/body/key. A 409 `idempotency_payload_mismatch` enters one non-retryable `request_conflict` client state; it never falls through to the offline retry loop.
 - `GenerationContext` is imported from `shared/safety/generation-context.ts`. The server loader returns that exact type; there is no second context with the same name.
@@ -6321,12 +6590,14 @@ Harden Task 1's `ai-generation-output.ts` contract and Task 9's `materializeAiGe
    assign or reorder refs. Require exact priority equality. Allocate one fresh selection
    UUID per referenced pantry ref, copy the owner pantry ID/name/current quantity/unit,
    and deterministically compute shortage from trusted inventory plus provider planned
-   quantity; a `must_use` ref must be `used` and every selected `must_use` must appear
-   exactly once. Provider output never contains inventory or shortage.
+   quantity. Preserve Task 9's trimmed exact unit comparison, null-inventory rejection,
+   exactly representable 0.001 quantities, and integer-thousandths shortage
+   subtraction; a `must_use` ref must be `used` and every selected `must_use` must
+   appear exactly once. Provider output never contains inventory or shortage.
 3. Allocate fresh UUIDs for the menu and every dish, ingredient, step, timeline row, adaptation, and pantry selection. Safety actions have no independent ID. Resolve every cross-reference through field-specific maps. An ingredient `pantryRef` resolves to the freshly allocated selection UUID; `pantryUsage.dishRefs` must equal the dishes whose ingredients use that ref.
-4. Resolve provider label candidates from local source refs and exact source paths to the freshly allocated source UUIDs. A pantry selection ID is never a label source. A processed food selected from the pantry is confirmable only through the real linked `dishIngredient` source: its trusted pantry-name snapshot must normalize-match that ingredient name or a reviewed alias before the ingredient text may be used. Then pass the complete internal value through `generatedMenuSchema`; Plan 2's canonical validator still discards provider status and derives the exact current pending set.
+4. Resolve provider label candidates from local source refs and exact source paths to the freshly allocated source UUIDs. A pantry selection ID is never a label source. A processed food selected from the pantry is confirmable only through the real linked `dishIngredient` source: its trusted pantry-name snapshot and ingredient name must be equal after the one canonical normalizer. Alias tables, synonyms, fuzzy matching, case-only exceptions, and width-only exceptions are forbidden. Then pass the complete internal value through `generatedMenuSchema`; Plan 2's canonical validator still discards provider status and derives the exact current pending set.
 
-`openrouter.ts` sends Task 1's `menuResponseFormat` and parses `aiGenerationResponseSchema`; it never parses `generatedMenuSchema` directly. `runGeneration` branches on that top-level success/constraint-conflict union, materializes only a success payload immediately after each initial/repair response, and does so before `validateGeneratedMenu`. Whole-menu regeneration reuses this same full-menu local payload/materializer with its Plan 4 prompt constraints; one-dish regeneration keeps Plan 4's narrower replacement schema. Tests cover a normal pantry selection, all cross-ref kinds, two ingredients sharing one pantry selection, must/prefer semantics, malicious UUID output, foreign/unknown pantry refs, duplicate refs, wrong-kind refs, missing must-use, inconsistent dish links, attempted pantry label sources, pantry-name/ingredient-name mismatches, fresh-ID allocation, trusted shortage calculation, and successful persistence. The recursive prompt and provider-output tests prove no stable UUID crosses either OpenRouter direction.
+`openrouter.ts` sends Task 1's `menuResponseFormat` and parses `aiGenerationResponseSchema`; it never parses `generatedMenuSchema` directly. `runGeneration` branches on that top-level success/constraint-conflict union, sends provider conflicts through Task 9's trusted projector, materializes only a success payload immediately after each initial/repair response, and does so before `validateGeneratedMenu`. Provider conflict codes exclude server-only `current_safety_changed`; fixed copy and current anonymous refs are application-derived, while an invalid provider conflict shares the single `invalid_ai_response` repair budget. Whole-menu regeneration reuses this same full-menu local payload/materializer with its Plan 4 prompt constraints; one-dish regeneration keeps Plan 4's narrower replacement schema. Tests cover a normal pantry selection, all cross-ref kinds, two ingredients sharing one pantry selection, must/prefer semantics, malicious UUID output, foreign/unknown pantry refs, duplicate refs, label-only polymorphic wrong-kind refs, typed-prefix schema rejection, missing must-use, inconsistent dish links, attempted pantry label sources, normalized-exact pantry-name/ingredient-name mismatches, trimmed exact unit mismatches, null trusted inventory, excess precision, integer-thousandths shortage, fresh-ID allocation, and successful persistence. The recursive prompt and provider-output tests prove no stable UUID crosses either OpenRouter direction.
 
 Extend `_shared/env.ts` with required `GENERATION_REQUEST_HMAC_KEY`, parsed only through `parseGenerationRequestHmacKey`. Add `generationIntegrity: { requestHmacKey: Uint8Array }` to `ServerEnv`; do not retain a browser-prefixed alias. Tests reject missing, non-canonical base64, 31/33-byte keys, and any defined `VITE_GENERATION_REQUEST_HMAC_KEY`. `scripts/generate-local-secrets.mjs` writes `randomBytes(32).toString("base64")` to the gitignored local `.env`; `.env.example` uses only `generated-32-byte-base64-secret`, and Compose requires/interpolates that key into the Function runtime. `tests/tooling/compose.test.mjs` proves the generated decoded length and that the browser/app build environment has no `VITE_` alias. Production never uses a committed sample value. No logger receives this field.
 
@@ -6338,7 +6609,7 @@ request_hmac_version text not null
 request_hmac text not null check (request_hmac ~ '^[a-f0-9]{64}$'),
 ```
 
-It has no raw request JSON/body/prompt column and no custom-reason free-text column. It may retain the non-free-text `request_kind`, `draft_id`, `source_menu_id`, `replace_dish_id`, and `change_reason` enum needed for ownership/lineage. Replace Task 2's object-only `terminal_details` check with a private immutable validator used by the table constraint: every non-conflict row requires `null`; a conflict row permits exactly `{ "conflictCodes": [<generationConflictCode>...] }`, with 1–12 unique entries from the shared closed enum and no additional key. Change the final conflict RPC to accept only that validated `text[]`; it constructs the JSON itself, so `message`, `conditionRefs`, `changeReasonCustom`, and arbitrary prose never cross the persistence boundary. The repository reduces the validated wire conflicts to unique codes, and `toGenerationStatus` recreates each Japanese `message` from the shared code-to-copy map with `conditionRefs: []` when reading either the immediate or recovered terminal payload. Plan 4 passes `changeReasonCustom` from the in-memory validated execution command directly to atomic success persistence; only the completed `public.menus.change_reason_custom` stores it, while failed/conflict/timeout ledgers retain only the HMAC.
+It has no raw request JSON/body/prompt column and no custom-reason free-text column. It may retain the non-free-text `request_kind`, `draft_id`, `source_menu_id`, `replace_dish_id`, and `change_reason` enum needed for ownership/lineage. Replace Task 2's object-only `terminal_details` check with a private immutable validator used by the table constraint: every non-conflict row requires `null`; a conflict row permits exactly `{ "conflictCodes": [<generationConflictCode>...] }`, with 1–12 unique entries from the shared closed enum and no additional key. Change the final conflict RPC to accept only that validated `text[]`; it constructs the JSON itself, so `message`, `conditionRefs`, `changeReasonCustom`, and arbitrary prose never cross the persistence boundary. Task 9's provider projector still runs first, replaces provider prose with fixed copy, and rejects provider-forbidden codes/refs through the one repair budget; Task 15 then reduces the trusted conflicts to unique codes at the repository boundary. `toGenerationStatus` recreates each Japanese `message` from the shared code-to-copy map with `conditionRefs: []` after the mandatory authoritative `status(key)` read for both immediate and recovered terminal results. Plan 4 passes `changeReasonCustom` from the in-memory validated execution command directly to atomic success persistence; only the completed `public.menus.change_reason_custom` stores it, while failed/conflict/timeout ledgers retain only the HMAC.
 
 Change `reserve_ai_generation` and the repository adapter together. Drop the obsolete interim nine-argument overload. The one final RPC, its revoke/grant statements, repository named arguments, generated database type, and pgTAP `to_regprocedure` assertion use exactly this signature; `change_reason_custom` is deliberately absent:
 
@@ -6456,7 +6727,9 @@ In `runGeneration`, the only valid order is:
 
 ```ts
 const reservation = await deps.repository.reserve(command);
-if (!reservation.reserved) return toGenerationStatus(reservation.record, key);
+const projectStatus = async () =>
+  toGenerationStatus(await deps.repository.status(key), key);
+if (!reservation.reserved) return projectStatus();
 const execution = await deps.loadExecutionContext(
   command,
   reservation.requestId,
@@ -6467,30 +6740,40 @@ let preflight: GenerationPreflightResult;
 try {
   preflight = deps.validatePreflight(context, deps.now());
 } catch {
-  return toGenerationStatus(await deps.repository.failBeforeSend(
-    reservation.requestId, "internal_error"), key);
+  await deps.repository.failBeforeSend(reservation.requestId, "internal_error");
+  return projectStatus();
 }
 if (!preflight.ok && preflight.terminal === "constraint_conflict") {
-  return toGenerationStatus(await deps.repository.conflict(
-    reservation.requestId, preflight.conflicts), key);
+  await deps.repository.conflict(reservation.requestId, preflight.conflicts);
+  return projectStatus();
 }
-if (!preflight.ok) return toGenerationStatus(await deps.repository.failBeforeSend(
-  reservation.requestId, preflight.primaryCode), key);
+if (!preflight.ok) {
+  await deps.repository.failBeforeSend(reservation.requestId, preflight.primaryCode);
+  return projectStatus();
+}
 const messages = deps.buildMessages(context);
-if (remainingMs() < REQUIRED_SEND_BUDGET_MS) return toGenerationStatus(
-  await deps.repository.failBeforeSend(reservation.requestId, "generation_timeout"), key);
+if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
+  await deps.repository.failBeforeSend(reservation.requestId, "generation_timeout");
+  return projectStatus();
+}
 const sent = await deps.repository.markSent(reservation.requestId);
-if (!sent.sent) return toGenerationStatus(sent.record, key);
+if (!sent.sent) return projectStatus();
 ```
 
 `markSent` atomically converts one user-attempt reservation and one global reservation to sent. A sent attempt is never released. Repair calls `reserveRepairAttempt`, which atomically reserves both counters and fails on either limit.
 
-The preflight call itself and its result projection are both inside the closed
+The preflight call itself and its result projection are both inside Task 9's closed
 pre-send terminalization boundary. A thrown preflight becomes
 `failed/internal_error`; a failed result uses `failBeforeSend`; a constraint result uses
 the existing conflict transition. All three paths release every unsent reservation,
 construct no prompt, never call `markSent`, and perform no fetch. Tests cover each path
 and prove exception text is absent from the terminal record and response.
+Task 15 keeps Task 9's common post-reservation guard around every application
+operation, closed failure-code membership check, record-before-repair model handling,
+eligible-model-before-reservation check, and status-hydration sentinel. A fail/status
+transport error rejects without recursive terminalization; no immediate transition
+record is ever projected. The new deadline/attempt operations join that guard but do
+not replace it.
 
 Install the exact `private.current_safety_fingerprint` and `private.lock_and_assert_current_safety_fingerprint` SQL bodies shown earlier in this Task 15; alternate JSON serialization or a second fingerprint builder is forbidden. `finalize_ai_generation_success` locks the request (`FOR UPDATE`), invokes the locking function, separately locks/rechecks selected pantry rows, requires `status='processing'`, and compares all expected current state before any menu insert. Mismatch atomically releases only the success reservation, writes `constraint_conflict/current_safety_changed`, inserts no menu, and returns the terminal record. Immediately after both private-function revokes, Plan 3 installs the sole `public.confirm_menu_label_confirmation(uuid,uuid,text)` shown above, including its helper-before-use expected-fingerprint boundary validation. Plan 4 may call the locking function only from its owner-checking security-definer reconciliation RPC; it consumes, and never recreates or overloads, Plan 3's confirmation RPC.
 
@@ -6577,7 +6860,7 @@ const callProvider = (
   });
 ```
 
-`sendMenuGeneration` keeps the Task 6 `AbortController` timer contract and applies the smaller of validated `ServerEnv.openRouter.timeoutMs` and `input.timeoutMs`; body-read aborts are also `generation_timeout`, and the timer is always cleared in `finally`. A `generation_timeout` never enters repair. For invalid structure/rules, repair requires `canRepair()` and passes `error.modelId` or the successful first response's actual model as the sole `excludedModelIds` entry. The handler test advances fake monotonic time during auth and reservation, proving those phases consume the same 50-second budget and the response still completes by the original deadline with at most two sends.
+`sendMenuGeneration` keeps the Task 6 `AbortController` timer contract and applies the smaller of validated `ServerEnv.openRouter.timeoutMs` and `input.timeoutMs`; body-read aborts are also `generation_timeout`, and the timer is always cleared in `finally`. A `generation_timeout` never enters repair. For invalid structure/rules/provider-conflict projection, repair requires `canRepair()` and preserves Task 9's ordering: record a non-null trusted configured `error.modelId` first, calculate eligible configured models, and only then reserve repair. If exclusion leaves none, do not reserve or send. Only null `modelId` uses no exclusion. An invalid repair response records its trusted configured model before terminal failure. Record failure is guarded `internal_error`; unknown exceptions and non-member `HttpError`/`OpenRouterCallError` codes likewise cannot masquerade as `model_unavailable`. The repair prompt contains only Task 9's stable-deduplicated, max-64 closed codes and code-derived fixed paths. The handler test advances fake monotonic time during auth and reservation, proving those phases consume the same 50-second budget and the response still completes by the original deadline with at most two sends.
 
 There is also a hard pre-send gate after context loading, deterministic preflight, and prompt construction, immediately before `markSent`: if `remainingMs() < REQUIRED_SEND_BUDGET_MS`, call `repository.failBeforeSend(requestId,"generation_timeout")` and return its terminal status. That transition atomically releases the user-success reservation, the unsent user-attempt reservation, and the unsent global reservation; it performs no OpenRouter HTTP call and never calls `markSent`. At equality the send is allowed. `timeoutForAttempt()` must always be positive on the send path, and every success/conflict/failure path stops provider work once `remainingMs() <= FINALIZE_RESERVE_MS` so the atomic finalizer retains its full 2-second reserve.
 
