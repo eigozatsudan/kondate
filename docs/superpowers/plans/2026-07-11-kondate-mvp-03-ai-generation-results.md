@@ -1807,49 +1807,107 @@ git commit -m "feat: 検証済み献立を原子的に保存"
 
 **Files:**
 - Create: `netlify/functions/_shared/supabase-user.ts`
+- Create: `netlify/functions/_shared/supabase-user.test.ts`
 - Create: `netlify/functions/_shared/logger.test.ts`
 - Create: `netlify/functions/_shared/logger.ts`
 - Create: `netlify/functions/_shared/generation-repository.test.ts`
 - Create: `netlify/functions/_shared/generation-repository.ts`
 
 **Interfaces:**
-- Consumes: `requireUser()`, `HttpError`, `handleError()`, `json()`, `getSupabaseAdmin()`, `getServerEnv()`, and generated RPC types.
+- Consumes: `requireUser()`, `HttpError`, `getSupabaseAdmin()`, `getServerEnv()`, `generationConflictSchema`, and generated RPC types.
 - Produces: `UserSupabaseClient`, `createUserScopedSupabase(accessToken)`, `AuthenticatedUser = Awaited<ReturnType<typeof requireUser>>`, `SafeGenerationLogEvent`, `logGenerationEvent()`, and `createGenerationRepository(user)` with the quota/status methods used only by `runGeneration()` and the status handler.
+
+Task 5のrepository署名はTask 9までの内部オーケストレーションを構築するための暫定境界であり、release可能なHTTP境界ではない。Task 15で`reserve(command)`、`generation-command.v1` HMAC、attempt-aware遷移、closed conflict-code永続化へ置換し、そこで初めてGlobal Constraintsを満たす。Task 10でHTTP handlerを追加してもTask 15完了前はrelease不可とする。
 
 - [ ] **Step 1 (2–5 min): Write failing RLS-header, RPC-unwrapping, and logger allowlist tests**
 
-```ts
-import { describe, expect, it, vi } from "vitest";
-import { createUserScopedSupabase } from "./supabase-user";
-import { logGenerationEvent } from "./logger";
+`supabase-user.test.ts` は `createClient` と `getServerEnv` をmockし、公開鍵とJWTの境界を引数レベルで固定する。
 
-it("creates a non-persisting user client without the service key", () => {
-  const client = createUserScopedSupabase("access-token");
-  expect(client).toBeDefined();
+```ts
+import { beforeEach, expect, it, vi } from "vitest";
+
+const { createClientMock, getServerEnvMock } = vi.hoisted(() => ({
+  createClientMock: vi.fn(() => ({ from: vi.fn() })),
+  getServerEnvMock: vi.fn(() => ({
+    supabase: {
+      url: "https://abcdefghijklmnopqrst.supabase.co",
+      publishableKey: "publishable-key",
+      serviceRoleKey: "actual-secret-key",
+    },
+  })),
+}));
+
+vi.mock("@supabase/supabase-js", () => ({ createClient: createClientMock }));
+vi.mock("./env.js", () => ({ getServerEnv: getServerEnvMock }));
+
+import { createUserScopedSupabase } from "./supabase-user.js";
+
+beforeEach(() => vi.clearAllMocks());
+
+it("creates a non-persisting user client with the publishable key and bearer token", () => {
+  createUserScopedSupabase("access-token");
+  expect(createClientMock).toHaveBeenCalledWith(
+    "https://abcdefghijklmnopqrst.supabase.co",
+    "publishable-key",
+    {
+      global: { headers: { Authorization: "Bearer access-token" } },
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        persistSession: false,
+      },
+    },
+  );
+  expect(createClientMock).not.toHaveBeenCalledWith(
+    expect.anything(),
+    "actual-secret-key",
+    expect.anything(),
+  );
 });
+```
+
+`logger.test.ts` はallowlist外の値を渡しても、出力が4フィールドだけであることを固定する。
+
+```ts
+import { expect, it, vi } from "vitest";
+import { logGenerationEvent } from "./logger.js";
 
 it("serializes only the approved log fields", () => {
-  const sink = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-  logGenerationEvent("error", {
+  const sink = {
+    info: vi.fn<(line: string) => void>(),
+    warn: vi.fn<(line: string) => void>(),
+    error: vi.fn<(line: string) => void>(),
+  };
+  const eventWithSensitiveCanaries = {
     requestId: "50000000-0000-4000-8000-000000000001",
     errorCode: "invalid_ai_response",
     durationMs: 321,
     modelId: "model:free",
-  }, sink);
+    allergyDetails: ["egg"],
+    prompt: "sensitive-prompt",
+    rawResponse: "sensitive-response",
+  };
+  logGenerationEvent("error", eventWithSensitiveCanaries, sink);
   const line = sink.error.mock.calls[0]?.[0];
+  expect(line).toBeTypeOf("string");
+  if (typeof line !== "string") throw new Error("Expected serialized log output to be a string");
   expect(JSON.parse(line)).toEqual({
     requestId: "50000000-0000-4000-8000-000000000001",
     errorCode: "invalid_ai_response",
     durationMs: 321,
     modelId: "model:free",
   });
-  expect(line).not.toContain("allerg");
+  expect(line).not.toContain("egg");
+  expect(line).not.toContain("sensitive-prompt");
+  expect(line).not.toContain("sensitive-response");
 });
 ```
 
+`generation-repository.test.ts` はadmin clientと環境、user clientをmockし、`reserve`（`draftRevision`を含む）、`markSent`、`reserveRepair`、`recordModel`、`fail`、`conflict`、`succeed`（lineage 3引数を含む）、`status`の全public RPC名・typed引数・`data` unwrapを検証する。各expected argsは `satisfies Database["public"]["Functions"][Name]["Args"]` で固定し、`rpcMock` は `(name: string, parameters: unknown) => Promise<{ data: unknown; error: PostgrestError | null }>` 相当の型を与えて `mock.calls` を `any` にしない。`makeValidatedMenu()`を使用し、mock呼び出し値をunsafeにcastしない。成功8経路をtable化してRPC名、引数、parsed returnを検証する。RPC戻り値へ `user_id`、`request_hmac`、`raw_payload` のcanaryを混ぜても `QuotaRequestRecord` から除去されることを検証する。さらに8経路それぞれで `message`、`details`、`hint`、`code` を含むPostgREST errorを返す場合と、代表1経路でPromise rejectionする場合を検証し、いずれもDB情報を公開せず、固定の `HttpError(500, "quota_transition_failed", "生成の受付状態を更新できませんでした。")` へ変換されることを検証する。
+
 - [ ] **Step 2 (2–5 min): Run focused tests and observe missing modules**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/supabase-user.test.ts netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts`
 
 Expected: FAIL because the user client, logger, and repository modules do not exist.
 
@@ -1857,8 +1915,8 @@ Expected: FAIL because the user client, logger, and repository modules do not ex
 
 ```ts
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "../../../src/shared/types/database";
-import { getServerEnv } from "./env";
+import type { Database } from "../../../src/shared/types/database.js";
+import { getServerEnv } from "./env.js";
 
 export type UserSupabaseClient = SupabaseClient<Database>;
 
@@ -1879,7 +1937,7 @@ export type SafeGenerationLogEvent = {
   modelId: string | null;
 };
 
-type SafeSink = Pick<Console, "info" | "warn" | "error">;
+type SafeSink = Record<"info" | "warn" | "error", (line: string) => void>;
 
 export function logGenerationEvent(
   level: "info" | "warn" | "error",
@@ -1900,13 +1958,17 @@ export function logGenerationEvent(
 
 ```ts
 import { z } from "zod";
-import { releaseQuota, type ValidatedMenu } from "../../../shared/contracts/generation";
-import type { Database } from "../../../src/shared/types/database";
-import { HttpError } from "./http";
-import { getServerEnv } from "./env";
-import { getSupabaseAdmin } from "./supabase-admin";
-import type { requireUser } from "./auth";
-import { createUserScopedSupabase, type UserSupabaseClient } from "./supabase-user";
+import {
+  generationConflictSchema,
+  releaseQuota,
+  type ValidatedMenu,
+} from "../../../shared/contracts/generation.js";
+import type { Database } from "../../../src/shared/types/database.js";
+import type { requireUser } from "./auth.js";
+import { getServerEnv } from "./env.js";
+import { HttpError } from "./http.js";
+import { getSupabaseAdmin } from "./supabase-admin.js";
+import { createUserScopedSupabase, type UserSupabaseClient } from "./supabase-user.js";
 
 export type AuthenticatedUser = Awaited<ReturnType<typeof requireUser>>;
 
@@ -1926,12 +1988,14 @@ const requestPayloadSchema = z.object({
   started_at: z.string().datetime({ offset: true }).optional(),
   completed_at: z.string().datetime({ offset: true }).nullable().optional(),
   replayed: z.boolean().optional(),
-}).passthrough();
+}).strip();
 export type QuotaRequestRecord = z.infer<typeof requestPayloadSchema>;
 const repairReservationSchema = z.object({
   reserved: z.boolean(),
   retry_at: z.string().datetime({ offset: true }).nullable(),
 }).strict();
+const jsonValueSchema = z.json();
+const conflictPayloadSchema = z.array(generationConflictSchema).min(1).max(12);
 type PublicFunctions = Database["public"]["Functions"];
 type PublicFunctionName = keyof PublicFunctions;
 
@@ -1939,9 +2003,17 @@ async function rpc<Name extends PublicFunctionName>(
   name: Name,
   parameters: PublicFunctions[Name]["Args"],
 ): Promise<unknown> {
-  const { data, error } = await getSupabaseAdmin().rpc(name, parameters);
-  if (error) throw new HttpError(500, "quota_transition_failed", "生成の受付状態を更新できませんでした。");
-  return data;
+  try {
+    const { data, error } = await getSupabaseAdmin().rpc(name, parameters);
+    if (error !== null) throw error;
+    return data;
+  } catch {
+    throw new HttpError(
+      500,
+      "quota_transition_failed",
+      "生成の受付状態を更新できませんでした。",
+    );
+  }
 }
 
 export function createGenerationRepository(user: AuthenticatedUser) {
@@ -1971,10 +2043,9 @@ export function createGenerationRepository(user: AuthenticatedUser) {
       }));
     },
     async recordModel(requestId: string, modelId: string) {
-      const { error } = await getSupabaseAdmin().rpc("record_ai_generation_model", {
+      await rpc("record_ai_generation_model", {
         p_request_id: requestId, p_model_id: modelId,
       });
-      if (error) throw new HttpError(500, "quota_transition_failed", "生成状態を更新できませんでした。");
     },
     async fail(requestId: string, code: string, retryAt: string | null) {
       return requestPayloadSchema.parse(await rpc("finalize_ai_generation_failure", {
@@ -1983,7 +2054,8 @@ export function createGenerationRepository(user: AuthenticatedUser) {
     },
     async conflict(requestId: string, conflicts: unknown[]) {
       return requestPayloadSchema.parse(await rpc("finalize_ai_generation_conflict", {
-        p_request_id: requestId, p_conflicts: conflicts,
+        p_request_id: requestId,
+        p_conflicts: jsonValueSchema.parse(conflictPayloadSchema.parse(conflicts)),
       }));
     },
     async succeed(input: {
@@ -1993,11 +2065,13 @@ export function createGenerationRepository(user: AuthenticatedUser) {
       sourceMenuId: string | null; changeReason: string | null; changeReasonCustom: string | null;
     }) {
       return requestPayloadSchema.parse(await rpc("finalize_ai_generation_success", {
-        p_request_id: input.requestId, p_menu: input.menu,
-        p_preference_snapshot: input.preferenceSnapshot, p_safety_snapshot: input.safetySnapshot,
+        p_request_id: input.requestId, p_menu: jsonValueSchema.parse(input.menu),
+        p_preference_snapshot: jsonValueSchema.parse(input.preferenceSnapshot),
+        p_safety_snapshot: jsonValueSchema.parse(input.safetySnapshot),
         p_safety_fingerprint: input.safetyFingerprint, p_allergen_version: input.allergenVersion,
-        p_food_rule_version: input.foodRuleVersion, p_target_members: input.targetMembers,
-        p_expired_checks: input.expiredChecks,
+        p_food_rule_version: input.foodRuleVersion,
+        p_target_members: jsonValueSchema.parse(input.targetMembers),
+        p_expired_checks: jsonValueSchema.parse(input.expiredChecks),
         p_source_menu_id: input.sourceMenuId, p_change_reason: input.changeReason,
         p_change_reason_custom: input.changeReasonCustom,
       }));
@@ -2015,17 +2089,41 @@ export type GenerationRepository = ReturnType<typeof createGenerationRepository>
 export { type UserSupabaseClient };
 ```
 
-- [ ] **Step 5 (2–5 min): Run focused tests and typecheck and observe the pass**
+- [ ] **Step 5 (2–5 min): Run focused tests and observe the pass**
 
-Run: `docker compose run --rm --no-deps app sh -lc 'npm test -- --run netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts && npm run typecheck'`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/supabase-user.test.ts netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.test.ts`
 
-Expected: tests PASS, RPC errors expose no database detail, logger snapshots contain exactly four allowlisted fields, and typecheck exits 0.
+Expected: tests PASS, RPC errors expose no database detail, and logger snapshots contain exactly four allowlisted fields.
 
-- [ ] **Step 6 (2–5 min): Commit the server boundary**
+- [ ] **Step 6 (2–5 min): Run typecheck and observe the pass**
+
+Run: `docker compose run --rm --no-deps app npm run typecheck`
+
+Expected: PASS with no NodeNext import or RPC argument errors.
+
+- [ ] **Step 7 (2–5 min): Run the repository per-Task verification gate**
+
+Run each command in its own tool call, in this exact order:
 
 ```bash
-git add netlify/functions/_shared/supabase-user.ts netlify/functions/_shared/logger.ts netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.ts netlify/functions/_shared/generation-repository.test.ts
-git commit -m "feat: add generation server boundary"
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test
+./scripts/run-e2e.sh
+docker compose run --rm --no-deps app npm run build
+git diff --check
+```
+
+Expected: Task 5に起因するfailureは0件。Task 3で既知の`OPENROUTER_MODELS` Compose供給不足により`reset-local-db.sh`、E2E、buildのapp healthだけが停止する場合は、コマンドと出力をreportへ記録し、Task 7のCompose補正後に同じgateを再実行する。DB migration/pgTAPを含む停止前までの結果は個別に記録し、既知blocker以外のfailureは修正して失敗コマンド以降を再実行する。
+
+- [ ] **Step 8 (2–5 min): Commit the server boundary**
+
+```bash
+git add netlify/functions/_shared/supabase-user.ts netlify/functions/_shared/supabase-user.test.ts netlify/functions/_shared/logger.ts netlify/functions/_shared/logger.test.ts netlify/functions/_shared/generation-repository.ts netlify/functions/_shared/generation-repository.test.ts
+git commit -m "feat: AI生成のサーバー境界を追加"
 ```
 
 ### Task 6: Call OpenRouter with ordered free fallback and strict structured output
