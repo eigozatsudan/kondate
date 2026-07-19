@@ -11,6 +11,7 @@ import {
   makeValidatedMenu,
 } from "../../../shared/testing/factories.js";
 import { materializeAiGeneratedMenu } from "./generation-materializer.js";
+import { GenerationOutputError } from "./generation-repair.js";
 import { HttpError } from "./http.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
 import {
@@ -219,6 +220,23 @@ describe("projectProviderConflicts", () => {
       "invalid_generation_output",
     );
   });
+
+  it.each([[null], ["sentinel"]] as const)(
+    "collapses invalid conflict element %j without retaining it",
+    (input) => {
+      try {
+        projectProviderConflicts(input, makeGenerationContext());
+      } catch (error) {
+        expect(error).toBeInstanceOf(GenerationOutputError);
+        if (error instanceof GenerationOutputError) {
+          expect(error.issues).toEqual([{ code: "invalid_provider_menu", path: "menu" }]);
+          expect(JSON.stringify(error.issues)).not.toContain("sentinel");
+        }
+        return;
+      }
+      throw new Error("expected GenerationOutputError");
+    },
+  );
 });
 
 describe("runGeneration", () => {
@@ -446,6 +464,49 @@ describe("runGeneration", () => {
     );
     expect(repository.conflict).toHaveBeenCalledTimes(1);
     expect(repository.fail).not.toHaveBeenCalled();
+  });
+
+  it("closes an unexpected provider-conflict projection throw exactly once", async () => {
+    const repository = makeRepository();
+    const canary = "projection getter canary";
+    const context = makeGenerationContext();
+    Object.defineProperty(context, "targetMembers", {
+      get(): never {
+        throw new Error(canary);
+      },
+    });
+    const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>(() =>
+      Promise.resolve({ generationContext: context }),
+    );
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+      Promise.resolve({
+        output: {
+          outcome: "constraint_conflict",
+          conflicts: [
+            {
+              code: "must_use_conflict",
+              message: canary,
+              conditionRefs: [],
+            },
+          ],
+        },
+        modelId: models[0],
+      }),
+    );
+    const result = await runGeneration(
+      makeDeps({ repository, loadExecutionContext, callOpenRouter }),
+      command,
+    );
+    expect(repository.fail).toHaveBeenCalledWith(requestId, "internal_error", null);
+    expect(repository.fail).toHaveBeenCalledTimes(1);
+    expect(repository.conflict).not.toHaveBeenCalled();
+    expect(repository.status).toHaveBeenCalledTimes(1);
+    expect(repository.reserveRepair).not.toHaveBeenCalled();
+    expect(repository.markSent).toHaveBeenCalledTimes(1);
+    expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(repository.fail.mock.calls)).not.toContain(canary);
+    expect(JSON.stringify(result)).not.toContain(canary);
+    expect(result).toMatchObject({ status: "failed", error: { code: "internal_error" } });
   });
 
   it("closes a thrown preflight before prompt construction", async () => {
