@@ -3223,7 +3223,7 @@ git commit -m "feat: 匿名の現行生成コンテキストを追加"
   `loadGenerationContext(user,requestId,request,now?)` and complete
   `validateGenerationPreflight(context,now)`, plus Plan 2's `validateGeneratedMenu()` and
   authoritative fingerprint contract.
-- Produces: `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, `toGenerationStatus(record,idempotencyKey)`, and the sole provider-local-to-internal boundary `materializeAiGeneratedMenu(output,context,uuid)`. Plan 4 extends the Task 1 command union and reuses the same reservation, repair, materialization, validation, and persistence path.
+- Produces: `GenerationDependencies`, canonical `runGeneration(deps, command)`, `createGenerationDeps(user,{requestStartedAtMonotonicMs})`, `toGenerationStatus(record,idempotencyKey)`, exported trusted/testable server boundary `projectProviderConflicts(input,context)`, and the sole provider-local-to-internal menu boundary `materializeAiGeneratedMenu(output,context,uuid)`. Plan 4 extends the Task 1 command union and reuses the same reservation, repair, materialization, validation, and persistence path.
 - `repository.status(idempotencyKey)` is the owner-scoped authoritative hydration
   boundary after a repository mutation. `runGeneration` never projects a replay,
   denial, or terminal transition from that mutation's returned record: after
@@ -3244,7 +3244,8 @@ git commit -m "feat: 匿名の現行生成コンテキストを追加"
   are stable-first-occurrence deduplicated and capped at 64. Provider values, local
   refs, UUIDs, array indexes, exception text, validator messages, and raw paths never
   enter a repair prompt.
-- Provider conflicts pass through a trusted projector before terminalization. It
+- Provider conflicts pass through the exported trusted/testable server projector
+  `projectProviderConflicts(input,context)` before terminalization. It
   accepts only provider-allowed conflict codes (`must_use_conflict`,
   `allergen_pantry_conflict`, `dish_count_conflict`,
   `mandatory_safety_conflict`; never server-only `current_safety_changed`), derives
@@ -3624,7 +3625,7 @@ const providerConflictInputSchema = z.array(z.object({
   conditionRefs: z.array(z.string()).max(24),
 }).strict()).min(1).max(12);
 
-function projectProviderConflicts(
+export function projectProviderConflicts(
   input: unknown,
   context: GenerationContext,
 ): readonly z.infer<typeof generationConflictSchema>[] {
