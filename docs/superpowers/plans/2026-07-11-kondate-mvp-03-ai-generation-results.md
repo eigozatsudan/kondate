@@ -581,11 +581,11 @@ export function generationResponse(result: GenerationStatusData): Response;
 export function useGenerationRecovery(): GenerationRecoveryController;
 
 export type PendingGeneration =
-  | ({ createdAt: string; requestId?: string } &
+  | ({ ownerUserId: string; createdAt: string; requestId?: string } &
       Extract<GenerationCommand, { kind: "new_menu" }>)
-  | ({ createdAt: string; requestId?: string } &
+  | ({ ownerUserId: string; createdAt: string; requestId?: string } &
       Extract<GenerationCommand, { kind: "regenerate_menu" }>)
-  | ({ createdAt: string; requestId?: string } &
+  | ({ ownerUserId: string; createdAt: string; requestId?: string } &
       Extract<GenerationCommand, { kind: "regenerate_dish" }>);
 
 export const PENDING_GENERATION_TTL_MS: 1800000;
@@ -4329,6 +4329,22 @@ it("writes the same owner-bound command before starting the POST", async () => {
   expect(order).toEqual(["saved", "posted"]);
 });
 
+it("starts a new operation only after clear, owner-bound save, and idle submit", async () => {
+  const order: string[] = [];
+  const removeStorage = { removeItem: () => { order.push("cleared"); } };
+  const writeStorage = { setItem: () => { order.push("saved"); } };
+  clearPendingGeneration(removeStorage);
+  const idle = generationReducer(processingState, { type: "clear" });
+  const pending = createPendingGeneration(newMenuCommand, USER_ID);
+  savePendingGeneration(pending, writeStorage);
+  const submitting = generationReducer(idle, { type: "submit" });
+  await postGeneration(pendingGenerationCommand(pending), {
+    fetchImpl: async () => { order.push("posted"); return processingResponse; },
+  });
+  expect(submitting).toEqual({ phase: "submitting", effect: "submit" });
+  expect(order).toEqual(["cleared", "saved", "posted"]);
+});
+
 it.each([
   [29*60_000+59_999,true],[30*60_000,false],
 ])("keeps 29:59.999 and expires at the exact 30:00 boundary",(age,kept)=>{
@@ -4351,10 +4367,54 @@ it("deletes wrong-user and corrupt records without POSTing",async()=>{
   expect(post).not.toHaveBeenCalled();
 });
 
-it("resends only from not_started and never from processing", () => {
+it.each(["invalid", "foreign", "expired"] as const)(
+  "returns null and absorbs removeItem failure for %s pending data", (kind) => {
+    const storage = pendingStorageFor(kind, { removeItem: () => { throw new Error("remove"); } });
+    expect(() => readPendingGeneration(USER_ID, FIXED_NOW, storage)).not.toThrow();
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+  });
+
+it("fails closed when getItem throws", () => {
+  const storage = { getItem: () => { throw new Error("get"); }, removeItem: vi.fn() };
+  expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+});
+
+it("continues cleanup when clear removeItem throws", () => {
+  expect(() => clearPendingGeneration({
+    removeItem: () => { throw new Error("remove"); },
+  })).not.toThrow();
+});
+
+it("propagates setItem failure and never starts the POST", async () => {
+  const post = vi.fn();
+  expect(() => savePendingGeneration(
+    createPendingGeneration(newMenuCommand, USER_ID),
+    { setItem: () => { throw new Error("set"); } },
+  )).toThrow("set");
+  expect(post).not.toHaveBeenCalled();
+});
+
+it("resends recovery only from a not_started status", () => {
   expect(generationReducer(checkingState, { type: "status", data: notStarted }).effect).toBe("submit");
   expect(generationReducer(checkingState, { type: "status", data: processing }).effect).toBe("poll");
 });
+
+it.each([
+  checkingState, submittingState, processingState, offlineState,
+  succeededState, failedState, constraintConflictState,
+])("keeps every non-idle state on an explicit submit", (state) => {
+  expect(generationReducer(state, { type: "submit" })).toBe(state);
+});
+
+it.each(["POST", "GET"] as const)(
+  "rejects a valid status envelope whose idempotency key mismatches %s", async (method) => {
+    const callApi = method === "POST"
+      ? () => postGeneration(newMenuCommand, { fetchImpl: mismatchResponseFetch })
+      : () => getGenerationStatus(newMenuCommand.request.idempotencyKey, {
+          fetchImpl: mismatchResponseFetch,
+        });
+    await expect(callApi()).rejects.toBeInstanceOf(z.ZodError);
+  });
 ```
 
 - [ ] **Step 2 (2–5 min): Run the three focused suites and observe missing modules**
@@ -4382,7 +4442,9 @@ export const pendingGenerationSchema=z.discriminatedUnion("kind",[
   z.object({...meta,kind:z.literal("regenerate_dish"),request:regenerateDishRequestSchema}).strict(),
 ]);
 export type PendingGeneration = z.infer<typeof pendingGenerationSchema>;
-type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+type PendingGenerationReadStorage = Pick<Storage, "getItem" | "removeItem">;
+type PendingGenerationWriteStorage = Pick<Storage, "setItem">;
+type PendingGenerationRemoveStorage = Pick<Storage, "removeItem">;
 
 export function createPendingGeneration(
   command:GenerationCommand,ownerUserId:string,now:()=>Date=()=>new Date(),
@@ -4394,8 +4456,10 @@ export function pendingGenerationCommand(value:PendingGeneration):GenerationComm
   return generationCommandSchema.parse({kind:value.kind,request:value.request});
 }
 export function readPendingGeneration(currentUserId:string,now:Date,
-  storage:StorageLike=localStorage):PendingGeneration|null{
-  const raw=storage.getItem(key);if(raw===null)return null;
+  storage:PendingGenerationReadStorage=localStorage):PendingGeneration|null{
+  let raw:string|null;
+  try{raw=storage.getItem(key);}catch{return null;}
+  if(raw===null)return null;
   try{
     const parsed=pendingGenerationSchema.safeParse(JSON.parse(raw));
     if(!parsed.success)throw new Error("invalid_pending");
@@ -4403,13 +4467,24 @@ export function readPendingGeneration(currentUserId:string,now:Date,
     if(parsed.data.ownerUserId!==currentUserId||!Number.isFinite(age)||age<0||
       age>=PENDING_GENERATION_TTL_MS)throw new Error("expired_or_foreign_pending");
     return parsed.data;
-  }catch{storage.removeItem(key);return null;}
+  }catch{
+    try{storage.removeItem(key);}catch{/* UIと認証の後始末を継続するため削除失敗を吸収する。 */}
+    return null;
+  }
 }
-export function savePendingGeneration(value: PendingGeneration, storage: StorageLike = localStorage): void {
+export function savePendingGeneration(
+  value: PendingGeneration, storage: PendingGenerationWriteStorage = localStorage,
+): void {
   storage.setItem(key, JSON.stringify(pendingGenerationSchema.parse(value)));
 }
-export function clearPendingGeneration(storage: StorageLike = localStorage): void { storage.removeItem(key); }
+export function clearPendingGeneration(
+  storage: PendingGenerationRemoveStorage = localStorage,
+): void {
+  try{storage.removeItem(key);}catch{/* UIと認証の後始末を継続するため削除失敗を吸収する。 */}
+}
 ```
+
+`readPendingGeneration()` is fail-closed: `getItem`, JSON parsing, schema validation, ownership, clock, or TTL failure returns `null`; invalid, foreign-owned, future, and expired records are best-effort deleted. `removeItem` failure in that deletion and in `clearPendingGeneration()` is absorbed so UI/auth cleanup continues. `savePendingGeneration()` deliberately does not catch schema, serialization, or `setItem` failures: the caller must not dispatch `submit` or start a POST unless the exact owner-bound command was saved successfully.
 
 - [ ] **Step 4 (2–5 min): Implement authenticated envelope parsing for POST and status**
 
@@ -4423,7 +4498,7 @@ import { getBrowserSupabaseClient } from "../../../shared/lib/supabase";
 import { requireAccessToken } from "../../auth/session";
 
 async function call(
-  url: string, init: RequestInit, fetchImpl: typeof fetch,
+  url: string, init: RequestInit, expectedIdempotencyKey: string, fetchImpl: typeof fetch,
 ): Promise<GenerationStatusData> {
   const accessToken = await requireAccessToken(getBrowserSupabaseClient());
   const response = await fetchImpl(url, {
@@ -4436,7 +4511,9 @@ async function call(
     }).strict() }).strict(),
   ]).parse(await response.json());
   if (!envelope.ok) throw new Error(envelope.error.code);
-  return generationStatusDataSchema.parse(envelope.data);
+  const data = generationStatusDataSchema.parse(envelope.data);
+  z.literal(expectedIdempotencyKey).parse(data.idempotencyKey);
+  return data;
 }
 
 export function generationEndpointFor(command:GenerationCommand):string{
@@ -4446,12 +4523,16 @@ export function postGeneration(commandInput:GenerationCommand,
   deps:{fetchImpl?:typeof fetch}={}){
   const command=generationCommandSchema.parse(commandInput);
   return call(generationEndpointFor(command),{method:"POST",
-    body:JSON.stringify(command.request)},deps.fetchImpl??fetch);
+    body:JSON.stringify(command.request)},command.request.idempotencyKey,deps.fetchImpl??fetch);
 }
 export function getGenerationStatus(idempotencyKey: string, deps: { fetchImpl?: typeof fetch } = {}) {
-  return call(`/api/generations/${encodeURIComponent(idempotencyKey)}/status`, { method: "GET" }, deps.fetchImpl ?? fetch);
+  const expectedIdempotencyKey=z.string().uuid().parse(idempotencyKey);
+  return call(`/api/generations/${encodeURIComponent(expectedIdempotencyKey)}/status`,
+    { method: "GET" },expectedIdempotencyKey,deps.fetchImpl??fetch);
 }
 ```
+
+The authenticated call boundary receives the expected idempotency key separately from the response. POST uses the key from the parsed canonical command; GET first UUID-validates its input and uses that same validated value in both the URL and expectation. A parsed status whose `idempotencyKey` differs is rejected as runtime schema/protocol validation. Do not add a new public or stable error-code identifier for this client-side rejection.
 
 - [ ] **Step 5 (2–5 min): Implement the exhaustive pure recovery reducer**
 
@@ -4479,8 +4560,8 @@ export function generationReducer(state: GenerationClientState, event: Generatio
     : { phase: "offline", previous: state, effect: "wait_online" };
   if (event.type === "online") return { phase: "checking", effect: "status" };
   if (event.type === "recover") return { phase: "checking", effect: "status" };
-  if (event.type === "submit") return state.phase === "processing" ? state
-    : { phase: "submitting", effect: "submit" };
+  if (event.type === "submit") return state.phase === "idle"
+    ? { phase: "submitting", effect: "submit" } : state;
   if (event.type === "status") {
     if (event.data.status === "not_started") return { phase: "submitting", effect: "submit" };
     if (event.data.status === "processing") return { phase: "processing", data: event.data, effect: "poll" };
@@ -4492,6 +4573,8 @@ export function generationReducer(state: GenerationClientState, event: Generatio
 }
 ```
 
+An explicit `submit` represents a new operation and transitions only `idle -> submitting`. `checking`, `submitting`, `processing`, `offline`, and every terminal state preserve object identity on that event. The caller starts a new operation in the fixed order `clearPendingGeneration()` → reducer `clear` to `idle` → create and successfully save the owner-bound pending command → reducer `submit`; save failure stops before the submit event and before POST. Recovery does not use that explicit submit path: only a parsed status with `status: "not_started"` produces the recovery resend effect, while `processing` polls and terminal statuses never resend.
+
 - [ ] **Step 6 (2–5 min): Run browser boundary tests and typecheck**
 
 Run each command separately:
@@ -4501,7 +4584,7 @@ docker compose run --rm --no-deps app npx vitest run src/features/generation/api
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST, auth expiry, envelope failure, all five statuses, offline/online, not_started-only resend, and no processing resend.
+Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST, owner-bound clear/save/submit ordering, auth expiry, envelope failure, POST/GET response-key mismatch rejection, all five statuses, offline/online, `not_started`-only recovery resend, idle-only explicit submit, non-idle state preservation, `getItem`/`removeItem`/clear cleanup exception absorption, and `setItem` failure propagation with no POST.
 
 - [ ] **Step 7 (2–5 min): Commit the browser recovery core**
 
@@ -4509,7 +4592,6 @@ Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST
 git add src/features/generation/api src/features/generation/model
 git commit -m "feat: 献立生成の復旧状態機械を追加"
 ```
-
 ### Task 12: Recover on mount, online, visibility, and auth events and show truthful quota state
 
 **Files:**
