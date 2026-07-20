@@ -285,6 +285,17 @@ select is(
   'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69',
   'fingerprint matches the canonical TypeScript-compatible SHA-256'
 );
+select is(
+  private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000002',
+      '15100000-0000-4000-8000-000000000001'
+    ]::uuid[]
+  ),
+  'fca553a2d6bcaeabbe6b5725a9330d358564e542dd1e333c0316a1c43564f3b4',
+  'anonymous references follow input ordinality before UUID encoding order'
+);
 
 select throws_ok($$
   select private.current_safety_fingerprint(
@@ -468,6 +479,28 @@ select ok(
     ) function_
   ),
   'locking helper keeps member, allergy, catalog, alias, rule, recalculation order'
+);
+select ok(
+  pg_catalog.strpos(
+    pg_catalog.pg_get_functiondef(
+      to_regprocedure(
+        'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)'
+      )
+    ),
+    'order by member.id for update'
+  ) > 0,
+  'locking helper takes member row locks in UUID order with FOR UPDATE'
+);
+select ok(
+  pg_catalog.strpos(
+    pg_catalog.pg_get_functiondef(
+      to_regprocedure(
+        'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)'
+      )
+    ),
+    'order by allergy.member_id,allergy.id for share'
+  ) > 0,
+  'locking helper takes allergy row locks in member and allergy order with FOR SHARE'
 );
 
 select has_table('private'::name, 'ai_generation_requests'::name);
