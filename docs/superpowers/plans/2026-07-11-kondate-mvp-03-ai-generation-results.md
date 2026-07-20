@@ -4043,12 +4043,23 @@ git commit -m "feat: 検証済み献立生成を統合"
 - Create: `netlify/functions/generate-menu.ts`
 - Create: `netlify/functions/generation-status.test.ts`
 - Create: `netlify/functions/generation-status.ts`
+- Modify: `netlify/functions/_shared/generation-service.test.ts`
+- Modify: `netlify/functions/_shared/generation-service.ts`
 
 **Interfaces:**
 - Consumes: `requireUser()`, `parseJson()`, `handleError()`, `json()`, `newMenuGenerationRequestSchema`, `createGenerationDeps()`, `runGeneration()`, and repository `status()`.
 - Produces: `generationResponse(result)`, `POST /api/generations/menu`, and `GET /api/generations/:idempotencyKey/status` with the five exact states. The status endpoint never distinguishes a missing key from a key owned by someone else.
+- Task 9's `toGenerationStatus()` remains the only status projector. It treats a stored request row as authoritative: `processing` requires `started_at`, every terminal state requires `completed_at`, and `succeeded` additionally requires `completed_menu_id`. Missing authoritative fields throw and are closed by the handler as the fixed `500 request_failed` envelope; the projector never fabricates the current time or rewrites a malformed succeeded row as failed. An unknown stored failure code remains a failed state projected as `internal_error` with fixed copy.
+- A missing or malformed status-path key is a handler-local `HttpError(400, "invalid_request", "入力内容を確認してください")`; it is rejected before repository creation/status lookup and neither the supplied path value nor a parser diagnostic is reflected. Task 10 does not add an Origin check or a new Content-Type check: the locked HTTP boundary remains exactly `requireUser()`, the existing `parseJson()`, `handleError()`, and `generationResponse()`.
 
-- [ ] **Step 1 (2–5 min): Write failing handler tests for auth, invalid body, replay, and not_started**
+- [ ] **Step 1 (2–5 min): Write failing handler and projector tests for the complete closed HTTP boundary**
+
+Add a table-driven RED matrix instead of only happy-path examples:
+
+- POST: 405 and `Allow: POST` without auth/orchestration; 401 without a verified token; invalid JSON, unknown fields, and missing/invalid consent; the existing body-size rejection; same-key terminal replay; and no duplicated OpenRouter call. Prove `performance.now()` is captured at handler entry before authentication and that the exact captured value is passed to `createGenerationDeps()` after authentication.
+- GET: 405 and `Allow: GET`; 401; missing and malformed path keys both return the exact fixed 400 envelope, call neither repository creation nor `status()`, and do not reflect a sentinel path/parser value; an owner-scoped missing key and a key owned by another user are indistinguishable `not_started` responses; all five exact states are projected.
+- Projection/envelope: `not_started`, `succeeded`, and `constraint_conflict` are 200, `processing` is 202, the three user limit codes are 429, `global_daily_limit`/`model_unavailable`/`generation_timeout` are 503, and every other closed failure code is 422. Every success and error response has `Cache-Control: no-store`.
+- Stored-row canaries: missing `started_at` on `processing`, missing `completed_at` on each terminal state, and missing `completed_menu_id` on `succeeded` throw. Through GET, each becomes the exact fixed 500 envelope and does not reflect a sentinel repository/parser error. An unknown `failure_code` remains `status: "failed"` with the fixed `internal_error` copy rather than changing state or synthesizing timestamps.
 
 ```ts
 import { expect, it, vi } from "vitest";
@@ -4084,11 +4095,11 @@ it.each(["user_daily_limit", "user_attempt_limit", "user_short_window_limit"] as
 
 - [ ] **Step 2 (2–5 min): Run handler tests and observe missing function modules**
 
-Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts`
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/generation-service.test.ts`
 
-Expected: FAIL because both fetch-style Functions are missing.
+Expected: FAIL because both fetch-style Functions are missing and the existing projector still fabricates timestamps/rewrites a malformed success.
 
-- [ ] **Step 3 (2–5 min): Add one canonical HTTP projection to the generation service**
+- [ ] **Step 3 (2–5 min): Add one canonical HTTP projection and close malformed stored status rows**
 
 ```ts
 import { json } from "./http.js";
@@ -4101,6 +4112,44 @@ export function generationResponse(result: GenerationStatusData): Response {
   return json(status, { ok: true, data: result });
 }
 ```
+
+Remove every `new Date().toISOString()` fallback from `toGenerationStatus()` and do not let a malformed success fall through to the failed branch:
+
+```ts
+function requireStoredTimestamp(
+  value: string | null | undefined,
+  missingCode: "started_at_missing" | "completed_at_missing",
+): string {
+  if (value === null || value === undefined) throw new Error(missingCode);
+  return value;
+}
+
+if (record.status === "processing") {
+  return {
+    status: "processing",
+    idempotencyKey,
+    requestId,
+    quota,
+    startedAt: requireStoredTimestamp(record.started_at, "started_at_missing"),
+  };
+}
+const completedAt = requireStoredTimestamp(record.completed_at, "completed_at_missing");
+if (record.status === "succeeded") {
+  if (record.completed_menu_id === null || record.completed_menu_id === undefined) {
+    throw new Error("completed_menu_id_missing");
+  }
+  return {
+    status: "succeeded",
+    idempotencyKey,
+    requestId,
+    quota,
+    menuId: record.completed_menu_id,
+    completedAt,
+  };
+}
+```
+
+Keep Task 9's closed conflict parsing and failed-code projection after these guards. A failed row with an unknown code still uses `internal_error`; it is not a malformed status-state rewrite.
 
 - [ ] **Step 4 (2–5 min): Implement the complete POST and GET fetch-style Functions**
 
@@ -4132,7 +4181,7 @@ export const config: Config = { path: "/api/generations/menu", method: "POST" };
 import type { Config, Context } from "@netlify/functions";
 import { z } from "zod";
 import { requireUser } from "./_shared/auth.js";
-import { handleError, json, methodNotAllowed } from "./_shared/http.js";
+import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.js";
 import { createGenerationRepository } from "./_shared/generation-repository.js";
 import { toGenerationStatus } from "./_shared/generation-service.js";
 
@@ -4142,7 +4191,11 @@ export default async function generationStatus(request: Request, context?: Conte
   if (request.method !== "GET") return methodNotAllowed(["GET"]);
   try {
     const user = await requireUser(request);
-    const idempotencyKey = idempotencyKeySchema.parse(context?.params.idempotencyKey);
+    const parsedIdempotencyKey = idempotencyKeySchema.safeParse(context?.params.idempotencyKey);
+    if (!parsedIdempotencyKey.success) {
+      throw new HttpError(400, "invalid_request", "入力内容を確認してください");
+    }
+    const idempotencyKey = parsedIdempotencyKey.data;
     const record = await createGenerationRepository(user).status(idempotencyKey);
     return json(200, { ok: true, data: toGenerationStatus(record, idempotencyKey) });
   } catch (error) { return handleError(error); }
@@ -4159,16 +4212,16 @@ export const config: Config = {
 Run each command separately:
 
 ```bash
-docker compose run --rm --no-deps app npx vitest run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/http.test.ts
+docker compose run --rm --no-deps app npx vitest run netlify/functions/generate-menu.test.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/generation-service.test.ts netlify/functions/_shared/http.test.ts
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: tests PASS for 401, 405, invalid JSON, unknown fields, consent, not_started, processing, succeeded, failed, constraint conflict, same-key replay, another user's indistinguishable missing key, and no duplicated OpenRouter call.
+Expected: tests PASS for 401, 405/Allow, invalid JSON, unknown fields, consent, body size, entry-time capture, no-store, not_started, processing, succeeded, failed, constraint conflict, the exact status-code table, same-key replay, another user's indistinguishable missing key, no duplicated OpenRouter call, path rejection before repository access, no reflected path/parser/repository diagnostics, and every authoritative stored-row guard above.
 
 - [ ] **Step 6 (2–5 min): Commit the generation API**
 
 ```bash
-git add netlify/functions/generate-menu.ts netlify/functions/generate-menu.test.ts netlify/functions/generation-status.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/generation-service.ts
+git add netlify/functions/generate-menu.ts netlify/functions/generate-menu.test.ts netlify/functions/generation-status.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/generation-service.ts netlify/functions/_shared/generation-service.test.ts
 git commit -m "feat: 復旧可能な献立生成APIを公開"
 ```
 
