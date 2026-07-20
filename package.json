@@ -23,7 +23,8 @@
     "verify:openrouter:config": "node scripts/verify-openrouter-models.mjs",
     "verify:openrouter:models": "node scripts/verify-openrouter-models.mjs --remote",
     "predev": "npm run verify:openrouter:config",
-    "prebuild": "npm run verify:openrouter:config"
+    "prebuild": "npm run verify:openrouter:config",
+    "test:openrouter:smoke": "vitest run netlify/functions/_shared/openrouter.smoke.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

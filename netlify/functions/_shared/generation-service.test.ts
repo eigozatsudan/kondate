@@ -993,6 +993,53 @@ describe("runGeneration", () => {
       expect(repository.succeed).toHaveBeenCalledTimes(transition === "success" ? 1 : 0);
     },
   );
+
+  // --- 敵対的シナリオのサービス層終端性テスト ---
+  // 各固定adversarialシナリオをサービスの一次+修復パスを通して実行し、
+  // 修復は1回だけ行われ、ユーザーの成功quota消費が起きないことを確認する。
+  it.each([
+    "malformed-json",
+    "direct-allergen",
+    "alias-in-step",
+    "missing-label-confirmation",
+    "unsafe-age-shape",
+    "invalid-adaptation-branch",
+    "invalid-pantry-dish-link",
+    "over-time-limit",
+  ])(
+    "%s performs at most one repair and never consumes user success when still invalid",
+    async (scenario) => {
+      const mockRepository = makeRepository();
+      const isMalformedJson = scenario === "malformed-json";
+      const callOpenRouter = isMalformedJson
+        ? vi
+            .fn<GenerationDependencies["callOpenRouter"]>()
+            .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[0]))
+            .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[1]))
+        : vi
+            .fn<GenerationDependencies["callOpenRouter"]>()
+            .mockResolvedValueOnce({ output: scenarios.success, modelId: models[0] })
+            .mockResolvedValueOnce({ output: scenarios.success, modelId: models[1] });
+
+      if (!isMalformedJson) {
+        // 一次・修復両方でmaterializerが例外を投げる（不正な出力）
+        vi.mocked(materializeAiGeneratedMenu).mockImplementation(() => {
+          throw new GenerationOutputError(["invalid_provider_menu"]);
+        });
+      }
+
+      const result = await runGeneration(
+        makeDeps({ repository: mockRepository, callOpenRouter }),
+        command,
+      );
+      expect(result.status).toBe("failed");
+      expect(result).toMatchObject({ quota: { consumed: false } });
+      expect(mockRepository.reserve).toHaveBeenCalledTimes(1);
+      expect(mockRepository.reserveRepair).toHaveBeenCalledTimes(1);
+      expect(mockRepository.markSent).toHaveBeenCalledTimes(2);
+      expect(mockRepository.succeed).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("toGenerationStatus", () => {
