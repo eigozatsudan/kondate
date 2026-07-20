@@ -81,6 +81,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      auth:
+        condition: service_healthy
     entrypoint: ["/workspace/scripts/apply-migrations.sh"]
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres

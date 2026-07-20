@@ -45,6 +45,14 @@ test("root compose owns every local entry-point service", async () => {
   assert.match(compose, /infra\/supabase\/docker-compose\.yml/);
 });
 
+test("serializes project migrations after GoTrue migrations", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  const migrate = compose.match(/^ {2}migrate:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
+  assert.ok(migrate, "migrate service is missing");
+  assert.match(migrate, /^ {6}db:\n {8}condition: service_healthy$/mu);
+  assert.match(migrate, /^ {6}auth:\n {8}condition: service_healthy$/mu);
+});
+
 test("derives the Compose project name from the checkout directory", async () => {
   const [compose, tooling] = await Promise.all([
     readFile("compose.yaml", "utf8"),
