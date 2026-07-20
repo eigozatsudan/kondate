@@ -8,14 +8,27 @@ import { sendMenuGeneration } from "./openrouter.js";
 describe.skipIf(process.env.RUN_OPENROUTER_SMOKE !== "1")("real OpenRouter", () => {
   it("returns one structurally valid response through one application HTTP request", async () => {
     if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is required");
-    const result = await sendMenuGeneration({
-      timeoutMs: 20_000,
-      messages: [
-        { role: "system", content: "指定されたJSON Schemaだけを返してください。" },
-        { role: "user", content: "匿名の大人1人向け、15分の和食朝食2品を生成してください。" },
-      ],
-    });
-    expect(["success", "constraint_conflict"]).toContain(result.output.outcome);
-    expect(result.modelId.endsWith(":free")).toBe(true);
+    // fetch呼出し回数を計測し、内部リトライが発生していないことを確認する
+    let fetchCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
+      fetchCount += 1;
+      return originalFetch(...args);
+    };
+    try {
+      const result = await sendMenuGeneration({
+        timeoutMs: 20_000,
+        messages: [
+          { role: "system", content: "指定されたJSON Schemaだけを返してください。" },
+          { role: "user", content: "匿名の大人1人向け、15分の和食朝食2品を生成してください。" },
+        ],
+      });
+      expect(["success", "constraint_conflict"]).toContain(result.output.outcome);
+      expect(result.modelId.endsWith(":free")).toBe(true);
+      // 1アプリケーションリクエスト = 1 HTTP fetch のみ
+      expect(fetchCount).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   }, 70_000);
 });
