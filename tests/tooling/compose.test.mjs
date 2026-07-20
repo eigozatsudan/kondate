@@ -49,8 +49,12 @@ test("serializes project migrations after GoTrue migrations", async () => {
   const compose = await readFile("compose.yaml", "utf8");
   const migrate = compose.match(/^ {2}migrate:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
   assert.ok(migrate, "migrate service is missing");
-  assert.match(migrate, /^ {6}db:\n {8}condition: service_healthy$/mu);
-  assert.match(migrate, /^ {6}auth:\n {8}condition: service_healthy$/mu);
+  const dependsOn = migrate.match(
+    /^ {4}depends_on:\n(?<body>(?: {6}[\w-]+:\n {8}condition: service_healthy\n)+)/mu,
+  )?.groups?.body;
+  assert.ok(dependsOn, "migrate depends_on mapping is missing");
+  assert.match(dependsOn, /^ {6}db:\n {8}condition: service_healthy$/mu);
+  assert.match(dependsOn, /^ {6}auth:\n {8}condition: service_healthy$/mu);
 });
 
 test("derives the Compose project name from the checkout directory", async () => {
