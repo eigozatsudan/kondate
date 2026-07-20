@@ -4386,11 +4386,13 @@ it("continues cleanup when clear removeItem throws", () => {
 });
 
 it("propagates setItem failure and never starts the POST", async () => {
-  const post = vi.fn();
-  expect(() => savePendingGeneration(
-    createPendingGeneration(newMenuCommand, USER_ID),
-    { setItem: () => { throw new Error("set"); } },
-  )).toThrow("set");
+  const post = vi.fn(async () => processingResponse);
+  const operation = async () => {
+    const pending = createPendingGeneration(newMenuCommand, USER_ID);
+    savePendingGeneration(pending, { setItem: () => { throw new Error("set"); } });
+    await postGeneration(pendingGenerationCommand(pending), { fetchImpl: post });
+  };
+  await expect(operation()).rejects.toThrow("set");
   expect(post).not.toHaveBeenCalled();
 });
 
@@ -4415,6 +4417,15 @@ it.each(["POST", "GET"] as const)(
         });
     await expect(callApi()).rejects.toBeInstanceOf(z.ZodError);
   });
+
+it("rejects an invalid GET key before auth or fetch", async () => {
+  const fetchImpl = vi.fn();
+  mockRequireAccessToken.mockClear();
+  await expect(getGenerationStatus("not-a-uuid", { fetchImpl }))
+    .rejects.toBeInstanceOf(z.ZodError);
+  expect(mockRequireAccessToken).not.toHaveBeenCalled();
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
 ```
 
 - [ ] **Step 2 (2–5 min): Run the three focused suites and observe missing modules**
@@ -4584,7 +4595,7 @@ docker compose run --rm --no-deps app npx vitest run src/features/generation/api
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST, owner-bound clear/save/submit ordering, auth expiry, envelope failure, POST/GET response-key mismatch rejection, all five statuses, offline/online, `not_started`-only recovery resend, idle-only explicit submit, non-idle state preservation, `getItem`/`removeItem`/clear cleanup exception absorption, and `setItem` failure propagation with no POST.
+Expected: tests PASS for storage corruption, privacy allowlist, save-before-POST, owner-bound clear/save/submit ordering, auth expiry, envelope failure, POST/GET response-key mismatch rejection, invalid GET UUID rejection before auth/fetch, all five statuses, offline/online, `not_started`-only recovery resend, idle-only explicit submit, non-idle state preservation, `getItem`/`removeItem`/clear cleanup exception absorption, and non-vacuous `setItem` failure propagation with no POST.
 
 - [ ] **Step 7 (2–5 min): Commit the browser recovery core**
 
@@ -4606,7 +4617,7 @@ git commit -m "feat: 献立生成の復旧状態機械を追加"
 
 **Interfaces:**
 - Consumes: Task 11 storage/API/reducer, Plan 1 auth events, Plan 2 draft and expired-pantry UI.
-- Produces: `GenerationRecoveryController` and `useGenerationRecovery()`. `startGeneration(pending)` saves before POST; `resumeNotStarted()` reuses the stored key and exact stored expired-item checks; `processing` only polls; successful result remains recoverable until the result page loads. Task 15 generalizes the same controller—not a second hook—to all three command variants and replaces terminal attempt copy with current `useUsageToday()` data.
+- Produces: `GenerationRecoveryController` and `useGenerationRecovery()`. `startGeneration(pending)` is the only new-operation caller and always clears the prior storage record, dispatches reducer `clear` to idle, saves the owner-bound pending command, dispatches idle-only `submit`, and only then POSTs that exact pending command. `resumeNotStarted()` reuses the stored key and exact stored expired-item checks without clearing or creating a new operation; `processing` only polls; successful result remains recoverable until the result page loads. Task 15 generalizes the same controller—not a second hook—to all three command variants and replaces terminal attempt copy with current `useUsageToday()` data.
 
 - [ ] **Step 1 (2–5 min): Write failing tab-destroy, reconnect, auth-return, and quota-copy component tests**
 
@@ -4617,6 +4628,29 @@ it("recovers a saved processing key without posting again", async () => {
   renderHook(() => useGenerationRecovery());
   await waitFor(() => expect(mockStatus).toHaveBeenCalledWith(pending.request.idempotencyKey));
   expect(mockPost).not.toHaveBeenCalled();
+});
+
+it("clears a non-idle old operation before owner-bound save and POST", async () => {
+  mockReadPending.mockReturnValue(oldPending);
+  mockStatus.mockResolvedValue(processing);
+  const recovery = renderHook(() => useGenerationRecovery());
+  await waitFor(() => expect(recovery.result.current.state.phase).toBe("processing"));
+  const order: string[] = [];
+  mockClearPending.mockImplementation(() => { order.push("cleared"); });
+  mockSavePending.mockImplementation((value) => {
+    order.push("saved"); expect(value).toEqual(newPending);
+  });
+  const postResponse = deferred<GenerationStatusData>();
+  mockPost.mockImplementation(async (command) => {
+    order.push("posted"); expect(command).toEqual(pendingGenerationCommand(newPending));
+    return postResponse.promise;
+  });
+  let operation!: Promise<void>;
+  act(() => { operation = recovery.result.current.startGeneration(newPending); });
+  await waitFor(() => expect(recovery.result.current.state.phase).toBe("submitting"));
+  expect(order).toEqual(["cleared", "saved", "posted"]);
+  postResponse.resolve(processing);
+  await act(() => operation);
 });
 
 it("shows returned quota and Japan retry time after failure", () => {
@@ -4668,8 +4702,8 @@ export function useGenerationRecovery(): GenerationRecoveryController {
     catch { dispatch({ type: "network_error" }); }
   }, [read]);
 
-  const submit = useCallback(async () => {
-    const pending = read(); if (!pending) return;
+  const submit = useCallback(async (pendingInput?: PendingGeneration) => {
+    const pending = pendingInput ?? read(); if (!pending) return;
     try {
       const data = await postGeneration(pendingGenerationCommand(pending));
       if (data.status === "processing") savePendingGeneration({ ...pending, requestId: data.requestId });
@@ -4678,9 +4712,11 @@ export function useGenerationRecovery(): GenerationRecoveryController {
   }, [read]);
 
   const startGeneration = useCallback(async (pending: PendingGeneration) => {
+    clearPendingGeneration();
+    dispatch({ type: "clear" });
     savePendingGeneration(pending);
     dispatch({ type: "submit" });
-    await submit();
+    await submit(pending);
   }, [submit]);
 
   useEffect(() => {
@@ -4730,7 +4766,7 @@ export function GenerationStatusPanel({ state }: { state: GenerationClientState 
 }
 ```
 
-Wire the planner submit callback to await Plan 2's `autosave.flush()`, build `{kind:"new_menu",request:{idempotencyKey,draftId:saved.id,draftRevision:saved.revision,privacyNoticeVersion,expiredPantryConfirmations}}`, call `createPendingGeneration(command,user.id)`, then `startGeneration(pending)`. Disable the button while autosave flush, `submitting`, or `processing`. A flush conflict creates no pending record or POST. Sign-out, account switch, account deletion, explicit cancel, and every terminal success/failure/conflict call `clearPendingGeneration`; a foreign or expired record is deleted before any status or POST effect. Add routes with these exact elements:
+Wire the planner submit callback to await Plan 2's `autosave.flush()`, build `{kind:"new_menu",request:{idempotencyKey,draftId:saved.id,draftRevision:saved.revision,privacyNoticeVersion,expiredPantryConfirmations}}`, call `createPendingGeneration(command,user.id)`, then `startGeneration(pending)`. The hook import list must include Task 11's `clearPendingGeneration`, and `startGeneration` must preserve the fixed `clearPendingGeneration()` → reducer `clear` → `savePendingGeneration(pending)` → reducer `submit` → `submit(pending)` order even when the previous reducer state is checking, submitting, processing, offline, or terminal and storage contains an older pending command. A save failure prevents both submit dispatch and POST. Disable the button while autosave flush, `submitting`, or `processing`. A flush conflict creates no pending record or POST. Sign-out, account switch, account deletion, explicit cancel, and every terminal success/failure/conflict call `clearPendingGeneration`; a foreign or expired record is deleted before any status or POST effect. Add routes with these exact elements:
 
 ```tsx
 <Route path="/generation" element={<GenerationPage />} />
@@ -4746,7 +4782,7 @@ docker compose run --rm --no-deps app npx vitest run src/features/planner src/fe
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: tests PASS for save-before-send, POST-before-accept tab destruction, not_started re-confirm/resend, processing no-resend, response loss, online, visibility, auth return, succeeded navigation, every quota message, and 44px controls.
+Expected: tests PASS for new-operation clearing of non-idle state and old pending storage before owner-bound save-before-POST, save failure with no submit/POST, POST-before-accept tab destruction, `not_started` re-confirm/resend without new-operation clearing, processing no-resend, response loss, online, visibility, auth return, succeeded navigation, every quota message, and 44px controls.
 
 - [ ] **Step 6 (2–5 min): Commit recovery UX**
 
