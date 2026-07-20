@@ -57,8 +57,12 @@ export function GenerationStatusPanel({ state }: { state: GenerationClientState 
         {state.data.quota.retryAt !== null && (
           <p>再開: {formatJstRetryTime(state.data.quota.retryAt, new Date())}</p>
         )}
-        <a href="/emergency-menus">15分緊急献立を見る</a>
-        <a href="/history">履歴・お気に入りを見る</a>
+        <a className="button-link" href="/emergency-menus">
+          15分緊急献立を見る
+        </a>
+        <a className="button-link" href="/history">
+          履歴・お気に入りを見る
+        </a>
       </>
     );
   }
