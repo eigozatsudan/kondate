@@ -34,10 +34,22 @@ type InFlightRecord = { token: GenerationLifecycleToken; promise: Promise<void> 
 
 // テスト専用の初期状態注入。実利用の useGenerationRecovery() は引数なしで呼ばれ、
 // マウント時の recover 判定と初回 effect 実行を通常どおり行う。
+//
+// この注入口が存在する理由: テスト（use-generation-recovery.test.tsx）の一部は
+// マウント直後のフックが「特定の中間状態（例: submitting/offline）」を参照等価
+// （toBe(initialState)）で保持していることを検証する必要があるが、実際の非同期
+// 復旧フローを通してこの中間状態に到達させることは構造上できない（recover は
+// 常に "checking" から始まり、非同期の GET 応答を経て初めて他の phase へ遷移する
+// ため）。そのためテストにのみ許された初期状態の直接注入口として存在する。
+//
+// onDispatch は dispatch 呼び出しをその場で同期的に観測するためのフックである。
+// テスト側のリデューサーモック（reducerListenerRef）への一本化を検討したが、
+// React は act() 内で dispatch をバッチ処理するため、その経路での観測は実際の
+// レンダー確定（非同期の POST 応答より後）まで遅延してしまい、save→submit/
+// clear→post という操作順序をレースなく検証できない。そのためこの seam はここに残す。
 export type GenerationRecoverySeedForTesting = {
   state: GenerationClientState;
   token: GenerationLifecycleToken | null;
-  // dispatch 呼び出しの同期的な観測用（React 側の再レンダー反映タイミングに依存しない）。
   onDispatch?: (event: GenerationEvent) => void;
   // 既に「別 token へ切り替わった後」の孤立した submit 継続を再現するためのテスト専用フック。
   staleSubmit?: {
@@ -51,10 +63,17 @@ export function useGenerationRecovery(
 ): GenerationRecoveryController {
   const navigate = useNavigate();
   const userId = useAuth().session?.user.id ?? null;
-  const [state, dispatchState] = useReducer(
-    generationReducer,
-    seedForTesting?.state ?? { phase: "idle", effect: "none" },
-  );
+
+  // マウント時の seed 短絡判定を一箇所にまとめる。seed 済みの初回レンダーでは
+  // （1）注入された state/token をそのまま初期値にし、（2）自動 recover 判定
+  // （下の recover effect）と（3）effect-runner の初回自動実行の両方を抑制する。
+  // 実利用（seedForTesting 省略）では isSeeded は常に false になり、通常どおり
+  // "idle" から始まって自動 recover が走る。
+  const isSeeded = seedForTesting !== undefined;
+  const seedInitialState = seedForTesting?.state ?? { phase: "idle", effect: "none" };
+  const seedInitialToken = seedForTesting?.token ?? null;
+
+  const [state, dispatchState] = useReducer(generationReducer, seedInitialState);
   const dispatch = useCallback(
     (event: GenerationEvent) => {
       seedForTesting?.onDispatch?.(event);
@@ -67,12 +86,10 @@ export function useGenerationRecovery(
     [userId],
   );
   const epochRef = useRef(0);
-  const lifecycleRef = useRef<GenerationLifecycleToken | null>(seedForTesting?.token ?? null);
+  const lifecycleRef = useRef<GenerationLifecycleToken | null>(seedInitialToken);
   const statusInFlightRef = useRef<InFlightRecord | null>(null);
   const submitInFlightRef = useRef<InFlightRecord | null>(null);
-  // seed 済みの初回レンダーでは effect-runner を一度だけ抑制し、注入した状態が
-  // マウント直後の自動リカバリや自動クリアで書き換わらないようにする。
-  const skipInitialEffectRunRef = useRef(seedForTesting !== undefined);
+  const skipInitialEffectRunRef = useRef(isSeeded);
 
   const storedMatches = useCallback(
     (token: GenerationLifecycleToken) => {
@@ -239,7 +256,9 @@ export function useGenerationRecovery(
   }, [dispatch, invalidateLifecycle]);
 
   useEffect(() => {
-    if (seedForTesting !== undefined) return;
+    // seed 注入時はテストが用意した中間状態をそのまま観測させるため、
+    // マウント時の自動 recover 判定を実行しない（isSeeded の定義は上部参照）。
+    if (isSeeded) return;
     const pending = read();
     if (pending === null) return;
     const current = lifecycleRef.current;

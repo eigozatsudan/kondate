@@ -298,6 +298,12 @@ function renderRecoveryAt(
     mockPost.mockImplementation(async (command: GenerationCommand) => onPost(command));
   }
   const onReducerEvent = overrides.onReducerEvent;
+  // 注記: reducerListenerRef（モック化した generationReducer から呼ばれる）はこの用途には
+  // 使えない。React は dispatch を act() 内でバッチ処理するため、reducerListenerRef 経由の
+  // 観測は実際のリデューサー呼び出し（レンダー確定時）まで遅延し、非同期の POST 応答より
+  // 後に届くことがある（実測で "posted" が "submit"/"clear" より先に記録された）。
+  // seedForTesting.onDispatch はフックが dispatch を呼んだその場で同期的に発火するため、
+  // save→submit/clear→post という操作順序をレースなく検証できるのはこちらだけである。
   const seed = {
     state: initialState,
     token: seedTokenFor(initialState, pendingValue),
