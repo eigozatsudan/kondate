@@ -4045,12 +4045,15 @@ git commit -m "feat: 検証済み献立生成を統合"
 - Create: `netlify/functions/generation-status.ts`
 - Modify: `netlify/functions/_shared/generation-service.test.ts`
 - Modify: `netlify/functions/_shared/generation-service.ts`
+- Modify: `compose.yaml`
+- Modify: `tests/tooling/compose.test.mjs`
 
 **Interfaces:**
 - Consumes: `requireUser()`, `parseJson()`, `handleError()`, `json()`, `newMenuGenerationRequestSchema`, `createGenerationDeps()`, `runGeneration()`, and repository `status()`.
 - Produces: `generationResponse(result)`, `POST /api/generations/menu`, and `GET /api/generations/:idempotencyKey/status` with the five exact states. `generationResponse()` is the only successful data-envelope and HTTP-status projector for POST, terminal replay, and GET status, so all three paths share the exact same state-to-status mapping. The status endpoint never distinguishes a missing key from a key owned by someone else.
 - Task 9's `toGenerationStatus()` remains the only status projector. It treats a stored request row as authoritative: `processing` requires `started_at`, every terminal state requires `completed_at`, and `succeeded` additionally requires `completed_menu_id`. Missing authoritative fields throw and are closed by the handler as the fixed `500 request_failed` envelope; the projector never fabricates the current time or rewrites a malformed succeeded row as failed. An unknown stored failure code remains a failed state projected as `internal_error` with fixed copy.
 - A missing or malformed status-path key is a handler-local `HttpError(400, "invalid_request", "入力内容を確認してください")`; it is rejected before repository creation/status lookup and neither the supplied path value nor a parser diagnostic is reflected. Task 10 does not add an Origin check or a new Content-Type check: the locked HTTP boundary remains exactly `requireUser()`, the existing `parseJson()`, `handleError()`, and `generationResponse()`.
+- Gate 5 on a fresh database reset exposed an independent prerequisite tooling defect: the included GoTrue `auth` migrations and project `migrate` service can start after `db` becomes healthy at the same time and deadlock on `auth.users` DDL (`40P01`). Preserve the existing `db: service_healthy` dependency and add `auth: service_healthy` to `migrate`, producing the strict startup order db → auth → project migrate → app/db-test. Do not add retries, extend health timeouts, or modify the vendored Supabase Compose file. This correction has its own RED test, verification, scope, and commit after the Task 10 feature commit.
 
 - [ ] **Step 1 (2–5 min): Write failing handler and projector tests for the complete closed HTTP boundary**
 
@@ -4223,6 +4226,73 @@ Expected: tests PASS for 401, 405/Allow, invalid JSON, unknown fields, consent, 
 ```bash
 git add netlify/functions/generate-menu.ts netlify/functions/generate-menu.test.ts netlify/functions/generation-status.ts netlify/functions/generation-status.test.ts netlify/functions/_shared/generation-service.ts netlify/functions/_shared/generation-service.test.ts
 git commit -m "feat: 復旧可能な献立生成APIを公開"
+```
+
+- [ ] **Step 7 (2–5 min): Add the failing migration-order regression test**
+
+Add this static test without changing Compose first:
+
+```js
+test("serializes project migrations after GoTrue migrations", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  const migrate = compose.match(/^ {2}migrate:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
+  assert.ok(migrate, "migrate service is missing");
+  assert.match(migrate, /^ {6}db:\n {8}condition: service_healthy$/mu);
+  assert.match(migrate, /^ {6}auth:\n {8}condition: service_healthy$/mu);
+});
+```
+
+- [ ] **Step 8 (2–5 min): Run the focused tooling test and observe RED**
+
+Run: `docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs`
+
+Expected: FAIL because `migrate.depends_on` still contains only the existing healthy `db` dependency and does not wait for healthy `auth`.
+
+- [ ] **Step 9 (2–5 min): Serialize the project migration after GoTrue**
+
+Change only the root Compose override:
+
+```yaml
+migrate:
+  depends_on:
+    db:
+      condition: service_healthy
+    auth:
+      condition: service_healthy
+```
+
+Keep `app` and `db-test` waiting for successful `migrate` completion. Do not change retries, healthcheck timeouts, or `infra/supabase/docker-compose.yml`.
+
+- [ ] **Step 10 (5–15 min): Verify the startup order and resume the required gates from Gate 5**
+
+Run every command separately:
+
+```bash
+docker compose config --quiet
+docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
+./scripts/reset-local-db.sh
+docker compose ps --all auth migrate app oauth-mock
+docker compose ps -q auth
+docker inspect --format '{{.RestartCount}}' <auth-container-id-returned-above>
+docker compose exec -T db psql -U postgres -d postgres -Atc "select deadlocks from pg_stat_database where datname = current_database();"
+```
+
+The fresh reset must show `auth` restart count 0, database deadlocks 0, `migrate` exited 0, and `app`/`oauth-mock` healthy. Resolve the auth container ID with the preceding read-only command and pass that literal ID to `docker inspect`; do not join commands or use command substitution. When local resources permit, repeat `./scripts/reset-local-db.sh` and the same evidence checks two more times for three cold resets total.
+
+The first successful fresh reset supplies required Gate 5 evidence. Then resume the remaining required gates, still as separate commands:
+
+```bash
+docker compose --profile test run --rm db-test
+./scripts/run-e2e.sh
+docker compose run --rm --no-deps app npm run build
+git diff --check
+```
+
+- [ ] **Step 11 (2–5 min): Commit the independent initialization fix**
+
+```bash
+git add compose.yaml tests/tooling/compose.test.mjs
+git commit -m "fix: DB初期化時のAuth移行を直列化"
 ```
 
 ### Task 11: Create the browser API, minimal idempotency storage, and pure recovery machine
