@@ -1,5 +1,6 @@
 import { expect, test } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
 // 切断復旧、タブ再開、結果画面の詳細表示、320px幅でのレイアウトを検証する。
@@ -7,12 +8,20 @@ import type { Page } from "@playwright/test";
 // ルート不在時はこれらのテストは通らない。
 
 async function completeMinimumPlanner(page: Page) {
+  // local OpenRouterの固定success fixtureと同じ家族・食事条件に揃え、
+  // E2EがAI応答fixtureの内容ではなく復旧flowだけを検証できるようにする。
+  await page.goto("/settings");
+  await page.getByLabel("呼び名").fill("家族1");
+  await page.getByLabel("アレルギーの確認").selectOption("registered");
+  await page.getByRole("button", { name: "小麦を追加" }).click();
+  await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await page.goto("/planner");
-  await page.getByRole("radio", { name: "夕食" }).check();
+  await page.getByRole("radio", { name: "朝食" }).check();
   await page.getByLabel("メイン食材").fill("鶏肉");
   await page.getByRole("button", { name: "追加" }).click();
   await page.getByRole("radio", { name: "和食" }).check();
-  // 自動保存が完了し献立生成ボタンが有効になるまで待つ
+  // draftRevisionがserver側で確定する前のPOSTを避けるため、自動保存完了を待つ。
+  await expect(page.getByText("保存済み", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({
     timeout: 10_000,
   });
@@ -45,30 +54,30 @@ test("resends the same key after the first POST is lost before acceptance", asyn
   await page.reload();
   // recovery hookがGET statusでsucceeded結果を検出し、結果画面へ遷移する
   await expect(page.getByText("献立ができました")).toBeVisible({ timeout: 30_000 });
-  expect(new Set(postedKeys).size).toBe(1);
+  // POSTは2回発行され（初回abort後の再送1回）、両方とも同一idempotencyKeyであることを
+  // 直接確認する。Set.size === 1 だけではPOSTが1回だけでも通過してしまうため、
+  // 実際に2回のPOSTが発生し、両方が同じkeyであることを明示的に検証する。
+  expect(postedKeys.length).toBe(2);
+  expect(postedKeys[0]).toBe(postedKeys[1]);
 });
 
 test("recovers a persisted result when only the POST response is lost", async ({
   completedOnboardingPage: page,
 }) => {
   await completeMinimumPlanner(page);
-  let fetchCompleted: (() => void) | undefined;
-  const fetchCompletedPromise = new Promise<void>((resolve) => {
-    fetchCompleted = resolve;
-  });
-  let intercepted = false;
   await page.route("**/api/generations/menu", async (route) => {
-    if (intercepted) return route.continue();
-    intercepted = true;
-    // サーバー側の処理を完了させる（DBに結果が保存される）
-    await route.fetch();
-    fetchCompleted?.();
-    // レスポンスだけを破棄する
-    await route.abort("connectionreset");
+    // E2E Function Serverにhandler完了後のresponseだけを破棄させる。
+    // browser側でabortしないため、生成結果のDB永続化は確実に完了する。
+    await route.continue({
+      headers: {
+        ...route.request().headers(),
+        "X-Kondate-E2E-Drop-Response": "after-handler",
+      },
+    });
   });
   await page.getByRole("button", { name: "献立を作る" }).click();
-  // サーバー側の処理完了（結果永続化）を待ってからreloadする
-  await fetchCompletedPromise;
+  await expect(page.getByText("通信を確認しています")).toBeVisible({ timeout: 10_000 });
+  await page.unrouteAll();
   await page.reload();
   // recovery hookがGET statusでsucceeded結果を取得し、結果画面を表示する
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
@@ -78,36 +87,37 @@ test("recovers a persisted result when only the POST response is lost", async ({
   await expect(page.getByRole("tablist", { name: "料理" })).toBeVisible();
 });
 
-test("recovers processing after closing and reopening a tab", async ({
+test("recovers a completed result after a tab is closed before its POST response arrives", async ({
   completedOnboardingPage: page,
   context,
 }) => {
   await completeMinimumPlanner(page);
-  // POSTレスポンスを遅延させて、クライアントがprocessing状態を認識する時間を確保する
-  let releaseResponse: (() => void) | undefined;
+  const origin = new URL(page.url()).origin;
+  const arrivalToken = randomUUID();
   await page.route("**/api/generations/menu", async (route) => {
-    const response = await route.fetch();
-    // レスポンスを保持し、テストがタブを閉じた後に解放する
-    await new Promise<void>((resolve) => {
-      releaseResponse = resolve;
+    await route.continue({
+      headers: {
+        ...route.request().headers(),
+        "X-Kondate-E2E-Arrival-Token": arrivalToken,
+      },
     });
-    await route.fulfill({ response });
   });
   await page.getByRole("button", { name: "献立を作る" }).click();
-  // POSTが発行されたことを確認（クライアント側ではsubmitting/processing状態）
-  await expect(page.getByText("献立を作っています")).toBeVisible({ timeout: 10_000 });
+  const arrivalUrl = `${origin}/api/__kondate_e2e__/request-arrivals/${encodeURIComponent(arrivalToken)}`;
+  // handler呼出し前に記録される一度限りのtokenを観測し、POSTがserverへ到達した
+  // 直後にtabを閉じる。handler完了やclient responseには同期しない。
+  await expect
+    .poll(async () => (await context.request.get(arrivalUrl)).status(), { timeout: 10_000 })
+    .toBe(204);
   await page.close();
-  // サーバー側は既に処理完了（route.fetch()で完了済み）なので、レスポンスを解放
-  releaseResponse?.();
-  // 新しいタブでplannerを開き、recovery hookがGET statusで結果を取得する
   const reopened = await context.newPage();
-  await reopened.goto("/planner");
+  await reopened.goto("/generation");
   await expect(reopened.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
 });
 
-test("shows timeline, tabs, ingredients, steps, adaptations, pantry reasons, labels, and disclaimer at 320px", async ({
+test("shows timeline, tabs, ingredients, steps, adaptations, empty pantry state, labels, and disclaimer at 320px", async ({
   completedOnboardingPage: page,
 }) => {
   await page.setViewportSize({ width: 320, height: 720 });
@@ -125,7 +135,7 @@ test("shows timeline, tabs, ingredients, steps, adaptations, pantry reasons, lab
   // ラベル確認セクション — mock success fixture は ingredient_2「しょうゆ」に
   // wheat アレルゲンの label confirmation を持つ
   await expect(page.getByText("加工品は原材料表示を確認してください")).toBeVisible();
-  await expect(page.getByText("しょうゆ")).toBeVisible();
+  await expect(page.getByText("しょうゆ：小麦")).toBeVisible();
   // 料理タブ — 2品目「にんじんの温サラダ」が存在する
   await expect(page.getByRole("tablist", { name: "料理" })).toBeVisible();
   await page.getByRole("tab").nth(1).click();
@@ -138,10 +148,16 @@ test("shows timeline, tabs, ingredients, steps, adaptations, pantry reasons, lab
   await expect(page.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
   await expect(page.getByText("骨を完全に除く")).toBeVisible();
   // 冷蔵庫食材セクション — mock success fixture の pantryUsage は空なので
-  // 空状態メッセージまたはセクション見出しの存在を確認
+  // 明示的な空状態メッセージを確認する（テスト名の pantry reasons は success
+  // fixture では非空にならないため、この空状態表示自体が検証対象）
   await expect(page.getByRole("heading", { name: "冷蔵庫食材の使い方" })).toBeVisible();
-  // 免責文全文
-  await expect(page.getByText("安全を保証する表示ではありません")).toBeVisible();
+  await expect(page.getByText("今回選んだ冷蔵庫食材はありません。")).toBeVisible();
+  // 免責文全文（menu-result.tsx の実際の固定文言）
+  await expect(
+    page.getByText(
+      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+    ),
+  ).toBeVisible();
   // 横スクロールが発生しないことを確認
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

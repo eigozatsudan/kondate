@@ -47,6 +47,21 @@ const routes = new Map([
         }),
     },
   ],
+  [
+    "/netlify/functions/generate-menu.ts",
+    {
+      config: { path: "/api/generations/menu", method: "POST" },
+      default: async (request) =>
+        Response.json({ body: await request.text(), method: request.method }),
+    },
+  ],
+  [
+    "/netlify/functions/generation-status.ts",
+    {
+      config: { path: "/api/generations/:idempotencyKey/status", method: "GET" },
+      default: async (_request, context) => Response.json(context.params),
+    },
+  ],
 ]);
 
 async function withServer(loadModule, run) {
@@ -94,6 +109,118 @@ test("routes from exported config, forwards required request fields, and passes 
         meal: "dinner",
         authorization: "Bearer e2e-token",
       });
+      const generateMenuResponse = await fetch(`${origin}/api/generations/menu`, {
+        method: "POST",
+        body: '{"idempotencyKey":"test"}',
+      });
+      assert.deepEqual(await generateMenuResponse.json(), {
+        body: '{"idempotencyKey":"test"}',
+        method: "POST",
+      });
+      const statusResponse = await fetch(
+        `${origin}/api/generations/22222222-2222-4222-8222-222222222222/status`,
+      );
+      assert.deepEqual(await statusResponse.json(), {
+        idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      });
+    },
+  );
+});
+
+test("reports a request arrival before its handler completes and consumes the token once", async () => {
+  let notifyHandlerStarted;
+  const handlerStarted = new Promise((resolve) => {
+    notifyHandlerStarted = resolve;
+  });
+  let releaseHandler;
+  const handlerReleased = new Promise((resolve) => {
+    releaseHandler = resolve;
+  });
+  const token = "arrival_test-token";
+
+  await withServer(
+    async (path) => {
+      const module = routes.get(path);
+      if (path !== "/netlify/functions/generate-menu.ts") return module;
+      return {
+        ...module,
+        default: async () => {
+          notifyHandlerStarted();
+          await handlerReleased;
+          return new Response(null, { status: 204 });
+        },
+      };
+    },
+    async (origin) => {
+      const generationRequest = fetch(`${origin}/api/generations/menu`, {
+        method: "POST",
+        headers: { "X-Kondate-E2E-Arrival-Token": token },
+      });
+      try {
+        await handlerStarted;
+
+        const arrivalUrl = `${origin}/api/__kondate_e2e__/request-arrivals/${encodeURIComponent(token)}`;
+        assert.equal((await fetch(arrivalUrl)).status, 204);
+        assert.equal((await fetch(arrivalUrl)).status, 404);
+      } finally {
+        releaseHandler();
+        assert.equal((await generationRequest).status, 204);
+      }
+    },
+  );
+});
+
+test("rejects an unsafe arrival token before invoking the handler", async () => {
+  let generateMenuCalls = 0;
+
+  await withServer(
+    async (path) => {
+      const module = routes.get(path);
+      if (path !== "/netlify/functions/generate-menu.ts") return module;
+      return {
+        ...module,
+        default: async () => {
+          generateMenuCalls += 1;
+          return new Response(null, { status: 204 });
+        },
+      };
+    },
+    async (origin) => {
+      const response = await fetch(`${origin}/api/generations/menu`, {
+        method: "POST",
+        headers: { "X-Kondate-E2E-Arrival-Token": "unsafe/token" },
+      });
+
+      assert.equal(response.status, 400);
+      assert.equal(generateMenuCalls, 0);
+    },
+  );
+});
+
+test("drops only the client response after the handler completes", async () => {
+  let generateMenuCalls = 0;
+
+  await withServer(
+    async (path) => {
+      const module = routes.get(path);
+      if (path !== "/netlify/functions/generate-menu.ts") return module;
+      return {
+        ...module,
+        default: async () => {
+          generateMenuCalls += 1;
+          return Response.json({ accepted: true });
+        },
+      };
+    },
+    async (origin) => {
+      await assert.rejects(
+        fetch(`${origin}/api/generations/menu`, {
+          method: "POST",
+          headers: { "X-Kondate-E2E-Drop-Response": "after-handler" },
+          body: '{"idempotencyKey":"test"}',
+        }),
+      );
+      assert.equal(generateMenuCalls, 1);
     },
   );
 });

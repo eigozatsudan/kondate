@@ -7,7 +7,13 @@ const functionModulePaths = [
   "/netlify/functions/auth-continuation-deposit.ts",
   "/netlify/functions/auth-continuation-claim.ts",
   "/netlify/functions/emergency-menus.ts",
+  "/netlify/functions/generate-menu.ts",
+  "/netlify/functions/generation-status.ts",
 ];
+const requestArrivalPath = "/api/__kondate_e2e__/request-arrivals/";
+const requestArrivalTtlMs = 30_000;
+const requestArrivalLimit = 256;
+const requestArrivalTokenPattern = /^[A-Za-z0-9_-]{1,128}$/u;
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -17,7 +23,10 @@ function createMatcher(path) {
   const pattern = path
     .split("/")
     .map((segment) => {
-      if (segment === ":continuationId") return "(?<continuationId>[^/]+)";
+      // ":xxx" 形式のパスパラメータ全般を名前付きキャプチャへ変換する。
+      // continuationId 専用の特別扱いをやめ、idempotencyKey 等の他パラメータ名も
+      // 汎用的にサポートする（generation-status.ts の :idempotencyKey で必要）。
+      if (segment.startsWith(":")) return `(?<${segment.slice(1)}>[^/]+)`;
       return escapeRegex(segment);
     })
     .join("/");
@@ -30,6 +39,33 @@ function requestHeaders(rawHeaders) {
     result.append(rawHeaders[index], rawHeaders[index + 1]);
   }
   return result;
+}
+
+function isRequestArrivalToken(value) {
+  return typeof value === "string" && requestArrivalTokenPattern.test(value);
+}
+
+function pruneRequestArrivals(requestArrivals, now) {
+  for (const [token, expiresAt] of requestArrivals) {
+    if (expiresAt > now) continue;
+    requestArrivals.delete(token);
+  }
+}
+
+function recordRequestArrival(requestArrivals, token, now) {
+  pruneRequestArrivals(requestArrivals, now);
+  requestArrivals.delete(token);
+  while (requestArrivals.size >= requestArrivalLimit) {
+    const oldestToken = requestArrivals.keys().next().value;
+    if (oldestToken === undefined) break;
+    requestArrivals.delete(oldestToken);
+  }
+  requestArrivals.set(token, now + requestArrivalTtlMs);
+}
+
+function consumeRequestArrival(requestArrivals, token, now) {
+  pruneRequestArrivals(requestArrivals, now);
+  return requestArrivals.delete(token);
 }
 
 async function writeResponse(response, nodeResponse) {
@@ -53,12 +89,36 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
     method: module.config.method,
     matcher: createMatcher(module.config.path),
   }));
+  // 到達tokenはE2Eの同期にだけ使う短命な状態である。期限と上限を設け、
+  // 並列testがtokenを使い捨ててもserver processへ蓄積し続けないようにする。
+  const requestArrivals = new Map();
 
   return createServer(async (nodeRequest, nodeResponse) => {
     const url = new URL(
       nodeRequest.url ?? "/",
       `http://${nodeRequest.headers.host ?? "127.0.0.1"}`,
     );
+    if (nodeRequest.method === "GET" && url.pathname.startsWith(requestArrivalPath)) {
+      let token;
+      try {
+        token = decodeURIComponent(url.pathname.slice(requestArrivalPath.length));
+      } catch {
+        nodeResponse.statusCode = 400;
+        nodeResponse.end();
+        return;
+      }
+      if (!isRequestArrivalToken(token)) {
+        nodeResponse.statusCode = 400;
+        nodeResponse.end();
+        return;
+      }
+      nodeResponse.statusCode = consumeRequestArrival(requestArrivals, token, Date.now())
+        ? 204
+        : 404;
+      nodeResponse.end();
+      return;
+    }
+
     const route = routes.find(
       ({ method, matcher }) => method === nodeRequest.method && matcher.test(url.pathname),
     );
@@ -66,6 +126,17 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
       nodeResponse.statusCode = 404;
       nodeResponse.end();
       return;
+    }
+
+    const arrivalToken = nodeRequest.headers["x-kondate-e2e-arrival-token"];
+    if (arrivalToken !== undefined) {
+      if (!isRequestArrivalToken(arrivalToken)) {
+        nodeResponse.statusCode = 400;
+        nodeResponse.end();
+        return;
+      }
+      // handler呼出し前に記録し、長時間処理中でもtab-close testが到達を観測できるようにする。
+      recordRequestArrival(requestArrivals, arrivalToken, Date.now());
     }
 
     const params = route.matcher.exec(url.pathname)?.groups ?? {};
@@ -78,7 +149,15 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
     });
 
     try {
-      await writeResponse(await route.handler(request, { params }), nodeResponse);
+      const shouldDropResponse =
+        nodeRequest.headers["x-kondate-e2e-drop-response"] === "after-handler";
+      const functionResponse = await route.handler(request, { params });
+      if (shouldDropResponse) {
+        // handlerのDB副作用を完了させた後、client responseだけを失わせるE2E専用seam。
+        nodeResponse.destroy();
+        return;
+      }
+      await writeResponse(functionResponse, nodeResponse);
     } catch {
       logger.error({
         code: "e2e_function_handler_failed",
