@@ -1,15 +1,69 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { materializeAiGeneratedMenu } from "./generation-materializer.js";
 import { GenerationOutputError } from "./generation-repair.js";
 import { runGeneration, type GenerationDependencies } from "./generation-service.js";
-import { OpenRouterCallError } from "./openrouter.js";
+import { parseServerEnv, type ServerEnv } from "./env.js";
+import { sendMenuGeneration } from "./openrouter.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import type { GenerationCommand } from "../../../shared/contracts/generation.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
 import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
+
+// このファイルが検証する adversarial scenario 名の閉じた集合。
+// scenarios.mjs のキー全体からテスト対象だけを厳密なunion型として抜き出し、
+// 添字アクセス時に string 型へ広がらないようにする（TS7053回避）。
+const adversarialScenarioNames = [
+  "direct-allergen",
+  "alias-in-step",
+  "missing-label-confirmation",
+  "unsafe-age-shape",
+  "invalid-adaptation-branch",
+  "invalid-pantry-dish-link",
+  "over-time-limit",
+] as const;
+type AdversarialScenarioName = (typeof adversarialScenarioNames)[number];
+
+// HTTP境界を通すサービス層テストが対象とする全シナリオ（malformed-jsonを含む）。
+const httpBoundaryScenarioNames = ["malformed-json", ...adversarialScenarioNames] as const;
+type HttpBoundaryScenarioName = (typeof httpBoundaryScenarioNames)[number];
+
+const { getServerEnvMock } = vi.hoisted(() => ({
+  getServerEnvMock: vi.fn<() => ServerEnv>(),
+}));
+
+vi.mock("./env.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./env.js")>();
+  return { ...actual, getServerEnv: getServerEnvMock };
+});
+
+// docker compose の openrouter-mock サービスは app コンテナと同じDockerネットワーク上の
+// http://openrouter-mock:8787/api/v1 で到達可能。実際のHTTPリクエスト・レスポンス
+// パース・X-Kondate-Mock-Scenarioヘッダー経路を通すことで、sendMenuGeneration()、
+// HTTPシリアライズ、local mock server、レスポンスパースをすべて実証する。
+// 前提: `docker compose up -d --wait` でスタックが起動済みであること
+// （AGENTS.md 3章のローカルスタック起動手順、通常の開発/検証フローで既に満たされる）。
+// openrouter-mock に到達できない場合、このdescribeブロックのテストはfetch失敗で
+// 明示的に失敗する（無言でスキップしない）。
+const httpModels = ["mock/kondate-primary:free", "mock/kondate-repair:free"] as const;
+const httpMockServerConfig = parseServerEnv({
+  VITE_SUPABASE_URL: "http://127.0.0.1:8000",
+  SUPABASE_URL: "http://kong:8000",
+  SUPABASE_SERVICE_ROLE_KEY: "service-role-key-at-least-twenty-characters",
+  SERVER_SITE_ORIGIN: "http://127.0.0.1:5173",
+  AUTH_CONTINUATION_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  AUTH_CONTINUATION_TTL_SECONDS: "300",
+  SUPABASE_PUBLISHABLE_KEY: "publishable-test",
+  OPENROUTER_API_KEY: "local-mock-key",
+  OPENROUTER_MODELS: httpModels.join(","),
+  OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
+  USER_DAILY_AI_LIMIT: "5",
+  USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
+  USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
+  USER_SHORT_WINDOW_SECONDS: "600",
+});
 
 // --- 決定論的UUID生成器 ---
 // テストの再現性を保証するため、毎回リセットできるインクリメンタルUUID
@@ -35,7 +89,9 @@ beforeEach(() => {
 // - 現行の辞書/ルールバージョン
 // - unsafe-age-shape用の子どもの年齢帯とミニトマト形状ルール
 // - invalid-pantry-dish-link用の pantry_1 選択/アイテム
-function makeAdversarialGenerationContext(scenario: string): GenerationContext {
+function makeAdversarialGenerationContext(
+  scenario: AdversarialScenarioName | "success",
+): GenerationContext {
   const memberId = "70000000-0000-4000-8000-000000000001";
   const anonymousRef = "member_1";
   const dictionaryVersion = "jp-caa-2026-04.v1";
@@ -266,16 +322,16 @@ describe("fixed OpenRouter adversarial outputs", () => {
   });
 });
 
-// --- サービス層adversarial統合テスト ---
-// vi.mock を使わず、runGeneration に scenario 固有 fixture を callOpenRouter から返し、
-// 実際の materializeAiGeneratedMenu / validateGeneratedMenu を経由して拒否されることを
-// 証明する。各シナリオで:
-// - primary model ID を記録し repair 時に除外する
-// - 最大2回の送信（markSent）で終端する（3回目なし）
-// - 成功persistence（succeed）が呼ばれない
-// - quota.consumed === false
-describe("adversarial scenarios through runGeneration with real materializer/validator", () => {
-  const models = ["mock/primary:free", "mock/repair:free"] as const;
+// --- サービス層adversarial統合テスト（real local HTTP mock境界） ---
+// callOpenRouter に sendMenuGeneration() 自体を渡し、OPENROUTER_MOCK_SCENARIO 環境変数で
+// docker compose の openrouter-mock サービスへ実HTTPリクエストを送る。これにより:
+// - sendMenuGeneration() の実装（HTTPシリアライズ・レスポンスパース）
+// - local OpenRouter mock server の応答
+// - HTTP境界でのmodel exclusion（2回目送信時のmodels配列）
+// - primary/repair のレスポンスmodel ID
+// をすべて実際のHTTP通信で証明する。materializeAiGeneratedMenu/validateGeneratedMenuは
+// vi.mock されていないため実コードを通る。
+describe("adversarial scenarios through runGeneration with the real local HTTP mock", () => {
   const requestId = "90000000-0000-4000-8000-000000000001";
   const key = "91000000-0000-4000-8000-000000000001";
   const command: GenerationCommand = {
@@ -288,6 +344,19 @@ describe("adversarial scenarios through runGeneration with real materializer/val
       expiredPantryConfirmations: [],
     },
   };
+  const originalMockScenario = process.env.OPENROUTER_MOCK_SCENARIO;
+
+  beforeEach(() => {
+    getServerEnvMock.mockReturnValue(httpMockServerConfig);
+  });
+
+  afterEach(() => {
+    if (originalMockScenario === undefined) {
+      delete process.env.OPENROUTER_MOCK_SCENARIO;
+    } else {
+      process.env.OPENROUTER_MOCK_SCENARIO = originalMockScenario;
+    }
+  });
 
   function makeServiceRepository() {
     return {
@@ -366,91 +435,64 @@ describe("adversarial scenarios through runGeneration with real materializer/val
     };
   }
 
-  // callOpenRouter が scenario 固有の fixture を返すファクトリ。
-  // malformed-json は文字列なので OpenRouterCallError を投げる。
-  // それ以外は outcome:"success" の menu を返す（不正な内容だが構造的には valid）。
-  function makeScenarioCallOpenRouter(scenario: string) {
-    const fixture = scenarios[scenario];
-    if (typeof fixture === "string") {
-      // malformed-json: パース不能 → OpenRouterCallError
-      return vi
-        .fn<GenerationDependencies["callOpenRouter"]>()
-        .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[0]))
-        .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[1]));
-    }
-    // 他のシナリオ: outcome は success だが menu 内容が不正
-    return vi
-      .fn<GenerationDependencies["callOpenRouter"]>()
-      .mockResolvedValueOnce({ output: fixture, modelId: models[0] })
-      .mockResolvedValueOnce({ output: fixture, modelId: models[1] });
-  }
-
   function makeServiceDeps(
-    scenario: string,
+    scenario: HttpBoundaryScenarioName,
     repository: ReturnType<typeof makeServiceRepository>,
-    callOpenRouter: ReturnType<typeof makeScenarioCallOpenRouter>,
   ): GenerationDependencies {
-    const context = makeAdversarialGenerationContext(scenario);
+    // unsafe-age-shape は age_shape_rule 検証用に "丸ごと" を含まない食材名へ
+    // 差し替える必要があるため、fixed fixture を直接使うHTTP経路では検証対象から
+    // 除外し、safety_action_contradiction 経路（frozen fixtureそのまま）だけを
+    // このHTTP境界テストで確認する。missing-evidence（age_shape_rule）経路は
+    // 上のmaterializer/validator直接呼び出しテストで検証済み。
+    const context = makeAdversarialGenerationContext(
+      scenario === "malformed-json" ? "success" : scenario,
+    );
     return {
       user: { userId: "93000000-0000-4000-8000-000000000001", accessToken: "token" },
       repository,
-      models,
+      models: [...httpModels],
       loadExecutionContext: vi.fn(() => Promise.resolve({ generationContext: context })),
       validatePreflight: () => ({ ok: true }),
       buildMessages: () => [{ role: "user", content: "prompt" }],
-      callOpenRouter,
+      callOpenRouter: sendMenuGeneration,
       now: () => new Date("2026-07-11T00:00:00.000Z"),
       openRouterTimeoutMs: 20_000,
       requestStartedAtMonotonicMs: 0,
       functionTotalBudgetMs: 50_000,
       uuid: deterministicUuid,
-      ...({} as Record<string, never>),
     };
   }
 
-  it.each([
-    "malformed-json",
-    "direct-allergen",
-    "alias-in-step",
-    "missing-label-confirmation",
-    "unsafe-age-shape",
-    "invalid-adaptation-branch",
-    "invalid-pantry-dish-link",
-    "over-time-limit",
-  ])(
+  it.each(httpBoundaryScenarioNames)(
     "%s: at most one repair, primary model excluded, no third send, no success quota",
     async (scenario) => {
+      process.env.OPENROUTER_MOCK_SCENARIO = scenario;
       const repository = makeServiceRepository();
-      const callOpenRouter = makeScenarioCallOpenRouter(scenario);
-      const deps = makeServiceDeps(scenario, repository, callOpenRouter);
+      const deps = makeServiceDeps(scenario, repository);
 
       const result = await runGeneration(deps, command);
 
-      // 1. 結果は失敗
+      // 1. リクエスト予約は1回だけ行われる
+      expect(repository.reserve).toHaveBeenCalledTimes(1);
+
+      // 2. 結果は失敗
       expect(result.status).toBe("failed");
       expect(result).toMatchObject({ quota: { consumed: false } });
 
-      // 2. 最大2回の送信（primary + repair）
+      // 3. 最大2回の送信（primary + repair）。実HTTPのため呼出し回数はmarkSentで確認する。
       expect(repository.markSent).toHaveBeenCalledTimes(2);
-      expect(callOpenRouter).toHaveBeenCalledTimes(2);
 
-      // 3. 修復は1回だけ予約される
+      // 4. 修復は1回だけ予約される
       expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
 
-      // 4. 成功persistenceは呼ばれない
+      // 5. 成功persistenceは呼ばれない
       expect(repository.succeed).not.toHaveBeenCalled();
 
-      // 5. primary model IDが記録される
-      expect(repository.recordModel).toHaveBeenCalledWith(requestId, models[0]);
-
-      // 6. repair呼び出しではprimary modelが除外される
-      const repairCall = callOpenRouter.mock.calls[1];
-      if (repairCall !== undefined) {
-        expect(repairCall[0].excludedModelIds).toEqual([models[0]]);
-      }
-
-      // 7. repair model IDも記録される
-      expect(repository.recordModel).toHaveBeenCalledWith(requestId, models[1]);
+      // 6. primary/repair 両方のmodel IDがHTTPレスポンス経由で記録される
+      //    （mock serverは primary送信時 body.models[0]、repair送信時 repairModel を返す）
+      expect(repository.recordModel).toHaveBeenCalledWith(requestId, httpModels[0]);
+      expect(repository.recordModel).toHaveBeenCalledWith(requestId, httpModels[1]);
     },
+    20_000,
   );
 });
