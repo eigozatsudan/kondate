@@ -43,14 +43,16 @@ const STEP2_ID = "23000000-0000-4000-8000-000000000002";
 const STEP3_ID = "23000000-0000-4000-8000-000000000003";
 const STEP4_ID = "23000000-0000-4000-8000-000000000004";
 const ADAPTATION_ID = "24000000-0000-4000-8000-000000000001";
+const ADAPTATION2_ID = "24000000-0000-4000-8000-000000000002";
 const TIMELINE_ID = "25000000-0000-4000-8000-000000000001";
 const TIMELINE2_ID = "25000000-0000-4000-8000-000000000002";
 const PANTRY_SELECTION_USED_ID = "26000000-0000-4000-8000-000000000001";
 const PANTRY_SELECTION_UNUSED_ID = "26000000-0000-4000-8000-000000000002";
 const CONFIRMATION_ROW_ID = "27000000-0000-4000-8000-000000000001";
 
-// PostgREST から返る行を意図的に非ソート順（料理は position 降順）で用意し、
-// マッパーが position/id で正規化して並べ直すことを検証する。
+// PostgREST から返る行を意図的に非ソート順（料理・取り分けは降順）で用意し、
+// マッパーがposition/idで正規化して並べ直すことを検証する。各ネスト配列も2件以上にし、
+// 先頭要素だけが偶然正しいfixtureでは並び替えの欠落を見逃さないようにする。
 function rawMenuRow() {
   return {
     id: MENU_ID,
@@ -95,7 +97,31 @@ function rawMenuRow() {
           { id: STEP4_ID, position: 2, instruction: "器に盛る" },
           { id: STEP2_ID, position: 1, instruction: "やわらかく加熱する" },
         ],
-        menu_member_adaptations: [],
+        menu_member_adaptations: [
+          {
+            id: ADAPTATION2_ID,
+            dish_id: DISH2_ID,
+            anonymous_member_ref: "member_2",
+            portion_text: "副菜を半量取り分ける",
+            branch_before_recipe_step_id: STEP2_ID,
+            additional_cutting: "野菜を5mm角に切る",
+            additional_heating: "追加で3分加熱する",
+            additional_seasoning: "味付け前に取り分ける",
+            serving_check: "十分に冷まして配膳する",
+            safety_tags: ["soft_vegetable"],
+            menu_safety_actions: [
+              {
+                dish_id: DISH2_ID,
+                ingredient_id: INGREDIENT2_ID,
+                anonymous_member_ref: "member_2",
+                before_recipe_step_id: STEP2_ID,
+                position: 1,
+                kind: "soften",
+                instruction: "にんじんを歯ぐきでつぶせる硬さにする",
+              },
+            ],
+          },
+        ],
       },
       {
         id: DISH1_ID,
@@ -139,11 +165,11 @@ function rawMenuRow() {
             anonymous_member_ref: "member_1",
             portion_text: "取り分け量を確認",
             branch_before_recipe_step_id: STEP1_ID,
-            additional_cutting: null,
-            additional_heating: null,
-            additional_seasoning: null,
+            additional_cutting: "ごはんを一口大にする",
+            additional_heating: "中心まで再加熱する",
+            additional_seasoning: "塩を加える前に取り分ける",
             serving_check: "小さくちぎって渡す",
-            safety_tags: [],
+            safety_tags: ["small_bite"],
             menu_safety_actions: [
               {
                 dish_id: DISH1_ID,
@@ -225,6 +251,11 @@ function rawMenuRow() {
         member_display_name_snapshot: "きろく1",
         household_members: { display_name: "子ども" },
       },
+      {
+        anonymous_ref: "member_3",
+        member_display_name_snapshot: " ",
+        household_members: { display_name: " " },
+      },
     ],
     menu_label_confirmations: [
       {
@@ -283,10 +314,59 @@ describe("getMenuResult", () => {
     expect(result.menu.mealType).toBe("breakfast");
 
     // 取り分けの安全手順は正規化された配列として保持される。
-    const adaptation = result.menu.adaptations.find((item) => item.id === ADAPTATION_ID);
-    expect(adaptation?.safetyActions.map((action) => action.instruction)).toEqual([
-      "食べやすい大きさにほぐしてください",
-      "のりを細かくちぎってください",
+    expect(result.menu.adaptations).toEqual([
+      {
+        id: ADAPTATION_ID,
+        dishId: DISH1_ID,
+        anonymousMemberRef: "member_1",
+        portionText: "取り分け量を確認",
+        branchBeforeRecipeStepId: STEP1_ID,
+        additionalCutting: "ごはんを一口大にする",
+        additionalHeating: "中心まで再加熱する",
+        additionalSeasoning: "塩を加える前に取り分ける",
+        servingCheck: "小さくちぎって渡す",
+        safetyTags: ["small_bite"],
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: DISH1_ID,
+            ingredientId: INGREDIENT1_ID,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: STEP1_ID,
+            instruction: "食べやすい大きさにほぐしてください",
+          },
+          {
+            kind: "cut_small",
+            dishId: DISH1_ID,
+            ingredientId: INGREDIENT3_ID,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: STEP3_ID,
+            instruction: "のりを細かくちぎってください",
+          },
+        ],
+      },
+      {
+        id: ADAPTATION2_ID,
+        dishId: DISH2_ID,
+        anonymousMemberRef: "member_2",
+        portionText: "副菜を半量取り分ける",
+        branchBeforeRecipeStepId: STEP2_ID,
+        additionalCutting: "野菜を5mm角に切る",
+        additionalHeating: "追加で3分加熱する",
+        additionalSeasoning: "味付け前に取り分ける",
+        servingCheck: "十分に冷まして配膳する",
+        safetyTags: ["soft_vegetable"],
+        safetyActions: [
+          {
+            kind: "soften",
+            dishId: DISH2_ID,
+            ingredientId: INGREDIENT2_ID,
+            anonymousMemberRef: "member_2",
+            beforeRecipeStepId: STEP2_ID,
+            instruction: "にんじんを歯ぐきでつぶせる硬さにする",
+          },
+        ],
+      },
     ]);
 
     // 冷蔵庫食材の使用先は ingredient.pantry_selection_id から dish 単位に導出される。
@@ -302,7 +382,11 @@ describe("getMenuResult", () => {
 
     // 家族ラベルは anonymous_ref の番号順に並び、household_members の表示名が
     // スナップショットより優先される。
-    expect(result.memberLabels).toEqual({ member_1: "子ども", member_2: "家族2" });
+    expect(result.memberLabels).toEqual({
+      member_1: "子ども",
+      member_2: "家族2",
+      member_3: "家族3",
+    });
 
     // ラベル確認はDBの確認行id・不変の原文スナップショット・人間可読な
     // アレルゲン名／家族名を持つ。

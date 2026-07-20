@@ -95,7 +95,14 @@ it("renders numbered steps and every persisted adaptation field", () => {
   const result = makeMenuResultViewModel();
   render(<MenuResult result={result} />);
   const panel = screen.getByRole("tabpanel");
-  expect(within(panel).getByText("1")).toBeVisible();
+  const recipeHeading = within(panel).getByRole("heading", { name: "作り方" });
+  const recipeList = recipeHeading.nextElementSibling;
+  if (!(recipeList instanceof HTMLOListElement)) throw new Error("recipe steps must be an ol");
+  expect(
+    within(recipeList)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent),
+  ).toEqual(["1ごはんを握る", "2のりを巻く"]);
   expect(within(panel).getByText("分ける前: 手順1")).toBeVisible();
   expect(within(panel).getByText("切り方: 細かくほぐす")).toBeVisible();
   expect(within(panel).getByText("加熱: 中心まで温める")).toBeVisible();

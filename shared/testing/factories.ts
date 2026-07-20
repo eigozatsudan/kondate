@@ -226,8 +226,35 @@ export function makeMenuResultViewModel() {
   const ingredient1Id = "53000000-0000-4000-8000-000000000001";
   const ingredient2Id = "53000000-0000-4000-8000-000000000002";
   const step1Id = "51000000-0000-4000-8000-000000000001";
+  const baseMenu = makeValidatedMenu();
+  const dishes = baseMenu.dishes.map((dish) => ({
+    ...dish,
+    ingredients: dish.ingredients.map((ingredient) =>
+      ingredient.id === ingredient1Id
+        ? { ...ingredient, name: "しょうゆ", labelConfirmationRequired: true }
+        : ingredient.id === ingredient2Id
+          ? {
+              ...ingredient,
+              name: "乳成分入りドレッシング",
+              labelConfirmationRequired: true,
+            }
+          : ingredient,
+    ),
+    steps: [
+      ...dish.steps,
+      {
+        id:
+          dish.id === dish1Id
+            ? "51000000-0000-4000-8000-000000000003"
+            : "51000000-0000-4000-8000-000000000004",
+        position: 2,
+        instruction: dish.id === dish1Id ? "のりを巻く" : "器に盛る",
+      },
+    ],
+  }));
 
   const menu = makeValidatedMenu({
+    dishes,
     adaptations: [
       {
         id: "57000000-0000-4000-8000-000000000001",
@@ -285,7 +312,7 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient",
         sourceId: ingredient1Id,
         sourcePath: "dishes.0.ingredients.0.name",
-        sourceText: "ごはん",
+        sourceText: "しょうゆ",
         allergenId: "wheat",
         anonymousMemberRef: "member_2",
         dictionaryVersion: "jp-caa-2026-04.v1",
@@ -297,7 +324,7 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient",
         sourceId: ingredient2Id,
         sourcePath: "dishes.1.ingredients.0.name",
-        sourceText: "にんじん",
+        sourceText: "乳成分入りドレッシング",
         allergenId: "milk",
         anonymousMemberRef: "member_1",
         dictionaryVersion: "jp-caa-2026-04.v1",
@@ -317,7 +344,7 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient" as const,
         sourceId: ingredient1Id,
         sourcePath: "dishes.0.ingredients.0.name",
-        sourceText: "ごはん",
+        sourceText: "しょうゆ",
         allergenName: "小麦",
         memberLabel: "大人",
         dictionaryVersion: "jp-caa-2026-04.v1",
@@ -332,7 +359,7 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient" as const,
         sourceId: ingredient2Id,
         sourcePath: "dishes.1.ingredients.0.name",
-        sourceText: "にんじん",
+        sourceText: "乳成分入りドレッシング",
         allergenName: "乳",
         memberLabel: "子ども",
         dictionaryVersion: "jp-caa-2026-04.v1",
