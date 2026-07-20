@@ -161,10 +161,11 @@ it("wraps unbroken ingredient names and amounts inside a 320px material row", ()
   const row = name.closest("li");
   // jsdomはlayout geometryを返さないためscrollWidthを偽装せず、320pxでも
   // flexのauto-min-widthに遮られない子要素単位の折返し契約をclassで固定する。
-  expect(row).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_auto]");
+  expect(row).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_minmax(0,45%)]");
   expect(name).toHaveClass("min-w-0", "break-words", "[overflow-wrap:anywhere]");
   expect(amount).toHaveClass(
-    "max-w-[45%]",
+    "min-w-0",
+    "w-full",
     "break-words",
     "text-right",
     "[overflow-wrap:anywhere]",

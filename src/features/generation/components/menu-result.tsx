@@ -119,7 +119,7 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
           {selected.ingredients.map((item) => (
             <li
               key={item.id}
-              className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2"
+              className="grid min-h-11 grid-cols-[minmax(0,1fr)_minmax(0,45%)] items-center gap-3 py-2"
             >
               <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                 {item.name}
@@ -129,7 +129,7 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
                   </span>
                 )}
               </span>
-              <span className="max-w-[45%] break-words text-right [overflow-wrap:anywhere]">
+              <span className="min-w-0 w-full break-words text-right [overflow-wrap:anywhere]">
                 {amount(item.quantityValue, item.unit, item.quantityText)}
               </span>
             </li>
