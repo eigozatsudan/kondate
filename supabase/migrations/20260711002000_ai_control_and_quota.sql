@@ -552,6 +552,125 @@ begin
 end;
 $$;
 
+create or replace function private.current_safety_fingerprint(
+  p_user_id uuid,p_target_member_ids uuid[]
+) returns text
+language plpgsql
+stable
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_requested_count integer;
+  v_member_count integer;
+  v_members text;
+  v_payload text;
+begin
+  if p_user_id is null or p_target_member_ids is null
+     or pg_catalog.cardinality(p_target_member_ids)=0
+     or pg_catalog.array_position(p_target_member_ids,null::uuid) is not null then
+    raise exception using errcode='22023',message='invalid_target_members';
+  end if;
+  select pg_catalog.count(distinct requested.member_id)::integer
+    into v_requested_count
+  from pg_catalog.unnest(p_target_member_ids) as requested(member_id);
+  if v_requested_count<>pg_catalog.cardinality(p_target_member_ids) then
+    raise exception using errcode='22023',message='invalid_target_members';
+  end if;
+
+  with requested as (
+    select target.member_id,target.ordinality
+    from pg_catalog.unnest(p_target_member_ids) with ordinality
+      as target(member_id,ordinality)
+  ), canonical_members as (
+    select member.id,
+      'member_'||requested.ordinality::text as anonymous_ref,
+      member.age_band,member.allergy_status,
+      coalesce(array(select allergy.allergen_id
+        from public.member_allergies allergy
+        where allergy.user_id=p_user_id and allergy.member_id=member.id
+          and allergy.allergen_id is not null
+        order by allergy.allergen_id),array[]::text[]) as allergen_ids,
+      exists(select 1 from public.member_allergies allergy
+        where allergy.user_id=p_user_id and allergy.member_id=member.id
+          and allergy.allergen_id is null) as has_unmapped_custom_allergy,
+      array(select value from pg_catalog.unnest(member.required_safety_constraints)
+        as constraints_(value) order by value) as required_constraints,
+      member.unsupported_diet_status,
+      array(select value from pg_catalog.unnest(member.unsupported_diet_kinds)
+        as diets(value) order by value) as unsupported_diet_kinds
+    from requested
+    join public.household_members member
+      on member.id=requested.member_id and member.user_id=p_user_id
+     and member.status='complete'
+  ), encoded as (
+    select id,
+      '{"householdMemberId":'||pg_catalog.to_json(id::text)::text||
+      ',"anonymousRef":'||pg_catalog.to_json(anonymous_ref)::text||
+      ',"ageBand":'||pg_catalog.to_json(age_band)::text||
+      ',"allergyStatus":'||pg_catalog.to_json(allergy_status)::text||
+      ',"allergenIds":'||pg_catalog.to_json(allergen_ids)::text||
+      ',"hasUnmappedCustomAllergy":'||
+        pg_catalog.to_json(has_unmapped_custom_allergy)::text||
+      ',"requiredSafetyConstraints":'||pg_catalog.to_json(required_constraints)::text||
+      ',"unsupportedDietStatus":'||pg_catalog.to_json(unsupported_diet_status)::text||
+      ',"unsupportedDietKinds":'||pg_catalog.to_json(unsupported_diet_kinds)::text||'}'
+      as encoded_member
+    from canonical_members
+  )
+  select pg_catalog.count(*)::integer,
+    coalesce(pg_catalog.string_agg(encoded_member,',' order by id::text),'')
+    into v_member_count,v_members
+  from encoded;
+  if v_member_count<>v_requested_count then
+    raise exception using errcode='22023',message='invalid_target_members';
+  end if;
+
+  v_payload := '{"dictionaryVersion":"jp-caa-2026-04.v1"'
+    ||',"foodRuleVersion":"jp-caa-child-shape-2026-07.v1"'
+    ||',"members":['||v_members||']}';
+  return pg_catalog.encode(
+    extensions.digest(pg_catalog.convert_to(v_payload,'UTF8'),'sha256'),'hex');
+end
+$function$;
+
+create or replace function private.lock_and_assert_current_safety_fingerprint(
+  p_user_id uuid,p_target_member_ids uuid[],p_expected text
+) returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare v_actual text;
+begin
+  if p_expected is null then
+    raise exception using errcode='22023',message='current_safety_changed';
+  end if;
+  -- 親行のFOR UPDATEで、新しい外部キー子行が取得するKEY SHAREと競合させる。
+  perform 1 from public.household_members member
+    where member.user_id=p_user_id
+      and member.id=any(p_target_member_ids)
+      and member.status='complete'
+    order by member.id for update;
+  perform 1 from public.member_allergies allergy
+    where allergy.user_id=p_user_id
+      and allergy.member_id=any(p_target_member_ids)
+    order by allergy.member_id,allergy.id for share;
+  lock table public.allergen_catalog in share mode;
+  lock table public.allergen_aliases in share mode;
+  lock table public.food_safety_rules in share mode;
+  v_actual:=private.current_safety_fingerprint(p_user_id,p_target_member_ids);
+  if v_actual is distinct from p_expected then
+    raise exception using errcode='P0001',message='current_safety_changed';
+  end if;
+end
+$function$;
+
+revoke all on function private.current_safety_fingerprint(uuid,uuid[])
+  from public,anon,authenticated,service_role;
+revoke all on function private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)
+  from public,anon,authenticated,service_role;
+
 create or replace function public.finalize_ai_generation_success(
   p_request_id uuid,p_menu jsonb,p_preference_snapshot jsonb,p_safety_snapshot jsonb,
   p_safety_fingerprint text,p_allergen_version text,p_food_rule_version text,

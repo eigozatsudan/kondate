@@ -1,5 +1,6 @@
+\ir 000_helpers.sql
 begin;
-select plan(64);
+select no_plan();
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password,
@@ -32,6 +33,441 @@ insert into public.generation_drafts (
   'lunch', array['豆腐'], 'chinese',
   array['10000000-0000-4000-8000-000000000002'::uuid],
   15, 'economy', array['えび'], '辛さ控えめ', '[]'::jsonb, 2
+);
+
+select tests.create_supabase_user(
+  '15000000-0000-4000-8000-000000000001',
+  'fingerprint-owner-a@example.invalid'
+);
+select tests.create_supabase_user(
+  '15000000-0000-4000-8000-000000000002',
+  'fingerprint-owner-b@example.invalid'
+);
+
+-- UUID順と逆順で作成し、物理的な挿入順へ依存しないことを固定する。
+insert into public.household_members (
+  id, user_id, status, display_name, age_band, allergy_status,
+  required_safety_constraints, unsupported_diet_status, unsupported_diet_kinds
+) values
+  (
+    '15100000-0000-4000-8000-000000000002',
+    '15000000-0000-4000-8000-000000000001',
+    'complete', '大人', 'adult', 'none',
+    '{}', 'none', '{}'
+  ),
+  (
+    '15100000-0000-4000-8000-000000000001',
+    '15000000-0000-4000-8000-000000000001',
+    'draft', '子ども', 'age_3_5', 'registered',
+    array['remove_bones', 'cut_small'],
+    'present',
+    array['therapeutic_diet', 'swallowing_concern']
+  ),
+  (
+    '15100000-0000-4000-8000-000000000003',
+    '15000000-0000-4000-8000-000000000001',
+    'draft', '下書き', null, null,
+    '{}', null, '{}'
+  ),
+  (
+    '15200000-0000-4000-8000-000000000001',
+    '15000000-0000-4000-8000-000000000002',
+    'complete', '別世帯', 'adult', 'none',
+    '{}', 'none', '{}'
+  );
+
+-- allergen ID順と異なる順序で作成する。
+insert into public.member_allergies (
+  id, user_id, member_id, allergen_id,
+  custom_name, custom_aliases, custom_confirmed
+) values
+  (
+    '15300000-0000-4000-8000-000000000002',
+    '15000000-0000-4000-8000-000000000001',
+    '15100000-0000-4000-8000-000000000001',
+    'wheat', null, '{}', false
+  ),
+  (
+    '15300000-0000-4000-8000-000000000003',
+    '15000000-0000-4000-8000-000000000001',
+    '15100000-0000-4000-8000-000000000001',
+    null, '独自食材', array['独自別名'], true
+  ),
+  (
+    '15300000-0000-4000-8000-000000000001',
+    '15000000-0000-4000-8000-000000000001',
+    '15100000-0000-4000-8000-000000000001',
+    'egg', null, '{}', false
+  );
+
+-- 登録済みアレルギーを要求する即時triggerを満たしてから、対象memberを完了状態にする。
+update public.household_members
+set status = 'complete'
+where id = '15100000-0000-4000-8000-000000000001';
+
+select has_function(
+  'private',
+  'current_safety_fingerprint',
+  array['uuid', 'uuid[]'],
+  'current fingerprint helper has the exact input signature'
+);
+select function_returns(
+  'private',
+  'current_safety_fingerprint',
+  array['uuid', 'uuid[]'],
+  'text',
+  'current fingerprint helper returns text'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_catalog.pg_proc procedure_
+    join pg_catalog.pg_namespace namespace_
+      on namespace_.oid = procedure_.pronamespace
+    where namespace_.nspname = 'private'
+      and procedure_.proname = 'current_safety_fingerprint'
+  ),
+  1,
+  'current fingerprint helper has no overload'
+);
+
+select has_function(
+  'private',
+  'lock_and_assert_current_safety_fingerprint',
+  array['uuid', 'uuid[]', 'text'],
+  'locking fingerprint helper has the exact input signature'
+);
+select function_returns(
+  'private',
+  'lock_and_assert_current_safety_fingerprint',
+  array['uuid', 'uuid[]', 'text'],
+  'void',
+  'locking fingerprint helper returns void'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_catalog.pg_proc procedure_
+    join pg_catalog.pg_namespace namespace_
+      on namespace_.oid = procedure_.pronamespace
+    where namespace_.nspname = 'private'
+      and procedure_.proname = 'lock_and_assert_current_safety_fingerprint'
+  ),
+  1,
+  'locking fingerprint helper has no overload'
+);
+
+select ok(
+  not (
+    select procedure_.prosecdef
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid =
+      to_regprocedure('private.current_safety_fingerprint(uuid,uuid[])')
+  ),
+  'current fingerprint helper is SECURITY INVOKER'
+);
+select ok(
+  not (
+    select procedure_.prosecdef
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid = to_regprocedure(
+      'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)'
+    )
+  ),
+  'locking fingerprint helper is SECURITY INVOKER'
+);
+select is(
+  (
+    select procedure_.provolatile::text
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid =
+      to_regprocedure('private.current_safety_fingerprint(uuid,uuid[])')
+  ),
+  's',
+  'current fingerprint helper is STABLE'
+);
+select is(
+  (
+    select procedure_.proconfig
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid =
+      to_regprocedure('private.current_safety_fingerprint(uuid,uuid[])')
+  ),
+  array['search_path=""']::text[],
+  'current fingerprint helper has an empty search_path'
+);
+select is(
+  (
+    select procedure_.proconfig
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid = to_regprocedure(
+      'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)'
+    )
+  ),
+  array['search_path=""']::text[],
+  'locking fingerprint helper has an empty search_path'
+);
+
+select ok(
+  not exists (
+    select 1
+    from pg_catalog.pg_proc procedure_
+    cross join lateral pg_catalog.aclexplode(
+      coalesce(
+        procedure_.proacl,
+        pg_catalog.acldefault('f', procedure_.proowner)
+      )
+    ) privilege_
+    where procedure_.oid =
+      to_regprocedure('private.current_safety_fingerprint(uuid,uuid[])')
+      and privilege_.grantee = 0
+      and privilege_.privilege_type = 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'private.current_safety_fingerprint(uuid,uuid[])',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'private.current_safety_fingerprint(uuid,uuid[])',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'private.current_safety_fingerprint(uuid,uuid[])',
+    'EXECUTE'
+  ),
+  'PUBLIC and every external role cannot execute the current helper'
+);
+select ok(
+  not exists (
+    select 1
+    from pg_catalog.pg_proc procedure_
+    cross join lateral pg_catalog.aclexplode(
+      coalesce(
+        procedure_.proacl,
+        pg_catalog.acldefault('f', procedure_.proowner)
+      )
+    ) privilege_
+    where procedure_.oid = to_regprocedure(
+      'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)'
+    )
+      and privilege_.grantee = 0
+      and privilege_.privilege_type = 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)',
+    'EXECUTE'
+  ),
+  'PUBLIC and every external role cannot execute the locking helper'
+);
+
+select is(
+  private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000001',
+      '15100000-0000-4000-8000-000000000002'
+    ]::uuid[]
+  ),
+  'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69',
+  'fingerprint matches the canonical TypeScript-compatible SHA-256'
+);
+
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    null::uuid,
+    array['15100000-0000-4000-8000-000000000001']::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'a null owner is rejected');
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001', null::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'a null member array is rejected');
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001', '{}'::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'an empty member array is rejected');
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001', array[null]::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'a null member element is rejected');
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000001',
+      '15100000-0000-4000-8000-000000000001'
+    ]::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'duplicate members are rejected');
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array['15900000-0000-4000-8000-000000000001']::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'a missing member is rejected');
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array['15200000-0000-4000-8000-000000000001']::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'a foreign member is rejected');
+select throws_ok($$
+  select private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array['15100000-0000-4000-8000-000000000003']::uuid[]
+  )
+$$, '22023', 'invalid_target_members', 'a draft member is rejected');
+
+-- 登録済みmemberの最後のallergy削除を防ぐtriggerに従い、再構築中だけ未確認へ戻す。
+update public.household_members
+set allergy_status = 'unconfirmed'
+where id = '15100000-0000-4000-8000-000000000001';
+
+delete from public.member_allergies
+where member_id = '15100000-0000-4000-8000-000000000001';
+
+-- 同じlogical setを異なる順序で再作成し、row insertion order非依存を固定する。
+insert into public.member_allergies (
+  id, user_id, member_id, allergen_id,
+  custom_name, custom_aliases, custom_confirmed
+) values
+  (
+    '15300000-0000-4000-8000-000000000001',
+    '15000000-0000-4000-8000-000000000001',
+    '15100000-0000-4000-8000-000000000001',
+    'egg', null, '{}', false
+  ),
+  (
+    '15300000-0000-4000-8000-000000000003',
+    '15000000-0000-4000-8000-000000000001',
+    '15100000-0000-4000-8000-000000000001',
+    null, '独自食材', array['独自別名'], true
+  ),
+  (
+    '15300000-0000-4000-8000-000000000002',
+    '15000000-0000-4000-8000-000000000001',
+    '15100000-0000-4000-8000-000000000001',
+    'wheat', null, '{}', false
+  );
+
+update public.household_members
+set allergy_status = 'registered'
+where id = '15100000-0000-4000-8000-000000000001';
+
+select is(
+  private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000001',
+      '15100000-0000-4000-8000-000000000002'
+    ]::uuid[]
+  ),
+  'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69',
+  'member and allergy insertion order does not change the fingerprint'
+);
+
+select lives_ok($$
+  select private.lock_and_assert_current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000001',
+      '15100000-0000-4000-8000-000000000002'
+    ]::uuid[],
+    'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69'
+  )
+$$, 'the locking helper accepts the exact current fingerprint');
+select throws_ok($$
+  select private.lock_and_assert_current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000001',
+      '15100000-0000-4000-8000-000000000002'
+    ]::uuid[], null
+  )
+$$, '22023', 'current_safety_changed',
+  'the locking helper rejects a null expected fingerprint');
+
+delete from public.member_allergies
+where id = '15300000-0000-4000-8000-000000000001';
+
+select isnt(
+  private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000001',
+      '15100000-0000-4000-8000-000000000002'
+    ]::uuid[]
+  ),
+  'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69',
+  'an allergy mutation changes the fingerprint'
+);
+select throws_ok($$
+  select private.lock_and_assert_current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array[
+      '15100000-0000-4000-8000-000000000001',
+      '15100000-0000-4000-8000-000000000002'
+    ]::uuid[],
+    'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69'
+  )
+$$, 'P0001', 'current_safety_changed',
+  'the locking helper rejects a stale expected fingerprint');
+
+select ok(
+  (
+    select
+      pg_catalog.strpos(definition_, 'from public.household_members member') > 0
+      and pg_catalog.strpos(
+        definition_, 'from public.member_allergies allergy'
+      ) > pg_catalog.strpos(
+        definition_, 'from public.household_members member'
+      )
+      and pg_catalog.strpos(
+        definition_, 'lock table public.allergen_catalog in share mode'
+      ) > pg_catalog.strpos(
+        definition_, 'from public.member_allergies allergy'
+      )
+      and pg_catalog.strpos(
+        definition_, 'lock table public.allergen_aliases in share mode'
+      ) > pg_catalog.strpos(
+        definition_, 'lock table public.allergen_catalog in share mode'
+      )
+      and pg_catalog.strpos(
+        definition_, 'lock table public.food_safety_rules in share mode'
+      ) > pg_catalog.strpos(
+        definition_, 'lock table public.allergen_aliases in share mode'
+      )
+      and pg_catalog.strpos(
+        definition_, 'v_actual:=private.current_safety_fingerprint'
+      ) > pg_catalog.strpos(
+        definition_, 'lock table public.food_safety_rules in share mode'
+      )
+    from (
+      select pg_catalog.pg_get_functiondef(
+        to_regprocedure(
+          'private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)'
+        )
+      ) as definition_
+    ) function_
+  ),
+  'locking helper keeps member, allergy, catalog, alias, rule, recalculation order'
 );
 
 select has_table('private'::name, 'ai_generation_requests'::name);
