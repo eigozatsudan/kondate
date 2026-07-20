@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
 import {
   generationConflictCopy,
+  generationFailureCodes,
   type GenerationCommand,
+  type GenerationFailureCode,
+  type GenerationStatusData,
 } from "../../../shared/contracts/generation.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import {
@@ -15,6 +18,7 @@ import { GenerationOutputError } from "./generation-repair.js";
 import { HttpError } from "./http.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
 import {
+  generationResponse,
   projectProviderConflicts,
   runGeneration,
   toGenerationStatus,
@@ -1007,5 +1011,130 @@ describe("toGenerationStatus", () => {
         error: { code },
       });
     }
+  });
+
+  it("requires the authoritative processing start timestamp", () => {
+    expect(() =>
+      toGenerationStatus({ ...record("processing"), started_at: undefined }, key),
+    ).toThrow("started_at_missing");
+  });
+
+  it.each(["succeeded", "failed", "constraint_conflict"] as const)(
+    "requires the authoritative completion timestamp for %s",
+    (status) => {
+      expect(() => toGenerationStatus({ ...record(status), completed_at: null }, key)).toThrow(
+        "completed_at_missing",
+      );
+    },
+  );
+
+  it("requires the authoritative completed menu id for succeeded", () => {
+    expect(() =>
+      toGenerationStatus({ ...record("succeeded"), completed_menu_id: null }, key),
+    ).toThrow("completed_menu_id_missing");
+  });
+
+  it("keeps an unknown stored failure in the fixed internal error state", () => {
+    expect(toGenerationStatus({ ...record("failed"), failure_code: "raw-canary" }, key)).toEqual({
+      status: "failed",
+      idempotencyKey: key,
+      requestId,
+      quota: {
+        consumed: false,
+        remaining: 5,
+        userDailyLimit: 5,
+        limitKind: null,
+        retryAt: null,
+      },
+      error: {
+        code: "internal_error",
+        message: "献立を作成できませんでした。成功回数には含まれません。",
+        retryable: true,
+      },
+      completedAt: "2026-07-11T00:00:01.000Z",
+    });
+  });
+});
+
+describe("generationResponse", () => {
+  const quota = {
+    consumed: false,
+    remaining: 5,
+    userDailyLimit: 5 as const,
+    limitKind: null,
+    retryAt: null,
+  };
+  const expectedFailureStatus: Record<GenerationFailureCode, number> = Object.fromEntries(
+    generationFailureCodes.map((code) => [
+      code,
+      ["user_daily_limit", "user_attempt_limit", "user_short_window_limit"].includes(code)
+        ? 429
+        : ["global_daily_limit", "model_unavailable", "generation_timeout"].includes(code)
+          ? 503
+          : 422,
+    ]),
+  ) as Record<GenerationFailureCode, number>;
+
+  const successfulStates: readonly [GenerationStatusData, number][] = [
+    [{ status: "not_started", idempotencyKey: key, quota }, 200],
+    [
+      {
+        status: "processing",
+        idempotencyKey: key,
+        requestId,
+        quota,
+        startedAt: "2026-07-11T00:00:00.000Z",
+      },
+      202,
+    ],
+    [
+      {
+        status: "succeeded",
+        idempotencyKey: key,
+        requestId,
+        quota,
+        menuId,
+        completedAt: "2026-07-11T00:00:01.000Z",
+      },
+      200,
+    ],
+    [
+      {
+        status: "constraint_conflict",
+        idempotencyKey: key,
+        requestId,
+        quota,
+        conflicts: [
+          {
+            code: "must_use_conflict",
+            message: generationConflictCopy.must_use_conflict,
+            conditionRefs: [],
+          },
+        ],
+        completedAt: "2026-07-11T00:00:01.000Z",
+      },
+      200,
+    ],
+  ];
+
+  it.each(successfulStates)("maps %s to its canonical HTTP status", async (result, status) => {
+    const response = generationResponse(result);
+    expect(response.status).toBe(status);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({ ok: true, data: result });
+  });
+
+  it.each(generationFailureCodes)("maps failed %s to its canonical HTTP status", (code) => {
+    const result: GenerationStatusData = {
+      status: "failed",
+      idempotencyKey: key,
+      requestId,
+      quota,
+      error: { code, message: "固定文言", retryable: false },
+      completedAt: "2026-07-11T00:00:01.000Z",
+    };
+    const response = generationResponse(result);
+    expect(response.status).toBe(expectedFailureStatus[code]);
+    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 });

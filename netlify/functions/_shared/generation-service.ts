@@ -32,7 +32,7 @@ import {
   type GenerationRepository,
   type QuotaRequestRecord,
 } from "./generation-repository.js";
-import { HttpError } from "./http.js";
+import { HttpError, json } from "./http.js";
 import {
   OpenRouterCallError,
   sendMenuGeneration,
@@ -214,15 +214,14 @@ export function toGenerationStatus(
       idempotencyKey,
       requestId,
       quota,
-      startedAt: record.started_at ?? new Date().toISOString(),
+      startedAt: requireStoredTimestamp(record.started_at, "started_at_missing"),
     };
   }
-  const completedAt = record.completed_at ?? new Date().toISOString();
-  if (
-    record.status === "succeeded" &&
-    record.completed_menu_id !== null &&
-    record.completed_menu_id !== undefined
-  ) {
+  const completedAt = requireStoredTimestamp(record.completed_at, "completed_at_missing");
+  if (record.status === "succeeded") {
+    if (record.completed_menu_id === null || record.completed_menu_id === undefined) {
+      throw new Error("completed_menu_id_missing");
+    }
     return {
       status: "succeeded",
       idempotencyKey,
@@ -256,6 +255,34 @@ export function toGenerationStatus(
     completedAt,
     error: { code, ...failureCopy[code] },
   };
+}
+
+function requireStoredTimestamp(
+  value: string | null | undefined,
+  missingCode: "started_at_missing" | "completed_at_missing",
+): string {
+  if (value === null || value === undefined) throw new Error(missingCode);
+  return value;
+}
+
+export function generationResponse(result: GenerationStatusData): Response {
+  const status =
+    result.status === "processing"
+      ? 202
+      : result.status === "failed" &&
+          ["user_daily_limit", "user_attempt_limit", "user_short_window_limit"].includes(
+            result.error.code,
+          )
+        ? 429
+        : result.status === "failed" &&
+            ["global_daily_limit", "model_unavailable", "generation_timeout"].includes(
+              result.error.code,
+            )
+          ? 503
+          : result.status === "failed"
+            ? 422
+            : 200;
+  return json(status, { ok: true, data: result });
 }
 
 export function createGenerationDeps(
