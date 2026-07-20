@@ -158,12 +158,30 @@ describe("pending generation storage", () => {
   });
 
   it.each(["new_menu", "regenerate_menu", "regenerate_dish"] as const)(
-    "round-trips and recovers the exact %s command",
+    "persists and recovers the exact %s command",
     (kind) => {
       const command = makeCommand(kind);
-      const pending = createPendingGeneration(command, USER_ID);
-      expect(pendingGenerationCommand(pending)).toEqual(command);
-      expect(pending.ownerUserId).toBe(USER_ID);
+      const requestId = "50000000-0000-4000-8000-000000000001";
+      const pending = pendingGenerationSchema.parse({
+        ...createPendingGeneration(command, USER_ID, () => new Date(STARTED_AT)),
+        requestId,
+      });
+      const storage = memoryStorage();
+
+      savePendingGeneration(pending, storage);
+      const recovered = readPendingGeneration(
+        USER_ID,
+        new Date(Date.parse(STARTED_AT) + 1_000),
+        storage,
+      );
+
+      expect(recovered).not.toBeNull();
+      if (recovered === null) {
+        throw new Error("pending generation was not recovered");
+      }
+      expect(recovered.ownerUserId).toBe(USER_ID);
+      expect(recovered.requestId).toBe(requestId);
+      expect(pendingGenerationCommand(recovered)).toEqual(command);
     },
   );
 
