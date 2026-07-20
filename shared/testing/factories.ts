@@ -213,3 +213,141 @@ export function underSixHardBeanAndNutContext(): GenerationContext {
     },
   };
 }
+
+// 献立結果画面（MenuResult）のコンポーネント／ページ用フィクスチャ。
+// makeValidatedMenu() の既定値（塩おにぎり／温野菜の2品、取り分けと在庫使用と
+// ラベル確認はすべて空）はそのまま使わず、段取り・安全手順・在庫の不足と未使用理由・
+// ラベル確認の各表示を一度に検証できるよう adaptations/pantryUsage/labelConfirmations
+// を上書きする。
+//
+// 表示テキストについての注意: ラベル確認の sourceText はあえて対象食材の実際の名前
+// （「ごはん」「にんじん」）とは異なる、より具体的な文言にしている。MenuResult は
+// 確認対象の本文（sourceText）を材料欄などの元表示と並べて再掲するため、もし
+// sourceText が元表示とまったく同じ文字列だと、DOM 上に同じテキストを含む要素が
+// 2つ存在してしまい、Testing Library の getByText（正規表現・複数要素は例外を送出）
+// が一意に要素を特定できなくなる。実運用の source_text_snapshot は元テキストの
+// 完全な複製だが、このフィクスチャでは表示検証の一意性を優先し、意図的に区別できる
+// 文言を採用している。
+export function makeMenuResultViewModel() {
+  const dish1Id = "50000000-0000-4000-8000-000000000001";
+  const dish2Id = "50000000-0000-4000-8000-000000000002";
+  const ingredient1Id = "53000000-0000-4000-8000-000000000001";
+  const ingredient2Id = "53000000-0000-4000-8000-000000000002";
+  const step1Id = "51000000-0000-4000-8000-000000000001";
+
+  const menu = makeValidatedMenu({
+    adaptations: [
+      {
+        id: "57000000-0000-4000-8000-000000000001",
+        dishId: dish1Id,
+        anonymousMemberRef: "member_1",
+        portionText: "取り分け量を確認",
+        branchBeforeRecipeStepId: step1Id,
+        additionalCutting: null,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "小さくちぎって渡す",
+        safetyTags: [],
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: dish1Id,
+            ingredientId: ingredient1Id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: step1Id,
+            instruction: "食べやすい大きさにほぐしてください",
+          },
+        ],
+      },
+    ],
+    pantryUsage: [
+      {
+        selectionId: "58000000-0000-4000-8000-000000000001",
+        pantryItemId: "59000000-0000-4000-8000-000000000001",
+        pantryItemName: "にんじん",
+        priority: "prefer_use",
+        usageStatus: "used",
+        plannedQuantity: 100,
+        inventoryQuantity: 60,
+        shortageQuantity: 40,
+        unit: "g",
+        dishIds: [dish2Id],
+        unusedReason: null,
+      },
+      {
+        selectionId: "58000000-0000-4000-8000-000000000002",
+        pantryItemId: "59000000-0000-4000-8000-000000000002",
+        pantryItemName: "小松菜",
+        priority: "prefer_use",
+        usageStatus: "unused",
+        plannedQuantity: null,
+        inventoryQuantity: null,
+        shortageQuantity: null,
+        unit: null,
+        dishIds: [],
+        unusedReason: "傷んでいたため使わなかった",
+      },
+    ],
+    labelConfirmations: [
+      {
+        sourceType: "ingredient",
+        sourceId: ingredient1Id,
+        sourcePath: "dishes.0.ingredients.0.name",
+        sourceText: "国産米使用表示確認",
+        allergenId: "wheat",
+        anonymousMemberRef: "member_2",
+        dictionaryVersion: "jp-caa-2026-04.v1",
+        confirmationStatus: "pending",
+        confirmedAt: null,
+        confirmedBy: null,
+      },
+      {
+        sourceType: "ingredient",
+        sourceId: ingredient2Id,
+        sourcePath: "dishes.1.ingredients.0.name",
+        sourceText: "有機野菜使用表示確認",
+        allergenId: "milk",
+        anonymousMemberRef: "member_1",
+        dictionaryVersion: "jp-caa-2026-04.v1",
+        confirmationStatus: "pending",
+        confirmedAt: null,
+        confirmedBy: null,
+      },
+    ],
+  });
+
+  return {
+    menu,
+    memberLabels: { member_1: "子ども", member_2: "大人" },
+    labelConfirmations: [
+      {
+        confirmationId: "79000000-0000-4000-8000-000000000001",
+        sourceType: "ingredient" as const,
+        sourceId: ingredient1Id,
+        sourcePath: "dishes.0.ingredients.0.name",
+        sourceText: "国産米使用表示確認",
+        allergenName: "小麦",
+        memberLabel: "大人",
+        confirmationStatus: "pending" as const,
+        requirementSafetyFingerprint: "a".repeat(64),
+        isCurrent: true as const,
+        confirmedAt: null,
+        confirmedBy: null,
+      },
+      {
+        confirmationId: "79000000-0000-4000-8000-000000000002",
+        sourceType: "ingredient" as const,
+        sourceId: ingredient2Id,
+        sourcePath: "dishes.1.ingredients.0.name",
+        sourceText: "有機野菜使用表示確認",
+        allergenName: "乳",
+        memberLabel: "子ども",
+        confirmationStatus: "pending" as const,
+        requirementSafetyFingerprint: "b".repeat(64),
+        isCurrent: true as const,
+        confirmedAt: null,
+        confirmedBy: null,
+      },
+    ],
+  };
+}
