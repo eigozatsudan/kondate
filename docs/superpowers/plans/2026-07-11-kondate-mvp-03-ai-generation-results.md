@@ -4048,7 +4048,7 @@ git commit -m "feat: 検証済み献立生成を統合"
 
 **Interfaces:**
 - Consumes: `requireUser()`, `parseJson()`, `handleError()`, `json()`, `newMenuGenerationRequestSchema`, `createGenerationDeps()`, `runGeneration()`, and repository `status()`.
-- Produces: `generationResponse(result)`, `POST /api/generations/menu`, and `GET /api/generations/:idempotencyKey/status` with the five exact states. The status endpoint never distinguishes a missing key from a key owned by someone else.
+- Produces: `generationResponse(result)`, `POST /api/generations/menu`, and `GET /api/generations/:idempotencyKey/status` with the five exact states. `generationResponse()` is the only successful data-envelope and HTTP-status projector for POST, terminal replay, and GET status, so all three paths share the exact same state-to-status mapping. The status endpoint never distinguishes a missing key from a key owned by someone else.
 - Task 9's `toGenerationStatus()` remains the only status projector. It treats a stored request row as authoritative: `processing` requires `started_at`, every terminal state requires `completed_at`, and `succeeded` additionally requires `completed_menu_id`. Missing authoritative fields throw and are closed by the handler as the fixed `500 request_failed` envelope; the projector never fabricates the current time or rewrites a malformed succeeded row as failed. An unknown stored failure code remains a failed state projected as `internal_error` with fixed copy.
 - A missing or malformed status-path key is a handler-local `HttpError(400, "invalid_request", "入力内容を確認してください")`; it is rejected before repository creation/status lookup and neither the supplied path value nor a parser diagnostic is reflected. Task 10 does not add an Origin check or a new Content-Type check: the locked HTTP boundary remains exactly `requireUser()`, the existing `parseJson()`, `handleError()`, and `generationResponse()`.
 
@@ -4057,7 +4057,7 @@ git commit -m "feat: 検証済み献立生成を統合"
 Add a table-driven RED matrix instead of only happy-path examples:
 
 - POST: 405 and `Allow: POST` without auth/orchestration; 401 without a verified token; invalid JSON, unknown fields, and missing/invalid consent; the existing body-size rejection; same-key terminal replay; and no duplicated OpenRouter call. Prove `performance.now()` is captured at handler entry before authentication and that the exact captured value is passed to `createGenerationDeps()` after authentication.
-- GET: 405 and `Allow: GET`; 401; missing and malformed path keys both return the exact fixed 400 envelope, call neither repository creation nor `status()`, and do not reflect a sentinel path/parser value; an owner-scoped missing key and a key owned by another user are indistinguishable `not_started` responses; all five exact states are projected.
+- GET: 405 and `Allow: GET`; 401; missing and malformed path keys both return the exact fixed 400 envelope, call neither repository creation nor `status()`, and do not reflect a sentinel path/parser value; an owner-scoped missing key and a key owned by another user are indistinguishable `not_started` responses; all five exact states are projected through `generationResponse()` as 200/202/429/503/422 with `Cache-Control: no-store`.
 - Projection/envelope: `not_started`, `succeeded`, and `constraint_conflict` are 200, `processing` is 202, the three user limit codes are 429, `global_daily_limit`/`model_unavailable`/`generation_timeout` are 503, and every other closed failure code is 422. Every success and error response has `Cache-Control: no-store`.
 - Stored-row canaries: missing `started_at` on `processing`, missing `completed_at` on each terminal state, and missing `completed_menu_id` on `succeeded` throw. Through GET, each becomes the exact fixed 500 envelope and does not reflect a sentinel repository/parser error. An unknown `failure_code` remains `status: "failed"` with the fixed `internal_error` copy rather than changing state or synthesizing timestamps.
 
@@ -4181,9 +4181,9 @@ export const config: Config = { path: "/api/generations/menu", method: "POST" };
 import type { Config, Context } from "@netlify/functions";
 import { z } from "zod";
 import { requireUser } from "./_shared/auth.js";
-import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.js";
+import { handleError, HttpError, methodNotAllowed } from "./_shared/http.js";
 import { createGenerationRepository } from "./_shared/generation-repository.js";
-import { toGenerationStatus } from "./_shared/generation-service.js";
+import { generationResponse, toGenerationStatus } from "./_shared/generation-service.js";
 
 const idempotencyKeySchema = z.string().uuid();
 
@@ -4197,7 +4197,7 @@ export default async function generationStatus(request: Request, context?: Conte
     }
     const idempotencyKey = parsedIdempotencyKey.data;
     const record = await createGenerationRepository(user).status(idempotencyKey);
-    return json(200, { ok: true, data: toGenerationStatus(record, idempotencyKey) });
+    return generationResponse(toGenerationStatus(record, idempotencyKey));
   } catch (error) { return handleError(error); }
 }
 
@@ -4216,7 +4216,7 @@ docker compose run --rm --no-deps app npx vitest run netlify/functions/generate-
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: tests PASS for 401, 405/Allow, invalid JSON, unknown fields, consent, body size, entry-time capture, no-store, not_started, processing, succeeded, failed, constraint conflict, the exact status-code table, same-key replay, another user's indistinguishable missing key, no duplicated OpenRouter call, path rejection before repository access, no reflected path/parser/repository diagnostics, and every authoritative stored-row guard above.
+Expected: tests PASS for 401, 405/Allow, invalid JSON, unknown fields, consent, body size, entry-time capture, no-store, not_started, processing, succeeded, failed, constraint conflict, the exact 200/202/429/503/422 status-code table through both POST/replay and GET, same-key replay, another user's indistinguishable missing key, no duplicated OpenRouter call, path rejection before repository access, no reflected path/parser/repository diagnostics, and every authoritative stored-row guard above.
 
 - [ ] **Step 6 (2–5 min): Commit the generation API**
 
