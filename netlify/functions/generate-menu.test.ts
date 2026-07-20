@@ -1,6 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GenerationStatusData } from "../../shared/contracts/generation.js";
+import { scenarios } from "../../tools/openrouter-mock/fixtures/scenarios.mjs";
+import {
+  generationConflictCopy,
+  generationFailureCodes,
+  type GenerationStatusData,
+} from "../../shared/contracts/generation.js";
+import { validateGeneratedMenu } from "../../shared/safety/validate-generated-menu.js";
+import {
+  makeGeneratedMenu,
+  makeGenerationContext,
+  makeValidatedMenu,
+} from "../../shared/testing/factories.js";
 import { requireUser } from "./_shared/auth.js";
+import { materializeAiGeneratedMenu } from "./_shared/generation-materializer.js";
+import type { QuotaRequestRecord } from "./_shared/generation-repository.js";
 import {
   createGenerationDeps,
   runGeneration,
@@ -10,6 +23,12 @@ import { HttpError } from "./_shared/http.js";
 import handler from "./generate-menu.js";
 
 vi.mock("./_shared/auth.js", () => ({ requireUser: vi.fn() }));
+vi.mock("../../shared/safety/validate-generated-menu.js", () => ({
+  validateGeneratedMenu: vi.fn(),
+}));
+vi.mock("./_shared/generation-materializer.js", () => ({
+  materializeAiGeneratedMenu: vi.fn(),
+}));
 vi.mock("./_shared/generation-service.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("./_shared/generation-service.js")>();
   return {
@@ -44,6 +63,73 @@ const terminalResult: GenerationStatusData = {
   menuId: "83000000-0000-4000-8000-000000000001",
   completedAt: "2026-07-11T00:00:01.000Z",
 };
+const quota = {
+  consumed: false,
+  remaining: 5,
+  userDailyLimit: 5 as const,
+  limitKind: null,
+  retryAt: null,
+};
+
+function expectedFailureStatus(code: (typeof generationFailureCodes)[number]): number {
+  if (["user_daily_limit", "user_attempt_limit", "user_short_window_limit"].includes(code)) {
+    return 429;
+  }
+  if (["global_daily_limit", "model_unavailable", "generation_timeout"].includes(code)) {
+    return 503;
+  }
+  return 422;
+}
+
+const canonicalResponseCases: readonly [string, GenerationStatusData, number][] = [
+  [
+    "not_started",
+    { status: "not_started", idempotencyKey: requestBody.idempotencyKey, quota },
+    200,
+  ],
+  [
+    "processing",
+    {
+      status: "processing",
+      idempotencyKey: requestBody.idempotencyKey,
+      requestId: terminalResult.requestId,
+      quota,
+      startedAt: "2026-07-11T00:00:00.000Z",
+    },
+    202,
+  ],
+  ["succeeded", terminalResult, 200],
+  [
+    "constraint_conflict",
+    {
+      status: "constraint_conflict",
+      idempotencyKey: requestBody.idempotencyKey,
+      requestId: terminalResult.requestId,
+      quota,
+      conflicts: [
+        {
+          code: "must_use_conflict",
+          message: generationConflictCopy.must_use_conflict,
+          conditionRefs: [],
+        },
+      ],
+      completedAt: terminalResult.completedAt,
+    },
+    200,
+  ],
+  ...generationFailureCodes.map((code): [string, GenerationStatusData, number] => [
+    `failed:${code}`,
+    {
+      status: "failed",
+      idempotencyKey: requestBody.idempotencyKey,
+      requestId: terminalResult.requestId,
+      quota,
+      error: { code, message: "固定文言", retryable: false },
+      completedAt: terminalResult.completedAt,
+    },
+    expectedFailureStatus(code),
+  ]),
+];
 
 function postRequest(body: unknown = requestBody, headers?: Record<string, string>): Request {
   return new Request("http://127.0.0.1:5173/api/generations/menu", {
@@ -131,7 +217,7 @@ describe("POST /api/generations/menu", () => {
     expect(runGeneration).toHaveBeenCalledTimes(1);
   });
 
-  it("captures entry time before authentication and projects terminal replay canonically", async () => {
+  it("captures entry time before authentication and projects the result canonically", async () => {
     const order: string[] = [];
     const now = vi.spyOn(performance, "now").mockImplementation(() => {
       order.push("time");
@@ -159,5 +245,120 @@ describe("POST /api/generations/menu", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({ ok: true, data: terminalResult });
     now.mockRestore();
+  });
+
+  it.each(canonicalResponseCases)(
+    "projects %s through the complete canonical POST boundary",
+    async (_label, result, expectedStatus) => {
+      vi.mocked(runGeneration).mockResolvedValue(result);
+
+      const response = await handler(postRequest());
+
+      expect(response.status).toBe(expectedStatus);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toEqual({ ok: true, data: result });
+      expect(runGeneration).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("hydrates a same-key terminal replay without duplicating generation side effects", async () => {
+    const actualService = await vi.importActual<typeof import("./_shared/generation-service.js")>(
+      "./_shared/generation-service.js",
+    );
+    const requestId = terminalResult.requestId;
+    const modelId = "mock/primary:free";
+    let reservationCreations = 0;
+    let current: QuotaRequestRecord = {
+      request_id: requestId,
+      idempotency_key: requestBody.idempotencyKey,
+      status: "processing",
+      failure_code: null,
+      retry_at: null,
+      completed_menu_id: null,
+      remaining: 5,
+      user_daily_limit: 5,
+      consumed: false,
+      terminal_details: null,
+      started_at: "2026-07-11T00:00:00.000Z",
+      completed_at: null,
+      replayed: false,
+    };
+    const knownReservations = new Set<string>();
+    const repository: GenerationDependencies["repository"] = {
+      reserve: vi.fn((input: { idempotencyKey: string }) => {
+        if (!knownReservations.has(input.idempotencyKey)) {
+          knownReservations.add(input.idempotencyKey);
+          reservationCreations += 1;
+          return Promise.resolve(current);
+        }
+        return Promise.resolve({ ...current, replayed: true });
+      }),
+      markSent: vi.fn(() => Promise.resolve(current)),
+      reserveRepair: vi.fn(() => Promise.resolve({ reserved: false, retry_at: null })),
+      recordModel: vi.fn(() => Promise.resolve()),
+      fail: vi.fn(() => Promise.resolve(current)),
+      conflict: vi.fn(() => Promise.resolve(current)),
+      succeed: vi.fn(() => {
+        current = {
+          ...current,
+          status: "succeeded",
+          completed_menu_id: terminalResult.menuId,
+          completed_at: terminalResult.completedAt,
+          remaining: 4,
+          consumed: true,
+        };
+        return Promise.resolve(current);
+      }),
+      status: vi.fn(() => Promise.resolve(current)),
+    };
+    const loadExecutionContext = vi.fn(() =>
+      Promise.resolve({ generationContext: makeGenerationContext() }),
+    );
+    const validatePreflight = vi.fn(() => ({ ok: true as const }));
+    const buildMessages = vi.fn(() => [{ role: "user" as const, content: "prompt" }]);
+    const callOpenRouter = vi.fn(() => Promise.resolve({ output: scenarios.success, modelId }));
+    const deps: GenerationDependencies = {
+      user,
+      repository,
+      models: [modelId],
+      loadExecutionContext,
+      validatePreflight,
+      buildMessages,
+      callOpenRouter,
+      now: () => new Date("2026-07-11T00:00:00.000Z"),
+      openRouterTimeoutMs: 20_000,
+      requestStartedAtMonotonicMs: 0,
+      functionTotalBudgetMs: 50_000,
+      uuid: () => "86000000-0000-4000-8000-000000000001",
+    };
+    vi.mocked(materializeAiGeneratedMenu).mockReturnValue(makeGeneratedMenu());
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu: makeValidatedMenu(),
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+    });
+    vi.mocked(createGenerationDeps).mockReturnValue(deps);
+    vi.mocked(runGeneration).mockImplementation(actualService.runGeneration);
+
+    const firstResponse = await handler(postRequest());
+    const replayResponse = await handler(postRequest());
+
+    expect(firstResponse.status).toBe(200);
+    expect(replayResponse.status).toBe(200);
+    await expect(firstResponse.json()).resolves.toEqual({ ok: true, data: terminalResult });
+    await expect(replayResponse.json()).resolves.toEqual({ ok: true, data: terminalResult });
+    expect(repository.reserve).toHaveBeenCalledTimes(2);
+    expect(reservationCreations).toBe(1);
+    expect(loadExecutionContext).toHaveBeenCalledTimes(1);
+    expect(validatePreflight).toHaveBeenCalledTimes(1);
+    expect(buildMessages).toHaveBeenCalledTimes(1);
+    expect(repository.markSent).toHaveBeenCalledTimes(1);
+    expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    expect(repository.recordModel).toHaveBeenCalledTimes(1);
+    expect(repository.succeed).toHaveBeenCalledTimes(1);
+    expect(repository.fail).not.toHaveBeenCalled();
+    expect(repository.conflict).not.toHaveBeenCalled();
+    expect(repository.status).toHaveBeenCalledTimes(2);
   });
 });

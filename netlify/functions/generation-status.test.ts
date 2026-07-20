@@ -122,17 +122,41 @@ describe("GET /api/generations/:idempotencyKey/status", () => {
   );
 
   it("makes an owner-scoped missing key indistinguishable from another user's key", async () => {
+    const foreignOwnerId = "86000000-0000-4000-8000-000000000001";
+    let storedOwnerId: string | null = null;
+    const ownerLookups: { authenticatedUserId: string; storedOwnerId: string | null }[] = [];
+    vi.mocked(createGenerationRepository).mockImplementation(
+      (authenticatedUser) =>
+        ({
+          status: vi.fn((idempotencyKey: string) => {
+            ownerLookups.push({
+              authenticatedUserId: authenticatedUser.userId,
+              storedOwnerId,
+            });
+            return Promise.resolve(
+              idempotencyKey === key && storedOwnerId === authenticatedUser.userId
+                ? record("succeeded")
+                : record("not_started"),
+            );
+          }),
+        }) as never,
+    );
+
     const missingResponse = await handler(request(), context(key));
     const missingBody = await responseBody(missingResponse);
-    status.mockResolvedValueOnce(record("not_started"));
+    storedOwnerId = foreignOwnerId;
     const otherOwnerResponse = await handler(request(), context(key));
     const otherOwnerBody = await responseBody(otherOwnerResponse);
 
     expect(otherOwnerResponse.status).toBe(200);
     expect(otherOwnerBody).toEqual(missingBody);
     expect(otherOwnerBody).toMatchObject({ ok: true, data: { status: "not_started" } });
-    expect(status).toHaveBeenNthCalledWith(1, key);
-    expect(status).toHaveBeenNthCalledWith(2, key);
+    expect(createGenerationRepository).toHaveBeenNthCalledWith(1, user);
+    expect(createGenerationRepository).toHaveBeenNthCalledWith(2, user);
+    expect(ownerLookups).toEqual([
+      { authenticatedUserId: user.userId, storedOwnerId: null },
+      { authenticatedUserId: user.userId, storedOwnerId: foreignOwnerId },
+    ]);
   });
 
   it.each([
