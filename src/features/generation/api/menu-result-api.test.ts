@@ -242,6 +242,11 @@ function rawMenuRow() {
     ],
     menu_target_members: [
       {
+        anonymous_ref: "member_3",
+        member_display_name_snapshot: " ",
+        household_members: { display_name: " " },
+      },
+      {
         anonymous_ref: "member_2",
         member_display_name_snapshot: "家族2",
         household_members: null,
@@ -250,11 +255,6 @@ function rawMenuRow() {
         anonymous_ref: "member_1",
         member_display_name_snapshot: "きろく1",
         household_members: { display_name: "子ども" },
-      },
-      {
-        anonymous_ref: "member_3",
-        member_display_name_snapshot: " ",
-        household_members: { display_name: " " },
       },
     ],
     menu_label_confirmations: [
