@@ -3,7 +3,8 @@ import { AppShell } from "./layouts/app-shell";
 import { RequireCompletedOnboarding, RequireSession } from "@/features/auth/protected-routes";
 import { PantryPage } from "@/features/pantry/pantry-page";
 import { EmergencyMenuPage } from "@/features/emergency/emergency-menu-page";
-import { PlannerPage } from "@/features/planner/planner-route";
+import { PlannerRoutePage } from "@/features/planner/planner-route";
+import { GenerationPage } from "@/features/generation/pages/generation-page";
 import { PlaceholderPage } from "@/shared/ui/placeholder-page";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
@@ -55,7 +56,11 @@ export function createAppRouter(): AppRouter {
                 { path: "/", element: <Navigate to="/planner" replace /> },
                 {
                   path: "/planner",
-                  element: <PlannerPage />,
+                  element: <PlannerRoutePage />,
+                },
+                {
+                  path: "/generation",
+                  element: <GenerationPage />,
                 },
                 {
                   path: "/pantry",

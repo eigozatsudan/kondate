@@ -1,17 +1,17 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerAttempt } from "./expired-pantry-checks";
 
 const draft: PlannerDraft = {
-  id: "71000000-0000-0000-0000-000000000001",
-  userId: "72000000-0000-0000-0000-000000000001",
+  id: "71000000-0000-4000-8000-000000000001",
+  userId: "72000000-0000-4000-8000-000000000001",
   mealType: "dinner",
   mainIngredients: ["鶏肉"],
   cuisineGenre: "japanese",
-  targetMemberIds: ["70000000-0000-0000-0000-000000000001"],
+  targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
   timeLimitMinutes: null,
   budgetPreference: null,
   avoidIngredients: [],
@@ -23,7 +23,7 @@ const draft: PlannerDraft = {
 };
 
 const pantryItem: PantryItem = {
-  id: "74000000-0000-0000-0000-000000000001",
+  id: "74000000-0000-4000-8000-000000000001",
   userId: draft.userId,
   name: "キャベツ",
   quantity: 1,
@@ -36,7 +36,7 @@ const pantryItem: PantryItem = {
 };
 
 const queryState = vi.hoisted(() => ({
-  userId: "72000000-0000-0000-0000-000000000001",
+  userId: "72000000-0000-4000-8000-000000000001",
   draft: undefined as PlannerDraft | null | undefined,
   pantry: {
     data: undefined as PantryItem[] | undefined,
@@ -46,10 +46,10 @@ const queryState = vi.hoisted(() => ({
   ownerBPending: false,
 }));
 
-const ownerBId = "72000000-0000-0000-0000-000000000002";
+const ownerBId = "72000000-0000-4000-8000-000000000002";
 const ownerBDraft: PlannerDraft = {
   ...draft,
-  id: "71000000-0000-0000-0000-000000000002",
+  id: "71000000-0000-4000-8000-000000000002",
   userId: ownerBId,
   mainIngredients: ["鮭"],
   memo: "owner B の下書き",
@@ -161,7 +161,7 @@ vi.mock("./planner-page", () => ({
             idempotencyKey: props.attempt.idempotencyKey,
             expiredPantryChecks: [
               {
-                pantryItemId: "74000000-0000-0000-0000-000000000001",
+                pantryItemId: "74000000-0000-4000-8000-000000000001",
                 checkedAt: "2026-07-11T03:00:00.000Z",
               },
             ],
@@ -198,7 +198,12 @@ vi.mock("./planner-page", () => ({
   ),
 }));
 
-import { PlannerPage } from "./planner-route";
+const generationRecoveryMock = vi.hoisted(() => ({ startGeneration: vi.fn() }));
+vi.mock("@/features/generation/hooks/use-generation-recovery", () => ({
+  useGenerationRecovery: () => generationRecoveryMock,
+}));
+
+import { PlannerPage, PlannerRoutePage } from "./planner-route";
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -226,6 +231,8 @@ beforeEach(() => {
     isPending: false,
   };
   savePlannerDraftMock.mockResolvedValue(draft);
+  generationRecoveryMock.startGeneration.mockReset();
+  generationRecoveryMock.startGeneration.mockResolvedValue(undefined);
 });
 
 it("下書き未作成でも対象家族を含む revision 0 の初回保存後に緊急献立へ移動する", async () => {
@@ -334,7 +341,7 @@ it("route が更新された exact attempt を生成へ渡し新しい試行で�
       idempotencyKey: firstKey,
       expiredPantryChecks: [
         {
-          pantryItemId: "74000000-0000-0000-0000-000000000001",
+          pantryItemId: "74000000-0000-4000-8000-000000000001",
           checkedAt: "2026-07-11T03:00:00.000Z",
         },
       ],
@@ -372,7 +379,7 @@ it("生成成功の完了後だけ attempt を新しいキーと空の確認へ�
       idempotencyKey: firstKey,
       expiredPantryChecks: [
         {
-          pantryItemId: "74000000-0000-0000-0000-000000000001",
+          pantryItemId: "74000000-0000-4000-8000-000000000001",
           checkedAt: "2026-07-11T03:00:00.000Z",
         },
       ],
@@ -435,4 +442,56 @@ it.each([
   });
   expect(screen.getByLabelText("attempt key")).toHaveTextContent(firstKey);
   expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+});
+
+describe("PlannerRoutePage", () => {
+  it("献立を作る操作から復旧フックへ new_menu の保留コマンドを渡し完了後に作成状況画面へ移動する", async () => {
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(generationRecoveryMock.startGeneration).toHaveBeenCalledTimes(1);
+    });
+    const pending = generationRecoveryMock.startGeneration.mock.calls[0]?.[0] as {
+      ownerUserId: string;
+      kind: string;
+      request: Record<string, unknown>;
+    };
+    expect(pending).toMatchObject({
+      ownerUserId: draft.userId,
+      kind: "new_menu",
+      request: {
+        idempotencyKey: attemptKey,
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-11.v1",
+        expiredPantryConfirmations: [
+          {
+            pantryItemId: "74000000-0000-4000-8000-000000000001",
+            checkedAt: "2026-07-11T03:00:00.000Z",
+          },
+        ],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation");
+    });
+  });
+
+  it("復旧フックの startGeneration が拒否したら作成状況画面へ移動しない", async () => {
+    generationRecoveryMock.startGeneration.mockRejectedValueOnce(new Error("生成操作が進行中です"));
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(generationRecoveryMock.startGeneration).toHaveBeenCalledTimes(1);
+    });
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+  });
 });

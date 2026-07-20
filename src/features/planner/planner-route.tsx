@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
+import { privacyNoticeVersion } from "@shared/contracts/domain";
 import {
   listAllergenCatalog,
   listHouseholdMembers,
@@ -11,6 +12,8 @@ import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
+import { createPendingGeneration } from "@/features/generation/model/pending-generation";
+import { useGenerationRecovery } from "@/features/generation/hooks/use-generation-recovery";
 import type { PlannerSafetyMember } from "./planner-safety-member";
 import { createPlannerAttempt, type PlannerAttempt } from "./expired-pantry-checks";
 import {
@@ -142,6 +145,39 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
       startGeneration={startGeneration}
     />
   );
+}
+
+// ルーターが実際にマウントする献立ページ。復旧付き生成フックを結線し、
+// 「献立を作る」操作から保留中の生成コマンドを保存してPOSTし、作成状況画面へ遷移する。
+// PlannerPage 自体はテスト向けに startGeneration を注入可能な薄いラッパーのまま変更しない。
+export function PlannerRoutePage() {
+  const userId = useAuth().session?.user.id;
+  const navigate = useNavigate();
+  const recovery = useGenerationRecovery();
+  const startGeneration = useCallback(
+    async (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
+      if (userId === undefined) return false;
+      const pending = createPendingGeneration(
+        {
+          kind: "new_menu",
+          request: {
+            idempotencyKey: attempt.idempotencyKey,
+            draftId: draft.id,
+            draftRevision: draft.revision,
+            privacyNoticeVersion,
+            expiredPantryConfirmations: [...attempt.expiredPantryChecks],
+          },
+        },
+        userId,
+      );
+      await recovery.startGeneration(pending);
+      if (signal.aborted) return false;
+      void navigate("/generation");
+      return true;
+    },
+    [navigate, recovery, userId],
+  );
+  return <PlannerPage startGeneration={startGeneration} />;
 }
 
 type PlannerPageForOwnerProps = {
