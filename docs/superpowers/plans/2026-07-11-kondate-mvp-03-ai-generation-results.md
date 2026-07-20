@@ -4584,7 +4584,7 @@ export function generationReducer(state: GenerationClientState, event: Generatio
 }
 ```
 
-An explicit `submit` represents a new operation and transitions only `idle -> submitting`. `checking`, `submitting`, `processing`, `offline`, and every terminal state preserve object identity on that event. The Task 12 consumer permits a new operation only from `idle` or a terminal phase (`succeeded`, `failed`, or `constraint_conflict`) and rejects every active phase before storage mutation or POST. It first atomically overwrites storage with the validated owner-bound pending command. Only after save succeeds, an idle caller dispatches `submit`; a terminal caller dispatches reducer `clear` and then `submit`; both then directly POST the exact saved pending command. Schema/serialization/`setItem` failure preserves the old storage and reducer state and causes no dispatch or POST. `clearPendingGeneration()` is not part of normal replacement; it remains for sign-out, account switch/deletion, explicit cancel/manual fresh clear, invalid-record cleanup, and terminal cleanup. Recovery does not use the explicit new-operation path: only a parsed status with `status: "not_started"` may pass that same stored pending command to the dedicated resend controller, while `processing` polls and terminal statuses never resend.
+An explicit `submit` represents a new operation and transitions only `idle -> submitting`. `checking`, `submitting`, `processing`, `offline`, and every terminal state preserve object identity on that event. The Task 12 consumer permits a new operation only from `idle` or a terminal phase (`succeeded`, `failed`, or `constraint_conflict`) and rejects every active phase before storage mutation or POST. It owns a synchronous lifecycle token `{ ownerUserId, idempotencyKey, epoch, phase }`; allowed-state decisions use that token rather than a render closure, and accepted replacement or owner/manual cleanup advances a monotonic epoch before asynchronous work can continue. It first atomically overwrites storage with the validated owner-bound pending command. Only after save succeeds, an idle caller dispatches `submit`; a terminal caller dispatches reducer `clear` and then `submit`; both then directly POST the exact saved pending command. Schema/serialization/`setItem` failure restores the previous lifecycle token and preserves the old storage and reducer state with no dispatch or POST. `clearPendingGeneration()` is not part of normal replacement; it remains for sign-out, account switch/deletion, explicit cancel/manual fresh clear, invalid-record cleanup, and terminal cleanup. Every post-await storage/ref/dispatch effect must still match current owner, epoch, key, and stored pending owner/key; stale completion is discarded. Recovery does not use the explicit new-operation path: only a parsed status with `status: "not_started"` may pass that same stored pending command to the shared lifecycle submit controller, while `processing` polls and terminal statuses never resend.
 
 - [ ] **Step 6 (2–5 min): Run browser boundary tests and typecheck**
 
@@ -4617,7 +4617,7 @@ git commit -m "feat: 献立生成の復旧状態機械を追加"
 
 **Interfaces:**
 - Consumes: Task 11 storage/API/reducer, Plan 1 auth events, Plan 2 draft and expired-pantry UI.
-- Produces: `GenerationRecoveryController` and `useGenerationRecovery()`. `startGeneration(pending)` is the only new-operation caller. It accepts only idle or terminal state, rejects active state without storage/state/POST effects, atomically saves the owner-bound pending command before any reducer transition, dispatches idle-only `submit` directly from idle or `clear` then `submit` from terminal, and then POSTs that exact argument. `resumeNotStarted(pending)` is the only recovery resend caller: a parsed GET `not_started` status passes the same stored command/key to it through a single-flight/key guard; initial direct submit does not enter that path. `processing` only polls, terminal status never submits, and successful result remains recoverable until the result page loads. Task 15 generalizes the same controller—not a second hook—to all three command variants and replaces terminal attempt copy with current `useUsageToday()` data.
+- Produces: `GenerationRecoveryController` and `useGenerationRecovery()`. The controller owns the synchronous `{ ownerUserId, idempotencyKey, epoch, phase }` lifecycle token and separate status/submit in-flight records bound to that token. `startGeneration(pending)` is the only new-operation caller. It accepts only idle or terminal token phase, rejects active state without storage/state/POST effects, atomically saves the owner-bound pending command before any reducer transition, dispatches idle-only `submit` directly from idle or `clear` then `submit` from terminal, and then POSTs that exact argument. `resumeNotStarted(pending)` is the only recovery resend caller: a parsed GET `not_started` status passes the same stored command/key from the status record to the distinct submit record; initial direct submit shares only the submit record. `processing` only polls, terminal status never submits, stale owner/epoch/key completion is discarded, and successful result remains recoverable until the result page loads. Task 15 generalizes the same controller—not a second hook—to all three command variants and replaces terminal attempt copy with current `useUsageToday()` data.
 
 - [ ] **Step 1 (2–5 min): Write failing tab-destroy, reconnect, auth-return, and quota-copy component tests**
 
@@ -4682,11 +4682,12 @@ it("preserves old terminal storage and state when replacement save fails", async
   expect(mockPost).not.toHaveBeenCalled();
 });
 
-it("resends the exact stored command once after GET returns not_started", async () => {
+it("hands GET not_started to a separate submit record without self-suppression", async () => {
   mockReadPending.mockReturnValue(oldPending);
   mockStatus.mockResolvedValue(notStarted);
   const recovery = renderHook(() => useGenerationRecovery());
   await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+  expect(mockStatus).toHaveBeenCalledTimes(1);
   expect(mockStatus).toHaveBeenCalledWith(oldPending.request.idempotencyKey);
   expect(mockPost).toHaveBeenCalledWith(pendingGenerationCommand(oldPending));
 });
@@ -4706,8 +4707,79 @@ it("serializes concurrent not_started status checks into one resend", async () =
     recovery.result.current.retryStatus(), recovery.result.current.retryStatus(),
   ]));
   await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+  expect(mockStatus).toHaveBeenCalledTimes(1);
   expect(mockPost).toHaveBeenCalledWith(pendingGenerationCommand(oldPending));
 });
+
+it("rejects a sequential second start before React rerenders", async () => {
+  const postA=deferred<GenerationStatusData>(); mockPost.mockReturnValue(postA.promise);
+  const recovery=renderRecoveryAt(idleState,null);
+  const first=recovery.result.current.startGeneration(pendingA);
+  await expect(recovery.result.current.startGeneration(pendingB)).rejects.toThrow();
+  expect(mockSavePending).toHaveBeenCalledTimes(1);expect(mockPost).toHaveBeenCalledTimes(1);
+  postA.resolve(processingA);await first;
+});
+
+it.each([notStartedA,processingA,succeededA,failedA,constraintConflictA,"reject"] as const)(
+  "discards delayed status A outcome %s after terminal replacement B",async(outcome)=>{
+    const delayed=deferred<GenerationStatusData>();mockStatus.mockReturnValue(delayed.promise);
+    const recovery=renderRecoveryAt(failedState,pendingA);
+    const statusA=recovery.result.current.retryStatus();
+    await recovery.result.current.startGeneration(pendingB);
+    outcome==="reject"?delayed.reject(new Error("auth")):delayed.resolve(outcome);
+    await statusA.catch(()=>undefined);
+    expect(readPendingGeneration(USER_ID,FIXED_NOW,storage)).toMatchObject(pendingB);
+    expect(mockDispatches).not.toContainEqual(expect.objectContaining({data:outcome}));
+  });
+
+it("discards delayed GET A after account switch",async()=>{
+  const delayed=deferred<GenerationStatusData>();mockStatus.mockReturnValue(delayed.promise);
+  const recovery=renderRecoveryAt(processingState,pendingA);
+  const statusA=recovery.result.current.retryStatus();
+  act(()=>emitAuth("SIGNED_IN",OTHER_USER_SESSION));
+  delayed.resolve(succeededA);await statusA;
+  expect(mockDispatches).not.toContainEqual({type:"status",data:succeededA});
+  expect(readPendingGeneration(OTHER_USER_ID,FIXED_NOW,storage)).toBeNull();
+});
+
+it("discards old POST A after sign-out",async()=>{
+  const postA=deferred<GenerationStatusData>();mockPost.mockReturnValueOnce(postA.promise);
+  const recovery=renderRecoveryAt(idleState,null);
+  const operationA=recovery.result.current.startGeneration(pendingA);
+  act(()=>emitAuth("SIGNED_OUT",null));
+  postA.resolve(processingA);await operationA;
+  expect(readPendingGeneration(USER_ID,FIXED_NOW,storage)).not.toMatchObject(pendingA);
+  expect(mockDispatches).not.toContainEqual({type:"status",data:processingA});
+});
+
+it("discards old POST A after accepted terminal replacement B",async()=>{
+  const postA=deferred<GenerationStatusData>();
+  const recovery=renderRecoveryAt(failedState,pendingA,{inFlightSubmit:postA.promise});
+  await recovery.result.current.startGeneration(pendingB);
+  postA.resolve(processingA);
+  expect(readPendingGeneration(USER_ID,FIXED_NOW,storage)).toMatchObject(pendingB);
+  expect(mockDispatches).not.toContainEqual({type:"status",data:processingA});
+});
+
+it("does not unlock a second resend when a non-not_started GET interleaves",async()=>{
+  const resend=deferred<GenerationStatusData>();mockPost.mockReturnValue(resend.promise);
+  mockStatus.mockResolvedValueOnce(notStartedA).mockResolvedValueOnce(processingA);
+  const recovery=renderRecoveryAt(checkingState,pendingA);
+  await recovery.result.current.retryStatus();await recovery.result.current.retryStatus();
+  await recovery.result.current.resumeNotStarted(pendingA);
+  expect(mockPost).toHaveBeenCalledTimes(1);
+  resend.resolve(processingA);
+});
+
+it.each([new Error("transport"),new Error("auth")])(
+  "keeps current pending offline after %s and permits later status recovery",async(error)=>{
+    mockPost.mockRejectedValueOnce(error);const recovery=renderRecoveryAt(idleState,null);
+    await recovery.result.current.startGeneration(pendingA);
+    expect(recovery.result.current.state.phase).toBe("offline");
+    expect(readPendingGeneration(USER_ID,FIXED_NOW,storage)).toMatchObject(pendingA);
+    mockStatus.mockResolvedValue(processingA);await recovery.result.current.retryStatus();
+    expect(mockDispatches).toContainEqual({type:"status",data:processingA});
+  });
 
 it("shows returned quota and Japan retry time after failure", () => {
   render(<GenerationStatusPanel state={failedState} />);
@@ -4743,7 +4815,13 @@ export type GenerationRecoveryController = {
   startGeneration(pending: PendingGeneration): Promise<void>;
   resumeNotStarted(pending: PendingGeneration): Promise<void>;
   retryStatus(): Promise<void>;
+  clearGeneration(): void;
 };
+
+type LifecyclePhase=GenerationClientState["phase"]|"starting";
+type GenerationLifecycleToken={ownerUserId:string;idempotencyKey:string;
+  epoch:number;phase:LifecyclePhase};
+type InFlightRecord={token:GenerationLifecycleToken;promise:Promise<void>};
 
 export function useGenerationRecovery(): GenerationRecoveryController {
   const navigate = useNavigate();
@@ -4751,91 +4829,160 @@ export function useGenerationRecovery(): GenerationRecoveryController {
   const [state, dispatch] = useReducer(generationReducer, { phase: "idle", effect: "none" });
   const read=useCallback(()=>userId===null?null:
     readPendingGeneration(userId,new Date()),[userId]);
-  const notStartedPendingRef=useRef<PendingGeneration|null>(null);
-  const resumedKeyRef=useRef<string|null>(null);
-  const resumeInFlightRef=useRef<Promise<void>|null>(null);
-  const startInFlightRef=useRef(false);
+  const epochRef=useRef(0);
+  const lifecycleRef=useRef<GenerationLifecycleToken|null>(null);
+  const statusInFlightRef=useRef<InFlightRecord|null>(null);
+  const submitInFlightRef=useRef<InFlightRecord|null>(null);
 
-  const submit = useCallback(async (pending: PendingGeneration):Promise<boolean> => {
-    try {
-      const data = await postGeneration(pendingGenerationCommand(pending));
-      if (data.status === "processing") savePendingGeneration({ ...pending, requestId: data.requestId });
-      dispatch({ type: "status", data });
-      return true;
-    } catch { dispatch({ type: "network_error" }); return false; }
-  }, []);
+  const storedMatches=useCallback((token:GenerationLifecycleToken)=>{
+    const stored=read();return userId===token.ownerUserId&&stored!==null&&
+      stored.ownerUserId===token.ownerUserId&&
+      stored.request.idempotencyKey===token.idempotencyKey;
+  },[read,userId]);
+  const isCurrent=useCallback((token:GenerationLifecycleToken)=>{
+    const current=lifecycleRef.current;return current===token&&
+      current.ownerUserId===token.ownerUserId&&current.epoch===token.epoch&&
+      current.idempotencyKey===token.idempotencyKey&&storedMatches(token);
+  },[storedMatches]);
+  const invalidateLifecycle=useCallback(()=>{
+    epochRef.current+=1;lifecycleRef.current=null;
+    statusInFlightRef.current=null;submitInFlightRef.current=null;
+  },[]);
 
-  const resumeNotStarted = useCallback((pending: PendingGeneration):Promise<void> => {
-    const key=pending.request.idempotencyKey;
-    if(resumedKeyRef.current===key){return resumeInFlightRef.current??Promise.resolve();}
-    resumedKeyRef.current=key;
-    let operation!:Promise<void>;
-    operation=(async()=>{
-      const completed=await submit(pending);
-      if(!completed&&resumedKeyRef.current===key)resumedKeyRef.current=null;
-    })().finally(()=>{
-      if(resumeInFlightRef.current===operation)resumeInFlightRef.current=null;
+  const submitWithToken=useCallback((token:GenerationLifecycleToken,
+    pending:PendingGeneration):Promise<void>=>{
+    const current=submitInFlightRef.current;
+    if(current?.token===token)return current.promise;
+    const operation=Promise.resolve().then(async()=>{
+      try{
+        const data=await postGeneration(pendingGenerationCommand(pending));
+        if(!isCurrent(token))return;
+        if(data.status==="processing"){
+          try{savePendingGeneration({...pending,requestId:data.requestId});}
+          catch{if(isCurrent(token)){token.phase="offline";dispatch({type:"network_error"});}return;}
+          if(!isCurrent(token))return;
+        }
+        token.phase=data.status==="not_started"?"submitting":data.status;
+        dispatch({type:"status",data});
+      }catch{
+        if(!isCurrent(token))return;
+        token.phase="offline";dispatch({type:"network_error"});
+      }
     });
-    resumeInFlightRef.current=operation;
+    const record:InFlightRecord={token,promise:operation};
+    submitInFlightRef.current=record;
+    void operation.finally(()=>{
+      if(submitInFlightRef.current===record)submitInFlightRef.current=null;
+    });
     return operation;
-  },[submit]);
+  },[isCurrent]);
 
-  const retryStatus = useCallback(async () => {
-    const pending = read(); if (!pending) return;
-    try {
-      const data=await getGenerationStatus(pending.request.idempotencyKey);
-      if(data.status==="not_started")notStartedPendingRef.current=pending;
-      else{notStartedPendingRef.current=null;resumedKeyRef.current=null;}
-      dispatch({ type: "status", data });
-    } catch { dispatch({ type: "network_error" }); }
-  }, [read]);
+  const resumeNotStarted=useCallback((pending:PendingGeneration):Promise<void>=>{
+    const token=lifecycleRef.current;
+    if(token===null||token.ownerUserId!==pending.ownerUserId||
+      token.idempotencyKey!==pending.request.idempotencyKey||!isCurrent(token))return Promise.resolve();
+    return submitWithToken(token,pending);
+  },[isCurrent,submitWithToken]);
+
+  const retryStatus = useCallback(():Promise<void> => {
+    const pending = read(); if (!pending) return Promise.resolve();
+    let token=lifecycleRef.current;
+    if(token===null||token.ownerUserId!==pending.ownerUserId||
+      token.idempotencyKey!==pending.request.idempotencyKey){
+      token={ownerUserId:pending.ownerUserId,idempotencyKey:pending.request.idempotencyKey,
+        epoch:++epochRef.current,phase:"checking"};lifecycleRef.current=token;
+    }
+    const current=statusInFlightRef.current;
+    if(current?.token===token)return current.promise;
+    const operation=Promise.resolve().then(async()=>{
+      try {
+        const data=await getGenerationStatus(pending.request.idempotencyKey);
+        if(!isCurrent(token))return;
+        token.phase=data.status==="not_started"?"submitting":data.status;
+        dispatch({type:"status",data});
+        if(data.status==="not_started")void resumeNotStarted(pending);
+      } catch {
+        if(!isCurrent(token))return;
+        token.phase="offline";dispatch({type:"network_error"});
+      }
+    });
+    const record:InFlightRecord={token,promise:operation};
+    statusInFlightRef.current=record;
+    void operation.finally(()=>{
+      if(statusInFlightRef.current===record)statusInFlightRef.current=null;
+    });
+    return operation;
+  },[isCurrent,read,resumeNotStarted]);
 
   const startGeneration = useCallback(async (pending: PendingGeneration) => {
-    const allowed=state.phase==="idle"||state.phase==="succeeded"||
-      state.phase==="failed"||state.phase==="constraint_conflict";
-    if(startInFlightRef.current||!allowed)throw new Error("generation operation is active");
-    startInFlightRef.current=true;
+    const previous=lifecycleRef.current;
+    const previousPhase=previous?.phase??"idle";
+    const allowed=previousPhase==="idle"||previousPhase==="succeeded"||
+      previousPhase==="failed"||previousPhase==="constraint_conflict";
+    if(!allowed||userId===null||pending.ownerUserId!==userId)
+      throw new Error("generation operation is active");
+    const token:GenerationLifecycleToken={ownerUserId:pending.ownerUserId,
+      idempotencyKey:pending.request.idempotencyKey,epoch:++epochRef.current,phase:"starting"};
+    lifecycleRef.current=token;
     try{
       savePendingGeneration(pending);
-      notStartedPendingRef.current=null;resumedKeyRef.current=null;
-      if(state.phase!=="idle")dispatch({type:"clear"});
-      dispatch({type:"submit"});
-      await submit(pending);
-    }finally{startInFlightRef.current=false;}
-  }, [state.phase,submit]);
+    }catch(error){
+      if(lifecycleRef.current===token)lifecycleRef.current=previous;
+      throw error;
+    }
+    token.phase="submitting";
+    if(previousPhase!=="idle")dispatch({type:"clear"});
+    dispatch({type:"submit"});
+    await submitWithToken(token,pending);
+  },[submitWithToken,userId]);
+  const clearGeneration=useCallback(()=>{
+    invalidateLifecycle();clearPendingGeneration();dispatch({type:"clear"});
+  },[invalidateLifecycle]);
 
   useEffect(() => {
-    if (read()) dispatch({ type: "recover" });
-  }, [read]);
+    const pending=read();if(pending===null)return;
+    const current=lifecycleRef.current;
+    if(current===null||current.ownerUserId!==pending.ownerUserId||
+      current.idempotencyKey!==pending.request.idempotencyKey){
+      lifecycleRef.current={ownerUserId:pending.ownerUserId,
+        idempotencyKey:pending.request.idempotencyKey,epoch:++epochRef.current,phase:"checking"};
+    }else{current.phase="checking";}
+    dispatch({type:"recover"});
+  },[read]);
   useEffect(() => {
-    if(state.effect==="submit"){
-      const pending=notStartedPendingRef.current;
-      if(pending!==null){notStartedPendingRef.current=null;void resumeNotStarted(pending);}
-    }
     if (state.effect === "status") void retryStatus();
     if (state.effect === "poll") {
       const timer = window.setTimeout(() => { if (!document.hidden) void retryStatus(); }, 2_000);
       return () => window.clearTimeout(timer);
     }
-    if (state.effect === "navigate"){
+    const token=lifecycleRef.current;
+    if(state.effect==="navigate"&&token!==null&&token.phase==="succeeded"&&
+      token.idempotencyKey===state.data.idempotencyKey&&isCurrent(token)){
       clearPendingGeneration();navigate(`/menus/${state.data.menuId}?recovered=1`);
     }
-    if(state.phase==="failed"||state.phase==="constraint_conflict")clearPendingGeneration();
-  }, [navigate, resumeNotStarted, retryStatus, state]);
+    if((state.phase==="failed"||state.phase==="constraint_conflict")&&token!==null&&
+      token.phase===state.phase&&token.idempotencyKey===state.data.idempotencyKey&&isCurrent(token)){
+      clearPendingGeneration();
+    }
+  },[isCurrent,navigate,retryStatus,state]);
   useEffect(() => {
-    const recover = () => { dispatch({ type: "online" }); void retryStatus(); };
+    const recover = () => {
+      const token=lifecycleRef.current;if(token!==null)token.phase="checking";
+      dispatch({type:"online"});void retryStatus();
+    };
     const visible = () => { if (!document.hidden) void retryStatus(); };
     window.addEventListener("online", recover); document.addEventListener("visibilitychange", visible);
     const { data } = getBrowserSupabaseClient().auth.onAuthStateChange((event,session) => {
-      if(event==="SIGNED_OUT"||session?.user.id!==userId){clearPendingGeneration();
-        dispatch({type:"clear"});return;}
+      if(event==="SIGNED_OUT"||session?.user.id!==userId){
+        clearGeneration();return;
+      }
       if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") recover();
     });
     return () => { window.removeEventListener("online", recover);
       document.removeEventListener("visibilitychange", visible); data.subscription.unsubscribe(); };
-  }, [retryStatus,userId]);
+  },[clearGeneration,retryStatus,userId]);
 
-  return { state, startGeneration, resumeNotStarted, retryStatus };
+  return { state, startGeneration, resumeNotStarted, retryStatus, clearGeneration };
 }
 ```
 
@@ -4855,7 +5002,9 @@ export function GenerationStatusPanel({ state }: { state: GenerationClientState 
 }
 ```
 
-Wire the planner submit callback to await Plan 2's `autosave.flush()`, build `{kind:"new_menu",request:{idempotencyKey,draftId:saved.id,draftRevision:saved.revision,privacyNoticeVersion,expiredPantryConfirmations}}`, call `createPendingGeneration(command,user.id)`, then `startGeneration(pending)`. Normal start never calls `clearPendingGeneration()`: checking, submitting, processing, offline, or an already-starting call rejects before save/dispatch/POST; idle saves then dispatches `submit`; terminal saves then dispatches `clear` and `submit`; both POST the exact passed pending only after save. Since `localStorage.setItem` atomically replaces the key, a schema/serialization/`setItem` failure leaves the prior record and reducer state intact. The thrown active-operation error is internal control flow, not a new public/stable error code. `retryStatus()` places the same stored pending into the resend ref only for a parsed GET `not_started`; the submit-effect controller consumes that ref once through `resumeNotStarted(pending)`. A same-key guard plus one in-flight promise coalesces concurrent status/StrictMode effects, clears after a non-`not_started` status, and resets after a transport failure so a later status check may retry. Initial direct start has no resend ref and therefore cannot double-POST through the effect controller. Disable the button while autosave flush, `submitting`, or `processing`. A flush conflict creates no pending record or POST. Sign-out, account switch, account deletion, explicit cancel/manual fresh clear, and every terminal success/failure/conflict call `clearPendingGeneration`; a foreign or expired record is deleted before any status or POST effect. Add routes with these exact elements:
+Wire the planner submit callback to await Plan 2's `autosave.flush()`, build `{kind:"new_menu",request:{idempotencyKey,draftId:saved.id,draftRevision:saved.revision,privacyNoticeVersion,expiredPantryConfirmations}}`, call `createPendingGeneration(command,user.id)`, then `startGeneration(pending)`. Normal start never calls `clearPendingGeneration()`. The synchronous lifecycle token—not the last render state—rejects checking, starting/submitting, processing, and offline before save/dispatch/POST. An accepted start advances the monotonic epoch and installs a provisional `starting` token synchronously, then atomically saves. Save failure restores the previous lifecycle token and leaves old storage/reducer state untouched. Save success moves the same token to `submitting`; idle dispatches `submit`, terminal dispatches `clear` then `submit`, and both call the shared token-bound submit with the exact pending. The token is never reset to idle merely because its promise settles. The thrown active-operation error remains internal control flow, not a public/stable error code.
+
+Initial POST and `resumeNotStarted(pending)` share one submit `{ token, promise }` record. GET status checks use a separate status `{ token, promise }` record: GETs for the same token coalesce, but a validated `not_started` hands off to the separate submit record before the status record performs identity-guarded cleanup. Thus the GET promise cannot suppress its own POST, while a later non-`not_started` GET cannot clear or unlock the live submit promise. Both records construct their promise before the record and compare record identity during cleanup, avoiding Promise self-reference/TDZ and preventing an old promise from clearing a new record. `retryStatus()` captures pending plus token before GET and revalidates current authenticated owner, epoch/key token identity, and stored pending owner/key after await before any phase/ref/storage/dispatch effect. Only a current parsed `not_started` calls shared submit; processing and terminal status never submit. Current-token transport/auth failure synchronously sets lifecycle/state offline, preserves pending, and allows a later online/status recovery. Accepted replacement, sign-out, account switch, explicit cancel, and manual fresh clear increment epoch before state/storage cleanup, so old POST/GET completion cannot save a request ID, clear/write storage, restore state, navigate, or dispatch. Every terminal storage clear also verifies token and stored pending before acting. Disable the button while autosave flush, `submitting`, or `processing`. A flush conflict creates no pending record or POST. A foreign or expired record is deleted before any status or POST effect. Add routes with these exact elements:
 
 ```tsx
 <Route path="/generation" element={<GenerationPage />} />
@@ -4871,7 +5020,7 @@ docker compose run --rm --no-deps app npx vitest run src/features/planner src/fe
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: tests PASS for active-state rejection with old pending/state preservation and zero save/clear/POST, idle save→submit→POST, terminal save→clear→submit→POST, save failure with old pending/state and zero dispatch/POST, POST-before-accept tab destruction, GET `not_started` exact same-command/key single resend, concurrent/StrictMode single-flight without initial direct-submit duplication, processing/terminal no-resend, response loss with later retry eligibility, online, visibility, auth return, succeeded navigation, every quota message, and 44px controls.
+Expected: tests PASS for token-authoritative active rejection and sequential double-start prevention before rerender; idle/terminal save-first start and save rollback; POST-before-accept tab destruction; exact-key `not_started` shared single-flight; processing/terminal no-resend; an interleaved non-`not_started` GET not unlocking a second resend; delayed GET A across all five statuses or rejection after accepted B/account switch being discarded; delayed POST A after B/sign-out not saving, clearing, or dispatching; current transport/auth failure entering offline with pending preserved and later status retry enabled; online, visibility, auth return, succeeded navigation, every quota message, and 44px controls.
 
 - [ ] **Step 6 (2–5 min): Commit recovery UX**
 
