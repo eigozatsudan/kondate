@@ -1,4 +1,5 @@
 import type { GeneratedMenu, ValidatedMenu } from "../contracts/generation.js";
+import type { MenuResultViewModel } from "../contracts/menu-result.js";
 import type { CurrentSafetyContext } from "../safety/context.js";
 import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.js";
 import { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
@@ -220,7 +221,7 @@ export function underSixHardBeanAndNutContext(): GenerationContext {
 // ラベル確認の各表示を一度に検証できるよう adaptations/pantryUsage/labelConfirmations
 // を上書きする。
 //
-export function makeMenuResultViewModel() {
+export function makeMenuResultViewModel(): MenuResultViewModel {
   const dish1Id = "50000000-0000-4000-8000-000000000001";
   const dish2Id = "50000000-0000-4000-8000-000000000002";
   const ingredient1Id = "53000000-0000-4000-8000-000000000001";

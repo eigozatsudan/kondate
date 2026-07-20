@@ -117,8 +117,11 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
         <h3 className="mt-5 text-lg font-bold">材料</h3>
         <ul className="divide-y">
           {selected.ingredients.map((item) => (
-            <li key={item.id} className="flex min-h-11 items-center justify-between gap-3 py-2">
-              <span>
+            <li
+              key={item.id}
+              className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2"
+            >
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                 {item.name}
                 {item.labelConfirmationRequired && (
                   <span className="ml-2 rounded border border-amber-700 px-2 text-sm">
@@ -126,7 +129,9 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
                   </span>
                 )}
               </span>
-              <span>{amount(item.quantityValue, item.unit, item.quantityText)}</span>
+              <span className="max-w-[45%] break-words text-right [overflow-wrap:anywhere]">
+                {amount(item.quantityValue, item.unit, item.quantityText)}
+              </span>
             </li>
           ))}
         </ul>

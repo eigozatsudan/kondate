@@ -1,25 +1,8 @@
-import { validatedMenuSchema, type ValidatedMenu } from "@shared/contracts/generation";
+import { validatedMenuSchema } from "@shared/contracts/generation";
+import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
-export type MenuResultViewModel = {
-  menu: ValidatedMenu;
-  memberLabels: Readonly<Record<string, string>>;
-  labelConfirmations: readonly {
-    confirmationId: string;
-    sourceType: ValidatedMenu["labelConfirmations"][number]["sourceType"];
-    sourceId: string;
-    sourcePath: string;
-    sourceText: string;
-    allergenName: string;
-    memberLabel: string;
-    dictionaryVersion: string;
-    confirmationStatus: "pending" | "confirmed";
-    requirementSafetyFingerprint: string;
-    isCurrent: true;
-    confirmedAt: string | null;
-    confirmedBy: string | null;
-  }[];
-};
+export type { MenuResultViewModel } from "@shared/contracts/menu-result";
 
 // RLSで保護された献立集約を、所有者セッションから見える正規化テーブルだけで
 // 再構成するクエリ。埋め込みヒントは Plan 2 のマイグレーションで確定した

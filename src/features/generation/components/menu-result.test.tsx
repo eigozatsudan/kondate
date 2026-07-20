@@ -137,3 +137,36 @@ it("keeps the full safety disclaimer and a 320px no-overflow class contract", ()
     "break-words",
   );
 });
+
+it("wraps unbroken ingredient names and amounts inside a 320px material row", () => {
+  const result = makeMenuResultViewModel();
+  const firstDish = result.menu.dishes[0];
+  const firstIngredient = firstDish?.ingredients[0];
+  if (firstDish === undefined || firstIngredient === undefined)
+    throw new Error("fixture must contain an ingredient");
+  const maximumName = "W".repeat(100);
+  const maximumAmount = "9".repeat(60);
+  firstDish.ingredients[0] = {
+    ...firstIngredient,
+    name: maximumName,
+    quantityValue: null,
+    quantityText: maximumAmount,
+    unit: null,
+  };
+
+  render(<MenuResult result={result} />);
+
+  const name = screen.getByText(maximumName);
+  const amount = screen.getByText(maximumAmount);
+  const row = name.closest("li");
+  // jsdomはlayout geometryを返さないためscrollWidthを偽装せず、320pxでも
+  // flexのauto-min-widthに遮られない子要素単位の折返し契約をclassで固定する。
+  expect(row).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_auto]");
+  expect(name).toHaveClass("min-w-0", "break-words", "[overflow-wrap:anywhere]");
+  expect(amount).toHaveClass(
+    "max-w-[45%]",
+    "break-words",
+    "text-right",
+    "[overflow-wrap:anywhere]",
+  );
+});
