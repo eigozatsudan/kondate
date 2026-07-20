@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import type { MenuResultViewModel } from "../api/menu-result-api";
 
 const roleLabels = {
@@ -28,8 +28,26 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
     [menu.adaptations, selected],
   );
   const labels = result.labelConfirmations.filter((item) => sourceIds.has(item.sourceId));
+  const selectedAdaptations = menu.adaptations.filter((item) => item.dishId === selected.id);
+  const moveToDish = (index: number) => {
+    const dish = menu.dishes[index];
+    if (dish === undefined) return;
+    setSelectedId(dish.id);
+    document.getElementById(`tab-${dish.id}`)?.focus();
+  };
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowLeft")
+      nextIndex = (index - 1 + menu.dishes.length) % menu.dishes.length;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % menu.dishes.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = menu.dishes.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    moveToDish(nextIndex);
+  };
   return (
-    <main className="mx-auto w-full max-w-3xl overflow-x-hidden px-4 pb-28 pt-6 text-stone-900">
+    <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm">
         <strong>AIが作成した献立です。</strong>{" "}
         内容、加熱状態、家庭内での混入を調理前に確認してください。
@@ -50,7 +68,7 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
           {menu.timeline.map((step) => (
             <li
               key={step.id}
-              className="grid grid-cols-[4.5rem_1fr] gap-3 border-l-4 border-terracotta-500 pl-3"
+              className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-3 border-l-4 border-terracotta-500 pl-3"
             >
               <span className="font-semibold">{step.startMinute}分〜</span>
               <span>
@@ -67,15 +85,19 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
         aria-label="料理"
         className="sticky top-0 z-10 mt-6 flex gap-2 overflow-x-auto bg-stone-50 py-2"
       >
-        {menu.dishes.map((dish) => (
+        {menu.dishes.map((dish, index) => (
           <button
             key={dish.id}
             id={`tab-${dish.id}`}
             role="tab"
             aria-selected={dish.id === selected.id}
             aria-controls={`panel-${dish.id}`}
+            tabIndex={dish.id === selected.id ? 0 : -1}
             onClick={() => {
               setSelectedId(dish.id);
+            }}
+            onKeyDown={(event) => {
+              handleTabKeyDown(event, index);
             }}
             className="min-h-11 shrink-0 rounded-full border-2 px-4 font-semibold aria-selected:border-terracotta-700 aria-selected:bg-terracotta-100"
           >
@@ -111,16 +133,17 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
         <h3 className="mt-5 text-lg font-bold">作り方</h3>
         <ol className="mt-2 space-y-3">
           {selected.steps.map((step) => (
-            <li key={step.id} className="grid grid-cols-[2rem_1fr] gap-2">
+            <li key={step.id} className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2">
               <span className="font-bold">{step.position}</span>
               <span>{step.instruction}</span>
             </li>
           ))}
         </ol>
         <h3 className="mt-5 text-lg font-bold">家族向けの取り分け</h3>
-        {menu.adaptations
-          .filter((item) => item.dishId === selected.id)
-          .map((item) => (
+        {selectedAdaptations.length === 0 ? (
+          <p className="mt-2">この料理の取り分け案はありません。</p>
+        ) : (
+          selectedAdaptations.map((item) => (
             <dl key={item.id} className="mt-2 rounded-xl bg-stone-50 p-3">
               <dt className="font-bold">
                 {result.memberLabels[item.anonymousMemberRef] ?? "家族"}・{item.portionText}
@@ -146,14 +169,24 @@ export function MenuResult({ result }: { result: MenuResultViewModel }) {
                 </dd>
               )}
             </dl>
-          ))}
+          ))
+        )}
         {labels.length !== 0 && (
-          <section className="mt-5 rounded-xl border border-amber-700 bg-amber-50 p-3">
-            <h3 className="font-bold">加工品は原材料表示を確認してください</h3>
+          <section
+            aria-labelledby="label-confirmations-heading"
+            className="mt-5 rounded-xl border border-amber-700 bg-amber-50 p-3"
+          >
+            <h3 id="label-confirmations-heading" className="font-bold">
+              原材料表示の確認
+            </h3>
+            <p className="font-semibold">加工品は原材料表示を確認してください</p>
             <ul>
               {labels.map((item) => (
-                <li key={item.confirmationId}>
+                <li key={item.confirmationId} className="break-words">
                   {item.sourceText}：{item.allergenName}（{item.memberLabel}）
+                  <span className="block text-sm text-stone-600">
+                    辞書版 {item.dictionaryVersion}
+                  </span>
                 </li>
               ))}
             </ul>

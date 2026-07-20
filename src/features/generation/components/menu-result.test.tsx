@@ -29,6 +29,31 @@ it("switches dishes and exposes structured preparation and label checks", async 
   expect(screen.getByText("加工品は原材料表示を確認してください")).toBeVisible();
 });
 
+it("moves focus and selection with roving tab keyboard controls", async () => {
+  const result = makeMenuResultViewModel();
+  render(<MenuResult result={result} />);
+  const tabs = screen.getAllByRole("tab");
+  const firstTab = tabs[0];
+  const lastTab = tabs.at(-1);
+  if (firstTab === undefined || lastTab === undefined) throw new Error("fixture must contain tabs");
+
+  firstTab.focus();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(lastTab).toHaveFocus();
+  expect(lastTab).toHaveAttribute("aria-selected", "true");
+  expect(firstTab).toHaveAttribute("tabindex", "-1");
+
+  await userEvent.keyboard("{Home}");
+  expect(firstTab).toHaveFocus();
+  expect(firstTab).toHaveAttribute("aria-selected", "true");
+
+  await userEvent.keyboard("{End}");
+  expect(lastTab).toHaveFocus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(firstTab).toHaveFocus();
+  expect(firstTab).toHaveAttribute("aria-selected", "true");
+});
+
 it("shows used amounts, shortages, and persisted unused reasons", () => {
   render(<MenuResult result={makeMenuResultViewModel()} />);
   expect(screen.getByRole("heading", { name: "冷蔵庫食材の使い方" })).toBeVisible();
@@ -52,8 +77,56 @@ it("renders confirmation ids through human source, allergen, and member labels",
   const confirmation = result.labelConfirmations.at(0);
   if (confirmation === undefined) throw new Error("fixture must contain a label confirmation");
   render(<MenuResult result={result} />);
+  const confirmationSection = screen.getByRole("region", { name: "原材料表示の確認" });
   expect(confirmation.confirmationId).toMatch(/^[0-9a-f-]{36}$/u);
-  expect(screen.getByText(new RegExp(confirmation.sourceText, "u"))).toBeVisible();
-  expect(screen.getByText(new RegExp(confirmation.allergenName, "u"))).toBeVisible();
-  expect(screen.getByText(new RegExp(confirmation.memberLabel, "u"))).toBeVisible();
+  expect(
+    within(confirmationSection).getByText(new RegExp(confirmation.sourceText, "u")),
+  ).toBeVisible();
+  expect(
+    within(confirmationSection).getByText(new RegExp(confirmation.allergenName, "u")),
+  ).toBeVisible();
+  expect(
+    within(confirmationSection).getByText(new RegExp(confirmation.memberLabel, "u")),
+  ).toBeVisible();
+  expect(within(confirmationSection).getByText(/辞書版 jp-caa-2026-04\.v1/u)).toBeVisible();
+});
+
+it("renders numbered steps and every persisted adaptation field", () => {
+  const result = makeMenuResultViewModel();
+  render(<MenuResult result={result} />);
+  const panel = screen.getByRole("tabpanel");
+  expect(within(panel).getByText("1")).toBeVisible();
+  expect(within(panel).getByText("分ける前: 手順1")).toBeVisible();
+  expect(within(panel).getByText("切り方: 細かくほぐす")).toBeVisible();
+  expect(within(panel).getByText("加熱: 中心まで温める")).toBeVisible();
+  expect(within(panel).getByText("味付け: 薄味にする")).toBeVisible();
+  expect(within(panel).getByText("配膳時: 小さくちぎって渡す")).toBeVisible();
+});
+
+it("shows a plain empty state when the selected dish has no adaptation", async () => {
+  const result = makeMenuResultViewModel();
+  const secondDish = result.menu.dishes[1];
+  if (secondDish === undefined) throw new Error("fixture must contain a second dish");
+  render(<MenuResult result={result} />);
+
+  await userEvent.click(screen.getByRole("tab", { name: new RegExp(secondDish.name, "u") }));
+
+  expect(screen.getByText("この料理の取り分け案はありません。")).toBeVisible();
+});
+
+it("keeps the full safety disclaimer and a 320px no-overflow class contract", () => {
+  const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
+  expect(
+    screen.getByText(
+      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+    ),
+  ).toBeVisible();
+  // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
+  // 横方向の最大幅・はみ出し抑止・長文折返しの具体的classで固定する。
+  expect(container.querySelector("main")).toHaveClass(
+    "w-full",
+    "max-w-full",
+    "overflow-x-hidden",
+    "break-words",
+  );
 });

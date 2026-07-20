@@ -36,10 +36,15 @@ const DISH1_ID = "21000000-0000-4000-8000-000000000001";
 const DISH2_ID = "21000000-0000-4000-8000-000000000002";
 const INGREDIENT1_ID = "22000000-0000-4000-8000-000000000001";
 const INGREDIENT2_ID = "22000000-0000-4000-8000-000000000002";
+const INGREDIENT3_ID = "22000000-0000-4000-8000-000000000003";
+const INGREDIENT4_ID = "22000000-0000-4000-8000-000000000004";
 const STEP1_ID = "23000000-0000-4000-8000-000000000001";
 const STEP2_ID = "23000000-0000-4000-8000-000000000002";
+const STEP3_ID = "23000000-0000-4000-8000-000000000003";
+const STEP4_ID = "23000000-0000-4000-8000-000000000004";
 const ADAPTATION_ID = "24000000-0000-4000-8000-000000000001";
 const TIMELINE_ID = "25000000-0000-4000-8000-000000000001";
+const TIMELINE2_ID = "25000000-0000-4000-8000-000000000002";
 const PANTRY_SELECTION_USED_ID = "26000000-0000-4000-8000-000000000001";
 const PANTRY_SELECTION_UNUSED_ID = "26000000-0000-4000-8000-000000000002";
 const CONFIRMATION_ROW_ID = "27000000-0000-4000-8000-000000000001";
@@ -64,6 +69,17 @@ function rawMenuRow() {
         cooking_time_minutes: 5,
         dish_ingredients: [
           {
+            id: INGREDIENT4_ID,
+            position: 2,
+            name: "ブロッコリー",
+            quantity_value: 40,
+            quantity_text: "40g",
+            unit: "g",
+            store_section: "produce",
+            pantry_selection_id: null,
+            label_confirmation_required: false,
+          },
+          {
             id: INGREDIENT2_ID,
             position: 1,
             name: "にんじん",
@@ -75,7 +91,10 @@ function rawMenuRow() {
             label_confirmation_required: false,
           },
         ],
-        recipe_steps: [{ id: STEP2_ID, position: 1, instruction: "やわらかく加熱する" }],
+        recipe_steps: [
+          { id: STEP4_ID, position: 2, instruction: "器に盛る" },
+          { id: STEP2_ID, position: 1, instruction: "やわらかく加熱する" },
+        ],
         menu_member_adaptations: [],
       },
       {
@@ -86,6 +105,17 @@ function rawMenuRow() {
         description: "朝の主食",
         cooking_time_minutes: 10,
         dish_ingredients: [
+          {
+            id: INGREDIENT3_ID,
+            position: 2,
+            name: "のり",
+            quantity_value: 1,
+            quantity_text: "1枚",
+            unit: "枚",
+            store_section: "dry_goods",
+            pantry_selection_id: null,
+            label_confirmation_required: false,
+          },
           {
             id: INGREDIENT1_ID,
             position: 1,
@@ -98,7 +128,10 @@ function rawMenuRow() {
             label_confirmation_required: false,
           },
         ],
-        recipe_steps: [{ id: STEP1_ID, position: 1, instruction: "ごはんを握る" }],
+        recipe_steps: [
+          { id: STEP3_ID, position: 2, instruction: "のりを巻く" },
+          { id: STEP1_ID, position: 1, instruction: "ごはんを握る" },
+        ],
         menu_member_adaptations: [
           {
             id: ADAPTATION_ID,
@@ -114,6 +147,15 @@ function rawMenuRow() {
             menu_safety_actions: [
               {
                 dish_id: DISH1_ID,
+                ingredient_id: INGREDIENT3_ID,
+                anonymous_member_ref: "member_1",
+                before_recipe_step_id: STEP3_ID,
+                position: 2,
+                kind: "cut_small",
+                instruction: "のりを細かくちぎってください",
+              },
+              {
+                dish_id: DISH1_ID,
                 ingredient_id: INGREDIENT1_ID,
                 anonymous_member_ref: "member_1",
                 before_recipe_step_id: STEP1_ID,
@@ -127,6 +169,15 @@ function rawMenuRow() {
       },
     ],
     menu_timeline_steps: [
+      {
+        id: TIMELINE2_ID,
+        position: 2,
+        start_minute: 10,
+        duration_minutes: 5,
+        instruction: "料理を盛り付ける",
+        dish_id: DISH2_ID,
+        recipe_step_id: STEP4_ID,
+      },
       {
         id: TIMELINE_ID,
         position: 1,
@@ -217,20 +268,25 @@ describe("getMenuResult", () => {
 
     // 料理はDB上position降順で返っても、position昇順に並び替わる。
     expect(result.menu.dishes.map((dish) => dish.id)).toEqual([DISH1_ID, DISH2_ID]);
+    expect(result.menu.dishes[0]?.ingredients.map((item) => item.id)).toEqual([
+      INGREDIENT1_ID,
+      INGREDIENT3_ID,
+    ]);
+    expect(result.menu.dishes[1]?.ingredients.map((item) => item.id)).toEqual([
+      INGREDIENT2_ID,
+      INGREDIENT4_ID,
+    ]);
+    expect(result.menu.dishes[0]?.steps.map((step) => step.id)).toEqual([STEP1_ID, STEP3_ID]);
+    expect(result.menu.dishes[1]?.steps.map((step) => step.id)).toEqual([STEP2_ID, STEP4_ID]);
+    expect(result.menu.timeline.map((step) => step.id)).toEqual([TIMELINE_ID, TIMELINE2_ID]);
     expect(result.menu.menuId).toBe(MENU_ID);
     expect(result.menu.mealType).toBe("breakfast");
 
     // 取り分けの安全手順は正規化された配列として保持される。
     const adaptation = result.menu.adaptations.find((item) => item.id === ADAPTATION_ID);
-    expect(adaptation?.safetyActions).toEqual([
-      {
-        kind: "cut_small",
-        dishId: DISH1_ID,
-        ingredientId: INGREDIENT1_ID,
-        anonymousMemberRef: "member_1",
-        beforeRecipeStepId: STEP1_ID,
-        instruction: "食べやすい大きさにほぐしてください",
-      },
+    expect(adaptation?.safetyActions.map((action) => action.instruction)).toEqual([
+      "食べやすい大きさにほぐしてください",
+      "のりを細かくちぎってください",
     ]);
 
     // 冷蔵庫食材の使用先は ingredient.pantry_selection_id から dish 単位に導出される。
@@ -259,6 +315,7 @@ describe("getMenuResult", () => {
         sourceText: "ごはん",
         allergenName: "小麦",
         memberLabel: "子ども",
+        dictionaryVersion: "jp-caa-2026-04.v1",
         confirmationStatus: "pending",
         requirementSafetyFingerprint: "a".repeat(64),
         isCurrent: true,

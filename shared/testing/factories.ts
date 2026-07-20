@@ -220,14 +220,6 @@ export function underSixHardBeanAndNutContext(): GenerationContext {
 // ラベル確認の各表示を一度に検証できるよう adaptations/pantryUsage/labelConfirmations
 // を上書きする。
 //
-// 表示テキストについての注意: ラベル確認の sourceText はあえて対象食材の実際の名前
-// （「ごはん」「にんじん」）とは異なる、より具体的な文言にしている。MenuResult は
-// 確認対象の本文（sourceText）を材料欄などの元表示と並べて再掲するため、もし
-// sourceText が元表示とまったく同じ文字列だと、DOM 上に同じテキストを含む要素が
-// 2つ存在してしまい、Testing Library の getByText（正規表現・複数要素は例外を送出）
-// が一意に要素を特定できなくなる。実運用の source_text_snapshot は元テキストの
-// 完全な複製だが、このフィクスチャでは表示検証の一意性を優先し、意図的に区別できる
-// 文言を採用している。
 export function makeMenuResultViewModel() {
   const dish1Id = "50000000-0000-4000-8000-000000000001";
   const dish2Id = "50000000-0000-4000-8000-000000000002";
@@ -243,9 +235,9 @@ export function makeMenuResultViewModel() {
         anonymousMemberRef: "member_1",
         portionText: "取り分け量を確認",
         branchBeforeRecipeStepId: step1Id,
-        additionalCutting: null,
-        additionalHeating: null,
-        additionalSeasoning: null,
+        additionalCutting: "細かくほぐす",
+        additionalHeating: "中心まで温める",
+        additionalSeasoning: "薄味にする",
         servingCheck: "小さくちぎって渡す",
         safetyTags: [],
         safetyActions: [
@@ -293,7 +285,7 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient",
         sourceId: ingredient1Id,
         sourcePath: "dishes.0.ingredients.0.name",
-        sourceText: "国産米使用表示確認",
+        sourceText: "ごはん",
         allergenId: "wheat",
         anonymousMemberRef: "member_2",
         dictionaryVersion: "jp-caa-2026-04.v1",
@@ -305,7 +297,7 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient",
         sourceId: ingredient2Id,
         sourcePath: "dishes.1.ingredients.0.name",
-        sourceText: "有機野菜使用表示確認",
+        sourceText: "にんじん",
         allergenId: "milk",
         anonymousMemberRef: "member_1",
         dictionaryVersion: "jp-caa-2026-04.v1",
@@ -325,9 +317,10 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient" as const,
         sourceId: ingredient1Id,
         sourcePath: "dishes.0.ingredients.0.name",
-        sourceText: "国産米使用表示確認",
+        sourceText: "ごはん",
         allergenName: "小麦",
         memberLabel: "大人",
+        dictionaryVersion: "jp-caa-2026-04.v1",
         confirmationStatus: "pending" as const,
         requirementSafetyFingerprint: "a".repeat(64),
         isCurrent: true as const,
@@ -339,9 +332,10 @@ export function makeMenuResultViewModel() {
         sourceType: "ingredient" as const,
         sourceId: ingredient2Id,
         sourcePath: "dishes.1.ingredients.0.name",
-        sourceText: "有機野菜使用表示確認",
+        sourceText: "にんじん",
         allergenName: "乳",
         memberLabel: "子ども",
+        dictionaryVersion: "jp-caa-2026-04.v1",
         confirmationStatus: "pending" as const,
         requirementSafetyFingerprint: "b".repeat(64),
         isCurrent: true as const,

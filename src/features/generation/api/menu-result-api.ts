@@ -12,6 +12,7 @@ export type MenuResultViewModel = {
     sourceText: string;
     allergenName: string;
     memberLabel: string;
+    dictionaryVersion: string;
     confirmationStatus: "pending" | "confirmed";
     requirementSafetyFingerprint: string;
     isCurrent: true;
@@ -242,6 +243,7 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
         sourceText: item.source_text_snapshot,
         allergenName: item.allergen_catalog.display_name.trim() || "確認対象アレルゲン",
         memberLabel: memberLabels.get(canonical.anonymousMemberRef) ?? "家族",
+        dictionaryVersion: canonical.dictionaryVersion,
         confirmationStatus: canonical.confirmationStatus,
         requirementSafetyFingerprint: item.requirement_safety_fingerprint,
         isCurrent: true as const,

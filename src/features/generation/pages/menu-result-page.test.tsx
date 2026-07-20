@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
+import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import { MenuResultPage } from "./menu-result-page";
 
 const getMenuResultMock = vi.hoisted(() => vi.fn());
@@ -15,22 +17,36 @@ vi.mock("../model/pending-generation", () => ({
 }));
 
 const VALID_MENU_ID = "30000000-0000-4000-8000-000000000001";
+const USER_A_ID = "31000000-0000-4000-8000-000000000001";
+const USER_B_ID = "31000000-0000-4000-8000-000000000002";
+
+function authValue(userId: string | null, status: AuthContextValue["status"] = "authenticated") {
+  return {
+    status,
+    session: userId === null ? null : ({ user: { id: userId } } as AuthContextValue["session"]),
+    refreshSession: vi.fn(),
+  } satisfies AuthContextValue;
+}
 
 function renderPage(
   path: string,
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  auth = authValue(USER_A_ID),
 ) {
   const router = createMemoryRouter(
     [
       { path: "/menus/:menuId", element: <MenuResultPage /> },
       { path: "/planner", element: <h1>プランナー</h1> },
+      { path: "/history", element: <h1>履歴</h1> },
     ],
     { initialEntries: [path] },
   );
   render(
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
+    <AuthContext.Provider value={auth}>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </AuthContext.Provider>,
   );
   return router;
 }
@@ -71,6 +87,40 @@ describe("MenuResultPage", () => {
     });
   });
 
+  it("同じQueryClientでも別ユーザーへ献立キャッシュを共有しない", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const userAResult = makeMenuResultViewModel();
+    const userBResult = makeMenuResultViewModel();
+    const userAFirstDish = userAResult.menu.dishes[0];
+    const firstDish = userBResult.menu.dishes[0];
+    if (userAFirstDish === undefined || firstDish === undefined)
+      throw new Error("fixture must contain a dish");
+    userBResult.menu.dishes[0] = { ...firstDish, name: "利用者Bの料理" };
+    getMenuResultMock.mockResolvedValueOnce(userAResult).mockResolvedValueOnce(userBResult);
+
+    const first = renderPage(`/menus/${VALID_MENU_ID}`, queryClient, authValue(USER_A_ID));
+    expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
+    first.dispose();
+    cleanup();
+    renderPage(`/menus/${VALID_MENU_ID}`, queryClient, authValue(USER_B_ID));
+
+    await waitFor(() => {
+      expect(getMenuResultMock).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByRole("heading", { name: "利用者Bの料理" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: userAFirstDish.name })).toBeNull();
+  });
+
+  it("認証状態が未確定または未認証なら献立を問い合わせない", () => {
+    const loading = renderPage(`/menus/${VALID_MENU_ID}`, undefined, authValue(null, "loading"));
+    expect(getMenuResultMock).not.toHaveBeenCalled();
+    loading.dispose();
+    cleanup();
+
+    renderPage(`/menus/${VALID_MENU_ID}`, undefined, authValue(null, "unauthenticated"));
+    expect(getMenuResultMock).not.toHaveBeenCalled();
+  });
+
   it("読み込みに失敗したら履歴への導線を表示し、保存内容は後始末しない", async () => {
     getMenuResultMock.mockRejectedValue(new Error("menu_not_found"));
 
@@ -78,6 +128,9 @@ describe("MenuResultPage", () => {
 
     expect(await screen.findByRole("heading", { name: "献立を表示できません" })).toBeVisible();
     expect(screen.getByRole("link", { name: "履歴を見る" })).toHaveAttribute("href", "/history");
+    expect(screen.getByRole("link", { name: "履歴を見る" })).toHaveClass("min-h-11", "min-w-11");
+    await userEvent.click(screen.getByRole("link", { name: "履歴を見る" }));
+    expect(await screen.findByRole("heading", { name: "履歴" })).toBeVisible();
     expect(clearPendingGenerationMock).not.toHaveBeenCalled();
   });
 });
