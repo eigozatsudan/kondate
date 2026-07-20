@@ -503,6 +503,181 @@ select ok(
   'locking helper takes allergy row locks in member and allergy order with FOR SHARE'
 );
 
+select has_function(
+  'private',
+  'assign_regeneration_lineage',
+  array['uuid', 'uuid', 'uuid', 'text', 'text'],
+  'lineage hook has the exact input signature'
+);
+select function_returns(
+  'private',
+  'assign_regeneration_lineage',
+  array['uuid', 'uuid', 'uuid', 'text', 'text'],
+  'void',
+  'lineage hook returns void'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_catalog.pg_proc procedure_
+    join pg_catalog.pg_namespace namespace_
+      on namespace_.oid = procedure_.pronamespace
+    where namespace_.nspname = 'private'
+      and procedure_.proname = 'assign_regeneration_lineage'
+  ),
+  1,
+  'lineage hook has no overload'
+);
+select ok(
+  not (
+    select procedure_.prosecdef
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid = to_regprocedure(
+      'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
+    )
+  ),
+  'lineage hook is SECURITY INVOKER'
+);
+select is(
+  (
+    select procedure_.provolatile::text
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid = to_regprocedure(
+      'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
+    )
+  ),
+  'v',
+  'lineage hook is VOLATILE'
+);
+select is(
+  (
+    select procedure_.proconfig
+    from pg_catalog.pg_proc procedure_
+    where procedure_.oid = to_regprocedure(
+      'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
+    )
+  ),
+  array['search_path=""']::text[],
+  'lineage hook has an empty search_path'
+);
+select ok(
+  coalesce(
+    not exists (
+      select 1
+      from pg_catalog.pg_proc procedure_
+      cross join lateral pg_catalog.aclexplode(
+        coalesce(
+          procedure_.proacl,
+          pg_catalog.acldefault('f', procedure_.proowner)
+        )
+      ) privilege_
+      where procedure_.oid = to_regprocedure(
+        'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
+      )
+        and privilege_.grantee = 0
+        and privilege_.privilege_type = 'EXECUTE'
+    )
+    and not has_function_privilege(
+      'anon',
+      to_regprocedure(
+        'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
+      ),
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'authenticated',
+      to_regprocedure(
+        'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
+      ),
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'service_role',
+      to_regprocedure(
+        'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
+      ),
+      'EXECUTE'
+    ),
+    false
+  ),
+  'PUBLIC and every external role cannot execute the lineage hook'
+);
+select lives_ok($$
+  select private.assign_regeneration_lineage(
+    '16000000-0000-4000-8000-000000000001'::uuid,
+    null::uuid,
+    '16000000-0000-4000-8000-000000000002'::uuid,
+    null::text,
+    null::text
+  )
+$$, 'the lineage hook accepts an all-null new-menu lineage');
+select throws_ok($$
+  select private.assign_regeneration_lineage(
+    '16000000-0000-4000-8000-000000000001'::uuid,
+    '16000000-0000-4000-8000-000000000003'::uuid,
+    '16000000-0000-4000-8000-000000000002'::uuid,
+    null::text,
+    null::text
+  )
+$$, 'P0001', 'regeneration_not_implemented',
+  'the lineage hook rejects a source-only lineage');
+select throws_ok($$
+  select private.assign_regeneration_lineage(
+    '16000000-0000-4000-8000-000000000001'::uuid,
+    null::uuid,
+    '16000000-0000-4000-8000-000000000002'::uuid,
+    'simpler'::text,
+    null::text
+  )
+$$, 'P0001', 'regeneration_not_implemented',
+  'the lineage hook rejects a reason-only lineage');
+select throws_ok($$
+  select private.assign_regeneration_lineage(
+    '16000000-0000-4000-8000-000000000001'::uuid,
+    null::uuid,
+    '16000000-0000-4000-8000-000000000002'::uuid,
+    null::text,
+    '自由記述'::text
+  )
+$$, 'P0001', 'regeneration_not_implemented',
+  'the lineage hook rejects a custom-reason-only lineage');
+select ok(
+  (
+    select
+      pg_catalog.strpos(
+        definition_, 'v_menu_id := private.persist_validated_menu('
+      ) > 0
+      and pg_catalog.strpos(
+        definition_, 'perform private.assign_regeneration_lineage('
+      ) > pg_catalog.strpos(
+        definition_, 'v_menu_id := private.persist_validated_menu('
+      )
+      and pg_catalog.strpos(
+        definition_, 'perform private.soft_delete_generation_draft('
+      ) > pg_catalog.strpos(
+        definition_, 'perform private.assign_regeneration_lineage('
+      )
+      and pg_catalog.strpos(
+        definition_, 'update private.ai_user_daily_usage set'
+      ) > pg_catalog.strpos(
+        definition_, 'perform private.soft_delete_generation_draft('
+      )
+      and pg_catalog.strpos(
+        definition_, 'update private.ai_generation_requests set'
+      ) > pg_catalog.strpos(
+        definition_, 'update private.ai_user_daily_usage set'
+      )
+    from (
+      select pg_catalog.pg_get_functiondef(
+        to_regprocedure(
+          'public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz)'
+        )
+      ) as definition_
+    ) function_
+  ),
+  'success finalization keeps persist, lineage, draft, quota, request order'
+);
+
 select has_table('private'::name, 'ai_generation_requests'::name);
 select has_table('private'::name, 'generation_draft_submission_versions'::name);
 select has_table('private'::name, 'ai_user_daily_usage'::name);

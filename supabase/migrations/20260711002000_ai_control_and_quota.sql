@@ -671,6 +671,35 @@ revoke all on function private.current_safety_fingerprint(uuid,uuid[])
 revoke all on function private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)
   from public,anon,authenticated,service_role;
 
+create or replace function private.assign_regeneration_lineage(
+  p_user_id uuid,
+  p_source_menu_id uuid,
+  p_completed_menu_id uuid,
+  p_change_reason text,
+  p_change_reason_custom text
+) returns void
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $function$
+begin
+  if p_source_menu_id is null
+     and p_change_reason is null
+     and p_change_reason_custom is null then
+    return;
+  end if;
+
+  raise exception using
+    errcode = 'P0001',
+    message = 'regeneration_not_implemented';
+end;
+$function$;
+
+revoke all on function private.assign_regeneration_lineage(
+  uuid,uuid,uuid,text,text
+) from public,anon,authenticated,service_role;
+
 create or replace function public.finalize_ai_generation_success(
   p_request_id uuid,p_menu jsonb,p_preference_snapshot jsonb,p_safety_snapshot jsonb,
   p_safety_fingerprint text,p_allergen_version text,p_food_rule_version text,

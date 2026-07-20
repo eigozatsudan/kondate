@@ -247,6 +247,20 @@ export type Database = {
         }
         Returns: Json
       }
+      assign_regeneration_lineage: {
+        Args: {
+          p_change_reason: string
+          p_change_reason_custom: string
+          p_completed_menu_id: string
+          p_source_menu_id: string
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      current_safety_fingerprint: {
+        Args: { p_target_member_ids: string[]; p_user_id: string }
+        Returns: string
+      }
       is_canonical_bounded_text: {
         Args: { p_max_length: number; p_min_length: number; p_value: string }
         Returns: boolean
@@ -262,6 +276,14 @@ export type Database = {
       is_valid_draft_uuid_array: {
         Args: { p_max_count: number; p_value: string[] }
         Returns: boolean
+      }
+      lock_and_assert_current_safety_fingerprint: {
+        Args: {
+          p_expected: string
+          p_target_member_ids: string[]
+          p_user_id: string
+        }
+        Returns: undefined
       }
       normalize_allergen_term: { Args: { p_value: string }; Returns: string }
       persist_validated_menu: {
