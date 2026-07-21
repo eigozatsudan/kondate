@@ -6,6 +6,8 @@ import { EmergencyMenuPage } from "@/features/emergency/emergency-menu-page";
 import { PlannerRoutePage } from "@/features/planner/planner-route";
 import { GenerationPage } from "@/features/generation/pages/generation-page";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
+import { HistoryDetailPage } from "@/features/history/pages/history-detail-page";
+import { HistoryPage } from "@/features/history/pages/history-page";
 import { PlaceholderPage } from "@/shared/ui/placeholder-page";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
@@ -73,12 +75,11 @@ export function createAppRouter(): AppRouter {
                 },
                 {
                   path: "/history",
-                  element: (
-                    <PlaceholderPage
-                      title="履歴"
-                      description="完成した献立とお気に入りを確認する画面です。"
-                    />
-                  ),
+                  element: <HistoryPage />,
+                },
+                {
+                  path: "/history/:menuId",
+                  element: <HistoryDetailPage />,
                 },
                 {
                   path: "/shopping",

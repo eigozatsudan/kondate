@@ -35,6 +35,13 @@ const isValidMessage = (value) =>
   (value.role === "system" || value.role === "user" || value.role === "assistant") &&
   typeof value.content === "string";
 
+/** full_menu または dish regeneration の response_format を受け入れる */
+const isDishRegenerationFormat = (responseFormat) =>
+  isPlainObject(responseFormat) &&
+  responseFormat.type === "json_schema" &&
+  isPlainObject(responseFormat.json_schema) &&
+  responseFormat.json_schema.name === "kondate_dish_regeneration";
+
 const isValidBody = (body) => {
   if (!isPlainObject(body) || !hasExactKeys(body, expectedBodyKeys)) return false;
   const { models, messages, provider, response_format: responseFormat, temperature, stream } = body;
@@ -42,6 +49,9 @@ const isValidBody = (body) => {
     Array.isArray(models) &&
     ((models.length === 2 && models[0] === primaryModel && models[1] === repairModel) ||
       (models.length === 1 && models[0] === repairModel));
+  const responseFormatValid =
+    isDeepStrictEqual(responseFormat, menuResponseFormat) ||
+    isDishRegenerationFormat(responseFormat);
   return (
     modelSequenceValid &&
     models.every((model) => typeof model === "string" && model.endsWith(":free")) &&
@@ -53,7 +63,7 @@ const isValidBody = (body) => {
     provider.require_parameters === true &&
     temperature === 0.2 &&
     stream === false &&
-    isDeepStrictEqual(responseFormat, menuResponseFormat)
+    responseFormatValid
   );
 };
 
@@ -167,8 +177,17 @@ async function handleRequest(request, response) {
   const header = request.headers["x-kondate-mock-scenario"] ?? "success";
   const scenario = Array.isArray(header) ? header[0] : header;
   const repairRequest = body.models.length === 1 && body.models[0] === repairModel;
-  const key =
-    scenario === "invalid-then-success" ? (repairRequest ? "success" : "malformed-json") : scenario;
+  const dishMode = isDishRegenerationFormat(body.response_format);
+  // 料理単位再生成は default で dish-replacement を返す（success の full_menu 形は拒否される）
+  const resolvedScenario =
+    scenario === "invalid-then-success"
+      ? repairRequest
+        ? "success"
+        : "malformed-json"
+      : dishMode && (scenario === "success" || scenario === undefined)
+        ? "dish-replacement"
+        : scenario;
+  const key = resolvedScenario;
   if (typeof key !== "string" || !Object.hasOwn(scenarios, key)) {
     jsonResponse(response, 404, { error: "not_found" });
     return;

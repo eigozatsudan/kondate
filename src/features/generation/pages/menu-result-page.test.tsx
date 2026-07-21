@@ -6,19 +6,63 @@ import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
+import type { RevalidationResult } from "@/features/history/api/revalidation-api";
 import { MenuResultPage } from "./menu-result-page";
 
 const getMenuResultMock = vi.hoisted(() => vi.fn());
 const clearPendingGenerationMock = vi.hoisted(() => vi.fn());
+const revalidateMenuMock = vi.hoisted(() => vi.fn());
+const getUsageTodayMock = vi.hoisted(() => vi.fn());
+const confirmLabelConfirmationMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/menu-result-api", () => ({ getMenuResult: getMenuResultMock }));
-vi.mock("../model/pending-generation", () => ({
-  clearPendingGeneration: clearPendingGenerationMock,
+vi.mock("../model/pending-generation", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../model/pending-generation")>();
+  return {
+    ...original,
+    clearPendingGeneration: clearPendingGenerationMock,
+  };
+});
+vi.mock("@/features/history/api/revalidation-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/history/api/revalidation-api")>();
+  return { ...original, revalidateMenu: revalidateMenuMock };
+});
+vi.mock("../api/usage-today-api", () => ({
+  getUsageToday: getUsageTodayMock,
+}));
+vi.mock("../api/confirm-label-api", () => ({
+  confirmLabelConfirmation: confirmLabelConfirmationMock,
+}));
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: () => ({
+    channel: () => {
+      const api = {
+        on: () => api,
+        subscribe: () => api,
+        unsubscribe: vi.fn(),
+      };
+      return api;
+    },
+    auth: {
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
+      getSession: () => Promise.resolve({ data: { session: { access_token: "t" } }, error: null }),
+    },
+  }),
 }));
 
 const VALID_MENU_ID = "30000000-0000-4000-8000-000000000001";
 const USER_A_ID = "31000000-0000-4000-8000-000000000001";
 const USER_B_ID = "31000000-0000-4000-8000-000000000002";
+
+const validRevalidation: RevalidationResult = {
+  status: "valid",
+  safetyFingerprint: "current",
+  allergenCatalogVersion: "allergens-v3",
+  foodRuleVersion: "food-v2",
+  issues: [],
+  changedDetails: [],
+  currentLabelWarnings: [],
+};
 
 function authValue(userId: string | null, status: AuthContextValue["status"] = "authenticated") {
   return {
@@ -38,6 +82,7 @@ function renderPage(
       { path: "/menus/:menuId", element: <MenuResultPage /> },
       { path: "/planner", element: <h1>プランナー</h1> },
       { path: "/history", element: <h1>履歴</h1> },
+      { path: "/generation", element: <h1>作成状況</h1> },
     ],
     { initialEntries: [path] },
   );
@@ -53,6 +98,14 @@ function renderPage(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  revalidateMenuMock.mockResolvedValue(validRevalidation);
+  getUsageTodayMock.mockResolvedValue({
+    success: { consumed: 1, limit: 5, remaining: 4 },
+    attempts: { sent: 0, limit: 12, remaining: 12 },
+    shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+    globalAvailable: true,
+    retryAt: null,
+  });
 });
 
 describe("MenuResultPage", () => {
@@ -133,4 +186,65 @@ describe("MenuResultPage", () => {
     expect(await screen.findByRole("heading", { name: "履歴" })).toBeVisible();
     expect(clearPendingGenerationMock).not.toHaveBeenCalled();
   });
+
+  it("現行安全の確認中は献立本文と操作を閉じる", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    revalidateMenuMock.mockReturnValue(new Promise(() => undefined));
+    renderPage(`/menus/${VALID_MENU_ID}`);
+    // 献立本体の取得が終わったあとも再検証が終わるまで操作を閉じる
+    expect(await screen.findByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
+    expect(screen.getByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+  });
+
+  it("stale label confirm failure recloses the gate synchronously", async () => {
+    const view = makeMenuResultViewModel();
+    getMenuResultMock.mockResolvedValue(view);
+    const warning = {
+      confirmationId: "48000000-0000-4000-8000-000000000099",
+      sourceType: "ingredient" as const,
+      sourceId: view.menu.dishes[0]?.ingredients[0]?.id ?? "53000000-0000-4000-8000-000000000001",
+      sourcePath: "dishes.0.ingredients.0.name",
+      sourceText: "確認対象の加工品",
+      allergenId: "egg",
+      allergenName: "卵",
+      anonymousMemberRef: "member_1",
+      memberLabel: "子ども",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending" as const,
+    };
+    let revalidateCalls = 0;
+    const afterStale = deferredPromiseForTest<RevalidationResult>();
+    revalidateMenuMock.mockImplementation(() => {
+      revalidateCalls += 1;
+      if (revalidateCalls === 1) {
+        return Promise.resolve({ ...validRevalidation, currentLabelWarnings: [warning] });
+      }
+      return afterStale.promise;
+    });
+    confirmLabelConfirmationMock.mockRejectedValue(new Error("not_found"));
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+    expect(
+      await screen.findByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeEnabled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    );
+
+    // invalidate 完了を待たず、同一ターン相当で checking に戻る
+    expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+  });
 });
+
+function deferredPromiseForTest<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}

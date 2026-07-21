@@ -137,7 +137,8 @@ select ok(
   format('%s has the exact ordered owner-composite delete contract', expected.constraint_name)
 )
 from (values
-  ('menus_parent_owner_fkey', array['parent_menu_id','user_id'], array['id','user_id'], 'c'),
+  -- Plan 4: parent 参照は ON DELETE SET NULL (parent_menu_id) → confdeltype n
+  ('menus_parent_owner_fkey', array['parent_menu_id','user_id'], array['id','user_id'], 'n'),
   ('menu_target_members_menu_owner_fkey', array['menu_id','user_id'], array['id','user_id'], 'c'),
   ('menu_target_members_member_owner_fkey', array['household_member_id','household_member_user_id'], array['id','user_id'], 'n'),
   ('generation_pantry_selections_menu_owner_fkey', array['menu_id','user_id'], array['id','user_id'], 'c'),
@@ -258,13 +259,14 @@ select throws_ok(
   $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1',gen_random_uuid(),'40000000-0000-0000-0000-000000000001','simpler','余計')$$,
   '23514', null, 'non-custom derived menu rejects custom detail'
 );
+-- 同一 derivation_group では version 一意。親 root が version=1 のため 2 を明示する。
 select lives_ok(
-  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason) values ('49000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','simpler')$$,
+  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,version) values ('49000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','simpler',2)$$,
   'derived menu accepts a non-custom reason without detail'
 );
 delete from public.menus where id = '49000000-0000-0000-0000-000000000001';
 select lives_ok(
-  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom) values ('49000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','custom','食材変更')$$,
+  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom,version) values ('49000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','custom','食材変更',2)$$,
   'custom derived menu accepts canonical detail'
 );
 delete from public.menus where id = '49000000-0000-0000-0000-000000000002';

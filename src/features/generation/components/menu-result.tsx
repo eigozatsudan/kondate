@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import type { PantryItem, PantryItemInput } from "@shared/contracts/pantry";
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
@@ -26,6 +26,17 @@ export type MenuResultActions = {
   onRefetchResult(): Promise<void>;
 };
 
+/** 表示用の現行ラベル警告（再検証ゲートまたは単体テストの注入） */
+export type MenuResultLabelWarning = {
+  confirmationId: string;
+  sourceId: string;
+  sourceText: string;
+  allergenName: string;
+  memberLabel: string;
+  dictionaryVersion: string;
+  confirmationStatus: "pending" | "confirmed";
+};
+
 type UndoState = {
   selectionId: string;
   snapshot: Pick<
@@ -37,9 +48,21 @@ type UndoState = {
 export function MenuResult({
   result,
   actions,
+  currentLabelWarnings,
+  currentSafetyFingerprint,
+  onSelectedDishChange,
 }: {
   result: MenuResultViewModel;
   actions?: MenuResultActions;
+  /**
+   * 現行安全ゲートが返した警告だけを表示する。
+   * 指定時は Plan 3 の保存リストを現行権限として使わない。
+   * 未指定の単体テストでは保存リストへフォールバックする。
+   */
+  currentLabelWarnings?: readonly MenuResultLabelWarning[];
+  /** 確認 POST に載せる現行 fingerprint。再検証結果を正とする。 */
+  currentSafetyFingerprint?: string;
+  onSelectedDishChange?: (dishId: string) => void;
 }) {
   const { menu } = result;
   const firstDish = menu.dishes.at(0);
@@ -60,6 +83,10 @@ export function MenuResult({
   );
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (selected !== null) onSelectedDishChange?.(selected.id);
+  }, [onSelectedDishChange, selected]);
+
   const sourceIds = useMemo(() => {
     if (selected === null) return new Set<string>();
     return new Set([
@@ -69,7 +96,24 @@ export function MenuResult({
       ...menu.adaptations.filter((item) => item.dishId === selected.id).map((item) => item.id),
     ]);
   }, [menu.adaptations, selected]);
-  const labels = result.labelConfirmations.filter((item) => sourceIds.has(item.sourceId));
+
+  // ゲート通過後は currentLabelWarnings のみ。未注入の単体表示だけ保存リストを使う。
+  const labels: readonly MenuResultLabelWarning[] = useMemo(() => {
+    if (currentLabelWarnings !== undefined) {
+      return currentLabelWarnings.filter((item) => sourceIds.has(item.sourceId));
+    }
+    return result.labelConfirmations
+      .filter((item) => sourceIds.has(item.sourceId))
+      .map((item) => ({
+        confirmationId: item.confirmationId,
+        sourceId: item.sourceId,
+        sourceText: item.sourceText,
+        allergenName: item.allergenName,
+        memberLabel: item.memberLabel,
+        dictionaryVersion: item.dictionaryVersion,
+        confirmationStatus: item.confirmationStatus,
+      }));
+  }, [currentLabelWarnings, result.labelConfirmations, sourceIds]);
   const selectedAdaptations =
     selected === null ? [] : menu.adaptations.filter((item) => item.dishId === selected.id);
 
@@ -94,14 +138,24 @@ export function MenuResult({
     event.preventDefault();
   };
 
-  const handleConfirmLabel = async (confirmationId: string, fingerprint: string): Promise<void> => {
+  const handleConfirmLabel = async (confirmationId: string): Promise<void> => {
     if (actions === undefined || busy) return;
+    // 現行ゲートの fingerprint を正とし、保存行の古い fingerprint は使わない
+    const fingerprint =
+      currentSafetyFingerprint ??
+      result.labelConfirmations.find((item) => item.confirmationId === confirmationId)
+        ?.requirementSafetyFingerprint;
+    if (fingerprint === undefined) {
+      setLiveMessage("確認を保存できませんでした");
+      return;
+    }
     setBusy(true);
     setConfirmingId(confirmationId);
     try {
       await actions.onConfirmLabel(confirmationId, fingerprint);
       setLiveMessage("原材料表示を確認済みにしました");
     } catch {
+      // 古い警告・stale fingerprint はゲート再閉鎖を呼び出し側に委ねる
       setLiveMessage("確認を保存できませんでした");
     } finally {
       setConfirmingId(null);
@@ -375,13 +429,10 @@ export function MenuResult({
                       className="mt-2 min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-3 font-semibold"
                       disabled={busy || confirmingId === item.confirmationId}
                       onClick={() => {
-                        void handleConfirmLabel(
-                          item.confirmationId,
-                          item.requirementSafetyFingerprint,
-                        );
+                        void handleConfirmLabel(item.confirmationId);
                       }}
                     >
-                      本人が原材料表示を確認しました
+                      本人が商品の原材料表示を確認しました
                     </button>
                   )}
                 </li>

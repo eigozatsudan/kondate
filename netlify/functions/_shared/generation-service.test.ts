@@ -7,6 +7,7 @@ import {
   type GenerationFailureCode,
   type GenerationStatusData,
 } from "../../../shared/contracts/generation.js";
+import { createDishSignature, createMenuSignature } from "../../../shared/safety/deduplicate.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
@@ -34,13 +35,19 @@ import {
 
 // createGenerationDeps の契約テスト用。runGeneration 経路は makeDeps で差し替えるため
 // これらのモックは createGenerationDeps を直接呼ぶ describe でのみ設定する。
-const { getServerEnvMock, loadGenerationContextMock, createGenerationRepositoryMock } = vi.hoisted(
-  () => ({
-    getServerEnvMock: vi.fn(),
-    loadGenerationContextMock: vi.fn(),
-    createGenerationRepositoryMock: vi.fn(),
-  }),
-);
+const {
+  getServerEnvMock,
+  loadGenerationContextMock,
+  createGenerationRepositoryMock,
+  loadRegenerationExecutionContextMock,
+  createRegenerationLoaderDepsMock,
+} = vi.hoisted(() => ({
+  getServerEnvMock: vi.fn(),
+  loadGenerationContextMock: vi.fn(),
+  createGenerationRepositoryMock: vi.fn(),
+  loadRegenerationExecutionContextMock: vi.fn(),
+  createRegenerationLoaderDepsMock: vi.fn(() => ({ requestStartedAtMonotonicMs: 0 })),
+}));
 
 vi.mock("../../../shared/safety/validate-generated-menu.js", () => ({
   validateGeneratedMenu: vi.fn(),
@@ -60,6 +67,16 @@ vi.mock("./generation-repository.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./generation-repository.js")>();
   return { ...actual, createGenerationRepository: createGenerationRepositoryMock };
 });
+vi.mock("./regeneration-context.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./regeneration-context.js")>();
+  return {
+    ...actual,
+    loadRegenerationExecutionContext: loadRegenerationExecutionContextMock,
+  };
+});
+vi.mock("./regeneration-adapter.js", () => ({
+  createRegenerationLoaderDeps: createRegenerationLoaderDepsMock,
+}));
 
 const requestId = "81000000-0000-4000-8000-000000000001";
 const key = "82000000-0000-4000-8000-000000000001";
@@ -176,7 +193,13 @@ function makeDeps(
     ),
     validatePreflight,
     buildMessages,
-    callOpenRouter: vi.fn(() => Promise.resolve({ output: scenarios.success, modelId: models[0] })),
+    callOpenRouter: vi.fn(() =>
+      Promise.resolve({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      }),
+    ),
     now: () => new Date("2026-07-11T00:00:00.000Z"),
     monotonicNow: () => 0,
     openRouterTimeoutMs: 20_000,
@@ -329,7 +352,11 @@ describe("runGeneration", () => {
     async (boundary, expectedMarkSent, expectedFetch) => {
       const repository = makeRepository();
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
-        Promise.resolve({ output: scenarios.success, modelId: models[0] }),
+        Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        }),
       );
       const overrides: Partial<Omit<GenerationDependencies, "repository">> = {
         callOpenRouter,
@@ -398,7 +425,11 @@ describe("runGeneration", () => {
     });
     const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
       order.push("fetch");
-      return Promise.resolve({ output: scenarios.success, modelId: models[0] });
+      return Promise.resolve({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      });
     });
     const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
     expect(order).toEqual(["sent", "fetch"]);
@@ -496,6 +527,7 @@ describe("runGeneration", () => {
           : () => ({ ok: true });
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
         Promise.resolve({
+          mode: "full_menu" as const,
           output: {
             outcome: "constraint_conflict",
             conflicts: [
@@ -560,6 +592,7 @@ describe("runGeneration", () => {
     );
     const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
       Promise.resolve({
+        mode: "full_menu" as const,
         output: {
           outcome: "constraint_conflict",
           conflicts: [
@@ -646,8 +679,16 @@ describe("runGeneration", () => {
       });
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
-      .mockResolvedValueOnce({ output: scenarios.success, modelId: models[0] })
-      .mockResolvedValueOnce({ output: scenarios.success, modelId: models[1] });
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      })
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[1],
+      });
     const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
     expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
     expect(repository.markSent).toHaveBeenCalledTimes(2);
@@ -662,13 +703,18 @@ describe("runGeneration", () => {
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
       .mockResolvedValueOnce({
+        mode: "full_menu" as const,
         output: {
           outcome: "constraint_conflict",
           conflicts: [{ code: "current_safety_changed", message: canary, conditionRefs: [canary] }],
         },
         modelId: models[0],
       })
-      .mockResolvedValueOnce({ output: scenarios.success, modelId: models[1] });
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[1],
+      });
     const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
     expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
     expect(callOpenRouter).toHaveBeenCalledTimes(2);
@@ -680,14 +726,22 @@ describe("runGeneration", () => {
   it("terminalizes an invalid repaired provider conflict without a third send", async () => {
     const repository = makeRepository();
     const canary = "raw-provider-message-55000000-0000-4000-8000-000000000001";
-    const invalidConflict: OpenRouterGenerationResult["output"] = {
+    const invalidConflict: Extract<OpenRouterGenerationResult, { mode: "full_menu" }>["output"] = {
       outcome: "constraint_conflict" as const,
       conflicts: [{ code: "current_safety_changed", message: canary, conditionRefs: [canary] }],
     };
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
-      .mockResolvedValueOnce({ output: invalidConflict, modelId: models[0] })
-      .mockResolvedValueOnce({ output: invalidConflict, modelId: models[1] });
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: invalidConflict,
+        modelId: models[0],
+      })
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: invalidConflict,
+        modelId: models[1],
+      });
     const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
     expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
     expect(repository.conflict).not.toHaveBeenCalled();
@@ -713,7 +767,11 @@ describe("runGeneration", () => {
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
       .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[0]))
-      .mockResolvedValueOnce({ output: scenarios.success, modelId: models[1] });
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[1],
+      });
     await runGeneration(makeDeps({ repository, callOpenRouter }), command);
     expect(order.slice(0, 2)).toEqual(["record", "repair"]);
   });
@@ -755,7 +813,11 @@ describe("runGeneration", () => {
       const callOpenRouter = vi
         .fn<GenerationDependencies["callOpenRouter"]>()
         .mockRejectedValueOnce(error)
-        .mockResolvedValueOnce({ output: scenarios.success, modelId: models[1] });
+        .mockResolvedValueOnce({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[1],
+        });
       const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
       expect(callOpenRouter.mock.calls[1]?.[0].excludedModelIds).toEqual([]);
       expect(repository.recordModel).toHaveBeenCalledTimes(1);
@@ -785,7 +847,11 @@ describe("runGeneration", () => {
     });
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
-      .mockResolvedValueOnce({ output: scenarios.success, modelId: models[0] })
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      })
       .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[1]));
     await runGeneration(makeDeps({ repository, callOpenRouter }), command);
     expect(order).toEqual([`record:${models[0]}`, `record:${models[1]}`, "fail"]);
@@ -820,9 +886,11 @@ describe("runGeneration", () => {
       ok: false,
       issues: [{ code: "time_limit_exceeded", path: "raw", message: "canary" }],
     });
-    const callOpenRouter = vi
-      .fn<GenerationDependencies["callOpenRouter"]>()
-      .mockResolvedValue({ output: scenarios.success, modelId: models[0] });
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>().mockResolvedValue({
+      mode: "full_menu" as const,
+      output: scenarios.success,
+      modelId: models[0],
+    });
     const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
     expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
     expect(repository.markSent).toHaveBeenCalledTimes(1);
@@ -874,7 +942,11 @@ describe("runGeneration", () => {
       const repository = makeRepository();
       let nowMs = 0;
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
-        Promise.resolve({ output: scenarios.success, modelId: models[0] }),
+        Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        }),
       );
       const result = await runGeneration(
         makeDeps({
@@ -1247,15 +1319,56 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
         expiredPantryConfirmations: [],
       },
     },
-  ])("rejects $kind with regeneration_not_implemented before loading context", async (regen) => {
-    const deps = createGenerationDeps(user, timing);
-    await expect(
-      deps.loadExecutionContext(regen, loadRequestId, deadlineAtMonotonicMs),
-    ).rejects.toMatchObject({
-      status: 422,
-      code: "regeneration_not_implemented",
+  ])("routes $kind through loadRegenerationExecutionContext with entry timing", async (regen) => {
+    const regenerationContext = {
+      kind: regen.kind,
+      command: regen,
+      requestId: loadRequestId,
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "current-v3",
+      startedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+      deadlineAtMonotonicMs,
+      regeneration: {
+        sourceMenuId: regen.request.sourceMenuId,
+        sourceMenu: makeValidatedMenu(),
+        derivationGroupId: "group-1",
+        replaceDishId: regen.kind === "regenerate_dish" ? regen.request.dishId : null,
+        retainedDishIds: [],
+        excludedDishIds: [],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    loadRegenerationExecutionContextMock.mockResolvedValue(regenerationContext);
+    createRegenerationLoaderDepsMock.mockReturnValue({
+      requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
     });
+
+    const deps = createGenerationDeps(user, timing);
+    const execution = await deps.loadExecutionContext(regen, loadRequestId, deadlineAtMonotonicMs);
+
     expect(loadGenerationContextMock).not.toHaveBeenCalled();
+    expect(createRegenerationLoaderDepsMock).toHaveBeenCalledWith(user, {
+      requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+    });
+    expect(loadRegenerationExecutionContextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+      }),
+      user,
+      regen,
+      loadRequestId,
+      deadlineAtMonotonicMs,
+    );
+    expect(execution.startedAtMonotonicMs).toBe(timing.requestStartedAtMonotonicMs);
+    expect(execution.kind).toBe(regen.kind);
   });
 });
 
@@ -1436,5 +1549,373 @@ describe("generationResponse", () => {
     const response = generationResponse(result);
     expect(response.status).toBe(expectedFailureStatus[code]);
     expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("runGeneration regeneration duplicate gating", () => {
+  it("returns duplicate_output without finalizing user success", async () => {
+    const menu = makeValidatedMenu();
+    const dishSig = (dish: (typeof menu.dishes)[number]) => ({
+      role: dish.role,
+      name: dish.name,
+      primaryIngredients: dish.ingredients.map((item) => item.name),
+    });
+    const wholeRegenerationCommand = {
+      kind: "regenerate_menu" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: "88000000-0000-4000-8000-000000000001",
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: wholeRegenerationCommand,
+      requestId,
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "fp",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: wholeRegenerationCommand.request.sourceMenuId,
+        sourceMenu: menu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: menu.dishes.map((dish) => dish.id),
+        excludedDishIds: menu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [
+          {
+            menuId: menu.menuId,
+            menuSignature: createMenuSignature({ dishes: menu.dishes.map(dishSig) }),
+            dishSignatures: menu.dishes.map((dish) => createDishSignature(dishSig(dish))),
+          },
+        ],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu,
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+    });
+    const repository = makeRepository();
+    // 2 モデルあるため repair でも同一 model が選ばれ得る。両回とも duplicate になるよう modelId を分ける
+    const callOpenRouter = vi
+      .fn<GenerationDependencies["callOpenRouter"]>()
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      })
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[1],
+      });
+    const depsWithDuplicateOutput = makeDeps({
+      repository,
+      loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+      callOpenRouter,
+    });
+
+    const result = await runGeneration(depsWithDuplicateOutput, wholeRegenerationCommand);
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "duplicate_output" },
+      quota: { consumed: false },
+    });
+    expect(repository.succeed).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalledWith(requestId, "duplicate_output", null);
+  });
+
+  it("rejects material near-duplicate dish output without succeed or success quota", async () => {
+    const chickenCabbage = {
+      role: "main" as const,
+      name: "鶏肉と白菜の煮物",
+      primaryIngredients: ["鶏もも肉", "白菜", "しょうゆ"],
+    };
+    const cabbageChicken = {
+      role: "main" as const,
+      name: "白菜と鶏肉の煮物",
+      primaryIngredients: ["白菜", "鶏もも肉", "しょうゆ"],
+    };
+    const sourceMainId = "50000000-0000-4000-8000-000000000001";
+    const sourceMenu = makeValidatedMenu({
+      dishes: [
+        {
+          id: sourceMainId,
+          role: "main",
+          position: 1,
+          name: chickenCabbage.name,
+          description: "主菜",
+          cookingTimeMinutes: 20,
+          ingredients: chickenCabbage.primaryIngredients.map((name, index) => ({
+            id: `53000000-0000-4000-8000-00000000000${String(index + 1)}`,
+            position: index + 1,
+            name,
+            quantityValue: 100,
+            quantityText: "100g",
+            unit: "g",
+            storeSection: "meat_fish" as const,
+            pantrySelectionId: null,
+            labelConfirmationRequired: false,
+          })),
+          steps: [
+            {
+              id: "51000000-0000-4000-8000-000000000001",
+              position: 1,
+              instruction: "煮る",
+            },
+          ],
+        },
+        makeValidatedMenu().dishes[1]!,
+      ],
+    });
+    const nearDuplicateMenu = makeValidatedMenu({
+      dishes: [
+        {
+          id: "b0000000-0000-4000-8000-000000000001",
+          role: "main",
+          position: 1,
+          name: cabbageChicken.name,
+          description: "主菜",
+          cookingTimeMinutes: 20,
+          ingredients: cabbageChicken.primaryIngredients.map((name, index) => ({
+            id: `b3000000-0000-4000-8000-00000000000${String(index + 1)}`,
+            position: index + 1,
+            name,
+            quantityValue: 100,
+            quantityText: "100g",
+            unit: "g",
+            storeSection: "meat_fish" as const,
+            pantrySelectionId: null,
+            labelConfirmationRequired: false,
+          })),
+          steps: [
+            {
+              id: "b1000000-0000-4000-8000-000000000001",
+              position: 1,
+              instruction: "煮る",
+            },
+          ],
+        },
+        {
+          ...makeValidatedMenu().dishes[1]!,
+          id: "b0000000-0000-4000-8000-000000000002",
+        },
+      ],
+    });
+    const dishRegenerationCommand = {
+      kind: "regenerate_dish" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: sourceMenu.menuId,
+        dishId: sourceMainId,
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: dishRegenerationCommand,
+      requestId,
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "fp",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: sourceMainId,
+        retainedDishIds: [sourceMenu.dishes[1]!.id],
+        excludedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [
+          {
+            menuId: sourceMenu.menuId,
+            menuSignature: createMenuSignature({
+              dishes: sourceMenu.dishes.map((dish) => ({
+                role: dish.role,
+                name: dish.name,
+                primaryIngredients: dish.ingredients.map((item) => item.name),
+              })),
+            }),
+            dishSignatures: sourceMenu.dishes.map((dish) =>
+              createDishSignature({
+                role: dish.role,
+                name: dish.name,
+                primaryIngredients: dish.ingredients.map((item) => item.name),
+              }),
+            ),
+          },
+        ],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    // full_menu 経路で materialize 済み候補を validator が返す想定
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu: nearDuplicateMenu,
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+    });
+    const repository = makeRepository();
+    const callOpenRouter = vi
+      .fn<GenerationDependencies["callOpenRouter"]>()
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      })
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[1],
+      });
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+        callOpenRouter,
+      }),
+      dishRegenerationCommand,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "duplicate_output" },
+      quota: { consumed: false },
+    });
+    expect(repository.succeed).not.toHaveBeenCalled();
+  });
+
+  it("succeeds dish regeneration once with current safety snapshot and lineage", async () => {
+    const sourceMenu = makeValidatedMenu();
+    const replaceDishId = sourceMenu.dishes[0]!.id;
+    const freshMenu = makeValidatedMenu({
+      menuId: "b2000000-0000-4000-8000-000000000001",
+      labelConfirmations: [
+        {
+          sourceType: "ingredient",
+          sourceId: "b3000000-0000-4000-8000-000000000001",
+          sourcePath: "dishes.0.ingredients.0.name",
+          sourceText: "しょうゆ",
+          allergenId: "wheat",
+          anonymousMemberRef: "member_1",
+          dictionaryVersion: "jp-caa-2026-04.v1",
+          confirmationStatus: "pending",
+          confirmedAt: null,
+          confirmedBy: null,
+        },
+      ],
+    });
+    const currentSafetySnapshot = {
+      dictionaryVersion: "dict-current",
+      foodRuleVersion: "rule-current",
+      marker: "current-safety-snapshot",
+    };
+    const generationContext = makeGenerationContext({
+      safetySnapshot: currentSafetySnapshot,
+      preferenceSnapshot: {
+        mealType: "breakfast",
+        mainIngredients: ["ごはん"],
+      },
+    });
+    const dishRegenerationCommand = {
+      kind: "regenerate_dish" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: sourceMenu.menuId,
+        dishId: replaceDishId,
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: dishRegenerationCommand,
+      requestId,
+      generationContext,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(generationContext.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId,
+        retainedDishIds: sourceMenu.dishes.slice(1).map((dish) => dish.id),
+        excludedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: generationContext.preferenceSnapshot,
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu: freshMenu,
+      labelConfirmations: freshMenu.labelConfirmations,
+      safetyFingerprint: "sha256:test",
+    });
+    const repository = makeRepository();
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+        callOpenRouter: vi.fn(() =>
+          Promise.resolve({
+            mode: "full_menu" as const,
+            output: scenarios.success,
+            modelId: models[0],
+          }),
+        ),
+      }),
+      dishRegenerationCommand,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(repository.succeed).toHaveBeenCalledTimes(1);
+    expect(repository.succeed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId,
+        menu: freshMenu,
+        safetySnapshot: generationContext.safetySnapshot,
+        preferenceSnapshot: generationContext.preferenceSnapshot,
+        sourceMenuId: sourceMenu.menuId,
+        changeReason: "simpler",
+        changeReasonCustom: null,
+      }),
+    );
+    // 空オブジェクトや履歴専用 marker ではないことを固定
+    const succeedCalls = repository.succeed.mock.calls as unknown as Array<
+      [{ safetySnapshot: unknown }]
+    >;
+    expect(succeedCalls[0]?.[0]?.safetySnapshot).toEqual(currentSafetySnapshot);
+    expect(freshMenu.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(
+      true,
+    );
   });
 });

@@ -10,8 +10,11 @@ import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs
 it("keeps every required adversarial scenario fixed in source control", () => {
   expect(Object.keys(scenarios).sort()).toEqual([
     "alias-in-step",
+    "alternate-menu",
     "constraint-conflict",
     "direct-allergen",
+    "dish-replacement",
+    "duplicate-menu",
     "invalid-adaptation-branch",
     "invalid-pantry-dish-link",
     "malformed-json",
@@ -34,6 +37,8 @@ it("keeps provider fixtures free of persistent identifiers and trusted inventory
 describe("schema-valid fixed outputs", () => {
   const schemaValidScenarioNames = [
     "success",
+    "duplicate-menu",
+    "alternate-menu",
     "constraint-conflict",
     "direct-allergen",
     "alias-in-step",

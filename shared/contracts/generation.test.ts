@@ -202,6 +202,27 @@ describe("generationStatusDataSchema", () => {
       }),
     ).toMatchObject({ status: "not_started", quota: { remaining: 4 } });
   });
+
+  it("accepts terminal failed duplicate_output without menuId and without quota consumption", () => {
+    const failed = generationStatusDataSchema.parse({
+      status: "failed",
+      idempotencyKey: "10000000-0000-4000-8000-000000000001",
+      requestId: "50000000-0000-4000-8000-000000000001",
+      quota: { ...quota, consumed: false },
+      error: {
+        code: "duplicate_output",
+        message: "元の献立とほぼ同じ案だったため保存しませんでした。今回は回数に含まれません",
+        retryable: true,
+      },
+      completedAt: "2026-07-11T00:00:01.000Z",
+    });
+    expect(failed).toMatchObject({
+      status: "failed",
+      quota: { consumed: false },
+      error: { code: "duplicate_output" },
+    });
+    expect(failed).not.toHaveProperty("menuId");
+  });
 });
 
 describe("aiGenerationResponseSchema", () => {

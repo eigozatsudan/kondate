@@ -1,0 +1,416 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createMemoryRouter } from "react-router";
+import { RouterProvider } from "react-router/dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeMenuResultViewModel } from "@shared/testing/factories";
+import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
+import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
+import {
+  householdSafetyChangedEvent,
+  householdSafetyRevisionStorageKey,
+} from "@/features/household/household-queries";
+import type { RevalidationResult } from "../api/revalidation-api";
+import { HistoryDetailPage, type HistoryDetailRevalidationView } from "./history-detail-page";
+
+const revalidateMenuMock = vi.hoisted(() => vi.fn());
+const getMenuResultMock = vi.hoisted(() => vi.fn());
+const getUsageTodayMock = vi.hoisted(() => vi.fn());
+const acceptMenuVersionMock = vi.hoisted(() => vi.fn());
+const channelHandlers = vi.hoisted(() => ({
+  members: null as null | (() => void),
+  allergies: null as null | (() => void),
+}));
+
+vi.mock("../api/revalidation-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api/revalidation-api")>();
+  return { ...original, revalidateMenu: revalidateMenuMock };
+});
+vi.mock("@/features/generation/api/menu-result-api", () => ({
+  getMenuResult: getMenuResultMock,
+}));
+vi.mock("@/features/generation/api/usage-today-api", () => ({
+  getUsageToday: getUsageTodayMock,
+}));
+vi.mock("../api/history-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api/history-api")>();
+  return { ...original, acceptMenuVersion: acceptMenuVersionMock };
+});
+vi.mock("@/features/generation/model/pending-generation", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/generation/model/pending-generation")>();
+  return { ...original, clearPendingGeneration: vi.fn() };
+});
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: () => ({
+    channel: () => {
+      const api = {
+        on: (_event: string, filter: { table?: string }, callback: () => void) => {
+          if (filter.table === "household_members") channelHandlers.members = callback;
+          if (filter.table === "member_allergies") channelHandlers.allergies = callback;
+          return api;
+        },
+        subscribe: () => api,
+        unsubscribe: vi.fn(),
+      };
+      return api;
+    },
+    auth: {
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
+      getSession: () => Promise.resolve({ data: { session: { access_token: "t" } }, error: null }),
+    },
+  }),
+}));
+
+const MENU_ID = "30000000-0000-4000-8000-000000000001";
+const USER_ID = "31000000-0000-4000-8000-000000000001";
+
+const validRevalidation: RevalidationResult = {
+  status: "valid",
+  safetyFingerprint: "current",
+  allergenCatalogVersion: "allergens-v3",
+  foodRuleVersion: "food-v2",
+  issues: [],
+  changedDetails: [],
+  currentLabelWarnings: [],
+};
+
+function deferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function authValue(userId: string): AuthContextValue {
+  return {
+    status: "authenticated",
+    session: { user: { id: userId } } as AuthContextValue["session"],
+    refreshSession: vi.fn(),
+  };
+}
+
+function renderHistoryDetail(
+  options: {
+    revalidate?: () => Promise<RevalidationResult>;
+    revalidation?: HistoryDetailRevalidationView;
+  } = {},
+) {
+  if (options.revalidate !== undefined) {
+    revalidateMenuMock.mockImplementation(options.revalidate);
+  }
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/history/:menuId",
+        element:
+          options.revalidation !== undefined ? (
+            <HistoryDetailPage revalidation={options.revalidation} />
+          ) : (
+            <HistoryDetailPage />
+          ),
+      },
+      { path: "/history", element: <h1>履歴</h1> },
+      { path: "/generation", element: <h1>作成状況</h1> },
+    ],
+    { initialEntries: [`/history/${MENU_ID}`] },
+  );
+  render(
+    <AuthContext.Provider value={authValue(USER_ID)}>
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </AuthContext.Provider>,
+  );
+  return router;
+}
+
+function renderMenuResultPage(
+  options: {
+    initialRevalidation?: RevalidationResult;
+    nextRevalidation?: Promise<RevalidationResult>;
+  } = {},
+) {
+  // 多段応答が必要なときだけ mockImplementation を上書きする。
+  // 単発の mockResolvedValue / mockRejectedValue を壊さない。
+  if (options.initialRevalidation !== undefined || options.nextRevalidation !== undefined) {
+    let call = 0;
+    revalidateMenuMock.mockImplementation(() => {
+      call += 1;
+      if (call === 1 && options.initialRevalidation !== undefined) {
+        return Promise.resolve(options.initialRevalidation);
+      }
+      if (options.nextRevalidation !== undefined) return options.nextRevalidation;
+      return Promise.resolve(options.initialRevalidation ?? validRevalidation);
+    });
+  }
+  const router = createMemoryRouter(
+    [
+      { path: "/menus/:menuId", element: <MenuResultPage /> },
+      { path: "/planner", element: <h1>プランナー</h1> },
+      { path: "/history", element: <h1>履歴</h1> },
+    ],
+    { initialEntries: [`/menus/${MENU_ID}`] },
+  );
+  render(
+    <AuthContext.Provider value={authValue(USER_ID)}>
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </AuthContext.Provider>,
+  );
+  return router;
+}
+
+function dispatchHouseholdSafetyStorageEvent(): void {
+  window.dispatchEvent(
+    new StorageEvent("storage", {
+      key: householdSafetyRevisionStorageKey,
+      newValue: crypto.randomUUID(),
+    }),
+  );
+}
+
+/** test専用。DOM / Realtime / 60s の各シグナルを再現する。 */
+function fireSafetySignal(
+  signal:
+    | "focus"
+    | "visible-visibilitychange"
+    | "online"
+    | "realtime-household-member"
+    | "realtime-member-allergy"
+    | "sixty-second-poll"
+    | "same-tab-event",
+): void {
+  if (signal === "focus") {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    window.dispatchEvent(new Event("focus"));
+    return;
+  }
+  if (signal === "visible-visibilitychange") {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    return;
+  }
+  if (signal === "online") {
+    window.dispatchEvent(new Event("online"));
+    return;
+  }
+  if (signal === "realtime-household-member") {
+    channelHandlers.members?.();
+    return;
+  }
+  if (signal === "realtime-member-allergy") {
+    channelHandlers.allergies?.();
+    return;
+  }
+  if (signal === "same-tab-event") {
+    window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
+    return;
+  }
+  // sixty-second-poll は vi.advanceTimers 側で扱う
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  channelHandlers.members = null;
+  channelHandlers.allergies = null;
+  revalidateMenuMock.mockResolvedValue(validRevalidation);
+  getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+  getUsageTodayMock.mockResolvedValue({
+    success: { consumed: 2, limit: 5, remaining: 3 },
+    attempts: { sent: 0, limit: 12, remaining: 12 },
+    shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+    globalAvailable: true,
+    retryAt: null,
+  });
+  acceptMenuVersionMock.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+describe("HistoryDetailPage safety gate", () => {
+  it("revalidates on mount and blocks actions while current safety is loading", async () => {
+    const revalidate = deferredPromise<RevalidationResult>();
+    renderHistoryDetail({ revalidate: () => revalidate.promise });
+    expect(await screen.findByRole("status")).toHaveTextContent("現在の家族設定で確認しています");
+    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
+    act(() => {
+      revalidate.resolve(validRevalidation);
+    });
+    expect(await screen.findByText("現在の家族設定で確認しました")).toBeVisible();
+  });
+
+  it("allows regeneration after a changed but valid current-safety result", () => {
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "changed",
+          issues: [],
+          changedDetails: ["preference_changed"],
+        },
+      },
+    });
+    expect(
+      screen.getByText("現在の家族設定で確認しました。作成時から条件が変わっています"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
+  });
+
+  it("disables これに決めた while checking and enables when revalidation is actionable", async () => {
+    const revalidate = deferredPromise<RevalidationResult>();
+    renderHistoryDetail({ revalidate: () => revalidate.promise });
+    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeDisabled();
+    act(() => {
+      revalidate.resolve(validRevalidation);
+    });
+    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeEnabled();
+  });
+
+  it("calls acceptMenuVersion when これに決めた is clicked while actionable", async () => {
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    const button = screen.getByRole("button", { name: "これに決めた" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(acceptMenuVersionMock).toHaveBeenCalledTimes(1);
+    expect(acceptMenuVersionMock).toHaveBeenCalledWith(MENU_ID);
+  });
+
+  it("keeps これに決めた disabled when revalidation is invalid", () => {
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "invalid",
+          issues: [
+            { code: "allergen_present", path: "dishes.0", message: "アレルゲンが含まれます" },
+          ],
+        },
+      },
+    });
+    expect(screen.getByRole("button", { name: "これに決めた" })).toBeDisabled();
+    expect(acceptMenuVersionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("MenuResultPage shared revalidation gate", () => {
+  it("hides an already open result immediately when safety changes in another tab", async () => {
+    const revalidate = deferredPromise<RevalidationResult>();
+    renderMenuResultPage({
+      initialRevalidation: validRevalidation,
+      nextRevalidation: revalidate.promise,
+    });
+    expect(await screen.findByRole("heading", { name: /献立/u })).toBeVisible();
+    act(() => {
+      dispatchHouseholdSafetyStorageEvent();
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("現在の家族設定で確認しています");
+    expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
+  });
+
+  it.each([
+    "focus",
+    "visible-visibilitychange",
+    "online",
+    "realtime-household-member",
+    "realtime-member-allergy",
+    "sixty-second-poll",
+  ] as const)("fails closed and starts a fresh current-safety check for %s", async (signal) => {
+    if (signal === "sixty-second-poll") vi.useFakeTimers({ shouldAdvanceTime: true });
+    const revalidate = deferredPromise<RevalidationResult>();
+    renderMenuResultPage({
+      initialRevalidation: validRevalidation,
+      nextRevalidation: revalidate.promise,
+    });
+    expect(await screen.findByRole("heading", { name: /献立/u })).toBeVisible();
+    if (signal === "sixty-second-poll") {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+    } else {
+      act(() => {
+        fireSafetySignal(signal);
+      });
+    }
+    expect(screen.getByRole("status")).toHaveTextContent("現在の家族設定で確認しています");
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
+    act(() => {
+      revalidate.resolve(validRevalidation);
+    });
+    expect(await screen.findByRole("button", { name: "冷蔵庫へ反映" })).toBeEnabled();
+  });
+
+  it("lists invalid issues and keeps content closed", async () => {
+    revalidateMenuMock.mockResolvedValue({
+      ...validRevalidation,
+      status: "invalid",
+      issues: [{ code: "allergen_present", path: "dishes.0", message: "アレルゲンが含まれます" }],
+    });
+    renderMenuResultPage({});
+    expect(await screen.findByText("アレルゲンが含まれます")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
+  });
+
+  it("shows もう一度確認 on network failure without a manual-success escape", async () => {
+    revalidateMenuMock.mockRejectedValue(new Error("network"));
+    renderMenuResultPage({});
+    expect(await screen.findByRole("button", { name: "もう一度確認" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+  });
+
+  it("shows revalidation currentLabelWarnings and hides obsolete stored-only warnings", async () => {
+    const view = makeMenuResultViewModel();
+    getMenuResultMock.mockResolvedValue(view);
+    revalidateMenuMock.mockResolvedValue({
+      ...validRevalidation,
+      currentLabelWarnings: [
+        {
+          confirmationId: "48000000-0000-4000-8000-000000000099",
+          sourceType: "ingredient",
+          sourceId:
+            view.menu.dishes[0]?.ingredients[0]?.id ?? "53000000-0000-4000-8000-000000000001",
+          sourcePath: "dishes.0.ingredients.0.name",
+          sourceText: "RPCが返したスナップショット",
+          allergenId: "egg",
+          allergenName: "卵",
+          anonymousMemberRef: "member_1",
+          memberLabel: "子ども",
+          dictionaryVersion: "jp-caa-2026-04.v1",
+          confirmationStatus: "pending",
+        },
+      ],
+    });
+    renderMenuResultPage({});
+    expect(await screen.findByText(/RPCが返したスナップショット/u)).toBeVisible();
+    expect(screen.getByText(/卵/u)).toBeVisible();
+    expect(screen.queryByText("乳成分入りドレッシング")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    ).toBeVisible();
+  });
+});
