@@ -74,8 +74,8 @@
 | 不明 | わからない | `src/features/pantry/pantry-form.tsx` |
 | 不明として登録 | わからないまま登録 | `src/features/pantry/pantry-form.tsx` |
 | 対象家族 | 誰の分を作りますか | `src/features/planner/planner-page.tsx` |
-| 年齢区分 | 年齢のめやす | `src/features/household/household-onboarding-page.tsx` |
-| 対象外の食事の確認 | 食べない食事はありますか | `src/features/household/household-onboarding-page.tsx` |
+| 年齢区分 | 年齢のめやす | `household-onboarding-page.tsx`, `household-settings-page.tsx`, `household-settings-schema.ts` |
+| 対象外の食事の確認 | 食べない食事はありますか | `household-onboarding-page.tsx`, `household-settings-page.tsx`, `household-settings-schema.ts` |
 | 標準29品目を検索 | よくあるアレルギーから探す | `src/features/household/allergy-editor.tsx` |
 | 標準候補に該当しないことを確認 | 一覧にないアレルギーとして登録 | `src/features/household/allergy-editor.tsx` |
 | 表示名を確認できない項目 | 名前を表示できない項目 | `src/features/household/allergy-editor.tsx` |
@@ -100,7 +100,14 @@
 
 1. `docker compose run --rm --no-deps app npm run lint`、`format:check`、`typecheck`。
 2. 文言を変更した各ファイルの単体テストをスコープ実行し、日本語文字列で要素を引いているアサーションを新文言へ追随させる。対象は約8ファイル。
-3. E2E は「冷蔵庫」を維持するため無影響の見込み。ただし `generation-status-panel` の文言を E2E が参照していないか、実装時に `e2e/specs` を grep して確認する。
+3. **E2E は影響を受ける。** 計画作成時の調査で、「年齢区分」「対象外の食事の確認」「標準候補に該当しないことを確認」が Playwright の `getByLabel` セレクタとして次の5ファイルから参照されていることが判明した。ブレインストーミング時点では無影響と見込んでいたが、これは誤りだった。
+
+   - `e2e/fixtures/auth.ts`（オンボーディングを駆動する共通フィクスチャ）
+   - `e2e/specs/onboarding.spec.ts`
+   - `e2e/specs/settings.spec.ts`
+   - `e2e/specs/menu-domain-pantry.spec.ts`
+
+   `e2e/fixtures/auth.ts` は多くのspecが依存する共通フィクスチャのため、ここを直し損ねるとE2E全体が落ちる。文言変更と同一コミットでセレクタを更新する。
 4. dev サーバを起動し、320 CSS px 幅で全5タブを目視。横スクロールが出ないこと、44×44 のタッチ領域が維持されていることを確認。
 
 ## リスク
