@@ -895,7 +895,13 @@ select is((select count(*) from private.ai_generation_requests
     '20000000-0000-4000-8000-000000000097',
     '20000000-0000-4000-8000-000000000098'
   )), 0::bigint);
-select is((select count(*) from private.ai_global_daily_usage), 0::bigint);
+-- グローバル表は user_id を持たない。拒否された予約が使う JST 日だけを密封する。
+select is(
+  (select count(*) from private.ai_global_daily_usage
+    where usage_day = date '2026-07-11'),
+  0::bigint,
+  'invalid request HMAC creates no global usage for the attempted JST day'
+);
 select throws_ok($$
   select public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000002',
@@ -921,7 +927,12 @@ select is((select count(*) from private.ai_generation_requests
     '20000000-0000-4000-8000-000000000097',
     '20000000-0000-4000-8000-000000000098'
   )), 0::bigint);
-select is((select count(*) from private.ai_global_daily_usage), 0::bigint);
+select is(
+  (select count(*) from private.ai_global_daily_usage
+    where usage_day = date '2026-07-11'),
+  0::bigint,
+  'invalid global quota configuration creates no global usage for the attempted JST day'
+);
 
 insert into private.ai_user_daily_usage (
   user_id, usage_day, reserved_count, success_count, updated_at
@@ -1010,7 +1021,8 @@ select is(
   'invalid drafts create no request ledger rows'
 );
 select is(
-  (select count(*) from private.generation_draft_submission_versions),
+  (select count(*) from private.generation_draft_submission_versions
+    where user_id = '10000000-0000-4000-8000-000000000002'),
   0::bigint,
   'invalid drafts create no immutable snapshots'
 );
