@@ -16,24 +16,43 @@ vi.mock("@/features/auth/use-auth", () => ({
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ cancelQueries: vi.fn(), setQueryData: vi.fn() }),
-  useQuery: ({ queryKey }: { queryKey: readonly string[] }) =>
-    queryKey[0] === "planner"
-      ? { data: null, isError: false, isPending: false, refetch: vi.fn() }
-      : {
-          data: {
-            members: mocks.eligibleMemberIds.map((id, index) => ({
-              id,
-              displayName: `家族${String(index + 1)}`,
-              ageBandLabel: "大人",
-              allergyLabel: "アレルギーなし",
-              safetyLabels: [],
-              blockedReason: null,
-            })),
-            eligibleMemberIds: mocks.eligibleMemberIds,
-          },
-          isError: false,
-          isPending: false,
+  useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
+    if (queryKey[0] === "usage-today") {
+      return {
+        data: {
+          success: { consumed: 0, limit: 5, remaining: 5 },
+          attempts: { sent: 0, limit: 12, remaining: 12 },
+          shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+          globalAvailable: true,
+          retryAt: null,
         },
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+      };
+    }
+    if (queryKey[0] === "planner") {
+      return { data: null, isError: false, isPending: false, refetch: vi.fn() };
+    }
+    if (queryKey[0] === "pantry") {
+      return { data: [], isError: false, isPending: false };
+    }
+    return {
+      data: {
+        members: mocks.eligibleMemberIds.map((id, index) => ({
+          id,
+          displayName: `家族${String(index + 1)}`,
+          ageBandLabel: "大人",
+          allergyLabel: "アレルギーなし",
+          safetyLabels: [],
+          blockedReason: null,
+        })),
+        eligibleMemberIds: mocks.eligibleMemberIds,
+      },
+      isError: false,
+      isPending: false,
+    };
+  },
 }));
 vi.mock("./use-draft-autosave", () => ({
   useDraftAutosave: () => ({

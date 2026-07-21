@@ -807,6 +807,37 @@ export const generationIssueCodes = [
 ] as const;
 export type GenerationIssueCode = (typeof generationIssueCodes)[number];
 
+/** 非衝突コードの日本語。衝突5件は generationConflictCopy を import して共有する。 */
+const nonConflictIssueMessages = {
+  consent_required: "AIへ送る情報の説明を確認してください。",
+  draft_not_found: "保存した献立条件が見つかりませんでした。",
+  invalid_request: "献立条件を確認してください。",
+  generation_in_progress: "別の献立を作成中です。",
+  user_daily_limit: "今日は5回利用しました。明日0:00（日本時間）から利用できます",
+  user_attempt_limit: "本日のAI通信試行上限に達しました。明日0:00（日本時間）から利用できます",
+  user_short_window_limit: "10分間の通信試行上限に達しました。しばらくしてから再度お試しください",
+  global_daily_limit:
+    "本日分のAI受付がいっぱいです。成功回数には含まれません。明日0:00から再開します",
+  allergy_unconfirmed: "アレルギー確認が必要な項目があります。確認してからもう一度お試しください。",
+  allergen_missing: "アレルギー情報の登録が必要です。家族の設定を確認してください。",
+  unmapped_custom_allergy:
+    "登録されたアレルギー内容を確認できませんでした。家族の設定を確認してください。",
+  unsupported_diet_unconfirmed: "離乳食・飲み込み/嚥下・治療食の確認が必要です。",
+  regeneration_not_implemented: "再生成は次の計画で有効になります。",
+  unsupported_diet: "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。",
+  allergy_conflict: "アレルギー食材が、使いたい食材に含まれています",
+  expired_pantry_unconfirmed: "期限を過ぎた食材は、今回の実物確認が必要です。",
+  model_unavailable: "AIが混み合っています。成功回数には含まれません。",
+  invalid_ai_response: "献立を正しく確認できませんでした。成功回数には含まれません。",
+  generation_timeout: "作成に時間がかかりました。成功回数には含まれません。",
+  internal_error: "献立を作成できませんでした。成功回数には含まれません。",
+} as const satisfies Record<GenerationFailureCode, string>;
+
+export const issueMessages = {
+  ...nonConflictIssueMessages,
+  ...generationConflictCopy,
+} as const satisfies Record<GenerationIssueCode, string>;
+
 export const aiGenerationResponseSchema = z.discriminatedUnion("outcome", [
   z
     .object({

@@ -3,12 +3,19 @@ import {
   aiGenerationResponseSchema,
   generationConflictCodes,
   generationConflictCopy,
+  generationIssueCodes,
   generationStatusDataSchema,
+  issueMessages,
   menuResponseFormat,
   newMenuGenerationRequestSchema,
   releaseQuota,
+  usageTodayDataSchema,
   validatedMenuSchema,
 } from "./generation.js";
+import {
+  availableUsageTodayFixture,
+  shortWindowBlockedUsageTodayFixture,
+} from "../testing/factories.js";
 
 const dishId = "40000000-0000-4000-8000-000000000001";
 const stepId = "41000000-0000-4000-8000-000000000001";
@@ -105,6 +112,36 @@ describe("generationConflictCopy", () => {
       messages.every((message) => message.length > 0),
     );
   });
+});
+
+describe("generationIssueCodes and issueMessages", () => {
+  it("covers every issue code with Japanese copy", () => {
+    for (const code of generationIssueCodes) {
+      expect(issueMessages[code].length).toBeGreaterThan(0);
+    }
+  });
+
+  it("reuses generationConflictCopy entries by value for the five conflicts", () => {
+    for (const code of generationConflictCodes) {
+      expect(issueMessages[code]).toBe(generationConflictCopy[code]);
+    }
+  });
+});
+
+describe("usageTodayDataSchema", () => {
+  it.each([availableUsageTodayFixture, shortWindowBlockedUsageTodayFixture])(
+    "keeps the roadmap usage shape exact",
+    (fixture) => {
+      expect(usageTodayDataSchema.parse(fixture)).toEqual(fixture);
+      expect(Object.keys(fixture).sort()).toEqual([
+        "attempts",
+        "globalAvailable",
+        "retryAt",
+        "shortWindow",
+        "success",
+      ]);
+    },
+  );
 });
 
 describe("newMenuGenerationRequestSchema", () => {

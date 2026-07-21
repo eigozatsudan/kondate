@@ -72,6 +72,8 @@ export function PlannerForm({
   draftConflictRefetchError = false,
   onResolveDraftConflict,
   onRetryDraftConflict,
+  usageRemaining = null,
+  shortWindowRetryAt = null,
 }: {
   initialValue: PlannerDraftInput;
   members: readonly PlannerSafetyMember[];
@@ -90,6 +92,10 @@ export function PlannerForm({
   draftConflictRefetchError?: boolean;
   onResolveDraftConflict?: () => void;
   onRetryDraftConflict?: () => void;
+  /** GET /api/usage/today の成功残数。未取得時は null */
+  usageRemaining?: number | null;
+  /** 短期窓が尽きたときの再開時刻（表示用） */
+  shortWindowRetryAt?: string | null;
 }) {
   const [value, setValue] = useState(initialValue);
   const [ingredient, setIngredient] = useState("");
@@ -434,6 +440,22 @@ export function PlannerForm({
             最新の下書きを読み込む
           </button>
         </section>
+      )}
+      {usageRemaining !== null && (
+        <p role="status" className="mt-3">
+          本日あと{usageRemaining}回作成できます
+        </p>
+      )}
+      {shortWindowRetryAt !== null && (
+        <p role="status" className="mt-2">
+          10分間の通信試行上限に達しました。
+          {new Intl.DateTimeFormat("ja-JP", {
+            timeZone: "Asia/Tokyo",
+            dateStyle: "short",
+            timeStyle: "short",
+          }).format(new Date(shortWindowRetryAt))}
+          以降に再試行してください
+        </p>
       )}
       <button
         className="primary-button"

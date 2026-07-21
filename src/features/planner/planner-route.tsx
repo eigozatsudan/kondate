@@ -14,6 +14,7 @@ import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import { createPendingGeneration } from "@/features/generation/model/pending-generation";
 import { useGenerationRecovery } from "@/features/generation/hooks/use-generation-recovery";
+import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import type { PlannerSafetyMember } from "./planner-safety-member";
 import { createPlannerAttempt, type PlannerAttempt } from "./expired-pantry-checks";
 import {
@@ -204,6 +205,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     queryFn: () => listPantryItems(client, userId ?? ""),
     enabled: userId !== undefined,
   });
+  const usage = useUsageToday(userId ?? "");
   const [value, setValue] = useState<PlannerDraftInput>(emptyDraft);
   const [initialized, setInitialized] = useState(false);
   const [baselineRevision, setBaselineRevision] = useState(0);
@@ -331,6 +333,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       draftConflictRefetchError={draftConflictRefetchError}
       onResolveDraftConflict={resolveDraftConflict}
       onRetryDraftConflict={() => void loadLatestConflictDraft()}
+      usageRemaining={usage.data?.success.remaining ?? null}
+      shortWindowRetryAt={
+        usage.data !== undefined && usage.data.shortWindow.remaining === 0
+          ? usage.data.shortWindow.retryAt
+          : null
+      }
       onGenerate={async (draft, currentAttempt) => {
         if (startGeneration === undefined || currentAttempt === undefined) return false;
         const controller = new AbortController();

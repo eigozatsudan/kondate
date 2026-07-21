@@ -49,6 +49,9 @@ const TIMELINE2_ID = "25000000-0000-4000-8000-000000000002";
 const PANTRY_SELECTION_USED_ID = "26000000-0000-4000-8000-000000000001";
 const PANTRY_SELECTION_UNUSED_ID = "26000000-0000-4000-8000-000000000002";
 const CONFIRMATION_ROW_ID = "27000000-0000-4000-8000-000000000001";
+const CONFIRMATION_ROW_ID_2 = "27000000-0000-4000-8000-000000000002";
+const PANTRY_ITEM_USED_ID = "29000000-0000-4000-8000-000000000001";
+const PANTRY_ITEM_MISSING_ID = "29000000-0000-4000-8000-000000000099";
 
 // PostgREST から返る行を意図的に非ソート順（料理・取り分けは降順）で用意し、
 // マッパーがposition/idで正規化して並べ直すことを検証する。各ネスト配列も2件以上にし、
@@ -274,16 +277,44 @@ function rawMenuRow() {
         confirmed_by: null,
         allergen_catalog: { display_name: "小麦" },
       },
+      // 同一 sourceId/allergen/member でも path と snapshot が異なれば別警告
+      {
+        id: CONFIRMATION_ROW_ID_2,
+        source_type: "ingredient",
+        source_id: INGREDIENT1_ID,
+        source_path: "dishes.0.ingredients.0.quantityText",
+        source_text_snapshot: "300g",
+        allergen_id: "wheat",
+        anonymous_member_ref: "member_1",
+        dictionary_version: "jp-caa-2026-04.v1",
+        requirement_safety_fingerprint: "a".repeat(64),
+        is_current: true,
+        confirmation_status: "pending",
+        confirmed_at: null,
+        confirmed_by: null,
+        allergen_catalog: { display_name: "小麦" },
+      },
     ],
   };
 }
 
-function mockClient(result: { data: unknown; error: unknown }) {
-  const chain = {
-    eq: vi.fn(() => chain),
-    maybeSingle: vi.fn(() => Promise.resolve(result)),
+function mockClient(options: {
+  menu: { data: unknown; error: unknown };
+  pantryRows?: readonly Record<string, unknown>[];
+}) {
+  const menuChain = {
+    eq: vi.fn(() => menuChain),
+    maybeSingle: vi.fn(() => Promise.resolve(options.menu)),
   };
-  const from = vi.fn(() => ({ select: vi.fn(() => chain) }));
+  const pantryChain = {
+    in: vi.fn(() => Promise.resolve({ data: options.pantryRows ?? [], error: null })),
+  };
+  const from = vi.fn((table: string) => {
+    if (table === "pantry_items") {
+      return { select: vi.fn(() => pantryChain) };
+    }
+    return { select: vi.fn(() => menuChain) };
+  });
   return { from };
 }
 
@@ -293,7 +324,25 @@ beforeEach(() => {
 
 describe("getMenuResult", () => {
   it("所有者のRLS集約を並び替え・正規化したビューモデルへ変換する", async () => {
-    getBrowserSupabaseClientMock.mockReturnValue(mockClient({ data: rawMenuRow(), error: null }));
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({
+        menu: { data: rawMenuRow(), error: null },
+        pantryRows: [
+          {
+            id: PANTRY_ITEM_USED_ID,
+            user_id: "10000000-0000-4000-8000-000000000001",
+            name: "ごはん",
+            quantity: 200,
+            unit: "g",
+            expires_on: "2026-07-20",
+            expiration_type: "use_by",
+            opened_state: "opened",
+            created_at: "2026-07-10T00:00:00.000Z",
+            updated_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
 
     const result = await getMenuResult(MENU_ID);
 
@@ -389,7 +438,7 @@ describe("getMenuResult", () => {
     });
 
     // ラベル確認はDBの確認行id・不変の原文スナップショット・人間可読な
-    // アレルゲン名／家族名を持つ。
+    // アレルゲン名／家族名を持つ。同一 sourceId でも path/snapshot は潰さない。
     expect(result.labelConfirmations).toEqual([
       {
         confirmationId: CONFIRMATION_ROW_ID,
@@ -406,18 +455,88 @@ describe("getMenuResult", () => {
         confirmedAt: null,
         confirmedBy: null,
       },
+      {
+        confirmationId: CONFIRMATION_ROW_ID_2,
+        sourceType: "ingredient",
+        sourceId: INGREDIENT1_ID,
+        sourcePath: "dishes.0.ingredients.0.quantityText",
+        sourceText: "300g",
+        allergenName: "小麦",
+        memberLabel: "子ども",
+        dictionaryVersion: "jp-caa-2026-04.v1",
+        confirmationStatus: "pending",
+        requirementSafetyFingerprint: "a".repeat(64),
+        isCurrent: true,
+        confirmedAt: null,
+        confirmedBy: null,
+      },
+    ]);
+
+    // used 選択だけが post-cook 対象。live row の updatedAt が mutation version。
+    expect(result.pantryPostCookTargets).toEqual([
+      {
+        selectionId: PANTRY_SELECTION_USED_ID,
+        pantryItemId: PANTRY_ITEM_USED_ID,
+        pantryItemName: "ごはん",
+        plannedQuantity: 300,
+        unit: "g",
+        currentPantryRow: {
+          id: PANTRY_ITEM_USED_ID,
+          name: "ごはん",
+          quantity: 200,
+          unit: "g",
+          expiresOn: "2026-07-20",
+          expirationType: "use_by",
+          openedState: "opened",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+      },
+    ]);
+  });
+
+  it("live pantry が無い used 選択は削除済みとして閉じる", async () => {
+    const row = rawMenuRow();
+    row.generation_pantry_selections = [
+      {
+        id: PANTRY_SELECTION_USED_ID,
+        pantry_item_id: PANTRY_ITEM_MISSING_ID,
+        pantry_name_snapshot: "消えた食材",
+        priority: "must_use",
+        usage_status: "used",
+        planned_quantity: 1,
+        inventory_quantity_snapshot: 1,
+        shortage_quantity: 0,
+        unit: "個",
+        unused_reason: null,
+      },
+    ];
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.pantryPostCookTargets).toEqual([
+      {
+        selectionId: PANTRY_SELECTION_USED_ID,
+        pantryItemId: null,
+        pantryItemName: "消えた食材",
+        plannedQuantity: 1,
+        unit: "個",
+        currentPantryRow: null,
+      },
     ]);
   });
 
   it("行が見つからない場合はmenu_not_foundを送出する", async () => {
-    getBrowserSupabaseClientMock.mockReturnValue(mockClient({ data: null, error: null }));
+    getBrowserSupabaseClientMock.mockReturnValue(mockClient({ menu: { data: null, error: null } }));
 
     await expect(getMenuResult(MENU_ID)).rejects.toThrow("menu_not_found");
   });
 
   it("他ユーザーの献立などRLSにより不可視な場合もmenu_not_foundを送出する", async () => {
     getBrowserSupabaseClientMock.mockReturnValue(
-      mockClient({ data: null, error: { message: "not found", code: "PGRST116" } }),
+      mockClient({
+        menu: { data: null, error: { message: "not found", code: "PGRST116" } },
+      }),
     );
 
     await expect(getMenuResult(MENU_ID)).rejects.toThrow("menu_not_found");

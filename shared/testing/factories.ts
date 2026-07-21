@@ -1,4 +1,4 @@
-import type { GeneratedMenu, ValidatedMenu } from "../contracts/generation.js";
+import { releaseQuota, type GeneratedMenu, type ValidatedMenu } from "../contracts/generation.js";
 import type { MenuResultViewModel } from "../contracts/menu-result.js";
 import type { CurrentSafetyContext } from "../safety/context.js";
 import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.js";
@@ -7,6 +7,33 @@ import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1
 import type { GenerationContext } from "../safety/generation-context.js";
 
 export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
+
+/** 利用状況の共有 fixture（usage-today 各層で再定義しない） */
+export const availableUsageTodayFixture = {
+  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 4 },
+  attempts: { sent: 2, limit: releaseQuota.userDailyExternalCallLimit, remaining: 10 },
+  shortWindow: {
+    sent: 2,
+    limit: releaseQuota.userShortWindowExternalCallLimit,
+    remaining: 2,
+    retryAt: null,
+  },
+  globalAvailable: true,
+  retryAt: null,
+} as const;
+
+export const shortWindowBlockedUsageTodayFixture = {
+  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 4 },
+  attempts: { sent: 4, limit: releaseQuota.userDailyExternalCallLimit, remaining: 8 },
+  shortWindow: {
+    sent: 4,
+    limit: releaseQuota.userShortWindowExternalCallLimit,
+    remaining: 0,
+    retryAt: "2026-07-11T09:10:00+09:00",
+  },
+  globalAvailable: true,
+  retryAt: "2026-07-11T09:10:00+09:00",
+} as const;
 
 export function makeValidatedMenu(overrides: Partial<ValidatedMenu> = {}): ValidatedMenu {
   const dishId = "50000000-0000-4000-8000-000000000001";
@@ -371,6 +398,32 @@ export function makeMenuResultViewModel(): MenuResultViewModel {
         confirmedBy: null,
       },
     ],
-    pantryPostCookTargets: [],
+    pantryPostCookTargets: [
+      {
+        selectionId: "65000000-0000-4000-8000-000000000001",
+        pantryItemId: "66000000-0000-4000-8000-000000000001",
+        pantryItemName: "しょうゆ",
+        plannedQuantity: 15,
+        unit: "ml",
+        currentPantryRow: {
+          id: "66000000-0000-4000-8000-000000000001",
+          name: "しょうゆ",
+          quantity: 200,
+          unit: "ml",
+          expiresOn: "2026-12-01",
+          expirationType: "best_before",
+          openedState: "opened",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+      },
+      {
+        selectionId: "65000000-0000-4000-8000-000000000002",
+        pantryItemId: null,
+        pantryItemName: "消えた食材",
+        plannedQuantity: 1,
+        unit: "個",
+        currentPantryRow: null,
+      },
+    ],
   };
 }

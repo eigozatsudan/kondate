@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -15,6 +16,7 @@ import {
   savePendingGeneration,
   type PendingGeneration,
 } from "../model/pending-generation";
+import { jstDayKey, usageTodayQueryKey } from "./use-usage-today";
 
 export type GenerationRecoveryController = {
   state: GenerationClientState;
@@ -72,6 +74,7 @@ export function useGenerationRecovery(
   const isSeeded = seedForTesting !== undefined;
   const seedInitialState = seedForTesting?.state ?? { phase: "idle", effect: "none" };
   const seedInitialToken = seedForTesting?.token ?? null;
+  const queryClient = useQueryClient();
 
   const [state, dispatchState] = useReducer(generationReducer, seedInitialState);
   const dispatch = useCallback(
@@ -313,9 +316,19 @@ export function useGenerationRecovery(
       isCurrent(token)
     ) {
       clearPendingGeneration();
+      if (userId !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: usageTodayQueryKey(userId, jstDayKey()),
+        });
+      }
+    }
+    if (state.phase === "succeeded" && userId !== null) {
+      void queryClient.invalidateQueries({
+        queryKey: usageTodayQueryKey(userId, jstDayKey()),
+      });
     }
     return undefined;
-  }, [isCurrent, navigate, retryStatus, state]);
+  }, [isCurrent, navigate, queryClient, retryStatus, state, userId]);
 
   useEffect(() => {
     const recover = () => {

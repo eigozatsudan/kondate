@@ -2,9 +2,7 @@ import { expect, test } from "../fixtures/auth";
 import type { Page, Request, Route } from "@playwright/test";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
-// 切断復旧、タブ再開、結果画面の詳細表示、320px幅でのレイアウトを検証する。
-// NOTE: 結果画面（/menus/:menuId）のルート結線はTask 15で追加される。
-// ルート不在時はこれらのテストは通らない。
+// 切断復旧、タブ再開、結果画面（/menus/:menuId）の詳細表示、320px幅でのレイアウトを検証する。
 
 async function completeMinimumPlanner(page: Page) {
   // local OpenRouterの固定success fixtureと同じ家族・食事条件に揃え、

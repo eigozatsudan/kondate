@@ -78,6 +78,21 @@ vi.mock("@tanstack/react-query", () => ({
     setQueryData: setQueryDataMock,
   }),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
+    // usage-today は成功残数表示のみ。生成開始とは独立して常に loaded を返す。
+    if (queryKey[0] === "usage-today") {
+      return {
+        data: {
+          success: { consumed: 0, limit: 5, remaining: 5 },
+          attempts: { sent: 0, limit: 12, remaining: 12 },
+          shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+          globalAvailable: true,
+          retryAt: null,
+        },
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+      };
+    }
     const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
     const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;
     return queryKey[0] === "planner"

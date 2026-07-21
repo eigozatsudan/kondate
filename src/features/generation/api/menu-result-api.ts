@@ -1,8 +1,9 @@
+import { pantryItemSchema } from "@shared/contracts/pantry";
 import { validatedMenuSchema } from "@shared/contracts/generation";
-import type { MenuResultViewModel } from "@shared/contracts/menu-result";
+import type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
-export type { MenuResultViewModel } from "@shared/contracts/menu-result";
+export type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
 
 // RLSで保護された献立集約を、所有者セッションから見える正規化テーブルだけで
 // 再構成するクエリ。埋め込みヒントは Plan 2 のマイグレーションで確定した
@@ -58,8 +59,79 @@ export function buildMenuResultQuery(
     .maybeSingle();
 }
 
+/** used 選択に紐づく live pantry_items を所有者 RLS で読み、mutation version に使う。 */
+async function loadLivePantryRows(
+  client: ReturnType<typeof getBrowserSupabaseClient>,
+  pantryItemIds: readonly string[],
+): Promise<
+  Map<
+    string,
+    Pick<
+      ReturnType<typeof pantryItemSchema.parse>,
+      | "id"
+      | "name"
+      | "quantity"
+      | "unit"
+      | "expiresOn"
+      | "expirationType"
+      | "openedState"
+      | "updatedAt"
+    >
+  >
+> {
+  const map = new Map<
+    string,
+    Pick<
+      ReturnType<typeof pantryItemSchema.parse>,
+      | "id"
+      | "name"
+      | "quantity"
+      | "unit"
+      | "expiresOn"
+      | "expirationType"
+      | "openedState"
+      | "updatedAt"
+    >
+  >();
+  if (pantryItemIds.length === 0) return map;
+  const { data, error } = await client
+    .from("pantry_items")
+    .select(
+      "id, name, quantity, unit, expires_on, expiration_type, opened_state, updated_at, user_id, created_at",
+    )
+    .in("id", [...pantryItemIds]);
+  if (error !== null) return map;
+  for (const row of data) {
+    const parsed = pantryItemSchema.safeParse({
+      id: row.id,
+      userId: row.user_id,
+      name: row.name,
+      quantity: row.quantity,
+      unit: row.unit,
+      expiresOn: row.expires_on,
+      expirationType: row.expiration_type,
+      openedState: row.opened_state,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+    if (!parsed.success) continue;
+    map.set(parsed.data.id, {
+      id: parsed.data.id,
+      name: parsed.data.name,
+      quantity: parsed.data.quantity,
+      unit: parsed.data.unit,
+      expiresOn: parsed.data.expiresOn,
+      expirationType: parsed.data.expirationType,
+      openedState: parsed.data.openedState,
+      updatedAt: parsed.data.updatedAt,
+    });
+  }
+  return map;
+}
+
 export async function getMenuResult(menuId: string): Promise<MenuResultViewModel> {
-  const { data, error } = await buildMenuResultQuery(getBrowserSupabaseClient(), menuId);
+  const client = getBrowserSupabaseClient();
+  const { data, error } = await buildMenuResultQuery(client, menuId);
 
   if (error || !data) throw new Error("menu_not_found");
   const dishes = [...data.dishes]
@@ -205,17 +277,39 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
         ] as const,
     ),
   );
-  // used な pantry 選択だけを調理後操作対象にする（live row は別途呼び出し側で載せる）
-  const pantryPostCookTargets = data.generation_pantry_selections
-    .filter((item) => item.usage_status === "used")
-    .map((item) => ({
+
+  // used 選択の live pantry 行を同一所有者 RLS 境界で読み mutation version に使う
+  const usedSelections = data.generation_pantry_selections.filter(
+    (item) => item.usage_status === "used",
+  );
+  const liveIds = usedSelections
+    .map((item) => item.pantry_item_id)
+    .filter((id): id is string => id !== null);
+  const liveRows = await loadLivePantryRows(client, liveIds);
+
+  const pantryPostCookTargets: PantryPostCookTarget[] = usedSelections.map((item) => {
+    const pantryItemId = item.pantry_item_id;
+    const live = pantryItemId === null ? undefined : liveRows.get(pantryItemId);
+    // 削除済み・RLS 外は pantryItemId を null に閉じ、mutation 制御を出さない
+    if (pantryItemId === null || live === undefined) {
+      return {
+        selectionId: item.id,
+        pantryItemId: null,
+        pantryItemName: item.pantry_name_snapshot,
+        plannedQuantity: item.planned_quantity,
+        unit: item.unit,
+        currentPantryRow: null,
+      };
+    }
+    return {
       selectionId: item.id,
-      pantryItemId: item.pantry_item_id,
+      pantryItemId,
       pantryItemName: item.pantry_name_snapshot,
       plannedQuantity: item.planned_quantity,
       unit: item.unit,
-      currentPantryRow: null,
-    }));
+      currentPantryRow: live,
+    };
+  });
 
   return {
     menu,

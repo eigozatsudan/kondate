@@ -1,8 +1,22 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
-import { MenuResult } from "./menu-result";
+import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
+import { MenuResult, type MenuResultActions } from "./menu-result";
+
+function makeActions(overrides: Partial<MenuResultActions> = {}): MenuResultActions {
+  return {
+    menuId: "20000000-0000-4000-8000-000000000001",
+    userId: "10000000-0000-4000-8000-000000000001",
+    onConfirmLabel: vi.fn(() => Promise.resolve()),
+    onDeletePantry: vi.fn(() => Promise.resolve()),
+    onUpdatePantry: vi.fn(() => Promise.resolve()),
+    onCreatePantry: vi.fn(() => Promise.resolve()),
+    onRefetchResult: vi.fn(() => Promise.resolve()),
+    ...overrides,
+  };
+}
 
 it("shows the overall timeline before persistent dish tabs", () => {
   const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
@@ -170,4 +184,94 @@ it("wraps unbroken ingredient names and amounts inside a 320px material row", ()
     "text-right",
     "[overflow-wrap:anywhere]",
   );
+});
+
+it("shows the label-confirm action and calls the confirm handler", async () => {
+  const onConfirmLabel = vi.fn(() => Promise.resolve());
+  const actions = makeActions({ onConfirmLabel });
+  const result = makeMenuResultViewModel();
+  const confirmation = result.labelConfirmations[0];
+  if (confirmation === undefined) throw new Error("fixture must contain a confirmation");
+  render(<MenuResult result={result} actions={actions} />);
+  await userEvent.click(screen.getByRole("button", { name: "本人が原材料表示を確認しました" }));
+  expect(onConfirmLabel).toHaveBeenCalledWith(
+    confirmation.confirmationId,
+    confirmation.requirementSafetyFingerprint,
+  );
+});
+
+it("renders 44px post-cook controls and deleted state without mutation buttons", () => {
+  render(<MenuResult result={makeMenuResultViewModel()} actions={makeActions()} />);
+  const usedUp = screen.getByRole("button", { name: "使い切った" });
+  const stillHave = screen.getByRole("button", { name: "まだある" });
+  expect(usedUp).toHaveClass("min-h-11", "min-w-11");
+  expect(stillHave).toHaveClass("min-h-11", "min-w-11");
+  expect(screen.getByText("冷蔵庫から削除済み")).toBeVisible();
+});
+
+it("cancels destructive pantry delete without writing", async () => {
+  const onDeletePantry = vi.fn(() => Promise.resolve());
+  const actions = makeActions({ onDeletePantry });
+  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  await userEvent.click(screen.getByRole("button", { name: "使い切った" }));
+  expect(screen.getByText("この食材を冷蔵庫から削除しますか？")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "やめる" }));
+  expect(onDeletePantry).not.toHaveBeenCalled();
+  expect(screen.queryByText("この食材を冷蔵庫から削除しますか？")).toBeNull();
+});
+
+it("confirms pantry delete and supports undo recreation without aggregate reattach", async () => {
+  const onDeletePantry = vi.fn(() => Promise.resolve());
+  const onRefetchResult = vi.fn(() => Promise.resolve());
+  const onCreatePantry = vi.fn(() => Promise.resolve());
+  const actions = makeActions({ onDeletePantry, onRefetchResult, onCreatePantry });
+  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  await userEvent.click(screen.getByRole("button", { name: "使い切った" }));
+  await userEvent.click(screen.getByRole("button", { name: "削除する" }));
+  expect(onDeletePantry).toHaveBeenCalledTimes(1);
+  expect(onRefetchResult).toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "元に戻す" }));
+  expect(onCreatePantry).toHaveBeenCalledWith(
+    expect.objectContaining({ name: "しょうゆ", unit: "ml" }),
+  );
+  // 削除後は mutation 制御を再表示しない
+  expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();
+});
+
+it("saves blank remainder as null quantity/unit", async () => {
+  const onUpdatePantry = vi.fn(() => Promise.resolve());
+  const actions = makeActions({ onUpdatePantry });
+  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  await userEvent.click(screen.getByRole("button", { name: "まだある" }));
+  await userEvent.click(screen.getByRole("button", { name: "分量を保存" }));
+  expect(onUpdatePantry).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "66000000-0000-4000-8000-000000000001" }),
+    expect.objectContaining({ quantity: null, unit: null, name: "しょうゆ" }),
+  );
+});
+
+it("keeps remainder inputs on version conflict without silent retry", async () => {
+  const onUpdatePantry = vi.fn(() => Promise.reject(new PantryVersionConflictError()));
+  const onRefetchResult = vi.fn(() => Promise.resolve());
+  const actions = makeActions({ onUpdatePantry, onRefetchResult });
+  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  await userEvent.click(screen.getByRole("button", { name: "まだある" }));
+  await userEvent.type(screen.getByLabelText("残りの分量（任意）"), "50");
+  await userEvent.type(screen.getByLabelText("単位"), "ml");
+  await userEvent.click(screen.getByRole("button", { name: "分量を保存" }));
+  expect(
+    screen.getByText("冷蔵庫の内容が変わりました。最新の内容を確認してください"),
+  ).toBeVisible();
+  expect(screen.getByLabelText("残りの分量（任意）")).toHaveValue("50");
+  expect(screen.getByLabelText("単位")).toHaveValue("ml");
+  expect(onUpdatePantry).toHaveBeenCalledTimes(1);
+  expect(onRefetchResult).toHaveBeenCalled();
+});
+
+it("returns an alert when the menu has no dishes", () => {
+  const result = makeMenuResultViewModel();
+  // 空配列は validated では本来到達しないが、表示境界の防御を固定する
+  (result.menu as { dishes: unknown }).dishes = [];
+  render(<MenuResult result={result} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("献立の料理を表示できません");
 });

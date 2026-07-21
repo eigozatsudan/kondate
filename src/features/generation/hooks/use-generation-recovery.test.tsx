@@ -1,5 +1,7 @@
 import type { Session } from "@supabase/supabase-js";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
 import {
@@ -78,6 +80,13 @@ vi.mock("../model/generation-machine", async (importOriginal) => {
 
 // モック適用後にフックを import する。
 const { useGenerationRecovery } = await import("./use-generation-recovery");
+
+function recoveryWrapper({ children }: { children: ReactNode }) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
 const realPendingGeneration = await vi.importActual<typeof import("../model/pending-generation")>(
   "../model/pending-generation",
 );
@@ -317,7 +326,7 @@ function renderRecoveryAt(
           },
         }),
   };
-  return renderHook(() => useGenerationRecovery(seed));
+  return renderHook(() => useGenerationRecovery(seed), { wrapper: recoveryWrapper });
 }
 
 function renderRecoveryWithInFlight(
@@ -328,12 +337,14 @@ function renderRecoveryWithInFlight(
   realPendingGeneration.savePendingGeneration(pendingValue, storage);
   mockPost.mockReturnValueOnce(postPromise);
   const resultSink: { promise?: Promise<void> } = {};
-  const recovery = renderHook(() =>
-    useGenerationRecovery({
-      state: initialState,
-      token: seedTokenFor(initialState, pendingValue),
-      staleSubmit: { pending: pendingValue, resultSink },
-    }),
+  const recovery = renderHook(
+    () =>
+      useGenerationRecovery({
+        state: initialState,
+        token: seedTokenFor(initialState, pendingValue),
+        staleSubmit: { pending: pendingValue, resultSink },
+      }),
+    { wrapper: recoveryWrapper },
   );
   if (resultSink.promise === undefined) {
     throw new Error("stale submit was not scheduled");
@@ -363,7 +374,7 @@ describe("useGenerationRecovery", () => {
   it("recovers a saved processing key without posting again", async () => {
     savePendingGeneration(pending, storage);
     mockStatus.mockResolvedValue(processing);
-    renderHook(() => useGenerationRecovery());
+    renderHook(() => useGenerationRecovery(), { wrapper: recoveryWrapper });
     await waitFor(() => {
       expect(mockStatus).toHaveBeenCalledWith(pending.request.idempotencyKey);
     });
@@ -444,7 +455,9 @@ describe("useGenerationRecovery", () => {
     mockReadPending.mockReturnValue(oldPending);
     mockStatus.mockResolvedValue(notStarted);
     mockPost.mockResolvedValue(processing);
-    const recovery = renderHook(() => useGenerationRecovery());
+    const recovery = renderHook(() => useGenerationRecovery(), {
+      wrapper: recoveryWrapper,
+    });
     await waitFor(() => {
       expect(recovery.result.current.state.phase).toBe("processing");
     });
@@ -471,7 +484,9 @@ describe("useGenerationRecovery", () => {
     mockReadPending.mockReturnValue(oldPending);
     mockStatus.mockResolvedValue(notStarted);
     mockPost.mockResolvedValue(processing);
-    const recovery = renderHook(() => useGenerationRecovery());
+    const recovery = renderHook(() => useGenerationRecovery(), {
+      wrapper: recoveryWrapper,
+    });
     await act(() =>
       Promise.all([recovery.result.current.retryStatus(), recovery.result.current.retryStatus()]),
     );
