@@ -1,19 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  color: #332c27;
-  background: #f7f1e8;
+  color: #1e293b;
+  background: #f8fafc;
   font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --surface: #fffaf3;
-  --text: #332c27;
-  --muted: #6f6258;
-  --primary: #b85f44;
-  --primary-hover: #97462f;
-  --pantry: #5f745f;
-  --danger: #a33b35;
-  --border: #d9cabc;
+  --surface: #ffffff;
+  --text: #1e293b;
+  --muted: #64748b;
+  --primary: #f97316;
+  --primary-hover: #ea580c;
+  --primary-ink: #1e293b;
+  --primary-strong: #c2410c;
+  --pantry: #0f766e;
+  --danger: #dc2626;
+  --border: #e2e8f0;
 }
 
 .emergency-menu-page,
@@ -98,7 +100,9 @@ textarea:focus-visible {
   border-radius: 18px;
   background: var(--surface);
   padding: 20px;
-  box-shadow: 0 8px 24px rgb(82 60 43 / 8%);
+  box-shadow:
+    0 1px 3px rgb(15 23 42 / 8%),
+    0 8px 24px rgb(15 23 42 / 6%);
 }
 
 .stack {
@@ -107,7 +111,7 @@ textarea:focus-visible {
 }
 
 .eyebrow {
-  color: var(--primary);
+  color: var(--primary-strong);
   font-weight: 700;
 }
 
@@ -126,7 +130,7 @@ textarea:focus-visible {
 
 .primary-button {
   border: 1px solid var(--primary);
-  color: #fff;
+  color: var(--primary-ink);
   background: var(--primary);
 }
 
@@ -136,13 +140,13 @@ textarea:focus-visible {
 
 .secondary-button {
   border: 1px solid var(--primary);
-  color: var(--primary-hover);
+  color: var(--primary-strong);
   background: transparent;
 }
 
 .text-button {
   border: 0;
-  color: var(--primary-hover);
+  color: var(--primary-strong);
   background: transparent;
   text-decoration: underline;
 }
@@ -225,7 +229,7 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   border-top: 1px solid var(--border);
-  background: rgb(255 250 243 / 96%);
+  background: rgb(255 255 255 / 96%);
   backdrop-filter: blur(8px);
 }
 
@@ -244,7 +248,7 @@ textarea:focus-visible {
 
 .nav-item-active {
   border-top-color: var(--primary);
-  color: var(--primary-hover);
+  color: var(--primary-strong);
 }
 
 @media (min-width: 720px) {
