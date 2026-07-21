@@ -1,6 +1,5 @@
 import { expect, test } from "../fixtures/auth";
 import type { Page, Route } from "@playwright/test";
-import { randomUUID } from "node:crypto";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
 // 切断復旧、タブ再開、結果画面の詳細表示、320px幅でのレイアウトを検証する。
@@ -104,26 +103,27 @@ test("recovers a completed result after a tab is closed before its POST response
   context,
 }) => {
   await completeMinimumPlanner(page);
-  const origin = new URL(page.url()).origin;
-  const arrivalToken = randomUUID();
+  await page.route("**/api/generations/*/status", async (route) => {
+    // handler完了後もstatus応答を切断し、元tabが結果を回収する前に
+    // POST応答喪失時のoffline表示を同期点として観測できるようにする。
+    await route.abort("connectionreset");
+  });
   await page.route("**/api/generations/menu", async (route) => {
     await route.continue({
       headers: {
         ...route.request().headers(),
-        "X-Kondate-E2E-Arrival-Token": arrivalToken,
+        "X-Kondate-E2E-Drop-Response": "after-handler",
       },
     });
   });
   await page.getByRole("button", { name: "献立を作る" }).click();
-  const arrivalUrl = `${origin}/api/__kondate_e2e__/request-arrivals/${encodeURIComponent(arrivalToken)}`;
-  // handler呼出し前に記録される一度限りのtokenを観測し、POSTがserverへ到達した
-  // 直後にtabを閉じる。handler完了やclient responseには同期しない。
-  await expect
-    .poll(async () => (await context.request.get(arrivalUrl)).status(), { timeout: 10_000 })
-    .toBe(204);
+  // after-handlerでgenerationの永続化を完了し、POSTとstatusの両応答喪失を
+  // clientが認識した時点を条件同期にする。固定時間待ちは使わない。
+  await expect(page.getByText("通信を確認しています")).toBeVisible({ timeout: 10_000 });
   await page.close();
   const reopened = await context.newPage();
   await reopened.goto("/generation");
+  await expect(reopened).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
   await expect(reopened.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
