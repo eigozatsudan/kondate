@@ -336,7 +336,7 @@ describe("fixed OpenRouter adversarial outputs", () => {
 describe("adversarial scenarios through runGeneration with the real local HTTP mock", () => {
   const requestId = "90000000-0000-4000-8000-000000000001";
   const key = "91000000-0000-4000-8000-000000000001";
-  const command: GenerationCommand = {
+  const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
     kind: "new_menu",
     request: {
       idempotencyKey: key,
@@ -471,7 +471,18 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
       user: { userId: "93000000-0000-4000-8000-000000000001", accessToken: "token" },
       repository,
       models: [...httpModels],
-      loadExecutionContext: vi.fn(() => Promise.resolve({ generationContext: context })),
+      loadExecutionContext: vi.fn(() =>
+        Promise.resolve({
+          kind: "new_menu" as const,
+          command,
+          requestId: "91000000-0000-4000-8000-000000000001",
+          generationContext: context,
+          expectedSafetyFingerprint: "sha256:adversarial-fingerprint",
+          startedAtMonotonicMs: 0,
+          deadlineAtMonotonicMs: 50_000,
+          regeneration: null,
+        }),
+      ),
       validatePreflight: () => ({ ok: true }),
       buildMessages: () => [{ role: "user", content: "prompt" }],
       callOpenRouter: sendMenuGeneration,

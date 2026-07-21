@@ -18,6 +18,7 @@ import {
   createGenerationDeps,
   runGeneration,
   type GenerationDependencies,
+  type GenerationExecutionContext,
 } from "./_shared/generation-service.js";
 import { HttpError } from "./_shared/http.js";
 import handler from "./generate-menu.js";
@@ -312,9 +313,27 @@ describe("POST /api/generations/menu", () => {
       }),
       status: vi.fn(() => Promise.resolve(current)),
     };
-    const loadExecutionContext = vi.fn(() =>
-      Promise.resolve({ generationContext: makeGenerationContext() }),
-    );
+    const generationContext = makeGenerationContext();
+    const executionContext: Extract<GenerationExecutionContext, { kind: "new_menu" }> = {
+      kind: "new_menu",
+      command: {
+        kind: "new_menu",
+        request: {
+          idempotencyKey: "82000000-0000-4000-8000-000000000001",
+          draftId: "84000000-0000-4000-8000-000000000001",
+          draftRevision: 1,
+          privacyNoticeVersion: "2026-07-11.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext,
+      expectedSafetyFingerprint: "sha256:test-fingerprint",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: null,
+    };
+    const loadExecutionContext = vi.fn(() => Promise.resolve(executionContext));
     const validatePreflight = vi.fn(() => ({ ok: true as const }));
     const buildMessages = vi.fn(() => [{ role: "user" as const, content: "prompt" }]);
     const callOpenRouter = vi.fn(() => Promise.resolve({ output: scenarios.success, modelId }));

@@ -7,6 +7,8 @@ import {
   type GenerationFailureCode,
   type GenerationStatusData,
 } from "../../../shared/contracts/generation.js";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import {
   makeGeneratedMenu,
@@ -19,6 +21,7 @@ import { HttpError } from "./http.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
 import {
   ATTEMPT_TIMEOUT_MS,
+  createGenerationDeps,
   FINALIZE_RESERVE_MS,
   generationResponse,
   projectProviderConflicts,
@@ -26,7 +29,18 @@ import {
   runGeneration,
   toGenerationStatus,
   type GenerationDependencies,
+  type GenerationExecutionContext,
 } from "./generation-service.js";
+
+// createGenerationDeps の契約テスト用。runGeneration 経路は makeDeps で差し替えるため
+// これらのモックは createGenerationDeps を直接呼ぶ describe でのみ設定する。
+const { getServerEnvMock, loadGenerationContextMock, createGenerationRepositoryMock } = vi.hoisted(
+  () => ({
+    getServerEnvMock: vi.fn(),
+    loadGenerationContextMock: vi.fn(),
+    createGenerationRepositoryMock: vi.fn(),
+  }),
+);
 
 vi.mock("../../../shared/safety/validate-generated-menu.js", () => ({
   validateGeneratedMenu: vi.fn(),
@@ -34,12 +48,24 @@ vi.mock("../../../shared/safety/validate-generated-menu.js", () => ({
 vi.mock("./generation-materializer.js", () => ({
   materializeAiGeneratedMenu: vi.fn(),
 }));
+vi.mock("./env.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./env.js")>();
+  return { ...actual, getServerEnv: getServerEnvMock };
+});
+vi.mock("./generation-context.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./generation-context.js")>();
+  return { ...actual, loadGenerationContext: loadGenerationContextMock };
+});
+vi.mock("./generation-repository.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./generation-repository.js")>();
+  return { ...actual, createGenerationRepository: createGenerationRepositoryMock };
+});
 
 const requestId = "81000000-0000-4000-8000-000000000001";
 const key = "82000000-0000-4000-8000-000000000001";
 const menuId = "83000000-0000-4000-8000-000000000001";
 const models = ["mock/primary:free", "mock/repair:free"] as const;
-const command: GenerationCommand = {
+const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
   kind: "new_menu",
   request: {
     idempotencyKey: key,
@@ -49,6 +75,32 @@ const command: GenerationCommand = {
     expiredPantryConfirmations: [],
   },
 };
+
+/** テストダブルが満たす new_menu 実行コンテキスト（Plan 3 Task 15 契約） */
+function makeNewMenuExecutionContext(
+  overrides: {
+    generationContext?: GenerationContext;
+    command?: Extract<GenerationCommand, { kind: "new_menu" }>;
+    requestId?: string;
+    expectedSafetyFingerprint?: string;
+    startedAtMonotonicMs?: number;
+    deadlineAtMonotonicMs?: number;
+  } = {},
+): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
+  const generationContext = overrides.generationContext ?? makeGenerationContext();
+  return {
+    kind: "new_menu",
+    command: overrides.command ?? command,
+    requestId: overrides.requestId ?? requestId,
+    generationContext,
+    expectedSafetyFingerprint:
+      overrides.expectedSafetyFingerprint ??
+      createCurrentSafetyFingerprint(generationContext.safety),
+    startedAtMonotonicMs: overrides.startedAtMonotonicMs ?? 0,
+    deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 50_000,
+    regeneration: null,
+  };
+}
 
 function record(
   status: "processing" | "failed" | "constraint_conflict" | "succeeded",
@@ -119,7 +171,9 @@ function makeDeps(
     user: { userId: "85000000-0000-4000-8000-000000000001", accessToken: "token" },
     repository: overrides.repository ?? makeRepository(),
     models,
-    loadExecutionContext: vi.fn(() => Promise.resolve({ generationContext: context })),
+    loadExecutionContext: vi.fn(() =>
+      Promise.resolve(makeNewMenuExecutionContext({ generationContext: context })),
+    ),
     validatePreflight,
     buildMessages,
     callOpenRouter: vi.fn(() => Promise.resolve({ output: scenarios.success, modelId: models[0] })),
@@ -502,7 +556,7 @@ describe("runGeneration", () => {
       },
     });
     const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>(() =>
-      Promise.resolve({ generationContext: context }),
+      Promise.resolve(makeNewMenuExecutionContext({ generationContext: context })),
     );
     const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
       Promise.resolve({
@@ -801,7 +855,7 @@ describe("runGeneration", () => {
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
             nowMs = 50_000 - (REQUIRED_SEND_BUDGET_MS - 1);
-            return Promise.resolve({ generationContext: makeGenerationContext() });
+            return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
         command,
@@ -831,7 +885,7 @@ describe("runGeneration", () => {
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
             nowMs = 50_000 - REQUIRED_SEND_BUDGET_MS;
-            return Promise.resolve({ generationContext: makeGenerationContext() });
+            return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
         command,
@@ -1113,6 +1167,95 @@ describe("runGeneration", () => {
     expect(mockRepository.reserveRepair).toHaveBeenCalledTimes(1);
     expect(mockRepository.markSent).toHaveBeenCalledTimes(2);
     expect(mockRepository.succeed).not.toHaveBeenCalled();
+  });
+});
+
+describe("createGenerationDeps loadExecutionContext contract", () => {
+  const user = {
+    userId: "85000000-0000-4000-8000-000000000001",
+    accessToken: "token",
+  };
+  const timing = { requestStartedAtMonotonicMs: 1_234 };
+  const deadlineAtMonotonicMs = 51_234;
+  const loadRequestId = "87000000-0000-4000-8000-000000000001";
+
+  beforeEach(() => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        models: [...models],
+        timeoutMs: 20_000,
+        functionTotalBudgetMs: 50_000,
+      },
+    });
+    createGenerationRepositoryMock.mockReturnValue({
+      reserve: vi.fn(),
+      markSent: vi.fn(),
+      reserveRepair: vi.fn(),
+      recordModel: vi.fn(),
+      fail: vi.fn(),
+      failBeforeSend: vi.fn(),
+      conflict: vi.fn(),
+      succeed: vi.fn(),
+      status: vi.fn(),
+    });
+    loadGenerationContextMock.mockReset();
+  });
+
+  it("returns a full new_menu GenerationExecutionContext with regeneration null", async () => {
+    const generationContext = makeGenerationContext();
+    loadGenerationContextMock.mockResolvedValue(generationContext);
+
+    const deps = createGenerationDeps(user, timing);
+    const execution = await deps.loadExecutionContext(
+      command,
+      loadRequestId,
+      deadlineAtMonotonicMs,
+    );
+
+    expect(execution).toEqual({
+      kind: "new_menu",
+      command,
+      requestId: loadRequestId,
+      generationContext,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(generationContext.safety),
+      startedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+      deadlineAtMonotonicMs,
+      regeneration: null,
+    });
+    expect(loadGenerationContextMock).toHaveBeenCalledWith(user, loadRequestId, command.request);
+  });
+
+  it.each([
+    {
+      kind: "regenerate_menu" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: "88000000-0000-4000-8000-000000000001",
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    },
+    {
+      kind: "regenerate_dish" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: "88000000-0000-4000-8000-000000000001",
+        dishId: "89000000-0000-4000-8000-000000000001",
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    },
+  ])("rejects $kind with regeneration_not_implemented before loading context", async (regen) => {
+    const deps = createGenerationDeps(user, timing);
+    await expect(
+      deps.loadExecutionContext(regen, loadRequestId, deadlineAtMonotonicMs),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "regeneration_not_implemented",
+    });
+    expect(loadGenerationContextMock).not.toHaveBeenCalled();
   });
 });
 

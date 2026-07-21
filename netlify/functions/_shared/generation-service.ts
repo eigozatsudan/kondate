@@ -10,6 +10,7 @@ import {
   type GenerationFailureCode,
   type GenerationStatusData,
   type MenuValidationResult,
+  type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
@@ -48,6 +49,59 @@ export const FINALIZE_RESERVE_MS = 2_000;
 /** markSent 前に必要な最小残り予算 */
 export const REQUIRED_SEND_BUDGET_MS = ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS;
 
+/** 全 kind 共通の実行コンテキスト基底（Plan 4 が再生成経路で再利用） */
+type ExecutionBase = {
+  requestId: string;
+  generationContext: GenerationContext;
+  expectedSafetyFingerprint: string;
+  startedAtMonotonicMs: number;
+  deadlineAtMonotonicMs: number;
+};
+
+/**
+ * 再生成時に loadExecutionContext が埋めるペイロード。
+ * Plan 4 所有の prompt/materialization データは artifacts に閉じ、
+ * スキーマガードなしでは信頼しない。
+ */
+export type RegenerationExecutionPayload = {
+  sourceMenuId: string;
+  sourceMenu: ValidatedMenu;
+  derivationGroupId: string;
+  replaceDishId: string | null;
+  retainedDishIds: readonly string[];
+  excludedDishIds: readonly string[];
+  sourceSafetyFingerprint: string;
+  sourcePreferenceSnapshot: Readonly<Record<string, unknown>>;
+  existingDerivationMenus: readonly {
+    menuId: string;
+    menuSignature: string;
+    dishSignatures: readonly string[];
+  }[];
+  /** Plan 4 所有の prompt/materialization データ。スキーマガードなしでは信頼しない。 */
+  artifacts: unknown;
+};
+
+/**
+ * オーケストレーション所有の実行コンテキスト。
+ * Plan 4 はここから import し、同名型を再宣言してはならない。
+ */
+export type GenerationExecutionContext =
+  | (ExecutionBase & {
+      kind: "new_menu";
+      command: Extract<GenerationCommand, { kind: "new_menu" }>;
+      regeneration: null;
+    })
+  | (ExecutionBase & {
+      kind: "regenerate_menu";
+      command: Extract<GenerationCommand, { kind: "regenerate_menu" }>;
+      regeneration: RegenerationExecutionPayload & { replaceDishId: null };
+    })
+  | (ExecutionBase & {
+      kind: "regenerate_dish";
+      command: Extract<GenerationCommand, { kind: "regenerate_dish" }>;
+      regeneration: RegenerationExecutionPayload & { replaceDishId: string };
+    });
+
 export type GenerationDependencies = {
   user: AuthenticatedUser;
   repository: Omit<GenerationRepository, "userClient">;
@@ -56,7 +110,7 @@ export type GenerationDependencies = {
     command: GenerationCommand,
     requestId: string,
     deadlineAtMonotonicMs: number,
-  ): Promise<{ generationContext: GenerationContext }>;
+  ): Promise<GenerationExecutionContext>;
   validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
   buildMessages(context: GenerationContext): readonly OpenRouterMessage[];
   callOpenRouter(
@@ -317,7 +371,7 @@ export function createGenerationDeps(
     user,
     repository: createGenerationRepository(user),
     models: env.openRouter.models,
-    loadExecutionContext: async (command, requestId) => {
+    loadExecutionContext: async (command, requestId, deadlineAtMonotonicMs) => {
       if (command.kind !== "new_menu") {
         throw new HttpError(
           422,
@@ -325,8 +379,16 @@ export function createGenerationDeps(
           "再生成は次の計画で有効になります。",
         );
       }
+      const generationContext = await loadGenerationContext(user, requestId, command.request);
       return {
-        generationContext: await loadGenerationContext(user, requestId, command.request),
+        kind: "new_menu",
+        command,
+        requestId,
+        generationContext,
+        expectedSafetyFingerprint: createCurrentSafetyFingerprint(generationContext.safety),
+        startedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+        deadlineAtMonotonicMs,
+        regeneration: null,
       };
     },
     validatePreflight: validateGenerationPreflight,
