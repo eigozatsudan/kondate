@@ -145,4 +145,84 @@ describe("createRegenerationLoaderDeps", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_request", status: 422 });
   });
+
+  it("fails closed when pantry re-query errors instead of reusing base pantryItems", async () => {
+    const pantryItemId = "66000000-0000-4000-8000-000000000001";
+    const stored = makeStored();
+    stored.preferenceSnapshot = {
+      submission: {
+        mealType: "breakfast",
+        mainIngredients: ["ごはん"],
+        cuisineGenre: "japanese",
+        targetMemberIds: [memberId],
+        timeLimitMinutes: 15,
+        budgetPreference: "standard",
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [{ pantryItemId, priority: "prefer_use" as const }],
+      },
+      memberPreferences: [],
+    };
+    const currentSafety = makeCurrentSafetyContext();
+    vi.mocked(buildStoredGenerationContext).mockResolvedValue({
+      submission: {
+        mealType: "breakfast",
+        mainIngredients: ["ごはん"],
+        cuisineGenre: "japanese",
+        targetMemberIds: [memberId],
+        timeLimitMinutes: 15,
+        budgetPreference: "standard",
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [{ pantryItemId, priority: "prefer_use" }],
+      },
+      safety: currentSafety,
+      pantryItems: [
+        {
+          id: pantryItemId,
+          userId: user.userId,
+          name: "古い在庫",
+          quantity: 1,
+          unit: "個",
+          expiresOn: "2020-01-01",
+          expirationType: "best_before",
+          openedState: "unopened",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      memberPreferences: [],
+      targetMembers: [
+        {
+          householdMemberId: memberId,
+          anonymousRef: "member_1",
+          displayNameSnapshot: "家族1",
+        },
+      ],
+      expiredPantryChecks: [],
+      idempotencyKey: "82000000-0000-4000-8000-000000000003",
+      preferenceSnapshot: {},
+      safetySnapshot: {},
+    });
+
+    const from = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } }),
+        }),
+      }),
+    });
+    vi.mocked(createUserScopedSupabase).mockReturnValue({ from } as never);
+
+    const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
+    await expect(
+      deps.buildCurrentContext({
+        user,
+        stored,
+        idempotencyKey: "82000000-0000-4000-8000-000000000003",
+        expiredPantryConfirmations: [],
+        now: new Date("2026-07-11T00:00:00.000Z"),
+      }),
+    ).rejects.toMatchObject({ code: "internal_error", status: 503 });
+  });
 });

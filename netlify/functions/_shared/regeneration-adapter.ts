@@ -127,7 +127,9 @@ export function createRegenerationLoaderDeps(
       throw new HttpError(422, "invalid_request", "献立条件を確認してください");
     }
 
-    // pantry は submission の選択を正に再読込（base は usage 由来で不足し得る）
+    // pantry は submission の選択を正に再読込（base は usage 由来で不足し得る）。
+    // 問い合わせ失敗時に base を黙って残すと、欠落した期限切れ食材が
+    // expired 判定から抜け fail-open になるため、必ず fail-closed する。
     const pantryItemIds = submission.pantrySelections.map((item) => item.pantryItemId);
     let pantryItems = base.pantryItems;
     if (pantryItemIds.length > 0) {
@@ -138,31 +140,32 @@ export function createRegenerationLoaderDeps(
         )
         .eq("user_id", input.user.userId)
         .in("id", pantryItemIds);
-      if (error === null) {
-        pantryItems = data.map((row) => ({
-          id: row.id,
-          userId: row.user_id,
-          name: row.name,
-          quantity: row.quantity,
-          unit: row.unit,
-          expiresOn: row.expires_on,
-          expirationType:
-            row.expiration_type === "use_by" ||
-            row.expiration_type === "best_before" ||
-            row.expiration_type === "other" ||
-            row.expiration_type === "unknown"
-              ? row.expiration_type
-              : null,
-          openedState:
-            row.opened_state === "unopened" ||
-            row.opened_state === "opened" ||
-            row.opened_state === "unknown"
-              ? row.opened_state
-              : null,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        }));
+      if (error !== null || data === null) {
+        throw new HttpError(503, "internal_error", "冷蔵庫の食材を確認できませんでした");
       }
+      pantryItems = data.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        name: row.name,
+        quantity: row.quantity,
+        unit: row.unit,
+        expiresOn: row.expires_on,
+        expirationType:
+          row.expiration_type === "use_by" ||
+          row.expiration_type === "best_before" ||
+          row.expiration_type === "other" ||
+          row.expiration_type === "unknown"
+            ? row.expiration_type
+            : null,
+        openedState:
+          row.opened_state === "unopened" ||
+          row.opened_state === "opened" ||
+          row.opened_state === "unknown"
+            ? row.opened_state
+            : null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
     }
 
     // 期限切れ確認はコマンドの新規収集分のみ（古い確認を持ち込まない）

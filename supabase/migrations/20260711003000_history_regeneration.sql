@@ -123,8 +123,10 @@ begin
   return;
 end;
 $$;
+-- Plan 3 と同じ四ロール revoke。SECURITY DEFINER + 生 p_user_id なので
+-- service_role を含む明示 revoke を保つ（CREATE OR REPLACE でも契約を固定する）。
 revoke all on function private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)
-  from public,anon,authenticated;
+  from public,anon,authenticated,service_role;
 
 create or replace function public.accept_menu_version(p_menu_id uuid)
 returns void

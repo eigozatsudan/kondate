@@ -286,23 +286,22 @@ export function buildDishRegenerationPrompt(input: {
     };
   });
 
+  // timeline / adaptation を id→ref に合流させる。label の sourceId は
+  // dish/ingredient/step に限らず timeline・adaptation 行の UUID も取り得る。
+  for (const [ref, id] of mutableRefMap) {
+    if (!idToRef.has(id)) {
+      idToRef.set(id, ref);
+    }
+  }
+
   let labelIndex = 0;
   const sourceLabelConfirmations = source.menu.labelConfirmations.map((label) => {
     labelIndex += 1;
     const labelRef = `label_${String(labelIndex)}`;
     // ラベル identity は sourceId をキーに登録（DB 行 id が無い generated 形）
     mutableRefMap.set(labelRef, label.sourceId);
-    const sourceRef =
-      idToRef.get(label.sourceId) ??
-      // sourceType に応じた fallback: sourceId が dish/ingredient/step の UUID
-      null;
-    if (sourceRef === null) {
-      throw new Error("label_source_ref_unresolved");
-    }
-    // recipe_step → step 名前空間へ正規化（AI スキーマの label source は step_）
-    const normalizedSourceType =
-      label.sourceType === "recipe_step" ? ("ingredient" as const) : label.sourceType;
     // local-ref スキーマは dish/ingredient/step/timeline/adaptation のみ
+    // （recipe_step は step_ 名前空間の UUID を sourceId に持つ）
     const allowedSourceTypes = new Set([
       "dish",
       "ingredient",
@@ -311,10 +310,25 @@ export function buildDishRegenerationPrompt(input: {
       "timeline",
     ]);
     if (!allowedSourceTypes.has(label.sourceType)) {
-      throw new Error("label_source_type_unsupported");
+      throw new HttpError(422, "invalid_request", "献立の表示を確認できませんでした");
     }
-    // AI プロンプト側 sourceType は generated 形の enum を維持
-    void normalizedSourceType;
+    const sourceRef = idToRef.get(label.sourceId);
+    if (sourceRef === undefined) {
+      // 未登録 source は生 Error ではなく閉じた 422 に落とす（500 を出さない）
+      throw new HttpError(422, "invalid_request", "献立の表示を確認できませんでした");
+    }
+    // sourceType に応じた ref 種別を検証（timeline ラベルが dish_ を指す等を拒否）
+    const expectedKindPrefix: Record<string, string> = {
+      dish: "dish_",
+      ingredient: "ingredient_",
+      recipe_step: "step_",
+      timeline: "timeline_",
+      adaptation: "adaptation_",
+    };
+    const prefix = expectedKindPrefix[label.sourceType];
+    if (prefix === undefined || !sourceRef.startsWith(prefix)) {
+      throw new HttpError(422, "invalid_request", "献立の表示を確認できませんでした");
+    }
     return {
       labelRef,
       sourceType: label.sourceType,
@@ -327,9 +341,6 @@ export function buildDishRegenerationPrompt(input: {
       confirmationStatus: "pending" as const,
     };
   });
-
-  // mutableRefMap は prompt 構築時の完全レジストリ。retained.refMap は dish 系のみを保持。
-  void mutableRefMap;
 
   const excludedDishSignatures = source.menu.dishes.map((dish) =>
     createDishSignature(dishSignatureInput(dish)),

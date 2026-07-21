@@ -239,6 +239,35 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(result.issues.some((issue) => /allergen|allergy/i.test(issue.code))).toBe(false);
   });
 
+  it("fails closed with current_target_member_required when no surviving targets remain", async () => {
+    const stored = makeStored({
+      targetMemberIds: [],
+      targetMembers: [
+        {
+          householdMemberId: null,
+          anonymousMemberRef: "member_1",
+          displayNameSnapshot: "削除済みの家族",
+          displayName: "削除済みの家族",
+        },
+      ],
+    });
+    await expect(
+      validateStoredMenuCurrentSafety({
+        ownerClient: ownerClientWith({
+          pantry_items: { data: [], error: null },
+          household_members: { data: [], error: null },
+        }) as never,
+        admin: {} as never,
+        stored,
+        userId: USER_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "current_target_member_required",
+      status: 422,
+    });
+    expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
+  });
+
   it("keeps historical confirmed provenance on the stored aggregate and does not use it as current provider evidence", async () => {
     const stored = makeStored();
     const historical = structuredClone(stored.menu.labelConfirmations);

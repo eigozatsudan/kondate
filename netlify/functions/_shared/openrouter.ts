@@ -223,14 +223,12 @@ export async function sendMenuGeneration(
       };
     }
 
-    // full_menu: 置換ボディを拒否
-    const dishProbe = dishRegenerationAiOutputSchema.safeParse(decoded);
+    // full_menu: aiGenerationResponseSchema で閉じる。
+    // 置換形が同時に成立する曖昧ボディも full_menu として受理する（mode 優先）。
     const output = aiGenerationResponseSchema.safeParse(decoded);
     if (!output.success) {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
-    // 置換形が同時に成立する曖昧ボディは拒否しない（full_menu スキーマ優先）
-    void dishProbe;
     return { mode: "full_menu", output: output.data, modelId: envelope.data.model };
   } finally {
     clearTimeout(timeout);

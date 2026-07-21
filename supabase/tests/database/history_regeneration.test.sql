@@ -1,5 +1,5 @@
 begin;
-select plan(39);
+select plan(43);
 
 -- この pgTAP 1.3 は has_column(schema, table, column) の3引数形がなく、
 -- schema 付きは description 付きの4引数形だけが使える。
@@ -181,6 +181,35 @@ select ok(exists(
   select 1 from public.menu_safety_actions
   where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
 ), 'delete fixture contains an ingredient/step-bound safety action');
+
+-- accept_menu_version: 同一 derivation_group 内で is_selected / selected_at を排他切替する
+-- fixture の初期選択状態は superuser で用意し、RPC 呼び出しだけ authenticated で行う
+update public.menus
+set is_selected = true, selected_at = now()
+where id = 'b1000000-0000-4000-8000-000000000001';
+update public.menus
+set is_selected = false, selected_at = null
+where id = 'b1000000-0000-4000-8000-000000000002';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a1000000-0000-4000-8000-000000000001', true);
+select lives_ok(
+  $$select public.accept_menu_version('b1000000-0000-4000-8000-000000000002'::uuid)$$,
+  'owner can accept a child version'
+);
+reset role;
+select is(
+  (select is_selected from public.menus where id = 'b1000000-0000-4000-8000-000000000002'::uuid),
+  true, 'accepted menu is selected'
+);
+select ok(
+  (select selected_at is not null from public.menus
+    where id = 'b1000000-0000-4000-8000-000000000002'::uuid),
+  'accepted menu has selected_at'
+);
+select is(
+  (select is_selected from public.menus where id = 'b1000000-0000-4000-8000-000000000001'::uuid),
+  false, 'sibling version is unselected after accept'
+);
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a1000000-0000-4000-8000-000000000001', true);

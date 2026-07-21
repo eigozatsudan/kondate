@@ -9,6 +9,7 @@ import { HttpError } from "./http.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import type { StoredMenuAggregate } from "./stored-menu-loader.js";
 import {
+  buildDishRegenerationPrompt,
   isRegenerationDuplicate,
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
@@ -843,5 +844,88 @@ describe("materializeDishRegenerationCandidate", () => {
         (row) => !("confirmedAt" in row) && !("confirmedBy" in row),
       ),
     ).toBe(true);
+  });
+});
+
+describe("buildDishRegenerationPrompt label source refs", () => {
+  it("resolves timeline and adaptation sourced labels without throwing 500", () => {
+    const base = makeValidatedMenu();
+    const firstDish = base.dishes[0];
+    const firstStep = firstDish?.steps[0];
+    const timelineId = base.timeline[0]?.id;
+    if (firstDish === undefined || firstStep === undefined || timelineId === undefined) {
+      throw new Error("fixture missing dish/step/timeline");
+    }
+    const adaptationId = "57000000-0000-4000-8000-000000000099";
+    const menu = makeValidatedMenu({
+      adaptations: [
+        {
+          id: adaptationId,
+          dishId: firstDish.id,
+          anonymousMemberRef: "member_1",
+          portionText: "通常量",
+          branchBeforeRecipeStepId: firstStep.id,
+          additionalCutting: null,
+          additionalHeating: null,
+          additionalSeasoning: null,
+          servingCheck: "確認",
+          safetyTags: [],
+          safetyActions: [],
+        },
+      ],
+      labelConfirmations: [
+        {
+          sourceType: "timeline",
+          sourceId: timelineId,
+          sourcePath: "timeline.0.instruction",
+          sourceText: base.timeline[0]?.instruction ?? "工程",
+          allergenId: "wheat",
+          anonymousMemberRef: "member_1",
+          dictionaryVersion: "jp-caa-2026-04.v1",
+          confirmationStatus: "pending",
+          confirmedAt: null,
+          confirmedBy: null,
+        },
+        {
+          sourceType: "adaptation",
+          sourceId: adaptationId,
+          sourcePath: "adaptations.0.portionText",
+          sourceText: "通常量",
+          allergenId: "egg",
+          anonymousMemberRef: "member_1",
+          dictionaryVersion: "jp-caa-2026-04.v1",
+          confirmationStatus: "pending",
+          confirmedAt: null,
+          confirmedBy: null,
+        },
+      ],
+    });
+    const stored = makeStoredMenu({ menu });
+    const retained = toRetainedDishPrompt(menu, firstDish.id);
+    const prompt = buildDishRegenerationPrompt({
+      command: {
+        kind: "regenerate_dish",
+        request: {
+          sourceMenuId: menu.menuId,
+          dishId: firstDish.id,
+          idempotencyKey: "82000000-0000-4000-8000-000000000099",
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          expiredPantryConfirmations: [],
+        },
+      },
+      source: stored,
+      generationContext: makeGenerationContext(),
+      retained,
+    });
+
+    const timelineLabel = prompt.sourceLabelConfirmations.find(
+      (row) => row.sourceType === "timeline",
+    );
+    const adaptationLabel = prompt.sourceLabelConfirmations.find(
+      (row) => row.sourceType === "adaptation",
+    );
+    expect(timelineLabel?.sourceRef).toMatch(/^timeline_[1-9][0-9]*$/u);
+    expect(adaptationLabel?.sourceRef).toMatch(/^adaptation_[1-9][0-9]*$/u);
   });
 });

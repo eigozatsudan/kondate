@@ -311,6 +311,12 @@ export async function validateStoredMenuCurrentSafety(input: {
   changedDetails: readonly ChangedDetail[];
 }> {
   const { ownerClient, admin, stored, userId } = input;
+  // buildStoredGenerationContext と同じ空ターゲットガード。
+  // 生存メンバーが 0 のとき allergen ループは 0 件になり、未ガードだと
+  // issues=[] のまま ok:true になり履歴詳細が「現行安全を通過」と誤表示する。
+  if (stored.targetMemberIds.length === 0) {
+    throw new HttpError(422, "current_target_member_required", "現在の家族を1人以上選んでください");
+  }
   // 削除済みリンクは決して現行 validator メンバーにしない
   const renumberedSafety = await loadCurrentSafetyContext(admin, userId, stored.targetMemberIds);
   const safety = withHistoricalAnonymousRefs(renumberedSafety, stored);
@@ -586,6 +592,14 @@ export function createRevalidationDeps(user: AuthenticatedUser): RevalidationDep
       return loadStoredMenu(ownerClient, userId, menuId);
     },
     loadCurrentSafety: async (userId, stored) => {
+      // mount 再検証でも空ターゲットを 422 で閉じる（silent valid を出さない）
+      if (stored.targetMemberIds.length === 0) {
+        throw new HttpError(
+          422,
+          "current_target_member_required",
+          "現在の家族を1人以上選んでください",
+        );
+      }
       const safety = await loadCurrentSafetyContext(admin, userId, stored.targetMemberIds);
       return {
         fingerprint: createCurrentSafetyFingerprint(safety),
