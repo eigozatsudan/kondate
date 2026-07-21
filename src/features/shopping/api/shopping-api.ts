@@ -163,10 +163,6 @@ export async function mutateShoppingItem(
   input: ShoppingItemMutationRequest,
 ): Promise<ShoppingItemMutationResponse> {
   const parsed = shoppingItemMutationRequestSchema.parse(input);
-  // 生成型は p_item_id / p_payload を「非 null な uuid」「Json」として出力するが、
-  // SQL 側の p_item_id uuid は nullable（add_manual は必ず null を送る）で、
-  // payload は Zod で検証済みの閉じたオブジェクト。呼び出し引数だけを
-  // RPC の実シグネチャへ合わせるための機械的な整形。
   const args = {
     p_list_id: parsed.listId,
     p_expected_list_version: parsed.expectedListVersion,

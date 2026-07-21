@@ -25,6 +25,15 @@ export function ReconcileListSheet({
     () => new Set(diff.replace.map((item) => item.itemId)),
   );
   const [removeIds, setRemoveIds] = useState(() => new Set(diff.remove.map((item) => item.itemId)));
+  // 2回目以降のプレビューでは差分そのものが差し替わる。初期化子は初回マウントでしか
+  // 走らないため、新しい差分が来たら選択状態を必ず作り直す（前回の選択を承認しない）。
+  const [seededDiff, setSeededDiff] = useState(diff);
+  if (seededDiff !== diff) {
+    setSeededDiff(diff);
+    setAddKeys(new Set(diff.add.map((item) => item.key)));
+    setReplaceIds(new Set(diff.replace.map((item) => item.itemId)));
+    setRemoveIds(new Set(diff.remove.map((item) => item.itemId)));
+  }
   const toggle = (
     current: Set<string>,
     value: string,

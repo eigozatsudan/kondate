@@ -211,7 +211,10 @@ export function useResumeShoppingCommand<T>({
 }: ResumeShoppingCommandOptions<T>) {
   const inFlight = useRef(false);
   const submitRef = useRef(submit);
-  submitRef.current = submit;
+  // 描画中に ref を書き換えない（破棄される並行描画でも書き換わってしまうため）。
+  useEffect(() => {
+    submitRef.current = submit;
+  }, [submit]);
 
   const resume = useCallback(async () => {
     if (inFlight.current || targetId === null) return;

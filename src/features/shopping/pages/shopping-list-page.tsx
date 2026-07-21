@@ -84,8 +84,16 @@ export function ShoppingListPage() {
   );
   // ゲートが閉じている間だけ、作成時に保存した不変スナップショットを別枠で読む。
   // これは現行の権威ではなく、過去の記録として提示する。
+  // 同じ source_warning_key はリスト行と項目行の両方に存在し得る（DB の一意索引が
+  // そう設計されている）ため、所有者を含む鍵で必ず一意にする。取りこぼすと
+  // アレルゲン警告そのものが画面から消える。
   const storedProvenanceWarnings = safetyGate.error
-    ? [...list.listLabelWarnings, ...list.items.flatMap((item) => item.labelWarnings)]
+    ? [
+        ...list.listLabelWarnings.map((warning) => ({ owner: "list", warning })),
+        ...list.items.flatMap((item) =>
+          item.labelWarnings.map((warning) => ({ owner: item.id, warning })),
+        ),
+      ]
     : [];
   const mutate = async (value: LocalShoppingItemMutation) => {
     if (safetyBlocked || safetyGate.safetyFingerprint === null) return;
@@ -110,6 +118,12 @@ export function ShoppingListPage() {
       ) {
         setMutationError("家族設定が変わりました。もう一度確認します");
         await safetyGate.refresh();
+      } else if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "idempotency_payload_mismatch"
+      ) {
+        setMutationError("前回と異なる内容で再送できません");
       } else {
         setMutationError("買い物項目を更新できませんでした");
       }
@@ -157,8 +171,8 @@ export function ShoppingListPage() {
         <section className="card" aria-label="過去の原材料表示警告">
           <strong>現在の条件では確認できない過去の警告</strong>
           <p>安全確認が完了するまで買い物操作はできません。</p>
-          {storedProvenanceWarnings.map((warning) => (
-            <p key={warning.warningKey}>
+          {storedProvenanceWarnings.map(({ owner, warning }) => (
+            <p key={`${owner}:${warning.warningKey}`}>
               {warning.sourceDisplayName}・{warning.allergenDisplayName}・
               {warning.memberDisplayName}
             </p>
@@ -417,6 +431,8 @@ export function ShoppingListPage() {
           className="primary-button min-h-11"
           type="button"
           onClick={() => {
+            // 編集フォームで出た入力エラーを追加フォームへ持ち越さない。
+            setFieldError(null);
             setAdding(true);
           }}
         >

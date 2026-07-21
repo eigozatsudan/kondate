@@ -5,8 +5,14 @@ import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
+import type {
+  ShoppingDiff,
+  ShoppingList,
+  ShoppingListSafetyData,
+} from "@shared/contracts/shopping";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import type { RevalidationResult } from "@/features/history/api/revalidation-api";
+import { pendingShoppingCommandStorageKey } from "@/features/shopping/api/shopping-api";
 import { MenuResultPage } from "./menu-result-page";
 
 const getMenuResultMock = vi.hoisted(() => vi.fn());
@@ -33,6 +39,24 @@ vi.mock("../api/usage-today-api", () => ({
 vi.mock("../api/confirm-label-api", () => ({
   confirmLabelConfirmation: confirmLabelConfirmationMock,
 }));
+type ShoppingApiModule = typeof import("@/features/shopping/api/shopping-api");
+
+const shoppingApi = vi.hoisted(() => ({
+  fetchActiveShoppingList: vi.fn<ShoppingApiModule["fetchActiveShoppingList"]>(),
+  revalidateActiveShoppingList: vi.fn<ShoppingApiModule["revalidateActiveShoppingList"]>(),
+  createShoppingList: vi.fn<ShoppingApiModule["createShoppingList"]>(),
+  reconcileShoppingListRequest: vi.fn<ShoppingApiModule["reconcileShoppingListRequest"]>(),
+  previewShoppingDiff: vi.fn<ShoppingApiModule["previewShoppingDiff"]>(),
+  fetchReconcilableMenuSource: vi.fn<ShoppingApiModule["fetchReconcilableMenuSource"]>(),
+}));
+
+// 買い物リストの API 層だけを差し替える。保存領域ヘルパー（persistedShoppingCommand /
+// clearShoppingCommand）は実体のまま動かし、再送記録の後始末まで検証する。
+vi.mock("@/features/shopping/api/shopping-api", async (importOriginal) => {
+  const original = await importOriginal<ShoppingApiModule>();
+  return { ...original, ...shoppingApi };
+});
+
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
     channel: () => {
@@ -43,9 +67,13 @@ vi.mock("@/shared/lib/supabase", () => ({
       };
       return api;
     },
+    removeChannel: vi.fn(),
     auth: {
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
       getSession: () => Promise.resolve({ data: { session: { access_token: "t" } }, error: null }),
+      // 買い物リストの安全ゲートは所有者が取れないと必ず閉じる。所有者を返さない限り
+      // 買い物系の操作は全テストで永久に無効のままになる。
+      getUser: () => Promise.resolve({ data: { user: { id: USER_A_ID } }, error: null }),
     },
   }),
 }));
@@ -62,6 +90,61 @@ const validRevalidation: RevalidationResult = {
   issues: [],
   changedDetails: [],
   currentLabelWarnings: [],
+};
+
+const SHOPPING_LIST_ID = "32000000-0000-4000-8000-000000000001";
+const SHOPPING_ITEM_ID = "32000000-0000-4000-8000-000000000002";
+const SHOPPING_FINGERPRINT = "f".repeat(64);
+
+const activeShoppingList: ShoppingList = {
+  id: SHOPPING_LIST_ID,
+  status: "active",
+  version: 4,
+  items: [],
+  listLabelWarnings: [],
+};
+
+const validShoppingSafety: ShoppingListSafetyData = {
+  status: "valid",
+  safetyFingerprint: SHOPPING_FINGERPRINT,
+  checkedSourceMenuIds: [VALID_MENU_ID],
+  currentLabelWarnings: [],
+  issues: [],
+};
+
+const invalidShoppingSafety: ShoppingListSafetyData = {
+  status: "invalid",
+  safetyFingerprint: null,
+  checkedSourceMenuIds: [VALID_MENU_ID],
+  currentLabelWarnings: [],
+  issues: [
+    {
+      code: "current_safety_invalid",
+      message: "現在の家族設定ではこのリストを使えません",
+      sourceMenuId: VALID_MENU_ID,
+    },
+  ],
+};
+
+const shoppingDiff: ShoppingDiff = {
+  add: [
+    {
+      key: "add-key-1",
+      displayName: "たまねぎ",
+      normalizedName: "たまねぎ",
+      storeSection: "produce",
+      quantityValue: 2,
+      quantityText: "2個",
+      unit: "個",
+      pantryCheckRequired: false,
+      sourceIngredients: [],
+      labelWarnings: [],
+    },
+  ],
+  replace: [],
+  remove: [],
+  protectedItemIds: [SHOPPING_ITEM_ID],
+  listLabelWarnings: [],
 };
 
 function authValue(userId: string | null, status: AuthContextValue["status"] = "authenticated") {
@@ -83,6 +166,7 @@ function renderPage(
       { path: "/planner", element: <h1>プランナー</h1> },
       { path: "/history", element: <h1>履歴</h1> },
       { path: "/generation", element: <h1>作成状況</h1> },
+      { path: "/shopping", element: <h1>買い物リスト</h1> },
     ],
     { initialEntries: [path] },
   );
@@ -98,6 +182,21 @@ function renderPage(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
+  shoppingApi.fetchActiveShoppingList.mockResolvedValue(activeShoppingList);
+  shoppingApi.revalidateActiveShoppingList.mockResolvedValue(validShoppingSafety);
+  shoppingApi.fetchReconcilableMenuSource.mockResolvedValue(null);
+  shoppingApi.createShoppingList.mockResolvedValue({
+    listId: SHOPPING_LIST_ID,
+    version: 5,
+    replayed: false,
+  });
+  shoppingApi.reconcileShoppingListRequest.mockResolvedValue({
+    listId: SHOPPING_LIST_ID,
+    version: 5,
+    replayed: false,
+  });
+  shoppingApi.previewShoppingDiff.mockResolvedValue(shoppingDiff);
   revalidateMenuMock.mockResolvedValue(validRevalidation);
   getUsageTodayMock.mockResolvedValue({
     success: { consumed: 1, limit: 5, remaining: 4 },
@@ -258,6 +357,115 @@ describe("MenuResultPage", () => {
     expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
     expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the shopping affordance closed while the shopping safety gate stays closed", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.revalidateActiveShoppingList.mockResolvedValue(invalidShoppingSafety);
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    await waitFor(() => {
+      expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
+    });
+    expect(create).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+  });
+
+  it("opens the create sheet, sends the exact active list id and version, and moves to the list", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+
+    const router = renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    await waitFor(() => {
+      expect(create).toBeEnabled();
+    });
+    await userEvent.click(create);
+    expect(screen.getByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    await waitFor(() => {
+      expect(shoppingApi.createShoppingList).toHaveBeenCalledTimes(1);
+    });
+    // TanStack Query は mutationFn へ第2引数（内部 context）も渡すため、
+    // 組み立てたコマンドそのものだけを比較する。
+    const command = shoppingApi.createShoppingList.mock.calls[0]?.[0];
+    expect(Object.keys(command ?? {}).sort()).toEqual([
+      "activeListId",
+      "expectedListVersion",
+      "idempotencyKey",
+      "menuId",
+      "mode",
+    ]);
+    expect(command).toMatchObject({
+      menuId: VALID_MENU_ID,
+      mode: "append",
+      activeListId: SHOPPING_LIST_ID,
+      expectedListVersion: 4,
+    });
+    expect(typeof command?.idempotencyKey).toBe("string");
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/shopping");
+    });
+    // 読み直しまで済んだ時点で再送用の記録は残さない
+    expect(
+      sessionStorage.getItem(pendingShoppingCommandStorageKey("create", VALID_MENU_ID)),
+    ).toBeNull();
+  });
+
+  it("previews the diff for display only and opens the reconcile sheet", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
+      sourceMenuId: VALID_MENU_ID,
+      sourceMenuVersion: 2,
+    });
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const reconcile = await screen.findByRole("button", { name: "買い物リストとの差分を確認" });
+    await waitFor(() => {
+      expect(reconcile).toBeEnabled();
+    });
+    await userEvent.click(reconcile);
+
+    await waitFor(() => {
+      expect(shoppingApi.previewShoppingDiff).toHaveBeenCalledWith(
+        VALID_MENU_ID,
+        2,
+        activeShoppingList,
+      );
+    });
+    expect(await screen.findByRole("heading", { name: "献立変更の差分" })).toBeVisible();
+  });
+
+  it("clears the approval and asks for a new one when the reconcile fails with a code", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
+      sourceMenuId: VALID_MENU_ID,
+      sourceMenuVersion: 2,
+    });
+    shoppingApi.reconcileShoppingListRequest.mockRejectedValue(
+      Object.assign(new Error("買い物リストが更新されました"), { code: "list_version_conflict" }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const reconcile = await screen.findByRole("button", { name: "買い物リストとの差分を確認" });
+    await waitFor(() => {
+      expect(reconcile).toBeEnabled();
+    });
+    await userEvent.click(reconcile);
+    await userEvent.click(await screen.findByRole("button", { name: "選んだ変更を反映" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストの状態が変わりました。もう一度確認してください",
+    );
+    expect(screen.queryByRole("heading", { name: "献立変更の差分" })).not.toBeInTheDocument();
+    expect(
+      sessionStorage.getItem(pendingShoppingCommandStorageKey("reconcile", SHOPPING_LIST_ID)),
+    ).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,10 +18,11 @@ import type {
 } from "@shared/contracts/shopping";
 import { CreateListSheet } from "../components/create-list-sheet";
 import { ReconcileListSheet } from "../components/reconcile-list-sheet";
-import { shoppingKeys } from "../hooks/use-shopping-list";
+import { shoppingKeys, useResumeShoppingCommand } from "../hooks/use-shopping-list";
 import { categoryLabel, ShoppingListPage } from "./shopping-list-page";
 import {
   clearShoppingCommand,
+  fetchReconcilableMenuSource,
   pendingShoppingCommandStorageKey,
   pendingShoppingCommandTtlMs,
   persistedShoppingCommand,
@@ -70,8 +71,26 @@ const realtime = vi.hoisted(() => ({
   removeChannel: vi.fn(),
 }));
 
+// fetchReconcilableMenuSource だけは実体を動かして検証するため、PostgREST 相当の
+// 最小クエリビルダをテーブル単位の結果で差し替える。
+type PostgrestResult = { data: unknown; error: { message: string } | null };
+const postgrest = vi.hoisted(() => ({
+  results: new Map<string, { data: unknown; error: { message: string } | null }>(),
+}));
+
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
+    from: (table: string) => {
+      const result: PostgrestResult = postgrest.results.get(table) ?? { data: null, error: null };
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        maybeSingle: () => Promise.resolve(result),
+        then: <T,>(onFulfilled: (value: PostgrestResult) => T) =>
+          Promise.resolve(result).then(onFulfilled),
+      };
+      return builder;
+    },
     auth: {
       getUser: () =>
         Promise.resolve({
@@ -263,6 +282,7 @@ beforeEach(() => {
   realtime.channelNames = [];
   realtime.handlers = [];
   realtime.statusCallback = null;
+  postgrest.results.clear();
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -1016,6 +1036,51 @@ describe("ReconcileListSheet", () => {
     );
     expect(screen.getByRole("button", { name: "選んだ変更を反映" })).toBeDisabled();
   });
+
+  it("reseeds the selection when a second preview arrives without unmounting", async () => {
+    const secondDiff: ShoppingDiff = {
+      add: [
+        {
+          ...(diff.add[0] as ShoppingDiff["add"][number]),
+          key: "add-key-2",
+          displayName: "じゃがいも",
+        },
+      ],
+      replace: [],
+      remove: [],
+      protectedItemIds: [],
+      listLabelWarnings: [],
+    };
+    const onApply = vi.fn();
+    const view = render(
+      <ReconcileListSheet
+        diff={diff}
+        pending={false}
+        safetyBlocked={false}
+        onApply={onApply}
+        onCancel={vi.fn()}
+      />,
+    );
+    view.rerender(
+      <ReconcileListSheet
+        diff={secondDiff}
+        pending={false}
+        safetyBlocked={false}
+        onApply={onApply}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    // 2回目のプレビューでは、新しい行が既定で選択され、前回の選択は残らない。
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getByRole("checkbox")).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "選んだ変更を反映" }));
+    expect(onApply).toHaveBeenCalledWith({
+      addKeys: ["add-key-2"],
+      replaceItemIds: [],
+      removeItemIds: [],
+    });
+  });
 });
 
 describe("persistedShoppingCommand", () => {
@@ -1062,5 +1127,190 @@ describe("persistedShoppingCommand", () => {
     expect(command.menuId).toBe(MENU_ID);
     clearShoppingCommand("create", MENU_ID);
     expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).toBeNull();
+  });
+});
+
+describe("ShoppingListPage stored provenance section", () => {
+  it("renders every stored warning even when two rows share one warning key", async () => {
+    // DB の一意索引はリスト行と項目行で同じ source_warning_key を許すため、鍵の衝突は
+    // 例外ではなく通常のケース。アレルゲン警告が1件でも消えてはならない。
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fetchActiveShoppingList.mockResolvedValue(
+      makeShoppingList(
+        [
+          makeItem({
+            labelWarnings: [makeLabelSnapshot({ sourceDisplayName: "ロースハム" })],
+          }),
+        ],
+        {
+          listLabelWarnings: [makeLabelSnapshot({ sourceDisplayName: "デミグラスソース" })],
+        },
+      ),
+    );
+    revalidateActiveShoppingList.mockResolvedValue(unverifiableSafety("元の献立が見つかりません"));
+    render(
+      <Providers>
+        <ShoppingListPage />
+      </Providers>,
+    );
+
+    const section = await screen.findByLabelText("過去の原材料表示警告");
+    expect(section).toHaveTextContent("デミグラスソース・乳・はなこ");
+    expect(section).toHaveTextContent("ロースハム・乳・はなこ");
+    expect(
+      consoleError.mock.calls.filter((call) => String(call[0]).includes("same key")),
+    ).toHaveLength(0);
+    consoleError.mockRestore();
+  });
+});
+
+describe("useResumeShoppingCommand", () => {
+  const schema = z.object({ menuId: z.uuid(), idempotencyKey: z.uuid() }).strict();
+  type ResumeCommand = z.infer<typeof schema>;
+  type Submit = (command: ResumeCommand) => Promise<void>;
+  const IDEMPOTENCY_KEY = "40000000-0000-4000-8000-0000000000aa";
+  const command: ResumeCommand = { menuId: MENU_ID, idempotencyKey: IDEMPOTENCY_KEY };
+  const storageKey = pendingShoppingCommandStorageKey("create", MENU_ID);
+  const seed = (createdAtMs: number) => {
+    sessionStorage.setItem(storageKey, JSON.stringify({ createdAtMs, command }));
+  };
+
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+  afterEach(() => {
+    sessionStorage.clear();
+  });
+
+  it("replays a committed but lost command byte-identically without a second user click", async () => {
+    seed(Date.now());
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() =>
+      useResumeShoppingCommand({ kind: "create", targetId: MENU_ID, schema, submit }),
+    );
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+    expect(JSON.stringify(submit.mock.calls[0]?.[0])).toBe(JSON.stringify(command));
+    // 読み直しが済むまで記録はフックの中では消さない
+    expect(sessionStorage.getItem(storageKey)).not.toBeNull();
+  });
+
+  it("starts no second submission while the first one is still in flight", async () => {
+    seed(Date.now());
+    const gate = deferredPromise<undefined>();
+    const submit = vi.fn<Submit>(() => gate.promise);
+
+    renderHook(() =>
+      useResumeShoppingCommand({ kind: "create", targetId: MENU_ID, schema, submit }),
+    );
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      gate.resolve(undefined);
+      await gate.promise;
+    });
+  });
+
+  it("discards and never sends a record older than the retention window", async () => {
+    seed(Date.now() - pendingShoppingCommandTtlMs - 1);
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() =>
+      useResumeShoppingCommand({ kind: "create", targetId: MENU_ID, schema, submit }),
+    );
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem(storageKey)).toBeNull();
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("discards and never sends a record whose timestamp is in the future", async () => {
+    seed(Date.now() + 60_000);
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() =>
+      useResumeShoppingCommand({ kind: "create", targetId: MENU_ID, schema, submit }),
+    );
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem(storageKey)).toBeNull();
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("discards and never sends a corrupt record", async () => {
+    sessionStorage.setItem(storageKey, "{ not json");
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() =>
+      useResumeShoppingCommand({ kind: "create", targetId: MENU_ID, schema, submit }),
+    );
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem(storageKey)).toBeNull();
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("reads no record at all when there is no target", async () => {
+    seed(Date.now());
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() => useResumeShoppingCommand({ kind: "create", targetId: null, schema, submit }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(storageKey)).not.toBeNull();
+  });
+});
+
+describe("fetchReconcilableMenuSource", () => {
+  const OTHER_DERIVATION_ID = "40000000-0000-4000-8000-000000000009";
+  const setMenu = (row: unknown) => postgrest.results.set("menus", { data: row, error: null });
+  const setSources = (rows: unknown[]) =>
+    postgrest.results.set("shopping_list_sources", { data: rows, error: null });
+
+  it("offers reconciliation when the list holds an older version of the same derivation group", async () => {
+    setMenu({ id: MENU_ID, derivation_group_id: DERIVATION_ID, version: 3 });
+    setSources([{ source_derivation_group_id: DERIVATION_ID, source_menu_version: 2 }]);
+
+    await expect(fetchReconcilableMenuSource(MENU_ID, LIST_ID)).resolves.toEqual({
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 3,
+    });
+  });
+
+  it("offers nothing when the list already holds the current version", async () => {
+    setMenu({ id: MENU_ID, derivation_group_id: DERIVATION_ID, version: 3 });
+    setSources([{ source_derivation_group_id: DERIVATION_ID, source_menu_version: 3 }]);
+
+    await expect(fetchReconcilableMenuSource(MENU_ID, LIST_ID)).resolves.toBeNull();
+  });
+
+  it("offers nothing when the older source belongs to another derivation group", async () => {
+    setMenu({ id: MENU_ID, derivation_group_id: DERIVATION_ID, version: 3 });
+    setSources([{ source_derivation_group_id: OTHER_DERIVATION_ID, source_menu_version: 1 }]);
+
+    await expect(fetchReconcilableMenuSource(MENU_ID, LIST_ID)).resolves.toBeNull();
+  });
+
+  it("offers nothing when the menu itself is gone", async () => {
+    setMenu(null);
+    setSources([{ source_derivation_group_id: DERIVATION_ID, source_menu_version: 1 }]);
+
+    await expect(fetchReconcilableMenuSource(MENU_ID, LIST_ID)).resolves.toBeNull();
   });
 });

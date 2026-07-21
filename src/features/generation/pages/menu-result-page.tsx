@@ -148,6 +148,9 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
 
   const finishShoppingCommand = async (kind: "create" | "reconcile", targetId: string) => {
     await queryClient.invalidateQueries({ queryKey: shoppingKeys.active });
+    // 反映後は「古い版を取り込んでいるか」の判定も作り直す（staleTime のあいだ
+    // 反映済みリストに対して差分を出さないため）。
+    await queryClient.invalidateQueries({ queryKey: ["shopping", "reconcile-target"] });
     clearShoppingCommand(kind, targetId);
     setShoppingSheet(null);
     setShoppingDiff(null);

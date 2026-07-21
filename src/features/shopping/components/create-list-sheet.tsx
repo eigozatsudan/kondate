@@ -29,6 +29,7 @@ export function CreateListSheet({
           <label className="min-h-11 flex items-center">
             <input
               type="radio"
+              name="create-list-mode"
               checked={mode === "append"}
               onChange={() => {
                 setMode("append");
@@ -39,6 +40,7 @@ export function CreateListSheet({
           <label className="min-h-11 flex items-center">
             <input
               type="radio"
+              name="create-list-mode"
               checked={mode === "new"}
               onChange={() => {
                 setMode("new");
