@@ -1,5 +1,5 @@
 import { expect, test } from "../fixtures/auth";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
@@ -65,7 +65,9 @@ test("recovers a persisted result when only the POST response is lost", async ({
   completedOnboardingPage: page,
 }) => {
   await completeMinimumPlanner(page);
-  await page.route("**/api/generations/menu", async (route) => {
+  const generationPostPattern = "**/api/generations/menu";
+  const generationStatusPattern = "**/api/generations/*/status";
+  const dropPostResponse = async (route: Route) => {
     // E2E Function Serverにhandler完了後のresponseだけを破棄させる。
     // browser側でabortしないため、生成結果のDB永続化は確実に完了する。
     await route.continue({
@@ -74,12 +76,22 @@ test("recovers a persisted result when only the POST response is lost", async ({
         "X-Kondate-E2E-Drop-Response": "after-handler",
       },
     });
-  });
+  };
+  const dropStatusResponse = async (route: Route) => {
+    // 永続化直後のstatus成功で結果画面へ先行遷移しないよう、このtestだけ
+    // recovery GETを切断し、POST応答喪失時のoffline表示を確実に観測する。
+    await route.abort("connectionreset");
+  };
+  await page.route(generationPostPattern, dropPostResponse);
+  await page.route(generationStatusPattern, dropStatusResponse);
   await page.getByRole("button", { name: "献立を作る" }).click();
   await expect(page.getByText("通信を確認しています")).toBeVisible({ timeout: 10_000 });
-  await page.unrouteAll();
+  // 他のfixture routeを維持したまま、ここで追加したfault handlerだけを解除する。
+  await page.unroute(generationPostPattern, dropPostResponse);
+  await page.unroute(generationStatusPattern, dropStatusResponse);
   await page.reload();
   // recovery hookがGET statusでsucceeded結果を取得し、結果画面を表示する
+  await expect(page).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
