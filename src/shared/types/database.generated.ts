@@ -1011,6 +1011,50 @@ export type Database = {
           },
         ]
       }
+      menu_revalidations: {
+        Row: {
+          allergen_catalog_version: string
+          created_at: string
+          food_rule_version: string
+          id: string
+          issues: Json
+          menu_id: string
+          safety_fingerprint: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          allergen_catalog_version: string
+          created_at?: string
+          food_rule_version: string
+          id?: string
+          issues?: Json
+          menu_id: string
+          safety_fingerprint: string
+          status: string
+          user_id: string
+        }
+        Update: {
+          allergen_catalog_version?: string
+          created_at?: string
+          food_rule_version?: string
+          id?: string
+          issues?: Json
+          menu_id?: string
+          safety_fingerprint?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_revalidations_menu_owner_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
       menu_safety_actions: {
         Row: {
           anonymous_member_ref: string
@@ -1228,9 +1272,11 @@ export type Database = {
           preference_snapshot: Json
           safety_fingerprint: string
           safety_snapshot: Json
+          selected_at: string | null
           servings: number
           total_elapsed_minutes: number
           user_id: string
+          version: number
         }
         Insert: {
           allergen_dictionary_version: string
@@ -1249,9 +1295,11 @@ export type Database = {
           preference_snapshot: Json
           safety_fingerprint: string
           safety_snapshot: Json
+          selected_at?: string | null
           servings: number
           total_elapsed_minutes: number
           user_id: string
+          version?: number
         }
         Update: {
           allergen_dictionary_version?: string
@@ -1270,9 +1318,11 @@ export type Database = {
           preference_snapshot?: Json
           safety_fingerprint?: string
           safety_snapshot?: Json
+          selected_at?: string | null
           servings?: number
           total_elapsed_minutes?: number
           user_id?: string
+          version?: number
         }
         Relationships: [
           {
@@ -1411,6 +1461,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accept_menu_version: { Args: { p_menu_id: string }; Returns: undefined }
       add_custom_member_allergy: {
         Args: {
           p_custom_aliases?: string[]
@@ -1535,6 +1586,10 @@ export type Database = {
       delete_member_allergy: {
         Args: { p_allergy_id: string }
         Returns: undefined
+      }
+      delete_menu_group: {
+        Args: { p_derivation_group_id: string }
+        Returns: number
       }
       deposit_auth_continuation: {
         Args: {
