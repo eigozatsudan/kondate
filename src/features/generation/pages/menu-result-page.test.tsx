@@ -140,6 +140,20 @@ describe("MenuResultPage", () => {
     });
   });
 
+  it("ラベル確認の免責文をページ内で1回だけ表示する", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    // ゲート解放後も、ページ枠と献立本文とで免責文が二重表示されないこと
+    expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
+    expect(
+      screen.getAllByText(
+        "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("同じQueryClientでも別ユーザーへ献立キャッシュを共有しない", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const userAResult = makeMenuResultViewModel();
@@ -195,6 +209,12 @@ describe("MenuResultPage", () => {
     expect(await screen.findByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
     expect(screen.getByText("現在の家族設定で確認しています")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+    // 本文が閉じている間もラベル確認の免責文は常時表示する
+    expect(
+      screen.getByText(
+        "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+      ),
+    ).toBeVisible();
   });
 
   it("stale label confirm failure recloses the gate synchronously", async () => {

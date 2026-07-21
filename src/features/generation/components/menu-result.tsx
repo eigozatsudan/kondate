@@ -595,10 +595,6 @@ export function MenuResult({
           </ul>
         </section>
       )}
-
-      <p className="mt-6 rounded-xl border border-amber-700 p-3 font-semibold">
-        加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。
-      </p>
     </main>
   );
 }
