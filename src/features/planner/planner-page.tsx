@@ -154,7 +154,7 @@ export function PlannerForm({
       operationGenerationRef.current += 1;
       activeOperationRef.current = "idle";
       setIsOpeningEmergencyMenus(false);
-      setGenerationError("対象家族の条件が変わったため、緊急献立への移動を中止しました。");
+      setGenerationError("作る相手の条件が変わったため、緊急献立への移動を中止しました。");
     }
     const next = { ...value, targetMemberIds: reconciledTargetMemberIds };
     setValue(next);
@@ -205,7 +205,7 @@ export function PlannerForm({
         {value.targetMemberIds.length >= targetMemberLimit &&
           members.some(
             (member) => member.blockedReason === null && !value.targetMemberIds.includes(member.id),
-          ) && <p>対象家族は20人までです。選択中の家族を外すと追加できます。</p>}
+          ) && <p>選べる家族は20人までです。誰かを外すと追加できます。</p>}
         {!hasEligibleMembers && (
           <p role="alert">献立を作れる家族がいません。家族設定を確認してください。</p>
         )}
