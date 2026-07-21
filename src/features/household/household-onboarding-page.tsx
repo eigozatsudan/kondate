@@ -329,7 +329,7 @@ export function HouseholdOnboardingForm({
                   setCustomConfirmed(event.target.checked);
                 }}
               />
-              標準項目の候補を確認し、この表記で登録します
+              一覧の候補を確認し、この表記で登録します
             </label>
             <button
               className="secondary-button"
