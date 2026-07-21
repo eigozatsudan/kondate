@@ -17,12 +17,12 @@ const expiryLabels = {
   use_by: "消費期限",
   best_before: "賞味期限",
   other: "期限",
-  unknown: "期限種別不明",
+  unknown: "期限の種類は未登録",
 } as const;
 const openedLabels = {
   unopened: "未開封",
   opened: "開封済み",
-  unknown: "開封状態不明",
+  unknown: "開けたかは未登録",
 } as const;
 
 export function PantryPage() {
