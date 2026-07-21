@@ -7,6 +7,7 @@ import {
   runGeneration,
 } from "./_shared/generation-service.js";
 import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
+import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 
 /**
  * POST /api/generations/dish — 料理単位の再生成。
@@ -18,8 +19,12 @@ export default async function generateDish(request: Request): Promise<Response> 
   try {
     const user = await requireUser(request);
     const body = await parseJson(request, regenerateDishRequestSchema);
+    const localTestScenario = readLocalMockScenario(request);
     const result = await runGeneration(
-      createGenerationDeps(user, { requestStartedAtMonotonicMs }),
+      createGenerationDeps(user, {
+        requestStartedAtMonotonicMs,
+        ...(localTestScenario === undefined ? {} : { localTestScenario }),
+      }),
       {
         kind: "regenerate_dish",
         request: body,

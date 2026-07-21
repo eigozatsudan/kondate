@@ -837,8 +837,11 @@ describe("materializeDishRegenerationCandidate", () => {
     for (const row of candidate.timeline) expect(sourceIds.has(row.id)).toBe(false);
     for (const row of candidate.adaptations) expect(sourceIds.has(row.id)).toBe(false);
     // 保持・置換のラベルはすべて pending（履歴 confirmed を持ち込まない）
-    expect(candidate.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(
-      true,
-    );
+    // Generated 形は confirmationStatus が pending 固定なので、confirmed フィールド非存在で検証する
+    expect(
+      candidate.labelConfirmations.every(
+        (row) => !("confirmedAt" in row) && !("confirmedBy" in row),
+      ),
+    ).toBe(true);
   });
 });

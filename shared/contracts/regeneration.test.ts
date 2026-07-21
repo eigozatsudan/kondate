@@ -202,7 +202,7 @@ describe("regeneration contracts", () => {
 
 describe("assertUniqueLocalRefDeclarations", () => {
   it("accepts unique request-local refs", () => {
-    expect(() =>
+    expect(() => {
       assertUniqueLocalRefDeclarations([
         "dish_1",
         "ingredient_1",
@@ -211,19 +211,23 @@ describe("assertUniqueLocalRefDeclarations", () => {
         "adaptation_1",
         "pantry_1",
         "label_1",
-      ]),
-    ).not.toThrow();
+      ]);
+    }).not.toThrow();
   });
 
   it("rejects duplicate declarations", () => {
-    expect(() => assertUniqueLocalRefDeclarations(["dish_1", "dish_1"])).toThrow(/duplicate/i);
+    expect(() => {
+      assertUniqueLocalRefDeclarations(["dish_1", "dish_1"]);
+    }).toThrow(/duplicate/i);
   });
 
   it("rejects non request-local refs including UUIDs", () => {
-    expect(() =>
-      assertUniqueLocalRefDeclarations(["10000000-0000-4000-8000-000000000001"]),
-    ).toThrow();
-    expect(() => assertUniqueLocalRefDeclarations(["member_1"])).toThrow();
+    expect(() => {
+      assertUniqueLocalRefDeclarations(["10000000-0000-4000-8000-000000000001"]);
+    }).toThrow();
+    expect(() => {
+      assertUniqueLocalRefDeclarations(["member_1"]);
+    }).toThrow();
   });
 });
 
@@ -232,7 +236,7 @@ describe("assertMaterializationRefUnion", () => {
   const replacement = ["dish_2", "ingredient_10", "step_10"] as const;
 
   it("accepts a collision-free union with resolved refs", () => {
-    expect(() =>
+    expect(() => {
       assertMaterializationRefUnion({
         serverKnownDeclarations: serverKnown,
         replacementDeclarations: replacement,
@@ -242,51 +246,51 @@ describe("assertMaterializationRefUnion", () => {
           { expectedKind: "step", ref: "step_10" },
         ],
         labelSourceRefs: ["ingredient_10", "dish_1"],
-      }),
-    ).not.toThrow();
+      });
+    }).not.toThrow();
   });
 
   it("rejects a collision between server-known and replacement declarations", () => {
-    expect(() =>
+    expect(() => {
       assertMaterializationRefUnion({
         serverKnownDeclarations: serverKnown,
         replacementDeclarations: ["dish_1", "ingredient_10"],
         referencedRefs: [],
         labelSourceRefs: [],
-      }),
-    ).toThrow(/collision/i);
+      });
+    }).toThrow(/collision/i);
   });
 
   it("rejects a dangling referenced ref", () => {
-    expect(() =>
+    expect(() => {
       assertMaterializationRefUnion({
         serverKnownDeclarations: serverKnown,
         replacementDeclarations: replacement,
         referencedRefs: [{ expectedKind: "dish", ref: "dish_99" }],
         labelSourceRefs: [],
-      }),
-    ).toThrow(/dangling/i);
+      });
+    }).toThrow(/dangling/i);
   });
 
   it("rejects a wrong-kind referenced ref", () => {
-    expect(() =>
+    expect(() => {
       assertMaterializationRefUnion({
         serverKnownDeclarations: serverKnown,
         replacementDeclarations: replacement,
         referencedRefs: [{ expectedKind: "dish", ref: "ingredient_1" }],
         labelSourceRefs: [],
-      }),
-    ).toThrow(/wrong-kind|wrong kind/i);
+      });
+    }).toThrow(/wrong-kind|wrong kind/i);
   });
 
   it("rejects a label source outside the allowed source namespaces", () => {
-    expect(() =>
+    expect(() => {
       assertMaterializationRefUnion({
         serverKnownDeclarations: [...serverKnown, "label_1"],
         replacementDeclarations: replacement,
         referencedRefs: [],
         labelSourceRefs: ["pantry_1"],
-      }),
-    ).toThrow(/label source/i);
+      });
+    }).toThrow(/label source/i);
   });
 });

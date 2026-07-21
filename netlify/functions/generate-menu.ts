@@ -11,6 +11,7 @@ import {
   runGeneration,
 } from "./_shared/generation-service.js";
 import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
+import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 
 /** 新規献立と献立全体再生成を同一 POST で受け付ける（kind は body 形で判別） */
 const menuEndpointBodySchema = z.union([
@@ -28,8 +29,15 @@ export default async function generateMenu(request: Request): Promise<Response> 
       "draftId" in body
         ? { kind: "new_menu" as const, request: body }
         : { kind: "regenerate_menu" as const, request: body };
+    const localTestScenario = readLocalMockScenario(request);
     return generationResponse(
-      await runGeneration(createGenerationDeps(user, { requestStartedAtMonotonicMs }), command),
+      await runGeneration(
+        createGenerationDeps(user, {
+          requestStartedAtMonotonicMs,
+          ...(localTestScenario === undefined ? {} : { localTestScenario }),
+        }),
+        command,
+      ),
     );
   } catch (error) {
     return handleError(error);

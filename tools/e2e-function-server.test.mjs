@@ -62,6 +62,38 @@ const routes = new Map([
       default: async (_request, context) => Response.json(context.params),
     },
   ],
+  [
+    "/netlify/functions/generate-dish.ts",
+    {
+      config: { path: "/api/generations/dish", method: "POST" },
+      default: async (request) =>
+        Response.json({ body: await request.text(), method: request.method }),
+    },
+  ],
+  [
+    "/netlify/functions/revalidate-menu.ts",
+    {
+      config: { path: "/api/menus/:menuId/revalidate", method: "POST" },
+      default: async (_request, context) => Response.json({ menuId: context.params.menuId }),
+    },
+  ],
+  [
+    "/netlify/functions/usage-today.ts",
+    {
+      config: { path: "/api/usage/today", method: "GET" },
+      default: async () => Response.json({ ok: true }),
+    },
+  ],
+  [
+    "/netlify/functions/confirm-label-confirmation.ts",
+    {
+      config: {
+        path: "/api/menus/:menuId/label-confirmations/:confirmationId/confirm",
+        method: "POST",
+      },
+      default: async (_request, context) => Response.json(context.params),
+    },
+  ],
 ]);
 
 async function withServer(loadModule, run) {

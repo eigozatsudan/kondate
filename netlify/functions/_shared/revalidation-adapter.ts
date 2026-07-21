@@ -146,7 +146,7 @@ function makeRevalidationGenerationContext(
 }
 
 /**
- * 在庫名スナップショットも現行アレルギー辞書へ通す（collectMenuTextSources 外の leaf）。
+ * 在庫名スナップショットも現行アレルギー辞書へ通す（材料・手順テキスト収集外の leaf）。
  */
 function scanPantryNameSnapshotIssues(
   menu: GeneratedMenu | StoredMenuAggregate["menu"],

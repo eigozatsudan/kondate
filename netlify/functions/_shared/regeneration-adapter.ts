@@ -14,8 +14,13 @@ import { loadStoredMenu, type StoredMenuAggregate } from "./stored-menu-loader.j
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
 
-/** preference_snapshot は targetMemberIds を現行の生存リンクで上書きする */
-const savedPreferenceSchema = plannerSubmissionSchema.omit({ targetMemberIds: true }).strict();
+/**
+ * 永続 preference_snapshot は { submission, memberPreferences } 形。
+ * submission は targetMemberIds を含み得るが、再生成時は生存リンクで上書きする。
+ */
+const preferenceSnapshotEnvelopeSchema = z.looseObject({
+  submission: plannerSubmissionSchema,
+});
 
 /**
  * JWT 所有者クライアントで source / group / recent を読み、
@@ -112,8 +117,10 @@ export function createRegenerationLoaderDeps(
     // 保存済み preference を閉じたスキーマで読む。失敗時は空 submission を捏造せず fail-closed。
     let submission: PlannerSubmission;
     try {
+      const envelope = preferenceSnapshotEnvelopeSchema.parse(input.stored.preferenceSnapshot);
       submission = plannerSubmissionSchema.parse({
-        ...savedPreferenceSchema.parse(input.stored.preferenceSnapshot),
+        ...envelope.submission,
+        // 現行の生存ターゲットで上書き（削除済みメンバーを載せない）
         targetMemberIds: [...input.stored.targetMemberIds],
       });
     } catch {

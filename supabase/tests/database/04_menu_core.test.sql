@@ -37,7 +37,8 @@ select ok(
     and confkey = array[
       (select attnum from pg_attribute where attrelid = 'public.menus'::regclass and attname = 'id'),
       (select attnum from pg_attribute where attrelid = 'public.menus'::regclass and attname = 'user_id')
-    ]::smallint[] and confdeltype = 'c'
+    -- Plan 4: parent 削除時は parent_menu_id だけ SET NULL（confdeltype = n）
+    ]::smallint[] and confdeltype = 'n'
    from pg_constraint where conname = 'menus_parent_owner_fkey')
   and (select count(*) = 1 from pg_constraint where conrelid = 'public.menu_target_members'::regclass and confrelid = 'public.menus'::regclass and contype = 'f')
   and (select count(*) = 1 from pg_constraint where conrelid = 'public.menu_target_members'::regclass and confrelid = 'public.household_members'::regclass and contype = 'f')

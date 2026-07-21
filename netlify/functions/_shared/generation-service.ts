@@ -438,16 +438,45 @@ function createBaseGenerationDeps(
   };
 }
 
+/** handler 入口で渡す生成依存の timing と、ローカル mock 限定のシナリオ */
+export type GenerationDepsOptions = {
+  requestStartedAtMonotonicMs: number;
+  /**
+   * Compose openrouter-mock 専用。sendMenuGeneration が OPENROUTER_MOCK_SCENARIO を読むため、
+   * リクエスト単位で環境変数へ橋渡しする（本番 base URL では handler が設定しない）。
+   */
+  localTestScenario?: string;
+};
+
 /**
  * 公開ファクトリ。new_menu は base のまま、再生成だけ loadRegenerationExecutionContext へ分岐する。
  */
 export function createGenerationDeps(
   user: AuthenticatedUser,
-  timing: { requestStartedAtMonotonicMs: number },
+  timing: GenerationDepsOptions,
 ): GenerationDependencies {
   const base = createBaseGenerationDeps(user, timing);
+  const localTestScenario = timing.localTestScenario;
+  // 並行リクエストで環境変数を奪い合わないよう、call 中だけ差し替えて finally で戻す
+  const callOpenRouter: GenerationDependencies["callOpenRouter"] =
+    localTestScenario === undefined
+      ? sendMenuGeneration
+      : async (input) => {
+          const previous = process.env.OPENROUTER_MOCK_SCENARIO;
+          process.env.OPENROUTER_MOCK_SCENARIO = localTestScenario;
+          try {
+            return await sendMenuGeneration(input);
+          } finally {
+            if (previous === undefined) {
+              delete process.env.OPENROUTER_MOCK_SCENARIO;
+            } else {
+              process.env.OPENROUTER_MOCK_SCENARIO = previous;
+            }
+          }
+        };
   return {
     ...base,
+    callOpenRouter,
     loadExecutionContext: async (command, requestId, deadlineAtMonotonicMs) => {
       if (command.kind === "new_menu") {
         return base.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);

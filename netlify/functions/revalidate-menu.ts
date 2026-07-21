@@ -30,4 +30,4 @@ export default async (request: Request, context: Context): Promise<Response> => 
   }
 };
 
-export const config: Config = { path: "/api/menus/:menuId/revalidate" };
+export const config: Config = { path: "/api/menus/:menuId/revalidate", method: "POST" };

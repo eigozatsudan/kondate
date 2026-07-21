@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
@@ -120,22 +120,7 @@ describe("useRegeneration", () => {
     expect(postMock).not.toHaveBeenCalled();
   });
 
-  it("persists regenerate_menu body and posts the kind-derived endpoint", async () => {
-    const processing: GenerationStatusData = {
-      status: "processing",
-      idempotencyKey: "10000000-0000-4000-8000-000000000099",
-      requestId: "50000000-0000-4000-8000-000000000001",
-      startedAt: "2026-07-11T00:00:00.000Z",
-      quota,
-    };
-    postMock.mockImplementation((command: GenerationCommand) => {
-      processing.idempotencyKey = command.request.idempotencyKey;
-      return Promise.resolve({
-        ...processing,
-        idempotencyKey: command.request.idempotencyKey,
-      });
-    });
-
+  it("persists regenerate_menu pending and navigates to /generation without POSTing here", async () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
@@ -150,8 +135,12 @@ describe("useRegeneration", () => {
       await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
     });
 
-    expect(postMock).toHaveBeenCalledTimes(1);
-    const command = postMock.mock.calls[0]?.[0] as GenerationCommand;
+    // POST は GenerationPage 側の recovery が行う。ここでは pending 永続化のみ。
+    expect(postMock).not.toHaveBeenCalled();
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(pending).not.toBeNull();
+    if (pending === null) throw new Error("pending required");
+    const command = pendingGenerationCommand(pending);
     expect(command.kind).toBe("regenerate_menu");
     expect(generationEndpointFor(command)).toBe("/api/generations/menu");
     if (command.kind !== "regenerate_menu") throw new Error("expected regenerate_menu");
@@ -162,17 +151,7 @@ describe("useRegeneration", () => {
     expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 
-  it("persists regenerate_dish with dishId and the dish endpoint", async () => {
-    postMock.mockImplementation((command: GenerationCommand) =>
-      Promise.resolve({
-        status: "processing" as const,
-        idempotencyKey: command.request.idempotencyKey,
-        requestId: "50000000-0000-4000-8000-000000000002",
-        startedAt: "2026-07-11T00:00:00.000Z",
-        quota,
-      }),
-    );
-
+  it("persists regenerate_dish pending with dishId and navigates to /generation", async () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
@@ -190,11 +169,16 @@ describe("useRegeneration", () => {
       });
     });
 
-    const command = postMock.mock.calls[0]?.[0] as GenerationCommand;
+    expect(postMock).not.toHaveBeenCalled();
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(pending).not.toBeNull();
+    if (pending === null) throw new Error("pending required");
+    const command = pendingGenerationCommand(pending);
     expect(command.kind).toBe("regenerate_dish");
     expect(generationEndpointFor(command)).toBe("/api/generations/dish");
     if (command.kind !== "regenerate_dish") throw new Error("expected regenerate_dish");
     expect(command.request.dishId).toBe(DISH_ID);
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 
   it.each(["regenerate_menu", "regenerate_dish"] as const)(
@@ -263,18 +247,6 @@ describe("useRegeneration", () => {
   );
 
   it("startWhole persists regenerate identity that recovery can re-read unchanged", async () => {
-    const storage = memoryStorage();
-    // useRegeneration は module の default storage を使うため、save 後の identity は
-    // pending-generation の schema 経由で検証する（hook 内 save と同等の command 形状）
-    postMock.mockImplementation((command: GenerationCommand) =>
-      Promise.resolve({
-        status: "processing" as const,
-        idempotencyKey: command.request.idempotencyKey,
-        requestId: "50000000-0000-4000-8000-000000000030",
-        startedAt: "2026-07-11T00:00:00.000Z",
-        quota,
-      }),
-    );
     const { result } = renderHook(
       () =>
         useRegeneration({
@@ -287,31 +259,17 @@ describe("useRegeneration", () => {
     await act(async () => {
       await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
     });
-    expect(postMock).toHaveBeenCalledTimes(1);
-    const posted = postMock.mock.calls[0]?.[0] as GenerationCommand;
-    expect(posted.kind).toBe("regenerate_menu");
-    // 復旧用に同じ command を保存した想定で、再読取 identity が POST と一致することを示す
-    const pending = createPendingGeneration(posted, USER_ID, () => new Date());
-    savePendingGeneration(pending, storage);
-    const recovered = readPendingGeneration(USER_ID, new Date(), storage);
-    expect(recovered).not.toBeNull();
-    if (recovered === null) throw new Error("pending required");
-    expect(JSON.stringify(pendingGenerationCommand(recovered).request)).toBe(
-      JSON.stringify(posted.request),
-    );
-    expect(generationEndpointFor(pendingGenerationCommand(recovered))).toBe(
-      "/api/generations/menu",
-    );
+    // POST は GenerationPage 側。ここでは pending と navigate のみ。
+    expect(postMock).not.toHaveBeenCalled();
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(pending).not.toBeNull();
+    if (pending === null) throw new Error("pending required");
+    expect(pending.kind).toBe("regenerate_menu");
+    expect(generationEndpointFor(pendingGenerationCommand(pending))).toBe("/api/generations/menu");
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 
   it("allows regeneration after a changed but valid current-safety result", async () => {
-    postMock.mockResolvedValue({
-      status: "processing",
-      idempotencyKey: "10000000-0000-4000-8000-000000000021",
-      requestId: "50000000-0000-4000-8000-000000000021",
-      startedAt: "2026-07-11T00:00:00.000Z",
-      quota,
-    });
     const { result } = renderHook(
       () =>
         useRegeneration({
@@ -329,8 +287,7 @@ describe("useRegeneration", () => {
     await act(async () => {
       await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
     });
-    await waitFor(() => {
-      expect(postMock).toHaveBeenCalled();
-    });
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
+    expect(readPendingGeneration(USER_ID, new Date())).not.toBeNull();
   });
 });

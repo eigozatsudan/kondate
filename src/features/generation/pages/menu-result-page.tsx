@@ -15,6 +15,7 @@ import {
   useMenuRevalidation,
   type RevalidationPhaseName,
 } from "@/features/history/hooks/use-menu-revalidation";
+import { useAcceptMenuVersion } from "@/features/history/hooks/use-history";
 import { useRegeneration } from "@/features/history/hooks/use-regeneration";
 import {
   createPantryItem,
@@ -86,6 +87,8 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     phase: revalidation.phase,
     result: revalidation.result,
   });
+  // 履歴詳細と同じ「これに決めた」採用。再生成結果画面からもバージョンを確定できる。
+  const accept = useAcceptMenuVersion();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   const [fridgeOpen, setFridgeOpen] = useState(false);
@@ -287,6 +290,17 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
           }}
         >
           冷蔵庫へ反映
+        </button>
+        <button
+          type="button"
+          className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+          disabled={!actionsEnabled || accept.isPending || menuId === null}
+          onClick={() => {
+            if (menuId === null) return;
+            accept.mutate(menuId);
+          }}
+        >
+          これに決めた
         </button>
       </div>
 

@@ -1,7 +1,136 @@
 {
-  "scenario": "duplicate-menu",
-  "sourceMenuId": "72000000-0000-4000-8000-000000000001",
-  "duplicateOfMenuId": "72000000-0000-4000-8000-000000000002",
-  "menuSignature": "main:鶏肉の照り焼き|side:青菜のおひたし|soup:豆腐のみそ汁",
-  "dishSignatures": ["main:鶏肉の照り焼き", "side:青菜のおひたし", "soup:豆腐のみそ汁"]
+  "outcome": "success",
+  "menu": {
+    "schemaVersion": "2026-07-11.v1",
+    "mealType": "breakfast",
+    "cuisineGenre": "japanese",
+    "servings": 2,
+    "totalElapsedMinutes": 15,
+    "safetyTags": ["cut_small"],
+    "dishes": [
+      {
+        "dishRef": "dish_1",
+        "role": "main",
+        "position": 1,
+        "name": "鶏肉と白菜のやわらか煮",
+        "description": "朝の短時間煮物",
+        "cookingTimeMinutes": 15,
+        "ingredients": [
+          {
+            "ingredientRef": "ingredient_1",
+            "position": 1,
+            "name": "鶏もも肉",
+            "quantityValue": 200,
+            "quantityText": "200g",
+            "unit": "g",
+            "storeSection": "meat_fish",
+            "pantryRef": null,
+            "labelConfirmationRequired": false
+          },
+          {
+            "ingredientRef": "ingredient_2",
+            "position": 2,
+            "name": "しょうゆ",
+            "quantityValue": 1,
+            "quantityText": "小さじ1",
+            "unit": "tsp",
+            "storeSection": "seasonings",
+            "pantryRef": null,
+            "labelConfirmationRequired": true
+          }
+        ],
+        "steps": [
+          {
+            "stepRef": "step_1",
+            "position": 1,
+            "instruction": "鶏肉を小さく切り、白菜と十分に加熱する"
+          }
+        ]
+      },
+      {
+        "dishRef": "dish_2",
+        "role": "side",
+        "position": 2,
+        "name": "にんじんの温サラダ",
+        "description": "やわらかい副菜",
+        "cookingTimeMinutes": 8,
+        "ingredients": [
+          {
+            "ingredientRef": "ingredient_3",
+            "position": 1,
+            "name": "にんじん",
+            "quantityValue": 1,
+            "quantityText": "1本",
+            "unit": "piece",
+            "storeSection": "produce",
+            "pantryRef": null,
+            "labelConfirmationRequired": false
+          }
+        ],
+        "steps": [
+          {
+            "stepRef": "step_2",
+            "position": 1,
+            "instruction": "にんじんを薄く切り、やわらかく加熱する"
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "timelineRef": "timeline_1",
+        "position": 1,
+        "startMinute": 0,
+        "durationMinutes": 7,
+        "instruction": "主菜の材料を切って加熱を始める",
+        "dishRef": "dish_1",
+        "stepRef": "step_1"
+      },
+      {
+        "timelineRef": "timeline_2",
+        "position": 2,
+        "startMinute": 7,
+        "durationMinutes": 8,
+        "instruction": "主菜を煮ながら副菜を仕上げる",
+        "dishRef": "dish_2",
+        "stepRef": "step_2"
+      }
+    ],
+    "adaptations": [
+      {
+        "adaptationRef": "adaptation_1",
+        "dishRef": "dish_1",
+        "anonymousMemberRef": "member_1",
+        "portionText": "1人分",
+        "beforeStepRef": "step_1",
+        "additionalCutting": "1cm角",
+        "additionalHeating": "中心まで十分に加熱",
+        "additionalSeasoning": null,
+        "servingCheck": "骨がないことを確認",
+        "safetyTags": ["cut_small"],
+        "safetyActions": [
+          {
+            "kind": "remove_bones",
+            "dishRef": "dish_1",
+            "ingredientRef": "ingredient_1",
+            "anonymousMemberRef": "member_1",
+            "beforeStepRef": "step_1",
+            "instruction": "骨を完全に除く"
+          }
+        ]
+      }
+    ],
+    "pantryUsage": [],
+    "labelConfirmations": [
+      {
+        "sourceType": "ingredient",
+        "sourceRef": "ingredient_2",
+        "sourcePath": "dishes.0.ingredients.1.name",
+        "allergenId": "wheat",
+        "anonymousMemberRef": "member_1",
+        "dictionaryVersion": "jp-caa-2026-04.v1",
+        "confirmationStatus": "pending"
+      }
+    ]
+  }
 }

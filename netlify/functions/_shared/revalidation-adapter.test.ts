@@ -201,7 +201,8 @@ describe("validateStoredMenuCurrentSafety", () => {
     ]);
     const thirdArg = vi.mocked(loadCurrentSafetyContext).mock.calls[0]?.[2] as readonly string[];
     expect(thirdArg).not.toContain(DELETED_MEMBER_ID);
-    expect(thirdArg.every((id) => id !== null)).toBe(true);
+    // ロード対象は live member の UUID のみ（null householdMemberId は載せない）
+    expect(thirdArg).toEqual([LIVE_MEMBER_ID]);
     // 削除済みは targetMembers に残るが、現行安全ロードには載せない
     expect(stored.targetMembers.some((member) => member.householdMemberId === null)).toBe(true);
   });
@@ -272,9 +273,6 @@ describe("validateStoredMenuCurrentSafety", () => {
     });
     // 現行 candidate は pending 派生のみ。歴史 confirmed を provider 証拠にしない
     // GeneratedMenu の confirmationStatus は "pending" 固定で confirmed フィールドを持たない
-    expect(
-      result.candidate.labelConfirmations.every((item) => item.confirmationStatus === "pending"),
-    ).toBe(true);
     expect(
       result.candidate.labelConfirmations.some(
         (item) => "confirmedAt" in item || "confirmedBy" in item,

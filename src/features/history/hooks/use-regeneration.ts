@@ -2,8 +2,10 @@ import { useCallback } from "react";
 import { useNavigate } from "react-router";
 import type { ChangeReason } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
-import { useGenerationRecovery } from "@/features/generation/hooks/use-generation-recovery";
-import { createPendingGeneration } from "@/features/generation/model/pending-generation";
+import {
+  createPendingGeneration,
+  savePendingGeneration,
+} from "@/features/generation/model/pending-generation";
 import { isRevalidationActionable, type RevalidationResult } from "../api/revalidation-api";
 import type { RevalidationPhaseName } from "./use-menu-revalidation";
 
@@ -19,22 +21,22 @@ export type UseRegenerationInput = {
 };
 
 /**
- * 再生成コマンドを Plan 3 の PendingGeneration として永続化し、
- * useGenerationRecovery 経由で kind から導出した endpoint へ POST する。
- * 現行マウントの再検証が成功していない限りコマンドを組み立てない。
+ * 再生成コマンドを PendingGeneration として永続化し、/generation へ遷移する。
+ * POST は GenerationPage の useGenerationRecovery が pending を recover して行う。
+ * （結果画面インスタンスで await startGeneration すると、成功時に pending が消え
+ *  /generation が idle→planner へ落ちるレースが起きる。）
  */
 export function useRegeneration({ menuId, phase, result }: UseRegenerationInput) {
   const userId = useAuth().session?.user.id;
-  const recovery = useGenerationRecovery();
   const navigate = useNavigate();
 
   const canRegenerate =
     phase === "checked" && result !== undefined && isRevalidationActionable(result);
 
   const startWhole = useCallback(
-    async (reason: RegenerationReasonInput) => {
+    (reason: RegenerationReasonInput) => {
       if (!canRegenerate || userId === undefined) {
-        throw new Error("revalidation_required");
+        return Promise.reject(new Error("revalidation_required"));
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
@@ -52,16 +54,17 @@ export function useRegeneration({ menuId, phase, result }: UseRegenerationInput)
         },
         userId,
       );
-      await recovery.startGeneration(pending);
+      savePendingGeneration(pending);
       void navigate("/generation");
+      return Promise.resolve();
     },
-    [canRegenerate, menuId, navigate, recovery, userId],
+    [canRegenerate, menuId, navigate, userId],
   );
 
   const startDish = useCallback(
-    async (dishId: string, reason: RegenerationReasonInput) => {
+    (dishId: string, reason: RegenerationReasonInput) => {
       if (!canRegenerate || userId === undefined) {
-        throw new Error("revalidation_required");
+        return Promise.reject(new Error("revalidation_required"));
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
@@ -79,10 +82,11 @@ export function useRegeneration({ menuId, phase, result }: UseRegenerationInput)
         },
         userId,
       );
-      await recovery.startGeneration(pending);
+      savePendingGeneration(pending);
       void navigate("/generation");
+      return Promise.resolve();
     },
-    [canRegenerate, menuId, navigate, recovery, userId],
+    [canRegenerate, menuId, navigate, userId],
   );
 
   return { canRegenerate, startWhole, startDish };
