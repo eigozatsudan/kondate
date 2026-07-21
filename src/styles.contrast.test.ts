@@ -56,4 +56,27 @@ describe("color token contrast", () => {
   it("keeps pantry-accent text readable on card surfaces", () => {
     expect(contrast(token("pantry"), token("surface"))).toBeGreaterThanOrEqual(4.5);
   });
+
+  const tints = {
+    planner: "#fff1e6",
+    pantry: "#e6f4f1",
+    history: "#efebfb",
+    shopping: "#fdf0f3",
+    settings: "#f1f5f9",
+  } as const;
+
+  for (const [section, tint] of Object.entries(tints)) {
+    it(`keeps body text readable on the ${section} tint`, () => {
+      expect(contrast(token("text"), tint)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`keeps muted text readable on the ${section} tint`, () => {
+      expect(contrast(token("muted"), tint)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`declares the ${section} tint in the stylesheet`, () => {
+      expect(css).toContain(`[data-section="${section}"]`);
+      expect(css.toLowerCase()).toContain(tint);
+    });
+  }
 });

@@ -8,7 +8,7 @@
   text-rendering: optimizeLegibility;
   --surface: #ffffff;
   --text: #1e293b;
-  --muted: #64748b;
+  --muted: #475569;
   --primary: #f97316;
   --primary-hover: #ea580c;
   --primary-ink: #1e293b;
@@ -16,6 +16,35 @@
   --pantry: #0f766e;
   --danger: #dc2626;
   --border: #e2e8f0;
+}
+
+:root {
+  --section-tint: #f8fafc;
+}
+
+[data-section="planner"] {
+  --section-tint: #fff1e6;
+}
+
+[data-section="pantry"] {
+  --section-tint: #e6f4f1;
+}
+
+[data-section="history"] {
+  --section-tint: #efebfb;
+}
+
+[data-section="shopping"] {
+  --section-tint: #fdf0f3;
+}
+
+[data-section="settings"] {
+  --section-tint: #f1f5f9;
+}
+
+.app-section {
+  min-height: 100vh;
+  background: var(--section-tint);
 }
 
 .emergency-menu-page,
