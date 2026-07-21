@@ -1675,6 +1675,38 @@ export type Database = {
         Args: { p_now?: string; p_request_id: string }
         Returns: Json
       }
+      reconcile_menu_label_confirmations: {
+        Args: {
+          p_expected_safety_fingerprint: string
+          p_menu_id: string
+          p_requirements: Json
+          p_user_id: string
+        }
+        Returns: {
+          allergen_id: string
+          anonymous_member_ref: string
+          confirmation_status: string
+          confirmed_at: string | null
+          confirmed_by: string | null
+          created_at: string
+          dictionary_version: string
+          id: string
+          is_current: boolean
+          menu_id: string
+          requirement_safety_fingerprint: string
+          source_id: string
+          source_path: string
+          source_text_snapshot: string
+          source_type: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "menu_label_confirmations"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       record_ai_generation_model: {
         Args: { p_model_id: string; p_now?: string; p_request_id: string }
         Returns: undefined

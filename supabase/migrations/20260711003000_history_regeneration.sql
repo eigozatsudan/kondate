@@ -182,3 +182,189 @@ $$;
 
 revoke all on function public.delete_menu_group(uuid) from public, anon;
 grant execute on function public.delete_menu_group(uuid) to authenticated;
+
+-- Plan 4 Task 3: 現行 canonical ラベル確認要件の reconcile。
+-- service_role 専用。Plan 3 の 3 引数 confirm_menu_label_confirmation は触らない。
+create or replace function public.reconcile_menu_label_confirmations(
+  p_user_id uuid,
+  p_menu_id uuid,
+  p_expected_safety_fingerprint text,
+  p_requirements jsonb
+)
+returns setof public.menu_label_confirmations
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $function$
+declare
+  v_menu_owner uuid;
+  v_target_member_ids uuid[];
+  v_requirement jsonb;
+  v_source_type text;
+  v_source_id uuid;
+  v_source_path text;
+  v_source_text text;
+  v_allergen_id text;
+  v_anonymous_ref text;
+  v_dictionary_version text;
+  v_identity text;
+  v_seen text[] := array[]::text[];
+  v_ws text := U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF';
+  v_allowed_keys text[] := array[
+    'sourceType','sourceId','sourcePath','sourceTextSnapshot',
+    'allergenId','anonymousMemberRef','dictionaryVersion'
+  ];
+begin
+  if p_user_id is null or p_menu_id is null then
+    raise exception using errcode = '22023', message = 'invalid_reconcile_request';
+  end if;
+  if p_expected_safety_fingerprint is null
+     or p_expected_safety_fingerprint is distinct from btrim(p_expected_safety_fingerprint, v_ws)
+     or char_length(p_expected_safety_fingerprint) not between 1 and 200 then
+    raise exception using errcode = '22023', message = 'invalid_safety_fingerprint';
+  end if;
+  if p_requirements is null or jsonb_typeof(p_requirements) is distinct from 'array' then
+    raise exception using errcode = '22023', message = 'invalid_requirements';
+  end if;
+  if jsonb_array_length(p_requirements) > 200 then
+    raise exception using errcode = '22023', message = 'requirements_cap_exceeded';
+  end if;
+
+  -- 所有者メニューと生存ターゲット行をロックし、数値 suffix 順で target ids を組み立てる
+  select menu.user_id into v_menu_owner
+  from public.menus menu
+  where menu.id = p_menu_id and menu.user_id = p_user_id
+  for update;
+  if v_menu_owner is null then
+    raise exception using errcode = 'P0002', message = 'menu_not_found';
+  end if;
+
+  perform 1
+  from public.menu_target_members target
+  where target.menu_id = p_menu_id
+    and target.user_id = p_user_id
+    and target.household_member_id is not null
+  order by substring(target.anonymous_ref from '^member_([1-9][0-9]*)$')::integer
+  for update;
+
+  select array_agg(
+    target.household_member_id
+    order by substring(target.anonymous_ref from '^member_([1-9][0-9]*)$')::integer
+  )
+    into v_target_member_ids
+  from public.menu_target_members target
+  where target.menu_id = p_menu_id
+    and target.user_id = p_user_id
+    and target.household_member_id is not null;
+
+  if coalesce(cardinality(v_target_member_ids), 0) = 0 then
+    raise exception using errcode = '22023', message = 'current_target_member_required';
+  end if;
+
+  perform private.lock_and_assert_current_safety_fingerprint(
+    p_user_id, v_target_member_ids, p_expected_safety_fingerprint
+  );
+
+  -- 先に現行フラグを下ろし、partial unique (one current requirement) を空ける
+  update public.menu_label_confirmations
+  set is_current = false
+  where menu_id = p_menu_id
+    and user_id = p_user_id
+    and is_current;
+
+  for v_requirement in
+    select value from jsonb_array_elements(p_requirements)
+  loop
+    if jsonb_typeof(v_requirement) is distinct from 'object' then
+      raise exception using errcode = '22023', message = 'invalid_requirement_shape';
+    end if;
+    if exists (
+      select 1
+      from jsonb_object_keys(v_requirement) as keys(key)
+      where keys.key <> all (v_allowed_keys)
+    ) or (
+      select count(*) from jsonb_object_keys(v_requirement)
+    ) <> cardinality(v_allowed_keys) then
+      raise exception using errcode = '22023', message = 'invalid_requirement_keys';
+    end if;
+
+    v_source_type := v_requirement->>'sourceType';
+    begin
+      v_source_id := (v_requirement->>'sourceId')::uuid;
+    exception when others then
+      raise exception using errcode = '22023', message = 'invalid_requirement_source_id';
+    end;
+    v_source_path := v_requirement->>'sourcePath';
+    v_source_text := v_requirement->>'sourceTextSnapshot';
+    v_allergen_id := v_requirement->>'allergenId';
+    v_anonymous_ref := v_requirement->>'anonymousMemberRef';
+    v_dictionary_version := v_requirement->>'dictionaryVersion';
+
+    if v_source_type is null
+       or v_source_type not in ('dish','ingredient','recipe_step','adaptation','timeline')
+       or v_source_path is null
+       or char_length(btrim(v_source_path)) not between 1 and 200
+       or v_source_text is null
+       or v_source_text is distinct from btrim(v_source_text, v_ws)
+       or char_length(v_source_text) not between 1 and 500
+       or v_allergen_id is null
+       or v_allergen_id !~ '^[a-z][a-z0-9_]*$'
+       or v_anonymous_ref is null
+       or v_anonymous_ref !~ '^member_[1-9][0-9]*$'
+       or v_dictionary_version is null
+       or char_length(btrim(v_dictionary_version)) < 1 then
+      raise exception using errcode = '22023', message = 'invalid_requirement_fields';
+    end if;
+
+    v_identity := concat_ws(
+      E'\u0001',
+      v_source_type,
+      v_source_id::text,
+      v_source_path,
+      v_allergen_id,
+      v_anonymous_ref,
+      v_dictionary_version
+    );
+    if v_identity = any (v_seen) then
+      raise exception using errcode = '22023', message = 'duplicate_requirement';
+    end if;
+    v_seen := array_append(v_seen, v_identity);
+
+    insert into public.menu_label_confirmations (
+      menu_id, user_id, source_type, source_id, source_path, source_text_snapshot,
+      allergen_id, anonymous_member_ref, dictionary_version,
+      requirement_safety_fingerprint, is_current, confirmation_status
+    ) values (
+      p_menu_id, p_user_id, v_source_type, v_source_id, v_source_path, v_source_text,
+      v_allergen_id, v_anonymous_ref, v_dictionary_version,
+      p_expected_safety_fingerprint, true, 'pending'
+    )
+    on conflict (
+      menu_id, source_type, source_id, source_path, allergen_id,
+      anonymous_member_ref, dictionary_version, requirement_safety_fingerprint
+    ) do update set
+      -- 同一 fingerprint 再 reconcile では confirmed 証跡と immutable snapshot を保持
+      is_current = true,
+      source_text_snapshot = public.menu_label_confirmations.source_text_snapshot,
+      confirmation_status = public.menu_label_confirmations.confirmation_status,
+      confirmed_at = public.menu_label_confirmations.confirmed_at,
+      confirmed_by = public.menu_label_confirmations.confirmed_by;
+  end loop;
+
+  return query
+    select confirmation.*
+    from public.menu_label_confirmations confirmation
+    where confirmation.menu_id = p_menu_id
+      and confirmation.user_id = p_user_id
+      and confirmation.is_current
+    order by
+      confirmation.source_path,
+      confirmation.allergen_id,
+      confirmation.anonymous_member_ref;
+end;
+$function$;
+
+revoke all on function public.reconcile_menu_label_confirmations(uuid,uuid,text,jsonb)
+  from public, anon, authenticated;
+grant execute on function public.reconcile_menu_label_confirmations(uuid,uuid,text,jsonb)
+  to service_role;
