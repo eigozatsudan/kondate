@@ -872,3 +872,205 @@ docker compose run --rm --no-deps app npm run format:check
 出力が大きい場合はファイルへリダイレクトし、失敗行だけを読む。
 
 E2Eは人間に `./scripts/run-e2e.sh` の実行を依頼し、要約を受け取る。
+
+---
+
+### Task 1b: 機能ごとのパステル面
+
+**Files:**
+- Modify: `src/app/layouts/app-shell.tsx`
+- Modify: `src/styles.css`
+- Test: `src/styles.contrast.test.ts`（既存を拡張）
+- Test: `src/app/layouts/app-shell.test.tsx`（新規作成）
+
+**Interfaces:**
+- Consumes: Task 1 のトークン（`--text` `--muted` `--surface` ほか）
+- Produces: CSSカスタムプロパティ `--section-tint`、および `AppShell` が描画する `data-section` 属性。値は `planner` / `pantry` / `history` / `shopping` / `settings` / `other` の6種。
+
+Task 1 の白ベースに、機能ごとの淡い色面を重ねる。カードは白のまま淡い面から浮かせ、主ボタンは濃い塗りを維持して押すべき場所を明確に保つ。
+
+現状「どの機能の画面か」をCSSに伝える仕組みが無い。`AppShell` が `useLocation` でパスから機能を判定し、ラッパー要素の `data-section` に出す方式を採る。ルーティング定義は変更しない。
+
+セクションとパスの対応（`src/app/router.tsx` の定義に基づく）:
+
+| `data-section` | パス | 面の色 |
+|---|---|---|
+| `planner` | `/planner`, `/generation`, `/menus/:menuId` | `#fff1e6` 淡いオレンジ |
+| `pantry` | `/pantry` | `#e6f4f1` 淡いミント |
+| `history` | `/history`, `/history/:menuId` | `#efebfb` 淡いラベンダー |
+| `shopping` | `/shopping` | `#fdf0f3` 淡いピンク |
+| `settings` | `/settings` | `#f1f5f9` 淡いグレー |
+| `other` | 上記以外（`/emergency-menus` など） | `#f8fafc` 既定の背景色 |
+
+`/emergency-menus` に固有の色を与えないのは意図的。緊急献立は安全性に隣接する画面で、色による含意を持たせない。
+
+**`--muted` の変更が必要。** 現行の `#64748b` は最も明るい面 `#fff1e6` の上で 4.30:1 となり AA（4.5:1）を割る。`#475569` に下げると全パステル面で 6.7:1 以上になる。白背景でも 7.58:1 で、`--text` `#1e293b` との視覚的な区別は保たれる。
+
+- [ ] **Step 1: コントラストテストを拡張する（RED）**
+
+`src/styles.contrast.test.ts` の `describe` ブロックの末尾に次を追加する。既存の6件は変更しない。
+
+```ts
+  const tints = {
+    planner: "#fff1e6",
+    pantry: "#e6f4f1",
+    history: "#efebfb",
+    shopping: "#fdf0f3",
+    settings: "#f1f5f9",
+  } as const;
+
+  for (const [section, tint] of Object.entries(tints)) {
+    it(`keeps body text readable on the ${section} tint`, () => {
+      expect(contrast(token("text"), tint)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`keeps muted text readable on the ${section} tint`, () => {
+      expect(contrast(token("muted"), tint)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`declares the ${section} tint in the stylesheet`, () => {
+      expect(css).toContain(`[data-section="${section}"]`);
+      expect(css.toLowerCase()).toContain(tint);
+    });
+  }
+```
+
+- [ ] **Step 2: テストが失敗することを確認**
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/styles.contrast.test.ts
+```
+
+期待: FAIL。`declares the ... tint` の5件が `[data-section=...]` 未定義で落ち、`keeps muted text readable on the planner tint` が 4.30:1 で落ちる。
+
+- [ ] **Step 3: `--muted` を下げ、面の色を定義する（GREEN）**
+
+`src/styles.css` の `:root` 内の `--muted` を差し替える:
+
+```css
+  --muted: #475569;
+```
+
+`:root` ブロックの直後に、既定値とセクション別の面を追加する:
+
+```css
+:root {
+  --section-tint: #f8fafc;
+}
+
+[data-section="planner"] {
+  --section-tint: #fff1e6;
+}
+
+[data-section="pantry"] {
+  --section-tint: #e6f4f1;
+}
+
+[data-section="history"] {
+  --section-tint: #efebfb;
+}
+
+[data-section="shopping"] {
+  --section-tint: #fdf0f3;
+}
+
+[data-section="settings"] {
+  --section-tint: #f1f5f9;
+}
+
+.app-section {
+  min-height: 100vh;
+  background: var(--section-tint);
+}
+```
+
+- [ ] **Step 4: `AppShell` のテストを書く（RED）**
+
+`src/app/layouts/app-shell.test.tsx` を新規作成する。既存のテストがどう `AppShell` を描画しているかを `src/app/router.test.tsx` で確認し、そのプロバイダ構成（QueryClientProvider、認証、MemoryRouter 等）に合わせること。テストの骨子:
+
+```tsx
+it("marks the pantry section on the pantry route", () => {
+  // /pantry を初期エントリにして AppShell を描画する
+  expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "pantry");
+});
+
+it("marks nested menu routes as the planner section", () => {
+  // /menus/abc を初期エントリにして AppShell を描画する
+  expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "planner");
+});
+
+it("falls back to other for routes without a section", () => {
+  // /emergency-menus を初期エントリにして AppShell を描画する
+  expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "other");
+});
+```
+
+- [ ] **Step 5: テストが失敗することを確認**
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/app/layouts/app-shell.test.tsx
+```
+
+期待: FAIL。`data-section` 属性がまだ描画されていない。
+
+- [ ] **Step 6: `AppShell` に `data-section` を実装する（GREEN）**
+
+`src/app/layouts/app-shell.tsx` に `useLocation` を追加インポートし（`react-router` から。`react-router/dom` ではない）、パスから機能を判定する関数を追加する:
+
+```tsx
+/** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
+function sectionForPath(pathname: string): string {
+  if (pathname === "/planner" || pathname === "/generation" || pathname.startsWith("/menus/")) {
+    return "planner";
+  }
+  if (pathname === "/pantry") return "pantry";
+  if (pathname === "/history" || pathname.startsWith("/history/")) return "history";
+  if (pathname === "/shopping") return "shopping";
+  if (pathname === "/settings") return "settings";
+  return "other";
+}
+```
+
+`AppShell` の返り値のラッパー `<div>` を差し替える。既存の `<Outlet />` と `<nav>` の構造・順序は変更しない:
+
+```tsx
+  const location = useLocation();
+  return (
+    <div className="app-section" data-section={sectionForPath(location.pathname)}>
+      <Outlet />
+```
+
+- [ ] **Step 7: テストが通ることを確認**
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/styles.contrast.test.ts src/app/layouts/app-shell.test.tsx
+```
+
+期待: PASS（コントラスト21件、AppShell 3件）。
+
+- [ ] **Step 8: 既存テストへの影響を確認**
+
+`AppShell` にラッパー要素が増えたため、DOM構造に依存する既存テストが落ちる可能性がある。
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/app
+```
+
+期待: PASS。落ちた場合は、構造を戻すのではなく、テスト側のクエリを新しい構造に追随させる。
+
+- [ ] **Step 9: 検証とコミット**
+
+```bash
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run format:check
+git add src/styles.css src/styles.contrast.test.ts src/app/layouts
+git commit -m "$(cat <<'EOF'
+feat: 機能ごとの淡い色面を敷く
+
+献立・冷蔵庫・履歴・買い物・設定を淡い色面で区別し、白いカードを
+その上に浮かせる。面はAppShellがパスから判定してdata-sectionに出す。
+淡いオレンジ面の上で従来のmutedが4.5:1を割るため、mutedを一段暗くした。
+EOF
+)"
+```
