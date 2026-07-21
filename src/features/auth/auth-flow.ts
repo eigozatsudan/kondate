@@ -37,7 +37,9 @@ function base64url(bytes: Uint8Array): string {
 }
 
 export function sanitizeReturnPath(value: string | null | undefined): string {
-  if (value === undefined || value === null || !value.startsWith("/") || value.startsWith("//")) {
+  // Function側contractの returnTo と同じ形（先頭"/"＋非"/"の1文字以上）に揃える。
+  // protocol-relative "//" に加えて、単独の "/" もここで既定値へ寄せる。
+  if (value === undefined || value === null || !/^\/[^/]/u.test(value)) {
     return "/planner";
   }
   try {
