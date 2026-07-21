@@ -336,7 +336,9 @@ describe("POST /api/generations/menu", () => {
     const loadExecutionContext = vi.fn(() => Promise.resolve(executionContext));
     const validatePreflight = vi.fn(() => ({ ok: true as const }));
     const buildMessages = vi.fn(() => [{ role: "user" as const, content: "prompt" }]);
-    const callOpenRouter = vi.fn(() => Promise.resolve({ output: scenarios.success, modelId }));
+    const callOpenRouter = vi.fn(() =>
+      Promise.resolve({ mode: "full_menu" as const, output: scenarios.success, modelId }),
+    );
     const deps: GenerationDependencies = {
       user,
       repository,

@@ -1,5 +1,11 @@
+import {
+  dishRegenerationPromptSchema,
+  wholeRegenerationPromptSchema,
+} from "../../../shared/contracts/regeneration.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import type { GenerationExecutionContext } from "./generation-service.js";
 import type { OpenRouterMessage } from "./openrouter.js";
+import { requireRegenerationArtifacts } from "./regeneration-context.js";
 
 export type PromptPreferences = {
   mealType: GenerationContext["submission"]["mealType"];
@@ -34,7 +40,8 @@ export type GenerationPromptDto = {
   validationVersions: { allergenDictionary: string; foodSafetyRules: string };
 };
 
-export function buildGenerationMessages(context: GenerationContext): readonly OpenRouterMessage[] {
+/** Plan 3 本体: 新規献立の base プロンプトのみを構築する */
+function buildBaseGenerationMessages(context: GenerationContext): readonly OpenRouterMessage[] {
   for (const member of context.safety.members) {
     if (
       !context.memberPreferences.some(
@@ -146,6 +153,36 @@ export function buildGenerationMessages(context: GenerationContext): readonly Op
     {
       role: "user",
       content: `<kondate_input_data>\n${serialized}\n</kondate_input_data>`,
+    },
+  ];
+}
+
+/**
+ * 実行コンテキスト全体からメッセージを構築する。
+ * 再生成時は base + regeneration_constraints を付与する。
+ */
+export function buildGenerationMessages(
+  context: GenerationExecutionContext,
+): readonly OpenRouterMessage[] {
+  const base = buildBaseGenerationMessages(context.generationContext);
+  if (context.kind === "new_menu") return base;
+  const artifacts = requireRegenerationArtifacts(context.regeneration.artifacts);
+  const regeneration =
+    context.kind === "regenerate_dish"
+      ? dishRegenerationPromptSchema.parse(artifacts.promptDto)
+      : wholeRegenerationPromptSchema.parse({
+          mode: "whole",
+          reason: context.command.request.changeReason,
+          changeReasonCustom: context.command.request.changeReasonCustom,
+          excludedDishSignatures: context.regeneration.existingDerivationMenus.flatMap(
+            (menu) => menu.dishSignatures,
+          ),
+        });
+  return [
+    ...base,
+    {
+      role: "user",
+      content: `<regeneration_constraints>\n${JSON.stringify(regeneration)}\n</regeneration_constraints>`,
     },
   ];
 }

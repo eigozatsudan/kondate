@@ -114,7 +114,90 @@ it("uses models fallback, strict schema, and required parameters", async () => {
     temperature: 0.2,
     stream: false,
   });
-  expect(result).toEqual({ output: conflictOutput, modelId: models[1] });
+  expect(result).toEqual({ mode: "full_menu", output: conflictOutput, modelId: models[1] });
+});
+
+it("uses dish regeneration schema in replacement_dish mode and rejects full-menu bodies", async () => {
+  const dishOutput = {
+    replacementDish: {
+      dishRef: "dish_1",
+      role: "main",
+      position: 1,
+      name: "炒め物",
+      description: "主菜",
+      cookingTimeMinutes: 15,
+      ingredients: [
+        {
+          ingredientRef: "ingredient_1",
+          position: 1,
+          name: "豚肉",
+          quantityValue: 100,
+          quantityText: "100g",
+          unit: "g",
+          storeSection: "meat_fish",
+          pantryRef: null,
+          labelConfirmationRequired: false,
+        },
+      ],
+      steps: [{ stepRef: "step_1", position: 1, instruction: "炒める" }],
+    },
+    timeline: [
+      {
+        timelineRef: "timeline_1",
+        position: 1,
+        startMinute: 0,
+        durationMinutes: 15,
+        instruction: "炒める",
+        dishRef: "dish_1",
+        stepRef: "step_1",
+      },
+    ],
+    adaptations: [],
+    pantryUsage: [],
+    labelConfirmations: [],
+  };
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        model: models[0],
+        choices: [{ message: { content: JSON.stringify(dishOutput) } }],
+      }),
+      { status: 200 },
+    ),
+  );
+  vi.stubGlobal("fetch", fetchImpl);
+
+  const result = await sendMenuGeneration({
+    messages: [{ role: "user", content: "data" }],
+    timeoutMs: 1_000,
+    mode: "replacement_dish",
+  });
+
+  expect(result).toEqual({
+    mode: "replacement_dish",
+    output: dishOutput,
+    modelId: models[0],
+  });
+  const body = requestBody(fetchImpl) as { response_format: { json_schema: { name: string } } };
+  expect(body.response_format.json_schema.name).toBe("kondate_dish_regeneration");
+
+  // full_menu ボディは replacement モードで拒否
+  fetchImpl.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        model: models[0],
+        choices: [{ message: { content: JSON.stringify(conflictOutput) } }],
+      }),
+      { status: 200 },
+    ),
+  );
+  await expect(
+    sendMenuGeneration({
+      messages: [],
+      timeoutMs: 1_000,
+      mode: "replacement_dish",
+    }),
+  ).rejects.toMatchObject({ code: "invalid_ai_response" });
 });
 
 it.each([

@@ -41,6 +41,12 @@ import {
   type OpenRouterGenerationResult,
   type OpenRouterMessage,
 } from "./openrouter.js";
+import { createRegenerationLoaderDeps } from "./regeneration-adapter.js";
+import {
+  isRegenerationDuplicate,
+  loadRegenerationExecutionContext,
+  materializeDishRegenerationCandidate,
+} from "./regeneration-context.js";
 
 /** 1 回の OpenRouter 試行上限（ms） */
 export const ATTEMPT_TIMEOUT_MS = 20_000;
@@ -112,7 +118,7 @@ export type GenerationDependencies = {
     deadlineAtMonotonicMs: number,
   ): Promise<GenerationExecutionContext>;
   validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
-  buildMessages(context: GenerationContext): readonly OpenRouterMessage[];
+  buildMessages(context: GenerationExecutionContext): readonly OpenRouterMessage[];
   callOpenRouter(
     input: Parameters<typeof sendMenuGeneration>[0],
   ): Promise<OpenRouterGenerationResult>;
@@ -387,7 +393,11 @@ export function generationResponse(result: GenerationStatusData): Response {
   return json(status, { ok: true, data: result });
 }
 
-export function createGenerationDeps(
+/**
+ * Plan 3 の new_menu ファクトリ本体。byte-for-byte 互換を保つ。
+ * 再生成スタブは createGenerationDeps ラッパーが置き換える。
+ */
+function createBaseGenerationDeps(
   user: AuthenticatedUser,
   timing: { requestStartedAtMonotonicMs: number },
 ): GenerationDependencies {
@@ -428,16 +438,79 @@ export function createGenerationDeps(
   };
 }
 
+/**
+ * 公開ファクトリ。new_menu は base のまま、再生成だけ loadRegenerationExecutionContext へ分岐する。
+ */
+export function createGenerationDeps(
+  user: AuthenticatedUser,
+  timing: { requestStartedAtMonotonicMs: number },
+): GenerationDependencies {
+  const base = createBaseGenerationDeps(user, timing);
+  return {
+    ...base,
+    loadExecutionContext: async (command, requestId, deadlineAtMonotonicMs) => {
+      if (command.kind === "new_menu") {
+        return base.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);
+      }
+      return loadRegenerationExecutionContext(
+        createRegenerationLoaderDeps(user, {
+          requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+        }),
+        user,
+        command,
+        requestId,
+        deadlineAtMonotonicMs,
+      );
+    },
+  };
+}
+
 type CheckedOutput =
   | { kind: "valid"; checked: Extract<MenuValidationResult, { ok: true }> }
   | { kind: "conflict"; conflicts: readonly z.infer<typeof generationConflictSchema>[] }
-  | { kind: "invalid"; issues: readonly { code: string; path?: string; message?: string }[] };
+  | {
+      kind: "invalid";
+      issues: readonly { code: string; path?: string; message?: string }[];
+      /** 重複は repair 後も残れば duplicate_output で fail（成功消費なし） */
+      duplicate?: boolean;
+    };
 
-function checkOutput(
+/**
+ * OpenRouter 結果を完全候補へ合成し、validateGeneratedMenu まで通す。
+ * 再生成の duplicate は valid 後にシグネチャで判定する。
+ */
+function composeCandidate(
   result: OpenRouterGenerationResult,
-  context: GenerationContext,
+  execution: GenerationExecutionContext,
   uuid: () => string,
 ): CheckedOutput {
+  const context = execution.generationContext;
+
+  if (result.mode === "replacement_dish") {
+    if (execution.kind !== "regenerate_dish") {
+      return { kind: "invalid", issues: [{ code: "invalid_provider_menu" }] };
+    }
+    try {
+      const candidate = materializeDishRegenerationCandidate(execution, result.output, uuid);
+      const checked = validateGeneratedMenu(candidate, context);
+      if (!checked.ok) return { kind: "invalid", issues: checked.issues };
+      if (isRegenerationDuplicate(checked.menu, execution)) {
+        return {
+          kind: "invalid",
+          issues: [{ code: "duplicate_output" }],
+          duplicate: true,
+        };
+      }
+      return { kind: "valid", checked };
+    } catch (error) {
+      if (error instanceof GenerationOutputError) {
+        return { kind: "invalid", issues: error.issues };
+      }
+      return { kind: "invalid", issues: [{ code: "invalid_provider_menu" }] };
+    }
+  }
+
+  // full_menu: new_menu と regenerate_menu
   if (result.output.outcome === "constraint_conflict") {
     try {
       return {
@@ -454,11 +527,34 @@ function checkOutput(
       materializeAiGeneratedMenu(result.output.menu, context, uuid),
       context,
     );
-    return checked.ok ? { kind: "valid", checked } : { kind: "invalid", issues: checked.issues };
+    if (!checked.ok) return { kind: "invalid", issues: checked.issues };
+    if (execution.kind !== "new_menu" && isRegenerationDuplicate(checked.menu, execution)) {
+      return {
+        kind: "invalid",
+        issues: [{ code: "duplicate_output" }],
+        duplicate: true,
+      };
+    }
+    return { kind: "valid", checked };
   } catch (error) {
     if (!(error instanceof GenerationOutputError)) throw error;
     return { kind: "invalid", issues: error.issues };
   }
+}
+
+function lineageFields(execution: GenerationExecutionContext): {
+  sourceMenuId: string | null;
+  changeReason: string | null;
+  changeReasonCustom: string | null;
+} {
+  if (execution.kind === "new_menu") {
+    return { sourceMenuId: null, changeReason: null, changeReasonCustom: null };
+  }
+  return {
+    sourceMenuId: execution.regeneration.sourceMenuId,
+    changeReason: execution.command.request.changeReason,
+    changeReasonCustom: execution.command.request.changeReasonCustom,
+  };
 }
 
 class StatusHydrationError extends Error {
@@ -534,7 +630,8 @@ export async function runGeneration(
       const code = generationFailureCodeSchema.safeParse(preflight.primaryCode);
       return await fail(code.success ? code.data : "internal_error", null);
     }
-    const originalMessages = deps.buildMessages(context);
+    const originalMessages = deps.buildMessages(execution);
+    const wireMode = execution.kind === "regenerate_dish" ? "replacement_dish" : "full_menu";
 
     // markSent 直前の pre-send ゲート。不足時は HTTP を一度も送らず timeout へ
     if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
@@ -561,6 +658,7 @@ export async function runGeneration(
           messages,
           timeoutMs: attemptTimeout,
           excludedModelIds,
+          mode: wireMode,
         });
       } catch (error) {
         if (
@@ -583,6 +681,7 @@ export async function runGeneration(
     let firstResult: OpenRouterGenerationResult | null = null;
     let firstIssues: readonly { code: string; path?: string; message?: string }[] | null = null;
     let firstModelId: string | null = null;
+    let firstWasDuplicate = false;
     try {
       const firstCall = await call();
       if (firstCall === "terminal") return await hydrate();
@@ -601,7 +700,7 @@ export async function runGeneration(
     }
 
     if (firstResult !== null) {
-      const output = checkOutput(firstResult, context, () => deps.uuid());
+      const output = composeCandidate(firstResult, execution, () => deps.uuid());
       if (output.kind === "conflict") return await conflict(output.conflicts);
       if (output.kind === "valid") {
         await deps.repository.succeed({
@@ -614,22 +713,31 @@ export async function runGeneration(
           foodRuleVersion: context.safety.foodRuleVersion,
           targetMembers: [...context.targetMembers],
           expiredChecks: [...context.expiredPantryChecks],
-          sourceMenuId: null,
-          changeReason: null,
-          changeReasonCustom: null,
+          ...lineageFields(execution),
         });
         return await hydrate();
       }
       firstIssues = output.issues;
+      firstWasDuplicate = output.duplicate === true;
     }
 
     // repair は canRepair（20s+2s 残）のときだけ。timeout 経路はここへ来ない
-    if (!canRepair()) return await fail("invalid_ai_response", null);
+    // 重複も 1 回だけ repair を通し、再重複なら duplicate_output（成功消費なし）
+    if (!canRepair()) {
+      return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);
+    }
     const excludedModelIds = firstModelId === null ? [] : [firstModelId];
     const eligibleModels = deps.models.filter((model) => !excludedModelIds.includes(model));
-    if (eligibleModels.length === 0) return await fail("invalid_ai_response", null);
+    if (eligibleModels.length === 0) {
+      return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);
+    }
     const repair = await deps.repository.reserveRepair(requestId);
-    if (!repair.reserved) return await fail("invalid_ai_response", repair.retry_at);
+    if (!repair.reserved) {
+      return await fail(
+        firstWasDuplicate ? "duplicate_output" : "invalid_ai_response",
+        repair.retry_at,
+      );
+    }
     const diagnostics: readonly GenerationRepairDiagnostic[] = toRepairDiagnostics(
       firstIssues ?? [{ code: "invalid_provider_menu" }],
     );
@@ -649,9 +757,16 @@ export async function runGeneration(
       const code = generationFailureCodeSchema.safeParse(error.code);
       return await fail(code.success ? code.data : "internal_error", error.retryAt);
     }
-    const repairedOutput = checkOutput(repaired, context, () => deps.uuid());
+    const repairedOutput = composeCandidate(repaired, execution, () => deps.uuid());
     if (repairedOutput.kind === "conflict") return await conflict(repairedOutput.conflicts);
-    if (repairedOutput.kind === "invalid") return await fail("invalid_ai_response", null);
+    if (repairedOutput.kind === "invalid") {
+      return await fail(
+        repairedOutput.duplicate === true || firstWasDuplicate
+          ? "duplicate_output"
+          : "invalid_ai_response",
+        null,
+      );
+    }
     await deps.repository.succeed({
       requestId,
       menu: repairedOutput.checked.menu,
@@ -662,9 +777,7 @@ export async function runGeneration(
       foodRuleVersion: context.safety.foodRuleVersion,
       targetMembers: [...context.targetMembers],
       expiredChecks: [...context.expiredPantryChecks],
-      sourceMenuId: null,
-      changeReason: null,
-      changeReasonCustom: null,
+      ...lineageFields(execution),
     });
     return await hydrate();
   } catch (error) {

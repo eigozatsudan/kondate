@@ -2,6 +2,35 @@ import { describe, expect, it } from "vitest";
 import { makeGenerationContext } from "../../../shared/testing/factories.js";
 import { buildGenerationMessages } from "./generation-prompt.js";
 
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import type { GenerationExecutionContext } from "./generation-service.js";
+
+/** 既存テストが GenerationContext を渡していた互換ラッパ（new_menu 実行文脈） */
+function asNewMenuExecution(
+  context: GenerationContext,
+): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
+  return {
+    kind: "new_menu",
+    command: {
+      kind: "new_menu",
+      request: {
+        idempotencyKey: "56000000-0000-4000-8000-000000000001",
+        draftId: "84000000-0000-4000-8000-000000000001",
+        draftRevision: 1,
+        privacyNoticeVersion: "2026-07-11.v1",
+        expiredPantryConfirmations: [],
+      },
+    },
+    requestId: "81000000-0000-4000-8000-000000000001",
+    generationContext: context,
+    expectedSafetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+    startedAtMonotonicMs: 0,
+    deadlineAtMonotonicMs: 50_000,
+    regeneration: null,
+  };
+}
+
 const firstPantryId = "74000000-0000-4000-8000-000000000001";
 const secondPantryId = "74000000-0000-4000-8000-000000000002";
 const userIdCanary = "USER_ID_CANARY";
@@ -96,7 +125,7 @@ describe("buildGenerationMessages", () => {
       unknown: "UNKNOWN_CONTEXT_CANARY",
     };
 
-    const messages = buildGenerationMessages(context);
+    const messages = buildGenerationMessages(asNewMenuExecution(context));
 
     expect(messages).toHaveLength(2);
     expect(messages[0]?.role).toBe("system");
@@ -174,9 +203,9 @@ describe("buildGenerationMessages", () => {
 
   it("rejects a missing member-preference pairing", () => {
     const base = makeGenerationContext();
-    expect(() => buildGenerationMessages({ ...base, memberPreferences: [] })).toThrow(
-      "member_preferences_missing",
-    );
+    expect(() =>
+      buildGenerationMessages(asNewMenuExecution({ ...base, memberPreferences: [] })),
+    ).toThrow("member_preferences_missing");
   });
 
   it.each([
@@ -218,9 +247,9 @@ describe("buildGenerationMessages", () => {
       }),
     ],
   ])("fails closed for %s", (_case, mutate) => {
-    expect(() => buildGenerationMessages(mutate(makeGenerationContext()))).toThrow(
-      "member_context_mismatch",
-    );
+    expect(() =>
+      buildGenerationMessages(asNewMenuExecution(mutate(makeGenerationContext()))),
+    ).toThrow("member_context_mismatch");
   });
 
   const secondMemberId = "55000000-0000-4000-8000-000000000002";
@@ -261,7 +290,7 @@ describe("buildGenerationMessages", () => {
   }
 
   it("keeps two members in canonical submission order", () => {
-    const messages = buildGenerationMessages(makeTwoMemberContext());
+    const messages = buildGenerationMessages(asNewMenuExecution(makeTwoMemberContext()));
     const serialized = (messages[1]?.content ?? "")
       .replace("<kondate_input_data>\n", "")
       .replace("\n</kondate_input_data>", "");
@@ -293,8 +322,8 @@ describe("buildGenerationMessages", () => {
       }),
     ],
   ])("fails closed when only %s are reversed", (_case, mutate) => {
-    expect(() => buildGenerationMessages(mutate(makeTwoMemberContext()))).toThrow(
-      "member_context_mismatch",
-    );
+    expect(() =>
+      buildGenerationMessages(asNewMenuExecution(mutate(makeTwoMemberContext()))),
+    ).toThrow("member_context_mismatch");
   });
 });
