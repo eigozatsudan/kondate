@@ -296,6 +296,30 @@ export type Database = {
         }
         Relationships: []
       }
+      shopping_mutations: {
+        Row: {
+          created_at: string
+          idempotency_key: string
+          request_hash: string
+          response: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          idempotency_key: string
+          request_hash: string
+          response: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          idempotency_key?: string
+          request_hash?: string
+          response?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -325,6 +349,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      cleanup_expired_shopping_mutations: {
+        Args: { p_limit?: number; p_user_id: string }
+        Returns: number
+      }
       current_safety_fingerprint: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: string
@@ -351,6 +379,14 @@ export type Database = {
           p_target_member_ids: string[]
           p_user_id: string
         }
+        Returns: undefined
+      }
+      lock_and_check_shopping_list_safety: {
+        Args: { p_expected: string; p_list_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      lock_and_check_shopping_safety: {
+        Args: { p_expected: string; p_menu_id: string; p_user_id: string }
         Returns: undefined
       }
       normalize_allergen_term: { Args: { p_value: string }; Returns: string }
@@ -381,6 +417,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      write_shopping_items: {
+        Args: { p_items: Json; p_list_id: string; p_user_id: string }
+        Returns: undefined
       }
     }
     Enums: {
@@ -1456,6 +1496,396 @@ export type Database = {
           },
         ]
       }
+      shopping_current_label_warnings: {
+        Row: {
+          allergen_display_name: string
+          allergen_id: string
+          anonymous_member_ref: string
+          checked_at: string
+          dictionary_version: string
+          id: string
+          item_id: string | null
+          list_id: string
+          member_display_name: string
+          source_derivation_group_id: string
+          source_display_name: string
+          source_id: string
+          source_menu_id: string
+          source_path: string
+          source_type: string
+          user_id: string
+          warning_key: string
+        }
+        Insert: {
+          allergen_display_name: string
+          allergen_id: string
+          anonymous_member_ref: string
+          checked_at?: string
+          dictionary_version: string
+          id?: string
+          item_id?: string | null
+          list_id: string
+          member_display_name: string
+          source_derivation_group_id: string
+          source_display_name: string
+          source_id: string
+          source_menu_id: string
+          source_path: string
+          source_type: string
+          user_id: string
+          warning_key: string
+        }
+        Update: {
+          allergen_display_name?: string
+          allergen_id?: string
+          anonymous_member_ref?: string
+          checked_at?: string
+          dictionary_version?: string
+          id?: string
+          item_id?: string | null
+          list_id?: string
+          member_display_name?: string
+          source_derivation_group_id?: string
+          source_display_name?: string
+          source_id?: string
+          source_menu_id?: string
+          source_path?: string
+          source_type?: string
+          user_id?: string
+          warning_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shopping_current_label_warnings_allergen_id_fkey"
+            columns: ["allergen_id"]
+            isOneToOne: false
+            referencedRelation: "allergen_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shopping_current_label_warnings_item_owner_fk"
+            columns: ["item_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_items"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "shopping_current_label_warnings_list_owner_fk"
+            columns: ["list_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_lists"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "shopping_current_label_warnings_menu_owner_fk"
+            columns: ["source_menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      shopping_item_sources: {
+        Row: {
+          created_at: string
+          dish_ingredient_id: string | null
+          id: string
+          item_id: string
+          source_dish_id_snapshot: string
+          source_dish_name: string
+          source_ingredient_id_snapshot: string
+          source_name: string
+          source_quantity_text: string
+          source_quantity_value: number | null
+          source_unit: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish_ingredient_id?: string | null
+          id?: string
+          item_id: string
+          source_dish_id_snapshot: string
+          source_dish_name: string
+          source_ingredient_id_snapshot: string
+          source_name: string
+          source_quantity_text: string
+          source_quantity_value?: number | null
+          source_unit?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          dish_ingredient_id?: string | null
+          id?: string
+          item_id?: string
+          source_dish_id_snapshot?: string
+          source_dish_name?: string
+          source_ingredient_id_snapshot?: string
+          source_name?: string
+          source_quantity_text?: string
+          source_quantity_value?: number | null
+          source_unit?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shopping_item_sources_dish_ingredient_id_user_id_fkey"
+            columns: ["dish_ingredient_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "dish_ingredients"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "shopping_item_sources_item_id_user_id_fkey"
+            columns: ["item_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_items"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      shopping_items: {
+        Row: {
+          created_at: string
+          display_name: string
+          id: string
+          is_checked: boolean
+          is_manual: boolean
+          is_manually_edited: boolean
+          is_removed_by_user: boolean
+          list_id: string
+          normalized_name: string
+          pantry_check_required: boolean
+          quantity_text: string
+          quantity_value: number | null
+          store_section: string
+          unit: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          id?: string
+          is_checked?: boolean
+          is_manual?: boolean
+          is_manually_edited?: boolean
+          is_removed_by_user?: boolean
+          list_id: string
+          normalized_name: string
+          pantry_check_required?: boolean
+          quantity_text: string
+          quantity_value?: number | null
+          store_section: string
+          unit?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          id?: string
+          is_checked?: boolean
+          is_manual?: boolean
+          is_manually_edited?: boolean
+          is_removed_by_user?: boolean
+          list_id?: string
+          normalized_name?: string
+          pantry_check_required?: boolean
+          quantity_text?: string
+          quantity_value?: number | null
+          store_section?: string
+          unit?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shopping_items_list_id_user_id_fkey"
+            columns: ["list_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_lists"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      shopping_label_confirmations: {
+        Row: {
+          allergen_display_name: string
+          allergen_id: string
+          anonymous_member_ref: string
+          confirmation_status: string
+          created_at: string
+          dictionary_version: string
+          id: string
+          item_id: string | null
+          list_id: string
+          member_display_name: string
+          menu_label_confirmation_id: string | null
+          source_confirmation_id_snapshot: string | null
+          source_derivation_group_id: string
+          source_display_name: string
+          source_id_snapshot: string
+          source_menu_id_snapshot: string
+          source_path: string
+          source_type: string
+          source_warning_key: string
+          user_id: string
+        }
+        Insert: {
+          allergen_display_name: string
+          allergen_id: string
+          anonymous_member_ref: string
+          confirmation_status: string
+          created_at?: string
+          dictionary_version: string
+          id?: string
+          item_id?: string | null
+          list_id: string
+          member_display_name: string
+          menu_label_confirmation_id?: string | null
+          source_confirmation_id_snapshot?: string | null
+          source_derivation_group_id: string
+          source_display_name: string
+          source_id_snapshot: string
+          source_menu_id_snapshot: string
+          source_path: string
+          source_type: string
+          source_warning_key: string
+          user_id: string
+        }
+        Update: {
+          allergen_display_name?: string
+          allergen_id?: string
+          anonymous_member_ref?: string
+          confirmation_status?: string
+          created_at?: string
+          dictionary_version?: string
+          id?: string
+          item_id?: string | null
+          list_id?: string
+          member_display_name?: string
+          menu_label_confirmation_id?: string | null
+          source_confirmation_id_snapshot?: string | null
+          source_derivation_group_id?: string
+          source_display_name?: string
+          source_id_snapshot?: string
+          source_menu_id_snapshot?: string
+          source_path?: string
+          source_type?: string
+          source_warning_key?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shopping_label_confirmations_allergen_id_fkey"
+            columns: ["allergen_id"]
+            isOneToOne: false
+            referencedRelation: "allergen_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shopping_label_confirmations_item_id_user_id_fkey"
+            columns: ["item_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_items"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "shopping_label_confirmations_list_id_user_id_fkey"
+            columns: ["list_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_lists"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "shopping_label_confirmations_menu_label_confirmation_id_us_fkey"
+            columns: ["menu_label_confirmation_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menu_label_confirmations"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      shopping_list_sources: {
+        Row: {
+          created_at: string
+          id: string
+          list_id: string
+          menu_id: string | null
+          source_derivation_group_id: string
+          source_menu_id_snapshot: string
+          source_menu_version: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          list_id: string
+          menu_id?: string | null
+          source_derivation_group_id: string
+          source_menu_id_snapshot: string
+          source_menu_version: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          list_id?: string
+          menu_id?: string | null
+          source_derivation_group_id?: string
+          source_menu_id_snapshot?: string
+          source_menu_version?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shopping_list_sources_list_id_user_id_fkey"
+            columns: ["list_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_lists"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "shopping_list_sources_menu_id_user_id_fkey"
+            columns: ["menu_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      shopping_lists: {
+        Row: {
+          created_at: string
+          id: string
+          safety_fingerprint: string
+          status: string
+          updated_at: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          safety_fingerprint: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          safety_fingerprint?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1484,6 +1914,34 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      apply_shopping_draft: {
+        Args: {
+          p_active_list_id: string
+          p_draft: Json
+          p_expected_list_version: number
+          p_idempotency_key: string
+          p_menu_id: string
+          p_mode: string
+          p_request_hash: string
+          p_safety_fingerprint: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      apply_shopping_reconciliation: {
+        Args: {
+          p_expected_list_version: number
+          p_idempotency_key: string
+          p_list_id: string
+          p_request_hash: string
+          p_resolved_diff: Json
+          p_safety_fingerprint: string
+          p_source_menu_id: string
+          p_source_menu_version: number
+          p_user_id: string
+        }
+        Returns: Json
       }
       claim_auth_continuation: {
         Args: {
@@ -1671,8 +2129,28 @@ export type Database = {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: Json
       }
+      get_shopping_mutation_replay: {
+        Args: {
+          p_idempotency_key: string
+          p_request_hash: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       mark_ai_global_sent: {
         Args: { p_now?: string; p_request_id: string }
+        Returns: Json
+      }
+      mutate_shopping_item: {
+        Args: {
+          p_expected_list_version: number
+          p_expected_safety_fingerprint: string
+          p_idempotency_key: string
+          p_item_id: string
+          p_list_id: string
+          p_operation: string
+          p_payload: Json
+        }
         Returns: Json
       }
       reconcile_menu_label_confirmations: {
@@ -1710,6 +2188,15 @@ export type Database = {
       record_ai_generation_model: {
         Args: { p_model_id: string; p_now?: string; p_request_id: string }
         Returns: undefined
+      }
+      refresh_shopping_list_safety: {
+        Args: {
+          p_expected_fingerprint: string
+          p_list_id: string
+          p_user_id: string
+          p_warnings: Json
+        }
+        Returns: Json
       }
       reserve_ai_generation: {
         Args: {
@@ -1786,6 +2273,14 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      shopping_list_safety_fingerprint: {
+        Args: { p_list_id: string; p_user_id: string }
+        Returns: string
+      }
+      shopping_safety_fingerprint: {
+        Args: { p_menu_id: string; p_user_id: string }
+        Returns: string
       }
       start_household_onboarding: {
         Args: { p_sort_order: number }
