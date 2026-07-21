@@ -67,9 +67,9 @@ it("resumes one draft and saves each required selection", async () => {
   );
 
   expect(await screen.findByText("必須項目 0 / 3")).toBeInTheDocument();
-  await user.selectOptions(screen.getByLabelText("年齢区分"), "adult");
+  await user.selectOptions(screen.getByLabelText("年齢のめやす"), "adult");
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
-  await user.selectOptions(screen.getByLabelText("対象外の食事の確認"), "none");
+  await user.selectOptions(screen.getByLabelText("食べない食事はありますか"), "none");
   expect(await screen.findByText("必須項目 3 / 3")).toBeInTheDocument();
   expect(updateDraft).toHaveBeenCalledTimes(3);
   await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
@@ -104,7 +104,7 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
     </QueryClientProvider>,
   );
 
-  await user.selectOptions(await screen.findByLabelText("対象外の食事の確認"), "present");
+  await user.selectOptions(await screen.findByLabelText("食べない食事はありますか"), "present");
 
   expect(updateDraft).toHaveBeenNthCalledWith(1, "member-1", {
     unsupported_diet_status: "present",
@@ -172,7 +172,7 @@ it("serializes rapid draft updates in input order", async () => {
     </QueryClientProvider>,
   );
 
-  await user.selectOptions(await screen.findByLabelText("年齢区分"), "adult");
+  await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
 
   expect(updateDraft).toHaveBeenCalledTimes(1);
@@ -291,7 +291,7 @@ it("retries unsaved fields with a later queued save after an earlier save fails"
     </QueryClientProvider>,
   );
 
-  await user.selectOptions(await screen.findByLabelText("年齢区分"), "adult");
+  await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
   firstUpdate.reject(new Error("一時的な保存失敗"));
 

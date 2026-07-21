@@ -91,9 +91,9 @@ export async function requestMagicLinkAndReadUrl(page: Page, email: string): Pro
 
 export async function completeMinimumOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "家族設定を始める" }).click();
-  await page.getByLabel("年齢区分").selectOption("adult");
+  await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page.getByLabel("対象外の食事の確認").selectOption("none");
+  await page.getByLabel("食べない食事はありますか").selectOption("none");
   await page.getByRole("button", { name: "残りはあとで設定して完了" }).click();
   await page.getByRole("button", { name: "AI情報の説明へ" }).click();
 }

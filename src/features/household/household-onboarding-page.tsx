@@ -202,7 +202,7 @@ export function HouseholdOnboardingForm({
     return (
       <main className="page-frame stack">
         <h1>家族の初回設定</h1>
-        <p>年齢区分、アレルギー、対象外の食事の3項目から始めます。</p>
+        <p>年齢のめやす、アレルギー、食べない食事の3項目から始めます。</p>
         {completeMembers.length > 0 && <p>{completeMembers.length}人の設定が完了しています。</p>}
         <button
           className="primary-button"
@@ -249,9 +249,9 @@ export function HouseholdOnboardingForm({
           />
         </label>
         <label className="field">
-          <span>年齢区分</span>
+          <span>年齢のめやす</span>
           <select
-            aria-label="年齢区分"
+            aria-label="年齢のめやす"
             value={draft.age_band ?? ""}
             onChange={(event) => {
               const ageBand = event.target.value as AgeBand;
@@ -356,9 +356,9 @@ export function HouseholdOnboardingForm({
         )}
 
         <label className="field">
-          <span>対象外の食事の確認</span>
+          <span>食べない食事はありますか</span>
           <select
-            aria-label="対象外の食事の確認"
+            aria-label="食べない食事はありますか"
             value={draft.unsupported_diet_status ?? ""}
             onChange={(event) => {
               const value = event.target.value as UnsupportedDietStatus;
@@ -426,7 +426,7 @@ export function HouseholdOnboardingForm({
       )}
       {draft.unsupported_diet_status === "unconfirmed" && (
         <p className="error-message">
-          対象外の食事を確認するまで、このメンバーは献立生成に使えません。
+          食べない食事を確認するまで、このメンバーは献立生成に使えません。
         </p>
       )}
     </main>

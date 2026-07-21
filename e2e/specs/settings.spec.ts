@@ -12,13 +12,13 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.goto("/settings");
   await page.getByRole("button", { name: "家族を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
-  await expect(page.getByRole("alert")).toContainText("年齢区分を選んでください");
-  await expect(page.getByLabel("年齢区分")).toBeFocused();
+  await expect(page.getByRole("alert")).toContainText("年齢のめやすを選んでください");
+  await expect(page.getByLabel("年齢のめやす")).toBeFocused();
   await page.getByLabel("呼び名").fill("子ども");
-  await page.getByLabel("年齢区分").selectOption("age_3_5");
+  await page.getByLabel("年齢のめやす").selectOption("age_3_5");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "くるみを追加" }).click();
-  await page.getByLabel("対象外の食事の確認").selectOption("none");
+  await page.getByLabel("食べない食事はありますか").selectOption("none");
   await page.getByLabel("骨を除く").check();
   await page.getByLabel("食べる量").selectOption("small");
   await page.getByLabel("苦手食材を追加").fill("ねぎ");

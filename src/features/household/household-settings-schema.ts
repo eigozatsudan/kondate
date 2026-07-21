@@ -13,9 +13,9 @@ import {
 export const householdSettingsSchema = z
   .object({
     displayName: z.string().trim().min(1).max(30).nullable(),
-    ageBand: z.enum(ageBands, "年齢区分を選んでください"),
+    ageBand: z.enum(ageBands, "年齢のめやすを選んでください"),
     allergyStatus: z.enum(allergyStatuses, "アレルギーの確認を選んでください"),
-    unsupportedDietStatus: z.enum(unsupportedDietStatuses, "対象外の食事の確認を選んでください"),
+    unsupportedDietStatus: z.enum(unsupportedDietStatuses, "食べない食事があるか選んでください"),
     unsupportedDietKinds: z.array(z.enum(unsupportedDietKinds)).max(3),
     requiredSafetyConstraints: z.array(z.enum(requiredSafetyConstraints)).max(2),
     portionSize: z.enum(portionSizes),

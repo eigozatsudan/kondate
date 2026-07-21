@@ -113,9 +113,9 @@ it("creates and selects a new draft while an existing member is present", async 
 
   expect(createDraft).toHaveBeenCalledWith(1);
   expect(await screen.findByLabelText("呼び名")).toHaveValue("");
-  expect(screen.getByLabelText("年齢区分")).toHaveValue("");
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("");
-  expect(screen.getByLabelText("対象外の食事の確認")).toHaveValue("");
+  expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("");
   expect(screen.getByRole("button", { name: "この家族の設定を完了" })).toBeVisible();
 
   await act(async () => {
@@ -343,9 +343,9 @@ it("keeps every new draft field through consecutive autosaves and completes with
   });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "adult");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
-  await userEvent.selectOptions(screen.getByLabelText("対象外の食事の確認"), "none");
+  await userEvent.selectOptions(screen.getByLabelText("食べない食事はありますか"), "none");
   await userEvent.click(screen.getByLabelText("骨を除く"));
 
   for (let index = 0; index < 2; index += 1) {
@@ -361,9 +361,9 @@ it("keeps every new draft field through consecutive autosaves and completes with
   }
 
   await waitFor(() => {
-    expect(screen.getByLabelText("年齢区分")).toHaveValue("adult");
+    expect(screen.getByLabelText("年齢のめやす")).toHaveValue("adult");
     expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
-    expect(screen.getByLabelText("対象外の食事の確認")).toHaveValue("none");
+    expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("none");
     expect(screen.getByLabelText("骨を除く")).toBeChecked();
   });
   expect(updateDraft.mock.calls[1]?.[1]).toEqual(
@@ -401,7 +401,7 @@ it("keeps every new draft field through consecutive autosaves and completes with
 
 it("saves a changed safety field and invalidates dependents", async () => {
   const { updateMember, invalidateSafety } = renderSettings();
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
   await waitFor(() => {
     expect(updateMember.mock.calls.length).toBeGreaterThan(0);
   });
@@ -475,7 +475,7 @@ it.each([
     });
     renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
 
-    await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+    await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
     await waitFor(() => {
       expect(updateMember).toHaveBeenCalledTimes(1);
     });
@@ -594,7 +594,7 @@ it("keeps a deferred registered intent when the first allergy add fails", async 
     );
   renderSettings({ addStandardAllergy, updateMember });
 
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
   await waitFor(() => {
     expect(updateMember).toHaveBeenCalledTimes(1);
   });
@@ -1744,7 +1744,7 @@ it.each(["standard", "custom"] as const)(
 it("applies age defaults when the user selects an age band", async () => {
   const { updateMember } = renderSettings();
 
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
 
   await waitFor(() => {
     expect(updateMember).toHaveBeenCalledWith(
