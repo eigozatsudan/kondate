@@ -217,8 +217,9 @@ export function buildDishRegenerationPrompt(input: {
     mutableRefMap.set(adaptationRef, adaptation.id);
     const dishRef = idToRef.get(adaptation.dishId);
     const beforeStepRef = idToRef.get(adaptation.branchBeforeRecipeStepId);
+    // 正規化済み ValidatedMenu では通常到達しない。到達時も 500 ではなく閉じた 422 に揃える。
     if (dishRef === undefined || beforeStepRef === undefined) {
-      throw new Error("adaptation_ref_unresolved");
+      throw new HttpError(422, "invalid_request", "献立の表示を確認できませんでした");
     }
     return {
       adaptationRef,
@@ -240,7 +241,7 @@ export function buildDishRegenerationPrompt(input: {
           ingredientRef === undefined ||
           actionStepRef === undefined
         ) {
-          throw new Error("safety_action_ref_unresolved");
+          throw new HttpError(422, "invalid_request", "献立の表示を確認できませんでした");
         }
         return {
           kind: action.kind,

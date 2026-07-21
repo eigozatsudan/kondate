@@ -1,5 +1,5 @@
 begin;
-select plan(43);
+select plan(45);
 
 -- この pgTAP 1.3 は has_column(schema, table, column) の3引数形がなく、
 -- schema 付きは description 付きの4引数形だけが使える。
@@ -209,6 +209,21 @@ select ok(
 select is(
   (select is_selected from public.menus where id = 'b1000000-0000-4000-8000-000000000001'::uuid),
   false, 'sibling version is unselected after accept'
+);
+
+-- 非所有者は menu_not_found（P0002）。選択状態は変わらない。
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a2000000-0000-4000-8000-000000000002', true);
+select throws_ok(
+  $$select public.accept_menu_version('b1000000-0000-4000-8000-000000000002'::uuid)$$,
+  'P0002',
+  'menu_not_found',
+  'non-owner accept is indistinguishable as menu_not_found'
+);
+reset role;
+select is(
+  (select is_selected from public.menus where id = 'b1000000-0000-4000-8000-000000000002'::uuid),
+  true, 'non-owner accept does not clear owner selection'
 );
 
 set local role authenticated;
