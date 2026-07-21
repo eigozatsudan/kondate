@@ -91,4 +91,24 @@ describe("confirm-label-confirmation", () => {
       },
     });
   });
+
+  it("fails closed when the RPC row is malformed", async () => {
+    rpc.mockResolvedValue({
+      data: [{ id: "not-a-uuid", confirmation_status: 1 }],
+      error: null,
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedSafetyFingerprint: "a".repeat(64) }),
+      }),
+      context,
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "confirmation_failed" },
+    });
+  });
 });

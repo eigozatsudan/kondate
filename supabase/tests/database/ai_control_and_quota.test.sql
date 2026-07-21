@@ -2440,5 +2440,193 @@ end
 $test$;
 select pass('confirm_menu_label_confirmation enforces fingerprint boundary and reverse member order');
 
+select has_function('public'::name, 'get_ai_usage_today'::name);
+
+-- usageTodayDataSchema の balance を reserved 保持中でも満たすこと
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000a5';
+  v_now timestamptz := '2026-07-10 15:00:00+00';
+  v_usage jsonb;
+  v_success_consumed integer;
+  v_success_remaining integer;
+  v_attempt_sent integer;
+  v_attempt_remaining integer;
+begin
+  perform tests.create_supabase_user(v_owner, 'usage-reserved@example.invalid');
+
+  -- reserved のみ（成功 0 / 予約 1）
+  insert into private.ai_user_daily_usage(user_id, usage_day, success_count, reserved_count)
+  values (v_owner, date '2026-07-11', 0, 1);
+  insert into private.ai_user_daily_external_attempts(user_id, usage_day, sent_count, reserved_count)
+  values (v_owner, date '2026-07-11', 0, 1);
+
+  v_usage := public.get_ai_usage_today(v_owner, v_now);
+  v_success_consumed := (v_usage->'success'->>'consumed')::integer;
+  v_success_remaining := (v_usage->'success'->>'remaining')::integer;
+  v_attempt_sent := (v_usage->'attempts'->>'sent')::integer;
+  v_attempt_remaining := (v_usage->'attempts'->>'remaining')::integer;
+
+  if v_success_consumed <> 1 then
+    raise exception 'reserved-only success.consumed expected 1, got %', v_success_consumed;
+  end if;
+  if v_success_consumed + v_success_remaining <> 5 then
+    raise exception 'reserved-only success counts do not balance: % + %',
+      v_success_consumed, v_success_remaining;
+  end if;
+  if v_attempt_sent <> 1 then
+    raise exception 'reserved-only attempts.sent expected 1, got %', v_attempt_sent;
+  end if;
+  if v_attempt_sent + v_attempt_remaining <> 12 then
+    raise exception 'reserved-only attempt counts do not balance: % + %',
+      v_attempt_sent, v_attempt_remaining;
+  end if;
+  if (v_usage->'shortWindow'->>'sent')::integer <> 0 then
+    raise exception 'shortWindow must stay sent-only while reserved';
+  end if;
+  if ((v_usage->'shortWindow'->>'sent')::integer
+      + (v_usage->'shortWindow'->>'remaining')::integer) <> 4 then
+    raise exception 'shortWindow counts do not balance under reserved success/attempt';
+  end if;
+
+  -- 成功 2 + 予約 1
+  update private.ai_user_daily_usage
+  set success_count = 2, reserved_count = 1
+  where user_id = v_owner and usage_day = date '2026-07-11';
+  update private.ai_user_daily_external_attempts
+  set sent_count = 3, reserved_count = 1
+  where user_id = v_owner and usage_day = date '2026-07-11';
+
+  v_usage := public.get_ai_usage_today(v_owner, v_now);
+  v_success_consumed := (v_usage->'success'->>'consumed')::integer;
+  v_success_remaining := (v_usage->'success'->>'remaining')::integer;
+  v_attempt_sent := (v_usage->'attempts'->>'sent')::integer;
+  v_attempt_remaining := (v_usage->'attempts'->>'remaining')::integer;
+
+  if v_success_consumed <> 3 then
+    raise exception 'success+reserved consumed expected 3, got %', v_success_consumed;
+  end if;
+  if v_success_consumed + v_success_remaining <> 5 then
+    raise exception 'success+reserved success counts do not balance: % + %',
+      v_success_consumed, v_success_remaining;
+  end if;
+  if v_attempt_sent <> 4 then
+    raise exception 'success+reserved attempts.sent expected 4, got %', v_attempt_sent;
+  end if;
+  if v_attempt_sent + v_attempt_remaining <> 12 then
+    raise exception 'success+reserved attempt counts do not balance: % + %',
+      v_attempt_sent, v_attempt_remaining;
+  end if;
+  -- blocked 時は retryAt 必須、空き時は null（先行 fixture の global 残に依存しない）
+  if ((v_usage->>'retryAt') is null)
+     = (
+       (v_usage->'success'->>'remaining')::integer = 0
+       or (v_usage->'attempts'->>'remaining')::integer = 0
+       or (v_usage->'shortWindow'->>'remaining')::integer = 0
+       or (v_usage->>'globalAvailable') is distinct from 'true'
+     ) then
+    raise exception 'retryAt / blocker pairing mismatch: %', v_usage;
+  end if;
+end
+$test$;
+select pass('get_ai_usage_today balances consumed/sent while reservations are held');
+
+-- repair の attempt 上限 deny は reserved/retry_at のみ（code なし）
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000a6';
+  v_draft_id constant uuid := '30000000-0000-4000-8000-0000000000a6';
+  v_key constant uuid := '20000000-0000-4000-8000-0000000000a6';
+  v_now timestamptz := '2026-07-10 15:00:00+00';
+  v_request_id uuid;
+  v_repair jsonb;
+begin
+  perform tests.create_supabase_user(v_owner, 'repair-attempt-limit@example.invalid');
+  insert into public.generation_drafts (
+    id, user_id, meal_type, main_ingredients, cuisine_genre, target_member_ids,
+    time_limit_minutes, budget_preference, avoid_ingredients, memo,
+    pantry_selections, revision
+  ) values (
+    v_draft_id, v_owner, 'dinner', array['鶏肉'], 'japanese',
+    array[v_owner], 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
+  );
+  perform public.reserve_ai_generation(
+    v_owner, v_key, 'new_menu', v_draft_id, 1,
+    null, null, null, 'generation-command.v1', repeat('e', 64),
+    5, 45, 180, v_now
+  );
+  select id into v_request_id from private.ai_generation_requests where idempotency_key = v_key;
+  -- markSent 相当: 初回送信を消費し attempt/global 予約を解放した状態へ
+  perform public.mark_ai_global_sent(v_request_id, v_now);
+  -- 日次 attempt を上限まで埋める（repair 拒否用）
+  update private.ai_user_daily_external_attempts
+  set reserved_count = 0, sent_count = 12
+  where user_id = v_owner and usage_day = private.ai_jst_day(v_now);
+
+  v_repair := public.reserve_ai_repair_call(v_request_id, 45, v_now + interval '1 second');
+  if (v_repair->>'reserved')::boolean is distinct from false then
+    raise exception 'attempt-limit repair should not reserve';
+  end if;
+  if v_repair ? 'code' then
+    raise exception 'attempt-limit repair deny must omit code field: %', v_repair;
+  end if;
+  if not (v_repair ? 'retry_at') or (v_repair->>'retry_at') is null then
+    raise exception 'attempt-limit repair deny must include retry_at';
+  end if;
+  if (select repair_attempted from private.ai_generation_requests where id = v_request_id)
+     is distinct from true then
+    raise exception 'repair_attempted must stick true after attempt-limit deny';
+  end if;
+end
+$test$;
+select pass('reserve_ai_repair_call attempt-limit deny omits code for strict DTO');
+
+-- opportunistic cleanup は p_user_id 指定時に他ユーザー終端行を消さない
+do $test$
+declare
+  v_owner_a constant uuid := '10000000-0000-4000-8000-0000000000c1';
+  v_owner_b constant uuid := '10000000-0000-4000-8000-0000000000c2';
+  v_old_a uuid := '30000000-0000-4000-8000-0000000000c1';
+  v_old_b uuid := '30000000-0000-4000-8000-0000000000c2';
+  v_before timestamptz := '2026-07-11 00:00:00+00'::timestamptz - interval '30 days';
+  v_deleted integer;
+begin
+  perform tests.create_supabase_user(v_owner_a, 'cleanup-a@example.invalid');
+  perform tests.create_supabase_user(v_owner_b, 'cleanup-b@example.invalid');
+  insert into private.ai_generation_requests(
+    id, user_id, idempotency_key, request_kind, status,
+    request_hmac_version, request_hmac, user_usage_day,
+    failure_code, started_at, completed_at
+  ) values
+    (v_old_a, v_owner_a, '30000000-0000-4000-8000-0000000000d1', 'regenerate_menu', 'failed',
+     'generation-command.v1', repeat('c', 64), date '2026-06-01',
+     'generation_timeout', '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00'),
+    (v_old_b, v_owner_b, '30000000-0000-4000-8000-0000000000d2', 'regenerate_menu', 'failed',
+     'generation-command.v1', repeat('d', 64), date '2026-06-01',
+     'generation_timeout', '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00');
+
+  v_deleted := public.cleanup_ai_generation_requests(v_before, v_owner_a);
+  if v_deleted < 1 then
+    raise exception 'user-scoped cleanup deleted fewer than one row';
+  end if;
+  if exists(select 1 from private.ai_generation_requests where id = v_old_a) then
+    raise exception 'user-scoped cleanup left owner A terminal row';
+  end if;
+  if not exists(select 1 from private.ai_generation_requests where id = v_old_b) then
+    raise exception 'user-scoped cleanup deleted other user terminal row';
+  end if;
+
+  -- null p_user_id は全体掃除（Plan 6 互換）
+  v_deleted := public.cleanup_ai_generation_requests(v_before, null);
+  if v_deleted < 1 then
+    raise exception 'global cleanup deleted fewer than one row';
+  end if;
+  if exists(select 1 from private.ai_generation_requests where id = v_old_b) then
+    raise exception 'global cleanup left owner B terminal row';
+  end if;
+end
+$test$;
+select pass('cleanup_ai_generation_requests scopes opportunistic deletes by user_id');
+
 select * from finish();
 rollback;

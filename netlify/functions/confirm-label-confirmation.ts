@@ -11,6 +11,13 @@ const bodySchema = z
     expectedSafetyFingerprint: z.string().min(1).max(200),
   })
   .strict();
+// RPC setof 行を 200 応答前に検証する（未検査 cast 禁止）。余分な列は許容する。
+const confirmationRowSchema = z.looseObject({
+  id: z.uuid(),
+  confirmation_status: z.string().min(1),
+  confirmed_at: z.iso.datetime({ offset: true }).nullable(),
+  confirmed_by: z.uuid().nullable(),
+});
 
 export type ConfirmationDependencies = {
   requireUser: typeof requireUser;
@@ -56,12 +63,11 @@ export function confirmLabelConfirmationHandler(
         // missing / foreign / wrong-menu / archived / stale / replay は閉じた 404
         throw new HttpError(404, "confirmation_not_found", "確認対象が見つかりませんでした");
       }
-      const row = rows[0] as {
-        id: string;
-        confirmation_status: string;
-        confirmed_at: string | null;
-        confirmed_by: string | null;
-      };
+      const parsed = confirmationRowSchema.safeParse(rows[0]);
+      if (!parsed.success) {
+        throw new HttpError(500, "confirmation_failed", "確認を保存できませんでした");
+      }
+      const row = parsed.data;
       return json(200, {
         ok: true,
         data: {

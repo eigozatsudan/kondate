@@ -112,6 +112,7 @@ export function createGenerationRepository(user: AuthenticatedUser) {
     },
     async markSent(requestId: string) {
       // sent / code は短期窓拒否時に付加される。通常成功は sent=true。
+      // extras 解析失敗時は status!==processing なら fail-closed で sent=false。
       const raw = await rpc("mark_ai_global_sent", { p_request_id: requestId });
       const record = requestPayloadSchema.parse(raw);
       const extras = z
@@ -120,9 +121,10 @@ export function createGenerationRepository(user: AuthenticatedUser) {
           code: z.string().optional(),
         })
         .safeParse(raw);
+      const processing = record.status === "processing";
       return {
         ...record,
-        sent: extras.success ? (extras.data.sent ?? record.status === "processing") : true,
+        sent: extras.success ? (extras.data.sent ?? processing) : processing,
         code: extras.success
           ? (extras.data.code ?? record.failure_code ?? null)
           : (record.failure_code ?? null),

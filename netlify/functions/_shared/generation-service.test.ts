@@ -18,8 +18,11 @@ import { GenerationOutputError } from "./generation-repair.js";
 import { HttpError } from "./http.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
 import {
+  ATTEMPT_TIMEOUT_MS,
+  FINALIZE_RESERVE_MS,
   generationResponse,
   projectProviderConflicts,
+  REQUIRED_SEND_BUDGET_MS,
   runGeneration,
   toGenerationStatus,
   type GenerationDependencies,
@@ -774,6 +777,87 @@ describe("runGeneration", () => {
       status: "failed",
       error: { code: "invalid_ai_response" },
       quota: { retryAt: "2026-07-11T00:10:00.000Z" },
+    });
+  });
+
+  describe("50-second deadline and pre-send budget", () => {
+    it("exports the release-locked budget constants", () => {
+      expect(ATTEMPT_TIMEOUT_MS).toBe(20_000);
+      expect(FINALIZE_RESERVE_MS).toBe(2_000);
+      expect(REQUIRED_SEND_BUDGET_MS).toBe(22_000);
+    });
+
+    it("fails before markSent when remaining is below REQUIRED_SEND_BUDGET_MS", async () => {
+      const repository = makeRepository();
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+      // 認証・予約後に共有予算が進み、pre-send 時点で remaining = REQUIRED - 1
+      let nowMs = 0;
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => nowMs,
+          loadExecutionContext: vi.fn(() => {
+            nowMs = 50_000 - (REQUIRED_SEND_BUDGET_MS - 1);
+            return Promise.resolve({ generationContext: makeGenerationContext() });
+          }),
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.failBeforeSend).toHaveBeenCalledWith(requestId, "generation_timeout");
+      expect(repository.markSent).not.toHaveBeenCalled();
+      expect(callOpenRouter).not.toHaveBeenCalled();
+      expect(repository.reserveRepair).not.toHaveBeenCalled();
+    });
+
+    it("allows one send with a positive timeout when remaining equals REQUIRED_SEND_BUDGET_MS", async () => {
+      const repository = makeRepository();
+      let nowMs = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+        Promise.resolve({ output: scenarios.success, modelId: models[0] }),
+      );
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => nowMs,
+          loadExecutionContext: vi.fn(() => {
+            nowMs = 50_000 - REQUIRED_SEND_BUDGET_MS;
+            return Promise.resolve({ generationContext: makeGenerationContext() });
+          }),
+        }),
+        command,
+      );
+      expect(result.status).toBe("succeeded");
+      expect(repository.failBeforeSend).not.toHaveBeenCalled();
+      expect(repository.markSent).toHaveBeenCalledTimes(1);
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
+      const timeoutMs = callOpenRouter.mock.calls[0]?.[0].timeoutMs;
+      expect(timeoutMs).toBeGreaterThan(0);
+      expect(timeoutMs).toBeLessThanOrEqual(ATTEMPT_TIMEOUT_MS);
+    });
+
+    it("never repairs after a provider generation_timeout", async () => {
+      const repository = makeRepository();
+      const callOpenRouter = vi
+        .fn<GenerationDependencies["callOpenRouter"]>()
+        .mockRejectedValue(new OpenRouterCallError("generation_timeout"));
+      const result = await runGeneration(makeDeps({ repository, callOpenRouter }), command);
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.markSent).toHaveBeenCalledTimes(1);
+      expect(repository.reserveRepair).not.toHaveBeenCalled();
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -352,6 +352,54 @@ describe("createGenerationRepository", () => {
 
     await expectSanitizedDatabaseError(repository.reserve(newMenuCommand));
   });
+
+  it("parses a soft repair denial without a code field", async () => {
+    const retryAt = "2026-07-11T15:00:00.000Z";
+    rpcMock.mockResolvedValueOnce({
+      data: { reserved: false, retry_at: retryAt },
+      error: null,
+    });
+    const repository = createGenerationRepository(user);
+
+    await expect(repository.reserveRepair(requestId)).resolves.toEqual({
+      reserved: false,
+      retry_at: retryAt,
+    });
+  });
+
+  it("rejects a repair denial that includes an unknown code field", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        reserved: false,
+        retry_at: "2026-07-11T15:00:00.000Z",
+        code: "user_attempt_limit",
+      },
+      error: null,
+    });
+    const repository = createGenerationRepository(user);
+
+    // .strict() は code を拒否する。サービス層で fail へ到達できない 500 経路の元になる
+    await expect(repository.reserveRepair(requestId)).rejects.toThrow();
+  });
+
+  it("marks markSent as unsent when status is terminal and extras are malformed", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        ...privateRecord,
+        status: "failed",
+        failure_code: "user_short_window_limit",
+        sent: "not-boolean",
+      },
+      error: null,
+    });
+    const repository = createGenerationRepository(user);
+
+    await expect(repository.markSent(requestId)).resolves.toMatchObject({
+      status: "failed",
+      sent: false,
+      code: "user_short_window_limit",
+    });
+  });
 });
 
 async function expectSanitizedDatabaseError(operation: Promise<unknown>): Promise<void> {

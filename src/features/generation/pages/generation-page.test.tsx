@@ -1,7 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";

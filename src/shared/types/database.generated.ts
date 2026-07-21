@@ -1449,7 +1449,7 @@ export type Database = {
         }[]
       }
       cleanup_ai_generation_requests: {
-        Args: { p_before: string }
+        Args: { p_before: string; p_user_id?: string }
         Returns: number
       }
       cleanup_auth_continuations: { Args: { p_now: string }; Returns: number }

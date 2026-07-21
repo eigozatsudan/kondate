@@ -262,8 +262,11 @@ end;
 $$;
 
 -- 終端行だけを 30 日超で削除する。processing と menu 参照行は残す。
+-- p_user_id 指定時は本人行のみ（予約後 opportunistic）。null は Plan 6 向け全体掃除。
+drop function if exists public.cleanup_ai_generation_requests(timestamptz);
 create or replace function public.cleanup_ai_generation_requests(
-  p_before timestamptz
+  p_before timestamptz,
+  p_user_id uuid default null
 ) returns integer
 language plpgsql security definer set search_path = pg_catalog, pg_temp
 as $$
@@ -276,6 +279,7 @@ begin
   where request.status in ('succeeded', 'failed', 'constraint_conflict')
     and request.completed_at is not null
     and request.completed_at < p_before
+    and (p_user_id is null or request.user_id = p_user_id)
     and not exists (
       select 1 from public.menus menu where menu.id = request.completed_menu_id
     );
@@ -477,7 +481,8 @@ begin
   ) returning * into v_request;
   -- 予約後に本人の 30 日超終端行を opportunistic に掃除（processing / menu 参照は残す）
   perform public.cleanup_ai_generation_requests(
-    p_now - interval '30 days'
+    p_now - interval '30 days',
+    p_user_id
   );
   return private.ai_request_payload(v_request, false);
 end;
@@ -601,11 +606,11 @@ begin
   -- repair_attempted は枠不足でも立て、二重 repair を防ぐ
   update private.ai_generation_requests set repair_attempted = true, updated_at = p_now
     where id = p_request_id;
+  -- deny 形は reserved/retry_at のみ（repository の .strict() が code を拒否するため）
   if v_attempts.reserved_count + v_attempts.sent_count >= 12 then
     return jsonb_build_object(
       'reserved', false,
-      'retry_at', private.ai_next_jst_midnight(p_now),
-      'code', 'user_attempt_limit'
+      'retry_at', private.ai_next_jst_midnight(p_now)
     );
   end if;
   if v_usage.sent_count + v_usage.reserved_count >= p_global_limit then
@@ -1215,6 +1220,9 @@ declare
   v_window_sent integer := 0;
   v_global_sent integer := 0;
   v_global_reserved integer := 0;
+  -- usageTodayDataSchema は consumed+remaining===limit / sent+remaining===limit を要求する
+  v_success_consumed integer;
+  v_attempt_used integer;
   v_success_remaining integer;
   v_attempt_remaining integer;
   v_window_remaining integer;
@@ -1241,8 +1249,12 @@ begin
   from private.ai_global_daily_usage
   where usage_day = v_day;
 
-  v_success_remaining := greatest(5 - v_success_count - v_success_reserved, 0);
-  v_attempt_remaining := greatest(12 - v_attempt_sent - v_attempt_reserved, 0);
+  -- reserved もスロット占有として consumed/sent に含め、スキーマ balance を保つ
+  v_success_consumed := v_success_count + v_success_reserved;
+  v_attempt_used := v_attempt_sent + v_attempt_reserved;
+  v_success_remaining := greatest(5 - v_success_consumed, 0);
+  v_attempt_remaining := greatest(12 - v_attempt_used, 0);
+  -- shortWindow は markSent 後の sent のみ（予約中は未計上）
   v_window_remaining := greatest(4 - v_window_sent, 0);
   v_global_available := (v_global_sent + v_global_reserved) < 45;
 
@@ -1262,12 +1274,12 @@ begin
 
   return jsonb_build_object(
     'success', jsonb_build_object(
-      'consumed', v_success_count,
+      'consumed', v_success_consumed,
       'limit', 5,
       'remaining', v_success_remaining
     ),
     'attempts', jsonb_build_object(
-      'sent', v_attempt_sent,
+      'sent', v_attempt_used,
       'limit', 12,
       'remaining', v_attempt_remaining
     ),
@@ -1330,7 +1342,7 @@ revoke all on function private.persist_validated_menu(
 ) from public,anon,authenticated,service_role;
 
 revoke all on function public.cleanup_stale_ai_generations(timestamptz) from public, anon, authenticated;
-revoke all on function public.cleanup_ai_generation_requests(timestamptz) from public, anon, authenticated;
+revoke all on function public.cleanup_ai_generation_requests(timestamptz, uuid) from public, anon, authenticated;
 revoke all on function public.reserve_ai_generation(
   uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, integer, integer, integer, timestamptz
 ) from public, anon, authenticated;
@@ -1344,7 +1356,7 @@ revoke all on function public.get_ai_generation_status(uuid,uuid,integer,timesta
 revoke all on function public.get_ai_usage_today(uuid,timestamptz) from public,anon,authenticated;
 revoke all on function public.get_ai_generation_submission_snapshot(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.cleanup_stale_ai_generations(timestamptz) to service_role;
-grant execute on function public.cleanup_ai_generation_requests(timestamptz) to service_role;
+grant execute on function public.cleanup_ai_generation_requests(timestamptz, uuid) to service_role;
 grant execute on function public.reserve_ai_generation(
   uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, integer, integer, integer, timestamptz
 ) to service_role;
