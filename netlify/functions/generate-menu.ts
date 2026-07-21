@@ -25,4 +25,9 @@ export default async function generateMenu(request: Request): Promise<Response> 
   }
 }
 
-export const config: Config = { path: "/api/generations/menu", method: "POST" };
+// IP 単位の外側 flood 制御のみ。利用者別 4/600s は PostgreSQL が権威。
+export const config: Config = {
+  path: "/api/generations/menu",
+  method: "POST",
+  rateLimit: { windowLimit: 40, windowSize: 180, aggregateBy: ["ip"] },
+};

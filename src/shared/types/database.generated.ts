@@ -36,6 +36,8 @@ export type Database = {
           status: string
           terminal_details: Json | null
           updated_at: string
+          user_attempt_day: string | null
+          user_attempt_reserved: boolean
           user_id: string
           user_quota_reserved: boolean
           user_usage_day: string
@@ -66,6 +68,8 @@ export type Database = {
           status: string
           terminal_details?: Json | null
           updated_at?: string
+          user_attempt_day?: string | null
+          user_attempt_reserved?: boolean
           user_id: string
           user_quota_reserved?: boolean
           user_usage_day: string
@@ -96,6 +100,8 @@ export type Database = {
           status?: string
           terminal_details?: Json | null
           updated_at?: string
+          user_attempt_day?: string | null
+          user_attempt_reserved?: boolean
           user_id?: string
           user_quota_reserved?: boolean
           user_usage_day?: string
@@ -1442,6 +1448,10 @@ export type Database = {
           return_to: string
         }[]
       }
+      cleanup_ai_generation_requests: {
+        Args: { p_before: string }
+        Returns: number
+      }
       cleanup_auth_continuations: { Args: { p_now: string }; Returns: number }
       cleanup_stale_ai_generations: {
         Args: { p_now?: string }
@@ -1471,6 +1481,37 @@ export type Database = {
           to: "household_members"
           isOneToOne: true
           isSetofReturn: false
+        }
+      }
+      confirm_menu_label_confirmation: {
+        Args: {
+          p_confirmation_id: string
+          p_expected_safety_fingerprint: string
+          p_menu_id: string
+        }
+        Returns: {
+          allergen_id: string
+          anonymous_member_ref: string
+          confirmation_status: string
+          confirmed_at: string | null
+          confirmed_by: string | null
+          created_at: string
+          dictionary_version: string
+          id: string
+          is_current: boolean
+          menu_id: string
+          requirement_safety_fingerprint: string
+          source_id: string
+          source_path: string
+          source_text_snapshot: string
+          source_type: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "menu_label_confirmations"
+          isOneToOne: false
+          isSetofReturn: true
         }
       }
       create_auth_continuation: {
@@ -1566,6 +1607,10 @@ export type Database = {
           target_member_ids: string[]
           time_limit_minutes: number
         }[]
+      }
+      get_ai_usage_today: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: Json
       }
       get_current_safety_snapshot: {
         Args: { p_target_member_ids: string[]; p_user_id: string }

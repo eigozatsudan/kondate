@@ -205,6 +205,18 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
         ] as const,
     ),
   );
+  // used な pantry 選択だけを調理後操作対象にする（live row は別途呼び出し側で載せる）
+  const pantryPostCookTargets = data.generation_pantry_selections
+    .filter((item) => item.usage_status === "used")
+    .map((item) => ({
+      selectionId: item.id,
+      pantryItemId: item.pantry_item_id,
+      pantryItemName: item.pantry_name_snapshot,
+      plannedQuantity: item.planned_quantity,
+      unit: item.unit,
+      currentPantryRow: null,
+    }));
+
   return {
     menu,
     memberLabels: Object.fromEntries(memberLabels),
@@ -234,5 +246,6 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
         confirmedBy: canonical.confirmedBy,
       };
     }),
+    pantryPostCookTargets,
   };
 }

@@ -126,8 +126,8 @@ select is(
 
 select ok(
   to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid)') is null
-  and to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid,text)') is null,
-  'Task 3 exposes no confirmation transition before current-safety locking exists'
+  and to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid,text)') is not null,
+  'Plan 3 exposes sole three-argument confirmation after current-safety locking'
 );
 
 select ok(

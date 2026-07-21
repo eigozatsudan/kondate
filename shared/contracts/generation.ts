@@ -716,6 +716,97 @@ export const generationStatusDataSchema = z.discriminatedUnion("status", [
 ]);
 export type GenerationStatusData = z.infer<typeof generationStatusDataSchema>;
 
+export const usageTodayDataSchema = z
+  .object({
+    success: z
+      .object({
+        consumed: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
+        limit: z.literal(releaseQuota.userDailySuccessLimit),
+        remaining: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
+      })
+      .strict(),
+    attempts: z
+      .object({
+        sent: z.number().int().min(0).max(releaseQuota.userDailyExternalCallLimit),
+        limit: z.literal(releaseQuota.userDailyExternalCallLimit),
+        remaining: z.number().int().min(0).max(releaseQuota.userDailyExternalCallLimit),
+      })
+      .strict(),
+    shortWindow: z
+      .object({
+        sent: z.number().int().min(0).max(releaseQuota.userShortWindowExternalCallLimit),
+        limit: z.literal(releaseQuota.userShortWindowExternalCallLimit),
+        remaining: z.number().int().min(0).max(releaseQuota.userShortWindowExternalCallLimit),
+        retryAt: isoDateTimeSchema.nullable(),
+      })
+      .strict(),
+    globalAvailable: z.boolean(),
+    retryAt: isoDateTimeSchema.nullable(),
+  })
+  .strict()
+  .superRefine((data, context) => {
+    if (data.success.consumed + data.success.remaining !== data.success.limit) {
+      context.addIssue({
+        code: "custom",
+        path: ["success", "remaining"],
+        message: "success counts must balance",
+      });
+    }
+    if (data.attempts.sent + data.attempts.remaining !== data.attempts.limit) {
+      context.addIssue({
+        code: "custom",
+        path: ["attempts", "remaining"],
+        message: "attempt counts must balance",
+      });
+    }
+    if (data.shortWindow.sent + data.shortWindow.remaining !== data.shortWindow.limit) {
+      context.addIssue({
+        code: "custom",
+        path: ["shortWindow", "remaining"],
+        message: "window counts must balance",
+      });
+    }
+    const blocked =
+      data.success.remaining === 0 ||
+      data.attempts.remaining === 0 ||
+      data.shortWindow.remaining === 0 ||
+      !data.globalAvailable;
+    if ((data.retryAt !== null) !== blocked) {
+      context.addIssue({
+        code: "custom",
+        path: ["retryAt"],
+        message: "retryAt must identify an active blocker",
+      });
+    }
+    if ((data.shortWindow.retryAt !== null) !== (data.shortWindow.remaining === 0)) {
+      context.addIssue({
+        code: "custom",
+        path: ["shortWindow", "retryAt"],
+        message: "shortWindow.retryAt is present only while its limit is exhausted",
+      });
+    }
+    const onlyShortWindowBlocked =
+      data.success.remaining > 0 &&
+      data.attempts.remaining > 0 &&
+      data.shortWindow.remaining === 0 &&
+      data.globalAvailable;
+    if (onlyShortWindowBlocked && data.retryAt !== data.shortWindow.retryAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["retryAt"],
+        message: "top-level retryAt must equal the sole short-window blocker",
+      });
+    }
+  });
+export type UsageTodayData = z.infer<typeof usageTodayDataSchema>;
+
+/** 生成失敗・衝突・quota を含む閉じた issue コード集合 */
+export const generationIssueCodes = [
+  ...generationFailureCodes,
+  ...generationConflictCodes,
+] as const;
+export type GenerationIssueCode = (typeof generationIssueCodes)[number];
+
 export const aiGenerationResponseSchema = z.discriminatedUnion("outcome", [
   z
     .object({

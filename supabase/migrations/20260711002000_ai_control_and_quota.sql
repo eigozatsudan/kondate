@@ -109,6 +109,10 @@ create table private.ai_generation_requests (
   completed_menu_id uuid references public.menus(id) on delete set null,
   user_usage_day date not null,
   user_quota_reserved boolean not null default false,
+  -- 未送信の利用者外部 call attempt 予約。markSent で sent へ確定し、failBeforeSend で返却する
+  user_attempt_reserved boolean not null default false,
+  -- attempt 予約日（repair が success 予約日と異なる JST 日に跨る場合に備える）
+  user_attempt_day date,
   global_reserved_day date,
   global_sent_calls smallint not null default 0 check (global_sent_calls between 0 and 2),
   repair_attempted boolean not null default false,
@@ -233,6 +237,12 @@ begin
       set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
       where user_id = v_request.user_id and usage_day = v_request.user_usage_day;
     end if;
+    -- 未送信 attempt 予約だけを返却する（送信済みは返さない）
+    if v_request.user_attempt_reserved and v_request.user_attempt_day is not null then
+      update private.ai_user_daily_external_attempts
+      set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+      where user_id = v_request.user_id and usage_day = v_request.user_attempt_day;
+    end if;
     if v_request.global_reserved_day is not null then
       update private.ai_global_daily_usage
       set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
@@ -240,12 +250,36 @@ begin
     end if;
     update private.ai_generation_requests set
       status = 'failed', failure_code = 'generation_timeout',
-      user_quota_reserved = false, global_reserved_day = null,
+      user_quota_reserved = false, user_attempt_reserved = false, user_attempt_day = null,
+      global_reserved_day = null,
       retry_at = p_now, completed_at = p_now, updated_at = p_now,
       duration_ms = greatest(0, floor(extract(epoch from (p_now - started_at)) * 1000)::integer)
     where id = v_request.id;
     v_count := v_count + 1;
   end loop;
+  return v_count;
+end;
+$$;
+
+-- 終端行だけを 30 日超で削除する。processing と menu 参照行は残す。
+create or replace function public.cleanup_ai_generation_requests(
+  p_before timestamptz
+) returns integer
+language plpgsql security definer set search_path = pg_catalog, pg_temp
+as $$
+declare v_count integer;
+begin
+  if p_before is null then
+    raise exception using errcode = '22023', message = 'invalid_cleanup_before';
+  end if;
+  delete from private.ai_generation_requests request
+  where request.status in ('succeeded', 'failed', 'constraint_conflict')
+    and request.completed_at is not null
+    and request.completed_at < p_before
+    and not exists (
+      select 1 from public.menus menu where menu.id = request.completed_menu_id
+    );
+  get diagnostics v_count = row_count;
   return v_count;
 end;
 $$;
@@ -280,6 +314,7 @@ declare
   v_draft public.generation_drafts;
   v_user private.ai_user_daily_usage;
   v_global private.ai_global_daily_usage;
+  v_attempts private.ai_user_daily_external_attempts;
 begin
   -- HMAC 検証は冪等キー照合・quota 参照より先。不正形式は台帳を触らない
   if p_request_hmac_version is distinct from 'generation-command.v1'
@@ -362,10 +397,14 @@ begin
   values (p_user_id, v_day) on conflict do nothing;
   insert into private.ai_global_daily_usage(usage_day)
   values (v_day) on conflict do nothing;
+  insert into private.ai_user_daily_external_attempts(user_id, usage_day)
+  values (p_user_id, v_day) on conflict do nothing;
   select * into v_user from private.ai_user_daily_usage
     where user_id = p_user_id and usage_day = v_day for update;
   select * into v_global from private.ai_global_daily_usage
     where usage_day = v_day for update;
+  select * into v_attempts from private.ai_user_daily_external_attempts
+    where user_id = p_user_id and usage_day = v_day for update;
 
   if v_user.success_count + v_user.reserved_count >= p_user_limit then
     insert into private.ai_generation_requests(
@@ -378,6 +417,23 @@ begin
       p_draft_revision, p_source_menu_id, p_replace_dish_id, p_change_reason,
       p_request_hmac_version, p_request_hmac,
       v_day, 'user_daily_limit',
+      private.ai_next_jst_midnight(p_now), p_now, p_now
+    ) returning * into v_request;
+    return private.ai_request_payload(v_request, false);
+  end if;
+
+  -- release-locked 12 回/日の外部 call attempt 上限
+  if v_attempts.reserved_count + v_attempts.sent_count >= 12 then
+    insert into private.ai_generation_requests(
+      user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+      source_menu_id, replace_dish_id, change_reason,
+      request_hmac_version, request_hmac,
+      user_usage_day, failure_code, retry_at, started_at, completed_at
+    ) values (
+      p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id,
+      p_draft_revision, p_source_menu_id, p_replace_dish_id, p_change_reason,
+      p_request_hmac_version, p_request_hmac,
+      v_day, 'user_attempt_limit',
       private.ai_next_jst_midnight(p_now), p_now, p_now
     ) returning * into v_request;
     return private.ai_request_payload(v_request, false);
@@ -401,21 +457,28 @@ begin
 
   update private.ai_user_daily_usage set reserved_count = reserved_count + 1, updated_at = p_now
   where user_id = p_user_id and usage_day = v_day;
+  update private.ai_user_daily_external_attempts
+  set reserved_count = reserved_count + 1, updated_at = p_now
+  where user_id = p_user_id and usage_day = v_day;
   update private.ai_global_daily_usage set reserved_count = reserved_count + 1, updated_at = p_now
   where usage_day = v_day;
   insert into private.ai_generation_requests(
     user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
     source_menu_id, replace_dish_id, change_reason,
     request_hmac_version, request_hmac,
-    user_usage_day, user_quota_reserved, global_reserved_day,
-    processing_expires_at, started_at
+    user_usage_day, user_quota_reserved, user_attempt_reserved, user_attempt_day,
+    global_reserved_day, processing_expires_at, started_at
   ) values (
     p_user_id, p_idempotency_key, p_request_kind, 'processing', p_draft_id,
     p_draft_revision, p_source_menu_id, p_replace_dish_id, p_change_reason,
     p_request_hmac_version, p_request_hmac,
-    v_day, true, v_day,
-    p_now + make_interval(secs => p_stale_after_seconds), p_now
+    v_day, true, true, v_day,
+    v_day, p_now + make_interval(secs => p_stale_after_seconds), p_now
   ) returning * into v_request;
+  -- 予約後に本人の 30 日超終端行を opportunistic に掃除（processing / menu 参照は残す）
+  perform public.cleanup_ai_generation_requests(
+    p_now - interval '30 days'
+  );
   return private.ai_request_payload(v_request, false);
 end;
 $$;
@@ -424,20 +487,88 @@ create or replace function public.mark_ai_global_sent(
   p_request_id uuid, p_now timestamptz default clock_timestamp()
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp
 as $$
-declare v_request private.ai_generation_requests;
+declare
+  v_request private.ai_generation_requests;
+  v_window_started_at timestamptz;
+  v_window private.ai_user_rate_windows;
 begin
   select * into v_request from private.ai_generation_requests where id = p_request_id for update;
-  if not found or v_request.status <> 'processing' or v_request.global_reserved_day is null then
+  if not found or v_request.status <> 'processing'
+     or v_request.global_reserved_day is null
+     or not v_request.user_attempt_reserved
+     or v_request.user_attempt_day is null then
     raise exception using errcode = '55000', message = 'global_call_not_reserved';
   end if;
+
+  -- 固定 600 秒窓。非整列は table check で拒否される
+  v_window_started_at := to_timestamp(
+    floor(extract(epoch from p_now) / 600.0) * 600.0
+  );
+  insert into private.ai_user_rate_windows(user_id, window_started_at)
+  values (v_request.user_id, v_window_started_at) on conflict do nothing;
+  select * into v_window from private.ai_user_rate_windows
+    where user_id = v_request.user_id and window_started_at = v_window_started_at
+    for update;
+
+  -- 短期 4 回上限。拒否時は未送信の success / attempt / global 予約をまとめて解放する
+  if v_window.sent_count >= 4 then
+    if v_request.user_quota_reserved then
+      update private.ai_user_daily_usage
+      set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+      where user_id = v_request.user_id and usage_day = v_request.user_usage_day;
+    end if;
+    update private.ai_user_daily_external_attempts
+    set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+    where user_id = v_request.user_id and usage_day = v_request.user_attempt_day;
+    update private.ai_global_daily_usage
+    set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+    where usage_day = v_request.global_reserved_day;
+    update private.ai_generation_requests set
+      status = 'failed',
+      failure_code = 'user_short_window_limit',
+      retry_at = v_window_started_at + interval '10 minutes',
+      user_quota_reserved = false,
+      user_attempt_reserved = false,
+      user_attempt_day = null,
+      global_reserved_day = null,
+      completed_at = p_now,
+      updated_at = p_now,
+      duration_ms = greatest(
+        0,
+        floor(extract(epoch from (p_now - started_at)) * 1000)::integer
+      )
+    where id = p_request_id
+    returning * into v_request;
+    return private.ai_request_payload(v_request, false)
+      || jsonb_build_object('sent', false, 'code', 'user_short_window_limit');
+  end if;
+
   update private.ai_global_daily_usage
   set reserved_count = reserved_count - 1, sent_count = sent_count + 1, updated_at = p_now
   where usage_day = v_request.global_reserved_day and reserved_count > 0;
   if not found then raise exception using errcode = '23514', message = 'global_reservation_corrupt'; end if;
+
+  update private.ai_user_daily_external_attempts
+  set reserved_count = reserved_count - 1, sent_count = sent_count + 1, updated_at = p_now
+  where user_id = v_request.user_id
+    and usage_day = v_request.user_attempt_day
+    and reserved_count > 0;
+  if not found then raise exception using errcode = '23514', message = 'attempt_reservation_corrupt'; end if;
+
+  update private.ai_user_rate_windows
+  set sent_count = sent_count + 1, updated_at = p_now
+  where user_id = v_request.user_id and window_started_at = v_window_started_at;
+
   update private.ai_generation_requests
-  set global_reserved_day = null, global_sent_calls = global_sent_calls + 1, updated_at = p_now
-  where id = p_request_id returning * into v_request;
-  return private.ai_request_payload(v_request, false);
+  set global_reserved_day = null,
+      user_attempt_reserved = false,
+      user_attempt_day = null,
+      global_sent_calls = global_sent_calls + 1,
+      updated_at = p_now
+  where id = p_request_id
+  returning * into v_request;
+  return private.ai_request_payload(v_request, false)
+    || jsonb_build_object('sent', true);
 end;
 $$;
 
@@ -446,7 +577,10 @@ create or replace function public.reserve_ai_repair_call(
   p_now timestamptz default clock_timestamp()
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp
 as $$
-declare v_request private.ai_generation_requests; v_usage private.ai_global_daily_usage;
+declare
+  v_request private.ai_generation_requests;
+  v_usage private.ai_global_daily_usage;
+  v_attempts private.ai_user_daily_external_attempts;
   v_day date := private.ai_jst_day(p_now);
 begin
   if p_global_limit is null or p_global_limit not between 1 and 45 then
@@ -454,19 +588,39 @@ begin
   end if;
   select * into v_request from private.ai_generation_requests where id = p_request_id for update;
   if not found or v_request.status <> 'processing' or v_request.repair_attempted
-     or v_request.global_reserved_day is not null then
+     or v_request.global_reserved_day is not null
+     or v_request.user_attempt_reserved then
     raise exception using errcode = '55000', message = 'repair_not_available';
   end if;
   insert into private.ai_global_daily_usage(usage_day) values (v_day) on conflict do nothing;
+  insert into private.ai_user_daily_external_attempts(user_id, usage_day)
+  values (v_request.user_id, v_day) on conflict do nothing;
   select * into v_usage from private.ai_global_daily_usage where usage_day = v_day for update;
+  select * into v_attempts from private.ai_user_daily_external_attempts
+    where user_id = v_request.user_id and usage_day = v_day for update;
+  -- repair_attempted は枠不足でも立て、二重 repair を防ぐ
   update private.ai_generation_requests set repair_attempted = true, updated_at = p_now
     where id = p_request_id;
+  if v_attempts.reserved_count + v_attempts.sent_count >= 12 then
+    return jsonb_build_object(
+      'reserved', false,
+      'retry_at', private.ai_next_jst_midnight(p_now),
+      'code', 'user_attempt_limit'
+    );
+  end if;
   if v_usage.sent_count + v_usage.reserved_count >= p_global_limit then
     return jsonb_build_object('reserved', false, 'retry_at', private.ai_next_jst_midnight(p_now));
   end if;
   update private.ai_global_daily_usage set reserved_count = reserved_count + 1, updated_at = p_now
     where usage_day = v_day;
-  update private.ai_generation_requests set global_reserved_day = v_day, updated_at = p_now
+  update private.ai_user_daily_external_attempts
+  set reserved_count = reserved_count + 1, updated_at = p_now
+  where user_id = v_request.user_id and usage_day = v_day;
+  update private.ai_generation_requests
+  set global_reserved_day = v_day,
+      user_attempt_reserved = true,
+      user_attempt_day = v_day,
+      updated_at = p_now
     where id = p_request_id;
   return jsonb_build_object('reserved', true, 'retry_at', null);
 end;
@@ -501,13 +655,20 @@ begin
     update private.ai_user_daily_usage set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
       where user_id = v_request.user_id and usage_day = v_request.user_usage_day;
   end if;
+  -- 未送信 attempt 予約のみ返却。markSent 済みの sent_count は触らない
+  if v_request.user_attempt_reserved and v_request.user_attempt_day is not null then
+    update private.ai_user_daily_external_attempts
+    set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+    where user_id = v_request.user_id and usage_day = v_request.user_attempt_day;
+  end if;
   if v_request.global_reserved_day is not null then
     update private.ai_global_daily_usage set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
       where usage_day = v_request.global_reserved_day;
   end if;
   update private.ai_generation_requests set
     status = 'failed', failure_code = p_failure_code, retry_at = p_retry_at,
-    user_quota_reserved = false, global_reserved_day = null,
+    user_quota_reserved = false, user_attempt_reserved = false, user_attempt_day = null,
+    global_reserved_day = null,
     completed_at = p_now, updated_at = p_now,
     duration_ms = greatest(0, floor(extract(epoch from (p_now - started_at)) * 1000)::integer)
   where id = p_request_id returning * into v_request;
@@ -542,11 +703,16 @@ begin
     return private.ai_request_payload(v_request, true);
   end if;
 
-  -- 未解放の success 予約を同じ transaction で解放する
+  -- 未解放の success / attempt / global 予約を同じ transaction で解放する
   if v_request.user_quota_reserved then
     update private.ai_user_daily_usage
     set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
     where user_id = v_request.user_id and usage_day = v_request.user_usage_day;
+  end if;
+  if v_request.user_attempt_reserved and v_request.user_attempt_day is not null then
+    update private.ai_user_daily_external_attempts
+    set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+    where user_id = v_request.user_id and usage_day = v_request.user_attempt_day;
   end if;
   if v_request.global_reserved_day is not null then
     update private.ai_global_daily_usage
@@ -559,6 +725,8 @@ begin
     failure_code = null,
     terminal_details = jsonb_build_object('conflictCodes', to_jsonb(p_conflict_codes)),
     user_quota_reserved = false,
+    user_attempt_reserved = false,
+    user_attempt_day = null,
     global_reserved_day = null,
     completed_at = p_now,
     updated_at = p_now,
@@ -848,6 +1016,65 @@ revoke all on function private.current_safety_fingerprint(uuid,uuid[])
 revoke all on function private.lock_and_assert_current_safety_fingerprint(uuid,uuid[],text)
   from public,anon,authenticated,service_role;
 
+-- Plan 3 唯一のラベル確認遷移。fingerprint helper revoke 直後に置き、helper 呼出し前に
+-- expected fingerprint の Unicode whitespace / 1〜200 文字境界を空結果で拒否する。
+create or replace function public.confirm_menu_label_confirmation(
+  p_menu_id uuid,
+  p_confirmation_id uuid,
+  p_expected_safety_fingerprint text
+) returns setof public.menu_label_confirmations
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_target_member_ids uuid[];
+begin
+  if v_user_id is null then return; end if;
+  if p_expected_safety_fingerprint is null
+     or p_expected_safety_fingerprint is distinct from btrim(
+       p_expected_safety_fingerprint,
+       U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+     )
+     or char_length(p_expected_safety_fingerprint) not between 1 and 200 then
+    return;
+  end if;
+  select array_agg(
+    target.household_member_id
+    order by substring(target.anonymous_ref from '^member_([1-9][0-9]*)$')::integer
+  )
+    into v_target_member_ids
+  from public.menu_target_members target
+  where target.menu_id = p_menu_id and target.user_id = v_user_id
+    and target.household_member_id is not null;
+  if coalesce(cardinality(v_target_member_ids), 0) = 0 then return; end if;
+  begin
+    perform private.lock_and_assert_current_safety_fingerprint(
+      v_user_id, v_target_member_ids, p_expected_safety_fingerprint
+    );
+  exception
+    when sqlstate 'P0001' then return;
+  end;
+  return query
+    update public.menu_label_confirmations confirmation
+    set confirmation_status = 'confirmed',
+        confirmed_at = statement_timestamp(),
+        confirmed_by = v_user_id
+    where confirmation.id = p_confirmation_id
+      and confirmation.menu_id = p_menu_id
+      and confirmation.user_id = v_user_id
+      and confirmation.is_current
+      and confirmation.confirmation_status = 'pending'
+      and confirmation.requirement_safety_fingerprint = p_expected_safety_fingerprint
+    returning confirmation.*;
+end;
+$function$;
+revoke all on function public.confirm_menu_label_confirmation(uuid,uuid,text)
+  from public,anon,authenticated,service_role;
+grant execute on function public.confirm_menu_label_confirmation(uuid,uuid,text)
+  to authenticated;
+
 create or replace function private.assign_regeneration_lineage(
   p_user_id uuid,
   p_source_menu_id uuid,
@@ -917,13 +1144,19 @@ begin
     reserved_count = reserved_count - 1, success_count = success_count + 1, updated_at = p_now
   where user_id = v_request.user_id and usage_day = v_request.user_usage_day and reserved_count > 0;
   if not found then raise exception using errcode = '23514', message = 'user_reservation_corrupt'; end if;
+  if v_request.user_attempt_reserved and v_request.user_attempt_day is not null then
+    update private.ai_user_daily_external_attempts
+    set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+    where user_id = v_request.user_id and usage_day = v_request.user_attempt_day;
+  end if;
   if v_request.global_reserved_day is not null then
     update private.ai_global_daily_usage set reserved_count = reserved_count - 1, updated_at = p_now
     where usage_day = v_request.global_reserved_day and reserved_count > 0;
   end if;
   update private.ai_generation_requests set
     status = 'succeeded',completed_menu_id = v_menu_id,user_quota_reserved = false,
-    global_reserved_day = null,completed_at = p_now,updated_at = p_now,
+    user_attempt_reserved = false,user_attempt_day = null,global_reserved_day = null,
+    completed_at = p_now,updated_at = p_now,
     duration_ms = greatest(0, floor(extract(epoch from (p_now - started_at)) * 1000)::integer)
   where id = p_request_id returning * into v_request;
   return private.ai_request_payload(v_request, false);
@@ -957,6 +1190,95 @@ begin
     'user_daily_limit',p_user_limit,'consumed',v_request.status='succeeded',
     'terminal_details',v_request.terminal_details,'actual_model_ids',v_request.actual_model_ids,
     'started_at',v_request.started_at,'completed_at',v_request.completed_at
+  );
+end;
+$$;
+
+-- 生成行を作らず現在の成功 / attempt / 短期窓 / 全体受付を返す
+create or replace function public.get_ai_usage_today(
+  p_user_id uuid,
+  p_now timestamptz default clock_timestamp()
+) returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_day date := private.ai_jst_day(p_now);
+  v_window_started_at timestamptz := to_timestamp(
+    floor(extract(epoch from p_now) / 600.0) * 600.0
+  );
+  v_success_count integer := 0;
+  v_success_reserved integer := 0;
+  v_attempt_sent integer := 0;
+  v_attempt_reserved integer := 0;
+  v_window_sent integer := 0;
+  v_global_sent integer := 0;
+  v_global_reserved integer := 0;
+  v_success_remaining integer;
+  v_attempt_remaining integer;
+  v_window_remaining integer;
+  v_global_available boolean;
+  v_success_retry timestamptz;
+  v_attempt_retry timestamptz;
+  v_window_retry timestamptz;
+  v_global_retry timestamptz;
+  v_retry_at timestamptz;
+begin
+  select coalesce(success_count, 0), coalesce(reserved_count, 0)
+    into v_success_count, v_success_reserved
+  from private.ai_user_daily_usage
+  where user_id = p_user_id and usage_day = v_day;
+  select coalesce(sent_count, 0), coalesce(reserved_count, 0)
+    into v_attempt_sent, v_attempt_reserved
+  from private.ai_user_daily_external_attempts
+  where user_id = p_user_id and usage_day = v_day;
+  select coalesce(sent_count, 0) into v_window_sent
+  from private.ai_user_rate_windows
+  where user_id = p_user_id and window_started_at = v_window_started_at;
+  select coalesce(sent_count, 0), coalesce(reserved_count, 0)
+    into v_global_sent, v_global_reserved
+  from private.ai_global_daily_usage
+  where usage_day = v_day;
+
+  v_success_remaining := greatest(5 - v_success_count - v_success_reserved, 0);
+  v_attempt_remaining := greatest(12 - v_attempt_sent - v_attempt_reserved, 0);
+  v_window_remaining := greatest(4 - v_window_sent, 0);
+  v_global_available := (v_global_sent + v_global_reserved) < 45;
+
+  v_success_retry := case when v_success_remaining = 0
+    then private.ai_next_jst_midnight(p_now) else null end;
+  v_attempt_retry := case when v_attempt_remaining = 0
+    then private.ai_next_jst_midnight(p_now) else null end;
+  v_window_retry := case when v_window_remaining = 0
+    then v_window_started_at + interval '10 minutes' else null end;
+  v_global_retry := case when not v_global_available
+    then private.ai_next_jst_midnight(p_now) else null end;
+
+  select min(candidate) into v_retry_at
+  from (values (v_success_retry), (v_attempt_retry), (v_window_retry), (v_global_retry))
+    as retries(candidate)
+  where candidate is not null;
+
+  return jsonb_build_object(
+    'success', jsonb_build_object(
+      'consumed', v_success_count,
+      'limit', 5,
+      'remaining', v_success_remaining
+    ),
+    'attempts', jsonb_build_object(
+      'sent', v_attempt_sent,
+      'limit', 12,
+      'remaining', v_attempt_remaining
+    ),
+    'shortWindow', jsonb_build_object(
+      'sent', v_window_sent,
+      'limit', 4,
+      'remaining', v_window_remaining,
+      'retryAt', v_window_retry
+    ),
+    'globalAvailable', v_global_available,
+    'retryAt', v_retry_at
   );
 end;
 $$;
@@ -1008,6 +1330,7 @@ revoke all on function private.persist_validated_menu(
 ) from public,anon,authenticated,service_role;
 
 revoke all on function public.cleanup_stale_ai_generations(timestamptz) from public, anon, authenticated;
+revoke all on function public.cleanup_ai_generation_requests(timestamptz) from public, anon, authenticated;
 revoke all on function public.reserve_ai_generation(
   uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, integer, integer, integer, timestamptz
 ) from public, anon, authenticated;
@@ -1018,8 +1341,10 @@ revoke all on function public.finalize_ai_generation_failure(uuid, text, timesta
 revoke all on function public.finalize_ai_generation_conflict(uuid, text[], timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) from public,anon,authenticated;
 revoke all on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) from public,anon,authenticated;
+revoke all on function public.get_ai_usage_today(uuid,timestamptz) from public,anon,authenticated;
 revoke all on function public.get_ai_generation_submission_snapshot(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.cleanup_stale_ai_generations(timestamptz) to service_role;
+grant execute on function public.cleanup_ai_generation_requests(timestamptz) to service_role;
 grant execute on function public.reserve_ai_generation(
   uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, integer, integer, integer, timestamptz
 ) to service_role;
@@ -1030,4 +1355,5 @@ grant execute on function public.finalize_ai_generation_failure(uuid, text, time
 grant execute on function public.finalize_ai_generation_conflict(uuid, text[], timestamptz) to service_role;
 grant execute on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) to service_role;
 grant execute on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) to service_role;
+grant execute on function public.get_ai_usage_today(uuid,timestamptz) to service_role;
 grant execute on function public.get_ai_generation_submission_snapshot(uuid,uuid) to service_role;

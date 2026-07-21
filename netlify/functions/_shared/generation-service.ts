@@ -41,6 +41,13 @@ import {
   type OpenRouterMessage,
 } from "./openrouter.js";
 
+/** 1 回の OpenRouter 試行上限（ms） */
+export const ATTEMPT_TIMEOUT_MS = 20_000;
+/** 最終化用に確保する残り予算（ms） */
+export const FINALIZE_RESERVE_MS = 2_000;
+/** markSent 前に必要な最小残り予算 */
+export const REQUIRED_SEND_BUDGET_MS = ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS;
+
 export type GenerationDependencies = {
   user: AuthenticatedUser;
   repository: Omit<GenerationRepository, "userClient">;
@@ -56,6 +63,8 @@ export type GenerationDependencies = {
     input: Parameters<typeof sendMenuGeneration>[0],
   ): Promise<OpenRouterGenerationResult>;
   now(): Date;
+  /** 単調時計。認証・予約も同じ 50s 予算を消費する */
+  monotonicNow(): number;
   openRouterTimeoutMs: number;
   requestStartedAtMonotonicMs: number;
   functionTotalBudgetMs: number;
@@ -324,6 +333,7 @@ export function createGenerationDeps(
     buildMessages: buildGenerationMessages,
     callOpenRouter: sendMenuGeneration,
     now: () => new Date(),
+    monotonicNow: () => performance.now(),
     openRouterTimeoutMs: env.openRouter.timeoutMs,
     requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
     functionTotalBudgetMs: env.openRouter.functionTotalBudgetMs,
@@ -416,12 +426,18 @@ export async function runGeneration(
     return await hydrate();
   };
 
-  try {
-    const execution = await deps.loadExecutionContext(
-      command,
-      requestId,
-      deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs,
+  const deadlineAtMonotonicMs = deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs;
+  const remainingMs = () => deadlineAtMonotonicMs - deps.monotonicNow();
+  const timeoutForAttempt = () =>
+    Math.min(
+      ATTEMPT_TIMEOUT_MS,
+      deps.openRouterTimeoutMs,
+      Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
     );
+  const canRepair = () => remainingMs() >= REQUIRED_SEND_BUDGET_MS;
+
+  try {
+    const execution = await deps.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);
     const context = execution.generationContext;
     const preflight = deps.validatePreflight(context, deps.now());
     if (!preflight.ok) {
@@ -433,16 +449,30 @@ export async function runGeneration(
     }
     const originalMessages = deps.buildMessages(context);
 
+    // markSent 直前の pre-send ゲート。不足時は HTTP を一度も送らず timeout へ
+    if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
+      await deps.repository.failBeforeSend(requestId, "generation_timeout");
+      return await hydrate();
+    }
+
     const call = async (
       excludedModelIds: readonly string[] = [],
       messages: readonly OpenRouterMessage[] = originalMessages,
-    ) => {
-      await deps.repository.markSent(requestId);
+    ): Promise<OpenRouterGenerationResult | "terminal"> => {
+      const attemptTimeout = timeoutForAttempt();
+      if (attemptTimeout <= 0) {
+        throw new OpenRouterCallError("generation_timeout");
+      }
+      const sent = await deps.repository.markSent(requestId);
+      // 短期窓拒否は markSent 内で failed 終端化済み。再 fail せず status を読む。
+      if (!sent.sent) {
+        return "terminal";
+      }
       let result: OpenRouterGenerationResult;
       try {
         result = await deps.callOpenRouter({
           messages,
-          timeoutMs: deps.openRouterTimeoutMs,
+          timeoutMs: attemptTimeout,
           excludedModelIds,
         });
       } catch (error) {
@@ -467,12 +497,16 @@ export async function runGeneration(
     let firstIssues: readonly { code: string; path?: string; message?: string }[] | null = null;
     let firstModelId: string | null = null;
     try {
-      firstResult = await call();
+      const firstCall = await call();
+      if (firstCall === "terminal") return await hydrate();
+      firstResult = firstCall;
       firstModelId = firstResult.modelId;
     } catch (error) {
       if (!(error instanceof OpenRouterCallError)) throw error;
       const code = generationFailureCodeSchema.safeParse(error.code);
       if (!code.success) return await fail("internal_error", null);
+      // timeout は修理しない
+      if (code.data === "generation_timeout") return await fail(code.data, error.retryAt);
       if (code.data !== "invalid_ai_response") return await fail(code.data, error.retryAt);
       firstModelId =
         error.modelId !== null && deps.models.includes(error.modelId) ? error.modelId : null;
@@ -502,6 +536,8 @@ export async function runGeneration(
       firstIssues = output.issues;
     }
 
+    // repair は canRepair（20s+2s 残）のときだけ。timeout 経路はここへ来ない
+    if (!canRepair()) return await fail("invalid_ai_response", null);
     const excludedModelIds = firstModelId === null ? [] : [firstModelId];
     const eligibleModels = deps.models.filter((model) => !excludedModelIds.includes(model));
     if (eligibleModels.length === 0) return await fail("invalid_ai_response", null);
@@ -512,13 +548,15 @@ export async function runGeneration(
     );
     let repaired: OpenRouterGenerationResult;
     try {
-      repaired = await call(excludedModelIds, [
+      const repairedCall = await call(excludedModelIds, [
         ...originalMessages,
         {
           role: "user",
           content: `前の結果を次の項目だけ修正し、全体JSONを一度だけ再生成してください: ${JSON.stringify(diagnostics)}`,
         },
       ]);
+      if (repairedCall === "terminal") return await hydrate();
+      repaired = repairedCall;
     } catch (error) {
       if (!(error instanceof OpenRouterCallError)) throw error;
       const code = generationFailureCodeSchema.safeParse(error.code);

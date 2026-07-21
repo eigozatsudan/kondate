@@ -70,7 +70,7 @@ function makeRepository() {
   let current = record("processing");
   const repository = {
     reserve: vi.fn(() => Promise.resolve(current)),
-    markSent: vi.fn(() => Promise.resolve(current)),
+    markSent: vi.fn(() => Promise.resolve({ ...current, sent: true as const, code: null })),
     reserveRepair: vi.fn<GenerationDependencies["repository"]["reserveRepair"]>(() =>
       Promise.resolve({ reserved: true, retry_at: null }),
     ),
@@ -78,6 +78,10 @@ function makeRepository() {
       Promise.resolve(undefined),
     ),
     fail: vi.fn((_id: string, code: string, retryAt: string | null) => {
+      current = { ...record("failed"), failure_code: code, retry_at: retryAt };
+      return Promise.resolve(current);
+    }),
+    failBeforeSend: vi.fn((_id: string, code: string, retryAt: string | null = null) => {
       current = { ...record("failed"), failure_code: code, retry_at: retryAt };
       return Promise.resolve(current);
     }),
@@ -117,6 +121,7 @@ function makeDeps(
     buildMessages,
     callOpenRouter: vi.fn(() => Promise.resolve({ output: scenarios.success, modelId: models[0] })),
     now: () => new Date("2026-07-11T00:00:00.000Z"),
+    monotonicNow: () => 0,
     openRouterTimeoutMs: 20_000,
     requestStartedAtMonotonicMs: 0,
     functionTotalBudgetMs: 50_000,
@@ -332,7 +337,7 @@ describe("runGeneration", () => {
     const repository = makeRepository();
     repository.markSent.mockImplementation(() => {
       order.push("sent");
-      return Promise.resolve(record("processing"));
+      return Promise.resolve({ ...record("processing"), sent: true as const, code: null });
     });
     const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
       order.push("fetch");

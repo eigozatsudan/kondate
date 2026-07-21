@@ -197,7 +197,8 @@ const successCases: readonly SuccessCase[] = [
     args: markSentArgs,
     data: privateRecord,
     invoke: (repository) => repository.markSent(requestId),
-    expected: expectedPublicRecord,
+    // markSent は sent フラグを付加する（RPC に無い場合は processing から true を補完）
+    expected: { ...expectedPublicRecord, sent: true, code: null },
   },
   {
     name: "reserveRepair",

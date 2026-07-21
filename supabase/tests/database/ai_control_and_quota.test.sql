@@ -2042,5 +2042,403 @@ select is(
   'zero remaining nine-argument reserve overloads'
 );
 
+-- C5: ラベル確認 RPC の overload と grant
+select is(
+  (select count(*)::integer
+    from pg_catalog.pg_proc procedure_
+    join pg_catalog.pg_namespace namespace_
+      on namespace_.oid = procedure_.pronamespace
+    where namespace_.nspname = 'public'
+      and procedure_.proname = 'confirm_menu_label_confirmation'
+      and procedure_.pronargs = 2),
+  0,
+  'no two-argument confirm_menu_label_confirmation overload'
+);
+select is(
+  (select count(*)::integer
+    from pg_catalog.pg_proc procedure_
+    join pg_catalog.pg_namespace namespace_
+      on namespace_.oid = procedure_.pronamespace
+    where namespace_.nspname = 'public'
+      and procedure_.proname = 'confirm_menu_label_confirmation'
+      and procedure_.pronargs = 3),
+  1,
+  'exactly one three-argument confirm_menu_label_confirmation'
+);
+select ok(
+  has_function_privilege(
+    'authenticated',
+    'public.confirm_menu_label_confirmation(uuid,uuid,text)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.confirm_menu_label_confirmation(uuid,uuid,text)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'public.confirm_menu_label_confirmation(uuid,uuid,text)',
+    'execute'
+  ),
+  'only authenticated may execute confirm_menu_label_confirmation'
+);
+
+-- C6: check 制約と retention / attempt 結合
+select throws_ok(
+  $$insert into private.ai_user_daily_usage(user_id, usage_day, reserved_count, success_count)
+    values ('10000000-0000-4000-8000-000000000001', '2099-01-01', 3, 3)$$,
+  '23514',
+  null,
+  'success table rejects reserved+success above 5'
+);
+select throws_ok(
+  $$insert into private.ai_user_daily_external_attempts(user_id, usage_day, reserved_count, sent_count)
+    values ('10000000-0000-4000-8000-000000000001', '2099-01-02', 7, 6)$$,
+  '23514',
+  null,
+  'attempt table rejects reserved+sent above 12'
+);
+select throws_ok(
+  $$insert into private.ai_user_rate_windows(user_id, window_started_at, sent_count)
+    values ('10000000-0000-4000-8000-000000000001', '2026-07-11 00:00:00+00', 5)$$,
+  '23514',
+  null,
+  'rate window rejects sent_count above 4'
+);
+select throws_ok(
+  $$insert into private.ai_user_rate_windows(user_id, window_started_at, sent_count)
+    values ('10000000-0000-4000-8000-000000000001', '2026-07-11 00:00:01+00', 0)$$,
+  '23514',
+  null,
+  'rate window rejects non-600-aligned window_started_at'
+);
+select has_function('public'::name, 'cleanup_ai_generation_requests'::name);
+
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000001';
+  v_old uuid := '30000000-0000-4000-8000-0000000000a1';
+  v_recent uuid := '30000000-0000-4000-8000-0000000000a2';
+  v_processing uuid := '30000000-0000-4000-8000-0000000000a3';
+  v_menu_linked uuid := '30000000-0000-4000-8000-0000000000a4';
+  v_menu uuid := '60000000-0000-4000-8000-0000000000a4';
+  v_deleted integer;
+begin
+  insert into private.ai_generation_requests(
+    id, user_id, idempotency_key, request_kind, status,
+    request_hmac_version, request_hmac, user_usage_day,
+    failure_code, started_at, completed_at
+  ) values
+    (v_old, v_owner, '30000000-0000-4000-8000-0000000000b1', 'regenerate_menu', 'failed',
+     'generation-command.v1', repeat('1', 64), date '2026-06-01',
+     'generation_timeout', '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00'),
+    (v_recent, v_owner, '30000000-0000-4000-8000-0000000000b2', 'regenerate_menu', 'failed',
+     'generation-command.v1', repeat('2', 64), date '2026-07-01',
+     'generation_timeout', '2026-07-01 00:00:00+00', '2026-07-01 00:00:01+00'),
+    (v_processing, v_owner, '30000000-0000-4000-8000-0000000000b3', 'regenerate_menu', 'processing',
+     'generation-command.v1', repeat('3', 64), date '2026-06-01',
+     null, '2026-06-01 00:00:00+00', null);
+  insert into public.menus(
+    id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
+    preference_snapshot, safety_snapshot, safety_fingerprint,
+    allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+    derivation_group_id
+  ) values (
+    v_menu, v_owner, 'dinner', 'japanese', 2, 15,
+    '{}'::jsonb, '{}'::jsonb, repeat('a', 64),
+    'dict', 'rule', 'schema', v_menu
+  );
+  insert into private.ai_generation_requests(
+    id, user_id, idempotency_key, request_kind, status,
+    request_hmac_version, request_hmac, user_usage_day,
+    completed_menu_id, started_at, completed_at
+  ) values (
+    v_menu_linked, v_owner, '30000000-0000-4000-8000-0000000000b4', 'regenerate_menu', 'succeeded',
+    'generation-command.v1', repeat('4', 64), date '2026-06-01',
+    v_menu, '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00'
+  );
+
+  v_deleted := public.cleanup_ai_generation_requests('2026-07-11 00:00:00+00'::timestamptz - interval '30 days');
+  if v_deleted < 1 then
+    raise exception 'cleanup deleted fewer than one terminal row';
+  end if;
+  if exists(select 1 from private.ai_generation_requests where id = v_old) then
+    raise exception '31-day terminal row was not deleted';
+  end if;
+  if not exists(select 1 from private.ai_generation_requests where id = v_recent) then
+    raise exception '29-day terminal row was deleted';
+  end if;
+  if not exists(select 1 from private.ai_generation_requests where id = v_processing) then
+    raise exception 'processing row was deleted';
+  end if;
+  if not exists(select 1 from private.ai_generation_requests where id = v_menu_linked) then
+    raise exception 'menu-referenced terminal row was deleted';
+  end if;
+end
+$test$;
+select pass('cleanup_ai_generation_requests deletes only old terminal non-menu rows');
+
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000ee';
+  v_draft_id constant uuid := '30000000-0000-4000-8000-0000000000ee';
+  v_draft public.generation_drafts;
+  v_request_id uuid;
+  v_payload jsonb;
+  v_i integer;
+  v_key uuid;
+begin
+  -- 先行 fixture の成功枠と独立した専用 owner で attempt / window 結合を検証する
+  perform tests.create_supabase_user(v_owner, 'attempt-window@example.invalid');
+  insert into public.generation_drafts (
+    id, user_id, meal_type, main_ingredients, cuisine_genre, target_member_ids,
+    time_limit_minutes, budget_preference, avoid_ingredients, memo,
+    pantry_selections, revision
+  ) values (
+    v_draft_id, v_owner, 'dinner', array['鶏肉'], 'japanese',
+    array[v_owner], 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
+  );
+
+  select * into strict v_draft from public.generation_drafts where id = v_draft_id;
+  v_payload := public.reserve_ai_generation(
+    v_owner, '30000000-0000-4000-8000-0000000000c1', 'new_menu',
+    v_draft.id, v_draft.revision, null, null, null,
+    'generation-command.v1', repeat('c', 64),
+    5, 45, 180, '2026-07-11 01:00:00+00'
+  );
+  if v_payload->>'status' is distinct from 'processing' then
+    raise exception 'initial reserve did not process: %', v_payload;
+  end if;
+  select id into strict v_request_id from private.ai_generation_requests
+    where idempotency_key = '30000000-0000-4000-8000-0000000000c1';
+  if not coalesce((
+    select user_attempt_reserved and user_attempt_day = date '2026-07-11'
+    from private.ai_generation_requests where id = v_request_id
+  ), false) then
+    raise exception 'reserve did not flag user_attempt_reserved';
+  end if;
+  if (select reserved_count from private.ai_user_daily_external_attempts
+      where user_id = v_owner and usage_day = date '2026-07-11') is distinct from 1 then
+    raise exception 'reserve did not increment attempt reserved_count';
+  end if;
+  v_payload := public.mark_ai_global_sent(v_request_id, '2026-07-11 01:00:01+00');
+  if v_payload->>'sent' is distinct from 'true' then
+    raise exception 'markSent did not report sent=true: %', v_payload;
+  end if;
+  if (select sent_count from private.ai_user_daily_external_attempts
+      where user_id = v_owner and usage_day = date '2026-07-11') is distinct from 1 then
+    raise exception 'markSent did not convert attempt to sent';
+  end if;
+  if (select sent_count from private.ai_user_rate_windows
+      where user_id = v_owner
+        and window_started_at = '2026-07-11 01:00:00+00'::timestamptz) is distinct from 1 then
+    raise exception 'markSent did not increment aligned rate window';
+  end if;
+  perform public.finalize_ai_generation_failure(
+    v_request_id, 'invalid_ai_response', null, '2026-07-11 01:00:02+00'
+  );
+
+  -- 短期 4 回目まで成功、5 回目は user_short_window_limit（02:00 窓）
+  for v_i in 1..4 loop
+    update public.generation_drafts
+    set deleted_at = null, revision = revision + 1
+    where id = v_draft_id;
+    select * into strict v_draft from public.generation_drafts where id = v_draft_id;
+    v_key := ('30000000-0000-4000-8000-0000000000d' || v_i::text)::uuid;
+    v_payload := public.reserve_ai_generation(
+      v_owner, v_key, 'new_menu', v_draft.id, v_draft.revision, null, null, null,
+      'generation-command.v1', repeat((v_i)::text, 64),
+      5, 45, 180, '2026-07-11 02:00:00+00'
+    );
+    if v_payload->>'status' is distinct from 'processing' then
+      raise exception 'window reserve % did not process: %', v_i, v_payload;
+    end if;
+    select id into strict v_request_id from private.ai_generation_requests
+      where idempotency_key = v_key;
+    v_payload := public.mark_ai_global_sent(
+      v_request_id,
+      ('2026-07-11 02:00:0' || v_i::text || '+00')::timestamptz
+    );
+    if v_payload->>'sent' is distinct from 'true' then
+      raise exception 'window send % did not succeed: %', v_i, v_payload;
+    end if;
+    perform public.finalize_ai_generation_failure(
+      v_request_id, 'invalid_ai_response', null,
+      ('2026-07-11 02:00:1' || v_i::text || '+00')::timestamptz
+    );
+  end loop;
+
+  update public.generation_drafts
+  set deleted_at = null, revision = revision + 1
+  where id = v_draft_id;
+  select * into strict v_draft from public.generation_drafts where id = v_draft_id;
+  v_payload := public.reserve_ai_generation(
+    v_owner, '30000000-0000-4000-8000-0000000000d5', 'new_menu',
+    v_draft.id, v_draft.revision, null, null, null,
+    'generation-command.v1', repeat('a', 64),
+    5, 45, 180, '2026-07-11 02:00:20+00'
+  );
+  if v_payload->>'status' is distinct from 'processing' then
+    raise exception 'fifth window reserve did not process: %', v_payload;
+  end if;
+  select id into strict v_request_id from private.ai_generation_requests
+    where idempotency_key = '30000000-0000-4000-8000-0000000000d5';
+  v_payload := public.mark_ai_global_sent(v_request_id, '2026-07-11 02:00:21+00');
+  if v_payload->>'sent' is distinct from 'false'
+     or v_payload->>'code' is distinct from 'user_short_window_limit'
+     or v_payload->>'failure_code' is distinct from 'user_short_window_limit' then
+    raise exception 'fifth window send did not deny with user_short_window_limit: %', v_payload;
+  end if;
+end
+$test$;
+select pass('markSent couples attempt and short-window counters');
+
+-- C5 confirm RPC: invalid fingerprint empty-return + success with reverse member order
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000091';
+  v_member2 constant uuid := '20000000-0000-4000-8000-000000000092';
+  v_member10 constant uuid := '20000000-0000-4000-8000-00000000009a';
+  v_menu constant uuid := '40000000-0000-4000-8000-000000000091';
+  v_confirm constant uuid := '48000000-0000-4000-8000-000000000091';
+  v_dish constant uuid := '42000000-0000-4000-8000-000000000091';
+  v_fingerprint text;
+  v_status text;
+  v_before jsonb;
+  v_after jsonb;
+  v_count integer;
+begin
+  perform tests.create_supabase_user(v_owner, 'confirm-owner@example.invalid');
+  -- member_10 を member_2 より先に挿入し、数値 suffix 順だけが fingerprint 入力になることを固定
+  insert into public.household_members(
+    id, user_id, status, display_name, age_band, allergy_status,
+    required_safety_constraints, unsupported_diet_status, unsupported_diet_kinds
+  ) values
+    (v_member10, v_owner, 'complete', '十郎', 'adult', 'none',
+     array[]::text[], 'none', array[]::text[]),
+    (v_member2, v_owner, 'complete', '次郎', 'adult', 'none',
+     array[]::text[], 'none', array[]::text[]);
+
+  insert into public.menus(
+    id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
+    preference_snapshot, safety_snapshot, safety_fingerprint,
+    allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+    derivation_group_id
+  ) values (
+    v_menu, v_owner, 'dinner', 'japanese', 2, 15,
+    '{}'::jsonb, '{}'::jsonb, repeat('a', 64),
+    'jp-caa-2026-04.v1', 'jp-caa-child-shape-2026-07.v1', '2026-07-11.v1', v_menu
+  );
+  insert into public.menu_target_members(
+    menu_id, user_id, household_member_id, household_member_user_id,
+    anonymous_ref, member_display_name_snapshot
+  ) values
+    (v_menu, v_owner, v_member10, v_owner, 'member_10', '十郎'),
+    (v_menu, v_owner, v_member2, v_owner, 'member_2', '次郎');
+  insert into public.dishes(
+    id, menu_id, user_id, role, position, name, description, cooking_time_minutes
+  ) values (v_dish, v_menu, v_owner, 'main', 1, '確認料理', '説明', 10);
+  -- helper は入力 ordinal で anonymousRef を付ける。numeric suffix 順 member_2, member_10
+  v_fingerprint := private.current_safety_fingerprint(
+    v_owner, array[v_member2, v_member10]
+  );
+  insert into public.menu_label_confirmations(
+    id, menu_id, user_id, source_type, source_id, source_path, source_text_snapshot,
+    allergen_id, anonymous_member_ref, dictionary_version, requirement_safety_fingerprint
+  ) values (
+    v_confirm, v_menu, v_owner, 'dish', v_dish, 'dishes.0.name', '確認料理',
+    'egg', 'member_2', 'jp-caa-2026-04.v1', v_fingerprint
+  );
+
+  -- null auth → empty
+  perform tests.clear_authentication();
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(v_menu, v_confirm, v_fingerprint);
+  if v_count <> 0 then raise exception 'null auth returned rows'; end if;
+
+  perform tests.authenticate_as(v_owner);
+  set local role authenticated;
+
+  select jsonb_build_object(
+    'status', confirmation_status, 'confirmed_at', confirmed_at, 'confirmed_by', confirmed_by
+  ) into v_before
+  from public.menu_label_confirmations where id = v_confirm;
+
+  -- invalid expected fingerprints: empty before helper, row unchanged
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(v_menu, v_confirm, null);
+  if v_count <> 0 then raise exception 'NULL fingerprint returned rows'; end if;
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(v_menu, v_confirm, ' ');
+  if v_count <> 0 then raise exception 'blank fingerprint returned rows'; end if;
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(
+    v_menu, v_confirm, U&'\3000' || repeat('a', 64) || U&'\3000'
+  );
+  if v_count <> 0 then raise exception 'padded fingerprint returned rows'; end if;
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(v_menu, v_confirm, repeat('a', 201));
+  if v_count <> 0 then raise exception '201-char fingerprint returned rows'; end if;
+
+  select jsonb_build_object(
+    'status', confirmation_status, 'confirmed_at', confirmed_at, 'confirmed_by', confirmed_by
+  ) into v_after
+  from public.menu_label_confirmations where id = v_confirm;
+  if v_after is distinct from v_before then
+    raise exception 'invalid fingerprint mutated the confirmation row';
+  end if;
+
+  -- wrong menu / unknown id → empty
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(
+    '40000000-0000-4000-8000-000000000099', v_confirm, v_fingerprint
+  );
+  if v_count <> 0 then raise exception 'wrong menu returned rows'; end if;
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(
+    v_menu, '48000000-0000-4000-8000-000000000099', v_fingerprint
+  );
+  if v_count <> 0 then raise exception 'unknown confirmation returned rows'; end if;
+
+  -- stale stored fingerprint → empty（台帳更新は definer ロールで行う）
+  reset role;
+  update public.menu_label_confirmations
+  set requirement_safety_fingerprint = repeat('b', 64)
+  where id = v_confirm;
+  set local role authenticated;
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(v_menu, v_confirm, v_fingerprint);
+  if v_count <> 0 then raise exception 'stale stored fingerprint returned rows'; end if;
+  reset role;
+  update public.menu_label_confirmations
+  set requirement_safety_fingerprint = v_fingerprint
+  where id = v_confirm;
+  set local role authenticated;
+
+  -- success
+  select confirmation_status into v_status
+  from public.confirm_menu_label_confirmation(v_menu, v_confirm, v_fingerprint);
+  if v_status is distinct from 'confirmed' then
+    raise exception 'owner confirm did not succeed';
+  end if;
+  reset role;
+  if (select confirmation_status from public.menu_label_confirmations where id = v_confirm)
+     is distinct from 'confirmed' then
+    raise exception 'owner confirm did not persist confirmed status';
+  end if;
+
+  -- replay → empty
+  set local role authenticated;
+  select count(*)::integer into v_count
+  from public.confirm_menu_label_confirmation(v_menu, v_confirm, v_fingerprint);
+  if v_count <> 0 then raise exception 'replay returned rows'; end if;
+
+  reset role;
+  perform tests.clear_authentication();
+end
+$test$;
+select pass('confirm_menu_label_confirmation enforces fingerprint boundary and reverse member order');
+
 select * from finish();
 rollback;

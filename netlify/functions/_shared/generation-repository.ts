@@ -111,9 +111,26 @@ export function createGenerationRepository(user: AuthenticatedUser) {
       );
     },
     async markSent(requestId: string) {
-      return requestPayloadSchema.parse(
-        await rpc("mark_ai_global_sent", { p_request_id: requestId }),
-      );
+      // sent / code は短期窓拒否時に付加される。通常成功は sent=true。
+      const raw = await rpc("mark_ai_global_sent", { p_request_id: requestId });
+      const record = requestPayloadSchema.parse(raw);
+      const extras = z
+        .object({
+          sent: z.boolean().optional(),
+          code: z.string().optional(),
+        })
+        .safeParse(raw);
+      return {
+        ...record,
+        sent: extras.success ? (extras.data.sent ?? record.status === "processing") : true,
+        code: extras.success
+          ? (extras.data.code ?? record.failure_code ?? null)
+          : (record.failure_code ?? null),
+      };
+    },
+    async failBeforeSend(requestId: string, code: string, retryAt: string | null = null) {
+      // 未送信の success / attempt / global 予約を解放する fail の別名
+      return this.fail(requestId, code, retryAt);
     },
     async reserveRepair(requestId: string) {
       return repairReservationSchema.parse(

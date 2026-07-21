@@ -293,10 +293,11 @@ describe("POST /api/generations/menu", () => {
         }
         return Promise.resolve({ ...current, replayed: true });
       }),
-      markSent: vi.fn(() => Promise.resolve(current)),
+      markSent: vi.fn(() => Promise.resolve({ ...current, sent: true as const, code: null })),
       reserveRepair: vi.fn(() => Promise.resolve({ reserved: false, retry_at: null })),
       recordModel: vi.fn(() => Promise.resolve()),
       fail: vi.fn(() => Promise.resolve(current)),
+      failBeforeSend: vi.fn(() => Promise.resolve(current)),
       conflict: vi.fn(() => Promise.resolve(current)),
       succeed: vi.fn(() => {
         current = {
@@ -326,6 +327,7 @@ describe("POST /api/generations/menu", () => {
       buildMessages,
       callOpenRouter,
       now: () => new Date("2026-07-11T00:00:00.000Z"),
+      monotonicNow: () => 0,
       openRouterTimeoutMs: 20_000,
       requestStartedAtMonotonicMs: 0,
       functionTotalBudgetMs: 50_000,

@@ -1,4 +1,25 @@
 import type { ValidatedMenu } from "./generation.js";
+import type { PantryItem } from "./pantry.js";
+
+/** 調理後の冷蔵庫操作対象。世代スナップショットではなく live row を保持する。 */
+export type PantryPostCookTarget = {
+  selectionId: string;
+  pantryItemId: string | null;
+  pantryItemName: string;
+  plannedQuantity: number | null;
+  unit: string | null;
+  currentPantryRow: Pick<
+    PantryItem,
+    | "id"
+    | "name"
+    | "quantity"
+    | "unit"
+    | "expiresOn"
+    | "expirationType"
+    | "openedState"
+    | "updatedAt"
+  > | null;
+};
 
 export type MenuResultViewModel = {
   menu: ValidatedMenu;
@@ -18,4 +39,5 @@ export type MenuResultViewModel = {
     confirmedAt: string | null;
     confirmedBy: string | null;
   }[];
+  pantryPostCookTargets: readonly PantryPostCookTarget[];
 };

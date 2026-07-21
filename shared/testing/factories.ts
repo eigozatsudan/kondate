@@ -371,5 +371,6 @@ export function makeMenuResultViewModel(): MenuResultViewModel {
         confirmedBy: null,
       },
     ],
+    pantryPostCookTargets: [],
   };
 }

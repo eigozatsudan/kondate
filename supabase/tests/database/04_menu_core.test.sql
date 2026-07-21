@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(42);
+select plan(43);
 
 select has_table('public', 'menus', 'menus exists');
 select has_table('public', 'menu_target_members', 'menu_target_members exists');
@@ -107,8 +107,21 @@ select ok(has_table_privilege('authenticated', 'public.menu_label_confirmations'
 select ok(not has_column_privilege('authenticated', 'public.menu_label_confirmations', 'confirmation_status', 'update'), 'direct confirmation update is forbidden');
 select ok(
   to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid)') is null
-  and to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid,text)') is null,
-  'Task 3 exposes no confirmation transition before current-safety locking exists'
+  and to_regprocedure('public.confirm_menu_label_confirmation(uuid,uuid,text)') is not null,
+  'Plan 3 exposes sole three-argument confirmation after current-safety locking'
+);
+select ok(
+  has_function_privilege(
+    'authenticated',
+    'public.confirm_menu_label_confirmation(uuid,uuid,text)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.confirm_menu_label_confirmation(uuid,uuid,text)',
+    'execute'
+  ),
+  'only authenticated may execute the three-argument confirmation RPC'
 );
 select ok(not has_table_privilege('authenticated', 'public.menu_label_confirmations', 'insert'), 'label records are finalized server-side');
 select ok(has_table_privilege('authenticated', 'public.dishes', 'select'), 'generated children are readable');
