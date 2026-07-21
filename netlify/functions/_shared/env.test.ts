@@ -17,6 +17,7 @@ const validServerEnv = {
   SUPABASE_PUBLISHABLE_KEY: "publishable-test",
   OPENROUTER_API_KEY: "mock-key",
   OPENROUTER_MODELS: "google/gemma-3-27b-it:free,mistralai/mistral-small-3.2-24b-instruct:free",
+  GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   USER_DAILY_AI_LIMIT: "5",
   USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
@@ -53,6 +54,9 @@ describe("parseOpenRouterModels", () => {
       functionTotalBudgetMs: 50_000,
       staleAfterSeconds: 180,
     });
+    expect(parsed.generationIntegrity.requestHmacKey).toEqual(
+      Buffer.from(validServerEnv.GENERATION_REQUEST_HMAC_KEY, "base64"),
+    );
   });
 
   it.each([
@@ -67,6 +71,26 @@ describe("parseOpenRouterModels", () => {
     ["USER_SHORT_WINDOW_SECONDS", "601"],
   ] as const)("rejects missing or changed release quota %s=%s", (key, value) => {
     expect(() => parseServerEnv({ ...validServerEnv, [key]: value })).toThrow();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["non-canonical base64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+    ["31-byte key", Buffer.alloc(31, 1).toString("base64")],
+    ["33-byte key", Buffer.alloc(33, 1).toString("base64")],
+  ] as const)("rejects an invalid GENERATION_REQUEST_HMAC_KEY (%s)", (_label, value) => {
+    expect(() => parseServerEnv({ ...validServerEnv, GENERATION_REQUEST_HMAC_KEY: value })).toThrow(
+      "server_configuration_invalid",
+    );
+  });
+
+  it("rejects a browser-prefixed generation HMAC key alias", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        VITE_GENERATION_REQUEST_HMAC_KEY: validServerEnv.GENERATION_REQUEST_HMAC_KEY,
+      }),
+    ).toThrow("server_configuration_invalid");
   });
 
   it.each(["0", "46"])("rejects out-of-range global quota %s", (value) => {

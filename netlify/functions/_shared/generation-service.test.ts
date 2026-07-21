@@ -82,7 +82,11 @@ function makeRepository() {
       return Promise.resolve(current);
     }),
     conflict: vi.fn((_id: string, conflicts: unknown[]) => {
-      current = { ...record("constraint_conflict"), terminal_details: { conflicts } };
+      const codes = (conflicts as Array<{ code: string }>).map((conflict) => conflict.code);
+      current = {
+        ...record("constraint_conflict"),
+        terminal_details: { conflictCodes: codes },
+      };
       return Promise.resolve(current);
     }),
     succeed: vi.fn(() => {
@@ -389,7 +393,17 @@ describe("runGeneration", () => {
       makeDeps({ repository, validatePreflight, buildMessages, callOpenRouter }),
       command,
     );
-    expect(result).toMatchObject({ status: "constraint_conflict", conflicts: [conflict] });
+    // 永続化後の status 再読込は codes-only → conditionRefs は空で固定 copy を再構成する
+    expect(result).toMatchObject({
+      status: "constraint_conflict",
+      conflicts: [
+        {
+          code: "must_use_conflict",
+          message: generationConflictCopy.must_use_conflict,
+          conditionRefs: [],
+        },
+      ],
+    });
     expect(repository.conflict).toHaveBeenCalledWith(requestId, [conflict]);
     expect(repository.fail).not.toHaveBeenCalled();
     expect(repository.markSent).not.toHaveBeenCalled();
@@ -918,13 +932,7 @@ describe("runGeneration", () => {
     const hydrated = record(hydratedStatus);
     if (hydratedStatus === "constraint_conflict") {
       hydrated.terminal_details = {
-        conflicts: [
-          {
-            code: "must_use_conflict",
-            message: generationConflictCopy.must_use_conflict,
-            conditionRefs: [],
-          },
-        ],
+        conflictCodes: ["must_use_conflict"],
       };
     }
     repository.status.mockResolvedValue(hydrated);
@@ -1076,6 +1084,42 @@ describe("toGenerationStatus", () => {
         retryable: true,
       },
       completedAt: "2026-07-11T00:00:01.000Z",
+    });
+  });
+
+  it("rehydrates constraint conflicts from closed codes with fixed Japanese copy", () => {
+    expect(
+      toGenerationStatus(
+        {
+          ...record("constraint_conflict"),
+          terminal_details: { conflictCodes: ["must_use_conflict", "current_safety_changed"] },
+        },
+        key,
+      ),
+    ).toEqual({
+      status: "constraint_conflict",
+      idempotencyKey: key,
+      requestId,
+      quota: {
+        consumed: false,
+        remaining: 5,
+        userDailyLimit: 5,
+        limitKind: null,
+        retryAt: null,
+      },
+      completedAt: "2026-07-11T00:00:01.000Z",
+      conflicts: [
+        {
+          code: "must_use_conflict",
+          message: generationConflictCopy.must_use_conflict,
+          conditionRefs: [],
+        },
+        {
+          code: "current_safety_changed",
+          message: generationConflictCopy.current_safety_changed,
+          conditionRefs: [],
+        },
+      ],
     });
   });
 });

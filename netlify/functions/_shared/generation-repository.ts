@@ -2,11 +2,16 @@ import { z } from "zod";
 import {
   generationConflictSchema,
   releaseQuota,
+  type GenerationCommand,
   type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
 import type { Database } from "../../../src/shared/types/database.js";
 import type { requireUser } from "./auth.js";
 import { getServerEnv } from "./env.js";
+import {
+  generationRequestHmac,
+  generationRequestHmacVersion,
+} from "./generation-command-integrity.js";
 import { HttpError } from "./http.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase, type UserSupabaseClient } from "./supabase-user.js";
@@ -45,6 +50,15 @@ const conflictPayloadSchema = z.array(generationConflictSchema).min(1).max(12);
 type PublicFunctions = Database["public"]["Functions"];
 type PublicFunctionName = keyof PublicFunctions;
 
+type PostgrestLikeError = {
+  code?: string | null;
+  message?: string | null;
+};
+
+function isPostgrestLikeError(error: unknown): error is PostgrestLikeError {
+  return typeof error === "object" && error !== null;
+}
+
 async function rpc<Name extends PublicFunctionName>(
   name: Name,
   parameters: PublicFunctions[Name]["Args"],
@@ -53,7 +67,19 @@ async function rpc<Name extends PublicFunctionName>(
     const { data, error } = await getSupabaseAdmin().rpc(name, parameters);
     if (error !== null) throw error;
     return data;
-  } catch {
+  } catch (error: unknown) {
+    // 同一冪等キーで異なるコマンド本文は非再試行の 409 へ固定する
+    if (
+      isPostgrestLikeError(error) &&
+      error.code === "22023" &&
+      error.message === "idempotency_payload_mismatch"
+    ) {
+      throw new HttpError(
+        409,
+        "idempotency_payload_mismatch",
+        "同じ操作番号で異なる内容は送信できません。最初からやり直してください。",
+      );
+    }
     throw new HttpError(500, "quota_transition_failed", "生成の受付状態を更新できませんでした。");
   }
 }
@@ -63,19 +89,21 @@ export function createGenerationRepository(user: AuthenticatedUser) {
   const userClient = createUserScopedSupabase(user.accessToken);
   return {
     userClient,
-    async reserve(input: {
-      idempotencyKey: string;
-      kind: "new_menu" | "regenerate_menu" | "regenerate_dish";
-      draftId: string | null;
-      draftRevision: number | null;
-    }) {
+    async reserve(command: GenerationCommand) {
+      const hmac = generationRequestHmac(command, env.generationIntegrity.requestHmacKey);
+      const isNewMenu = command.kind === "new_menu";
       return requestPayloadSchema.parse(
         await rpc("reserve_ai_generation", {
           p_user_id: user.userId,
-          p_idempotency_key: input.idempotencyKey,
-          p_request_kind: input.kind,
-          p_draft_id: input.draftId,
-          p_draft_revision: input.draftRevision,
+          p_idempotency_key: command.request.idempotencyKey,
+          p_request_kind: command.kind,
+          p_draft_id: isNewMenu ? command.request.draftId : null,
+          p_draft_revision: isNewMenu ? command.request.draftRevision : null,
+          p_source_menu_id: isNewMenu ? null : command.request.sourceMenuId,
+          p_replace_dish_id: command.kind === "regenerate_dish" ? command.request.dishId : null,
+          p_change_reason: isNewMenu ? null : command.request.changeReason,
+          p_request_hmac_version: generationRequestHmacVersion,
+          p_request_hmac: hmac,
           p_user_limit: env.openRouter.userDailyLimit,
           p_global_limit: env.openRouter.globalDailyLimit,
           p_stale_after_seconds: env.openRouter.staleAfterSeconds,
@@ -111,10 +139,13 @@ export function createGenerationRepository(user: AuthenticatedUser) {
       );
     },
     async conflict(requestId: string, conflicts: unknown[]) {
+      // 永続化境界へは閉じた code 配列だけを渡し、message/conditionRefs は載せない
+      const parsed = conflictPayloadSchema.parse(conflicts);
+      const codes = [...new Set(parsed.map((conflict) => conflict.code))];
       return requestPayloadSchema.parse(
         await rpc("finalize_ai_generation_conflict", {
           p_request_id: requestId,
-          p_conflicts: jsonValueSchema.parse(conflictPayloadSchema.parse(conflicts)),
+          p_conflict_codes: codes,
         }),
       );
     },

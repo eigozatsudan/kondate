@@ -1,7 +1,6 @@
 import type { Context } from "@netlify/functions";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  generationConflictCopy,
   generationFailureCodes,
   type GenerationFailureCode,
 } from "../../shared/contracts/generation.js";
@@ -55,17 +54,7 @@ function record(
     user_daily_limit: 5 as const,
     consumed: state === "succeeded",
     terminal_details:
-      state === "constraint_conflict"
-        ? {
-            conflicts: [
-              {
-                code: "must_use_conflict",
-                message: generationConflictCopy.must_use_conflict,
-                conditionRefs: [],
-              },
-            ],
-          }
-        : null,
+      state === "constraint_conflict" ? { conflictCodes: ["must_use_conflict"] } : null,
     started_at: state === "not_started" ? undefined : startedAt,
     completed_at: ["not_started", "processing"].includes(state) ? null : completedAt,
     replayed: false,

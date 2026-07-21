@@ -285,9 +285,9 @@ describe("POST /api/generations/menu", () => {
     };
     const knownReservations = new Set<string>();
     const repository: GenerationDependencies["repository"] = {
-      reserve: vi.fn((input: { idempotencyKey: string }) => {
-        if (!knownReservations.has(input.idempotencyKey)) {
-          knownReservations.add(input.idempotencyKey);
+      reserve: vi.fn((command: { request: { idempotencyKey: string } }) => {
+        if (!knownReservations.has(command.request.idempotencyKey)) {
+          knownReservations.add(command.request.idempotencyKey);
           reservationCreations += 1;
           return Promise.resolve(current);
         }

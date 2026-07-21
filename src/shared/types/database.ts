@@ -21,11 +21,16 @@ type SaveDraftArgs = Omit<GeneratedSaveDraftArgs, NullableDraftArgs> & {
   p_budget_preference: GeneratedSaveDraftArgs["p_budget_preference"] | null;
 };
 
-type NullableReserveGenerationArgs = "p_draft_id" | "p_draft_revision";
+// Postgres Meta は nullable 引数を非 null として生成するため、overlay で復元する
+type NullableReserveGenerationArgs =
+  "p_draft_id" | "p_draft_revision" | "p_source_menu_id" | "p_replace_dish_id" | "p_change_reason";
 
 type ReserveGenerationArgs = Omit<GeneratedReserveGenerationArgs, NullableReserveGenerationArgs> & {
   p_draft_id: GeneratedReserveGenerationArgs["p_draft_id"] | null;
   p_draft_revision: GeneratedReserveGenerationArgs["p_draft_revision"] | null;
+  p_source_menu_id: GeneratedReserveGenerationArgs["p_source_menu_id"] | null;
+  p_replace_dish_id: GeneratedReserveGenerationArgs["p_replace_dish_id"] | null;
+  p_change_reason: GeneratedReserveGenerationArgs["p_change_reason"] | null;
 };
 
 type FinalizeGenerationFailureArgs = Omit<GeneratedFinalizeGenerationFailureArgs, "p_retry_at"> & {

@@ -1,11 +1,14 @@
 import { PostgrestError } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeValidatedMenu } from "../../../shared/testing/factories.js";
+import type { GenerationCommand } from "../../../shared/contracts/generation.js";
 import type { Database } from "../../../src/shared/types/database.js";
 import { HttpError } from "./http.js";
 
 type RpcResult = { data: unknown; error: PostgrestError | null };
 type RpcMock = (name: string, parameters: unknown) => Promise<RpcResult>;
+
+const hmacKey = Buffer.alloc(32, 7);
 
 const { createUserScopedSupabaseMock, getServerEnvMock, rpcMock, userClient } = vi.hoisted(() => {
   const client = { from: vi.fn() };
@@ -16,6 +19,9 @@ const { createUserScopedSupabaseMock, getServerEnvMock, rpcMock, userClient } = 
         userDailyLimit: 5,
         globalDailyLimit: 45,
         staleAfterSeconds: 180,
+      },
+      generationIntegrity: {
+        requestHmacKey: Buffer.alloc(32, 7),
       },
     })),
     rpcMock: vi.fn<RpcMock>(),
@@ -31,6 +37,10 @@ vi.mock("./supabase-user.js", () => ({
   createUserScopedSupabase: createUserScopedSupabaseMock,
 }));
 
+import {
+  generationRequestHmac,
+  generationRequestHmacVersion,
+} from "./generation-command-integrity.js";
 import { createGenerationRepository, type GenerationRepository } from "./generation-repository.js";
 
 const user = {
@@ -42,6 +52,17 @@ const idempotencyKey = "30000000-0000-4000-8000-000000000001";
 const draftId = "40000000-0000-4000-8000-000000000001";
 const sourceMenuId = "60000000-0000-4000-8000-000000000001";
 const retryAt = "2026-07-20T00:00:00+09:00";
+
+const newMenuCommand: GenerationCommand = {
+  kind: "new_menu",
+  request: {
+    idempotencyKey,
+    draftId,
+    draftRevision: 7,
+    privacyNoticeVersion: "2026-07-11.v1",
+    expiredPantryConfirmations: [],
+  },
+};
 
 const publicRecord = {
   request_id: requestId,
@@ -76,6 +97,11 @@ const reserveArgs = {
   p_request_kind: "new_menu",
   p_draft_id: draftId,
   p_draft_revision: 7,
+  p_source_menu_id: null,
+  p_replace_dish_id: null,
+  p_change_reason: null,
+  p_request_hmac_version: generationRequestHmacVersion,
+  p_request_hmac: generationRequestHmac(newMenuCommand, hmacKey),
   p_user_limit: 5,
   p_global_limit: 45,
   p_stale_after_seconds: 180,
@@ -98,14 +124,19 @@ const failArgs = {
 } satisfies Database["public"]["Functions"]["finalize_ai_generation_failure"]["Args"];
 const conflicts = [
   {
-    code: "current_safety_changed",
+    code: "current_safety_changed" as const,
     message: "条件が更新されました",
     conditionRefs: ["member_1"],
+  },
+  {
+    code: "current_safety_changed" as const,
+    message: "重複コードは一意化する",
+    conditionRefs: [],
   },
 ];
 const conflictArgs = {
   p_request_id: requestId,
-  p_conflicts: conflicts,
+  p_conflict_codes: ["current_safety_changed"],
 } satisfies Database["public"]["Functions"]["finalize_ai_generation_conflict"]["Args"];
 const menu = makeValidatedMenu();
 const succeedInput = {
@@ -157,13 +188,7 @@ const successCases: readonly SuccessCase[] = [
     rpcName: "reserve_ai_generation",
     args: reserveArgs,
     data: privateRecord,
-    invoke: (repository) =>
-      repository.reserve({
-        idempotencyKey,
-        kind: "new_menu",
-        draftId,
-        draftRevision: 7,
-      }),
+    invoke: (repository) => repository.reserve(newMenuCommand),
     expected: expectedPublicRecord,
   },
   {
@@ -227,6 +252,16 @@ const successCases: readonly SuccessCase[] = [
 beforeEach(() => {
   vi.clearAllMocks();
   rpcMock.mockReset();
+  getServerEnvMock.mockReturnValue({
+    openRouter: {
+      userDailyLimit: 5,
+      globalDailyLimit: 45,
+      staleAfterSeconds: 180,
+    },
+    generationIntegrity: {
+      requestHmacKey: hmacKey,
+    },
+  });
 });
 
 describe("createGenerationRepository", () => {
@@ -285,18 +320,36 @@ describe("createGenerationRepository", () => {
     await expectSanitizedDatabaseError(testCase.invoke(repository));
   });
 
+  it("maps an idempotency payload mismatch to a non-retryable conflict", async () => {
+    const databaseError = new PostgrestError({
+      message: "idempotency_payload_mismatch",
+      details: "private database details",
+      hint: "private database hint",
+      code: "22023",
+    });
+    rpcMock.mockResolvedValueOnce({ data: null, error: databaseError });
+    const repository = createGenerationRepository(user);
+
+    try {
+      await repository.reserve(newMenuCommand);
+      throw new Error("Expected repository.reserve to reject");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(HttpError);
+      if (!(error instanceof HttpError)) throw error;
+      expect(error.status).toBe(409);
+      expect(error.code).toBe("idempotency_payload_mismatch");
+      expect(error.message).toBe(
+        "同じ操作番号で異なる内容は送信できません。最初からやり直してください。",
+      );
+      expect(String(error)).not.toContain("private database");
+    }
+  });
+
   it("sanitizes a rejected RPC promise", async () => {
     rpcMock.mockRejectedValueOnce(new Error("private rejection detail"));
     const repository = createGenerationRepository(user);
 
-    await expectSanitizedDatabaseError(
-      repository.reserve({
-        idempotencyKey,
-        kind: "new_menu",
-        draftId,
-        draftRevision: 7,
-      }),
-    );
+    await expectSanitizedDatabaseError(repository.reserve(newMenuCommand));
   });
 });
 

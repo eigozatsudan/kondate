@@ -682,18 +682,27 @@ select has_table('private'::name, 'ai_generation_requests'::name);
 select has_table('private'::name, 'generation_draft_submission_versions'::name);
 select has_table('private'::name, 'ai_user_daily_usage'::name);
 select has_table('private'::name, 'ai_global_daily_usage'::name);
+select has_table('private'::name, 'ai_user_daily_external_attempts'::name);
+select has_table('private'::name, 'ai_user_rate_windows'::name);
 select hasnt_table('public'::name, 'ai_generation_requests'::name);
 select has_function('public'::name, 'reserve_ai_generation'::name);
 select has_function('public'::name, 'reserve_ai_repair_call'::name);
 select has_function('public'::name, 'mark_ai_global_sent'::name);
 select has_function('public'::name, 'finalize_ai_generation_failure'::name);
+select has_function('public'::name, 'finalize_ai_generation_conflict'::name);
 select has_function('public'::name, 'cleanup_stale_ai_generations'::name);
 select has_function('public'::name, 'get_ai_generation_submission_snapshot'::name);
 select ok(
   to_regprocedure(
-    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,integer,integer,integer,timestamptz)'
   ) is not null,
-  'the interim reservation RPC has the exact nine-argument signature'
+  'the final reservation RPC has the exact fourteen-argument signature'
+);
+select ok(
+  to_regprocedure(
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
+  ) is null,
+  'the obsolete nine-argument reservation RPC is absent'
 );
 select ok(
   to_regprocedure(
@@ -703,9 +712,57 @@ select ok(
 );
 select ok(
   to_regprocedure(
+    'public.finalize_ai_generation_conflict(uuid,text[],timestamptz)'
+  ) is not null,
+  'the final conflict RPC accepts validated text[] codes only'
+);
+select ok(
+  to_regprocedure(
+    'public.finalize_ai_generation_conflict(uuid,jsonb,timestamptz)'
+  ) is null,
+  'the obsolete jsonb conflict overload is absent'
+);
+select ok(
+  to_regprocedure(
     'public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz)'
   ) is not null,
   'the final 13-argument success finalizer exists'
+);
+select ok(
+  (
+    select attnotnull
+    from pg_catalog.pg_attribute
+    where attrelid = 'private.ai_generation_requests'::regclass
+      and attname = 'request_hmac_version'
+      and not attisdropped
+  ),
+  'request_hmac_version is required'
+);
+select ok(
+  (
+    select attnotnull
+    from pg_catalog.pg_attribute
+    where attrelid = 'private.ai_generation_requests'::regclass
+      and attname = 'request_hmac'
+      and not attisdropped
+  ),
+  'request_hmac is required'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_catalog.pg_attribute
+    where attrelid = 'private.ai_generation_requests'::regclass
+      and not attisdropped
+      and attname in (
+        'request_body',
+        'request_json',
+        'prompt',
+        'change_reason_custom'
+      )
+  ),
+  0,
+  'the request ledger stores neither raw request bodies nor free-text custom reasons'
 );
 select ok(
   coalesce(
@@ -738,25 +795,25 @@ select ok(
   has_function_privilege(
     'service_role',
     to_regprocedure(
-      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
+      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,integer,integer,integer,timestamptz)'
     ),
     'EXECUTE'
   )
   and not has_function_privilege(
     'anon',
     to_regprocedure(
-      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
+      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,integer,integer,integer,timestamptz)'
     ),
     'EXECUTE'
   )
   and not has_function_privilege(
     'authenticated',
     to_regprocedure(
-      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
+      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,integer,integer,integer,timestamptz)'
     ),
     'EXECUTE'
   ),
-  'only service_role can execute the interim reservation RPC'
+  'only service_role can execute the final reservation RPC'
 );
 select ok(
   has_function_privilege(
@@ -806,10 +863,32 @@ select throws_ok($$
   select public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000099',
-    'new_menu', null, null, 6, 45, 180, '2026-07-10 15:00:00+00'
+    'new_menu', null, null, null, null, null,
+    'generation-command.v1', repeat('9', 64), 6, 45, 180,
+    '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'release_quota_mismatch',
   'the database rejects an environment-only success-limit override');
+select throws_ok($$
+  select public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000096',
+    'new_menu', null, null, null, null, null,
+    'generation-command.v0', repeat('9', 64), 5, 45, 180,
+    '2026-07-10 15:00:00+00'
+  )
+$$, '22023', 'invalid_request_hmac',
+  'the database rejects a non-v1 request HMAC version');
+select throws_ok($$
+  select public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000096',
+    'new_menu', null, null, null, null, null,
+    'generation-command.v1', repeat('g', 64), 5, 45, 180,
+    '2026-07-10 15:00:00+00'
+  )
+$$, '22023', 'invalid_request_hmac',
+  'the database rejects a non-hex request HMAC');
 
 select is((select count(*) from private.ai_generation_requests
   where idempotency_key in (
@@ -821,7 +900,9 @@ select throws_ok($$
   select public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000097',
-    'regenerate_menu', null, null, 5, 0, 180, '2026-07-10 15:00:00+00'
+    'regenerate_menu', null, null, null, null, null,
+    'generation-command.v1', repeat('7', 64), 5, 0, 180,
+    '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'invalid_quota_configuration',
   'the database rejects a zero global limit before generation reservation');
@@ -829,7 +910,9 @@ select throws_ok($$
   select public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000098',
-    'regenerate_menu', null, null, 5, 46, 180, '2026-07-10 15:00:00+00'
+    'regenerate_menu', null, null, null, null, null,
+    'generation-command.v1', repeat('8', 64), 5, 46, 180,
+    '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'invalid_quota_configuration',
   'the database rejects a global limit above the release maximum before generation reservation');
@@ -853,11 +936,14 @@ insert into private.ai_global_daily_usage (
 );
 insert into private.ai_generation_requests (
   user_id, idempotency_key, request_kind, status, user_usage_day,
+  request_hmac_version, request_hmac,
   user_quota_reserved, global_reserved_day, processing_expires_at, started_at
 ) values (
   '10000000-0000-4000-8000-000000000002',
   '20000000-0000-4000-8000-000000000090',
-  'regenerate_menu', 'processing', date '2026-07-11', true, date '2026-07-11',
+  'regenerate_menu', 'processing', date '2026-07-11',
+  'generation-command.v1', repeat('0', 64),
+  true, date '2026-07-11',
   '2026-07-10 15:30:00+00', '2026-07-10 15:00:00+00'
 );
 
@@ -866,6 +952,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000091',
     'new_menu', '30000000-0000-4000-8000-000000000099', 1,
+    null, null, null, 'generation-command.v1', repeat('1', 64),
     5, 45, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
@@ -875,6 +962,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000092',
     'new_menu', '30000000-0000-4000-8000-000000000001', 1,
+    null, null, null, 'generation-command.v1', repeat('2', 64),
     5, 45, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
@@ -884,6 +972,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000093',
     'new_menu', '30000000-0000-4000-8000-000000000002', 1,
+    null, null, null, 'generation-command.v1', repeat('3', 64),
     5, 45, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
@@ -897,6 +986,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000094',
     'new_menu', '30000000-0000-4000-8000-000000000002', 2,
+    null, null, null, 'generation-command.v1', repeat('4', 64),
     5, 45, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
@@ -906,6 +996,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000095',
     'regenerate_menu', '30000000-0000-4000-8000-000000000002', 2,
+    null, null, null, 'generation-command.v1', repeat('5', 64),
     5, 45, 180, '2026-07-10 16:00:00+00'
   )
 $$, '22023', 'invalid_draft_reference',
@@ -967,8 +1058,9 @@ select is(
   public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000001',
-    'new_menu', '30000000-0000-4000-8000-000000000001',
-    1, 5, 45, 180, '2026-07-10 15:00:00+00'
+    'new_menu', '30000000-0000-4000-8000-000000000001', 1,
+    null, null, null, 'generation-command.v1', repeat('1', 64),
+    5, 45, 180, '2026-07-10 15:00:00+00'
   )->>'status',
   'processing'
 );
@@ -1072,8 +1164,9 @@ select is(
   public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000001',
-    'new_menu', '30000000-0000-4000-8000-000000000001',
-    1, 5, 45, 180, '2026-07-10 15:00:01+00'
+    'new_menu', '30000000-0000-4000-8000-000000000001', 1,
+    null, null, null, 'generation-command.v1', repeat('1', 64),
+    5, 45, 180, '2026-07-10 15:00:01+00'
   )->>'replayed',
   'true'
 );
@@ -1081,12 +1174,29 @@ select is((select reserved_count from private.ai_user_daily_usage
   where user_id = '10000000-0000-4000-8000-000000000001'), 1);
 select is((select reserved_count from private.ai_global_daily_usage
   where usage_day = date '2026-07-11'), 1);
+select is(
+  (
+    select jsonb_build_object(
+      'version', request_hmac_version,
+      'hmac', request_hmac
+    )
+    from private.ai_generation_requests
+    where idempotency_key = '20000000-0000-4000-8000-000000000001'
+  ),
+  jsonb_build_object(
+    'version', 'generation-command.v1',
+    'hmac', repeat('1', 64)
+  ),
+  'a successful reservation stores the versioned request HMAC'
+);
 
 select is(
   public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000002',
-    'regenerate_menu', null, null, 5, 45, 180, '2026-07-10 15:00:02+00'
+    'regenerate_menu', null, null, null, null, null,
+    'generation-command.v1', repeat('2', 64),
+    5, 45, 180, '2026-07-10 15:00:02+00'
   )->>'failure_code',
   'generation_in_progress'
 );
@@ -1173,8 +1283,9 @@ select is(
   public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000003',
-    'new_menu', '30000000-0000-4000-8000-000000000002',
-    3, 5, 45, 180, '2026-07-10 15:10:00+00'
+    'new_menu', '30000000-0000-4000-8000-000000000002', 3,
+    null, null, null, 'generation-command.v1', repeat('3', 64),
+    5, 45, 180, '2026-07-10 15:10:00+00'
   )->>'status',
   'processing',
   'a new-menu reservation accepts nullable optional submission fields'
@@ -1230,6 +1341,705 @@ select is(
       and security_type = 'DEFINER'),
   1::bigint,
   'the snapshot RPC is a security-definer owner boundary'
+);
+
+-- 同一 key で異なる HMAC は cleanup/quota より先に拒否し、台帳・カウンタを一切動かさない
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000001';
+  v_key constant uuid := '20000000-0000-4000-8000-000000000010';
+  v_stale_key constant uuid := '20000000-0000-4000-8000-000000000011';
+  v_before jsonb;
+  v_after jsonb;
+begin
+  insert into private.ai_generation_requests (
+    user_id, idempotency_key, request_kind, status, user_usage_day,
+    request_hmac_version, request_hmac,
+    user_quota_reserved, global_reserved_day, processing_expires_at, started_at
+  ) values (
+    v_owner, v_stale_key, 'regenerate_menu', 'processing', date '2026-07-11',
+    'generation-command.v1', repeat('a', 64),
+    true, date '2026-07-11',
+    '2026-07-10 14:00:00+00', '2026-07-10 13:00:00+00'
+  );
+  insert into private.ai_generation_requests (
+    user_id, idempotency_key, request_kind, status,
+    draft_id, draft_revision, user_usage_day,
+    request_hmac_version, request_hmac,
+    user_quota_reserved, started_at, completed_at, failure_code
+  ) values (
+    v_owner, v_key, 'new_menu', 'failed',
+    '30000000-0000-4000-8000-000000000001', 1, date '2026-07-11',
+    'generation-command.v1', repeat('b', 64),
+    false, '2026-07-10 15:20:00+00', '2026-07-10 15:20:01+00', 'model_unavailable'
+  );
+
+  select jsonb_build_object(
+    'requests', coalesce((select jsonb_agg(to_jsonb(t) order by t.id)
+      from private.ai_generation_requests t),'[]'::jsonb),
+    'snapshots', coalesce((select jsonb_agg(to_jsonb(t)
+      order by t.draft_id,t.user_id,t.draft_revision)
+      from private.generation_draft_submission_versions t),'[]'::jsonb),
+    'success', coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_usage t),'[]'::jsonb),
+    'attempts', coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_external_attempts t),'[]'::jsonb),
+    'windows', coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.window_started_at)
+      from private.ai_user_rate_windows t),'[]'::jsonb),
+    'global', coalesce((select jsonb_agg(to_jsonb(t) order by t.usage_day)
+      from private.ai_global_daily_usage t),'[]'::jsonb)
+  ) into v_before;
+
+  begin
+    perform public.reserve_ai_generation(
+      v_owner, v_key, 'new_menu',
+      '30000000-0000-4000-8000-000000000001', 1,
+      null, null, null, 'generation-command.v1', repeat('c', 64),
+      5, 45, 180, '2026-07-10 16:00:00+00'
+    );
+    raise exception using errcode = 'XX000', message = 'expected_idempotency_payload_mismatch';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'idempotency_payload_mismatch' then raise; end if;
+  end;
+
+  select jsonb_build_object(
+    'requests', coalesce((select jsonb_agg(to_jsonb(t) order by t.id)
+      from private.ai_generation_requests t),'[]'::jsonb),
+    'snapshots', coalesce((select jsonb_agg(to_jsonb(t)
+      order by t.draft_id,t.user_id,t.draft_revision)
+      from private.generation_draft_submission_versions t),'[]'::jsonb),
+    'success', coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_usage t),'[]'::jsonb),
+    'attempts', coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_external_attempts t),'[]'::jsonb),
+    'windows', coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.window_started_at)
+      from private.ai_user_rate_windows t),'[]'::jsonb),
+    'global', coalesce((select jsonb_agg(to_jsonb(t) order by t.usage_day)
+      from private.ai_global_daily_usage t),'[]'::jsonb)
+  ) into v_after;
+  if v_after is distinct from v_before then
+    raise exception 'mismatched HMAC reservation changed ledger, snapshot, quota, or counter state';
+  end if;
+  if (select status from private.ai_generation_requests where idempotency_key = v_stale_key)
+      is distinct from 'processing' then
+    raise exception 'mismatched HMAC cleaned an unrelated stale processing request';
+  end if;
+end
+$test$;
+select pass('mismatched HMAC rejects before cleanup and leaves every counter unchanged');
+
+-- 閉じた conflict 永続化: 無効・重複・12 超は無変更、許可コードは codes-only DTO のみ
+do $test$
+declare
+  v_request_id uuid;
+  v_before jsonb;
+  v_after jsonb;
+  v_payload jsonb;
+  v_codes text[];
+begin
+  select id into strict v_request_id
+  from private.ai_generation_requests
+  where idempotency_key = '20000000-0000-4000-8000-000000000003'
+    and status = 'processing';
+
+  select to_jsonb(r) into v_before
+  from private.ai_generation_requests r where r.id = v_request_id;
+
+  begin
+    perform public.finalize_ai_generation_conflict(
+      v_request_id, array['not_a_real_conflict'], '2026-07-10 15:20:00+00'
+    );
+    raise exception using errcode = 'XX000', message = 'expected_invalid_terminal_details';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'invalid_terminal_details' then raise; end if;
+  end;
+
+  begin
+    perform public.finalize_ai_generation_conflict(
+      v_request_id,
+      array['must_use_conflict', 'must_use_conflict'],
+      '2026-07-10 15:20:00+00'
+    );
+    raise exception using errcode = 'XX000', message = 'expected_invalid_terminal_details';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'invalid_terminal_details' then raise; end if;
+  end;
+
+  v_codes := array[
+    'must_use_conflict',
+    'allergen_pantry_conflict',
+    'dish_count_conflict',
+    'mandatory_safety_conflict',
+    'current_safety_changed',
+    'must_use_conflict',
+    'allergen_pantry_conflict',
+    'dish_count_conflict',
+    'mandatory_safety_conflict',
+    'current_safety_changed',
+    'must_use_conflict',
+    'allergen_pantry_conflict',
+    'dish_count_conflict'
+  ];
+  begin
+    perform public.finalize_ai_generation_conflict(
+      v_request_id, v_codes, '2026-07-10 15:20:00+00'
+    );
+    raise exception using errcode = 'XX000', message = 'expected_invalid_terminal_details';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'invalid_terminal_details' then raise; end if;
+  end;
+
+  select to_jsonb(r) into v_after
+  from private.ai_generation_requests r where r.id = v_request_id;
+  if v_after is distinct from v_before then
+    raise exception 'invalid conflict codes mutated the request row';
+  end if;
+
+  v_payload := public.finalize_ai_generation_conflict(
+    v_request_id,
+    array['must_use_conflict', 'current_safety_changed'],
+    '2026-07-10 15:20:00+00'
+  );
+  if v_payload->>'status' is distinct from 'constraint_conflict' then
+    raise exception 'allowed conflict did not terminalize the request';
+  end if;
+  if (select terminal_details from private.ai_generation_requests where id = v_request_id)
+      is distinct from jsonb_build_object(
+        'conflictCodes',
+        jsonb_build_array('must_use_conflict', 'current_safety_changed')
+      ) then
+    raise exception 'allowed conflict did not persist the closed conflict-code DTO';
+  end if;
+
+  begin
+    update private.ai_generation_requests
+    set terminal_details = jsonb_build_object(
+      'conflictCodes', jsonb_build_array('must_use_conflict'),
+      'message', 'forbidden prose'
+    )
+    where id = v_request_id;
+    raise exception using errcode = 'XX000', message = 'expected_terminal_details_constraint';
+  exception when check_violation then
+    null;
+  end;
+
+  begin
+    update private.ai_generation_requests
+    set terminal_details = jsonb_build_object(
+      'conflictCodes',
+      jsonb_build_array(
+        jsonb_build_object('code', 'must_use_conflict', 'message', 'nested')
+      )
+    )
+    where id = v_request_id;
+    raise exception using errcode = 'XX000', message = 'expected_terminal_details_constraint';
+  exception when check_violation then
+    null;
+  end;
+end
+$test$;
+select pass('conflict RPC rejects invalid codes and persists only closed conflictCodes');
+
+-- 削除済み draft は最終シグネチャでも副作用ゼロ
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000071';
+  v_draft_id constant uuid := '20000000-0000-4000-8000-000000000071';
+  v_key constant uuid := '30000000-0000-4000-8000-000000000071';
+  v_revision constant bigint := 7;
+  v_deleted public.generation_drafts;
+  v_before jsonb;
+  v_after jsonb;
+begin
+  if to_regprocedure(
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,integer,integer,integer,timestamptz)'
+  ) is null then
+    raise exception 'the final reservation signature is missing';
+  end if;
+  if to_regprocedure(
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,integer,integer,integer,timestamptz)'
+  ) is not null then
+    raise exception 'the obsolete reservation overload still exists';
+  end if;
+  insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  values(v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','deleted-reserve@example.invalid','','{}','{}',now(),now());
+  insert into public.generation_drafts(
+    id,user_id,meal_type,main_ingredients,cuisine_genre,target_member_ids,
+    time_limit_minutes,budget_preference,avoid_ingredients,memo,pantry_selections,revision
+  ) values(v_draft_id,v_owner,'dinner',array['鶏肉'],'japanese',
+    array['10000000-0000-4000-8000-000000000001'::uuid],
+    30,'standard',array[]::text[],'','[]',v_revision);
+
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft_id,v_revision);
+  if v_deleted.revision is distinct from v_revision + 1 then
+    raise exception 'deleted reserve fixture did not advance the draft revision';
+  end if;
+
+  select jsonb_build_object(
+    'requests',coalesce((select jsonb_agg(to_jsonb(t) order by t.id)
+      from private.ai_generation_requests t),'[]'::jsonb),
+    'snapshots',coalesce((select jsonb_agg(to_jsonb(t)
+      order by t.draft_id,t.user_id,t.draft_revision)
+      from private.generation_draft_submission_versions t),'[]'::jsonb),
+    'success',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_usage t),'[]'::jsonb),
+    'attempts',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_external_attempts t),'[]'::jsonb),
+    'windows',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.window_started_at)
+      from private.ai_user_rate_windows t),'[]'::jsonb),
+    'global',coalesce((select jsonb_agg(to_jsonb(t) order by t.usage_day)
+      from private.ai_global_daily_usage t),'[]'::jsonb)
+  ) into v_before;
+
+  begin
+    perform public.reserve_ai_generation(
+      v_owner,v_key,'new_menu',v_draft_id,v_revision,
+      null,null,null,'generation-command.v1',repeat('a',64),
+      5,45,180,'2026-07-11 00:00:00+00');
+    raise exception using errcode='XX000',message='expected_draft_unavailable';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> 'draft_unavailable' then raise; end if;
+  end;
+
+  select jsonb_build_object(
+    'requests',coalesce((select jsonb_agg(to_jsonb(t) order by t.id)
+      from private.ai_generation_requests t),'[]'::jsonb),
+    'snapshots',coalesce((select jsonb_agg(to_jsonb(t)
+      order by t.draft_id,t.user_id,t.draft_revision)
+      from private.generation_draft_submission_versions t),'[]'::jsonb),
+    'success',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_usage t),'[]'::jsonb),
+    'attempts',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.usage_day)
+      from private.ai_user_daily_external_attempts t),'[]'::jsonb),
+    'windows',coalesce((select jsonb_agg(to_jsonb(t) order by t.user_id,t.window_started_at)
+      from private.ai_user_rate_windows t),'[]'::jsonb),
+    'global',coalesce((select jsonb_agg(to_jsonb(t) order by t.usage_day)
+      from private.ai_global_daily_usage t),'[]'::jsonb)
+  ) into v_after;
+  if v_after is distinct from v_before then
+    raise exception 'deleted draft reservation changed ledger, snapshot, quota, or counter state';
+  end if;
+end
+$test$;
+select pass('deleted draft reservation rejects with the final signature and zero side effects');
+
+-- C4: 唯一の canonical finalizer success fixture
+create temporary table finalize_fixture_context(
+  preference_snapshot jsonb not null,
+  safety_snapshot jsonb not null,
+  safety_fingerprint text not null,
+  allergen_version text not null,
+  food_rule_version text not null,
+  target_members jsonb not null
+) on commit drop;
+
+create function pg_temp.finalize_ordering_success(
+  p_request_id uuid,p_menu_id uuid,p_dish_id uuid,p_ingredient_id uuid,
+  p_step_id uuid,p_timeline_id uuid,p_pantry_selection_id uuid,
+  p_pantry_item_id uuid,p_checked_at timestamptz,p_now timestamptz,
+  p_source_menu_id uuid default null,p_change_reason text default null,
+  p_change_reason_custom text default null
+) returns jsonb language plpgsql as $fixture$
+declare
+  v_context pg_temp.finalize_fixture_context;
+  v_adaptation_id uuid := pg_catalog.gen_random_uuid();
+  v_side1_dish_id uuid := pg_catalog.gen_random_uuid();
+  v_side1_ingredient_id uuid := pg_catalog.gen_random_uuid();
+  v_side1_step_id uuid := pg_catalog.gen_random_uuid();
+  v_side2_dish_id uuid := pg_catalog.gen_random_uuid();
+  v_side2_ingredient_id uuid := pg_catalog.gen_random_uuid();
+  v_side2_step_id uuid := pg_catalog.gen_random_uuid();
+  v_unchecked_selection_id uuid := pg_catalog.gen_random_uuid();
+begin
+  select * into strict v_context from pg_temp.finalize_fixture_context;
+  return public.finalize_ai_generation_success(
+    p_request_id,
+    jsonb_build_object(
+      'schemaVersion','2026-07-11.v1','menuId',p_menu_id,
+      'mealType','dinner','cuisineGenre','japanese','servings',2,
+      'totalElapsedMinutes',15,'safetyTags','[]'::jsonb,
+      'dishes',jsonb_build_array(jsonb_build_object(
+        'id',p_dish_id,'role','main','position',1,'name','白菜のクリーム煮',
+        'description','短時間の煮物','cookingTimeMinutes',15,
+        'ingredients',jsonb_build_array(jsonb_build_object(
+          'id',p_ingredient_id,'position',1,'name','ホワイトソース',
+          'quantityValue',200,'quantityText','200g','unit','g',
+          'storeSection','seasonings','pantrySelectionId',p_pantry_selection_id,
+          'labelConfirmationRequired',true)),
+        'steps',jsonb_build_array(jsonb_build_object(
+          'id',p_step_id,'position',1,'instruction','材料を中心まで加熱する'))),
+        jsonb_build_object(
+          'id',v_side1_dish_id,'role','side','position',2,'name','白菜のおひたし',
+          'description','副菜','cookingTimeMinutes',10,
+          'ingredients',jsonb_build_array(jsonb_build_object(
+            'id',v_side1_ingredient_id,'position',1,'name','白菜',
+            'quantityValue',100,'quantityText','100g','unit','g',
+            'storeSection','produce','pantrySelectionId',null,
+            'labelConfirmationRequired',false)),
+          'steps',jsonb_build_array(jsonb_build_object(
+            'id',v_side1_step_id,'position',1,'instruction','白菜をゆでる'))),
+        jsonb_build_object(
+          'id',v_side2_dish_id,'role','soup','position',3,'name','わかめ汁',
+          'description','汁物','cookingTimeMinutes',10,
+          'ingredients',jsonb_build_array(jsonb_build_object(
+            'id',v_side2_ingredient_id,'position',1,'name','わかめ',
+            'quantityValue',10,'quantityText','10g','unit','g',
+            'storeSection','dry_goods','pantrySelectionId',null,
+            'labelConfirmationRequired',false)),
+          'steps',jsonb_build_array(jsonb_build_object(
+            'id',v_side2_step_id,'position',1,'instruction','わかめを煮る')))),
+      'timeline',jsonb_build_array(jsonb_build_object(
+        'id',p_timeline_id,'position',1,'startMinute',0,'durationMinutes',15,
+        'instruction','主菜を作る','dishId',p_dish_id,'recipeStepId',p_step_id)),
+      'adaptations',jsonb_build_array(jsonb_build_object(
+        'id',v_adaptation_id,'dishId',p_dish_id,
+        'anonymousMemberRef','member_1','portionText','通常量',
+        'branchBeforeRecipeStepId',p_step_id,
+        'additionalCutting',null,'additionalHeating','中心まで十分に加熱する',
+        'additionalSeasoning',null,'servingCheck','中心部の加熱を確認する',
+        'safetyTags',jsonb_build_array('heat_thoroughly'),
+        'safetyActions',jsonb_build_array(jsonb_build_object(
+          'kind','heat_thoroughly','dishId',p_dish_id,
+          'ingredientId',p_ingredient_id,'anonymousMemberRef','member_1',
+          'beforeRecipeStepId',p_step_id,
+          'instruction','材料を中心まで十分に加熱する')))),
+      'pantryUsage',jsonb_build_array(jsonb_build_object(
+        'selectionId',p_pantry_selection_id,'pantryItemId',p_pantry_item_id,
+        'pantryItemName','ホワイトソース','priority','must_use','usageStatus','used',
+        'plannedQuantity',200,'inventoryQuantity',200,'shortageQuantity',0,'unit','g',
+        'dishIds',jsonb_build_array(p_dish_id),'unusedReason',null),
+        jsonb_build_object(
+          'selectionId',v_unchecked_selection_id,'pantryItemId',null,
+          'pantryItemName','確認不要食材','priority','prefer_use','usageStatus','unused',
+          'plannedQuantity',null,'inventoryQuantity',null,'shortageQuantity',null,
+          'unit',null,'dishIds','[]'::jsonb,'unusedReason','今回は使わない')),
+      'labelConfirmations',jsonb_build_array(jsonb_build_object(
+        'sourceType','ingredient','sourceId',p_ingredient_id,
+        'sourcePath','dishes.0.ingredients.0.name','sourceText','ホワイトソース',
+        'allergenId','milk','anonymousMemberRef','member_1',
+        'dictionaryVersion',v_context.allergen_version,
+        'confirmationStatus','pending'))),
+    v_context.preference_snapshot,v_context.safety_snapshot,v_context.safety_fingerprint,
+    v_context.allergen_version,v_context.food_rule_version,
+    v_context.target_members,jsonb_build_array(jsonb_build_object(
+      'pantryItemId',p_pantry_item_id,'checkedAt',p_checked_at)),
+    p_source_menu_id,p_change_reason,p_change_reason_custom,p_now);
+end
+$fixture$;
+
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000072';
+  v_member constant uuid := '20000000-0000-4000-8000-000000000072';
+  v_pantry_item constant uuid := '22000000-0000-4000-8000-000000000072';
+  v_draft public.generation_drafts;
+  v_deleted public.generation_drafts;
+  v_request_id uuid;
+  v_result jsonb;
+  v_target_ids uuid[];
+  v_allergen_version text;
+  v_food_rule_version text;
+  v_fingerprint text;
+  v_before_revision bigint;
+  v_recreated_revision bigint;
+  v_before jsonb;
+  v_after jsonb;
+  v_pantry_selections jsonb;
+begin
+  insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  values(v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','ordering-finalizer@example.invalid','','{}','{}',now(),now());
+  -- registered アレルギーは complete 遷移前に子行が必要（即時 trigger）
+  insert into public.household_members(
+    id,user_id,status,display_name,age_band,portion_size,spice_level,
+    allergy_status,unsupported_diet_status,sort_order
+  ) values(v_member,v_owner,'draft','注文確認','adult','regular','mild',
+    'registered','none',0);
+  insert into public.member_allergies(id,user_id,member_id,allergen_id)
+  values('21000000-0000-4000-8000-000000000072',v_owner,v_member,'milk');
+  update public.household_members
+  set status = 'complete'
+  where id = v_member;
+  insert into public.pantry_items(
+    id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state
+  ) values(v_pantry_item,v_owner,'ホワイトソース',200,'g','2026-07-10','use_by','opened');
+  v_pantry_selections:=jsonb_build_array(jsonb_build_object(
+    'pantryItemId',v_pantry_item,'priority','must_use'));
+  select catalog_version into strict v_allergen_version
+  from public.allergen_catalog where id='milk';
+  select rule_version into strict v_food_rule_version
+  from public.food_safety_rules order by id limit 1;
+  v_target_ids := array[v_member];
+  v_fingerprint := private.current_safety_fingerprint(v_owner,v_target_ids);
+  insert into pg_temp.finalize_fixture_context values(
+    jsonb_build_object('mealType','dinner'),
+    jsonb_build_object('members',jsonb_build_array(jsonb_build_object(
+      'householdMemberId',v_member,'anonymousRef','member_1','ageBand','adult',
+      'allergyStatus','registered','allergenIds',jsonb_build_array('milk'),
+      'requiredSafetyConstraints','[]'::jsonb,'unsupportedDietStatus','none',
+      'unsupportedDietKinds','[]'::jsonb))),
+    v_fingerprint,v_allergen_version,v_food_rule_version,
+    jsonb_build_array(jsonb_build_object(
+      'householdMemberId',v_member,'anonymousRef','member_1',
+      'displayNameSnapshot','注文確認'))
+  );
+  perform set_config('request.jwt.claim.sub',v_owner::text,true);
+
+  -- 実在 member/allergy/catalog/rule と最終 13 引数で canonical success を成立させる
+  v_draft := public.save_generation_draft(0::bigint,'dinner',array['canonical'],'japanese',
+    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000080',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('e',64),5,45,180,'2026-07-11 00:00:10+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000080';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:00:11+00');
+  v_result := pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000080','61000000-0000-4000-8000-000000000080',
+    '62000000-0000-4000-8000-000000000080','63000000-0000-4000-8000-000000000080',
+    '64000000-0000-4000-8000-000000000080','65000000-0000-4000-8000-000000000080',
+    v_pantry_item,'2026-07-10 15:00:00+00','2026-07-11 00:00:12+00');
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'canonical finalizer fixture did not succeed';
+  end if;
+  if (select jsonb_build_object(
+      'menus',(select count(*) from public.menus where id='60000000-0000-4000-8000-000000000080'),
+      'targets',(select count(*) from public.menu_target_members where menu_id='60000000-0000-4000-8000-000000000080'),
+      'dishes',(select count(*) from public.dishes where menu_id='60000000-0000-4000-8000-000000000080'),
+      'ingredients',(select count(*) from public.dish_ingredients where menu_id='60000000-0000-4000-8000-000000000080'),
+      'steps',(select count(*) from public.recipe_steps where menu_id='60000000-0000-4000-8000-000000000080'),
+      'timeline',(select count(*) from public.menu_timeline_steps where menu_id='60000000-0000-4000-8000-000000000080'),
+      'adaptations',(select count(*) from public.menu_member_adaptations where menu_id='60000000-0000-4000-8000-000000000080'),
+      'actions',(select count(*) from public.menu_safety_actions
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and ingredient_id='62000000-0000-4000-8000-000000000080'),
+      'labelRequired',(select label_confirmation_required
+        from public.dish_ingredients
+        where id='62000000-0000-4000-8000-000000000080'),
+      'pantryLinked',(select pantry_selection_id='65000000-0000-4000-8000-000000000080'
+        from public.dish_ingredients
+        where id='62000000-0000-4000-8000-000000000080'),
+      'pantryName',(select pantry_name_snapshot
+        from public.generation_pantry_selections
+        where id='65000000-0000-4000-8000-000000000080'),
+      'pantryLiveName',(select name from public.pantry_items
+        where id='22000000-0000-4000-8000-000000000072'),
+      'reviewedAlias',(select exists(select 1 from public.allergen_aliases alias
+        where alias.allergen_id='milk' and alias.normalized_alias='ホワイトソース'
+          and alias.alias_kind='processed' and alias.requires_label_confirmation)),
+      'labelAllergen',(select allergen_id
+        from public.menu_label_confirmations
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and source_id='62000000-0000-4000-8000-000000000080'),
+      'sourceSnapshot',(select source_text_snapshot
+        from public.menu_label_confirmations
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and source_id='62000000-0000-4000-8000-000000000080'),
+      'checkDate',(select expired_item_check_jst_date::text
+        from public.generation_pantry_selections
+        where id='65000000-0000-4000-8000-000000000080'),
+      'paired',(select (expired_item_checked_at is null)=(expired_item_check_jst_date is null)
+        from public.generation_pantry_selections
+        where id='65000000-0000-4000-8000-000000000080'),
+      'unchecked',(select count(*) from public.generation_pantry_selections
+        where menu_id='60000000-0000-4000-8000-000000000080'
+          and pantry_name_snapshot='確認不要食材'
+          and expired_item_checked_at is null
+          and expired_item_check_jst_date is null)
+    )) is distinct from jsonb_build_object(
+      'menus',1,'targets',1,'dishes',3,'ingredients',3,'steps',3,
+      'timeline',1,'adaptations',1,'actions',1,
+      'labelRequired',true,'pantryLinked',true,'pantryName','ホワイトソース',
+      'pantryLiveName','ホワイトソース',
+      'reviewedAlias',true,'labelAllergen','milk','sourceSnapshot','ホワイトソース',
+      'checkDate','2026-07-11','paired',true,'unchecked',1) then
+    raise exception 'canonical finalizer did not commit every normalized child and ingredient-bound action';
+  end if;
+
+  -- 有効行削除、NULL、再作成後削除でも revision を単調増加させる
+  v_draft := public.save_generation_draft(0::bigint,'dinner',array['helper-1'],'japanese',
+    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,v_draft.revision);
+  if v_deleted.revision is distinct from v_draft.revision+1 then
+    raise exception 'helper did not increment an active draft revision';
+  end if;
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,null);
+  if v_deleted is not null then
+    raise exception 'helper did not return NULL for an already deleted draft';
+  end if;
+  v_draft := public.save_generation_draft(0::bigint,'dinner',array['helper-2'],'japanese',
+    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+  v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,null);
+  if v_deleted.revision is distinct from v_draft.revision+1 then
+    raise exception 'helper did not advance the recreated draft revision';
+  end if;
+
+  -- 手動削除が先でも finalizer は保存して成功する
+  v_draft := public.save_generation_draft(0::bigint,'dinner',array['manual-first'],'japanese',
+    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000081',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('b',64),5,45,180,'2026-07-11 00:01:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000081';
+  perform public.delete_generation_draft(v_draft.revision);
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:01:01+00');
+  v_result := pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000081','61000000-0000-4000-8000-000000000081',
+    '62000000-0000-4000-8000-000000000081','63000000-0000-4000-8000-000000000081',
+    '64000000-0000-4000-8000-000000000081','65000000-0000-4000-8000-000000000081',
+    v_pantry_item,'2026-07-11 00:00:59+00','2026-07-11 00:01:02+00');
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'manual-delete-first finalizer did not succeed';
+  end if;
+  if (select count(*) from public.menus
+      where id='60000000-0000-4000-8000-000000000081') <> 1 then
+    raise exception 'manual-delete-first did not commit the menu';
+  end if;
+
+  -- finalizer が先なら、以前の public revision は stale になる
+  v_draft := public.save_generation_draft(0::bigint,'dinner',array['finalizer-first'],'japanese',
+    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+  v_before_revision := v_draft.revision;
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000082',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('c',64),5,45,180,'2026-07-11 00:02:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000082';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:02:01+00');
+  perform pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000082','61000000-0000-4000-8000-000000000082',
+    '62000000-0000-4000-8000-000000000082','63000000-0000-4000-8000-000000000082',
+    '64000000-0000-4000-8000-000000000082','65000000-0000-4000-8000-000000000082',
+    v_pantry_item,'2026-07-11 00:01:59+00','2026-07-11 00:02:02+00');
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_before_revision+1 then
+    raise exception 'matching finalizer did not advance the draft revision';
+  end if;
+  if not coalesce((select deleted_at is not null
+      from public.generation_drafts where id=v_draft.id),false) then
+    raise exception 'matching finalizer did not soft-delete the draft';
+  end if;
+  begin
+    perform public.delete_generation_draft(v_before_revision);
+    raise exception using errcode='XX000',message='expected_draft_revision_conflict';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> 'draft_revision_conflict' then raise; end if;
+  end;
+
+  -- 予約後に別タブ保存された新 revision は finalizer が削除しない
+  v_draft := public.save_generation_draft(0::bigint,'dinner',array['reserved'],'japanese',
+    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000083',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v1',repeat('d',64),5,45,180,'2026-07-11 00:03:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000083';
+  v_draft := public.save_generation_draft(v_draft.revision,'dinner',array['updated'],'japanese',
+    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+  v_recreated_revision := v_draft.revision;
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:03:01+00');
+  perform pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000083','61000000-0000-4000-8000-000000000083',
+    '62000000-0000-4000-8000-000000000083','63000000-0000-4000-8000-000000000083',
+    '64000000-0000-4000-8000-000000000083','65000000-0000-4000-8000-000000000083',
+    v_pantry_item,'2026-07-11 00:02:59+00','2026-07-11 00:03:02+00');
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_recreated_revision then
+    raise exception 'finalizer changed the post-reservation draft revision';
+  end if;
+  if coalesce((select deleted_at is not null
+      from public.generation_drafts where id=v_draft.id),true) then
+    raise exception 'finalizer deleted the post-reservation draft';
+  end if;
+
+  -- draft 参照を持たない再生成は無関係な active draft を変更しない
+  v_before_revision := v_draft.revision;
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000084',
+    'regenerate_menu',null,null,'60000000-0000-4000-8000-000000000080',null,'simpler',
+    'generation-command.v1',repeat('e',64),5,45,180,'2026-07-11 00:14:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000084';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:14:01+00');
+  select jsonb_build_object(
+    'request',(select to_jsonb(r) from private.ai_generation_requests r where r.id=v_request_id),
+    'usage',(select to_jsonb(u) from private.ai_user_daily_usage u
+      where u.user_id=v_owner and u.usage_day=private.ai_jst_day('2026-07-11 00:14:01+00')),
+    'draft',(select to_jsonb(d) from public.generation_drafts d where d.id=v_draft.id),
+    'menuCount',(select count(*) from public.menus
+      where id='60000000-0000-4000-8000-000000000084')
+  ) into v_before;
+  begin
+    perform pg_temp.finalize_ordering_success(v_request_id,
+      '60000000-0000-4000-8000-000000000084','61000000-0000-4000-8000-000000000084',
+      '62000000-0000-4000-8000-000000000084','63000000-0000-4000-8000-000000000084',
+      '64000000-0000-4000-8000-000000000084','65000000-0000-4000-8000-000000000084',
+      v_pantry_item,'2026-07-11 00:13:59+00','2026-07-11 00:14:02+00',
+      '60000000-0000-4000-8000-000000000080','simpler',null);
+    raise exception using errcode='XX000',message='expected_regeneration_not_implemented';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> 'regeneration_not_implemented' then raise; end if;
+  end;
+  select jsonb_build_object(
+    'request',(select to_jsonb(r) from private.ai_generation_requests r where r.id=v_request_id),
+    'usage',(select to_jsonb(u) from private.ai_user_daily_usage u
+      where u.user_id=v_owner and u.usage_day=private.ai_jst_day('2026-07-11 00:14:01+00')),
+    'draft',(select to_jsonb(d) from public.generation_drafts d where d.id=v_draft.id),
+    'menuCount',(select count(*) from public.menus
+      where id='60000000-0000-4000-8000-000000000084')
+  ) into v_after;
+  if v_after is distinct from v_before then
+    raise exception 'regeneration failure changed menu, quota, request, or unrelated draft state';
+  end if;
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_before_revision
+     or coalesce((select deleted_at is not null
+       from public.generation_drafts where id=v_draft.id),true) then
+    raise exception 'regeneration did not preserve the unrelated active draft';
+  end if;
+  perform public.finalize_ai_generation_failure(
+    v_request_id,'regeneration_not_implemented',null,'2026-07-11 00:14:03+00');
+
+  -- null lineage で成功する内部境界でも null draft 参照は helper を呼ばない
+  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000085',
+    'regenerate_menu',null,null,'60000000-0000-4000-8000-000000000080',null,'simpler',
+    'generation-command.v1',repeat('f',64),5,45,180,'2026-07-11 00:25:00+00');
+  select id into strict v_request_id from private.ai_generation_requests
+    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000085';
+  v_before_revision := v_draft.revision;
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:25:01+00');
+  v_result := pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000085','61000000-0000-4000-8000-000000000085',
+    '62000000-0000-4000-8000-000000000085','63000000-0000-4000-8000-000000000085',
+    '64000000-0000-4000-8000-000000000085','65000000-0000-4000-8000-000000000085',
+    v_pantry_item,'2026-07-11 00:24:59+00','2026-07-11 00:25:02+00');
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'null-lineage regeneration boundary did not succeed';
+  end if;
+  if (select revision from public.generation_drafts where id=v_draft.id)
+      is distinct from v_before_revision
+     or coalesce((select deleted_at is not null
+       from public.generation_drafts where id=v_draft.id),true) then
+    raise exception 'null-draft success changed an unrelated active draft';
+  end if;
+end
+$test$;
+select pass('canonical finalization preserves matching, updated, and unrelated draft boundaries');
+
+select is(
+  (select count(*)::integer
+    from pg_catalog.pg_proc procedure_
+    join pg_catalog.pg_namespace namespace_
+      on namespace_.oid = procedure_.pronamespace
+    where namespace_.nspname = 'public'
+      and procedure_.proname = 'reserve_ai_generation'
+      and pg_catalog.pg_get_function_identity_arguments(procedure_.oid)
+        not like '%p_request_hmac%'),
+  0,
+  'zero remaining nine-argument reserve overloads'
 );
 
 select * from finish();

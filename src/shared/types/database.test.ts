@@ -18,12 +18,18 @@ it("accepts nullable draft references for regeneration reservations", () => {
     p_request_kind: "regenerate_menu",
     p_draft_id: null,
     p_draft_revision: null,
+    p_source_menu_id: "60000000-0000-4000-8000-000000000001",
+    p_replace_dish_id: null,
+    p_change_reason: "simpler",
+    p_request_hmac_version: "generation-command.v1",
+    p_request_hmac: "a".repeat(64),
     p_user_limit: 5,
     p_global_limit: 45,
   } satisfies ReserveGenerationArgs;
 
   expectTypeOf(args).toExtend<ReserveGenerationArgs>();
   expect(args.p_draft_id).toBeNull();
+  expect(args.p_source_menu_id).not.toBeNull();
 });
 
 it("accepts a null retry time for terminal failures", () => {
@@ -113,7 +119,8 @@ type AppSaveDraft = Database["public"]["Functions"]["save_generation_draft"];
 type NullableDraftArg =
   "p_meal_type" | "p_cuisine_genre" | "p_time_limit_minutes" | "p_budget_preference";
 type GeneratedReserveGeneration = GeneratedDatabase["public"]["Functions"]["reserve_ai_generation"];
-type NullableReserveGenerationArg = "p_draft_id" | "p_draft_revision";
+type NullableReserveGenerationArg =
+  "p_draft_id" | "p_draft_revision" | "p_source_menu_id" | "p_replace_dish_id" | "p_change_reason";
 type GeneratedFinalizeGenerationFailure =
   GeneratedDatabase["public"]["Functions"]["finalize_ai_generation_failure"];
 type GeneratedFinalizeGenerationSuccess =

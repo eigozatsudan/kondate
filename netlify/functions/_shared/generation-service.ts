@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
+  generationConflictCodes,
   generationConflictCopy,
   generationConflictSchema,
   generationFailureCodes,
@@ -232,17 +233,30 @@ export function toGenerationStatus(
     };
   }
   if (record.status === "constraint_conflict") {
+    // 台帳は code のみ。表示 message は Task 9 の generationConflictCopy から再構成する
+    const codes = z
+      .object({
+        conflictCodes: z.array(z.enum(generationConflictCodes)).min(1).max(12),
+      })
+      .strict()
+      .parse(record.terminal_details).conflictCodes;
+    const uniqueCodes = [...new Set(codes)];
+    if (uniqueCodes.length !== codes.length) {
+      throw new Error("terminal_conflict_codes_invalid");
+    }
     return {
       status: "constraint_conflict",
       idempotencyKey,
       requestId,
       quota,
       completedAt,
-      conflicts: generationConflictSchema
-        .array()
-        .min(1)
-        .max(12)
-        .parse(record.terminal_details?.conflicts),
+      conflicts: uniqueCodes.map((code) =>
+        generationConflictSchema.parse({
+          code,
+          message: generationConflictCopy[code],
+          conditionRefs: [],
+        }),
+      ),
     };
   }
   const parsedCode = generationFailureCodeSchema.safeParse(record.failure_code);
@@ -371,12 +385,7 @@ export async function runGeneration(
   command: GenerationCommand,
 ): Promise<GenerationStatusData> {
   const key = command.request.idempotencyKey;
-  const reserved = await deps.repository.reserve({
-    idempotencyKey: key,
-    kind: command.kind,
-    draftId: command.kind === "new_menu" ? command.request.draftId : null,
-    draftRevision: command.kind === "new_menu" ? command.request.draftRevision : null,
-  });
+  const reserved = await deps.repository.reserve(command);
   const hydrate = async () => {
     try {
       return toGenerationStatus(await deps.repository.status(key), key);

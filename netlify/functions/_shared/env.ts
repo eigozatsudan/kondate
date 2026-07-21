@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
+import { parseGenerationRequestHmacKey } from "./generation-command-integrity.js";
 
 const localServerSupabaseUrl = "http://kong:8000";
 const localBrowserSupabaseUrl = "http://127.0.0.1:8000";
@@ -37,11 +38,27 @@ const releaseLockedInteger = <const Value extends number, const Text extends str
 ) => z.union([z.literal(value), z.literal(text)]).transform(() => value);
 const globalDailyLimit = (max: number) => z.coerce.number().int().min(1).max(max).default(max);
 
+const generationRequestHmacKeySchema = z
+  .string()
+  .min(1)
+  .transform((value, context) => {
+    try {
+      return parseGenerationRequestHmacKey(value);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "GENERATION_REQUEST_HMAC_KEY must be canonical base64 for exactly 32 bytes",
+      });
+      return z.NEVER;
+    }
+  });
+
 const rawServerEnvSchema = continuationServerEnvSchema.extend({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   OPENROUTER_API_KEY: z.string().min(1),
   OPENROUTER_MODELS: z.string(),
   OPENROUTER_BASE_URL: z.url().default("https://openrouter.ai/api/v1"),
+  GENERATION_REQUEST_HMAC_KEY: generationRequestHmacKeySchema,
   USER_DAILY_AI_LIMIT: releaseLockedInteger(releaseQuota.userDailySuccessLimit, "5"),
   USER_DAILY_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
     releaseQuota.userDailyExternalCallLimit,
@@ -59,7 +76,7 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
 });
 
 type ParsedServerEnv = z.infer<typeof rawServerEnvSchema>;
-export type ServerEnv = ParsedServerEnv & {
+export type ServerEnv = Omit<ParsedServerEnv, "GENERATION_REQUEST_HMAC_KEY"> & {
   supabase: {
     url: string;
     publishableKey: string;
@@ -77,6 +94,9 @@ export type ServerEnv = ParsedServerEnv & {
     timeoutMs: number;
     functionTotalBudgetMs: number;
     staleAfterSeconds: number;
+  };
+  generationIntegrity: {
+    requestHmacKey: Uint8Array;
   };
 };
 
@@ -103,6 +123,10 @@ export function parseOpenRouterModels(value: string): readonly string[] {
 
 export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (source.VITE_AUTH_CONTINUATION_ENCRYPTION_KEY !== undefined) {
+    throw new Error("server_configuration_invalid");
+  }
+  // ブラウザ向け alias は存在自体を拒否する（鍵をクライアントへ漏らさない）
+  if (source.VITE_GENERATION_REQUEST_HMAC_KEY !== undefined) {
     throw new Error("server_configuration_invalid");
   }
   const result = rawServerEnvSchema.safeParse(source);
@@ -136,8 +160,9 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   ) {
     throw new Error("server_configuration_invalid");
   }
+  const { GENERATION_REQUEST_HMAC_KEY, ...publicEnv } = result.data;
   return {
-    ...result.data,
+    ...publicEnv,
     supabase: {
       url: result.data.SUPABASE_URL,
       publishableKey: result.data.SUPABASE_PUBLISHABLE_KEY,
@@ -155,6 +180,9 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       timeoutMs: result.data.OPENROUTER_TIMEOUT_MS,
       functionTotalBudgetMs: result.data.FUNCTION_TOTAL_BUDGET_MS,
       staleAfterSeconds: result.data.AI_PROCESSING_STALE_SECONDS,
+    },
+    generationIntegrity: {
+      requestHmacKey: GENERATION_REQUEST_HMAC_KEY,
     },
   };
 }

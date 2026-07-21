@@ -1,3 +1,61 @@
+-- 衝突コードの閉じた集合。1〜12 件かつ重複なし（台帳制約と conflict RPC の共通判定）
+create or replace function private.ai_conflict_codes_valid(p_codes text[])
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path = pg_catalog
+as $$
+  select
+    p_codes is not null
+    and cardinality(p_codes) between 1 and 12
+    and cardinality(p_codes) = (
+      select count(distinct code) from unnest(p_codes) as codes(code)
+    )
+    and not exists (
+      select 1
+      from unnest(p_codes) as codes(code)
+      where code is null
+         or code not in (
+           'must_use_conflict',
+           'allergen_pantry_conflict',
+           'dish_count_conflict',
+           'mandatory_safety_conflict',
+           'current_safety_changed'
+         )
+    )
+$$;
+
+-- non-conflict 行は terminal_details null、conflict 行は {conflictCodes:[...]} のみ
+create or replace function private.ai_generation_terminal_details_valid(
+  p_status text,
+  p_terminal_details jsonb
+) returns boolean
+language sql
+immutable
+parallel safe
+set search_path = pg_catalog
+as $$
+  select case
+    when p_status is distinct from 'constraint_conflict' then
+      p_terminal_details is null
+    when p_terminal_details is null
+      or jsonb_typeof(p_terminal_details) is distinct from 'object'
+      or (
+        select count(*)::integer
+        from jsonb_object_keys(p_terminal_details) as keys(key)
+      ) <> 1
+      or not (p_terminal_details ? 'conflictCodes')
+      or jsonb_typeof(p_terminal_details->'conflictCodes') is distinct from 'array'
+    then false
+    else private.ai_conflict_codes_valid(
+      array(
+        select jsonb_array_elements_text(p_terminal_details->'conflictCodes')
+      )
+    )
+  end
+$$;
+
 create table private.generation_draft_submission_versions (
   draft_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -33,6 +91,21 @@ create table private.ai_generation_requests (
   draft_id uuid,
   draft_revision bigint,
   source_menu_id uuid references public.menus(id) on delete set null,
+  replace_dish_id uuid,
+  change_reason text check (
+    change_reason is null
+    or change_reason in (
+      'simpler',
+      'different_ingredient',
+      'child_friendly',
+      'different_flavor',
+      'custom'
+    )
+  ),
+  -- 台帳は正規化コマンドの HMAC のみを保持し、生リクエスト本文や自由記述は載せない
+  request_hmac_version text not null
+    check (request_hmac_version = 'generation-command.v1'),
+  request_hmac text not null check (request_hmac ~ '^[a-f0-9]{64}$'),
   completed_menu_id uuid references public.menus(id) on delete set null,
   user_usage_day date not null,
   user_quota_reserved boolean not null default false,
@@ -53,7 +126,7 @@ create table private.ai_generation_requests (
   foreign key (draft_id,user_id,draft_revision)
     references private.generation_draft_submission_versions(draft_id,user_id,draft_revision),
   check ((request_kind = 'new_menu') = (draft_id is not null and draft_revision is not null)),
-  check (terminal_details is null or jsonb_typeof(terminal_details) = 'object')
+  check (private.ai_generation_terminal_details_valid(status, terminal_details))
 );
 
 create unique index ai_generation_requests_one_processing_per_user
@@ -78,10 +151,35 @@ create table private.ai_global_daily_usage (
   updated_at timestamptz not null default now()
 );
 
+-- Plan 6 運用/cleanup が参照する固定名。本 session は DDL のみ（markSent 結合は C6）
+create table private.ai_user_daily_external_attempts (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  usage_day date not null,
+  reserved_count integer not null default 0 check (reserved_count >= 0),
+  sent_count integer not null default 0 check (sent_count >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, usage_day),
+  check (reserved_count + sent_count <= 12)
+);
+
+create table private.ai_user_rate_windows (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  window_started_at timestamptz not null,
+  sent_count integer not null default 0 check (sent_count between 0 and 4),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, window_started_at),
+  check ((extract(epoch from window_started_at)::bigint % 600) = 0)
+);
+
 revoke all on private.ai_generation_requests from public, anon, authenticated;
 revoke all on private.generation_draft_submission_versions from public, anon, authenticated;
 revoke all on private.ai_user_daily_usage from public, anon, authenticated;
 revoke all on private.ai_global_daily_usage from public, anon, authenticated;
+revoke all on private.ai_user_daily_external_attempts from public, anon, authenticated;
+revoke all on private.ai_user_rate_windows from public, anon, authenticated;
+revoke all on function private.ai_conflict_codes_valid(text[]) from public, anon, authenticated, service_role;
+revoke all on function private.ai_generation_terminal_details_valid(text, jsonb)
+  from public, anon, authenticated, service_role;
 
 create or replace function private.ai_jst_day(p_now timestamptz)
 returns date language sql immutable parallel safe
@@ -152,12 +250,22 @@ begin
 end;
 $$;
 
+-- 暫定 9 引数は DROP してから最終 14 引数のみを作成する（CREATE OR REPLACE ではシグネチャ置換不可）
+drop function if exists public.reserve_ai_generation(
+  uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz
+);
+
 create or replace function public.reserve_ai_generation(
   p_user_id uuid,
   p_idempotency_key uuid,
   p_request_kind text,
   p_draft_id uuid,
   p_draft_revision bigint,
+  p_source_menu_id uuid,
+  p_replace_dish_id uuid,
+  p_change_reason text,
+  p_request_hmac_version text,
+  p_request_hmac text,
   p_user_limit integer,
   p_global_limit integer,
   p_stale_after_seconds integer default 180,
@@ -173,6 +281,13 @@ declare
   v_user private.ai_user_daily_usage;
   v_global private.ai_global_daily_usage;
 begin
+  -- HMAC 検証は冪等キー照合・quota 参照より先。不正形式は台帳を触らない
+  if p_request_hmac_version is distinct from 'generation-command.v1'
+     or p_request_hmac is null
+     or p_request_hmac !~ '^[a-f0-9]{64}$' then
+    raise exception using errcode = '22023', message = 'invalid_request_hmac';
+  end if;
+  -- release-locked 成功上限 5 は idempotency lookup より前に拒否する
   if p_user_limit <> 5 then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
@@ -184,12 +299,22 @@ begin
     raise exception using errcode = '22023', message = 'invalid_request_kind';
   end if;
 
-  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
+  -- 同一 user+key の競合を直列化し、HMAC 比較を cleanup/quota より先に確定する
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_user_id::text || ':' || p_idempotency_key::text, 0)
+  );
 
   select * into v_request from private.ai_generation_requests
   where user_id = p_user_id and idempotency_key = p_idempotency_key;
-  if found then return private.ai_request_payload(v_request, true); end if;
+  if found then
+    if v_request.request_hmac_version is distinct from p_request_hmac_version
+       or v_request.request_hmac is distinct from p_request_hmac then
+      raise exception using errcode = '22023', message = 'idempotency_payload_mismatch';
+    end if;
+    return private.ai_request_payload(v_request, true);
+  end if;
 
+  -- 本当に新しい key だけが draft ゲート・stale cleanup・active lookup・quota へ進む
   if p_request_kind = 'new_menu' then
     select * into v_draft
     from public.generation_drafts
@@ -220,10 +345,14 @@ begin
   if found then
     insert into private.ai_generation_requests(
       user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+      source_menu_id, replace_dish_id, change_reason,
+      request_hmac_version, request_hmac,
       user_usage_day, failure_code, retry_at, started_at, completed_at
     ) values (
       p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id,
-      p_draft_revision, v_day, 'generation_in_progress',
+      p_draft_revision, p_source_menu_id, p_replace_dish_id, p_change_reason,
+      p_request_hmac_version, p_request_hmac,
+      v_day, 'generation_in_progress',
       v_active.processing_expires_at, p_now, p_now
     ) returning * into v_request;
     return private.ai_request_payload(v_request, false);
@@ -241,10 +370,14 @@ begin
   if v_user.success_count + v_user.reserved_count >= p_user_limit then
     insert into private.ai_generation_requests(
       user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+      source_menu_id, replace_dish_id, change_reason,
+      request_hmac_version, request_hmac,
       user_usage_day, failure_code, retry_at, started_at, completed_at
     ) values (
       p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id,
-      p_draft_revision, v_day, 'user_daily_limit',
+      p_draft_revision, p_source_menu_id, p_replace_dish_id, p_change_reason,
+      p_request_hmac_version, p_request_hmac,
+      v_day, 'user_daily_limit',
       private.ai_next_jst_midnight(p_now), p_now, p_now
     ) returning * into v_request;
     return private.ai_request_payload(v_request, false);
@@ -253,10 +386,14 @@ begin
   if v_global.sent_count + v_global.reserved_count >= p_global_limit then
     insert into private.ai_generation_requests(
       user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+      source_menu_id, replace_dish_id, change_reason,
+      request_hmac_version, request_hmac,
       user_usage_day, failure_code, retry_at, started_at, completed_at
     ) values (
       p_user_id, p_idempotency_key, p_request_kind, 'failed', p_draft_id,
-      p_draft_revision, v_day, 'global_daily_limit',
+      p_draft_revision, p_source_menu_id, p_replace_dish_id, p_change_reason,
+      p_request_hmac_version, p_request_hmac,
+      v_day, 'global_daily_limit',
       private.ai_next_jst_midnight(p_now), p_now, p_now
     ) returning * into v_request;
     return private.ai_request_payload(v_request, false);
@@ -268,11 +405,15 @@ begin
   where usage_day = v_day;
   insert into private.ai_generation_requests(
     user_id, idempotency_key, request_kind, status, draft_id, draft_revision,
+    source_menu_id, replace_dish_id, change_reason,
+    request_hmac_version, request_hmac,
     user_usage_day, user_quota_reserved, global_reserved_day,
     processing_expires_at, started_at
   ) values (
     p_user_id, p_idempotency_key, p_request_kind, 'processing', p_draft_id,
-    p_draft_revision, v_day, true, v_day,
+    p_draft_revision, p_source_menu_id, p_replace_dish_id, p_change_reason,
+    p_request_hmac_version, p_request_hmac,
+    v_day, true, v_day,
     p_now + make_interval(secs => p_stale_after_seconds), p_now
   ) returning * into v_request;
   return private.ai_request_payload(v_request, false);
@@ -374,24 +515,60 @@ begin
 end;
 $$;
 
+-- 旧 jsonb overload を完全に落とし、codes-only text[] を唯一の永続化境界にする
+drop function if exists public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz);
+
 create or replace function public.finalize_ai_generation_conflict(
-  p_request_id uuid, p_conflicts jsonb,
+  p_request_id uuid,
+  p_conflict_codes text[],
   p_now timestamptz default clock_timestamp()
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp
 as $$
-declare v_payload jsonb;
+declare
+  v_request private.ai_generation_requests;
 begin
-  if jsonb_typeof(p_conflicts) <> 'array' or jsonb_array_length(p_conflicts) = 0 then
-    raise exception using errcode = '22023', message = 'invalid_conflicts';
+  -- 無効・重複・12 超は request を変更せず拒否する
+  if not private.ai_conflict_codes_valid(p_conflict_codes) then
+    raise exception using errcode = '22023', message = 'invalid_terminal_details';
   end if;
-  v_payload := public.finalize_ai_generation_failure(p_request_id, 'constraint_conflict', null, p_now);
-  update private.ai_generation_requests
-  set status = 'constraint_conflict', failure_code = null,
-      terminal_details = jsonb_build_object('conflicts', p_conflicts)
-  where id = p_request_id;
-  select private.ai_request_payload(r, false) into v_payload
-    from private.ai_generation_requests r where id = p_request_id;
-  return v_payload;
+
+  select * into v_request from private.ai_generation_requests
+  where id = p_request_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'request_not_found';
+  end if;
+  -- 既に終端なら immutable replay（succeeded/failed/timeout を書き直さない）
+  if v_request.status is distinct from 'processing' then
+    return private.ai_request_payload(v_request, true);
+  end if;
+
+  -- 未解放の success 予約を同じ transaction で解放する
+  if v_request.user_quota_reserved then
+    update private.ai_user_daily_usage
+    set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+    where user_id = v_request.user_id and usage_day = v_request.user_usage_day;
+  end if;
+  if v_request.global_reserved_day is not null then
+    update private.ai_global_daily_usage
+    set reserved_count = greatest(reserved_count - 1, 0), updated_at = p_now
+    where usage_day = v_request.global_reserved_day;
+  end if;
+
+  update private.ai_generation_requests set
+    status = 'constraint_conflict',
+    failure_code = null,
+    terminal_details = jsonb_build_object('conflictCodes', to_jsonb(p_conflict_codes)),
+    user_quota_reserved = false,
+    global_reserved_day = null,
+    completed_at = p_now,
+    updated_at = p_now,
+    duration_ms = greatest(
+      0,
+      floor(extract(epoch from (p_now - started_at)) * 1000)::integer
+    )
+  where id = p_request_id
+  returning * into v_request;
+  return private.ai_request_payload(v_request, false);
 end;
 $$;
 
@@ -831,22 +1008,26 @@ revoke all on function private.persist_validated_menu(
 ) from public,anon,authenticated,service_role;
 
 revoke all on function public.cleanup_stale_ai_generations(timestamptz) from public, anon, authenticated;
-revoke all on function public.reserve_ai_generation(uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz) from public, anon, authenticated;
+revoke all on function public.reserve_ai_generation(
+  uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, integer, integer, integer, timestamptz
+) from public, anon, authenticated;
 revoke all on function public.reserve_ai_repair_call(uuid, integer, timestamptz) from public, anon, authenticated;
 revoke all on function public.mark_ai_global_sent(uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.record_ai_generation_model(uuid, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_failure(uuid, text, timestamptz, timestamptz) from public, anon, authenticated;
-revoke all on function public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.finalize_ai_generation_conflict(uuid, text[], timestamptz) from public, anon, authenticated;
 revoke all on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) from public,anon,authenticated;
 revoke all on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) from public,anon,authenticated;
 revoke all on function public.get_ai_generation_submission_snapshot(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.cleanup_stale_ai_generations(timestamptz) to service_role;
-grant execute on function public.reserve_ai_generation(uuid, uuid, text, uuid, bigint, integer, integer, integer, timestamptz) to service_role;
+grant execute on function public.reserve_ai_generation(
+  uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, integer, integer, integer, timestamptz
+) to service_role;
 grant execute on function public.reserve_ai_repair_call(uuid, integer, timestamptz) to service_role;
 grant execute on function public.mark_ai_global_sent(uuid, timestamptz) to service_role;
 grant execute on function public.record_ai_generation_model(uuid, text, timestamptz) to service_role;
 grant execute on function public.finalize_ai_generation_failure(uuid, text, timestamptz, timestamptz) to service_role;
-grant execute on function public.finalize_ai_generation_conflict(uuid, jsonb, timestamptz) to service_role;
+grant execute on function public.finalize_ai_generation_conflict(uuid, text[], timestamptz) to service_role;
 grant execute on function public.finalize_ai_generation_success(uuid,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb,uuid,text,text,timestamptz) to service_role;
 grant execute on function public.get_ai_generation_status(uuid,uuid,integer,timestamptz) to service_role;
 grant execute on function public.get_ai_generation_submission_snapshot(uuid,uuid) to service_role;

@@ -71,6 +71,7 @@ values.set("JWT_SECRET", jwtSecret);
 values.set("ANON_KEY", signRole("anon"));
 values.set("SERVICE_ROLE_KEY", signRole("service_role"));
 values.set("AUTH_CONTINUATION_ENCRYPTION_KEY", randomBytes(32).toString("base64"));
+values.set("GENERATION_REQUEST_HMAC_KEY", randomBytes(32).toString("base64"));
 values.set("AUTH_CONTINUATION_TTL_SECONDS", "300");
 const localUid = process.env.LOCAL_UID ?? "1000";
 const localGid = process.env.LOCAL_GID ?? "1000";

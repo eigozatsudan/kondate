@@ -12,6 +12,7 @@ export type Database = {
       ai_generation_requests: {
         Row: {
           actual_model_ids: string[]
+          change_reason: string | null
           completed_at: string | null
           completed_menu_id: string | null
           created_at: string
@@ -25,6 +26,9 @@ export type Database = {
           idempotency_key: string
           processing_expires_at: string | null
           repair_attempted: boolean
+          replace_dish_id: string | null
+          request_hmac: string
+          request_hmac_version: string
           request_kind: string
           retry_at: string | null
           source_menu_id: string | null
@@ -38,6 +42,7 @@ export type Database = {
         }
         Insert: {
           actual_model_ids?: string[]
+          change_reason?: string | null
           completed_at?: string | null
           completed_menu_id?: string | null
           created_at?: string
@@ -51,6 +56,9 @@ export type Database = {
           idempotency_key: string
           processing_expires_at?: string | null
           repair_attempted?: boolean
+          replace_dish_id?: string | null
+          request_hmac: string
+          request_hmac_version: string
           request_kind: string
           retry_at?: string | null
           source_menu_id?: string | null
@@ -64,6 +72,7 @@ export type Database = {
         }
         Update: {
           actual_model_ids?: string[]
+          change_reason?: string | null
           completed_at?: string | null
           completed_menu_id?: string | null
           created_at?: string
@@ -77,6 +86,9 @@ export type Database = {
           idempotency_key?: string
           processing_expires_at?: string | null
           repair_attempted?: boolean
+          replace_dish_id?: string | null
+          request_hmac?: string
+          request_hmac_version?: string
           request_kind?: string
           retry_at?: string | null
           source_menu_id?: string | null
@@ -119,6 +131,30 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_user_daily_external_attempts: {
+        Row: {
+          reserved_count: number
+          sent_count: number
+          updated_at: string
+          usage_day: string
+          user_id: string
+        }
+        Insert: {
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          usage_day: string
+          user_id: string
+        }
+        Update: {
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          usage_day?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       ai_user_daily_usage: {
         Row: {
           reserved_count: number
@@ -140,6 +176,27 @@ export type Database = {
           updated_at?: string
           usage_day?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      ai_user_rate_windows: {
+        Row: {
+          sent_count: number
+          updated_at: string
+          user_id: string
+          window_started_at: string
+        }
+        Insert: {
+          sent_count?: number
+          updated_at?: string
+          user_id: string
+          window_started_at: string
+        }
+        Update: {
+          sent_count?: number
+          updated_at?: string
+          user_id?: string
+          window_started_at?: string
         }
         Relationships: []
       }
@@ -238,6 +295,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      ai_conflict_codes_valid: { Args: { p_codes: string[] }; Returns: boolean }
+      ai_generation_terminal_details_valid: {
+        Args: { p_status: string; p_terminal_details: Json }
+        Returns: boolean
+      }
       ai_jst_day: { Args: { p_now: string }; Returns: string }
       ai_next_jst_midnight: { Args: { p_now: string }; Returns: string }
       ai_request_payload: {
@@ -1445,7 +1507,11 @@ export type Database = {
         Returns: boolean
       }
       finalize_ai_generation_conflict: {
-        Args: { p_conflicts: Json; p_now?: string; p_request_id: string }
+        Args: {
+          p_conflict_codes: string[]
+          p_now?: string
+          p_request_id: string
+        }
         Returns: Json
       }
       finalize_ai_generation_failure: {
@@ -1515,12 +1581,17 @@ export type Database = {
       }
       reserve_ai_generation: {
         Args: {
+          p_change_reason: string
           p_draft_id: string
           p_draft_revision: number
           p_global_limit: number
           p_idempotency_key: string
           p_now?: string
+          p_replace_dish_id: string
+          p_request_hmac: string
+          p_request_hmac_version: string
           p_request_kind: string
+          p_source_menu_id: string
           p_stale_after_seconds?: number
           p_user_id: string
           p_user_limit: number
