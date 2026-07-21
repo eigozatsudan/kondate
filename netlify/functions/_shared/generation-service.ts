@@ -214,6 +214,31 @@ const failureCopy: Record<GenerationFailureCode, { message: string; retryable: b
     message: "献立を作成できませんでした。成功回数には含まれません。",
     retryable: true,
   },
+  // Plan 4 再生成契約の閉じた失敗コード（message は issueMessages と同一文言）
+  duplicate_output: {
+    message: "元の献立とほぼ同じ案だったため保存しませんでした。今回は回数に含まれません",
+    retryable: true,
+  },
+  idempotency_payload_mismatch: {
+    message: "前回と異なる内容で再送できません。もう一度操作してください",
+    retryable: false,
+  },
+  current_safety_revalidation_required: {
+    message: "現在の家族設定ではこの献立を利用できません",
+    retryable: false,
+  },
+  current_target_member_required: {
+    message: "現在の家族を1人以上選んでください",
+    retryable: false,
+  },
+  source_menu_not_found: {
+    message: "元の献立が見つかりません",
+    retryable: false,
+  },
+  replace_dish_not_found: {
+    message: "変更する料理が見つかりません",
+    retryable: false,
+  },
 };
 
 function closedFailureCode(error: unknown): GenerationFailureCode {

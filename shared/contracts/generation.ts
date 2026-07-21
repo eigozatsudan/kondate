@@ -548,6 +548,13 @@ export const generationFailureCodes = [
   "invalid_ai_response",
   "generation_timeout",
   "internal_error",
+  // Plan 4 再生成・重複・現行安全条件向けの閉じた失敗コード
+  "duplicate_output",
+  "idempotency_payload_mismatch",
+  "current_safety_revalidation_required",
+  "current_target_member_required",
+  "source_menu_not_found",
+  "replace_dish_not_found",
 ] as const;
 export type GenerationFailureCode = (typeof generationFailureCodes)[number];
 
@@ -831,6 +838,12 @@ const nonConflictIssueMessages = {
   invalid_ai_response: "献立を正しく確認できませんでした。成功回数には含まれません。",
   generation_timeout: "作成に時間がかかりました。成功回数には含まれません。",
   internal_error: "献立を作成できませんでした。成功回数には含まれません。",
+  duplicate_output: "元の献立とほぼ同じ案だったため保存しませんでした。今回は回数に含まれません",
+  idempotency_payload_mismatch: "前回と異なる内容で再送できません。もう一度操作してください",
+  current_safety_revalidation_required: "現在の家族設定ではこの献立を利用できません",
+  current_target_member_required: "現在の家族を1人以上選んでください",
+  source_menu_not_found: "元の献立が見つかりません",
+  replace_dish_not_found: "変更する料理が見つかりません",
 } as const satisfies Record<GenerationFailureCode, string>;
 
 export const issueMessages = {
