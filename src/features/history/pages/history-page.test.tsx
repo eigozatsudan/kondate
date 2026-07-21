@@ -119,6 +119,7 @@ describe("HistoryPage", () => {
       groups: [sampleGroup],
     });
     expect(await screen.findByText("採用した献立")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "作った献立" })).toBeVisible();
     expect(screen.getByText("3案")).toBeVisible();
     expect(screen.getByText("開くと現在の家族設定で再確認します")).toBeVisible();
     expect(screen.queryByText("menu-1")).not.toBeInTheDocument();
@@ -133,7 +134,15 @@ describe("HistoryPage", () => {
     api.listHistoryGroups.mockResolvedValue([]);
     renderConnectedHistoryPage();
     expect(await screen.findByText("まだ献立がありません")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "作った献立" })).toBeVisible();
     expect(screen.getByRole("link", { name: "献立を作る" })).toHaveAttribute("href", "/planner");
+  });
+
+  it("shows a heading and a retry control when loading fails", async () => {
+    api.listHistoryGroups.mockRejectedValue(new Error("boom"));
+    renderConnectedHistoryPage();
+    expect(await screen.findByRole("heading", { name: "作った献立" })).toBeVisible();
+    expect(screen.getByText("履歴を読み込めませんでした")).toBeVisible();
   });
 
   it("toggles favorite with a 44px control", async () => {
