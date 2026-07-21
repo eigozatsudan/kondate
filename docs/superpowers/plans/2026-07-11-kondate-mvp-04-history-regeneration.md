@@ -51,10 +51,12 @@ select has_column('public', 'menus', 'is_selected');
 select has_table('public', 'menu_revalidations');
 select has_function('public', 'accept_menu_version', array['uuid']);
 select has_function('public', 'delete_menu_group', array['uuid']);
+-- Plan 3 は非自由記述の change_reason enum を台帳に保持してよい（plan03 L7175）。
+-- 禁止対象は自由記述の change_reason_custom のみ。生リクエスト本文は別アサーションで固定する。
 select is_empty($$select 1 from information_schema.columns
   where table_schema='private' and table_name='ai_generation_requests'
-    and column_name in ('change_reason','change_reason_custom')$$,
-  'generation ledger stores only the canonical HMAC, never reason text');
+    and column_name = 'change_reason_custom'$$,
+  'generation ledger never stores free-text change_reason_custom');
 select has_column('private', 'ai_generation_requests', 'replace_dish_id');
 select ok(
   to_regprocedure('public.reserve_ai_regeneration(uuid,uuid,text,uuid,uuid,uuid,text,text,integer,integer,integer,timestamptz)') is null,
@@ -304,8 +306,10 @@ grant select on public.menu_revalidations to authenticated;
 create policy menu_revalidations_select_own
   on public.menu_revalidations for select to authenticated
   using ((select auth.uid()) = user_id);
+-- Plan 3 が replace_dish_id uuid を既に所有する。ADD COLUMN すると衝突するため FK のみ追加する。
 alter table private.ai_generation_requests
-  add column replace_dish_id uuid references public.dishes(id) on delete set null;
+  add constraint ai_generation_requests_replace_dish_id_fkey
+  foreign key (replace_dish_id) references public.dishes(id) on delete set null;
 
 -- reserve_ai_regeneration は作成しない。Plan 3 の canonical reservation RPC が完全な
 -- GenerationCommand を受け取り、冪等性用には server-secret HMAC だけを保存し、success、
