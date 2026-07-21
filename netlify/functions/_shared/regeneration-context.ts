@@ -14,7 +14,13 @@ import {
   type DishRegenerationPrompt,
   type RetainedDishPrompt,
 } from "../../../shared/contracts/regeneration.js";
-import { createDishSignature, createMenuSignature } from "../../../shared/safety/deduplicate.js";
+import {
+  createDishSignature,
+  createMenuSignature,
+  isMateriallySameDish,
+  isMateriallySameMenu,
+  type DishSignatureInput,
+} from "../../../shared/safety/deduplicate.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
@@ -30,11 +36,29 @@ type RegenerationCommand = Extract<
 
 const preferenceSnapshotSchema = z.record(z.string(), z.unknown()).readonly();
 
-const dishSignatureInput = (dish: ValidatedMenu["dishes"][number]) => ({
+/** createDishSignature の JSON 形から material 比較用入力を復元する */
+const dishSignaturePayloadSchema = z.tuple([z.string(), z.string(), z.array(z.string())]);
+
+const dishSignatureInput = (dish: ValidatedMenu["dishes"][number]): DishSignatureInput => ({
   role: dish.role,
   name: dish.name,
   primaryIngredients: dish.ingredients.map((item) => item.name),
 });
+
+/**
+ * 既存 derivation のシグネチャ文字列を material 判定入力へ戻す。
+ * 破損シグネチャは比較不能として null（一致扱いにしない）。
+ */
+function dishInputFromSignature(signature: string): DishSignatureInput | null {
+  try {
+    const parsed = dishSignaturePayloadSchema.safeParse(JSON.parse(signature));
+    if (!parsed.success) return null;
+    const [role, name, primaryIngredients] = parsed.data;
+    return { role, name, primaryIngredients };
+  } catch {
+    return null;
+  }
+}
 
 type RetainedPromptResult = {
   dto: readonly RetainedDishPrompt[];
@@ -354,7 +378,16 @@ export async function loadRegenerationExecutionContext(
   deadlineAtMonotonicMs: number,
 ): Promise<GenerationExecutionContext> {
   // 所有権は owner クエリが先。admin は buildCurrentContext 内でのみ。
-  const source = await deps.loadSource(user, command.request.sourceMenuId);
+  // loadStoredMenu の menu_not_found は Plan 4 閉じた source_menu_not_found へ写像する。
+  let source: StoredMenuAggregate;
+  try {
+    source = await deps.loadSource(user, command.request.sourceMenuId);
+  } catch (error) {
+    if (error instanceof HttpError && error.code === "menu_not_found") {
+      throw new HttpError(404, "source_menu_not_found", "元の献立が見つかりません");
+    }
+    throw error;
+  }
   if (source.targetMemberIds.length === 0) {
     throw new HttpError(422, "current_target_member_required", "現在の家族を1人以上選んでください");
   }
@@ -795,18 +828,27 @@ function collectAggregateOwnedIds(menu: ValidatedMenu): Set<string> {
   return ids;
 }
 
-/** 候補が derivation 上の既存シグネチャと衝突するか */
+/**
+ * 候補が derivation 上の既存案と衝突するか。
+ * 完全一致シグネチャに加え、Task 2 の material 近傍一致も duplicate_output とする
+ *（成功確定・成功枠消費の前に弾く）。
+ */
 export function isRegenerationDuplicate(
   menu: ValidatedMenu,
   execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" | "regenerate_dish" }>,
 ): boolean {
   if (execution.kind === "regenerate_menu") {
-    const signature = createMenuSignature({
-      dishes: menu.dishes.map(dishSignatureInput),
+    const dishes = menu.dishes.map(dishSignatureInput);
+    const signature = createMenuSignature({ dishes });
+    return execution.regeneration.existingDerivationMenus.some((item) => {
+      if (item.menuSignature === signature) return true;
+      const existingDishes = item.dishSignatures
+        .map(dishInputFromSignature)
+        .filter((dish): dish is DishSignatureInput => dish !== null);
+      // 破損シグネチャ混在時は material 比較を行わず exact のみにフォールバック
+      if (existingDishes.length !== item.dishSignatures.length) return false;
+      return isMateriallySameMenu({ dishes }, { dishes: existingDishes });
     });
-    return execution.regeneration.existingDerivationMenus.some(
-      (item) => item.menuSignature === signature,
-    );
   }
   const sourceReplace = execution.regeneration.sourceMenu.dishes.find(
     (dish) => dish.id === execution.regeneration.replaceDishId,
@@ -816,8 +858,13 @@ export function isRegenerationDuplicate(
     (dish) => dish.role === sourceReplace.role && dish.position === sourceReplace.position,
   );
   if (replacement === undefined) return false;
-  const dishSig = createDishSignature(dishSignatureInput(replacement));
+  const replacementInput = dishSignatureInput(replacement);
+  const dishSig = createDishSignature(replacementInput);
   return execution.regeneration.existingDerivationMenus.some((item) =>
-    item.dishSignatures.includes(dishSig),
+    item.dishSignatures.some((sig) => {
+      if (sig === dishSig) return true;
+      const existing = dishInputFromSignature(sig);
+      return existing !== null && isMateriallySameDish(replacementInput, existing);
+    }),
   );
 }

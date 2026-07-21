@@ -1637,4 +1637,285 @@ describe("runGeneration regeneration duplicate gating", () => {
     expect(repository.succeed).not.toHaveBeenCalled();
     expect(repository.fail).toHaveBeenCalledWith(requestId, "duplicate_output", null);
   });
+
+  it("rejects material near-duplicate dish output without succeed or success quota", async () => {
+    const chickenCabbage = {
+      role: "main" as const,
+      name: "鶏肉と白菜の煮物",
+      primaryIngredients: ["鶏もも肉", "白菜", "しょうゆ"],
+    };
+    const cabbageChicken = {
+      role: "main" as const,
+      name: "白菜と鶏肉の煮物",
+      primaryIngredients: ["白菜", "鶏もも肉", "しょうゆ"],
+    };
+    const sourceMainId = "50000000-0000-4000-8000-000000000001";
+    const sourceMenu = makeValidatedMenu({
+      dishes: [
+        {
+          id: sourceMainId,
+          role: "main",
+          position: 1,
+          name: chickenCabbage.name,
+          description: "主菜",
+          cookingTimeMinutes: 20,
+          ingredients: chickenCabbage.primaryIngredients.map((name, index) => ({
+            id: `53000000-0000-4000-8000-00000000000${String(index + 1)}`,
+            position: index + 1,
+            name,
+            quantityValue: 100,
+            quantityText: "100g",
+            unit: "g",
+            storeSection: "meat_fish" as const,
+            pantrySelectionId: null,
+            labelConfirmationRequired: false,
+          })),
+          steps: [
+            {
+              id: "51000000-0000-4000-8000-000000000001",
+              position: 1,
+              instruction: "煮る",
+            },
+          ],
+        },
+        makeValidatedMenu().dishes[1]!,
+      ],
+    });
+    const nearDuplicateMenu = makeValidatedMenu({
+      dishes: [
+        {
+          id: "b0000000-0000-4000-8000-000000000001",
+          role: "main",
+          position: 1,
+          name: cabbageChicken.name,
+          description: "主菜",
+          cookingTimeMinutes: 20,
+          ingredients: cabbageChicken.primaryIngredients.map((name, index) => ({
+            id: `b3000000-0000-4000-8000-00000000000${String(index + 1)}`,
+            position: index + 1,
+            name,
+            quantityValue: 100,
+            quantityText: "100g",
+            unit: "g",
+            storeSection: "meat_fish" as const,
+            pantrySelectionId: null,
+            labelConfirmationRequired: false,
+          })),
+          steps: [
+            {
+              id: "b1000000-0000-4000-8000-000000000001",
+              position: 1,
+              instruction: "煮る",
+            },
+          ],
+        },
+        {
+          ...makeValidatedMenu().dishes[1]!,
+          id: "b0000000-0000-4000-8000-000000000002",
+        },
+      ],
+    });
+    const dishRegenerationCommand = {
+      kind: "regenerate_dish" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: sourceMenu.menuId,
+        dishId: sourceMainId,
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: dishRegenerationCommand,
+      requestId,
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "fp",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: sourceMainId,
+        retainedDishIds: [sourceMenu.dishes[1]!.id],
+        excludedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [
+          {
+            menuId: sourceMenu.menuId,
+            menuSignature: createMenuSignature({
+              dishes: sourceMenu.dishes.map((dish) => ({
+                role: dish.role,
+                name: dish.name,
+                primaryIngredients: dish.ingredients.map((item) => item.name),
+              })),
+            }),
+            dishSignatures: sourceMenu.dishes.map((dish) =>
+              createDishSignature({
+                role: dish.role,
+                name: dish.name,
+                primaryIngredients: dish.ingredients.map((item) => item.name),
+              }),
+            ),
+          },
+        ],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    // full_menu 経路で materialize 済み候補を validator が返す想定
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu: nearDuplicateMenu,
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+    });
+    const repository = makeRepository();
+    const callOpenRouter = vi
+      .fn<GenerationDependencies["callOpenRouter"]>()
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      })
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[1],
+      });
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+        callOpenRouter,
+      }),
+      dishRegenerationCommand,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "duplicate_output" },
+      quota: { consumed: false },
+    });
+    expect(repository.succeed).not.toHaveBeenCalled();
+  });
+
+  it("succeeds dish regeneration once with current safety snapshot and lineage", async () => {
+    const sourceMenu = makeValidatedMenu();
+    const replaceDishId = sourceMenu.dishes[0]!.id;
+    const freshMenu = makeValidatedMenu({
+      menuId: "b2000000-0000-4000-8000-000000000001",
+      labelConfirmations: [
+        {
+          sourceType: "ingredient",
+          sourceId: "b3000000-0000-4000-8000-000000000001",
+          sourcePath: "dishes.0.ingredients.0.name",
+          sourceText: "しょうゆ",
+          allergenId: "wheat",
+          anonymousMemberRef: "member_1",
+          dictionaryVersion: "jp-caa-2026-04.v1",
+          confirmationStatus: "pending",
+          confirmedAt: null,
+          confirmedBy: null,
+        },
+      ],
+    });
+    const currentSafetySnapshot = {
+      dictionaryVersion: "dict-current",
+      foodRuleVersion: "rule-current",
+      marker: "current-safety-snapshot",
+    };
+    const generationContext = makeGenerationContext({
+      safetySnapshot: currentSafetySnapshot,
+      preferenceSnapshot: {
+        mealType: "breakfast",
+        mainIngredients: ["ごはん"],
+      },
+    });
+    const dishRegenerationCommand = {
+      kind: "regenerate_dish" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: sourceMenu.menuId,
+        dishId: replaceDishId,
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: dishRegenerationCommand,
+      requestId,
+      generationContext,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(generationContext.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId,
+        retainedDishIds: sourceMenu.dishes.slice(1).map((dish) => dish.id),
+        excludedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: generationContext.preferenceSnapshot,
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu: freshMenu,
+      labelConfirmations: freshMenu.labelConfirmations,
+      safetyFingerprint: "sha256:test",
+    });
+    const repository = makeRepository();
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+        callOpenRouter: vi.fn(() =>
+          Promise.resolve({
+            mode: "full_menu" as const,
+            output: scenarios.success,
+            modelId: models[0],
+          }),
+        ),
+      }),
+      dishRegenerationCommand,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(repository.succeed).toHaveBeenCalledTimes(1);
+    expect(repository.succeed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId,
+        menu: freshMenu,
+        safetySnapshot: generationContext.safetySnapshot,
+        preferenceSnapshot: generationContext.preferenceSnapshot,
+        sourceMenuId: sourceMenu.menuId,
+        changeReason: "simpler",
+        changeReasonCustom: null,
+      }),
+    );
+    // 空オブジェクトや履歴専用 marker ではないことを固定
+    const succeedCalls = repository.succeed.mock.calls as unknown as Array<
+      [{ safetySnapshot: unknown }]
+    >;
+    expect(succeedCalls[0]?.[0]?.safetySnapshot).toEqual(currentSafetySnapshot);
+    expect(freshMenu.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(
+      true,
+    );
+  });
 });

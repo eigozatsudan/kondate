@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDishSignature } from "../../../shared/safety/deduplicate.js";
+import { createDishSignature, createMenuSignature } from "../../../shared/safety/deduplicate.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { makeGenerationContext, makeValidatedMenu } from "../../../shared/testing/factories.js";
 import type { GenerationCommand } from "../../../shared/contracts/generation.js";
 import type { DishRegenerationAiOutput } from "../../../shared/contracts/regeneration.js";
+import { HttpError } from "./http.js";
+import type { GenerationExecutionContext } from "./generation-service.js";
 import type { StoredMenuAggregate } from "./stored-menu-loader.js";
 import {
+  isRegenerationDuplicate,
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
   toRetainedDishPrompt,
@@ -266,6 +269,272 @@ describe("loadRegenerationExecutionContext", () => {
     await expect(
       loadRegenerationExecutionContext(deps, user, dishCommand, "request-row-1", 50_000),
     ).rejects.toMatchObject({ code: "current_safety_revalidation_required" });
+  });
+
+  it("maps foreign or missing source to source_menu_not_found before current context", async () => {
+    const deps = makeLoaderDeps(makeStoredMenu());
+    deps.loadSource.mockRejectedValue(new HttpError(404, "menu_not_found", "献立が見つかりません"));
+    await expect(
+      loadRegenerationExecutionContext(deps, user, dishCommand, "request-row-1", 50_000),
+    ).rejects.toMatchObject({ code: "source_menu_not_found", status: 404 });
+    // admin 経路は buildCurrentContext 内のみ。source 欠落では到達しない
+    expect(deps.buildCurrentContext).not.toHaveBeenCalled();
+    expect(deps.loadGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe("isRegenerationDuplicate material equivalence", () => {
+  const chickenCabbage = {
+    role: "main",
+    name: "鶏肉と白菜の煮物",
+    primaryIngredients: ["鶏もも肉", "白菜", "しょうゆ"],
+  } as const;
+  const cabbageChicken = {
+    role: "main",
+    name: "白菜と鶏肉の煮物",
+    primaryIngredients: ["白菜", "鶏もも肉", "しょうゆ"],
+  } as const;
+
+  function dishFromSigInput(
+    input: {
+      role: "main" | "side" | "soup" | "staple" | "other";
+      name: string;
+      primaryIngredients: readonly string[];
+    },
+    dishId: string,
+  ) {
+    return {
+      id: dishId,
+      role: input.role,
+      position: 1,
+      name: input.name,
+      description: "テスト",
+      cookingTimeMinutes: 20,
+      ingredients: input.primaryIngredients.map((name, index) => ({
+        id: `53000000-0000-4000-8000-00000000000${String(index + 1)}`,
+        position: index + 1,
+        name,
+        quantityValue: 100,
+        quantityText: "100g",
+        unit: "g",
+        storeSection: "meat_fish" as const,
+        pantrySelectionId: null,
+        labelConfirmationRequired: false,
+      })),
+      steps: [
+        {
+          id: "51000000-0000-4000-8000-000000000001",
+          position: 1,
+          instruction: "煮る",
+        },
+      ],
+    };
+  }
+
+  it("rejects a dish that is only materially the same as an existing derivation dish", () => {
+    const sourceMenu = makeValidatedMenu({
+      dishes: [
+        dishFromSigInput(chickenCabbage, dish1Id),
+        {
+          ...makeValidatedMenu().dishes[1]!,
+          id: dish2Id,
+        },
+      ],
+    });
+    const candidate = makeValidatedMenu({
+      dishes: [
+        dishFromSigInput(cabbageChicken, "b0000000-0000-4000-8000-000000000001"),
+        {
+          ...makeValidatedMenu().dishes[1]!,
+          id: "b0000000-0000-4000-8000-000000000002",
+        },
+      ],
+    });
+    const existingSig = createDishSignature(chickenCabbage);
+    const candidateSig = createDishSignature(cabbageChicken);
+    // 名前順が異なるため exact シグネチャは不一致
+    expect(existingSig).not.toBe(candidateSig);
+
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: dishCommand,
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "fp",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: dish1Id,
+        retainedDishIds: [dish2Id],
+        excludedDishIds: [dish1Id, dish2Id],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [
+          {
+            menuId: sourceMenu.menuId,
+            menuSignature: createMenuSignature({
+              dishes: sourceMenu.dishes.map((dish) => ({
+                role: dish.role,
+                name: dish.name,
+                primaryIngredients: dish.ingredients.map((item) => item.name),
+              })),
+            }),
+            dishSignatures: [
+              existingSig,
+              createDishSignature({
+                role: "side",
+                name: "温野菜",
+                primaryIngredients: ["にんじん"],
+              }),
+            ],
+          },
+        ],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+
+    expect(isRegenerationDuplicate(candidate, execution)).toBe(true);
+  });
+
+  it("rejects a whole menu when every role is only materially unchanged", () => {
+    const firstDishes = [
+      dishFromSigInput(chickenCabbage, dish1Id),
+      {
+        id: dish2Id,
+        role: "side" as const,
+        position: 2,
+        name: "にんじんの和え物",
+        description: "副菜",
+        cookingTimeMinutes: 10,
+        ingredients: [
+          {
+            id: "53000000-0000-4000-8000-000000000099",
+            position: 1,
+            name: "にんじん",
+            quantityValue: 1,
+            quantityText: "1本",
+            unit: "本",
+            storeSection: "produce" as const,
+            pantrySelectionId: null,
+            labelConfirmationRequired: false,
+          },
+        ],
+        steps: [
+          {
+            id: "51000000-0000-4000-8000-000000000099",
+            position: 1,
+            instruction: "和える",
+          },
+        ],
+      },
+    ];
+    const secondDishes = [
+      {
+        id: "b0000000-0000-4000-8000-000000000002",
+        role: "side" as const,
+        position: 2,
+        name: "人参の和え物",
+        description: "副菜",
+        cookingTimeMinutes: 10,
+        ingredients: [
+          {
+            id: "b3000000-0000-4000-8000-000000000002",
+            position: 1,
+            name: "にんじん",
+            quantityValue: 1,
+            quantityText: "1本",
+            unit: "本",
+            storeSection: "produce" as const,
+            pantrySelectionId: null,
+            labelConfirmationRequired: false,
+          },
+        ],
+        steps: [
+          {
+            id: "b1000000-0000-4000-8000-000000000002",
+            position: 1,
+            instruction: "和える",
+          },
+        ],
+      },
+      dishFromSigInput(cabbageChicken, "b0000000-0000-4000-8000-000000000001"),
+    ];
+    const sourceMenu = makeValidatedMenu({ dishes: firstDishes });
+    const candidate = makeValidatedMenu({ dishes: secondDishes });
+    const existingMenuSig = createMenuSignature({
+      dishes: firstDishes.map((dish) => ({
+        role: dish.role,
+        name: dish.name,
+        primaryIngredients: dish.ingredients.map((item) => item.name),
+      })),
+    });
+    const candidateMenuSig = createMenuSignature({
+      dishes: secondDishes.map((dish) => ({
+        role: dish.role,
+        name: dish.name,
+        primaryIngredients: dish.ingredients.map((item) => item.name),
+      })),
+    });
+    // 人参/にんじん は signature 正規化で一致し得るが、主菜名順が違うので menu 全体は別
+    expect(existingMenuSig).not.toBe(candidateMenuSig);
+
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: {
+        kind: "regenerate_menu",
+        request: {
+          idempotencyKey: "82000000-0000-4000-8000-000000000001",
+          sourceMenuId: sourceMenu.menuId,
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          expiredPantryConfirmations: [],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "fp",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: firstDishes.map((dish) => dish.id),
+        excludedDishIds: firstDishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [
+          {
+            menuId: sourceMenu.menuId,
+            menuSignature: existingMenuSig,
+            dishSignatures: firstDishes.map((dish) =>
+              createDishSignature({
+                role: dish.role,
+                name: dish.name,
+                primaryIngredients: dish.ingredients.map((item) => item.name),
+              }),
+            ),
+          },
+        ],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+
+    expect(isRegenerationDuplicate(candidate, execution)).toBe(true);
   });
 });
 
@@ -548,5 +817,28 @@ describe("materializeDishRegenerationCandidate", () => {
       throw new Error(`materialize validation: ${JSON.stringify(checked.issues)}`);
     }
     expect(checked.ok).toBe(true);
+
+    // 集約所有 UUID を source と共有しない（menu/dish/ingredient/step/timeline/adaptation）
+    const sourceMenu = execution.regeneration.sourceMenu;
+    const sourceIds = new Set<string>([sourceMenu.menuId]);
+    for (const dish of sourceMenu.dishes) {
+      sourceIds.add(dish.id);
+      for (const item of dish.ingredients) sourceIds.add(item.id);
+      for (const step of dish.steps) sourceIds.add(step.id);
+    }
+    for (const row of sourceMenu.timeline) sourceIds.add(row.id);
+    for (const row of sourceMenu.adaptations) sourceIds.add(row.id);
+    expect(sourceIds.has(candidate.menuId)).toBe(false);
+    for (const dish of candidate.dishes) {
+      expect(sourceIds.has(dish.id)).toBe(false);
+      for (const item of dish.ingredients) expect(sourceIds.has(item.id)).toBe(false);
+      for (const step of dish.steps) expect(sourceIds.has(step.id)).toBe(false);
+    }
+    for (const row of candidate.timeline) expect(sourceIds.has(row.id)).toBe(false);
+    for (const row of candidate.adaptations) expect(sourceIds.has(row.id)).toBe(false);
+    // 保持・置換のラベルはすべて pending（履歴 confirmed を持ち込まない）
+    expect(candidate.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(
+      true,
+    );
   });
 });

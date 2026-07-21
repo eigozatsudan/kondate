@@ -32,8 +32,16 @@ export function createRegenerationLoaderDeps(
     authenticated: AuthenticatedUser,
     menuId: string,
   ): Promise<StoredMenuAggregate> => {
-    // 所有権は user_id 一致の owner クエリのみで証明する
-    return loadStoredMenu(ownerClient, authenticated.userId, menuId);
+    // 所有権は user_id 一致の owner クエリのみで証明する。
+    // 他ユーザー／欠落は loader の menu_not_found → 再生成契約の source_menu_not_found。
+    try {
+      return await loadStoredMenu(ownerClient, authenticated.userId, menuId);
+    } catch (error) {
+      if (error instanceof HttpError && error.code === "menu_not_found") {
+        throw new HttpError(404, "source_menu_not_found", "元の献立が見つかりません");
+      }
+      throw error;
+    }
   };
 
   const loadGroup = async (
@@ -101,7 +109,7 @@ export function createRegenerationLoaderDeps(
       idempotencyKey: input.idempotencyKey,
     });
 
-    // 保存済み preference を閉じたスキーマで読み、生存 target だけを差し込む
+    // 保存済み preference を閉じたスキーマで読む。失敗時は空 submission を捏造せず fail-closed。
     let submission: PlannerSubmission;
     try {
       submission = plannerSubmissionSchema.parse({
@@ -109,11 +117,7 @@ export function createRegenerationLoaderDeps(
         targetMemberIds: [...input.stored.targetMemberIds],
       });
     } catch {
-      // snapshot が不完全な場合は menu メタ + 空 preferences の base.submission を使う
-      submission = plannerSubmissionSchema.parse({
-        ...base.submission,
-        targetMemberIds: [...input.stored.targetMemberIds],
-      });
+      throw new HttpError(422, "invalid_request", "献立条件を確認してください");
     }
 
     // pantry は submission の選択を正に再読込（base は usage 由来で不足し得る）
@@ -171,6 +175,7 @@ export function createRegenerationLoaderDeps(
 
     // 現行 safety は loadCurrentSafetyContext 経由で base に既に入っている
     //（buildStoredGenerationContext が admin 呼び出し済み）
+    // succeed 永続化用 safetySnapshot は現行 safety を載せ、履歴スナップショットも空 {} も使わない
     return {
       ...base,
       submission,
@@ -185,8 +190,8 @@ export function createRegenerationLoaderDeps(
             ? input.stored.preferenceSnapshot
             : {},
         ),
-      // 履歴 safety_snapshot は validator 入力に載せない
-      safetySnapshot: {},
+      // new_menu 経路と同様、現行 CurrentSafetyContext を snapshot として保持する
+      safetySnapshot: base.safety,
     };
   };
 
