@@ -343,6 +343,32 @@ async function loadActiveShoppingListSources(
     .eq("list_id", listId);
   if (sources.error !== null) throw dbFailure("買い物リストの献立情報を読み込めませんでした");
 
+  // 設計書 Task4: 現在の投影に載せる derivation group は「生きている source 献立」の
+  // 値でなければならない。shopping_list_sources.source_derivation_group_id は
+  // リスト作成時に記録したスナップショット列なので、menu_id が生きている行では
+  // menus.derivation_group_id（live）で置き換える。献立が消えた行（menu_id is null）は
+  // そもそも unverifiable に倒れるため、スナップショットのまま残す。
+  const liveMenuIds = [
+    ...new Set(
+      sources.data.map((row) => row.menu_id).filter((menuId): menuId is string => menuId !== null),
+    ),
+  ];
+  const liveMenus =
+    liveMenuIds.length === 0
+      ? []
+      : await (async () => {
+          const { data, error } = await client
+            .from("menus")
+            .select("id,derivation_group_id")
+            .eq("user_id", userId)
+            .in("id", liveMenuIds);
+          if (error !== null) throw dbFailure("買い物リストの献立情報を読み込めませんでした");
+          return data;
+        })();
+  const derivationGroupIdByMenuId = new Map(
+    liveMenus.map((row) => [row.id, row.derivation_group_id]),
+  );
+
   const items = await client
     .from("shopping_items")
     .select("id")
@@ -402,7 +428,10 @@ async function loadActiveShoppingListSources(
       menuId: row.menu_id,
       sourceMenuIdSnapshot: row.source_menu_id_snapshot,
       sourceMenuVersion: row.source_menu_version,
-      sourceDerivationGroupId: row.source_derivation_group_id,
+      sourceDerivationGroupId:
+        row.menu_id === null
+          ? row.source_derivation_group_id
+          : (derivationGroupIdByMenuId.get(row.menu_id) ?? row.source_derivation_group_id),
       itemSources: row.menu_id === null ? [] : (itemSourcesByMenuId.get(row.menu_id) ?? []),
     }),
   );

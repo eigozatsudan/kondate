@@ -234,12 +234,26 @@ export async function revalidateActiveShoppingList(
       derivationGroupIdByMenuId.set(source.menuId, source.sourceDerivationGroupId);
     }
     for (const itemSource of source.itemSources) {
-      itemIdByMenuAndIngredient.set(
-        `${source.menuId}|${itemSource.sourceIngredientIdSnapshot}`,
-        itemSource.itemId,
-      );
+      const key = `${source.menuId}|${itemSource.sourceIngredientIdSnapshot}`;
+      const previous = itemIdByMenuAndIngredient.get(key);
+      // 同じ (献立, ingredient スナップショット) が別々の item を指すのは曖昧な状態で、
+      // どちらに警告を付けるかを行順に委ねてはならない。warningKey 側の重複と同じく
+      // 安全側で閉じる（同じ献立が複数バージョンで登録されている場合、同一 itemId が
+      // 複数行から重複して供給されるのは正常なので、値が食い違うときだけ閉じる）。
+      if (previous !== undefined && previous !== itemSource.itemId) {
+        throw new HttpError(503, "safety_check_failed", "現在の家族設定を確認できませんでした");
+      }
+      itemIdByMenuAndIngredient.set(key, itemSource.itemId);
     }
   }
+
+  // 検証を始める前のリスト安全性 fingerprint。source ごとの再検証は1件ずつ
+  // 現在の家族設定を読むため、ループの途中で設定が変わっても各再検証は成功しうる。
+  // 前後で読み比べないと、古い設定で計算した警告に、新しい設定の fingerprint
+  // トークンを添えて status:"valid" を返してしまう（Task3 の validatedDraft と同じ
+  // before/after ガードを、リスト単位の同じ関数で行う）。
+  const fingerprintBefore = await deps.getListSafetyFingerprint(command.listId);
+  if (fingerprintBefore === null) return safetyCheckFailed([]);
 
   const checkedSourceMenuIds = [...new Set(liveSources.map((source) => source.menuId))].sort();
   const checked: string[] = [];
@@ -301,8 +315,13 @@ export async function revalidateActiveShoppingList(
       (left.itemId ?? "").localeCompare(right.itemId ?? ""),
   );
 
+  // 検証後の再読み取り。消えた（null）場合も、値が変わった場合も、トークンは返さない。
+  // ここから RPC commit までの窓は private.lock_and_check_shopping_list_safety が
+  // p_expected と live 再計算値を突き合わせて閉じる。
   const fingerprint = await deps.getListSafetyFingerprint(command.listId);
-  if (fingerprint === null) return safetyCheckFailed(checkedSourceMenuIds);
+  if (fingerprint === null || fingerprint !== fingerprintBefore) {
+    return safetyCheckFailed(checkedSourceMenuIds);
+  }
 
   let persisted;
   try {

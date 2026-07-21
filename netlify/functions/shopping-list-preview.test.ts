@@ -25,7 +25,7 @@ const MENU_ID = "52000000-0000-4000-8000-000000000001";
 const ITEM_ID = "71000000-0000-4000-8000-000000000001";
 const INGREDIENT_ID = "53000000-0000-4000-8000-000000000001";
 const DISH_ID = "50000000-0000-4000-8000-000000000001";
-const MEMBER_UUID = "86000000-0000-4000-8000-000000000009";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function makeFactory(deps: Partial<ShoppingDependencies> = {}) {
   return vi.fn().mockReturnValue(deps);
@@ -152,8 +152,41 @@ describe("createShoppingListPreviewHandler", () => {
     expect(text).toContain("カレールー");
     expect(text).toContain("小麦");
     expect(text).toContain("子ども");
-    // 人間向けラベルとして生の識別子（member UUID）が返らないことを固定する。
-    expect(text).not.toContain(MEMBER_UUID);
+    // sourcePath / 生アレルゲンID / 匿名参照は契約上ペイロードに含まれるため、
+    // 「本文に出現しないこと」では検証できない。人間向け表示フィールドが
+    // それらの生識別子と一致しないこと（＝生識別子をラベルとして描画していないこと）を
+    // 構造的に固定する。
+    const body = JSON.parse(text) as {
+      data: {
+        add: {
+          labelWarnings: {
+            sourcePath: string;
+            sourceDisplayName: string;
+            allergenId: string;
+            allergenDisplayName: string;
+            anonymousMemberRef: string;
+            memberDisplayName: string;
+          }[];
+        }[];
+      };
+    };
+    const warnings = body.data.add.flatMap((item) => item.labelWarnings);
+    expect(warnings).toHaveLength(1);
+    for (const warning of warnings) {
+      expect(warning.sourceDisplayName).toBe("カレールー");
+      expect(warning.allergenDisplayName).toBe("小麦");
+      expect(warning.memberDisplayName).toBe("子ども");
+      expect(warning.sourceDisplayName).not.toBe(warning.sourcePath);
+      expect(warning.allergenDisplayName).not.toBe(warning.allergenId);
+      expect(warning.memberDisplayName).not.toBe(warning.anonymousMemberRef);
+      for (const label of [
+        warning.sourceDisplayName,
+        warning.allergenDisplayName,
+        warning.memberDisplayName,
+      ]) {
+        expect(label).not.toMatch(UUID_PATTERN);
+      }
+    }
     expect(factory).toHaveBeenCalledWith({ userId: USER_ID, accessToken: ACCESS_TOKEN });
     expect(previewShoppingListDiffMock).toHaveBeenCalledWith(
       expect.anything(),

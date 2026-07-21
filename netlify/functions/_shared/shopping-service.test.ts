@@ -446,6 +446,7 @@ describe("createShoppingListFromMenu", () => {
 const LIST_ID = "70000000-0000-4000-8000-000000000001";
 const OTHER_LIST_ID = "70000000-0000-4000-8000-000000000002";
 const ITEM_ID = "71000000-0000-4000-8000-000000000001";
+const OTHER_ITEM_ID = "71000000-0000-4000-8000-000000000002";
 const MENU_A = "52000000-0000-4000-8000-00000000000a";
 const MENU_B = "52000000-0000-4000-8000-00000000000b";
 const GROUP_A = "c1000000-0000-4000-8000-00000000000a";
@@ -694,6 +695,33 @@ describe("revalidateActiveShoppingList", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it("returns no token when the list safety fingerprint changes across the source validation window", async () => {
+    // 設計書 Task4 Step1:「source 検証と fingerprint 読み取りの間に安全性が変わった場合は
+    // トークンを返さない」。fingerprint が null になる（source 削除）ケースとは別に、
+    // 値そのものが変わるケースを固定する。前後で読み直して食い違いを検出しないと、
+    // 古い家族設定で計算した警告に、新しい設定の fingerprint トークンが付いて返る。
+    const replace = vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource()]),
+      getListSafetyFingerprint: vi
+        .fn<ShoppingDependencies["getListSafetyFingerprint"]>()
+        .mockResolvedValueOnce(FINGERPRINT_A)
+        .mockResolvedValueOnce(FINGERPRINT_B),
+      replaceCurrentSafetyProjection: replace,
+    });
+    const result = await revalidateActiveShoppingList(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+    });
+    expect(result.status).toBe("unverifiable");
+    expect(result.safetyFingerprint).toBeNull();
+    expect(result.currentLabelWarnings).toEqual([]);
+    expect(result.issues[0]?.code).toBe("safety_check_failed");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   it("returns safety_check_failed with no current projection when the replacement loses the race", async () => {
     const deps = makeShoppingDependencies({
       loadActiveListSources: vi
@@ -819,9 +847,63 @@ describe("revalidateActiveShoppingList", () => {
     await revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID });
     const sent = sentWarnings(replace);
     expect(sent).toHaveLength(2);
-    expect(sent.map((warning) => warning.warningKey)).toEqual(
-      [...sent.map((warning) => warning.warningKey)].sort(),
-    );
+    // 「自分自身をソートした結果と比べる」では並び替えを外しても通りうるため、
+    // 隣接要素が厳密に昇順であることを直接固定する。
+    expect(sent[0]?.warningKey.localeCompare(sent[1]?.warningKey ?? "")).toBeLessThan(0);
+  });
+
+  it("returns valid with nothing checked for a manual-only list that has no sources", async () => {
+    // 手動追加のみのリストは source 行を持たない。ループは回らず、SQL 側の
+    // 'manual-only' ダイジェストが返るため valid になる。境界として明示的に固定する。
+    const replace = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      });
+    const revalidate = vi.fn<ShoppingDependencies["revalidate"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([]),
+      revalidate,
+      replaceCurrentSafetyProjection: replace,
+    });
+    await expect(
+      revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID }),
+    ).resolves.toEqual({
+      status: "valid",
+      safetyFingerprint: FINGERPRINT_A,
+      checkedSourceMenuIds: [],
+      currentLabelWarnings: [],
+      issues: [],
+    });
+    expect(revalidate).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when one ingredient snapshot maps to two different shopping items", async () => {
+    // warningKey 側の曖昧さは既に 503 に倒している。同じ (献立, ingredient スナップショット)
+    // が別々の item を指す状態も同種の曖昧さであり、どちらの item に警告を付けるかを
+    // 行順に委ねてはならないため、同じく安全側で閉じる。
+    const replace = vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([
+          makeSource({
+            itemSources: [
+              { itemId: ITEM_ID, sourceIngredientIdSnapshot: INGREDIENT_A },
+              { itemId: OTHER_ITEM_ID, sourceIngredientIdSnapshot: INGREDIENT_A },
+            ],
+          }),
+        ]),
+      replaceCurrentSafetyProjection: replace,
+    });
+    await expect(
+      revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID }),
+    ).rejects.toMatchObject({ status: 503, code: "safety_check_failed" });
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("fails closed when a composed warning exceeds the bounded source text length", async () => {
