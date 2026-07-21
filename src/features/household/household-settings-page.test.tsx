@@ -113,9 +113,9 @@ it("creates and selects a new draft while an existing member is present", async 
 
   expect(createDraft).toHaveBeenCalledWith(1);
   expect(await screen.findByLabelText("呼び名")).toHaveValue("");
-  expect(screen.getByLabelText("年齢区分")).toHaveValue("");
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("");
-  expect(screen.getByLabelText("対象外の食事の確認")).toHaveValue("");
+  expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("");
   expect(screen.getByRole("button", { name: "この家族の設定を完了" })).toBeVisible();
 
   await act(async () => {
@@ -343,9 +343,9 @@ it("keeps every new draft field through consecutive autosaves and completes with
   });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "adult");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
-  await userEvent.selectOptions(screen.getByLabelText("対象外の食事の確認"), "none");
+  await userEvent.selectOptions(screen.getByLabelText("食べない食事はありますか"), "none");
   await userEvent.click(screen.getByLabelText("骨を除く"));
 
   for (let index = 0; index < 2; index += 1) {
@@ -361,9 +361,9 @@ it("keeps every new draft field through consecutive autosaves and completes with
   }
 
   await waitFor(() => {
-    expect(screen.getByLabelText("年齢区分")).toHaveValue("adult");
+    expect(screen.getByLabelText("年齢のめやす")).toHaveValue("adult");
     expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
-    expect(screen.getByLabelText("対象外の食事の確認")).toHaveValue("none");
+    expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("none");
     expect(screen.getByLabelText("骨を除く")).toBeChecked();
   });
   expect(updateDraft.mock.calls[1]?.[1]).toEqual(
@@ -401,7 +401,7 @@ it("keeps every new draft field through consecutive autosaves and completes with
 
 it("saves a changed safety field and invalidates dependents", async () => {
   const { updateMember, invalidateSafety } = renderSettings();
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
   await waitFor(() => {
     expect(updateMember.mock.calls.length).toBeGreaterThan(0);
   });
@@ -431,7 +431,7 @@ it.each([
       await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
     } else {
       await userEvent.type(screen.getByLabelText("自由登録名"), "えんどう豆たんぱく");
-      await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+      await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
       await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
     }
 
@@ -475,7 +475,7 @@ it.each([
     });
     renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
 
-    await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+    await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
     await waitFor(() => {
       expect(updateMember).toHaveBeenCalledTimes(1);
     });
@@ -498,7 +498,7 @@ it.each([
       await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
     } else {
       await userEvent.type(screen.getByLabelText("自由登録名"), "えんどう豆たんぱく");
-      await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+      await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
       await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
     }
 
@@ -594,7 +594,7 @@ it("keeps a deferred registered intent when the first allergy add fails", async 
     );
   renderSettings({ addStandardAllergy, updateMember });
 
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
   await waitFor(() => {
     expect(updateMember).toHaveBeenCalledTimes(1);
   });
@@ -1023,7 +1023,7 @@ it("disables every allergy operation while a registered member allergy query is 
   expect(await screen.findByLabelText("アレルギーの確認")).toBeDisabled();
   const standardAdd = screen.getByRole("button", { name: "くるみを追加" });
   const customName = screen.getByLabelText("自由登録名");
-  const customConfirm = screen.getByLabelText("標準候補に該当しないことを確認");
+  const customConfirm = screen.getByLabelText("一覧にないアレルギーとして登録");
   const customAdd = screen.getByRole("button", { name: "自由登録を追加" });
   expect(standardAdd).toBeDisabled();
   expect(customName).toBeDisabled();
@@ -1075,7 +1075,7 @@ it("keeps allergy operations disabled after failure and enables them only after 
   const allergyStatus = screen.getByLabelText("アレルギーの確認");
   const standardAdd = screen.getByRole("button", { name: "くるみを追加" });
   const customName = screen.getByLabelText("自由登録名");
-  const customConfirm = screen.getByLabelText("標準候補に該当しないことを確認");
+  const customConfirm = screen.getByLabelText("一覧にないアレルギーとして登録");
   const customAdd = screen.getByRole("button", { name: "自由登録を追加" });
   expect(allergyStatus).toBeDisabled();
   expect(standardAdd).toBeDisabled();
@@ -1316,7 +1316,7 @@ it("自由登録アレルギー追加成功後に保留したregisteredを保存
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.type(screen.getByLabelText("自由登録名"), "マンゴー");
-  await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+  await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
   await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
 
   expect(addCustomAllergy).toHaveBeenCalledWith("member-1", "マンゴー", []);
@@ -1342,7 +1342,7 @@ it("自由登録INSERT失敗時は入力と確認状態を保持する", async (
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.type(screen.getByLabelText("自由登録名"), "マンゴー");
   await userEvent.type(screen.getByLabelText("別名（カンマ区切り・任意）"), "南国果実");
-  await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+  await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
   await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
 
   await act(async () => {
@@ -1353,7 +1353,7 @@ it("自由登録INSERT失敗時は入力と確認状態を保持する", async (
   expect(screen.getByRole("status")).toHaveTextContent("自由登録の追加に失敗しました");
   expect(screen.getByLabelText("自由登録名")).toHaveValue("マンゴー");
   expect(screen.getByLabelText("別名（カンマ区切り・任意）")).toHaveValue("南国果実");
-  expect(screen.getByLabelText("標準候補に該当しないことを確認")).toBeChecked();
+  expect(screen.getByLabelText("一覧にないアレルギーとして登録")).toBeChecked();
   expect(updateMember).not.toHaveBeenCalled();
 });
 
@@ -1372,7 +1372,7 @@ it("自由登録INSERT成功後のregistered保存失敗では入力をクリア
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.type(screen.getByLabelText("自由登録名"), "マンゴー");
   await userEvent.type(screen.getByLabelText("別名（カンマ区切り・任意）"), "南国果実");
-  await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+  await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
   await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
 
   await waitFor(() => {
@@ -1380,7 +1380,7 @@ it("自由登録INSERT成功後のregistered保存失敗では入力をクリア
   });
   expect(screen.getByLabelText("自由登録名")).toHaveValue("");
   expect(screen.getByLabelText("別名（カンマ区切り・任意）")).toHaveValue("");
-  expect(screen.getByLabelText("標準候補に該当しないことを確認")).not.toBeChecked();
+  expect(screen.getByLabelText("一覧にないアレルギーとして登録")).not.toBeChecked();
 });
 
 it("アレルギー追加中の別フィールド変更を最新snapshotで保存する", async () => {
@@ -1708,7 +1708,7 @@ it.each(["standard", "custom"] as const)(
       await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
     } else {
       await userEvent.type(screen.getByLabelText("自由登録名"), "マンゴー");
-      await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+      await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
       await userEvent.click(screen.getByRole("button", { name: "自由登録を追加" }));
     }
 
@@ -1726,7 +1726,7 @@ it.each(["standard", "custom"] as const)(
       await waitFor(() => {
         expect(screen.getByLabelText("自由登録名")).toHaveValue("");
       });
-      expect(screen.getByLabelText("標準候補に該当しないことを確認")).not.toBeChecked();
+      expect(screen.getByLabelText("一覧にないアレルギーとして登録")).not.toBeChecked();
     }
 
     fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "更新後" } });
@@ -1744,7 +1744,7 @@ it.each(["standard", "custom"] as const)(
 it("applies age defaults when the user selects an age band", async () => {
   const { updateMember } = renderSettings();
 
-  await userEvent.selectOptions(await screen.findByLabelText("年齢区分"), "age_3_5");
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
 
   await waitFor(() => {
     expect(updateMember).toHaveBeenCalledWith(

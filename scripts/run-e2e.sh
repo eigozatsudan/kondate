@@ -292,6 +292,10 @@ run_e2e_commands() {
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
     up -d --wait auth || return $?
+  # アプリ全体で共有するAI日次枠はJST日付単位でDBに積み上がるため、
+  # 同じ日の2回目以降のスイートが後半だけ枠切れで落ちる。実行順・実行回数に
+  # 依存しないよう、テスト開始前に共有枠だけ初期化する。
+  run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
     up -d --wait --force-recreate --no-deps kong oauth-mock app || return $?

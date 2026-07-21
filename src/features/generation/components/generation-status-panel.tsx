@@ -29,11 +29,11 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
   }
   const data = usage.data;
   return (
-    <section aria-label="現在の利用状況">
+    <section aria-label="今日あと何回作れるか">
       <p>成功回数：本日あと{data.success.remaining}回</p>
       <p>AI通信試行：本日あと{data.attempts.remaining}回</p>
       <p>10分間の通信試行：あと{data.shortWindow.remaining}回</p>
-      <p>アプリ全体受付：{data.globalAvailable ? "受付中" : "本日分終了"}</p>
+      <p>アプリ全体：{data.globalAvailable ? "作成できます" : "今日はここまで"}</p>
       {data.shortWindow.retryAt === null ? null : (
         <p>10分枠の再開：{formatRetryAt(data.shortWindow.retryAt)}</p>
       )}
@@ -108,7 +108,7 @@ export function GenerationStatusPanel({
           15分緊急献立を見る
         </a>
         <a className="button-link" href="/history">
-          履歴・お気に入りを見る
+          作った献立を見る
         </a>
       </>
     );

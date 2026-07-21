@@ -8,6 +8,12 @@ async function completeMinimumPlanner(page: Page) {
   // local OpenRouterの固定success fixtureと同じ家族・食事条件に揃え、
   // E2EがAI応答fixtureの内容ではなく復旧flowだけを検証できるようにする。
   await page.goto("/settings");
+  // moduleの取得が瞬断で欠けるとSPAがmountせず白紙のままになる。個別の
+  // labelを30秒待って初めて気付くのではなく、まず画面が描画できたことを
+  // 確認して失敗理由を切り分けられるようにする。
+  await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
+    timeout: 15_000,
+  });
   await page.getByLabel("呼び名").fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();

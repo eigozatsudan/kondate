@@ -1,0 +1,99 @@
+{
+  "replacementDish": {
+    "dishRef": "dish_1",
+    "role": "main",
+    "position": 1,
+    "name": "鶏肉のさっぱり煮",
+    "description": "別案の主菜",
+    "cookingTimeMinutes": 12,
+    "ingredients": [
+      {
+        "ingredientRef": "ingredient_1",
+        "position": 1,
+        "name": "鶏むね肉",
+        "quantityValue": 180,
+        "quantityText": "180g",
+        "unit": "g",
+        "storeSection": "meat_fish",
+        "pantryRef": null,
+        "labelConfirmationRequired": true
+      },
+      {
+        "ingredientRef": "ingredient_2",
+        "position": 2,
+        "name": "しょうゆ",
+        "quantityValue": 1,
+        "quantityText": "小さじ1",
+        "unit": "tsp",
+        "storeSection": "seasonings",
+        "pantryRef": null,
+        "labelConfirmationRequired": true
+      }
+    ],
+    "steps": [
+      {
+        "stepRef": "step_1",
+        "position": 1,
+        "instruction": "鶏肉を小さく切り、中心まで十分に煮る"
+      }
+    ]
+  },
+  "timeline": [
+    {
+      "timelineRef": "timeline_1",
+      "position": 1,
+      "startMinute": 0,
+      "durationMinutes": 6,
+      "instruction": "主菜の材料を切って加熱を始める",
+      "dishRef": "dish_1",
+      "stepRef": "step_1"
+    },
+    {
+      "timelineRef": "timeline_2",
+      "position": 2,
+      "startMinute": 6,
+      "durationMinutes": 8,
+      "instruction": "主菜を煮ながら副菜を仕上げる",
+      "dishRef": "dish_2",
+      "stepRef": "step_31"
+    }
+  ],
+  "adaptations": [
+    {
+      "adaptationRef": "adaptation_1",
+      "dishRef": "dish_1",
+      "anonymousMemberRef": "member_1",
+      "portionText": "1人分",
+      "beforeStepRef": "step_1",
+      "additionalCutting": "1cm角",
+      "additionalHeating": "中心まで十分に加熱",
+      "additionalSeasoning": null,
+      "servingCheck": "骨がないことを確認",
+      "safetyTags": ["cut_small"],
+      "safetyActions": [
+        {
+          "kind": "remove_bones",
+          "dishRef": "dish_1",
+          "ingredientRef": "ingredient_1",
+          "anonymousMemberRef": "member_1",
+          "beforeStepRef": "step_1",
+          "instruction": "骨を完全に除く"
+        }
+      ]
+    }
+  ],
+  "pantryUsage": [],
+  "labelConfirmations": [
+    {
+      "labelRef": "label_1",
+      "sourceType": "ingredient",
+      "sourceRef": "ingredient_2",
+      "sourcePath": "dishes.0.ingredients.1.name",
+      "sourceText": "しょうゆ",
+      "allergenId": "wheat",
+      "anonymousMemberRef": "member_1",
+      "dictionaryVersion": "jp-caa-2026-04.v1",
+      "confirmationStatus": "pending"
+    }
+  ]
+}

@@ -67,9 +67,9 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await page.getByRole("button", { name: "家族を追加" }).click();
   const selectedMemberId = await readCreatedId(await memberCreated);
   await page.getByLabel("呼び名").fill("緊急用家族");
-  await page.getByLabel("年齢区分").selectOption("adult");
+  await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page.getByLabel("対象外の食事の確認").selectOption("none");
+  await page.getByLabel("食べない食事はありますか").selectOption("none");
   const memberCompleted = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&

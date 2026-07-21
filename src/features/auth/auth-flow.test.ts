@@ -38,6 +38,11 @@ describe("auth flow storage", () => {
     expect(sanitizeReturnPath("https://attacker.example")).toBe("/planner");
     expect(sanitizeReturnPath("//attacker.example")).toBe("/planner");
   });
+  it("normalizes the bare root path the継続API rejects", () => {
+    // Function側contractは returnTo に /^\/[^/]/ を要求するため、"/" を送ると400になる。
+    // "/" はrouter上 /planner へNavigateするだけなので、送信前に正規化する。
+    expect(sanitizeReturnPath("/")).toBe("/planner");
+  });
 
   it("keeps the claim secret only in the initiating browser", async () => {
     const shared = new MapStorage();

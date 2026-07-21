@@ -19,12 +19,12 @@ const expirationLabels = {
   use_by: "消費期限",
   best_before: "賞味期限",
   other: "その他",
-  unknown: "不明",
+  unknown: "わからない",
 } as const;
 const openedLabels = {
   unopened: "未開封として登録",
   opened: "開封済みとして登録",
-  unknown: "不明として登録",
+  unknown: "わからないまま登録",
 } as const;
 
 const pantryFields: readonly (keyof PantryItemInput)[] = [

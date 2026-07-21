@@ -1,7 +1,11 @@
 import type { AiGenerationResponse } from "../../../shared/contracts/generation.js";
+import type { DishRegenerationAiOutput } from "../../../shared/contracts/regeneration.js";
 
 type ScenarioName =
   | "success"
+  | "duplicate-menu"
+  | "alternate-menu"
+  | "dish-replacement"
   | "constraint-conflict"
   | "malformed-json"
   | "direct-allergen"
@@ -13,7 +17,8 @@ type ScenarioName =
   | "over-time-limit";
 
 export declare const scenarios: Readonly<
-  Record<Exclude<ScenarioName, "malformed-json">, AiGenerationResponse> & {
+  Record<Exclude<ScenarioName, "malformed-json" | "dish-replacement">, AiGenerationResponse> & {
     readonly "malformed-json": string;
+    readonly "dish-replacement": DishRegenerationAiOutput;
   }
 >;

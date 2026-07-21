@@ -2,13 +2,19 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { createServer as createViteServer } from "vite";
 
+// Plan 4 履歴・再生成ジャーニーが必要とする Function を含む閉じた一覧。
+// Vite proxy が /api を 5174 へ転送するため、ここに無い path は E2E で 404 になる。
 const functionModulePaths = [
   "/netlify/functions/auth-continuation-create.ts",
   "/netlify/functions/auth-continuation-deposit.ts",
   "/netlify/functions/auth-continuation-claim.ts",
   "/netlify/functions/emergency-menus.ts",
   "/netlify/functions/generate-menu.ts",
+  "/netlify/functions/generate-dish.ts",
   "/netlify/functions/generation-status.ts",
+  "/netlify/functions/revalidate-menu.ts",
+  "/netlify/functions/usage-today.ts",
+  "/netlify/functions/confirm-label-confirmation.ts",
 ];
 
 function escapeRegex(value) {

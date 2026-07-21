@@ -787,7 +787,7 @@ export function HouseholdSettingsForm({
           />
         </label>
         <label className="field">
-          <span>年齢区分</span>
+          <span>年齢のめやす</span>
           <select
             ref={ageBandRef}
             value={values.ageBand}
@@ -908,7 +908,7 @@ export function HouseholdSettingsForm({
           />
         )}
         <label className="field">
-          <span>対象外の食事の確認</span>
+          <span>食べない食事はありますか</span>
           <select
             ref={unsupportedDietStatusRef}
             value={values.unsupportedDietStatus}
@@ -928,7 +928,7 @@ export function HouseholdSettingsForm({
         </label>
         {values.unsupportedDietStatus === "present" && (
           <fieldset className="stack">
-            <legend>対象外の食事</legend>
+            <legend>食べない食事</legend>
             {unsupportedDietKinds.map((kind) => (
               <label key={kind}>
                 <input

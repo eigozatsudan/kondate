@@ -528,15 +528,16 @@ select is(
   1,
   'lineage hook has no overload'
 );
+-- Plan 4 Task 1 が SECURITY DEFINER + search_path=pg_catalog,pg_temp で本体を置換した
 select ok(
-  not (
+  (
     select procedure_.prosecdef
     from pg_catalog.pg_proc procedure_
     where procedure_.oid = to_regprocedure(
       'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
     )
   ),
-  'lineage hook is SECURITY INVOKER'
+  'lineage hook is SECURITY DEFINER'
 );
 select is(
   (
@@ -557,8 +558,8 @@ select is(
       'private.assign_regeneration_lineage(uuid,uuid,uuid,text,text)'
     )
   ),
-  array['search_path=""']::text[],
-  'lineage hook has an empty search_path'
+  array['search_path=pg_catalog, pg_temp']::text[],
+  'lineage hook pins search_path to pg_catalog, pg_temp'
 );
 select ok(
   coalesce(
@@ -611,6 +612,7 @@ select lives_ok($$
     null::text
   )
 $$, 'the lineage hook accepts an all-null new-menu lineage');
+-- Plan 4 本体: 部分 lineage / 不正 reason は invalid_*（P0001 スタブは廃止）
 select throws_ok($$
   select private.assign_regeneration_lineage(
     '16000000-0000-4000-8000-000000000001'::uuid,
@@ -619,7 +621,7 @@ select throws_ok($$
     null::text,
     null::text
   )
-$$, 'P0001', 'regeneration_not_implemented',
+$$, '22023', 'invalid_change_reason',
   'the lineage hook rejects a source-only lineage');
 select throws_ok($$
   select private.assign_regeneration_lineage(
@@ -629,7 +631,7 @@ select throws_ok($$
     'simpler'::text,
     null::text
   )
-$$, 'P0001', 'regeneration_not_implemented',
+$$, '22023', 'invalid_regeneration_lineage',
   'the lineage hook rejects a reason-only lineage');
 select throws_ok($$
   select private.assign_regeneration_lineage(
@@ -639,7 +641,7 @@ select throws_ok($$
     null::text,
     '自由記述'::text
   )
-$$, 'P0001', 'regeneration_not_implemented',
+$$, '22023', 'invalid_regeneration_lineage',
   'the lineage hook rejects a custom-reason-only lineage');
 select ok(
   (
@@ -1968,7 +1970,10 @@ begin
     raise exception 'finalizer deleted the post-reservation draft';
   end if;
 
-  -- draft 参照を持たない再生成は無関係な active draft を変更しない
+  -- draft 参照を持たない再生成は無関係な active draft を変更しない。
+  -- Plan 4: lineage 本体により source+reason 付き finalization は成功する（成功枠1枠）。
+  -- 日次上限 5 のため null-lineage 再生成の別 success はここに重ねず、
+  -- 同一ケースで lineage 付与と draft 保全を同時検証する。
   v_before_revision := v_draft.revision;
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000084',
     'regenerate_menu',null,null,'60000000-0000-4000-8000-000000000080',null,'simpler',
@@ -1976,66 +1981,30 @@ begin
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000084';
   perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:14:01+00');
-  select jsonb_build_object(
-    'request',(select to_jsonb(r) from private.ai_generation_requests r where r.id=v_request_id),
-    'usage',(select to_jsonb(u) from private.ai_user_daily_usage u
-      where u.user_id=v_owner and u.usage_day=private.ai_jst_day('2026-07-11 00:14:01+00')),
-    'draft',(select to_jsonb(d) from public.generation_drafts d where d.id=v_draft.id),
-    'menuCount',(select count(*) from public.menus
-      where id='60000000-0000-4000-8000-000000000084')
-  ) into v_before;
-  begin
-    perform pg_temp.finalize_ordering_success(v_request_id,
-      '60000000-0000-4000-8000-000000000084','61000000-0000-4000-8000-000000000084',
-      '62000000-0000-4000-8000-000000000084','63000000-0000-4000-8000-000000000084',
-      '64000000-0000-4000-8000-000000000084','65000000-0000-4000-8000-000000000084',
-      v_pantry_item,'2026-07-11 00:13:59+00','2026-07-11 00:14:02+00',
-      '60000000-0000-4000-8000-000000000080','simpler',null);
-    raise exception using errcode='XX000',message='expected_regeneration_not_implemented';
-  exception when sqlstate 'P0001' then
-    if sqlerrm <> 'regeneration_not_implemented' then raise; end if;
-  end;
-  select jsonb_build_object(
-    'request',(select to_jsonb(r) from private.ai_generation_requests r where r.id=v_request_id),
-    'usage',(select to_jsonb(u) from private.ai_user_daily_usage u
-      where u.user_id=v_owner and u.usage_day=private.ai_jst_day('2026-07-11 00:14:01+00')),
-    'draft',(select to_jsonb(d) from public.generation_drafts d where d.id=v_draft.id),
-    'menuCount',(select count(*) from public.menus
-      where id='60000000-0000-4000-8000-000000000084')
-  ) into v_after;
-  if v_after is distinct from v_before then
-    raise exception 'regeneration failure changed menu, quota, request, or unrelated draft state';
+  v_result := pg_temp.finalize_ordering_success(v_request_id,
+    '60000000-0000-4000-8000-000000000084','61000000-0000-4000-8000-000000000084',
+    '62000000-0000-4000-8000-000000000084','63000000-0000-4000-8000-000000000084',
+    '64000000-0000-4000-8000-000000000084','65000000-0000-4000-8000-000000000084',
+    v_pantry_item,'2026-07-11 00:13:59+00','2026-07-11 00:14:02+00',
+    '60000000-0000-4000-8000-000000000080','simpler',null);
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'regeneration lineage finalizer did not succeed: %', v_result;
+  end if;
+  if (select parent_menu_id::text from public.menus
+        where id='60000000-0000-4000-8000-000000000084')
+      is distinct from '60000000-0000-4000-8000-000000000080' then
+    raise exception 'regeneration lineage did not set parent_menu_id';
+  end if;
+  if (select change_reason from public.menus
+        where id='60000000-0000-4000-8000-000000000084')
+      is distinct from 'simpler' then
+    raise exception 'regeneration lineage did not set change_reason';
   end if;
   if (select revision from public.generation_drafts where id=v_draft.id)
       is distinct from v_before_revision
      or coalesce((select deleted_at is not null
        from public.generation_drafts where id=v_draft.id),true) then
     raise exception 'regeneration did not preserve the unrelated active draft';
-  end if;
-  perform public.finalize_ai_generation_failure(
-    v_request_id,'regeneration_not_implemented',null,'2026-07-11 00:14:03+00');
-
-  -- null lineage で成功する内部境界でも null draft 参照は helper を呼ばない
-  perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000085',
-    'regenerate_menu',null,null,'60000000-0000-4000-8000-000000000080',null,'simpler',
-    'generation-command.v1',repeat('f',64),5,45,180,'2026-07-11 00:25:00+00');
-  select id into strict v_request_id from private.ai_generation_requests
-    where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000085';
-  v_before_revision := v_draft.revision;
-  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:25:01+00');
-  v_result := pg_temp.finalize_ordering_success(v_request_id,
-    '60000000-0000-4000-8000-000000000085','61000000-0000-4000-8000-000000000085',
-    '62000000-0000-4000-8000-000000000085','63000000-0000-4000-8000-000000000085',
-    '64000000-0000-4000-8000-000000000085','65000000-0000-4000-8000-000000000085',
-    v_pantry_item,'2026-07-11 00:24:59+00','2026-07-11 00:25:02+00');
-  if v_result->>'status' is distinct from 'succeeded' then
-    raise exception 'null-lineage regeneration boundary did not succeed';
-  end if;
-  if (select revision from public.generation_drafts where id=v_draft.id)
-      is distinct from v_before_revision
-     or coalesce((select deleted_at is not null
-       from public.generation_drafts where id=v_draft.id),true) then
-    raise exception 'null-draft success changed an unrelated active draft';
   end if;
 end
 $test$;

@@ -21,6 +21,7 @@ import {
   type GenerationExecutionContext,
 } from "./_shared/generation-service.js";
 import { HttpError } from "./_shared/http.js";
+import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 import handler from "./generate-menu.js";
 
 vi.mock("./_shared/auth.js", () => ({ requireUser: vi.fn() }));
@@ -29,6 +30,9 @@ vi.mock("../../shared/safety/validate-generated-menu.js", () => ({
 }));
 vi.mock("./_shared/generation-materializer.js", () => ({
   materializeAiGeneratedMenu: vi.fn(),
+}));
+vi.mock("./_shared/local-mock-scenario.js", () => ({
+  readLocalMockScenario: vi.fn(() => undefined),
 }));
 vi.mock("./_shared/generation-service.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("./_shared/generation-service.js")>();
@@ -145,6 +149,7 @@ beforeEach(() => {
   vi.mocked(requireUser).mockResolvedValue(user);
   vi.mocked(createGenerationDeps).mockReturnValue({} as GenerationDependencies);
   vi.mocked(runGeneration).mockResolvedValue(terminalResult);
+  vi.mocked(readLocalMockScenario).mockReturnValue(undefined);
 });
 
 describe("POST /api/generations/menu", () => {
@@ -248,6 +253,29 @@ describe("POST /api/generations/menu", () => {
     now.mockRestore();
   });
 
+  it("forwards localTestScenario when the local mock header is honored", async () => {
+    vi.mocked(readLocalMockScenario).mockReturnValue("duplicate-menu");
+    await handler(postRequest(requestBody, { "x-kondate-mock-scenario": "duplicate-menu" }));
+    const depsArgs = vi.mocked(createGenerationDeps).mock.calls[0];
+    expect(depsArgs?.[0]).toEqual(user);
+    expect(depsArgs?.[1]).toMatchObject({
+      localTestScenario: "duplicate-menu",
+    });
+    expect(typeof depsArgs?.[1]?.requestStartedAtMonotonicMs).toBe("number");
+  });
+
+  it("does not pass localTestScenario when the mock header is ignored (production base)", async () => {
+    // readLocalMockScenario が production base で undefined を返す経路を再現
+    vi.mocked(readLocalMockScenario).mockReturnValue(undefined);
+    await handler(postRequest(requestBody, { "x-kondate-mock-scenario": "duplicate-menu" }));
+    const depsArgs = vi.mocked(createGenerationDeps).mock.calls[0];
+    expect(depsArgs?.[0]).toEqual(user);
+    expect(depsArgs?.[1]).toEqual({
+      requestStartedAtMonotonicMs: depsArgs?.[1]?.requestStartedAtMonotonicMs,
+    });
+    expect(depsArgs?.[1]).not.toHaveProperty("localTestScenario");
+  });
+
   it.each(canonicalResponseCases)(
     "projects %s through the complete canonical POST boundary",
     async (_label, result, expectedStatus) => {
@@ -336,7 +364,9 @@ describe("POST /api/generations/menu", () => {
     const loadExecutionContext = vi.fn(() => Promise.resolve(executionContext));
     const validatePreflight = vi.fn(() => ({ ok: true as const }));
     const buildMessages = vi.fn(() => [{ role: "user" as const, content: "prompt" }]);
-    const callOpenRouter = vi.fn(() => Promise.resolve({ output: scenarios.success, modelId }));
+    const callOpenRouter = vi.fn(() =>
+      Promise.resolve({ mode: "full_menu" as const, output: scenarios.success, modelId }),
+    );
     const deps: GenerationDependencies = {
       user,
       repository,

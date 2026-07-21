@@ -1,12 +1,24 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useLocation } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
   householdSafetyRevisionStorageKey,
   invalidateHouseholdSafetyQueries,
 } from "@/features/household/household-queries";
+
+/** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
+function sectionForPath(pathname: string): string {
+  if (pathname === "/planner" || pathname === "/generation" || pathname.startsWith("/menus/")) {
+    return "planner";
+  }
+  if (pathname === "/pantry") return "pantry";
+  if (pathname === "/history" || pathname.startsWith("/history/")) return "history";
+  if (pathname === "/shopping") return "shopping";
+  if (pathname === "/settings") return "settings";
+  return "other";
+}
 
 const items = [
   { to: "/planner", label: "献立" },
@@ -19,6 +31,7 @@ const items = [
 export function AppShell() {
   const auth = useAuth();
   const queryClient = useQueryClient();
+  const location = useLocation();
   const userId = auth.session?.user.id;
   useEffect(() => {
     if (userId === undefined) return undefined;
@@ -34,7 +47,7 @@ export function AppShell() {
     };
   }, [queryClient, userId]);
   return (
-    <div>
+    <div className="app-section" data-section={sectionForPath(location.pathname)}>
       <Outlet />
       <nav className="bottom-nav" aria-label="メインメニュー">
         {items.map((item) => (

@@ -49,7 +49,10 @@ it("searches all 29 standard items and adds the selected catalog id", async () =
       remove={vi.fn()}
     />,
   );
-  await userEvent.type(screen.getByRole("searchbox", { name: "標準29品目を検索" }), "くるみ");
+  await userEvent.type(
+    screen.getByRole("searchbox", { name: "よくあるアレルギーから探す" }),
+    "くるみ",
+  );
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
   expect(addStandard).toHaveBeenCalledWith("member-1", "walnut");
 });
@@ -90,7 +93,10 @@ it("finds a standard item by a reviewed alias", async () => {
     />,
   );
 
-  await userEvent.type(screen.getByRole("searchbox", { name: "標準29品目を検索" }), "たまご");
+  await userEvent.type(
+    screen.getByRole("searchbox", { name: "よくあるアレルギーから探す" }),
+    "たまご",
+  );
 
   expect(screen.getByRole("button", { name: "項目1を追加" })).toBeVisible();
 });
@@ -111,8 +117,8 @@ it("shows a direct or derived alias match and prevents custom registration", asy
 
   await userEvent.type(screen.getByLabelText("自由登録名"), "  たまご  ");
 
-  expect(screen.getByRole("alert")).toHaveTextContent("標準候補: 項目1（たまご）");
-  await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+  expect(screen.getByRole("alert")).toHaveTextContent("一覧に同じものがあります: 項目1（たまご）");
+  await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
   expect(screen.getByRole("button", { name: "自由登録を追加" })).toBeDisabled();
   expect(addCustom).not.toHaveBeenCalled();
 });
@@ -167,15 +173,15 @@ it.each(["success", "failure"] as const)(
       />,
     );
     await userEvent.type(screen.getByLabelText("自由登録名"), "ひよこ豆");
-    await userEvent.click(screen.getByLabelText("標準候補に該当しないことを確認"));
+    await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
 
     await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
 
-    expect(screen.getByRole("searchbox", { name: "標準29品目を検索" })).toBeDisabled();
+    expect(screen.getByRole("searchbox", { name: "よくあるアレルギーから探す" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "項目1を追加" })).toBeDisabled();
     expect(screen.getByLabelText("自由登録名")).toBeDisabled();
     expect(screen.getByLabelText("別名（カンマ区切り・任意）")).toBeDisabled();
-    expect(screen.getByLabelText("標準候補に該当しないことを確認")).toBeDisabled();
+    expect(screen.getByLabelText("一覧にないアレルギーとして登録")).toBeDisabled();
     expect(screen.getByRole("button", { name: "自由登録を追加" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "えんどう豆たんぱくを削除" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "項目1を追加" }));

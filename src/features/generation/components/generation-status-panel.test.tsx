@@ -1,9 +1,18 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationStatusData } from "@shared/contracts/generation";
 import { getNextJstMidnight } from "@shared/time/jst";
 import type { GenerationClientState } from "../model/generation-machine";
 import { GenerationStatusPanel } from "./generation-status-panel";
+
+const getUsageTodayMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../api/usage-today-api", () => ({
+  getUsageToday: getUsageTodayMock,
+}));
+
+const USER_ID = "60000000-0000-4000-8000-000000000001";
 
 const NOW = new Date("2026-07-20T05:00:00.000Z");
 const KEY = "10000000-0000-4000-8000-000000000001";
@@ -28,6 +37,13 @@ const failedState: GenerationClientState = { phase: "failed", data: failedData, 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
+  getUsageTodayMock.mockResolvedValue({
+    success: { consumed: 1, limit: 5, remaining: 4 },
+    attempts: { sent: 0, limit: 12, remaining: 12 },
+    shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+    globalAvailable: true,
+    retryAt: null,
+  });
 });
 
 afterEach(() => {
@@ -44,6 +60,22 @@ describe("GenerationStatusPanel", () => {
       "href",
       "/emergency-menus",
     );
+    expect(screen.getByRole("link", { name: "作った献立を見る" })).toHaveAttribute(
+      "href",
+      "/history",
+    );
+  });
+
+  it("shows how many generations remain today and the app-wide status", async () => {
+    vi.useRealTimers();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel state={failedState} userId={USER_ID} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
+    expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
   });
 
   it("shows a status message while checking saved progress", () => {

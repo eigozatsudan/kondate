@@ -135,13 +135,15 @@ it("shows a plain empty state when the selected dish has no adaptation", async (
   expect(screen.getByText("この料理の取り分け案はありません。")).toBeVisible();
 });
 
-it("keeps the full safety disclaimer and a 320px no-overflow class contract", () => {
+it("leaves the label disclaimer to the page shell and keeps a 320px no-overflow class contract", () => {
   const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
+  // ラベル確認の免責文はゲートで本文が閉じている間も出し続ける必要があるため、
+  // 本文コンポーネントではなくページ枠（MenuResultPage/HistoryDetailPage）が持つ。
   expect(
-    screen.getByText(
+    screen.queryByText(
       "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
     ),
-  ).toBeVisible();
+  ).toBeNull();
   // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
   // 横方向の最大幅・はみ出し抑止・長文折返しの具体的classで固定する。
   expect(container.querySelector("main")).toHaveClass(
@@ -193,7 +195,9 @@ it("shows the label-confirm action and calls the confirm handler", async () => {
   const confirmation = result.labelConfirmations[0];
   if (confirmation === undefined) throw new Error("fixture must contain a confirmation");
   render(<MenuResult result={result} actions={actions} />);
-  await userEvent.click(screen.getByRole("button", { name: "本人が原材料表示を確認しました" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+  );
   expect(onConfirmLabel).toHaveBeenCalledWith(
     confirmation.confirmationId,
     confirmation.requirementSafetyFingerprint,

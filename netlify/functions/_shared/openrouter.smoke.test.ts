@@ -23,6 +23,8 @@ describe.skipIf(process.env.RUN_OPENROUTER_SMOKE !== "1")("real OpenRouter", () 
           { role: "user", content: "匿名の大人1人向け、15分の和食朝食2品を生成してください。" },
         ],
       });
+      expect(result.mode).toBe("full_menu");
+      if (result.mode !== "full_menu") throw new Error("expected full_menu");
       expect(["success", "constraint_conflict"]).toContain(result.output.outcome);
       expect(result.modelId.endsWith(":free")).toBe(true);
       // 1アプリケーションリクエスト = 1 HTTP fetch のみ

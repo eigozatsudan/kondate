@@ -121,6 +121,10 @@ services:
       meta:
         condition: service_healthy
     environment:
+      # コンテナ内では localhost が ::1 を先に返すため、@netlify/functions-dev の
+      # streaming bridge が ::1 にbindし 127.0.0.1 へ接続して ECONNREFUSED になる。
+      # IPv4を優先させ、dev中のFunction呼び出しを成立させる。
+      NODE_OPTIONS: --dns-result-order=ipv4first
       VITE_SUPABASE_URL: http://127.0.0.1:8000
       VITE_SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
       VITE_MAGIC_LINK_RESEND_SECONDS: ${VITE_MAGIC_LINK_RESEND_SECONDS:-60}

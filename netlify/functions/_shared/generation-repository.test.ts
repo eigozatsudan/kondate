@@ -417,3 +417,67 @@ async function expectSanitizedDatabaseError(operation: Promise<unknown>): Promis
     expect(String(error)).not.toContain("private rejection");
   }
 }
+
+describe("createGenerationRepository regeneration reserve", () => {
+  it("reserves regenerate_menu and regenerate_dish through the same reserve_ai_generation RPC", async () => {
+    const regenerateMenuCommand: GenerationCommand = {
+      kind: "regenerate_menu",
+      request: {
+        idempotencyKey,
+        sourceMenuId,
+        changeReason: "simpler",
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const regenerateDishCommand: GenerationCommand = {
+      kind: "regenerate_dish",
+      request: {
+        idempotencyKey,
+        sourceMenuId,
+        dishId: "70000000-0000-4000-8000-000000000001",
+        changeReason: "different_ingredient",
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    rpcMock
+      .mockResolvedValueOnce({ data: publicRecord, error: null })
+      .mockResolvedValueOnce({ data: publicRecord, error: null });
+    const repository = createGenerationRepository(user);
+
+    await repository.reserve(regenerateMenuCommand);
+    await repository.reserve(regenerateDishCommand);
+
+    expect(rpcMock).toHaveBeenNthCalledWith(1, "reserve_ai_generation", {
+      p_user_id: user.userId,
+      p_idempotency_key: idempotencyKey,
+      p_request_kind: "regenerate_menu",
+      p_draft_id: null,
+      p_draft_revision: null,
+      p_source_menu_id: sourceMenuId,
+      p_replace_dish_id: null,
+      p_change_reason: "simpler",
+      p_request_hmac_version: generationRequestHmacVersion,
+      p_request_hmac: generationRequestHmac(regenerateMenuCommand, hmacKey),
+      p_user_limit: 5,
+      p_global_limit: 45,
+      p_stale_after_seconds: 180,
+    });
+    expect(rpcMock).toHaveBeenNthCalledWith(2, "reserve_ai_generation", {
+      p_user_id: user.userId,
+      p_idempotency_key: idempotencyKey,
+      p_request_kind: "regenerate_dish",
+      p_draft_id: null,
+      p_draft_revision: null,
+      p_source_menu_id: sourceMenuId,
+      p_replace_dish_id: "70000000-0000-4000-8000-000000000001",
+      p_change_reason: "different_ingredient",
+      p_request_hmac_version: generationRequestHmacVersion,
+      p_request_hmac: generationRequestHmac(regenerateDishCommand, hmacKey),
+      p_user_limit: 5,
+      p_global_limit: 45,
+      p_stale_after_seconds: 180,
+    });
+  });
+});

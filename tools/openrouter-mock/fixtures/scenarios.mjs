@@ -170,8 +170,128 @@ const recursivelyFreeze = (value) => {
   return value;
 };
 
+// Plan 4: success と同一 role/primary 集合を返し、初回・repair の両方で duplicate にする。
+// 外部 artifact は fixtures/duplicate-menu.json（同じ内容）を正本ドキュメントとして保持する。
+const duplicateMenu = clone();
+// 全体再生成が success と material 重複しない別案（E2E の version グループ検証用）
+const alternateMenu = clone();
+alternateMenu.menu.dishes[0].name = "鶏肉のさっぱり煮";
+alternateMenu.menu.dishes[0].description = "別案の主菜";
+alternateMenu.menu.dishes[0].ingredients[0].name = "鶏むね肉";
+alternateMenu.menu.dishes[0].ingredients[0].quantityValue = 180;
+alternateMenu.menu.dishes[0].ingredients[0].quantityText = "180g";
+alternateMenu.menu.dishes[0].steps[0].instruction = "鶏肉を小さく切り、中心まで十分に煮る";
+alternateMenu.menu.dishes[1].name = "きゅうりともやしの浅漬け";
+alternateMenu.menu.dishes[1].description = "別案の副菜";
+alternateMenu.menu.dishes[1].ingredients[0].name = "きゅうり";
+alternateMenu.menu.dishes[1].ingredients[0].quantityText = "1本";
+alternateMenu.menu.dishes[1].steps[0].instruction = "きゅうりを薄切りにして漬ける";
+// 料理単位再生成用。success 主菜と material 近傍不一致になる別案
+const dishReplacement = {
+  replacementDish: {
+    dishRef: "dish_1",
+    role: "main",
+    position: 1,
+    name: "鶏肉のさっぱり煮",
+    description: "別案の主菜",
+    cookingTimeMinutes: 12,
+    ingredients: [
+      {
+        ingredientRef: "ingredient_1",
+        position: 1,
+        name: "鶏むね肉",
+        quantityValue: 180,
+        quantityText: "180g",
+        unit: "g",
+        storeSection: "meat_fish",
+        pantryRef: null,
+        labelConfirmationRequired: true,
+      },
+      {
+        ingredientRef: "ingredient_2",
+        position: 2,
+        name: "しょうゆ",
+        quantityValue: 1,
+        quantityText: "小さじ1",
+        unit: "tsp",
+        storeSection: "seasonings",
+        pantryRef: null,
+        labelConfirmationRequired: true,
+      },
+    ],
+    steps: [
+      {
+        stepRef: "step_1",
+        position: 1,
+        instruction: "鶏肉を小さく切り、中心まで十分に煮る",
+      },
+    ],
+  },
+  timeline: [
+    {
+      timelineRef: "timeline_1",
+      position: 1,
+      startMinute: 0,
+      durationMinutes: 6,
+      instruction: "主菜の材料を切って加熱を始める",
+      dishRef: "dish_1",
+      stepRef: "step_1",
+    },
+    {
+      timelineRef: "timeline_2",
+      position: 2,
+      startMinute: 6,
+      durationMinutes: 8,
+      instruction: "主菜を煮ながら副菜を仕上げる",
+      dishRef: "dish_2",
+      stepRef: "step_31",
+    },
+  ],
+  adaptations: [
+    {
+      adaptationRef: "adaptation_1",
+      dishRef: "dish_1",
+      anonymousMemberRef: "member_1",
+      portionText: "1人分",
+      beforeStepRef: "step_1",
+      additionalCutting: "1cm角",
+      additionalHeating: "中心まで十分に加熱",
+      additionalSeasoning: null,
+      servingCheck: "骨がないことを確認",
+      safetyTags: ["cut_small"],
+      safetyActions: [
+        {
+          kind: "remove_bones",
+          dishRef: "dish_1",
+          ingredientRef: "ingredient_1",
+          anonymousMemberRef: "member_1",
+          beforeStepRef: "step_1",
+          instruction: "骨を完全に除く",
+        },
+      ],
+    },
+  ],
+  pantryUsage: [],
+  labelConfirmations: [
+    {
+      labelRef: "label_1",
+      sourceType: "ingredient",
+      sourceRef: "ingredient_2",
+      sourcePath: "dishes.0.ingredients.1.name",
+      sourceText: "しょうゆ",
+      allergenId: "wheat",
+      anonymousMemberRef: "member_1",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending",
+    },
+  ],
+};
+
 export const scenarios = recursivelyFreeze({
   success,
+  "duplicate-menu": duplicateMenu,
+  "alternate-menu": alternateMenu,
+  "dish-replacement": dishReplacement,
   "constraint-conflict": {
     outcome: "constraint_conflict",
     conflicts: [
