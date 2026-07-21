@@ -193,7 +193,9 @@ it("shows the label-confirm action and calls the confirm handler", async () => {
   const confirmation = result.labelConfirmations[0];
   if (confirmation === undefined) throw new Error("fixture must contain a confirmation");
   render(<MenuResult result={result} actions={actions} />);
-  await userEvent.click(screen.getByRole("button", { name: "本人が原材料表示を確認しました" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+  );
   expect(onConfirmLabel).toHaveBeenCalledWith(
     confirmation.confirmationId,
     confirmation.requirementSafetyFingerprint,

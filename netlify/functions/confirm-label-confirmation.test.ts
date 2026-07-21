@@ -111,4 +111,27 @@ describe("confirm-label-confirmation", () => {
       error: { code: "confirmation_failed" },
     });
   });
+
+  it("returns the same closed 404 for a stale fingerprint or archived confirmation", async () => {
+    // Plan 3 の3引数 RPC が empty setof を返したとき、古い警告の確認を閉じる
+    rpc.mockResolvedValue({ data: [], error: null });
+    const response = await handler(
+      new Request("http://127.0.0.1/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedSafetyFingerprint: "stale-fingerprint" }),
+      }),
+      context,
+    );
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "confirmation_not_found" },
+    });
+    expect(rpc).toHaveBeenCalledWith("token", {
+      p_menu_id: "40000000-0000-4000-8000-000000000001",
+      p_confirmation_id: "48000000-0000-4000-8000-000000000001",
+      p_expected_safety_fingerprint: "stale-fingerprint",
+    });
+  });
 });
