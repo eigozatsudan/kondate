@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import type { DataRouteObject } from "react-router";
 import { describe, expect, it } from "vitest";
 import { RequireCompletedOnboarding } from "@/features/auth/protected-routes";
+import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import { createAppRouter } from "./router";
 
 function findRoute(routes: DataRouteObject[], path: string): DataRouteObject | undefined {
@@ -63,6 +64,18 @@ describe("app router", () => {
     const plannerAncestors = findAncestorElementTypes(router.routes, "/planner");
     expect(emergencyAncestors).not.toContain(RequireCompletedOnboarding);
     expect(plannerAncestors).toContain(RequireCompletedOnboarding);
+    router.dispose();
+  });
+
+  it("registers /menus/:menuId under RequireCompletedOnboarding with MenuResultPage", () => {
+    const router = createAppRouter();
+    const route = findRoute(router.routes, "/menus/:menuId");
+    const ancestors = findAncestorElementTypes(router.routes, "/menus/:menuId");
+
+    expect(route).toBeDefined();
+    expect(ancestors).toContain(RequireCompletedOnboarding);
+    expect(route?.element).toBeDefined();
+    expect((route?.element as ReactElement).type).toBe(MenuResultPage);
     router.dispose();
   });
 });
