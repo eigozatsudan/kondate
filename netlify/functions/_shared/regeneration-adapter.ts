@@ -140,7 +140,8 @@ export function createRegenerationLoaderDeps(
         )
         .eq("user_id", input.user.userId)
         .in("id", pantryItemIds);
-      if (error !== null || data === null) {
+      // supabase-js 型上 error===null なら data は非 null（no-unnecessary-condition）
+      if (error !== null) {
         throw new HttpError(503, "internal_error", "冷蔵庫の食材を確認できませんでした");
       }
       pantryItems = data.map((row) => ({
