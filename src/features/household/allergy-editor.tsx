@@ -136,8 +136,8 @@ export function AllergyEditor(props: AllergyEditorProps) {
         </label>
         {exactMatch && (
           <p role="alert">
-            標準候補: {exactMatches.map((item) => item.display_name).join("、")}（
-            {normalizedCustomName}）。標準項目を先に選んでください
+            一覧に同じものがあります: {exactMatches.map((item) => item.display_name).join("、")}（
+            {normalizedCustomName}）。一覧から先に選んでください
           </p>
         )}
         <label>

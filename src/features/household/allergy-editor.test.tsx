@@ -117,7 +117,7 @@ it("shows a direct or derived alias match and prevents custom registration", asy
 
   await userEvent.type(screen.getByLabelText("自由登録名"), "  たまご  ");
 
-  expect(screen.getByRole("alert")).toHaveTextContent("標準候補: 項目1（たまご）");
+  expect(screen.getByRole("alert")).toHaveTextContent("一覧に同じものがあります: 項目1（たまご）");
   await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
   expect(screen.getByRole("button", { name: "自由登録を追加" })).toBeDisabled();
   expect(addCustom).not.toHaveBeenCalled();
