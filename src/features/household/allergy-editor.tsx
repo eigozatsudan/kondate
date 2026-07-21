@@ -79,9 +79,9 @@ export function AllergyEditor(props: AllergyEditorProps) {
   return (
     <section className="stack" aria-label="アレルギー編集">
       <label className="field">
-        <span>標準29品目を検索</span>
+        <span>よくあるアレルギーから探す</span>
         <input
-          aria-label="標準29品目を検索"
+          aria-label="よくあるアレルギーから探す"
           role="searchbox"
           value={query}
           disabled={mutationDisabled}
@@ -143,14 +143,14 @@ export function AllergyEditor(props: AllergyEditorProps) {
         <label>
           <input
             type="checkbox"
-            aria-label="標準候補に該当しないことを確認"
+            aria-label="一覧にないアレルギーとして登録"
             checked={confirmed}
             disabled={mutationDisabled}
             onChange={(event) => {
               setConfirmed(event.target.checked);
             }}
           />
-          標準候補に該当しないことを確認
+          一覧にないアレルギーとして登録
         </label>
         <button
           className="secondary-button"
@@ -183,7 +183,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
             allergy.allergen_id === null
               ? allergy.custom_name
               : catalog.find((item) => item.id === allergy.allergen_id)?.display_name;
-          const displayName = name ?? "表示名を確認できない項目";
+          const displayName = name ?? "名前を表示できない項目";
           return (
             <li key={allergy.id}>
               {displayName}

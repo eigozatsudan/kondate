@@ -28,7 +28,7 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
   await page.getByLabel("自由登録名").fill("えんどう豆たんぱく");
-  await page.getByLabel("標準候補に該当しないことを確認").check();
+  await page.getByLabel("一覧にないアレルギーとして登録").check();
   await page.getByRole("button", { name: "自由登録を追加" }).click();
   await page.getByRole("button", { name: "くるみを削除" }).click();
   await page.getByRole("button", { name: "家族を削除" }).click();
