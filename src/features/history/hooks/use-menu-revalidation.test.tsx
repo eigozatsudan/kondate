@@ -155,6 +155,84 @@ describe("useMenuRevalidation", () => {
     });
   });
 
+  it("keeps checking when an older in-flight revalidation settles after a newer one started", async () => {
+    const first = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(first.promise);
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    expect(result.current.phase).toBe("checking");
+
+    // 初回を完了させ actionable にする
+    act(() => {
+      first.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+
+    // 古い飛行中要求 A と、後から始まる最新要求 B を重ねる
+    const older = deferredPromise<RevalidationResult>();
+    const newer = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+
+    // さらにシグナルで最新世代を進める（A が残ったまま B が始まる）
+    act(() => {
+      window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
+    });
+    expect(result.current.phase).toBe("checking");
+
+    const stale: RevalidationResult = {
+      ...valid,
+      safetyFingerprint: "stale-older",
+      status: "changed",
+      changedDetails: ["preference_changed"],
+    };
+    const fresh: RevalidationResult = {
+      ...valid,
+      safetyFingerprint: "fresh-latest",
+    };
+
+    // 古い A が先に解決しても、最新 B が未完了なら checking のまま（stale authority を返さない）
+    act(() => {
+      older.resolve(stale);
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+
+    act(() => {
+      newer.resolve(fresh);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    expect(result.current.result?.safetyFingerprint).toBe("fresh-latest");
+  });
+
+  it("beginRecheck forces checking synchronously before the next fetch settles", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      result.current.beginRecheck();
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
   // 60 秒 poll は history-detail-page の sixty-second-poll ケースで page 統合として検証する
   // （React Query と fake timers の組み合わせは unit では不安定）
 });

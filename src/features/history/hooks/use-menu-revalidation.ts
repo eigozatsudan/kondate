@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   householdSafetyChangedEvent,
@@ -21,17 +21,27 @@ export function menuRevalidationQueryKey(menuId: string) {
 /**
  * /menus/:menuId と /history/:menuId が共有する現行安全ゲート。
  * 同一イベントターンで checking に入り、manual-success の逃げ道は持たない。
+ * 飛行中の再検証は常に checking とし、古い要求の完了で最新の閉じ状態を開けない。
  * Realtime は RLS で本人行に限定し、browser から owner ID を送らない。
  */
 export function useMenuRevalidation(menuId: string) {
   const cache = useQueryClient();
   const [forcedChecking, setForcedChecking] = useState(false);
+  // 単調増加。完了時に最新世代だけが forcedChecking を解除する
+  const requestGenerationRef = useRef(0);
+
   const query = useQuery({
     queryKey: menuRevalidationQueryKey(menuId),
     queryFn: async () => {
-      const result = await revalidateMenu(menuId);
-      setForcedChecking(false);
-      return result;
+      const generation = ++requestGenerationRef.current;
+      try {
+        return await revalidateMenu(menuId);
+      } finally {
+        // 古い飛行中レスポンスが後から到着しても、最新要求の閉じ状態を開けない
+        if (generation === requestGenerationRef.current) {
+          setForcedChecking(false);
+        }
+      }
     },
     staleTime: 0,
     retry: false,
@@ -39,15 +49,22 @@ export function useMenuRevalidation(menuId: string) {
     enabled: menuId.length > 0,
   });
 
+  /**
+   * 同期的に checking へ落とし、active query を再 POST する。
+   * stale confirm 失敗など、invalidate 非同期だけでは間が空く経路から呼ぶ。
+   */
+  const beginRecheck = useCallback(() => {
+    setForcedChecking(true);
+    void cache.invalidateQueries({
+      queryKey: menuRevalidationQueryKey(menuId),
+      exact: true,
+      refetchType: "active",
+    });
+  }, [cache, menuId]);
+
   useEffect(() => {
     const changed = () => {
-      // 同期的に checking へ落とし、直後に active query を再 POST する
-      setForcedChecking(true);
-      void cache.invalidateQueries({
-        queryKey: menuRevalidationQueryKey(menuId),
-        exact: true,
-        refetchType: "active",
-      });
+      beginRecheck();
     };
     const stored = (event: StorageEvent) => {
       if (event.key === householdSafetyRevisionStorageKey) changed();
@@ -59,6 +76,7 @@ export function useMenuRevalidation(menuId: string) {
       changed();
     };
     const onOffline = () => {
+      // オフライン中は fetch が始まらないため、明示的に閉じ続ける
       setForcedChecking(true);
     };
     const channel = getBrowserSupabaseClient()
@@ -85,19 +103,31 @@ export function useMenuRevalidation(menuId: string) {
       window.clearInterval(timer);
       void channel.unsubscribe();
     };
-  }, [cache, menuId]);
+  }, [beginRecheck, menuId]);
 
-  // isPending のみでは再検証 invalidate 後に古い data が残るため forcedChecking を併用する
+  // isPending だけでは再検証 invalidate 後に古い data が残る。
+  // isFetching で飛行中を、forcedChecking で同一ターンの即時閉鎖とオフラインをカバーする。
   const phase: RevalidationPhaseName =
-    forcedChecking || query.isPending ? "checking" : query.isError ? "error" : "checked";
+    forcedChecking || query.isPending || query.isFetching
+      ? "checking"
+      : query.isError
+        ? "error"
+        : "checked";
 
   const errorMessage =
     query.error instanceof Error ? query.error.message : "現在の家族設定で確認できませんでした";
+
+  const refetch = useCallback(() => {
+    setForcedChecking(true);
+    return query.refetch();
+  }, [query]);
 
   return {
     ...query,
     phase,
     result: phase === "checked" ? query.data : undefined,
     errorMessage: phase === "error" ? errorMessage : undefined,
+    beginRecheck,
+    refetch,
   };
 }

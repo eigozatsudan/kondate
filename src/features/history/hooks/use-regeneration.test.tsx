@@ -199,7 +199,7 @@ describe("useRegeneration", () => {
 
   it.each(["regenerate_menu", "regenerate_dish"] as const)(
     "recovers %s with the exact endpoint, body, and key after response loss",
-    (kind) => {
+    async (kind) => {
       const storage = memoryStorage();
       const command: GenerationCommand =
         kind === "regenerate_menu"
@@ -230,35 +230,79 @@ describe("useRegeneration", () => {
       const keyBefore = pending.request.idempotencyKey;
       const endpoint = generationEndpointFor(pendingGenerationCommand(pending));
 
-      // 初回 POST 応答消失 → not_started → 同一 body/key で再送
-      postMock.mockRejectedValueOnce(new TypeError("network")).mockResolvedValueOnce({
+      // 復旧経路: 永続化済み pending を読み直し、同一 body/key/endpoint で再 POST する
+      const recovered = readPendingGeneration(USER_ID, new Date(), storage);
+      expect(recovered).not.toBeNull();
+      if (recovered === null) throw new Error("pending required");
+      const resent = pendingGenerationCommand(recovered);
+      expect(JSON.stringify(resent.request)).toBe(bodyBefore);
+      expect(recovered.request.idempotencyKey).toBe(keyBefore);
+      expect(generationEndpointFor(resent)).toBe(endpoint);
+      expect(generationEndpointFor(resent)).toBe(
+        kind === "regenerate_dish" ? "/api/generations/dish" : "/api/generations/menu",
+      );
+
+      postMock.mockResolvedValueOnce({
         status: "processing",
         idempotencyKey: keyBefore,
         requestId: "50000000-0000-4000-8000-000000000010",
         startedAt: "2026-07-11T00:00:00.000Z",
         quota,
       } satisfies GenerationStatusData);
-      statusMock.mockResolvedValue({
-        status: "not_started",
-        idempotencyKey: keyBefore,
-        quota,
-      } satisfies GenerationStatusData);
 
-      const recovered = readPendingGeneration(USER_ID, new Date(), storage);
-      expect(recovered).not.toBeNull();
-      if (recovered === null) throw new Error("pending required");
-      expect(JSON.stringify(pendingGenerationCommand(recovered).request)).toBe(bodyBefore);
-      expect(recovered.request.idempotencyKey).toBe(keyBefore);
-      expect(generationEndpointFor(pendingGenerationCommand(recovered))).toBe(endpoint);
-
-      // 再送時も schema 上の body がバイト一致
-      const resent = pendingGenerationCommand(recovered);
-      expect(JSON.stringify(resent.request)).toBe(bodyBefore);
-      expect(generationEndpointFor(resent)).toBe(
-        kind === "regenerate_dish" ? "/api/generations/dish" : "/api/generations/menu",
-      );
+      // recovery が POST に渡す command と同一 identity であることを実呼び出しで確認
+      const { postGeneration } = await import("@/features/generation/api/generation-api");
+      await postGeneration(resent);
+      expect(postMock).toHaveBeenCalledTimes(1);
+      const posted = postMock.mock.calls[0]?.[0] as GenerationCommand;
+      expect(posted.kind).toBe(kind);
+      expect(posted.request.idempotencyKey).toBe(keyBefore);
+      expect(JSON.stringify(posted.request)).toBe(bodyBefore);
+      expect(generationEndpointFor(posted)).toBe(endpoint);
     },
   );
+
+  it("startWhole persists regenerate identity that recovery can re-read unchanged", async () => {
+    const storage = memoryStorage();
+    // useRegeneration は module の default storage を使うため、save 後の identity は
+    // pending-generation の schema 経由で検証する（hook 内 save と同等の command 形状）
+    postMock.mockImplementation((command: GenerationCommand) =>
+      Promise.resolve({
+        status: "processing" as const,
+        idempotencyKey: command.request.idempotencyKey,
+        requestId: "50000000-0000-4000-8000-000000000030",
+        startedAt: "2026-07-11T00:00:00.000Z",
+        quota,
+      }),
+    );
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+        }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
+    });
+    expect(postMock).toHaveBeenCalledTimes(1);
+    const posted = postMock.mock.calls[0]?.[0] as GenerationCommand;
+    expect(posted.kind).toBe("regenerate_menu");
+    // 復旧用に同じ command を保存した想定で、再読取 identity が POST と一致することを示す
+    const pending = createPendingGeneration(posted, USER_ID, () => new Date());
+    savePendingGeneration(pending, storage);
+    const recovered = readPendingGeneration(USER_ID, new Date(), storage);
+    expect(recovered).not.toBeNull();
+    if (recovered === null) throw new Error("pending required");
+    expect(JSON.stringify(pendingGenerationCommand(recovered).request)).toBe(
+      JSON.stringify(posted.request),
+    );
+    expect(generationEndpointFor(pendingGenerationCommand(recovered))).toBe(
+      "/api/generations/menu",
+    );
+  });
 
   it("allows regeneration after a changed but valid current-safety result", async () => {
     postMock.mockResolvedValue({

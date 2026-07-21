@@ -17,6 +17,7 @@ export type HistoryDetailRevalidationView = {
   result?: RevalidationResult;
   errorMessage?: string;
   refetch?: () => void;
+  beginRecheck?: () => void;
 };
 
 type HistoryDetailPageProps = {
@@ -45,6 +46,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
     refetch: () => {
       void live.refetch();
     },
+    beginRecheck: live.beginRecheck,
   };
   const revalidation = injected ?? liveView;
 

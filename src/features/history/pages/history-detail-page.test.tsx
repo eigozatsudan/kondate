@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -272,6 +273,45 @@ describe("HistoryDetailPage safety gate", () => {
       screen.getByText("現在の家族設定で確認しました。作成時から条件が変わっています"),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
+  });
+
+  it("disables これに決めた while checking and enables when revalidation is actionable", async () => {
+    const revalidate = deferredPromise<RevalidationResult>();
+    renderHistoryDetail({ revalidate: () => revalidate.promise });
+    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeDisabled();
+    act(() => {
+      revalidate.resolve(validRevalidation);
+    });
+    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeEnabled();
+  });
+
+  it("calls acceptMenuVersion when これに決めた is clicked while actionable", async () => {
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    const button = screen.getByRole("button", { name: "これに決めた" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(acceptMenuVersionMock).toHaveBeenCalledTimes(1);
+    expect(acceptMenuVersionMock).toHaveBeenCalledWith(MENU_ID);
+  });
+
+  it("keeps これに決めた disabled when revalidation is invalid", () => {
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "invalid",
+          issues: [
+            { code: "allergen_present", path: "dishes.0", message: "アレルゲンが含まれます" },
+          ],
+        },
+      },
+    });
+    expect(screen.getByRole("button", { name: "これに決めた" })).toBeDisabled();
+    expect(acceptMenuVersionMock).not.toHaveBeenCalled();
   });
 });
 

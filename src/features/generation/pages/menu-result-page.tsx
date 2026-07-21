@@ -37,6 +37,8 @@ export type MenuResultPageRevalidationView = {
   result?: RevalidationResult;
   errorMessage?: string;
   refetch?: () => void;
+  /** stale confirm 失敗時などに同期的にゲートを閉じる */
+  beginRecheck?: () => void;
 };
 
 type MenuResultPageProps = {
@@ -65,6 +67,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   }, [query.data]);
 
   const live = useMenuRevalidation(menuId ?? "");
+  const beginRecheck = live.beginRecheck;
   const liveView: MenuResultPageRevalidationView = {
     phase: live.phase,
     ...(live.result !== undefined ? { result: live.result } : {}),
@@ -72,6 +75,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     refetch: () => {
       void live.refetch();
     },
+    beginRecheck,
   };
   const revalidation = injected ?? liveView;
 
@@ -112,17 +116,11 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
             expectedSafetyFingerprint || safetyFingerprint,
           );
           await queryClient.invalidateQueries({ queryKey });
-          await queryClient.invalidateQueries({
-            queryKey: ["menu-revalidation", menuId],
-            exact: true,
-          });
+          // 成功後も fingerprint が変わり得るため再検証する（飛行中は checking）
+          beginRecheck();
         } catch (error) {
-          // stale / archived は閉じた not-found。ゲートを再閉鎖する
-          await queryClient.invalidateQueries({
-            queryKey: ["menu-revalidation", menuId],
-            exact: true,
-            refetchType: "active",
-          });
+          // stale / archived は閉じた not-found。invalidate を待たず同期的にゲートを閉じる
+          beginRecheck();
           throw error;
         }
       },
@@ -142,7 +140,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
         await queryClient.invalidateQueries({ queryKey });
       },
     };
-  }, [menuId, queryClient, queryKey, revalidation.result, userId]);
+  }, [beginRecheck, menuId, queryClient, queryKey, revalidation.result, userId]);
 
   if (!parsed.success) return <Navigate to="/planner" replace />;
   if (query.isError)

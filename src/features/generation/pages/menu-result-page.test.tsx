@@ -13,6 +13,7 @@ const getMenuResultMock = vi.hoisted(() => vi.fn());
 const clearPendingGenerationMock = vi.hoisted(() => vi.fn());
 const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
+const confirmLabelConfirmationMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/menu-result-api", () => ({ getMenuResult: getMenuResultMock }));
 vi.mock("../model/pending-generation", async (importOriginal) => {
@@ -28,6 +29,9 @@ vi.mock("@/features/history/api/revalidation-api", async (importOriginal) => {
 });
 vi.mock("../api/usage-today-api", () => ({
   getUsageToday: getUsageTodayMock,
+}));
+vi.mock("../api/confirm-label-api", () => ({
+  confirmLabelConfirmation: confirmLabelConfirmationMock,
 }));
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
@@ -192,4 +196,55 @@ describe("MenuResultPage", () => {
     expect(screen.getByText("現在の家族設定で確認しています")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
   });
+
+  it("stale label confirm failure recloses the gate synchronously", async () => {
+    const view = makeMenuResultViewModel();
+    getMenuResultMock.mockResolvedValue(view);
+    const warning = {
+      confirmationId: "48000000-0000-4000-8000-000000000099",
+      sourceType: "ingredient" as const,
+      sourceId: view.menu.dishes[0]?.ingredients[0]?.id ?? "53000000-0000-4000-8000-000000000001",
+      sourcePath: "dishes.0.ingredients.0.name",
+      sourceText: "確認対象の加工品",
+      allergenId: "egg",
+      allergenName: "卵",
+      anonymousMemberRef: "member_1",
+      memberLabel: "子ども",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending" as const,
+    };
+    let revalidateCalls = 0;
+    const afterStale = deferredPromiseForTest<RevalidationResult>();
+    revalidateMenuMock.mockImplementation(() => {
+      revalidateCalls += 1;
+      if (revalidateCalls === 1) {
+        return Promise.resolve({ ...validRevalidation, currentLabelWarnings: [warning] });
+      }
+      return afterStale.promise;
+    });
+    confirmLabelConfirmationMock.mockRejectedValue(new Error("not_found"));
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+    expect(
+      await screen.findByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeEnabled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    );
+
+    // invalidate 完了を待たず、同一ターン相当で checking に戻る
+    expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+  });
 });
+
+function deferredPromiseForTest<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
