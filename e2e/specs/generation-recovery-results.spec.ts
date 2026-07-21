@@ -1,5 +1,5 @@
 import { expect, test } from "../fixtures/auth";
-import type { Page, Route } from "@playwright/test";
+import type { Page, Request, Route } from "@playwright/test";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
 // 切断復旧、タブ再開、結果画面の詳細表示、320px幅でのレイアウトを検証する。
@@ -62,8 +62,18 @@ test("resends the same key after the first POST is lost before acceptance", asyn
 
 test("recovers a persisted result when only the POST response is lost", async ({
   completedOnboardingPage: page,
+  context,
 }) => {
   await completeMinimumPlanner(page);
+  let generationPostCount = 0;
+  const countGenerationPost = (request: Request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/generations/menu"
+    ) {
+      generationPostCount += 1;
+    }
+  };
   const generationPostPattern = "**/api/generations/menu";
   const generationStatusPattern = "**/api/generations/*/status";
   const dropPostResponse = async (route: Route) => {
@@ -83,6 +93,7 @@ test("recovers a persisted result when only the POST response is lost", async ({
   };
   await page.route(generationPostPattern, dropPostResponse);
   await page.route(generationStatusPattern, dropStatusResponse);
+  context.on("request", countGenerationPost);
   await page.getByRole("button", { name: "献立を作る" }).click();
   await expect(page.getByText("通信を確認しています")).toBeVisible({ timeout: 10_000 });
   // 他のfixture routeを維持したまま、ここで追加したfault handlerだけを解除する。
@@ -90,7 +101,14 @@ test("recovers a persisted result when only the POST response is lost", async ({
   await page.unroute(generationStatusPattern, dropStatusResponse);
   await page.reload();
   // recovery hookがGET statusでsucceeded結果を取得し、結果画面を表示する
-  await expect(page).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
+  try {
+    await expect(page).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
+    // reload後の誤ったnot_started判定が同じkeyを再POSTしてもserverの冪等性で
+    // 成功し得るため、結果表示より先にcontext全体のPOST総数を直接検証する。
+    expect(generationPostCount).toBe(1);
+  } finally {
+    context.off("request", countGenerationPost);
+  }
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
@@ -103,6 +121,15 @@ test("recovers a completed result after a tab is closed before its POST response
   context,
 }) => {
   await completeMinimumPlanner(page);
+  let generationPostCount = 0;
+  const countGenerationPost = (request: Request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/generations/menu"
+    ) {
+      generationPostCount += 1;
+    }
+  };
   await page.route("**/api/generations/*/status", async (route) => {
     // handler完了後もstatus応答を切断し、元tabが結果を回収する前に
     // POST応答喪失時のoffline表示を同期点として観測できるようにする。
@@ -116,6 +143,7 @@ test("recovers a completed result after a tab is closed before its POST response
       },
     });
   });
+  context.on("request", countGenerationPost);
   await page.getByRole("button", { name: "献立を作る" }).click();
   // after-handlerでgenerationの永続化を完了し、POSTとstatusの両応答喪失を
   // clientが認識した時点を条件同期にする。固定時間待ちは使わない。
@@ -123,7 +151,14 @@ test("recovers a completed result after a tab is closed before its POST response
   await page.close();
   const reopened = await context.newPage();
   await reopened.goto("/generation");
-  await expect(reopened).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
+  try {
+    await expect(reopened).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
+    // 新しいpageで誤ったnot_started判定から再送しても同じ結果へ回復できるため、
+    // page closeをまたぐcontext全体のPOST総数が1回だけであることを保証する。
+    expect(generationPostCount).toBe(1);
+  } finally {
+    context.off("request", countGenerationPost);
+  }
   await expect(reopened.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
