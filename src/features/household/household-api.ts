@@ -222,7 +222,7 @@ export async function addCustomMemberAllergy(
   });
   if (error !== null) {
     if (error.message.includes("custom_allergy_matches_standard")) {
-      throw dataError("標準候補に一致します。標準項目から選んでください");
+      throw dataError("一覧にある項目と同じです。一覧から選んでください");
     }
     throw dataError("自由登録アレルギーを保存できませんでした");
   }
