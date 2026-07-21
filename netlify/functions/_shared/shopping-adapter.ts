@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { Database } from "../../../src/shared/types/database.js";
 import type {
   CreateShoppingListResponse,
+  CurrentShoppingLabelWarning,
   ReconcileShoppingListResponse,
+  RefreshShoppingListSafetyRpcResponse,
   ShoppingDraft,
   ShoppingLabelSnapshot,
   ShoppingList,
@@ -14,6 +16,7 @@ import { reviewedShoppingAliases } from "../../../shared/shopping/reviewed-alias
 import {
   createShoppingListResponseSchema,
   reconcileShoppingListResponseSchema,
+  refreshShoppingListSafetyRpcResponseSchema,
   shoppingLabelSnapshotSchema,
   shoppingListSchema,
   shoppingSourceIngredientSchema,
@@ -42,6 +45,18 @@ export type ShoppingMenuAggregate = {
   labels: ShoppingLabelSnapshot[];
 };
 export type ShoppingPantryAmount = { name: string; quantity: number | null; unit: string | null };
+
+// 設計書 Task4: 買い物リスト単位の再検証で使う、所有者スコープの source 行。
+// menuId は献立が削除されると null になる（shopping_list_sources.menu_id は
+// on delete set null）。その場合は「現在の安全性を確認できない」扱いにするため、
+// snapshot 側（source_menu_id_snapshot ほか）とは別のフィールドとして保持する。
+export type ActiveShoppingSource = {
+  menuId: string | null;
+  sourceMenuIdSnapshot: string;
+  sourceMenuVersion: number;
+  sourceDerivationGroupId: string;
+  itemSources: readonly { itemId: string; sourceIngredientIdSnapshot: string }[];
+};
 
 export type ShoppingDependencies = {
   loadMenu(
@@ -78,6 +93,14 @@ export type ShoppingDependencies = {
     idempotencyKey: string;
     requestHash: string;
   }): Promise<CreateShoppingListResponse | null>;
+  loadActiveListSources(listId: string): Promise<ActiveShoppingSource[]>;
+  getListSafetyFingerprint(listId: string): Promise<string | null>;
+  replaceCurrentSafetyProjection(input: {
+    userId: string;
+    listId: string;
+    expectedFingerprint: string;
+    warnings: readonly CurrentShoppingLabelWarning[];
+  }): Promise<RefreshShoppingListSafetyRpcResponse>;
   aliases: ReadonlyMap<string, string>;
 };
 
@@ -294,6 +317,97 @@ function toLabel(row: {
   });
 }
 
+// 設計書 Task4: adapter は返す前に全フィールドを UUID / 正のバージョンとして検証する。
+// DB 由来の生の行をそのまま service へ渡さないための境界。
+const activeShoppingSourceSchema = z
+  .object({
+    menuId: z.uuid().nullable(),
+    sourceMenuIdSnapshot: z.uuid(),
+    sourceMenuVersion: z.number().int().positive(),
+    sourceDerivationGroupId: z.uuid(),
+    itemSources: z.array(
+      z.object({ itemId: z.uuid(), sourceIngredientIdSnapshot: z.uuid() }).strict(),
+    ),
+  })
+  .strict();
+
+async function loadActiveShoppingListSources(
+  client: UserSupabaseClient,
+  userId: string,
+  listId: string,
+): Promise<ActiveShoppingSource[]> {
+  const sources = await client
+    .from("shopping_list_sources")
+    .select("menu_id,source_menu_id_snapshot,source_menu_version,source_derivation_group_id")
+    .eq("user_id", userId)
+    .eq("list_id", listId);
+  if (sources.error !== null) throw dbFailure("買い物リストの献立情報を読み込めませんでした");
+
+  const items = await client
+    .from("shopping_items")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("list_id", listId);
+  if (items.error !== null) throw dbFailure("買い物リストの項目を読み込めませんでした");
+  const itemIds = items.data.map((item) => item.id);
+
+  const itemSourceRows =
+    itemIds.length === 0
+      ? []
+      : await (async () => {
+          const { data, error } = await client
+            .from("shopping_item_sources")
+            .select("item_id,source_ingredient_id_snapshot")
+            .eq("user_id", userId)
+            .in("item_id", itemIds);
+          if (error !== null) throw dbFailure("買い物リストの由来情報を読み込めませんでした");
+          return data;
+        })();
+
+  // どの item がどの献立由来かは、生きている dish_ingredients の menu_id でしか確定できない。
+  // 献立が削除されて辿れなくなった行は意図的に捨て、source 側の menuId=null 判定で
+  // unverifiable に倒す（名前一致での代替解決は安全側に倒れないため行わない）。
+  const snapshotIds = [...new Set(itemSourceRows.map((row) => row.source_ingredient_id_snapshot))];
+  const ingredientRows =
+    snapshotIds.length === 0
+      ? []
+      : await (async () => {
+          const { data, error } = await client
+            .from("dish_ingredients")
+            .select("id,menu_id")
+            .eq("user_id", userId)
+            .in("id", snapshotIds);
+          if (error !== null) throw dbFailure("買い物リストの由来情報を読み込めませんでした");
+          return data;
+        })();
+  const menuIdByIngredientId = new Map(ingredientRows.map((row) => [row.id, row.menu_id]));
+
+  const itemSourcesByMenuId = new Map<
+    string,
+    { itemId: string; sourceIngredientIdSnapshot: string }[]
+  >();
+  for (const row of itemSourceRows) {
+    const menuId = menuIdByIngredientId.get(row.source_ingredient_id_snapshot);
+    if (menuId === undefined) continue;
+    const bucket = itemSourcesByMenuId.get(menuId) ?? [];
+    bucket.push({
+      itemId: row.item_id,
+      sourceIngredientIdSnapshot: row.source_ingredient_id_snapshot,
+    });
+    itemSourcesByMenuId.set(menuId, bucket);
+  }
+
+  return sources.data.map((row) =>
+    activeShoppingSourceSchema.parse({
+      menuId: row.menu_id,
+      sourceMenuIdSnapshot: row.source_menu_id_snapshot,
+      sourceMenuVersion: row.source_menu_version,
+      sourceDerivationGroupId: row.source_derivation_group_id,
+      itemSources: row.menu_id === null ? [] : (itemSourcesByMenuId.get(row.menu_id) ?? []),
+    }),
+  );
+}
+
 function parseRpcResponse<T>(data: unknown, schema: z.ZodType<T>): T {
   const parsed = schema.safeParse(data);
   if (!parsed.success) throw dbFailure("買い物リストの応答を確認できませんでした");
@@ -372,6 +486,33 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
       });
       if (error !== null) mapRpcError(error);
       return data === null ? null : parseRpcResponse(data, createShoppingListResponseSchema);
+    },
+    loadActiveListSources: (listId) =>
+      loadActiveShoppingListSources(userClient, user.userId, listId),
+    async getListSafetyFingerprint(listId) {
+      const { data, error } = await admin.rpc("shopping_list_safety_fingerprint", {
+        p_user_id: user.userId,
+        p_list_id: listId,
+      });
+      if (error !== null) mapRpcError(error);
+      // 生成済み Database 型は plpgsql の "returns text" を非 null と推論するが、
+      // SQL 側は「自分の active なリストではない」「menu_id が null の source を含む」
+      // 場合に null を返す契約。ShoppingDependencies 側の戻り値型を string|null に
+      // しているのはそのためで、ここでは実引用をそのまま通す。
+      return data;
+    },
+    async replaceCurrentSafetyProjection(input) {
+      const { data, error } = await admin.rpc("refresh_shopping_list_safety", {
+        p_user_id: input.userId,
+        p_list_id: input.listId,
+        p_expected_fingerprint: input.expectedFingerprint,
+        p_warnings: input.warnings.map((warning) => ({ ...warning })),
+      });
+      if (error !== null) mapRpcError(error);
+      // data は service 専用 RPC の内部オブジェクト。公開 HTTP union
+      // (shoppingListSafetyDataSchema) としては絶対に解釈せず、内部スキーマだけで
+      // 厳密検証する。キー欠落・余剰キー・301件・不正な warning はここで閉じる。
+      return parseRpcResponse(data as unknown, refreshShoppingListSafetyRpcResponseSchema);
     },
     aliases: reviewedShoppingAliases,
   };

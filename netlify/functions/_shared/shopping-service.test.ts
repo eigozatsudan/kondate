@@ -2,11 +2,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   CreateShoppingListRequest,
   CreateShoppingListResponse,
+  CurrentShoppingLabelWarning,
+  ReconcileShoppingListRequest,
   ShoppingDraft,
+  ShoppingLabelSnapshot,
+  ShoppingList,
 } from "../../../shared/contracts/shopping.js";
+import { HttpError } from "./http.js";
 import type { CurrentMenuLabelWarning, RevalidationResult } from "./revalidation-service.js";
-import type { ShoppingDependencies, ShoppingMenuAggregate } from "./shopping-adapter.js";
-import { createShoppingListFromMenu } from "./shopping-service.js";
+import type {
+  ActiveShoppingSource,
+  ShoppingDependencies,
+  ShoppingMenuAggregate,
+} from "./shopping-adapter.js";
+import {
+  createShoppingListFromMenu,
+  previewShoppingListDiff,
+  reconcileShoppingList,
+  revalidateActiveShoppingList,
+} from "./shopping-service.js";
 
 // 設計書 Task3 Step1: current-safety 検証 → fingerprint-before → owner 読み込み →
 // fingerprint-after → RPC 適用、という順序と replay/エラーの各分岐を網羅する。
@@ -91,6 +105,13 @@ type Mocks = {
   applyDraft: ReturnType<typeof vi.fn<ShoppingDependencies["applyDraft"]>>;
   applyReconciliation: ReturnType<typeof vi.fn<ShoppingDependencies["applyReconciliation"]>>;
   findMutationReplay: ReturnType<typeof vi.fn<ShoppingDependencies["findMutationReplay"]>>;
+  loadActiveListSources: ReturnType<typeof vi.fn<ShoppingDependencies["loadActiveListSources"]>>;
+  getListSafetyFingerprint: ReturnType<
+    typeof vi.fn<ShoppingDependencies["getListSafetyFingerprint"]>
+  >;
+  replaceCurrentSafetyProjection: ReturnType<
+    typeof vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>
+  >;
 };
 
 function makeMocks(): Mocks {
@@ -105,6 +126,19 @@ function makeMocks(): Mocks {
     applyDraft: vi.fn<ShoppingDependencies["applyDraft"]>().mockResolvedValue(makeResponse()),
     applyReconciliation: vi.fn<ShoppingDependencies["applyReconciliation"]>(),
     findMutationReplay: vi.fn<ShoppingDependencies["findMutationReplay"]>().mockResolvedValue(null),
+    loadActiveListSources: vi
+      .fn<ShoppingDependencies["loadActiveListSources"]>()
+      .mockResolvedValue([]),
+    getListSafetyFingerprint: vi
+      .fn<ShoppingDependencies["getListSafetyFingerprint"]>()
+      .mockResolvedValue(FINGERPRINT_A),
+    replaceCurrentSafetyProjection: vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      }),
   };
 }
 
@@ -118,6 +152,9 @@ function toDeps(mocks: Mocks): ShoppingDependencies {
     applyDraft: mocks.applyDraft,
     applyReconciliation: mocks.applyReconciliation,
     findMutationReplay: mocks.findMutationReplay,
+    loadActiveListSources: mocks.loadActiveListSources,
+    getListSafetyFingerprint: mocks.getListSafetyFingerprint,
+    replaceCurrentSafetyProjection: mocks.replaceCurrentSafetyProjection,
     aliases: new Map(),
   };
 }
@@ -396,5 +433,625 @@ describe("createShoppingListFromMenu", () => {
     });
     await createShoppingListFromMenu(toDeps(mocks), makeCommand());
     expect(capturedDraft?.items[0]?.displayName).toBe("スナップショット食材");
+  });
+});
+
+// --- 設計書 Task4: preview / revalidate / reconcile ---------------------------------
+// Task4 で追加される三つの経路（差分プレビュー、買い物リスト単位の現行安全性再検証、
+// 承認済み差分の整合適用）を、ShoppingDependencies を丸ごと差し替えられる
+// makeShoppingDependencies fixture で検証する。Task3 の makeMocks/toDeps は
+// 「個別の vi.fn 変数を直接 expect する」形だが、設計書 Task4 が verbatim で
+// 供給するテストは deps オブジェクト経由で expect するため、両方を併存させる。
+
+const LIST_ID = "70000000-0000-4000-8000-000000000001";
+const OTHER_LIST_ID = "70000000-0000-4000-8000-000000000002";
+const ITEM_ID = "71000000-0000-4000-8000-000000000001";
+const MENU_A = "52000000-0000-4000-8000-00000000000a";
+const MENU_B = "52000000-0000-4000-8000-00000000000b";
+const GROUP_A = "c1000000-0000-4000-8000-00000000000a";
+const GROUP_B = "c1000000-0000-4000-8000-00000000000b";
+const INGREDIENT_A = "53000000-0000-4000-8000-00000000000a";
+const INGREDIENT_B = "53000000-0000-4000-8000-00000000000b";
+
+function makeList(overrides: Partial<ShoppingList> = {}): ShoppingList {
+  return {
+    id: LIST_ID,
+    status: "active",
+    version: 3,
+    items: [],
+    listLabelWarnings: [],
+    ...overrides,
+  };
+}
+
+function makeSource(overrides: Partial<ActiveShoppingSource> = {}): ActiveShoppingSource {
+  return {
+    menuId: MENU_A,
+    sourceMenuIdSnapshot: MENU_A,
+    sourceMenuVersion: 1,
+    sourceDerivationGroupId: GROUP_A,
+    itemSources: [],
+    ...overrides,
+  };
+}
+
+function makeMenuWarning(
+  overrides: Partial<CurrentMenuLabelWarning> = {},
+): CurrentMenuLabelWarning {
+  return {
+    confirmationId: "a1000000-0000-4000-8000-000000000001",
+    sourceType: "ingredient",
+    sourceId: INGREDIENT_A,
+    sourcePath: "dishes.0.ingredients.0.name",
+    sourceText: "カレールー",
+    allergenId: "wheat",
+    allergenName: "小麦",
+    anonymousMemberRef: "member_1",
+    memberLabel: "子ども",
+    dictionaryVersion: "jp-caa-2026-04.v1",
+    confirmationStatus: "pending",
+    ...overrides,
+  };
+}
+
+function makeCurrentWarning(
+  overrides: Partial<CurrentShoppingLabelWarning> = {},
+): CurrentShoppingLabelWarning {
+  return {
+    itemId: null,
+    warningKey: "b".repeat(64),
+    sourceMenuId: MENU_B,
+    sourceDerivationGroupId: GROUP_B,
+    sourceType: "ingredient",
+    sourceId: INGREDIENT_A,
+    sourcePath: "dishes.0.ingredients.0.name",
+    sourceDisplayName: "カレールー",
+    allergenId: "wheat",
+    allergenDisplayName: "小麦",
+    anonymousMemberRef: "member_1",
+    memberDisplayName: "子ども",
+    dictionaryVersion: "jp-caa-2026-04.v1",
+    ...overrides,
+  };
+}
+
+function makeShoppingDependencies(
+  overrides: Partial<ShoppingDependencies> = {},
+): ShoppingDependencies {
+  return {
+    ...toDeps(makeMocks()),
+    loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(makeList()),
+    loadActiveListSources: vi
+      .fn<ShoppingDependencies["loadActiveListSources"]>()
+      .mockResolvedValue([]),
+    getListSafetyFingerprint: vi
+      .fn<ShoppingDependencies["getListSafetyFingerprint"]>()
+      .mockResolvedValue(FINGERPRINT_A),
+    replaceCurrentSafetyProjection: vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      }),
+    applyReconciliation: vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false }),
+    ...overrides,
+  };
+}
+
+const reconcileCommand: ReconcileShoppingListRequest & { userId: string; listId: string } = {
+  userId: USER_ID,
+  listId: LIST_ID,
+  expectedListVersion: 3,
+  sourceMenuId: MENU_ID,
+  sourceMenuVersion: 1,
+  idempotencyKey: IDEMPOTENCY_KEY,
+  approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+};
+
+function sentWarnings(
+  mock: ReturnType<typeof vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>>,
+): readonly CurrentShoppingLabelWarning[] {
+  return mock.mock.calls[0]?.[0].warnings ?? [];
+}
+
+describe("revalidateActiveShoppingList", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns a deterministic fingerprint with sorted unique checked source menu ids", async () => {
+    // 設計書 Task4 Step1: source は逆順かつ重複ありで供給し、公開結果の
+    // checkedSourceMenuIds が「重複排除 + 昇順」であることを固定する。
+    const warningB = makeCurrentWarning();
+    const replace = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [warningB],
+      });
+    const revalidate = vi
+      .fn<ShoppingDependencies["revalidate"]>()
+      .mockResolvedValue(makeRevalidation());
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([
+          makeSource({
+            menuId: MENU_B,
+            sourceMenuIdSnapshot: MENU_B,
+            sourceDerivationGroupId: GROUP_B,
+          }),
+          makeSource(),
+          makeSource({
+            menuId: MENU_B,
+            sourceMenuIdSnapshot: MENU_B,
+            sourceMenuVersion: 2,
+            sourceDerivationGroupId: GROUP_B,
+          }),
+        ]),
+      revalidate,
+      replaceCurrentSafetyProjection: replace,
+    });
+    await expect(
+      revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID }),
+    ).resolves.toEqual({
+      status: "valid",
+      safetyFingerprint: FINGERPRINT_A,
+      checkedSourceMenuIds: [MENU_A, MENU_B],
+      currentLabelWarnings: [warningB],
+      issues: [],
+    });
+    // 同一献立は distinct 単位で一度だけ再検証する。
+    expect(revalidate).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns unverifiable with no fingerprint when a source menu is no longer live", async () => {
+    const replace = vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>();
+    const fingerprint = vi.fn<ShoppingDependencies["getListSafetyFingerprint"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource(), makeSource({ menuId: null })]),
+      getListSafetyFingerprint: fingerprint,
+      replaceCurrentSafetyProjection: replace,
+    });
+    const result = await revalidateActiveShoppingList(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+    });
+    expect(result.status).toBe("unverifiable");
+    expect(result.safetyFingerprint).toBeNull();
+    expect(result.currentLabelWarnings).toEqual([]);
+    expect(result.issues[0]?.code).toBe("source_menu_unavailable");
+    expect(fingerprint).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("returns human issues and no fingerprint when a source is currently invalid", async () => {
+    const replace = vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource()]),
+      revalidate: vi.fn<ShoppingDependencies["revalidate"]>().mockResolvedValue(
+        makeRevalidation({
+          status: "invalid",
+          issues: [
+            { code: "direct_allergen_match", path: "dishes.0", message: "小麦が含まれます" },
+          ],
+        }),
+      ),
+      replaceCurrentSafetyProjection: replace,
+    });
+    const result = await revalidateActiveShoppingList(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+    });
+    expect(result.status).toBe("invalid");
+    expect(result.safetyFingerprint).toBeNull();
+    expect(result.checkedSourceMenuIds).toEqual([MENU_A]);
+    expect(result.issues[0]).toMatchObject({
+      code: "current_safety_invalid",
+      sourceMenuId: MENU_A,
+    });
+    expect(result.issues[0]?.message.length).toBeGreaterThan(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("stays closed when owner-scoped source enumeration fails", async () => {
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockRejectedValue(new HttpError(503, "shopping_unavailable", "読み込めませんでした")),
+    });
+    await expect(
+      revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID }),
+    ).rejects.toMatchObject({ status: 503 });
+  });
+
+  it("returns no token when the list safety fingerprint disappears after source validation", async () => {
+    const replace = vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource()]),
+      getListSafetyFingerprint: vi
+        .fn<ShoppingDependencies["getListSafetyFingerprint"]>()
+        .mockResolvedValue(null),
+      replaceCurrentSafetyProjection: replace,
+    });
+    const result = await revalidateActiveShoppingList(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+    });
+    expect(result.status).toBe("unverifiable");
+    expect(result.safetyFingerprint).toBeNull();
+    expect(result.issues[0]?.code).toBe("safety_check_failed");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("returns safety_check_failed with no current projection when the replacement loses the race", async () => {
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource()]),
+      replaceCurrentSafetyProjection: vi
+        .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+        .mockRejectedValue(
+          new HttpError(409, "safety_fingerprint_changed", "家族設定が変わりました"),
+        ),
+    });
+    const result = await revalidateActiveShoppingList(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+    });
+    expect(result.status).toBe("unverifiable");
+    expect(result.currentLabelWarnings).toEqual([]);
+    expect(result.issues[0]?.code).toBe("safety_check_failed");
+  });
+
+  it("never wraps a foreign list id or a changed fingerprint from the internal RPC as success", async () => {
+    for (const persisted of [
+      { listId: OTHER_LIST_ID, safetyFingerprint: FINGERPRINT_A, currentLabelWarnings: [] },
+      { listId: LIST_ID, safetyFingerprint: FINGERPRINT_B, currentLabelWarnings: [] },
+    ]) {
+      const deps = makeShoppingDependencies({
+        loadActiveListSources: vi
+          .fn<ShoppingDependencies["loadActiveListSources"]>()
+          .mockResolvedValue([makeSource()]),
+        replaceCurrentSafetyProjection: vi
+          .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+          .mockResolvedValue(persisted),
+      });
+      await expect(
+        revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID }),
+      ).rejects.toMatchObject({ status: 503, code: "safety_check_failed" });
+    }
+  });
+
+  it("maps a warning to an item only on an exact source ingredient snapshot match", async () => {
+    const replace = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      });
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([
+          makeSource({
+            itemSources: [{ itemId: ITEM_ID, sourceIngredientIdSnapshot: INGREDIENT_A }],
+          }),
+        ]),
+      revalidate: vi
+        .fn<ShoppingDependencies["revalidate"]>()
+        .mockResolvedValue(makeRevalidation({ currentLabelWarnings: [makeMenuWarning()] })),
+      replaceCurrentSafetyProjection: replace,
+    });
+    await revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID });
+    expect(sentWarnings(replace)).toEqual([
+      expect.objectContaining({
+        itemId: ITEM_ID,
+        sourceMenuId: MENU_A,
+        sourceDerivationGroupId: GROUP_A,
+        sourceDisplayName: "カレールー",
+        allergenDisplayName: "小麦",
+        memberDisplayName: "子ども",
+      }),
+    ]);
+  });
+
+  it("keeps a warning list-level instead of falling back to name-only matching", async () => {
+    const replace = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      });
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([
+          makeSource({
+            // 同じ表示名でも ingredient スナップショット ID が違えば item へは結び付けない。
+            itemSources: [{ itemId: ITEM_ID, sourceIngredientIdSnapshot: INGREDIENT_B }],
+          }),
+        ]),
+      revalidate: vi
+        .fn<ShoppingDependencies["revalidate"]>()
+        .mockResolvedValue(makeRevalidation({ currentLabelWarnings: [makeMenuWarning()] })),
+      replaceCurrentSafetyProjection: replace,
+    });
+    await revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID });
+    expect(sentWarnings(replace)[0]?.itemId).toBeNull();
+  });
+
+  it("deduplicates and sorts the composed current warnings by warning key and item id", async () => {
+    const replace = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      });
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource()]),
+      revalidate: vi.fn<ShoppingDependencies["revalidate"]>().mockResolvedValue(
+        makeRevalidation({
+          currentLabelWarnings: [
+            makeMenuWarning({ allergenId: "milk", allergenName: "乳" }),
+            makeMenuWarning(),
+            makeMenuWarning(),
+          ],
+        }),
+      ),
+      replaceCurrentSafetyProjection: replace,
+    });
+    await revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID });
+    const sent = sentWarnings(replace);
+    expect(sent).toHaveLength(2);
+    expect(sent.map((warning) => warning.warningKey)).toEqual(
+      [...sent.map((warning) => warning.warningKey)].sort(),
+    );
+  });
+
+  it("fails closed when a composed warning exceeds the bounded source text length", async () => {
+    const replace = vi.fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource()]),
+      revalidate: vi.fn<ShoppingDependencies["revalidate"]>().mockResolvedValue(
+        makeRevalidation({
+          currentLabelWarnings: [makeMenuWarning({ sourceText: "あ".repeat(501) })],
+        }),
+      ),
+      replaceCurrentSafetyProjection: replace,
+    });
+    await expect(
+      revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID }),
+    ).rejects.toMatchObject({ status: 503, code: "safety_check_failed" });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("sends only the currently derived warning and never the immutable provenance snapshot", async () => {
+    const immutableA: ShoppingLabelSnapshot = {
+      confirmationId: "a1000000-0000-4000-8000-0000000000aa",
+      warningKey: "a".repeat(64),
+      sourceMenuId: MENU_A,
+      sourceDerivationGroupId: GROUP_A,
+      sourceType: "ingredient",
+      sourceId: INGREDIENT_B,
+      sourcePath: "dishes.0.ingredients.1.name",
+      sourceDisplayName: "旧食材",
+      allergenId: "egg",
+      allergenDisplayName: "卵",
+      anonymousMemberRef: "member_2",
+      memberDisplayName: "削除済みの家族",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending",
+    };
+    const replace = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      });
+    const deps = makeShoppingDependencies({
+      loadActiveList: vi
+        .fn<ShoppingDependencies["loadActiveList"]>()
+        .mockResolvedValue(makeList({ listLabelWarnings: [immutableA] })),
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([makeSource()]),
+      revalidate: vi
+        .fn<ShoppingDependencies["revalidate"]>()
+        .mockResolvedValue(makeRevalidation({ currentLabelWarnings: [makeMenuWarning()] })),
+      replaceCurrentSafetyProjection: replace,
+    });
+    await revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID });
+    const sent = sentWarnings(replace);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.warningKey).not.toBe(immutableA.warningKey);
+  });
+
+  it("fails closed when the list is missing or owned by another user", async () => {
+    const deps = makeShoppingDependencies({
+      loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(null),
+    });
+    await expect(
+      revalidateActiveShoppingList(deps, { userId: USER_ID, listId: OTHER_LIST_ID }),
+    ).rejects.toMatchObject({ status: 404, code: "shopping_list_not_found" });
+  });
+});
+
+describe("previewShoppingListDiff", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns canonical human fields from the owner-scoped server snapshot", async () => {
+    const deps = makeShoppingDependencies({
+      loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(
+        makeMenu({
+          ingredients: [
+            {
+              ingredientId: INGREDIENT_A,
+              dishId: DISH_ID,
+              dishName: "カレー",
+              name: "カレールー",
+              quantityValue: 1,
+              quantityText: "1箱",
+              unit: "箱",
+              storeSection: "dry_goods",
+            },
+          ],
+          labels: [
+            {
+              confirmationId: "a1000000-0000-4000-8000-000000000001",
+              warningKey: "c".repeat(64),
+              sourceMenuId: MENU_ID,
+              sourceDerivationGroupId: GROUP_A,
+              sourceType: "ingredient",
+              sourceId: INGREDIENT_A,
+              sourcePath: "dishes.0.ingredients.0.name",
+              sourceDisplayName: "カレールー",
+              allergenId: "wheat",
+              allergenDisplayName: "小麦",
+              anonymousMemberRef: "member_1",
+              memberDisplayName: "子ども",
+              dictionaryVersion: "jp-caa-2026-04.v1",
+              confirmationStatus: "pending",
+            },
+          ],
+        }),
+      ),
+    });
+    const diff = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    expect(diff.add[0]?.displayName).toBe("カレールー");
+    const labels = [...diff.add.flatMap((item) => item.labelWarnings), ...diff.listLabelWarnings];
+    expect(labels[0]?.allergenDisplayName).toBe("小麦");
+    expect(labels[0]?.memberDisplayName).toBe("子ども");
+  });
+
+  it("rejects a stale list version before revalidating the source menu", async () => {
+    const revalidate = vi.fn<ShoppingDependencies["revalidate"]>();
+    const deps = makeShoppingDependencies({ revalidate });
+    await expect(
+      previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 2,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "list_version_conflict" });
+    expect(revalidate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale source menu version", async () => {
+    const deps = makeShoppingDependencies();
+    await expect(
+      previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        expectedListVersion: 3,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "source_menu_version_conflict" });
+  });
+});
+
+describe("reconcileShoppingList", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns a saved reconciliation before stale-version or current-state reads", async () => {
+    const saved = { listId: crypto.randomUUID(), version: 4, replayed: true };
+    const deps = makeShoppingDependencies({
+      findMutationReplay: vi.fn().mockResolvedValue(saved),
+      loadActiveList: vi.fn(() => {
+        throw new Error("must not load after replay");
+      }),
+      revalidate: vi.fn(() => {
+        throw new Error("must not revalidate after replay");
+      }),
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).resolves.toEqual(saved);
+    /* eslint-disable @typescript-eslint/unbound-method -- 設計書 Task4 Step1 が verbatim
+       で供給するテストは deps 経由で expect する。ShoppingDependencies の各要素は
+       this を参照しない純粋な関数プロパティなので、束縛外れの危険はない。 */
+    expect(deps.loadActiveList).not.toHaveBeenCalled();
+    expect(deps.revalidate).not.toHaveBeenCalled();
+    /* eslint-enable @typescript-eslint/unbound-method */
+  });
+
+  it("rejects a stale list version before applying the reconciliation", async () => {
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({ applyReconciliation });
+    await expect(
+      reconcileShoppingList(deps, { ...reconcileCommand, expectedListVersion: 2 }),
+    ).rejects.toMatchObject({ status: 409, code: "list_version_conflict" });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale source menu version before applying the reconciliation", async () => {
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({ applyReconciliation });
+    await expect(
+      reconcileShoppingList(deps, { ...reconcileCommand, sourceMenuVersion: 2 }),
+    ).rejects.toMatchObject({ status: 409, code: "source_menu_version_conflict" });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  it("passes the just-read safety fingerprint and the canonical request hash to the RPC", async () => {
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const deps = makeShoppingDependencies({ applyReconciliation });
+    await reconcileShoppingList(deps, reconcileCommand);
+    expect(applyReconciliation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        listId: LIST_ID,
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        safetyFingerprint: FINGERPRINT_A,
+        requestHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown as string,
+      }),
+    );
+  });
+
+  it("surfaces the RPC protected_item_conflict defense to the caller", async () => {
+    const deps = makeShoppingDependencies({
+      applyReconciliation: vi
+        .fn<ShoppingDependencies["applyReconciliation"]>()
+        .mockRejectedValue(
+          new HttpError(409, "protected_item_conflict", "差分を作り直してください"),
+        ),
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 409,
+      code: "protected_item_conflict",
+    });
   });
 });
