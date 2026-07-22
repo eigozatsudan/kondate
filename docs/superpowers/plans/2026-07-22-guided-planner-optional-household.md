@@ -544,7 +544,7 @@ Run: `docker compose run --rm --no-deps app npx supabase migration new target_mo
 
 Expected: 新しいmigration pathが1件表示される。exact pathをTask reportへ記録する。
 
-pgTAPへhousehold/ideaの正常行、4種類の矛盾行、既存menu backfill、空target draftのnull移行、version列のmode別nullabilityを追加する。空targetは少なくとも「他回答が完成済み」「途中回答」「以前は家族を選択していたが保存時点では0件」の3 fixtureを用意する。旧schemaから選択意図を復元できないため、3件とも`target_mode is null`、`servings is null`へ移行し、食事・食材・ジャンル・任意条件は変更されないことを検証する。
+pgTAPへhousehold/ideaの正常行、4種類の矛盾行、既存menu backfill、空target draftのnull移行、version列のmode別nullabilityを追加する。空targetは少なくとも「他回答が完成済み」「途中回答」「以前は家族を選択していたが保存時点では0件」の3 fixtureを用意する。旧schemaから選択意図を復元できないため、3件とも`target_mode is null`、`servings is null`へ移行し、食事・食材・ジャンル・任意条件・pantry選択・revisionは変更されないことを検証する。
 
 - [ ] **Step 4: shared planner schemaを実装する**
 
