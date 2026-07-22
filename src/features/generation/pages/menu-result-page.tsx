@@ -182,6 +182,8 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     try {
       await reconcileList.mutateAsync({ listId, input: command });
       await finishShoppingCommand("reconcile", listId);
+      // 作成時と同じく反映後は買い物リストへ移る（E2E・再送完了の到達点を揃える）
+      void navigate("/shopping");
     } catch (error) {
       failShoppingCommand("reconcile", listId, error);
     }
