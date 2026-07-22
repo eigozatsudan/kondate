@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import {
-  generationCommandSchema,
+  generationCommandV2Schema,
   generationStatusDataSchema,
   type GenerationCommand,
   type GenerationStatusData,
@@ -65,10 +65,11 @@ export function postGeneration(
   commandInput: GenerationCommand,
   deps: { fetchImpl?: typeof fetch } = {},
 ): Promise<GenerationStatusData> {
-  const command = generationCommandSchema.parse(commandInput);
+  // wire は top-level commandVersion を必須とする v2 全体を送る
+  const command = generationCommandV2Schema.parse(commandInput);
   return call(
     generationEndpointFor(command),
-    { method: "POST", body: JSON.stringify(command.request) },
+    { method: "POST", body: JSON.stringify(command) },
     command.request.idempotencyKey,
     deps.fetchImpl ?? fetch,
   );

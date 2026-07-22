@@ -20,6 +20,20 @@ import { materializeAiGeneratedMenu } from "./generation-materializer.js";
 import { GenerationOutputError } from "./generation-repair.js";
 import { HttpError } from "./http.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
+vi.mock("./generation-integrity-context.js", () => ({
+  resolveGenerationIntegrityContext: vi.fn(() =>
+    Promise.resolve({
+      kind: "new_menu",
+      targetMode: "household",
+      servings: null,
+      targetMemberIds: ["90000000-0000-4000-8000-000000000001"],
+      sourceMenuVersion: null,
+    }),
+  ),
+}));
+vi.mock("./supabase-admin.js", () => ({
+  getSupabaseAdmin: vi.fn(() => ({})),
+}));
 import {
   ATTEMPT_TIMEOUT_MS,
   createGenerationDeps,
@@ -83,6 +97,7 @@ const key = "82000000-0000-4000-8000-000000000001";
 const menuId = "83000000-0000-4000-8000-000000000001";
 const models = ["mock/primary:free", "mock/repair:free"] as const;
 const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
+  commandVersion: "generation-command.v2",
   kind: "new_menu",
   request: {
     idempotencyKey: key,
@@ -141,7 +156,9 @@ function record(
 function makeRepository() {
   let current = record("processing");
   const repository = {
-    reserve: vi.fn(() => Promise.resolve(current)),
+    lookup: vi.fn(() => Promise.resolve({ kind: "miss" as const })),
+    replayExisting: vi.fn(() => Promise.resolve(current)),
+    reserveNew: vi.fn(() => Promise.resolve(current)),
     markSent: vi.fn(() => Promise.resolve({ ...current, sent: true as const, code: null })),
     reserveRepair: vi.fn<GenerationDependencies["repository"]["reserveRepair"]>(() =>
       Promise.resolve({ reserved: true, retry_at: null }),
@@ -1066,7 +1083,7 @@ describe("runGeneration", () => {
 
   it("hydrates a replay without executing generation", async () => {
     const repository = makeRepository();
-    repository.reserve.mockResolvedValue({ ...record("processing"), replayed: true });
+    repository.reserveNew.mockResolvedValue({ ...record("processing"), replayed: true });
     repository.status.mockResolvedValue(record("succeeded"));
     const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
     const result = await runGeneration(makeDeps({ repository, loadExecutionContext }), command);
@@ -1085,7 +1102,7 @@ describe("runGeneration", () => {
     "ignores a stale %s reservation return and hydrates authoritative status",
     async (status, replayed) => {
       const repository = makeRepository();
-      repository.reserve.mockResolvedValue({ ...record(status), replayed });
+      repository.reserveNew.mockResolvedValue({ ...record(status), replayed });
       repository.status.mockResolvedValue(record("succeeded"));
       const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
       const result = await runGeneration(makeDeps({ repository, loadExecutionContext }), command);
@@ -1105,7 +1122,7 @@ describe("runGeneration", () => {
     async (status, replayed) => {
       const repository = makeRepository();
       const statusError = new Error("status unavailable");
-      repository.reserve.mockResolvedValue({ ...record(status), replayed });
+      repository.reserveNew.mockResolvedValue({ ...record(status), replayed });
       repository.status.mockRejectedValue(statusError);
       const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
       await expect(
@@ -1235,7 +1252,8 @@ describe("runGeneration", () => {
     );
     expect(result.status).toBe("failed");
     expect(result).toMatchObject({ quota: { consumed: false } });
-    expect(mockRepository.reserve).toHaveBeenCalledTimes(1);
+    expect(mockRepository.lookup).toHaveBeenCalledTimes(1);
+    expect(mockRepository.reserveNew).toHaveBeenCalledTimes(1);
     expect(mockRepository.reserveRepair).toHaveBeenCalledTimes(1);
     expect(mockRepository.markSent).toHaveBeenCalledTimes(2);
     expect(mockRepository.succeed).not.toHaveBeenCalled();
@@ -1299,6 +1317,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
 
   it.each([
     {
+      commandVersion: "generation-command.v2" as const,
       kind: "regenerate_menu" as const,
       request: {
         idempotencyKey: key,
@@ -1309,6 +1328,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       },
     },
     {
+      commandVersion: "generation-command.v2" as const,
       kind: "regenerate_dish" as const,
       request: {
         idempotencyKey: key,
@@ -1561,6 +1581,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       primaryIngredients: dish.ingredients.map((item) => item.name),
     });
     const wholeRegenerationCommand = {
+      commandVersion: "generation-command.v2" as const,
       kind: "regenerate_menu" as const,
       request: {
         idempotencyKey: key,
@@ -1716,6 +1737,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       ],
     });
     const dishRegenerationCommand = {
+      commandVersion: "generation-command.v2" as const,
       kind: "regenerate_dish" as const,
       request: {
         idempotencyKey: key,
@@ -1839,6 +1861,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       },
     });
     const dishRegenerationCommand = {
+      commandVersion: "generation-command.v2" as const,
       kind: "regenerate_dish" as const,
       request: {
         idempotencyKey: key,

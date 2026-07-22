@@ -25,6 +25,7 @@ const processing: GenerationStatusData = {
   quota,
 };
 const newMenuCommand: GenerationCommand = {
+  commandVersion: "generation-command.v2",
   kind: "new_menu",
   request: {
     idempotencyKey: IDEMPOTENCY_KEY,
@@ -35,6 +36,7 @@ const newMenuCommand: GenerationCommand = {
   },
 };
 const regenerateMenuCommand: GenerationCommand = {
+  commandVersion: "generation-command.v2",
   kind: "regenerate_menu",
   request: {
     idempotencyKey: IDEMPOTENCY_KEY,
@@ -45,6 +47,7 @@ const regenerateMenuCommand: GenerationCommand = {
   },
 };
 const regenerateDishCommand: GenerationCommand = {
+  commandVersion: "generation-command.v2",
   kind: "regenerate_dish",
   request: {
     ...regenerateMenuCommand.request,
@@ -78,7 +81,7 @@ describe("generation API", () => {
     await expect(postGeneration(newMenuCommand, { fetchImpl })).resolves.toEqual(processing);
     expect(fetchImpl).toHaveBeenCalledWith("/api/generations/menu", {
       method: "POST",
-      body: JSON.stringify(newMenuCommand.request),
+      body: JSON.stringify(newMenuCommand),
       headers: {
         Authorization: "Bearer access-token",
         "Content-Type": "application/json",

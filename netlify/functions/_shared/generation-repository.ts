@@ -1,9 +1,11 @@
 import { z } from "zod";
 import {
   generationConflictSchema,
+  generationCommandVersionV2,
   releaseQuota,
-  type GenerationCommand,
-  type ValidatedMenu,
+  type GenerationCommandV2,
+  type GenerationIntegrityContextV2,
+  type GenerationRequestLookup,
 } from "../../../shared/contracts/generation.js";
 import type { Database } from "../../../src/shared/types/database.js";
 import type { requireUser } from "./auth.js";
@@ -12,6 +14,10 @@ import {
   generationRequestHmac,
   generationRequestHmacVersion,
 } from "./generation-command-integrity.js";
+import {
+  parseIntegrityContextPayload,
+  toIntegrityContextPayload,
+} from "./generation-integrity-context.js";
 import { HttpError } from "./http.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase, type UserSupabaseClient } from "./supabase-user.js";
@@ -84,32 +90,98 @@ async function rpc<Name extends PublicFunctionName>(
   }
 }
 
+const lookupHitSchema = z
+  .object({
+    kind: z.literal("hit"),
+    request_id: z.uuid(),
+    request_hmac_version: z.literal(generationCommandVersionV2),
+    integrity: z.unknown(),
+  })
+  .strict();
+const lookupMissSchema = z.object({ kind: z.literal("miss") }).strict();
+
+export type GenerationReservationRepository = {
+  lookup: (idempotencyKey: string) => Promise<GenerationRequestLookup>;
+  replayExisting: (
+    command: GenerationCommandV2,
+    lookup: Extract<GenerationRequestLookup, { kind: "hit" }>,
+  ) => Promise<QuotaRequestRecord>;
+  reserveNew: (
+    command: GenerationCommandV2,
+    integrity: GenerationIntegrityContextV2,
+  ) => Promise<QuotaRequestRecord>;
+};
+
 export function createGenerationRepository(user: AuthenticatedUser) {
   const env = getServerEnv();
   const userClient = createUserScopedSupabase(user.accessToken);
-  return {
-    userClient,
-    async reserve(command: GenerationCommand) {
-      const hmac = generationRequestHmac(command, env.generationIntegrity.requestHmacKey);
-      const isNewMenu = command.kind === "new_menu";
+
+  const buildReserveArgs = (
+    command: GenerationCommandV2,
+    integrity: GenerationIntegrityContextV2,
+  ) => {
+    const hmac = generationRequestHmac(command, integrity, env.generationIntegrity.requestHmacKey);
+    const isNewMenu = command.kind === "new_menu";
+    return {
+      p_user_id: user.userId,
+      p_idempotency_key: command.request.idempotencyKey,
+      p_request_kind: command.kind,
+      p_draft_id: isNewMenu ? command.request.draftId : null,
+      p_draft_revision: isNewMenu ? command.request.draftRevision : null,
+      p_source_menu_id: isNewMenu ? null : command.request.sourceMenuId,
+      p_replace_dish_id: command.kind === "regenerate_dish" ? command.request.dishId : null,
+      p_change_reason: isNewMenu ? null : command.request.changeReason,
+      p_request_hmac_version: generationRequestHmacVersion,
+      p_request_hmac: hmac,
+      p_integrity_context: toIntegrityContextPayload(integrity),
+      p_user_limit: env.openRouter.userDailyLimit,
+      p_global_limit: env.openRouter.globalDailyLimit,
+      p_stale_after_seconds: env.openRouter.staleAfterSeconds,
+    };
+  };
+
+  const reservation: GenerationReservationRepository = {
+    async lookup(idempotencyKey) {
+      const raw = await rpc("lookup_ai_generation_request", {
+        p_user_id: user.userId,
+        p_idempotency_key: idempotencyKey,
+      });
+      const miss = lookupMissSchema.safeParse(raw);
+      if (miss.success) return { kind: "miss" };
+      const hit = lookupHitSchema.parse(raw);
+      return {
+        kind: "hit",
+        requestId: hit.request_id,
+        requestHmacVersion: hit.request_hmac_version,
+        integrity: parseIntegrityContextPayload(hit.integrity),
+      };
+    },
+
+    async replayExisting(command, lookup) {
+      // 保存済み integrity から HMAC を再計算し、live draft/menu を読まずに台帳へ照合する
+      try {
+        return requestPayloadSchema.parse(
+          await rpc("reserve_ai_generation", buildReserveArgs(command, lookup.integrity)),
+        );
+      } catch (error: unknown) {
+        // lookup hit 後に row が消えた場合は miss へ戻さず fail-closed
+        if (error instanceof HttpError && error.code === "quota_transition_failed") {
+          throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+        }
+        throw error;
+      }
+    },
+
+    async reserveNew(command, integrity) {
       return requestPayloadSchema.parse(
-        await rpc("reserve_ai_generation", {
-          p_user_id: user.userId,
-          p_idempotency_key: command.request.idempotencyKey,
-          p_request_kind: command.kind,
-          p_draft_id: isNewMenu ? command.request.draftId : null,
-          p_draft_revision: isNewMenu ? command.request.draftRevision : null,
-          p_source_menu_id: isNewMenu ? null : command.request.sourceMenuId,
-          p_replace_dish_id: command.kind === "regenerate_dish" ? command.request.dishId : null,
-          p_change_reason: isNewMenu ? null : command.request.changeReason,
-          p_request_hmac_version: generationRequestHmacVersion,
-          p_request_hmac: hmac,
-          p_user_limit: env.openRouter.userDailyLimit,
-          p_global_limit: env.openRouter.globalDailyLimit,
-          p_stale_after_seconds: env.openRouter.staleAfterSeconds,
-        }),
+        await rpc("reserve_ai_generation", buildReserveArgs(command, integrity)),
       );
     },
+  };
+
+  return {
+    userClient,
+    ...reservation,
     async markSent(requestId: string) {
       // sent / code は短期窓拒否時に付加される。通常成功は sent=true。
       // extras 解析失敗時は status!==processing なら fail-closed で sent=false。
@@ -170,7 +242,7 @@ export function createGenerationRepository(user: AuthenticatedUser) {
     },
     async succeed(input: {
       requestId: string;
-      menu: ValidatedMenu;
+      menu: import("../../../shared/contracts/generation.js").ValidatedMenu;
       preferenceSnapshot: unknown;
       safetySnapshot: unknown;
       safetyFingerprint: string;

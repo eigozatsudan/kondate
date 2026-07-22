@@ -13,6 +13,7 @@ function asNewMenuExecution(
   return {
     kind: "new_menu",
     command: {
+      commandVersion: "generation-command.v2",
       kind: "new_menu",
       request: {
         idempotencyKey: "56000000-0000-4000-8000-000000000001",

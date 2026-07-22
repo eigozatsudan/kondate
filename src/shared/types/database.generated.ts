@@ -302,6 +302,53 @@ export type Database = {
         }
         Relationships: []
       }
+      generation_regeneration_snapshots: {
+        Row: {
+          created_at: string
+          kind: string
+          replace_dish_id: string | null
+          request_id: string
+          servings: number
+          source_menu_id: string
+          source_menu_version: number
+          target_member_ids: string[]
+          target_mode: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          kind: string
+          replace_dish_id?: string | null
+          request_id: string
+          servings: number
+          source_menu_id: string
+          source_menu_version: number
+          target_member_ids?: string[]
+          target_mode: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          kind?: string
+          replace_dish_id?: string | null
+          request_id?: string
+          servings?: number
+          source_menu_id?: string
+          source_menu_version?: number
+          target_member_ids?: string[]
+          target_mode?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generation_regeneration_snapshots_request_id_user_id_fkey"
+            columns: ["request_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "ai_generation_requests"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
       shopping_mutations: {
         Row: {
           created_at: string
@@ -377,6 +424,14 @@ export type Database = {
       }
       is_valid_draft_uuid_array: {
         Args: { p_max_count: number; p_value: string[] }
+        Returns: boolean
+      }
+      is_valid_generation_integrity_context: {
+        Args: { p_context: Json; p_request_kind: string }
+        Returns: boolean
+      }
+      is_valid_generation_target_member_ids: {
+        Args: { p_target_mode: string; p_value: string[] }
         Returns: boolean
       }
       is_valid_submission_target_member_ids: {
@@ -2115,6 +2170,21 @@ export type Database = {
         }
         Returns: Json
       }
+      get_ai_generation_regeneration_snapshot: {
+        Args: { p_request_id: string; p_user_id: string }
+        Returns: {
+          created_at: string
+          kind: string
+          replace_dish_id: string
+          request_id: string
+          servings: number
+          source_menu_id: string
+          source_menu_version: number
+          target_member_ids: string[]
+          target_mode: string
+          user_id: string
+        }[]
+      }
       get_ai_generation_status: {
         Args: {
           p_idempotency_key: string
@@ -2157,6 +2227,10 @@ export type Database = {
           p_request_hash: string
           p_user_id: string
         }
+        Returns: Json
+      }
+      lookup_ai_generation_request: {
+        Args: { p_idempotency_key: string; p_user_id: string }
         Returns: Json
       }
       mark_ai_global_sent: {
@@ -2227,6 +2301,7 @@ export type Database = {
           p_draft_revision: number
           p_global_limit: number
           p_idempotency_key: string
+          p_integrity_context: Json
           p_now?: string
           p_replace_dish_id: string
           p_request_hmac: string

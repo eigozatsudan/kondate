@@ -51,6 +51,7 @@ const quota = {
 
 function makeCommand(idempotencyKey: string): GenerationCommand {
   return {
+    commandVersion: "generation-command.v2",
     kind: "new_menu",
     request: {
       idempotencyKey,

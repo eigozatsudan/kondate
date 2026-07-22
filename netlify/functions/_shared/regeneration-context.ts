@@ -27,6 +27,7 @@ import { validateGeneratedMenu } from "../../../shared/safety/validate-generated
 import type { AuthenticatedUser } from "./generation-repository.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import { HttpError } from "./http.js";
+import { getSupabaseAdmin } from "./supabase-admin.js";
 import { toStoredRevalidationCandidate, type StoredMenuAggregate } from "./stored-menu-loader.js";
 
 type RegenerationCommand = Extract<
@@ -382,6 +383,44 @@ export type LoaderDeps = {
  * Plan 3 の GenerationExecutionContext を埋める唯一の再生成ローダー。
  * 実行 union を再宣言しない。
  */
+const regenerationSnapshotRowSchema = z
+  .object({
+    request_id: z.uuid(),
+    user_id: z.uuid(),
+    kind: z.enum(["regenerate_menu", "regenerate_dish"]),
+    source_menu_id: z.uuid(),
+    source_menu_version: z.number().int().positive(),
+    replace_dish_id: z.uuid().nullable(),
+    target_mode: z.enum(["household", "idea"]),
+    servings: z.number().int().min(1).max(20),
+    target_member_ids: z.array(z.uuid()),
+    created_at: z.string(),
+  })
+  .strict();
+
+/**
+ * request-bound snapshot を正本として読み、live source の owner/version と照合する。
+ * 不一致・削除は外部送信前に source_menu_changed で fail-closed する。
+ */
+async function loadRegenerationSnapshot(
+  requestId: string,
+  userId: string,
+): Promise<z.infer<typeof regenerationSnapshotRowSchema>> {
+  const { data, error } = await getSupabaseAdmin().rpc("get_ai_generation_regeneration_snapshot", {
+    p_request_id: requestId,
+    p_user_id: userId,
+  });
+  if (error !== null) {
+    throw new HttpError(500, "internal_error", "再生成の予約情報を確認できませんでした。");
+  }
+  const rows = z.array(regenerationSnapshotRowSchema).parse(data);
+  const snapshot = rows[0];
+  if (snapshot === undefined) {
+    throw new HttpError(500, "internal_error", "再生成の予約情報が見つかりません。");
+  }
+  return snapshot;
+}
+
 export async function loadRegenerationExecutionContext(
   deps: LoaderDeps,
   user: AuthenticatedUser,
@@ -389,18 +428,43 @@ export async function loadRegenerationExecutionContext(
   requestId: string,
   deadlineAtMonotonicMs: number,
 ): Promise<GenerationExecutionContext> {
+  // request snapshot を正本とし、live source は owner+version 付きで再取得する
+  const snapshot = await loadRegenerationSnapshot(requestId, user.userId);
+  if (
+    snapshot.kind !== command.kind ||
+    snapshot.source_menu_id !== command.request.sourceMenuId ||
+    (command.kind === "regenerate_dish" && snapshot.replace_dish_id !== command.request.dishId)
+  ) {
+    throw new HttpError(
+      422,
+      "source_menu_changed",
+      "元の献立が更新されたため、もう一度操作してください",
+    );
+  }
+
   // 所有権は owner クエリが先。admin は buildCurrentContext 内でのみ。
-  // loadStoredMenu の menu_not_found は Plan 4 閉じた source_menu_not_found へ写像する。
+  // loadStoredMenu の menu_not_found は source_menu_changed へ写像する（snapshot 後の削除）。
   let source: StoredMenuAggregate;
   try {
     source = await deps.loadSource(user, command.request.sourceMenuId);
   } catch (error) {
     if (error instanceof HttpError && error.code === "menu_not_found") {
-      throw new HttpError(404, "source_menu_not_found", "元の献立が見つかりません");
+      throw new HttpError(
+        422,
+        "source_menu_changed",
+        "元の献立が更新されたため、もう一度操作してください",
+      );
     }
     throw error;
   }
-  if (source.targetMemberIds.length === 0) {
+  if (source.version !== snapshot.source_menu_version) {
+    throw new HttpError(
+      422,
+      "source_menu_changed",
+      "元の献立が更新されたため、もう一度操作してください",
+    );
+  }
+  if (snapshot.target_mode === "household" && source.targetMemberIds.length === 0) {
     throw new HttpError(422, "current_target_member_required", "現在の家族を1人以上選んでください");
   }
   const replaceDishId = command.kind === "regenerate_dish" ? command.request.dishId : null;

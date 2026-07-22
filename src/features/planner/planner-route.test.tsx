@@ -480,6 +480,7 @@ describe("PlannerRoutePage", () => {
     };
     expect(pending).toMatchObject({
       ownerUserId: draft.userId,
+      commandVersion: "generation-command.v2",
       kind: "new_menu",
       request: {
         idempotencyKey: attemptKey,

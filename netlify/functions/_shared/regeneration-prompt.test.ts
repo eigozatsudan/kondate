@@ -102,6 +102,7 @@ describe("buildDishRegenerationPrompt", () => {
       ],
     };
     const command: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
+      commandVersion: "generation-command.v2",
       kind: "regenerate_dish",
       request: {
         sourceMenuId: sourceMenu.menuId,

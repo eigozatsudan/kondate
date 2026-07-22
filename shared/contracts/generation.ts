@@ -555,6 +555,8 @@ export const generationFailureCodes = [
   "current_target_member_required",
   "source_menu_not_found",
   "replace_dish_not_found",
+  // Plan 7: 予約時に凍結した元献立 version と live source の不一致
+  "source_menu_changed",
 ] as const;
 export type GenerationFailureCode = (typeof generationFailureCodes)[number];
 
@@ -644,14 +646,84 @@ export const regenerateDishRequestSchema = z
   .object({ ...regenerationBase, dishId: uuidSchema })
   .strict()
   .superRefine(refineRegenerationRequest);
-export const generationCommandSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("new_menu"), request: newMenuGenerationRequestSchema }).strict(),
-  z.object({ kind: z.literal("regenerate_menu"), request: regenerateMenuRequestSchema }).strict(),
-  z.object({ kind: z.literal("regenerate_dish"), request: regenerateDishRequestSchema }).strict(),
+
+/** 生成コマンド wire / pending / HMAC の唯一の版。v1 は未デプロイのため削除済み。 */
+export const generationCommandVersionV2 = "generation-command.v2" as const;
+
+export const generationCommandV2Schema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      commandVersion: z.literal(generationCommandVersionV2),
+      kind: z.literal("new_menu"),
+      request: newMenuGenerationRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      commandVersion: z.literal(generationCommandVersionV2),
+      kind: z.literal("regenerate_menu"),
+      request: regenerateMenuRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      commandVersion: z.literal(generationCommandVersionV2),
+      kind: z.literal("regenerate_dish"),
+      request: regenerateDishRequestSchema,
+    })
+    .strict(),
 ]);
+
+/** 後方互換の別名。実体は v2 のみ。 */
+export const generationCommandSchema = generationCommandV2Schema;
+
 export type RegenerateMenuRequest = z.infer<typeof regenerateMenuRequestSchema>;
 export type RegenerateDishRequest = z.infer<typeof regenerateDishRequestSchema>;
-export type GenerationCommand = z.infer<typeof generationCommandSchema>;
+export type GenerationCommandV2 = z.infer<typeof generationCommandV2Schema>;
+export type GenerationCommand = GenerationCommandV2;
+
+/**
+ * サーバー権威の整合性コンテキスト。クライアントから mode/servings/memberIds/source version を受け取らない。
+ * kind × targetMode の判別可能 union で household 空 / idea 非空を型で禁止する。
+ */
+export type GenerationIntegrityContextV2 =
+  | {
+      kind: "new_menu";
+      targetMode: "household";
+      servings: null;
+      targetMemberIds: readonly [string, ...string[]];
+      sourceMenuVersion: null;
+    }
+  | {
+      kind: "new_menu";
+      targetMode: "idea";
+      servings: number;
+      targetMemberIds: readonly [];
+      sourceMenuVersion: null;
+    }
+  | {
+      kind: "regenerate_menu" | "regenerate_dish";
+      targetMode: "household";
+      servings: number;
+      targetMemberIds: readonly [string, ...string[]];
+      sourceMenuVersion: number;
+    }
+  | {
+      kind: "regenerate_menu" | "regenerate_dish";
+      targetMode: "idea";
+      servings: number;
+      targetMemberIds: readonly [];
+      sourceMenuVersion: number;
+    };
+
+export type GenerationRequestLookup =
+  | { kind: "miss" }
+  | {
+      kind: "hit";
+      requestId: string;
+      requestHmacVersion: "generation-command.v2";
+      integrity: GenerationIntegrityContextV2;
+    };
 
 export const generationQuotaSchema = z
   .object({
@@ -844,6 +916,7 @@ const nonConflictIssueMessages = {
   current_target_member_required: "現在の家族を1人以上選んでください",
   source_menu_not_found: "元の献立が見つかりません",
   replace_dish_not_found: "変更する料理が見つかりません",
+  source_menu_changed: "元の献立が更新されたため、もう一度操作してください",
 } as const satisfies Record<GenerationFailureCode, string>;
 
 export const issueMessages = {

@@ -174,6 +174,7 @@ export function PlannerRoutePage() {
       if (userId === undefined) return false;
       const pending = createPendingGeneration(
         {
+          commandVersion: "generation-command.v2",
           kind: "new_menu",
           request: {
             idempotencyKey: attempt.idempotencyKey,

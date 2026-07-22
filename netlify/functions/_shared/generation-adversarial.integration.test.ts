@@ -39,6 +39,22 @@ vi.mock("./env.js", async (importOriginal) => {
   return { ...actual, getServerEnv: getServerEnvMock };
 });
 
+// ledger-first miss 時に権威 integrity を解決する。統合テストは draft 行を持たないため固定値を返す。
+vi.mock("./generation-integrity-context.js", () => ({
+  resolveGenerationIntegrityContext: vi.fn(() =>
+    Promise.resolve({
+      kind: "new_menu",
+      targetMode: "household",
+      servings: null,
+      targetMemberIds: ["90000000-0000-4000-8000-000000000001"],
+      sourceMenuVersion: null,
+    }),
+  ),
+}));
+vi.mock("./supabase-admin.js", () => ({
+  getSupabaseAdmin: vi.fn(() => ({})),
+}));
+
 // docker compose の openrouter-mock サービスは app コンテナと同じDockerネットワーク上の
 // http://openrouter-mock:8787/api/v1 で到達可能。実際のHTTPリクエスト・レスポンス
 // パース・X-Kondate-Mock-Scenarioヘッダー経路を通すことで、sendMenuGeneration()、
@@ -339,6 +355,7 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
   const requestId = "90000000-0000-4000-8000-000000000001";
   const key = "91000000-0000-4000-8000-000000000001";
   const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
+    commandVersion: "generation-command.v2",
     kind: "new_menu",
     request: {
       idempotencyKey: key,
@@ -363,23 +380,24 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
   });
 
   function makeServiceRepository() {
+    const processingRecord = {
+      request_id: requestId,
+      idempotency_key: key,
+      status: "processing" as const,
+      remaining: 5,
+      user_daily_limit: 5 as const,
+      consumed: false,
+      started_at: "2026-07-11T00:00:00.000Z",
+      completed_at: null,
+      completed_menu_id: null,
+      failure_code: null,
+      terminal_details: null,
+      replayed: false,
+    };
     return {
-      reserve: vi.fn(() =>
-        Promise.resolve({
-          request_id: requestId,
-          idempotency_key: key,
-          status: "processing" as const,
-          remaining: 5,
-          user_daily_limit: 5 as const,
-          consumed: false,
-          started_at: "2026-07-11T00:00:00.000Z",
-          completed_at: null,
-          completed_menu_id: null,
-          failure_code: null,
-          terminal_details: null,
-          replayed: false,
-        }),
-      ),
+      lookup: vi.fn(() => Promise.resolve({ kind: "miss" as const })),
+      replayExisting: vi.fn(() => Promise.resolve(processingRecord)),
+      reserveNew: vi.fn(() => Promise.resolve(processingRecord)),
       markSent: vi.fn(() =>
         Promise.resolve({
           request_id: requestId,
@@ -507,7 +525,8 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
       const result = await runGeneration(deps, command);
 
       // 1. リクエスト予約は1回だけ行われる
-      expect(repository.reserve).toHaveBeenCalledTimes(1);
+      expect(repository.lookup).toHaveBeenCalledTimes(1);
+      expect(repository.reserveNew).toHaveBeenCalledTimes(1);
 
       // 2. 結果は失敗
       expect(result.status).toBe("failed");

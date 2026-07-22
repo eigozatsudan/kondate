@@ -54,6 +54,7 @@ const sourceMenuId = "60000000-0000-4000-8000-000000000001";
 const retryAt = "2026-07-20T00:00:00+09:00";
 
 const newMenuCommand: GenerationCommand = {
+  commandVersion: "generation-command.v2",
   kind: "new_menu",
   request: {
     idempotencyKey,
@@ -62,6 +63,14 @@ const newMenuCommand: GenerationCommand = {
     privacyNoticeVersion: "2026-07-11.v1",
     expiredPantryConfirmations: [],
   },
+};
+
+const householdIntegrity = {
+  kind: "new_menu" as const,
+  targetMode: "household" as const,
+  servings: null,
+  targetMemberIds: ["50000000-0000-4000-8000-000000000001"] as const,
+  sourceMenuVersion: null,
 };
 
 const publicRecord = {
@@ -101,11 +110,18 @@ const reserveArgs = {
   p_replace_dish_id: null,
   p_change_reason: null,
   p_request_hmac_version: generationRequestHmacVersion,
-  p_request_hmac: generationRequestHmac(newMenuCommand, hmacKey),
+  p_request_hmac: generationRequestHmac(newMenuCommand, householdIntegrity, hmacKey),
+  p_integrity_context: {
+    kind: "new_menu",
+    target_mode: "household",
+    servings: null,
+    target_member_ids: ["50000000-0000-4000-8000-000000000001"],
+    source_menu_version: null,
+  },
   p_user_limit: 5,
   p_global_limit: 45,
   p_stale_after_seconds: 180,
-} satisfies Database["public"]["Functions"]["reserve_ai_generation"]["Args"];
+};
 const markSentArgs = {
   p_request_id: requestId,
 } satisfies Database["public"]["Functions"]["mark_ai_global_sent"]["Args"];
@@ -184,11 +200,19 @@ type SuccessCase = {
 
 const successCases: readonly SuccessCase[] = [
   {
-    name: "reserve",
+    name: "lookup miss",
+    rpcName: "lookup_ai_generation_request",
+    args: { p_user_id: user.userId, p_idempotency_key: idempotencyKey },
+    data: { kind: "miss" },
+    invoke: (repository) => repository.lookup(idempotencyKey),
+    expected: { kind: "miss" },
+  },
+  {
+    name: "reserveNew",
     rpcName: "reserve_ai_generation",
     args: reserveArgs,
     data: privateRecord,
-    invoke: (repository) => repository.reserve(newMenuCommand),
+    invoke: (repository) => repository.reserveNew(newMenuCommand, householdIntegrity),
     expected: expectedPublicRecord,
   },
   {
@@ -332,8 +356,8 @@ describe("createGenerationRepository", () => {
     const repository = createGenerationRepository(user);
 
     try {
-      await repository.reserve(newMenuCommand);
-      throw new Error("Expected repository.reserve to reject");
+      await repository.reserveNew(newMenuCommand, householdIntegrity);
+      throw new Error("Expected repository.reserveNew to reject");
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(HttpError);
       if (!(error instanceof HttpError)) throw error;
@@ -350,7 +374,7 @@ describe("createGenerationRepository", () => {
     rpcMock.mockRejectedValueOnce(new Error("private rejection detail"));
     const repository = createGenerationRepository(user);
 
-    await expectSanitizedDatabaseError(repository.reserve(newMenuCommand));
+    await expectSanitizedDatabaseError(repository.reserveNew(newMenuCommand, householdIntegrity));
   });
 
   it("parses a soft repair denial without a code field", async () => {
@@ -421,6 +445,7 @@ async function expectSanitizedDatabaseError(operation: Promise<unknown>): Promis
 describe("createGenerationRepository regeneration reserve", () => {
   it("reserves regenerate_menu and regenerate_dish through the same reserve_ai_generation RPC", async () => {
     const regenerateMenuCommand: GenerationCommand = {
+      commandVersion: "generation-command.v2",
       kind: "regenerate_menu",
       request: {
         idempotencyKey,
@@ -431,6 +456,7 @@ describe("createGenerationRepository regeneration reserve", () => {
       },
     };
     const regenerateDishCommand: GenerationCommand = {
+      commandVersion: "generation-command.v2",
       kind: "regenerate_dish",
       request: {
         idempotencyKey,
@@ -441,13 +467,27 @@ describe("createGenerationRepository regeneration reserve", () => {
         expiredPantryConfirmations: [],
       },
     };
+    const regenMenuIntegrity = {
+      kind: "regenerate_menu" as const,
+      targetMode: "household" as const,
+      servings: 2,
+      targetMemberIds: ["50000000-0000-4000-8000-000000000001"] as const,
+      sourceMenuVersion: 1,
+    };
+    const regenDishIntegrity = {
+      kind: "regenerate_dish" as const,
+      targetMode: "household" as const,
+      servings: 2,
+      targetMemberIds: ["50000000-0000-4000-8000-000000000001"] as const,
+      sourceMenuVersion: 1,
+    };
     rpcMock
       .mockResolvedValueOnce({ data: publicRecord, error: null })
       .mockResolvedValueOnce({ data: publicRecord, error: null });
     const repository = createGenerationRepository(user);
 
-    await repository.reserve(regenerateMenuCommand);
-    await repository.reserve(regenerateDishCommand);
+    await repository.reserveNew(regenerateMenuCommand, regenMenuIntegrity);
+    await repository.reserveNew(regenerateDishCommand, regenDishIntegrity);
 
     expect(rpcMock).toHaveBeenNthCalledWith(1, "reserve_ai_generation", {
       p_user_id: user.userId,
@@ -459,7 +499,14 @@ describe("createGenerationRepository regeneration reserve", () => {
       p_replace_dish_id: null,
       p_change_reason: "simpler",
       p_request_hmac_version: generationRequestHmacVersion,
-      p_request_hmac: generationRequestHmac(regenerateMenuCommand, hmacKey),
+      p_request_hmac: generationRequestHmac(regenerateMenuCommand, regenMenuIntegrity, hmacKey),
+      p_integrity_context: {
+        kind: "regenerate_menu",
+        target_mode: "household",
+        servings: 2,
+        target_member_ids: ["50000000-0000-4000-8000-000000000001"],
+        source_menu_version: 1,
+      },
       p_user_limit: 5,
       p_global_limit: 45,
       p_stale_after_seconds: 180,
@@ -474,7 +521,14 @@ describe("createGenerationRepository regeneration reserve", () => {
       p_replace_dish_id: "70000000-0000-4000-8000-000000000001",
       p_change_reason: "different_ingredient",
       p_request_hmac_version: generationRequestHmacVersion,
-      p_request_hmac: generationRequestHmac(regenerateDishCommand, hmacKey),
+      p_request_hmac: generationRequestHmac(regenerateDishCommand, regenDishIntegrity, hmacKey),
+      p_integrity_context: {
+        kind: "regenerate_dish",
+        target_mode: "household",
+        servings: 2,
+        target_member_ids: ["50000000-0000-4000-8000-000000000001"],
+        source_menu_version: 1,
+      },
       p_user_limit: 5,
       p_global_limit: 45,
       p_stale_after_seconds: 180,

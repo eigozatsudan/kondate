@@ -188,6 +188,7 @@ describe("useRegeneration", () => {
       const command: GenerationCommand =
         kind === "regenerate_menu"
           ? {
+              commandVersion: "generation-command.v2" as const,
               kind,
               request: {
                 idempotencyKey: "10000000-0000-4000-8000-000000000011",
@@ -198,6 +199,7 @@ describe("useRegeneration", () => {
               },
             }
           : {
+              commandVersion: "generation-command.v2" as const,
               kind,
               request: {
                 idempotencyKey: "10000000-0000-4000-8000-000000000012",
@@ -210,7 +212,7 @@ describe("useRegeneration", () => {
             };
       const pending = createPendingGeneration(command, USER_ID, () => new Date());
       savePendingGeneration(pending, storage);
-      const bodyBefore = JSON.stringify(pendingGenerationCommand(pending).request);
+      const bodyBefore = JSON.stringify(pendingGenerationCommand(pending));
       const keyBefore = pending.request.idempotencyKey;
       const endpoint = generationEndpointFor(pendingGenerationCommand(pending));
 
@@ -219,7 +221,7 @@ describe("useRegeneration", () => {
       expect(recovered).not.toBeNull();
       if (recovered === null) throw new Error("pending required");
       const resent = pendingGenerationCommand(recovered);
-      expect(JSON.stringify(resent.request)).toBe(bodyBefore);
+      expect(JSON.stringify(resent)).toBe(bodyBefore);
       expect(recovered.request.idempotencyKey).toBe(keyBefore);
       expect(generationEndpointFor(resent)).toBe(endpoint);
       expect(generationEndpointFor(resent)).toBe(
@@ -241,7 +243,7 @@ describe("useRegeneration", () => {
       const posted = postMock.mock.calls[0]?.[0] as GenerationCommand;
       expect(posted.kind).toBe(kind);
       expect(posted.request.idempotencyKey).toBe(keyBefore);
-      expect(JSON.stringify(posted.request)).toBe(bodyBefore);
+      expect(JSON.stringify(posted)).toBe(bodyBefore);
       expect(generationEndpointFor(posted)).toBe(endpoint);
     },
   );

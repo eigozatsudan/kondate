@@ -28,16 +28,20 @@ const user = {
   accessToken: "token",
 };
 const requestBody = {
-  idempotencyKey: "82000000-0000-4000-8000-000000000001",
-  sourceMenuId: "88000000-0000-4000-8000-000000000001",
-  dishId: "89000000-0000-4000-8000-000000000001",
-  changeReason: "simpler" as const,
-  changeReasonCustom: null,
-  expiredPantryConfirmations: [],
+  commandVersion: "generation-command.v2" as const,
+  kind: "regenerate_dish" as const,
+  request: {
+    idempotencyKey: "82000000-0000-4000-8000-000000000001",
+    sourceMenuId: "88000000-0000-4000-8000-000000000001",
+    dishId: "89000000-0000-4000-8000-000000000001",
+    changeReason: "simpler" as const,
+    changeReasonCustom: null,
+    expiredPantryConfirmations: [],
+  },
 };
 const terminalResult: GenerationStatusData = {
   status: "succeeded",
-  idempotencyKey: requestBody.idempotencyKey,
+  idempotencyKey: requestBody.request.idempotencyKey,
   requestId: "81000000-0000-4000-8000-000000000001",
   quota: {
     consumed: true,
@@ -95,10 +99,7 @@ describe("POST /api/generations/dish", () => {
     expect(createGenerationDeps).toHaveBeenCalledWith(user, {
       requestStartedAtMonotonicMs: 1234.5,
     });
-    expect(runGeneration).toHaveBeenCalledWith(deps, {
-      kind: "regenerate_dish",
-      request: requestBody,
-    });
+    expect(runGeneration).toHaveBeenCalledWith(deps, requestBody);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, data: terminalResult });
     now.mockRestore();
@@ -108,7 +109,7 @@ describe("POST /api/generations/dish", () => {
     const response = await handler(
       postRequest({
         ...requestBody,
-        changeReason: undefined,
+        request: { ...requestBody.request, changeReason: undefined },
       }),
     );
     expect(response.status).toBe(400);

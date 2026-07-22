@@ -1,6 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import {
+  generationCommandVersionV2,
   newMenuGenerationRequestSchema,
   regenerateMenuRequestSchema,
 } from "../../shared/contracts/generation.js";
@@ -13,10 +14,22 @@ import {
 import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
 import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 
-/** 新規献立と献立全体再生成を同一 POST で受け付ける（kind は body 形で判別） */
-const menuEndpointBodySchema = z.union([
-  newMenuGenerationRequestSchema,
-  regenerateMenuRequestSchema,
+/** 新規献立と献立全体再生成を同一 POST で受け付ける（v2 commandVersion + kind 必須） */
+const menuEndpointBodySchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      commandVersion: z.literal(generationCommandVersionV2),
+      kind: z.literal("new_menu"),
+      request: newMenuGenerationRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      commandVersion: z.literal(generationCommandVersionV2),
+      kind: z.literal("regenerate_menu"),
+      request: regenerateMenuRequestSchema,
+    })
+    .strict(),
 ]);
 
 export default async function generateMenu(request: Request): Promise<Response> {
@@ -24,11 +37,7 @@ export default async function generateMenu(request: Request): Promise<Response> 
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
   try {
     const user = await requireUser(request);
-    const body = await parseJson(request, menuEndpointBodySchema);
-    const command =
-      "draftId" in body
-        ? { kind: "new_menu" as const, request: body }
-        : { kind: "regenerate_menu" as const, request: body };
+    const command = await parseJson(request, menuEndpointBodySchema);
     const localTestScenario = readLocalMockScenario(request);
     return generationResponse(
       await runGeneration(

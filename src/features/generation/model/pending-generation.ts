@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 import {
-  generationCommandSchema,
+  generationCommandVersionV2,
+  generationCommandV2Schema,
   newMenuGenerationRequestSchema,
   regenerateDishRequestSchema,
   regenerateMenuRequestSchema,
@@ -18,10 +19,12 @@ const pendingGenerationMetadataSchema = {
   createdAt: z.iso.datetime({ offset: true }),
 };
 
+// 端末 pending は commandVersion を持つ v2 だけを受理する（旧版 reader は置かない）
 export const pendingGenerationSchema = z.discriminatedUnion("kind", [
   z
     .object({
       ...pendingGenerationMetadataSchema,
+      commandVersion: z.literal(generationCommandVersionV2),
       kind: z.literal("new_menu"),
       request: newMenuGenerationRequestSchema,
     })
@@ -29,6 +32,7 @@ export const pendingGenerationSchema = z.discriminatedUnion("kind", [
   z
     .object({
       ...pendingGenerationMetadataSchema,
+      commandVersion: z.literal(generationCommandVersionV2),
       kind: z.literal("regenerate_menu"),
       request: regenerateMenuRequestSchema,
     })
@@ -36,6 +40,7 @@ export const pendingGenerationSchema = z.discriminatedUnion("kind", [
   z
     .object({
       ...pendingGenerationMetadataSchema,
+      commandVersion: z.literal(generationCommandVersionV2),
       kind: z.literal("regenerate_dish"),
       request: regenerateDishRequestSchema,
     })
@@ -54,14 +59,15 @@ export function createPendingGeneration(
   now: () => Date = () => new Date(),
 ): PendingGeneration {
   return pendingGenerationSchema.parse({
-    ...generationCommandSchema.parse(command),
+    ...generationCommandV2Schema.parse(command),
     ownerUserId,
     createdAt: now().toISOString(),
   });
 }
 
 export function pendingGenerationCommand(value: PendingGeneration): GenerationCommand {
-  return generationCommandSchema.parse({
+  return generationCommandV2Schema.parse({
+    commandVersion: value.commandVersion,
     kind: value.kind,
     request: value.request,
   });

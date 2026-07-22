@@ -1,5 +1,9 @@
 import type { Config } from "@netlify/functions";
-import { regenerateDishRequestSchema } from "../../shared/contracts/generation.js";
+import { z } from "zod";
+import {
+  generationCommandVersionV2,
+  regenerateDishRequestSchema,
+} from "../../shared/contracts/generation.js";
 import { requireUser } from "./_shared/auth.js";
 import {
   createGenerationDeps,
@@ -8,6 +12,14 @@ import {
 } from "./_shared/generation-service.js";
 import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
 import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
+
+const dishEndpointBodySchema = z
+  .object({
+    commandVersion: z.literal(generationCommandVersionV2),
+    kind: z.literal("regenerate_dish"),
+    request: regenerateDishRequestSchema,
+  })
+  .strict();
 
 /**
  * POST /api/generations/dish — 料理単位の再生成。
@@ -18,17 +30,14 @@ export default async function generateDish(request: Request): Promise<Response> 
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
   try {
     const user = await requireUser(request);
-    const body = await parseJson(request, regenerateDishRequestSchema);
+    const command = await parseJson(request, dishEndpointBodySchema);
     const localTestScenario = readLocalMockScenario(request);
     const result = await runGeneration(
       createGenerationDeps(user, {
         requestStartedAtMonotonicMs,
         ...(localTestScenario === undefined ? {} : { localTestScenario }),
       }),
-      {
-        kind: "regenerate_dish",
-        request: body,
-      },
+      command,
     );
     return generationResponse(result);
   } catch (error) {

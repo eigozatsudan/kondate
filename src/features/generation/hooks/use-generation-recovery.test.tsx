@@ -118,6 +118,7 @@ let storage: ReturnType<typeof memoryStorage>;
 
 function makeCommand(idempotencyKey: string): GenerationCommand {
   return {
+    commandVersion: "generation-command.v2",
     kind: "new_menu",
     request: {
       idempotencyKey,

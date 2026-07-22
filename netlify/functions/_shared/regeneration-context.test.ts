@@ -1,4 +1,36 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const snapshotRpc = vi.hoisted(() =>
+  vi.fn((...rpcArgs: unknown[]) => {
+    const name = rpcArgs[0] as string;
+    const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+    if (name !== "get_ai_generation_regeneration_snapshot") {
+      return Promise.resolve({ data: null, error: { message: "unexpected rpc" } });
+    }
+    // 既定は dishCommand 向け。個別ケースは beforeEach / テスト内で上書きする。
+    return Promise.resolve({
+      data: [
+        {
+          request_id: args.p_request_id,
+          user_id: args.p_user_id,
+          kind: "regenerate_dish",
+          source_menu_id: "52000000-0000-4000-8000-000000000001",
+          source_menu_version: 1,
+          replace_dish_id: "50000000-0000-4000-8000-000000000002",
+          target_mode: "household",
+          servings: 2,
+          target_member_ids: ["55000000-0000-4000-8000-000000000001"],
+          created_at: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+      error: null,
+    });
+  }),
+);
+vi.mock("./supabase-admin.js", () => ({
+  getSupabaseAdmin: vi.fn(() => ({ rpc: snapshotRpc })),
+}));
+
 import { createDishSignature, createMenuSignature } from "../../../shared/safety/deduplicate.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
@@ -119,6 +151,7 @@ function makeLoaderDeps(
 }
 
 const dishCommand: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
+  commandVersion: "generation-command.v2",
   kind: "regenerate_dish",
   request: {
     sourceMenuId: "52000000-0000-4000-8000-000000000001",
@@ -135,6 +168,34 @@ function dishSig(name: string, role: string, ingredients: string[]) {
 }
 
 describe("loadRegenerationExecutionContext", () => {
+  beforeEach(() => {
+    snapshotRpc.mockClear();
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const name = rpcArgs[0] as string;
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      if (name !== "get_ai_generation_regeneration_snapshot") {
+        return Promise.resolve({ data: null, error: { message: "unexpected rpc" } });
+      }
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_dish",
+            source_menu_id: "52000000-0000-4000-8000-000000000001",
+            source_menu_version: 1,
+            replace_dish_id: dish2Id,
+            target_mode: "household",
+            servings: 2,
+            target_member_ids: ["55000000-0000-4000-8000-000000000001"],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+  });
+
   it("loads current safety and excludes every dish in the root group", async () => {
     const teriyakiSignature = dishSig("照り焼き", "main", ["鶏肉"]);
     const sweetSoySignature = dishSig("甘辛炒め", "side", ["豚肉"]);
@@ -212,13 +273,34 @@ describe("loadRegenerationExecutionContext", () => {
     // expectedSafetyFingerprint は現行 context から計算される
     const expectedFp = createCurrentSafetyFingerprint(generationContext.safety);
 
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_dish",
+            source_menu_id: source.menu.menuId,
+            source_menu_version: source.version,
+            replace_dish_id: dish2Id,
+            target_mode: "household",
+            servings: 2,
+            target_member_ids: [...source.targetMemberIds],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
     const context = await loadRegenerationExecutionContext(
       deps,
       user,
       {
+        commandVersion: "generation-command.v2",
         kind: "regenerate_dish",
         request: {
-          sourceMenuId: "menu-2",
+          sourceMenuId: source.menu.menuId,
           dishId: dish2Id,
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           changeReason: "simpler",
@@ -226,7 +308,7 @@ describe("loadRegenerationExecutionContext", () => {
           expiredPantryConfirmations: [],
         },
       },
-      "request-row-1",
+      "91000000-0000-4000-8000-000000000001",
       50_000,
     );
 
@@ -255,7 +337,13 @@ describe("loadRegenerationExecutionContext", () => {
       }),
     );
     await expect(
-      loadRegenerationExecutionContext(deps, user, dishCommand, "request-row-1", 50_000),
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
     ).rejects.toMatchObject({ code: "current_target_member_required" });
     expect(deps.buildCurrentContext).not.toHaveBeenCalled();
   });
@@ -268,19 +356,45 @@ describe("loadRegenerationExecutionContext", () => {
       }),
     );
     await expect(
-      loadRegenerationExecutionContext(deps, user, dishCommand, "request-row-1", 50_000),
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
     ).rejects.toMatchObject({ code: "current_safety_revalidation_required" });
   });
 
-  it("maps foreign or missing source to source_menu_not_found before current context", async () => {
+  it("maps foreign or missing source to source_menu_changed before current context", async () => {
     const deps = makeLoaderDeps(makeStoredMenu());
     deps.loadSource.mockRejectedValue(new HttpError(404, "menu_not_found", "献立が見つかりません"));
     await expect(
-      loadRegenerationExecutionContext(deps, user, dishCommand, "request-row-1", 50_000),
-    ).rejects.toMatchObject({ code: "source_menu_not_found", status: 404 });
-    // admin 経路は buildCurrentContext 内のみ。source 欠落では到達しない
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({ code: "source_menu_changed", status: 422 });
+    // snapshot 後の live source 欠落は fail-closed。build へ進まない
     expect(deps.buildCurrentContext).not.toHaveBeenCalled();
     expect(deps.loadGroup).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when live source version diverges from the request snapshot", async () => {
+    const deps = makeLoaderDeps(makeStoredMenu({ version: 9 }));
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({ code: "source_menu_changed", status: 422 });
+    expect(deps.buildCurrentContext).not.toHaveBeenCalled();
   });
 });
 
@@ -490,6 +604,7 @@ describe("isRegenerationDuplicate material equivalence", () => {
     const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
       kind: "regenerate_menu",
       command: {
+        commandVersion: "generation-command.v2",
         kind: "regenerate_menu",
         request: {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
@@ -904,6 +1019,7 @@ describe("buildDishRegenerationPrompt label source refs", () => {
     const retained = toRetainedDishPrompt(menu, firstDish.id);
     const prompt = buildDishRegenerationPrompt({
       command: {
+        commandVersion: "generation-command.v2",
         kind: "regenerate_dish",
         request: {
           sourceMenuId: menu.menuId,

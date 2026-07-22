@@ -48,6 +48,7 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
   };
   if (kind === "new_menu") {
     return {
+      commandVersion: "generation-command.v2",
       kind,
       request: {
         idempotencyKey: IDEMPOTENCY_KEY,
@@ -58,8 +59,11 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
       },
     };
   }
-  if (kind === "regenerate_menu") return { kind, request: base };
+  if (kind === "regenerate_menu") {
+    return { commandVersion: "generation-command.v2", kind, request: base };
+  }
   return {
+    commandVersion: "generation-command.v2",
     kind,
     request: { ...base, dishId: "70000000-0000-4000-8000-000000000001" },
   };

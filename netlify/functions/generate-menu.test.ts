@@ -24,6 +24,20 @@ import { HttpError } from "./_shared/http.js";
 import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 import handler from "./generate-menu.js";
 
+vi.mock("./_shared/generation-integrity-context.js", () => ({
+  resolveGenerationIntegrityContext: vi.fn(() =>
+    Promise.resolve({
+      kind: "new_menu",
+      targetMode: "household",
+      servings: null,
+      targetMemberIds: ["90000000-0000-4000-8000-000000000001"],
+      sourceMenuVersion: null,
+    }),
+  ),
+}));
+vi.mock("./_shared/supabase-admin.js", () => ({
+  getSupabaseAdmin: vi.fn(() => ({})),
+}));
 vi.mock("./_shared/auth.js", () => ({ requireUser: vi.fn() }));
 vi.mock("../../shared/safety/validate-generated-menu.js", () => ({
   validateGeneratedMenu: vi.fn(),
@@ -48,15 +62,19 @@ const user = {
   accessToken: "token",
 };
 const requestBody = {
-  idempotencyKey: "82000000-0000-4000-8000-000000000001",
-  draftId: "84000000-0000-4000-8000-000000000001",
-  draftRevision: 1,
-  privacyNoticeVersion: "2026-07-11.v1",
-  expiredPantryConfirmations: [],
+  commandVersion: "generation-command.v2" as const,
+  kind: "new_menu" as const,
+  request: {
+    idempotencyKey: "82000000-0000-4000-8000-000000000001",
+    draftId: "84000000-0000-4000-8000-000000000001",
+    draftRevision: 1,
+    privacyNoticeVersion: "2026-07-11.v1",
+    expiredPantryConfirmations: [],
+  },
 };
 const terminalResult: GenerationStatusData = {
   status: "succeeded",
-  idempotencyKey: requestBody.idempotencyKey,
+  idempotencyKey: requestBody.request.idempotencyKey,
   requestId: "81000000-0000-4000-8000-000000000001",
   quota: {
     consumed: true,
@@ -89,14 +107,14 @@ function expectedFailureStatus(code: (typeof generationFailureCodes)[number]): n
 const canonicalResponseCases: readonly [string, GenerationStatusData, number][] = [
   [
     "not_started",
-    { status: "not_started", idempotencyKey: requestBody.idempotencyKey, quota },
+    { status: "not_started", idempotencyKey: requestBody.request.idempotencyKey, quota },
     200,
   ],
   [
     "processing",
     {
       status: "processing",
-      idempotencyKey: requestBody.idempotencyKey,
+      idempotencyKey: requestBody.request.idempotencyKey,
       requestId: terminalResult.requestId,
       quota,
       startedAt: "2026-07-11T00:00:00.000Z",
@@ -108,7 +126,7 @@ const canonicalResponseCases: readonly [string, GenerationStatusData, number][] 
     "constraint_conflict",
     {
       status: "constraint_conflict",
-      idempotencyKey: requestBody.idempotencyKey,
+      idempotencyKey: requestBody.request.idempotencyKey,
       requestId: terminalResult.requestId,
       quota,
       conflicts: [
@@ -126,7 +144,7 @@ const canonicalResponseCases: readonly [string, GenerationStatusData, number][] 
     `failed:${code}`,
     {
       status: "failed",
-      idempotencyKey: requestBody.idempotencyKey,
+      idempotencyKey: requestBody.request.idempotencyKey,
       requestId: terminalResult.requestId,
       quota,
       error: { code, message: "固定文言", retryable: false },
@@ -186,8 +204,22 @@ describe("POST /api/generations/menu", () => {
   it.each([
     ["invalid JSON", "{sentinel", "invalid_json"],
     ["unknown field", { ...requestBody, sentinel: true }, "invalid_request"],
-    ["missing consent", { ...requestBody, privacyNoticeVersion: undefined }, "invalid_request"],
-    ["invalid consent", { ...requestBody, privacyNoticeVersion: "sentinel" }, "invalid_request"],
+    [
+      "missing consent",
+      {
+        ...requestBody,
+        request: { ...requestBody.request, privacyNoticeVersion: undefined },
+      },
+      "invalid_request",
+    ],
+    [
+      "invalid consent",
+      {
+        ...requestBody,
+        request: { ...requestBody.request, privacyNoticeVersion: "sentinel" },
+      },
+      "invalid_request",
+    ],
   ])("rejects %s without orchestration", async (_label, body, code) => {
     const response = await handler(postRequest(body));
 
@@ -243,10 +275,7 @@ describe("POST /api/generations/menu", () => {
       requestStartedAtMonotonicMs: 1234.5,
     });
     expect(runGeneration).toHaveBeenCalledTimes(1);
-    expect(runGeneration).toHaveBeenCalledWith(deps, {
-      kind: "new_menu",
-      request: requestBody,
-    });
+    expect(runGeneration).toHaveBeenCalledWith(deps, requestBody);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({ ok: true, data: terminalResult });
@@ -299,7 +328,7 @@ describe("POST /api/generations/menu", () => {
     let reservationCreations = 0;
     let current: QuotaRequestRecord = {
       request_id: requestId,
-      idempotency_key: requestBody.idempotencyKey,
+      idempotency_key: requestBody.request.idempotencyKey,
       status: "processing",
       failure_code: null,
       retry_at: null,
@@ -314,13 +343,28 @@ describe("POST /api/generations/menu", () => {
     };
     const knownReservations = new Set<string>();
     const repository: GenerationDependencies["repository"] = {
-      reserve: vi.fn((command: { request: { idempotencyKey: string } }) => {
-        if (!knownReservations.has(command.request.idempotencyKey)) {
-          knownReservations.add(command.request.idempotencyKey);
-          reservationCreations += 1;
-          return Promise.resolve(current);
+      lookup: vi.fn((idempotencyKey: string) => {
+        if (knownReservations.has(idempotencyKey)) {
+          return Promise.resolve({
+            kind: "hit" as const,
+            requestId: current.request_id!,
+            requestHmacVersion: "generation-command.v2" as const,
+            integrity: {
+              kind: "new_menu" as const,
+              targetMode: "household" as const,
+              servings: null,
+              targetMemberIds: ["90000000-0000-4000-8000-000000000001"] as const,
+              sourceMenuVersion: null,
+            },
+          });
         }
-        return Promise.resolve({ ...current, replayed: true });
+        return Promise.resolve({ kind: "miss" as const });
+      }),
+      replayExisting: vi.fn(() => Promise.resolve({ ...current, replayed: true })),
+      reserveNew: vi.fn((command: { request: { idempotencyKey: string } }) => {
+        knownReservations.add(command.request.idempotencyKey);
+        reservationCreations += 1;
+        return Promise.resolve(current);
       }),
       markSent: vi.fn(() => Promise.resolve({ ...current, sent: true as const, code: null })),
       reserveRepair: vi.fn(() => Promise.resolve({ reserved: false, retry_at: null })),
@@ -345,6 +389,7 @@ describe("POST /api/generations/menu", () => {
     const executionContext: Extract<GenerationExecutionContext, { kind: "new_menu" }> = {
       kind: "new_menu",
       command: {
+        commandVersion: "generation-command.v2",
         kind: "new_menu",
         request: {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
@@ -399,7 +444,9 @@ describe("POST /api/generations/menu", () => {
     expect(replayResponse.status).toBe(200);
     await expect(firstResponse.json()).resolves.toEqual({ ok: true, data: terminalResult });
     await expect(replayResponse.json()).resolves.toEqual({ ok: true, data: terminalResult });
-    expect(repository.reserve).toHaveBeenCalledTimes(2);
+    expect(repository.lookup).toHaveBeenCalledTimes(2);
+    expect(repository.reserveNew).toHaveBeenCalledTimes(1);
+    expect(repository.replayExisting).toHaveBeenCalledTimes(1);
     expect(reservationCreations).toBe(1);
     expect(loadExecutionContext).toHaveBeenCalledTimes(1);
     expect(validatePreflight).toHaveBeenCalledTimes(1);

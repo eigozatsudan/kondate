@@ -42,6 +42,7 @@ export function useRegeneration({ menuId, phase, result }: UseRegenerationInput)
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
       const pending = createPendingGeneration(
         {
+          commandVersion: "generation-command.v2",
           kind: "regenerate_menu",
           request: {
             idempotencyKey: crypto.randomUUID(),
@@ -70,6 +71,7 @@ export function useRegeneration({ menuId, phase, result }: UseRegenerationInput)
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
       const pending = createPendingGeneration(
         {
+          commandVersion: "generation-command.v2",
           kind: "regenerate_dish",
           request: {
             idempotencyKey: crypto.randomUUID(),

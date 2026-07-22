@@ -28,6 +28,7 @@ import {
   toRepairDiagnostics,
   type GenerationRepairDiagnostic,
 } from "./generation-repair.js";
+import { resolveGenerationIntegrityContext } from "./generation-integrity-context.js";
 import {
   createGenerationRepository,
   type AuthenticatedUser,
@@ -35,6 +36,7 @@ import {
   type QuotaRequestRecord,
 } from "./generation-repository.js";
 import { HttpError, json } from "./http.js";
+import { getSupabaseAdmin } from "./supabase-admin.js";
 import {
   OpenRouterCallError,
   sendMenuGeneration,
@@ -243,6 +245,10 @@ const failureCopy: Record<GenerationFailureCode, { message: string; retryable: b
   },
   replace_dish_not_found: {
     message: "変更する料理が見つかりません",
+    retryable: false,
+  },
+  source_menu_changed: {
+    message: "元の献立が更新されたため、もう一度操作してください",
     retryable: false,
   },
 };
@@ -607,7 +613,15 @@ export async function runGeneration(
   command: GenerationCommand,
 ): Promise<GenerationStatusData> {
   const key = command.request.idempotencyKey;
-  const reserved = await deps.repository.reserve(command);
+  // ledger-first: hit は保存済み integrity だけで replay し、live draft/menu を読まない
+  const lookup = await deps.repository.lookup(key);
+  const reserved =
+    lookup.kind === "hit"
+      ? await deps.repository.replayExisting(command, lookup)
+      : await deps.repository.reserveNew(
+          command,
+          await resolveGenerationIntegrityContext(getSupabaseAdmin(), deps.user.userId, command),
+        );
   const hydrate = async () => {
     try {
       return toGenerationStatus(await deps.repository.status(key), key);

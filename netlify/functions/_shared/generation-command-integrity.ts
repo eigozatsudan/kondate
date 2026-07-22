@@ -2,10 +2,12 @@ import { Buffer } from "node:buffer";
 import { createHmac } from "node:crypto";
 import type {
   ExpiredPantryConfirmation,
-  GenerationCommand,
+  GenerationCommandV2,
+  GenerationIntegrityContextV2,
 } from "../../../shared/contracts/generation.js";
+import { generationCommandVersionV2 } from "../../../shared/contracts/generation.js";
 
-export const generationRequestHmacVersion = "generation-command.v1" as const;
+export const generationRequestHmacVersion = generationCommandVersionV2;
 
 // 期限切れ在庫確認は集合として扱い、保存順に依存しないよう正規化する
 const sortedChecks = (
@@ -17,31 +19,37 @@ const sortedChecks = (
       left.checkedAt.localeCompare(right.checkedAt),
   );
 
-// 冪等性比較の唯一の正規表現。リクエスト JSON やプロンプト本文は台帳に載せない
-export function canonicalizeGenerationCommandV1(command: GenerationCommand): string {
-  const base = {
+// 対象家族 ID も集合として扱い、HMAC が並び順に依存しないよう正規化する
+const sortedMemberIds = (values: readonly string[]): readonly string[] =>
+  [...values].toSorted((left, right) => left.localeCompare(right));
+
+/**
+ * 冪等性比較の唯一の正規表現。key 順は固定し、kind に存在しない値は null とする。
+ * リクエスト JSON やプロンプト本文は台帳に載せない。
+ */
+export function canonicalizeGenerationCommandV2(
+  command: GenerationCommandV2,
+  integrity: GenerationIntegrityContextV2,
+): string {
+  const isNewMenu = command.kind === "new_menu";
+  // key 順は brief Step 4 の固定順。JSON.stringify は挿入順を保持する。
+  return JSON.stringify({
     version: generationRequestHmacVersion,
     kind: command.kind,
     idempotencyKey: command.request.idempotencyKey,
-  } as const;
-  if (command.kind === "new_menu") {
-    return JSON.stringify({
-      ...base,
-      draftId: command.request.draftId,
-      draftRevision: command.request.draftRevision,
-      privacyNoticeVersion: command.request.privacyNoticeVersion,
-      expiredPantryConfirmations: sortedChecks(command.request.expiredPantryConfirmations),
-    });
-  }
-  const regeneration = {
-    ...base,
-    sourceMenuId: command.request.sourceMenuId,
+    draftId: isNewMenu ? command.request.draftId : null,
+    draftRevision: isNewMenu ? command.request.draftRevision : null,
+    sourceMenuId: isNewMenu ? null : command.request.sourceMenuId,
     dishId: command.kind === "regenerate_dish" ? command.request.dishId : null,
-    changeReason: command.request.changeReason,
-    changeReasonCustom: command.request.changeReasonCustom,
+    changeReason: isNewMenu ? null : command.request.changeReason,
+    changeReasonCustom: isNewMenu ? null : command.request.changeReasonCustom,
+    privacyNoticeVersion: isNewMenu ? command.request.privacyNoticeVersion : null,
     expiredPantryConfirmations: sortedChecks(command.request.expiredPantryConfirmations),
-  } as const;
-  return JSON.stringify(regeneration);
+    targetMode: integrity.targetMode,
+    servings: integrity.servings,
+    targetMemberIds: sortedMemberIds(integrity.targetMemberIds),
+    sourceMenuVersion: integrity.sourceMenuVersion,
+  });
 }
 
 // 環境変数から 32 バイト HMAC 鍵を読み取る。非正規 base64 や長さ不一致は拒否する
@@ -54,8 +62,12 @@ export function parseGenerationRequestHmacKey(value: string): Buffer {
 }
 
 // 正規化したコマンド文字列に対する HMAC-SHA-256（小文字 hex 64 桁）
-export function generationRequestHmac(command: GenerationCommand, key: Uint8Array): string {
+export function generationRequestHmac(
+  command: GenerationCommandV2,
+  integrity: GenerationIntegrityContextV2,
+  key: Uint8Array,
+): string {
   return createHmac("sha256", key)
-    .update(canonicalizeGenerationCommandV1(command), "utf8")
+    .update(canonicalizeGenerationCommandV2(command, integrity), "utf8")
     .digest("hex");
 }

@@ -22,8 +22,15 @@ it("accepts nullable draft references for regeneration reservations", () => {
     p_source_menu_id: "60000000-0000-4000-8000-000000000001",
     p_replace_dish_id: null,
     p_change_reason: "simpler",
-    p_request_hmac_version: "generation-command.v1",
+    p_request_hmac_version: "generation-command.v2",
     p_request_hmac: "a".repeat(64),
+    p_integrity_context: {
+      kind: "regenerate_menu",
+      target_mode: "household",
+      servings: 2,
+      target_member_ids: ["70000000-0000-4000-8000-000000000001"],
+      source_menu_version: 1,
+    },
     p_user_limit: 5,
     p_global_limit: 45,
   } satisfies ReserveGenerationArgs;
