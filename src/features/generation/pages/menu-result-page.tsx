@@ -1,7 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useParams } from "react-router";
+import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { z } from "zod";
+import {
+  createShoppingListRequestSchema,
+  reconcileShoppingListRequestSchema,
+  type CreateShoppingListRequest,
+  type ReconcileShoppingListRequest,
+  type ShoppingDiff,
+} from "@shared/contracts/shopping";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   isRevalidationActionable,
@@ -23,6 +30,22 @@ import {
   pantryKeys,
   updatePantryItem,
 } from "@/features/pantry/pantry-api";
+import {
+  clearShoppingCommand,
+  fetchReconcilableMenuSource,
+  persistedShoppingCommand,
+  previewShoppingDiff,
+} from "@/features/shopping/api/shopping-api";
+import { CreateListSheet } from "@/features/shopping/components/create-list-sheet";
+import { ReconcileListSheet } from "@/features/shopping/components/reconcile-list-sheet";
+import {
+  shoppingKeys,
+  useCreateShoppingList,
+  useReconcileShoppingList,
+  useResumeShoppingCommand,
+  useShoppingList,
+  useShoppingSafetyGate,
+} from "@/features/shopping/hooks/use-shopping-list";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { confirmLabelConfirmation } from "../api/confirm-label-api";
 import { getMenuResult } from "../api/menu-result-api";
@@ -97,6 +120,89 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     revalidation.phase === "checked" &&
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
+
+  // 買い物リスト側の現行安全ゲート。献立側の再検証と両方が通るまで
+  // create / reconcile のコマンドは組み立てない。
+  const navigate = useNavigate();
+  const shoppingList = useShoppingList();
+  const shoppingGate = useShoppingSafetyGate();
+  const createList = useCreateShoppingList();
+  const reconcileList = useReconcileShoppingList();
+  const [shoppingSheet, setShoppingSheet] = useState<"create" | "reconcile" | null>(null);
+  const [shoppingDiff, setShoppingDiff] = useState<ShoppingDiff | null>(null);
+  const [shoppingError, setShoppingError] = useState<string | null>(null);
+  const activeList = shoppingList.data ?? null;
+  const shoppingBlocked =
+    !actionsEnabled ||
+    shoppingGate.blocked ||
+    shoppingList.isFetching ||
+    !shoppingList.isSuccess ||
+    menuId === null;
+
+  const reconcileTarget = useQuery({
+    queryKey: ["shopping", "reconcile-target", menuId ?? "invalid", activeList?.id ?? "none"],
+    queryFn: () => fetchReconcilableMenuSource(menuId ?? "invalid", activeList?.id ?? "none"),
+    enabled: menuId !== null && activeList !== null && actionsEnabled,
+    staleTime: 30_000,
+  });
+
+  const finishShoppingCommand = async (kind: "create" | "reconcile", targetId: string) => {
+    await queryClient.invalidateQueries({ queryKey: shoppingKeys.active });
+    // 反映後は「古い版を取り込んでいるか」の判定も作り直す（staleTime のあいだ
+    // 反映済みリストに対して差分を出さないため）。
+    await queryClient.invalidateQueries({ queryKey: ["shopping", "reconcile-target"] });
+    clearShoppingCommand(kind, targetId);
+    setShoppingSheet(null);
+    setShoppingDiff(null);
+  };
+  const failShoppingCommand = (kind: "create" | "reconcile", targetId: string, error: unknown) => {
+    // code 付き（HTTP/ドメイン）失敗は自動再送しない。記録を捨てて承認をやり直す。
+    if (error instanceof Error && "code" in error) {
+      clearShoppingCommand(kind, targetId);
+      void queryClient.invalidateQueries({ queryKey: shoppingKeys.active });
+      void queryClient.invalidateQueries({ queryKey });
+      setShoppingSheet(null);
+      setShoppingDiff(null);
+      setShoppingError("買い物リストの状態が変わりました。もう一度確認してください");
+      return;
+    }
+    setShoppingError("買い物リストを更新できませんでした。通信が戻ると自動で送り直します");
+  };
+
+  const submitCreate = async (command: CreateShoppingListRequest) => {
+    try {
+      await createList.mutateAsync(command);
+      await finishShoppingCommand("create", command.menuId);
+      void navigate("/shopping");
+    } catch (error) {
+      failShoppingCommand("create", command.menuId, error);
+    }
+  };
+  const submitReconcile = async (listId: string, command: ReconcileShoppingListRequest) => {
+    try {
+      await reconcileList.mutateAsync({ listId, input: command });
+      await finishShoppingCommand("reconcile", listId);
+      // 作成時と同じく反映後は買い物リストへ移る（E2E・再送完了の到達点を揃える）
+      void navigate("/shopping");
+    } catch (error) {
+      failShoppingCommand("reconcile", listId, error);
+    }
+  };
+
+  // 応答を取り逃した送信は、再読込・復帰・オンライン復帰で同じバイト列のまま再送する。
+  useResumeShoppingCommand({
+    kind: "create",
+    targetId: menuId,
+    schema: createShoppingListRequestSchema,
+    submit: submitCreate,
+  });
+  useResumeShoppingCommand({
+    kind: "reconcile",
+    targetId: activeList?.id ?? null,
+    schema: reconcileShoppingListRequestSchema,
+    submit: (command: ReconcileShoppingListRequest) =>
+      submitReconcile(activeList?.id ?? "", command),
+  });
 
   const firstDishId = query.data?.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
@@ -277,10 +383,37 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
-          disabled={!actionsEnabled}
+          disabled={shoppingBlocked || createList.isPending}
+          onClick={() => {
+            setShoppingError(null);
+            setShoppingSheet("create");
+          }}
         >
           買い物リストを作る
         </button>
+        {reconcileTarget.data !== null && reconcileTarget.data !== undefined && (
+          <button
+            type="button"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            disabled={shoppingBlocked || reconcileList.isPending}
+            onClick={() => {
+              const target = reconcileTarget.data;
+              if (activeList === null || menuId === null || target === null) return;
+              setShoppingError(null);
+              // 表示専用のプレビュー。反映内容はサーバーが必ず計算し直す。
+              previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
+                .then((diff) => {
+                  setShoppingDiff(diff);
+                  setShoppingSheet("reconcile");
+                })
+                .catch(() => {
+                  setShoppingError("差分を確認できませんでした");
+                });
+            }}
+          >
+            買い物リストとの差分を確認
+          </button>
+        )}
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
@@ -303,6 +436,83 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
           これに決めた
         </button>
       </div>
+
+      {shoppingError !== null && (
+        <p role="alert" className="mt-4">
+          {shoppingError}
+        </p>
+      )}
+
+      {shoppingSheet === "create" && menuId !== null && (
+        <CreateListSheet
+          activeList={
+            activeList === null
+              ? null
+              : {
+                  id: activeList.id,
+                  version: activeList.version,
+                  itemCount: activeList.items.length,
+                }
+          }
+          pending={createList.isPending}
+          safetyBlocked={shoppingBlocked}
+          onSubmit={(input) => {
+            if (shoppingBlocked) return;
+            const command = persistedShoppingCommand(
+              "create",
+              menuId,
+              createShoppingListRequestSchema,
+              (idempotencyKey) => ({
+                menuId,
+                mode: input.mode,
+                activeListId: input.mode === "append" ? input.activeListId : null,
+                expectedListVersion: input.mode === "append" ? input.expectedListVersion : null,
+                idempotencyKey,
+              }),
+            );
+            void submitCreate(command);
+          }}
+          onCancel={() => {
+            setShoppingSheet(null);
+          }}
+        />
+      )}
+
+      {shoppingSheet === "reconcile" &&
+        shoppingDiff !== null &&
+        activeList !== null &&
+        menuId !== null &&
+        reconcileTarget.data !== null &&
+        reconcileTarget.data !== undefined && (
+          <ReconcileListSheet
+            diff={shoppingDiff}
+            pending={reconcileList.isPending}
+            safetyBlocked={shoppingBlocked}
+            onApply={(approval) => {
+              const target = reconcileTarget.data;
+              if (shoppingBlocked || target === null) return;
+              const listId = activeList.id;
+              const command = persistedShoppingCommand(
+                "reconcile",
+                listId,
+                reconcileShoppingListRequestSchema,
+                (idempotencyKey) => ({
+                  expectedListVersion: activeList.version,
+                  sourceMenuId: menuId,
+                  sourceMenuVersion: target.sourceMenuVersion,
+                  idempotencyKey,
+                  // 承認はキーとIDだけを運ぶ。解決済みの値はブラウザから送らない。
+                  approval,
+                }),
+              );
+              void submitReconcile(listId, command);
+            }}
+            onCancel={() => {
+              setShoppingSheet(null);
+              setShoppingDiff(null);
+            }}
+          />
+        )}
 
       {sheetMode !== null && (
         <section

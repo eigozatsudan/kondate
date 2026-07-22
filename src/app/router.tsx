@@ -8,7 +8,7 @@ import { GenerationPage } from "@/features/generation/pages/generation-page";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import { HistoryDetailPage } from "@/features/history/pages/history-detail-page";
 import { HistoryPage } from "@/features/history/pages/history-page";
-import { PlaceholderPage } from "@/shared/ui/placeholder-page";
+import { ShoppingListPage } from "@/features/shopping/pages/shopping-list-page";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
 
@@ -83,12 +83,7 @@ export function createAppRouter(): AppRouter {
                 },
                 {
                   path: "/shopping",
-                  element: (
-                    <PlaceholderPage
-                      title="買い物"
-                      description="使用中の買い物リストを確認する画面です。"
-                    />
-                  ),
+                  element: <ShoppingListPage />,
                 },
                 {
                   path: "/settings",

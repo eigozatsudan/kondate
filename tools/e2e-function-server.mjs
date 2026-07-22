@@ -2,7 +2,8 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { createServer as createViteServer } from "vite";
 
-// Plan 4 履歴・再生成ジャーニーが必要とする Function を含む閉じた一覧。
+// Plan 4 履歴・再生成ジャーニーと Plan 5 買い物リストジャーニーが必要とする
+// Function を含む閉じた一覧。
 // Vite proxy が /api を 5174 へ転送するため、ここに無い path は E2E で 404 になる。
 const functionModulePaths = [
   "/netlify/functions/auth-continuation-create.ts",
@@ -15,6 +16,10 @@ const functionModulePaths = [
   "/netlify/functions/revalidate-menu.ts",
   "/netlify/functions/usage-today.ts",
   "/netlify/functions/confirm-label-confirmation.ts",
+  "/netlify/functions/shopping-list-from-menu.ts",
+  "/netlify/functions/shopping-list-preview.ts",
+  "/netlify/functions/shopping-list-reconcile.ts",
+  "/netlify/functions/shopping-list-revalidate.ts",
 ];
 
 function escapeRegex(value) {
@@ -70,7 +75,11 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
       `http://${nodeRequest.headers.host ?? "127.0.0.1"}`,
     );
     const route = routes.find(
-      ({ method, matcher }) => method === nodeRequest.method && matcher.test(url.pathname),
+      // Netlify の Config.method は任意項目で、省略時は全メソッドを受ける。
+      // Plan 5 の一部 Function は method を宣言しないため、undefined を
+      // 「メソッド制限なし」として扱わないと E2E だけ 404 になる。
+      ({ method, matcher }) =>
+        (method === undefined || method === nodeRequest.method) && matcher.test(url.pathname),
     );
     if (route === undefined) {
       nodeResponse.statusCode = 404;

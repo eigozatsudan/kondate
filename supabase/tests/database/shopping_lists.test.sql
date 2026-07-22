@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(59);
+select plan(60);
 select has_table('public','shopping_lists','shopping_lists exists');
 select has_table('public','shopping_items','shopping_items exists');
 select has_table('public','shopping_list_sources','shopping_list_sources exists');
@@ -636,6 +636,179 @@ end;
 $test$;
 select pass('idempotency: same-key replay returns the saved response before stale-version checks, '
   || 'and same-key different-payload retry fails with idempotency_payload_mismatch');
+
+-- -----------------------------------------------------------------------------
+-- idempotency二重送信検証（apply_shopping_reconciliation）:
+-- 差分整合を適用してversion 4を記録したあと、同じキー/ハッシュでの再送は
+-- 「古い期待version 3」を渡したままでも保存済みレスポンスを返す（version不一致
+-- チェックより前にreplayが返る）。同じキーで承認内容だけ変えた再送は
+-- idempotency_payload_mismatchで拒否する（これもversionエラーより前）。
+-- -----------------------------------------------------------------------------
+do $test$
+declare
+  v_owner constant uuid := 'c7000000-0000-4000-8000-000000000001';
+  v_member constant uuid := 'c7000000-0000-4000-8000-000000000002';
+  v_menu_a constant uuid := 'c7000000-0000-4000-8000-000000000003';
+  v_dish_a constant uuid := 'c7000000-0000-4000-8000-000000000004';
+  v_ingredient_a constant uuid := 'c7000000-0000-4000-8000-000000000005';
+  v_menu_b constant uuid := 'c7000000-0000-4000-8000-000000000013';
+  v_dish_b constant uuid := 'c7000000-0000-4000-8000-000000000014';
+  v_ingredient_b constant uuid := 'c7000000-0000-4000-8000-000000000015';
+  v_key constant uuid := 'c7000000-0000-4000-8000-000000000020';
+  v_list_id uuid;
+  v_fingerprint text;
+  v_hash text;
+  v_draft jsonb;
+  v_diff jsonb;
+  v_response jsonb;
+begin
+  insert into auth.users (id,instance_id,aud,role,email) values
+    (v_owner,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',
+      'shopping-reconcile-idem-owner@example.test');
+  insert into public.household_members (
+    id,user_id,status,display_name,age_band,portion_size,spice_level,
+    allergy_status,unsupported_diet_status
+  ) values (
+    v_member,v_owner,'draft','子ども','age_6_8','regular','mild','registered','none'
+  );
+  insert into public.member_allergies (
+    id,user_id,member_id,allergen_id,custom_name,custom_confirmed
+  ) values (
+    'c7000000-0000-4000-8000-000000000006',v_owner,v_member,'wheat',null,false
+  );
+  update public.household_members set status='complete' where id=v_member;
+
+  insert into public.menus (
+    id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
+    preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+    food_safety_rule_version,output_schema_version,derivation_group_id,version
+  ) values
+    (v_menu_a,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('a',64),
+      'allergens-v1','food-v1','menu-v1','c7000000-0000-4000-8000-000000000007',1),
+    (v_menu_b,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('b',64),
+      'allergens-v1','food-v1','menu-v1','c7000000-0000-4000-8000-000000000017',1);
+  insert into public.menu_target_members (
+    id,menu_id,user_id,household_member_id,household_member_user_id,
+    anonymous_ref,member_display_name_snapshot
+  ) values
+    ('c7000000-0000-4000-8000-000000000008',v_menu_a,v_owner,v_member,v_owner,'member_1','子ども'),
+    ('c7000000-0000-4000-8000-000000000018',v_menu_b,v_owner,v_member,v_owner,'member_1','子ども');
+  insert into public.dishes (
+    id,menu_id,user_id,role,position,name,description,cooking_time_minutes
+  ) values
+    (v_dish_a,v_menu_a,v_owner,'main',1,'煮物','reconcile検証用の煮物です',20),
+    (v_dish_b,v_menu_b,v_owner,'main',1,'炒め物','reconcile検証用の炒め物です',15);
+  insert into public.dish_ingredients (
+    id,menu_id,dish_id,user_id,position,name,quantity_value,quantity_text,unit,store_section
+  ) values
+    (v_ingredient_a,v_menu_a,v_dish_a,v_owner,1,'にんじん',1,'1本','本','produce'),
+    (v_ingredient_b,v_menu_b,v_dish_b,v_owner,1,'たまねぎ',1,'1個','個','produce');
+
+  -- 献立Aで買い物リストを作る（version 1）。
+  v_fingerprint := public.shopping_safety_fingerprint(v_owner, v_menu_a);
+  v_draft := jsonb_build_object(
+    'items', jsonb_build_array(jsonb_build_object(
+      'key','carrot-reconcile','displayName','にんじん','normalizedName','にんじん',
+      'storeSection','produce','quantityValue',1,'quantityText','1本','unit','本',
+      'pantryCheckRequired',false,
+      'sourceIngredients', jsonb_build_array(jsonb_build_object(
+        'ingredientId',v_ingredient_a,'dishId',v_dish_a,'dishName','煮物','name','にんじん',
+        'quantityValue',1,'quantityText','1本','unit','本','storeSection','produce'
+      )),
+      'labelWarnings','[]'::jsonb
+    )),
+    'listLabelWarnings','[]'::jsonb
+  );
+  v_response := public.apply_shopping_draft(
+    v_owner, v_menu_a, 'new', null, null, v_fingerprint,
+    'c7000000-0000-4000-8000-000000000021'::uuid,
+    encode(extensions.digest(convert_to('reconcile-idem-create','UTF8'),'sha256'),'hex'),
+    v_draft
+  );
+  v_list_id := (v_response->>'listId')::uuid;
+
+  -- 設計書の「version 4 を記録する」条件を満たすため、整合適用の直前にリストを
+  -- version 3 まで進めておく（apply_shopping_reconciliation は +1 する）。
+  update public.shopping_lists set version = 3 where id = v_list_id and user_id = v_owner;
+
+  v_fingerprint := public.shopping_safety_fingerprint(v_owner, v_menu_b);
+  v_hash := encode(extensions.digest(convert_to('reconcile-idem-approval','UTF8'),'sha256'),'hex');
+  v_diff := jsonb_build_object(
+    'add', jsonb_build_array(jsonb_build_object(
+      'key','onion-reconcile','displayName','たまねぎ','normalizedName','たまねぎ',
+      'storeSection','produce','quantityValue',1,'quantityText','1個','unit','個',
+      'pantryCheckRequired',false,
+      'sourceIngredients', jsonb_build_array(jsonb_build_object(
+        'ingredientId',v_ingredient_b,'dishId',v_dish_b,'dishName','炒め物','name','たまねぎ',
+        'quantityValue',1,'quantityText','1個','unit','個','storeSection','produce'
+      )),
+      'labelWarnings','[]'::jsonb
+    )),
+    'replace','[]'::jsonb,
+    'removeIds','[]'::jsonb,
+    'listLabelWarnings','[]'::jsonb
+  );
+
+  v_response := public.apply_shopping_reconciliation(
+    v_owner, v_list_id, 3, v_menu_b, 1, v_fingerprint, v_key, v_hash, v_diff
+  );
+  if (v_response->>'version')::integer <> 4 then
+    raise exception 'reconcile idempotency: the first reconciliation should record version 4, got %',
+      v_response->>'version';
+  end if;
+  if (v_response->>'replayed')::boolean is distinct from false then
+    raise exception 'reconcile idempotency: the first reconciliation must not be marked replayed';
+  end if;
+
+  -- 同じキー/ハッシュでのreplay照会は保存済みレスポンス（version 4）を返す。
+  -- get_shopping_mutation_replay はversionを引数に取らないため、呼び出し側が
+  -- 古い期待version 3 を持ったままでも保存済みレスポンスが優先される。
+  v_response := public.get_shopping_mutation_replay(v_owner, v_key, v_hash);
+  if v_response is null then
+    raise exception 'reconcile idempotency: the saved reconciliation must replay';
+  end if;
+  if (v_response->>'version')::integer <> 4
+    or (v_response->>'replayed')::boolean is distinct from true
+    or (v_response->>'listId')::uuid <> v_list_id then
+    raise exception 'reconcile idempotency: replay must return the saved version 4 response, got %',
+      v_response;
+  end if;
+
+  -- RPC自体の再送も同じ。古い期待version 3 を渡したままでも、
+  -- list_version_conflict より前にreplayが返る（現在のリストは version 4）。
+  v_response := public.apply_shopping_reconciliation(
+    v_owner, v_list_id, 3, v_menu_b, 1, v_fingerprint, v_key, v_hash, v_diff
+  );
+  if (v_response->>'version')::integer <> 4
+    or (v_response->>'replayed')::boolean is distinct from true then
+    raise exception 'reconcile idempotency: a stale-version retry with the same key/hash must '
+      'return the saved response, got %', v_response;
+  end if;
+
+  -- 同じキーで承認内容（=request hash）だけ変えた再送は、versionエラーではなく
+  -- idempotency_payload_mismatch で拒否する。
+  begin
+    perform public.apply_shopping_reconciliation(
+      v_owner, v_list_id, 3, v_menu_b, 1, v_fingerprint, v_key,
+      encode(extensions.digest(convert_to('reconcile-idem-approval-changed','UTF8'),'sha256'),'hex'),
+      jsonb_set(v_diff,'{removeIds}',jsonb_build_array(to_jsonb(gen_random_uuid())))
+    );
+    raise exception 'reconcile idempotency: same-key changed-approval retry unexpectedly succeeded';
+  exception when others then
+    if sqlerrm <> 'idempotency_payload_mismatch' then
+      raise;
+    end if;
+  end;
+
+  -- 拒否された再送はリストを進めていない。
+  if (select version from public.shopping_lists where id = v_list_id) <> 4 then
+    raise exception 'reconcile idempotency: a rejected retry must not advance the list version';
+  end if;
+end;
+$test$;
+select pass('reconcile idempotency: apply_shopping_reconciliation records version 4, the same '
+  || 'key/hash replays the saved response even with the old expected version 3, and a changed '
+  || 'approval under the same key raises idempotency_payload_mismatch before any version error');
 
 select * from finish();
 rollback;
