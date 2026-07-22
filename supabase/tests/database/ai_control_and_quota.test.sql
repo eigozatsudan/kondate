@@ -1316,21 +1316,47 @@ set deleted_at = null
 where id = '30000000-0000-4000-8000-000000000001';
 
 select is(
-  public.reserve_ai_generation(
-    '10000000-0000-4000-8000-000000000001',
-    '20000000-0000-4000-8000-000000000002',
-    'new_menu', '30000000-0000-4000-8000-000000000001', 1,
-    null, null, null,
-    'generation-command.v2', repeat('2', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb,
-    5, 45, 180, '2026-07-10 15:00:02+00'
-  )->>'failure_code',
-  'generation_in_progress'
+  (
+    select public.reserve_ai_generation(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'new_menu', '30000000-0000-4000-8000-000000000001', 1,
+      null, null, null,
+      'generation-command.v2', repeat('2', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb,
+      5, 45, 180, '2026-07-10 15:00:02+00'
+    )
+  ) - 'started_at' - 'completed_at' - 'retry_at' - 'processing_expires_at'
+    - 'remaining' - 'user_daily_limit' - 'consumed',
+  (
+    select jsonb_build_object(
+      'request_id', id,
+      'idempotency_key', '20000000-0000-4000-8000-000000000002'::uuid,
+      'status', 'failed',
+      'failure_code', 'generation_in_progress',
+      'completed_menu_id', null,
+      'replayed', false
+    )
+    from private.ai_generation_requests
+    where idempotency_key = '20000000-0000-4000-8000-000000000001'
+  ),
+  'generation_in_progress surfaces active request_id without a new ledger row'
 );
 select is(
   (select count(*) from private.ai_generation_requests
     where idempotency_key = '20000000-0000-4000-8000-000000000002'),
   0::bigint,
   'generation_in_progress does not create a request ledger row'
+);
+-- p_now を処理期限内に固定しないと cleanup_stale が active を generation_timeout にする
+select is(
+  public.get_ai_generation_status(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    5,
+    '2026-07-10 15:00:02+00'
+  )->>'status',
+  'not_started',
+  'rejected key remains not_started in the ledger status RPC'
 );
 
 select lives_ok($$
@@ -2857,6 +2883,244 @@ begin
 end
 $test$;
 select pass('cleanup_ai_generation_requests scopes opportunistic deletes by user_id');
+
+-- =============================================================================
+-- Plan 7 Task 4: regeneration snapshot 不変性 / owner 複合 FK / member 契約 /
+-- lookup + regeneration snapshot RPC の privilege
+-- =============================================================================
+select ok(
+  has_function_privilege(
+    'service_role',
+    to_regprocedure('public.lookup_ai_generation_request(uuid,uuid)'),
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    to_regprocedure('public.lookup_ai_generation_request(uuid,uuid)'),
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    to_regprocedure('public.lookup_ai_generation_request(uuid,uuid)'),
+    'EXECUTE'
+  ),
+  'only service_role can execute lookup_ai_generation_request'
+);
+select throws_ok($$
+  set local role anon;
+  select public.lookup_ai_generation_request(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000099'
+  )
+$$, '42501', null, 'anon is actually denied lookup_ai_generation_request');
+select throws_ok($$
+  set local role authenticated;
+  select public.lookup_ai_generation_request(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000099'
+  )
+$$, '42501', null, 'authenticated is actually denied lookup_ai_generation_request');
+
+select ok(
+  has_function_privilege(
+    'service_role',
+    to_regprocedure('public.get_ai_generation_regeneration_snapshot(uuid,uuid)'),
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    to_regprocedure('public.get_ai_generation_regeneration_snapshot(uuid,uuid)'),
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    to_regprocedure('public.get_ai_generation_regeneration_snapshot(uuid,uuid)'),
+    'EXECUTE'
+  ),
+  'only service_role can execute get_ai_generation_regeneration_snapshot'
+);
+select throws_ok($$
+  set local role anon;
+  select public.get_ai_generation_regeneration_snapshot(
+    '20000000-0000-4000-8000-000000000099',
+    '10000000-0000-4000-8000-000000000001'
+  )
+$$, '42501', null, 'anon is actually denied regeneration snapshot RPC');
+select throws_ok($$
+  set local role authenticated;
+  select public.get_ai_generation_regeneration_snapshot(
+    '20000000-0000-4000-8000-000000000099',
+    '10000000-0000-4000-8000-000000000001'
+  )
+$$, '42501', null, 'authenticated is actually denied regeneration snapshot RPC');
+
+do $snapshot_fixture$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-000000000001';
+  v_other constant uuid := '10000000-0000-4000-8000-000000000002';
+  v_request constant uuid := 'd1000000-0000-4000-8000-000000000001';
+  v_owner_bare constant uuid := 'd1000000-0000-4000-8000-000000000003';
+  v_other_request constant uuid := 'd1000000-0000-4000-8000-000000000002';
+  v_member constant uuid := '10000000-0000-4000-8000-000000000001';
+begin
+  -- 既存 processing があれば終端化して snapshot 検証用 request を挿入できるようにする
+  update private.ai_generation_requests
+  set status = 'failed',
+      failure_code = 'generation_timeout',
+      completed_at = coalesce(completed_at, now()),
+      processing_expires_at = null,
+      user_quota_reserved = false,
+      user_attempt_reserved = false,
+      user_attempt_day = null,
+      global_reserved_day = null
+  where user_id in (v_owner, v_other) and status = 'processing';
+
+  insert into private.ai_generation_requests(
+    id, user_id, idempotency_key, request_kind, status,
+    request_hmac_version, request_hmac, user_usage_day,
+    started_at, completed_at
+  ) values
+    (v_request, v_owner, 'd2000000-0000-4000-8000-000000000001', 'regenerate_menu', 'failed',
+     'generation-command.v2', repeat('a', 64), date '2026-07-22',
+     '2026-07-22 00:00:00+00', '2026-07-22 00:00:01+00'),
+    (v_owner_bare, v_owner, 'd2000000-0000-4000-8000-000000000003', 'regenerate_menu', 'failed',
+     'generation-command.v2', repeat('b', 64), date '2026-07-22',
+     '2026-07-22 00:00:00+00', '2026-07-22 00:00:01+00'),
+    (v_other_request, v_other, 'd2000000-0000-4000-8000-000000000002', 'regenerate_menu', 'failed',
+     'generation-command.v2', repeat('c', 64), date '2026-07-22',
+     '2026-07-22 00:00:00+00', '2026-07-22 00:00:01+00');
+
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids, created_at
+  ) values (
+    v_request, v_owner, 'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'household', 2, array[v_member], '2026-07-22 00:00:00+00'
+  );
+end
+$snapshot_fixture$;
+
+select throws_ok($$
+  update private.generation_regeneration_snapshots
+  set servings = 3
+  where request_id = 'd1000000-0000-4000-8000-000000000001'
+$$, '55000', 'generation_regeneration_snapshot_immutable',
+  'regeneration snapshot rejects UPDATE');
+
+select throws_ok($$
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids
+  ) values (
+    'd1000000-0000-4000-8000-000000000002',
+    '10000000-0000-4000-8000-000000000001',
+    'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'household', 2,
+    array['10000000-0000-4000-8000-000000000001'::uuid]
+  )
+$$, '23503', null,
+  'regeneration snapshot rejects other-owner request composite FK');
+
+select throws_ok($$
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids
+  ) values (
+    'd1000000-0000-4000-8000-000000000003',
+    '10000000-0000-4000-8000-000000000002',
+    'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'household', 2,
+    array['10000000-0000-4000-8000-000000000001'::uuid]
+  )
+$$, '23503', null,
+  'regeneration snapshot rejects wrong user_id on existing request');
+
+select throws_ok($$
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids
+  ) values (
+    'd1000000-0000-4000-8000-000000000002',
+    '10000000-0000-4000-8000-000000000002',
+    'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'household', 2,
+    (
+      select array_agg(
+        ('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid
+        order by g
+      )
+      from generate_series(1, 21) as g
+    )
+  )
+$$, '23514', null,
+  'regeneration snapshot rejects 21 household members');
+
+select throws_ok($$
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids
+  ) values (
+    'd1000000-0000-4000-8000-000000000002',
+    '10000000-0000-4000-8000-000000000002',
+    'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'household', 2,
+    array[null::uuid, '10000000-0000-4000-8000-000000000002'::uuid]
+  )
+$$, '23514', null,
+  'regeneration snapshot rejects NULL target member elements');
+
+select throws_ok($$
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids
+  ) values (
+    'd1000000-0000-4000-8000-000000000002',
+    '10000000-0000-4000-8000-000000000002',
+    'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'household', 2,
+    array[
+      '10000000-0000-4000-8000-000000000002'::uuid,
+      '10000000-0000-4000-8000-000000000002'::uuid
+    ]
+  )
+$$, '23514', null,
+  'regeneration snapshot rejects duplicate target member ids');
+
+select throws_ok($$
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids
+  ) values (
+    'd1000000-0000-4000-8000-000000000002',
+    '10000000-0000-4000-8000-000000000002',
+    'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'idea', 2,
+    array['10000000-0000-4000-8000-000000000002'::uuid]
+  )
+$$, '23514', null,
+  'regeneration snapshot idea mode rejects non-empty target members');
+
+select throws_ok($$
+  insert into private.generation_regeneration_snapshots(
+    request_id, user_id, kind, source_menu_id, source_menu_version,
+    replace_dish_id, target_mode, servings, target_member_ids
+  ) values (
+    'd1000000-0000-4000-8000-000000000002',
+    '10000000-0000-4000-8000-000000000002',
+    'regenerate_menu',
+    'c4000000-0000-4000-8000-000000000099', 1, null,
+    'household', 2,
+    array[]::uuid[]
+  )
+$$, '23514', null,
+  'regeneration snapshot household mode rejects empty target members');
 
 select * from finish();
 rollback;

@@ -3,6 +3,7 @@
 -- Plan 7 Task 4: owner 単位 processing 制約を dblink の別バックエンド session で検証する。
 -- 同一 owner の processing v2 があるとき、別 key の new/whole/dish 予約はすべて
 -- generation_in_progress となり request / quota / attempt / snapshot を増やさない。
+-- dblink セッションは autocommit でコミット済み processing 行を観測する。
 -- =============================================================================
 select plan(5);
 
@@ -79,7 +80,7 @@ insert into public.dishes (
   ('c8000000-0000-4000-8000-000000000101', 'c4000000-0000-4000-8000-000000000101',
     'c1000000-0000-4000-8000-000000000101', 'main', 1, '煮物', 'race検証用の煮物です', 20);
 
--- owner1 に processing 予約を作る
+-- owner1 に processing 予約を作る（このファイルは begin を開かないので autocommit）
 select public.reserve_ai_generation(
   'c1000000-0000-4000-8000-000000000101',
   'c9000000-0000-4000-8000-000000000001',
@@ -106,59 +107,92 @@ select
   (select count(*) from private.generation_regeneration_snapshots
     where user_id = 'c1000000-0000-4000-8000-000000000101') as snapshots;
 
+-- dblink 用接続文字列（別バックエンド session）
+create temporary table race_dblink_conn as
+select
+  'host=db port=5432 dbname=postgres user=generation_pgtap_dblink_test password=generation_pgtap_dblink_test_only'
+    as connstr;
+
+-- 別 session から new_menu を予約 → generation_in_progress
 select is(
-  (select public.reserve_ai_generation(
-    'c1000000-0000-4000-8000-000000000101',
-    'c9000000-0000-4000-8000-000000000002',
-    'new_menu',
-    'c3000000-0000-4000-8000-000000000101',
-    1,
-    null, null, null,
-    'generation-command.v2',
-    repeat('2', 64),
-    '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
-    5, 45, 180,
-    '2026-07-22 00:00:01+00'
-  )->>'failure_code'),
+  (
+    select failure_code
+    from extensions.dblink(
+      (select connstr from race_dblink_conn),
+      $sql$
+        select public.reserve_ai_generation(
+          'c1000000-0000-4000-8000-000000000101',
+          'c9000000-0000-4000-8000-000000000002',
+          'new_menu',
+          'c3000000-0000-4000-8000-000000000101',
+          1,
+          null, null, null,
+          'generation-command.v2',
+          repeat('2', 64),
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
+          5, 45, 180,
+          '2026-07-22 00:00:01+00'
+        )->>'failure_code'
+      $sql$
+    ) as t(failure_code text)
+  ),
   'generation_in_progress',
-  'owner with processing rejects another new_menu key'
+  'other-session new_menu under processing is generation_in_progress'
 );
 
+-- 別 session から regenerate_menu
 select is(
-  (select public.reserve_ai_generation(
-    'c1000000-0000-4000-8000-000000000101',
-    'c9000000-0000-4000-8000-000000000003',
-    'regenerate_menu',
-    null, null,
-    'c4000000-0000-4000-8000-000000000101',
-    null, 'simpler',
-    'generation-command.v2',
-    repeat('3', 64),
-    '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-    5, 45, 180,
-    '2026-07-22 00:00:02+00'
-  )->>'failure_code'),
+  (
+    select failure_code
+    from extensions.dblink(
+      (select connstr from race_dblink_conn),
+      $sql$
+        select public.reserve_ai_generation(
+          'c1000000-0000-4000-8000-000000000101',
+          'c9000000-0000-4000-8000-000000000003',
+          'regenerate_menu',
+          null, null,
+          'c4000000-0000-4000-8000-000000000101',
+          null, 'simpler',
+          'generation-command.v2',
+          repeat('3', 64),
+          '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
+          5, 45, 180,
+          '2026-07-22 00:00:02+00'
+        )->>'failure_code'
+      $sql$
+    ) as t(failure_code text)
+  ),
   'generation_in_progress',
-  'owner with processing rejects regenerate_menu on another key'
+  'other-session regenerate_menu under processing is generation_in_progress'
 );
 
+-- 別 session から regenerate_dish
 select is(
-  (select public.reserve_ai_generation(
-    'c1000000-0000-4000-8000-000000000101',
-    'c9000000-0000-4000-8000-000000000004',
-    'regenerate_dish',
-    null, null,
-    'c4000000-0000-4000-8000-000000000101',
-    'c8000000-0000-4000-8000-000000000101',
-    'simpler',
-    'generation-command.v2',
-    repeat('4', 64),
-    '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-    5, 45, 180,
-    '2026-07-22 00:00:03+00'
-  )->>'failure_code'),
+  (
+    select failure_code
+    from extensions.dblink(
+      (select connstr from race_dblink_conn),
+      $sql$
+        select public.reserve_ai_generation(
+          'c1000000-0000-4000-8000-000000000101',
+          'c9000000-0000-4000-8000-000000000004',
+          'regenerate_dish',
+          null, null,
+          'c4000000-0000-4000-8000-000000000101',
+          'c8000000-0000-4000-8000-000000000101',
+          'simpler',
+          'generation-command.v2',
+          repeat('4', 64),
+          '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
+          5, 45, 180,
+          '2026-07-22 00:00:03+00'
+        )->>'failure_code'
+      $sql$
+    ) as t(failure_code text)
+  ),
   'generation_in_progress',
-  'owner with processing rejects regenerate_dish on another key'
+  'other-session regenerate_dish under processing is generation_in_progress'
 );
 
 select is(
@@ -184,26 +218,34 @@ select is(
     )
     from race_baseline
   ),
-  'generation_in_progress does not add request, quota, attempt, or snapshot rows'
+  'generation_in_progress from other sessions does not add request, quota, attempt, or snapshot rows'
 );
 
--- 別 owner は独立して予約できる
+-- 別 owner は独立して予約できる（これも dblink の別 session から）
 select is(
-  (select public.reserve_ai_generation(
-    'c1000000-0000-4000-8000-000000000102',
-    'c9000000-0000-4000-8000-000000000005',
-    'new_menu',
-    'c3000000-0000-4000-8000-000000000102',
-    1,
-    null, null, null,
-    'generation-command.v2',
-    repeat('5', 64),
-    '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb,
-    5, 45, 180,
-    '2026-07-22 00:00:04+00'
-  )->>'status'),
+  (
+    select status
+    from extensions.dblink(
+      (select connstr from race_dblink_conn),
+      $sql$
+        select public.reserve_ai_generation(
+          'c1000000-0000-4000-8000-000000000102',
+          'c9000000-0000-4000-8000-000000000005',
+          'new_menu',
+          'c3000000-0000-4000-8000-000000000102',
+          1,
+          null, null, null,
+          'generation-command.v2',
+          repeat('5', 64),
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb,
+          5, 45, 180,
+          '2026-07-22 00:00:04+00'
+        )->>'status'
+      $sql$
+    ) as t(status text)
+  ),
   'processing',
-  'a different owner can reserve independently'
+  'a different owner can reserve independently from another session'
 );
 
 -- cleanup

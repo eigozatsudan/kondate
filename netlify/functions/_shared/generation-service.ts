@@ -630,6 +630,11 @@ export async function runGeneration(
     }
   };
   if (reserved.status !== "processing" || reserved.replayed === true) {
+    // generation_in_progress は台帳行を増やさない合成 failed。status(key) は
+    // not_started になるため、reserve payload をそのまま GenerationStatusData へ写す。
+    if (reserved.status === "failed" && reserved.failure_code === "generation_in_progress") {
+      return toGenerationStatus(reserved, key);
+    }
     try {
       return await hydrate();
     } catch (error) {

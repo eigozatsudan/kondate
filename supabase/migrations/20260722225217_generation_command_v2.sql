@@ -36,10 +36,11 @@ as $$
       or pg_catalog.array_ndims(p_value) is not distinct from 1
     )
     and pg_catalog.array_position(p_value, null) is null
-    and (
-      select pg_catalog.count(*)::integer
+    -- 重複 ID は count(distinct) と cardinality の不一致で拒否する
+    and pg_catalog.cardinality(p_value) = (
+      select pg_catalog.count(distinct member_id)::integer
       from pg_catalog.unnest(p_value) as members(member_id)
-    ) = pg_catalog.cardinality(p_value)
+    )
     and (
       (p_target_mode = 'household' and pg_catalog.cardinality(p_value) between 1 and 20)
       or (p_target_mode = 'idea' and pg_catalog.cardinality(p_value) = 0)
@@ -435,17 +436,32 @@ begin
 
   perform public.cleanup_stale_ai_generations(p_now);
 
-  -- owner に processing があれば永続行を作らず安定 code を返す
+  -- owner に processing があれば永続行を作らず安定 code を返す。
+  -- request_id は新規行ではなく既存 active の id を載せ、POST 応答が
+  -- GenerationStatusData（failed は requestId/completedAt 必須）へ直接写せるようにする。
   select * into v_active from private.ai_generation_requests
   where user_id = p_user_id and status = 'processing';
   if found then
+    select * into v_user from private.ai_user_daily_usage
+    where user_id = p_user_id and usage_day = v_day;
     return pg_catalog.jsonb_build_object(
+      'request_id', v_active.id,
       'idempotency_key', p_idempotency_key,
       'status', 'failed',
       'failure_code', 'generation_in_progress',
       'retry_at', v_active.processing_expires_at,
       'processing_expires_at', v_active.processing_expires_at,
       'completed_menu_id', null,
+      'started_at', v_active.started_at,
+      'completed_at', p_now,
+      'remaining', greatest(
+        p_user_limit
+          - coalesce(v_user.success_count, 0)
+          - coalesce(v_user.reserved_count, 0),
+        0
+      ),
+      'user_daily_limit', p_user_limit,
+      'consumed', false,
       'replayed', false
     );
   end if;
@@ -558,13 +574,30 @@ begin
     end if;
   exception
     when unique_violation then
-      -- owner 単位 processing 制約の競合を安定 code へ写す（request/quota/snapshot を残さない）
+      -- owner 単位 processing 制約の競合を安定 code へ写す（request/quota/snapshot を残さない）。
+      -- サブトランザクション巻き戻し後に勝者の processing 行を読み、early path と同じ形へ揃える。
+      select * into v_active from private.ai_generation_requests
+      where user_id = p_user_id and status = 'processing';
+      select * into v_user from private.ai_user_daily_usage
+      where user_id = p_user_id and usage_day = v_day;
       return pg_catalog.jsonb_build_object(
+        'request_id', coalesce(v_active.id, p_idempotency_key),
         'idempotency_key', p_idempotency_key,
         'status', 'failed',
         'failure_code', 'generation_in_progress',
-        'retry_at', null,
+        'retry_at', v_active.processing_expires_at,
+        'processing_expires_at', v_active.processing_expires_at,
         'completed_menu_id', null,
+        'started_at', coalesce(v_active.started_at, p_now),
+        'completed_at', p_now,
+        'remaining', greatest(
+          p_user_limit
+            - coalesce(v_user.success_count, 0)
+            - coalesce(v_user.reserved_count, 0),
+          0
+        ),
+        'user_daily_limit', p_user_limit,
+        'consumed', false,
         'replayed', false
       );
   end;

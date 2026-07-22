@@ -1093,6 +1093,60 @@ describe("runGeneration", () => {
     expect(repository.markSent).not.toHaveBeenCalled();
   });
 
+  it("surfaces synthetic generation_in_progress without hydrating not_started", async () => {
+    // 台帳に rejected key の行は無い。status(key) は not_started を返すが、
+    // POST 応答は reserve 合成 payload の安定 code を優先する。
+    const activeRequestId = "87000000-0000-4000-8000-000000000001";
+    const repository = makeRepository();
+    repository.reserveNew.mockResolvedValue({
+      request_id: activeRequestId,
+      idempotency_key: key,
+      status: "failed",
+      failure_code: "generation_in_progress",
+      retry_at: "2026-07-11T00:03:00.000Z",
+      processing_expires_at: "2026-07-11T00:03:00.000Z",
+      completed_menu_id: null,
+      started_at: "2026-07-11T00:00:00.000Z",
+      completed_at: "2026-07-11T00:00:01.000Z",
+      remaining: 4,
+      user_daily_limit: 5 as const,
+      consumed: false,
+      replayed: false,
+    });
+    repository.status.mockResolvedValue({
+      idempotency_key: key,
+      status: "not_started",
+      remaining: 5,
+      user_daily_limit: 5 as const,
+      consumed: false,
+    });
+    const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
+    const result = await runGeneration(makeDeps({ repository, loadExecutionContext }), command);
+    expect(result).toEqual({
+      status: "failed",
+      idempotencyKey: key,
+      requestId: activeRequestId,
+      quota: {
+        consumed: false,
+        remaining: 4,
+        userDailyLimit: 5,
+        limitKind: null,
+        retryAt: "2026-07-11T00:03:00.000Z",
+      },
+      completedAt: "2026-07-11T00:00:01.000Z",
+      error: {
+        code: "generation_in_progress",
+        message: "別の献立を作成中です。",
+        retryable: true,
+      },
+    });
+    expect(result.status).not.toBe("not_started");
+    expect(repository.status).not.toHaveBeenCalled();
+    expect(loadExecutionContext).not.toHaveBeenCalled();
+    expect(repository.markSent).not.toHaveBeenCalled();
+    expect(repository.fail).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["failed", false],
     ["constraint_conflict", false],
