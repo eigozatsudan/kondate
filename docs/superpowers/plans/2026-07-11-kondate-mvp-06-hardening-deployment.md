@@ -20,7 +20,7 @@
 - Browser code receives only `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, public policy URLs, and Plan 1's provider-mode switch. Local/CI use `VITE_AUTH_PROVIDER_MODE=oauth_mock` plus exact `VITE_OAUTH_MOCK_ORIGIN=http://127.0.0.1:8788`; production requires `VITE_AUTH_PROVIDER_MODE=supabase` and forbids the mock-origin variable. Production browser and server Supabase URLs are exact managed origins with the same 20-character project ref, their publishable keys are byte-identical, and the maintenance direct host or Session-pooler username suffix carries that same ref. Service-role, OpenRouter, `GENERATION_REQUEST_HMAC_KEY`, and `SUPABASE_MAINTENANCE_DB_URL` credentials exist only in server-side secret contexts. The HMAC key and maintenance URL are Functions-scoped in Netlify and are exposed transiently only to the protected release preflight process; neither is a `VITE_` variable, site-build input, browser asset, repository value, artifact, or log field.
 - Release-locked generation controls are exactly 5 successes/JST day, 12 sends/user/JST day, and 4 sends/fixed 600-second window. Runtime parsing and production preflight reject any drift in 5/12/4/600.
 - Every configured OpenRouter model is explicit, unique, ends in `:free`, is not `openrouter/auto`, and supports both `structured_outputs` and `response_format` according to the live Models API at deployment time. That metadata request has one five-second abort deadline and reports a closed error without response content.
-- The live-model check is mandatory for a Netlify production build but not for normal tests, which use `mock/kondate:free` and the local mock service.
+- The live-model check is mandatory for a Netlify production build but not for normal tests, which use the local mock service. The local model list is exactly what `compose.yaml` already sets — `mock/kondate-primary:free,mock/kondate-repair:free`, two entries because the repair path needs its own model. Commands in this plan write it as `OPENROUTER_MODELS="$LOCAL_MOCK_MODELS"`; export `LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free` before running them, and never collapse it to a single invented ID such as `mock/kondate:free`, which the mock does not serve.
 - The SPA works without horizontal scrolling at 320, 375, and 430 CSS pixels. Every visible interactive target is at least 44 by 44 CSS pixels and every asynchronous status is exposed through text and an appropriate live region. This now includes `/welcome`, each of the five wizard steps, the review screen, and the idea-mode result/history surfaces. Split ownership rather than re-implementing: Plan 7 Task 1 owns the `.guided-planner-theme` contrast tests, and Plan 7 Task 8 Step 5 owns the 320-pixel/44-pixel wizard sweep plus keyboard-only traversal and reduced-motion. Plan 6 adds what neither covers — axe/landmark/live-region over every route, the 375- and 430-pixel widths, and both modes' result and history surfaces — and never relaxes or restates a Plan 7 assertion. Where the 320-pixel wizard sweep below overlaps Plan 7's, the acceptance matrix cites Plan 7's test rather than counting a duplicate.
 - CI runs formatting, lint, type checking, unit/component/adversarial tests, database tests, integration/E2E tests, the Netlify production build, Docker Compose validation, and dependency auditing. No deploy proceeds after a failed gate.
 - Production smoke tests are read-only except for the unauthenticated rejection probes; they do not create users, menus, or OpenRouter calls.
@@ -37,7 +37,7 @@
 - Create: `supabase/tests/database/account_deletion.test.sql`
 
 **Interfaces:**
-- Consumes: every `public` and `private` table created by Plans 1–5 **and Plan 7** that has a `user_id` column — including `private.generation_regeneration_snapshots`.
+- Consumes: every `public` and `private` table created by Plans 1–5 **and Plan 7** that has a `user_id` column — including `public.shopping_current_label_warnings` (Plan 5) and `private.generation_regeneration_snapshots` (Plan 7). The explicit list is 24 public relations; derive it from the migrations at implementation time rather than trusting this count, and treat any table the dynamic assertion finds but the list omits as a bug in the list.
 - Consumes: Plan 2's normalized `public.menu_safety_actions` producer (also populated by Plan 3 finalization); this plan inventories and tests that table but does not recreate it.
 - Produces: a deployment-time invariant that every such column has a direct cascading foreign key to `auth.users(id)` and a pgTAP regression test for that invariant.
 
@@ -56,7 +56,8 @@ select is_empty(
       ('dish_ingredients'),('recipe_steps'),('menu_timeline_steps'),
       ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),
       ('shopping_lists'),('shopping_list_sources'),('shopping_items'),
-      ('shopping_item_sources'),('shopping_label_confirmations')
+      ('shopping_item_sources'),('shopping_label_confirmations'),
+      ('shopping_current_label_warnings')
     )
     select expected.table_name
     from expected
@@ -173,7 +174,7 @@ declare
     'generation_pantry_selections','dishes','dish_ingredients','recipe_steps',
     'menu_timeline_steps','menu_member_adaptations','menu_safety_actions','menu_label_confirmations',
     'menu_revalidations','shopping_lists','shopping_list_sources','shopping_items',
-    'shopping_item_sources','shopping_label_confirmations'
+    'shopping_item_sources','shopping_label_confirmations','shopping_current_label_warnings'
   ];
   missing_user_id text[];
   offenders text[];
@@ -469,8 +470,10 @@ git commit -m "feat: add permanent account deletion"
 - Modify: `netlify/functions/_shared/env.ts`
 
 **Interfaces:**
-- Consumes: `OPENROUTER_MODELS` parsing from Plan 3 and the OpenRouter `GET /api/v1/models` response.
-- Produces: `verify:models:config`, `verify:models:remote`, and one shared model-list parser used by build and Functions.
+- Consumes: the **existing** `scripts/verify-openrouter-models.mjs`, the existing `verify:openrouter:config` / `verify:openrouter:models` scripts and their `predev`/`prebuild` callers, `OPENROUTER_MODELS` parsing from Plan 3, and the OpenRouter `GET /api/v1/models` response.
+- Produces: a testable refactor of that same script and one shared model-list parser used by build and Functions. **The script names do not change.** `verify:openrouter:config` and `verify:openrouter:models` keep their current names and their `--remote` argument convention, because `predev` and `prebuild` already call them; introducing `verify:models:config`/`verify:models:remote` would break both.
+
+The current script has no exports and does its work at module top level, so Step 1's test cannot import it as written. The refactor is therefore: extract `parseConfiguredModels`, `verifyRemoteModels`, and `main` as named exports, keep the executable guard, and keep `--remote` as the remote-check switch rather than adding a `VERIFY_OPENROUTER_REMOTE` env variable. Read the current file before rewriting it and preserve any rule it already enforces that the snippet below omits.
 
 - [ ] **Step 1: Add table-driven failing tests for the verifier**
 
@@ -504,8 +507,7 @@ test("bounds the live Models API request and closes transport failures", async (
     throw new Error("sensitive transport detail");
   };
   await assert.rejects(
-    main({ OPENROUTER_MODELS: "vendor/a:free", VERIFY_OPENROUTER_REMOTE: "1" },
-      fetchImpl, () => signal),
+    main({ OPENROUTER_MODELS: "vendor/a:free" }, fetchImpl, () => signal, ["--remote"]),
     /openrouter_models_unavailable/u,
   );
 });
@@ -550,12 +552,13 @@ export async function main(
   env = process.env,
   fetchImpl = fetch,
   createSignal = () => AbortSignal.timeout(modelsApiTimeoutMs),
+  argv = process.argv.slice(2),
 ) {
   const configured = parseConfiguredModels(env.OPENROUTER_MODELS ?? "");
   if (env.CONTEXT === "production" && env.OPENROUTER_BASE_URL !== "https://openrouter.ai/api/v1") {
     throw new Error("production OPENROUTER_BASE_URL must equal https://openrouter.ai/api/v1");
   }
-  if (env.VERIFY_OPENROUTER_REMOTE !== "1") return;
+  if (!argv.includes("--remote")) return;
   let response;
   try {
     response = await fetchImpl(officialModelsUrl, {
@@ -578,64 +581,47 @@ if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").hre
 }
 ```
 
-The same `parseConfiguredModels` rules must be represented in the Zod schema in `netlify/functions/_shared/env.ts`; its Vitest table reuses the accepted and rejected values above so runtime and build cannot drift. The schema fixes `USER_DAILY_EXTERNAL_CALL_LIMIT=12`, `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`, `USER_SHORT_WINDOW_SECONDS=600`, `FAILED_GENERATION_LEDGER_RETENTION_DAYS=30`, `AUTH_CONTINUATION_TTL_SECONDS=300`, `OPENROUTER_TIMEOUT_MS=20000`, `FUNCTION_TOTAL_BUDGET_MS=50000`, and `AI_PROCESSING_STALE_SECONDS=180` exactly. A production-context test accepts only the exact `https://openrouter.ai/api/v1` base URL; lookalike hosts, credentials, query/fragment, HTTP, and trailing-path variants fail before build.
+The same `parseConfiguredModels` rules must be represented in the Zod schema in `netlify/functions/_shared/env.ts`; its Vitest table reuses the accepted and rejected values above so runtime and build cannot drift. That schema **already** fixes `USER_DAILY_AI_LIMIT=5`, `USER_DAILY_EXTERNAL_CALL_LIMIT=12`, `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`, `USER_SHORT_WINDOW_SECONDS=600`, `OPENROUTER_TIMEOUT_MS=20000`, `FUNCTION_TOTAL_BUDGET_MS=50000`, and `AI_PROCESSING_STALE_SECONDS=180` through `releaseLockedInteger`/`positiveInteger`; verify rather than re-add them, and do not weaken an existing lock into a plain default. `AUTH_CONTINUATION_TTL_SECONDS=300` comes from the continuation schema this one extends. A production-context test accepts only the exact `https://openrouter.ai/api/v1` base URL; lookalike hosts, credentials, query/fragment, HTTP, and trailing-path variants fail before build.
 
 - [ ] **Step 4: Add scripts and a mock-safe environment template**
+
+The existing script entries stay exactly as they are:
 
 ```json
 {
   "scripts": {
-    "verify:models:config": "node scripts/verify-openrouter-models.mjs",
-    "verify:models:remote": "VERIFY_OPENROUTER_REMOTE=1 node scripts/verify-openrouter-models.mjs",
-    "prebuild": "node --env-file-if-exists=.env scripts/verify-openrouter-models.mjs"
+    "verify:openrouter:config": "node scripts/verify-openrouter-models.mjs",
+    "verify:openrouter:models": "node scripts/verify-openrouter-models.mjs --remote",
+    "predev": "npm run verify:openrouter:config",
+    "prebuild": "npm run verify:openrouter:config"
   }
 }
 ```
 
-Merge these keys into the existing `scripts` object; do not replace earlier scripts.
+Task 3 adds no script keys here. If the verifier needs `.env` values when run standalone, add `--env-file-if-exists=.env` inside `scripts/verify-openrouter-models.mjs`'s own invocation contract rather than changing `prebuild`, so `predev`/`prebuild` keep pointing at one name.
 
-```dotenv
-# Browser-safe values
-VITE_SUPABASE_URL=http://127.0.0.1:8000
-VITE_SUPABASE_PUBLISHABLE_KEY=generated-by-scripts/generate-local-secrets.sh
-VITE_PRIVACY_POLICY_URL=/privacy
-VITE_MAGIC_LINK_RESEND_SECONDS=60
-VITE_AUTH_CONTINUATION_TTL_MS=300000
-VITE_AUTH_PROVIDER_MODE=oauth_mock
-VITE_OAUTH_MOCK_ORIGIN=http://127.0.0.1:8788
+`.env.example` is **extended, never replaced**. It is the template for this repository's self-hosted Supabase stack and `scripts/generate-local-secrets.mjs` writes the matching `.env`: `ANON_KEY`, `SERVICE_ROLE_KEY`, `JWT_SECRET`, `POSTGRES_PASSWORD`, `SUPABASE_PUBLIC_URL`, `API_EXTERNAL_URL`, `SITE_URL`, `ADDITIONAL_REDIRECT_URLS`, `ENABLE_GOOGLE_SIGNUP`, `GOOGLE_*`, `SMTP_*`, `OAUTH_MOCK_USER_PASSWORD`, and `GENERATION_REQUEST_HMAC_KEY` are all load-bearing — `compose.yaml` interpolates `${ANON_KEY}`/`${SERVICE_ROLE_KEY}` into the app service, so deleting them breaks the whole local and CI stack. Read the current file and keep every existing key.
 
-# Server-only local values; never prefix these with VITE_
-SUPABASE_URL=http://kong:8000
-SUPABASE_PUBLISHABLE_KEY=generated-by-scripts/generate-local-secrets.sh
-SUPABASE_SERVICE_ROLE_KEY=generated-by-scripts/generate-local-secrets.sh
-SERVER_SITE_ORIGIN=http://127.0.0.1:5173
-AUTH_CONTINUATION_ENCRYPTION_KEY=generated-32-byte-base64-secret
-OPENROUTER_API_KEY=local-mock-key
-OPENROUTER_BASE_URL=http://openrouter-mock:8787/api/v1
-OPENROUTER_MODELS=mock/kondate:free
-GLOBAL_DAILY_AI_LIMIT=45
-USER_DAILY_AI_LIMIT=5
-USER_DAILY_EXTERNAL_CALL_LIMIT=12
-USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4
-USER_SHORT_WINDOW_SECONDS=600
-FAILED_GENERATION_LEDGER_RETENTION_DAYS=30
-AUTH_CONTINUATION_TTL_SECONDS=300
-OPENROUTER_TIMEOUT_MS=20000
-FUNCTION_TOTAL_BUDGET_MS=50000
-AI_PROCESSING_STALE_SECONDS=180
-APP_ORIGIN=http://127.0.0.1:5173
-```
+Server values such as `SUPABASE_URL=http://kong:8000`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `OPENROUTER_MODELS`, and `OPENROUTER_BASE_URL` are supplied by `compose.yaml`'s app service rather than `.env.example`; documenting them here is optional and must not contradict Compose. The only variables Task 3 may need to add are ones this plan actually introduces and something actually reads — see the note below, and drop any that no runtime consumes.
+
+`APP_ORIGIN`, `FAILED_GENERATION_LEDGER_RETENTION_DAYS`, and `VITE_PRIVACY_POLICY_URL` appeared in earlier drafts of this plan but exist nowhere in the codebase — no source file, Compose service, script, or `.env.example` key. They have been removed from this plan's `.env.example` block, CI environment, and production preflight list rather than invented at release time:
+
+- `APP_ORIGIN` duplicated `SERVER_SITE_ORIGIN`, which already carries the canonical origin and is actually read. One name for one value.
+- `FAILED_GENERATION_LEDGER_RETENTION_DAYS` is a hardcoded 30-day interval inside the cleanup SQL, not configuration. Task 8 keeps it in SQL; the retention constant stays release-locked there.
+- `VITE_PRIVACY_POLICY_URL` has no consumer; the privacy notice is an in-app route.
+
+If a later task genuinely needs one of them, introduce the runtime consumer and the Zod schema entry in the same commit that adds the variable — never a preflight requirement for a variable nothing reads.
 
 The root Compose project has the Plan 1 service named exactly `oauth-mock`, with container origin `http://oauth-mock:8788`, browser origin `http://127.0.0.1:8788`, and `GET /health`. The focused Compose contract test asserts that exact service/healthcheck/port and the app's local provider variables. Environment tests accept these two browser variables only in local/mock mode. A production-context test requires `VITE_AUTH_PROVIDER_MODE=supabase` and rejects `VITE_OAUTH_MOCK_ORIGIN` even if it contains the expected local URL; production can never silently enable the pseudo-provider.
 
-Update the root `compose.yaml` app/Function environment to use those same two deadline controls:
+The root `compose.yaml` app/Function environment already carries both deadline controls, and `GENERATION_SYNC_DEADLINE_MS` is already absent repository-wide:
 
 ```yaml
 FUNCTION_TOTAL_BUDGET_MS: "50000"
 AI_PROCESSING_STALE_SECONDS: "180"
 ```
 
-Remove the obsolete `GENERATION_SYNC_DEADLINE_MS` key everywhere. Add a focused configuration test that parses the Compose model and asserts both exact values, then asserts a repository source scan returns zero occurrences of `GENERATION_SYNC_DEADLINE_MS` and one canonical runtime read of `FUNCTION_TOTAL_BUDGET_MS` rather than allowing both deadline names to coexist.
+This part of the task is therefore verification, not migration. Add the focused configuration test that parses the Compose model and asserts both exact values, plus the source scan asserting zero occurrences of `GENERATION_SYNC_DEADLINE_MS` and one canonical runtime read of `FUNCTION_TOTAL_BUDGET_MS`. Both are expected to pass on first run; that is the correct outcome and not a reason to skip writing them, because they are what keeps the obsolete name from returning.
 
 - [ ] **Step 5: Run config, runtime, type, and build checks**
 
@@ -643,11 +629,11 @@ Run:
 
 ```bash
 node --test scripts/verify-openrouter-models.test.mjs
-OPENROUTER_MODELS=mock/kondate:free npm run verify:models:config
-OPENROUTER_MODELS=vendor/paid npm run verify:models:config
+OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run verify:openrouter:config
+OPENROUTER_MODELS=vendor/paid npm run verify:openrouter:config
 npm test -- --run netlify/functions/_shared/env.test.ts
 npm run typecheck
-OPENROUTER_MODELS=mock/kondate:free npm run build
+OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
 docker compose config --quiet
 test "$(rg -n 'GENERATION_SYNC_DEADLINE_MS' compose.yaml netlify/functions scripts .env.example | wc -l)" -eq 0
 ```
@@ -786,7 +772,7 @@ export const createSafeLogger = (write: LogWriter = console.log) => (event: Safe
 export const safeLog = createSafeLogger();
 ```
 
-Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Replace every route-handler `console.*` call with `safeLog`. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
+Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Note this changes the emitted JSON: the current implementation writes camelCase `{requestId,errorCode,durationMs,modelId}` with no `level`, and the new shape is snake_case with `level`. Update the existing `logger.test.ts` assertions in the same commit, and write `privacy-logging.spec.ts` against the new field names — a log assertion left on the old keys would pass vacuously. Replace every route-handler `console.*` call with `safeLog`. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
 
 - [ ] **Step 4: Add Netlify build, SPA fallback, and headers**
 
@@ -802,13 +788,19 @@ Run `npm install --save-dev --save-exact netlify-cli@26.2.0`; commit the resulti
   NODE_VERSION = "24"
 
 [context.production]
-  command = "npm run verify:models:remote && npm run build"
+  command = "npm run verify:openrouter:models && npm run build"
 
 [context.deploy-preview]
   command = "npm run build"
 
 [context.branch-deploy]
   command = "npm run build"
+
+# Keep every existing redirect, in its existing order, above the SPA fallback.
+[[redirects]]
+  from = "/api/emergency-menus"
+  to = "/.netlify/functions/emergency-menus"
+  status = 200
 
 [[redirects]]
   from = "/*"
@@ -825,6 +817,8 @@ Run `npm install --save-dev --save-exact netlify-cli@26.2.0`; commit the resulti
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
 ```
 
+This is a merge into the existing `netlify.toml`, not a replacement of it. The file already exists with `[build]`, `[build.environment]`, the `/api/emergency-menus` redirect, and the SPA fallback; Task 4 adds the context commands and the headers block and leaves everything else byte-identical. Do not drop the emergency-menus redirect because `emergency-menus.ts` also declares `config.path` — establish why the redirect exists before touching it, and keep it unless that investigation proves it dead. SPA catch-all stays last.
+
 Supabase authentication redirects use top-level navigation and do not require adding Google domains to `connect-src`. If a custom Supabase domain is used, add that exact HTTPS and WSS origin to `connect-src` in the deployment commit.
 
 - [ ] **Step 5: Run security boundary and Netlify build checks**
@@ -834,7 +828,7 @@ Run:
 ```bash
 npm test -- --run netlify/functions/_shared/logger.test.ts
 npm run db:test -- supabase/tests/database/rls_inventory.test.sql
-OPENROUTER_MODELS=mock/kondate:free npm run build
+OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
 npm exec --offline netlify -- build --offline --context deploy-preview
 ```
 
@@ -996,7 +990,7 @@ The skeleton also omits one step the prose requires: on each fixture's first gen
 
 - [ ] **Step 4: Correct shared UI primitives, focus, and status announcements**
 
-Centralize fixes in `src/shared/ui/button.tsx`, `field.tsx`, `dialog.tsx`, `toast.tsx`, and the app shell. On route changes, move programmatic focus to the page `h1` with `tabIndex={-1}`. Loading updates use `role="status" aria-live="polite"`; validation and request failures use `role="alert"`; icon-only actions have Japanese accessible names; color is never the only error or selection cue.
+Centralize fixes in whatever shared primitives actually exist at that point. `src/shared/ui/` currently holds only `placeholder-page.tsx` and Plan 7's `wizard/` directory (`wizard-frame`, `choice-card`, `progress-indicator`, `inline-notice`, `review-row`) — there is no `button.tsx`, `field.tsx`, `dialog.tsx`, or `toast.tsx` to centralize into. Fix Plan 7's wizard primitives and the app shell first, and extract a new shared primitive only when the same violation appears in three or more feature components; do not create a speculative design-system layer as part of an accessibility fix. Plan 7 Task 1 owns the wizard primitives' own ARIA/keyboard/focus contract, so changes there must keep its tests green rather than restate them. On route changes, move programmatic focus to the page `h1` with `tabIndex={-1}`. Loading updates use `role="status" aria-live="polite"`; validation and request failures use `role="alert"`; icon-only actions have Japanese accessible names; color is never the only error or selection cue.
 
 - [ ] **Step 5: Run accessibility, mobile, and visual-layout checks**
 
@@ -1004,7 +998,7 @@ Run:
 
 ```bash
 npm test -- --run src/app/accessibility.test.tsx
-npm run e2e -- e2e/specs/mobile-accessibility.spec.ts
+./scripts/run-e2e.sh e2e/specs/mobile-accessibility.spec.ts
 npm run typecheck
 ```
 
@@ -1169,7 +1163,7 @@ Add `e2e/specs/auth-callback-security.spec.ts`: create a local PKCE attempt, ass
 Run:
 
 ```bash
-npm run e2e -- e2e/specs/full-journey.spec.ts e2e/specs/privacy-logging.spec.ts e2e/specs/account-deletion.spec.ts
+./scripts/run-e2e.sh e2e/specs/full-journey.spec.ts e2e/specs/privacy-logging.spec.ts e2e/specs/account-deletion.spec.ts
 ```
 
 Expected: FAIL on every missing cross-feature fixture or behavior; failures identify a route, scenario, or leaked test marker.
@@ -1188,7 +1182,7 @@ npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
 node --test scripts/verify-release-evidence.test.mjs
 npm run db:test
-npm run e2e
+./scripts/run-e2e.sh
 ```
 
 Expected: unit/component/adversarial, pgTAP, and all Playwright tests report zero failures without contacting OpenRouter.
@@ -1219,7 +1213,7 @@ Add this package script, keeping the individual commands available:
 ```json
 {
   "scripts": {
-    "ci": "npm run format:check && npm run lint && npm run typecheck && npm test -- --run && npm run db:test && npm run db:types && git diff --exit-code -- src/shared/types/database.generated.ts && npm run e2e && npm run build && npm exec --offline netlify -- build --offline --context deploy-preview && docker compose config --quiet"
+    "ci": "npm run format:check && npm run lint && npm run typecheck && npm test -- --run && npm run db:test && npm run db:types && git diff --exit-code -- src/shared/types/database.generated.ts && ./scripts/run-e2e.sh && npm run build && npm exec --offline netlify -- build --offline --context deploy-preview && docker compose config --quiet"
   }
 }
 ```
@@ -1249,11 +1243,10 @@ jobs:
     timeout-minutes: 30
     env:
       CI: "true"
-      OPENROUTER_MODELS: mock/kondate:free
+      OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
       OPENROUTER_API_KEY: local-mock-key
       OPENROUTER_BASE_URL: http://127.0.0.1:8787/api/v1
       SERVER_SITE_ORIGIN: http://127.0.0.1:5173
-      APP_ORIGIN: http://127.0.0.1:5173
       AUTH_CONTINUATION_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
       VITE_MAGIC_LINK_RESEND_SECONDS: "60"
       VITE_AUTH_CONTINUATION_TTL_MS: "300000"
@@ -1264,7 +1257,6 @@ jobs:
       USER_DAILY_EXTERNAL_CALL_LIMIT: "12"
       USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4"
       USER_SHORT_WINDOW_SECONDS: "600"
-      FAILED_GENERATION_LEDGER_RETENTION_DAYS: "30"
       AUTH_CONTINUATION_TTL_SECONDS: "300"
       OPENROUTER_TIMEOUT_MS: "20000"
       FUNCTION_TOTAL_BUDGET_MS: "50000"
@@ -1283,10 +1275,8 @@ jobs:
       - name: Assert the canonical local continuation origin
         run: |
           test "$SERVER_SITE_ORIGIN" = "http://127.0.0.1:5173"
-          test "$APP_ORIGIN" = "$SERVER_SITE_ORIGIN"
           test "$VITE_AUTH_PROVIDER_MODE" = "oauth_mock"
           test "$VITE_OAUTH_MOCK_ORIGIN" = "http://127.0.0.1:8788"
-      - run: npm exec --offline playwright -- install --with-deps chromium
       - run: docker compose config --quiet
       - run: docker compose up -d --wait
       - run: curl --fail --silent --show-error http://127.0.0.1:8788/health
@@ -1299,7 +1289,7 @@ jobs:
         run: |
           npm run db:types
           git diff --exit-code -- src/shared/types/database.generated.ts
-      - run: npm run e2e
+      - run: ./scripts/run-e2e.sh
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run build
       - run: npm exec --offline netlify -- build --offline --context deploy-preview
@@ -1320,7 +1310,9 @@ jobs:
           rm -f .env
 ```
 
-`npm run db:types` is locked to the offline/local command that emits both `--schema public,private` into `src/shared/types/database.generated.ts`; a source-level script test fails if either schema is omitted. `generate-local-secrets.sh` runs after `npm ci` and before any Compose interpolation. It creates only the gitignored `.env`, and the `always()` cleanup removes it even after a failed start/test. CI's explicit `SERVER_SITE_ORIGIN` and `APP_ORIGIN` both remain Plan 1's canonical `http://127.0.0.1:5173`; the assertion fails before E2E if shell environment overrides the generated file with a different continuation origin. The offline Netlify build does not change that local runtime origin. Do not upload database volumes, `.env`, traces containing typed household data, or Function log files. Configure Playwright screenshots, video, and traces as `retain-on-failure`; E2E fixtures use synthetic names and conditions only.
+`npm run db:types` runs `scripts/generate-database-types.sh`, which reads pg-meta at `?included_schemas=public,private`; it does not use the Supabase CLI's `--schema` flag. The source-level script test therefore asserts that **that** URL keeps both schemas, not that a `--schema public,private` argument is present. Do not rewrite the generator to the CLI form just to match a phrase in this plan: the committed `database.generated.ts` was produced by pg-meta, and swapping generators would produce formatting drift that fails `git diff --exit-code` for reasons unrelated to schema changes. `generate-local-secrets.sh` runs after `npm ci` and before any Compose interpolation. It creates only the gitignored `.env`, and the `always()` cleanup removes it even after a failed start/test. CI's explicit `SERVER_SITE_ORIGIN` remains Plan 1's canonical `http://127.0.0.1:5173`; the assertion fails before E2E if the shell environment overrides the generated file with a different continuation origin. The offline Netlify build does not change that local runtime origin. E2E runs through `./scripts/run-e2e.sh`, never a bare `npm run e2e`/`playwright test` on the runner. That wrapper is the project's only supported entry point: it resolves the Compose project name, drives the dedicated `e2e` Compose service, holds a lock against concurrent runs, and restores the normal dev stack on success, failure, and interrupt alike. Because Playwright runs inside that container, CI installs no host browser — drop any `playwright install` step — and the container, not the runner, owns the browser version.
+
+Do not upload database volumes, `.env`, traces containing typed household data, or Function log files. Configure Playwright screenshots, video, and traces as `retain-on-failure`; E2E fixtures use synthetic names and conditions only.
 
 - [ ] **Step 3: Validate workflow syntax and reproduce its commands locally**
 
@@ -1335,9 +1327,9 @@ npm test -- --run
 npm run db:test
 npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
-npm run e2e
+./scripts/run-e2e.sh
 npm audit --omit=dev --audit-level=high
-OPENROUTER_MODELS=mock/kondate:free npm run build
+OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
 npm exec --offline netlify -- build --offline --context deploy-preview
 docker compose config --quiet
 docker compose down --volumes
@@ -1396,7 +1388,7 @@ git commit -m "ci: gate the complete MVP"
 
 The preflight test passes a complete synthetic production environment using project ref `abcdefghijklmnopqrst` and expects no errors, then removes each required variable in turn and expects its exact name in the error. It also asserts that `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `GENERATION_REQUEST_HMAC_KEY`, and `SUPABASE_MAINTENANCE_DB_URL` are rejected when exposed through any `VITE_`-prefixed alias, requires `VITE_AUTH_PROVIDER_MODE=supabase`, and uses `Object.hasOwn(env,"VITE_OAUTH_MOCK_ORIGIN")` to reject the mock-origin key even when its value is empty. It rejects a missing HMAC key, invalid base64, any decoded length other than exactly 32 bytes, Plan 3's documented sample/local value, and a `VITE_GENERATION_REQUEST_HMAC_KEY` key even when empty. It requires both `SUPABASE_URL` and `VITE_SUPABASE_URL` to equal the exact managed origin `https://abcdefghijklmnopqrst.supabase.co`, requires `SUPABASE_PUBLISHABLE_KEY === VITE_SUPABASE_PUBLISHABLE_KEY`, and passes that extracted ref into maintenance parsing. Arbitrary HTTPS, short/uppercase refs, suffix lookalikes, credentials, ports, trailing slash, path/query/fragment, browser/server ref mismatch, publishable-key mismatch, a direct database host with another ref, and a Session-pooler username with another ref all fail with closed codes. `oauth_mock` mode, the local mock URL, a maintenance URL without TLS, a URL whose direct username is not exactly `kondate_maintenance_login` (or whose Supavisor Session username is not exactly that role plus the expected project-ref suffix), and a URL containing credentials in any error all fail in production.
 
-Write `maintenance_cleanup.test.sql` red first. It proves exact overloads `cleanup_stale_ai_generations(timestamptz,integer)`, `cleanup_ai_generation_requests(timestamptz,integer)`, `private.cleanup_shopping_mutations(timestamptz,integer)`, and `cleanup_auth_continuations(timestamptz,integer)` plus `run_kondate_maintenance(timestamptz,integer)`. It proves `kondate_maintenance_executor` is NOLOGIN, NOINHERIT, not superuser, cannot bypass RLS, has `USAGE` on `public` and `EXECUTE` on that one RPC only, and has no table, sequence, helper-function, or private-schema privilege. `public`, `anon`, `authenticated`, and `service_role` cannot execute the RPC. Seed terminal generation requests and shopping mutations at exactly 30 days, just older than 30 days, and 29 days; expired, claimed, and live continuations; expired processing reservations with both sent and unsent global slots; and more than one batch in both retention ledgers. Assert both exact 30-day boundaries are retained, only older terminal/shopping rows are deleted, expired/claimed continuations are deleted, live continuations remain, and stale reservations use Plan 3's canonical transition to release success plus only unsent attempt/global reservations. A second run returns all four zero counts; a batch of two leaves deterministic work for the next call; concurrent calls use `FOR UPDATE SKIP LOCKED` and never double-release or double-delete.
+Write `maintenance_cleanup.test.sql` red first. It proves the exact batched signatures `cleanup_stale_ai_generations(timestamptz,integer)`, `cleanup_ai_generation_requests_batch(timestamptz,integer)`, `private.cleanup_shopping_mutations(timestamptz,integer)`, and `cleanup_auth_continuations(timestamptz,integer)` plus `run_kondate_maintenance(timestamptz,integer)`, and additionally proves that the preexisting `cleanup_ai_generation_requests(timestamptz,uuid)` and `private.cleanup_expired_shopping_mutations(uuid,integer)` still exist with their original grants and that no ambiguous overload was introduced. It proves `kondate_maintenance_executor` is NOLOGIN, NOINHERIT, not superuser, cannot bypass RLS, has `USAGE` on `public` and `EXECUTE` on that one RPC only, and has no table, sequence, helper-function, or private-schema privilege. `public`, `anon`, `authenticated`, and `service_role` cannot execute the RPC. Seed terminal generation requests and shopping mutations at exactly 30 days, just older than 30 days, and 29 days; expired, claimed, and live continuations; expired processing reservations with both sent and unsent global slots; and more than one batch in both retention ledgers. Assert both exact 30-day boundaries are retained, only older terminal/shopping rows are deleted, expired/claimed continuations are deleted, live continuations remain, and stale reservations use Plan 3's canonical transition to release success plus only unsent attempt/global reservations. A second run returns all four zero counts; a batch of two leaves deterministic work for the next call; concurrent calls use `FOR UPDATE SKIP LOCKED` and never double-release or double-delete.
 
 Plan 7's `private.generation_regeneration_snapshots` is deliberately **not** a fifth category. It is request-bound with `ON DELETE CASCADE` from `private.ai_generation_requests(id,user_id)`, so terminal-ledger retention removes it implicitly. Seed a regeneration snapshot on a terminal request just older than 30 days and one on a retained request at the exact boundary, then assert the first snapshot disappears with its request, the second survives, `generationLedgersDeleted` counts requests rather than snapshots, and the returned object still has exactly four keys. Also assert no snapshot on a still-`processing` request or on a menu-referenced request is ever removed. Adding a snapshot count, a snapshot-first delete, or a separate snapshot category is out of scope and would break the four-key readback contract below.
 
@@ -1433,7 +1425,7 @@ npm install --save-dev --save-exact @types/pg@8.20.0
 }
 ```
 
-`preflight-production.mjs` validates `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_PRIVACY_POLICY_URL`, `VITE_MAGIC_LINK_RESEND_SECONDS`, `VITE_AUTH_CONTINUATION_TTL_MS`, `VITE_AUTH_PROVIDER_MODE`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_MAINTENANCE_DB_URL`, `SERVER_SITE_ORIGIN`, `AUTH_CONTINUATION_ENCRYPTION_KEY`, `GENERATION_REQUEST_HMAC_KEY`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODELS`, `GLOBAL_DAILY_AI_LIMIT`, `USER_DAILY_AI_LIMIT`, `USER_DAILY_EXTERNAL_CALL_LIMIT`, `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT`, `USER_SHORT_WINDOW_SECONDS`, `FAILED_GENERATION_LEDGER_RETENTION_DAYS`, `AUTH_CONTINUATION_TTL_SECONDS`, `OPENROUTER_TIMEOUT_MS`, `FUNCTION_TOTAL_BUDGET_MS`, `AI_PROCESSING_STALE_SECONDS`, and `APP_ORIGIN`; it calls the exported OpenRouter parser plus Plan 1's `parseManagedSupabaseProjectRef` and the production parser from `maintenance-env.ts`. Both Supabase app URLs must be byte-identical exact managed origins, their extracted 20-character refs must be equal, both publishable-key variables must be byte-identical, and the maintenance parser receives that expected ref and requires the direct database host or Session username suffix to match. It checks all numeric values are positive integers; fixes the release-locked limits at exactly `5` successful generations, `12` user daily sends, `4` sends per `600` seconds, failed-ledger retention at `30` days, continuation TTL at `300` seconds/`300000` browser milliseconds, attempt timeout at `20000` ms, total Function budget at `50000` ms, and processing-stale threshold at exactly `180` seconds; requires `VITE_AUTH_PROVIDER_MODE === "supabase"`, rejects the presence of `VITE_OAUTH_MOCK_ORIGIN`, `KONDATE_MAINTENANCE_ENV`, and every `VITE_` alias of a server secret, requires the continuation key to decode to exactly 32 bytes and the generation HMAC key to use canonical base64 decoding to exactly 32 bytes, rejects the HMAC sample/local value, `SERVER_SITE_ORIGIN === APP_ORIGIN`, and `OPENROUTER_BASE_URL` to equal `https://openrouter.ai/api/v1`; it performs no network call. Extend Plan 3's `_shared/env.test.ts` with the same production HMAC cases while leaving its runtime parser the sole owner of decoded key material. Its tests call the validator with an explicit object and spawn the CLI with a complete synthetic `env` object that does not spread or inherit `process.env`, so ambient developer variables cannot hide a missing deployment variable, generation key, maintenance credential, cross-project endpoint, or mock-provider leak. Errors name the missing variable or a closed validation code only, never a URL component, project ref, or secret value.
+`preflight-production.mjs` validates `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_MAGIC_LINK_RESEND_SECONDS`, `VITE_AUTH_CONTINUATION_TTL_MS`, `VITE_AUTH_PROVIDER_MODE`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_MAINTENANCE_DB_URL`, `SERVER_SITE_ORIGIN`, `AUTH_CONTINUATION_ENCRYPTION_KEY`, `GENERATION_REQUEST_HMAC_KEY`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODELS`, `GLOBAL_DAILY_AI_LIMIT`, `USER_DAILY_AI_LIMIT`, `USER_DAILY_EXTERNAL_CALL_LIMIT`, `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT`, `USER_SHORT_WINDOW_SECONDS`, `AUTH_CONTINUATION_TTL_SECONDS`, `OPENROUTER_TIMEOUT_MS`, `FUNCTION_TOTAL_BUDGET_MS`, and `AI_PROCESSING_STALE_SECONDS`; it calls the exported OpenRouter parser plus Plan 1's `parseManagedSupabaseProjectRef` and the production parser from `maintenance-env.ts`. Both Supabase app URLs must be byte-identical exact managed origins, their extracted 20-character refs must be equal, both publishable-key variables must be byte-identical, and the maintenance parser receives that expected ref and requires the direct database host or Session username suffix to match. It checks all numeric values are positive integers; fixes the release-locked limits at exactly `5` successful generations, `12` user daily sends, `4` sends per `600` seconds, failed-ledger retention at `30` days, continuation TTL at `300` seconds/`300000` browser milliseconds, attempt timeout at `20000` ms, total Function budget at `50000` ms, and processing-stale threshold at exactly `180` seconds; requires `VITE_AUTH_PROVIDER_MODE === "supabase"`, rejects the presence of `VITE_OAUTH_MOCK_ORIGIN`, `KONDATE_MAINTENANCE_ENV`, and every `VITE_` alias of a server secret, requires the continuation key to decode to exactly 32 bytes and the generation HMAC key to use canonical base64 decoding to exactly 32 bytes, rejects the HMAC sample/local value, and requires `OPENROUTER_BASE_URL` to equal `https://openrouter.ai/api/v1`; it performs no network call. Extend Plan 3's `_shared/env.test.ts` with the same production HMAC cases while leaving its runtime parser the sole owner of decoded key material. Its tests call the validator with an explicit object and spawn the CLI with a complete synthetic `env` object that does not spread or inherit `process.env`, so ambient developer variables cannot hide a missing deployment variable, generation key, maintenance credential, cross-project endpoint, or mock-provider leak. Errors name the missing variable or a closed validation code only, never a URL component, project ref, or secret value.
 
 `smoke-production.mjs` requires one HTTPS origin argument, rejects a URL with credentials/query/fragment, runs the three probes above with a five-second `AbortSignal.timeout(5000)`, and exits nonzero with the probe name and HTTP status only. It never prints a response body or environment value.
 
@@ -1441,9 +1433,17 @@ npm install --save-dev --save-exact @types/pg@8.20.0
 
 `verify-browser-secrets.mjs` scans `src/` and any built `dist/` for the forbidden server-variable names and for the non-empty values of `OPENROUTER_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GENERATION_REQUEST_HMAC_KEY`, `SUPABASE_MAINTENANCE_DB_URL`, `MAINTENANCE_DB_PASSWORD`, and `NETLIFY_AUTH_TOKEN` present in its explicit environment. It reports only the variable name and relative file, never the matching value or line contents, and exits nonzero on a match. Its tests use synthetic secrets and fixtures to prove both name/value detection and redacted output. CI runs it after the build with the generated `.env`; the protected release runner runs it after the production build with its transient complete server-secret environment.
 
-Migration `051` keeps the exact Plan 1/Plan 3 one-argument cleanup signatures as compatibility wrappers and moves their existing transitions into bounded two-argument overloads (`1..250`, `FOR UPDATE SKIP LOCKED`). It adds `private.cleanup_shopping_mutations(p_before timestamptz,p_limit integer)` with the same `1..250` bound; it deletes only `private.shopping_mutations.created_at < p_before`, orders by `created_at,user_id,idempotency_key`, locks with `FOR UPDATE SKIP LOCKED`, and returns one count. Exact-boundary rows are retained. The helper has no public wrapper because no browser/service path consumes it. Migration `051` creates or normalizes `kondate_maintenance_executor` as `NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`; the migration never creates a LOGIN or embeds a password. The executor receives only `USAGE ON SCHEMA public` and `EXECUTE ON FUNCTION public.run_kondate_maintenance(timestamptz,integer)`. Revoke the RPC from `PUBLIC`, `anon`, `authenticated`, and `service_role`, and revoke table, sequence, private-schema, and every bounded-helper privilege—including the shopping helper—from the executor. Existing one-argument wrappers keep only the preexisting service-role permissions required by Plans 1 and 3; neither the executor nor the Scheduled Function calls them directly.
+The maintenance migration keeps the existing cleanup entry points as compatibility wrappers and moves their transitions into bounded, batched variants (`1..250`, `FOR UPDATE SKIP LOCKED`). Read the current signatures before writing it, because they are not uniform and one of them makes a naive overload illegal:
 
-`run_kondate_maintenance` does not duplicate quota-release or replay SQL. It calls the canonical bounded transitions in this fixed order: stale reservations, terminal generation ledgers with `updated_at < p_now - interval '30 days'`, shopping mutation replays with `created_at < p_now - interval '30 days'`, then expired-or-claimed continuations. The RPC is `SECURITY DEFINER SET search_path=''`, uses schema-qualified references and fixed SQL only, and returns this strict JSON object:
+- `public.cleanup_stale_ai_generations(p_now timestamptz default clock_timestamp())` — one argument with a default.
+- `public.cleanup_auth_continuations(p_now timestamptz)` — one argument.
+- `public.cleanup_ai_generation_requests(p_before timestamptz, p_user_id uuid default null)` — **already two arguments**, the second a defaulted `uuid`.
+
+Adding `cleanup_ai_generation_requests(timestamptz,integer)` alongside that last one creates an ambiguous overload: any two-argument call with an untyped `NULL` or numeric literal fails to resolve, and the existing service-role callers become fragile. Do not create that overload. Give the batched variant a distinct name — `public.cleanup_ai_generation_requests_batch(p_before timestamptz, p_limit integer)` — leave the existing `(timestamptz,uuid)` function and its grants untouched, and have `run_kondate_maintenance` call the batch function. Apply the same rule anywhere else a proposed overload would collide with an existing defaulted parameter; a new name is always cheaper than an ambiguity.
+
+Shopping-mutation retention already has a helper: `private.cleanup_expired_shopping_mutations(p_user_id uuid, p_limit integer default 100)` deletes the same 30-day-old rows, but per user and capped at 100, and it is called on the request path rather than by a scheduler. Do not add a second, silently different cleaner. Add `private.cleanup_shopping_mutations(p_before timestamptz, p_limit integer)` as the account-wide scheduled variant with the `1..250` bound, deleting only `private.shopping_mutations.created_at < p_before`, ordering by `created_at,user_id,idempotency_key`, locking with `FOR UPDATE SKIP LOCKED`, and returning one count; then state explicitly in the migration comment and the access matrix that the two coexist by design — the per-user one bounds a single request's cleanup, the account-wide one is the hourly sweep — and prove with pgTAP that neither deletes a row at or newer than the exact 30-day boundary. If that division turns out not to hold, collapse them rather than leaving two retention rules. Exact-boundary rows are retained. The account-wide helper has no public wrapper because no browser/service path consumes it. Migration `051` creates or normalizes `kondate_maintenance_executor` as `NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`; the migration never creates a LOGIN or embeds a password. The executor receives only `USAGE ON SCHEMA public` and `EXECUTE ON FUNCTION public.run_kondate_maintenance(timestamptz,integer)`. Revoke the RPC from `PUBLIC`, `anon`, `authenticated`, and `service_role`, and revoke table, sequence, private-schema, and every bounded-helper privilege—including the shopping helper—from the executor. Existing one-argument wrappers keep only the preexisting service-role permissions required by Plans 1 and 3; neither the executor nor the Scheduled Function calls them directly.
+
+`run_kondate_maintenance` does not duplicate quota-release or replay SQL. It calls the canonical bounded transitions in this fixed order: stale reservations, terminal generation ledgers with `updated_at < p_now - interval '30 days'` via `cleanup_ai_generation_requests_batch`, shopping mutation replays with `created_at < p_now - interval '30 days'` via `private.cleanup_shopping_mutations`, then expired-or-claimed continuations. The RPC is `SECURITY DEFINER SET search_path=''`, uses schema-qualified references and fixed SQL only. (The existing Plan 1–5 cleanup functions use `set search_path = pg_catalog, pg_temp`; Plan 7 moves the RPCs it replaces to `''`. New functions here use `''` — do not rewrite untouched existing functions' `search_path` as a drive-by change, since that alters an applied migration's behavior without a test demanding it.) It and returns this strict JSON object:
 
 ```json
 {
@@ -1526,14 +1526,14 @@ The login-default/database ceiling (20 seconds), node-postgres client timeout (2
 5. Generate a unique maintenance password in the deployment secret manager. Through protected administrator `psql` with history, echo, statement logging, and shell tracing disabled, create or normalize `kondate_maintenance_login` as `LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2`, set/rotate its password with `psql`'s protected password-input path, grant `kondate_maintenance_executor` membership, and execute `ALTER ROLE kondate_maintenance_login SET statement_timeout='20s'`. Pass secret material through protected stdin/environment, never a CLI argument or SQL editor; SQL editors may be used only for the non-secret grant/default statements if their transcripts are protected. The committed migration creates only the NOLOGIN executor and RPC grants.
 6. If the Netlify runtime can reach the project's IPv6 direct endpoint or the project has the IPv4 add-on, build the TLS-required direct URL with exact host `db.<the-recorded-project-ref>.supabase.co:5432` and username `kondate_maintenance_login`. Otherwise use the official IPv4 Supavisor **Session** URL on port `5432`, replacing its role prefix with `kondate_maintenance_login` while retaining exactly the same recorded project-ref routing suffix. A ref copied from another environment is a hard failure even when its credentials connect. Percent-encode credential components without ever printing the intermediate URL, store the result only as the Netlify Functions-scoped `SUPABASE_MAINTENANCE_DB_URL`, and immediately discard local copies. Never use port `6543`/transaction mode, a service-role JWT, administrator database password, repository, ticket, shell history, or log as storage; session mode is required for the login default and one-client transaction semantics.
 7. Connect once with the dedicated URL and verify `session_user=current_user='kondate_maintenance_login'` and `current_setting('statement_timeout')='20s'` before any transaction. Then verify a transaction can `SET LOCAL ROLE kondate_maintenance_executor`, sees the same `20s`, can call only the maintenance RPC, and cannot select owned tables or execute another application RPC. Output booleans/role names only; redact the connection command and URL.
-8. Run the database suite, including the exact 30-day terminal-generation and `private.shopping_mutations` boundaries, four-count readback, and real 20-second cancellation/rollback integration tests, against staging, not production; promote the same migration files to production only after staging passes. Run `npm exec --offline supabase -- gen types typescript --db-url "$SUPABASE_DB_URL" --schema public,private > /tmp/database.generated.ts`, compare both schemas to the committed generated type through `diff -u`, and fail on any public/private drift.
+8. Run the database suite, including the exact 30-day terminal-generation and `private.shopping_mutations` boundaries, four-count readback, and real 20-second cancellation/rollback integration tests, against staging, not production; promote the same migration files to production only after staging passes. To check for schema drift, regenerate types **with the same generator that produced the committed file** — `scripts/generate-database-types.sh` pointed at the staging database through `PG_META_TYPES_URL` — and `diff -u` the result against `src/shared/types/database.generated.ts`. Do not compare against `supabase gen types` output: a different generator produces cosmetic differences that are indistinguishable from real public/private drift.
 9. Verify catalog versions and privacy explanation version, then create no production demo household data.
 
 The runbook states migrations are forward-only. A failure before traffic is fixed by a new migration; rollback of frontend traffic uses Netlify’s previous deploy, never `db reset` or destructive migration reversal. Maintenance credential rollback is independent: disable the schedule, revoke LOGIN or executor membership, terminate only that login's sessions, rotate the secret, and read back role/default/privilege state before re-enabling. No runbook command prints a password or connection URL, and all operator transcripts/artifacts are checked for their absence.
 
 - [ ] **Step 4: Write the Netlify and operations runbooks**
 
-`docs/deployment/netlify.md` lists the exact browser-safe and server-only variables above, sets both Supabase app URLs to the same exact managed origin and both publishable-key variables to the same value, sets `VITE_AUTH_PROVIDER_MODE=supabase`, proves `VITE_OAUTH_MOCK_ORIGIN` and `KONDATE_MAINTENANCE_ENV` are absent, sets `VERIFY_OPENROUTER_REMOTE=1` for production builds, requires the canonical `APP_ORIGIN`, and requires `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` exactly. It adds both `GENERATION_REQUEST_HMAC_KEY` and the same-project `SUPABASE_MAINTENANCE_DB_URL` only through Netlify's protected Functions runtime scope—not Builds, deploy logs, `netlify.toml`, repository files, preview contexts, or any `VITE_` key—and validates them without printing either value. Before deployment, a protected release runner injects the same secrets transiently into an environment-clean `npm run preflight:production` subprocess; only its exit status and closed check names enter release evidence, and the site build receives neither. The HMAC key is stable across MVP deploys because retained requests store only the HMAC: rotation requires a reviewed new HMAC version/keyring migration plus explicit pending-command handling, never an ad-hoc environment replacement. The runbook confirms the five-second provider/live-model verification separately in the deploy log and deploys the tagged commit. It obtains `PRODUCTION_DEPLOY_ID` and `PRODUCTION_ORIGIN` only from authoritative Netlify deploy/site metadata inside the protected runner, verifies them with `verify:production-deploy`, passes that unchanged verified origin to `smoke:production`, and verifies the deploy again afterward. An operator-typed smoke origin, example URL, artifact-supplied origin, or unverified environment override is forbidden. The local `oauth-mock` service/origin, local-mode marker, sample HMAC key, and local maintenance password/URL are never copied into a Netlify site variable. Maintenance-password rotation creates a new dedicated password, atomically replaces the protected variable, verifies one scheduled run, and then invalidates the old password without exposing either value.
+`docs/deployment/netlify.md` lists the exact browser-safe and server-only variables above, sets both Supabase app URLs to the same exact managed origin and both publishable-key variables to the same value, sets `VITE_AUTH_PROVIDER_MODE=supabase`, proves `VITE_OAUTH_MOCK_ORIGIN` and `KONDATE_MAINTENANCE_ENV` are absent, uses the `verify:openrouter:models` production build command, and requires `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` exactly. It adds both `GENERATION_REQUEST_HMAC_KEY` and the same-project `SUPABASE_MAINTENANCE_DB_URL` only through Netlify's protected Functions runtime scope—not Builds, deploy logs, `netlify.toml`, repository files, preview contexts, or any `VITE_` key—and validates them without printing either value. Before deployment, a protected release runner injects the same secrets transiently into an environment-clean `npm run preflight:production` subprocess; only its exit status and closed check names enter release evidence, and the site build receives neither. The HMAC key is stable across MVP deploys because retained requests store only the HMAC: rotation requires a reviewed new HMAC version/keyring migration plus explicit pending-command handling, never an ad-hoc environment replacement. The runbook confirms the five-second provider/live-model verification separately in the deploy log and deploys the tagged commit. It obtains `PRODUCTION_DEPLOY_ID` and `PRODUCTION_ORIGIN` only from authoritative Netlify deploy/site metadata inside the protected runner, verifies them with `verify:production-deploy`, passes that unchanged verified origin to `smoke:production`, and verifies the deploy again afterward. An operator-typed smoke origin, example URL, artifact-supplied origin, or unverified environment override is forbidden. The local `oauth-mock` service/origin, local-mode marker, sample HMAC key, and local maintenance password/URL are never copied into a Netlify site variable. Maintenance-password rotation creates a new dedicated password, atomically replaces the protected variable, verifies one scheduled run, and then invalidates the old password without exposing either value.
 
 `docs/runbooks/openrouter.md` instructs the operator to query the Models API for current `:free` IDs through the fixed five-second metadata deadline, require `structured_outputs` and `response_format`, run the fixed adversarial corpus in staging, order models explicitly, update only `OPENROUTER_MODELS`, redeploy, and confirm no paid or automatic model was added. It records the release-locked controls—exactly 5 successful generations per user/JST day, exactly 12 external sends per user/JST day, exactly 4 sends per fixed 600 seconds, 20-second per-attempt timeout, and 50-second total Function budget—and forbids operational tuning of 5/12/4/600 without a reviewed release. It also documents the `maintenance-cleanup` Scheduled Function: `@hourly`, published production only, 250 rows in each of four categories, exact 30-day generation/shopping retention, the implicit regeneration-snapshot cascade that is not a fifth counted category, dedicated PostgreSQL login, role-default and transaction-local 20-second database bounds, 25-second client bound under the 30-second platform limit, idempotent reentry, mandatory connection cleanup, and four-count-only monitoring. Local diagnosis first provisions the ephemeral local login, starts `npm exec --offline netlify dev`, and then uses `npm exec --offline netlify functions:invoke maintenance-cleanup` from another terminal; no URL probe is attempted. A timeout requires checking only the closed failure metric and aggregate row counts, then reproducing against staging tests that assert SQLSTATE `57014`; never enable raw driver errors or print the maintenance URL. If no verified free model exists, keep AI unavailable and leave emergency menus enabled.
 
@@ -1608,9 +1608,9 @@ npm run db:test
 npm run test:maintenance-db:integration
 npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
-npm run e2e
+./scripts/run-e2e.sh
 npm audit --omit=dev --audit-level=high
-OPENROUTER_MODELS=mock/kondate:free npm run build
+OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
 npm run verify:browser-secrets
 npm exec --offline netlify -- build --offline --context deploy-preview
 npm run verify:browser-secrets
