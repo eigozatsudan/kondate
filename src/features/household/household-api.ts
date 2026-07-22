@@ -1,8 +1,9 @@
 import type { OnboardingStatus } from "@shared/contracts/domain";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
+import type { Database } from "@/shared/types/database";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/types/database.generated";
 
-export type ProfileRow = Tables<"profiles">;
+export type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 export type HouseholdMemberRow = Tables<"household_members">;
 export type MemberAllergyRow = Tables<"member_allergies">;
 export type MemberDislikeRow = Tables<"member_dislikes">;

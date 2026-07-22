@@ -31,7 +31,7 @@ describe("domain contracts", () => {
   });
 
   it("keeps household values aligned with database checks", () => {
-    expect(onboardingStatuses).toEqual(["not_started", "in_progress", "complete"]);
+    expect(onboardingStatuses).toEqual(["not_started", "in_progress", "complete", "skipped"]);
     expect(householdMemberStatuses).toEqual(["draft", "complete"]);
     expect(portionSizes).toEqual(["small", "regular", "large"]);
     expect(spiceLevels).toEqual(["none", "mild", "regular"]);

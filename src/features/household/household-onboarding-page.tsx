@@ -72,7 +72,7 @@ export function HouseholdOnboardingPage() {
       userId={auth.session.user.id}
       api={api}
       onDone={() => {
-        void navigate("/privacy?returnTo=/planner");
+        void navigate("/planner");
       }}
     />
   );
@@ -94,6 +94,7 @@ export function HouseholdOnboardingForm({
   const latestSaveVersion = useRef(0);
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
+  const [completeError, setCompleteError] = useState(false);
   const membersQuery = useQuery({
     queryKey: householdKeys.members(userId),
     queryFn: api.listMembers,
@@ -170,6 +171,18 @@ export function HouseholdOnboardingForm({
     return queuedSave;
   };
 
+  // 家族設定の完了（completeMember→setProgress("complete")→遷移）は必ずこの順序で
+  // 行い、どちらかが失敗したら現在画面に残って再試行できるようにする。
+  const finishOnboarding = async () => {
+    try {
+      await api.setProgress("complete");
+      setCompleteError(false);
+      onDone();
+    } catch {
+      setCompleteError(true);
+    }
+  };
+
   const completedRequired = useMemo(() => {
     if (draft === null) return 0;
     return [
@@ -215,9 +228,20 @@ export function HouseholdOnboardingForm({
           {completeMembers.length === 0 ? "家族設定を始める" : "家族を追加"}
         </button>
         {completeMembers.length > 0 && (
-          <button className="secondary-button" type="button" onClick={onDone}>
-            AI情報の説明へ
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              void finishOnboarding();
+            }}
+          >
+            この内容で設定を完了する
           </button>
+        )}
+        {completeError && (
+          <p className="error-message" role="alert">
+            設定を完了できませんでした。通信を確認して再試行してください。
+          </p>
         )}
       </main>
     );
@@ -409,11 +433,15 @@ export function HouseholdOnboardingForm({
         onClick={() => {
           void saveQueue.current.then(async (saved) => {
             if (!saved) return;
+            let completed: HouseholdMemberRow;
             try {
-              replaceMember(await api.completeMember(draft.id));
+              completed = await api.completeMember(draft.id);
             } catch {
               setSaveState("failed");
+              return;
             }
+            replaceMember(completed);
+            await finishOnboarding();
           });
         }}
       >
@@ -427,6 +455,11 @@ export function HouseholdOnboardingForm({
       {draft.unsupported_diet_status === "unconfirmed" && (
         <p className="error-message">
           食べない食事を確認するまで、このメンバーは献立生成に使えません。
+        </p>
+      )}
+      {completeError && (
+        <p className="error-message" role="alert">
+          設定を完了できませんでした。通信を確認して再試行してください。
         </p>
       )}
     </main>

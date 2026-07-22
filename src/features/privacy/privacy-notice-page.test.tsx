@@ -10,9 +10,6 @@ type Consent = {
   accepted_at: string;
   created_at: string;
 };
-type Profile = { user_id: string; onboarding_status: string };
-const completeOnboarding =
-  vi.fn<(client: unknown, userId: string, status: "complete") => Promise<Profile>>();
 const acceptConsent = vi.fn<(client: unknown, userId: string) => Promise<Consent>>();
 
 vi.mock("@/features/auth/use-auth", () => ({
@@ -21,11 +18,6 @@ vi.mock("@/features/auth/use-auth", () => ({
 
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
-}));
-
-vi.mock("@/features/household/household-api", () => ({
-  setOnboardingStatus: (client: unknown, userId: string, status: "complete") =>
-    completeOnboarding(client, userId, status),
 }));
 
 vi.mock("./privacy-api", () => ({
@@ -48,21 +40,13 @@ it("explains sent, unsent, and stored data before accepting", async () => {
   expect(onAccept).toHaveBeenCalledOnce();
 });
 
-it("completes onboarding only after privacy consent is accepted", async () => {
+it("saves only the privacy consent and navigates to the sanitized returnTo, without touching onboarding status", async () => {
   const user = userEvent.setup();
-  const order: string[] = [];
-  acceptConsent.mockImplementation(() => {
-    order.push("consent");
-    return Promise.resolve({
-      user_id: "user-1",
-      notice_version: "2026-07-11.v1",
-      accepted_at: "2026-07-12T00:00:00.000Z",
-      created_at: "2026-07-12T00:00:00.000Z",
-    });
-  });
-  completeOnboarding.mockImplementation(() => {
-    order.push("complete");
-    return Promise.resolve({ user_id: "user-1", onboarding_status: "complete" });
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-11.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
   });
   const router = createMemoryRouter(
     [
@@ -83,8 +67,17 @@ it("completes onboarding only after privacy consent is accepted", async () => {
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
 
   await waitFor(() => {
-    expect(completeOnboarding).toHaveBeenCalledWith({}, "user-1", "complete");
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
   });
-  expect(order).toEqual(["consent", "complete"]);
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+});
+
+it("explains sent content across both target modes and no family data for idea mode", () => {
+  render(<PrivacyNoticeContent saving={false} onAccept={vi.fn()} onSkip={vi.fn()} />);
+  const sentSection = screen.getByRole("heading", { name: "AIへ送る情報" }).nextElementSibling;
+  expect(sentSection?.textContent).toContain("家族の有無に関わらず共通で送る内容");
+  expect(sentSection?.textContent).toContain("家族設定を使う場合だけ");
+  expect(sentSection?.textContent).toContain(
+    "家族設定を使わないアイデア献立では、家族に関する情報は一切送りません",
+  );
 });

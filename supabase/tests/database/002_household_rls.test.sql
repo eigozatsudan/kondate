@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(38);
+select plan(40);
 
 select tests.create_supabase_user('11111111-1111-1111-1111-111111111111', 'one@example.invalid');
 select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@example.invalid');
@@ -273,6 +273,14 @@ select ok(
 select ok(
   not has_function_privilege('anon', 'public.delete_member_allergy(uuid)', 'execute'),
   'anonymous users cannot execute the allergy deletion RPC'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.set_onboarding_status(text)', 'execute'),
+  'authenticated users can execute set_onboarding_status'
+);
+select ok(
+  not has_function_privilege('anon', 'public.set_onboarding_status(text)', 'execute'),
+  'anonymous users cannot execute set_onboarding_status'
 );
 
 select * from finish();

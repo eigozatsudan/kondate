@@ -40,7 +40,11 @@ export const test = base.extend<AuthFixtures>({
   },
 
   completedOnboardingPage: async ({ authenticatedPage: page }, provide) => {
+    // 家族設定の完了は現在プライバシー同意と切り離されており、直接/plannerへ
+    // 遷移する。この後で/privacyを独立して開いて同意を保存する。
     await completeMinimumOnboarding(page);
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await page.goto("/privacy?returnTo=%2Fplanner");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
@@ -95,5 +99,4 @@ export async function completeMinimumOnboarding(page: Page): Promise<void> {
   await page.getByLabel("アレルギーの確認").selectOption("none");
   await page.getByLabel("食べない食事はありますか").selectOption("none");
   await page.getByRole("button", { name: "残りはあとで設定して完了" }).click();
-  await page.getByRole("button", { name: "AI情報の説明へ" }).click();
 }

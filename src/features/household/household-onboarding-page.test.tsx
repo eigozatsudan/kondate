@@ -33,22 +33,31 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-it("resumes one draft and saves each required selection", async () => {
+it("resumes one draft, saves each required selection, and completes through completeMember->setProgress->navigate", async () => {
   const user = userEvent.setup();
   let currentDraft = draft;
+  const order: string[] = [];
   const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
     currentDraft = { ...currentDraft, ...patch };
     return Promise.resolve(currentDraft);
   });
-  const completeMember = vi.fn(() =>
-    Promise.resolve({
+  const completeMember = vi.fn(() => {
+    order.push("completeMember");
+    return Promise.resolve({
       ...draft,
       age_band: "adult" as const,
       allergy_status: "none" as const,
       unsupported_diet_status: "none" as const,
       status: "complete" as const,
-    }),
-  );
+    });
+  });
+  const setProgress = vi.fn(() => {
+    order.push("setProgress");
+    return Promise.resolve({});
+  });
+  const onDone = vi.fn(() => {
+    order.push("navigate");
+  });
   const api: HouseholdOnboardingApi = {
     listMembers: vi.fn().mockResolvedValue([draft]),
     createDraft: vi.fn(),
@@ -56,13 +65,13 @@ it("resumes one draft and saves each required selection", async () => {
     completeMember,
     listAllergies: vi.fn().mockResolvedValue([]),
     addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
+    setProgress,
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   render(
     <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
     </QueryClientProvider>,
   );
 
@@ -73,7 +82,87 @@ it("resumes one draft and saves each required selection", async () => {
   expect(await screen.findByText("必須項目 3 / 3")).toBeInTheDocument();
   expect(updateDraft).toHaveBeenCalledTimes(3);
   await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
+  await waitFor(() => {
+    expect(onDone).toHaveBeenCalledOnce();
+  });
   expect(completeMember).toHaveBeenCalledWith("member-1");
+  expect(setProgress).toHaveBeenCalledWith("complete");
+  expect(order).toEqual(["completeMember", "setProgress", "navigate"]);
+});
+
+it("stays on the page and shows a retryable error when setProgress fails after completeMember succeeds", async () => {
+  const user = userEvent.setup();
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const completeMember = vi.fn().mockResolvedValue({ ...completableDraft, status: "complete" });
+  const setProgress = vi.fn().mockRejectedValue(new Error("network"));
+  const onDone = vi.fn();
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([completableDraft]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress,
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "残りはあとで設定して完了" }));
+
+  expect(
+    await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
+  ).toBeInTheDocument();
+  expect(completeMember).toHaveBeenCalledWith("member-1");
+  expect(setProgress).toHaveBeenCalledWith("complete");
+  expect(onDone).not.toHaveBeenCalled();
+});
+
+it("does not call setProgress or navigate when completeMember fails", async () => {
+  const user = userEvent.setup();
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const completeMember = vi.fn().mockRejectedValue(new Error("network"));
+  const setProgress = vi.fn();
+  const onDone = vi.fn();
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([completableDraft]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress,
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "残りはあとで設定して完了" }));
+
+  expect(
+    await screen.findByText("保存できませんでした。選び直して再試行してください。"),
+  ).toBeInTheDocument();
+  expect(setProgress).not.toHaveBeenCalled();
+  expect(onDone).not.toHaveBeenCalled();
 });
 
 it("saves an incomplete unsupported diet draft before requiring a kind at completion", async () => {
@@ -121,10 +210,16 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
   expect(completeButton).toBeEnabled();
 });
 
-it("opens the privacy notice without completing onboarding", async () => {
+it("completes onboarding through setProgress->navigate when a complete member already exists and no draft is open", async () => {
   const user = userEvent.setup();
-  const onDone = vi.fn();
-  const setProgress = vi.fn();
+  const order: string[] = [];
+  const onDone = vi.fn(() => {
+    order.push("navigate");
+  });
+  const setProgress = vi.fn(() => {
+    order.push("setProgress");
+    return Promise.resolve({});
+  });
   const api: HouseholdOnboardingApi = {
     listMembers: vi.fn().mockResolvedValue([{ ...draft, status: "complete" as const }]),
     createDraft: vi.fn(),
@@ -142,10 +237,42 @@ it("opens the privacy notice without completing onboarding", async () => {
     </QueryClientProvider>,
   );
 
-  await user.click(await screen.findByRole("button", { name: "AI情報の説明へ" }));
+  await user.click(await screen.findByRole("button", { name: "この内容で設定を完了する" }));
 
-  expect(onDone).toHaveBeenCalledOnce();
-  expect(setProgress).not.toHaveBeenCalled();
+  await waitFor(() => {
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+  expect(setProgress).toHaveBeenCalledWith("complete");
+  expect(order).toEqual(["setProgress", "navigate"]);
+});
+
+it("stays on the page with a retryable error when setProgress fails for an already-complete member", async () => {
+  const user = userEvent.setup();
+  const onDone = vi.fn();
+  const setProgress = vi.fn().mockRejectedValue(new Error("network"));
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([{ ...draft, status: "complete" as const }]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember: vi.fn(),
+    listAllergies: vi.fn(),
+    addCustomAllergy: vi.fn(),
+    setProgress,
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "この内容で設定を完了する" }));
+
+  expect(
+    await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
+  ).toBeInTheDocument();
+  expect(onDone).not.toHaveBeenCalled();
 });
 
 it("serializes rapid draft updates in input order", async () => {

@@ -42,7 +42,7 @@ export const changeReasons = [
 ] as const;
 export type ChangeReason = (typeof changeReasons)[number];
 
-export const onboardingStatuses = ["not_started", "in_progress", "complete"] as const;
+export const onboardingStatuses = ["not_started", "in_progress", "complete", "skipped"] as const;
 export type OnboardingStatus = (typeof onboardingStatuses)[number];
 
 export const householdMemberStatuses = ["draft", "complete"] as const;

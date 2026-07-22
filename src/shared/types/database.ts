@@ -1,3 +1,4 @@
+import type { OnboardingStatus } from "@shared/contracts/domain.js";
 import type { Database as GeneratedDatabase } from "./database.generated.js";
 
 type GeneratedPublic = GeneratedDatabase["public"];
@@ -49,14 +50,39 @@ type FinalizeGenerationSuccessArgs = Omit<
   p_change_reason_custom: GeneratedFinalizeGenerationSuccessArgs["p_change_reason_custom"] | null;
 };
 
+type GeneratedSetOnboardingStatus = GeneratedFunctions["set_onboarding_status"];
+
+type GeneratedTables = GeneratedPublic["Tables"];
+type GeneratedProfiles = GeneratedTables["profiles"];
+
+// Postgres Meta は text 列を CHECK 制約の値集合ではなく string として生成するため、
+// overlay で OnboardingStatus のリテラルユニオンへ絞り込む。
+type ProfilesRow = Omit<GeneratedProfiles["Row"], "onboarding_status"> & {
+  onboarding_status: OnboardingStatus;
+};
+type ProfilesInsert = Omit<GeneratedProfiles["Insert"], "onboarding_status"> & {
+  onboarding_status?: OnboardingStatus;
+};
+type ProfilesUpdate = Omit<GeneratedProfiles["Update"], "onboarding_status"> & {
+  onboarding_status?: OnboardingStatus;
+};
+
 export type Database = Omit<GeneratedDatabase, "public"> & {
-  public: Omit<GeneratedPublic, "Functions"> & {
+  public: Omit<GeneratedPublic, "Functions" | "Tables"> & {
+    Tables: Omit<GeneratedTables, "profiles"> & {
+      profiles: Omit<GeneratedProfiles, "Row" | "Insert" | "Update"> & {
+        Row: ProfilesRow;
+        Insert: ProfilesInsert;
+        Update: ProfilesUpdate;
+      };
+    };
     Functions: Omit<
       GeneratedFunctions,
       | "save_generation_draft"
       | "reserve_ai_generation"
       | "finalize_ai_generation_failure"
       | "finalize_ai_generation_success"
+      | "set_onboarding_status"
     > & {
       save_generation_draft: Omit<GeneratedSaveDraft, "Args"> & {
         Args: SaveDraftArgs;
@@ -69,6 +95,10 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       };
       finalize_ai_generation_success: Omit<GeneratedFinalizeGenerationSuccess, "Args"> & {
         Args: FinalizeGenerationSuccessArgs;
+      };
+      set_onboarding_status: Omit<GeneratedSetOnboardingStatus, "Args" | "Returns"> & {
+        Args: { p_status: OnboardingStatus };
+        Returns: ProfilesRow;
       };
     };
   };

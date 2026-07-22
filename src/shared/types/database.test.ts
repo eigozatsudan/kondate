@@ -1,4 +1,5 @@
 import { expect, expectTypeOf, it } from "vitest";
+import type { OnboardingStatus } from "@shared/contracts/domain";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import type { Database } from "./database";
 import type { Database as GeneratedDatabase } from "./database.generated";
@@ -134,8 +135,17 @@ it("nullable 4項目以外のRPC契約を変更しない", () => {
   >();
   expectTypeOf<AppSaveDraft["Returns"]>().toEqualTypeOf<GeneratedSaveDraft["Returns"]>();
   expectTypeOf<AppSaveDraft["SetofOptions"]>().toEqualTypeOf<GeneratedSaveDraft["SetofOptions"]>();
-  expectTypeOf<Database["public"]["Functions"]["set_onboarding_status"]>().toEqualTypeOf<
-    GeneratedDatabase["public"]["Functions"]["set_onboarding_status"]
+});
+
+it("set_onboarding_statusのonboarding_statusをOnboardingStatusのリテラルユニオンへ絞り込む", () => {
+  type AppSetOnboardingStatus = Database["public"]["Functions"]["set_onboarding_status"];
+  type GeneratedSetOnboardingStatus =
+    GeneratedDatabase["public"]["Functions"]["set_onboarding_status"];
+
+  expectTypeOf<AppSetOnboardingStatus["Args"]>().toEqualTypeOf<{ p_status: OnboardingStatus }>();
+  expectTypeOf<AppSetOnboardingStatus["Returns"]>().toEqualTypeOf<ProfileRow>();
+  expectTypeOf<Omit<AppSetOnboardingStatus, "Args" | "Returns">>().toEqualTypeOf<
+    Omit<GeneratedSetOnboardingStatus, "Args" | "Returns">
   >();
 });
 
@@ -184,3 +194,29 @@ const invalidMainIngredients = {
 
 void invalidRevision;
 void invalidMainIngredients;
+
+type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
+
+it("profiles.onboarding_status はskippedへ代入できる", () => {
+  const skippedProfile = {
+    user_id: "10000000-0000-4000-8000-000000000099",
+    onboarding_status: "skipped",
+    onboarding_completed_at: "2026-07-22T00:00:00.000Z",
+    created_at: "2026-07-22T00:00:00.000Z",
+    updated_at: "2026-07-22T00:00:00.000Z",
+  } satisfies ProfileRow;
+
+  expectTypeOf(skippedProfile).toExtend<ProfileRow>();
+  expect(skippedProfile.onboarding_status).toBe("skipped");
+});
+
+const invalidOnboardingStatus = {
+  user_id: "10000000-0000-4000-8000-000000000098",
+  // @ts-expect-error onboarding_statusは既知の状態集合へのみ代入できる
+  onboarding_status: "unknown_status",
+  onboarding_completed_at: null,
+  created_at: "2026-07-22T00:00:00.000Z",
+  updated_at: "2026-07-22T00:00:00.000Z",
+} satisfies ProfileRow;
+
+void invalidOnboardingStatus;

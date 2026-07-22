@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(12);
+select plan(28);
 
 select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',
@@ -106,6 +106,116 @@ select is(
   (select onboarding_status from public.profiles),
   'not_started',
   'profile update failure preserves the original progress'
+);
+
+-- =============================================================================
+-- Plan 7 Task 2 Step 2: set_onboarding_status の状態遷移。家族設定なしでも
+-- skipped へ遷移でき、skipped からは in_progress/complete のどちらにも戻れる。
+-- complete は家族の完全性だけを検査し、privacy consent の有無を見ない。
+-- =============================================================================
+reset role;
+select tests.create_supabase_user(
+  '88888888-8888-8888-8888-888888888888',
+  'onboarding-skip@example.invalid'
+);
+select tests.authenticate_as('88888888-8888-8888-8888-888888888888');
+set local role authenticated;
+
+select lives_ok(
+  $$ select public.set_onboarding_status('skipped') $$,
+  '家族未登録でもskippedへ遷移できる'
+);
+select is(
+  (select onboarding_status from public.profiles where user_id = auth.uid()),
+  'skipped',
+  'skippedが保存される'
+);
+select ok(
+  (select onboarding_completed_at is not null from public.profiles where user_id = auth.uid()),
+  'skippedは完了時刻を持つ'
+);
+select lives_ok(
+  $$ select public.set_onboarding_status('in_progress') $$,
+  'skippedからin_progressへ戻れる'
+);
+select ok(
+  (select onboarding_completed_at is null from public.profiles where user_id = auth.uid()),
+  'in_progressへ戻ると完了時刻を消す'
+);
+
+create temporary table onboarding_idempotent_check as
+  select updated_at from public.profiles where user_id = '88888888-8888-8888-8888-888888888888';
+select lives_ok(
+  $$ select public.set_onboarding_status('in_progress') $$,
+  '同じ状態への再送は成功する（冪等）'
+);
+select is(
+  (select updated_at from public.profiles where user_id = '88888888-8888-8888-8888-888888888888'),
+  (select updated_at from onboarding_idempotent_check),
+  '同じ状態への再送はupdated_atを変更しない'
+);
+drop table onboarding_idempotent_check;
+
+insert into public.household_members (
+  id, user_id, status, age_band, allergy_status, unsupported_diet_status
+) values (
+  'ffffffff-ffff-ffff-ffff-ffffffffffff',
+  '88888888-8888-8888-8888-888888888888',
+  'complete', 'adult', 'none', 'none'
+);
+select lives_ok(
+  $$ select public.set_onboarding_status('complete') $$,
+  '家族1人が完全ならprivacy同意なしでcompleteへ遷移できる'
+);
+select is(
+  (select onboarding_status from public.profiles where user_id = auth.uid()),
+  'complete',
+  'completeが保存される'
+);
+select ok(
+  (select onboarding_completed_at is not null from public.profiles where user_id = auth.uid()),
+  'completeは完了時刻を持つ'
+);
+select ok(
+  not exists (
+    select 1 from public.privacy_consents where user_id = '88888888-8888-8888-8888-888888888888'
+  ),
+  'privacy_consents行を一切作らずにcompleteへ遷移できる'
+);
+select lives_ok(
+  $$
+    delete from public.household_members
+    where id = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+  $$,
+  '完了済みの最後の家族メンバーを削除できる'
+);
+select is(
+  (select onboarding_status from public.profiles where user_id = '88888888-8888-8888-8888-888888888888'),
+  'complete',
+  '最後の家族メンバー削除後もonboarding_statusはcompleteのまま変化しない'
+);
+
+reset role;
+select tests.create_supabase_user(
+  '99999999-9999-9999-9999-999999999999',
+  'onboarding-incomplete@example.invalid'
+);
+select tests.authenticate_as('99999999-9999-9999-9999-999999999999');
+set local role authenticated;
+select lives_ok(
+  $$ select public.set_onboarding_status('in_progress') $$,
+  '家族なしユーザーもin_progressへは遷移できる'
+);
+select throws_ok(
+  $$ select public.set_onboarding_status('complete') $$,
+  '23514',
+  'onboarding_members_incomplete',
+  '家族が1人もいない場合はcompleteへ遷移できない'
+);
+select is(
+  (select onboarding_status from public.profiles where user_id = '99999999-9999-9999-9999-999999999999'),
+  'in_progress',
+  '失敗したcomplete試行はonboarding_statusを変更しない'
 );
 
 select * from finish();
