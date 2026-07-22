@@ -27,6 +27,9 @@ describe("CurrentSafetySummary", () => {
       />,
     );
     expect(screen.getByText(/卵/)).toBeVisible();
+    expect(screen.getByText(/大人/)).toBeVisible();
+    expect(screen.getByText(/幼児/)).toBeVisible();
+    expect(screen.getByText(/要確認/)).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("年齢情報を確認してください");
     expect(screen.getByText(/AI生成だけでアレルギーの安全は保証できません/)).toBeVisible();
   });

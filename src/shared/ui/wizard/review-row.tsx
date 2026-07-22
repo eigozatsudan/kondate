@@ -11,7 +11,7 @@ export function ReviewRow({ label, value, onEdit }: ReviewRowProps) {
     <div className="review-row">
       <div>
         <p className="review-row-label">{label}</p>
-        <p className="review-row-value">{value}</p>
+        <div className="review-row-value">{value}</div>
       </div>
       <button
         className="text-button wizard-action"

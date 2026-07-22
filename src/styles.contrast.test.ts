@@ -139,5 +139,35 @@ describe("guided planner theme", () => {
     expect(css).toMatch(/\.choice-card\s*\{[^}]*border-radius:\s*(18|19|20)px/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*box-shadow:/s);
     expect(css).toMatch(/\.wizard-action[^}]*min-height:\s*44px/s);
+    expect(css).toMatch(
+      /\.guided-planner-theme \.wizard-title:focus-visible\s*\{[^}]*outline:\s*3px solid var\(--focus\)[^}]*outline-offset:\s*2px/s,
+    );
+  });
+
+  it("preserves every existing global appearance selector", () => {
+    expect(css).toMatch(/:root\s*\{[^}]*color:\s*#1e293b[^}]*background:\s*#f8fafc/s);
+    expect(css).toMatch(/body\s*\{[^}]*min-height:\s*100vh[^}]*font-size:\s*16px/s);
+    expect(css).toMatch(
+      /\.primary-button\s*\{[^}]*border:\s*1px solid var\(--primary\)[^}]*background:\s*var\(--primary\)/s,
+    );
+    expect(css).toMatch(
+      /\.secondary-button\s*\{[^}]*color:\s*var\(--primary-strong\)[^}]*background:\s*transparent/s,
+    );
+    expect(css).toMatch(/\.text-button\s*\{[^}]*border:\s*0[^}]*text-decoration:\s*underline/s);
+    expect(css).toMatch(/\.field\s*\{[^}]*display:\s*grid[^}]*gap:\s*6px/s);
+    expect(css).toMatch(
+      /\.field input,\s*\.field select\s*\{[^}]*min-height:\s*48px[^}]*background:\s*#fff/s,
+    );
+    expect(css).toMatch(
+      /\.app-section\s*\{[^}]*min-height:\s*100vh[^}]*background:\s*var\(--section-tint\)/s,
+    );
+  });
+
+  it("keeps long wizard content inside a 320px viewport", () => {
+    expect(css).toMatch(/\.choice-card\s*\{[^}]*min-width:\s*0/s);
+    expect(css).toMatch(
+      /\.choice-card > \*,\s*\.inline-notice-title,\s*\.inline-notice-body\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/s,
+    );
+    expect(css).toMatch(/\.choice-card:disabled\s*\{[^}]*opacity:[^}]*cursor:\s*not-allowed/s);
   });
 });

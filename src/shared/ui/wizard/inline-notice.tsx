@@ -15,7 +15,7 @@ export function InlineNotice({ tone, title, children }: InlineNoticeProps) {
       role={tone === "error" ? "alert" : "note"}
     >
       <strong className="inline-notice-title">{title}</strong>
-      <p className="inline-notice-body">{children}</p>
+      <div className="inline-notice-body">{children}</div>
     </section>
   );
 }

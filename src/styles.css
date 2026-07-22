@@ -51,6 +51,11 @@
   outline-offset: 2px;
 }
 
+.guided-planner-theme .wizard-title:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .guided-planner-theme .primary-button:hover {
   background: var(--primary-hover);
 }
@@ -99,6 +104,7 @@
 .choice-card {
   display: grid;
   width: 100%;
+  min-width: 0;
   min-height: 44px;
   gap: 4px;
   border: 1px solid var(--border);
@@ -109,6 +115,18 @@
   text-align: left;
   box-shadow: 0 4px 16px rgb(66 58 50 / 8%);
   cursor: pointer;
+}
+
+.choice-card > *,
+.inline-notice-title,
+.inline-notice-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.choice-card:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
 }
 
 .choice-card[aria-pressed="true"] {

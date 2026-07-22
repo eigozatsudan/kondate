@@ -54,6 +54,15 @@ describe("wizard UI", () => {
     );
   });
 
+  it("normalizes invalid progress boundaries", () => {
+    const { rerender } = render(<ProgressIndicator currentStep={0} totalSteps={0} />);
+    expect(screen.getByText("質問 1 / 1")).toBeVisible();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
+    rerender(<ProgressIndicator currentStep={9} totalSteps={5} />);
+    expect(screen.getByText("質問 5 / 5")).toBeVisible();
+    expect(screen.getByRole("progressbar").firstElementChild).toHaveStyle({ width: "100%" });
+  });
+
   it("uses alert only for errors", () => {
     const { rerender } = render(
       <InlineNotice tone="notice" title="お知らせ">
@@ -62,11 +71,46 @@ describe("wizard UI", () => {
     );
     expect(screen.getByRole("note")).toHaveTextContent("保存しました");
     rerender(
+      <InlineNotice tone="warning" title="確認してください">
+        入力を見直してください
+      </InlineNotice>,
+    );
+    expect(screen.getByRole("note")).toHaveTextContent("入力を見直してください");
+    rerender(
       <InlineNotice tone="error" title="保存できません">
         再試行してください
       </InlineNotice>,
     );
     expect(screen.getByRole("alert")).toHaveTextContent("再試行してください");
+  });
+
+  it("keeps disabled choices visibly unavailable", () => {
+    render(
+      <ChoiceCard
+        title="選べない候補"
+        description="現在は利用できません"
+        selected={false}
+        selectionMode="multiple"
+        disabled
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /選べない候補/ })).toBeDisabled();
+  });
+
+  it("accepts block content without nesting it in paragraphs", () => {
+    render(
+      <>
+        <InlineNotice tone="notice" title="詳細">
+          <div>お知らせのブロック要素</div>
+        </InlineNotice>
+        <ReviewRow label="食事" value={<div>確認行のブロック要素</div>} onEdit={vi.fn()} />
+      </>,
+    );
+    expect(screen.getByText("お知らせのブロック要素").parentElement).toHaveClass(
+      "inline-notice-body",
+    );
+    expect(screen.getByText("確認行のブロック要素").parentElement).toHaveClass("review-row-value");
   });
 
   it("gives review edit actions a contextual name", async () => {
