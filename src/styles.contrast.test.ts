@@ -20,6 +20,53 @@ type CssRule = {
   sourceOrder: number;
 };
 
+type CssKeyframes = {
+  name: string;
+  steps: readonly CssRule[];
+  atRules: readonly CssAtRule[];
+};
+
+function cssKeyframesRules(source: string): CssKeyframes[] {
+  const style = document.createElement("style");
+  style.textContent = source.replace(/@import\s+[^;]+;/g, "");
+  document.head.append(style);
+  const sheet = style.sheet;
+  if (sheet === null) throw new Error("stylesheet could not be parsed");
+  const result: CssKeyframes[] = [];
+
+  function collect(rules: CSSRuleList, atRules: readonly CssAtRule[]): void {
+    for (const rule of Array.from(rules)) {
+      if (rule.cssText.trim().startsWith("@keyframes") && "cssRules" in rule) {
+        const keyframesRule = rule as CSSKeyframesRule;
+        const steps = Array.from(keyframesRule.cssRules).map((rule, sourceOrder) => {
+          const step = rule as CSSKeyframeRule;
+          const declarations: CssDeclarations = new Map();
+          for (let index = 0; index < step.style.length; index += 1) {
+            const property = step.style.item(index);
+            declarations.set(property, step.style.getPropertyValue(property).trim());
+          }
+          return {
+            selector: step.keyText.replace(/\s+/g, " ").trim(),
+            declarations,
+            atRules: [],
+            sourceOrder,
+          };
+        });
+        result.push({ name: keyframesRule.name, steps, atRules });
+      } else if (!("selectorText" in rule) && "cssRules" in rule) {
+        const type = /^@([\w-]+)/u.exec(rule.cssText.trim())?.[1]?.toLowerCase() ?? "unknown";
+        const condition =
+          "conditionText" in rule ? String(rule.conditionText).replace(/\s+/g, " ").trim() : "";
+        collect((rule as CSSGroupingRule).cssRules, [...atRules, { type, condition }]);
+      }
+    }
+  }
+
+  collect(sheet.cssRules, []);
+  style.remove();
+  return result;
+}
+
 /** jsdomのCSSOMを使い、functional pseudo内のcommaをselector-listと誤認しない。 */
 function cssRules(source: string): CssRule[] {
   const parsedSource = source.replace(/@import\s+[^;]+;/g, "");
@@ -388,6 +435,86 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   ".wizard-transition": { animation: "wizard-enter 180ms ease-out" },
 };
 
+const globalRuleDeclarations: Readonly<
+  Record<string, readonly Readonly<Record<string, string>>[]>
+> = {
+  "*": [{ "box-sizing": "border-box" }],
+  ":root": [
+    {
+      color: "#1e293b",
+      background: "#f8fafc",
+      "font-family":
+        '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
+      "font-synthesis": "none",
+      "text-rendering": "optimizeLegibility",
+      "--surface": "#ffffff",
+      "--text": "#1e293b",
+      "--muted": "#475569",
+      "--primary": "#f97316",
+      "--primary-hover": "#ea580c",
+      "--primary-ink": "#1e293b",
+      "--primary-strong": "#c2410c",
+      "--pantry": "#0f766e",
+      "--danger": "#dc2626",
+      "--border": "#e2e8f0",
+    },
+    { "--section-tint": "#f8fafc" },
+  ],
+  "html, body, #root": [{ "min-width": "320px", "min-height": "100%", margin: "0" }],
+  body: [{ "min-height": "100vh", "font-size": "16px", "line-height": "1.6" }],
+  "button, a, input, select, textarea": [{ font: "inherit" }],
+  "button, .button-link": [{ "min-width": "44px", "min-height": "44px" }],
+  "button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible":
+    [{ outline: "3px solid #3f6f88", "outline-offset": "2px" }],
+  ".primary-button, .secondary-button, .text-button": [
+    {
+      display: "inline-flex",
+      "align-items": "center",
+      "justify-content": "center",
+      "border-radius": "12px",
+      padding: "10px 16px",
+      "font-weight": "700",
+      "text-decoration": "none",
+      cursor: "pointer",
+    },
+  ],
+  ".primary-button": [
+    {
+      border: "1px solid var(--primary)",
+      color: "var(--primary-ink)",
+      background: "var(--primary)",
+    },
+  ],
+  ".primary-button:hover": [{ background: "var(--primary-hover)" }],
+  ".secondary-button": [
+    {
+      border: "1px solid var(--primary)",
+      color: "var(--primary-strong)",
+      background: "transparent",
+    },
+  ],
+  ".text-button": [
+    {
+      border: "0",
+      color: "var(--primary-strong)",
+      background: "transparent",
+      "text-decoration": "underline",
+    },
+  ],
+  ".field": [{ display: "grid", gap: "6px" }],
+  ".field input, .field select": [
+    {
+      width: "100%",
+      "min-height": "48px",
+      border: "1px solid var(--border)",
+      "border-radius": "10px",
+      background: "#fff",
+      padding: "10px 12px",
+    },
+  ],
+  ".app-section": [{ "min-height": "100vh", background: "var(--section-tint)" }],
+};
+
 function hasExactDeclarations(
   declarations: CssDeclarations,
   expected: Readonly<Record<string, string>>,
@@ -454,6 +581,23 @@ function unexpectedProtectedSelectors(source: string, requireEveryTaskRule = fal
       unexpected.push(selector);
     }
   }
+  for (const [selector, expectedBlocks] of requireEveryTaskRule
+    ? Object.entries(globalRuleDeclarations)
+    : []) {
+    const actualBlocks = rules.filter(
+      (rule) => rule.selector === selector && rule.atRules.length === 0,
+    );
+    if (
+      actualBlocks.length !== expectedBlocks.length ||
+      actualBlocks.some(
+        (rule, index) =>
+          expectedBlocks[index] === undefined ||
+          !hasExactDeclarations(rule.declarations, expectedBlocks[index]),
+      )
+    ) {
+      unexpected.push(selector);
+    }
+  }
   return Array.from(new Set(unexpected));
 }
 
@@ -515,36 +659,69 @@ function unexpectedRepresentativeOverrides(source: string): string[] {
     </section>
   `;
   const elements = [root, ...Array.from(root.querySelectorAll("*"))];
-  const protectedProperties = new Set(
-    Object.values(taskRuleDeclarations).flatMap((declarations) => Object.keys(declarations)),
-  );
-  for (const property of [
-    "background-color",
-    "border-block",
-    "border-bottom-color",
-    "border-inline",
-    "border-left-color",
-    "border-right-color",
-    "border-top-color",
-  ]) {
-    protectedProperties.add(property);
-  }
-
   return cssRules(source)
-    .filter((rule) => !allowedProtectedSelectors.has(rule.selector))
-    .filter((rule) =>
-      Array.from(rule.declarations.keys()).some(
-        (property) => protectedProperties.has(property) || motionProperties.test(property),
-      ),
-    )
     .filter((rule) => {
+      if (Array.from(rule.declarations.keys()).includes("all")) return true;
+      const taskDeclarations = taskRuleDeclarations[rule.selector];
+      if (taskDeclarations !== undefined) {
+        const reducedMotionException =
+          rule.selector === ".wizard-transition" &&
+          rule.atRules.length === 1 &&
+          rule.atRules[0]?.type === "media" &&
+          rule.atRules[0].condition === "(prefers-reduced-motion: reduce)" &&
+          hasExactDeclarations(rule.declarations, { animation: "none" });
+        if (reducedMotionException) return false;
+        return (
+          rule.atRules.length !== 0 || !hasExactDeclarations(rule.declarations, taskDeclarations)
+        );
+      }
+      const globalDeclarations = globalRuleDeclarations[rule.selector];
+      if (globalDeclarations !== undefined) {
+        return !globalDeclarations.some((expected) =>
+          hasExactDeclarations(rule.declarations, expected),
+        );
+      }
+
+      const pseudoElement = /::([\w-]+)\s*$/u.exec(rule.selector);
+      if (pseudoElement !== null && pseudoElement[1] !== "before" && pseudoElement[1] !== "after") {
+        return true;
+      }
+      const originSelector =
+        pseudoElement === null ? rule.selector : rule.selector.slice(0, pseudoElement.index).trim();
       try {
-        return elements.some((element) => element.matches(rule.selector));
+        return elements.some((element) => element.matches(originSelector));
       } catch {
         return true;
       }
     })
-    .map((rule) => rule.selector);
+    .map((rule) => rule.selector)
+    .filter((selector, index, selectors) => selectors.indexOf(selector) === index);
+}
+
+function unexpectedKeyframesRules(source: string): string[] {
+  const keyframes = cssKeyframesRules(source);
+  const expectedSteps = [
+    { selector: "from", declarations: { opacity: "0", transform: "translateY(4px)" } },
+    { selector: "to", declarations: { opacity: "1", transform: "translateY(0)" } },
+  ] as const;
+  const unexpected = keyframes
+    .filter((keyframesRule) => {
+      if (keyframesRule.name !== "wizard-enter" || keyframesRule.atRules.length !== 0) return true;
+      if (keyframesRule.steps.length !== expectedSteps.length) return true;
+      return keyframesRule.steps.some((step, index) => {
+        const expected = expectedSteps[index];
+        return (
+          expected === undefined ||
+          step.selector !== expected.selector ||
+          !hasExactDeclarations(step.declarations, expected.declarations)
+        );
+      });
+    })
+    .map((rule) => rule.name);
+  if (keyframes.filter((rule) => rule.name === "wizard-enter").length !== 1) {
+    unexpected.push("wizard-enter");
+  }
+  return Array.from(new Set(unexpected));
 }
 
 function expectEffectiveDeclarations(selector: string, expected: Record<string, string>): void {
@@ -928,7 +1105,10 @@ describe("guided planner theme", () => {
       ".wizard-transition",
       '[class~="wizard-transition"]',
     ]);
-    expect(unexpectedRepresentativeOverrides(fixture)).toEqual(['[class~="wizard-transition"]']);
+    expect(unexpectedRepresentativeOverrides(fixture)).toEqual([
+      ".wizard-transition",
+      '[class~="wizard-transition"]',
+    ]);
   });
 
   it("rejects extra longhands on task-owned selectors", () => {
@@ -941,6 +1121,48 @@ describe("guided planner theme", () => {
 
     expect(unexpectedProtectedSelectors(fixture)).toEqual([".choice-card", ".wizard-transition"]);
     expect(unexpectedMotionRules(fixture)).toEqual([".wizard-transition"]);
+  });
+
+  it("rejects unknown representative selectors, resets, and pseudo-element content", () => {
+    const fixture = `
+      [aria-pressed="true"] {
+        all: unset;
+        background-image: linear-gradient(#000, #000);
+        border-top-style: none;
+        outline-style: none;
+      }
+      [aria-pressed="true"]::after { content: "未選択"; }
+      .primary-button { all: unset; }
+    `;
+
+    expect(unexpectedRepresentativeOverrides(fixture)).toEqual([
+      '[aria-pressed="true"]',
+      '[aria-pressed="true"]::after',
+      ".primary-button",
+    ]);
+  });
+
+  it("fixes wizard-enter as one exact top-level keyframes rule", () => {
+    const duplicate = `${cssWithoutImports}
+      @keyframes wizard-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    `;
+    const nested = `
+      @media (min-width: 1px) {
+        @keyframes wizard-enter { from { opacity: 0; } to { opacity: 1; } }
+      }
+    `;
+    const extra = `
+      @keyframes wizard-enter { from { opacity: 0; transform: translateY(4px); color: red; } 50% { opacity: .5; } to { opacity: 1; transform: translateY(0); } }
+    `;
+    const unknown = `
+      @keyframes other { from { opacity: 0; } to { opacity: 1; } }
+    `;
+
+    expect(unexpectedKeyframesRules(cssWithoutImports)).toEqual([]);
+    expect(unexpectedKeyframesRules(duplicate)).toEqual(["wizard-enter"]);
+    expect(unexpectedKeyframesRules(nested)).toEqual(["wizard-enter"]);
+    expect(unexpectedKeyframesRules(extra)).toEqual(["wizard-enter"]);
+    expect(unexpectedKeyframesRules(unknown)).toEqual(["other", "wizard-enter"]);
   });
 
   it("keeps final scoped component colors connected to their tokens", () => {
@@ -1037,6 +1259,7 @@ describe("guided planner theme", () => {
       animation: "wizard-enter 180ms ease-out",
     });
     expect(unexpectedMotionRules(cssWithoutImports)).toEqual([]);
+    expect(unexpectedKeyframesRules(cssWithoutImports)).toEqual([]);
     expect(unexpectedRepresentativeOverrides(cssWithoutImports)).toEqual([]);
   });
 
