@@ -8,10 +8,16 @@ const cssWithoutImports = css.replace(/@import\s+[^;]+;/g, "");
 
 type CssDeclarations = Map<string, string>;
 
+type CssAtRule = {
+  type: string;
+  condition: string;
+};
+
 type CssRule = {
   selector: string;
   declarations: CssDeclarations;
-  media: string | null;
+  atRules: readonly CssAtRule[];
+  sourceOrder: number;
 };
 
 /** jsdomのCSSOMを使い、functional pseudo内のcommaをselector-listと誤認しない。 */
@@ -24,7 +30,9 @@ function cssRules(source: string): CssRule[] {
   if (sheet === null) throw new Error("stylesheet could not be parsed");
   const result: CssRule[] = [];
 
-  function collect(rules: CSSRuleList, media: string | null): void {
+  let sourceOrder = 0;
+
+  function collect(rules: CSSRuleList, atRules: readonly CssAtRule[]): void {
     for (const rule of Array.from(rules)) {
       if ("selectorText" in rule && "style" in rule) {
         const styleRule = rule as CSSStyleRule;
@@ -41,17 +49,21 @@ function cssRules(source: string): CssRule[] {
         result.push({
           selector: styleRule.selectorText.replace(/\s+/g, " ").trim(),
           declarations: parsedDeclarations,
-          media,
+          atRules,
+          sourceOrder,
         });
+        sourceOrder += 1;
       } else if ("cssRules" in rule) {
         const groupingRule = rule as CSSGroupingRule;
-        const condition = "conditionText" in rule ? String(rule.conditionText) : media;
-        collect(groupingRule.cssRules, condition);
+        const type = /^@([\w-]+)/u.exec(rule.cssText.trim())?.[1]?.toLowerCase() ?? "unknown";
+        const condition =
+          "conditionText" in rule ? String(rule.conditionText).replace(/\s+/g, " ").trim() : "";
+        collect(groupingRule.cssRules, [...atRules, { type, condition }]);
       }
     }
   }
 
-  collect(sheet.cssRules, null);
+  collect(sheet.cssRules, []);
   style.remove();
   return result;
 }
@@ -119,7 +131,28 @@ function declarationsForSelector(
   const result: CssDeclarations = new Map();
   const acceptedSelectors = new Set([selector, ...(selectorGroups[selector] ?? [])]);
   for (const rule of cssRules(source)) {
-    if (rule.media !== media || !acceptedSelectors.has(rule.selector)) continue;
+    const expectedAtRules =
+      media === null ? [] : [{ type: "media", condition: media.replace(/\s+/g, " ").trim() }];
+    if (
+      JSON.stringify(rule.atRules) !== JSON.stringify(expectedAtRules) ||
+      !acceptedSelectors.has(rule.selector)
+    )
+      continue;
+    for (const [property, value] of rule.declarations) result.set(property, value);
+  }
+  return result;
+}
+
+/** reduce環境で成立するtop-levelと単独mediaを、実際のsource orderどおり合成する。 */
+function reducedMotionDeclarations(source: string, selector: string): CssDeclarations {
+  const result: CssDeclarations = new Map();
+  for (const rule of cssRules(source).sort((a, b) => a.sourceOrder - b.sourceOrder)) {
+    const applies =
+      rule.atRules.length === 0 ||
+      (rule.atRules.length === 1 &&
+        rule.atRules[0]?.type === "media" &&
+        rule.atRules[0].condition === "(prefers-reduced-motion: reduce)");
+    if (!applies || rule.selector !== selector) continue;
     for (const [property, value] of rule.declarations) result.set(property, value);
   }
   return result;
@@ -234,7 +267,18 @@ function unexpectedProtectedSelectors(source: string): string[] {
     .filter((rule) => {
       if (!touchesProtectedContract(rule.selector)) return false;
       if (!allowedProtectedSelectors.has(rule.selector)) return true;
-      return Array.from(rule.declarations.values()).some((value) => value.endsWith(" !important"));
+      if (Array.from(rule.declarations.values()).some((value) => value.endsWith(" !important"))) {
+        return true;
+      }
+      if (rule.atRules.length === 0) return false;
+      const reducedMotionException =
+        rule.selector === ".wizard-transition" &&
+        rule.atRules.length === 1 &&
+        rule.atRules[0]?.type === "media" &&
+        rule.atRules[0].condition === "(prefers-reduced-motion: reduce)" &&
+        rule.declarations.size === 1 &&
+        rule.declarations.get("animation") === "none";
+      return !reducedMotionException;
     })
     .map((rule) => rule.selector);
 }
@@ -254,7 +298,12 @@ function expectExactRuleDeclarations(
   media: string | null = null,
 ): void {
   const matchingRules = cssRules(cssWithoutImports).filter(
-    (rule) => rule.selector === selector && rule.media === media,
+    (rule) =>
+      rule.selector === selector &&
+      JSON.stringify(rule.atRules) ===
+        JSON.stringify(
+          media === null ? [] : [{ type: "media", condition: media.replace(/\s+/g, " ").trim() }],
+        ),
   );
   expect(matchingRules, selector).toHaveLength(1);
   const canonicalExpected = new Map(
@@ -555,6 +604,48 @@ describe("guided planner theme", () => {
     ]);
   });
 
+  it("rejects protected overrides in every conditional context", () => {
+    const arbitraryMedia = `
+      @media (min-width: 1px) {
+        .guided-planner-theme .primary-button { color: transparent; }
+      }
+    `;
+    const supportsMasqueradingAsReducedMotion = `
+      @supports (prefers-reduced-motion: reduce) {
+        .wizard-transition { animation: none; }
+      }
+    `;
+    const nestedReducedMotion = `
+      @supports (display: grid) {
+        @media (prefers-reduced-motion: reduce) {
+          .wizard-transition { animation: none; }
+        }
+      }
+    `;
+
+    expect(unexpectedProtectedSelectors(arbitraryMedia)).toEqual([
+      ".guided-planner-theme .primary-button",
+    ]);
+    expect(unexpectedProtectedSelectors(supportsMasqueradingAsReducedMotion)).toEqual([
+      ".wizard-transition",
+    ]);
+    expect(unexpectedProtectedSelectors(nestedReducedMotion)).toEqual([".wizard-transition"]);
+  });
+
+  it("detects a later top-level animation that re-enables reduced motion", () => {
+    const fixture = `
+      .wizard-transition { animation: wizard-enter 180ms ease-out; }
+      @media (prefers-reduced-motion: reduce) {
+        .wizard-transition { animation: none; }
+      }
+      .wizard-transition { animation: wizard-enter 180ms ease-out; }
+    `;
+
+    expect(reducedMotionDeclarations(fixture, ".wizard-transition").get("animation")).toBe(
+      "wizard-enter 180ms ease-out",
+    );
+  });
+
   it("keeps final scoped component colors connected to their tokens", () => {
     expectExactRuleDeclarations(".guided-planner-theme .primary-button", {
       "border-color": "var(--primary)",
@@ -643,12 +734,8 @@ describe("guided planner theme", () => {
     });
     const normalMotion = declarationsForSelector(cssWithoutImports, ".wizard-transition");
     expect(normalMotion.get("animation")).toBe("wizard-enter 180ms ease-out");
-    const reducedMotion = declarationsForSelector(
-      cssWithoutImports,
-      ".wizard-transition",
-      "(prefers-reduced-motion: reduce)",
-    );
-    expect(reducedMotion).toEqual(new Map([["animation", "none"]]));
+    const reducedMotion = reducedMotionDeclarations(cssWithoutImports, ".wizard-transition");
+    expect(reducedMotion.get("animation")).toBe("none");
     expectFinalDeclarations(".wizard-transition", {
       animation: "wizard-enter 180ms ease-out",
     });
