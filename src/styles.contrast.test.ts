@@ -12,6 +12,14 @@ function token(name: string): string {
   return value;
 }
 
+function scopedToken(name: string): string {
+  const scope = /\.guided-planner-theme\s*\{(?<body>[\s\S]*?)\}/.exec(css)?.groups?.body;
+  if (scope === undefined) throw new Error(".guided-planner-theme not found");
+  const value = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`).exec(scope)?.[1];
+  if (value === undefined) throw new Error(`scoped token --${name} not found`);
+  return value.toLowerCase();
+}
+
 /** 16進色の1チャンネル分をガンマ補正した値。offset は r=1, g=3, b=5。 */
 function channel(hex: string, offset: number): number {
   const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -79,4 +87,57 @@ describe("color token contrast", () => {
       expect(css.toLowerCase()).toContain(tint);
     });
   }
+});
+
+describe("guided planner theme", () => {
+  const expectedTokens = {
+    "app-background": "#f7f2e9",
+    surface: "#fffdf8",
+    text: "#423a32",
+    muted: "#6b5e52",
+    primary: "#d9a48f",
+    "primary-strong": "#8b4e3b",
+    selection: "#f4e6df",
+    notice: "#f8ece7",
+    border: "#d8c9bc",
+    pantry: "#416b5a",
+    danger: "#9f342c",
+  } as const;
+
+  it("declares the exact scoped palette", () => {
+    for (const [name, value] of Object.entries(expectedTokens)) {
+      expect(scopedToken(name)).toBe(value);
+    }
+  });
+
+  it("keeps all guided planner text combinations readable", () => {
+    expect(contrast(scopedToken("text"), scopedToken("surface"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(scopedToken("muted"), scopedToken("surface"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(scopedToken("primary-ink"), scopedToken("primary"))).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(
+      contrast(scopedToken("primary-ink"), scopedToken("primary-hover")),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrast(scopedToken("primary-ink"), scopedToken("primary-active")),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(scopedToken("text"), scopedToken("selection"))).toBeCloseTo(9.15, 1);
+    expect(contrast(scopedToken("muted"), scopedToken("selection"))).toBeCloseTo(5.15, 1);
+    expect(contrast(scopedToken("text"), scopedToken("notice"))).toBeCloseTo(9.64, 1);
+    expect(contrast(scopedToken("muted"), scopedToken("notice"))).toBeCloseTo(5.42, 1);
+    expect(contrast(scopedToken("danger"), scopedToken("notice"))).toBeCloseTo(6.04, 1);
+    expect(contrast(scopedToken("pantry"), scopedToken("surface"))).toBeCloseTo(5.94, 1);
+  });
+
+  it("keeps the new palette scoped and fixes visual contracts", () => {
+    expect(token("primary").toLowerCase()).toBe("#f97316");
+    expect(css).toMatch(/body\s*\{[^}]*font-size:\s*16px/s);
+    expect(css).toMatch(/\.app-section\s*\{[^}]*var\(--section-tint\)/s);
+    expect(css).toMatch(/\.guided-planner-theme[^}]*--focus:\s*#8b4e3b/s);
+    expect(css).toMatch(/\.choice-card\[aria-pressed="true"\][^}]*border-color:/s);
+    expect(css).toMatch(/\.choice-card\s*\{[^}]*border-radius:\s*(18|19|20)px/s);
+    expect(css).toMatch(/\.choice-card\s*\{[^}]*box-shadow:/s);
+    expect(css).toMatch(/\.wizard-action[^}]*min-height:\s*44px/s);
+  });
 });

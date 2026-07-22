@@ -22,6 +22,177 @@
   --section-tint: #f8fafc;
 }
 
+.guided-planner-theme {
+  color: #423a32;
+  background: #f7f2e9;
+  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --app-background: #f7f2e9;
+  --surface: #fffdf8;
+  --text: #423a32;
+  --muted: #6b5e52;
+  --primary: #d9a48f;
+  --primary-hover: #cf947d;
+  --primary-active: #cc927b;
+  --primary-ink: #3b302b;
+  --primary-strong: #8b4e3b;
+  --selection: #f4e6df;
+  --notice: #f8ece7;
+  --border: #d8c9bc;
+  --focus: #8b4e3b;
+  --pantry: #416b5a;
+  --danger: #9f342c;
+  --question-font: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif;
+}
+
+.guided-planner-theme :is(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.guided-planner-theme .primary-button:hover {
+  background: var(--primary-hover);
+}
+
+.guided-planner-theme .primary-button:active {
+  background: var(--primary-active);
+}
+
+.wizard-frame {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.wizard-header,
+.wizard-content,
+.wizard-actions {
+  min-width: 0;
+}
+
+.wizard-title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--question-font);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.wizard-description,
+.choice-card-description,
+.inline-notice-body {
+  color: var(--muted);
+}
+
+.wizard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wizard-action {
+  min-height: 44px;
+}
+
+.choice-card {
+  display: grid;
+  width: 100%;
+  min-height: 44px;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--surface);
+  padding: 16px;
+  text-align: left;
+  box-shadow: 0 4px 16px rgb(66 58 50 / 8%);
+  cursor: pointer;
+}
+
+.choice-card[aria-pressed="true"] {
+  border-color: var(--primary-strong);
+  background: var(--selection);
+}
+
+.choice-card-selection {
+  color: var(--primary-strong);
+  font-weight: 700;
+}
+
+.progress-indicator {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.progress-value {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-strong);
+}
+
+.inline-notice {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--notice);
+  padding: 16px;
+}
+
+.inline-notice-error {
+  color: var(--danger);
+}
+
+.inline-notice-title,
+.inline-notice-body {
+  margin: 0;
+}
+
+.review-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-block: 12px;
+}
+
+.review-row-label,
+.review-row-value {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wizard-transition {
+  animation: wizard-enter 180ms ease-out;
+}
+
+@keyframes wizard-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-transition {
+    animation: none;
+  }
+}
+
 [data-section="planner"] {
   --section-tint: #fff1e6;
 }
