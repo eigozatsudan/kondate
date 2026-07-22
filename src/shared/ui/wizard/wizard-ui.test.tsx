@@ -54,6 +54,21 @@ describe("wizard UI", () => {
     );
   });
 
+  it("keeps progress labels unique across multiple instances", () => {
+    render(
+      <>
+        <ProgressIndicator currentStep={2} totalSteps={5} />
+        <ProgressIndicator currentStep={2} totalSteps={5} />
+      </>,
+    );
+    const progressbars = screen.getAllByRole("progressbar", { name: "質問 2 / 5" });
+    const labelledBy = progressbars.map((progressbar) =>
+      progressbar.getAttribute("aria-labelledby"),
+    );
+    expect(new Set(labelledBy).size).toBe(2);
+    expect(screen.getAllByText("質問 2 / 5").every((label) => label.id.length > 0)).toBe(true);
+  });
+
   it("normalizes invalid progress boundaries", () => {
     const { rerender } = render(<ProgressIndicator currentStep={0} totalSteps={0} />);
     expect(screen.getByText("質問 1 / 1")).toBeVisible();

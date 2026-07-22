@@ -84,6 +84,19 @@
   overflow-wrap: anywhere;
 }
 
+.wizard-title,
+.wizard-description,
+.wizard-action,
+.choice-card > *,
+.inline-notice-title,
+.inline-notice-body,
+.review-row-label,
+.review-row-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .wizard-description,
 .choice-card-description,
 .inline-notice-body {
@@ -115,13 +128,6 @@
   text-align: left;
   box-shadow: 0 4px 16px rgb(66 58 50 / 8%);
   cursor: pointer;
-}
-
-.choice-card > *,
-.inline-notice-title,
-.inline-notice-body {
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 .choice-card:disabled {

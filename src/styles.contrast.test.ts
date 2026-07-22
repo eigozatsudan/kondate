@@ -4,6 +4,44 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const css = readFileSync(fileURLToPath(new URL("./styles.css", import.meta.url)), "utf8");
+const cssWithoutImports = css.replace(/@import\s+[^;]+;/g, "");
+
+type CssDeclarations = Map<string, string>;
+
+/** 対象selectorへ最終的に適用される宣言を全ruleから順に畳み込み、後勝ちの回帰も検出する。 */
+function effectiveDeclarations(selector: string): CssDeclarations {
+  const declarations: CssDeclarations = new Map();
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+
+  for (const match of cssWithoutImports.matchAll(rulePattern)) {
+    const selectorSource = match[1];
+    const ruleBody = match[2];
+    if (selectorSource === undefined || ruleBody === undefined) continue;
+    const selectors = selectorSource
+      .split(",")
+      .map((candidate) => candidate.trim())
+      .filter((candidate) => !candidate.startsWith("@"));
+    if (!selectors.includes(selector)) continue;
+
+    for (const declaration of ruleBody.split(";")) {
+      const separator = declaration.indexOf(":");
+      if (separator < 0) continue;
+      declarations.set(
+        declaration.slice(0, separator).trim(),
+        declaration.slice(separator + 1).trim(),
+      );
+    }
+  }
+
+  return declarations;
+}
+
+function expectEffectiveDeclarations(selector: string, expected: Record<string, string>): void {
+  const declarations = effectiveDeclarations(selector);
+  for (const [property, value] of Object.entries(expected)) {
+    expect(declarations.get(property), `${selector} ${property}`).toBe(value);
+  }
+}
 
 /** :root ブロックから `--name: #rrggbb;` を読み出す。 */
 function token(name: string): string {
@@ -145,29 +183,77 @@ describe("guided planner theme", () => {
   });
 
   it("preserves every existing global appearance selector", () => {
-    expect(css).toMatch(/:root\s*\{[^}]*color:\s*#1e293b[^}]*background:\s*#f8fafc/s);
-    expect(css).toMatch(/body\s*\{[^}]*min-height:\s*100vh[^}]*font-size:\s*16px/s);
-    expect(css).toMatch(
-      /\.primary-button\s*\{[^}]*border:\s*1px solid var\(--primary\)[^}]*background:\s*var\(--primary\)/s,
-    );
-    expect(css).toMatch(
-      /\.secondary-button\s*\{[^}]*color:\s*var\(--primary-strong\)[^}]*background:\s*transparent/s,
-    );
-    expect(css).toMatch(/\.text-button\s*\{[^}]*border:\s*0[^}]*text-decoration:\s*underline/s);
-    expect(css).toMatch(/\.field\s*\{[^}]*display:\s*grid[^}]*gap:\s*6px/s);
-    expect(css).toMatch(
-      /\.field input,\s*\.field select\s*\{[^}]*min-height:\s*48px[^}]*background:\s*#fff/s,
-    );
-    expect(css).toMatch(
-      /\.app-section\s*\{[^}]*min-height:\s*100vh[^}]*background:\s*var\(--section-tint\)/s,
-    );
+    expectEffectiveDeclarations(":root", {
+      color: "#1e293b",
+      background: "#f8fafc",
+      "--surface": "#ffffff",
+      "--text": "#1e293b",
+      "--primary": "#f97316",
+    });
+    expectEffectiveDeclarations("body", {
+      "min-height": "100vh",
+      "font-size": "16px",
+      "line-height": "1.6",
+    });
+    expectEffectiveDeclarations(".primary-button", {
+      border: "1px solid var(--primary)",
+      color: "var(--primary-ink)",
+      background: "var(--primary)",
+    });
+    expectEffectiveDeclarations(".secondary-button", {
+      color: "var(--primary-strong)",
+      background: "transparent",
+    });
+    expectEffectiveDeclarations(".text-button", {
+      border: "0",
+      background: "transparent",
+      "text-decoration": "underline",
+    });
+    expectEffectiveDeclarations(".field", { display: "grid", gap: "6px" });
+    for (const selector of [".field input", ".field select"]) {
+      expectEffectiveDeclarations(selector, {
+        "min-height": "48px",
+        background: "#fff",
+      });
+    }
+    expectEffectiveDeclarations(".app-section", {
+      "min-height": "100vh",
+      background: "var(--section-tint)",
+    });
+
+    const guidedPalette = new Set<string>(Object.values(expectedTokens));
+    const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    for (const match of cssWithoutImports.matchAll(rulePattern)) {
+      const selectorSource = match[1];
+      const ruleBody = match[2];
+      if (selectorSource === undefined || ruleBody === undefined) continue;
+      const selector = selectorSource.trim();
+      if (selector.includes(".guided-planner-theme")) continue;
+      const colors = ruleBody.toLowerCase().match(/#[0-9a-f]{6}\b/g) ?? [];
+      for (const color of colors) {
+        expect(guidedPalette.has(color)).toBe(false);
+      }
+    }
   });
 
   it("keeps long wizard content inside a 320px viewport", () => {
     expect(css).toMatch(/\.choice-card\s*\{[^}]*min-width:\s*0/s);
-    expect(css).toMatch(
-      /\.choice-card > \*,\s*\.inline-notice-title,\s*\.inline-notice-body\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/s,
-    );
     expect(css).toMatch(/\.choice-card:disabled\s*\{[^}]*opacity:[^}]*cursor:\s*not-allowed/s);
+    for (const selector of [
+      ".wizard-title",
+      ".wizard-description",
+      ".wizard-action",
+      ".choice-card > *",
+      ".inline-notice-title",
+      ".inline-notice-body",
+      ".review-row-label",
+      ".review-row-value",
+    ]) {
+      expectEffectiveDeclarations(selector, {
+        "min-width": "0",
+        "max-width": "100%",
+        "overflow-wrap": "anywhere",
+      });
+    }
   });
 });
