@@ -113,6 +113,9 @@ AI情報の説明はモード差を明記する。両モードで献立条件、
 - 履歴カードと履歴詳細でも生成モードを識別できるようにする。
 - 再生成は元のモードを維持する。
 - モードを変更する場合は、再生成ではなく回答を引き継いだ新規献立作成として開始する。
+- 「これに決めた」とお気に入りはモードに関係なく利用できる。アイデアモードでの採用は家族安全の確認を意味しない。
+- 調理後の冷蔵庫反映は、所有する冷蔵庫食材と生成時の使用量だけを更新するためアイデアモードでも利用できる。家族安全の再検証とは分離し、現在の食材所有・version競合検査を維持する。
+- 買い物リスト操作だけは、本設計のアイデアモードでは利用できない。
 
 ## 6. ビジュアル設計
 
@@ -178,6 +181,10 @@ AI情報の説明はモード差を明記する。両モードで献立条件、
 - AI情報の同意は、主要画面への入場条件ではなく生成開始条件として扱う。
 - 同意画面へ移動するときは安全な `returnTo` と保存済み下書きを使い、確認画面へ復帰する。
 
+現行の `RequireCompletedOnboarding` は主要画面群全体を囲み、プロフィールが `complete` でなければ `/onboarding` へ強制遷移する。本設計の変更は単なるコンポーネント削除ではなく、全ログイン利用者のルート到達条件を変更する。`/welcome` とウィザードを実装し、アイデアモードのサーバー経路が利用可能になったTaskでガードを外す。先行Taskでガードだけを外してはならない。
+
+同じTaskでルーター構造テスト、`RequireCompletedOnboarding` の単体テスト、初回設定・認証復帰・直接URL遷移に関するE2Eを新しい導線へ更新する。緊急献立が家族設定未完了でも到達可能という既存契約は維持する。
+
 ## 8. 状態とデータ契約
 
 ### 8.1 家族設定状態とAI同意の分離
@@ -194,16 +201,20 @@ not_started | in_progress | complete | skipped
 - AI情報への同意は `privacy_consents` だけを正本とする。
 - 既存の `complete` 利用者と家族データはそのまま維持する。
 
-`onboarding_completed_at` は `complete` または `skipped` のときだけ非nullとし、どちらも家族設定に関する初回選択が完了した時刻を表す。家族設定状態を更新するRPCからプライバシー同意の必須検査を外し、プライバシー画面は `privacy_consents` だけを更新する。生成サーバーは従来どおり現行版の同意を独立して検査する。
+`onboarding_completed_at` は履歴上の初回時刻ではなく、現在の終端状態である `complete` または `skipped` へ最後に入った時刻を表す。`in_progress` へ戻るとnullにし、再び `complete` または `skipped` へ入るとその時刻で更新する。初回選択時刻の履歴保存は本設計の対象外とする。家族設定状態を更新するRPCからプライバシー同意の必須検査を外し、プライバシー画面は `privacy_consents` だけを更新する。生成サーバーは従来どおり現行版の同意を独立して検査する。
 
 許可する状態遷移は次のとおりとする。
 
 - `not_started` → `in_progress` または `skipped`
 - `in_progress` → `complete` または `skipped`
 - `skipped` → `in_progress` または `complete`
-- `complete` は家族編集によって別状態へ戻さない
+- `complete` は家族編集や家族削除によって別状態へ戻さない
 
-`skipped` への遷移は入力途中の家族下書きを削除しない。再開時は同じ下書きから続ける。`complete` への遷移だけは、従来どおり完全な家族設定が1人以上あることをDBで検査する。
+`complete` は「家族設定を過去に1回以上完了した」プロフィール状態であり、「現在も利用可能な家族が1人以上いる」という不変条件ではない。`complete` への遷移時だけは完全な家族設定が1人以上あることをDBで検査する。最後の完全な家族を後から削除してもプロフィールは `complete` のまま維持し、献立作成時に現在利用可能な家族を別途取得して判定する。利用可能な家族が0人なら家族モードを選択不可にし、アイデアモードと家族追加導線を表示する。
+
+`skipped` への遷移は入力途中の家族下書きを削除しない。再開時は同じ下書きから続ける。
+
+現行DBは `onboarding_status` を `not_started | in_progress | complete` に制限し、`set_onboarding_status` も `skipped` を拒否している。また、現行RPCは `complete` とプライバシー同意を結合している。実装ではプロフィールのCHECK制約と完了時刻CHECKを置き換え、RPCへ上記の状態遷移を実装し、プライバシー同意検査を分離するマイグレーションが必須である。生成型、プロフィール取得、household query、pgTAPも同じTaskで更新する。
 
 ### 8.2 生成対象モード
 
@@ -244,9 +255,36 @@ type PlannerSubmission =
 
 生成リクエストHMACには `target_mode` とアイデアモードの `servings` を含める。既存の完成献立と対象家族を持つ既存下書きは `household` へ移行する。対象家族が空の古い下書きは `idea` へ自動移行せず、モードと人数を未選択状態にする。
 
+現行の下書き、凍結提出、完成献立には `target_mode` がない。`menus.servings`、`safety_snapshot`、`safety_fingerprint`、`allergen_dictionary_version`、`food_safety_rule_version` はすべてNOT NULLである。実装マイグレーションは次を行う。
+
+- 下書きと凍結提出へ `target_mode` とアイデア用 `servings` を追加し、モード・対象家族・人数の条件付きCHECKを追加する。
+- 完成献立へ `target_mode` を追加し、既存行を `household` へbackfillしてからNOT NULLと `household | idea` のCHECKを設定する。
+- `menus.servings`、`safety_snapshot`、`safety_fingerprint` は両モードでNOT NULLを維持する。
+- `allergen_dictionary_version` と `food_safety_rule_version` だけをnullableへ変更し、`household` では両方NOT NULL、`idea` では両方NULLとなる条件付きCHECKを追加する。
+- 既存の家族モード行、凍結提出、HMACは意味を変えず、追加列のbackfillだけを行う。
+
+空の古い下書きを開く場合、食事、食材、ジャンル、追加条件、冷蔵庫選択は保持する。`targetMode` と `servings` だけをnullにし、ウィザードは最初の未完了項目である対象ステップから再開する。これは既存回答を保持しながら、モードだけを利用者に再確認する例外フローである。
+
+再生成は新規献立用のdraft revision表を流用せず、request-boundなprivate snapshot表を追加する。表は `request_id` を主キーかつ `private.ai_generation_requests(id)` への `ON DELETE CASCADE` 外部キーとし、次を保持する。
+
+- `user_id`
+- `request_kind`: `regenerate_menu | regenerate_dish`
+- `source_menu_id_snapshot` と `source_menu_version`
+- `replace_dish_id_snapshot`: 一品再生成だけ非null
+- `target_mode`
+- `servings`: 両モードで1〜20
+- `target_member_ids`: householdは1〜20、ideaは空
+- `created_at`
+
+snapshotは予約RPCが所有者・元献立version・対象料理をロック確認した同じトランザクションで、生成リクエスト行と1対1に作成する。元献立へのlive FKは持たず、予約後に元献立または料理が削除されても監査・整合性情報としてsnapshotを保持する。UPDATEを拒否して不変とし、生成リクエストの30日保持が終了して削除されるときだけcascadeで削除する。献立全体・一品の両再生成で、HMACと完了RPCが参照する予約時のモード・人数・出典versionはこの `request_id` のsnapshotを正本とする。
+
+このsnapshotは元献立aggregateや料理本文を複製せず、元献立削除後の実行継続を保証しない。実行コンテキスト構築時はliveの元献立と対象料理を所有者・version付きで再取得し、snapshotと一致しなければ外部AI呼出し前に `source_menu_changed` でfail-closedする。コンテキスト構築後から完了処理までに元献立または対象料理が変更・削除された場合も、完了RPCがsnapshotの出典versionとlineage参照を再確認し、完成献立を保存せず同じcodeで終了する。外部送信前なら予約したattemptを既存規則で返却し、送信後ならattemptは消費するが成功枠は消費しない。
+
 ### 8.4 生成コマンドの版移行
 
 新規コマンドのHMAC版を `generation-command.v2` とし、canonical payloadへ `targetMode` と `servings` を追加する。既存の `generation-command.v1` は家族モード専用の旧形式として扱う。
+
+現行の `private.ai_generation_requests.request_hmac_version` は等号CHECKと予約RPC内の検査の両方で `generation-command.v1` だけを許可する。実装マイグレーションは列CHECKを `generation-command.v1 | generation-command.v2` に変更し、予約RPCを「既存ledgerのv1回収」と「新規v2予約」を区別して検査する。列CHECKだけを緩和して、クライアントが新規v1を予約できる状態にはしない。
 
 v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "generation-command.v2"` を必須とする。新規献立のwire requestは従来どおり下書きIDとrevisionを送り、サーバーが凍結下書きから `targetMode` と `servings` を解決してHMACへ含める。献立全体・一品の再生成は、サーバーが所有者確認済みの元献立から `targetMode` と `servings` を解決し、再生成用の凍結提出へ複製してHMACへ含める。再生成のクライアント入力でモードや人数を上書きできない。
 
@@ -255,8 +293,12 @@ v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "gener
 - `commandVersion` がない新規HTTP commandは `client_update_required` として外部AI呼出し前に拒否し、再読み込みを案内する。既存ledgerに同じkeyがある場合だけ、保存済み版による回収を優先する。
 - 予約処理は最初に既存ledgerを検索し、保存済みHMAC版で照合する。同じkeyをv1からv2へ再解釈せず、予約枠や外部AI試行枠を二重消費しない。
 - 処理中のv1は従来の家族モード経路でterminalまで完了させる。v1 readerは30日のledger保持期間と最長処理期限を過ぎ、対象行が存在しなくなるまで維持する。
-- 端末に残るv1 pending commandは、まず既存リクエストの有無を確認する。存在すればv1として回収する。存在せず対象家族が1人以上なら、新しいidempotency keyを持つv2家族コマンドへ変換する。対象家族が空なら破棄し、対象ステップを未選択で再表示する。
-- v1からv2へ変換した端末コマンドは、新しいコマンドの保存成功後に旧コマンドを削除する。両方を送信可能な状態で残さない。
+- 端末に残るv1 pending commandは、まず既存リクエストの有無を確認する。存在すればv1として回収する。存在しない新規献立commandは、保存された `draftId` と `draftRevision` で現在の同revision下書きを再取得する。v1のDB契約は対象家族1〜20人を必須としており、v1は家族モード専用だったため、同revisionの対象家族が非空なら例外的に `household` と確定できる。この判断は空配列からモードを推測するのではなく、legacy schemaの判別済み版契約に基づく。食事、食材、ジャンル、追加条件、冷蔵庫選択は同revision下書きから再構築する。revisionが不一致、下書きが欠損、対象家族が空なら変換せず、現在の下書きを保持して最初の未完了ステップを表示する。
+- 既存リクエストがないv1再生成commandは、所有者確認済みの元献立を取得する。v1時代の完成献立はmigrationで `household` へbackfillされるため、その保存済みモードと人数をv2凍結提出へ複製する。元献立が欠損または不整合なら変換しない。
+- v1からv2への変換では、各タブが新しいidempotency keyを生成してはならない。サーバーのclaim処理が、利用者IDとlegacy idempotency keyを一意キーとするprivate migration ledgerをトランザクション内で作成し、新しいv2 idempotency keyを1つだけ発行または再読出しする。複数タブ・端末から同じlegacy keyをclaimしても同じv2 keyを返す。
+- claim処理は、既存v1リクエストがあれば変換せずその回収先を返す。存在しない場合だけlegacy keyのtombstoneとv2 keyの対応を保存する。以後にlegacy keyで新規v1予約が到着しても、予約・quota・外部AI試行を行わず、対応するv2 keyを返す。
+- migration ledgerは少なくとも既存AI ledgerと同じ30日保持し、owner-bound RLS相当の関数内検査を行う。v2予約はclaim済みの対応を検査し、同じv2 keyの通常の冪等性境界へ合流する。
+- v1からv2へ変換した端末コマンドは、claimで得たv2 keyを持つ新コマンドの保存成功後に旧コマンドを削除する。両方を送信可能な状態で残さない。
 
 端末保存は `commandVersion` を持つ新スキーマと新しいstorage keyを使用する。現行keyのversion discriminatorなしデータだけをlegacy v1として読む。両keyが存在する場合は、新スキーマを正本とし、owner、TTL、request IDの整合を確認してからlegacy側を削除する。
 
@@ -287,6 +329,7 @@ v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "gener
 - 現行の年齢別食品安全ルールはすべて対象年齢帯を必要とするため、アイデアモードには適用しない。アイデアモード専用の一般安全ルールを本設計で新設したとは扱わない。
 - DBのnot-null契約を維持するため、安全スナップショットはnullにせず、`mode: "idea"`、`assurance: "none"`、空の家族一覧を持つ専用形式にする。生成コンテキストの `foodRuleVersion` と `allergenVersion` はnullとし、専用スキーマと完了処理がアイデアモードに限ってnullを許可する。架空の安全ルール版は保存しない。
 - 安全フィンガープリントは、家族安全を確認した証明ではなく、`mode: "idea"` と専用スナップショットのcanonical表現が改変されていないことを示すSHA-256値として保存する。UIでは安全確認済みの意味に使わない。
+- 現行の `private.current_safety_fingerprint()` とTypeScript側の家族フィンガープリント関数は、非空の完全な家族と年齢別ルール版を前提とするため変更しない。アイデアモードには、固定canonical JSON `{"assurance":"none","members":[],"mode":"idea"}` だけをSHA-256化する専用DB helperと対応するTypeScript関数を追加する。専用helperは家族表・アレルゲン表・年齢別ルール表を読まず、完了RPCが予約時と保存時に同じ値を再計算して照合する。
 - 完了処理は対象家族が0人であること、家族別データが0件であること、予約時のモードとフィンガープリントが一致することを確認する。
 - AI出力の `menu.servings` は凍結提出の `servings` と完全一致しなければ検証エラーにする。完了RPCも予約済み提出の人数と保存する完成献立の人数を照合し、不一致時は行を作成しない。
 - 結果に「家族条件を使用していません」と表示し、アレルギー対応や年齢適合を保証しない。
@@ -297,10 +340,13 @@ v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "gener
 
 買い物リストのサーバー処理と `apply_shopping_draft`、`apply_shopping_reconciliation` は、出典献立の `target_mode` が `household` であることを所有者確認と同じトランザクション内で検査する。`idea` なら `idea_menu_not_supported` で、リスト行、出典snapshot、list versionを一切変更せず拒否する。UI非表示だけを境界にしない。
 
+両RPCは既存のidempotency replay lookupを最初に維持し、保存済み成功応答の再読出しを壊さない。replay miss後、所有者・menu version付きで出典献立をロック取得した直後、shopping safety fingerprintのロック検査とリスト行の更新・追加より前に `target_mode` を検査する。既存のロック順、同時実行テスト、list version競合の優先順位をレビューし、必要なら同一Task内で更新する。
+
 ## 10. エラー処理
 
 - AI情報の説明が未確認なら、回答を保存して説明画面へ移動する。確認後は生成前確認へ戻る。
 - 家族設定が `not_started` または `in_progress` の利用者が対象ステップでアイデアモードを確定したとき、家族下書きを残したまま状態を `skipped` へ更新する。`/planner` へ直接移動しただけでは状態を変更しない。
+- migration後にモード未選択となった古い空対象下書きは、既存回答を保持して対象ステップから再開する。エラーとして破棄せず、アイデアモードへも自動変換しない。
 - 家族モードで選択した家族が削除、未完了、利用不可になった場合は対象ステップへ戻す。アイデアモードへ自動降格しない。
 - アイデアモードに家族IDが含まれる、または家族モードの家族IDが空の場合は、検証エラーとして生成しない。
 - 自動保存に失敗した場合は現在の画面に残し、再試行できる状態を表示する。
@@ -325,6 +371,7 @@ v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "gener
 - `TargetMode` と家族IDの条件付き契約
 - アイデアモードの人数1〜20、家族モードの `servings: null`、矛盾入力の拒否
 - 下書きの未選択状態と既存下書きの移行
+- 古い空対象下書きで既存回答を保持し、対象ステップから再開すること
 - 各質問の選択、戻る、進む、回答保持
 - 家族未登録時のアイデアモードと登録導線
 - 家族変更時に自動降格しないこと
@@ -338,10 +385,15 @@ v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "gener
 ### 12.2 pgTAP
 
 - 家族設定の `complete` と `skipped`、AI同意の独立性
+- `skipped → in_progress → complete` で完了時刻がnull化・再設定され、最後の家族削除後も `complete` を維持すること
 - `target_mode`、対象家族配列、人数の条件付きDB制約
+- `menus` のhousehold行はアレルゲン版・年齢別ルール版が必須、idea行は両方NULLで、servings・snapshot・fingerprintは両モード必須であること
 - 既存行の `household` への移行
+- `request_hmac_version` がv1/v2以外を拒否し、新規v1予約をRPCが拒否すること
 - v2予約内容、HMAC、再送時のモード一致と、既存v1 replayの版固定
+- 献立全体・一品の再生成snapshotがrequest-boundかつ更新不可で、元献立・料理が変更または削除された場合は外部送信前または完了前に `source_menu_changed` でfail-closedし、完成献立を作らないこと
 - v1/v2で同じidempotency keyを二重予約・二重消費しないこと
+- 複数タブ・端末が同じlegacy keyを同時claimしても同じv2 keyを受け取り、遅れて到着したv1予約がtombstoneで拒否されること
 - アイデアモードでAI出力人数と凍結提出人数が不一致なら、完了行を作成しないこと
 - アイデアモード完了処理で家族別データを拒否すること
 - 家族モードの現行フィンガープリントロックが維持されること
@@ -364,6 +416,8 @@ v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "gener
 - `targetMode: "idea"` と非空の家族ID、`targetMode: "household"` と空の家族ID、各モードと矛盾する `servings` を、共有スキーマ、API、予約RPC、コンテキスト復元、完了RPCの各境界で拒否する。
 - アイデアモードのAI応答で1〜20内の別人数を返す敵対ケースを用意し、サービス検証と完了RPCの両方で拒否する。
 - 既存v1処理中リクエスト、v1 replay、未送信v1端末コマンド、v2新規予約を並べ、外部AI試行枠と成功予約枠を二重消費しないことを確認する。
+- 同じ未送信v1 commandを2タブで同時変換し、migration ledgerがv2 keyを1つだけ発行し、片方のlegacy送信が遅延しても生成成功が1件だけであることを確認する。
+- 両再生成kindで予約後の元献立・対象料理を、実行コンテキスト構築前と外部送信後の各タイミングで変更・削除し、`source_menu_changed`、attempt返却/消費、成功枠非消費、完成献立0件を確認する。
 
 ### 12.5 提出前検証
 
@@ -371,15 +425,17 @@ v2のHTTP wire commandは全kindでトップレベルに `commandVersion: "gener
 
 ## 13. 実装の分割方針
 
-実装計画は少なくとも次の独立境界に分ける。
+実装計画は次の8 Taskに分け、順番に実行する。表中の既存制約変更は各Taskの必須範囲であり、後続Taskへ先送りしない。
 
-1. デザイントークンと共通ウィザード部品
-2. 家族設定状態とAI同意の分離
-3. `TargetMode`、人数を含む共有契約とDB下書き
-4. 生成コマンドv2、既存v1 replay、端末pending commandの移行
-5. アイデアモードの予約、生成コンテキスト、完了処理
-6. 献立作成ウィザードと生成前確認
-7. 結果、履歴、再生成のモード対応
-8. E2E、セキュリティ統合テスト、全体回帰
+| Task | 主な責務 | 必ず含める既存制約の変更 | 依存 |
+| --- | --- | --- | --- |
+| 1 | デザイントークンと共通ウィザード部品 | 現行カラートークン、ボタン、focus、contrast testを本設計の値へ更新する。既存画面の安全表示を色だけに依存させない。 | なし |
+| 2 | 家族設定状態とAI同意の分離 | `profiles.onboarding_status` と完了時刻のCHECKへ `skipped` を追加し、`set_onboarding_status` の状態遷移とプライバシー同意結合を変更する。生成型、household query、privacy画面、pgTAPを更新する。このTaskではまだ主要ルートのガードを外さない。 | Task 1 |
+| 3 | `TargetMode`、人数、保存スキーマ | 共有Zod契約、下書き、凍結提出、`menus.target_mode` を追加する。`menus.servings`、snapshot、fingerprintはNOT NULLを維持し、アレルゲン版・年齢別ルール版だけをモード条件付きnullableへ変更する。既存行をhouseholdへ、空対象下書きをモード未選択へ移行し、生成型とpgTAPを更新する。 | Task 2 |
+| 4 | 生成コマンドv2とlegacy移行 | `request_hmac_version` のDB CHECKと予約RPCのv1固定検査をv1回収・v2新規予約へ変更する。新規献立の凍結提出に加え、両再生成kindのrequest-bound immutable snapshot表を追加する。kind別wire schema、HMAC canonicalization、既存v1 replay、処理中v1、端末pending storage keyを実装する。owner-bound private migration ledgerとclaim/tombstoneを追加し、複数タブ・端末でもv2 keyを1つだけ発行して二重予約を防ぐ。 | Task 3 |
+| 5 | アイデアモードのサーバー境界 | 予約、コンテキスト、prompt、出力検証、専用idea fingerprint helper、完了RPC、人数一致、家族canary非送信を実装する。買い物RPCのreplay miss後・shopping safety lock前にhousehold限定検査を追加し、idea出典をDBでも拒否する。 | Task 4 |
+| 6 | `/welcome`、献立作成ウィザード、最小結果境界 | 開始画面、4質問、アイデア人数、生成前確認、追加条件、同意往復、古い空対象下書きの対象ステップ再開を実装する。Task 5のサーバー経路が利用可能になってから `RequireCompletedOnboarding` を主要ルートから外す。同じTaskでidea結果の読込、常時注意、家族再検証の非実行、家族領域と買い物・採用・再生成・冷蔵庫操作の非表示を実装し、安全に本文を閲覧できる最小結果画面まで完成させる。router/protected-routesテスト、既存の初回設定・認証復帰・OAuth・直接URL遷移E2E、生成から最小結果表示までを新しい導線へ更新し、旧強制遷移や安全表示誤認を残さない。 | Task 5 |
+| 7 | 結果、履歴、再生成の完全なモード対応 | idea結果の採用・お気に入り・許可する冷蔵庫操作、履歴一覧・詳細、`child_friendly` 拒否、モード維持再生成を実装する。買い物操作は非表示のまま維持する。結果、履歴、再生成の単体・コンポーネント・E2Eを両モードへ拡張する。 | Task 6 |
+| 8 | セキュリティ統合・全体回帰 | canary、矛盾payload、人数改変、v1/v2競合、shopping直接RPC、通信復帰、320px、アクセシビリティを統合検証し、`AGENTS.md` の9段階gateを完走する。 | Task 7 |
 
-各Taskは既存の家族モードを回帰させず、家族モードとアイデアモードの両方を検証してから次へ進む。
+Task 2〜5はDBマイグレーションを伴う。各Taskでマイグレーション、生成型、pgTAP、対象TypeScriptを同じcommit系列に揃え、中間状態を次Taskの暗黙前提にしない。Task 6でidea生成を利用者へ公開するときは、同じTask内で最小結果境界まで実装し、注意表示や家族再検証回避をTask 7へ先送りしない。各Taskは既存の家族モードを回帰させず、Task 5以降は家族モードとアイデアモードの両方を検証してから次へ進む。
