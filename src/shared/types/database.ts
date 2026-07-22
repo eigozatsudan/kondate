@@ -11,6 +11,8 @@ type GeneratedFinalizeGenerationFailure = GeneratedFunctions["finalize_ai_genera
 type GeneratedFinalizeGenerationFailureArgs = GeneratedFinalizeGenerationFailure["Args"];
 type GeneratedFinalizeGenerationSuccess = GeneratedFunctions["finalize_ai_generation_success"];
 type GeneratedFinalizeGenerationSuccessArgs = GeneratedFinalizeGenerationSuccess["Args"];
+type GeneratedSubmissionSnapshot = GeneratedFunctions["get_ai_generation_submission_snapshot"];
+type GeneratedSubmissionSnapshotReturns = GeneratedSubmissionSnapshot["Returns"][number];
 
 type NullableDraftArgs =
   | "p_meal_type"
@@ -59,6 +61,11 @@ type FinalizeGenerationSuccessArgs = Omit<
 
 type GeneratedSetOnboardingStatus = GeneratedFunctions["set_onboarding_status"];
 
+// Postgres Meta は household 凍結の null servings を非 null number として生成するため復元する
+type SubmissionSnapshotRow = Omit<GeneratedSubmissionSnapshotReturns, "servings"> & {
+  servings: GeneratedSubmissionSnapshotReturns["servings"] | null;
+};
+
 type GeneratedTables = GeneratedPublic["Tables"];
 type GeneratedProfiles = GeneratedTables["profiles"];
 
@@ -89,6 +96,7 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       | "reserve_ai_generation"
       | "finalize_ai_generation_failure"
       | "finalize_ai_generation_success"
+      | "get_ai_generation_submission_snapshot"
       | "set_onboarding_status"
     > & {
       save_generation_draft: Omit<GeneratedSaveDraft, "Args"> & {
@@ -102,6 +110,9 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       };
       finalize_ai_generation_success: Omit<GeneratedFinalizeGenerationSuccess, "Args"> & {
         Args: FinalizeGenerationSuccessArgs;
+      };
+      get_ai_generation_submission_snapshot: Omit<GeneratedSubmissionSnapshot, "Returns"> & {
+        Returns: SubmissionSnapshotRow[];
       };
       set_onboarding_status: Omit<GeneratedSetOnboardingStatus, "Args" | "Returns"> & {
         Args: { p_status: OnboardingStatus };

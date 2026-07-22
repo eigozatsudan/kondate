@@ -46,7 +46,9 @@ export async function getPlannerDraft(
 ): Promise<PlannerDraft | null> {
   const { data, error } = await client
     .from("generation_drafts")
-    .select("*")
+    .select(
+      "id,user_id,meal_type,main_ingredients,cuisine_genre,target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,pantry_selections,revision,created_at,updated_at,deleted_at",
+    )
     .eq("user_id", userId)
     .maybeSingle();
   if (error !== null) throw new Error("献立条件の下書きを読み込めませんでした");

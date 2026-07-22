@@ -1068,6 +1068,78 @@ delete from private.ai_user_daily_usage
 where user_id = '10000000-0000-4000-8000-000000000002';
 delete from private.ai_global_daily_usage where usage_day = date '2026-07-11';
 
+-- Task 3 ブリッジ: idea / 未選択 draft は request・quota 行を作る前に拒否する
+-- generation_drafts は user_id 一意のため、user2 の既存行を一時的に mode だけ差し替える。
+update public.generation_drafts
+set deleted_at = null,
+    target_mode = 'idea',
+    target_member_ids = array[]::uuid[],
+    servings = 2
+where id = '30000000-0000-4000-8000-000000000002';
+select throws_ok($$
+  select public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000002',
+    '20000000-0000-4000-8000-0000000000a0',
+    'new_menu', '30000000-0000-4000-8000-000000000002', 2,
+    null, null, null, 'generation-command.v1', repeat('a', 64),
+    5, 45, 180, '2026-07-10 16:00:00+00'
+  )
+$$, '22023', 'unsupported_target_mode',
+  'an idea draft is rejected before request or quota mutation');
+
+update public.generation_drafts
+set target_mode = null,
+    target_member_ids = array[]::uuid[],
+    servings = null
+where id = '30000000-0000-4000-8000-000000000002';
+select throws_ok($$
+  select public.reserve_ai_generation(
+    '10000000-0000-4000-8000-000000000002',
+    '20000000-0000-4000-8000-0000000000a1',
+    'new_menu', '30000000-0000-4000-8000-000000000002', 2,
+    null, null, null, 'generation-command.v1', repeat('b', 64),
+    5, 45, 180, '2026-07-10 16:00:00+00'
+  )
+$$, '22023', 'unsupported_target_mode',
+  'an unselected-mode draft is rejected before request or quota mutation');
+
+select is(
+  (select count(*) from private.ai_generation_requests
+    where idempotency_key in (
+      '20000000-0000-4000-8000-0000000000a0',
+      '20000000-0000-4000-8000-0000000000a1'
+    )),
+  0::bigint,
+  'unsupported target modes create no request ledger rows'
+);
+select is(
+  (select count(*) from private.generation_draft_submission_versions
+    where draft_id = '30000000-0000-4000-8000-000000000002'),
+  0::bigint,
+  'unsupported target modes create no immutable snapshots'
+);
+select is(
+  (select count(*) from private.ai_user_daily_usage
+    where user_id = '10000000-0000-4000-8000-000000000002'
+      and usage_day = date '2026-07-11'),
+  0::bigint,
+  'unsupported target modes create no user quota rows'
+);
+select is(
+  (select count(*) from private.ai_global_daily_usage
+    where usage_day = date '2026-07-11'),
+  0::bigint,
+  'unsupported target modes create no global quota rows'
+);
+
+-- 後続ケース向けに household 契約へ戻し、削除済み状態を再設定する
+update public.generation_drafts
+set target_mode = 'household',
+    target_member_ids = array['10000000-0000-4000-8000-000000000002'::uuid],
+    servings = null,
+    deleted_at = '2026-07-10 15:45:00+00'
+where id = '30000000-0000-4000-8000-000000000002';
+
 select is(
   public.reserve_ai_generation(
     '10000000-0000-4000-8000-000000000001',
@@ -1086,7 +1158,9 @@ select is(
     'meal_type', meal_type,
     'main_ingredients', main_ingredients,
     'cuisine_genre', cuisine_genre,
+    'target_mode', target_mode,
     'target_member_ids', target_member_ids,
+    'servings', servings,
     'time_limit_minutes', time_limit_minutes,
     'budget_preference', budget_preference,
     'avoid_ingredients', avoid_ingredients,
@@ -1102,7 +1176,9 @@ select is(
     'meal_type', 'dinner',
     'main_ingredients', array['鶏肉'],
     'cuisine_genre', 'japanese',
+    'target_mode', 'household',
     'target_member_ids', array['10000000-0000-4000-8000-000000000001'::uuid],
+    'servings', null,
     'time_limit_minutes', 30,
     'budget_preference', 'standard',
     'avoid_ingredients', array[]::text[],
@@ -1125,7 +1201,9 @@ select is(
     'meal_type', meal_type,
     'main_ingredients', main_ingredients,
     'cuisine_genre', cuisine_genre,
+    'target_mode', target_mode,
     'target_member_ids', target_member_ids,
+    'servings', servings,
     'time_limit_minutes', time_limit_minutes,
     'budget_preference', budget_preference,
     'avoid_ingredients', avoid_ingredients,
@@ -1143,7 +1221,9 @@ select is(
     'meal_type', 'dinner',
     'main_ingredients', array['鶏肉'],
     'cuisine_genre', 'japanese',
+    'target_mode', 'household',
     'target_member_ids', array['10000000-0000-4000-8000-000000000001'::uuid],
+    'servings', null,
     'time_limit_minutes', 30,
     'budget_preference', 'standard',
     'avoid_ingredients', array[]::text[],
@@ -1340,6 +1420,80 @@ select throws_ok($$
     'luxury', array[]::text[], '', '[]'::jsonb
   )
 $$, '23514', null, 'the immutable snapshot rejects an invalid budget preference');
+
+-- 凍結提出テーブル自体の target_mode / servings / members 契約
+select lives_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000020',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', 'household', array['10000000-0000-4000-8000-000000000002'::uuid], null, 15,
+    'standard', array[]::text[], '', '[]'::jsonb
+  )
+$$, 'household freeze accepts 1-20 members with null servings');
+select lives_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000021',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', 'idea', array[]::uuid[], 2::smallint, 15,
+    'standard', array[]::text[], '', '[]'::jsonb
+  )
+$$, 'idea freeze accepts empty members with servings 1-20');
+select throws_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000022',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', 'idea', array['10000000-0000-4000-8000-000000000002'::uuid], 2::smallint, 15,
+    'standard', array[]::text[], '', '[]'::jsonb
+  )
+$$, '23514', null, 'idea freeze rejects target members');
+select throws_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000023',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', 'household', array['10000000-0000-4000-8000-000000000002'::uuid], 2::smallint, 15,
+    'standard', array[]::text[], '', '[]'::jsonb
+  )
+$$, '23514', null, 'household freeze rejects non-null servings');
+select throws_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000024',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', 'idea', array[]::uuid[], null, 15,
+    'standard', array[]::text[], '', '[]'::jsonb
+  )
+$$, '23514', null, 'idea freeze rejects null servings');
+select throws_ok($$
+  insert into private.generation_draft_submission_versions(
+    draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    pantry_selections
+  ) values (
+    '30000000-0000-4000-8000-000000000025',
+    '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
+    'any', 'household', array[]::uuid[], null, 15,
+    'standard', array[]::text[], '', '[]'::jsonb
+  )
+$$, '23514', null, 'household freeze rejects empty target members');
 select is(
   (select count(*) from information_schema.routine_privileges
     where routine_schema = 'public'

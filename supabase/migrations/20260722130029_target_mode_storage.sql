@@ -71,6 +71,8 @@ alter table private.generation_draft_submission_versions
   add column target_mode text,
   add column servings smallint;
 
+-- 注: idea枝の `servings between 1 and 20` だけでは servings=null のとき評価が
+-- NULLになり CHECK が通ってしまう。draft と同じく servings is not null を明示する。
 alter table private.generation_draft_submission_versions
   alter column target_mode set not null,
   add constraint generation_draft_submission_versions_target_mode_check
@@ -78,7 +80,7 @@ alter table private.generation_draft_submission_versions
   add constraint generation_draft_submission_versions_servings_check
     check (
       (target_mode = 'household' and servings is null)
-      or (target_mode = 'idea' and servings between 1 and 20)
+      or (target_mode = 'idea' and servings is not null and servings between 1 and 20)
     ),
   add constraint generation_draft_submission_versions_target_member_ids_check
     check (private.is_valid_submission_target_member_ids(target_member_ids, target_mode));
