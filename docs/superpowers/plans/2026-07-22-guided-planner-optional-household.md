@@ -1560,7 +1560,7 @@ household + non-null direct servings
 
 - [ ] **Step 3: v1/v2 concurrencyとsource raceを実DBで検証する**
 
-同じlegacy keyを2 sessionでclaimし、v2 keyが1つ、request成功が1つ、quota/attemptが1系列であることをpgTAP/race harnessで確認する。new v1遅延予約はmappingだけ返す。whole/dish再生成は予約後のsource変更・削除を外部送信前と送信後に分け、`source_menu_changed`、attempt返却/消費、success非消費、menu 0件を確認する。
+同じlegacy keyを2 sessionでclaimし、v2 keyが1つ、request成功が1つ、quota/attemptが1系列であることをpgTAP/race harnessで確認する。遅延legacy claimは既存`claimed_v2` mappingを返し、旧reserve RPCを呼ばない。whole/dish再生成は予約後のsource変更・削除を外部送信前と送信後に分け、`source_menu_changed`、attempt返却/消費、success非消費、menu 0件を確認する。
 
 - [ ] **Step 4: shopping直接RPCと不変性を検証する**
 
