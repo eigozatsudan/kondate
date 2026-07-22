@@ -1,139 +1,277 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const css = readFileSync(fileURLToPath(new URL("./styles.css", import.meta.url)), "utf8");
+const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 const cssWithoutImports = css.replace(/@import\s+[^;]+;/g, "");
 
 type CssDeclarations = Map<string, string>;
 
 type CssRule = {
-  selectors: string[];
-  body: string;
+  selector: string;
+  declarations: CssDeclarations;
+  media: string | null;
 };
 
-type CascadedDeclaration = {
-  value: string;
-  important: boolean;
-  specificity: number;
-  order: number;
-};
-
-const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
-
+/** jsdomのCSSOMを使い、functional pseudo内のcommaをselector-listと誤認しない。 */
 function cssRules(source: string): CssRule[] {
-  return Array.from(source.matchAll(rulePattern), (match) => ({
-    selectors: (match[1] ?? "")
-      .split(",")
-      .map((selector) => selector.trim())
-      .filter((selector) => selector.length > 0 && !selector.startsWith("@")),
-    body: match[2] ?? "",
-  }));
-}
+  const parsedSource = source.replace(/@import\s+[^;]+;/g, "");
+  const style = document.createElement("style");
+  style.textContent = parsedSource;
+  document.head.append(style);
+  const sheet = style.sheet;
+  if (sheet === null) throw new Error("stylesheet could not be parsed");
+  const result: CssRule[] = [];
 
-function declarations(body: string): CssDeclarations {
-  const result: CssDeclarations = new Map();
-  for (const declaration of body.split(";")) {
-    const separator = declaration.indexOf(":");
-    if (separator < 0) continue;
-    result.set(declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim());
-  }
-  return result;
-}
-
-/** 対象selectorへ最終的に適用される宣言を全ruleから順に畳み込み、後勝ちの回帰も検出する。 */
-function effectiveDeclarations(selector: string): CssDeclarations {
-  const result: CssDeclarations = new Map();
-  for (const rule of cssRules(cssWithoutImports)) {
-    if (!rule.selectors.includes(selector)) continue;
-    for (const [property, value] of declarationsForRule(rule)) result.set(property, value);
-  }
-
-  return result;
-}
-
-function declarationsForRule(rule: CssRule): CssDeclarations {
-  return declarations(rule.body);
-}
-
-function specificity(selector: string): number {
-  const ids = selector.match(/#[\w-]+/g)?.length ?? 0;
-  const classesAndPseudos = selector.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+/g)?.length ?? 0;
-  const elements = selector.match(/(?:^|[>+~\s])(?:[a-z][\w-]*|:root)\b/gi)?.length ?? 0;
-  return ids * 100 + classesAndPseudos * 10 + elements;
-}
-
-function cascadedDeclarations(
-  source: string,
-  matchesTarget: (selector: string) => boolean,
-): CssDeclarations {
-  const winners = new Map<string, CascadedDeclaration>();
-  let order = 0;
-  for (const rule of cssRules(source)) {
-    for (const selector of rule.selectors) {
-      order += 1;
-      if (!matchesTarget(selector)) continue;
-      for (const [property, rawValue] of declarationsForRule(rule)) {
-        const important = /\s*!important\s*$/i.test(rawValue);
-        const value = rawValue.replace(/\s*!important\s*$/i, "").trim();
-        const candidate = { value, important, specificity: specificity(selector), order };
-        const winner = winners.get(property);
-        if (
-          winner === undefined ||
-          Number(candidate.important) > Number(winner.important) ||
-          (candidate.important === winner.important &&
-            (candidate.specificity > winner.specificity ||
-              (candidate.specificity === winner.specificity && candidate.order > winner.order)))
-        ) {
-          winners.set(property, candidate);
+  function collect(rules: CSSRuleList, media: string | null): void {
+    for (const rule of Array.from(rules)) {
+      if ("selectorText" in rule && "style" in rule) {
+        const styleRule = rule as CSSStyleRule;
+        const parsedDeclarations: CssDeclarations = new Map();
+        for (let index = 0; index < styleRule.style.length; index += 1) {
+          const property = styleRule.style.item(index);
+          const priority = styleRule.style.getPropertyPriority(property);
+          const value = styleRule.style.getPropertyValue(property).trim();
+          parsedDeclarations.set(
+            property,
+            priority === "important" ? `${value} !important` : value,
+          );
         }
+        result.push({
+          selector: styleRule.selectorText.replace(/\s+/g, " ").trim(),
+          declarations: parsedDeclarations,
+          media,
+        });
+      } else if ("cssRules" in rule) {
+        const groupingRule = rule as CSSGroupingRule;
+        const condition = "conditionText" in rule ? String(rule.conditionText) : media;
+        collect(groupingRule.cssRules, condition);
       }
     }
   }
-  return new Map(Array.from(winners, ([property, winner]) => [property, winner.value]));
+
+  collect(sheet.cssRules, null);
+  style.remove();
+  return result;
 }
 
-function finalDeclarations(source: string, target: string): CssDeclarations {
-  return cascadedDeclarations(
-    source,
-    (selector) =>
-      selector === target || selector.endsWith(` ${target}`) || target.endsWith(` ${selector}`),
-  );
+const selectorGroups: Readonly<Record<string, readonly string[]>> = {
+  body: ["html, body, #root"],
+  button: ["button, a, input, select, textarea", "button, .button-link"],
+  a: ["button, a, input, select, textarea"],
+  input: ["button, a, input, select, textarea"],
+  select: ["button, a, input, select, textarea"],
+  textarea: ["button, a, input, select, textarea"],
+  ".primary-button": [".primary-button, .secondary-button, .text-button"],
+  ".secondary-button": [".primary-button, .secondary-button, .text-button"],
+  ".text-button": [".primary-button, .secondary-button, .text-button"],
+  ".field input": [".field input, .field select"],
+  ".field select": [".field input, .field select"],
+  ".wizard-title": [
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+  ],
+  ".wizard-description": [
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+    ".wizard-description, .choice-card-description, .inline-notice-body",
+  ],
+  ".wizard-action": [
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+  ],
+  ".choice-card > *": [
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+  ],
+  ".choice-card-description": [
+    ".guided-planner-theme",
+    ".wizard-description, .choice-card-description, .inline-notice-body",
+  ],
+  '.choice-card[aria-pressed="true"]': [],
+  ".choice-card-selection": [".guided-planner-theme"],
+  ".progress-indicator": [".guided-planner-theme"],
+  ".inline-notice-title": [
+    ".guided-planner-theme",
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+    ".inline-notice-title, .inline-notice-body",
+  ],
+  ".inline-notice-body": [
+    ".guided-planner-theme",
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+    ".wizard-description, .choice-card-description, .inline-notice-body",
+    ".inline-notice-title, .inline-notice-body",
+  ],
+  ".inline-notice-error": [".guided-planner-theme"],
+  ".review-row-label": [
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+    ".review-row-label, .review-row-value",
+  ],
+  ".review-row-value": [
+    ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+    ".review-row-label, .review-row-value",
+  ],
+};
+
+/** 競合selectorは禁止済みなので、許可済みexact ruleだけをsource orderで合成する。 */
+function declarationsForSelector(
+  source: string,
+  selector: string,
+  media: string | null = null,
+): CssDeclarations {
+  const result: CssDeclarations = new Map();
+  const acceptedSelectors = new Set([selector, ...(selectorGroups[selector] ?? [])]);
+  for (const rule of cssRules(source)) {
+    if (rule.media !== media || !acceptedSelectors.has(rule.selector)) continue;
+    for (const [property, value] of rule.declarations) result.set(property, value);
+  }
+  return result;
 }
 
 /** scope selector自身の全blockを順番に畳み込み、後置blockの最終tokenを返す。 */
 function scopedDeclarations(source: string): CssDeclarations {
-  return finalDeclarations(source, ".guided-planner-theme");
+  return declarationsForSelector(source, ".guided-planner-theme");
 }
 
-function isGuidedBranch(selector: string): boolean {
-  return /(?:^|[>+~\s])\.guided-planner-theme(?:[.#:[>+~\s]|$)/.test(selector);
-}
+const allowedGuidedSelectors = new Set([
+  ".guided-planner-theme",
+  ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
+  ".guided-planner-theme .wizard-title:focus-visible",
+  ".guided-planner-theme .primary-button",
+  ".guided-planner-theme .primary-button:hover",
+  ".guided-planner-theme .primary-button:active",
+]);
 
 function findUnscopedDesignColorLeaks(source: string, colors: ReadonlySet<string>): string[] {
   const leaks: string[] = [];
+  const canonicalColors = new Set(
+    Array.from(colors).flatMap((color) => [color, canonicalCssValue("color", color)]),
+  );
   for (const rule of cssRules(source)) {
-    const usedColors = rule.body.toLowerCase().match(/#[0-9a-f]{6}\b/g) ?? [];
-    if (!usedColors.some((color) => colors.has(color))) continue;
-    for (const selector of rule.selectors) {
-      if (!isGuidedBranch(selector)) leaks.push(selector);
-    }
+    const usesDesignColor = Array.from(rule.declarations.values()).some((value) =>
+      Array.from(canonicalColors).some((color) => value.toLowerCase().includes(color)),
+    );
+    if (!usesDesignColor) continue;
+    if (!allowedGuidedSelectors.has(rule.selector)) leaks.push(rule.selector);
   }
   return leaks;
 }
 
+function canonicalCssValue(property: string, value: string): string {
+  const element = document.createElement("div");
+  element.style.setProperty(property, value);
+  return element.style.getPropertyValue(property).trim();
+}
+
+const protectedSelectorFragments = [
+  ".guided-planner-theme",
+  ".wizard-",
+  ".choice-card",
+  ".progress-",
+  ".inline-notice",
+  ".review-row",
+  ".primary-button",
+  ".secondary-button",
+  ".text-button",
+  ".field",
+  ".app-section",
+  ":root",
+] as const;
+
+const allowedProtectedSelectors = new Set([
+  ":root",
+  ".guided-planner-theme",
+  ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
+  ".guided-planner-theme .wizard-title:focus-visible",
+  ".guided-planner-theme .primary-button",
+  ".guided-planner-theme .primary-button:hover",
+  ".guided-planner-theme .primary-button:active",
+  ".wizard-frame",
+  ".wizard-header, .wizard-content, .wizard-actions",
+  ".wizard-title",
+  ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
+  ".wizard-description, .choice-card-description, .inline-notice-body",
+  ".wizard-actions",
+  ".wizard-action",
+  ".choice-card",
+  ".choice-card:disabled",
+  '.choice-card[aria-pressed="true"]',
+  '.choice-card[aria-pressed="true"] > strong',
+  '.choice-card[aria-pressed="true"] .choice-card-description',
+  ".choice-card-selection",
+  ".progress-indicator",
+  ".progress-track",
+  ".progress-value",
+  ".inline-notice",
+  ".inline-notice-error",
+  ".inline-notice-error .inline-notice-title, .inline-notice-error .inline-notice-body",
+  ".inline-notice-title, .inline-notice-body",
+  ".inline-notice-title",
+  ".review-row",
+  ".review-row-label, .review-row-value",
+  ".wizard-transition",
+  ".app-section",
+  "html, body, #root",
+  "body",
+  "button, a, input, select, textarea",
+  "button, .button-link",
+  "button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible",
+  ".primary-button, .secondary-button, .text-button",
+  ".primary-button",
+  ".primary-button:hover",
+  ".secondary-button",
+  ".text-button",
+  ".field",
+  ".field input, .field select",
+]);
+
+function touchesProtectedContract(selector: string): boolean {
+  if (protectedSelectorFragments.some((fragment) => selector.includes(fragment))) return true;
+  return /(?:^|[\s>+~,(])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/u.test(
+    selector,
+  );
+}
+
+function unexpectedProtectedSelectors(source: string): string[] {
+  return cssRules(source)
+    .filter((rule) => {
+      if (!touchesProtectedContract(rule.selector)) return false;
+      if (!allowedProtectedSelectors.has(rule.selector)) return true;
+      return Array.from(rule.declarations.values()).some((value) => value.endsWith(" !important"));
+    })
+    .map((rule) => rule.selector);
+}
+
 function expectEffectiveDeclarations(selector: string, expected: Record<string, string>): void {
-  const declarations = effectiveDeclarations(selector);
+  const declarations = declarationsForSelector(cssWithoutImports, selector);
   for (const [property, value] of Object.entries(expected)) {
-    expect(declarations.get(property), `${selector} ${property}`).toBe(value);
+    expect(declarations.get(property), `${selector} ${property}`).toBe(
+      canonicalCssValue(property, value),
+    );
   }
 }
 
+function expectExactRuleDeclarations(
+  selector: string,
+  expected: Record<string, string>,
+  media: string | null = null,
+): void {
+  const matchingRules = cssRules(cssWithoutImports).filter(
+    (rule) => rule.selector === selector && rule.media === media,
+  );
+  expect(matchingRules, selector).toHaveLength(1);
+  const canonicalExpected = new Map(
+    Object.entries(expected).map(([property, value]) => [
+      property,
+      canonicalCssValue(property, value),
+    ]),
+  );
+  expect(matchingRules[0]?.declarations, selector).toEqual(canonicalExpected);
+}
+
 function expectFinalDeclarations(selector: string, expected: Record<string, string>): void {
-  const declarations = finalDeclarations(cssWithoutImports, selector);
+  const declarations = declarationsForSelector(cssWithoutImports, selector);
   for (const [property, value] of Object.entries(expected)) {
-    expect(declarations.get(property), `${selector} ${property}`).toBe(value);
+    expect(declarations.get(property), `${selector} ${property}`).toBe(
+      canonicalCssValue(property, value),
+    );
   }
 }
 
@@ -371,9 +509,10 @@ describe("guided planner theme", () => {
 
     const guidedPalette = new Set<string>(Object.values(expectedTokens));
     expect(findUnscopedDesignColorLeaks(cssWithoutImports, guidedPalette)).toEqual([]);
+    expect(unexpectedProtectedSelectors(cssWithoutImports)).toEqual([]);
   });
 
-  it("detects adversarial global leaks in every selector-list branch", () => {
+  it("detects adversarial global leaks without splitting functional selector lists", () => {
     const guidedPalette = new Set<string>(Object.values(expectedTokens));
     const fixture = `
       .guided-planner-theme .probe, body { color: #f7f2e9; }
@@ -382,42 +521,59 @@ describe("guided planner theme", () => {
       .field input { color: #3b302b !important; }
     `;
     expect(findUnscopedDesignColorLeaks(fixture, guidedPalette)).toEqual([
-      "body",
+      ".guided-planner-theme .probe, body",
       ":root",
       ".shell .primary-button",
       ".field input",
     ]);
-    expect(finalDeclarations(fixture, ".primary-button").get("background")).toBe("#cc927b");
-    expect(finalDeclarations(fixture, ".field input").get("color")).toBe("#3b302b");
   });
 
-  it("resolves later, more specific, and important scoped overrides", () => {
+  it("rejects every non-allowlisted selector that can compete with protected styles", () => {
     const fixture = `
-      .guided-planner-theme { --primary: #d9a48f; }
-      .guided-planner-theme { --primary: #cc927b; }
-      .host .guided-planner-theme { --primary: #cf947d !important; }
-      .guided-planner-theme .primary-button:hover { background: var(--primary-hover); }
-      .host .guided-planner-theme .primary-button:hover { background: #3b302b; }
+      .guided-planner-theme :is(.primary-button, .choice-card) { color: #fff; }
+      .guided-planner-theme :not(.wizard-title) { color: #fff; }
+      .guided-planner-theme :where(.inline-notice) { color: #fff; }
+      .guided-planner-theme + .outside { color: #f7f2e9; }
+      .guided-planner-theme .choice-card, body { color: #f7f2e9; }
+      #app .guided-planner-theme .primary-button { color: #fff !important; }
+      .guided-planner-theme .primary-button { color: #fff !important; }
     `;
-    expect(scopedDeclarations(fixture).get("--primary")).toBe("#cf947d");
-    expect(
-      finalDeclarations(fixture, ".guided-planner-theme .primary-button:hover").get("background"),
-    ).toBe("#3b302b");
+    const guidedPalette = new Set<string>(Object.values(expectedTokens));
+
+    expect(findUnscopedDesignColorLeaks(fixture, guidedPalette)).toEqual([
+      ".guided-planner-theme + .outside",
+      ".guided-planner-theme .choice-card, body",
+    ]);
+    expect(unexpectedProtectedSelectors(fixture)).toEqual([
+      ".guided-planner-theme :is(.primary-button, .choice-card)",
+      ".guided-planner-theme :not(.wizard-title)",
+      ".guided-planner-theme :where(.inline-notice)",
+      ".guided-planner-theme + .outside",
+      ".guided-planner-theme .choice-card, body",
+      "#app .guided-planner-theme .primary-button",
+      ".guided-planner-theme .primary-button",
+    ]);
   });
 
   it("keeps final scoped component colors connected to their tokens", () => {
-    expectFinalDeclarations(".guided-planner-theme .primary-button", {
+    expectExactRuleDeclarations(".guided-planner-theme .primary-button", {
+      "border-color": "var(--primary)",
       color: "var(--primary-ink)",
       background: "var(--primary)",
     });
-    expectFinalDeclarations(".guided-planner-theme .primary-button:hover", {
+    expectExactRuleDeclarations(".guided-planner-theme .primary-button:hover", {
+      "border-color": "var(--primary-hover)",
+      color: "var(--primary-ink)",
       background: "var(--primary-hover)",
     });
-    expectFinalDeclarations(".guided-planner-theme .primary-button:active", {
+    expectExactRuleDeclarations(".guided-planner-theme .primary-button:active", {
+      "border-color": "var(--primary-active)",
+      color: "var(--primary-ink)",
       background: "var(--primary-active)",
     });
-    expectFinalDeclarations('.choice-card[aria-pressed="true"]', {
+    expectExactRuleDeclarations('.choice-card[aria-pressed="true"]', {
       "border-color": "var(--primary-strong)",
+      color: "var(--text)",
       background: "var(--selection)",
     });
     expectFinalDeclarations(".choice-card", {
@@ -429,9 +585,72 @@ describe("guided planner theme", () => {
     expectFinalDeclarations(".inline-notice", { background: "var(--notice)" });
     expectFinalDeclarations(".inline-notice-body", { color: "var(--muted)" });
     expectFinalDeclarations(".inline-notice-error", { color: "var(--danger)" });
-    expectFinalDeclarations(".guided-planner-theme .wizard-title:focus-visible", {
+    expectExactRuleDeclarations(".guided-planner-theme .wizard-title:focus-visible", {
       outline: "3px solid var(--focus)",
       "outline-offset": "2px",
+    });
+    expectExactRuleDeclarations(
+      ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
+      { outline: "3px solid var(--focus)", "outline-offset": "2px" },
+    );
+  });
+
+  it("binds every visible wizard state to a readable foreground and background", () => {
+    const bindings = [
+      [".wizard-title", "color", "text", "app-background"],
+      [".wizard-description", "color", "muted", "app-background"],
+      [".progress-indicator", "color", "muted", "app-background"],
+      [".guided-planner-theme .primary-button", "color", "primary-ink", "primary"],
+      [".guided-planner-theme .primary-button:hover", "color", "primary-ink", "primary-hover"],
+      [".guided-planner-theme .primary-button:active", "color", "primary-ink", "primary-active"],
+      ['.choice-card[aria-pressed="true"] > strong', "color", "text", "selection"],
+      ['.choice-card[aria-pressed="true"] .choice-card-description', "color", "muted", "selection"],
+      [".choice-card-selection", "color", "primary-strong", "selection"],
+      [".inline-notice-title", "color", "text", "notice"],
+      [".inline-notice-body", "color", "muted", "notice"],
+    ] as const;
+
+    for (const [selector, property, foreground, background] of bindings) {
+      expectFinalDeclarations(selector, { [property]: `var(--${foreground})` });
+      expect(
+        contrast(scopedToken(foreground), scopedToken(background)),
+        selector,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+    expectExactRuleDeclarations('.choice-card[aria-pressed="true"] > strong', {
+      color: "var(--text)",
+    });
+    expectExactRuleDeclarations('.choice-card[aria-pressed="true"] .choice-card-description', {
+      color: "var(--muted)",
+    });
+    expectExactRuleDeclarations(".inline-notice-title", { color: "var(--text)" });
+    expectExactRuleDeclarations(
+      ".inline-notice-error .inline-notice-title, .inline-notice-error .inline-notice-body",
+      { color: "var(--danger)" },
+    );
+    expectFinalDeclarations(".progress-track", { background: "var(--border)" });
+    expectFinalDeclarations(".progress-value", { background: "var(--primary-strong)" });
+    expectFinalDeclarations(
+      ".inline-notice-error .inline-notice-title, .inline-notice-error .inline-notice-body",
+      { color: "var(--danger)" },
+    );
+    expect(contrast(scopedToken("danger"), scopedToken("notice"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("fixes the exact shadow and motion accessibility contract", () => {
+    expectFinalDeclarations(".choice-card", {
+      "box-shadow": "0 4px 16px rgb(66 58 50 / 8%)",
+    });
+    const normalMotion = declarationsForSelector(cssWithoutImports, ".wizard-transition");
+    expect(normalMotion.get("animation")).toBe("wizard-enter 180ms ease-out");
+    const reducedMotion = declarationsForSelector(
+      cssWithoutImports,
+      ".wizard-transition",
+      "(prefers-reduced-motion: reduce)",
+    );
+    expect(reducedMotion).toEqual(new Map([["animation", "none"]]));
+    expectFinalDeclarations(".wizard-transition", {
+      animation: "wizard-enter 180ms ease-out",
     });
   });
 
