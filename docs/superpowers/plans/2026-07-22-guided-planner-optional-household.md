@@ -544,7 +544,7 @@ Run: `docker compose run --rm --no-deps app npx supabase migration new target_mo
 
 Expected: 新しいmigration pathが1件表示される。exact pathをTask reportへ記録する。
 
-pgTAPへhousehold/ideaの正常行、4種類の矛盾行、既存menu backfill、空target draftのnull移行、version列のmode別nullabilityを追加する。
+pgTAPへhousehold/ideaの正常行、4種類の矛盾行、既存menu backfill、空target draftのnull移行、version列のmode別nullabilityを追加する。空targetは少なくとも「他回答が完成済み」「途中回答」「以前は家族を選択していたが保存時点では0件」の3 fixtureを用意する。旧schemaから選択意図を復元できないため、3件とも`target_mode is null`、`servings is null`へ移行し、食事・食材・ジャンル・任意条件は変更されないことを検証する。
 
 - [ ] **Step 4: shared planner schemaを実装する**
 
@@ -569,7 +569,7 @@ if (value.targetMode === null) {
 
 - [ ] **Step 5: DB保存制約とbackfillをmigrationへ実装する**
 
-CLI生成migrationでplanner draft、`private.generation_draft_submission_versions`、`public.menus`へ`target_mode`を追加する。draftだけ`target_mode`/`servings` nullable、凍結提出とmenuはNOT NULLとする。既存draftの非空targetはhousehold、空targetはnull。既存凍結提出とmenuはhouseholdへbackfillする。
+CLI生成migrationでplanner draft、`private.generation_draft_submission_versions`、`public.menus`へ`target_mode`を追加する。draftだけ`target_mode`/`servings` nullable、凍結提出とmenuはNOT NULLとする。既存draftの非空targetはhousehold、空targetは回答進捗や過去の選択意図に関係なくnullとし、servingsもnullへ揃える。既存凍結提出とmenuはhouseholdへbackfillする。backfillは対象列以外の回答JSON、任意条件、pantry選択、revisionを変更しない。
 
 各表へ次と同値の条件付きCHECKを付ける。
 
@@ -762,6 +762,7 @@ create or replace function public.lookup_ai_generation_request(
   p_idempotency_key uuid
 ) returns jsonb;
 
+-- 現行v1の14引数overloadだけを削除する。直後に作るv2はjsonbを加えた15引数である。
 drop function if exists public.reserve_ai_generation(
   uuid, uuid, text, uuid, bigint, uuid, uuid, text,
   text, text, integer, integer, integer, timestamptz
@@ -853,7 +854,7 @@ Run: `docker compose run --rm --no-deps app npx supabase migration new generatio
 
 Expected: 新しいmigration pathが1件表示される。exact pathをTask reportへ記録する。
 
-通常pgTAPへv1/v2 CHECK、未知版拒否、新規v1予約拒否、既存v1 replay、request snapshot immutable、source version変更/削除、遅延v1拒否、quota不変を追加する。旧14引数`reserve_ai_generation`の`to_regprocedure(...) is null`、その呼出し失敗前後でrequest/usage行数不変も検証する。`ai_control_and_quota_races.test.sql`は既存shopping race testと同じ専用dblink roleを使い、fixtureをcommitしてから別backend 2 sessionで同じlegacy keyをclaimする。既存v1が先に作られたraceは両sessionが`existing_v1`と同一requestを返し、未作成raceは両sessionが`claimed_v2`と同一v2 keyを返し、どちらもrequest/quotaを二重作成しないことを検証する。
+通常pgTAPへv1/v2 CHECK、未知版拒否、新規v1予約拒否、既存v1 replay、request snapshot immutable、source version変更/削除、遅延v1拒否、quota不変を追加する。旧14引数`reserve_ai_generation`の`to_regprocedure(...) is null`と、新15引数signatureの`to_regprocedure(...) is not null`を別assertionで検証し、旧signature呼出し失敗前後でrequest/usage行数不変も検証する。`ai_control_and_quota_races.test.sql`は既存shopping race testと同じ専用dblink roleを使い、fixtureをcommitしてから別backend 2 sessionで同じlegacy keyをclaimする。既存v1が先に作られたraceは両sessionが`existing_v1`と同一requestを返し、未作成raceは両sessionが`claimed_v2`と同一v2 keyを返し、どちらもrequest/quotaを二重作成しないことを検証する。
 
 - [ ] **Step 4: v1/v2 wire schemaとcanonicalizerを実装する**
 
@@ -933,7 +934,15 @@ create table private.generation_command_migrations (
 
 - [ ] **Step 9: legacy claim ledger、RPC、bounded cleanupを実装する**
 
-claim RPCは`auth.uid()`がnullなら拒否し、ownerの既存v1 requestを先に`existing_v1`として返す。未claimならtransaction-scoped advisory lockを`user_id+legacy key`へ取得し、v1 requestとmappingを再読込後に1つのv2 keyをinsertして`claimed_v2`を返す。`ON CONFLICT`で既存のv2 keyを変更してはならない。mapping判定はlookup/claimに集約し、reserve RPCはmigration redirectを返さない。レスポンス作成後に`expires_at`を延長しない。
+claim RPCは`auth.uid()`がnullなら拒否し、ownerの既存v1 requestを先に`existing_v1`として返す。未claimなら現行reserve RPCと同じkey生成規則で、次のtransaction-scoped advisory lockを取得する。
+
+```sql
+perform pg_advisory_xact_lock(
+  hashtextextended(v_user_id::text || ':' || p_legacy_idempotency_key::text, 0)
+);
+```
+
+hash衝突は無関係なclaimを直列化するだけで正しさを損なわない。lock後にv1 requestとmappingを再読込し、未作成なら新しいv2 keyを`insert ... on conflict (user_id, legacy_idempotency_key) do nothing`で追加する。主キーを競合時の最終防壁とし、insert後は同じ主キーで必ず再selectして`claimed_v2`を返す。`ON CONFLICT DO UPDATE`で既存のv2 keyや期限を変更してはならない。mapping判定はlookup/claimに集約し、reserve RPCはmigration redirectを返さない。レスポンス作成後に`expires_at`を延長しない。
 
 期限切れmappingは`private.cleanup_generation_command_migrations(p_before timestamptz,p_limit integer)`で`created_at,user_id,legacy_idempotency_key`順に最大250件だけ削除し、service role以外のexecuteをrevokeする。claim時のowner cleanupも自分の期限切れ行を最大100件に制限する。
 
@@ -1137,7 +1146,7 @@ ideaは`adaptations.length === 0`、`labelConfirmations.length === 0`、family-s
 
 - [ ] **Step 6: DB idea helperとfinalize境界を実装する**
 
-`private.idea_safety_fingerprint()`は`digest(convert_to('{"assurance":"none","members":[],"mode":"idea"}','UTF8'),'sha256')`をhex化する。`public.finalize_ai_generation_success`の既存signatureは維持するが、`p_allergen_version`と`p_food_rule_version`をnullableとして扱う。request snapshotのmodeで分岐し、ideaでは対象家族0件、family子行0件、保存人数一致、固定snapshot/fingerprint一致、version列nullを検査する。householdでは両versionをnon-null検査し、既存`lock_and_assert_current_safety_fingerprint`をそのまま呼ぶ。両modeでowner、request status、HMAC、source lineage、quotaを維持する。
+`private.idea_safety_fingerprint()`は`digest(convert_to('{"assurance":"none","members":[],"mode":"idea"}','UTF8'),'sha256')`をhex化する。`public.finalize_ai_generation_success`は引数型・順序・戻り値を変えず、関数本体だけを置換する。PostgreSQLの`text`引数は元からNULLを受け取れるため、ideaでは`p_allergen_version`と`p_food_rule_version`のNULLを許容するmode分岐を本体へ追加する。ideaでは対象家族0件、family子行0件、保存人数一致、固定snapshot/fingerprint一致、version列nullを検査する。householdでは両versionをnon-null検査し、既存`lock_and_assert_current_safety_fingerprint`をそのまま呼ぶ。両modeでowner、request status、HMAC、source lineage、quotaを維持する。
 
 RPC内の順序はrequest `FOR UPDATE`→snapshot mode読出し→mode別不変条件→source lineage lock→menu/子行永続化→quota更新とする。失敗時は同一transactionのためmenu、子行、quotaの部分更新を残さない。function置換後は既存signatureの`EXECUTE`を`public,anon`からrevokeし、`service_role`だけへgrantする。
 
@@ -1611,7 +1620,7 @@ Expected: 9コマンドすべてexit 0。失敗した場合は原因を修正し
 
 - [ ] **Step 9: Plan全体の最終レビューを行う**
 
-最も高性能な利用可能ReviewerへTask 1開始前commitからTask 8 HEADまでのreview packageを渡し、設計適合性、RLS/owner、HMAC、legacy replay、family canary、shopping不変性、アクセシビリティ、household回帰を確認する。別ReviewerがCritical/Important指摘を再現検証し、妥当な指摘はfresh Implementerで修正後、9段階gateと両レビューを再実行する。未解決Critical/Importantが0件になった時だけPlan完了とする。
+`AGENTS.md` 9章に従い、`reviewer`役のTOMLまたは親設定を正としてTask 1開始前commitからTask 8 HEADまでのreview packageを渡す。設計適合性、RLS/owner、HMAC、legacy replay、family canary、shopping不変性、アクセシビリティ、household回帰を確認する。contextを共有しない別ReviewerがCritical/Important指摘を再現検証し、妥当な指摘はfresh Implementerで修正後、9段階gateと両レビューを再実行する。未解決Critical/Importantが0件になった時だけPlan完了とする。
 
 ---
 
