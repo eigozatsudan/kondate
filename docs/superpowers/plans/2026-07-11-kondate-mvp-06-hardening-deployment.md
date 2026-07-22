@@ -10,7 +10,10 @@
 
 ## Global Constraints
 
-- Implement only after Plans 1–5 and preserve every route, type, migration, and ownership boundary in the roadmap.
+- Implement only after Plans 1–5 **and the guided-planner/optional-household plan (Plan ID 7, `docs/superpowers/plans/2026-07-22-guided-planner-optional-household.md`)**, and preserve every route, type, migration, and ownership boundary in the roadmap and in that plan.
+- Plan 7's locked results are inputs here, never renegotiated: household setup is optional (`profiles.onboarding_status` includes `skipped`), `RequireCompletedOnboarding` no longer wraps the main routes, `/welcome` plus the five-step planner wizard replace the single-screen planner, `TargetMode = "household" | "idea"` is stored on drafts/frozen submissions/menus, `generation-command.v2` is the only command/HMAC version, `private.generation_regeneration_snapshots` is the request-bound regeneration snapshot, and `.guided-planner-theme` owns the linen/terracotta tokens. Plan 6 hardens and verifies these; it adds no product behavior to either mode.
+- Idea mode never gains a family-safety guarantee, a shopping-list path, or `child_friendly` regeneration in this plan. Every Plan 6 test, fixture, runbook, and smoke probe keeps the fixed rejection codes `idea_menu_not_supported` (four shopping routes) and `idea_menu_revalidation_not_supported` (direct menu revalidation).
+- Both of this plan's migrations are created with `docker compose run --rm --no-deps app npx supabase migration new <logical name>` (`account_deletion`, then `maintenance_cleanup`) so their CLI timestamps sort **after** every Plan 7 migration. The names `20260711005000_account_deletion.sql`/`20260711005100_maintenance_cleanup.sql` and the shorthands "migration 050/051" in this plan mean "the account-deletion migration" and "the maintenance migration" as ordered pairs; never hand-author a filename that would apply before Plan 7's `target_mode`, `generation_command_v2`, or idea-mode migrations on a clean reset. Record each CLI-emitted path in the Task brief/report.
 - Account deletion is a hard delete after an explicit Japanese confirmation phrase. It deletes the authenticated Supabase Auth user; every owned row must disappear through tested `ON DELETE CASCADE` paths.
 - Plan 1 remains the final `/settings` route and `HouseholdSettingsPage` owner. Plan 6 composes only `AccountSettingsSection`/DangerZone into that page and must preserve all family CRUD tests and controls.
 - Never accept a user ID from the account-deletion request and never put a name, email, access token, household condition, prompt, or raw AI response in logs or CI artifacts.
@@ -18,7 +21,7 @@
 - Release-locked generation controls are exactly 5 successes/JST day, 12 sends/user/JST day, and 4 sends/fixed 600-second window. Runtime parsing and production preflight reject any drift in 5/12/4/600.
 - Every configured OpenRouter model is explicit, unique, ends in `:free`, is not `openrouter/auto`, and supports both `structured_outputs` and `response_format` according to the live Models API at deployment time. That metadata request has one five-second abort deadline and reports a closed error without response content.
 - The live-model check is mandatory for a Netlify production build but not for normal tests, which use `mock/kondate:free` and the local mock service.
-- The SPA works without horizontal scrolling at 320, 375, and 430 CSS pixels. Every visible interactive target is at least 44 by 44 CSS pixels and every asynchronous status is exposed through text and an appropriate live region.
+- The SPA works without horizontal scrolling at 320, 375, and 430 CSS pixels. Every visible interactive target is at least 44 by 44 CSS pixels and every asynchronous status is exposed through text and an appropriate live region. This now includes `/welcome`, each of the five wizard steps, the review screen, and the idea-mode result/history surfaces. Split ownership rather than re-implementing: Plan 7 Task 1 owns the `.guided-planner-theme` contrast tests, and Plan 7 Task 8 Step 5 owns the 320-pixel/44-pixel wizard sweep plus keyboard-only traversal and reduced-motion. Plan 6 adds what neither covers — axe/landmark/live-region over every route, the 375- and 430-pixel widths, and both modes' result and history surfaces — and never relaxes or restates a Plan 7 assertion. Where the 320-pixel wizard sweep below overlaps Plan 7's, the acceptance matrix cites Plan 7's test rather than counting a duplicate.
 - CI runs formatting, lint, type checking, unit/component/adversarial tests, database tests, integration/E2E tests, the Netlify production build, Docker Compose validation, and dependency auditing. No deploy proceeds after a failed gate.
 - Production smoke tests are read-only except for the unauthenticated rejection probes; they do not create users, menus, or OpenRouter calls.
 - `maintenance-cleanup` uses code config `schedule: "@hourly"` with no `path`, runs only on published production deploys, and uses one fresh `pg.Client` per invocation. Its four fixed categories are stale generation reservations, terminal generation ledgers older than 30 days, `private.shopping_mutations` older than 30 days, and expired-or-claimed auth continuations. The dedicated LOGIN has `statement_timeout='20s'` before the first SQL command; the transaction reasserts and verifies `SET LOCAL ROLE kondate_maintenance_executor` plus `SET LOCAL statement_timeout='20s'`; the driver aborts at 25 seconds; and the platform stops at 30 seconds. Every path rolls back when possible, closes the connection, and logs exactly four aggregate cleanup counts, duration, and a closed error code only.
@@ -30,11 +33,11 @@
 ### Task 1: Prove account-wide cascade behavior
 
 **Files:**
-- Create: `supabase/migrations/20260711005000_account_deletion.sql`
+- Create via CLI: migration logical name `account_deletion` (the CLI timestamp must sort after every Plan 7 migration; referred to below as the account-deletion migration / "050")
 - Create: `supabase/tests/database/account_deletion.test.sql`
 
 **Interfaces:**
-- Consumes: every `public` and `private` table created by Plans 1–5 that has a `user_id` column.
+- Consumes: every `public` and `private` table created by Plans 1–5 **and Plan 7** that has a `user_id` column — including `private.generation_regeneration_snapshots`.
 - Consumes: Plan 2's normalized `public.menu_safety_actions` producer (also populated by Plan 3 finalization); this plan inventories and tests that table but does not recreate it.
 - Produces: a deployment-time invariant that every such column has a direct cascading foreign key to `auth.users(id)` and a pgTAP regression test for that invariant.
 
@@ -232,7 +235,9 @@ end;
 $$;
 ```
 
-Never edit migrations `001`–`040`, even when Step 2 identifies an offender. Migration `050` drops every competing FK to `auth.users` whose local key contains that offender's `user_id` (including composite and non-cascade Auth FKs), preserves owner-composite FKs to application tables, adds exactly `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`, and then runs the exact single-column guard above. A later discovery is fixed in a new `052+` migration because `051` is reserved for scheduled maintenance, never by changing an applied checksum.
+Never edit any already-applied migration — Plans 1–5's `001`–`040` or Plan 7's four (`optional_household_profiles`, `target_mode_storage`, `generation_command_v2`, `idea_generation_boundary`) — even when Step 2 identifies an offender. The account-deletion migration drops every competing FK to `auth.users` whose local key contains that offender's `user_id` (including composite and non-cascade Auth FKs), preserves owner-composite FKs to application tables, adds exactly `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`, and then runs the exact single-column guard above. A later discovery is fixed in a new migration created after the maintenance migration, never by changing an applied checksum.
+
+Plan 7's `private.generation_regeneration_snapshots` is the case this correction must get right rather than "fix": its `(request_id,user_id) → private.ai_generation_requests(id,user_id) ON DELETE CASCADE` composite FK targets an application relation, so it is preserved by the rule above and must still be joined by its own exact single-column `user_id → auth.users(id) ON DELETE CASCADE`. Both survive migration; the guard passes only when the single-column Auth FK exists and no *Auth* FK competes with it. Step 2's diagnostic run therefore has to be read against the post–Plan 7 schema, not the Plan 5 schema.
 
 - [ ] **Step 4: Rebuild the database and verify the invariant**
 
@@ -669,7 +674,7 @@ git commit -m "build: verify free OpenRouter models"
 - Modify: every `netlify/functions/*.ts` route handler
 
 **Interfaces:**
-- Consumes: function result/error codes and actual model IDs from Plans 2–5.
+- Consumes: function result/error codes and actual model IDs from Plans 2–5 and Plan 7 (including `idea_menu_not_supported`, `idea_menu_revalidation_not_supported`, `source_menu_changed`, and `idempotency_payload_mismatch`).
 - Produces: allowlisted JSON logs, a dynamic RLS/grant test, SPA routing, security headers, and a production build command with live model verification.
 
 - [ ] **Step 1: Write failing allowlist and RLS tests**
@@ -751,7 +756,7 @@ npm run db:test -- supabase/tests/database/rls_inventory.test.sql
 
 Expected: the logging test fails until the helper exists; the RLS test reports any earlier policy boundary defect.
 
-Create `docs/testing/database-access-matrix.md` with one row for every public/private table and callable RPC. Columns are `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy`, and `reason`. Derive the rows from the migrations, not assumptions: catalogs are authenticated `SELECT`; user-owned aggregate roots/children are owner `SELECT` plus only the explicit browser columns; derived inserts and all private ledgers are service-only; anon is `none`; every security-definer RPC records its exact signature and role grant. Add a test-side `expected_access` values CTE generated from this matrix and four `is_empty` assertions that symmetrically compare `information_schema.role_table_grants`, `role_column_grants`, `routine_privileges`, and `pg_policies`, so either an undocumented extra grant/policy or a missing documented one fails. The four generic assertions above plus these four exact comparisons equal `plan(8)`; the exact matrix comparison is the authoritative gate.
+Create `docs/testing/database-access-matrix.md` with one row for every public/private table and callable RPC **as the schema stands after Plan 7**, not after Plan 5. Deriving rows from the migrations is what makes this correct, so read the Plan 7 migrations too: `private.generation_regeneration_snapshots` is a private ledger (service-only, no `anon`/`authenticated` grant, no Data API exposure); `private.idea_safety_fingerprint(...)` and `private.is_valid_generation_target_member_ids(...)` are private helpers with no browser-role `EXECUTE`; and every RPC Plan 7 replaced — `set_onboarding_status`, `save_generation_draft` (new arity), `get_ai_generation_submission_snapshot` (`service_role` only), the v2 `reserve_ai_generation`, `finalize_ai_generation_success`, `apply_shopping_draft`, and `apply_shopping_reconciliation` — gets exactly one matrix row carrying the *current* signature. Some of these Plan 7 drops and re-creates (`save_generation_draft`, `reserve_ai_generation`, `get_ai_generation_submission_snapshot`), which discards their grants and restores the default `PUBLIC EXECUTE`; others it replaces in place with re-declared grants. Either way the symmetric comparison below is what proves no stale, default, or over-broad grant survived; a row whose documented signature no longer exists must fail rather than silently match a same-named overload. Columns are `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy`, and `reason`. Derive the rows from the migrations, not assumptions: catalogs are authenticated `SELECT`; user-owned aggregate roots/children are owner `SELECT` plus only the explicit browser columns; derived inserts and all private ledgers are service-only; anon is `none`; every security-definer RPC records its exact signature and role grant. Add a test-side `expected_access` values CTE generated from this matrix and four `is_empty` assertions that symmetrically compare `information_schema.role_table_grants`, `role_column_grants`, `routine_privileges`, and `pg_policies`, so either an undocumented extra grant/policy or a missing documented one fails. The four generic assertions above plus these four exact comparisons equal `plan(8)`; the exact matrix comparison is the authoritative gate.
 
 - [ ] **Step 3: Implement the closed logging shape**
 
@@ -854,8 +859,8 @@ git commit -m "security: enforce logging and deployment boundaries"
 - Modify: components reported by the new tests
 
 **Interfaces:**
-- Consumes: the completed login, onboarding, planner, result, history, pantry, shopping, and settings routes.
-- Produces: automated landmark/name/live-region checks and 320/375/430-pixel layout and target-size checks.
+- Consumes: the completed login, `/welcome`, optional household onboarding, the five-step planner wizard and its review screen, result (both modes), history (both modes), pantry, shopping, and settings routes, plus Plan 7's `e2e/fixtures/auth.ts` as that plan leaves it.
+- Produces: automated landmark/name/live-region checks, 320/375/430-pixel layout and target-size checks across both target modes, and one added idea-mode E2E fixture.
 
 - [ ] **Step 1: Add axe-core and write failing route tests**
 
@@ -872,7 +877,9 @@ expect(screen.getByRole("navigation", { name: "メインメニュー" })).toBeVi
 expect(screen.getByRole("status")).toHaveTextContent(/作成中|保存しました|残り/);
 ```
 
-Login has no authenticated navigation, so its test requires exactly one `main`, a named Google button, a labeled email input, and a textual error region instead.
+Login has no authenticated navigation, so its test requires exactly one `main`, a named Google button, a labeled email input, and a textual error region instead. `/welcome` is the same kind of exception: it is a pre-navigation start screen, so its test requires exactly one `main`, the primary 「献立アイデアを考える」 action, the secondary family-setup action, and zero same-weight competing primaries — not the bottom navigation.
+
+Cover each wizard step (`meal`, `ingredients`, `cuisine`, `audience`, `review`) as its own representative state, plus an audience step with zero available family members (family mode disabled, idea mode selectable, family-registration link present) and a review state in each mode. The idea-mode review and result states additionally assert the always-present 「家族条件を使用していません」 notice, and that no shopping control, family-adaptation region, or label-confirmation region is in the accessibility tree at all — an idea surface must not merely disable them.
 
 - [ ] **Step 2: Run the component accessibility test and capture violations**
 
@@ -882,48 +889,110 @@ Expected: FAIL until missing labels, landmarks, focus behavior, and live regions
 
 - [ ] **Step 3: Write the failing mobile Playwright checks**
 
-First extend Plan 1's fixture without changing the existing raw `authenticatedPage` used by onboarding tests:
+`e2e/fixtures/auth.ts` is already reshaped for the optional-household flow by the time this task runs: Plan 7 Task 2 removes AI consent from onboarding completion (`PrivacyNoticePage` no longer sets `complete`), and Plan 7 Task 6 rewrites the fixture file itself for the new routes. Take that fixture as it stands — read it rather than assuming a landing route, since `authenticatedPage` currently logs in through `/login?returnTo=%2Fplanner` and `/planner` is reachable at every onboarding status once `RequireCompletedOnboarding` is gone. Do not restore the old ordering or re-add a consent step. Add only the missing idea-mode counterpart, leaving both existing fixtures untouched:
 
 ```ts
 type AuthFixtures = {
   authEmail: string;
   authenticatedPage: Page;
   completedOnboardingPage: Page;
+  ideaModePage: Page;
 };
 // add to base.extend<AuthFixtures>:
-completedOnboardingPage: async ({ authenticatedPage: page }, use) => {
-  await completeMinimumOnboarding(page);
-  await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
-  await page.getByRole("button", { name: "確認して進む" }).click();
-  await expect(page).toHaveURL(/\/planner$/u);
+ideaModePage: async ({ authenticatedPage: page }, use) => {
+  await page.goto("/welcome");
+  await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
   await use(page);
 },
 ```
 
+The explicit `goto("/welcome")` is required and is safe only here: the fixture's profile is still `not_started`, so `/welcome` renders its choices. Once the fixture has run, the profile is `skipped` with zero family members, and `/welcome` redirects to `/planner` with `replace` for every `complete`/`skipped` user. No test may therefore measure `/welcome` through `ideaModePage`; the start screen's own layout checks belong to a separate test using the raw `authenticatedPage`.
+
 ```ts
 // e2e/specs/mobile-accessibility.spec.ts
+import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
 
+const answerWizard = async (page: Page, mode: "household" | "idea") => {
+  await page.getByRole("button", { name: "夕食" }).click();
+  await assertStepFits(page);
+  await page.getByRole("button", { name: "鶏肉" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await assertStepFits(page);
+  await page.getByRole("button", { name: "和食" }).click();
+  await assertStepFits(page);
+  if (mode === "idea") {
+    await page.getByRole("button", { name: "家族設定を使わず、アイデアだけ見る" }).click();
+    await page.getByRole("button", { name: "2人分" }).click();
+  } else {
+    await page.getByRole("button", { name: "登録した家族に合わせる" }).click();
+    await page.getByRole("checkbox", { name: /^おとな/u }).check();
+  }
+  await page.getByRole("button", { name: "次へ" }).click();
+};
+
+const assertNoHorizontalScroll = async (page: Page) =>
+  expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    .toBe(true);
+
+const assertStepFits = async (page: Page) => {
+  await assertNoHorizontalScroll(page);
+  await assertTargetSizes(page);
+};
+
+const assertTargetSizes = async (page: Page) => {
+  const visibleControls = page.locator("a:visible,button:visible,input:visible,select:visible,textarea:visible");
+  for (let index = 0; index < await visibleControls.count(); index += 1) {
+    const box = await visibleControls.nth(index).boundingBox();
+    expect(box, `control ${index} has a box`).not.toBeNull();
+    expect(box?.height, `control ${index} height`).toBeGreaterThanOrEqual(44);
+    expect(box?.width, `control ${index} width`).toBeGreaterThanOrEqual(44);
+  }
+};
+
 for (const width of [320, 375, 430]) {
-  test(`planner and result fit ${width}px with usable targets`, async ({ completedOnboardingPage: page }) => {
+  test(`the household wizard and result fit ${width}px with usable targets`, async ({ completedOnboardingPage: page }) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/planner");
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await assertNoHorizontalScroll(page);
+    await assertTargetSizes(page);
+    await answerWizard(page, "household");
+    await assertNoHorizontalScroll(page);
+    await assertTargetSizes(page);
 
-    const visibleControls = page.locator("a:visible,button:visible,input:visible,select:visible,textarea:visible");
-    for (let index = 0; index < await visibleControls.count(); index += 1) {
-      const box = await visibleControls.nth(index).boundingBox();
-      expect(box, `control ${index} has a box`).not.toBeNull();
-      expect(box?.height, `control ${index} height`).toBeGreaterThanOrEqual(44);
-    }
-
-    await page.getByRole("button", { name: "献立を作る" }).click();
+    await page.getByRole("button", { name: "この内容で作る" }).click();
     await expect(page.getByRole("status")).toContainText("献立を作っています");
     await expect(page.getByRole("heading", { name: "今日の献立" })).toBeVisible();
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await assertNoHorizontalScroll(page);
+  });
+
+  test(`the start screen fits ${width}px with usable targets`, async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/welcome");
+    await expect(page.getByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    await assertStepFits(page);
+  });
+
+  test(`the idea wizard and result fit ${width}px with usable targets`, async ({ ideaModePage: page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await answerWizard(page, "idea");
+    await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
+    await page.getByRole("button", { name: "この内容で作る" }).click();
+    await expect(page.getByRole("heading", { name: "今日の献立" })).toBeVisible();
+    await expect(page.getByText("家族条件を使用していません")).toBeVisible();
+    await assertNoHorizontalScroll(page);
+    await assertTargetSizes(page);
   });
 }
 ```
+
+Assert horizontal fit and target size **at every wizard step**, not only the first and last: a step that overflows at 320 pixels is invisible to an end-to-end assertion taken after the answers are already entered.
+
+This snippet is a skeleton, and the implementation wins every disagreement with it. Its labels (`夕食`, `鶏肉`, `和食`, `2人分`, `次へ`, `この内容で作る`) and its assumption about which choices auto-advance versus need an explicit next control are illustrative only — Plan 7 Task 6 owns the real copy and the real step-transition contract, and this file is corrected to match, never the reverse. The design fixes only that 1–6 servings are selection buttons and 7–20 is a numeric input, not their labels.
+
+The skeleton also omits one step the prose requires: on each fixture's first generation the AI-information screen appears before generation starts, because consent is now a generation precondition rather than an onboarding step. Follow it, confirm, and assert the wizard answers survive the round trip back to review. Both mode tests must include that hop.
 
 - [ ] **Step 4: Correct shared UI primitives, focus, and status announcements**
 
@@ -966,12 +1035,12 @@ git commit -m "test: enforce mobile accessibility"
 - Add fixtures under: `tools/openrouter-mock/fixtures/adversarial/`
 
 **Interfaces:**
-- Consumes: all 22 acceptance criteria in the approved design and every test added by Plans 1–5.
-- Produces: a one-to-one acceptance matrix, `completedOnboardingPage`, Node-only service-role/DB-count fixtures, sanitized Function-log capture, final cross-feature journey tests, deletion proof, deterministic OAuth callback/state coverage, an external same-SHA Google evidence verifier, and a fixed adversarial AI corpus.
+- Consumes: all 22 acceptance criteria in the approved MVP design, the 8 success conditions in `docs/superpowers/specs/2026-07-22-guided-planner-optional-household-design.md` §3.2, and every test added by Plans 1–5 and Plan 7.
+- Produces: a one-to-one acceptance matrix over both criteria sets, Node-only service-role/DB-count fixtures, sanitized Function-log capture, final cross-feature journey tests in both target modes, deletion proof, deterministic OAuth callback/state coverage, an external same-SHA Google evidence verifier, and a fixed adversarial AI corpus.
 
 - [ ] **Step 1: Inventory acceptance coverage before adding tests**
 
-Create `docs/testing/acceptance-matrix.md` with exactly 22 rows. Each row contains the design acceptance number, behavior, owning automated test file and exact test title, and test layer. A row may cite multiple tests. The only non-local exception is real Google-provider success: its row cites deterministic automated PKCE/state/callback tests plus an external JSON artifact verified for the release candidate. The artifact is stored outside the repository and has exactly these fields: `candidateSha`, Netlify `stagingDeployId`, authoritative `stagingDeploySha`, ISO `executedAt`, ISO `expiresAt` exactly 24 hours later, non-email `tester`, HTTPS origin-only `stagingOrigin`, `startScreen: "login"`, `stateMatched: true`, `originalBrowserCallbackCompleted: true`, `tokenFreeResult: true`, and `passed: true`. It contains no account identifier, email, authorization code, continuation secret, PKCE verifier, access/refresh token, screenshot, or raw log. No other row may say “manual only”. Production secret configuration and post-deploy reachability cite Task 8's automated preflight, authoritative current-production-deploy verifier, and smoke scripts; a smoke result without both surrounding metadata checks is not evidence.
+Create `docs/testing/acceptance-matrix.md` with two tables. The first is the MVP table with exactly 22 rows, unchanged in count and numbering. The second is a guided-planner table with exactly 8 rows, one per success condition in the Plan 7 design's §3.2 (household-free end-to-end completion, the fixed four-question order, the pre-generation review including whether safety conditions are used, answer survival across back/consent/disconnection, full retention of household-mode safety checks, idea mode never presented as family-safety-confirmed, 320-pixel/44-pixel compliance, and WCAG 2.1 AA contrast for body/supporting text and primary buttons). The whole-plan rule below is therefore 22/22 **and** 8/8; do not merge, renumber, or absorb guided-planner rows into the MVP 22. Each row in either table contains the criterion number, behavior, owning automated test file and exact test title, and test layer. A row may cite multiple tests, and a guided-planner row may cite a test Plan 7 already owns rather than duplicating it. The only non-local exception is real Google-provider success: its row cites deterministic automated PKCE/state/callback tests plus an external JSON artifact verified for the release candidate. The artifact is stored outside the repository and has exactly these fields: `candidateSha`, Netlify `stagingDeployId`, authoritative `stagingDeploySha`, ISO `executedAt`, ISO `expiresAt` exactly 24 hours later, non-email `tester`, HTTPS origin-only `stagingOrigin`, `startScreen: "login"`, `stateMatched: true`, `originalBrowserCallbackCompleted: true`, `tokenFreeResult: true`, and `passed: true`. It contains no account identifier, email, authorization code, continuation secret, PKCE verifier, access/refresh token, screenshot, or raw log. No other row may say “manual only”. Production secret configuration and post-deploy reachability cite Task 8's automated preflight, authoritative current-production-deploy verifier, and smoke scripts; a smoke result without both surrounding metadata checks is not evidence.
 
 Write `verify-release-evidence.mjs` and its Node tests before documenting a pass. The CLI accepts the external artifact path, obtains the candidate with `execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"})`, and reads Netlify's authoritative deploy metadata for `stagingDeployId` from `GET https://api.netlify.com/api/v1/deploys/:id` using a protected release-runner `NETLIFY_AUTH_TOKEN` that is never configured as a site/build variable. It strictly validates the exact schema above, rejects unknown/sensitive keys recursively and email/token/code/verifier-like values, requires `candidateSha === stagingDeploySha === metadata.commit_ref === HEAD`, requires metadata `id` and `deploy_ssl_url` to match the artifact's deploy ID/origin, and requires unexpired evidence with `expiresAt = executedAt + 24h`. It prints only `google_oauth_evidence: pass` or a safe field/error code. The artifact's SHA/origin is never accepted as a self-assertion without that metadata readback. Tests inject clock/fetch and cover wrong local/artifact/metadata SHA, deploy-ID/origin mismatch, missing/extra fields, false booleans, future execution, expired or non-24-hour evidence, non-HTTPS/path-bearing origin, email-shaped tester, and forbidden sensitive material. `docs/testing/google-oauth-staging.md` is an instruction/template only; neither the actual JSON nor a copied result is committed.
 
@@ -1064,11 +1133,11 @@ export async function readFunctionLogs(since:string):Promise<string>{
 }
 ```
 
-Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture. It parses `SUPABASE_SERVICE_ROLE_KEY` from `.env`, creates a non-persisting admin client for `http://127.0.0.1:8000`, and exports `queryOwnedCounts(userId)`. The latter validates `userId` with Zod and uses `execFile("docker",["compose","exec","-T","db","psql",...])` to query every `public`/`private` base table containing `user_id`, returning `{table,count}` JSON without printing row values. `seedCompleteOwnedGraph(page)` uses the existing onboarding, pantry, generation, revalidation, regeneration, and shopping fixture helpers, creates a generated menu targeting both a toddler and a senior with processed-food confirmation coverage, proves at least one normalized `menu_safety_actions` row was produced by Plans 2–3, and leaves a fresh planner draft. Before deletion, assert only a named `requiredNonEmptyFamilies` set (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping) has positive counts; idempotency ledgers and other optional tables may legitimately remain zero. No service-role value enters `page`, browser storage, screenshots, or logs.
+Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture. It parses `SUPABASE_SERVICE_ROLE_KEY` from `.env`, creates a non-persisting admin client for `http://127.0.0.1:8000`, and exports `queryOwnedCounts(userId)`. The latter validates `userId` with Zod and uses `execFile("docker",["compose","exec","-T","db","psql",...])` to query every `public`/`private` base table containing `user_id`, returning `{table,count}` JSON without printing row values. `seedCompleteOwnedGraph(page)` uses the existing onboarding, pantry, generation, revalidation, regeneration, and shopping fixture helpers, creates a generated menu targeting both a toddler and a senior with processed-food confirmation coverage, proves at least one normalized `menu_safety_actions` row was produced by Plans 2–3, and leaves a fresh planner draft. It must also seed the Plan 7 surface, because a cascade is only proven for rows that exist: at least one `target_mode = 'idea'` menu alongside the household one, and at least one row in `private.generation_regeneration_snapshots` from a completed regeneration reservation. Assert both are non-zero before deletion and zero after, so the snapshot's cascade through `private.ai_generation_requests` to `auth.users` is exercised rather than assumed. The idea menu also proves the deletion path does not depend on non-empty `menu_target_members`. Before deletion, assert only a named `requiredNonEmptyFamilies` set (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping) has positive counts; idempotency ledgers and other optional tables may legitimately remain zero. No service-role value enters `page`, browser storage, screenshots, or logs.
 
-`full-journey.spec.ts` covers login fixture → resumable household setup → privacy confirmation → pantry must/prefer selection → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation.
+`full-journey.spec.ts` covers two journeys. The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review → privacy confirmation at generation start and return to review with answers intact → pantry must/prefer selection → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → skip family setup → the same four questions with an explicit servings count → review showing 「家族の年齢・アレルギーは確認されません」 → privacy confirmation → generation → a result carrying 「家族条件を使用していません」 and matching `N人分` → history card and detail showing the mode → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason anywhere in its run; it never converts to household mode.
 
-`privacy-logging.spec.ts` captures mock Function logs and asserts that names, test email, allergy free text, planner note, prompt markers, and raw mock response strings are absent while request ID, safe error code, duration, and model ID are present.
+`privacy-logging.spec.ts` captures mock Function logs and asserts that names, test email, allergy free text, planner note, prompt markers, and raw mock response strings are absent while request ID, safe error code, duration, and model ID are present. It runs over both journeys. Plan 7 Task 8 owns the exhaustive family-canary matrix across DB reads, context DTOs, request bodies, snapshots, and menu child rows; this spec does not restate it and instead asserts the log surface specifically — including that the idea journey's logs carry no family identifier, no member ID, and no servings-bearing payload.
 
 `account-deletion.spec.ts` creates a dedicated test user with the named required aggregate families, opens Plan 1's `/settings`, first proves the existing member edit/allergy/dislike controls are still present, then opens the composed Plan 6 danger zone and performs the exact-phrase flow. It verifies redirect to the login message, verifies the old access token receives `401`, and uses the service-role test fixture to assert zero Auth user and zero rows across every inventoried owned table—including tables whose pre-delete count was zero.
 
@@ -1080,6 +1149,7 @@ const requiredNonEmptyFamilies=new Set([
   "public.menu_member_adaptations","public.menu_safety_actions",
   "public.menu_label_confirmations","public.menu_revalidations",
   "public.shopping_lists","public.shopping_items","public.shopping_label_confirmations",
+  "private.generation_regeneration_snapshots",
 ]);
 for(const table of requiredNonEmptyFamilies){
   expect(before.find((row)=>row.table===table)?.count,`${table} must be seeded`).toBeGreaterThan(0);
@@ -1286,7 +1356,7 @@ git commit -m "ci: gate the complete MVP"
 ### Task 8: Write deployment runbooks and production smoke automation
 
 **Files:**
-- Create: `supabase/migrations/20260711005100_maintenance_cleanup.sql`
+- Create via CLI: migration logical name `maintenance_cleanup` (created after the account-deletion migration; referred to below as the maintenance migration / "051")
 - Create: `supabase/tests/database/maintenance_cleanup.test.sql`
 - Modify: `.env.example`
 - Modify: `scripts/generate-local-secrets.sh`
@@ -1327,6 +1397,8 @@ git commit -m "ci: gate the complete MVP"
 The preflight test passes a complete synthetic production environment using project ref `abcdefghijklmnopqrst` and expects no errors, then removes each required variable in turn and expects its exact name in the error. It also asserts that `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `GENERATION_REQUEST_HMAC_KEY`, and `SUPABASE_MAINTENANCE_DB_URL` are rejected when exposed through any `VITE_`-prefixed alias, requires `VITE_AUTH_PROVIDER_MODE=supabase`, and uses `Object.hasOwn(env,"VITE_OAUTH_MOCK_ORIGIN")` to reject the mock-origin key even when its value is empty. It rejects a missing HMAC key, invalid base64, any decoded length other than exactly 32 bytes, Plan 3's documented sample/local value, and a `VITE_GENERATION_REQUEST_HMAC_KEY` key even when empty. It requires both `SUPABASE_URL` and `VITE_SUPABASE_URL` to equal the exact managed origin `https://abcdefghijklmnopqrst.supabase.co`, requires `SUPABASE_PUBLISHABLE_KEY === VITE_SUPABASE_PUBLISHABLE_KEY`, and passes that extracted ref into maintenance parsing. Arbitrary HTTPS, short/uppercase refs, suffix lookalikes, credentials, ports, trailing slash, path/query/fragment, browser/server ref mismatch, publishable-key mismatch, a direct database host with another ref, and a Session-pooler username with another ref all fail with closed codes. `oauth_mock` mode, the local mock URL, a maintenance URL without TLS, a URL whose direct username is not exactly `kondate_maintenance_login` (or whose Supavisor Session username is not exactly that role plus the expected project-ref suffix), and a URL containing credentials in any error all fail in production.
 
 Write `maintenance_cleanup.test.sql` red first. It proves exact overloads `cleanup_stale_ai_generations(timestamptz,integer)`, `cleanup_ai_generation_requests(timestamptz,integer)`, `private.cleanup_shopping_mutations(timestamptz,integer)`, and `cleanup_auth_continuations(timestamptz,integer)` plus `run_kondate_maintenance(timestamptz,integer)`. It proves `kondate_maintenance_executor` is NOLOGIN, NOINHERIT, not superuser, cannot bypass RLS, has `USAGE` on `public` and `EXECUTE` on that one RPC only, and has no table, sequence, helper-function, or private-schema privilege. `public`, `anon`, `authenticated`, and `service_role` cannot execute the RPC. Seed terminal generation requests and shopping mutations at exactly 30 days, just older than 30 days, and 29 days; expired, claimed, and live continuations; expired processing reservations with both sent and unsent global slots; and more than one batch in both retention ledgers. Assert both exact 30-day boundaries are retained, only older terminal/shopping rows are deleted, expired/claimed continuations are deleted, live continuations remain, and stale reservations use Plan 3's canonical transition to release success plus only unsent attempt/global reservations. A second run returns all four zero counts; a batch of two leaves deterministic work for the next call; concurrent calls use `FOR UPDATE SKIP LOCKED` and never double-release or double-delete.
+
+Plan 7's `private.generation_regeneration_snapshots` is deliberately **not** a fifth category. It is request-bound with `ON DELETE CASCADE` from `private.ai_generation_requests(id,user_id)`, so terminal-ledger retention removes it implicitly. Seed a regeneration snapshot on a terminal request just older than 30 days and one on a retained request at the exact boundary, then assert the first snapshot disappears with its request, the second survives, `generationLedgersDeleted` counts requests rather than snapshots, and the returned object still has exactly four keys. Also assert no snapshot on a still-`processing` request or on a menu-referenced request is ever removed. Adding a snapshot count, a snapshot-first delete, or a separate snapshot category is out of scope and would break the four-key readback contract below.
 
 Write `maintenance-env.test.ts`, `maintenance-db.test.ts`, and `maintenance-cleanup.test.ts` red first. The local environment test accepts exactly `kondate_maintenance_login@127.0.0.1:54322/postgres?sslmode=disable` solely in explicit local-test mode. Production parsing additionally requires an explicit expected project ref previously extracted from the exact server Supabase origin, plus a `postgres:`/`postgresql:` URL with a non-empty password, canonical dedicated-login identity, exact `/postgres` path, canonical host/port, and `sslmode=require`, `verify-ca`, or `verify-full`. Accepted production shapes are direct `kondate_maintenance_login@db.<expected-project-ref>.supabase.co:5432` and IPv4 Supavisor Session `kondate_maintenance_login.<expected-project-ref>@<region>.pooler.supabase.com:5432`; the same valid shapes with another project ref, port `6543`, and every transaction-mode/dedicated pooler fail. They reject fragments, duplicate parameters, and every query key except the one `sslmode` key—especially `options`, `search_path`, timeout, role, and application-name overrides. They reject `localhost`, alternate local ports, credentials/query details in errors, and `VITE_SUPABASE_MAINTENANCE_DB_URL` even when empty. Mode-selection tests allow local parsing only for the conjunction `CONTEXT=dev && KONDATE_MAINTENANCE_ENV=local`; either key alone, any other value, deploy-preview, branch-deploy, or production selects strict production parsing and rejects loopback. Production preflight rejects the presence of `KONDATE_MAINTENANCE_ENV` even when empty. The adapter unit tests assert a single client per invocation, one overall deadline that begins before connection and never resets, parameterized fixed RPC SQL, the role/timeout guards, strict four-count result parsing before `COMMIT`, `ROLLBACK` when safe, and one idempotent `client.end()` after success, SQL failure, result-parse failure, server cancellation, and client timeout; environment-parse failure constructs no client. No log or thrown public error contains the URL, project ref, password, host, or raw driver error.
 
@@ -1382,7 +1454,7 @@ Migration `051` keeps the exact Plan 1/Plan 3 one-argument cleanup signatures as
 }
 ```
 
-Do not put `set_config('statement_timeout',...)` inside the RPC and do not claim that a function-local setting bounds its containing command: PostgreSQL chooses the statement timeout before executing that command. Each of the four categories receives the same caller-supplied maximum of 250, so one invocation is bounded and reentrant; excess work remains for the next hour. Never delete a processing row as terminal-ledger retention, a menu-referenced request, a shopping mutation at or newer than the exact 30-day boundary, or a live unclaimed continuation.
+Do not put `set_config('statement_timeout',...)` inside the RPC and do not claim that a function-local setting bounds its containing command: PostgreSQL chooses the statement timeout before executing that command. Each of the four categories receives the same caller-supplied maximum of 250, so one invocation is bounded and reentrant; excess work remains for the next hour. Never delete a processing row as terminal-ledger retention, a menu-referenced request, a shopping mutation at or newer than the exact 30-day boundary, or a live unclaimed continuation. Never delete a regeneration snapshot directly; it leaves only as a cascade of its own terminal request.
 
 Append safe placeholders for `KONDATE_MAINTENANCE_ENV=local`, `MAINTENANCE_DB_PASSWORD`, and `SUPABASE_MAINTENANCE_DB_URL` to `.env.example`. The stable `scripts/generate-local-secrets.sh` wrapper delegates to `scripts/generate-local-secrets.mjs`; that implementation creates a URL-safe random local password, percent-encodes its credential component, and writes `KONDATE_MAINTENANCE_ENV=local` plus the password and exact URL `postgresql://kondate_maintenance_login:<encoded>@127.0.0.1:54322/postgres?sslmode=disable` only to the mode-`0600`, gitignored `.env`. It never prints them. `scripts/provision-maintenance-role.sh` reads the password without shell tracing or command-line exposure, provisions `kondate_maintenance_login LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2`, grants membership in the NOLOGIN executor, and executes `ALTER ROLE kondate_maintenance_login SET statement_timeout='20s'`. It is idempotent for local/CI use, sends password material to `psql` through protected stdin/environment only, emits closed status text without SQL/URLs, and unsets it before exit. Its source test rejects `set -x`, password/URL echoing, password-bearing argv, committed literal credentials, or provisioning the LOGIN in a migration.
 
@@ -1450,7 +1522,7 @@ The login-default/database ceiling (20 seconds), node-postgres client timeout (2
 1. Create the managed project in the chosen region and record its exact 20-character project ref, exact origin `https://<project-ref>.supabase.co`, publishable key, service-role key, and administrator deployment database URL in the deployment secret manager. These are distinct from the maintenance credential. Reject a custom/arbitrary REST origin for this MVP; browser and server app URLs are the same recorded managed origin and their publishable keys are identical.
 2. Configure Site URL to the canonical Netlify HTTPS origin and allow only Plan 1's canonical local `http://127.0.0.1:5173/auth/callback`, the Netlify production callback, and explicitly approved deploy-preview callbacks.
 3. Configure Google provider credentials and magic-link email templates; verify both callback paths in a staging project.
-4. Run `npm exec --offline supabase -- db push --db-url "$SUPABASE_DB_URL" --include-all` from a clean tagged commit, including `20260711005100_maintenance_cleanup.sql` after account-deletion migration `050`.
+4. Run `npm exec --offline supabase -- db push --db-url "$SUPABASE_DB_URL" --include-all` from a clean tagged commit. Verify by filename order that every Plan 7 migration applies first, then the account-deletion migration, then the maintenance migration — use the exact CLI-emitted paths recorded in the Task 1 and Task 8 briefs, never a filename retyped from this plan.
 5. Generate a unique maintenance password in the deployment secret manager. Through protected administrator `psql` with history, echo, statement logging, and shell tracing disabled, create or normalize `kondate_maintenance_login` as `LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2`, set/rotate its password with `psql`'s protected password-input path, grant `kondate_maintenance_executor` membership, and execute `ALTER ROLE kondate_maintenance_login SET statement_timeout='20s'`. Pass secret material through protected stdin/environment, never a CLI argument or SQL editor; SQL editors may be used only for the non-secret grant/default statements if their transcripts are protected. The committed migration creates only the NOLOGIN executor and RPC grants.
 6. If the Netlify runtime can reach the project's IPv6 direct endpoint or the project has the IPv4 add-on, build the TLS-required direct URL with exact host `db.<the-recorded-project-ref>.supabase.co:5432` and username `kondate_maintenance_login`. Otherwise use the official IPv4 Supavisor **Session** URL on port `5432`, replacing its role prefix with `kondate_maintenance_login` while retaining exactly the same recorded project-ref routing suffix. A ref copied from another environment is a hard failure even when its credentials connect. Percent-encode credential components without ever printing the intermediate URL, store the result only as the Netlify Functions-scoped `SUPABASE_MAINTENANCE_DB_URL`, and immediately discard local copies. Never use port `6543`/transaction mode, a service-role JWT, administrator database password, repository, ticket, shell history, or log as storage; session mode is required for the login default and one-client transaction semantics.
 7. Connect once with the dedicated URL and verify `session_user=current_user='kondate_maintenance_login'` and `current_setting('statement_timeout')='20s'` before any transaction. Then verify a transaction can `SET LOCAL ROLE kondate_maintenance_executor`, sees the same `20s`, can call only the maintenance RPC, and cannot select owned tables or execute another application RPC. Output booleans/role names only; redact the connection command and URL.
@@ -1463,9 +1535,9 @@ The runbook states migrations are forward-only. A failure before traffic is fixe
 
 `docs/deployment/netlify.md` lists the exact browser-safe and server-only variables above, sets both Supabase app URLs to the same exact managed origin and both publishable-key variables to the same value, sets `VITE_AUTH_PROVIDER_MODE=supabase`, proves `VITE_OAUTH_MOCK_ORIGIN` and `KONDATE_MAINTENANCE_ENV` are absent, sets `VERIFY_OPENROUTER_REMOTE=1` for production builds, requires the canonical `APP_ORIGIN`, and requires `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` exactly. It adds both `GENERATION_REQUEST_HMAC_KEY` and the same-project `SUPABASE_MAINTENANCE_DB_URL` only through Netlify's protected Functions runtime scope—not Builds, deploy logs, `netlify.toml`, repository files, preview contexts, or any `VITE_` key—and validates them without printing either value. Before deployment, a protected release runner injects the same secrets transiently into an environment-clean `npm run preflight:production` subprocess; only its exit status and closed check names enter release evidence, and the site build receives neither. The HMAC key is stable across MVP deploys because retained requests store only the HMAC: rotation requires a reviewed new HMAC version/keyring migration plus explicit pending-command handling, never an ad-hoc environment replacement. The runbook confirms the five-second provider/live-model verification separately in the deploy log and deploys the tagged commit. It obtains `PRODUCTION_DEPLOY_ID` and `PRODUCTION_ORIGIN` only from authoritative Netlify deploy/site metadata inside the protected runner, verifies them with `verify:production-deploy`, passes that unchanged verified origin to `smoke:production`, and verifies the deploy again afterward. An operator-typed smoke origin, example URL, artifact-supplied origin, or unverified environment override is forbidden. The local `oauth-mock` service/origin, local-mode marker, sample HMAC key, and local maintenance password/URL are never copied into a Netlify site variable. Maintenance-password rotation creates a new dedicated password, atomically replaces the protected variable, verifies one scheduled run, and then invalidates the old password without exposing either value.
 
-`docs/runbooks/openrouter.md` instructs the operator to query the Models API for current `:free` IDs through the fixed five-second metadata deadline, require `structured_outputs` and `response_format`, run the fixed adversarial corpus in staging, order models explicitly, update only `OPENROUTER_MODELS`, redeploy, and confirm no paid or automatic model was added. It records the release-locked controls—exactly 5 successful generations per user/JST day, exactly 12 external sends per user/JST day, exactly 4 sends per fixed 600 seconds, 20-second per-attempt timeout, and 50-second total Function budget—and forbids operational tuning of 5/12/4/600 without a reviewed release. It also documents the `maintenance-cleanup` Scheduled Function: `@hourly`, published production only, 250 rows in each of four categories, exact 30-day generation/shopping retention, dedicated PostgreSQL login, role-default and transaction-local 20-second database bounds, 25-second client bound under the 30-second platform limit, idempotent reentry, mandatory connection cleanup, and four-count-only monitoring. Local diagnosis first provisions the ephemeral local login, starts `npm exec --offline netlify dev`, and then uses `npm exec --offline netlify functions:invoke maintenance-cleanup` from another terminal; no URL probe is attempted. A timeout requires checking only the closed failure metric and aggregate row counts, then reproducing against staging tests that assert SQLSTATE `57014`; never enable raw driver errors or print the maintenance URL. If no verified free model exists, keep AI unavailable and leave emergency menus enabled.
+`docs/runbooks/openrouter.md` instructs the operator to query the Models API for current `:free` IDs through the fixed five-second metadata deadline, require `structured_outputs` and `response_format`, run the fixed adversarial corpus in staging, order models explicitly, update only `OPENROUTER_MODELS`, redeploy, and confirm no paid or automatic model was added. It records the release-locked controls—exactly 5 successful generations per user/JST day, exactly 12 external sends per user/JST day, exactly 4 sends per fixed 600 seconds, 20-second per-attempt timeout, and 50-second total Function budget—and forbids operational tuning of 5/12/4/600 without a reviewed release. It also documents the `maintenance-cleanup` Scheduled Function: `@hourly`, published production only, 250 rows in each of four categories, exact 30-day generation/shopping retention, the implicit regeneration-snapshot cascade that is not a fifth counted category, dedicated PostgreSQL login, role-default and transaction-local 20-second database bounds, 25-second client bound under the 30-second platform limit, idempotent reentry, mandatory connection cleanup, and four-count-only monitoring. Local diagnosis first provisions the ephemeral local login, starts `npm exec --offline netlify dev`, and then uses `npm exec --offline netlify functions:invoke maintenance-cleanup` from another terminal; no URL probe is attempted. A timeout requires checking only the closed failure metric and aggregate row counts, then reproducing against staging tests that assert SQLSTATE `57014`; never enable raw driver errors or print the maintenance URL. If no verified free model exists, keep AI unavailable and leave emergency menus enabled.
 
-`docs/runbooks/account-deletion.md` explains the user-visible hard-delete flow, a safe support response that does not request allergy data or tokens, verification through aggregate counts rather than PII logs, and escalation when the Auth Admin API returns an error. It never instructs an operator to delete rows manually before deleting the Auth user.
+`docs/runbooks/account-deletion.md` explains the user-visible hard-delete flow, a safe support response that does not request allergy data or tokens, verification through aggregate counts rather than PII logs, and escalation when the Auth Admin API returns an error. It states that deletion is mode-independent: an account holding only idea-mode menus and no family members deletes through the same single Auth-user path, and support must not ask a household-less user to "complete family setup first". It never instructs an operator to delete rows manually before deleting the Auth user.
 
 - [ ] **Step 5: Run runbook automation and documentation checks**
 
@@ -1488,7 +1560,7 @@ Before the focused database commands, generate `.env`, start the stack, and run 
 - [ ] **Step 6: Commit deployment automation and runbooks**
 
 ```bash
-git add .env.example .github/workflows/ci.yml supabase/migrations/20260711005100_maintenance_cleanup.sql supabase/tests/database/maintenance_cleanup.test.sql netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts netlify/functions/_shared/maintenance-env.ts netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/_shared/maintenance-db.integration.test.ts netlify/functions/maintenance-cleanup.ts netlify/functions/maintenance-cleanup.test.ts scripts/generate-local-secrets.sh scripts/generate-local-secrets.mjs scripts/provision-maintenance-role.sh scripts/provision-maintenance-role.test.mjs scripts/preflight-production.mjs scripts/preflight-production.test.mjs scripts/smoke-production.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.mjs scripts/verify-browser-secrets.test.mjs docs/deployment docs/runbooks package.json package-lock.json
+git add .env.example .github/workflows/ci.yml supabase/migrations supabase/tests/database/maintenance_cleanup.test.sql netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts netlify/functions/_shared/maintenance-env.ts netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/_shared/maintenance-db.integration.test.ts netlify/functions/maintenance-cleanup.ts netlify/functions/maintenance-cleanup.test.ts scripts/generate-local-secrets.sh scripts/generate-local-secrets.mjs scripts/provision-maintenance-role.sh scripts/provision-maintenance-role.test.mjs scripts/preflight-production.mjs scripts/preflight-production.test.mjs scripts/smoke-production.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.mjs scripts/verify-browser-secrets.test.mjs docs/deployment docs/runbooks package.json package-lock.json
 git commit -m "feat: add least-privilege production maintenance"
 ```
 
@@ -1506,7 +1578,7 @@ git commit -m "feat: add least-privilege production maintenance"
 
 Invoke `superpowers:requesting-code-review` over the full implementation range. Resolve every Blocker and High finding with a failing regression test first and rerun its focused gate. Medium findings that are explicitly deferred must include an owner and follow-up issue; safety, privacy, authorization, data-loss, paid-model, and accessibility failures cannot be deferred.
 
-Complete all 22 acceptance-matrix ownership/test-title rows. Create `release-checklist.md` as the immutable command/check template: required tool versions, every gate command, expected exit status, 22/22 rule, links to the four deployment/runbook documents, the four-category maintenance-login/default-timeout/privilege/retention checks, the external evidence location policy, the authoritative current-production-deploy checks before and after smoke, and the rule that the tested candidate is obtained with `git rev-parse HEAD`. Do not put a guessed/self-referential commit SHA, execution result, user value, database URL, credential, or raw log in the repository.
+Complete all 22 MVP and all 8 guided-planner acceptance-matrix ownership/test-title rows. Create `release-checklist.md` as the immutable command/check template: required tool versions, every gate command, expected exit status, the 22/22 and 8/8 rule, links to the four deployment/runbook documents, the four-category maintenance-login/default-timeout/privilege/retention checks, the external evidence location policy, the authoritative current-production-deploy checks before and after smoke, and the rule that the tested candidate is obtained with `git rev-parse HEAD`. Do not put a guessed/self-referential commit SHA, execution result, user value, database URL, credential, or raw log in the repository.
 
 - [ ] **Step 2: Make Task 9's sole repository commit before testing the candidate**
 
@@ -1576,11 +1648,11 @@ test "$(git rev-list -n 1 v1.0.0)" = "$CANDIDATE_SHA"
 test -z "$(git status --porcelain)"
 ```
 
-The protected release record stores `candidateSha`, production deploy ID, UTC execution date, Node/npm/Compose versions, command exit statuses/counts, 22/22, and the verified external Google artifact reference—never its sensitive inputs, origin value, metadata body, or raw logs. Production preflight/live model metadata verification, migration `051`, tag, current Netlify `published_deploy`, both production metadata checks, and the intervening smoke must all resolve to `CANDIDATE_SHA` and the one verified origin. `PRODUCTION_ORIGIN` is populated only by the protected metadata-readback step and is immutable for the command block; typing or copying an example origin is forbidden. There is no post-evidence repository commit; if any gate, staging check, production metadata check, or smoke fails, fix it in a new commit, discard the stale artifact/tag candidate, capture the new HEAD, and repeat Steps 3–4.
+The protected release record stores `candidateSha`, production deploy ID, UTC execution date, Node/npm/Compose versions, command exit statuses/counts, 22/22 and 8/8, and the verified external Google artifact reference—never its sensitive inputs, origin value, metadata body, or raw logs. Production preflight/live model metadata verification, migration `051`, tag, current Netlify `published_deploy`, both production metadata checks, and the intervening smoke must all resolve to `CANDIDATE_SHA` and the one verified origin. `PRODUCTION_ORIGIN` is populated only by the protected metadata-readback step and is immutable for the command block; typing or copying an example origin is forbidden. There is no post-evidence repository commit; if any gate, staging check, production metadata check, or smoke fails, fix it in a new commit, discard the stale artifact/tag candidate, capture the new HEAD, and repeat Steps 3–4.
 
 ## Plan Completion Gate
 
-Before calling this plan complete, run the roadmap’s global verification gate plus the public/private type diff and offline Netlify build, confirm `docs/testing/acceptance-matrix.md` has 22 populated rows, confirm the account-deletion E2E proves Auth and all inventoried owned-row removal with a non-empty normalized safety-action producer fixture, and verify the unexpired external Google artifact against current HEAD and authoritative staging metadata. Run `npm run preflight:production` from an empty explicit environment containing one exact managed Supabase project across browser/server/maintenance, a fresh canonical 32-byte production HMAC key, and all other required values; then run `npm run verify:browser-secrets` with that protected complete environment to scan names and values. Run `rg -n "OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN" dist src` expecting no matches. Confirm the dedicated maintenance login starts at `statement_timeout='20s'`, the executor's grants remain exact, generation and shopping mutation exact 30-day boundaries plus four-count readback pass, both SQLSTATE `57014` rollback tests pass, and `pg_stat_activity` has no leaked maintenance connection. Finally rerun the authoritative production deploy verifier around smoke, require current `published_deploy`, HEAD, tag, `commit_ref`, and verified smoke origin to equal the candidate contract, and confirm the worktree is clean. Then use `superpowers:verification-before-completion` and report the exact commands and outcomes without reproducing credentials, project refs, origins, metadata, or raw database errors.
+Before calling this plan complete, run the roadmap’s global verification gate plus the public/private type diff and offline Netlify build, confirm `docs/testing/acceptance-matrix.md` has 22 populated MVP rows plus 8 populated guided-planner rows, confirm the account-deletion E2E proves Auth and all inventoried owned-row removal with a non-empty normalized safety-action producer fixture and non-empty idea-menu and `private.generation_regeneration_snapshots` fixtures, and verify the unexpired external Google artifact against current HEAD and authoritative staging metadata. Run `npm run preflight:production` from an empty explicit environment containing one exact managed Supabase project across browser/server/maintenance, a fresh canonical 32-byte production HMAC key, and all other required values; then run `npm run verify:browser-secrets` with that protected complete environment to scan names and values. Run `rg -n "OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN" dist src` expecting no matches. Confirm the dedicated maintenance login starts at `statement_timeout='20s'`, the executor's grants remain exact, generation and shopping mutation exact 30-day boundaries plus four-count readback pass, regeneration snapshots leave only by cascade with their terminal requests, both SQLSTATE `57014` rollback tests pass, and `pg_stat_activity` has no leaked maintenance connection. Finally rerun the authoritative production deploy verifier around smoke, require current `published_deploy`, HEAD, tag, `commit_ref`, and verified smoke origin to equal the candidate contract, and confirm the worktree is clean. Then use `superpowers:verification-before-completion` and report the exact commands and outcomes without reproducing credentials, project refs, origins, metadata, or raw database errors.
 
 ## Official References
 
