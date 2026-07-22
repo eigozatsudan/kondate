@@ -1,13 +1,44 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
-import { deletePlannerDraft, savePlannerDraft } from "./planner-api";
+import type { Tables } from "@/shared/types/database.generated";
+import { deletePlannerDraft, mapPlannerDraft, savePlannerDraft } from "./planner-api";
 
 function clientWithRpc(result: unknown) {
   const rpc = vi.fn().mockResolvedValue(result);
   return { client: { rpc } as unknown as BrowserSupabaseClient, rpc };
 }
 
+const incompleteTargetDraft = {
+  id: "71000000-0000-4000-8000-000000000001",
+  user_id: "72000000-0000-4000-8000-000000000001",
+  meal_type: "dinner",
+  main_ingredients: ["鶏肉"],
+  cuisine_genre: "japanese",
+  target_mode: null,
+  target_member_ids: [],
+  servings: null,
+  time_limit_minutes: null,
+  budget_preference: null,
+  avoid_ingredients: [],
+  memo: "",
+  pantry_selections: [],
+  revision: 1,
+  created_at: "2026-07-01T00:00:00.000Z",
+  updated_at: "2026-07-01T00:00:00.000Z",
+} as unknown as Tables<"generation_drafts">;
+
 describe("planner draft API", () => {
+  it("keeps mode and servings unselected for an incomplete draft", () => {
+    expect(mapPlannerDraft(incompleteTargetDraft)).toMatchObject({
+      targetMode: null,
+      targetMemberIds: [],
+      servings: null,
+      mealType: "dinner",
+      mainIngredients: ["鶏肉"],
+      cuisineGenre: "japanese",
+    });
+  });
+
   it("authoritative revision を削除 RPC に渡す", async () => {
     const { client, rpc } = clientWithRpc({ error: null });
     await deletePlannerDraft(client, 7);
@@ -38,7 +69,9 @@ describe("planner draft API", () => {
           mealType: null,
           mainIngredients: [],
           cuisineGenre: null,
+          targetMode: null,
           targetMemberIds: [],
+          servings: null,
           timeLimitMinutes: null,
           budgetPreference: null,
           avoidIngredients: [],

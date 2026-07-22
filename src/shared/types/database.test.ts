@@ -79,7 +79,9 @@ it("未完成下書きのnullable項目をRPC引数として表現できる", ()
     p_meal_type: null,
     p_main_ingredients: [],
     p_cuisine_genre: null,
+    p_target_mode: null,
     p_target_member_ids: [],
+    p_servings: null,
     p_time_limit_minutes: null,
     p_budget_preference: null,
     p_avoid_ingredients: [],
@@ -89,6 +91,8 @@ it("未完成下書きのnullable項目をRPC引数として表現できる", ()
 
   expectTypeOf(args).toExtend<SaveDraftArgs>();
   expect(args.p_meal_type).toBeNull();
+  expect(args.p_target_mode).toBeNull();
+  expect(args.p_servings).toBeNull();
 });
 
 function acceptsIncompleteDraft(client: BrowserSupabaseClient, args: SaveDraftArgs) {
@@ -104,7 +108,9 @@ const invalidMemo = {
   p_meal_type: null,
   p_main_ingredients: [],
   p_cuisine_genre: null,
+  p_target_mode: null,
   p_target_member_ids: [],
+  p_servings: null,
   p_time_limit_minutes: null,
   p_budget_preference: null,
   p_avoid_ingredients: [],
@@ -118,7 +124,12 @@ void invalidMemo;
 type GeneratedSaveDraft = GeneratedDatabase["public"]["Functions"]["save_generation_draft"];
 type AppSaveDraft = Database["public"]["Functions"]["save_generation_draft"];
 type NullableDraftArg =
-  "p_meal_type" | "p_cuisine_genre" | "p_time_limit_minutes" | "p_budget_preference";
+  | "p_meal_type"
+  | "p_cuisine_genre"
+  | "p_target_mode"
+  | "p_servings"
+  | "p_time_limit_minutes"
+  | "p_budget_preference";
 type GeneratedReserveGeneration = GeneratedDatabase["public"]["Functions"]["reserve_ai_generation"];
 type NullableReserveGenerationArg =
   "p_draft_id" | "p_draft_revision" | "p_source_menu_id" | "p_replace_dish_id" | "p_change_reason";

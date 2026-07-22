@@ -93,17 +93,17 @@ insert into auth.users (id,instance_id,aud,role,email) values
 -- 計画の fixture は version のみ列挙していたが、既存 check と両立させるために change_reason を補う。
 insert into public.menus (
   id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
-  preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+  preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
   food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,version
 ) values
   ('b1000000-0000-4000-8000-000000000001','a1000000-0000-4000-8000-000000000001',
-    'dinner','japanese',2,30,'{}','{}',repeat('a',64),'allergens-v1','food-v1','menu-v1',
+    'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','allergens-v1','food-v1','menu-v1',
     'c1000000-0000-4000-8000-000000000001',null,null,1),
   ('b1000000-0000-4000-8000-000000000002','a1000000-0000-4000-8000-000000000001',
-    'dinner','japanese',2,30,'{}','{}',repeat('a',64),'allergens-v1','food-v1','menu-v1',
+    'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','allergens-v1','food-v1','menu-v1',
     'c1000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000001','simpler',2),
   ('b2000000-0000-4000-8000-000000000001','a2000000-0000-4000-8000-000000000002',
-    'dinner','japanese',2,30,'{}','{}',repeat('b',64),'allergens-v1','food-v1','menu-v1',
+    'dinner','japanese',2,30,'{}','{}',repeat('b',64),'household','allergens-v1','food-v1','menu-v1',
     'c1000000-0000-4000-8000-000000000001',null,null,1);
 insert into public.menu_target_members (
   id,menu_id,user_id,household_member_id,household_member_user_id,
@@ -300,10 +300,10 @@ declare
 begin
   insert into public.menus (
     id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
-    preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+    preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
     food_safety_rule_version,output_schema_version,derivation_group_id,version
   ) values (
-    v_menu,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('c',64),
+    v_menu,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('c',64),'household',
     'allergens-v1','food-v1','menu-v1','c3000000-0000-4000-8000-000000000001',1
   );
   for v_i in 1..10 loop
@@ -356,10 +356,10 @@ begin
 
   insert into public.menus (
     id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
-    preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+    preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
     food_safety_rule_version,output_schema_version,derivation_group_id,version
   ) values (
-    v_menu,v_owner,'dinner','japanese',2,20,'{}','{}',repeat('d',64),
+    v_menu,v_owner,'dinner','japanese',2,20,'{}','{}',repeat('d',64),'household',
     'jp-caa-2026-04.v1','jp-caa-child-shape-2026-07.v1','2026-07-11.v1',
     'c4000000-0000-4000-8000-000000000001',1
   );

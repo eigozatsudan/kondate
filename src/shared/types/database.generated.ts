@@ -260,7 +260,9 @@ export type Database = {
           meal_type: string
           memo: string
           pantry_selections: Json
+          servings: number | null
           target_member_ids: string[]
+          target_mode: string
           time_limit_minutes: number | null
           user_id: string
         }
@@ -275,7 +277,9 @@ export type Database = {
           meal_type: string
           memo: string
           pantry_selections: Json
+          servings?: number | null
           target_member_ids: string[]
+          target_mode: string
           time_limit_minutes?: number | null
           user_id: string
         }
@@ -290,7 +294,9 @@ export type Database = {
           meal_type?: string
           memo?: string
           pantry_selections?: Json
+          servings?: number | null
           target_member_ids?: string[]
+          target_mode?: string
           time_limit_minutes?: number | null
           user_id?: string
         }
@@ -373,6 +379,10 @@ export type Database = {
         Args: { p_max_count: number; p_value: string[] }
         Returns: boolean
       }
+      is_valid_submission_target_member_ids: {
+        Args: { p_target_mode: string; p_value: string[] }
+        Returns: boolean
+      }
       lock_and_assert_current_safety_fingerprint: {
         Args: {
           p_expected: string
@@ -401,6 +411,7 @@ export type Database = {
           p_safety_fingerprint: string
           p_safety_snapshot: Json
           p_target_members: Json
+          p_target_mode: string
         }
         Returns: string
       }
@@ -650,7 +661,9 @@ export type Database = {
           memo: string
           pantry_selections: Json
           revision: number
+          servings: number | null
           target_member_ids: string[]
+          target_mode: string | null
           time_limit_minutes: number | null
           updated_at: string
           user_id: string
@@ -667,7 +680,9 @@ export type Database = {
           memo?: string
           pantry_selections?: Json
           revision?: number
+          servings?: number | null
           target_member_ids?: string[]
+          target_mode?: string | null
           time_limit_minutes?: number | null
           updated_at?: string
           user_id: string
@@ -684,7 +699,9 @@ export type Database = {
           memo?: string
           pantry_selections?: Json
           revision?: number
+          servings?: number | null
           target_member_ids?: string[]
+          target_mode?: string | null
           time_limit_minutes?: number | null
           updated_at?: string
           user_id?: string
@@ -1296,13 +1313,13 @@ export type Database = {
       }
       menus: {
         Row: {
-          allergen_dictionary_version: string
+          allergen_dictionary_version: string | null
           change_reason: string | null
           change_reason_custom: string | null
           created_at: string
           cuisine_genre: string
           derivation_group_id: string
-          food_safety_rule_version: string
+          food_safety_rule_version: string | null
           id: string
           is_favorite: boolean
           is_selected: boolean
@@ -1314,18 +1331,19 @@ export type Database = {
           safety_snapshot: Json
           selected_at: string | null
           servings: number
+          target_mode: string
           total_elapsed_minutes: number
           user_id: string
           version: number
         }
         Insert: {
-          allergen_dictionary_version: string
+          allergen_dictionary_version?: string | null
           change_reason?: string | null
           change_reason_custom?: string | null
           created_at?: string
           cuisine_genre: string
           derivation_group_id: string
-          food_safety_rule_version: string
+          food_safety_rule_version?: string | null
           id?: string
           is_favorite?: boolean
           is_selected?: boolean
@@ -1337,18 +1355,19 @@ export type Database = {
           safety_snapshot: Json
           selected_at?: string | null
           servings: number
+          target_mode: string
           total_elapsed_minutes: number
           user_id: string
           version?: number
         }
         Update: {
-          allergen_dictionary_version?: string
+          allergen_dictionary_version?: string | null
           change_reason?: string | null
           change_reason_custom?: string | null
           created_at?: string
           cuisine_genre?: string
           derivation_group_id?: string
-          food_safety_rule_version?: string
+          food_safety_rule_version?: string | null
           id?: string
           is_favorite?: boolean
           is_selected?: boolean
@@ -1360,6 +1379,7 @@ export type Database = {
           safety_snapshot?: Json
           selected_at?: string | null
           servings?: number
+          target_mode?: string
           total_elapsed_minutes?: number
           user_id?: string
           version?: number
@@ -2117,7 +2137,9 @@ export type Database = {
           meal_type: string
           memo: string
           pantry_selections: Json
+          servings: number
           target_member_ids: string[]
+          target_mode: string
           time_limit_minutes: number
         }[]
       }
@@ -2231,7 +2253,9 @@ export type Database = {
           p_meal_type: string
           p_memo: string
           p_pantry_selections: Json
+          p_servings: number
           p_target_member_ids: string[]
+          p_target_mode: string
           p_time_limit_minutes: number
         }
         Returns: {
@@ -2246,7 +2270,9 @@ export type Database = {
           memo: string
           pantry_selections: Json
           revision: number
+          servings: number | null
           target_member_ids: string[]
+          target_mode: string | null
           time_limit_minutes: number | null
           updated_at: string
           user_id: string

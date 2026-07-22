@@ -19,14 +19,16 @@ export class DraftRevisionConflictError extends Error {
   }
 }
 
-function mapDraft(row: Tables<"generation_drafts">): PlannerDraft {
+export function mapPlannerDraft(row: Tables<"generation_drafts">): PlannerDraft {
   return plannerDraftSchema.parse({
     id: row.id,
     userId: row.user_id,
     mealType: row.meal_type,
     mainIngredients: row.main_ingredients,
     cuisineGenre: row.cuisine_genre,
+    targetMode: row.target_mode,
     targetMemberIds: row.target_member_ids,
+    servings: row.servings,
     timeLimitMinutes: row.time_limit_minutes,
     budgetPreference: row.budget_preference,
     avoidIngredients: row.avoid_ingredients,
@@ -48,7 +50,7 @@ export async function getPlannerDraft(
     .eq("user_id", userId)
     .maybeSingle();
   if (error !== null) throw new Error("献立条件の下書きを読み込めませんでした");
-  return data === null ? null : mapDraft(data);
+  return data === null ? null : mapPlannerDraft(data);
 }
 
 export async function savePlannerDraft(
@@ -62,7 +64,9 @@ export async function savePlannerDraft(
     p_meal_type: input.mealType,
     p_main_ingredients: input.mainIngredients,
     p_cuisine_genre: input.cuisineGenre,
+    p_target_mode: input.targetMode,
     p_target_member_ids: input.targetMemberIds,
+    p_servings: input.servings,
     p_time_limit_minutes: input.timeLimitMinutes,
     p_budget_preference: input.budgetPreference,
     p_avoid_ingredients: input.avoidIngredients,
@@ -73,7 +77,7 @@ export async function savePlannerDraft(
     if (error.message.includes("draft_revision_conflict")) throw new DraftRevisionConflictError();
     throw new Error("献立条件を保存できませんでした");
   }
-  return mapDraft(data);
+  return mapPlannerDraft(data);
 }
 
 export async function deletePlannerDraft(

@@ -30,7 +30,9 @@ const emptyDraft: PlannerDraftInput = {
   mealType: null,
   mainIngredients: [],
   cuisineGenre: null,
+  targetMode: null,
   targetMemberIds: [],
+  servings: null,
   timeLimitMinutes: null,
   budgetPreference: null,
   avoidIngredients: [],
@@ -65,17 +67,29 @@ function sanitizeDraft(
   eligibleMemberIds: readonly string[],
 ): PlannerDraftInput {
   const eligibleIds = new Set(eligibleMemberIds);
-  return draft === null
-    ? {
-        ...emptyDraft,
-        targetMemberIds: [...eligibleIds].slice(0, targetMemberLimit),
-      }
-    : {
-        ...draft,
-        targetMemberIds: draft.targetMemberIds
-          .filter((id) => eligibleIds.has(id))
-          .slice(0, targetMemberLimit),
-      };
+  if (draft === null) {
+    const targetMemberIds = [...eligibleIds].slice(0, targetMemberLimit);
+    return {
+      ...emptyDraft,
+      targetMemberIds,
+      targetMode: targetMemberIds.length > 0 ? "household" : null,
+      servings: null,
+    };
+  }
+  if (draft.targetMode === "idea") {
+    // idea 対象は家族選択を持たないため、人数はそのまま保持する。
+    return { ...draft, targetMemberIds: [] };
+  }
+  const targetMemberIds = draft.targetMemberIds
+    .filter((id) => eligibleIds.has(id))
+    .slice(0, targetMemberLimit);
+  return {
+    ...draft,
+    targetMemberIds,
+    // household の無効家族を除いた結果 0 件になっても idea へ変えず、未選択へ戻す。
+    targetMode: targetMemberIds.length > 0 ? "household" : null,
+    servings: null,
+  };
 }
 
 async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData> {

@@ -18,12 +18,12 @@ insert into public.pantry_items (id, user_id, name, quantity, unit) values
 
 insert into public.menus (
   id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
-  preference_snapshot, safety_snapshot, safety_fingerprint,
+  preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
   allergen_dictionary_version, food_safety_rule_version, output_schema_version,
   derivation_group_id
 ) values
-  ('40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'dinner', 'japanese', 2, 30, '{}', '{}', repeat('a', 64), 'dict-v1', 'rule-v1', 'schema-v1', '40000000-0000-0000-0000-000000000001'),
-  ('40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'dinner', 'western', 2, 30, '{}', '{}', repeat('b', 64), 'dict-v1', 'rule-v1', 'schema-v1', '40000000-0000-0000-0000-000000000002');
+  ('40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'dinner', 'japanese', 2, 30, '{}', '{}', repeat('a', 64), 'household', 'dict-v1', 'rule-v1', 'schema-v1', '40000000-0000-0000-0000-000000000001'),
+  ('40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'dinner', 'western', 2, 30, '{}', '{}', repeat('b', 64), 'household', 'dict-v1', 'rule-v1', 'schema-v1', '40000000-0000-0000-0000-000000000002');
 
 insert into public.menu_target_members (
   id, menu_id, user_id, household_member_id, household_member_user_id,
@@ -244,29 +244,29 @@ select throws_ok(
 );
 
 select throws_ok(
-  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1',gen_random_uuid(),'40000000-0000-0000-0000-000000000001','custom',' ')$$,
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','dict-v1','rule-v1','schema-v1',gen_random_uuid(),'40000000-0000-0000-0000-000000000001','custom',' ')$$,
   '23514', null, 'custom change reason rejects blank detail'
 );
 select throws_ok(
-  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,change_reason) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1',gen_random_uuid(),'simpler')$$,
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,change_reason) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','dict-v1','rule-v1','schema-v1',gen_random_uuid(),'simpler')$$,
   '23514', null, 'root menu rejects a change reason'
 );
 select throws_ok(
-  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1',gen_random_uuid(),'40000000-0000-0000-0000-000000000001')$$,
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','dict-v1','rule-v1','schema-v1',gen_random_uuid(),'40000000-0000-0000-0000-000000000001')$$,
   '23514', null, 'derived menu requires a change reason'
 );
 select throws_ok(
-  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1',gen_random_uuid(),'40000000-0000-0000-0000-000000000001','simpler','余計')$$,
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','dict-v1','rule-v1','schema-v1',gen_random_uuid(),'40000000-0000-0000-0000-000000000001','simpler','余計')$$,
   '23514', null, 'non-custom derived menu rejects custom detail'
 );
 -- 同一 derivation_group では version 一意。親 root が version=1 のため 2 を明示する。
 select lives_ok(
-  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,version) values ('49000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','simpler',2)$$,
+  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,version) values ('49000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','simpler',2)$$,
   'derived menu accepts a non-custom reason without detail'
 );
 delete from public.menus where id = '49000000-0000-0000-0000-000000000001';
 select lives_ok(
-  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom,version) values ('49000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','custom','食材変更',2)$$,
+  $$insert into public.menus (id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id,parent_menu_id,change_reason,change_reason_custom,version) values ('49000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','dict-v1','rule-v1','schema-v1','40000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','custom','食材変更',2)$$,
   'custom derived menu accepts canonical detail'
 );
 delete from public.menus where id = '49000000-0000-0000-0000-000000000002';
@@ -437,6 +437,24 @@ select ok(
   and exists(select 1 from public.menu_safety_actions where user_id = '10000000-0000-0000-0000-000000000002')
   and (select count(*) = 5 from public.menu_label_confirmations where user_id = '10000000-0000-0000-0000-000000000002'),
   'another owner entire graph survives unrelated root deletion'
+);
+
+-- target_mode='household'は両versionをNOT NULLのまま要求し、'idea'は両versionをNULLにする
+select throws_ok(
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'household',null,'rule-v1','schema-v1',gen_random_uuid())$$,
+  '23514', null, 'household menu requires an allergen dictionary version'
+);
+select throws_ok(
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'idea','dict-v1','rule-v1','schema-v1',gen_random_uuid())$$,
+  '23514', null, 'idea menu forbids a populated allergen dictionary version'
+);
+select throws_ok(
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',2,30,'{}','{}',repeat('a',64),'unknown',null,null,'schema-v1',gen_random_uuid())$$,
+  '23514', null, 'menu target_mode rejects an undeclared value'
+);
+select lives_ok(
+  $$insert into public.menus (user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,food_safety_rule_version,output_schema_version,derivation_group_id) values ('10000000-0000-0000-0000-000000000001','dinner','japanese',3,30,'{}','{}',repeat('a',64),'idea',null,null,'schema-v1',gen_random_uuid())$$,
+  'idea menu with no safety-version snapshot is accepted'
 );
 
 select * from finish();

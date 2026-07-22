@@ -121,11 +121,11 @@ update public.household_members set status='complete'
 
 insert into public.menus (
   id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
-  preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+  preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
   food_safety_rule_version,output_schema_version,derivation_group_id,version
 ) values (
   'f4000000-0000-4000-8000-000000000001','f1000000-0000-4000-8000-000000000001',
-  'dinner','japanese',2,30,'{}','{}',repeat('a',64),'allergens-v1','food-v1','menu-v1',
+  'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','allergens-v1','food-v1','menu-v1',
   'f5000000-0000-4000-8000-000000000001',1
 );
 insert into public.menu_target_members (
@@ -542,10 +542,10 @@ begin
   update public.household_members set status='complete' where id=v_member;
   insert into public.menus (
     id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
-    preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+    preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
     food_safety_rule_version,output_schema_version,derivation_group_id,version
   ) values (
-    v_menu,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('a',64),
+    v_menu,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household',
     'allergens-v1','food-v1','menu-v1','c6000000-0000-4000-8000-000000000008',1
   );
   insert into public.menu_target_members (
@@ -680,12 +680,12 @@ begin
 
   insert into public.menus (
     id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
-    preference_snapshot,safety_snapshot,safety_fingerprint,allergen_dictionary_version,
+    preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
     food_safety_rule_version,output_schema_version,derivation_group_id,version
   ) values
-    (v_menu_a,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('a',64),
+    (v_menu_a,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household',
       'allergens-v1','food-v1','menu-v1','c7000000-0000-4000-8000-000000000007',1),
-    (v_menu_b,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('b',64),
+    (v_menu_b,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('b',64),'household',
       'allergens-v1','food-v1','menu-v1','c7000000-0000-4000-8000-000000000017',1);
   insert into public.menu_target_members (
     id,menu_id,user_id,household_member_id,household_member_user_id,

@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(43);
+select plan(46);
 
 select has_table('public', 'menus', 'menus exists');
 select has_table('public', 'menu_target_members', 'menu_target_members exists');
@@ -16,6 +16,12 @@ select has_table('public', 'menu_label_confirmations', 'menu_label_confirmations
 select has_column(
   'public', 'menu_label_confirmations', 'source_text_snapshot',
   'label confirmations preserve a human-readable source snapshot'
+);
+select has_column('public', 'menus', 'target_mode', 'menus records a target mode');
+select col_not_null('public', 'menus', 'target_mode', 'menu target mode is not null');
+select col_is_null(
+  'public', 'menus', 'allergen_dictionary_version',
+  'menu allergen dictionary version is mode-conditionally nullable'
 );
 
 select ok((select c.relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relname = 'menus'), 'menus has RLS enabled');

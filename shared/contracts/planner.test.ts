@@ -3,14 +3,30 @@ import { detectUnsupportedMedicalRequest } from "../safety/medical-scope.js";
 import {
   collectPlannerRequestText,
   plannerDraftInputSchema,
+  plannerDraftSchema,
   plannerSubmissionSchema,
 } from "./planner.js";
+
+const memberId = "30000000-0000-4000-8000-000000000001";
 
 const incompleteDraft = {
   mealType: null,
   mainIngredients: [],
   cuisineGenre: null,
+  targetMode: null,
   targetMemberIds: [],
+  servings: null,
+  timeLimitMinutes: null,
+  budgetPreference: null,
+  avoidIngredients: [],
+  memo: "",
+  pantrySelections: [],
+};
+
+const validBase = {
+  mealType: "dinner",
+  mainIngredients: ["鶏肉"],
+  cuisineGenre: "japanese",
   timeLimitMinutes: null,
   budgetPreference: null,
   avoidIngredients: [],
@@ -27,13 +43,63 @@ describe("planner contracts", () => {
     expect(plannerSubmissionSchema.safeParse(incompleteDraft).success).toBe(false);
     expect(
       plannerSubmissionSchema.safeParse({
+        ...validBase,
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        servings: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    { targetMode: "idea", targetMemberIds: [memberId], servings: 2 },
+    { targetMode: "idea", targetMemberIds: [], servings: null },
+    { targetMode: "household", targetMemberIds: [], servings: null },
+    { targetMode: "household", targetMemberIds: [memberId], servings: 2 },
+  ])("rejects contradictory target values", (target) => {
+    expect(plannerSubmissionSchema.safeParse({ ...validBase, ...target }).success).toBe(false);
+  });
+
+  it("accepts an idea submission with no target members and a servings count", () => {
+    expect(
+      plannerSubmissionSchema.safeParse({
+        ...validBase,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 3,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps mode and servings unselected for an incomplete draft", () => {
+    expect(
+      plannerDraftInputSchema.parse({
         ...incompleteDraft,
         mealType: "dinner",
         mainIngredients: ["鶏肉"],
         cuisineGenre: "japanese",
-        targetMemberIds: ["30000000-0000-4000-8000-000000000001"],
-      }).success,
-    ).toBe(true);
+      }),
+    ).toMatchObject({
+      targetMode: null,
+      targetMemberIds: [],
+      servings: null,
+      mealType: "dinner",
+      mainIngredients: ["鶏肉"],
+      cuisineGenre: "japanese",
+    });
+  });
+
+  it.each([
+    { targetMode: "household", targetMemberIds: [], servings: null },
+    { targetMode: "household", targetMemberIds: [memberId], servings: 2 },
+    { targetMode: "idea", targetMemberIds: [memberId], servings: 2 },
+    { targetMode: "idea", targetMemberIds: [], servings: null },
+    { targetMode: null, targetMemberIds: [memberId], servings: null },
+    { targetMode: null, targetMemberIds: [], servings: 2 },
+  ])("rejects contradictory draft target values", (target) => {
+    expect(plannerDraftInputSchema.safeParse({ ...incompleteDraft, ...target }).success).toBe(
+      false,
+    );
   });
 
   it("limits memo to 200 characters", () => {
@@ -46,9 +112,9 @@ describe("planner contracts", () => {
     expect(
       plannerDraftInputSchema.parse({
         ...incompleteDraft,
-        mainIngredients: ["\u00a0🍳\ufeff"],
-        avoidIngredients: ["\u2028乳\u2029"],
-        memo: "\ufeffメモ\u00a0",
+        mainIngredients: [" 🍳﻿"],
+        avoidIngredients: [" 乳 "],
+        memo: "﻿メモ ",
       }),
     ).toMatchObject({
       mainIngredients: ["🍳"],
@@ -93,5 +159,20 @@ describe("planner contracts", () => {
         }),
       ),
     ).toContain("weaning_food");
+  });
+
+  it("keeps the full stored draft row consistent with the same target/servings rules", () => {
+    expect(
+      plannerDraftSchema.safeParse({
+        id: "31000000-0000-4000-8000-000000000001",
+        userId: "32000000-0000-4000-8000-000000000001",
+        ...incompleteDraft,
+        targetMode: "household",
+        targetMemberIds: [],
+        revision: 0,
+        createdAt: "2026-07-11T00:00:00+09:00",
+        updatedAt: "2026-07-11T00:00:00+09:00",
+      }).success,
+    ).toBe(false);
   });
 });

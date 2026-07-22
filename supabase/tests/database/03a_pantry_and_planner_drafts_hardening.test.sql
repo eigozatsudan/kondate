@@ -83,9 +83,9 @@ select ok(
   'PUBLIC has no execute grant on private draft helpers'
 );
 select ok(
-  coalesce(has_function_privilege('authenticated', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,uuid[],smallint,text,text[],text,jsonb)'), 'EXECUTE'), false)
-  and not coalesce(has_function_privilege('anon', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,uuid[],smallint,text,text[],text,jsonb)'), 'EXECUTE'), false)
-  and not coalesce(has_function_privilege('service_role', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,uuid[],smallint,text,text[],text,jsonb)'), 'EXECUTE'), false),
+  coalesce(has_function_privilege('authenticated', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text[],text,jsonb)'), 'EXECUTE'), false)
+  and not coalesce(has_function_privilege('anon', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text[],text,jsonb)'), 'EXECUTE'), false)
+  and not coalesce(has_function_privilege('service_role', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text[],text,jsonb)'), 'EXECUTE'), false),
   'only authenticated can execute the save RPC'
 );
 select ok(
@@ -100,7 +100,7 @@ select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000012
 insert into public.pantry_items (id, user_id, name, quantity, unit)
 values ('11000000-0000-0000-0000-000000000012', '10000000-0000-0000-0000-000000000012', '所有者2の食材', 1, '個');
 select public.save_generation_draft(
-  0, 'lunch', array['所有者2の食材'], 'western', array[]::uuid[],
+  0, 'lunch', array['所有者2の食材'], 'western', null, array[]::uuid[], null::smallint,
   15::smallint, 'economy', array[]::text[], '', '[]'::jsonb
 );
 
@@ -192,70 +192,71 @@ select throws_ok(
 );
 
 select throws_ok(
-  $$select public.save_generation_draft(null,null,array[]::text[],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(null,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '22023', 'invalid_draft_save', 'NULL expected revision is invalid'
 );
 select throws_ok(
-  $$select public.save_generation_draft(-1,null,array[]::text[],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(-1,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '22023', 'invalid_draft_save', 'negative expected revision is invalid'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[null::text],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[null::text],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'main ingredients reject NULL elements'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[['鶏肉']]::text[],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[['鶏肉']]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'main ingredients reject multidimensional arrays'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array['   ']::text[],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array['   ']::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'main ingredients reject blank elements'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[U&'\00A0鶏肉\FEFF']::text[],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[U&'\00A0鶏肉\FEFF']::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'main ingredients reject Unicode padding'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[repeat('🍳',81)]::text[],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[repeat('🍳',81)]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'main ingredients reject elements above 80 code points'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[null::uuid],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,'household',array[null::uuid],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'target members reject NULL elements'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[['20000000-0000-0000-0000-000000000001'::uuid]],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,'household',array[['20000000-0000-0000-0000-000000000001'::uuid]],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'target members reject multidimensional arrays'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[]::uuid[],null,null,array[null::text],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[null::text],'','[]'::jsonb)$$,
   '23514', null, 'avoid ingredients reject NULL elements'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[]::uuid[],null,null,array[['乳']]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[['乳']]::text[],'','[]'::jsonb)$$,
   '23514', null, 'avoid ingredients reject multidimensional arrays'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[]::uuid[],null,null,array[U&'\2028乳']::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[U&'\2028乳']::text[],'','[]'::jsonb)$$,
   '23514', null, 'avoid ingredients reject Unicode padding'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[]::uuid[],null,null,array[repeat('x',81)]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[repeat('x',81)]::text[],'','[]'::jsonb)$$,
   '23514', null, 'avoid ingredients reject overlong elements'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[]::uuid[],null,null,array[]::text[],U&'\FEFFmemo','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],U&'\FEFFmemo','[]'::jsonb)$$,
   '23514', null, 'memo rejects non-canonical padding'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,array[]::text[],null,array[]::uuid[],null,null,array[]::text[],repeat('🍳',201),'[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],repeat('🍳',201),'[]'::jsonb)$$,
   '23514', null, 'memo rejects more than 200 code points'
 );
 
 select is(
   (public.save_generation_draft(
-    0, null, array_fill(repeat('🍳',80), array[8]), null,
+    0, null, array_fill(repeat('🍳',80), array[8]), null, 'household',
     array(select ('20000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid from generate_series(1,20) as values_(i)),
+    null::smallint,
     null, null, array(select '避ける' || i from generate_series(1,20) as values_(i)), repeat('🍳',200),
     (select jsonb_agg(jsonb_build_object('pantryItemId',('21000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,'priority','prefer_use')) from generate_series(1,50) as values_(i))
   )).revision,
@@ -281,26 +282,26 @@ select is(
   'create round-trips every nullable and collection payload field'
 );
 select throws_ok(
-  $$select public.save_generation_draft(1,null,array(select '食材' || i from generate_series(1,9) as values_(i)),null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(1,null,array(select '食材' || i from generate_series(1,9) as values_(i)),null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'main ingredient count rejects nine'
 );
 select throws_ok(
-  $$select public.save_generation_draft(1,null,array[]::text[],null,array(select ('22000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid from generate_series(1,21) as values_(i)),null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(1,null,array[]::text[],null,'household',array(select ('22000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid from generate_series(1,21) as values_(i)),null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   '23514', null, 'target member count rejects twenty-one'
 );
 select throws_ok(
-  $$select public.save_generation_draft(1,null,array[]::text[],null,array[]::uuid[],null,null,array(select '回避' || i from generate_series(1,21) as values_(i)),'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(1,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array(select '回避' || i from generate_series(1,21) as values_(i)),'','[]'::jsonb)$$,
   '23514', null, 'avoid ingredient count rejects twenty-one'
 );
 select throws_ok(
-  $$select public.save_generation_draft(1,null,array[]::text[],null,array[]::uuid[],null,null,array[]::text[],'', (select jsonb_agg(jsonb_build_object('pantryItemId',('23000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,'priority','must_use')) from generate_series(1,51) as values_(i)))$$,
+  $$select public.save_generation_draft(1,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'', (select jsonb_agg(jsonb_build_object('pantryItemId',('23000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,'priority','must_use')) from generate_series(1,51) as values_(i)))$$,
   '23514', null, 'pantry selection count rejects fifty-one'
 );
 
 select is(
   (public.save_generation_draft(
-    1, 'dinner', array['鶏肉','白菜'], 'japanese',
-    array['20000000-0000-0000-0000-000000000001'::uuid], 30::smallint,
+    1, 'dinner', array['鶏肉','白菜'], 'japanese', 'household',
+    array['20000000-0000-0000-0000-000000000001'::uuid], null::smallint, 30::smallint,
     'standard', array['乳'], '更新',
     '[{"pantryItemId":"21000000-0000-0000-0000-000000000001","priority":"must_use"}]'::jsonb
   )).revision,
@@ -324,12 +325,12 @@ select is(
   'update round-trips the complete payload'
 );
 select throws_ok(
-  $$select public.save_generation_draft(0,null,null,null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(0,null,null,null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   'P0001', 'draft_revision_conflict',
   'expected revision zero conflicts with an active draft before payload validation'
 );
 select throws_ok(
-  $$select public.save_generation_draft(1,null,array[]::text[],null,array[]::uuid[],null,null,array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(1,null,array[]::text[],null,null,array[]::uuid[],null::smallint,null,null,array[]::text[],'','[]'::jsonb)$$,
   'P0001', 'draft_revision_conflict', 'stale save is rejected'
 );
 select is(public.delete_generation_draft(2), 3::bigint, 'delete increments the authoritative revision');
@@ -347,12 +348,12 @@ select throws_ok(
   '22023', 'invalid_draft_save', 'negative delete revision is invalid'
 );
 select is(
-  (public.save_generation_draft(0,'dinner',array['再作成'],'japanese',array[]::uuid[],30::smallint,'standard',array[]::text[],'','[]'::jsonb)).revision,
+  (public.save_generation_draft(0,'dinner',array['再作成'],'japanese',null,array[]::uuid[],null::smallint,30::smallint,'standard',array[]::text[],'','[]'::jsonb)).revision,
   4::bigint,
   'recreation continues the tombstone revision'
 );
 select throws_ok(
-  $$select public.save_generation_draft(2,'dinner',array['古い画面'],'japanese',array[]::uuid[],30::smallint,'standard',array[]::text[],'','[]'::jsonb)$$,
+  $$select public.save_generation_draft(2,'dinner',array['古い画面'],'japanese',null,array[]::uuid[],null::smallint,30::smallint,'standard',array[]::text[],'','[]'::jsonb)$$,
   'P0001', 'draft_revision_conflict', 'pre-delete revision cannot overwrite recreation'
 );
 

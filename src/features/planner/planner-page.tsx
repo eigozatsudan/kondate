@@ -156,7 +156,12 @@ export function PlannerForm({
       setIsOpeningEmergencyMenus(false);
       setGenerationError("作る相手の条件が変わったため、緊急献立への移動を中止しました。");
     }
-    const next = { ...value, targetMemberIds: reconciledTargetMemberIds };
+    const next = {
+      ...value,
+      targetMemberIds: reconciledTargetMemberIds,
+      targetMode: reconciledTargetMemberIds.length > 0 ? ("household" as const) : null,
+      servings: null,
+    };
     setValue(next);
     onChange(next);
   }, [eligibleMemberIds, onChange, value]);
@@ -186,10 +191,13 @@ export function PlannerForm({
                       value.targetMemberIds.length >= targetMemberLimit)
                   }
                   onChange={(event) => {
+                    const nextTargetMemberIds = event.target.checked
+                      ? [...value.targetMemberIds, member.id]
+                      : value.targetMemberIds.filter((id) => id !== member.id);
                     update({
-                      targetMemberIds: event.target.checked
-                        ? [...value.targetMemberIds, member.id]
-                        : value.targetMemberIds.filter((id) => id !== member.id),
+                      targetMemberIds: nextTargetMemberIds,
+                      targetMode: nextTargetMemberIds.length > 0 ? "household" : null,
+                      servings: null,
                     });
                   }}
                 />

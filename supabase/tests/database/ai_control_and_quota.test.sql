@@ -12,27 +12,27 @@ insert into auth.users (
    'authenticated', 'authenticated', 'quota-b@example.invalid', '', '{}'::jsonb, '{}'::jsonb, now(), now());
 
 insert into public.generation_drafts (
-  id, user_id, meal_type, main_ingredients, cuisine_genre, target_member_ids,
-  time_limit_minutes, budget_preference, avoid_ingredients, memo,
+  id, user_id, meal_type, main_ingredients, cuisine_genre, target_mode, target_member_ids,
+  servings, time_limit_minutes, budget_preference, avoid_ingredients, memo,
   pantry_selections, revision
 ) values (
   '30000000-0000-4000-8000-000000000001',
   '10000000-0000-4000-8000-000000000001',
-  'dinner', array['鶏肉'], 'japanese',
+  'dinner', array['鶏肉'], 'japanese', 'household',
   array['10000000-0000-4000-8000-000000000001'::uuid],
-  30, 'standard', array[]::text[], '', '[]'::jsonb, 1
+  null, 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
 );
 
 insert into public.generation_drafts (
-  id, user_id, meal_type, main_ingredients, cuisine_genre, target_member_ids,
-  time_limit_minutes, budget_preference, avoid_ingredients, memo,
+  id, user_id, meal_type, main_ingredients, cuisine_genre, target_mode, target_member_ids,
+  servings, time_limit_minutes, budget_preference, avoid_ingredients, memo,
   pantry_selections, revision
 ) values (
   '30000000-0000-4000-8000-000000000002',
   '10000000-0000-4000-8000-000000000002',
-  'lunch', array['豆腐'], 'chinese',
+  'lunch', array['豆腐'], 'chinese', 'household',
   array['10000000-0000-4000-8000-000000000002'::uuid],
-  15, 'economy', array['えび'], '辛さ控えめ', '[]'::jsonb, 2
+  null, 15, 'economy', array['えび'], '辛さ控えめ', '[]'::jsonb, 2
 );
 
 select tests.create_supabase_user(
@@ -771,21 +771,21 @@ select ok(
     not has_function_privilege(
       'service_role',
       to_regprocedure(
-        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,text,jsonb,jsonb)'
       ),
       'EXECUTE'
     )
     and not has_function_privilege(
       'anon',
       to_regprocedure(
-        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,text,jsonb,jsonb)'
       ),
       'EXECUTE'
     )
     and not has_function_privilege(
       'authenticated',
       to_regprocedure(
-        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,jsonb,jsonb)'
+        'private.persist_validated_menu(private.ai_generation_requests,jsonb,jsonb,jsonb,text,text,text,text,jsonb,jsonb)'
       ),
       'EXECUTE'
     ),
@@ -1319,24 +1319,24 @@ select is(
 select throws_ok($$
   insert into private.generation_draft_submission_versions(
     draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
-    target_member_ids,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
     pantry_selections
   ) values (
     '30000000-0000-4000-8000-000000000004',
     '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
-    'any', array['10000000-0000-4000-8000-000000000002'::uuid], 20,
+    'any', 'household', array['10000000-0000-4000-8000-000000000002'::uuid], null, 20,
     'standard', array[]::text[], '', '[]'::jsonb
   )
 $$, '23514', null, 'the immutable snapshot rejects an invalid time limit');
 select throws_ok($$
   insert into private.generation_draft_submission_versions(
     draft_id,user_id,draft_revision,meal_type,main_ingredients,cuisine_genre,
-    target_member_ids,time_limit_minutes,budget_preference,avoid_ingredients,memo,
+    target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,avoid_ingredients,memo,
     pantry_selections
   ) values (
     '30000000-0000-4000-8000-000000000005',
     '10000000-0000-4000-8000-000000000002', 1, 'breakfast', array['ごはん'],
-    'any', array['10000000-0000-4000-8000-000000000002'::uuid], 15,
+    'any', 'household', array['10000000-0000-4000-8000-000000000002'::uuid], null, 15,
     'luxury', array[]::text[], '', '[]'::jsonb
   )
 $$, '23514', null, 'the immutable snapshot rejects an invalid budget preference');
@@ -1580,10 +1580,10 @@ begin
   values(v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
     'authenticated','deleted-reserve@example.invalid','','{}','{}',now(),now());
   insert into public.generation_drafts(
-    id,user_id,meal_type,main_ingredients,cuisine_genre,target_member_ids,
+    id,user_id,meal_type,main_ingredients,cuisine_genre,target_mode,target_member_ids,servings,
     time_limit_minutes,budget_preference,avoid_ingredients,memo,pantry_selections,revision
-  ) values(v_draft_id,v_owner,'dinner',array['鶏肉'],'japanese',
-    array['10000000-0000-4000-8000-000000000001'::uuid],
+  ) values(v_draft_id,v_owner,'dinner',array['鶏肉'],'japanese','household',
+    array['10000000-0000-4000-8000-000000000001'::uuid],null,
     30,'standard',array[]::text[],'','[]',v_revision);
 
   v_deleted := private.soft_delete_generation_draft(v_owner,v_draft_id,v_revision);
@@ -1804,7 +1804,7 @@ begin
 
   -- 実在 member/allergy/catalog/rule と最終 13 引数で canonical success を成立させる
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['canonical'],'japanese',
-    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000080',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v1',repeat('e',64),5,45,180,'2026-07-11 00:00:10+00');
@@ -1844,6 +1844,8 @@ begin
       'reviewedAlias',(select exists(select 1 from public.allergen_aliases alias
         where alias.allergen_id='milk' and alias.normalized_alias='ホワイトソース'
           and alias.alias_kind='processed' and alias.requires_label_confirmation)),
+      'targetMode',(select target_mode from public.menus
+        where id='60000000-0000-4000-8000-000000000080'),
       'labelAllergen',(select allergen_id
         from public.menu_label_confirmations
         where menu_id='60000000-0000-4000-8000-000000000080'
@@ -1868,14 +1870,15 @@ begin
       'timeline',1,'adaptations',1,'actions',1,
       'labelRequired',true,'pantryLinked',true,'pantryName','ホワイトソース',
       'pantryLiveName','ホワイトソース',
-      'reviewedAlias',true,'labelAllergen','milk','sourceSnapshot','ホワイトソース',
+      'reviewedAlias',true,'targetMode','household','labelAllergen','milk',
+      'sourceSnapshot','ホワイトソース',
       'checkDate','2026-07-11','paired',true,'unchecked',1) then
     raise exception 'canonical finalizer did not commit every normalized child and ingredient-bound action';
   end if;
 
   -- 有効行削除、NULL、再作成後削除でも revision を単調増加させる
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['helper-1'],'japanese',
-    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,v_draft.revision);
   if v_deleted.revision is distinct from v_draft.revision+1 then
     raise exception 'helper did not increment an active draft revision';
@@ -1885,7 +1888,7 @@ begin
     raise exception 'helper did not return NULL for an already deleted draft';
   end if;
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['helper-2'],'japanese',
-    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,null);
   if v_deleted.revision is distinct from v_draft.revision+1 then
     raise exception 'helper did not advance the recreated draft revision';
@@ -1893,7 +1896,7 @@ begin
 
   -- 手動削除が先でも finalizer は保存して成功する
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['manual-first'],'japanese',
-    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000081',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v1',repeat('b',64),5,45,180,'2026-07-11 00:01:00+00');
@@ -1916,7 +1919,7 @@ begin
 
   -- finalizer が先なら、以前の public revision は stale になる
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['finalizer-first'],'japanese',
-    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   v_before_revision := v_draft.revision;
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000082',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
@@ -1946,14 +1949,14 @@ begin
 
   -- 予約後に別タブ保存された新 revision は finalizer が削除しない
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['reserved'],'japanese',
-    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000083',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v1',repeat('d',64),5,45,180,'2026-07-11 00:03:00+00');
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000083';
   v_draft := public.save_generation_draft(v_draft.revision,'dinner',array['updated'],'japanese',
-    v_target_ids,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   v_recreated_revision := v_draft.revision;
   perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:03:01+00');
   perform pg_temp.finalize_ordering_success(v_request_id,
@@ -2122,12 +2125,12 @@ begin
      null, '2026-06-01 00:00:00+00', null);
   insert into public.menus(
     id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
-    preference_snapshot, safety_snapshot, safety_fingerprint,
+    preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
     allergen_dictionary_version, food_safety_rule_version, output_schema_version,
     derivation_group_id
   ) values (
     v_menu, v_owner, 'dinner', 'japanese', 2, 15,
-    '{}'::jsonb, '{}'::jsonb, repeat('a', 64),
+    '{}'::jsonb, '{}'::jsonb, repeat('a', 64), 'household',
     'dict', 'rule', 'schema', v_menu
   );
   insert into private.ai_generation_requests(
@@ -2173,12 +2176,12 @@ begin
   -- 先行 fixture の成功枠と独立した専用 owner で attempt / window 結合を検証する
   perform tests.create_supabase_user(v_owner, 'attempt-window@example.invalid');
   insert into public.generation_drafts (
-    id, user_id, meal_type, main_ingredients, cuisine_genre, target_member_ids,
-    time_limit_minutes, budget_preference, avoid_ingredients, memo,
+    id, user_id, meal_type, main_ingredients, cuisine_genre, target_mode, target_member_ids,
+    servings, time_limit_minutes, budget_preference, avoid_ingredients, memo,
     pantry_selections, revision
   ) values (
-    v_draft_id, v_owner, 'dinner', array['鶏肉'], 'japanese',
-    array[v_owner], 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
+    v_draft_id, v_owner, 'dinner', array['鶏肉'], 'japanese', 'household',
+    array[v_owner], null, 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
   );
 
   select * into strict v_draft from public.generation_drafts where id = v_draft_id;
@@ -2303,12 +2306,12 @@ begin
 
   insert into public.menus(
     id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
-    preference_snapshot, safety_snapshot, safety_fingerprint,
+    preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
     allergen_dictionary_version, food_safety_rule_version, output_schema_version,
     derivation_group_id
   ) values (
     v_menu, v_owner, 'dinner', 'japanese', 2, 15,
-    '{}'::jsonb, '{}'::jsonb, repeat('a', 64),
+    '{}'::jsonb, '{}'::jsonb, repeat('a', 64), 'household',
     'jp-caa-2026-04.v1', 'jp-caa-child-shape-2026-07.v1', '2026-07-11.v1', v_menu
   );
   insert into public.menu_target_members(
@@ -2524,12 +2527,12 @@ declare
 begin
   perform tests.create_supabase_user(v_owner, 'repair-attempt-limit@example.invalid');
   insert into public.generation_drafts (
-    id, user_id, meal_type, main_ingredients, cuisine_genre, target_member_ids,
-    time_limit_minutes, budget_preference, avoid_ingredients, memo,
+    id, user_id, meal_type, main_ingredients, cuisine_genre, target_mode, target_member_ids,
+    servings, time_limit_minutes, budget_preference, avoid_ingredients, memo,
     pantry_selections, revision
   ) values (
-    v_draft_id, v_owner, 'dinner', array['鶏肉'], 'japanese',
-    array[v_owner], 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
+    v_draft_id, v_owner, 'dinner', array['鶏肉'], 'japanese', 'household',
+    array[v_owner], null, 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
   );
   perform public.reserve_ai_generation(
     v_owner, v_key, 'new_menu', v_draft_id, 1,

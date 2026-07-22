@@ -13,11 +13,18 @@ type GeneratedFinalizeGenerationSuccess = GeneratedFunctions["finalize_ai_genera
 type GeneratedFinalizeGenerationSuccessArgs = GeneratedFinalizeGenerationSuccess["Args"];
 
 type NullableDraftArgs =
-  "p_meal_type" | "p_cuisine_genre" | "p_time_limit_minutes" | "p_budget_preference";
+  | "p_meal_type"
+  | "p_cuisine_genre"
+  | "p_target_mode"
+  | "p_servings"
+  | "p_time_limit_minutes"
+  | "p_budget_preference";
 
 type SaveDraftArgs = Omit<GeneratedSaveDraftArgs, NullableDraftArgs> & {
   p_meal_type: GeneratedSaveDraftArgs["p_meal_type"] | null;
   p_cuisine_genre: GeneratedSaveDraftArgs["p_cuisine_genre"] | null;
+  p_target_mode: GeneratedSaveDraftArgs["p_target_mode"] | null;
+  p_servings: GeneratedSaveDraftArgs["p_servings"] | null;
   p_time_limit_minutes: GeneratedSaveDraftArgs["p_time_limit_minutes"] | null;
   p_budget_preference: GeneratedSaveDraftArgs["p_budget_preference"] | null;
 };

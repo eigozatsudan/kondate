@@ -9,6 +9,7 @@ import { pantryItemSchema, pantrySelectionDraftSchema } from "../../../shared/co
 import {
   collectPlannerRequestText,
   plannerSubmissionSchema,
+  targetModes,
 } from "../../../shared/contracts/planner.js";
 import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import { normalizeFoodText } from "../../../shared/safety/allergens.js";
@@ -61,7 +62,9 @@ const snapshotRowSchema = z
     meal_type: z.enum(["breakfast", "lunch", "dinner"]),
     main_ingredients: z.array(z.string()),
     cuisine_genre: z.enum(["japanese", "western", "chinese", "any"]),
+    target_mode: z.enum(targetModes),
     target_member_ids: z.array(z.uuid()),
+    servings: z.number().int().min(1).max(20).nullable(),
     time_limit_minutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
     budget_preference: z.enum(["economy", "standard"]).nullable(),
     avoid_ingredients: z.array(z.string()),
@@ -207,7 +210,9 @@ function mapSnapshot(row: z.infer<typeof snapshotRowSchema>) {
     mealType: row.meal_type,
     mainIngredients: row.main_ingredients,
     cuisineGenre: row.cuisine_genre,
+    targetMode: row.target_mode,
     targetMemberIds: row.target_member_ids,
+    servings: row.servings,
     timeLimitMinutes: row.time_limit_minutes,
     budgetPreference: row.budget_preference,
     avoidIngredients: row.avoid_ingredients,
