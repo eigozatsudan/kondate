@@ -52,6 +52,17 @@ describe("wizard UI", () => {
       "aria-valuenow",
       "2",
     );
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemin", "0");
+    expect(screen.getByRole("progressbar").firstElementChild).toHaveStyle({ width: "40%" });
+  });
+
+  it("aligns the visual and accessible range for a single step", () => {
+    render(<ProgressIndicator currentStep={1} totalSteps={1} />);
+    const progressbar = screen.getByRole("progressbar", { name: "質問 1 / 1" });
+    expect(progressbar).toHaveAttribute("aria-valuemin", "0");
+    expect(progressbar).toHaveAttribute("aria-valuemax", "1");
+    expect(progressbar).toHaveAttribute("aria-valuenow", "1");
+    expect(progressbar.firstElementChild).toHaveStyle({ width: "100%" });
   });
 
   it("keeps progress labels unique across multiple instances", () => {

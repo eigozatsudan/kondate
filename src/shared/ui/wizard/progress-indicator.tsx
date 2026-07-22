@@ -27,7 +27,7 @@ export function ProgressIndicator({ currentStep, totalSteps }: ProgressIndicator
         className="progress-track"
         role="progressbar"
         aria-labelledby={labelId}
-        aria-valuemin={1}
+        aria-valuemin={0}
         aria-valuemax={normalizedTotalSteps}
         aria-valuenow={normalizedCurrentStep}
       >
