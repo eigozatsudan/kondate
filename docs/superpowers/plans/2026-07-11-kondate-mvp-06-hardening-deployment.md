@@ -28,6 +28,26 @@
 - The release checklist/matrix commit precedes the final gate. Local, staging Google, tag, and the currently published production deployment all resolve to the same candidate SHA; the protected verifier reads Netlify deploy metadata and current site `published_deploy` metadata before and after smoke. Evidence is external and no evidence-result commit follows it.
 - Follow red-green-refactor and end every task with a focused commit.
 
+### How every command in this plan is executed
+
+This repository installs no host tooling: the host has Node but no `psql`, no `rg`, and the `app` container has no Docker socket. Earlier drafts of this plan assumed a conventional checkout and are corrected here. There are exactly three execution contexts, and every command below states which one it belongs to.
+
+1. **Container-routed (default).** All Node/npm/npx work runs inside the `app` service. Host-independent commands — `typecheck`, `lint`, `format:check`, `build`, `vitest`, `node --test`, `npm ci`, `npm install`, `npm audit`, `npm exec` — add `--no-deps`; anything that talks to a sibling service (notably `db:types`, which reads pg-meta at `http://meta:8080` and is unreachable from the host because `meta` publishes no port) omits `--no-deps` and requires `docker compose up -d --wait` first.
+
+   ```bash
+   docker compose run --rm --no-deps app npm run typecheck
+   docker compose run --rm --no-deps app npx vitest run <files>
+   docker compose run --rm app npm run db:types
+   ```
+
+2. **Host-issued Compose commands.** The wrappers that themselves drive Docker cannot run inside `app`: `docker compose --profile test run --rm db-test [files]` (pgTAP), `docker compose run --rm migrate`, `./scripts/run-e2e.sh`, `./scripts/reset-local-db.sh`, `docker compose config/up/down/ps`. Issue these from the host or the CI runner. Never wrap them in `npm run` inside a container.
+
+3. **Protected release runner.** `preflight:production`, `smoke:production`, `verify:production-deploy`, and `verify-release-evidence.mjs` run only in the protected release environment with the real secret set. They are outside this repository's container model and are never run against the local mock stack.
+
+Two consequences apply everywhere. **No command may depend on `rg`**: use `grep -rn` inside `app`, and never write a check whose tool-missing case silently produces a zero count that passes (`test "$(rg … | wc -l)" -eq 0` passes trivially when `rg` is absent — every such check in earlier drafts was a false green). **No test may assume it can shell out to `docker`**: the `e2e` service has neither the socket nor the CLI, so E2E fixtures reach Postgres directly over `network_mode: host` instead of `docker compose exec db psql`.
+
+The aggregate `ci` entry point is therefore a host shell script, not an npm script: `npm run ci` cannot exist in a form that works both inside and outside a container. See Task 7.
+
 ---
 
 ### Task 1: Prove account-wide cascade behavior
@@ -245,9 +265,9 @@ Plan 7's `private.generation_regeneration_snapshots` is the case this correction
 Run:
 
 ```bash
-npm run db:reset
-npm run db:test -- supabase/tests/database/account_deletion.test.sql
-npm run db:test
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test supabase/tests/database/account_deletion.test.sql
+docker compose --profile test run --rm db-test
 ```
 
 Expected: both focused assertions and the complete pgTAP suite pass.
@@ -444,10 +464,10 @@ Modify—not replace—Plan 1's `HouseholdSettingsPage`: import `AccountSettings
 Run:
 
 ```bash
-npm test -- --run src/features/account/delete-account-dialog.test.tsx
-npm test -- --run src/features/account/account-settings-section.test.tsx src/features/household/household-settings-page.test.tsx
-npm run typecheck
-npm run build
+docker compose run --rm --no-deps app npx vitest run src/features/account/delete-account-dialog.test.tsx
+docker compose run --rm --no-deps app npx vitest run src/features/account/account-settings-section.test.tsx src/features/household/household-settings-page.test.tsx
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run build
 ```
 
 Expected: tests pass, the settings route compiles, and `dist/` is produced.
@@ -628,14 +648,14 @@ This part of the task is therefore verification, not migration. Add the focused 
 Run:
 
 ```bash
-node --test scripts/verify-openrouter-models.test.mjs
-OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run verify:openrouter:config
-OPENROUTER_MODELS=vendor/paid npm run verify:openrouter:config
-npm test -- --run netlify/functions/_shared/env.test.ts
-npm run typecheck
-OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
+docker compose run --rm --no-deps app node --test scripts/verify-openrouter-models.test.mjs
+docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app npm run verify:openrouter:config
+docker compose run --rm --no-deps -e OPENROUTER_MODELS=vendor/paid app npm run verify:openrouter:config
+docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/env.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app npm run build
 docker compose config --quiet
-test "$(rg -n 'GENERATION_SYNC_DEADLINE_MS' compose.yaml netlify/functions scripts .env.example | wc -l)" -eq 0
+docker compose run --rm --no-deps app grep -rn 'GENERATION_SYNC_DEADLINE_MS' compose.yaml netlify/functions scripts .env.example; test "$?" -eq 1
 ```
 
 Expected: the first two checks and tests pass; the paid-model command exits nonzero with the explicit-free error; the injected abort proves the live metadata request receives one five-second signal and emits only `openrouter_models_unavailable`; the build succeeds with the mock configuration.
@@ -736,8 +756,8 @@ rollback;
 Run:
 
 ```bash
-npm test -- --run netlify/functions/_shared/logger.test.ts
-npm run db:test -- supabase/tests/database/rls_inventory.test.sql
+docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/logger.test.ts
+docker compose --profile test run --rm db-test supabase/tests/database/rls_inventory.test.sql
 ```
 
 Expected: the logging test fails until the helper exists; the RLS test reports any earlier policy boundary defect.
@@ -826,10 +846,10 @@ Supabase authentication redirects use top-level navigation and do not require ad
 Run:
 
 ```bash
-npm test -- --run netlify/functions/_shared/logger.test.ts
-npm run db:test -- supabase/tests/database/rls_inventory.test.sql
-OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
-npm exec --offline netlify -- build --offline --context deploy-preview
+docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/logger.test.ts
+docker compose --profile test run --rm db-test supabase/tests/database/rls_inventory.test.sql
+docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app npm run build
+docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
 ```
 
 Expected: tests pass, no private-schema grant or RLS omission is listed, Vite emits `dist/`, and Netlify accepts the configuration. The deploy-preview context deliberately uses structural model validation and makes no live Models API call; the production context always performs the remote check.
@@ -997,9 +1017,9 @@ Centralize fixes in whatever shared primitives actually exist at that point. `sr
 Run:
 
 ```bash
-npm test -- --run src/app/accessibility.test.tsx
+docker compose run --rm --no-deps app npx vitest run src/app/accessibility.test.tsx
 ./scripts/run-e2e.sh e2e/specs/mobile-accessibility.spec.ts
-npm run typecheck
+docker compose run --rm --no-deps app npm run typecheck
 ```
 
 Expected: axe reports zero violations in covered states; all three widths have no horizontal overflow; target-size assertions and type checking pass.
@@ -1025,6 +1045,8 @@ git commit -m "test: enforce mobile accessibility"
 - Create: `scripts/verify-release-evidence.mjs`
 - Create: `scripts/verify-release-evidence.test.mjs`
 - Modify: `e2e/fixtures/auth.ts`
+- Modify: `scripts/run-e2e.sh`
+- Modify: `.gitignore`
 - Modify: `tools/openrouter-mock/server.mjs`
 - Add fixtures under: `tools/openrouter-mock/fixtures/adversarial/`
 
@@ -1116,18 +1138,21 @@ Add one complete mock response for each case: direct allergen, allergen alias, p
 
 - [ ] **Step 3: Write failing full-journey and privacy tests**
 
-Create `e2e/fixtures/function-logs.ts` using `execFile` rather than shell interpolation:
+Neither fixture may shell out to `docker`. Playwright runs inside the `e2e` Compose service, which has no Docker socket and no `docker` CLI — the same constraint CLAUDE.md documents for `app`. Both fixtures below are written against what the `e2e` container actually has: `network_mode: host`, the repository mounted at `/workspace`, and the published service ports.
+
+Function logs are captured by the host wrapper, not by the test. `./scripts/run-e2e.sh` already owns the Compose lifecycle, so it writes `docker compose logs --no-color app` to a gitignored file under the workspace before tearing the stack down, and `e2e/fixtures/function-logs.ts` reads that file:
 
 ```ts
-import { execFile } from "node:child_process";import { promisify } from "node:util";
-const run=promisify(execFile);
-export async function readFunctionLogs(since:string):Promise<string>{
-  const {stdout}=await run("docker",["compose","logs","--no-color","--since",since,"app"],
-    {maxBuffer:2_000_000});return stdout;
+import { readFile } from "node:fs/promises";
+const logPath = process.env.KONDATE_FUNCTION_LOG_PATH ?? "/workspace/.e2e-function.log";
+export async function readFunctionLogs(): Promise<string> {
+  return readFile(logPath, "utf8");
 }
 ```
 
-Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture. It parses `SUPABASE_SERVICE_ROLE_KEY` from `.env`, creates a non-persisting admin client for `http://127.0.0.1:8000`, and exports `queryOwnedCounts(userId)`. The latter validates `userId` with Zod and uses `execFile("docker",["compose","exec","-T","db","psql",...])` to query every `public`/`private` base table containing `user_id`, returning `{table,count}` JSON without printing row values. `seedCompleteOwnedGraph(page)` uses the existing onboarding, pantry, generation, revalidation, regeneration, and shopping fixture helpers, creates a generated menu targeting both a toddler and a senior with processed-food confirmation coverage, proves at least one normalized `menu_safety_actions` row was produced by Plans 2–3, and leaves a fresh planner draft. It must also seed the Plan 7 surface, because a cascade is only proven for rows that exist: at least one `target_mode = 'idea'` menu alongside the household one, and at least one row in `private.generation_regeneration_snapshots` from a completed regeneration reservation. Assert both are non-zero before deletion and zero after, so the snapshot's cascade through `private.ai_generation_requests` to `auth.users` is exercised rather than assumed. The idea menu also proves the deletion path does not depend on non-empty `menu_target_members`. Before deletion, assert only a named `requiredNonEmptyFamilies` set (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping) has positive counts; idempotency ledgers and other optional tables may legitimately remain zero. No service-role value enters `page`, browser storage, screenshots, or logs.
+Add the capture step to `run-e2e.sh` in the same task, inside its existing cleanup path so it runs on success and failure alike, and add the log file to `.gitignore`. `run-e2e.sh` is host-issued, so `docker compose logs` is legitimate there. If reading the file before the wrapper writes it turns out to be a race for a given spec, have the wrapper capture logs *after* the Playwright run and make `privacy-logging.spec.ts` a post-run assertion over the captured file rather than an in-test read; do not reintroduce a `docker` call inside the container to avoid the ordering problem.
+
+Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture. It reads **`SERVICE_ROLE_KEY`** from `/workspace/.env` — that is the actual key name in `.env`/`.env.example`; `SUPABASE_SERVICE_ROLE_KEY` is only the name Compose maps it to inside the app container, and the `e2e` service declares no such environment — and creates a non-persisting admin client for `http://127.0.0.1:8000`. It exports `queryOwnedCounts(userId)`, which validates `userId` with Zod and connects to Postgres **directly with `pg`** at `127.0.0.1:54322` (published by `infra/supabase.override.yaml` and reachable because `e2e` uses host networking), querying every `public`/`private` base table containing `user_id` and returning `{table,count}` JSON without printing row values. A direct connection is required rather than PostgREST because `private` tables are deliberately not exposed to the Data API. Close the client in a `finally`. `seedCompleteOwnedGraph(page)` uses the existing onboarding, pantry, generation, revalidation, regeneration, and shopping fixture helpers, creates a generated menu targeting both a toddler and a senior with processed-food confirmation coverage, proves at least one normalized `menu_safety_actions` row was produced by Plans 2–3, and leaves a fresh planner draft. It must also seed the Plan 7 surface, because a cascade is only proven for rows that exist: at least one `target_mode = 'idea'` menu alongside the household one, and at least one row in `private.generation_regeneration_snapshots` from a completed regeneration reservation. Assert both are non-zero before deletion and zero after, so the snapshot's cascade through `private.ai_generation_requests` to `auth.users` is exercised rather than assumed. The idea menu also proves the deletion path does not depend on non-empty `menu_target_members`. Before deletion, assert only a named `requiredNonEmptyFamilies` set (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping) has positive counts; idempotency ledgers and other optional tables may legitimately remain zero. No service-role value enters `page`, browser storage, screenshots, or logs.
 
 `full-journey.spec.ts` covers two journeys. The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review → privacy confirmation at generation start and return to review with answers intact → pantry must/prefer selection → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → skip family setup → the same four questions with an explicit servings count → review showing 「家族の年齢・アレルギーは確認されません」 → privacy confirmation → generation → a result carrying 「家族条件を使用していません」 and matching `N人分` → history card and detail showing the mode → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason anywhere in its run; it never converts to household mode.
 
@@ -1177,11 +1202,11 @@ Update product files owned by Plans 1–5 only where a failing acceptance test p
 Run:
 
 ```bash
-npm test -- --run
-npm run db:types
+docker compose run --rm --no-deps app npx vitest run
+docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
-node --test scripts/verify-release-evidence.test.mjs
-npm run db:test
+docker compose run --rm --no-deps app node --test scripts/verify-release-evidence.test.mjs
+docker compose --profile test run --rm db-test
 ./scripts/run-e2e.sh
 ```
 
@@ -1198,7 +1223,7 @@ git commit -m "test: cover Kondate acceptance journeys"
 
 **Files:**
 - Create: `.github/workflows/ci.yml`
-- Modify: `package.json`
+- Create: `scripts/ci.sh`
 - Modify: `playwright.config.ts`
 - Verify: `scripts/generate-local-secrets.sh`
 
@@ -1208,17 +1233,29 @@ git commit -m "test: cover Kondate acceptance journeys"
 
 - [ ] **Step 1: Add a local CI aggregate and prove it stops on failure**
 
-Add this package script, keeping the individual commands available:
+The aggregate cannot be an npm script. It has to issue `docker compose` commands, so it cannot run inside `app` (no Docker socket); and running it on the host would require host Node, which this repository deliberately does not assume. Add a host shell script instead — `scripts/ci.sh` — that mirrors the workflow steps in order:
 
-```json
-{
-  "scripts": {
-    "ci": "npm run format:check && npm run lint && npm run typecheck && npm test -- --run && npm run db:test && npm run db:types && git diff --exit-code -- src/shared/types/database.generated.ts && ./scripts/run-e2e.sh && npm run build && npm exec --offline netlify -- build --offline --context deploy-preview && docker compose config --quiet"
-  }
-}
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+docker compose config --quiet
+docker compose up -d --wait
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run db:types
+git diff --exit-code -- src/shared/types/database.generated.ts
+./scripts/run-e2e.sh
+docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
+docker compose run --rm --no-deps app npm run build
+docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
 ```
 
-Run `npm run ci` once with a deliberate failing focused test, verify later commands do not run, then revert that deliberate test change.
+`set -e` gives the stop-on-first-failure behavior the npm `&&` chain provided. Add an `EXIT` trap for teardown in the same task as Task 8's extensions. The workflow keeps its steps enumerated rather than calling this script, so a failure names the failing gate in the GitHub UI; a source test asserts the two stay in the same order.
+
+Run `./scripts/ci.sh` once with a deliberate failing focused test, verify later commands do not run, then revert that deliberate test change.
 
 - [ ] **Step 2: Create the workflow**
 
@@ -1243,56 +1280,34 @@ jobs:
     timeout-minutes: 30
     env:
       CI: "true"
-      OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
-      OPENROUTER_API_KEY: local-mock-key
-      OPENROUTER_BASE_URL: http://127.0.0.1:8787/api/v1
-      SERVER_SITE_ORIGIN: http://127.0.0.1:5173
-      AUTH_CONTINUATION_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
-      VITE_MAGIC_LINK_RESEND_SECONDS: "60"
-      VITE_AUTH_CONTINUATION_TTL_MS: "300000"
-      VITE_AUTH_PROVIDER_MODE: oauth_mock
-      VITE_OAUTH_MOCK_ORIGIN: http://127.0.0.1:8788
-      GLOBAL_DAILY_AI_LIMIT: "45"
-      USER_DAILY_AI_LIMIT: "5"
-      USER_DAILY_EXTERNAL_CALL_LIMIT: "12"
-      USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4"
-      USER_SHORT_WINDOW_SECONDS: "600"
-      AUTH_CONTINUATION_TTL_SECONDS: "300"
-      OPENROUTER_TIMEOUT_MS: "20000"
-      FUNCTION_TOTAL_BUDGET_MS: "50000"
-      AI_PROCESSING_STALE_SECONDS: "180"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
       - name: Generate ephemeral local secrets
         run: ./scripts/generate-local-secrets.sh
       - name: Assert the canonical local continuation origin
         run: |
+          set -a; . ./.env; set +a
           test "$SERVER_SITE_ORIGIN" = "http://127.0.0.1:5173"
           test "$VITE_AUTH_PROVIDER_MODE" = "oauth_mock"
           test "$VITE_OAUTH_MOCK_ORIGIN" = "http://127.0.0.1:8788"
       - run: docker compose config --quiet
       - run: docker compose up -d --wait
       - run: curl --fail --silent --show-error http://127.0.0.1:8788/health
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test -- --run
-      - run: npm run db:test
+      - run: docker compose run --rm --no-deps app npm run format:check
+      - run: docker compose run --rm --no-deps app npm run lint
+      - run: docker compose run --rm --no-deps app npm run typecheck
+      - run: docker compose run --rm --no-deps app npx vitest run
+      - run: docker compose --profile test run --rm db-test
       - name: Verify public and private generated database types
         run: |
-          npm run db:types
+          docker compose run --rm app npm run db:types
           git diff --exit-code -- src/shared/types/database.generated.ts
       - run: ./scripts/run-e2e.sh
-      - run: npm audit --omit=dev --audit-level=high
-      - run: npm run build
-      - run: npm exec --offline netlify -- build --offline --context deploy-preview
+      - run: docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
+      - run: docker compose run --rm --no-deps app npm run build
+      - run: docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -1310,7 +1325,11 @@ jobs:
           rm -f .env
 ```
 
-`npm run db:types` runs `scripts/generate-database-types.sh`, which reads pg-meta at `?included_schemas=public,private`; it does not use the Supabase CLI's `--schema` flag. The source-level script test therefore asserts that **that** URL keeps both schemas, not that a `--schema public,private` argument is present. Do not rewrite the generator to the CLI form just to match a phrase in this plan: the committed `database.generated.ts` was produced by pg-meta, and swapping generators would produce formatting drift that fails `git diff --exit-code` for reasons unrelated to schema changes. `generate-local-secrets.sh` runs after `npm ci` and before any Compose interpolation. It creates only the gitignored `.env`, and the `always()` cleanup removes it even after a failed start/test. CI's explicit `SERVER_SITE_ORIGIN` remains Plan 1's canonical `http://127.0.0.1:5173`; the assertion fails before E2E if the shell environment overrides the generated file with a different continuation origin. The offline Netlify build does not change that local runtime origin. E2E runs through `./scripts/run-e2e.sh`, never a bare `npm run e2e`/`playwright test` on the runner. That wrapper is the project's only supported entry point: it resolves the Compose project name, drives the dedicated `e2e` Compose service, holds a lock against concurrent runs, and restores the normal dev stack on success, failure, and interrupt alike. Because Playwright runs inside that container, CI installs no host browser — drop any `playwright install` step — and the container, not the runner, owns the browser version.
+The job carries no `env:` block beyond `CI`. Every runtime value comes from the `.env` that `generate-local-secrets.sh` writes, and Compose interpolates it into each service. This is deliberate: a job-level `env:` entry becomes a shell variable that **wins over `.env`** during interpolation, so an earlier draft's hardcoded `AUTH_CONTINUATION_ENCRYPTION_KEY` silently replaced the generated ephemeral key while `GENERATION_REQUEST_HMAC_KEY` stayed generated — two keys of the same kind with different provenance. One source of truth removes that class of bug, and the origin assertion now sources `.env` so it verifies the generated file instead of restating a literal it just set itself.
+
+There is no `actions/setup-node` and no host `npm ci`: dependencies live in the image and the `node_modules` volume, and every Node command is container-routed. The runner needs only Docker, `git`, and `curl`.
+
+`npm run db:types` runs `scripts/generate-database-types.sh`, which reads pg-meta at `?included_schemas=public,private`; it does not use the Supabase CLI's `--schema` flag. It is run **with** the stack up and without `--no-deps`, because `meta` publishes no host port and is reachable only from inside the Compose network — this is why the plan never runs it on the host. The source-level script test therefore asserts that **that** URL keeps both schemas, not that a `--schema public,private` argument is present. Do not rewrite the generator to the CLI form just to match a phrase in this plan: the committed `database.generated.ts` was produced by pg-meta, and swapping generators would produce formatting drift that fails `git diff --exit-code` for reasons unrelated to schema changes. `generate-local-secrets.sh` runs first, before any Compose interpolation, and needs no host Node of its own. It creates only the gitignored `.env`, and the `always()` cleanup removes it even after a failed start/test. CI's explicit `SERVER_SITE_ORIGIN` remains Plan 1's canonical `http://127.0.0.1:5173`; the assertion fails before E2E if the shell environment overrides the generated file with a different continuation origin. The offline Netlify build does not change that local runtime origin. E2E runs through `./scripts/run-e2e.sh`, never a bare `npm run e2e`/`playwright test` on the runner. That wrapper is the project's only supported entry point: it resolves the Compose project name, drives the dedicated `e2e` Compose service, holds a lock against concurrent runs, and restores the normal dev stack on success, failure, and interrupt alike. Because Playwright runs inside that container, CI installs no host browser — drop any `playwright install` step — and the container, not the runner, owns the browser version.
 
 Do not upload database volumes, `.env`, traces containing typed household data, or Function log files. Configure Playwright screenshots, video, and traces as `retain-on-failure`; E2E fixtures use synthetic names and conditions only.
 
@@ -1320,28 +1339,28 @@ Run:
 
 ```bash
 docker compose up -d --wait
-npm run format:check
-npm run lint
-npm run typecheck
-npm test -- --run
-npm run db:test
-npm run db:types
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
 ./scripts/run-e2e.sh
-npm audit --omit=dev --audit-level=high
-OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
-npm exec --offline netlify -- build --offline --context deploy-preview
+docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
+docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app npm run build
+docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
 docker compose config --quiet
 docker compose down --volumes
 rm -f .env
 ```
 
-Before the first command, run `npm ci && ./scripts/generate-local-secrets.sh`. Expected: every command exits 0, public/private generated types have no diff, the pinned offline Netlify CLI accepts the deploy-preview build, `.env` is absent after cleanup, and OpenRouter mock request counts confirm zero external calls.
+Before the first command, run `./scripts/generate-local-secrets.sh` (it is Docker-based and needs no host Node). Expected: every command exits 0, public/private generated types have no diff, the pinned offline Netlify CLI accepts the deploy-preview build, `.env` is absent after cleanup, and OpenRouter mock request counts confirm zero external calls.
 
 - [ ] **Step 4: Commit CI**
 
 ```bash
-git add .github/workflows/ci.yml package.json package-lock.json playwright.config.ts
+git add .github/workflows/ci.yml scripts/ci.sh playwright.config.ts
 git commit -m "ci: gate the complete MVP"
 ```
 
@@ -1392,11 +1411,11 @@ Write `maintenance_cleanup.test.sql` red first. It proves the exact batched sign
 
 Plan 7's `private.generation_regeneration_snapshots` is deliberately **not** a fifth category. It is request-bound with `ON DELETE CASCADE` from `private.ai_generation_requests(id,user_id)`, so terminal-ledger retention removes it implicitly. Seed a regeneration snapshot on a terminal request just older than 30 days and one on a retained request at the exact boundary, then assert the first snapshot disappears with its request, the second survives, `generationLedgersDeleted` counts requests rather than snapshots, and the returned object still has exactly four keys. Also assert no snapshot on a still-`processing` request or on a menu-referenced request is ever removed. Adding a snapshot count, a snapshot-first delete, or a separate snapshot category is out of scope and would break the four-key readback contract below.
 
-Write `maintenance-env.test.ts`, `maintenance-db.test.ts`, and `maintenance-cleanup.test.ts` red first. The local environment test accepts exactly `kondate_maintenance_login@127.0.0.1:54322/postgres?sslmode=disable` solely in explicit local-test mode. Production parsing additionally requires an explicit expected project ref previously extracted from the exact server Supabase origin, plus a `postgres:`/`postgresql:` URL with a non-empty password, canonical dedicated-login identity, exact `/postgres` path, canonical host/port, and `sslmode=require`, `verify-ca`, or `verify-full`. Accepted production shapes are direct `kondate_maintenance_login@db.<expected-project-ref>.supabase.co:5432` and IPv4 Supavisor Session `kondate_maintenance_login.<expected-project-ref>@<region>.pooler.supabase.com:5432`; the same valid shapes with another project ref, port `6543`, and every transaction-mode/dedicated pooler fail. They reject fragments, duplicate parameters, and every query key except the one `sslmode` key—especially `options`, `search_path`, timeout, role, and application-name overrides. They reject `localhost`, alternate local ports, credentials/query details in errors, and `VITE_SUPABASE_MAINTENANCE_DB_URL` even when empty. Mode-selection tests allow local parsing only for the conjunction `CONTEXT=dev && KONDATE_MAINTENANCE_ENV=local`; either key alone, any other value, deploy-preview, branch-deploy, or production selects strict production parsing and rejects loopback. Production preflight rejects the presence of `KONDATE_MAINTENANCE_ENV` even when empty. The adapter unit tests assert a single client per invocation, one overall deadline that begins before connection and never resets, parameterized fixed RPC SQL, the role/timeout guards, strict four-count result parsing before `COMMIT`, `ROLLBACK` when safe, and one idempotent `client.end()` after success, SQL failure, result-parse failure, server cancellation, and client timeout; environment-parse failure constructs no client. No log or thrown public error contains the URL, project ref, password, host, or raw driver error.
+Write `maintenance-env.test.ts`, `maintenance-db.test.ts`, and `maintenance-cleanup.test.ts` red first. The local environment test accepts exactly `kondate_maintenance_login@db:5432/postgres?sslmode=disable` solely in explicit local-test mode — the container-internal address, since all Node commands are container-routed. Production parsing additionally requires an explicit expected project ref previously extracted from the exact server Supabase origin, plus a `postgres:`/`postgresql:` URL with a non-empty password, canonical dedicated-login identity, exact `/postgres` path, canonical host/port, and `sslmode=require`, `verify-ca`, or `verify-full`. Accepted production shapes are direct `kondate_maintenance_login@db.<expected-project-ref>.supabase.co:5432` and IPv4 Supavisor Session `kondate_maintenance_login.<expected-project-ref>@<region>.pooler.supabase.com:5432`; the same valid shapes with another project ref, port `6543`, and every transaction-mode/dedicated pooler fail. They reject fragments, duplicate parameters, and every query key except the one `sslmode` key—especially `options`, `search_path`, timeout, role, and application-name overrides. They reject `localhost`, alternate local ports, credentials/query details in errors, and `VITE_SUPABASE_MAINTENANCE_DB_URL` even when empty. Mode-selection tests allow local parsing only for the conjunction `CONTEXT=dev && KONDATE_MAINTENANCE_ENV=local`; either key alone, any other value, deploy-preview, branch-deploy, or production selects strict production parsing and rejects loopback. Production preflight rejects the presence of `KONDATE_MAINTENANCE_ENV` even when empty. The adapter unit tests assert a single client per invocation, one overall deadline that begins before connection and never resets, parameterized fixed RPC SQL, the role/timeout guards, strict four-count result parsing before `COMMIT`, `ROLLBACK` when safe, and one idempotent `client.end()` after success, SQL failure, result-parse failure, server cancellation, and client timeout; environment-parse failure constructs no client. No log or thrown public error contains the URL, project ref, password, host, or raw driver error.
 
 The Function test injects the clock, database adapter, and logger. It asserts one parsed counts-only maintenance call, `204`, safe metrics containing only `staleReservationsFinalized`, `generationLedgersDeleted`, `shoppingMutationsDeleted`, `authContinuationsDeleted`, and duration, closed `maintenance_cleanup_failed` logging, and no Supabase REST/admin client import. It imports `config`, expects `config` to equal `{schedule:"@hourly"}`, and rejects a `path` key. The source/config test documents that a Scheduled Function runs only for a published production deploy, has no directly invokable URL, and is locally debugged by starting `npm exec --offline netlify dev` with the generated local `.env`, then running `npm exec --offline netlify functions:invoke maintenance-cleanup` from a second terminal.
 
-Write `maintenance-db.integration.test.ts` against the real local PostgreSQL path and dedicated login. Before the transaction it asserts `session_user=current_user='kondate_maintenance_login'` and `current_setting('statement_timeout')='20s'`; inside it asserts `session_user='kondate_maintenance_login'`, `current_user='kondate_maintenance_executor'`, and the local timeout remains `20s`. A fixed test-only seam, unavailable to requests and production call sites, runs the actual maintenance RPC and then `pg_sleep(21)` before commit; expect SQLSTATE `57014` near 20 seconds, assert all generation, shopping-mutation, and continuation writes rolled back from an independent admin connection, and prove the `kondate-maintenance` connection disappeared from `pg_stat_activity`. A second test lets earlier categories change rows while an admin connection holds an `ACCESS EXCLUSIVE` lock on the later `private.auth_continuations` table; the same real RPC must be canceled with `57014`, roll back the earlier generation and shopping deletion changes, release/close both clients in `finally`, and leave no partial cleanup. The 25-second client ceiling is a backstop and must not win over the database's 20-second error in either test.
+Write `maintenance-db.integration.test.ts` against the real local PostgreSQL path and dedicated login. Exclude it from the ordinary suite in the same commit: `vitest.config.ts` currently includes `netlify/functions/**/*.test.ts` with a global `jsdom` environment, so without an `exclude` entry this file would also run inside `docker compose run --rm --no-deps app npx vitest run`, where the stack is absent and `pg` would be running under jsdom. Add it to `exclude`, mark the file `// @vitest-environment node`, and run it only through its dedicated command (which omits `--no-deps` because it needs `db`). Before the transaction it asserts `session_user=current_user='kondate_maintenance_login'` and `current_setting('statement_timeout')='20s'`; inside it asserts `session_user='kondate_maintenance_login'`, `current_user='kondate_maintenance_executor'`, and the local timeout remains `20s`. A fixed test-only seam, unavailable to requests and production call sites, runs the actual maintenance RPC and then `pg_sleep(21)` before commit; expect SQLSTATE `57014` near 20 seconds, assert all generation, shopping-mutation, and continuation writes rolled back from an independent admin connection, and prove the `kondate-maintenance` connection disappeared from `pg_stat_activity`. A second test lets earlier categories change rows while an admin connection holds an `ACCESS EXCLUSIVE` lock on the later `private.auth_continuations` table; the same real RPC must be canceled with `57014`, roll back the earlier generation and shopping deletion changes, release/close both clients in `finally`, and leave no partial cleanup. The 25-second client ceiling is a backstop and must not win over the database's 20-second error in either test.
 
 The smoke test injects `fetch` and asserts these exact probes: `GET /` must return `200` HTML containing the root mount element; unauthenticated `POST /api/generations/menu` must return `401` and `auth_required`; unauthenticated `DELETE /api/account` must return `401` and `auth_required`. It must never call a generation route with authorization.
 
@@ -1409,8 +1428,8 @@ Write `verify-browser-secrets.test.mjs` red first with a temporary synthetic sou
 Install the direct PostgreSQL driver as a Function runtime dependency and its types as a development dependency, preserving exact lockfile versions:
 
 ```bash
-npm install --save-exact pg@8.22.0
-npm install --save-dev --save-exact @types/pg@8.20.0
+docker compose run --rm --no-deps app npm install --save-exact pg@8.22.0
+docker compose run --rm --no-deps app npm install --save-dev --save-exact @types/pg@8.20.0
 ```
 
 ```json
@@ -1431,7 +1450,7 @@ npm install --save-dev --save-exact @types/pg@8.20.0
 
 `verify-production-deploy.mjs` requires `CANDIDATE_SHA`, `RELEASE_TAG`, `PRODUCTION_DEPLOY_ID`, and exact HTTPS origin-only `PRODUCTION_ORIGIN` plus `NETLIFY_AUTH_TOKEN`. It reads HEAD and `git rev-list -n 1 <tag>` without a shell, fetches `GET /api/v1/deploys/:productionDeployId`, then `GET /api/v1/sites/:site_id`, and applies the pure checks from Step 1. Both requests use `AbortSignal.timeout(5000)`. `site_id` is accepted only from the validated deploy response and URL-encoded; no caller-provided API URL exists. The site response must identify the same deploy as its current `published_deploy`, preventing a ready but superseded production deploy from satisfying the gate. The script emits only its closed pass/error code. Task 9 runs it immediately before and after `smoke-production -- "$PRODUCTION_ORIGIN"`; a concurrent publish or origin change therefore closes the release rather than blessing the wrong deploy.
 
-`verify-browser-secrets.mjs` scans `src/` and any built `dist/` for the forbidden server-variable names and for the non-empty values of `OPENROUTER_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GENERATION_REQUEST_HMAC_KEY`, `SUPABASE_MAINTENANCE_DB_URL`, `MAINTENANCE_DB_PASSWORD`, and `NETLIFY_AUTH_TOKEN` present in its explicit environment. It reports only the variable name and relative file, never the matching value or line contents, and exits nonzero on a match. Its tests use synthetic secrets and fixtures to prove both name/value detection and redacted output. CI runs it after the build with the generated `.env`; the protected release runner runs it after the production build with its transient complete server-secret environment.
+`verify-browser-secrets.mjs` scans `src/` and any built `dist/` for the forbidden server-variable names and for the non-empty values of `OPENROUTER_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GENERATION_REQUEST_HMAC_KEY`, `SUPABASE_MAINTENANCE_DB_URL`, `MAINTENANCE_DB_PASSWORD`, and `NETLIFY_AUTH_TOKEN` present in its explicit environment. It reports only the variable name and relative file, never the matching value or line contents, and exits nonzero on a match. It also scans `shared/`, which Vite aliases into the browser bundle and which an earlier draft omitted. Because `/workspace/dist` is a tmpfs mount in the `app` service, a build in one `docker compose run` leaves nothing for a later one to scan: run the build and the scan **in the same container invocation**, and make the script exit nonzero — not zero — when `dist/` is absent after a build was expected, so the "absent dist is accepted" allowance cannot turn into a silent pass. Its tests use synthetic secrets and fixtures to prove both name/value detection and redacted output. CI runs it after the build with the generated `.env`; the protected release runner runs it after the production build with its transient complete server-secret environment.
 
 The maintenance migration keeps the existing cleanup entry points as compatibility wrappers and moves their transitions into bounded, batched variants (`1..250`, `FOR UPDATE SKIP LOCKED`). Read the current signatures before writing it, because they are not uniform and one of them makes a naive overload illegal:
 
@@ -1439,11 +1458,13 @@ The maintenance migration keeps the existing cleanup entry points as compatibili
 - `public.cleanup_auth_continuations(p_now timestamptz)` — one argument.
 - `public.cleanup_ai_generation_requests(p_before timestamptz, p_user_id uuid default null)` — **already two arguments**, the second a defaulted `uuid`.
 
+Its retention key is **`completed_at`**, not `updated_at`: the existing body deletes rows whose `status in ('succeeded','failed','constraint_conflict')`, whose `completed_at is not null` and `< p_before`, and which no menu references. `updated_at` is `not null default now()` and moves for reasons unrelated to terminating, so batching on it would delete different rows than the canonical transition. The batched variant keeps `completed_at` and every one of those guards.
+
 Adding `cleanup_ai_generation_requests(timestamptz,integer)` alongside that last one creates an ambiguous overload: any two-argument call with an untyped `NULL` or numeric literal fails to resolve, and the existing service-role callers become fragile. Do not create that overload. Give the batched variant a distinct name — `public.cleanup_ai_generation_requests_batch(p_before timestamptz, p_limit integer)` — leave the existing `(timestamptz,uuid)` function and its grants untouched, and have `run_kondate_maintenance` call the batch function. Apply the same rule anywhere else a proposed overload would collide with an existing defaulted parameter; a new name is always cheaper than an ambiguity.
 
 Shopping-mutation retention already has a helper: `private.cleanup_expired_shopping_mutations(p_user_id uuid, p_limit integer default 100)` deletes the same 30-day-old rows, but per user and capped at 100, and it is called on the request path rather than by a scheduler. Do not add a second, silently different cleaner. Add `private.cleanup_shopping_mutations(p_before timestamptz, p_limit integer)` as the account-wide scheduled variant with the `1..250` bound, deleting only `private.shopping_mutations.created_at < p_before`, ordering by `created_at,user_id,idempotency_key`, locking with `FOR UPDATE SKIP LOCKED`, and returning one count; then state explicitly in the migration comment and the access matrix that the two coexist by design — the per-user one bounds a single request's cleanup, the account-wide one is the hourly sweep — and prove with pgTAP that neither deletes a row at or newer than the exact 30-day boundary. If that division turns out not to hold, collapse them rather than leaving two retention rules. Exact-boundary rows are retained. The account-wide helper has no public wrapper because no browser/service path consumes it. Migration `051` creates or normalizes `kondate_maintenance_executor` as `NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`; the migration never creates a LOGIN or embeds a password. The executor receives only `USAGE ON SCHEMA public` and `EXECUTE ON FUNCTION public.run_kondate_maintenance(timestamptz,integer)`. Revoke the RPC from `PUBLIC`, `anon`, `authenticated`, and `service_role`, and revoke table, sequence, private-schema, and every bounded-helper privilege—including the shopping helper—from the executor. Existing one-argument wrappers keep only the preexisting service-role permissions required by Plans 1 and 3; neither the executor nor the Scheduled Function calls them directly.
 
-`run_kondate_maintenance` does not duplicate quota-release or replay SQL. It calls the canonical bounded transitions in this fixed order: stale reservations, terminal generation ledgers with `updated_at < p_now - interval '30 days'` via `cleanup_ai_generation_requests_batch`, shopping mutation replays with `created_at < p_now - interval '30 days'` via `private.cleanup_shopping_mutations`, then expired-or-claimed continuations. The RPC is `SECURITY DEFINER SET search_path=''`, uses schema-qualified references and fixed SQL only. (The existing Plan 1–5 cleanup functions use `set search_path = pg_catalog, pg_temp`; Plan 7 moves the RPCs it replaces to `''`. New functions here use `''` — do not rewrite untouched existing functions' `search_path` as a drive-by change, since that alters an applied migration's behavior without a test demanding it.) It and returns this strict JSON object:
+`run_kondate_maintenance` does not duplicate quota-release or replay SQL. It calls the canonical bounded transitions in this fixed order: stale reservations, terminal generation ledgers with `completed_at < p_now - interval '30 days'` via `cleanup_ai_generation_requests_batch`, shopping mutation replays with `created_at < p_now - interval '30 days'` via `private.cleanup_shopping_mutations`, then expired-or-claimed continuations. The RPC is `SECURITY DEFINER SET search_path=''`, uses schema-qualified references and fixed SQL only. (The existing Plan 1–5 cleanup functions use `set search_path = pg_catalog, pg_temp`; Plan 7 moves the RPCs it replaces to `''`. New functions here use `''` — do not rewrite untouched existing functions' `search_path` as a drive-by change, since that alters an applied migration's behavior without a test demanding it.) It and returns this strict JSON object:
 
 ```json
 {
@@ -1456,9 +1477,9 @@ Shopping-mutation retention already has a helper: `private.cleanup_expired_shopp
 
 Do not put `set_config('statement_timeout',...)` inside the RPC and do not claim that a function-local setting bounds its containing command: PostgreSQL chooses the statement timeout before executing that command. Each of the four categories receives the same caller-supplied maximum of 250, so one invocation is bounded and reentrant; excess work remains for the next hour. Never delete a processing row as terminal-ledger retention, a menu-referenced request, a shopping mutation at or newer than the exact 30-day boundary, or a live unclaimed continuation. Never delete a regeneration snapshot directly; it leaves only as a cascade of its own terminal request.
 
-Append safe placeholders for `KONDATE_MAINTENANCE_ENV=local`, `MAINTENANCE_DB_PASSWORD`, and `SUPABASE_MAINTENANCE_DB_URL` to `.env.example`. The stable `scripts/generate-local-secrets.sh` wrapper delegates to `scripts/generate-local-secrets.mjs`; that implementation creates a URL-safe random local password, percent-encodes its credential component, and writes `KONDATE_MAINTENANCE_ENV=local` plus the password and exact URL `postgresql://kondate_maintenance_login:<encoded>@127.0.0.1:54322/postgres?sslmode=disable` only to the mode-`0600`, gitignored `.env`. It never prints them. `scripts/provision-maintenance-role.sh` reads the password without shell tracing or command-line exposure, provisions `kondate_maintenance_login LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2`, grants membership in the NOLOGIN executor, and executes `ALTER ROLE kondate_maintenance_login SET statement_timeout='20s'`. It is idempotent for local/CI use, sends password material to `psql` through protected stdin/environment only, emits closed status text without SQL/URLs, and unsets it before exit. Its source test rejects `set -x`, password/URL echoing, password-bearing argv, committed literal credentials, or provisioning the LOGIN in a migration.
+Append safe placeholders for `KONDATE_MAINTENANCE_ENV=local`, `MAINTENANCE_DB_PASSWORD`, and `SUPABASE_MAINTENANCE_DB_URL` to `.env.example`. The stable `scripts/generate-local-secrets.sh` wrapper delegates to `scripts/generate-local-secrets.mjs`; that implementation creates a URL-safe random local password, percent-encodes its credential component, and writes `KONDATE_MAINTENANCE_ENV=local` plus the password and exact URL `postgresql://kondate_maintenance_login:<encoded>@db:5432/postgres?sslmode=disable` only to the mode-`0600`, gitignored `.env`. It never prints them. `scripts/provision-maintenance-role.sh` is a **host-issued Compose command**, not a host `psql` invocation: this repository does not install `psql` on the host. It pipes its SQL into `docker compose exec -T db psql --no-psqlrc -v ON_ERROR_STOP=1` and passes the password through the environment (`PGPASSWORD`-style) or stdin, never argv. It reads the password without shell tracing or command-line exposure, provisions `kondate_maintenance_login LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2`, grants membership in the NOLOGIN executor, and executes `ALTER ROLE kondate_maintenance_login SET statement_timeout='20s'`. It is idempotent for local/CI use, sends password material to `psql` through protected stdin/environment only, emits closed status text without SQL/URLs, and unsets it before exit. Its source test rejects `set -x`, password/URL echoing, password-bearing argv, committed literal credentials, or provisioning the LOGIN in a migration.
 
-`maintenance-env.ts` returns an opaque validated connection string without logging or serialization helpers. Production parsing requires `{mode:"production",expectedProjectRef}` where the ref has already been extracted by Plan 1's exact managed-origin helper; absence or malformed ref fails before URL inspection. It accepts only `postgres:`/`postgresql:`, non-empty password, exact `/postgres` path, no fragment, and exactly one query parameter: `sslmode` in the set `require|verify-ca|verify-full`. It accepts either `db.<expectedProjectRef>.supabase.co:5432` with URL username exactly `kondate_maintenance_login`, or Supavisor Session mode on port `5432` with canonical URL-routing username `kondate_maintenance_login.<expectedProjectRef>`; the latter suffix is transport metadata, while the post-connect guard must still see exact database `session_user='kondate_maintenance_login'`. A syntactically valid direct or Session URL for any other project fails closed. This rejects URL-supplied `options`, role, search-path, timeout, application-name, duplicate-key overrides, port `6543`, and every transaction-mode pooler. Although transaction mode is normally attractive for serverless traffic, it cannot guarantee the session-level role default required here; this one hourly connection is instead capped at 25 seconds, limited to two login connections, and always closed. The local-test parser alone accepts exact host `127.0.0.1`, port `54322`, exact login username, `/postgres`, and sole `sslmode=disable`; `localhost`, IPv6 loopback, and any other port fail. `selectMaintenanceEnvironmentMode` returns that mode only for `CONTEXT=dev && KONDATE_MAINTENANCE_ENV=local`. Both parsers reject `VITE_SUPABASE_MAINTENANCE_DB_URL` by key presence, and production preflight rejects the local-mode key itself.
+`maintenance-env.ts` returns an opaque validated connection string without logging or serialization helpers. Production parsing requires `{mode:"production",expectedProjectRef}` where the ref has already been extracted by Plan 1's exact managed-origin helper; absence or malformed ref fails before URL inspection. It accepts only `postgres:`/`postgresql:`, non-empty password, exact `/postgres` path, no fragment, and exactly one query parameter: `sslmode` in the set `require|verify-ca|verify-full`. It accepts either `db.<expectedProjectRef>.supabase.co:5432` with URL username exactly `kondate_maintenance_login`, or Supavisor Session mode on port `5432` with canonical URL-routing username `kondate_maintenance_login.<expectedProjectRef>`; the latter suffix is transport metadata, while the post-connect guard must still see exact database `session_user='kondate_maintenance_login'`. A syntactically valid direct or Session URL for any other project fails closed. This rejects URL-supplied `options`, role, search-path, timeout, application-name, duplicate-key overrides, port `6543`, and every transaction-mode pooler. Although transaction mode is normally attractive for serverless traffic, it cannot guarantee the session-level role default required here; this one hourly connection is instead capped at 25 seconds, limited to two login connections, and always closed. The local-test parser alone accepts the **container-internal** canonical address: exact host `db`, port `5432`, exact login username `kondate_maintenance_login`, path `/postgres`, and sole `sslmode=disable`. Everything else — `localhost`, `127.0.0.1`, IPv6 loopback, any other host or port — fails. This is the address that works from inside the Compose network, which is where every Node command in this plan runs; the host-published `127.0.0.1:54322` mapping in `infra/supabase.override.yaml` exists for human inspection only and is deliberately **not** accepted, so a developer cannot accidentally point the local parser at something the container-routed test cannot reach. Earlier drafts specified `127.0.0.1:54322` and were unreachable from `app`, which sits on the default bridge network. `selectMaintenanceEnvironmentMode` returns that mode only for `CONTEXT=dev && KONDATE_MAINTENANCE_ENV=local`. Both parsers reject `VITE_SUPABASE_MAINTENANCE_DB_URL` by key presence, and production preflight rejects the local-mode key itself.
 
 `maintenance-db.ts` creates one `pg.Client` per invocation with `application_name: "kondate-maintenance"`, `connectionTimeoutMillis: 5_000`, `query_timeout: 25_000`, and `idle_in_transaction_session_timeout: 25_000`; it deliberately does not override `statement_timeout` in the driver. The database role default is therefore the authoritative ceiling from the first command. A single 25-second overall client deadline starts before `connect()`, bounds the whole adapter rather than resetting per query, and uses one idempotent close path; `query_timeout` is an additional per-query backstop. After connecting, a fixed guard checks `session_user`, `current_user`, and `current_setting('statement_timeout')` before `BEGIN`. The same client then runs these fixed operations:
 
@@ -1541,18 +1562,18 @@ The runbook states migrations are forward-only. A failure before traffic is fixe
 
 - [ ] **Step 5: Run runbook automation and documentation checks**
 
-Update `.github/workflows/ci.yml` so the role boundary is exercised rather than mocked. Immediately after `docker compose up -d --wait`, run `./scripts/provision-maintenance-role.sh`; run the five local-safe Node script tests shown below and the dedicated integration command before the ordinary test suite; and run `npm run verify:browser-secrets` after each browser build. The production-deploy verifier unit test uses injected metadata only and never contacts Netlify in CI. The generated `.env` supplies both local maintenance values and remains mode `0600`; neither value appears in workflow `env`, command arguments, uploaded artifacts, test names, failure output, or container diagnostics. Keep the existing `if: always()` teardown and `.env` removal. Update the root `ci` package script to include those Node tests, `npm run test:maintenance-db:integration` after unit tests, and `npm run verify:browser-secrets` after build, and document that its caller must have generated `.env`, started Compose, and provisioned the role first.
+Update `.github/workflows/ci.yml` so the role boundary is exercised rather than mocked. Immediately after `docker compose up -d --wait`, run `./scripts/provision-maintenance-role.sh`; run the five local-safe Node script tests shown below and the dedicated integration command before the ordinary test suite; and run `npm run verify:browser-secrets` after each browser build. The production-deploy verifier unit test uses injected metadata only and never contacts Netlify in CI. The generated `.env` supplies both local maintenance values and remains mode `0600`; neither value appears in workflow `env`, command arguments, uploaded artifacts, test names, failure output, or container diagnostics. Keep the existing `if: always()` teardown and `.env` removal. Update `scripts/ci.sh` to include those Node tests, the maintenance integration run after unit tests, and the browser-secret scan after build, and document that its caller must have generated `.env`, started Compose, and provisioned the role first.
 
 Run:
 
 ```bash
-node --test scripts/provision-maintenance-role.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs
-npm test -- --run netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/maintenance-cleanup.test.ts
-npm run db:test -- supabase/tests/database/maintenance_cleanup.test.sql
-npm run test:maintenance-db:integration
-npm run verify:browser-secrets
-npm run format:check
-test "$(rg -n 'GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD' src | wc -l)" -eq 0
+docker compose run --rm --no-deps app node --test scripts/provision-maintenance-role.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs
+docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/maintenance-cleanup.test.ts
+docker compose --profile test run --rm db-test supabase/tests/database/maintenance_cleanup.test.sql
+docker compose run --rm app npm run test:maintenance-db:integration
+docker compose run --rm --no-deps app sh -c 'npm run build && npm run verify:browser-secrets'
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app grep -rnE 'GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD' src shared; test "$?" -eq 1
 ```
 
 Before the focused database commands, generate `.env`, start the stack, and run `./scripts/provision-maintenance-role.sh`; use an `EXIT` trap to stop Compose and remove `.env` without printing either maintenance value. Expected: script tests pass, including a CLI subprocess whose `env` is a complete synthetic HTTPS production configuration built from an empty object and which accepts no inherited/local variables; removing each required key, changing either app project ref/key, or changing the maintenance project ref fails with a closed code. The migration privilege assertions and exact generation/shopping 30-day boundaries pass; the real login reports its 20-second default before `BEGIN`; both the `pg_sleep` and relation-lock paths return SQLSTATE `57014` around 20 seconds, roll back generation/shopping/continuation changes, and leave no maintenance connection. Unit tests prove four-count cleanup on all outcomes. The production deploy unit test rejects every SHA/tag/origin/current-published-deploy mismatch. Do not run `preflight:production` against the local mock `.env`, because production mode correctly rejects that environment. The real command runs only in the protected release runner with a complete secret-manager environment as required by `docs/deployment/netlify.md`; the Netlify site build does not receive the maintenance URL. Markdown formatting and browser-source secret-name scans pass.
@@ -1596,27 +1617,24 @@ After this commit, do not modify or commit the checklist, matrix, evidence, gene
 ```bash
 test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
 test -z "$(git status --porcelain)"
-npm ci
 ./scripts/generate-local-secrets.sh
 docker compose up -d --wait
 ./scripts/provision-maintenance-role.sh
-npm run format:check
-npm run lint
-npm run typecheck
-npm test -- --run
-npm run db:test
-npm run test:maintenance-db:integration
-npm run db:types
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run
+docker compose --profile test run --rm db-test
+docker compose run --rm app npm run test:maintenance-db:integration
+docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
 ./scripts/run-e2e.sh
-npm audit --omit=dev --audit-level=high
-OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" npm run build
-npm run verify:browser-secrets
-npm exec --offline netlify -- build --offline --context deploy-preview
-npm run verify:browser-secrets
-node --test scripts/provision-maintenance-role.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs scripts/verify-release-evidence.test.mjs
+docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
+docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app sh -c 'npm run build && npm run verify:browser-secrets'
+docker compose run --rm --no-deps app sh -c 'npm exec --offline netlify -- build --offline --context deploy-preview && npm run verify:browser-secrets'
+docker compose run --rm --no-deps app node --test scripts/provision-maintenance-role.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs scripts/verify-release-evidence.test.mjs
 docker compose config --quiet
-test "$(rg -n 'OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN' dist src | wc -l)" -eq 0
+docker compose run --rm --no-deps app grep -rnE 'OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN' dist src shared; test "$?" -eq 1
 docker compose down --volumes
 rm -f .env
 test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
@@ -1652,7 +1670,7 @@ The protected release record stores `candidateSha`, production deploy ID, UTC ex
 
 ## Plan Completion Gate
 
-Before calling this plan complete, run the roadmap’s global verification gate plus the public/private type diff and offline Netlify build, confirm `docs/testing/acceptance-matrix.md` has 22 populated MVP rows plus 8 populated guided-planner rows, confirm the account-deletion E2E proves Auth and all inventoried owned-row removal with a non-empty normalized safety-action producer fixture and non-empty idea-menu and `private.generation_regeneration_snapshots` fixtures, and verify the unexpired external Google artifact against current HEAD and authoritative staging metadata. Run `npm run preflight:production` from an empty explicit environment containing one exact managed Supabase project across browser/server/maintenance, a fresh canonical 32-byte production HMAC key, and all other required values; then run `npm run verify:browser-secrets` with that protected complete environment to scan names and values. Run `rg -n "OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN" dist src` expecting no matches. Confirm the dedicated maintenance login starts at `statement_timeout='20s'`, the executor's grants remain exact, generation and shopping mutation exact 30-day boundaries plus four-count readback pass, regeneration snapshots leave only by cascade with their terminal requests, both SQLSTATE `57014` rollback tests pass, and `pg_stat_activity` has no leaked maintenance connection. Finally rerun the authoritative production deploy verifier around smoke, require current `published_deploy`, HEAD, tag, `commit_ref`, and verified smoke origin to equal the candidate contract, and confirm the worktree is clean. Then use `superpowers:verification-before-completion` and report the exact commands and outcomes without reproducing credentials, project refs, origins, metadata, or raw database errors.
+Before calling this plan complete, run the roadmap’s global verification gate plus the public/private type diff and offline Netlify build, confirm `docs/testing/acceptance-matrix.md` has 22 populated MVP rows plus 8 populated guided-planner rows, confirm the account-deletion E2E proves Auth and all inventoried owned-row removal with a non-empty normalized safety-action producer fixture and non-empty idea-menu and `private.generation_regeneration_snapshots` fixtures, and verify the unexpired external Google artifact against current HEAD and authoritative staging metadata. Run `npm run preflight:production` from an empty explicit environment containing one exact managed Supabase project across browser/server/maintenance, a fresh canonical 32-byte production HMAC key, and all other required values; then run `npm run verify:browser-secrets` with that protected complete environment to scan names and values. Run the container-routed `grep -rnE` secret-name scan over `dist src shared` and require exit status 1 (no match) rather than an empty count. Confirm the dedicated maintenance login starts at `statement_timeout='20s'`, the executor's grants remain exact, generation and shopping mutation exact 30-day boundaries plus four-count readback pass, regeneration snapshots leave only by cascade with their terminal requests, both SQLSTATE `57014` rollback tests pass, and `pg_stat_activity` has no leaked maintenance connection. Finally rerun the authoritative production deploy verifier around smoke, require current `published_deploy`, HEAD, tag, `commit_ref`, and verified smoke origin to equal the candidate contract, and confirm the worktree is clean. Then use `superpowers:verification-before-completion` and report the exact commands and outcomes without reproducing credentials, project refs, origins, metadata, or raw database errors.
 
 ## Official References
 
