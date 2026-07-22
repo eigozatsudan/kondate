@@ -534,6 +534,22 @@ function hasExactDeclarations(
   );
 }
 
+function hasRequiredDeclarations(
+  declarations: CssDeclarations,
+  expected: Readonly<Record<string, string>>,
+): boolean {
+  const element = document.createElement("div");
+  for (const [property, value] of Object.entries(expected)) {
+    element.style.setProperty(property, value);
+  }
+  for (let index = 0; index < element.style.length; index += 1) {
+    const property = element.style.item(index);
+    if (declarations.get(property) !== element.style.getPropertyValue(property).trim())
+      return false;
+  }
+  return true;
+}
+
 function touchesProtectedContract(selector: string): boolean {
   if (protectedSelectorFragments.some((fragment) => selector.includes(fragment))) return true;
   return /(?:^|[\s>+~,(])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/u.test(
@@ -584,17 +600,12 @@ function unexpectedProtectedSelectors(source: string, requireEveryTaskRule = fal
   for (const [selector, expectedBlocks] of requireEveryTaskRule
     ? Object.entries(globalRuleDeclarations)
     : []) {
-    const actualBlocks = rules.filter(
-      (rule) => rule.selector === selector && rule.atRules.length === 0,
-    );
-    if (
-      actualBlocks.length !== expectedBlocks.length ||
-      actualBlocks.some(
-        (rule, index) =>
-          expectedBlocks[index] === undefined ||
-          !hasExactDeclarations(rule.declarations, expectedBlocks[index]),
-      )
-    ) {
+    const expectedDeclarations: Record<string, string> = {};
+    for (const expectedBlock of expectedBlocks) {
+      Object.assign(expectedDeclarations, expectedBlock);
+    }
+    const actualDeclarations = declarationsForSelector(source, selector);
+    if (!hasRequiredDeclarations(actualDeclarations, expectedDeclarations)) {
       unexpected.push(selector);
     }
   }
@@ -608,6 +619,10 @@ function unexpectedMotionRules(source: string): string[] {
   const unexpected = rules
     .filter((rule) =>
       Array.from(rule.declarations.keys()).some((property) => motionProperties.test(property)),
+    )
+    .filter(
+      (rule) =>
+        rule.selector.includes("wizard-transition") || selectorMatchesRepresentative(rule.selector),
     )
     .filter((rule) => {
       const isNormalAnimation =
@@ -639,7 +654,7 @@ function unexpectedMotionRules(source: string): string[] {
   return Array.from(new Set(unexpected));
 }
 
-function unexpectedRepresentativeOverrides(source: string): string[] {
+function representativeElements(): Element[] {
   const root = document.createElement("main");
   root.className = "guided-planner-theme";
   root.innerHTML = `
@@ -658,10 +673,23 @@ function unexpectedRepresentativeOverrides(source: string): string[] {
       <footer class="wizard-actions"><button class="wizard-action primary-button">次へ</button></footer>
     </section>
   `;
-  const elements = [root, ...Array.from(root.querySelectorAll("*"))];
+  return [root, ...Array.from(root.querySelectorAll("*"))];
+}
+
+function selectorMatchesRepresentative(selector: string): boolean {
+  const pseudoElement = /::([\w-]+)\s*$/u.exec(selector);
+  const originSelector =
+    pseudoElement === null ? selector : selector.slice(0, pseudoElement.index).trim();
+  try {
+    return representativeElements().some((element) => element.matches(originSelector));
+  } catch {
+    return false;
+  }
+}
+
+function unexpectedRepresentativeOverrides(source: string): string[] {
   return cssRules(source)
     .filter((rule) => {
-      if (Array.from(rule.declarations.keys()).includes("all")) return true;
       const taskDeclarations = taskRuleDeclarations[rule.selector];
       if (taskDeclarations !== undefined) {
         const reducedMotionException =
@@ -677,8 +705,18 @@ function unexpectedRepresentativeOverrides(source: string): string[] {
       }
       const globalDeclarations = globalRuleDeclarations[rule.selector];
       if (globalDeclarations !== undefined) {
-        return !globalDeclarations.some((expected) =>
-          hasExactDeclarations(rule.declarations, expected),
+        if (rule.declarations.has("all")) return true;
+        const protectedProperties = new Set(
+          globalDeclarations.flatMap((expected) => Object.keys(expected)),
+        );
+        const touchesProtectedProperty = Array.from(rule.declarations.keys()).some((property) =>
+          protectedProperties.has(property),
+        );
+        return (
+          touchesProtectedProperty &&
+          !globalDeclarations.some((expected) =>
+            hasRequiredDeclarations(rule.declarations, expected),
+          )
         );
       }
 
@@ -689,7 +727,7 @@ function unexpectedRepresentativeOverrides(source: string): string[] {
       const originSelector =
         pseudoElement === null ? rule.selector : rule.selector.slice(0, pseudoElement.index).trim();
       try {
-        return elements.some((element) => element.matches(originSelector));
+        return representativeElements().some((element) => element.matches(originSelector));
       } catch {
         return true;
       }
@@ -706,7 +744,8 @@ function unexpectedKeyframesRules(source: string): string[] {
   ] as const;
   const unexpected = keyframes
     .filter((keyframesRule) => {
-      if (keyframesRule.name !== "wizard-enter" || keyframesRule.atRules.length !== 0) return true;
+      if (keyframesRule.name !== "wizard-enter") return false;
+      if (keyframesRule.atRules.length !== 0) return true;
       if (keyframesRule.steps.length !== expectedSteps.length) return true;
       return keyframesRule.steps.some((step, index) => {
         const expected = expectedSteps[index];
@@ -1123,6 +1162,19 @@ describe("guided planner theme", () => {
     expect(unexpectedMotionRules(fixture)).toEqual([".wizard-transition"]);
   });
 
+  it("allows unrelated motion, resets, keyframes, and global declaration additions", () => {
+    const fixture = `${cssWithoutImports}
+      :root { --unrelated: 1; }
+      .unrelated { all: unset; transition: opacity 180ms; }
+      @keyframes unrelated { from { opacity: 0; } to { opacity: 1; } }
+    `;
+
+    expect(unexpectedProtectedSelectors(fixture, true)).toEqual([]);
+    expect(unexpectedMotionRules(fixture)).toEqual([]);
+    expect(unexpectedRepresentativeOverrides(fixture)).toEqual([]);
+    expect(unexpectedKeyframesRules(fixture)).toEqual([]);
+  });
+
   it("rejects unknown representative selectors, resets, and pseudo-element content", () => {
     const fixture = `
       [aria-pressed="true"] {
@@ -1162,7 +1214,7 @@ describe("guided planner theme", () => {
     expect(unexpectedKeyframesRules(duplicate)).toEqual(["wizard-enter"]);
     expect(unexpectedKeyframesRules(nested)).toEqual(["wizard-enter"]);
     expect(unexpectedKeyframesRules(extra)).toEqual(["wizard-enter"]);
-    expect(unexpectedKeyframesRules(unknown)).toEqual(["other", "wizard-enter"]);
+    expect(unexpectedKeyframesRules(unknown)).toEqual(["wizard-enter"]);
   });
 
   it("keeps final scoped component colors connected to their tokens", () => {

@@ -48,10 +48,10 @@ describe("wizard UI", () => {
   it("renders progress as text and a bar", () => {
     render(<ProgressIndicator currentStep={2} totalSteps={5} />);
     expect(screen.getByText("質問 2 / 5")).toBeVisible();
-    expect(screen.getByRole("progressbar", { name: "質問 2 / 5" })).toHaveAttribute(
-      "aria-valuenow",
-      "2",
-    );
+    const progressbar = screen.getByRole("progressbar", { name: "質問 2 / 5" });
+    expect(progressbar).toHaveAttribute("aria-label", "質問 2 / 5");
+    expect(progressbar).not.toHaveAttribute("aria-labelledby");
+    expect(progressbar).toHaveAttribute("aria-valuenow", "2");
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemin", "0");
     expect(screen.getByRole("progressbar").firstElementChild).toHaveStyle({ width: "40%" });
   });
@@ -65,7 +65,7 @@ describe("wizard UI", () => {
     expect(progressbar.firstElementChild).toHaveStyle({ width: "100%" });
   });
 
-  it("keeps progress labels unique across multiple instances", () => {
+  it("does not require progress label ids across multiple instances", () => {
     render(
       <>
         <ProgressIndicator currentStep={2} totalSteps={5} />
@@ -73,11 +73,10 @@ describe("wizard UI", () => {
       </>,
     );
     const progressbars = screen.getAllByRole("progressbar", { name: "質問 2 / 5" });
-    const labelledBy = progressbars.map((progressbar) =>
-      progressbar.getAttribute("aria-labelledby"),
-    );
-    expect(new Set(labelledBy).size).toBe(2);
-    expect(screen.getAllByText("質問 2 / 5").every((label) => label.id.length > 0)).toBe(true);
+    expect(
+      progressbars.every((progressbar) => progressbar.getAttribute("aria-label") !== null),
+    ).toBe(true);
+    expect(screen.getAllByText("質問 2 / 5").every((label) => label.id === "")).toBe(true);
   });
 
   it("normalizes invalid progress boundaries", () => {
