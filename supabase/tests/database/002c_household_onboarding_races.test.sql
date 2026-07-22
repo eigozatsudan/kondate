@@ -72,6 +72,7 @@ declare
   v_raised boolean := false;
   v_attempt integer;
   v_drained integer;
+  v_wait_event text;
 begin
   insert into public.household_members (
     id, user_id, status, age_band, allergy_status, unsupported_diet_status
@@ -157,7 +158,28 @@ begin
   perform extensions.dblink_send_query('onboarding_race1b',
     $sql$ select public.set_onboarding_status('in_progress') $sql$
   );
-  perform pg_sleep(0.2);
+
+  -- セッションBが実際にセッションAの保持するprofiles行ロックでブロックしたことを
+  -- pg_stat_activityで確認してから先に進む（Race 2と同じ検証パターン）。単なる
+  -- 固定sleepでは、セッションAが既にコミット待ちで行ロックを取得している保証が
+  -- なく、セッションBが競合ゼロでコミット済みの'complete'を読んだだけでも
+  -- invalid_onboarding_transitionという同じ結果になり得るため、このポーリングが
+  -- 「本当にロック競合を経由した」ことを担保する。
+  for v_attempt in 1..40 loop
+    perform pg_sleep(0.05);
+    select wait_event into v_wait_event from pg_stat_activity
+      where wait_event_type = 'Lock'
+        and query ilike '%set_onboarding_status%'
+      limit 1;
+    if v_wait_event is not null then
+      exit;
+    end if;
+  end loop;
+  if v_wait_event is null then
+    raise exception 'race 1: session B set_onboarding_status(''in_progress'') call did not '
+      'block on the profiles row lock held by session A set_onboarding_status(''complete'') '
+      'as expected';
+  end if;
 
   -- セッションAをコミットしてロックを解放する。
   for v_attempt in 1..40 loop
