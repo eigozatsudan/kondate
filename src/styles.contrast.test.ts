@@ -255,6 +255,158 @@ const allowedProtectedSelectors = new Set([
   ".field input, .field select",
 ]);
 
+const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  ".guided-planner-theme": {
+    color: "#423a32",
+    background: "#f7f2e9",
+    "font-family":
+      '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
+    "font-synthesis": "none",
+    "text-rendering": "optimizeLegibility",
+    "--app-background": "#f7f2e9",
+    "--surface": "#fffdf8",
+    "--text": "#423a32",
+    "--muted": "#6b5e52",
+    "--primary": "#d9a48f",
+    "--primary-hover": "#cf947d",
+    "--primary-active": "#cc927b",
+    "--primary-ink": "#3b302b",
+    "--primary-strong": "#8b4e3b",
+    "--selection": "#f4e6df",
+    "--notice": "#f8ece7",
+    "--border": "#d8c9bc",
+    "--focus": "#8b4e3b",
+    "--pantry": "#416b5a",
+    "--danger": "#9f342c",
+    "--question-font": '"Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif',
+  },
+  ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible": {
+    outline: "3px solid var(--focus)",
+    "outline-offset": "2px",
+  },
+  ".guided-planner-theme .wizard-title:focus-visible": {
+    outline: "3px solid var(--focus)",
+    "outline-offset": "2px",
+  },
+  ".guided-planner-theme .primary-button": {
+    "border-color": "var(--primary)",
+    color: "var(--primary-ink)",
+    background: "var(--primary)",
+  },
+  ".guided-planner-theme .primary-button:hover": {
+    "border-color": "var(--primary-hover)",
+    color: "var(--primary-ink)",
+    background: "var(--primary-hover)",
+  },
+  ".guided-planner-theme .primary-button:active": {
+    "border-color": "var(--primary-active)",
+    color: "var(--primary-ink)",
+    background: "var(--primary-active)",
+  },
+  ".wizard-frame": { display: "grid", gap: "20px", "min-width": "0" },
+  ".wizard-header, .wizard-content, .wizard-actions": { "min-width": "0" },
+  ".wizard-title": {
+    margin: "0",
+    color: "var(--text)",
+    "font-family": "var(--question-font)",
+    "line-height": "1.4",
+    "overflow-wrap": "anywhere",
+  },
+  ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value":
+    {
+      "min-width": "0",
+      "max-width": "100%",
+      "overflow-wrap": "anywhere",
+    },
+  ".wizard-description, .choice-card-description, .inline-notice-body": {
+    color: "var(--muted)",
+  },
+  ".wizard-actions": {
+    display: "flex",
+    "flex-wrap": "wrap",
+    "justify-content": "space-between",
+    gap: "12px",
+  },
+  ".wizard-action": { "min-height": "44px" },
+  ".choice-card": {
+    display: "grid",
+    width: "100%",
+    "min-width": "0",
+    "min-height": "44px",
+    gap: "4px",
+    border: "1px solid var(--border)",
+    "border-radius": "18px",
+    color: "var(--text)",
+    background: "var(--surface)",
+    padding: "16px",
+    "text-align": "left",
+    "box-shadow": "0 4px 16px rgb(66 58 50 / 8%)",
+    cursor: "pointer",
+  },
+  ".choice-card:disabled": { opacity: "0.56", cursor: "not-allowed" },
+  '.choice-card[aria-pressed="true"]': {
+    "border-color": "var(--primary-strong)",
+    color: "var(--text)",
+    background: "var(--selection)",
+  },
+  '.choice-card[aria-pressed="true"] > strong': { color: "var(--text)" },
+  '.choice-card[aria-pressed="true"] .choice-card-description': { color: "var(--muted)" },
+  ".choice-card-selection": { color: "var(--primary-strong)", "font-weight": "700" },
+  ".progress-indicator": { display: "grid", gap: "8px", color: "var(--muted)" },
+  ".progress-track": {
+    height: "6px",
+    overflow: "hidden",
+    "border-radius": "999px",
+    background: "var(--border)",
+  },
+  ".progress-value": {
+    height: "100%",
+    "border-radius": "inherit",
+    background: "var(--primary-strong)",
+  },
+  ".inline-notice": {
+    border: "1px solid var(--border)",
+    "border-radius": "18px",
+    background: "var(--notice)",
+    padding: "16px",
+  },
+  ".inline-notice-error": { color: "var(--danger)" },
+  ".inline-notice-error .inline-notice-title, .inline-notice-error .inline-notice-body": {
+    color: "var(--danger)",
+  },
+  ".inline-notice-title, .inline-notice-body": { margin: "0" },
+  ".inline-notice-title": { color: "var(--text)" },
+  ".review-row": {
+    display: "grid",
+    "grid-template-columns": "minmax(0, 1fr) auto",
+    gap: "12px",
+    "align-items": "center",
+    "border-bottom": "1px solid var(--border)",
+    "padding-block": "12px",
+  },
+  ".review-row-label, .review-row-value": { margin: "0", "overflow-wrap": "anywhere" },
+  ".wizard-transition": { animation: "wizard-enter 180ms ease-out" },
+};
+
+function hasExactDeclarations(
+  declarations: CssDeclarations,
+  expected: Readonly<Record<string, string>>,
+): boolean {
+  const element = document.createElement("div");
+  for (const [property, value] of Object.entries(expected)) {
+    element.style.setProperty(property, value);
+  }
+  const canonicalExpected: CssDeclarations = new Map();
+  for (let index = 0; index < element.style.length; index += 1) {
+    const property = element.style.item(index);
+    canonicalExpected.set(property, element.style.getPropertyValue(property).trim());
+  }
+  return (
+    declarations.size === canonicalExpected.size &&
+    Array.from(canonicalExpected).every(([property, value]) => declarations.get(property) === value)
+  );
+}
+
 function touchesProtectedContract(selector: string): boolean {
   if (protectedSelectorFragments.some((fragment) => selector.includes(fragment))) return true;
   return /(?:^|[\s>+~,(])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/u.test(
@@ -262,11 +414,24 @@ function touchesProtectedContract(selector: string): boolean {
   );
 }
 
-function unexpectedProtectedSelectors(source: string): string[] {
-  return cssRules(source)
+function unexpectedProtectedSelectors(source: string, requireEveryTaskRule = false): string[] {
+  const rules = cssRules(source);
+  const unexpected = rules
     .filter((rule) => {
       if (!touchesProtectedContract(rule.selector)) return false;
       if (!allowedProtectedSelectors.has(rule.selector)) return true;
+      const taskDeclarations = taskRuleDeclarations[rule.selector];
+      if (taskDeclarations !== undefined) {
+        const reducedMotionException =
+          rule.selector === ".wizard-transition" &&
+          rule.atRules.length === 1 &&
+          rule.atRules[0]?.type === "media" &&
+          rule.atRules[0].condition === "(prefers-reduced-motion: reduce)" &&
+          hasExactDeclarations(rule.declarations, { animation: "none" });
+        const topLevelContract =
+          rule.atRules.length === 0 && hasExactDeclarations(rule.declarations, taskDeclarations);
+        return !reducedMotionException && !topLevelContract;
+      }
       if (Array.from(rule.declarations.values()).some((value) => value.endsWith(" !important"))) {
         return true;
       }
@@ -279,6 +444,105 @@ function unexpectedProtectedSelectors(source: string): string[] {
         rule.declarations.size === 1 &&
         rule.declarations.get("animation") === "none";
       return !reducedMotionException;
+    })
+    .map((rule) => rule.selector);
+  for (const selector of Object.keys(taskRuleDeclarations)) {
+    const topLevelCount = rules.filter(
+      (rule) => rule.selector === selector && rule.atRules.length === 0,
+    ).length;
+    if (topLevelCount > 1 || (requireEveryTaskRule && topLevelCount !== 1)) {
+      unexpected.push(selector);
+    }
+  }
+  return Array.from(new Set(unexpected));
+}
+
+const motionProperties = /^(?:animation|transition)(?:-|$)/u;
+
+function unexpectedMotionRules(source: string): string[] {
+  const rules = cssRules(source);
+  const unexpected = rules
+    .filter((rule) =>
+      Array.from(rule.declarations.keys()).some((property) => motionProperties.test(property)),
+    )
+    .filter((rule) => {
+      const isNormalAnimation =
+        rule.selector === ".wizard-transition" &&
+        rule.atRules.length === 0 &&
+        rule.declarations.size === 1 &&
+        rule.declarations.get("animation") === "wizard-enter 180ms ease-out";
+      const isReducedAnimation =
+        rule.selector === ".wizard-transition" &&
+        rule.atRules.length === 1 &&
+        rule.atRules[0]?.type === "media" &&
+        rule.atRules[0].condition === "(prefers-reduced-motion: reduce)" &&
+        rule.declarations.size === 1 &&
+        rule.declarations.get("animation") === "none";
+      return !isNormalAnimation && !isReducedAnimation;
+    })
+    .map((rule) => rule.selector);
+  const normalRules = rules.filter(
+    (rule) => rule.selector === ".wizard-transition" && rule.atRules.length === 0,
+  );
+  const reducedRules = rules.filter(
+    (rule) =>
+      rule.selector === ".wizard-transition" &&
+      rule.atRules.length === 1 &&
+      rule.atRules[0]?.type === "media" &&
+      rule.atRules[0].condition === "(prefers-reduced-motion: reduce)",
+  );
+  if (normalRules.length > 1 || reducedRules.length > 1) unexpected.push(".wizard-transition");
+  return Array.from(new Set(unexpected));
+}
+
+function unexpectedRepresentativeOverrides(source: string): string[] {
+  const root = document.createElement("main");
+  root.className = "guided-planner-theme";
+  root.innerHTML = `
+    <section class="wizard-frame wizard-transition">
+      <header class="wizard-header"><h1 class="wizard-title" tabindex="-1">質問</h1></header>
+      <div class="wizard-content">
+        <p class="wizard-description">説明</p>
+        <button class="choice-card" aria-pressed="true">
+          <strong>候補</strong><span class="choice-card-description">補足</span>
+          <span class="choice-card-selection">選択中</span>
+        </button>
+        <div class="progress-indicator"><div class="progress-track"><div class="progress-value"></div></div></div>
+        <div class="inline-notice inline-notice-error"><strong class="inline-notice-title">注意</strong><div class="inline-notice-body">本文</div></div>
+        <div class="review-row"><p class="review-row-label">項目</p><p class="review-row-value">値</p></div>
+      </div>
+      <footer class="wizard-actions"><button class="wizard-action primary-button">次へ</button></footer>
+    </section>
+  `;
+  const elements = [root, ...Array.from(root.querySelectorAll("*"))];
+  const protectedProperties = new Set(
+    Object.values(taskRuleDeclarations).flatMap((declarations) => Object.keys(declarations)),
+  );
+  for (const property of [
+    "background-color",
+    "border-block",
+    "border-bottom-color",
+    "border-inline",
+    "border-left-color",
+    "border-right-color",
+    "border-top-color",
+  ]) {
+    protectedProperties.add(property);
+  }
+
+  return cssRules(source)
+    .filter((rule) => !allowedProtectedSelectors.has(rule.selector))
+    .filter((rule) =>
+      Array.from(rule.declarations.keys()).some(
+        (property) => protectedProperties.has(property) || motionProperties.test(property),
+      ),
+    )
+    .filter((rule) => {
+      try {
+        return elements.some((element) => element.matches(rule.selector));
+      } catch {
+        return true;
+      }
     })
     .map((rule) => rule.selector);
 }
@@ -558,7 +822,7 @@ describe("guided planner theme", () => {
 
     const guidedPalette = new Set<string>(Object.values(expectedTokens));
     expect(findUnscopedDesignColorLeaks(cssWithoutImports, guidedPalette)).toEqual([]);
-    expect(unexpectedProtectedSelectors(cssWithoutImports)).toEqual([]);
+    expect(unexpectedProtectedSelectors(cssWithoutImports, true)).toEqual([]);
   });
 
   it("detects adversarial global leaks without splitting functional selector lists", () => {
@@ -644,6 +908,39 @@ describe("guided planner theme", () => {
     expect(reducedMotionDeclarations(fixture, ".wizard-transition").get("animation")).toBe(
       "wizard-enter 180ms ease-out",
     );
+  });
+
+  it("rejects motion longhands and selector aliases that can re-enable motion", () => {
+    const fixture = `
+      .wizard-transition {
+        animation: wizard-enter 180ms ease-out;
+        animation-name: wizard-enter;
+        transition-property: transform;
+        transition-duration: 180ms;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .wizard-transition { animation: none; }
+        [class~="wizard-transition"] { animation-duration: 180ms; }
+      }
+    `;
+
+    expect(unexpectedMotionRules(fixture)).toEqual([
+      ".wizard-transition",
+      '[class~="wizard-transition"]',
+    ]);
+    expect(unexpectedRepresentativeOverrides(fixture)).toEqual(['[class~="wizard-transition"]']);
+  });
+
+  it("rejects extra longhands on task-owned selectors", () => {
+    const fixture = `
+      .choice-card { background: var(--surface); }
+      .choice-card { background-color: transparent; }
+      .wizard-transition { animation: wizard-enter 180ms ease-out; }
+      .wizard-transition { transition: transform 180ms ease-out; }
+    `;
+
+    expect(unexpectedProtectedSelectors(fixture)).toEqual([".choice-card", ".wizard-transition"]);
+    expect(unexpectedMotionRules(fixture)).toEqual([".wizard-transition"]);
   });
 
   it("keeps final scoped component colors connected to their tokens", () => {
@@ -739,6 +1036,8 @@ describe("guided planner theme", () => {
     expectFinalDeclarations(".wizard-transition", {
       animation: "wizard-enter 180ms ease-out",
     });
+    expect(unexpectedMotionRules(cssWithoutImports)).toEqual([]);
+    expect(unexpectedRepresentativeOverrides(cssWithoutImports)).toEqual([]);
   });
 
   it("keeps long wizard content inside a 320px viewport", () => {
