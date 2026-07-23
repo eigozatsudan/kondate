@@ -21,21 +21,20 @@ rules = [
   { action = "allow", tool = "bash", pattern = "bash ./scripts/run-e2e.sh *" },
   { action = "allow", tool = "bash", pattern = "bash ./scripts/generate-local-secrets.sh *" },
 
+  
+  { action = "allow", tool = "bash", pattern = "rmdir .run-e2e.lock 2>/dev/null" },
+
   # ========== 読み取り系 ==========
   { action = "allow", tool = "read" },
   { action = "allow", tool = "grep" },
+  { action = "allow", tool = "bash", pattern = "tee *" },
+  { action = "allow", tool = "bash", pattern = "tail *" },
+  { action = "allow", tool = "bash", pattern = "cat *" },
+  { action = "allow", tool = "bash", pattern = "ls *" },
 
   # ========== Docker Compose ==========
-  { action = "allow", tool = "bash", pattern = "docker compose up *" },
-  { action = "allow", tool = "bash", pattern = "docker compose down *" },
-  { action = "allow", tool = "bash", pattern = "docker compose run *" },
-  { action = "allow", tool = "bash", pattern = "docker compose run --rm *" },
-  { action = "allow", tool = "bash", pattern = "docker compose run --rm --no-deps *" },
-  { action = "allow", tool = "bash", pattern = "docker compose ps *" },
-  { action = "allow", tool = "bash", pattern = "docker compose logs *" },
-  { action = "allow", tool = "bash", pattern = "docker compose build *" },
-  { action = "allow", tool = "bash", pattern = "docker compose restart *" },
-  { action = "allow", tool = "bash", pattern = "docker compose exec *" },
+  { action = "allow", tool = "bash", pattern = "docker compose *" },
+  { action = "allow", tool = "bash", pattern = "docker-compose *" },
 
   # 危険なDocker操作
   { action = "deny",  tool = "bash", pattern = "docker compose down -v *" },
