@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Navigate, useParams } from "react-router";
 import { z } from "zod";
+import type { MenuResultViewModel } from "@shared/contracts/menu-result";
+import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
 import { useAuth } from "@/features/auth/use-auth";
 import { getMenuResult } from "@/features/generation/api/menu-result-api";
 import { MenuResult } from "@/features/generation/components/menu-result";
@@ -30,15 +32,99 @@ const DISCLAIMER =
   "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。";
 
 /**
- * 履歴詳細。現行安全再検証が終わるまで調理・再生成・買い物・採用を閉じる。
- * /menus/:menuId と同じ useMenuRevalidation を共有する。
+ * 履歴詳細。menu aggregate（権威あるtargetMode）を取得した後にmode別
+ * child componentへ分岐する。household child だけが現行安全再検証・
+ * 採用・再生成・買い物・冷蔵庫を維持し、idea child は常時noticeと
+ * 献立本文だけを表示する（brief step 12）。
  */
 export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageProps = {}) {
   const auth = useAuth();
   const userId = auth.session?.user.id;
   const parsed = z.uuid().safeParse(useParams().menuId);
   const menuId = parsed.success ? parsed.data : null;
-  const live = useMenuRevalidation(menuId ?? "");
+
+  const menuQuery = useQuery({
+    queryKey: ["menu-result", userId ?? "missing", menuId ?? "invalid"] as const,
+    queryFn: () => getMenuResult(menuId ?? "invalid"),
+    enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
+    staleTime: 30_000,
+  });
+
+  if (!parsed.success || menuId === null) return <Navigate to="/history" replace />;
+
+  if (menuQuery.isPending) {
+    return (
+      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+        <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+        <p role="status" className="mt-4">
+          献立を読み込んでいます
+        </p>
+      </main>
+    );
+  }
+
+  if (menuQuery.isError) {
+    return (
+      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+        <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+        <div className="mt-4 stack gap-2">
+          <h1>献立を表示できません</h1>
+          <Link
+            to="/history"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-3 font-semibold"
+          >
+            履歴へ戻る
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  if (menuQuery.data.targetMode === "idea") {
+    return <IdeaDetailBody result={menuQuery.data} />;
+  }
+  return (
+    <HouseholdDetailBody
+      result={menuQuery.data}
+      menuId={menuId}
+      userId={userId}
+      {...(injected !== undefined ? { injectedRevalidation: injected } : {})}
+    />
+  );
+}
+
+/** idea履歴の詳細本文。常時noticeと献立本文だけを表示し、家族安全操作を一切mountしない。 */
+function IdeaDetailBody({ result }: { result: MenuResultViewModel }) {
+  return (
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+      <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+      <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
+        <p>家族条件を使用していません</p>
+        <p>年齢・アレルギーへの適合は確認されていません</p>
+      </InlineNotice>
+      <MenuResult result={result} mode="idea" />
+    </main>
+  );
+}
+
+type HouseholdDetailBodyProps = {
+  result: MenuResultViewModel;
+  menuId: string;
+  userId: string | undefined;
+  injectedRevalidation?: HistoryDetailRevalidationView;
+};
+
+/**
+ * household履歴の詳細本文。既存の家族安全再検証・採用・再生成・買い物・
+ * 冷蔵庫連携をすべて維持する（Step 10までの実装をそのままこのcomponentへ移した）。
+ */
+function HouseholdDetailBody({
+  result,
+  menuId,
+  userId,
+  injectedRevalidation,
+}: HouseholdDetailBodyProps) {
+  const live = useMenuRevalidation(menuId);
   const liveView: HistoryDetailRevalidationView = {
     phase: live.phase,
     ...(live.result !== undefined ? { result: live.result } : {}),
@@ -48,19 +134,12 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
     },
     beginRecheck: live.beginRecheck,
   };
-  const revalidation = injected ?? liveView;
-
-  const menuQuery = useQuery({
-    queryKey: ["menu-result", userId ?? "missing", menuId ?? "invalid"] as const,
-    queryFn: () => getMenuResult(menuId ?? "invalid"),
-    enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
-    staleTime: 30_000,
-  });
+  const revalidation = injectedRevalidation ?? liveView;
 
   const usage = useUsageToday(userId ?? "");
   const remaining = usage.data?.success.remaining ?? 0;
   const regeneration = useRegeneration({
-    menuId: menuId ?? "00000000-0000-4000-8000-000000000000",
+    menuId,
     phase: revalidation.phase,
     result: revalidation.result,
   });
@@ -73,7 +152,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
 
-  const firstDishId = menuQuery.data?.menu.dishes[0]?.id ?? null;
+  const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
 
   const statusCopy = useMemo(() => {
@@ -86,8 +165,6 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
     return null;
   }, [revalidation]);
 
-  if (!parsed.success || menuId === null) return <Navigate to="/history" replace />;
-
   const onSubmitReason = async (value: RegenerationReasonInput) => {
     if (sheetMode === "dish") {
       if (dishIdForRegen === null) return;
@@ -99,7 +176,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
   };
 
   return (
-    <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
 
       {revalidation.phase === "checking" && (
@@ -142,27 +219,10 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
           </p>
         )}
 
-      {menuQuery.isPending && (
-        <p role="status" className="mt-4">
-          献立を読み込んでいます
-        </p>
-      )}
-
-      {menuQuery.isError && (
-        <div className="mt-4 stack gap-2">
-          <h1>献立を表示できません</h1>
-          <Link
-            to="/history"
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-3 font-semibold"
-          >
-            履歴へ戻る
-          </Link>
-        </div>
-      )}
-
-      {actionsEnabled && menuQuery.data !== undefined && revalidation.result !== undefined && (
+      {actionsEnabled && revalidation.result !== undefined && (
         <MenuResult
-          result={menuQuery.data}
+          result={result}
+          mode="household"
           currentLabelWarnings={revalidation.result.currentLabelWarnings}
           currentSafetyFingerprint={revalidation.result.safetyFingerprint}
           onSelectedDishChange={setSelectedDishId}

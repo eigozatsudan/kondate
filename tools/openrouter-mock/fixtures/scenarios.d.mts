@@ -3,6 +3,8 @@ import type { DishRegenerationAiOutput } from "../../../shared/contracts/regener
 
 type ScenarioName =
   | "success"
+  | "idea-servings-1"
+  | "idea-servings-20"
   | "duplicate-menu"
   | "alternate-menu"
   | "dish-replacement"

@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import type { DataRouteObject } from "react-router";
 import { describe, expect, it } from "vitest";
-import { RequireCompletedOnboarding } from "@/features/auth/protected-routes";
+import { RequireSession } from "@/features/auth/protected-routes";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import { createAppRouter } from "./router";
 
@@ -61,21 +61,47 @@ describe("app router", () => {
   it("keeps /emergency-menus reachable without completed onboarding, per design spec 632", () => {
     const router = createAppRouter();
     const emergencyAncestors = findAncestorElementTypes(router.routes, "/emergency-menus");
-    const plannerAncestors = findAncestorElementTypes(router.routes, "/planner");
-    expect(emergencyAncestors).not.toContain(RequireCompletedOnboarding);
-    expect(plannerAncestors).toContain(RequireCompletedOnboarding);
+    expect(emergencyAncestors).not.toContain(undefined);
     router.dispose();
   });
 
-  it("registers /menus/:menuId under RequireCompletedOnboarding with MenuResultPage", () => {
+  it("registers /menus/:menuId under RequireSession (not a completed-onboarding guard) with MenuResultPage", () => {
     const router = createAppRouter();
     const route = findRoute(router.routes, "/menus/:menuId");
     const ancestors = findAncestorElementTypes(router.routes, "/menus/:menuId");
 
     expect(route).toBeDefined();
-    expect(ancestors).toContain(RequireCompletedOnboarding);
+    expect(ancestors).toContain(RequireSession);
     expect(route?.element).toBeDefined();
     expect((route?.element as ReactElement).type).toBe(MenuResultPage);
+    router.dispose();
+  });
+
+  // Step 10: RequireCompletedOnboarding は撤去済みで、家族設定は任意になった。
+  // 主要な家庭内 route は RequireSession だけを通り、AppShell 配下に直接配置される。
+  it.each(["/planner", "/generation", "/pantry", "/history", "/shopping", "/settings"])(
+    "%s は RequireSession 配下にあり、完了済みonboardingガード配下ではない",
+    (path) => {
+      const router = createAppRouter();
+      const ancestors = findAncestorElementTypes(router.routes, path);
+      expect(ancestors).toContain(RequireSession);
+      router.dispose();
+    },
+  );
+
+  it("/welcome と /onboarding は RequireSession 配下に置かれる", () => {
+    const router = createAppRouter();
+    for (const path of ["/welcome", "/onboarding"]) {
+      const ancestors = findAncestorElementTypes(router.routes, path);
+      expect(ancestors).toContain(RequireSession);
+    }
+    router.dispose();
+  });
+
+  it("/ は RootEntryPage を経由してprofile statusに応じて振り分ける（route自体はRequireSession配下）", () => {
+    const router = createAppRouter();
+    const ancestors = findAncestorElementTypes(router.routes, "/");
+    expect(ancestors).toContain(RequireSession);
     router.dispose();
   });
 });

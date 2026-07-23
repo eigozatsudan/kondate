@@ -294,7 +294,9 @@ export function underSixHardBeanAndNutContext(): GenerationContext {
 // ラベル確認の各表示を一度に検証できるよう adaptations/pantryUsage/labelConfirmations
 // を上書きする。
 //
-export function makeMenuResultViewModel(): MenuResultViewModel {
+export function makeMenuResultViewModel(
+  overrides: Partial<Pick<MenuResultViewModel, "targetMode" | "sourceSubmission">> = {},
+): MenuResultViewModel {
   const dish1Id = "50000000-0000-4000-8000-000000000001";
   const dish2Id = "50000000-0000-4000-8000-000000000002";
   const ingredient1Id = "53000000-0000-4000-8000-000000000001";
@@ -410,6 +412,11 @@ export function makeMenuResultViewModel(): MenuResultViewModel {
   });
 
   return {
+    // 既存の household 向け表示テストを崩さないため既定値は household。
+    // idea 境界のテストは makeMenuResultViewModel({ targetMode: "idea" }) のように
+    // 呼び出し側で上書きする（下記の overrides 引数を参照）。
+    targetMode: "household",
+    sourceSubmission: null,
     menu,
     memberLabels: { member_1: "子ども", member_2: "大人" },
     labelConfirmations: [
@@ -471,5 +478,6 @@ export function makeMenuResultViewModel(): MenuResultViewModel {
         currentPantryRow: null,
       },
     ],
+    ...overrides,
   };
 }

@@ -467,6 +467,53 @@ describe("MenuResultPage", () => {
       sessionStorage.getItem(pendingShoppingCommandStorageKey("reconcile", SHOPPING_LIST_ID)),
     ).toBeNull();
   });
+
+  describe("idea result boundary", () => {
+    it("does not mount revalidation/shopping and shows a permanent idea notice", async () => {
+      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+
+      renderPage(`/menus/${VALID_MENU_ID}`);
+
+      expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
+      // idea は家族条件を使わないため、常時noticeを表示する
+      expect(screen.getByText("家族条件を使用していません")).toBeVisible();
+      expect(screen.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
+      // household専用の再検証・買い物・冷蔵庫操作は一切呼ばない/表示しない
+      expect(revalidateMenuMock).not.toHaveBeenCalled();
+      expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
+      expect(shoppingApi.fetchReconcilableMenuSource).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "冷蔵庫へ反映" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "これに決めた" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "献立をまるごと別案にする" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "この一品だけ別案にする" })).toBeNull();
+      // idea では sessionStorage に再送用の shopping 記録を一切作らない
+      expect(
+        Object.keys(sessionStorage).filter((key) => key.startsWith("kondate:shopping:")),
+      ).toHaveLength(0);
+    });
+
+    it("applies the guided-planner-theme class to the idea body root", async () => {
+      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+
+      renderPage(`/menus/${VALID_MENU_ID}`);
+
+      expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
+      expect(document.querySelector(".guided-planner-theme")).not.toBeNull();
+    });
+
+    it("keeps household mode mounting revalidation and shopping as before", async () => {
+      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+
+      renderPage(`/menus/${VALID_MENU_ID}`);
+
+      await waitFor(() => {
+        expect(revalidateMenuMock).toHaveBeenCalled();
+      });
+      expect(screen.queryByText("家族条件を使用していません")).toBeNull();
+    });
+  });
 });
 
 function deferredPromiseForTest<T>() {

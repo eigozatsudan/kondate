@@ -51,11 +51,26 @@ export async function seedGeneratedMenu(page: Page): Promise<string> {
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await page.goto("/planner");
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
-  await page.getByLabel("メイン食材").fill("鶏肉");
-  await page.getByRole("button", { name: "追加" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加", exact: true }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
   await page.getByRole("radio", { name: "和食" }).check();
-  await expect(page.getByText("保存済み", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  const audienceSaveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
+  expect((await audienceSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({
     timeout: 15_000,
   });

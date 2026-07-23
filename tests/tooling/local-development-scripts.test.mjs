@@ -51,7 +51,12 @@ async function createScriptFixture(
 async function createDatabaseScriptFixture(scriptName, dependencies = []) {
   const root = await createScriptFixture(
     scriptName,
-    ["compose-project-name.sh", "ensure-compose-project-env.sh", ...dependencies],
+    [
+      "compose-project-name.sh",
+      "ensure-compose-project-env.sh",
+      ...(scriptName === "run-e2e.sh" ? ["reset-e2e-ai-quota.sh"] : []),
+      ...dependencies,
+    ],
     "database scripts-",
   );
   await writeFile(join(root, ".env"), "EXISTING_VALUE=keep\n", { mode: 0o600 });
@@ -279,7 +284,7 @@ function expectedResetInvocations(root, projectName) {
   return expectedRefreshInvocations(root, projectName).slice(2);
 }
 
-function expectedE2EInvocations(root, projectName, arguments_ = []) {
+function expectedE2EInvocations(root, projectName, arguments_ = [], cleanupE2EContainers = true) {
   const compose = ["compose", "--project-directory", root, "--project-name", projectName];
   return [
     [...compose, "-f", join(root, "compose.yaml"), "up", "-d", "--wait"],
@@ -300,6 +305,19 @@ function expectedE2EInvocations(root, projectName, arguments_ = []) {
       ...compose,
       "-f",
       join(root, "compose.yaml"),
+      "run",
+      "--rm",
+      "--no-deps",
+      "--entrypoint",
+      "sh",
+      "migrate",
+      "-c",
+      'psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "truncate private.ai_global_daily_usage"',
+    ],
+    [
+      ...compose,
+      "-f",
+      join(root, "compose.yaml"),
       "-f",
       join(root, "compose.e2e.yaml"),
       "--profile",
@@ -309,6 +327,7 @@ function expectedE2EInvocations(root, projectName, arguments_ = []) {
       "--wait",
       "--force-recreate",
       "--no-deps",
+      "openrouter-mock",
       "kong",
       "oauth-mock",
       "app",
@@ -327,31 +346,35 @@ function expectedE2EInvocations(root, projectName, arguments_ = []) {
       "e2e",
       ...arguments_,
     ],
-    [
-      ...compose,
-      "-f",
-      join(root, "compose.yaml"),
-      "-f",
-      join(root, "compose.e2e.yaml"),
-      "--profile",
-      "e2e",
-      "kill",
-      "--signal",
-      "SIGKILL",
-      "e2e",
-    ],
-    [
-      ...compose,
-      "-f",
-      join(root, "compose.yaml"),
-      "-f",
-      join(root, "compose.e2e.yaml"),
-      "--profile",
-      "e2e",
-      "rm",
-      "--force",
-      "e2e",
-    ],
+    ...(cleanupE2EContainers
+      ? [
+          [
+            ...compose,
+            "-f",
+            join(root, "compose.yaml"),
+            "-f",
+            join(root, "compose.e2e.yaml"),
+            "--profile",
+            "e2e",
+            "kill",
+            "--signal",
+            "SIGKILL",
+            "e2e",
+          ],
+          [
+            ...compose,
+            "-f",
+            join(root, "compose.yaml"),
+            "-f",
+            join(root, "compose.e2e.yaml"),
+            "--profile",
+            "e2e",
+            "rm",
+            "--force",
+            "e2e",
+          ],
+        ]
+      : []),
     [
       ...compose,
       "-f",
@@ -526,7 +549,12 @@ test("E2E runner restores the base stack and preserves success or failure", asyn
 
       assert.deepEqual(
         await readDockerInvocations(logDir),
-        expectedE2EInvocations(root, await expectedProjectName(root), ["--grep", "space value"]),
+        expectedE2EInvocations(
+          root,
+          await expectedProjectName(root),
+          ["--grep", "space value"],
+          fixture.e2eStatus !== 0,
+        ),
       );
       await assert.rejects(access(await expectedE2ELockDir(root)));
     });
@@ -581,7 +609,7 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
   await runE2E(root, bin, thirdLogDir, [], { TMPDIR: thirdTmpDir });
   assert.deepEqual(
     await readDockerInvocations(thirdLogDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
 });
 
@@ -634,7 +662,7 @@ test("E2E runner reports a lock release failure after a successful run", async (
   assert.notEqual(result.code, 0);
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
 });
 
@@ -872,7 +900,7 @@ test("E2E runner bounds repeated signals while restoring the base stack", async 
   assert.equal(isProcessAlive(fakeDockerPid), false);
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
 });
 
@@ -922,7 +950,7 @@ test("E2E runner bounds one signal while a base restoration is stuck", async (t)
     assert.equal(isProcessAlive(pid), false);
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
 });
 
@@ -957,34 +985,36 @@ test("E2E runner preserves every early failure when cleanup also fails", async (
   }
 });
 
-test("E2E runner returns the first cleanup phase failure after a successful run", async (t) => {
-  for (const fixture of [
-    { env: { E2E_KILL_STATUS: "45" }, name: "kill", status: 45 },
-    { env: { E2E_RM_STATUS: "46" }, name: "rm", status: 46 },
-    { env: { E2E_CLEANUP_STATUS: "47" }, name: "restore", status: 47 },
-    {
-      env: { E2E_CLEANUP_STATUS: "47", E2E_KILL_STATUS: "45", E2E_RM_STATUS: "46" },
-      name: "all phases",
-      status: 45,
-    },
-  ]) {
-    await t.test(fixture.name, async (subtest) => {
-      const root = await createDatabaseScriptFixture("run-e2e.sh");
-      subtest.after(() => rm(root, { recursive: true, force: true }));
-      const bin = await installDockerRecorder(root);
-      const logDir = join(root, `cleanup failure ${fixture.status} log`);
+test("E2E runner skips removed E2E container cleanup after a successful run", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "successful E2E cleanup log");
 
-      await assert.rejects(
-        runE2E(root, bin, logDir, [], fixture.env),
-        (error) => error && typeof error === "object" && error.code === fixture.status,
-      );
+  await runE2E(root, bin, logDir, [], { E2E_KILL_STATUS: "45", E2E_RM_STATUS: "46" });
 
-      assert.deepEqual(
-        await readDockerInvocations(logDir),
-        expectedE2EInvocations(root, await expectedProjectName(root)),
-      );
-    });
-  }
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
+  );
+  await assert.rejects(access(await expectedE2ELockDir(root)));
+});
+
+test("E2E runner reports a base stack restoration failure after a successful run", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "base restoration failure log");
+
+  await assert.rejects(
+    runE2E(root, bin, logDir, [], { E2E_CLEANUP_STATUS: "47" }),
+    (error) => error && typeof error === "object" && error.code === 47,
+  );
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
+  );
 });
 
 test("E2E runner kills and removes a daemon-side E2E child before restoring", async (t) => {
@@ -1035,20 +1065,17 @@ test("E2E runner kills and removes a daemon-side E2E child before restoring", as
   );
 });
 
-test("E2E runner restores the base stack when E2E removal fails", async (t) => {
+test("E2E runner does not remove the completed E2E container", async (t) => {
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
   const logDir = join(root, "E2E removal failure log");
 
-  await assert.rejects(
-    runE2E(root, bin, logDir, [], { E2E_RM_STATUS: "46" }),
-    (error) => error && typeof error === "object" && error.code === 46,
-  );
+  await runE2E(root, bin, logDir, [], { E2E_RM_STATUS: "46" });
 
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
 });
 
@@ -1068,6 +1095,7 @@ test("E2E runner escalates a second signal across the cleanup phase", async (t) 
       DOCKER_READY_FILE: e2eReadyFile,
       E2E_CLEANUP_READY_FILE: cleanupReadyFile,
       E2E_CLEANUP_WAIT_FOR_SIGNAL: "1",
+      E2E_STATUS: "23",
       E2E_WAIT_FOR_SIGNAL: "1",
       KONDATE_E2E_SIGNAL_GRACE_SECONDS: "1",
       PATH: `${bin}:${process.env.PATH}`,
@@ -1167,6 +1195,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an rm signal", as
       DOCKER_LOG_DIR: logDir,
       E2E_CLEANUP_READY_FILE: cleanupReadyFile,
       E2E_CLEANUP_WAIT_FOR_SIGNAL: "1",
+      E2E_STATUS: "23",
       E2E_RM_READY_FILE: removalReadyFile,
       E2E_RM_SIGNAL_PARENT: "TERM",
       E2E_RM_SUCCESS_DELAY: "0.05",
@@ -1251,7 +1280,7 @@ test("E2E runner preserves a signal delivered as cleanup completes", async (t) =
   assert.equal(await readFile(successMarker, "utf8"), "restored\n");
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
 });
 

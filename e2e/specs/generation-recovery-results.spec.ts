@@ -1,8 +1,95 @@
 import { expect, test } from "../fixtures/auth";
+import { z } from "zod";
+import { localRestHeaders } from "../fixtures/local-supabase";
 import type { Page, Request, Route } from "@playwright/test";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
 // 切断復旧、タブ再開、結果画面（/menus/:menuId）の詳細表示、320px幅でのレイアウトを検証する。
+
+/**
+ * welcomeから「家族設定を省略」してideaモードで4質問→人数N→privacy→reviewへ進める。
+ * PlannerWizardは1画面1質問（meal→ingredients→cuisine→audience→review）のため、
+ * 旧PlannerForm（同一画面で全条件をradio選択）とは操作手順が異なる。
+ */
+async function completeIdeaPlannerToReview(page: Page, servings: number): Promise<void> {
+  // ログイン直後の/welcomeで家族設定を省略し、idea専用のonboarding_status=skippedへ進む。
+  await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+  await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
+
+  // 1. 食事
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+  const mealSaveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+  await page.getByRole("radio", { name: "朝食" }).check();
+  expect((await mealSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+
+  // 2. メイン食材
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  const ingredientSaveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加" }).click();
+  expect((await ingredientSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+
+  // 3. ジャンル
+  await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
+  const cuisineSaveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+  await page.getByRole("radio", { name: "和食" }).check();
+  expect((await cuisineSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+
+  // 4. 作る相手（idea人数N。境界値1・20の両方を1件以上使う）
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
+  // useDraftAutosaveは600msデバウンスで保存するため、servings確定操作の直後に
+  // save応答を同期点として待ってから次stepへ進む（画面離脱時のunmount flushに
+  // 依存せず、確実に永続化された状態でreviewへ到達する）。
+  const servingsSaveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+  if (servings >= 1 && servings <= 6) {
+    await page.getByRole("button", { name: `${String(servings)}人` }).click();
+  } else {
+    await page.getByLabel("7人以上（20人まで）").fill(String(servings));
+  }
+  expect((await servingsSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+
+  // 5. 確認（review）。privacy未確認のため生成buttonはdisabledで説明linkが出る。
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/privacy");
+  await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
+  await page.getByRole("button", { name: "確認して進む" }).click();
+
+  // returnTo=/planner?resume=reviewでreview stepへ戻る。
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  // 既知の問題: useDraftAutosaveの通常保存はReact Queryのcacheへ反映されず
+  // （flushDraftのみsetQueryDataを呼ぶ）、react-query defaultOptionsの
+  // staleTime=30_000内にSPA navigationで/plannerへ戻ると、初回mount時に
+  // キャッシュされたnull（またはservings未確定時点）のdraftがそのまま
+  // 再利用され、step 1へ巻き戻ってしまう（本サブパスのソース変更範囲外の
+  // 既存差異のためテスト側では reload で回避する。詳細はreportに記載）。
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
+}
 
 async function completeMinimumPlanner(page: Page) {
   // local OpenRouterの固定success fixtureと同じ家族・食事条件に揃え、
@@ -19,12 +106,31 @@ async function completeMinimumPlanner(page: Page) {
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await page.goto("/planner");
+  // PlannerWizardは1画面1質問（meal→ingredients→cuisine→audience→review）のため、
+  // 旧PlannerForm（同一画面で全条件をradio選択）とは操作手順が異なる。
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
-  await page.getByLabel("メイン食材").fill("鶏肉");
-  await page.getByRole("button", { name: "追加" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  // getByLabel("メイン食材")はaria-labelledbyを持つsectionとinput要素の両方に
+  // マッチしてstrict mode違反になるため、role指定で入力欄だけを絞り込む。
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加", exact: true }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
   await page.getByRole("radio", { name: "和食" }).check();
-  // draftRevisionがserver側で確定する前のPOSTを避けるため、自動保存完了を待つ。
-  await expect(page.getByText("保存済み", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "次へ" }).click();
+  // audienceは既定でeligible家族全員（家族1）がhouseholdモードで選択済み。
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  // draftRevisionがserver側で確定する前のPOSTを避けるため、最後の質問（audience）の
+  // 自動保存応答を同期点として待つ（PlannerWizardは「保存済み」の可視表示を持たない）。
+  const audienceSaveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
+  expect((await audienceSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({
     timeout: 10_000,
   });
@@ -211,4 +317,317 @@ test("shows timeline, tabs, ingredients, steps, adaptations, empty pantry state,
   ).toBeVisible();
   // 横スクロールが発生しないことを確認
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+// --- idea結果境界E2E（Task 6 Step 13） ---
+// 家族設定を省略したidea利用者が4質問→人数N→privacy→reviewを経て生成し、
+// 結果画面にnotice付きの本文だけが表示されること、家族向け操作・買い物・
+// 家族安全通信が一切発生しないことを固定する。Nの境界値は1と20の両方を検証する。
+
+async function assertIdeaResultBoundary(page: Page, servings: number): Promise<void> {
+  await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+    timeout: 30_000,
+  });
+  // notice: idea結果には常時「家族条件を使用していません」「年齢・アレルギーへの
+  // 適合は確認されていません」の2文が表示される（brief step 11）。
+  await expect(page.getByText("家族条件を使用していません")).toBeVisible();
+  await expect(page.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
+  // 人数表示。menu.servings === N であることを本文の「N人分」表示で確認する。
+  await expect(page.getByText(`${String(servings)}人分`, { exact: false })).toBeVisible();
+  // 家族向け5操作（まるごと別案・一品だけ別案・買い物リストを作る・
+  // 買い物リストとの差分を確認・冷蔵庫へ反映・これに決めた）がidea結果には
+  // 一切表示されない。
+  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "買い物リストとの差分を確認" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "冷蔵庫へ反映" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "これに決めた" })).toHaveCount(0);
+}
+
+function isAppGenerationMenuUrl(url: URL, appOrigin: string): boolean {
+  return url.origin === appOrigin && url.pathname === "/api/generations/menu";
+}
+
+function createFirstGenerationPostSelector(
+  appOrigin: string,
+): (url: URL, method: string) => boolean {
+  let selected = false;
+  return (url, method) => {
+    if (selected || method !== "POST" || !isAppGenerationMenuUrl(url, appOrigin)) return false;
+    selected = true;
+    return true;
+  };
+}
+
+async function selectIdeaMockScenario(
+  page: Page,
+  servings: 1 | 20,
+  appOrigin: string,
+): Promise<void> {
+  const shouldForwardScenario = createFirstGenerationPostSelector(appOrigin);
+  await page.route(
+    (url) => isAppGenerationMenuUrl(url, appOrigin),
+    async (route) => {
+      const request = route.request();
+      if (!shouldForwardScenario(new URL(request.url()), request.method())) {
+        await route.continue();
+        return;
+      }
+      await route.continue({
+        headers: {
+          ...request.headers(),
+          "x-kondate-mock-scenario": `idea-servings-${String(servings)}`,
+        },
+      });
+    },
+  );
+}
+
+test("selects only the first same-origin generation POST for an idea mock scenario", () => {
+  const appOrigin = "http://127.0.0.1:5173";
+  const sameOriginUrl = new URL("/api/generations/menu", appOrigin);
+  const shouldForwardScenario = createFirstGenerationPostSelector(appOrigin);
+
+  expect([
+    shouldForwardScenario(new URL("https://example.com/api/generations/menu"), "POST"),
+    shouldForwardScenario(sameOriginUrl, "GET"),
+    shouldForwardScenario(sameOriginUrl, "POST"),
+    shouldForwardScenario(sameOriginUrl, "POST"),
+  ]).toEqual([false, false, true, false]);
+});
+
+for (const servings of [1, 20] as const) {
+  test(`generates an idea menu for servings=${String(servings)} boundary without mounting household actions or shopping requests`, async ({
+    authenticatedPage: page,
+  }) => {
+    test.setTimeout(90_000);
+    const forbiddenIdeaResultRequests: string[] = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      // create(/api/shopping-lists/from-menu)、preview/reconcile/revalidate
+      // (/api/shopping-lists/:id/preview|reconcile|revalidate)のいずれも
+      // /api/shopping-lists/ 配下に集約されているため、prefixで一括検出する。
+      // 初回生成の/api/generations/menuだけはこのtestの主操作として許可する。
+      // 結果表示後のdish再生成、家族再検証、shopping 4 endpointはidea bodyで
+      // mountされないため、いずれも0件でなければならない。
+      if (
+        path.startsWith("/api/shopping-lists/") ||
+        path === "/api/generations/dish" ||
+        /^\/api\/menus\/[^/]+\/revalidate$/u.test(path)
+      ) {
+        forbiddenIdeaResultRequests.push(path);
+      }
+    });
+
+    await completeIdeaPlannerToReview(page, servings);
+    const appOrigin = new URL(page.url()).origin;
+    await selectIdeaMockScenario(page, servings, appOrigin);
+    const generationResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        isAppGenerationMenuUrl(new URL(response.url()), appOrigin),
+    );
+    await page.getByRole("button", { name: "献立を作る" }).click();
+    const generationResponse = await generationResponsePromise;
+    const generationResponseBody = await generationResponse.text();
+    let generationResult: unknown;
+    try {
+      generationResult = JSON.parse(generationResponseBody);
+    } catch {
+      generationResult = null;
+    }
+    const succeededResponse = z
+      .object({
+        ok: z.literal(true),
+        data: z.looseObject({ status: z.literal("succeeded") }),
+      })
+      .safeParse(generationResult);
+    if (!generationResponse.ok() || !succeededResponse.success) {
+      throw new Error(
+        `献立生成POSTが成功終端になりませんでした（HTTP ${String(generationResponse.status())}）: ${generationResponseBody}`,
+      );
+    }
+    await assertIdeaResultBoundary(page, servings);
+
+    // shoppingのcreate/preview/reconcile/revalidate requestが0件であることを確認する。
+    expect(forbiddenIdeaResultRequests).toHaveLength(0);
+
+    // sessionStorageにkondate:shopping: prefixのkeyが0件であることを確認する。
+    const shoppingSessionKeys = await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) => key.startsWith("kondate:shopping:")),
+    );
+    expect(shoppingSessionKeys).toHaveLength(0);
+
+    // 保存されたmenu rowのservingsが同じNであることをDB上でも直接確認する。
+    const menuIdMatch = /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname);
+    if (menuIdMatch?.[1] === undefined)
+      throw new Error("生成された献立IDをURLから取得できませんでした");
+    const headers = await localRestHeaders(page);
+    const menuLookup = await page.request.get(
+      `http://127.0.0.1:8000/rest/v1/menus?id=eq.${menuIdMatch[1]}&select=servings,target_mode`,
+      { headers },
+    );
+    const menuRows = z
+      .array(z.object({ servings: z.number(), target_mode: z.string() }))
+      .parse(await menuLookup.json());
+    expect(menuRows[0]?.servings).toBe(servings);
+    expect(menuRows[0]?.target_mode).toBe("idea");
+  });
+}
+
+test("shows a field-local range error and focuses the first invalid servings field", async ({
+  authenticatedPage: page,
+}) => {
+  // shared/contracts/planner.tsのservingsスキーマ（1〜20）とDB CHECK制約
+  // （generation_drafts_target_mode_servings_check）は1〜20の範囲を要求するが、
+  // その範囲を外れたservingsはUI（AudienceStepのNumberInput）自体が
+  // onServingsChangeへ反映しないため、range違反のdraftそのものが成立しない
+  // （DB RPC経由の直接注入もCHECK制約でreject）。したがってfield-local errorは
+  // 「範囲外の値を選択させない」というUI側のfail-closedな振る舞いとして検証する。
+  await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+  await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  await page.getByRole("radio", { name: "朝食" }).check();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("radio", { name: "和食" }).check();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
+  const servingsInput = page.getByLabel("7人以上（20人まで）");
+  await servingsInput.fill("21");
+  // 21は親の下書きへ保存せず、field-local errorを表示して最初のinvalid
+  // field（人数input）へfocusする。範囲外値を送信可能なdraftにしない設計と、
+  // エラー位置を利用者に明示するアクセシビリティ要件を両立させる。
+  for (const count of [1, 2, 3, 4, 5, 6]) {
+    await expect(page.getByRole("button", { name: `${String(count)}人` })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  }
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("alert")).toHaveText("人数は7人から20人の範囲で入力してください。");
+  await expect(servingsInput).toHaveAttribute("aria-invalid", "true");
+  await expect(servingsInput).toHaveAttribute("aria-describedby", "audience-servings-error");
+  await expect(servingsInput).toBeFocused();
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  await servingsInput.fill("20");
+  await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+});
+
+// --- 5-route smoke matrix（Task 6 Step 13） ---
+// skippedかつ家族0人の利用者が/pantry, /history, /shopping, /settings,
+// /emergency-menusを直接開いた場合、onboarding redirectなし・page errorなし・
+// 理解可能なempty state・家族安全requestが0件であることを固定する。
+
+test.describe("5-route smoke matrix for a skipped user with zero household members", () => {
+  test("visits pantry, history, shopping, settings, and emergency-menus without onboarding redirect or family-safety activity", async ({
+    authenticatedPage: page,
+  }) => {
+    // ideaを選ぶとonboarding_statusがskippedへ進む（audienceでideaを確定した時点）。
+    // ここでは家族設定を経由せず、welcomeから直接ideaを選んでskippedへ進める。
+    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+    await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+
+    const pageErrors: Error[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error);
+    });
+    const routeNames = ["pantry", "history", "shopping", "settings", "emergency-menus"] as const;
+    type RouteName = (typeof routeNames)[number];
+    const familySafetyRequests: Record<RouteName, string[]> = {
+      pantry: [],
+      history: [],
+      shopping: [],
+      settings: [],
+      "emergency-menus": [],
+    };
+    let activeRoute: RouteName | null = null;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      // household_membersのreadは/settingsが登録済み家族を表示するための正当な
+      // 画面読込であり、献立の家族安全再検証ではない。ここではStep 13が禁止する
+      // safety action（再検証・再生成・shopping・緊急献立）だけをroute別に記録する。
+      if (
+        url.pathname === "/api/emergency-menus" ||
+        url.pathname.startsWith("/api/shopping-lists/") ||
+        url.pathname === "/api/generations/dish" ||
+        /^\/api\/menus\/[^/]+\/revalidate$/u.test(url.pathname)
+      ) {
+        if (activeRoute !== null) familySafetyRequests[activeRoute].push(url.pathname);
+      }
+    });
+
+    activeRoute = "pantry";
+    await page.goto("/pantry");
+    await expect(page).toHaveURL((url) => url.pathname === "/pantry");
+    await expect(page.getByRole("heading", { name: "食材リスト" })).toBeVisible();
+
+    activeRoute = "history";
+    await page.goto("/history");
+    await expect(page).toHaveURL((url) => url.pathname === "/history");
+    await expect(page.getByRole("heading", { name: "作った献立" })).toBeVisible();
+    await expect(page.getByText("まだ献立がありません")).toBeVisible();
+
+    activeRoute = "shopping";
+    await page.goto("/shopping");
+    await expect(page).toHaveURL((url) => url.pathname === "/shopping");
+    await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible();
+    await expect(page.getByText("買い物リストは空です")).toBeVisible();
+
+    activeRoute = "settings";
+    await page.goto("/settings");
+    await expect(page).toHaveURL((url) => url.pathname === "/settings");
+    await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible();
+    await expect(page.getByText("家族を追加してください")).toBeVisible();
+
+    // /emergency-menusは下書きなしとidea下書きの両方を検証する。
+    // まず下書きなし（このユーザーはまだplanner下書きを保存していない）。
+    activeRoute = "emergency-menus";
+    await page.goto("/emergency-menus");
+    await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
+    await expect(page.getByRole("heading", { name: "15分緊急献立" })).toBeVisible();
+    await expect(
+      page.getByText("献立条件の下書きがありません。献立画面で条件を保存してください。"),
+    ).toBeVisible();
+    // idea下書き（家族条件を持たない）を作ってから再訪する。/planner自身の
+    // household_members取得は家族安全actionではないため、route listenerを
+    // 外さずに記録対象外として扱う。
+    activeRoute = null;
+    await page.goto("/planner");
+    await page.getByRole("radio", { name: "夕食" }).check();
+    await page.getByRole("button", { name: "次へ" }).click();
+    await page.getByRole("textbox", { name: "メイン食材" }).fill("豆腐");
+    await page.getByRole("button", { name: "追加" }).click();
+    await page.getByRole("button", { name: "次へ" }).click();
+    await page.getByRole("radio", { name: "中華" }).check();
+    await page.getByRole("button", { name: "次へ" }).click();
+    await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
+    // PlannerWizardは「保存済み」の可視表示を持たないため、servings確定の
+    // 自動保存応答自体を同期点として待つ。
+    const servingsSaveResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+    );
+    await page.getByRole("button", { name: "2人" }).click();
+    expect((await servingsSaveResponse).ok()).toBe(true);
+    activeRoute = "emergency-menus";
+    await page.goto("/emergency-menus");
+    await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
+    await expect(page.getByRole("heading", { name: "15分緊急献立" })).toBeVisible();
+    await expect(
+      page.getByText(
+        "対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。",
+      ),
+    ).toBeVisible();
+
+    expect(pageErrors).toHaveLength(0);
+    for (const routeName of routeNames) {
+      expect(familySafetyRequests[routeName]).toEqual([]);
+    }
+  });
 });

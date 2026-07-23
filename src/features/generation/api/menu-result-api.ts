@@ -1,6 +1,7 @@
 import { pantryItemSchema } from "@shared/contracts/pantry";
 import { validatedMenuSchema } from "@shared/contracts/generation";
 import type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
+import { plannerSubmissionSchema, targetModeSchema } from "@shared/contracts/planner";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 export type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
@@ -18,6 +19,7 @@ export function buildMenuResultQuery(
     .select(
       `
       id, meal_type, cuisine_genre, servings, total_elapsed_minutes, output_schema_version,
+      target_mode, preference_snapshot,
       dishes!dishes_menu_owner_fkey (
         id, role, position, name, description, cooking_time_minutes,
         dish_ingredients!dish_ingredients_dish_owner_fkey (
@@ -311,7 +313,23 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
     };
   });
 
+  // preference_snapshot.submission は idea/household 双方で保存されるが、形が
+  // 崩れている・欠落している場合は安全側に倒し sourceSubmission を null にする
+  // （存在しない家族条件を捏造してUIへ渡さないため）。
+  const submissionCandidate = (data.preference_snapshot as { submission?: unknown } | null)
+    ?.submission;
+  const submissionParsed = plannerSubmissionSchema.safeParse(submissionCandidate);
+  const sourceSubmission = submissionParsed.success ? submissionParsed.data : null;
+
+  // target_mode はDB制約で household|idea のいずれかしか入らないが、境界を
+  // 二重に守るため受信側でも zod で確定させ、未知の値は menu_not_found として
+  // 扱う（家族安全表示の判定元を不明な値に委ねない）。
+  const targetModeParsed = targetModeSchema.safeParse(data.target_mode);
+  if (!targetModeParsed.success) throw new Error("menu_not_found");
+
   return {
+    targetMode: targetModeParsed.data,
+    sourceSubmission,
     menu,
     memberLabels: Object.fromEntries(memberLabels),
     labelConfirmations: data.menu_label_confirmations.map((item) => {

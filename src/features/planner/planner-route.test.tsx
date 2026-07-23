@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerAttempt } from "./expired-pantry-checks";
+import type { PlannerFieldName, PlannerStep } from "./model/planner-wizard";
 
 const draft: PlannerDraft = {
   id: "71000000-0000-4000-8000-000000000001",
@@ -46,6 +47,7 @@ const queryState = vi.hoisted(() => ({
     isPending: false,
   },
   ownerBPending: false,
+  privacyConsent: null as { user_id: string; notice_version: string } | null,
 }));
 
 const ownerBId = "72000000-0000-4000-8000-000000000002";
@@ -94,6 +96,9 @@ vi.mock("@tanstack/react-query", () => ({
         isPending: false,
         isSuccess: true,
       };
+    }
+    if (queryKey[0] === "privacy") {
+      return { data: queryState.privacyConsent, isError: false, isPending: false };
     }
     const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
     const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;
@@ -151,68 +156,74 @@ vi.mock("./use-draft-autosave", () => ({
     };
   },
 }));
-vi.mock("./planner-page", () => ({
-  PlannerForm: (props: {
-    initialValue: PlannerDraftInput;
-    pantryItems: readonly PantryItem[];
-    pantryItemsStatus: "loading" | "loaded";
-    attempt: PlannerAttempt;
-    onAttemptChange(next: PlannerAttempt): void;
-    onStartNewAttempt(): void;
-    onGenerate(saved: PlannerDraft, attempt: PlannerAttempt): Promise<void>;
-    flush(): Promise<PlannerDraft>;
-    onOpenEmergencyMenus?(): Promise<void>;
-  }) => (
-    <div>
-      <output aria-label="pantry status">{props.pantryItemsStatus}</output>
-      <output aria-label="pantry names">
-        {props.pantryItems.map((item) => item.name).join("・")}
-      </output>
-      <output aria-label="draft memo">{props.initialValue.memo}</output>
-      <output aria-label="attempt key">{props.attempt.idempotencyKey}</output>
-      <output aria-label="check count">{props.attempt.expiredPantryChecks.length}</output>
-      <button
-        type="button"
-        onClick={() => {
-          props.onAttemptChange({
-            idempotencyKey: props.attempt.idempotencyKey,
-            expiredPantryChecks: [
-              {
-                pantryItemId: "74000000-0000-4000-8000-000000000001",
-                checkedAt: "2026-07-11T03:00:00.000Z",
-              },
-            ],
-          });
-        }}
-      >
-        確認を反映
-      </button>
-      <button
-        type="button"
-        onClick={() => void props.onGenerate(draft, props.attempt).catch(() => undefined)}
-      >
-        生成
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          props.onStartNewAttempt();
-        }}
-      >
-        新しい試行
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          if (props.onOpenEmergencyMenus !== undefined) {
-            void props.flush().then(() => props.onOpenEmergencyMenus?.());
-          }
-        }}
-      >
-        緊急献立
-      </button>
-    </div>
-  ),
+
+// PlannerRoutePage が実際にマウントするのは PlannerWizard であることを固定するため、
+// wizardは独立してmockし、routeから渡されたpropsだけをUIへ露出する。
+type WizardMockProps = {
+  draft: PlannerDraftInput;
+  step: PlannerStep;
+  isSaving: boolean;
+  error: string | null;
+  fieldErrors: Partial<Record<PlannerFieldName, string>>;
+  onDraftChange(next: PlannerDraftInput): void;
+  onStepChange(next: PlannerStep): void;
+  onSubmit(): Promise<void>;
+  attempt: PlannerAttempt;
+  onAttemptChange(next: PlannerAttempt): void;
+  pantryItems: readonly PantryItem[];
+  pantryItemsStatus: "loading" | "loaded";
+  hasAcceptedOrDeclinedPrivacy: boolean;
+  onOpenPrivacyNotice(): void;
+};
+const wizardPropsSpy = vi.hoisted(() => vi.fn());
+vi.mock("./components/planner-wizard", () => ({
+  PlannerWizard: (props: WizardMockProps) => {
+    wizardPropsSpy(props);
+    return (
+      <div>
+        <output aria-label="wizard step">{props.step}</output>
+        <output aria-label="wizard saving">{String(props.isSaving)}</output>
+        <output aria-label="wizard error">{props.error ?? ""}</output>
+        <output aria-label="pantry status">{props.pantryItemsStatus}</output>
+        <output aria-label="pantry names">
+          {props.pantryItems.map((item) => item.name).join("・")}
+        </output>
+        <output aria-label="draft memo">{props.draft.memo}</output>
+        <output aria-label="attempt key">{props.attempt.idempotencyKey}</output>
+        <output aria-label="check count">{props.attempt.expiredPantryChecks.length}</output>
+        <output aria-label="privacy accepted or declined">
+          {String(props.hasAcceptedOrDeclinedPrivacy)}
+        </output>
+        <button
+          type="button"
+          onClick={() => {
+            props.onAttemptChange({
+              idempotencyKey: props.attempt.idempotencyKey,
+              expiredPantryChecks: [
+                {
+                  pantryItemId: "74000000-0000-4000-8000-000000000001",
+                  checkedAt: "2026-07-11T03:00:00.000Z",
+                },
+              ],
+            });
+          }}
+        >
+          確認を反映
+        </button>
+        <button type="button" onClick={() => void props.onSubmit().catch(() => undefined)}>
+          生成
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            props.onOpenPrivacyNotice();
+          }}
+        >
+          privacy notice
+        </button>
+      </div>
+    );
+  },
 }));
 
 const generationRecoveryMock = vi.hoisted(() => ({ startGeneration: vi.fn() }));
@@ -247,26 +258,10 @@ beforeEach(() => {
     isError: false,
     isPending: false,
   };
+  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-11.v1" };
   savePlannerDraftMock.mockResolvedValue(draft);
   generationRecoveryMock.startGeneration.mockReset();
   generationRecoveryMock.startGeneration.mockResolvedValue(undefined);
-});
-
-it("下書き未作成でも対象家族を含む revision 0 の初回保存後に緊急献立へ移動する", async () => {
-  queryState.draft = null;
-  render(<PlannerPage />);
-
-  await userEvent.click(screen.getByRole("button", { name: "緊急献立" }));
-
-  await vi.waitFor(() => {
-    expect(savePlannerDraftMock).toHaveBeenCalledWith(
-      {},
-      draft.userId,
-      expect.objectContaining({ targetMemberIds: draft.targetMemberIds }),
-      0,
-    );
-    expect(navigateMock).toHaveBeenCalledWith("/emergency-menus");
-  });
 });
 
 it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closure を破棄する", async () => {
@@ -305,14 +300,14 @@ it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closu
   );
 });
 
-it("owner の冷蔵庫一覧を loaded 状態で planner form へ渡す", () => {
+it("owner の冷蔵庫一覧を loaded 状態で planner wizard へ渡す", () => {
   render(<PlannerPage />);
 
   expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
   expect(screen.getByLabelText("pantry names")).toHaveTextContent("キャベツ");
 });
 
-it("冷蔵庫一覧の取得中は planner form を確定表示しない", () => {
+it("冷蔵庫一覧の取得中は planner wizard を確定表示しない", () => {
   queryState.pantry = { data: undefined, isError: false, isPending: true };
 
   render(<PlannerPage />);
@@ -365,10 +360,6 @@ it("route が更新された exact attempt を生成へ渡し新しい試行で�
     },
     expect.any(AbortSignal),
   );
-
-  await user.click(screen.getByRole("button", { name: "新しい試行" }));
-  expect(screen.getByLabelText("attempt key").textContent).not.toBe(firstKey);
-  expect(screen.getByLabelText("check count")).toHaveTextContent("0");
 });
 
 it("生成成功の完了後だけ attempt を新しいキーと空の確認へ更新する", async () => {
@@ -459,6 +450,19 @@ it.each([
   });
   expect(screen.getByLabelText("attempt key")).toHaveTextContent(firstKey);
   expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+});
+
+it("AI情報未確認では wizard へ hasAcceptedOrDeclinedPrivacy=false を渡す", () => {
+  queryState.privacyConsent = null;
+  render(<PlannerPage />);
+  expect(screen.getByLabelText("privacy accepted or declined")).toHaveTextContent("false");
+});
+
+it("privacy notice への遷移操作は review resume 付きの returnTo を組み立てる", async () => {
+  const user = userEvent.setup();
+  render(<PlannerPage />);
+  await user.click(screen.getByRole("button", { name: "privacy notice" }));
+  expect(navigateMock).toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
 });
 
 describe("PlannerRoutePage", () => {

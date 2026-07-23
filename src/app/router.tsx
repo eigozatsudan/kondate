@@ -1,6 +1,7 @@
-import { createBrowserRouter, Navigate } from "react-router";
+import { createBrowserRouter } from "react-router";
 import { AppShell } from "./layouts/app-shell";
-import { RequireCompletedOnboarding, RequireSession } from "@/features/auth/protected-routes";
+import { RequireSession } from "@/features/auth/protected-routes";
+import { RootEntryPage } from "@/features/auth/root-entry-page";
 import { PantryPage } from "@/features/pantry/pantry-page";
 import { EmergencyMenuPage } from "@/features/emergency/emergency-menu-page";
 import { PlannerRoutePage } from "@/features/planner/planner-route";
@@ -31,6 +32,14 @@ export function createAppRouter(): AppRouter {
     {
       element: <RequireSession />,
       children: [
+        { path: "/", element: <RootEntryPage /> },
+        {
+          path: "/welcome",
+          lazy: async () => {
+            const { WelcomeRoutePage } = await import("@/features/welcome/welcome-route-page");
+            return { Component: WelcomeRoutePage };
+          },
+        },
         {
           path: "/onboarding",
           lazy: async () => {
@@ -54,46 +63,40 @@ export function createAppRouter(): AppRouter {
               element: <EmergencyMenuPage />,
             },
             {
-              element: <RequireCompletedOnboarding />,
-              children: [
-                { path: "/", element: <Navigate to="/planner" replace /> },
-                {
-                  path: "/planner",
-                  element: <PlannerRoutePage />,
-                },
-                {
-                  path: "/generation",
-                  element: <GenerationPage />,
-                },
-                {
-                  path: "/menus/:menuId",
-                  element: <MenuResultPage />,
-                },
-                {
-                  path: "/pantry",
-                  element: <PantryPage />,
-                },
-                {
-                  path: "/history",
-                  element: <HistoryPage />,
-                },
-                {
-                  path: "/history/:menuId",
-                  element: <HistoryDetailPage />,
-                },
-                {
-                  path: "/shopping",
-                  element: <ShoppingListPage />,
-                },
-                {
-                  path: "/settings",
-                  lazy: async () => {
-                    const { HouseholdSettingsPage } =
-                      await import("@/features/household/household-settings-page");
-                    return { Component: HouseholdSettingsPage };
-                  },
-                },
-              ],
+              path: "/planner",
+              element: <PlannerRoutePage />,
+            },
+            {
+              path: "/generation",
+              element: <GenerationPage />,
+            },
+            {
+              path: "/menus/:menuId",
+              element: <MenuResultPage />,
+            },
+            {
+              path: "/pantry",
+              element: <PantryPage />,
+            },
+            {
+              path: "/history",
+              element: <HistoryPage />,
+            },
+            {
+              path: "/history/:menuId",
+              element: <HistoryDetailPage />,
+            },
+            {
+              path: "/shopping",
+              element: <ShoppingListPage />,
+            },
+            {
+              path: "/settings",
+              lazy: async () => {
+                const { HouseholdSettingsPage } =
+                  await import("@/features/household/household-settings-page");
+                return { Component: HouseholdSettingsPage };
+              },
             },
           ],
         },

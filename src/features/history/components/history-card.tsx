@@ -72,7 +72,23 @@ export function HistoryCard({ group }: HistoryCardProps) {
             {versionCount}案
           </p>
         </div>
-        <p className="text-sm text-stone-700">開くと現在の家族設定で再確認します</p>
+        {/* idea/household の権威ある判定元はHistoryGroup.representative.targetMode。
+            idea カードには家族安全確認済みと誤解させる表現を一切出さない
+            （brief step 12）。 */}
+        <p
+          className={
+            representative.targetMode === "idea"
+              ? "inline-flex w-fit shrink-0 items-center rounded-full border border-stone-400 bg-stone-100 px-3 py-1 text-sm font-semibold"
+              : "inline-flex w-fit shrink-0 items-center rounded-full border border-terracotta-700 bg-terracotta-50 px-3 py-1 text-sm font-semibold"
+          }
+        >
+          {representative.targetMode === "idea" ? "アイデア" : "家族に合わせた献立"}
+        </p>
+        <p className="text-sm text-stone-700">
+          {representative.targetMode === "idea"
+            ? "開いても家族条件は確認しません"
+            : "開くと現在の家族設定で再確認します"}
+        </p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button

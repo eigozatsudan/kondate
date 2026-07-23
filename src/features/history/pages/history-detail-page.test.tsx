@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -248,7 +248,7 @@ describe("HistoryDetailPage safety gate", () => {
   it("revalidates on mount and blocks actions while current safety is loading", async () => {
     const revalidate = deferredPromise<RevalidationResult>();
     renderHistoryDetail({ revalidate: () => revalidate.promise });
-    expect(await screen.findByRole("status")).toHaveTextContent("現在の家族設定で確認しています");
+    expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
     expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
     act(() => {
@@ -257,7 +257,7 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByText("現在の家族設定で確認しました")).toBeVisible();
   });
 
-  it("allows regeneration after a changed but valid current-safety result", () => {
+  it("allows regeneration after a changed but valid current-safety result", async () => {
     renderHistoryDetail({
       revalidation: {
         phase: "checked",
@@ -270,7 +270,7 @@ describe("HistoryDetailPage safety gate", () => {
       },
     });
     expect(
-      screen.getByText("現在の家族設定で確認しました。作成時から条件が変わっています"),
+      await screen.findByText("現在の家族設定で確認しました。作成時から条件が変わっています"),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
   });
@@ -290,14 +290,14 @@ describe("HistoryDetailPage safety gate", () => {
     renderHistoryDetail({
       revalidation: { phase: "checked", result: validRevalidation },
     });
-    const button = screen.getByRole("button", { name: "これに決めた" });
+    const button = await screen.findByRole("button", { name: "これに決めた" });
     expect(button).toBeEnabled();
     await user.click(button);
     expect(acceptMenuVersionMock).toHaveBeenCalledTimes(1);
     expect(acceptMenuVersionMock).toHaveBeenCalledWith(MENU_ID);
   });
 
-  it("keeps これに決めた disabled when revalidation is invalid", () => {
+  it("keeps これに決めた disabled when revalidation is invalid", async () => {
     renderHistoryDetail({
       revalidation: {
         phase: "checked",
@@ -310,8 +310,49 @@ describe("HistoryDetailPage safety gate", () => {
         },
       },
     });
-    expect(screen.getByRole("button", { name: "これに決めた" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeDisabled();
     expect(acceptMenuVersionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("HistoryDetailPage idea read-only boundary", () => {
+  it("renders a permanent notice and recipe body without mounting revalidation or shopping", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+
+    renderHistoryDetail();
+
+    expect(await screen.findByText("家族条件を使用していません")).toBeVisible();
+    expect(screen.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
+    // idea では household 専用の再検証・採用・再生成・買い物・冷蔵庫を一切表示しない
+    expect(revalidateMenuMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "これに決めた" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "献立をまるごと別案にする" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "この一品だけ別案にする" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "冷蔵庫へ反映" })).toBeNull();
+    expect(acceptMenuVersionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not interpret the stored snapshot as a family safety confirmation on the idea child root", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+
+    renderHistoryDetail();
+
+    expect(await screen.findByText("家族条件を使用していません")).toBeVisible();
+    const themedRoot = document.querySelector(".guided-planner-theme");
+    expect(themedRoot).not.toBeNull();
+    expect(themedRoot?.textContent).not.toMatch(/確認済み|安全に配慮|アレルギー対応済み/u);
+  });
+
+  it("keeps household mode mounting revalidation and the family action bar as before", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+
+    renderHistoryDetail({ revalidate: () => Promise.resolve(validRevalidation) });
+
+    await waitFor(() => {
+      expect(revalidateMenuMock).toHaveBeenCalled();
+    });
+    expect(screen.queryByText("家族条件を使用していません")).toBeNull();
   });
 });
 

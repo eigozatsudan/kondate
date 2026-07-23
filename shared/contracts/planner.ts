@@ -20,7 +20,7 @@ function boundedCanonicalText(min: number, max: number) {
     );
 }
 
-const targetModeSchema = z.enum(targetModes);
+export const targetModeSchema = z.enum(targetModes);
 
 /**
  * 家族/人数の整合を強制する。household は家族1〜20人・人数指定なし、

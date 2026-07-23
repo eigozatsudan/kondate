@@ -9,6 +9,7 @@ import {
   type ReconcileShoppingListRequest,
   type ShoppingDiff,
 } from "@shared/contracts/shopping";
+import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   isRevalidationActionable,
@@ -49,6 +50,7 @@ import {
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { confirmLabelConfirmation } from "../api/confirm-label-api";
 import { getMenuResult } from "../api/menu-result-api";
+import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import { MenuResult, type MenuResultActions } from "../components/menu-result";
 import { useUsageToday } from "../hooks/use-usage-today";
 import { clearPendingGeneration } from "../model/pending-generation";
@@ -73,7 +75,6 @@ type MenuResultPageProps = {
 export function MenuResultPage({ revalidation: injected }: MenuResultPageProps = {}) {
   const auth = useAuth();
   const userId = auth.session?.user.id;
-  const queryClient = useQueryClient();
   const parsed = z.uuid().safeParse(useParams().menuId);
   const menuId = parsed.success ? parsed.data : null;
   const queryKey = useMemo(
@@ -90,6 +91,83 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     if (query.data) clearPendingGeneration();
   }, [query.data]);
 
+  if (!parsed.success) return <Navigate to="/planner" replace />;
+  if (query.isError)
+    return (
+      <main className="p-4">
+        <h1>献立を表示できません</h1>
+        <p>履歴からもう一度確認してください。</p>
+        <Link
+          to="/history"
+          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-3 font-semibold"
+        >
+          履歴を見る
+        </Link>
+      </main>
+    );
+  // 献立読み込み中でも操作バー枠は出さず、中立ステータスのみ
+  if (query.isPending)
+    return (
+      <p role="status" className="p-4">
+        献立を読み込んでいます
+      </p>
+    );
+
+  // targetMode をUI分岐の唯一の判定元とし、conditional hook呼び出しではなく
+  // household/idea それぞれ専用のchild componentへ分岐する（brief step 11）。
+  // household専用のuseMenuRevalidation・買い物hook・pending replayはidea側では
+  // 一切importされたhookを呼ばない構造にするため、component自体を分ける。
+  if (query.data.targetMode === "idea") {
+    return <IdeaResultBody result={query.data} />;
+  }
+  return (
+    <HouseholdResultBody
+      result={query.data}
+      menuId={menuId}
+      userId={userId}
+      queryKey={queryKey}
+      {...(injected !== undefined ? { injectedRevalidation: injected } : {})}
+    />
+  );
+}
+
+/**
+ * idea結果の本文。家族安全再検証・買い物・冷蔵庫関連のhookを一切mountしない。
+ * 常時noticeと献立本文（recipe）だけを表示する。
+ */
+function IdeaResultBody({ result }: { result: MenuResultViewModel }) {
+  return (
+    <div className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+      <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+      <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
+        <p>家族条件を使用していません</p>
+        <p>年齢・アレルギーへの適合は確認されていません</p>
+      </InlineNotice>
+      <MenuResult result={result} mode="idea" />
+    </div>
+  );
+}
+
+type HouseholdResultBodyProps = {
+  result: MenuResultViewModel;
+  menuId: string | null;
+  userId: string | undefined;
+  queryKey: readonly ["menu-result", string, string];
+  injectedRevalidation?: MenuResultPageRevalidationView;
+};
+
+/**
+ * household結果の本文。既存の家族安全再検証・買い物・冷蔵庫連携をすべて維持する。
+ * Step 10までの実装をそのままこのcomponentへ移した（表示分岐のみをPageへ委譲）。
+ */
+function HouseholdResultBody({
+  result,
+  menuId,
+  userId,
+  queryKey,
+  injectedRevalidation,
+}: HouseholdResultBodyProps) {
+  const queryClient = useQueryClient();
   const live = useMenuRevalidation(menuId ?? "");
   const beginRecheck = live.beginRecheck;
   const liveView: MenuResultPageRevalidationView = {
@@ -101,7 +179,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     },
     beginRecheck,
   };
-  const revalidation = injected ?? liveView;
+  const revalidation = injectedRevalidation ?? liveView;
 
   const usage = useUsageToday(userId ?? "");
   const remaining = usage.data?.success.remaining ?? 0;
@@ -204,7 +282,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
       submitReconcile(activeList?.id ?? "", command),
   });
 
-  const firstDishId = query.data?.menu.dishes[0]?.id ?? null;
+  const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
 
   const actions = useMemo((): MenuResultActions | undefined => {
@@ -251,28 +329,6 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     };
   }, [beginRecheck, menuId, queryClient, queryKey, revalidation.result, userId]);
 
-  if (!parsed.success) return <Navigate to="/planner" replace />;
-  if (query.isError)
-    return (
-      <main className="p-4">
-        <h1>献立を表示できません</h1>
-        <p>履歴からもう一度確認してください。</p>
-        <Link
-          to="/history"
-          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-3 font-semibold"
-        >
-          履歴を見る
-        </Link>
-      </main>
-    );
-  // 献立読み込み中でも操作バー枠は出さず、中立ステータスのみ
-  if (query.isPending)
-    return (
-      <p role="status" className="p-4">
-        献立を読み込んでいます
-      </p>
-    );
-
   const onSubmitReason = async (value: RegenerationReasonInput) => {
     if (sheetMode === "dish") {
       if (dishIdForRegen === null) return;
@@ -295,7 +351,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
             : null;
 
   return (
-    <div className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <div className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
 
       {revalidation.phase === "checking" && (
@@ -337,14 +393,16 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
           </p>
           {actions === undefined ? (
             <MenuResult
-              result={query.data}
+              result={result}
+              mode="household"
               currentLabelWarnings={revalidation.result.currentLabelWarnings}
               currentSafetyFingerprint={revalidation.result.safetyFingerprint}
               onSelectedDishChange={setSelectedDishId}
             />
           ) : (
             <MenuResult
-              result={query.data}
+              result={result}
+              mode="household"
               actions={actions}
               currentLabelWarnings={revalidation.result.currentLabelWarnings}
               currentSafetyFingerprint={revalidation.result.safetyFingerprint}

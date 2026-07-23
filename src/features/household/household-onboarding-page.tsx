@@ -235,7 +235,7 @@ export function HouseholdOnboardingForm({
               void finishOnboarding();
             }}
           >
-            この内容で設定を完了する
+            この家族の設定を完了する
           </button>
         )}
         {completeError && (
@@ -250,9 +250,9 @@ export function HouseholdOnboardingForm({
   return (
     <main className="page-frame stack">
       <div>
-        <p className="eyebrow">約60秒の必須設定</p>
+        <p className="eyebrow">家族設定（任意）</p>
         <h1>家族の初回設定</h1>
-        <p>必須項目 {completedRequired} / 3</p>
+        <p>設定済み項目 {completedRequired} / 3</p>
         <p
           className={saveState === "failed" ? "error-message" : "status-message"}
           aria-live="polite"
@@ -445,7 +445,7 @@ export function HouseholdOnboardingForm({
           });
         }}
       >
-        残りはあとで設定して完了
+        この家族の設定を完了する
       </button>
       {draft.allergy_status === "unconfirmed" && (
         <p className="error-message">

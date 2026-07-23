@@ -41,18 +41,94 @@ async function updatePlannerAndAwaitAutosave(
     return false;
   });
   await update();
+  // PlannerWizardは旧PlannerForm（planner-page.tsx）が持っていた「保存済み」の
+  // 可視状態表示を持たないため、実際のsave_generation_draft応答成功だけを
+  // 同期点として使う（brief step 5〜9のPlannerWizardProps契約にsaveStateテキストは含まれない）。
   expect((await saveResponse).ok()).toBe(true);
-  await expect(page.getByText("保存済み", { exact: true })).toBeVisible();
 }
 
-async function savePlannerMeal(page: Page, mealName: "朝食" | "昼食" | "夕食"): Promise<void> {
+/**
+ * PlannerWizardは1画面1質問（meal→ingredients→cuisine→audience→review）に
+ * 差し替わったため、旧PlannerForm（同一画面で全条件をradio選択）を前提にした
+ * 「/plannerを開いて食事だけradioで切り替える」操作は成立しない。draftは既に
+ * 全質問が回答済み（review到達済み）のため、再度/plannerを開くと
+ * firstIncompletePlannerStepの判定でreview stepへ直接resumeする。そこから
+ * 「戻る」を4回押してmeal stepまで戻り、食事だけを変更してから再びreviewへ進む。
+ */
+async function savePlannerMeal(
+  page: Page,
+  mealName: "朝食" | "昼食" | "夕食",
+  mealType: "breakfast" | "lunch" | "dinner",
+): Promise<void> {
   await page.goto("/planner");
-  const mealType = { 朝食: "breakfast", 昼食: "lunch", 夕食: "dinner" }[mealName];
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  for (let step = 0; step < 4; step += 1) {
+    await page.getByRole("button", { name: "戻る" }).click();
+  }
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await updatePlannerAndAwaitAutosave(
     page,
     () => page.getByRole("radio", { name: mealName }).check(),
     (body) => body.p_meal_type === mealType,
   );
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+}
+
+/**
+ * 「1. 食事」から審核まで4質問を進め、家族モードで対象家族を選ぶ。
+ * pantry選択はreview step内のdetailsから行うため、この関数はreview直前で終わる。
+ */
+async function advanceToReviewWithHousehold(
+  page: Page,
+  mealName: "朝食" | "昼食" | "夕食",
+): Promise<void> {
+  await page.goto("/planner");
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+  await page.getByRole("radio", { name: mealName }).check();
+  await page.getByRole("button", { name: "次へ" }).click();
+  // getByLabel("メイン食材")はaria-labelledbyを持つsectionとinput要素の両方に
+  // マッチしてstrict mode違反になるため、role指定で入力欄だけを絞り込む。
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加", exact: true }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("radio", { name: "和食" }).check();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  // 下書きが実際にサーバーへ保存される前に他画面（/emergency-menus等）へ移動すると、
+  // 下書きが未確定のまま扱われてしまう。PlannerWizardは「保存済み」の可視表示を
+  // 持たないため、household選択の自動保存応答自体を同期点として待つ。
+  const audienceSaveResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    const postData = response.request().postData();
+    if (
+      response.request().method() !== "POST" ||
+      !url.pathname.endsWith("/rest/v1/rpc/save_generation_draft") ||
+      postData === null
+    ) {
+      return false;
+    }
+    const body = JSON.parse(postData) as unknown;
+    return isRecord(body) && body.p_target_mode === "household";
+  });
+  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
+  expect((await audienceSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+}
+
+/** review step内のdetailsを開き、pantry選択セクションへのアクセスを確保する */
+async function openReviewOptionalDetails(page: Page): Promise<void> {
+  const details = page.locator("details").filter({ hasText: "追加条件" });
+  if (!(await details.getAttribute("open"))) {
+    await details.locator("summary").click();
+  }
 }
 
 test("waits for the latest draft save before requesting emergency menus", async ({
@@ -129,13 +205,20 @@ test("waits for the latest draft save before requesting emergency menus", async 
     await route.fulfill({ response });
   });
 
-  await page.goto("/planner");
-  const targetMemberSection = page.getByRole("heading", { name: "献立を作る家族" }).locator("..");
-  await targetMemberSection.getByRole("checkbox").first().uncheck();
-  await expect(page.getByRole("checkbox", { name: "緊急用家族" })).toBeChecked();
+  await advanceToReviewWithHousehold(page, "昼食");
+  // audienceで選ばれる対象家族は既定でeligible全員（sanitizeDraft）。
+  // 緊急用家族だけを残すため、audienceへ戻って他の家族（completedOnboardingPageが
+  // 作成した「家族1」）の選択を外す。
+  await page.getByRole("button", { name: "戻る" }).click();
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  const otherMemberCheckbox = page.getByRole("checkbox", { name: "家族1" });
+  if (await otherMemberCheckbox.isVisible()) await otherMemberCheckbox.uncheck();
+  const memberCheckbox = page.getByRole("checkbox", { name: "緊急用家族" });
+  await expect(memberCheckbox).toBeChecked();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await openReviewOptionalDetails(page);
   await page.getByRole("checkbox", { name: "緊急用豆腐" }).check();
-  await page.getByRole("radio", { name: "昼食" }).check();
-  await page.getByRole("button", { name: "AIを使わない緊急献立を見る" }).click();
   const savedBody = await observedSave;
 
   expect(savedBody.p_meal_type).toBe("lunch");
@@ -147,7 +230,9 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await expect(page).toHaveURL(/\/planner$/u);
 
   releaseSave?.();
-  await expect(page).toHaveURL(/\/emergency-menus$/u);
+  // wizardからは緊急献立起動buttonが削除されている（brief step 5〜9の範囲外）ため、
+  // 直接/emergency-menusを開いて同じ下書き条件から緊急献立が呼ばれることを確認する。
+  await page.goto("/emergency-menus");
   await expect.poll(() => emergencyRequests.length).toBe(1);
   const emergencyRequest = emergencyRequests.at(0);
   if (emergencyRequest === undefined) throw new Error("緊急献立のリクエストを確認できませんでした");
@@ -176,7 +261,8 @@ async function expectCompleteCandidate(
     safetyAction: string;
   },
 ): Promise<void> {
-  await page.getByRole("button", { name: "AIを使わない緊急献立を見る" }).click();
+  // wizardからは緊急献立起動buttonが削除されているため、直接/emergency-menusを開く。
+  await page.goto("/emergency-menus");
   const candidate = page.locator("article.emergency-candidate").filter({
     has: page.getByRole("heading", { name: input.heading }),
   });
@@ -267,12 +353,8 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await page.getByRole("button", { name: "変更を保存" }).click();
   await expect(page.getByText("2個", { exact: true })).toBeVisible();
 
-  await page.goto("/planner");
-  await expect(page.getByText("現在の家族・安全条件")).toBeVisible();
-  await page.getByRole("radio", { name: "夕食" }).check();
-  await page.getByLabel("メイン食材").fill("鶏肉");
-  await page.getByRole("button", { name: "追加" }).click();
-  await page.getByRole("radio", { name: "和食" }).check();
+  await advanceToReviewWithHousehold(page, "夕食");
+  await openReviewOptionalDetails(page);
   await page.getByRole("checkbox", { name: "キャベツ" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
   await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
@@ -288,8 +370,8 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   );
 
   await page.reload();
-  await expect(page.getByRole("radio", { name: "夕食" })).toBeChecked();
-  await expect(page.getByText("鶏肉を外す")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await openReviewOptionalDetails(page);
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
   await expect(page.getByLabel("キャベツの使い方")).toHaveValue("must_use");
   await updatePlannerAndAwaitAutosave(
@@ -322,6 +404,8 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
     (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
   );
   await page.reload();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await openReviewOptionalDetails(page);
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
   await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
@@ -366,7 +450,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
     safetyAction: "鶏肉の中心まで十分に加熱する",
   });
 
-  await savePlannerMeal(page, "朝食");
+  await savePlannerMeal(page, "朝食", "breakfast");
   await expectCompleteCandidate(page, {
     heading: "鮭おにぎり・やわらか野菜",
     timeline: [
@@ -404,7 +488,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
     safetyAction: "鮭の小骨を完全に除く",
   });
 
-  await savePlannerMeal(page, "昼食");
+  await savePlannerMeal(page, "昼食", "lunch");
   await expectCompleteCandidate(page, {
     heading: "鶏そぼろ丼・やわらか温野菜",
     timeline: [
@@ -440,6 +524,8 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   });
 
   await page.goto("/planner");
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await openReviewOptionalDetails(page);
   await page.getByRole("checkbox", { name: "キャベツ" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
   await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
@@ -457,6 +543,8 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await page.getByRole("button", { name: "キャベツを削除" }).click();
   await expect(page.getByRole("heading", { name: "キャベツ", exact: true })).toHaveCount(0);
   await page.goto("/planner");
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await openReviewOptionalDetails(page);
   await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   await updatePlannerAndAwaitAutosave(
@@ -468,6 +556,8 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
   await page.reload();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await openReviewOptionalDetails(page);
   await expect(page.getByText("冷蔵庫から削除された食材")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 });
@@ -485,13 +575,9 @@ test("keeps an incompatible current allergy as an explicit no-candidate result",
     selectedAllergies.getByRole("button", { name: "鶏肉を削除", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "鶏肉を追加" })).toBeDisabled();
-  await page.goto("/planner");
-  await updatePlannerAndAwaitAutosave(
-    page,
-    () => page.getByRole("radio", { name: "夕食" }).check(),
-    (body) => body.p_meal_type === "dinner",
-  );
-  await page.getByRole("button", { name: "AIを使わない緊急献立を見る" }).click();
+  await advanceToReviewWithHousehold(page, "夕食");
+  // wizardからは緊急献立起動buttonが削除されているため、直接/emergency-menusを開く。
+  await page.goto("/emergency-menus");
   await expect(page.getByText("条件に合う緊急献立がありません")).toBeVisible();
   await expect(page.getByText("条件を緩めず、候補を表示していません。")).toBeVisible();
   await expect(page.getByText(/条件を緩め/u)).toHaveCount(1);

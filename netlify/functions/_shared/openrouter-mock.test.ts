@@ -15,6 +15,8 @@ it("keeps every required adversarial scenario fixed in source control", () => {
     "direct-allergen",
     "dish-replacement",
     "duplicate-menu",
+    "idea-servings-1",
+    "idea-servings-20",
     "invalid-adaptation-branch",
     "invalid-pantry-dish-link",
     "malformed-json",
@@ -37,6 +39,8 @@ it("keeps provider fixtures free of persistent identifiers and trusted inventory
 describe("schema-valid fixed outputs", () => {
   const schemaValidScenarioNames = [
     "success",
+    "idea-servings-1",
+    "idea-servings-20",
     "duplicate-menu",
     "alternate-menu",
     "constraint-conflict",

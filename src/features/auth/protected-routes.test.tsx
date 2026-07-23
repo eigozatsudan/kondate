@@ -12,6 +12,11 @@ vi.mock("./use-auth", () => ({
   })),
 }));
 
+it("no longer exports RequireCompletedOnboarding (guard removed, onboarding is optional)", async () => {
+  const moduleExports: Record<string, unknown> = await import("./protected-routes");
+  expect(moduleExports.RequireCompletedOnboarding).toBeUndefined();
+});
+
 it("returns an unauthenticated visitor to login with a safe return path", async () => {
   const router = createMemoryRouter(
     [

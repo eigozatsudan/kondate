@@ -9,6 +9,7 @@ function row(partial: Partial<HistoryMenuRow> & Pick<HistoryMenuRow, "id">): His
     is_selected: false,
     selected_at: null,
     is_favorite: false,
+    target_mode: "household",
     dishes: [{ name: "鶏の照り焼き", position: 1 }],
     ...partial,
   };
@@ -53,6 +54,7 @@ describe("groupMenuRows", () => {
         createdAt: "2026-07-11T10:00:00Z",
         selectedAt: "2026-07-11T10:05:00Z",
         isFavorite: true,
+        targetMode: "household",
       },
     });
   });
@@ -78,6 +80,7 @@ describe("groupMenuRows", () => {
         derivation_group_id: "group-new",
         version: 2,
         created_at: "2026-07-11T12:00:00Z",
+        target_mode: "idea",
         dishes: [{ name: "新グループ最新", position: 1 }],
       }),
     ]);
@@ -86,6 +89,7 @@ describe("groupMenuRows", () => {
     expect(groups[0]?.representative).toMatchObject({
       id: "new-v2",
       title: "新グループ最新",
+      targetMode: "idea",
     });
   });
 });

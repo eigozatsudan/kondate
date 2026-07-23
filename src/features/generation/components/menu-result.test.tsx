@@ -279,3 +279,31 @@ it("returns an alert when the menu has no dishes", () => {
   render(<MenuResult result={result} />);
   expect(screen.getByRole("alert")).toHaveTextContent("献立の料理を表示できません");
 });
+
+it("hides adaptation, label confirmation, and post-cook pantry sections for idea mode", () => {
+  const result = makeMenuResultViewModel({ targetMode: "idea" });
+  render(<MenuResult result={result} mode="idea" />);
+  // idea は家族向け取り分け・原材料表示確認・調理後の冷蔵庫のいずれも表示しない
+  expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
+  expect(screen.queryByText("加工品は原材料表示を確認してください")).toBeNull();
+  expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "調理後の冷蔵庫" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();
+  // 献立本文（料理・材料・作り方）は idea でも表示する
+  expect(screen.getByRole("heading", { name: "献立ができました" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "材料" })).toBeVisible();
+});
+
+it("keeps household mode sections visible when mode is household", () => {
+  const result = makeMenuResultViewModel({ targetMode: "household" });
+  render(<MenuResult result={result} mode="household" actions={makeActions()} />);
+  expect(screen.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "原材料表示の確認" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "調理後の冷蔵庫" })).toBeVisible();
+});
+
+it("defaults mode to household when the prop is omitted (existing callers keep current behavior)", () => {
+  const result = makeMenuResultViewModel();
+  render(<MenuResult result={result} />);
+  expect(screen.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
+});

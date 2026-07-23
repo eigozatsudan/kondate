@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
-import { plannerDraftInputSchema, type PlannerDraftInput } from "@shared/contracts/planner";
 
 const mocks = vi.hoisted(() => ({
   eligibleMemberIds: Array.from(
@@ -37,6 +37,13 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "pantry") {
       return { data: [], isError: false, isPending: false };
     }
+    if (queryKey[0] === "privacy") {
+      return {
+        data: { user_id: "72000000-0000-4000-8000-000000000001", notice_version: "2026-07-11.v1" },
+        isError: false,
+        isPending: false,
+      };
+    }
     return {
       data: {
         members: mocks.eligibleMemberIds.map((id, index) => ({
@@ -61,14 +68,6 @@ vi.mock("./use-draft-autosave", () => ({
     flush: vi.fn(),
   }),
 }));
-vi.mock("./planner-page", () => ({
-  PlannerForm: ({ initialValue }: { initialValue: PlannerDraftInput }) => (
-    <>
-      <output aria-label="対象家族数">{initialValue.targetMemberIds.length}</output>
-      <output aria-label="下書き値">{JSON.stringify(initialValue)}</output>
-    </>
-  ),
-}));
 
 import { PlannerPage } from "./planner-route";
 
@@ -79,9 +78,15 @@ it("新規下書きの対象家族を適格な先頭20人までで初期化す�
     </MemoryRouter>,
   );
 
-  expect(await screen.findByLabelText("対象家族数")).toHaveTextContent("20");
-  expect(
-    plannerDraftInputSchema.safeParse(JSON.parse(screen.getByLabelText("下書き値").innerHTML))
-      .success,
-  ).toBe(true);
+  // audience stepまで進み、household選択済みの対象家族数を確認する。
+  await userEvent.click(await screen.findByRole("radio", { name: "夕食" }));
+  await userEvent.click(screen.getByRole("button", { name: "次へ" }));
+  await userEvent.type(screen.getByLabelText("メイン食材"), "鶏肉");
+  await userEvent.click(screen.getByRole("button", { name: "追加" }));
+  await userEvent.click(screen.getByRole("button", { name: "次へ" }));
+  await userEvent.click(screen.getByRole("radio", { name: "和食" }));
+  await userEvent.click(screen.getByRole("button", { name: "次へ" }));
+
+  expect(screen.getByRole("radio", { name: "家族に合わせて作る" })).toBeChecked();
+  expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(20);
 });

@@ -75,13 +75,13 @@ it("resumes one draft, saves each required selection, and completes through comp
     </QueryClientProvider>,
   );
 
-  expect(await screen.findByText("必須項目 0 / 3")).toBeInTheDocument();
+  expect(await screen.findByText("設定済み項目 0 / 3")).toBeInTheDocument();
   await user.selectOptions(screen.getByLabelText("年齢のめやす"), "adult");
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
   await user.selectOptions(screen.getByLabelText("食べない食事はありますか"), "none");
-  expect(await screen.findByText("必須項目 3 / 3")).toBeInTheDocument();
+  expect(await screen.findByText("設定済み項目 3 / 3")).toBeInTheDocument();
   expect(updateDraft).toHaveBeenCalledTimes(3);
-  await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
   await waitFor(() => {
     expect(onDone).toHaveBeenCalledOnce();
   });
@@ -118,7 +118,7 @@ it("stays on the page and shows a retryable error when setProgress fails after c
     </QueryClientProvider>,
   );
 
-  await user.click(await screen.findByRole("button", { name: "残りはあとで設定して完了" }));
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
   expect(
     await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
@@ -156,7 +156,7 @@ it("does not call setProgress or navigate when completeMember fails", async () =
     </QueryClientProvider>,
   );
 
-  await user.click(await screen.findByRole("button", { name: "残りはあとで設定して完了" }));
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
   expect(
     await screen.findByText("保存できませんでした。選び直して再試行してください。"),
@@ -199,7 +199,7 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
     unsupported_diet_status: "present",
     unsupported_diet_kinds: [],
   });
-  const completeButton = screen.getByRole("button", { name: "残りはあとで設定して完了" });
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了する" });
   expect(completeButton).toBeDisabled();
 
   await user.click(await screen.findByRole("checkbox", { name: "離乳食" }));
@@ -237,7 +237,7 @@ it("completes onboarding through setProgress->navigate when a complete member al
     </QueryClientProvider>,
   );
 
-  await user.click(await screen.findByRole("button", { name: "この内容で設定を完了する" }));
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
   await waitFor(() => {
     expect(onDone).toHaveBeenCalledOnce();
@@ -267,7 +267,7 @@ it("stays on the page with a retryable error when setProgress fails for an alrea
     </QueryClientProvider>,
   );
 
-  await user.click(await screen.findByRole("button", { name: "この内容で設定を完了する" }));
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
   expect(
     await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
@@ -385,7 +385,7 @@ it("waits for pending draft saves before completing a member", async () => {
   );
 
   await user.type(await screen.findByLabelText("呼び名（任意・AIには送りません）"), "母");
-  await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
   expect(completeMember).not.toHaveBeenCalled();
 
   pendingUpdate.resolve({ ...completableDraft, display_name: "母" });
@@ -464,7 +464,7 @@ it("does not complete or report saved when the final queued save fails", async (
   );
 
   await user.type(await screen.findByLabelText("呼び名（任意・AIには送りません）"), "母");
-  await user.click(screen.getByRole("button", { name: "残りはあとで設定して完了" }));
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
   pendingUpdate.reject(new Error("一時的な保存失敗"));
 
   expect(
@@ -472,4 +472,53 @@ it("does not complete or report saved when the final queued save fails", async (
   ).toBeInTheDocument();
   expect(completeMember).not.toHaveBeenCalled();
   expect(screen.queryByText("保存済み")).not.toBeInTheDocument();
+});
+
+it("任意性が明確な文言を表示し、旧「必須設定」表現を残さない", async () => {
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember: vi.fn(),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByText("家族設定（任意）", { exact: false })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "この家族の設定を完了する" })).toBeInTheDocument();
+  expect(screen.queryByText("必須設定", { exact: false })).not.toBeInTheDocument();
+  expect(screen.queryByText("残りはあとで設定して完了")).not.toBeInTheDocument();
+});
+
+it("draft が無く complete member が既にいる場合も任意性が明確な完了ボタン文言を使う", async () => {
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([{ ...draft, status: "complete" as const }]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember: vi.fn(),
+    listAllergies: vi.fn(),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  expect(
+    await screen.findByRole("button", { name: "この家族の設定を完了する" }),
+  ).toBeInTheDocument();
 });

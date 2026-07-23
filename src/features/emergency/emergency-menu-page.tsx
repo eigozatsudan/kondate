@@ -56,9 +56,14 @@ export function EmergencyMenuPage() {
     enabled: userId !== undefined,
     queryFn: () => getPlannerDraft(getBrowserSupabaseClient(), userId ?? ""),
   });
+  // 下書きなし、またはidea下書き（家族条件を持たない）の場合は対象家族が0人になる。
+  // route entryだけを理由に緊急献立APIや家族安全再検証を発生させない
+  // （Step 10要件）ため、eligibleMembersが0件のときはクエリ自体を無効化する。
+  const targetMemberIds = draftQuery.data?.targetMemberIds ?? [];
+  const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
   const request = {
     mealType: draftQuery.data?.mealType ?? "dinner",
-    targetMemberIds: draftQuery.data?.targetMemberIds ?? [],
+    targetMemberIds,
     pantryItemIds: draftQuery.data?.pantrySelections.map((item) => item.pantryItemId) ?? [],
   } as const;
   const query = useQuery({
@@ -71,7 +76,8 @@ export function EmergencyMenuPage() {
       userId !== undefined &&
       draftQuery.isSuccess &&
       draftQuery.data !== null &&
-      !draftQuery.isFetching,
+      !draftQuery.isFetching &&
+      hasEligibleHouseholdMembers,
     queryFn: () => getEmergencyMenus(request),
   });
   const loading = draftQuery.isFetching || query.isFetching;
@@ -81,6 +87,18 @@ export function EmergencyMenuPage() {
       <main className="page-frame stack emergency-menu-page">
         <h1>15分緊急献立</h1>
         <p role="alert">献立条件の下書きがありません。献立画面で条件を保存してください。</p>
+        <a href="/planner">献立画面へ戻る</a>
+      </main>
+    );
+  }
+  if (draftQuery.isSuccess && draftQuery.data !== null && !hasEligibleHouseholdMembers) {
+    return (
+      <main className="page-frame stack emergency-menu-page">
+        <h1>15分緊急献立</h1>
+        <p role="alert">
+          対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。
+        </p>
+        <a href="/onboarding">家族設定へ（任意）</a>
         <a href="/planner">献立画面へ戻る</a>
       </main>
     );

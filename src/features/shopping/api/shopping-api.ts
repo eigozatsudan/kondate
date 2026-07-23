@@ -258,6 +258,10 @@ export async function fetchReconcilableMenuSource(
     .from("menus")
     .select("id,derivation_group_id,version")
     .eq("id", menuId)
+    // Task 5 のHTTP/DB拒否（idea献立からの買い物リスト利用は不可）に対する
+    // 防御層。サーバー側の拒否が万一漏れても、このクライアント側クエリでも
+    // idea献立を読み込めなくする（fail closed）。
+    .eq("target_mode", "household")
     .maybeSingle();
   if (menu.error !== null) throw new Error("献立を確認できませんでした");
   const menuRow = menu.data;

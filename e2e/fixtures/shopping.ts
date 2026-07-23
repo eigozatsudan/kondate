@@ -59,13 +59,26 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
   // 設計書は「夕食」を指定するが、ローカルの OpenRouter mock が返す success fixture は
   // mealType=breakfast のため、夕食で要求すると生成が成立しない。既存の history.ts と
   // 同じく朝食で要求する（この読み替えは検証している内容を変えない）。
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
-  await page.getByLabel("メイン食材").fill("鶏肉");
-  // 入力だけでは条件に反映されない。既存の history.ts と同じく「追加」で確定し、
-  // 下書き保存と生成ボタンの活性化を待ってから生成する。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
   await page.getByRole("button", { name: "追加", exact: true }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
   await page.getByRole("radio", { name: "和食" }).check();
-  await expect(page.getByText("保存済み", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  const audienceSaveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
+  expect((await audienceSaveResponse).ok()).toBe(true);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({ timeout: 15_000 });
   await page.getByRole("button", { name: "献立を作る" }).click();
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });

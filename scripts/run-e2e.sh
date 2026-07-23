@@ -193,19 +193,24 @@ cleanup() {
   kill_status=0
   removal_status=0
   restore_status=0
-  if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
-    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    kill --signal SIGKILL e2e; then
-    :
-  else
-    kill_status=$?
-  fi
-  if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
-    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    rm --force e2e; then
-    :
-  else
-    removal_status=$?
+  if [ "$original_status" -ne 0 ] || [ "$termination_status" -ne 0 ]; then
+    # run --rmが正常終了した場合はE2Eコンテナも既に削除済みであるため、
+    # kill/rmの対象なしを失敗として扱わない。一方、失敗・中断時は残存した
+    # コンテナを確実に回収するため、従来どおり強制cleanupを実行する。
+    if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+      -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+      kill --signal SIGKILL e2e; then
+      :
+    else
+      kill_status=$?
+    fi
+    if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+      -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+      rm --force e2e; then
+      :
+    else
+      removal_status=$?
+    fi
   fi
   if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" \
@@ -284,8 +289,8 @@ else
 fi
 
 # 通常の開発スタックを起動したうえで、E2E専用プロファイルのauthを追加起動し、
-# kong/oauth-mock/appをE2E向け設定で強制再作成してから、実際のPlaywright
-# テストランナー(e2e)を実行する。
+# openrouter-mock/kong/oauth-mock/appをE2E向け設定で強制再作成してから、
+# 実際のPlaywrightテストランナー(e2e)を実行する。
 run_e2e_commands() {
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" up -d --wait || return $?
@@ -298,7 +303,7 @@ run_e2e_commands() {
   run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    up -d --wait --force-recreate --no-deps kong oauth-mock app || return $?
+    up -d --wait --force-recreate --no-deps openrouter-mock kong oauth-mock app || return $?
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
     run --rm --no-deps e2e "$@"

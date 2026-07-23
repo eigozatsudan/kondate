@@ -35,13 +35,22 @@ export const test = base.extend<AuthFixtures>({
   authenticatedPage: async ({ page, authEmail }, provide) => {
     const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
     await page.goto(magicLink);
-    await expect(page.getByRole("heading", { name: "家族の初回設定" })).toBeVisible();
+    // sanitizeReturnPathは継続APIが拒否する裸の"/"を送信前に"/planner"へ正規化するため、
+    // magic-link経由のログイン自体は常に/plannerへ着地する（既存仕様・変更なし）。
+    // RootEntryPageの新規振分け（not_started|in_progress→/welcome）を検証するには、
+    // ログイン後に改めて"/"へ遷移してRootEntryPageのprofile判定を経由する必要がある。
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await page.goto("/");
+    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+    await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible();
     await provide(page);
   },
 
   completedOnboardingPage: async ({ authenticatedPage: page }, provide) => {
-    // 家族設定の完了は現在プライバシー同意と切り離されており、直接/plannerへ
-    // 遷移する。この後で/privacyを独立して開いて同意を保存する。
+    // welcomeから家族導線を選んでから家族設定を完了する。家族設定の完了は
+    // 現在プライバシー同意と切り離されており、直接/plannerへ遷移する。
+    // この後で/privacyを独立して開いて同意を保存する。
+    await page.getByRole("button", { name: "家族情報を登録する" }).click();
     await completeMinimumOnboarding(page);
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
     await page.goto("/privacy?returnTo=%2Fplanner");
@@ -98,5 +107,9 @@ export async function completeMinimumOnboarding(page: Page): Promise<void> {
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
   await page.getByLabel("食べない食事はありますか").selectOption("none");
-  await page.getByRole("button", { name: "残りはあとで設定して完了" }).click();
+  // サブパスBで「残りはあとで設定して完了」「この内容で設定を完了する」の2種類の
+  // 完了ボタン文言が「この家族の設定を完了する」へ統一された（家族設定が任意で
+  // あることを明確に伝えるための文言変更）。旧文言のままだとE2Eがボタンを
+  // 見つけられずタイムアウトするため、新文言に追随する。
+  await page.getByRole("button", { name: "この家族の設定を完了する" }).click();
 }

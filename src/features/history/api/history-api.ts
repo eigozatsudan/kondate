@@ -1,3 +1,4 @@
+import { targetModeSchema } from "@shared/contracts/planner";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { groupMenuRows, type HistoryGroup, type HistoryMenuRow } from "../model/group-history";
 
@@ -18,23 +19,31 @@ export async function listHistoryGroups(): Promise<HistoryGroup[]> {
   const { data, error } = await supabase
     .from("menus")
     .select(
-      "id,derivation_group_id,version,created_at,is_selected,selected_at,is_favorite,dishes(name,position)",
+      "id,derivation_group_id,version,created_at,is_selected,selected_at,is_favorite,target_mode,dishes(name,position)",
     )
     .order("created_at", { ascending: false });
   if (error !== null) throw historyError("履歴を読み込めませんでした");
-  const rows: HistoryMenuRow[] = data.map((row) => ({
-    id: row.id,
-    derivation_group_id: row.derivation_group_id,
-    version: row.version,
-    created_at: row.created_at,
-    is_selected: row.is_selected,
-    selected_at: row.selected_at,
-    is_favorite: row.is_favorite,
-    // 埋め込みは配列。欠落時は空として扱いタイトルを壊さない
-    dishes: Array.isArray(row.dishes)
-      ? row.dishes.map((dish) => ({ name: dish.name, position: dish.position }))
-      : [],
-  }));
+  const rows: HistoryMenuRow[] = data.map((row) => {
+    // target_mode はDB制約で household|idea のいずれかしか入らないが、履歴一覧
+    // badge・詳細分岐の権威ある判定元として使う値のため受信側でも zod で確定させる。
+    // 未知の値が来た場合は household 側の安全表示を誤って外さないよう idea 側へ
+    // 倒す（家族安全情報が誤って表示される方向にはfailしない）。
+    const targetModeParsed = targetModeSchema.safeParse(row.target_mode);
+    return {
+      id: row.id,
+      derivation_group_id: row.derivation_group_id,
+      version: row.version,
+      created_at: row.created_at,
+      is_selected: row.is_selected,
+      selected_at: row.selected_at,
+      is_favorite: row.is_favorite,
+      target_mode: targetModeParsed.success ? targetModeParsed.data : "idea",
+      // 埋め込みは配列。欠落時は空として扱いタイトルを壊さない
+      dishes: Array.isArray(row.dishes)
+        ? row.dishes.map((dish) => ({ name: dish.name, position: dish.position }))
+        : [],
+    };
+  });
   return groupMenuRows(rows);
 }
 

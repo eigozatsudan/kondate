@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
+import {
+  collectPlannerRequestText,
+  plannerSubmissionSchema,
+  type PlannerDraft,
+  type PlannerDraftInput,
+} from "@shared/contracts/planner";
 import { privacyNoticeVersion } from "@shared/contracts/domain";
+import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import {
   listAllergenCatalog,
   listHouseholdMembers,
   listMemberAllergies,
+  setOnboardingStatus,
 } from "@/features/household/household-api";
 import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
@@ -15,6 +22,16 @@ import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import { createPendingGeneration } from "@/features/generation/model/pending-generation";
 import { useGenerationRecovery } from "@/features/generation/hooks/use-generation-recovery";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
+import { getCurrentPrivacyConsent, hasCurrentPrivacyConsent } from "@/features/privacy/privacy-api";
+import { privacyKeys } from "@/features/privacy/privacy-queries";
+import { PlannerWizard } from "./components/planner-wizard";
+import { medicalRequestBlockedMessage } from "./components/review-step";
+import {
+  buildPlannerSubmissionFieldErrors,
+  firstIncompletePlannerStep,
+  type PlannerFieldName,
+  type PlannerStep,
+} from "./model/planner-wizard";
 import type { PlannerSafetyMember } from "./planner-safety-member";
 import { createPlannerAttempt, type PlannerAttempt } from "./expired-pantry-checks";
 import {
@@ -23,7 +40,6 @@ import {
   plannerKeys,
   savePlannerDraft,
 } from "./planner-api";
-import { PlannerForm } from "./planner-page";
 import { useDraftAutosave } from "./use-draft-autosave";
 
 const emptyDraft: PlannerDraftInput = {
@@ -221,6 +237,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     enabled: userId !== undefined,
   });
   const usage = useUsageToday(userId ?? "");
+  const privacyQuery = useQuery({
+    queryKey: privacyKeys.current(userId ?? "missing"),
+    queryFn: () => getCurrentPrivacyConsent(client, userId ?? ""),
+    enabled: userId !== undefined,
+  });
   const [value, setValue] = useState<PlannerDraftInput>(emptyDraft);
   const [initialized, setInitialized] = useState(false);
   const [baselineRevision, setBaselineRevision] = useState(0);
@@ -231,6 +252,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [hasDraftConflict, setHasDraftConflict] = useState(false);
   const [draftConflictRefetchError, setDraftConflictRefetchError] = useState(false);
   const [attempt, setAttempt] = useState<PlannerAttempt>(createPlannerAttempt);
+  const [step, setStep] = useState<PlannerStep>("meal");
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<PlannerFieldName, string>>>({});
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const generationAbortControllerRef = useRef<AbortController | null>(null);
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
@@ -245,10 +270,30 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   useEffect(() => {
     if (draftQuery.data === undefined || safetyQuery.data === undefined || initialized) return;
-    setValue(sanitizeDraft(draftQuery.data, safetyQuery.data.eligibleMemberIds));
+    const sanitized = sanitizeDraft(draftQuery.data, safetyQuery.data.eligibleMemberIds);
+    setValue(sanitized);
     setBaselineRevision(draftQuery.data?.revision ?? 0);
+    // 下書きの回答状況からresume先stepを判定する（brief: 「resumes an incomplete
+    // target draft at audience without losing answers」）。
+    setStep(firstIncompletePlannerStep(sanitized));
     setInitialized(true);
   }, [draftQuery.data, initialized, safetyQuery.data]);
+
+  // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
+  // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
+  useEffect(() => {
+    if (!initialized || safetyQuery.data === undefined) return;
+    if (value.targetMode === "idea") return;
+    const eligibleIds = new Set(safetyQuery.data.eligibleMemberIds);
+    const nextIds = value.targetMemberIds.filter((id) => eligibleIds.has(id));
+    if (nextIds.length === value.targetMemberIds.length) return;
+    setValue({
+      ...value,
+      targetMemberIds: nextIds,
+      targetMode: nextIds.length > 0 ? "household" : null,
+      servings: null,
+    });
+  }, [initialized, safetyQuery.data, value]);
 
   const save = useCallback(
     (next: PlannerDraftInput, revision: number) =>
@@ -312,6 +357,23 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setDraftConflictRefetchError(false);
   }, [latestConflictDraft, safetyQuery.data]);
 
+  useEffect(() => {
+    // 競合検知後に最新下書きの取得が完了したら、wizardには明示的な解決UIを
+    // 持たせず自動で最新値へ切り替える。入力は既にflush済みの内容が競合した
+    // 結果のため、ここで表示中の入力を保持する意味がなく、
+    // 「最新の下書きを読み込む」を利用者に代わって即時実行するのに等しい。
+    if (latestConflictDraft === undefined) return;
+    resolveDraftConflict();
+  }, [latestConflictDraft, resolveDraftConflict]);
+
+  const hasAcceptedOrDeclinedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
+  const openPrivacyNotice = useCallback((): void => {
+    // review resume 付きの returnTo で /privacy へ往復する（brief step 9）。
+    // sanitizeReturnPath と同じ形へ揃えるため、pathとqueryをまとめて
+    // encodeURIComponent した固定文字列を使う（"/planner?resume=review"）。
+    void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+  }, [navigate]);
+
   if ((!initialized && draftQuery.isError) || safetyQuery.isError || pantryQuery.isError) {
     return (
       <main className="page-frame">
@@ -327,49 +389,122 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     );
   }
   return (
-    <PlannerForm
+    <PlannerWizard
       key={resetToken}
-      initialValue={value}
-      members={safetyQuery.data.members}
+      draft={value}
+      step={step}
+      eligibleMembers={safetyQuery.data.members}
+      isSaving={autosave.state === "saving" || isSubmitting || hasDraftConflict}
+      error={
+        submissionError ??
+        (draftConflictRefetchError
+          ? "最新の下書きを取得できませんでした。再読み込みしてください。"
+          : hasDraftConflict
+            ? "下書きが別の画面で更新されました。最新の内容へ読み込み直しています。"
+            : usage.data?.shortWindow.remaining === 0
+              ? "10分間の通信試行上限に達しました。しばらくしてから再試行してください。"
+              : null)
+      }
+      fieldErrors={fieldErrors}
+      onDraftChange={setValue}
+      onStepChange={setStep}
       pantryItems={pantryQuery.data}
       pantryItemsStatus="loaded"
-      saveState={autosave.state}
       attempt={attempt}
       onAttemptChange={setAttempt}
-      onStartNewAttempt={startNewAttempt}
-      onChange={setValue}
-      flush={flushDraft}
-      onOpenEmergencyMenus={() => {
-        void navigate("/emergency-menus");
-        return Promise.resolve();
-      }}
-      draftConflict={hasDraftConflict}
-      canResolveDraftConflict={latestConflictDraft !== undefined}
-      draftConflictRefetchError={draftConflictRefetchError}
-      onResolveDraftConflict={resolveDraftConflict}
-      onRetryDraftConflict={() => void loadLatestConflictDraft()}
-      usageRemaining={usage.data?.success.remaining ?? null}
-      shortWindowRetryAt={
-        usage.data !== undefined && usage.data.shortWindow.remaining === 0
-          ? usage.data.shortWindow.retryAt
-          : null
-      }
-      onGenerate={async (draft, currentAttempt) => {
-        if (startGeneration === undefined || currentAttempt === undefined) return false;
-        const controller = new AbortController();
-        generationAbortControllerRef.current?.abort();
-        generationAbortControllerRef.current = controller;
-        try {
-          const result = await startGeneration(draft, currentAttempt, controller.signal);
-          if (controller.signal.aborted || result === false) return false;
-          startNewAttempt();
-          return true;
-        } finally {
-          if (generationAbortControllerRef.current === controller) {
-            generationAbortControllerRef.current = null;
+      hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
+      onOpenPrivacyNotice={openPrivacyNotice}
+      onSubmit={async () => {
+        setSubmissionError(null);
+        setFieldErrors({});
+        const submissionCandidate: PlannerDraftInput = {
+          mealType: value.mealType,
+          mainIngredients: value.mainIngredients,
+          cuisineGenre: value.cuisineGenre,
+          targetMode: value.targetMode,
+          targetMemberIds: value.targetMemberIds,
+          servings: value.servings,
+          timeLimitMinutes: value.timeLimitMinutes,
+          budgetPreference: value.budgetPreference,
+          avoidIngredients: value.avoidIngredients,
+          memo: value.memo,
+          pantrySelections: value.pantrySelections,
+        };
+        const parsed = plannerSubmissionSchema.safeParse(submissionCandidate);
+        if (!parsed.success) {
+          const { fieldErrors: nextFieldErrors, firstInvalidStep } =
+            buildPlannerSubmissionFieldErrors(
+              parsed.error.issues.map((issue) => ({ path: issue.path, message: issue.message })),
+            );
+          setFieldErrors(nextFieldErrors);
+          // brief: 「保存/APIの非field errorは上部alertだけへ表示」。
+          // fieldへ正規化できたissueが1つ以上あるときはfield-local表示に委ね、
+          // 全issueが未知pathだった場合だけ上部summaryへ出す。
+          if (Object.keys(nextFieldErrors).length === 0) {
+            setSubmissionError("入力内容を確認してください。");
           }
+          if (firstInvalidStep !== null) setStep(firstInvalidStep);
+          return;
+        }
+        // Plan 2 クライアント医療境界（サーバー preflight と同 detector）。
+        // レビュー画面でも disabled にしているが、submit 経路でも再確認して AI 開始を止める。
+        if (detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0) {
+          setSubmissionError(medicalRequestBlockedMessage);
+          setStep("review");
+          return;
+        }
+        if (startGeneration === undefined) return;
+        setIsSubmitting(true);
+        try {
+          const saved = await flushDraft();
+          if (!hasAcceptedOrDeclinedPrivacy) {
+            openPrivacyNotice();
+            return;
+          }
+          // profileが not_started|in_progress の利用者が audience で idea を確定した
+          // 時点でだけ setOnboardingStatus(...,"skipped") を呼ぶ（brief step 8）。
+          // /planner へ直接開いただけでは status を変更しないため、この呼び出しは
+          // submit（review確定）操作の内側だけに置く。
+          if (parsed.data.targetMode === "idea" && userId !== undefined) {
+            await setOnboardingStatusIfNeeded(client, userId, queryClient);
+          }
+          const controller = new AbortController();
+          generationAbortControllerRef.current?.abort();
+          generationAbortControllerRef.current = controller;
+          try {
+            const result = await startGeneration(saved, attempt, controller.signal);
+            if (controller.signal.aborted || result === false) return;
+            startNewAttempt();
+          } finally {
+            if (generationAbortControllerRef.current === controller) {
+              generationAbortControllerRef.current = null;
+            }
+          }
+        } catch {
+          setSubmissionError("献立条件を保存できなかったため、生成を開始しませんでした。");
+        } finally {
+          setIsSubmitting(false);
         }
       }}
     />
   );
+}
+
+/**
+ * profileが not_started|in_progress のときだけ skipped へ進める。
+ * すでに complete|skipped の利用者へ再送信しても Task 2 の RPC 契約上は
+ * 安全だが、不要な書き込みを避けるため現在値を確認してから呼ぶ。
+ */
+async function setOnboardingStatusIfNeeded(
+  client: ReturnType<typeof getBrowserSupabaseClient>,
+  userId: string,
+  queryClient: ReturnType<typeof useQueryClient>,
+): Promise<void> {
+  const cached = queryClient.getQueryData<{ onboarding_status?: string } | undefined>(
+    householdKeys.profile(userId),
+  );
+  const currentStatus = cached?.onboarding_status;
+  if (currentStatus === "complete" || currentStatus === "skipped") return;
+  await setOnboardingStatus(client, userId, "skipped");
+  await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
 }

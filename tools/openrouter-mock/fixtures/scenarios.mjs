@@ -136,6 +136,14 @@ const success = {
 };
 
 const clone = () => structuredClone(success);
+const ideaServings1 = clone();
+ideaServings1.menu.servings = 1;
+ideaServings1.menu.adaptations = [];
+ideaServings1.menu.labelConfirmations = [];
+const ideaServings20 = clone();
+ideaServings20.menu.servings = 20;
+ideaServings20.menu.adaptations = [];
+ideaServings20.menu.labelConfirmations = [];
 const directAllergen = clone();
 directAllergen.menu.dishes[0].ingredients[0].name = "卵";
 const aliasInStep = clone();
@@ -289,6 +297,8 @@ const dishReplacement = {
 
 export const scenarios = recursivelyFreeze({
   success,
+  "idea-servings-1": ideaServings1,
+  "idea-servings-20": ideaServings20,
   "duplicate-menu": duplicateMenu,
   "alternate-menu": alternateMenu,
   "dish-replacement": dishReplacement,

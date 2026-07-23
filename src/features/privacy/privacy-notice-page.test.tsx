@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
 type Consent = {
@@ -25,6 +25,10 @@ vi.mock("./privacy-api", () => ({
 }));
 
 import { PrivacyNoticeContent, PrivacyNoticePage } from "./privacy-notice-page";
+
+beforeEach(() => {
+  acceptConsent.mockReset();
+});
 
 it("explains sent, unsent, and stored data before accepting", async () => {
   const user = userEvent.setup();
@@ -70,6 +74,63 @@ it("saves only the privacy consent and navigates to the sanitized returnTo, with
     expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
   });
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+});
+
+it("review resume 付きの returnTo（review確定直前の遷移）を確認して同じ画面へ戻る", async () => {
+  const user = userEvent.setup();
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-11.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  // review stepのprivacy未確認導線が組み立てる正確なreturnTo文字列
+  // （"/planner?resume=review"）をそのまま使い、往復先が変わらないことを固定する。
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=%2Fplanner%3Fresume%3Dreview"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/planner");
+  expect(router.state.location.search).toBe("?resume=review");
+});
+
+it("今はAIを使わない を選んだ場合も同じ returnTo へ戻るが同意を保存しない", async () => {
+  const user = userEvent.setup();
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=%2Fplanner%3Fresume%3Dreview"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(screen.getByRole("button", { name: "今はAIを使わない" }));
+
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  expect(router.state.location.search).toBe("?resume=review");
+  expect(acceptConsent).not.toHaveBeenCalled();
 });
 
 it("explains sent content across both target modes and no family data for idea mode", () => {

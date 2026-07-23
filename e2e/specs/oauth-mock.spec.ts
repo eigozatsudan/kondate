@@ -3,7 +3,9 @@ import { expect, test } from "@playwright/test";
 test("local Google success returns the bound code to the app and establishes a Supabase session", async ({
   page,
 }) => {
-  await page.goto("/login?returnTo=%2Fonboarding");
+  // continuation APIは裸の"/"を拒否する契約のため、rootへの安全な戻り先として
+  // query付きrootを渡す。callback後にRootEntryPageがnot_startedを/welcomeへ導く。
+  await page.goto("/login?returnTo=%2F%3Fsource%3Doauth");
   await page.getByRole("button", { name: "Googleで続ける" }).click();
   await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
   const providerUrl = new URL(page.url());
@@ -22,8 +24,8 @@ test("local Google success returns the bound code to the app and establishes a S
   expect(callbackUrl.searchParams.get("state")).toBe(providerUrl.searchParams.get("state"));
   expect(callbackUrl.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
   expect(callbackUrl.href).not.toMatch(/access_token|refresh_token|password|email/iu);
-  await expect(page).toHaveURL(/\/onboarding$/u);
-  await expect(page.getByRole("heading", { name: "家族の初回設定" })).toBeVisible();
+  await expect(page).toHaveURL(/\/welcome$/u);
+  await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible();
 });
 
 test("local Google cancellation returns through the app callback with actionable choices", async ({

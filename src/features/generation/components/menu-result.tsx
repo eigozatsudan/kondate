@@ -48,12 +48,22 @@ type UndoState = {
 export function MenuResult({
   result,
   actions,
+  mode = "household",
   currentLabelWarnings,
   currentSafetyFingerprint,
   onSelectedDishChange,
 }: {
   result: MenuResultViewModel;
   actions?: MenuResultActions;
+  /**
+   * idea では家族向け取り分け・原材料表示確認・調理後の冷蔵庫のいずれも
+   * 表示しない（brief step 11: 「MenuResultはideaでadaptation、
+   * label confirmation、family safety summaryをrenderせず」）。
+   * 呼び出し側の result.targetMode と一致させて渡す（このpropは表示の
+   * 最終判定元。result側の値と食い違っても安全側のideaを優先しない設計は
+   * 呼び出し側（MenuResultPage/HistoryDetailPage）の責務）。
+   */
+  mode?: "household" | "idea";
   /**
    * 現行安全ゲートが返した警告だけを表示する。
    * 指定時は Plan 3 の保存リストを現行権限として使わない。
@@ -371,39 +381,46 @@ export function MenuResult({
             </li>
           ))}
         </ol>
-        <h3 className="mt-5 text-lg font-bold">家族向けの取り分け</h3>
-        {selectedAdaptations.length === 0 ? (
-          <p className="mt-2">この料理の取り分け案はありません。</p>
-        ) : (
-          selectedAdaptations.map((item) => (
-            <dl key={item.id} className="mt-2 rounded-xl bg-stone-50 p-3">
-              <dt className="font-bold">
-                {result.memberLabels[item.anonymousMemberRef] ?? "家族"}・{item.portionText}
-              </dt>
-              <dd>
-                分ける前: 手順
-                {selected.steps.find((step) => step.id === item.branchBeforeRecipeStepId)?.position}
-              </dd>
-              {item.additionalCutting && <dd>切り方: {item.additionalCutting}</dd>}
-              {item.additionalHeating && <dd>加熱: {item.additionalHeating}</dd>}
-              {item.additionalSeasoning && <dd>味付け: {item.additionalSeasoning}</dd>}
-              <dd>配膳時: {item.servingCheck}</dd>
-              {item.safetyActions.length !== 0 && (
-                <dd>
-                  <strong>安全のための手順</strong>
-                  <ul>
-                    {item.safetyActions.map((action, index) => (
-                      <li key={`${action.beforeRecipeStepId}-${String(index)}`}>
-                        {action.instruction}
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
-              )}
-            </dl>
-          ))
+        {mode === "household" && (
+          <>
+            <h3 className="mt-5 text-lg font-bold">家族向けの取り分け</h3>
+            {selectedAdaptations.length === 0 ? (
+              <p className="mt-2">この料理の取り分け案はありません。</p>
+            ) : (
+              selectedAdaptations.map((item) => (
+                <dl key={item.id} className="mt-2 rounded-xl bg-stone-50 p-3">
+                  <dt className="font-bold">
+                    {result.memberLabels[item.anonymousMemberRef] ?? "家族"}・{item.portionText}
+                  </dt>
+                  <dd>
+                    分ける前: 手順
+                    {
+                      selected.steps.find((step) => step.id === item.branchBeforeRecipeStepId)
+                        ?.position
+                    }
+                  </dd>
+                  {item.additionalCutting && <dd>切り方: {item.additionalCutting}</dd>}
+                  {item.additionalHeating && <dd>加熱: {item.additionalHeating}</dd>}
+                  {item.additionalSeasoning && <dd>味付け: {item.additionalSeasoning}</dd>}
+                  <dd>配膳時: {item.servingCheck}</dd>
+                  {item.safetyActions.length !== 0 && (
+                    <dd>
+                      <strong>安全のための手順</strong>
+                      <ul>
+                        {item.safetyActions.map((action, index) => (
+                          <li key={`${action.beforeRecipeStepId}-${String(index)}`}>
+                            {action.instruction}
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  )}
+                </dl>
+              ))
+            )}
+          </>
         )}
-        {labels.length !== 0 && (
+        {mode === "household" && labels.length !== 0 && (
           <section
             aria-labelledby="label-confirmations-heading"
             className="mt-5 rounded-xl border border-amber-700 bg-amber-50 p-3"
@@ -470,7 +487,7 @@ export function MenuResult({
         )}
       </section>
 
-      {result.pantryPostCookTargets.length > 0 && (
+      {mode === "household" && result.pantryPostCookTargets.length > 0 && (
         <section
           aria-labelledby="post-cook-heading"
           className="mt-6 rounded-2xl bg-white p-4 shadow-sm"

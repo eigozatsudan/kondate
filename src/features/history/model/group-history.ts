@@ -1,3 +1,5 @@
+import type { TargetMode } from "@shared/contracts/planner";
+
 /** 派生グループ単位で履歴カードに載せる代表献立。 */
 export type HistoryGroup = {
   derivationGroupId: string;
@@ -8,6 +10,13 @@ export type HistoryGroup = {
     createdAt: string;
     selectedAt: string | null;
     isFavorite: boolean;
+    /**
+     * 権威ある家族/アイデア判定元。カードのbadge・詳細のchild分岐は
+     * 常にこの値だけを使う（brief step 12: 「詳細はmenu aggregateを取得して
+     * 権威あるtargetModeを判定した後にmode別child componentへ分岐」であり、
+     * 一覧側のこの値は表示badgeのためだけに使い、安全側の分岐権威にはしない）。
+     */
+    targetMode: TargetMode;
   };
 };
 
@@ -20,6 +29,7 @@ export type HistoryMenuRow = {
   is_selected: boolean;
   selected_at: string | null;
   is_favorite: boolean;
+  target_mode: TargetMode;
   dishes: Array<{ name: string; position: number }>;
 };
 
@@ -53,6 +63,7 @@ export function groupMenuRows(rows: readonly HistoryMenuRow[]): HistoryGroup[] {
         createdAt: chosen.created_at,
         selectedAt: chosen.selected_at,
         isFavorite: chosen.is_favorite,
+        targetMode: chosen.target_mode,
       },
     });
   }

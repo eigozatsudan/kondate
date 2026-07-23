@@ -29,6 +29,8 @@ it("keeps every nested relation on the named owner-composite FK", () => {
   expectTypeOf<
     MenuResultQueryRow["menu_label_confirmations"][number]["source_text_snapshot"]
   >().toEqualTypeOf<string>();
+  expectTypeOf<MenuResultQueryRow["target_mode"]>().toEqualTypeOf<string>();
+  expectTypeOf<MenuResultQueryRow["preference_snapshot"]>().not.toBeAny();
 });
 
 const MENU_ID = "20000000-0000-4000-8000-000000000001";
@@ -56,6 +58,22 @@ const PANTRY_ITEM_MISSING_ID = "29000000-0000-4000-8000-000000000099";
 // PostgREST から返る行を意図的に非ソート順（料理・取り分けは降順）で用意し、
 // マッパーがposition/idで正規化して並べ直すことを検証する。各ネスト配列も2件以上にし、
 // 先頭要素だけが偶然正しいfixtureでは並び替えの欠落を見逃さないようにする。
+const HOUSEHOLD_PREFERENCE_SNAPSHOT = {
+  submission: {
+    mealType: "breakfast",
+    mainIngredients: ["ごはん"],
+    cuisineGenre: "japanese",
+    targetMode: "household",
+    targetMemberIds: ["55000000-0000-4000-8000-000000000001"],
+    servings: null,
+    timeLimitMinutes: 15,
+    budgetPreference: "standard",
+    avoidIngredients: [],
+    memo: "",
+    pantrySelections: [],
+  },
+};
+
 function rawMenuRow() {
   return {
     id: MENU_ID,
@@ -64,6 +82,8 @@ function rawMenuRow() {
     servings: 2,
     total_elapsed_minutes: 15,
     output_schema_version: "2026-07-11.v1",
+    target_mode: "household" as string,
+    preference_snapshot: HOUSEHOLD_PREFERENCE_SNAPSHOT as unknown,
     dishes: [
       {
         id: DISH2_ID,
@@ -361,6 +381,10 @@ describe("getMenuResult", () => {
     expect(result.menu.timeline.map((step) => step.id)).toEqual([TIMELINE_ID, TIMELINE2_ID]);
     expect(result.menu.menuId).toBe(MENU_ID);
     expect(result.menu.mealType).toBe("breakfast");
+    // targetMode はDB由来の権威ある値のまま透過し、sourceSubmission は
+    // preference_snapshot.submission を plannerSubmissionSchema で解析した結果。
+    expect(result.targetMode).toBe("household");
+    expect(result.sourceSubmission).toEqual(HOUSEHOLD_PREFERENCE_SNAPSHOT.submission);
 
     // 取り分けの安全手順は正規化された配列として保持される。
     expect(result.menu.adaptations).toEqual([
@@ -524,6 +548,52 @@ describe("getMenuResult", () => {
         currentPantryRow: null,
       },
     ]);
+  });
+
+  it("preference_snapshot.submissionが解析できない場合はsourceSubmissionをnullにする", async () => {
+    const row = rawMenuRow();
+    row.preference_snapshot = { submission: { broken: true } };
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.sourceSubmission).toBeNull();
+  });
+
+  it("preference_snapshot.submissionが欠落している場合もsourceSubmissionをnullにする", async () => {
+    const row = rawMenuRow();
+    row.preference_snapshot = {};
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.sourceSubmission).toBeNull();
+  });
+
+  it("idea献立はtarget_modeをideaのまま透過する", async () => {
+    const row = rawMenuRow();
+    row.target_mode = "idea";
+    row.preference_snapshot = {
+      submission: {
+        mealType: "breakfast",
+        mainIngredients: ["ごはん"],
+        cuisineGenre: "japanese",
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 3,
+        timeLimitMinutes: 15,
+        budgetPreference: "standard",
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+      },
+    };
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.targetMode).toBe("idea");
+    expect(result.sourceSubmission?.targetMode).toBe("idea");
   });
 
   it("行が見つからない場合はmenu_not_foundを送出する", async () => {

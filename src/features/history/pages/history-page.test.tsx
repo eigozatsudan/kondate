@@ -41,6 +41,7 @@ const sampleGroup: HistoryGroup = {
     createdAt: "2026-07-11T10:00:00Z",
     selectedAt: "2026-07-11T10:00:00Z",
     isFavorite: true,
+    targetMode: "household",
   },
 };
 

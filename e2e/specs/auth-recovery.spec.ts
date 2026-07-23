@@ -8,9 +8,9 @@ test("same-browser callback restores both callback and original tabs", async ({
   const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
   const callbackTab = await context.newPage();
   await callbackTab.goto(magicLink);
-  await expect(callbackTab.getByRole("heading", { name: "家族の初回設定" })).toBeVisible();
+  await expect(callbackTab.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
   await page.bringToFront();
-  await expect(page).toHaveURL(/\/onboarding$/u);
+  await expect(page).toHaveURL(/\/planner$/u);
 });
 
 test("isolated WebView deposits once and the original browser claims with its secret", async ({
@@ -26,8 +26,8 @@ test("isolated WebView deposits once and the original browser claims with its se
     webView.getByText("元のブラウザでログインを続けてください。この画面に認証情報は保存されません"),
   ).toBeVisible();
   await page.bringToFront();
-  await expect(page).toHaveURL(/\/onboarding$/u);
-  await expect(webView).not.toHaveURL(/\/onboarding$/u);
+  await expect(page).toHaveURL(/\/planner$/u);
+  await expect(webView).not.toHaveURL(/\/planner$/u);
   await isolated.close();
 });
 
