@@ -124,7 +124,8 @@ export async function readRemainingQuota(page: Page): Promise<number> {
   return body.data.success.remaining;
 }
 
-type RegenerationReason = "simpler" | "different_ingredient" | "child_friendly" | "different_flavor";
+type RegenerationReason =
+  "simpler" | "different_ingredient" | "child_friendly" | "different_flavor";
 
 const regenerationReasonLabel: Record<RegenerationReason, string> = {
   simpler: "もっと簡単に",

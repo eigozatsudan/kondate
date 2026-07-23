@@ -471,6 +471,30 @@ for (const servings of [1, 20] as const) {
       .parse(await menuLookup.json());
     expect(menuRows[0]?.servings).toBe(servings);
     expect(menuRows[0]?.target_mode).toBe("idea");
+
+    // Task 8: idea source への新規 shopping mutation key は 422 idea_menu_not_supported
+    // （UI は mount しないが HTTP 境界を E2E でも固定する）
+    const ideaShopping = await page.request.post(
+      "http://127.0.0.1:5173/api/shopping-lists/from-menu",
+      {
+        headers: {
+          ...headers,
+          origin: "http://127.0.0.1:5173",
+        },
+        data: {
+          menuId: menuIdMatch[1],
+          mode: "new",
+          activeListId: null,
+          expectedListVersion: null,
+          idempotencyKey: crypto.randomUUID(),
+        },
+      },
+    );
+    expect(ideaShopping.status()).toBe(422);
+    const ideaShoppingBody = z
+      .object({ ok: z.literal(false), error: z.object({ code: z.string() }) })
+      .parse(await ideaShopping.json());
+    expect(ideaShoppingBody.error.code).toBe("idea_menu_not_supported");
   });
 }
 
@@ -627,5 +651,98 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     for (const routeName of routeNames) {
       expect(familySafetyRequests[routeName]).toEqual([]);
     }
+  });
+});
+
+// --- Plan 7 Task 8: 320px / keyboard / reduced-motion / 200% ---
+// PlannerWizard は共有 WizardFrame ではなく step ごとの section を描画する。
+// 44px は primary/戻る等の操作 button に適用し、native radio の見た目サイズは対象外。
+test.describe("wizard accessibility and layout contracts", () => {
+  test("fits 320px without horizontal scroll and keeps 44px action targets", async ({
+    authenticatedPage: page,
+  }) => {
+    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+    await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+    await page.getByRole("radio", { name: "朝食" }).check();
+    await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+
+    // 契約の正本は 320 CSS px。Playwright の viewport は CSS px 単位のため 320 で固定する。
+    // 200% 拡大はブラウザ zoom であり deviceScaleFactor とは別経路のため、
+    // ここでは scrollWidth 契約と 44px 操作領域を 320 で固定検証する。
+    await page.setViewportSize({ width: 320, height: 720 });
+    const noHorizontalScroll = await page.evaluate(
+      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+    );
+    expect(noHorizontalScroll).toBe(true);
+    const nextBox = await page.getByRole("button", { name: "次へ" }).boundingBox();
+    expect(nextBox).not.toBeNull();
+    if (nextBox === null) throw new Error("次へ button has no bounding box");
+    expect(nextBox.height).toBeGreaterThanOrEqual(44);
+  });
+
+  test("moves heading focus across steps and reaches privacy via keyboard", async ({
+    authenticatedPage: page,
+  }) => {
+    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+    await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+
+    // step 表示直後に heading へ focus（MealStep 等の契約）
+    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeFocused();
+    await page.getByRole("radio", { name: "朝食" }).check();
+    await clickWizardNext(page);
+    await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeFocused();
+    await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+    await page.getByRole("button", { name: "追加" }).click();
+    await clickWizardNext(page);
+    await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeFocused();
+    await page.getByRole("radio", { name: "和食" }).check();
+    await clickWizardNext(page);
+    await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeFocused();
+    // 人数 step の進捗相当: 見出しと選択中人数（aria-pressed）が読み上げられる
+    await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
+    await page.getByRole("button", { name: "2人" }).click();
+    await expect(page.getByRole("button", { name: "2人" })).toHaveAttribute("aria-pressed", "true");
+    await clickWizardNext(page);
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeFocused();
+
+    // Tab で AI 説明または生成操作へ到達できる
+    let reachedPrivacyOrGenerate = false;
+    for (let i = 0; i < 24; i += 1) {
+      await page.keyboard.press("Tab");
+      const focused = page.locator(":focus");
+      const name = (
+        (await focused.getAttribute("aria-label")) ??
+        (await focused.textContent()) ??
+        ""
+      ).trim();
+      if (name.includes("AI情報の説明を見る") || name.includes("献立を作る")) {
+        reachedPrivacyOrGenerate = true;
+        break;
+      }
+    }
+    expect(reachedPrivacyOrGenerate).toBe(true);
+  });
+
+  test("disables wizard-transition animation under prefers-reduced-motion", async ({
+    authenticatedPage: page,
+  }) => {
+    // Planner 本体は step section を使うが、Task 1 の CSS 契約（.wizard-transition）は
+    // prefers-reduced-motion: reduce で animation:none になることを DOM 注入で固定する。
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+    await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+    const animationName = await page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.className = "wizard-transition";
+      document.body.append(probe);
+      const name = getComputedStyle(probe).animationName;
+      probe.remove();
+      return name;
+    });
+    expect(animationName === "none" || animationName === "").toBe(true);
   });
 });

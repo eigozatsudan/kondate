@@ -1265,4 +1265,40 @@ describe("idea menu shopping boundaries", () => {
     expect(mocks.loadMenuIdentity).not.toHaveBeenCalled();
     expect(mocks.applyReconciliation).not.toHaveBeenCalled();
   });
+
+  it("rejects idea menus on reconcile after replay miss without full aggregate", async () => {
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(null);
+    mocks.loadActiveList.mockResolvedValue({
+      id: LIST_ID,
+      status: "active",
+      version: 3,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadMenuIdentity.mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "idea",
+    });
+    const deps = toDeps(mocks);
+    await expect(
+      reconcileShoppingList(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "idea_menu_not_supported",
+    });
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.loadMenu).not.toHaveBeenCalled();
+    expect(mocks.applyReconciliation).not.toHaveBeenCalled();
+  });
 });

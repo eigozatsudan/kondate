@@ -5,7 +5,7 @@
 -- generation_in_progress となり request / quota / attempt / snapshot を増やさない。
 -- dblink セッションは autocommit でコミット済み processing 行を観測する。
 -- =============================================================================
-select plan(5);
+select plan(7);
 
 delete from auth.users where id in (
   'c1000000-0000-4000-8000-000000000101',
@@ -246,6 +246,72 @@ select is(
   ),
   'processing',
   'a different owner can reserve independently from another session'
+);
+
+-- 同一 key replay は保存済み processing を返し、request/quota/attempt/snapshot を増やさない
+select is(
+  (
+    select jsonb_build_object(
+      'status', payload->>'status',
+      'replayed', payload->>'replayed',
+      'request_id', payload->>'request_id'
+    )
+    from extensions.dblink(
+      (select connstr from race_dblink_conn),
+      $sql$
+        select public.reserve_ai_generation(
+          'c1000000-0000-4000-8000-000000000101',
+          'c9000000-0000-4000-8000-000000000001',
+          'new_menu',
+          'c3000000-0000-4000-8000-000000000101',
+          1,
+          null, null, null,
+          'generation-command.v2',
+          repeat('1', 64),
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
+          5, 45, 180,
+          '2026-07-22 00:00:05+00'
+        ) as payload
+      $sql$
+    ) as t(payload jsonb)
+  ),
+  (
+    select jsonb_build_object(
+      'status', 'processing',
+      'replayed', 'true',
+      'request_id', id::text
+    )
+    from private.ai_generation_requests
+    where user_id = 'c1000000-0000-4000-8000-000000000101'
+      and idempotency_key = 'c9000000-0000-4000-8000-000000000001'
+  ),
+  'same-key replay returns saved processing status without a new reservation'
+);
+
+select is(
+  (
+    select jsonb_build_object(
+      'requests', (select count(*) from private.ai_generation_requests
+        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'user_reserved', (select coalesce(sum(reserved_count),0) from private.ai_user_daily_usage
+        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'attempt_reserved', (select coalesce(sum(reserved_count),0)
+        from private.ai_user_daily_external_attempts
+        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'snapshots', (select count(*) from private.generation_regeneration_snapshots
+        where user_id = 'c1000000-0000-4000-8000-000000000101')
+    )
+  ),
+  (
+    select jsonb_build_object(
+      'requests', requests,
+      'user_reserved', user_reserved,
+      'attempt_reserved', attempt_reserved,
+      'snapshots', snapshots
+    )
+    from race_baseline
+  ),
+  'same-key replay does not add request, quota, attempt, or snapshot rows'
 );
 
 -- cleanup

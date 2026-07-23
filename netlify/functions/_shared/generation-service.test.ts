@@ -2224,3 +2224,82 @@ describe("runGeneration idea child_friendly rejection", () => {
     expect(repository.markSent).toHaveBeenCalled();
   });
 });
+
+// --- Plan 7 Task 8: mode 矛盾と idea 人数改変 ---
+// loadExecutionContext / integrity 拒否を provider 送信前に終端し、
+// success 消費・menu 永続化が 0 件であることを固定する。
+describe("runGeneration mode contradiction and idea servings mutation matrix", () => {
+  // 共有 schema / integrity / reserve が拒否した矛盾は loadExecutionContext が
+  // HttpError で返す。ここでは 4 系統すべてが provider 送信前に同一不変条件で終端することを固定する。
+  it.each([
+    "idea + non-empty member IDs",
+    "idea + null servings",
+    "household + empty member IDs",
+    "household + non-null direct servings",
+  ] as const)("%s: provider send 0, succeed 0, menu 0, success consume 0", async () => {
+    const repository = makeRepository();
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+    const loadExecutionContext = vi
+      .fn<GenerationDependencies["loadExecutionContext"]>()
+      .mockRejectedValue(new HttpError(422, "invalid_request", "mode contradiction"));
+    const deps = makeDeps({ repository, callOpenRouter, loadExecutionContext });
+
+    const status = await runGeneration(deps, command);
+    expect(status).toMatchObject({
+      status: "failed",
+      error: { code: "invalid_request" },
+      quota: { consumed: false },
+    });
+    expect(callOpenRouter).not.toHaveBeenCalled();
+    expect(repository.markSent).not.toHaveBeenCalled();
+    expect(repository.succeed).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalledTimes(1);
+    expect(repository.fail).toHaveBeenCalledWith(requestId, "invalid_request", null);
+  });
+
+  it("rejects idea AI servings mismatch without succeed or success quota", async () => {
+    const repository = makeRepository();
+    const ideaContext = makeIdeaGenerationContext({
+      submission: {
+        ...makeIdeaGenerationContext().submission,
+        servings: 2,
+        mainIngredients: ["鶏肉"],
+      },
+    });
+    // materialize は通過させ、validate だけ servings_mismatch で拒否する（敵対人数改変）
+    vi.mocked(materializeAiGeneratedMenu).mockReturnValue(
+      makeGeneratedMenu({ servings: 5, adaptations: [], labelConfirmations: [] }),
+    );
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: false,
+      issues: [{ code: "servings_mismatch", path: "servings", message: "servings mismatch" }],
+    });
+
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>().mockResolvedValue({
+      mode: "full_menu" as const,
+      output:
+        typeof scenarios["idea-servings-2"] !== "string" &&
+        scenarios["idea-servings-2"].outcome === "success"
+          ? {
+              ...scenarios["idea-servings-2"],
+              menu: { ...scenarios["idea-servings-2"].menu, servings: 5 },
+            }
+          : scenarios.success,
+      modelId: models[0],
+    });
+    const deps = makeDeps({
+      repository,
+      callOpenRouter,
+      loadExecutionContext: vi.fn(() =>
+        Promise.resolve(makeNewMenuExecutionContext({ generationContext: ideaContext })),
+      ),
+    });
+
+    const status = await runGeneration(deps, command);
+    expect(status.status).toBe("failed");
+    expect(status).toMatchObject({ quota: { consumed: false } });
+    expect(callOpenRouter).toHaveBeenCalled();
+    expect(repository.succeed).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalled();
+  });
+});

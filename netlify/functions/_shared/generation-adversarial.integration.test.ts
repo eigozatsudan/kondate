@@ -1,16 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
-import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
-import { materializeAiGeneratedMenu } from "./generation-materializer.js";
-import { GenerationOutputError } from "./generation-repair.js";
-import { runGeneration, type GenerationDependencies } from "./generation-service.js";
-import { parseServerEnv, type ServerEnv } from "./env.js";
-import { sendMenuGeneration } from "./openrouter.js";
-import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import type { GenerationCommand } from "../../../shared/contracts/generation.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
 import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
+import {
+  makeGenerationContext,
+  makeIdeaGenerationContext,
+} from "../../../shared/testing/factories.js";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import { parseServerEnv, type ServerEnv } from "./env.js";
+import { materializeAiGeneratedMenu } from "./generation-materializer.js";
+import { buildGenerationMessages } from "./generation-prompt.js";
+import { GenerationOutputError } from "./generation-repair.js";
+import { runGeneration, type GenerationDependencies } from "./generation-service.js";
+import { sendMenuGeneration } from "./openrouter.js";
 
 // このファイルが検証する adversarial scenario 名の閉じた集合。
 // scenarios.mjs のキー全体からテスト対象だけを厳密なunion型として抜き出し、
@@ -551,4 +558,236 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
     },
     20_000,
   );
+});
+
+// --- Plan 7 Task 8: 家族 canary matrix ---
+// 呼び名・標準アレルギー・カスタムアレルギー・嫌い・分量・辛さ・食べやすさへ
+// それぞれ固有 canary を置き、idea 経路では query 相当の context / OpenRouter 本文 /
+// safety snapshot / 完成献立の家族子行すべてで 0 件であること、household 対照では
+// 匿名化 DTO に必要値だけが載ることを統合検証する。
+describe("family canary matrix across idea and household generation boundaries", () => {
+  const memberId = "55000000-0000-4000-8000-000000000001";
+  // 各フィールドへ独立した canary。idea 経路に 1 文字でも漏れたら失敗する。
+  const canaries = {
+    displayName: "CANARY_DISPLAY_NAME_α",
+    standardAllergy: "wheat",
+    customAllergy: "CANARY_CUSTOM_ALLERGY_γ",
+    dislike: "CANARY_DISLIKE_δ",
+    portion: "large" as const,
+    // "none" は idea safety snapshot の assurance と衝突するため mild を canary にする
+    spice: "mild" as const,
+    ease: "small_pieces" as const,
+  } as const;
+  // 自由文・識別子 canary。enum 値は idea の members 空で間接検証する（短い token の誤検出を避ける）。
+  const freeTextCanaries = [
+    canaries.displayName,
+    canaries.standardAllergy,
+    canaries.customAllergy,
+    canaries.dislike,
+  ] as const;
+
+  function householdContextWithCanaries(): GenerationContext {
+    const base = makeGenerationContext();
+    const safety: CurrentSafetyContext = {
+      ...base.safety,
+      members: [
+        {
+          ...base.safety.members[0]!,
+          householdMemberId: memberId,
+          allergyStatus: "registered",
+          allergenIds: [canaries.standardAllergy],
+          // カスタムアレルギー有無フラグ + snapshot 側に固有 canary を載せる
+          // （requiredSafetyConstraints は closed union のため free-text canary を置けない）
+          hasUnmappedCustomAllergy: true,
+          requiredSafetyConstraints: ["cut_small"],
+        },
+      ],
+    };
+    return makeGenerationContext({
+      safety,
+      targetMembers: [
+        {
+          householdMemberId: memberId,
+          anonymousRef: "member_1",
+          displayNameSnapshot: canaries.displayName,
+        },
+      ],
+      memberPreferences: [
+        {
+          householdMemberId: memberId,
+          anonymousMemberRef: "member_1",
+          portionSize: canaries.portion,
+          spiceLevel: canaries.spice,
+          easePreferences: [canaries.ease],
+          dislikes: [canaries.dislike],
+        },
+      ],
+      submission: {
+        ...base.submission,
+        targetMemberIds: [memberId],
+      },
+      // 永続 snapshot に canary が混入しても idea 経路へ載せないことを後段で確認する
+      safetySnapshot: {
+        displayName: canaries.displayName,
+        standardAllergy: canaries.standardAllergy,
+        customAllergy: canaries.customAllergy,
+      },
+      preferenceSnapshot: {
+        dislike: canaries.dislike,
+        portion: canaries.portion,
+        customAllergy: canaries.customAllergy,
+      },
+    });
+  }
+
+  function ideaContextFromHouseholdCanaries(): GenerationContext {
+    // idea 生成は家族表を読まず固定 snapshot だけを持つ。household canary は入力に入らない。
+    return makeIdeaGenerationContext({
+      submission: {
+        mealType: "breakfast",
+        mainIngredients: ["鶏肉"],
+        cuisineGenre: "japanese",
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+        timeLimitMinutes: 15,
+        budgetPreference: "standard",
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+      },
+      safetySnapshot: ideaSafetySnapshot,
+      preferenceSnapshot: {},
+    });
+  }
+
+  function asNewMenuExecution(context: GenerationContext) {
+    return {
+      kind: "new_menu" as const,
+      command: {
+        commandVersion: "generation-command.v2" as const,
+        kind: "new_menu" as const,
+        request: {
+          idempotencyKey: "56000000-0000-4000-8000-000000000001",
+          draftId: "84000000-0000-4000-8000-000000000001",
+          draftRevision: 1,
+          privacyNoticeVersion: "2026-07-11.v1" as const,
+          expiredPantryConfirmations: [] as {
+            pantryItemId: string;
+            checkedAt: string;
+          }[],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: context,
+      expectedSafetyFingerprint:
+        context.targetMode === "idea" ? "idea" : createCurrentSafetyFingerprint(context.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: null,
+    };
+  }
+
+  function assertNoCanary(serialized: string, label: string): void {
+    for (const token of freeTextCanaries) {
+      expect(serialized.includes(token), `${label} must not contain ${token}`).toBe(false);
+    }
+    for (const enumToken of [canaries.portion, canaries.spice, canaries.ease] as const) {
+      expect(
+        serialized.includes(`"${enumToken}"`) || serialized.includes(`:${enumToken}`),
+        `${label} must not embed preference enum ${enumToken}`,
+      ).toBe(false);
+    }
+  }
+
+  it("builds household OpenRouter DTO with anonymized preference canaries only", () => {
+    const context = householdContextWithCanaries();
+    const messages = buildGenerationMessages(asNewMenuExecution(context));
+    const userMessage = messages[1]?.content ?? "";
+    // 表示名・生 ID は AI 本文へ載せない
+    expect(userMessage).not.toContain(canaries.displayName);
+    expect(userMessage).not.toContain(memberId);
+    // 匿名化 DTO には必要な好み・標準アレルギーだけが載る（表示名・snapshot 自由文は載せない）
+    expect(userMessage).toContain(canaries.standardAllergy);
+    expect(userMessage).toContain(canaries.dislike);
+    expect(userMessage).toContain(`"portionSize":"${canaries.portion}"`);
+    expect(userMessage).toContain(`"spiceLevel":"${canaries.spice}"`);
+    expect(userMessage).toContain(canaries.ease);
+    expect(userMessage).toContain('"hasUnmappedCustomAllergy":true');
+    expect(userMessage).toContain('"ref":"member_1"');
+    // カスタムアレルギー free-text canary は DTO に載せない（snapshot 側のみ）
+    expect(userMessage).not.toContain(canaries.customAllergy);
+  });
+
+  it("keeps idea GenerationContext, prompt body, and fixed safety snapshot free of all canaries", () => {
+    const idea = ideaContextFromHouseholdCanaries();
+    // GenerationContext 層: 家族フィールドは空/null 固定
+    expect(idea.safety).toBeNull();
+    expect(idea.targetMembers).toEqual([]);
+    expect(idea.memberPreferences).toEqual([]);
+    expect(idea.submission.targetMemberIds).toEqual([]);
+    expect(idea.safetySnapshot).toEqual(ideaSafetySnapshot);
+
+    const contextJson = JSON.stringify(idea);
+    assertNoCanary(contextJson, "idea GenerationContext");
+
+    const messages = buildGenerationMessages(asNewMenuExecution(idea));
+    const userMessage = messages[1]?.content ?? "";
+    assertNoCanary(userMessage, "idea OpenRouter body");
+    // idea は members 配列が空で、validationVersions も null 固定
+    const serialized = userMessage
+      .replace("<kondate_input_data>\n", "")
+      .replace("\n</kondate_input_data>", "");
+    const payload = JSON.parse(serialized) as {
+      members: unknown[];
+      validationVersions: { allergenDictionary: null; foodSafetyRules: null };
+    };
+    expect(payload.members).toEqual([]);
+    expect(payload.validationVersions).toEqual({
+      allergenDictionary: null,
+      foodSafetyRules: null,
+    });
+  });
+
+  it("materializes idea success without family target/adaptation/action/label children or canaries", () => {
+    const fixture = scenarios["idea-servings-2"];
+    if (typeof fixture === "string" || fixture.outcome !== "success") {
+      throw new Error("invalid_test_fixture");
+    }
+    const idea = ideaContextFromHouseholdCanaries();
+    const materialized = materializeAiGeneratedMenu(fixture.menu, idea, deterministicUuid);
+    const result = validateGeneratedMenu(materialized, idea);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("idea success fixture must validate");
+
+    expect(result.menu.adaptations).toEqual([]);
+    expect(result.menu.labelConfirmations).toEqual([]);
+    expect(result.menu.servings).toBe(2);
+    // 完成献立 JSON に canary が混入しないこと（target/adaptation/action/label 子行相当）
+    assertNoCanary(JSON.stringify(result.menu), "validated idea menu");
+    assertNoCanary(JSON.stringify(idea.safetySnapshot), "idea safety snapshot");
+  });
+
+  it("rejects an idea AI servings mismatch inside 1-20 without producing a valid menu", () => {
+    // 凍結提出 servings=2 に対し AI が 5 を返す敵対ケース
+    const fixture = scenarios["idea-servings-1"];
+    if (typeof fixture === "string" || fixture.outcome !== "success") {
+      throw new Error("invalid_test_fixture");
+    }
+    const idea = makeIdeaGenerationContext({
+      submission: {
+        ...makeIdeaGenerationContext().submission,
+        servings: 2,
+        mainIngredients: ["鶏肉"],
+      },
+    });
+    const mismatched = structuredClone(fixture.menu);
+    mismatched.servings = 5;
+    const materialized = materializeAiGeneratedMenu(mismatched, idea, deterministicUuid);
+    const result = validateGeneratedMenu(materialized, idea);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.map((issue) => issue.code)).toContain("servings_mismatch");
+    }
+  });
 });
