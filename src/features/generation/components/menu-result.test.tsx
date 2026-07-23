@@ -280,18 +280,29 @@ it("returns an alert when the menu has no dishes", () => {
   expect(screen.getByRole("alert")).toHaveTextContent("献立の料理を表示できません");
 });
 
-it("hides adaptation, label confirmation, and post-cook pantry sections for idea mode", () => {
+it("hides adaptation and label confirmation for idea mode without actions", () => {
   const result = makeMenuResultViewModel({ targetMode: "idea" });
   render(<MenuResult result={result} mode="idea" />);
-  // idea は家族向け取り分け・原材料表示確認・調理後の冷蔵庫のいずれも表示しない
+  // idea は家族向け取り分け・原材料表示確認を表示しない
   expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
   expect(screen.queryByText("加工品は原材料表示を確認してください")).toBeNull();
   expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
+  // actions なしの idea は調理後冷蔵庫操作も出さない（read-only 境界）
   expect(screen.queryByRole("heading", { name: "調理後の冷蔵庫" })).toBeNull();
   expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();
   // 献立本文（料理・材料・作り方）は idea でも表示する
   expect(screen.getByRole("heading", { name: "献立ができました" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "材料" })).toBeVisible();
+});
+
+it("shows post-cook pantry controls for idea mode when pantry actions are provided", () => {
+  const result = makeMenuResultViewModel({ targetMode: "idea" });
+  render(<MenuResult result={result} mode="idea" actions={makeActions()} />);
+  expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
+  // 調理後の冷蔵庫は家族 fingerprint を要求しないため idea でも操作できる
+  expect(screen.getByRole("heading", { name: "調理後の冷蔵庫" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "使い切った" })).toBeVisible();
 });
 
 it("keeps household mode sections visible when mode is household", () => {

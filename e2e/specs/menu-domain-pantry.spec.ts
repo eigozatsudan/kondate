@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
+import { clickWizardNext } from "../fixtures/history";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -71,13 +72,13 @@ async function savePlannerMeal(
     () => page.getByRole("radio", { name: mealName }).check(),
     (body) => body.p_meal_type === mealType,
   );
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
 }
 
@@ -92,14 +93,14 @@ async function advanceToReviewWithHousehold(
   await page.goto("/planner");
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: mealName }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   // getByLabel("メイン食材")はaria-labelledbyを持つsectionとinput要素の両方に
   // マッチしてstrict mode違反になるため、role指定で入力欄だけを絞り込む。
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
   await page.getByRole("button", { name: "追加", exact: true }).click();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await page.getByRole("radio", { name: "和食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   // 下書きが実際にサーバーへ保存される前に他画面（/emergency-menus等）へ移動すると、
   // 下書きが未確定のまま扱われてしまう。PlannerWizardは「保存済み」の可視表示を
@@ -119,7 +120,7 @@ async function advanceToReviewWithHousehold(
   });
   await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
   expect((await audienceSaveResponse).ok()).toBe(true);
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
 }
 
@@ -215,7 +216,7 @@ test("waits for the latest draft save before requesting emergency menus", async 
   if (await otherMemberCheckbox.isVisible()) await otherMemberCheckbox.uncheck();
   const memberCheckbox = page.getByRole("checkbox", { name: "緊急用家族" });
   await expect(memberCheckbox).toBeChecked();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await openReviewOptionalDetails(page);
   await page.getByRole("checkbox", { name: "緊急用豆腐" }).check();

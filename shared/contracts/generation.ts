@@ -599,6 +599,9 @@ export const newMenuGenerationRequestSchema = z
   .strict();
 export type NewMenuGenerationRequest = z.infer<typeof newMenuGenerationRequestSchema>;
 
+// changeReason の wire 列挙は mode 非依存。idea + child_friendly は
+// snapshot の targetMode を見た server が markSent 前に invalid_request で拒否する
+// （UI も idea では child_friendly を出さない。schema だけでは mode を知らない）。
 const regenerationBase = {
   idempotencyKey: uuidSchema,
   sourceMenuId: uuidSchema,

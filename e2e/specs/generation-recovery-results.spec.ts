@@ -1,5 +1,6 @@
 import { expect, test } from "../fixtures/auth";
 import { z } from "zod";
+import { clickWizardNext } from "../fixtures/history";
 import { localRestHeaders } from "../fixtures/local-supabase";
 import type { Page, Request, Route } from "@playwright/test";
 
@@ -26,7 +27,7 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   );
   await page.getByRole("radio", { name: "朝食" }).check();
   expect((await mealSaveResponse).ok()).toBe(true);
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
 
   // 2. メイン食材
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
@@ -38,7 +39,7 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
   await page.getByRole("button", { name: "追加" }).click();
   expect((await ingredientSaveResponse).ok()).toBe(true);
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
 
   // 3. ジャンル
   await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
@@ -49,7 +50,7 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   );
   await page.getByRole("radio", { name: "和食" }).check();
   expect((await cuisineSaveResponse).ok()).toBe(true);
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
 
   // 4. 作る相手（idea人数N。境界値1・20の両方を1件以上使う）
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
@@ -68,7 +69,7 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
     await page.getByLabel("7人以上（20人まで）").fill(String(servings));
   }
   expect((await servingsSaveResponse).ok()).toBe(true);
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
 
   // 5. 確認（review）。privacy未確認のため生成buttonはdisabledで説明linkが出る。
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
@@ -110,14 +111,14 @@ async function completeMinimumPlanner(page: Page) {
   // 旧PlannerForm（同一画面で全条件をradio選択）とは操作手順が異なる。
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   // getByLabel("メイン食材")はaria-labelledbyを持つsectionとinput要素の両方に
   // マッチしてstrict mode違反になるため、role指定で入力欄だけを絞り込む。
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
   await page.getByRole("button", { name: "追加", exact: true }).click();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await page.getByRole("radio", { name: "和食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   // audienceは既定でeligible家族全員（家族1）がhouseholdモードで選択済み。
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   // draftRevisionがserver側で確定する前のPOSTを避けるため、最後の質問（audience）の
@@ -129,7 +130,7 @@ async function completeMinimumPlanner(page: Page) {
   );
   await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
   expect((await audienceSaveResponse).ok()).toBe(true);
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({
     timeout: 10_000,
@@ -319,30 +320,30 @@ test("shows timeline, tabs, ingredients, steps, adaptations, empty pantry state,
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-// --- idea結果境界E2E（Task 6 Step 13） ---
+// --- idea結果境界E2E（Task 6/7） ---
 // 家族設定を省略したidea利用者が4質問→人数N→privacy→reviewを経て生成し、
-// 結果画面にnotice付きの本文だけが表示されること、家族向け操作・買い物・
-// 家族安全通信が一切発生しないことを固定する。Nの境界値は1と20の両方を検証する。
+// 結果画面にnoticeと許可操作が表示され、買い物・家族安全通信が一切発生しないこと
+// を固定する。Nの境界値は1と20の両方を検証する。
 
 async function assertIdeaResultBoundary(page: Page, servings: number): Promise<void> {
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
   // notice: idea結果には常時「家族条件を使用していません」「年齢・アレルギーへの
-  // 適合は確認されていません」の2文が表示される（brief step 11）。
+  // 適合は確認されていません」の2文が表示される。
   await expect(page.getByText("家族条件を使用していません")).toBeVisible();
   await expect(page.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
   // 人数表示。menu.servings === N であることを本文の「N人分」表示で確認する。
   await expect(page.getByText(`${String(servings)}人分`, { exact: false })).toBeVisible();
-  // 家族向け5操作（まるごと別案・一品だけ別案・買い物リストを作る・
-  // 買い物リストとの差分を確認・冷蔵庫へ反映・これに決めた）がidea結果には
-  // 一切表示されない。
-  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toHaveCount(0);
+  // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成は利用できる
+  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "冷蔵庫へ反映" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
+  // 買い物だけは idea では非表示のまま
   await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "買い物リストとの差分を確認" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "冷蔵庫へ反映" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "これに決めた" })).toHaveCount(0);
 }
 
 function isAppGenerationMenuUrl(url: URL, appOrigin: string): boolean {
@@ -405,15 +406,12 @@ for (const servings of [1, 20] as const) {
     const forbiddenIdeaResultRequests: string[] = [];
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;
-      // create(/api/shopping-lists/from-menu)、preview/reconcile/revalidate
-      // (/api/shopping-lists/:id/preview|reconcile|revalidate)のいずれも
-      // /api/shopping-lists/ 配下に集約されているため、prefixで一括検出する。
-      // 初回生成の/api/generations/menuだけはこのtestの主操作として許可する。
-      // 結果表示後のdish再生成、家族再検証、shopping 4 endpointはidea bodyで
-      // mountされないため、いずれも0件でなければならない。
+      // create/preview/reconcile/revalidate の shopping 4 endpoint と
+      // 家族 revalidation は idea 結果で mount されないため 0 件。
+      // 初回生成の /api/generations/menu はこの test の主操作として許可する。
+      // dish 再生成は本 test では起動しない（別 E2E で検証）。
       if (
         path.startsWith("/api/shopping-lists/") ||
-        path === "/api/generations/dish" ||
         /^\/api\/menus\/[^/]+\/revalidate$/u.test(path)
       ) {
         forbiddenIdeaResultRequests.push(path);
@@ -489,12 +487,12 @@ test("shows a field-local range error and focuses the first invalid servings fie
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
   await page.getByRole("radio", { name: "朝食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
   await page.getByRole("button", { name: "追加" }).click();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await page.getByRole("radio", { name: "和食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
   const servingsInput = page.getByLabel("7人以上（20人まで）");
   await servingsInput.fill("21");
@@ -507,7 +505,7 @@ test("shows a field-local range error and focuses the first invalid servings fie
       "false",
     );
   }
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("alert")).toHaveText("人数は7人から20人の範囲で入力してください。");
   await expect(servingsInput).toHaveAttribute("aria-invalid", "true");
   await expect(servingsInput).toHaveAttribute("aria-describedby", "audience-servings-error");
@@ -599,12 +597,12 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     activeRoute = null;
     await page.goto("/planner");
     await page.getByRole("radio", { name: "夕食" }).check();
-    await page.getByRole("button", { name: "次へ" }).click();
+    await clickWizardNext(page);
     await page.getByRole("textbox", { name: "メイン食材" }).fill("豆腐");
     await page.getByRole("button", { name: "追加" }).click();
-    await page.getByRole("button", { name: "次へ" }).click();
+    await clickWizardNext(page);
     await page.getByRole("radio", { name: "中華" }).check();
-    await page.getByRole("button", { name: "次へ" }).click();
+    await clickWizardNext(page);
     await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
     // PlannerWizardは「保存済み」の可視表示を持たないため、servings確定の
     // 自動保存応答自体を同期点として待つ。

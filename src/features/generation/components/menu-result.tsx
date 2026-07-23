@@ -16,7 +16,11 @@ const amount = (value: number | null, unit: string | null, text: string) =>
 export type MenuResultActions = {
   menuId: string;
   userId: string;
-  onConfirmLabel(confirmationId: string, expectedSafetyFingerprint: string): Promise<void>;
+  /**
+   * 原材料表示確認。household のみ渡す。
+   * idea は label 領域自体を出さないため callback を作らない。
+   */
+  onConfirmLabel?(confirmationId: string, expectedSafetyFingerprint: string): Promise<void>;
   onDeletePantry(row: NonNullable<PantryPostCookTarget["currentPantryRow"]>): Promise<void>;
   onUpdatePantry(
     row: NonNullable<PantryPostCookTarget["currentPantryRow"]>,
@@ -56,12 +60,10 @@ export function MenuResult({
   result: MenuResultViewModel;
   actions?: MenuResultActions;
   /**
-   * idea では家族向け取り分け・原材料表示確認・調理後の冷蔵庫のいずれも
-   * 表示しない（brief step 11: 「MenuResultはideaでadaptation、
-   * label confirmation、family safety summaryをrenderせず」）。
-   * 呼び出し側の result.targetMode と一致させて渡す（このpropは表示の
-   * 最終判定元。result側の値と食い違っても安全側のideaを優先しない設計は
-   * 呼び出し側（MenuResultPage/HistoryDetailPage）の責務）。
+   * idea では家族向け取り分け・原材料表示確認を表示しない。
+   * 調理後の冷蔵庫反映は所有・version 競合検査だけで済むため idea でも許可する
+   * （actions が渡されたときだけ操作 UI を出す）。
+   * 呼び出し側の result.targetMode と一致させて渡す。
    */
   mode?: "household" | "idea";
   /**
@@ -149,7 +151,7 @@ export function MenuResult({
   };
 
   const handleConfirmLabel = async (confirmationId: string): Promise<void> => {
-    if (actions === undefined || busy) return;
+    if (actions === undefined || actions.onConfirmLabel === undefined || busy) return;
     // 現行ゲートの fingerprint を正とし、保存行の古い fingerprint は使わない
     const fingerprint =
       currentSafetyFingerprint ??
@@ -487,131 +489,134 @@ export function MenuResult({
         )}
       </section>
 
-      {mode === "household" && result.pantryPostCookTargets.length > 0 && (
-        <section
-          aria-labelledby="post-cook-heading"
-          className="mt-6 rounded-2xl bg-white p-4 shadow-sm"
-        >
-          <h2 id="post-cook-heading" className="text-xl font-bold">
-            調理後の冷蔵庫
-          </h2>
-          <ul className="mt-3 space-y-4">
-            {result.pantryPostCookTargets.map((target) => {
-              const isDeleted = deletedSelectionIds.has(target.selectionId);
-              const live = target.currentPantryRow;
-              return (
-                <li key={target.selectionId} className="rounded-xl border p-3">
-                  <strong>{target.pantryItemName}</strong>
-                  {isDeleted || live === null || target.pantryItemId === null ? (
-                    <p className="mt-1">冷蔵庫から削除済み</p>
-                  ) : (
-                    <>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
-                          disabled={busy}
-                          onClick={() => {
-                            setDeletePendingId(target.selectionId);
-                            setRemainderTargetId(null);
-                          }}
-                        >
-                          使い切った
-                        </button>
-                        <button
-                          type="button"
-                          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
-                          disabled={busy}
-                          onClick={() => {
-                            setRemainderTargetId(target.selectionId);
-                            setDeletePendingId(null);
-                          }}
-                        >
-                          まだある
-                        </button>
-                      </div>
-                      {deletePendingId === target.selectionId && (
-                        <div className="mt-3 rounded-lg bg-stone-50 p-3">
-                          <p>この食材を冷蔵庫から削除しますか？</p>
-                          <div className="mt-2 flex flex-wrap gap-2">
+      {/* 調理後の冷蔵庫は家族安全と分離し、所有者/version 検査だけで更新できる。
+          idea でも actions 付きなら表示する。read-only idea（actions なし）では出さない。 */}
+      {result.pantryPostCookTargets.length > 0 &&
+        (mode === "household" || actions !== undefined) && (
+          <section
+            aria-labelledby="post-cook-heading"
+            className="mt-6 rounded-2xl bg-white p-4 shadow-sm"
+          >
+            <h2 id="post-cook-heading" className="text-xl font-bold">
+              調理後の冷蔵庫
+            </h2>
+            <ul className="mt-3 space-y-4">
+              {result.pantryPostCookTargets.map((target) => {
+                const isDeleted = deletedSelectionIds.has(target.selectionId);
+                const live = target.currentPantryRow;
+                return (
+                  <li key={target.selectionId} className="rounded-xl border p-3">
+                    <strong>{target.pantryItemName}</strong>
+                    {isDeleted || live === null || target.pantryItemId === null ? (
+                      <p className="mt-1">冷蔵庫から削除済み</p>
+                    ) : (
+                      <>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+                            disabled={busy}
+                            onClick={() => {
+                              setDeletePendingId(target.selectionId);
+                              setRemainderTargetId(null);
+                            }}
+                          >
+                            使い切った
+                          </button>
+                          <button
+                            type="button"
+                            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+                            disabled={busy}
+                            onClick={() => {
+                              setRemainderTargetId(target.selectionId);
+                              setDeletePendingId(null);
+                            }}
+                          >
+                            まだある
+                          </button>
+                        </div>
+                        {deletePendingId === target.selectionId && (
+                          <div className="mt-3 rounded-lg bg-stone-50 p-3">
+                            <p>この食材を冷蔵庫から削除しますか？</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+                                disabled={busy}
+                                onClick={() => {
+                                  void handleDeleteConfirm(target);
+                                }}
+                              >
+                                削除する
+                              </button>
+                              <button
+                                type="button"
+                                className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+                                disabled={busy}
+                                onClick={() => {
+                                  setDeletePendingId(null);
+                                }}
+                              >
+                                やめる
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {remainderTargetId === target.selectionId && (
+                          <div className="mt-3 space-y-2 rounded-lg bg-stone-50 p-3">
+                            <label className="block">
+                              残りの分量（任意）
+                              <input
+                                className="mt-1 min-h-11 w-full rounded border px-2"
+                                inputMode="decimal"
+                                value={remainderQty}
+                                onChange={(event) => {
+                                  setRemainderQty(event.target.value);
+                                }}
+                              />
+                            </label>
+                            <label className="block">
+                              単位
+                              <input
+                                className="mt-1 min-h-11 w-full rounded border px-2"
+                                value={remainderUnit}
+                                onChange={(event) => {
+                                  setRemainderUnit(event.target.value);
+                                }}
+                              />
+                            </label>
                             <button
                               type="button"
                               className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
                               disabled={busy}
                               onClick={() => {
-                                void handleDeleteConfirm(target);
+                                void handleUpdateRemainder(target);
                               }}
                             >
-                              削除する
-                            </button>
-                            <button
-                              type="button"
-                              className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
-                              disabled={busy}
-                              onClick={() => {
-                                setDeletePendingId(null);
-                              }}
-                            >
-                              やめる
+                              分量を保存
                             </button>
                           </div>
-                        </div>
-                      )}
-                      {remainderTargetId === target.selectionId && (
-                        <div className="mt-3 space-y-2 rounded-lg bg-stone-50 p-3">
-                          <label className="block">
-                            残りの分量（任意）
-                            <input
-                              className="mt-1 min-h-11 w-full rounded border px-2"
-                              inputMode="decimal"
-                              value={remainderQty}
-                              onChange={(event) => {
-                                setRemainderQty(event.target.value);
-                              }}
-                            />
-                          </label>
-                          <label className="block">
-                            単位
-                            <input
-                              className="mt-1 min-h-11 w-full rounded border px-2"
-                              value={remainderUnit}
-                              onChange={(event) => {
-                                setRemainderUnit(event.target.value);
-                              }}
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
-                            disabled={busy}
-                            onClick={() => {
-                              void handleUpdateRemainder(target);
-                            }}
-                          >
-                            分量を保存
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {undo?.selectionId === target.selectionId && (
-                    <button
-                      type="button"
-                      className="mt-2 min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
-                      disabled={busy}
-                      onClick={() => {
-                        void handleUndo();
-                      }}
-                    >
-                      元に戻す
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+                        )}
+                      </>
+                    )}
+                    {undo?.selectionId === target.selectionId && (
+                      <button
+                        type="button"
+                        className="mt-2 min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+                        disabled={busy}
+                        onClick={() => {
+                          void handleUndo();
+                        }}
+                      >
+                        元に戻す
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
     </main>
   );
 }

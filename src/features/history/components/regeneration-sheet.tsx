@@ -1,8 +1,9 @@
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { changeReasons } from "@shared/contracts/domain";
+import type { TargetMode } from "@shared/contracts/planner";
 
-const reasons = [
+const allReasons = [
   ["simpler", "もっと簡単に"],
   ["different_ingredient", "別の食材で"],
   ["child_friendly", "子どもが食べやすく"],
@@ -35,10 +36,12 @@ const regenerationReasonSchema = z
 
 export type RegenerationReasonInput = z.infer<typeof regenerationReasonSchema>;
 
-type RegenerationSheetProps = {
+export type RegenerationSheetProps = {
+  /** idea では child_friendly（年齢適合）を出さない。household は全理由を出す。 */
+  targetMode: TargetMode;
   remaining: number;
   onSubmit: (value: RegenerationReasonInput) => Promise<void>;
-  onCancel?: () => void;
+  onCancel: () => void;
 };
 
 type FormValues = {
@@ -49,8 +52,14 @@ type FormValues = {
 /**
  * 再生成の必須理由シート。
  * 「安全」表現は出さず、成功時のみ1回消費する条件付きquota文言を固定する。
+ * idea では年齢適合を意味する child_friendly を UI から除く（server も拒否する）。
  */
-export function RegenerationSheet({ remaining, onSubmit, onCancel }: RegenerationSheetProps) {
+export function RegenerationSheet({
+  targetMode,
+  remaining,
+  onSubmit,
+  onCancel,
+}: RegenerationSheetProps) {
   const form = useForm<FormValues>({
     defaultValues: {
       changeReason: "",
@@ -58,6 +67,9 @@ export function RegenerationSheet({ remaining, onSubmit, onCancel }: Regeneratio
     },
   });
   const selectedReason = form.watch("changeReason");
+  // idea は年齢適合を保証しないため「子どもが食べやすく」を選択肢から外す
+  const reasons =
+    targetMode === "idea" ? allReasons.filter(([value]) => value !== "child_friendly") : allReasons;
 
   const submit = form.handleSubmit(async (raw) => {
     form.clearErrors();
@@ -82,6 +94,11 @@ export function RegenerationSheet({ remaining, onSubmit, onCancel }: Regeneratio
       if (raw.changeReason === "") {
         form.setError("changeReason", { message: "理由を選んでください" });
       }
+      return;
+    }
+    // idea UI から child_friendly を選べないことを二重に守る
+    if (targetMode === "idea" && parsed.data.changeReason === "child_friendly") {
+      form.setError("changeReason", { message: "理由を選んでください" });
       return;
     }
     await onSubmit(parsed.data);
@@ -126,16 +143,14 @@ export function RegenerationSheet({ remaining, onSubmit, onCancel }: Regeneratio
         >
           別案を作る
         </button>
-        {onCancel !== undefined && (
-          <button
-            type="button"
-            className="min-h-11 rounded-xl border-2 border-stone-800 px-4 font-semibold"
-            disabled={form.formState.isSubmitting}
-            onClick={onCancel}
-          >
-            やめる
-          </button>
-        )}
+        <button
+          type="button"
+          className="min-h-11 rounded-xl border-2 border-stone-800 px-4 font-semibold"
+          disabled={form.formState.isSubmitting}
+          onClick={onCancel}
+        >
+          やめる
+        </button>
       </div>
     </form>
   );

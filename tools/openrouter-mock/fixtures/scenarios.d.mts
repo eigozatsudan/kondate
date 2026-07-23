@@ -4,7 +4,9 @@ import type { DishRegenerationAiOutput } from "../../../shared/contracts/regener
 type ScenarioName =
   | "success"
   | "idea-servings-1"
+  | "idea-servings-2"
   | "idea-servings-20"
+  | "idea-alternate-menu-1"
   | "duplicate-menu"
   | "alternate-menu"
   | "dish-replacement"

@@ -727,6 +727,18 @@ export async function runGeneration(
       const code = generationFailureCodeSchema.safeParse(preflight.primaryCode);
       return await fail(code.success ? code.data : "internal_error", null);
     }
+
+    // idea 再生成は年齢適合を意味する child_friendly を外部送信前に拒否する。
+    // snapshot（loadExecutionContext）作成後・markSent 前で確定する。
+    // UI でも非表示だが、直接 API 呼び出しに対するサーバー境界として必須。
+    if (
+      (execution.kind === "regenerate_menu" || execution.kind === "regenerate_dish") &&
+      context.targetMode === "idea" &&
+      execution.command.request.changeReason === "child_friendly"
+    ) {
+      return await fail("invalid_request", null);
+    }
+
     const originalMessages = deps.buildMessages(execution);
     const wireMode = execution.kind === "regenerate_dish" ? "replacement_dish" : "full_menu";
 

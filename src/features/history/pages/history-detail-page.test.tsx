@@ -315,21 +315,23 @@ describe("HistoryDetailPage safety gate", () => {
   });
 });
 
-describe("HistoryDetailPage idea read-only boundary", () => {
-  it("renders a permanent notice and recipe body without mounting revalidation or shopping", async () => {
+describe("HistoryDetailPage idea permitted actions boundary", () => {
+  it("renders a permanent notice and permitted actions without mounting revalidation or shopping", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
 
     renderHistoryDetail();
 
     expect(await screen.findByText("家族条件を使用していません")).toBeVisible();
     expect(screen.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
-    // idea では household 専用の再検証・採用・再生成・買い物・冷蔵庫を一切表示しない
+    // idea では家族 revalidation と買い物を mount しない
     expect(revalidateMenuMock).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "これに決めた" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "献立をまるごと別案にする" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "この一品だけ別案にする" })).toBeNull();
     expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "冷蔵庫へ反映" })).toBeNull();
+    // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
+    expect(screen.getByRole("button", { name: "これに決めた" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeEnabled();
     expect(acceptMenuVersionMock).not.toHaveBeenCalled();
   });
 
@@ -342,6 +344,13 @@ describe("HistoryDetailPage idea read-only boundary", () => {
     const themedRoot = document.querySelector(".guided-planner-theme");
     expect(themedRoot).not.toBeNull();
     expect(themedRoot?.textContent).not.toMatch(/確認済み|安全に配慮|アレルギー対応済み/u);
+  });
+
+  it("hides child_friendly in idea regeneration sheet", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+    renderHistoryDetail();
+    await userEvent.click(await screen.findByRole("button", { name: "献立をまるごと別案にする" }));
+    expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
   });
 
   it("keeps household mode mounting revalidation and the family action bar as before", async () => {

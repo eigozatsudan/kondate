@@ -1,6 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 import { z } from "zod";
 import { completeMinimumOnboarding, expect, test as authTest } from "./auth";
+import { clickWizardNext } from "./history";
 import { localRestHeaders } from "./local-supabase";
 
 type ShoppingFixtures = { shoppingMenuId: string };
@@ -61,14 +62,14 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
   // 同じく朝食で要求する（この読み替えは検証している内容を変えない）。
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
   await page.getByRole("button", { name: "追加", exact: true }).click();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
   await page.getByRole("radio", { name: "和食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   const audienceSaveResponse = page.waitForResponse(
     (response) =>
@@ -77,7 +78,7 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
   );
   await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
   expect((await audienceSaveResponse).ok()).toBe(true);
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({ timeout: 15_000 });
   await page.getByRole("button", { name: "献立を作る" }).click();

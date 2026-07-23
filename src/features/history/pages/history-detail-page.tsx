@@ -1,16 +1,25 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link, Navigate, useParams } from "react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { z } from "zod";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
 import { useAuth } from "@/features/auth/use-auth";
 import { getMenuResult } from "@/features/generation/api/menu-result-api";
-import { MenuResult } from "@/features/generation/components/menu-result";
+import { MenuResult, type MenuResultActions } from "@/features/generation/components/menu-result";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
+import {
+  createPantryItem,
+  deletePantryItem,
+  pantryKeys,
+  updatePantryItem,
+} from "@/features/pantry/pantry-api";
+import { createPlannerDraftFromMenu } from "@/features/planner/model/draft-from-menu";
+import { getPlannerDraft, plannerKeys, savePlannerDraft } from "@/features/planner/planner-api";
+import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { isRevalidationActionable, type RevalidationResult } from "../api/revalidation-api";
 import { RegenerationSheet, type RegenerationReasonInput } from "../components/regeneration-sheet";
-import { useAcceptMenuVersion } from "../hooks/use-history";
+import { useAcceptMenuVersion, useToggleFavorite } from "../hooks/use-history";
 import { useMenuRevalidation, type RevalidationPhaseName } from "../hooks/use-menu-revalidation";
 import { useRegeneration } from "../hooks/use-regeneration";
 
@@ -33,9 +42,9 @@ const DISCLAIMER =
 
 /**
  * 履歴詳細。menu aggregate（権威あるtargetMode）を取得した後にmode別
- * child componentへ分岐する。household child だけが現行安全再検証・
- * 採用・再生成・買い物・冷蔵庫を維持し、idea child は常時noticeと
- * 献立本文だけを表示する（brief step 12）。
+ * child componentへ分岐する。household child は現行安全再検証・採用・再生成・
+ * 買い物・冷蔵庫を維持し、idea child は家族 revalidation/買い物を mount せず
+ * 許可操作（採用・お気に入り・冷蔵庫・再生成）だけを有効化する。
  */
 export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageProps = {}) {
   const auth = useAuth();
@@ -81,7 +90,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
   }
 
   if (menuQuery.data.targetMode === "idea") {
-    return <IdeaDetailBody result={menuQuery.data} />;
+    return <IdeaDetailBody result={menuQuery.data} menuId={menuId} userId={userId} />;
   }
   return (
     <HouseholdDetailBody
@@ -93,8 +102,95 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
   );
 }
 
-/** idea履歴の詳細本文。常時noticeと献立本文だけを表示し、家族安全操作を一切mountしない。 */
-function IdeaDetailBody({ result }: { result: MenuResultViewModel }) {
+type IdeaDetailBodyProps = {
+  result: MenuResultViewModel;
+  menuId: string;
+  userId: string | undefined;
+};
+
+/**
+ * idea履歴の詳細本文。
+ * 家族安全再検証・買い物は mount せず、常時noticeと許可操作を表示する。
+ */
+function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const usage = useUsageToday(userId ?? "");
+  const remaining = usage.data?.success.remaining ?? 0;
+  const regeneration = useRegeneration({
+    targetMode: "idea",
+    menuId,
+    phase: null,
+    result: null,
+  });
+  const accept = useAcceptMenuVersion();
+  const favorite = useToggleFavorite();
+  const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
+  const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [fridgeOpen, setFridgeOpen] = useState(false);
+  const [retargetError, setRetargetError] = useState<string | null>(null);
+  const [retargetPending, setRetargetPending] = useState(false);
+
+  const firstDishId = result.menu.dishes[0]?.id ?? null;
+  const dishIdForRegen = selectedDishId ?? firstDishId;
+  const queryKey = useMemo(
+    () => ["menu-result", userId ?? "missing", menuId] as const,
+    [menuId, userId],
+  );
+
+  const actions = useMemo((): MenuResultActions | undefined => {
+    if (userId === undefined) return undefined;
+    const client = getBrowserSupabaseClient();
+    return {
+      menuId,
+      userId,
+      onDeletePantry: async (row) => {
+        await deletePantryItem(client, userId, row.id, row.updatedAt);
+        await queryClient.invalidateQueries({ queryKey: pantryKeys.list(userId) });
+      },
+      onUpdatePantry: async (row, input) => {
+        await updatePantryItem(client, userId, row.id, row.updatedAt, input);
+        await queryClient.invalidateQueries({ queryKey: pantryKeys.list(userId) });
+      },
+      onCreatePantry: async (input) => {
+        await createPantryItem(client, userId, input);
+        await queryClient.invalidateQueries({ queryKey: pantryKeys.list(userId) });
+      },
+      onRefetchResult: async () => {
+        await queryClient.invalidateQueries({ queryKey });
+      },
+    };
+  }, [menuId, queryClient, queryKey, userId]);
+
+  const onSubmitReason = async (value: RegenerationReasonInput) => {
+    if (sheetMode === "dish") {
+      if (dishIdForRegen === null) return;
+      await regeneration.startDish(dishIdForRegen, value);
+    } else {
+      await regeneration.startWhole(value);
+    }
+    setSheetMode(null);
+  };
+
+  const onRetarget = async () => {
+    if (result.sourceSubmission === null || userId === undefined) return;
+    setRetargetError(null);
+    setRetargetPending(true);
+    try {
+      const client = getBrowserSupabaseClient();
+      const existing = await getPlannerDraft(client, userId);
+      const draft = createPlannerDraftFromMenu(result.sourceSubmission);
+      await savePlannerDraft(client, userId, draft, existing?.revision ?? 0);
+      await queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
+      void navigate("/planner?resume=audience");
+    } catch {
+      setRetargetError("献立条件を引き継げませんでした。もう一度お試しください");
+    } finally {
+      setRetargetPending(false);
+    }
+  };
+
   return (
     <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
@@ -102,7 +198,116 @@ function IdeaDetailBody({ result }: { result: MenuResultViewModel }) {
         <p>家族条件を使用していません</p>
         <p>年齢・アレルギーへの適合は確認されていません</p>
       </InlineNotice>
-      <MenuResult result={result} mode="idea" />
+      {actions === undefined ? (
+        <MenuResult result={result} mode="idea" onSelectedDishChange={setSelectedDishId} />
+      ) : (
+        <MenuResult
+          result={result}
+          mode="idea"
+          actions={actions}
+          onSelectedDishChange={setSelectedDishId}
+        />
+      )}
+      {fridgeOpen && (
+        <p className="mt-2 text-sm text-stone-700">
+          調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。
+        </p>
+      )}
+
+      <div className="mt-6 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          onClick={() => {
+            setSheetMode("whole");
+          }}
+        >
+          献立をまるごと別案にする
+        </button>
+        <button
+          type="button"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          disabled={dishIdForRegen === null}
+          onClick={() => {
+            setSheetMode("dish");
+          }}
+        >
+          この一品だけ別案にする
+        </button>
+        <button
+          type="button"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          onClick={() => {
+            setFridgeOpen(true);
+          }}
+        >
+          冷蔵庫へ反映
+        </button>
+        <button
+          type="button"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          disabled={favorite.isPending}
+          aria-pressed={isFavorite}
+          aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
+          onClick={() => {
+            const next = !isFavorite;
+            favorite.mutate(
+              { menuId, isFavorite: next },
+              {
+                onSuccess: () => {
+                  setIsFavorite(next);
+                },
+              },
+            );
+          }}
+        >
+          {isFavorite ? "★ お気に入り" : "☆ お気に入り"}
+        </button>
+        <button
+          type="button"
+          className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+          disabled={accept.isPending}
+          onClick={() => {
+            accept.mutate(menuId);
+          }}
+        >
+          これに決めた
+        </button>
+        {result.sourceSubmission !== null && (
+          <button
+            type="button"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            disabled={retargetPending}
+            onClick={() => {
+              void onRetarget();
+            }}
+          >
+            対象を変えて新しく作る
+          </button>
+        )}
+      </div>
+
+      {retargetError !== null && (
+        <p role="alert" className="mt-4">
+          {retargetError}
+        </p>
+      )}
+
+      {sheetMode !== null && (
+        <section
+          className="mt-6 rounded-2xl border bg-white p-4 shadow-sm"
+          aria-label="再生成の理由"
+        >
+          <RegenerationSheet
+            targetMode="idea"
+            remaining={remaining}
+            onSubmit={onSubmitReason}
+            onCancel={() => {
+              setSheetMode(null);
+            }}
+          />
+        </section>
+      )}
     </main>
   );
 }
@@ -116,7 +321,7 @@ type HouseholdDetailBodyProps = {
 
 /**
  * household履歴の詳細本文。既存の家族安全再検証・採用・再生成・買い物・
- * 冷蔵庫連携をすべて維持する（Step 10までの実装をそのままこのcomponentへ移した）。
+ * 冷蔵庫連携をすべて維持する。
  */
 function HouseholdDetailBody({
   result,
@@ -124,6 +329,8 @@ function HouseholdDetailBody({
   userId,
   injectedRevalidation,
 }: HouseholdDetailBodyProps) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const live = useMenuRevalidation(menuId);
   const liveView: HistoryDetailRevalidationView = {
     phase: live.phase,
@@ -139,6 +346,7 @@ function HouseholdDetailBody({
   const usage = useUsageToday(userId ?? "");
   const remaining = usage.data?.success.remaining ?? 0;
   const regeneration = useRegeneration({
+    targetMode: "household",
     menuId,
     phase: revalidation.phase,
     result: revalidation.result,
@@ -146,6 +354,8 @@ function HouseholdDetailBody({
   const accept = useAcceptMenuVersion();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
+  const [retargetError, setRetargetError] = useState<string | null>(null);
+  const [retargetPending, setRetargetPending] = useState(false);
 
   const actionsEnabled =
     revalidation.phase === "checked" &&
@@ -173,6 +383,24 @@ function HouseholdDetailBody({
       await regeneration.startWhole(value);
     }
     setSheetMode(null);
+  };
+
+  const onRetarget = async () => {
+    if (result.sourceSubmission === null || userId === undefined) return;
+    setRetargetError(null);
+    setRetargetPending(true);
+    try {
+      const client = getBrowserSupabaseClient();
+      const existing = await getPlannerDraft(client, userId);
+      const draft = createPlannerDraftFromMenu(result.sourceSubmission);
+      await savePlannerDraft(client, userId, draft, existing?.revision ?? 0);
+      await queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
+      void navigate("/planner?resume=audience");
+    } catch {
+      setRetargetError("献立条件を引き継げませんでした。もう一度お試しください");
+    } finally {
+      setRetargetPending(false);
+    }
   };
 
   return (
@@ -274,7 +502,25 @@ function HouseholdDetailBody({
         >
           これに決めた
         </button>
+        {result.sourceSubmission !== null && (
+          <button
+            type="button"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            disabled={retargetPending}
+            onClick={() => {
+              void onRetarget();
+            }}
+          >
+            対象を変えて新しく作る
+          </button>
+        )}
       </div>
+
+      {retargetError !== null && (
+        <p role="alert" className="mt-4">
+          {retargetError}
+        </p>
+      )}
 
       {sheetMode !== null && (
         <section
@@ -282,6 +528,7 @@ function HouseholdDetailBody({
           aria-label="再生成の理由"
         >
           <RegenerationSheet
+            targetMode="household"
             remaining={remaining}
             onSubmit={onSubmitReason}
             onCancel={() => {

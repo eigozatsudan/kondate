@@ -108,6 +108,7 @@ describe("useRegeneration", () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
+          targetMode: "household",
           menuId: MENU_ID,
           phase: "checking",
           result: undefined,
@@ -124,6 +125,7 @@ describe("useRegeneration", () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
+          targetMode: "household",
           menuId: MENU_ID,
           phase: "checked",
           result: validRevalidation,
@@ -155,6 +157,7 @@ describe("useRegeneration", () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
+          targetMode: "household",
           menuId: MENU_ID,
           phase: "checked",
           result: validRevalidation,
@@ -252,6 +255,7 @@ describe("useRegeneration", () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
+          targetMode: "household",
           menuId: MENU_ID,
           phase: "checked",
           result: validRevalidation,
@@ -275,6 +279,7 @@ describe("useRegeneration", () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
+          targetMode: "household",
           menuId: MENU_ID,
           phase: "checked",
           result: {
@@ -291,5 +296,66 @@ describe("useRegeneration", () => {
     });
     expect(navigateMock).toHaveBeenCalledWith("/generation");
     expect(readPendingGeneration(USER_ID, new Date())).not.toBeNull();
+  });
+
+  it("allows idea regeneration without revalidation phase or result", async () => {
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "idea",
+          menuId: MENU_ID,
+          phase: null,
+          result: null,
+        }),
+      { wrapper },
+    );
+    expect(result.current.canRegenerate).toBe(true);
+    await act(async () => {
+      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
+    });
+    expect(postMock).not.toHaveBeenCalled();
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(pending).not.toBeNull();
+    if (pending === null) throw new Error("pending required");
+    const command = pendingGenerationCommand(pending);
+    expect(command.kind).toBe("regenerate_menu");
+    if (command.kind !== "regenerate_menu") throw new Error("expected regenerate_menu");
+    // mode/servings/member IDs は wire に載せない（server snapshot が正本）
+    expect(command.request).toEqual({
+      idempotencyKey: command.request.idempotencyKey,
+      sourceMenuId: MENU_ID,
+      changeReason: "simpler",
+      changeReasonCustom: null,
+      expiredPantryConfirmations: [],
+    });
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
+  });
+
+  it("allows idea dish regeneration without family revalidation", async () => {
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "idea",
+          menuId: MENU_ID,
+          phase: null,
+          result: null,
+        }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.startDish(DISH_ID, {
+        changeReason: "different_flavor",
+        changeReasonCustom: null,
+      });
+    });
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(pending).not.toBeNull();
+    if (pending === null) throw new Error("pending required");
+    const command = pendingGenerationCommand(pending);
+    expect(command.kind).toBe("regenerate_dish");
+    if (command.kind !== "regenerate_dish") throw new Error("expected regenerate_dish");
+    expect(command.request.dishId).toBe(DISH_ID);
+    expect(command.request.sourceMenuId).toBe(MENU_ID);
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 });

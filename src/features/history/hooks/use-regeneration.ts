@@ -14,11 +14,24 @@ export type RegenerationReasonInput = {
   changeReasonCustom: string | null;
 };
 
-export type UseRegenerationInput = {
-  menuId: string;
-  phase: RevalidationPhaseName;
-  result: RevalidationResult | undefined;
-};
+/**
+ * household は現行安全再検証が actionable になるまで再生成を拒否する。
+ * idea は家族 revalidation を受け取らず、owner・pending・quota 制御だけを共有する。
+ * mode/servings/member IDs は wire に載せず、server が snapshot から複製する。
+ */
+export type UseRegenerationInput =
+  | {
+      targetMode: "household";
+      menuId: string;
+      phase: RevalidationPhaseName;
+      result: RevalidationResult | undefined;
+    }
+  | {
+      targetMode: "idea";
+      menuId: string;
+      phase: null;
+      result: null;
+    };
 
 /**
  * 再生成コマンドを PendingGeneration として永続化し、/generation へ遷移する。
@@ -26,12 +39,17 @@ export type UseRegenerationInput = {
  * （結果画面インスタンスで await startGeneration すると、成功時に pending が消え
  *  /generation が idle→planner へ落ちるレースが起きる。）
  */
-export function useRegeneration({ menuId, phase, result }: UseRegenerationInput) {
+export function useRegeneration(input: UseRegenerationInput) {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
+  const { menuId, targetMode } = input;
 
   const canRegenerate =
-    phase === "checked" && result !== undefined && isRevalidationActionable(result);
+    targetMode === "idea"
+      ? true
+      : input.phase === "checked" &&
+        input.result !== undefined &&
+        isRevalidationActionable(input.result);
 
   const startWhole = useCallback(
     (reason: RegenerationReasonInput) => {

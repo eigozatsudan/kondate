@@ -469,7 +469,7 @@ describe("MenuResultPage", () => {
   });
 
   describe("idea result boundary", () => {
-    it("does not mount revalidation/shopping and shows a permanent idea notice", async () => {
+    it("shows permitted actions without mounting revalidation or shopping", async () => {
       getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
 
       renderPage(`/menus/${VALID_MENU_ID}`);
@@ -478,20 +478,64 @@ describe("MenuResultPage", () => {
       // idea は家族条件を使わないため、常時noticeを表示する
       expect(screen.getByText("家族条件を使用していません")).toBeVisible();
       expect(screen.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
-      // household専用の再検証・買い物・冷蔵庫操作は一切呼ばない/表示しない
+      // 家族 revalidation / shopping は mount しない
       expect(revalidateMenuMock).not.toHaveBeenCalled();
       expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
       expect(shoppingApi.fetchReconcilableMenuSource).not.toHaveBeenCalled();
       expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
       expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "冷蔵庫へ反映" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "これに決めた" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "献立をまるごと別案にする" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "この一品だけ別案にする" })).toBeNull();
+      // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
+      expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "これに決めた" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeEnabled();
       // idea では sessionStorage に再送用の shopping 記録を一切作らない
       expect(
         Object.keys(sessionStorage).filter((key) => key.startsWith("kondate:shopping:")),
       ).toHaveLength(0);
+    });
+
+    it("hides child_friendly when opening idea regeneration sheet", async () => {
+      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+      renderPage(`/menus/${VALID_MENU_ID}`);
+      await userEvent.click(
+        await screen.findByRole("button", { name: "献立をまるごと別案にする" }),
+      );
+      expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: "もっと簡単に" })).toBeInTheDocument();
+    });
+
+    it("does not show retarget when sourceSubmission is null", async () => {
+      getMenuResultMock.mockResolvedValue(
+        makeMenuResultViewModel({ targetMode: "idea", sourceSubmission: null }),
+      );
+      renderPage(`/menus/${VALID_MENU_ID}`);
+      expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
+      expect(screen.queryByRole("button", { name: "対象を変えて新しく作る" })).toBeNull();
+    });
+
+    it("shows retarget when sourceSubmission is valid", async () => {
+      getMenuResultMock.mockResolvedValue(
+        makeMenuResultViewModel({
+          targetMode: "idea",
+          sourceSubmission: {
+            mealType: "dinner",
+            mainIngredients: ["鶏肉"],
+            cuisineGenre: "japanese",
+            targetMode: "idea",
+            targetMemberIds: [],
+            servings: 2,
+            timeLimitMinutes: 30,
+            budgetPreference: "economy",
+            avoidIngredients: [],
+            memo: "",
+            pantrySelections: [],
+          },
+        }),
+      );
+      renderPage(`/menus/${VALID_MENU_ID}`);
+      expect(await screen.findByRole("button", { name: "対象を変えて新しく作る" })).toBeEnabled();
     });
 
     it("applies the guided-planner-theme class to the idea body root", async () => {

@@ -140,6 +140,10 @@ const ideaServings1 = clone();
 ideaServings1.menu.servings = 1;
 ideaServings1.menu.adaptations = [];
 ideaServings1.menu.labelConfirmations = [];
+const ideaServings2 = clone();
+ideaServings2.menu.servings = 2;
+ideaServings2.menu.adaptations = [];
+ideaServings2.menu.labelConfirmations = [];
 const ideaServings20 = clone();
 ideaServings20.menu.servings = 20;
 ideaServings20.menu.adaptations = [];
@@ -194,6 +198,11 @@ alternateMenu.menu.dishes[1].description = "別案の副菜";
 alternateMenu.menu.dishes[1].ingredients[0].name = "きゅうり";
 alternateMenu.menu.dishes[1].ingredients[0].quantityText = "1本";
 alternateMenu.menu.dishes[1].steps[0].instruction = "きゅうりを薄切りにして漬ける";
+// idea 再生成用: servings=1・家族子行なし・material は alternate と同じ別案
+const ideaAlternateMenu1 = structuredClone(alternateMenu);
+ideaAlternateMenu1.menu.servings = 1;
+ideaAlternateMenu1.menu.adaptations = [];
+ideaAlternateMenu1.menu.labelConfirmations = [];
 // 料理単位再生成用。success 主菜と material 近傍不一致になる別案
 const dishReplacement = {
   replacementDish: {
@@ -298,7 +307,9 @@ const dishReplacement = {
 export const scenarios = recursivelyFreeze({
   success,
   "idea-servings-1": ideaServings1,
+  "idea-servings-2": ideaServings2,
   "idea-servings-20": ideaServings20,
+  "idea-alternate-menu-1": ideaAlternateMenu1,
   "duplicate-menu": duplicateMenu,
   "alternate-menu": alternateMenu,
   "dish-replacement": dishReplacement,

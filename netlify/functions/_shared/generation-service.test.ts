@@ -14,6 +14,7 @@ import { validateGeneratedMenu } from "../../../shared/safety/validate-generated
 import {
   makeGeneratedMenu,
   makeGenerationContext,
+  makeIdeaGenerationContext,
   makeValidatedMenu,
 } from "../../../shared/testing/factories.js";
 import { materializeAiGeneratedMenu } from "./generation-materializer.js";
@@ -2035,5 +2036,191 @@ describe("runGeneration regeneration duplicate gating", () => {
     expect(freshMenu.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(
       true,
     );
+  });
+});
+
+describe("runGeneration idea child_friendly rejection", () => {
+  it("rejects an idea child_friendly command before provider send", async () => {
+    const ideaChildFriendlyCommand = {
+      commandVersion: "generation-command.v2" as const,
+      kind: "regenerate_menu" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: "88000000-0000-4000-8000-000000000001",
+        changeReason: "child_friendly" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const menu = makeValidatedMenu();
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: ideaChildFriendlyCommand,
+      requestId,
+      generationContext: makeIdeaGenerationContext(),
+      expectedSafetyFingerprint: "idea-fingerprint",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: ideaChildFriendlyCommand.request.sourceMenuId,
+        sourceMenu: menu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: menu.dishes.map((dish) => dish.id),
+        excludedDishIds: menu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    const repository = makeRepository();
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+    const deps = makeDeps({
+      repository,
+      loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+      callOpenRouter,
+    });
+
+    const status = await runGeneration(deps, ideaChildFriendlyCommand);
+    expect(status).toMatchObject({
+      status: "failed",
+      error: { code: "invalid_request" },
+    });
+    expect(callOpenRouter).not.toHaveBeenCalled();
+    expect(repository.markSent).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalledWith(requestId, "invalid_request", null);
+  });
+
+  it("rejects idea dish regeneration with child_friendly before provider send", async () => {
+    const ideaChildFriendlyDishCommand = {
+      commandVersion: "generation-command.v2" as const,
+      kind: "regenerate_dish" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: "88000000-0000-4000-8000-000000000001",
+        dishId: "89000000-0000-4000-8000-000000000001",
+        changeReason: "child_friendly" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const menu = makeValidatedMenu();
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: ideaChildFriendlyDishCommand,
+      requestId,
+      generationContext: makeIdeaGenerationContext(),
+      expectedSafetyFingerprint: "idea-fingerprint",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: ideaChildFriendlyDishCommand.request.sourceMenuId,
+        sourceMenu: menu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: ideaChildFriendlyDishCommand.request.dishId,
+        retainedDishIds: [],
+        excludedDishIds: [ideaChildFriendlyDishCommand.request.dishId],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    const repository = makeRepository();
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+    const status = await runGeneration(
+      makeDeps({
+        repository,
+        loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+        callOpenRouter,
+      }),
+      ideaChildFriendlyDishCommand,
+    );
+    expect(status).toMatchObject({
+      status: "failed",
+      error: { code: "invalid_request" },
+    });
+    expect(callOpenRouter).not.toHaveBeenCalled();
+    expect(repository.markSent).not.toHaveBeenCalled();
+  });
+
+  it("allows household child_friendly regeneration to reach provider send", async () => {
+    const householdChildFriendlyCommand = {
+      commandVersion: "generation-command.v2" as const,
+      kind: "regenerate_menu" as const,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: "88000000-0000-4000-8000-000000000001",
+        changeReason: "child_friendly" as const,
+        changeReasonCustom: null,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const menu = makeValidatedMenu();
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: householdChildFriendlyCommand,
+      requestId,
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "fp",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: householdChildFriendlyCommand.request.sourceMenuId,
+        sourceMenu: menu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: menu.dishes.map((dish) => dish.id),
+        excludedDishIds: menu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    const repository = makeRepository();
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>().mockResolvedValue({
+      mode: "full_menu" as const,
+      output: scenarios.success,
+      modelId: models[0],
+    });
+    // 重複判定を避けるため別メニュー署名になるよう validate を通す
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu: makeValidatedMenu({
+        dishes: menu.dishes.map((dish) => ({
+          ...dish,
+          name: `${dish.name} 別案`,
+        })),
+      }),
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+    });
+    await runGeneration(
+      makeDeps({
+        repository,
+        loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+        callOpenRouter,
+      }),
+      householdChildFriendlyCommand,
+    );
+    expect(callOpenRouter).toHaveBeenCalled();
+    expect(repository.markSent).toHaveBeenCalled();
   });
 });
