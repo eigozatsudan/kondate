@@ -1,0 +1,11 @@
+[permission]
+rules = [
+  { action = "allow", tool = "bash", pattern = "git *" },
+  { action = "deny",  tool = "bash", pattern = "git push *" },
+
+  # ディレクトリ内の特定シェルスクリプトを許可
+  { action = "allow", tool = "bash", pattern = "./scripts/run-e2e.sh *" },
+  { action = "allow", tool = "bash", pattern = "./scripts/generate-local-secrets.sh *" },
+  { action = "allow", tool = "bash", pattern = "bash ./scripts/run-e2e.sh *" },
+  { action = "allow", tool = "bash", pattern = "bash ./scripts/generate-local-secrets.sh *" },
+]
