@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
-import {
-  collectPlannerRequestText,
-  type PlannerDraftInput,
-} from "@shared/contracts/planner";
+import { collectPlannerRequestText, type PlannerDraftInput } from "@shared/contracts/planner";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import { CurrentSafetySummary } from "../current-safety-summary";
@@ -110,10 +107,7 @@ export function ReviewStep({
   const medicalBlocked =
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
   const generateDisabled =
-    disabled ||
-    !hasAcceptedOrDeclinedPrivacy ||
-    hasUnavailablePantrySelections ||
-    medicalBlocked;
+    disabled || !hasAcceptedOrDeclinedPrivacy || hasUnavailablePantrySelections || medicalBlocked;
   return (
     <section className="card stack" aria-labelledby="review-step-title">
       <h2 id="review-step-title" tabIndex={-1} ref={headingRef}>

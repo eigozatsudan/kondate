@@ -223,7 +223,10 @@ export function AudienceStep({
                     onChange={(event) => {
                       if (isBlocked) return;
                       const nextIds = event.target.checked
-                        ? [...value.targetMemberIds.filter((id) => selectableIds.has(id)), member.id]
+                        ? [
+                            ...value.targetMemberIds.filter((id) => selectableIds.has(id)),
+                            member.id,
+                          ]
                         : value.targetMemberIds.filter((id) => id !== member.id);
                       onChange({ ...value, targetMemberIds: nextIds });
                     }}
