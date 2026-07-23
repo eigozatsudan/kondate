@@ -70,6 +70,12 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   onSubmit: () => void;
   /** 家族モードの安全要約表示用。idea でも免責文を見せるため渡す。 */
   safetyMembers?: readonly PlannerSafetyMember[];
+  /**
+   * 設計 §5.1: AI を使わない緊急献立への導線。
+   * route が flush→navigate を所有するため、ここはクリック通知だけを受け取る。
+   * 未指定ならボタン自体を出さない（meal 等の step では渡さない）。
+   */
+  onOpenEmergencyMenus?: () => void;
 };
 
 /**
@@ -93,6 +99,7 @@ export function ReviewStep({
   onOpenPrivacyNotice,
   onSubmit,
   safetyMembers = [],
+  onOpenEmergencyMenus,
 }: ReviewStepProps) {
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -290,6 +297,11 @@ export function ReviewStep({
           献立を作る
         </button>
       </div>
+      {onOpenEmergencyMenus !== undefined && (
+        <button type="button" disabled={disabled} onClick={onOpenEmergencyMenus}>
+          AIを使わない緊急献立を見る
+        </button>
+      )}
     </section>
   );
 }

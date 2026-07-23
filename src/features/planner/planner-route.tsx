@@ -256,17 +256,23 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<PlannerFieldName, string>>>({});
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isOpeningEmergencyMenus, setIsOpeningEmergencyMenus] = useState(false);
   const generationAbortControllerRef = useRef<AbortController | null>(null);
+  // 緊急献立遷移の single-flight と unmount 後の遅延 navigate 抑止。
+  const mountedRef = useRef(true);
+  const emergencyOperationIdRef = useRef(0);
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
   }, []);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      emergencyOperationIdRef.current += 1;
       generationAbortControllerRef.current?.abort();
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     if (draftQuery.data === undefined || safetyQuery.data === undefined || initialized) return;
@@ -346,6 +352,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }, [flushAutosave, onConflict, queryClient, userId]);
 
   const resolveDraftConflict = useCallback((): void => {
+    // Plan 2 §5: 最新行への切替は利用者の明示操作後だけ。取得完了だけでは value を触らない。
     if (latestConflictDraft === undefined || safetyQuery.data === undefined) return;
     const sanitized = sanitizeDraft(latestConflictDraft, safetyQuery.data.eligibleMemberIds);
     // 同じ render で表示値・保存 baseline・reset 世代を切り替え、混在状態を作らない。
@@ -357,15 +364,6 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setDraftConflictRefetchError(false);
   }, [latestConflictDraft, safetyQuery.data]);
 
-  useEffect(() => {
-    // 競合検知後に最新下書きの取得が完了したら、wizardには明示的な解決UIを
-    // 持たせず自動で最新値へ切り替える。入力は既にflush済みの内容が競合した
-    // 結果のため、ここで表示中の入力を保持する意味がなく、
-    // 「最新の下書きを読み込む」を利用者に代わって即時実行するのに等しい。
-    if (latestConflictDraft === undefined) return;
-    resolveDraftConflict();
-  }, [latestConflictDraft, resolveDraftConflict]);
-
   const hasAcceptedOrDeclinedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
   const openPrivacyNotice = useCallback((): void => {
     // review resume 付きの returnTo で /privacy へ往復する（brief step 9）。
@@ -373,6 +371,43 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // encodeURIComponent した固定文字列を使う（"/planner?resume=review"）。
     void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
   }, [navigate]);
+
+  // 設計 §5.1: AI を使わない緊急献立への導線。route が flush 後に navigate を所有する。
+  const openEmergencyMenus = useCallback((): void => {
+    if (
+      isOpeningEmergencyMenus ||
+      isSubmitting ||
+      hasDraftConflict ||
+      autosave.state === "saving"
+    ) {
+      return;
+    }
+    const operationId = ++emergencyOperationIdRef.current;
+    setIsOpeningEmergencyMenus(true);
+    setSubmissionError(null);
+    void (async () => {
+      try {
+        await flushDraft();
+        if (!mountedRef.current || operationId !== emergencyOperationIdRef.current) {
+          return;
+        }
+        void navigate("/emergency-menus");
+      } catch {
+        if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
+          // 生成 flush 失敗と同じ文言で、保存できなかったことだけを伝える。
+          setSubmissionError("献立条件を保存できなかったため、生成を開始しませんでした。");
+          setIsOpeningEmergencyMenus(false);
+        }
+      }
+    })();
+  }, [
+    autosave.state,
+    flushDraft,
+    hasDraftConflict,
+    isOpeningEmergencyMenus,
+    isSubmitting,
+    navigate,
+  ]);
 
   if ((!initialized && draftQuery.isError) || safetyQuery.isError || pantryQuery.isError) {
     return (
@@ -394,16 +429,17 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       draft={value}
       step={step}
       eligibleMembers={safetyQuery.data.members}
-      isSaving={autosave.state === "saving" || isSubmitting || hasDraftConflict}
+      isSaving={
+        autosave.state === "saving" || isSubmitting || hasDraftConflict || isOpeningEmergencyMenus
+      }
       error={
+        // 競合 chrome は wizard 側の明示 UI に任せる。ここでは submission / 利用上限のみ。
         submissionError ??
-        (draftConflictRefetchError
-          ? "最新の下書きを取得できませんでした。再読み込みしてください。"
-          : hasDraftConflict
-            ? "下書きが別の画面で更新されました。最新の内容へ読み込み直しています。"
-            : usage.data?.shortWindow.remaining === 0
-              ? "10分間の通信試行上限に達しました。しばらくしてから再試行してください。"
-              : null)
+        (hasDraftConflict
+          ? null
+          : usage.data?.shortWindow.remaining === 0
+            ? "10分間の通信試行上限に達しました。しばらくしてから再試行してください。"
+            : null)
       }
       fieldErrors={fieldErrors}
       onDraftChange={setValue}
@@ -414,6 +450,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onAttemptChange={setAttempt}
       hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
       onOpenPrivacyNotice={openPrivacyNotice}
+      hasDraftConflict={hasDraftConflict}
+      draftConflictRefetchError={draftConflictRefetchError}
+      canResolveDraftConflict={latestConflictDraft !== undefined}
+      onResolveDraftConflict={resolveDraftConflict}
+      onRetryDraftConflict={() => {
+        void loadLatestConflictDraft();
+      }}
+      onOpenEmergencyMenus={openEmergencyMenus}
       onSubmit={async () => {
         setSubmissionError(null);
         setFieldErrors({});

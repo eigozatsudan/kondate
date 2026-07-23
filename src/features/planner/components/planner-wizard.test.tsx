@@ -43,18 +43,32 @@ function Harness({
   eligibleMembers = [eligibleMember],
   fieldErrors = {},
   error = null,
+  isSaving = false,
   onSubmit = vi.fn(),
   hasAcceptedOrDeclinedPrivacy = true,
   onOpenPrivacyNotice = vi.fn(),
+  onOpenEmergencyMenus,
+  hasDraftConflict = false,
+  canResolveDraftConflict = false,
+  draftConflictRefetchError = false,
+  onResolveDraftConflict,
+  onRetryDraftConflict,
 }: {
   initialStep?: PlannerStep;
   initialDraft?: PlannerDraftInput;
   eligibleMembers?: readonly PlannerSafetyMember[];
   fieldErrors?: Partial<Record<PlannerFieldName, string>>;
   error?: string | null;
+  isSaving?: boolean;
   onSubmit?: () => Promise<void>;
   hasAcceptedOrDeclinedPrivacy?: boolean;
   onOpenPrivacyNotice?: () => void;
+  onOpenEmergencyMenus?: () => void;
+  hasDraftConflict?: boolean;
+  canResolveDraftConflict?: boolean;
+  draftConflictRefetchError?: boolean;
+  onResolveDraftConflict?: () => void;
+  onRetryDraftConflict?: () => void;
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
@@ -64,7 +78,7 @@ function Harness({
       draft={draft}
       step={step}
       eligibleMembers={eligibleMembers}
-      isSaving={false}
+      isSaving={isSaving}
       error={error}
       fieldErrors={fieldErrors}
       onDraftChange={setDraft}
@@ -76,9 +90,24 @@ function Harness({
       onAttemptChange={setAttempt}
       hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
       onOpenPrivacyNotice={onOpenPrivacyNotice}
+      hasDraftConflict={hasDraftConflict}
+      canResolveDraftConflict={canResolveDraftConflict}
+      draftConflictRefetchError={draftConflictRefetchError}
+      {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+      {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
+      {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
     />
   );
 }
+
+const reviewDraft: PlannerDraftInput = {
+  ...emptyDraft,
+  mealType: "dinner",
+  mainIngredients: ["鶏肉"],
+  cuisineGenre: "japanese",
+  targetMode: "household",
+  targetMemberIds: [eligibleMember.id],
+};
 
 describe("PlannerWizard 固定順とnavigation", () => {
   it("meal→ingredients→cuisine→audience→reviewの順で進み、戻ると回答を保持する", async () => {
@@ -294,6 +323,94 @@ describe("PlannerWizard review step", () => {
     render(<Harness initialStep="review" error="献立条件を保存できませんでした。" />);
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
     expect(screen.getByText("献立条件を保存できませんでした。")).toBeInTheDocument();
+  });
+
+  it("review では緊急献立導線を出し、保存中は無効化する", async () => {
+    const user = userEvent.setup();
+    const onOpenEmergencyMenus = vi.fn();
+    const { rerender } = render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        onOpenEmergencyMenus={onOpenEmergencyMenus}
+      />,
+    );
+
+    const emergency = screen.getByRole("button", { name: "AIを使わない緊急献立を見る" });
+    expect(emergency).toBeEnabled();
+    await user.click(emergency);
+    expect(onOpenEmergencyMenus).toHaveBeenCalledTimes(1);
+
+    // isSaving は親から制御されるため、同じ step のまま disabled だけ差し替える。
+    rerender(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        isSaving
+        onOpenEmergencyMenus={onOpenEmergencyMenus}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+  });
+
+  it("meal など review 以外の step では緊急献立ボタンを出さない", () => {
+    render(
+      <Harness initialStep="meal" initialDraft={reviewDraft} onOpenEmergencyMenus={vi.fn()} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "AIを使わない緊急献立を見る" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("下書き競合中は入力を保持し明示解決ボタンだけを提供する", async () => {
+    const user = userEvent.setup();
+    const onResolveDraftConflict = vi.fn();
+    const onOpenEmergencyMenus = vi.fn();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{ ...reviewDraft, memo: "Aの入力" }}
+        isSaving
+        hasDraftConflict
+        canResolveDraftConflict
+        onResolveDraftConflict={onResolveDraftConflict}
+        onOpenEmergencyMenus={onOpenEmergencyMenus}
+      />,
+    );
+
+    await user.click(screen.getByText("追加条件"));
+    expect(screen.getByLabelText("自由メモ")).toHaveValue("Aの入力");
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+    expect(
+      screen.getByRole("heading", { name: "下書きが別の画面で更新されました" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "最新の下書きを読み込む" }));
+    expect(onResolveDraftConflict).toHaveBeenCalledTimes(1);
+    expect(onOpenEmergencyMenus).not.toHaveBeenCalled();
+  });
+
+  it("競合先の再取得失敗時は再試行を提供し解決ボタンを無効のままにする", async () => {
+    const user = userEvent.setup();
+    const onRetryDraftConflict = vi.fn();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{ ...reviewDraft, memo: "Aの入力" }}
+        isSaving
+        hasDraftConflict
+        canResolveDraftConflict={false}
+        draftConflictRefetchError
+        onResolveDraftConflict={vi.fn()}
+        onRetryDraftConflict={onRetryDraftConflict}
+        onOpenEmergencyMenus={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("最新の下書きを取得できませんでした。");
+    expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "再試行" }));
+    expect(onRetryDraftConflict).toHaveBeenCalledTimes(1);
   });
 });
 

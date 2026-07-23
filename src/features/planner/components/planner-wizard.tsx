@@ -39,6 +39,14 @@ export type PlannerWizardExtraProps = {
   onAttemptChange: (next: PlannerAttempt) => void;
   hasAcceptedOrDeclinedPrivacy: boolean;
   onOpenPrivacyNotice: () => void;
+  /** Plan 2 §5: 下書き競合中はローカル入力を保持し、明示解決UIだけを出す */
+  hasDraftConflict?: boolean;
+  draftConflictRefetchError?: boolean;
+  canResolveDraftConflict?: boolean;
+  onResolveDraftConflict?: () => void;
+  onRetryDraftConflict?: () => void;
+  /** 設計 §5.1: review からの緊急献立導線。route が flush→navigate を所有する */
+  onOpenEmergencyMenus?: () => void;
 };
 
 /**
@@ -46,6 +54,42 @@ export type PlannerWizardExtraProps = {
  * を受け取る合成props。DB/APIを直接呼ばず、値変更とstep遷移だけを親（route層）へ通知する。
  */
 export type PlannerWizardComponentProps = PlannerWizardProps & PlannerWizardExtraProps;
+
+/**
+ * 競合検知中の明示解決 chrome。取得完了だけでは value を置換せず、
+ * 「最新の下書きを読み込む」押下後にだけ親の resolve を呼ぶ。
+ */
+function DraftConflictChrome({
+  draftConflictRefetchError,
+  canResolveDraftConflict,
+  onResolveDraftConflict,
+  onRetryDraftConflict,
+}: {
+  draftConflictRefetchError: boolean;
+  canResolveDraftConflict: boolean;
+  onResolveDraftConflict?: () => void;
+  onRetryDraftConflict?: () => void;
+}) {
+  return (
+    <section className="card stack" aria-labelledby="draft-conflict-title">
+      <h2 id="draft-conflict-title">下書きが別の画面で更新されました</h2>
+      <p>現在の入力を保持しています。内容を確認してから最新の下書きを読み込んでください。</p>
+      {draftConflictRefetchError && (
+        <>
+          <p role="alert">最新の下書きを取得できませんでした。</p>
+          {onRetryDraftConflict !== undefined && (
+            <button type="button" onClick={onRetryDraftConflict}>
+              再試行
+            </button>
+          )}
+        </>
+      )}
+      <button type="button" disabled={!canResolveDraftConflict} onClick={onResolveDraftConflict}>
+        最新の下書きを読み込む
+      </button>
+    </section>
+  );
+}
 
 export function PlannerWizard({
   draft,
@@ -63,6 +107,12 @@ export function PlannerWizard({
   onAttemptChange,
   hasAcceptedOrDeclinedPrivacy,
   onOpenPrivacyNotice,
+  hasDraftConflict = false,
+  draftConflictRefetchError = false,
+  canResolveDraftConflict = false,
+  onResolveDraftConflict,
+  onRetryDraftConflict,
+  onOpenEmergencyMenus,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLDivElement>(null);
@@ -71,9 +121,20 @@ export function PlannerWizard({
     onStepChange(next);
   };
 
+  // exactOptionalPropertyTypes: undefined を明示代入せず、定義済みキーだけ渡す。
+  const conflictChrome = hasDraftConflict ? (
+    <DraftConflictChrome
+      draftConflictRefetchError={draftConflictRefetchError}
+      canResolveDraftConflict={canResolveDraftConflict}
+      {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
+      {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
+    />
+  ) : null;
+
   if (step === "meal") {
     return (
       <div ref={containerRef}>
+        {conflictChrome}
         <MealStep
           value={draft.mealType}
           onChange={(mealType) => {
@@ -92,6 +153,7 @@ export function PlannerWizard({
   if (step === "ingredients") {
     return (
       <div ref={containerRef}>
+        {conflictChrome}
         <IngredientStep
           value={draft.mainIngredients}
           onChange={(mainIngredients) => {
@@ -113,6 +175,7 @@ export function PlannerWizard({
   if (step === "cuisine") {
     return (
       <div ref={containerRef}>
+        {conflictChrome}
         <CuisineStep
           value={draft.cuisineGenre}
           onChange={(cuisineGenre) => {
@@ -134,6 +197,7 @@ export function PlannerWizard({
   if (step === "audience") {
     return (
       <div ref={containerRef}>
+        {conflictChrome}
         <AudienceStep
           value={{
             targetMode: draft.targetMode,
@@ -168,6 +232,7 @@ export function PlannerWizard({
   // review
   return (
     <div ref={containerRef}>
+      {conflictChrome}
       <ReviewStep
         value={draft}
         onChange={(next) => {
@@ -189,6 +254,7 @@ export function PlannerWizard({
         hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
         onOpenPrivacyNotice={onOpenPrivacyNotice}
         safetyMembers={eligibleMembers}
+        {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
         onSubmit={() => {
           void onSubmit();
         }}

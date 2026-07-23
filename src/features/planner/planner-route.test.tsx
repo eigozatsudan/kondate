@@ -174,6 +174,12 @@ type WizardMockProps = {
   pantryItemsStatus: "loading" | "loaded";
   hasAcceptedOrDeclinedPrivacy: boolean;
   onOpenPrivacyNotice(): void;
+  hasDraftConflict?: boolean;
+  draftConflictRefetchError?: boolean;
+  canResolveDraftConflict?: boolean;
+  onResolveDraftConflict?: () => void;
+  onRetryDraftConflict?: () => void;
+  onOpenEmergencyMenus?: () => void;
 };
 const wizardPropsSpy = vi.hoisted(() => vi.fn());
 vi.mock("./components/planner-wizard", () => ({
@@ -194,6 +200,7 @@ vi.mock("./components/planner-wizard", () => ({
         <output aria-label="privacy accepted or declined">
           {String(props.hasAcceptedOrDeclinedPrivacy)}
         </output>
+        <output aria-label="has draft conflict">{String(props.hasDraftConflict ?? false)}</output>
         <button
           type="button"
           onClick={() => {
@@ -220,6 +227,15 @@ vi.mock("./components/planner-wizard", () => ({
           }}
         >
           privacy notice
+        </button>
+        <button
+          type="button"
+          disabled={props.isSaving}
+          onClick={() => {
+            props.onOpenEmergencyMenus?.();
+          }}
+        >
+          AIを使わない緊急献立を見る
         </button>
       </div>
     );
