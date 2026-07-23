@@ -53,7 +53,20 @@ export function createShoppingCommandHash(
   return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex");
 }
 
+/** idea を full aggregate / 家族再検証より前に拒否する固定契約 */
+function rejectIdeaMenu(): never {
+  throw new HttpError(422, "idea_menu_not_supported", "アイデア献立は買い物リストに利用できません");
+}
+
+async function assertHouseholdMenuIdentity(deps: ShoppingDependencies, menuId: string) {
+  const identity = await deps.loadMenuIdentity(menuId);
+  if (identity.targetMode !== "household") rejectIdeaMenu();
+  return identity;
+}
+
 async function validatedDraft(deps: ShoppingDependencies, menuId: string) {
+  // identity で idea を先に拒否し、full aggregate・家族 revalidation へ進まない
+  await assertHouseholdMenuIdentity(deps, menuId);
   const revalidation = await deps.revalidate(menuId);
   if (revalidation.status === "invalid" || revalidation.issues.length > 0) {
     throw new HttpError(
@@ -91,6 +104,7 @@ export async function createShoppingListFromMenu(
   command: CreateShoppingListRequest & UserCommand,
 ): Promise<CreateShoppingListResponse> {
   const requestHash = createShoppingCommandHash(command);
+  // 有効期限内 replay を最初に read-only で返し、出典削除・mode 変化後も live を再解釈しない
   const replay = await deps.findMutationReplay({
     idempotencyKey: command.idempotencyKey,
     requestHash,
@@ -115,6 +129,7 @@ export async function previewShoppingListDiff(
     throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   if (list.version !== command.expectedListVersion)
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
+  // preview は mutation replay なし。identity から開始する
   const { menu, draft } = await validatedDraft(deps, command.sourceMenuId);
   if (menu.version !== command.sourceMenuVersion)
     throw new HttpError(409, "source_menu_version_conflict", "献立が更新されました");
@@ -224,6 +239,12 @@ export async function revalidateActiveShoppingList(
   const liveSources = sources.filter(
     (source): source is (typeof sources)[number] & { menuId: string } => source.menuId !== null,
   );
+
+  // live source の identity を先に読み、idea 混入は家族 query / projection 書込み前に拒否
+  for (const source of liveSources) {
+    const identity = await deps.loadMenuIdentity(source.menuId);
+    if (identity.targetMode !== "household") rejectIdeaMenu();
+  }
 
   // itemId 解決は「同じ献立の source 行が持つ、完全一致の ingredient スナップショット」
   // だけを根拠にする。名前一致でのフォールバックは絶対に行わない。
@@ -356,6 +377,7 @@ export async function reconcileShoppingList(
   command: ReconcileShoppingListRequest & UserCommand & { listId: string },
 ): Promise<ReconcileShoppingListResponse> {
   const requestHash = createReconciliationRequestHash(command);
+  // create と同様、replay hit は live mode を再解釈しない
   const replay = await deps.findMutationReplay({
     idempotencyKey: command.idempotencyKey,
     requestHash,

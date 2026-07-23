@@ -93,6 +93,7 @@ function emergencyGenerationContext(
   memberLabels: Readonly<Record<string, string>>,
 ): GenerationContext {
   return {
+    targetMode: "household",
     submission: {
       mealType: menu.mealType,
       mainIngredients: [],
@@ -123,6 +124,8 @@ function emergencyGenerationContext(
       anonymousRef: member.anonymousRef,
       displayNameSnapshot: memberLabels[member.anonymousRef] ?? `家族${String(index + 1)}`,
     })),
+    allergenVersion: context.dictionaryVersion,
+    foodRuleVersion: context.foodRuleVersion,
     expiredPantryChecks: [],
     idempotencyKey: "82600000-0000-4000-8000-000000000001",
     preferenceSnapshot: {},

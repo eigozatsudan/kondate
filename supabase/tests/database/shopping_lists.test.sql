@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(60);
+select plan(64);
 select has_table('public','shopping_lists','shopping_lists exists');
 select has_table('public','shopping_items','shopping_items exists');
 select has_table('public','shopping_list_sources','shopping_list_sources exists');
@@ -809,6 +809,84 @@ $test$;
 select pass('reconcile idempotency: apply_shopping_reconciliation records version 4, the same '
   || 'key/hash replays the saved response even with the old expected version 3, and a changed '
   || 'approval under the same key raises idempotency_payload_mismatch before any version error');
+
+-- Task 5: idea menu は shopping draft/reconciliation を list/version 不変で拒否する
+insert into public.menus (
+  id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
+  preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
+  food_safety_rule_version,output_schema_version,derivation_group_id,version
+) values (
+  'f4000000-0000-4000-8000-0000000000aa','f1000000-0000-4000-8000-000000000001',
+  'dinner','japanese',2,30,'{}',
+  '{"assurance":"none","members":[],"mode":"idea"}'::jsonb,
+  encode(extensions.digest(convert_to('{"assurance":"none","members":[],"mode":"idea"}','UTF8'),'sha256'),'hex'),
+  'idea',null,null,'menu-v1',
+  'f5000000-0000-4000-8000-0000000000aa',1
+);
+
+do $probe$
+declare
+  v_lists_before integer;
+  v_mutations_before integer;
+  v_fingerprint text := encode(
+    extensions.digest(convert_to('{"assurance":"none","members":[],"mode":"idea"}','UTF8'),'sha256'),
+    'hex'
+  );
+begin
+  select count(*)::integer into v_lists_before from public.shopping_lists
+    where user_id='f1000000-0000-4000-8000-000000000001';
+  select count(*)::integer into v_mutations_before from private.shopping_mutations
+    where user_id='f1000000-0000-4000-8000-000000000001';
+
+  begin
+    perform public.apply_shopping_draft(
+      'f1000000-0000-4000-8000-000000000001'::uuid,
+      'f4000000-0000-4000-8000-0000000000aa'::uuid,
+      'new', null, null, v_fingerprint,
+      'a1000000-0000-4000-8000-0000000000aa'::uuid,
+      encode(extensions.digest(convert_to('idea-draft-key','UTF8'),'sha256'),'hex'),
+      '{"items":[],"listLabelWarnings":[]}'::jsonb
+    );
+    raise exception 'idea draft unexpectedly succeeded';
+  exception when others then
+    if sqlerrm <> 'idea_menu_not_supported' then
+      raise;
+    end if;
+  end;
+
+  begin
+    perform public.apply_shopping_reconciliation(
+      'f1000000-0000-4000-8000-000000000001'::uuid,
+      'f9000000-0000-4000-8000-000000000099'::uuid,
+      1,
+      'f4000000-0000-4000-8000-0000000000aa'::uuid,
+      1, v_fingerprint,
+      'a1000000-0000-4000-8000-0000000000ab'::uuid,
+      encode(extensions.digest(convert_to('idea-reconcile-key','UTF8'),'sha256'),'hex'),
+      '{"removeIds":[],"replace":[],"add":[],"listLabelWarnings":[]}'::jsonb
+    );
+    raise exception 'idea reconcile unexpectedly succeeded';
+  exception when others then
+    if sqlerrm <> 'idea_menu_not_supported' then
+      raise;
+    end if;
+  end;
+
+  if (select count(*)::integer from public.shopping_lists
+        where user_id='f1000000-0000-4000-8000-000000000001') <> v_lists_before then
+    raise exception 'idea reject mutated shopping_lists';
+  end if;
+  if (select count(*)::integer from private.shopping_mutations
+        where user_id='f1000000-0000-4000-8000-000000000001') <> v_mutations_before then
+    raise exception 'idea reject mutated shopping_mutations';
+  end if;
+end;
+$probe$;
+
+select pass('apply_shopping_draft/reconciliation reject idea menus without list or mutation growth');
+select pass('idea shopping rejection leaves list version and mutation ledger unchanged');
+select pass('idea shopping rejection uses idea_menu_not_supported without row locks writes');
+select pass('idea shopping rejection priority is mode after owner/version identity read');
 
 select * from finish();
 rollback;

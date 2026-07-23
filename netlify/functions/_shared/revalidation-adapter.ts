@@ -5,7 +5,10 @@ import { evaluateAllergens, normalizeFoodText } from "../../../shared/safety/all
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { evaluateFoodSafetyRules } from "../../../shared/safety/food-rules.js";
-import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import type {
+  GenerationContext,
+  HouseholdGenerationContext,
+} from "../../../shared/safety/generation-context.js";
 import type { Json } from "../../../src/shared/types/database.generated.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import { loadCurrentSafetyContext } from "./current-safety.js";
@@ -109,11 +112,12 @@ function makeRevalidationGenerationContext(
     } => member.householdMemberId !== null,
   );
   return {
+    targetMode: "household" as const,
     submission: {
       mealType: stored.menu.mealType,
       mainIngredients: [],
       cuisineGenre: stored.menu.cuisineGenre,
-      targetMode: "household",
+      targetMode: "household" as const,
       targetMemberIds: surviving.map((member) => member.householdMemberId),
       servings: null,
       timeLimitMinutes: null,
@@ -137,6 +141,8 @@ function makeRevalidationGenerationContext(
       anonymousRef: member.anonymousMemberRef,
       displayNameSnapshot: member.displayNameSnapshot,
     })),
+    allergenVersion: safety.dictionaryVersion,
+    foodRuleVersion: safety.foodRuleVersion,
     expiredPantryChecks: [],
     idempotencyKey: "00000000-0000-4000-8000-000000000099",
     preferenceSnapshot:
@@ -474,7 +480,7 @@ export async function buildStoredGenerationContext(input: {
   stored: StoredMenuAggregate;
   userId: string;
   idempotencyKey: string;
-}): Promise<GenerationContext> {
+}): Promise<HouseholdGenerationContext> {
   const { ownerClient, admin, stored, userId, idempotencyKey } = input;
   if (stored.targetMemberIds.length === 0) {
     throw new HttpError(422, "current_target_member_required", "再生成できる対象の家族がいません");
@@ -543,11 +549,12 @@ export async function buildStoredGenerationContext(input: {
     );
 
   return {
+    targetMode: "household" as const,
     submission: {
       mealType: stored.menu.mealType,
       mainIngredients: [],
       cuisineGenre: stored.menu.cuisineGenre,
-      targetMode: "household",
+      targetMode: "household" as const,
       targetMemberIds: surviving.map((member) => member.householdMemberId),
       servings: null,
       timeLimitMinutes: null,
@@ -577,6 +584,8 @@ export async function buildStoredGenerationContext(input: {
       anonymousRef: member.anonymousMemberRef,
       displayNameSnapshot: member.displayNameSnapshot,
     })),
+    allergenVersion: safety.dictionaryVersion,
+    foodRuleVersion: safety.foodRuleVersion,
     expiredPantryChecks: [],
     idempotencyKey,
     preferenceSnapshot:

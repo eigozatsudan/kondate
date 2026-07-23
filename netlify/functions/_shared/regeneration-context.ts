@@ -23,6 +23,7 @@ import {
 } from "../../../shared/safety/deduplicate.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { createIdeaSafetyFingerprint } from "../../../shared/safety/idea-fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
@@ -484,16 +485,19 @@ export async function loadRegenerationExecutionContext(
     }),
   ]);
 
-  const validation = validateGeneratedMenu(
-    toStoredRevalidationCandidate(source.menu, generationContext),
-    generationContext,
-  );
-  if (!validation.ok) {
-    throw new HttpError(
-      422,
-      "current_safety_revalidation_required",
-      "現在の家族設定ではこの献立を利用できません",
+  // idea は家族再検証ではなく idea 出力契約のみ。household は現行家族安全を必須。
+  if (snapshot.target_mode === "household" || generationContext.targetMode === "household") {
+    const validation = validateGeneratedMenu(
+      toStoredRevalidationCandidate(source.menu, generationContext),
+      generationContext,
     );
+    if (!validation.ok) {
+      throw new HttpError(
+        422,
+        "current_safety_revalidation_required",
+        "現在の家族設定ではこの献立を利用できません",
+      );
+    }
   }
 
   const versions = new Map([...group, ...recent].map((item) => [item.menu.menuId, item]));
@@ -549,7 +553,10 @@ export async function loadRegenerationExecutionContext(
   const executionBase = {
     requestId,
     generationContext,
-    expectedSafetyFingerprint: createCurrentSafetyFingerprint(generationContext.safety),
+    expectedSafetyFingerprint:
+      generationContext.targetMode === "idea"
+        ? createIdeaSafetyFingerprint()
+        : createCurrentSafetyFingerprint(generationContext.safety),
     startedAtMonotonicMs: deps.requestStartedAtMonotonicMs,
     deadlineAtMonotonicMs,
   };

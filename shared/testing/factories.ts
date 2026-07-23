@@ -4,7 +4,12 @@ import type { CurrentSafetyContext } from "../safety/context.js";
 import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.js";
 import { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
-import type { GenerationContext } from "../safety/generation-context.js";
+import type {
+  GenerationContext,
+  HouseholdGenerationContext,
+  IdeaGenerationContext,
+} from "../safety/generation-context.js";
+import { ideaSafetySnapshot } from "../safety/idea-fingerprint.js";
 
 export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 
@@ -188,10 +193,12 @@ export function makeCurrentSafetyContext(
 }
 
 export function makeGenerationContext(
-  overrides: Partial<GenerationContext> = {},
-): GenerationContext {
+  overrides: Partial<HouseholdGenerationContext> = {},
+): HouseholdGenerationContext {
   const memberId = "55000000-0000-4000-8000-000000000001";
-  const base: GenerationContext = {
+  const safety = overrides.safety ?? makeCurrentSafetyContext();
+  const base: HouseholdGenerationContext = {
+    targetMode: "household",
     submission: {
       mealType: "breakfast",
       mainIngredients: ["ごはん"],
@@ -205,7 +212,7 @@ export function makeGenerationContext(
       memo: "",
       pantrySelections: [],
     },
-    safety: makeCurrentSafetyContext(),
+    safety,
     pantryItems: [],
     memberPreferences: [
       {
@@ -224,23 +231,60 @@ export function makeGenerationContext(
         displayNameSnapshot: "家族1",
       },
     ],
+    allergenVersion: safety.dictionaryVersion,
+    foodRuleVersion: safety.foodRuleVersion,
     expiredPantryChecks: [],
     idempotencyKey: "56000000-0000-4000-8000-000000000001",
     preferenceSnapshot: {},
     safetySnapshot: {},
   };
-  return { ...base, ...overrides };
+  return { ...base, ...overrides, targetMode: "household" };
+}
+
+export function makeIdeaGenerationContext(
+  overrides: Partial<IdeaGenerationContext> = {},
+): IdeaGenerationContext {
+  const base: IdeaGenerationContext = {
+    targetMode: "idea",
+    submission: {
+      mealType: "breakfast",
+      mainIngredients: ["ごはん"],
+      cuisineGenre: "japanese",
+      targetMode: "idea",
+      targetMemberIds: [],
+      servings: 2,
+      timeLimitMinutes: 15,
+      budgetPreference: "standard",
+      avoidIngredients: [],
+      memo: "",
+      pantrySelections: [],
+    },
+    safety: null,
+    pantryItems: [],
+    memberPreferences: [],
+    targetMembers: [],
+    allergenVersion: null,
+    foodRuleVersion: null,
+    expiredPantryChecks: [],
+    idempotencyKey: "56000000-0000-4000-8000-000000000001",
+    preferenceSnapshot: {},
+    safetySnapshot: ideaSafetySnapshot,
+  };
+  return { ...base, ...overrides, targetMode: "idea", safety: null };
 }
 
 export function underSixHardBeanAndNutContext(): GenerationContext {
   const base = makeGenerationContext();
+  const safety = {
+    ...base.safety,
+    members: base.safety.members.map((member) => ({ ...member, ageBand: "age_3_5" as const })),
+    foodSafetyRules: [hardBeanAndReviewedNutRule],
+  };
   return {
     ...base,
-    safety: {
-      ...base.safety,
-      members: base.safety.members.map((member) => ({ ...member, ageBand: "age_3_5" })),
-      foodSafetyRules: [hardBeanAndReviewedNutRule],
-    },
+    safety,
+    allergenVersion: safety.dictionaryVersion,
+    foodRuleVersion: safety.foodRuleVersion,
   };
 }
 

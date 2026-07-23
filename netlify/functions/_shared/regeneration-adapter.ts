@@ -3,7 +3,12 @@ import {
   plannerSubmissionSchema,
   type PlannerSubmission,
 } from "../../../shared/contracts/planner.js";
-import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import type {
+  GenerationContext,
+  HouseholdGenerationContext,
+  IdeaGenerationContext,
+} from "../../../shared/safety/generation-context.js";
+import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
 import { getJstDateKey } from "../../../shared/time/jst.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import { validateTransientChecks } from "./generation-context.js";
@@ -84,6 +89,48 @@ export function createRegenerationLoaderDeps(
     );
   };
 
+  const loadPantryForSubmission = async (
+    authenticated: AuthenticatedUser,
+    submission: PlannerSubmission,
+    basePantry: GenerationContext["pantryItems"],
+  ): Promise<GenerationContext["pantryItems"]> => {
+    const pantryItemIds = submission.pantrySelections.map((item) => item.pantryItemId);
+    if (pantryItemIds.length === 0) return basePantry;
+    const { data, error } = await ownerClient
+      .from("pantry_items")
+      .select(
+        "id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state,created_at,updated_at",
+      )
+      .eq("user_id", authenticated.userId)
+      .in("id", pantryItemIds);
+    if (error !== null) {
+      throw new HttpError(503, "internal_error", "冷蔵庫の食材を確認できませんでした");
+    }
+    return data.map((row) => ({
+      id: row.id,
+      userId: row.user_id,
+      name: row.name,
+      quantity: row.quantity,
+      unit: row.unit,
+      expiresOn: row.expires_on,
+      expirationType:
+        row.expiration_type === "use_by" ||
+        row.expiration_type === "best_before" ||
+        row.expiration_type === "other" ||
+        row.expiration_type === "unknown"
+          ? row.expiration_type
+          : null,
+      openedState:
+        row.opened_state === "unopened" ||
+        row.opened_state === "opened" ||
+        row.opened_state === "unknown"
+          ? row.opened_state
+          : null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  };
+
   const buildCurrentContext = async (input: {
     user: AuthenticatedUser;
     stored: StoredMenuAggregate;
@@ -95,6 +142,56 @@ export function createRegenerationLoaderDeps(
       : never;
     now: Date;
   }): Promise<GenerationContext> => {
+    // 保存済み preference の mode を先に判別する（request snapshot と一致する提出が正本）
+    let submission: PlannerSubmission;
+    try {
+      const envelope = preferenceSnapshotEnvelopeSchema.parse(input.stored.preferenceSnapshot);
+      submission = envelope.submission;
+    } catch {
+      throw new HttpError(422, "invalid_request", "献立条件を確認してください");
+    }
+
+    if (submission.targetMode === "idea") {
+      // idea branch: current household safety と buildStoredGenerationContext を呼ばない
+      const pantryItems = await loadPantryForSubmission(input.user, submission, []);
+      const today = getJstDateKey(input.now);
+      const expiredSelectedIds = submission.pantrySelections
+        .filter((selection) => {
+          const item = pantryItems.find((candidate) => candidate.id === selection.pantryItemId);
+          return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
+        })
+        .map((selection) => selection.pantryItemId);
+      const expiredPantryChecks = validateTransientChecks(
+        input.expiredPantryConfirmations,
+        submission.pantrySelections.map((item) => item.pantryItemId),
+        expiredSelectedIds,
+        input.now,
+      );
+      const ideaContext: IdeaGenerationContext = {
+        targetMode: "idea",
+        submission,
+        safety: null,
+        pantryItems,
+        memberPreferences: [],
+        targetMembers: [],
+        allergenVersion: null,
+        foodRuleVersion: null,
+        expiredPantryChecks,
+        idempotencyKey: input.idempotencyKey,
+        preferenceSnapshot: z
+          .record(z.string(), z.unknown())
+          .parse(
+            typeof input.stored.preferenceSnapshot === "object" &&
+              input.stored.preferenceSnapshot !== null
+              ? input.stored.preferenceSnapshot
+              : {},
+          ),
+        safetySnapshot: ideaSafetySnapshot,
+      };
+      return ideaContext;
+    }
+
+    // household branch: 対象家族 1〜20 と現行 safety、既存 builder を維持
     if (input.stored.targetMemberIds.length === 0) {
       throw new HttpError(
         422,
@@ -103,9 +200,7 @@ export function createRegenerationLoaderDeps(
       );
     }
 
-    // admin は所有権が証明された後の現行 safety 読みに限定する
     const admin = getSupabaseAdmin();
-    // pantry / preference 行は Task 3 の owner-scoped 構築を再利用
     const base = await buildStoredGenerationContext({
       ownerClient,
       admin,
@@ -114,62 +209,17 @@ export function createRegenerationLoaderDeps(
       idempotencyKey: input.idempotencyKey,
     });
 
-    // 保存済み preference を閉じたスキーマで読む。失敗時は空 submission を捏造せず fail-closed。
-    let submission: PlannerSubmission;
+    // 現行の生存ターゲットで上書き（削除済みメンバーを載せない）
     try {
-      const envelope = preferenceSnapshotEnvelopeSchema.parse(input.stored.preferenceSnapshot);
       submission = plannerSubmissionSchema.parse({
-        ...envelope.submission,
-        // 現行の生存ターゲットで上書き（削除済みメンバーを載せない）
+        ...submission,
         targetMemberIds: [...input.stored.targetMemberIds],
       });
     } catch {
       throw new HttpError(422, "invalid_request", "献立条件を確認してください");
     }
 
-    // pantry は submission の選択を正に再読込（base は usage 由来で不足し得る）。
-    // 問い合わせ失敗時に base を黙って残すと、欠落した期限切れ食材が
-    // expired 判定から抜け fail-open になるため、必ず fail-closed する。
-    const pantryItemIds = submission.pantrySelections.map((item) => item.pantryItemId);
-    let pantryItems = base.pantryItems;
-    if (pantryItemIds.length > 0) {
-      const { data, error } = await ownerClient
-        .from("pantry_items")
-        .select(
-          "id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state,created_at,updated_at",
-        )
-        .eq("user_id", input.user.userId)
-        .in("id", pantryItemIds);
-      // supabase-js 型上 error===null なら data は非 null（no-unnecessary-condition）
-      if (error !== null) {
-        throw new HttpError(503, "internal_error", "冷蔵庫の食材を確認できませんでした");
-      }
-      pantryItems = data.map((row) => ({
-        id: row.id,
-        userId: row.user_id,
-        name: row.name,
-        quantity: row.quantity,
-        unit: row.unit,
-        expiresOn: row.expires_on,
-        expirationType:
-          row.expiration_type === "use_by" ||
-          row.expiration_type === "best_before" ||
-          row.expiration_type === "other" ||
-          row.expiration_type === "unknown"
-            ? row.expiration_type
-            : null,
-        openedState:
-          row.opened_state === "unopened" ||
-          row.opened_state === "opened" ||
-          row.opened_state === "unknown"
-            ? row.opened_state
-            : null,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      }));
-    }
-
-    // 期限切れ確認はコマンドの新規収集分のみ（古い確認を持ち込まない）
+    const pantryItems = await loadPantryForSubmission(input.user, submission, base.pantryItems);
     const today = getJstDateKey(input.now);
     const expiredSelectedIds = submission.pantrySelections
       .filter((selection) => {
@@ -184,12 +234,11 @@ export function createRegenerationLoaderDeps(
       input.now,
     );
 
-    // 現行 safety は loadCurrentSafetyContext 経由で base に既に入っている
-    //（buildStoredGenerationContext が admin 呼び出し済み）
-    // succeed 永続化用 safetySnapshot は現行 safety を載せ、履歴スナップショットも空 {} も使わない
-    return {
+    // buildStoredGenerationContext は household 専用の non-null safety を返す
+    const householdContext: HouseholdGenerationContext = {
       ...base,
-      submission,
+      targetMode: "household",
+      submission: submission as Extract<PlannerSubmission, { targetMode: "household" }>,
       pantryItems,
       expiredPantryChecks,
       idempotencyKey: input.idempotencyKey,
@@ -201,9 +250,11 @@ export function createRegenerationLoaderDeps(
             ? input.stored.preferenceSnapshot
             : {},
         ),
-      // new_menu 経路と同様、現行 CurrentSafetyContext を snapshot として保持する
       safetySnapshot: base.safety,
+      allergenVersion: base.safety.dictionaryVersion,
+      foodRuleVersion: base.safety.foodRuleVersion,
     };
+    return householdContext;
   };
 
   return {

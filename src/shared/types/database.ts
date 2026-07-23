@@ -47,8 +47,13 @@ type FinalizeGenerationFailureArgs = Omit<GeneratedFinalizeGenerationFailureArgs
   p_retry_at?: NonNullable<GeneratedFinalizeGenerationFailureArgs["p_retry_at"]> | null;
 };
 
+// Postgres text 引数は NULL を受け取れるが、生成型は non-null になるため idea 用に復元する
 type NullableFinalizeGenerationSuccessArgs =
-  "p_source_menu_id" | "p_change_reason" | "p_change_reason_custom";
+  | "p_source_menu_id"
+  | "p_change_reason"
+  | "p_change_reason_custom"
+  | "p_allergen_version"
+  | "p_food_rule_version";
 
 type FinalizeGenerationSuccessArgs = Omit<
   GeneratedFinalizeGenerationSuccessArgs,
@@ -57,6 +62,8 @@ type FinalizeGenerationSuccessArgs = Omit<
   p_source_menu_id: GeneratedFinalizeGenerationSuccessArgs["p_source_menu_id"] | null;
   p_change_reason: GeneratedFinalizeGenerationSuccessArgs["p_change_reason"] | null;
   p_change_reason_custom: GeneratedFinalizeGenerationSuccessArgs["p_change_reason_custom"] | null;
+  p_allergen_version: string | null;
+  p_food_rule_version: string | null;
 };
 
 type GeneratedSetOnboardingStatus = GeneratedFunctions["set_onboarding_status"];

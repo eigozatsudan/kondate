@@ -158,12 +158,19 @@ const menu = makeValidatedMenu();
 const succeedInput = {
   requestId,
   menu,
+  targetMode: "household" as const,
   preferenceSnapshot: { portions: ["regular"] },
   safetySnapshot: { members: ["member_1"] },
   safetyFingerprint: "safety-fingerprint",
   allergenVersion: "jp-caa-2026-04.v1",
   foodRuleVersion: "jp-caa-child-shape-2026-07.v1",
-  targetMembers: [{ anonymousRef: "member_1" }],
+  targetMembers: [
+    {
+      householdMemberId: "55000000-0000-4000-8000-000000000001",
+      anonymousRef: "member_1",
+      displayNameSnapshot: "家族1",
+    },
+  ],
   expiredChecks: [{ pantryItemId: "70000000-0000-4000-8000-000000000001" }],
   sourceMenuId,
   changeReason: "食材を変更",

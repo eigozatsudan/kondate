@@ -4,13 +4,15 @@ import { requireUser } from "./_shared/auth.js";
 import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.js";
 import { createRevalidationDeps } from "./_shared/revalidation-adapter.js";
 import { revalidateStoredMenu } from "./_shared/revalidation-service.js";
+import { loadStoredMenuIdentity } from "./_shared/stored-menu-loader.js";
+import { createUserScopedSupabase } from "./_shared/supabase-user.js";
 
 const menuIdSchema = z.uuid();
 
 /**
  * POST /api/menus/:menuId/revalidate
  * 履歴献立を現行の家族安全条件で再検証する境界。
- * 所有権は createRevalidationDeps 内の owner-scoped load が先に証明する。
+ * 最初に identity だけを読み、idea は full aggregate / 家族 query より前に拒否する。
  */
 export default async (request: Request, context: Context): Promise<Response> => {
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
@@ -19,6 +21,15 @@ export default async (request: Request, context: Context): Promise<Response> => 
     const menuId = menuIdSchema.safeParse(context.params.menuId);
     if (!menuId.success) {
       throw new HttpError(400, "invalid_menu_id", "献立を確認できませんでした");
+    }
+    const ownerClient = createUserScopedSupabase(user.accessToken);
+    const identity = await loadStoredMenuIdentity(ownerClient, user.userId, menuId.data);
+    if (identity.targetMode === "idea") {
+      throw new HttpError(
+        422,
+        "idea_menu_revalidation_not_supported",
+        "アイデア献立は家族条件で確認できません",
+      );
     }
     const result = await revalidateStoredMenu(createRevalidationDeps(user), {
       userId: user.userId,

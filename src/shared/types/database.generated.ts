@@ -410,6 +410,7 @@ export type Database = {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: string
       }
+      idea_safety_fingerprint: { Args: never; Returns: string }
       is_canonical_bounded_text: {
         Args: { p_max_length: number; p_min_length: number; p_value: string }
         Returns: boolean

@@ -97,6 +97,7 @@ function makeCommand(
 }
 
 type Mocks = {
+  loadMenuIdentity: ReturnType<typeof vi.fn<ShoppingDependencies["loadMenuIdentity"]>>;
   loadMenu: ReturnType<typeof vi.fn<ShoppingDependencies["loadMenu"]>>;
   revalidate: ReturnType<typeof vi.fn<ShoppingDependencies["revalidate"]>>;
   loadPantry: ReturnType<typeof vi.fn<ShoppingDependencies["loadPantry"]>>;
@@ -116,6 +117,12 @@ type Mocks = {
 
 function makeMocks(): Mocks {
   return {
+    loadMenuIdentity: vi.fn<ShoppingDependencies["loadMenuIdentity"]>().mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "household",
+    }),
     loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(makeMenu()),
     revalidate: vi.fn<ShoppingDependencies["revalidate"]>().mockResolvedValue(makeRevalidation()),
     loadPantry: vi.fn<ShoppingDependencies["loadPantry"]>().mockResolvedValue([]),
@@ -144,6 +151,7 @@ function makeMocks(): Mocks {
 
 function toDeps(mocks: Mocks): ShoppingDependencies {
   return {
+    loadMenuIdentity: mocks.loadMenuIdentity,
     loadMenu: mocks.loadMenu,
     revalidate: mocks.revalidate,
     loadPantry: mocks.loadPantry,
@@ -1135,5 +1143,126 @@ describe("reconcileShoppingList", () => {
       status: 409,
       code: "protected_item_conflict",
     });
+  });
+});
+
+describe("idea menu shopping boundaries", () => {
+  it("rejects idea menus on create after replay miss without full aggregate", async () => {
+    const mocks = makeMocks();
+    mocks.loadMenuIdentity.mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "idea",
+    });
+    const deps = toDeps(mocks);
+    await expect(createShoppingListFromMenu(deps, makeCommand())).rejects.toMatchObject({
+      status: 422,
+      code: "idea_menu_not_supported",
+      message: "アイデア献立は買い物リストに利用できません",
+    });
+    expect(mocks.loadMenuIdentity).toHaveBeenCalledWith(MENU_ID);
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.loadMenu).not.toHaveBeenCalled();
+    expect(mocks.loadPantry).not.toHaveBeenCalled();
+    expect(mocks.getSafetyFingerprint).not.toHaveBeenCalled();
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("returns saved create replay without identity or mode checks", async () => {
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(makeResponse({ replayed: true }));
+    mocks.loadMenuIdentity.mockRejectedValue(new Error("identity must not run on replay hit"));
+    const deps = toDeps(mocks);
+    await expect(createShoppingListFromMenu(deps, makeCommand())).resolves.toEqual(
+      makeResponse({ replayed: true }),
+    );
+    expect(mocks.loadMenuIdentity).not.toHaveBeenCalled();
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("rejects idea menus on preview without revalidation", async () => {
+    const mocks = makeMocks();
+    mocks.loadActiveList.mockResolvedValue({
+      id: LIST_ID,
+      status: "active",
+      version: 3,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadMenuIdentity.mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "idea",
+    });
+    const deps = toDeps(mocks);
+    await expect(
+      previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "idea_menu_not_supported" });
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.loadMenu).not.toHaveBeenCalled();
+  });
+
+  it("rejects idea sources on list revalidate before projection writes", async () => {
+    const mocks = makeMocks();
+    mocks.loadActiveList.mockResolvedValue({
+      id: LIST_ID,
+      status: "active",
+      version: 3,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
+    mocks.loadMenuIdentity.mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "idea",
+    });
+    const deps = toDeps(mocks);
+    await expect(
+      revalidateActiveShoppingList(deps, { userId: USER_ID, listId: LIST_ID }),
+    ).rejects.toMatchObject({ status: 422, code: "idea_menu_not_supported" });
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.replaceCurrentSafetyProjection).not.toHaveBeenCalled();
+  });
+
+  it("returns saved reconcile replay without mode checks", async () => {
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue({
+      listId: LIST_ID,
+      version: 4,
+      replayed: true,
+    });
+    mocks.loadMenuIdentity.mockRejectedValue(new Error("identity must not run on replay hit"));
+    const deps = toDeps(mocks);
+    await expect(
+      reconcileShoppingList(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).resolves.toEqual({ listId: LIST_ID, version: 4, replayed: true });
+    expect(mocks.loadMenuIdentity).not.toHaveBeenCalled();
+    expect(mocks.applyReconciliation).not.toHaveBeenCalled();
   });
 });

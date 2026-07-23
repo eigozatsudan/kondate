@@ -13,8 +13,13 @@ import {
 } from "../../../shared/contracts/planner.js";
 import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import { normalizeFoodText } from "../../../shared/safety/allergens.js";
+import type {
+  GenerationContext,
+  HouseholdGenerationContext,
+  IdeaGenerationContext,
+} from "../../../shared/safety/generation-context.js";
+import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
 import { detectUnsupportedMedicalRequest } from "../../../shared/safety/medical-scope.js";
-import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { getJstDateKey } from "../../../shared/time/jst.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import { HttpError } from "./http.js";
@@ -221,6 +226,46 @@ function mapSnapshot(row: z.infer<typeof snapshotRowSchema>) {
   });
 }
 
+async function loadOwnedPantryItems(
+  userClient: ReturnType<typeof createUserScopedSupabase>,
+  userId: string,
+  selectedIds: readonly string[],
+) {
+  if (new Set(selectedIds).size !== selectedIds.length) throw invalidRequest();
+  const pantryResult =
+    selectedIds.length === 0
+      ? { data: [], error: null }
+      : await userClient
+          .from("pantry_items")
+          .select(
+            "id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state,created_at,updated_at",
+          )
+          .in("id", selectedIds);
+  const pantryRows = z.array(pantryRowSchema).safeParse(pantryResult.data);
+  if (
+    pantryResult.error !== null ||
+    !pantryRows.success ||
+    pantryRows.data.length !== selectedIds.length ||
+    pantryRows.data.some((row) => row.user_id !== userId)
+  ) {
+    throw invalidRequest();
+  }
+  return pantryRows.data.map((row) =>
+    pantryItemSchema.parse({
+      id: row.id,
+      userId: row.user_id,
+      name: row.name,
+      quantity: row.quantity,
+      unit: row.unit,
+      expiresOn: row.expires_on,
+      expirationType: row.expiration_type,
+      openedState: row.opened_state,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }),
+  );
+}
+
 export async function loadGenerationContext(
   user: AuthenticatedUser,
   requestId: string,
@@ -262,6 +307,42 @@ export async function loadGenerationContext(
     throw new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。");
   }
 
+  // pantry / 期限検査は両 mode 共通。家族・allergen query は household だけ。
+  const selectedIds = submission.pantrySelections.map((selection) => selection.pantryItemId);
+  const pantryItems = await loadOwnedPantryItems(userClient, user.userId, selectedIds);
+  const today = getJstDateKey(now);
+  const expiredIds = submission.pantrySelections
+    .filter((selection) => {
+      const item = pantryItems.find((candidate) => candidate.id === selection.pantryItemId);
+      return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
+    })
+    .map((selection) => selection.pantryItemId);
+  const expiredPantryChecks = validateTransientChecks(
+    request.expiredPantryConfirmations,
+    selectedIds,
+    expiredIds,
+    now,
+  );
+
+  if (submission.targetMode === "idea") {
+    // idea: 家族表・dislike・現行 safety を一切読まない
+    const ideaContext: IdeaGenerationContext = {
+      targetMode: "idea",
+      submission,
+      safety: null,
+      pantryItems,
+      memberPreferences: [],
+      targetMembers: [],
+      allergenVersion: null,
+      foodRuleVersion: null,
+      expiredPantryChecks,
+      idempotencyKey: request.idempotencyKey,
+      preferenceSnapshot: { submission, memberPreferences: [] },
+      safetySnapshot: ideaSafetySnapshot,
+    };
+    return ideaContext;
+  }
+
   const memberResult = await userClient
     .from("household_members")
     .select(
@@ -288,54 +369,6 @@ export async function loadGenerationContext(
     .in("member_id", submission.targetMemberIds);
   const dislikes = z.array(dislikeRowSchema).safeParse(dislikeResult.data);
   if (dislikeResult.error !== null || !dislikes.success) throw invalidRequest();
-
-  const selectedIds = submission.pantrySelections.map((selection) => selection.pantryItemId);
-  if (new Set(selectedIds).size !== selectedIds.length) throw invalidRequest();
-  const pantryResult =
-    selectedIds.length === 0
-      ? { data: [], error: null }
-      : await userClient
-          .from("pantry_items")
-          .select(
-            "id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state,created_at,updated_at",
-          )
-          .in("id", selectedIds);
-  const pantryRows = z.array(pantryRowSchema).safeParse(pantryResult.data);
-  if (
-    pantryResult.error !== null ||
-    !pantryRows.success ||
-    pantryRows.data.length !== selectedIds.length ||
-    pantryRows.data.some((row) => row.user_id !== user.userId)
-  ) {
-    throw invalidRequest();
-  }
-  const pantryItems = pantryRows.data.map((row) =>
-    pantryItemSchema.parse({
-      id: row.id,
-      userId: row.user_id,
-      name: row.name,
-      quantity: row.quantity,
-      unit: row.unit,
-      expiresOn: row.expires_on,
-      expirationType: row.expiration_type,
-      openedState: row.opened_state,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }),
-  );
-  const today = getJstDateKey(now);
-  const expiredIds = submission.pantrySelections
-    .filter((selection) => {
-      const item = pantryItems.find((candidate) => candidate.id === selection.pantryItemId);
-      return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
-    })
-    .map((selection) => selection.pantryItemId);
-  const expiredPantryChecks = validateTransientChecks(
-    request.expiredPantryConfirmations,
-    selectedIds,
-    expiredIds,
-    now,
-  );
 
   const safety = await loadCurrentSafetyContext(admin, user.userId, submission.targetMemberIds);
   for (const member of safety.members) {
@@ -372,24 +405,29 @@ export async function loadGenerationContext(
       .map((row) => row.ingredient_name),
   }));
 
-  return {
+  const householdSafety = {
+    ...safety,
+    requestText: [
+      ...submission.mainIngredients,
+      ...submission.avoidIngredients,
+      submission.memo,
+    ].join("\n"),
+  };
+  const householdContext: HouseholdGenerationContext = {
+    targetMode: "household",
     submission,
-    safety: {
-      ...safety,
-      requestText: [
-        ...submission.mainIngredients,
-        ...submission.avoidIngredients,
-        submission.memo,
-      ].join("\n"),
-    },
+    safety: householdSafety,
     pantryItems,
     memberPreferences,
     targetMembers,
+    allergenVersion: householdSafety.dictionaryVersion,
+    foodRuleVersion: householdSafety.foodRuleVersion,
     expiredPantryChecks,
     idempotencyKey: request.idempotencyKey,
     preferenceSnapshot: { submission, memberPreferences },
-    safetySnapshot: safety,
+    safetySnapshot: householdSafety,
   };
+  return householdContext;
 }
 
 function containsAlias(text: string, aliases: readonly { normalizedAlias: string }[]): boolean {
@@ -402,66 +440,78 @@ export function validateGenerationPreflight(
   now: Date,
 ): GenerationPreflightResult {
   const issues = new Set<GenerationPreflightIssueCode>();
-  if (!hasExactCurrentSafetyManifest(context.safety)) issues.add("internal_error");
-  const submissionIds = context.submission.targetMemberIds;
-  const targetIds = context.targetMembers.map((member) => member.householdMemberId);
-  const safetyIds = context.safety.members.map((member) => member.householdMemberId);
-  const preferenceIds = context.memberPreferences.map((member) => member.householdMemberId);
-  const memberCount = submissionIds.length;
-  if (
-    memberCount === 0 ||
-    targetIds.length !== memberCount ||
-    safetyIds.length !== memberCount ||
-    preferenceIds.length !== memberCount ||
-    new Set(submissionIds).size !== memberCount ||
-    new Set(targetIds).size !== memberCount ||
-    new Set(safetyIds).size !== memberCount ||
-    new Set(preferenceIds).size !== memberCount ||
-    submissionIds.some((id, index) => {
-      const expectedRef = `member_${String(index + 1)}`;
-      return (
-        targetIds[index] !== id ||
-        safetyIds[index] !== id ||
-        preferenceIds[index] !== id ||
-        context.targetMembers[index]?.anonymousRef !== expectedRef ||
-        context.safety.members[index]?.anonymousRef !== expectedRef ||
-        context.memberPreferences[index]?.anonymousMemberRef !== expectedRef
-      );
-    })
-  ) {
-    issues.add("invalid_request");
-  }
-  for (const member of context.safety.members) {
-    if (member.allergyStatus === "unconfirmed") issues.add("allergy_unconfirmed");
-    if (member.allergyStatus === "registered" && member.allergenIds.length === 0) {
-      issues.add("allergen_missing");
+
+  if (context.targetMode === "household") {
+    if (!hasExactCurrentSafetyManifest(context.safety)) issues.add("internal_error");
+    const submissionIds = context.submission.targetMemberIds;
+    const targetIds = context.targetMembers.map((member) => member.householdMemberId);
+    const safetyIds = context.safety.members.map((member) => member.householdMemberId);
+    const preferenceIds = context.memberPreferences.map((member) => member.householdMemberId);
+    const memberCount = submissionIds.length;
+    if (
+      memberCount === 0 ||
+      targetIds.length !== memberCount ||
+      safetyIds.length !== memberCount ||
+      preferenceIds.length !== memberCount ||
+      new Set(submissionIds).size !== memberCount ||
+      new Set(targetIds).size !== memberCount ||
+      new Set(safetyIds).size !== memberCount ||
+      new Set(preferenceIds).size !== memberCount ||
+      submissionIds.some((id, index) => {
+        const expectedRef = `member_${String(index + 1)}`;
+        return (
+          targetIds[index] !== id ||
+          safetyIds[index] !== id ||
+          preferenceIds[index] !== id ||
+          context.targetMembers[index]?.anonymousRef !== expectedRef ||
+          context.safety.members[index]?.anonymousRef !== expectedRef ||
+          context.memberPreferences[index]?.anonymousMemberRef !== expectedRef
+        );
+      })
+    ) {
+      issues.add("invalid_request");
     }
-    if (member.hasUnmappedCustomAllergy) issues.add("unmapped_custom_allergy");
-    if (member.unsupportedDietStatus === "unconfirmed") {
-      issues.add("unsupported_diet_unconfirmed");
-    }
-    if (member.unsupportedDietStatus === "present") issues.add("unsupported_diet");
-    for (const allergenId of member.allergenIds) {
-      const aliases = context.safety.allergenDictionary.aliases.filter(
-        (alias) => alias.allergenId === allergenId,
-      );
-      if (aliases.length === 0) issues.add("allergen_missing");
-      if (
-        context.submission.mainIngredients.some((ingredient) => containsAlias(ingredient, aliases))
-      ) {
-        issues.add("allergy_conflict");
+    for (const member of context.safety.members) {
+      if (member.allergyStatus === "unconfirmed") issues.add("allergy_unconfirmed");
+      if (member.allergyStatus === "registered" && member.allergenIds.length === 0) {
+        issues.add("allergen_missing");
       }
-      if (
-        context.pantryItems.some((item) =>
-          context.submission.pantrySelections.some(
-            (selection) => selection.pantryItemId === item.id && containsAlias(item.name, aliases),
-          ),
-        )
-      ) {
-        issues.add("allergen_pantry_conflict");
+      if (member.hasUnmappedCustomAllergy) issues.add("unmapped_custom_allergy");
+      if (member.unsupportedDietStatus === "unconfirmed") {
+        issues.add("unsupported_diet_unconfirmed");
+      }
+      if (member.unsupportedDietStatus === "present") issues.add("unsupported_diet");
+      for (const allergenId of member.allergenIds) {
+        const aliases = context.safety.allergenDictionary.aliases.filter(
+          (alias) => alias.allergenId === allergenId,
+        );
+        if (aliases.length === 0) issues.add("allergen_missing");
+        if (
+          context.submission.mainIngredients.some((ingredient) =>
+            containsAlias(ingredient, aliases),
+          )
+        ) {
+          issues.add("allergy_conflict");
+        }
+        if (
+          context.pantryItems.some((item) =>
+            context.submission.pantrySelections.some(
+              (selection) =>
+                selection.pantryItemId === item.id && containsAlias(item.name, aliases),
+            ),
+          )
+        ) {
+          issues.add("allergen_pantry_conflict");
+        }
       }
     }
+  } else {
+    // idea: 型上 targetMembers/memberPreferences/safety は空固定。servings 1〜20 のみ検査
+    if (context.submission.servings < 1 || context.submission.servings > 20) {
+      issues.add("invalid_request");
+    }
   }
+
   const selectedIds = context.submission.pantrySelections.map(
     (selection) => selection.pantryItemId,
   );
@@ -527,7 +577,7 @@ export function validateGenerationPreflight(
       )
       .map((code) => {
         const conditionRefs = new Set<string>();
-        if (code === "allergen_pantry_conflict") {
+        if (code === "allergen_pantry_conflict" && context.targetMode === "household") {
           for (const member of context.safety.members) {
             const aliases = context.safety.allergenDictionary.aliases.filter((alias) =>
               member.allergenIds.includes(alias.allergenId),

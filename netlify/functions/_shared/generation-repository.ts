@@ -6,7 +6,10 @@ import {
   type GenerationCommandV2,
   type GenerationIntegrityContextV2,
   type GenerationRequestLookup,
+  type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
+import type { GenerationTargetMember } from "../../../shared/safety/generation-context.js";
+import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
 import type { Database } from "../../../src/shared/types/database.js";
 import type { requireUser } from "./auth.js";
 import { getServerEnv } from "./env.js";
@@ -21,6 +24,40 @@ import {
 import { HttpError } from "./http.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase, type UserSupabaseClient } from "./supabase-user.js";
+
+export type GenerationSuccessBase = {
+  requestId: string;
+  menu: ValidatedMenu;
+  preferenceSnapshot: Readonly<Record<string, unknown>>;
+  safetyFingerprint: string;
+  expiredChecks: readonly unknown[];
+  sourceMenuId: string | null;
+  changeReason: string | null;
+  changeReasonCustom: string | null;
+};
+
+export type GenerationSuccessInput =
+  | (GenerationSuccessBase & {
+      targetMode: "household";
+      safetySnapshot: Readonly<Record<string, unknown>>;
+      allergenVersion: string;
+      foodRuleVersion: string;
+      targetMembers: readonly GenerationTargetMember[];
+    })
+  | (GenerationSuccessBase & {
+      targetMode: "idea";
+      safetySnapshot: typeof ideaSafetySnapshot;
+      allergenVersion: null;
+      foodRuleVersion: null;
+      targetMembers: readonly [];
+    });
+
+export type GenerationSuccessWriter = {
+  succeed: (input: GenerationSuccessInput) => Promise<QuotaRequestRecord>;
+};
+
+// 型定義に使う const を実行時参照として保持し、tree-shake でも消えないようにする
+export { ideaSafetySnapshot };
 
 export type AuthenticatedUser = Awaited<ReturnType<typeof requireUser>>;
 
@@ -240,20 +277,8 @@ export function createGenerationRepository(user: AuthenticatedUser) {
         }),
       );
     },
-    async succeed(input: {
-      requestId: string;
-      menu: import("../../../shared/contracts/generation.js").ValidatedMenu;
-      preferenceSnapshot: unknown;
-      safetySnapshot: unknown;
-      safetyFingerprint: string;
-      allergenVersion: string;
-      foodRuleVersion: string;
-      targetMembers: unknown[];
-      expiredChecks: unknown[];
-      sourceMenuId: string | null;
-      changeReason: string | null;
-      changeReasonCustom: string | null;
-    }) {
+    async succeed(input: GenerationSuccessInput) {
+      // idea は null version / 空 target をそのまま渡し、サム値へ置換しない
       return requestPayloadSchema.parse(
         await rpc("finalize_ai_generation_success", {
           p_request_id: input.requestId,

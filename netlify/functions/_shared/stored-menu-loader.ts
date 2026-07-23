@@ -5,10 +5,19 @@ import {
   type GeneratedMenu,
   type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
+import type { TargetMode } from "../../../shared/contracts/planner.js";
 import { deriveCurrentGeneratedLabelConfirmations } from "../../../shared/safety/allergens.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import type { Database } from "../../../src/shared/types/database.js";
 import { HttpError } from "./http.js";
+
+/** identity-only: 家族/adaptation/catalog を nested select しない軽量読出し */
+export type StoredMenuIdentity = {
+  id: string;
+  userId: string;
+  version: number;
+  targetMode: TargetMode;
+};
 
 export type StoredMenuAggregate = {
   menu: ValidatedMenu;
@@ -66,6 +75,34 @@ export function buildStoredMenuQuery(
     .eq("id", menuId)
     .eq("user_id", userId)
     .maybeSingle();
+}
+
+/**
+ * owner-scoped で id/user_id/version/target_mode だけを読む。
+ * 買い物 idea 拒否と revalidate-menu の mode 境界用。full aggregate とは分離する。
+ */
+export async function loadStoredMenuIdentity(
+  client: SupabaseClient<Database>,
+  userId: string,
+  menuId: string,
+): Promise<StoredMenuIdentity> {
+  const { data, error } = await client
+    .from("menus")
+    .select("id,user_id,version,target_mode")
+    .eq("id", menuId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error !== null) throw new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
+  if (data === null) throw new HttpError(404, "menu_not_found", "献立が見つかりません");
+  if (data.target_mode !== "household" && data.target_mode !== "idea") {
+    throw new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
+  }
+  return {
+    id: data.id,
+    userId: data.user_id,
+    version: data.version,
+    targetMode: data.target_mode,
+  };
 }
 
 /**
@@ -232,12 +269,18 @@ export async function loadStoredMenu(
 
 /**
  * 履歴の confirmed 証跡を捨て、現行 pending の generated 形へ投影する。
- * 保存済み ValidatedMenu は変更しない。
+ * 保存済み ValidatedMenu は変更しない。idea は家族 safety を持たないため空確認のまま。
  */
 export function toStoredRevalidationCandidate(
   menu: ValidatedMenu,
   context: GenerationContext,
 ): GeneratedMenu {
+  if (context.targetMode === "idea") {
+    return generatedMenuSchema.parse({
+      ...menu,
+      labelConfirmations: [],
+    });
+  }
   return generatedMenuSchema.parse({
     ...menu,
     labelConfirmations: deriveCurrentGeneratedLabelConfirmations(menu, context.safety),

@@ -87,6 +87,7 @@ describe("createRegenerationLoaderDeps", () => {
     const stored = makeStored();
     const currentSafety = makeCurrentSafetyContext();
     vi.mocked(buildStoredGenerationContext).mockResolvedValue({
+      targetMode: "household",
       submission: {
         mealType: "breakfast",
         mainIngredients: [],
@@ -119,6 +120,8 @@ describe("createRegenerationLoaderDeps", () => {
           displayNameSnapshot: "家族1",
         },
       ],
+      allergenVersion: currentSafety.dictionaryVersion,
+      foodRuleVersion: currentSafety.foodRuleVersion,
       expiredPantryChecks: [],
       idempotencyKey: "82000000-0000-4000-8000-000000000001",
       preferenceSnapshot: {},
@@ -150,6 +153,53 @@ describe("createRegenerationLoaderDeps", () => {
     ).rejects.toMatchObject({ code: "invalid_request", status: 422 });
   });
 
+  it("builds idea context without household safety or stored generation builder", async () => {
+    const stored = makeStored();
+    stored.preferenceSnapshot = {
+      submission: {
+        mealType: "breakfast",
+        mainIngredients: ["ごはん"],
+        cuisineGenre: "japanese",
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+        timeLimitMinutes: 15,
+        budgetPreference: "standard",
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+      },
+      memberPreferences: [],
+    };
+    stored.targetMemberIds = [];
+    stored.targetMembers = [];
+
+    const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
+    const context = await deps.buildCurrentContext({
+      user,
+      stored,
+      idempotencyKey: "82000000-0000-4000-8000-000000000099",
+      expiredPantryConfirmations: [],
+      now: new Date("2026-07-11T00:00:00.000Z"),
+    });
+
+    expect(context).toMatchObject({
+      targetMode: "idea",
+      safety: null,
+      memberPreferences: [],
+      targetMembers: [],
+      allergenVersion: null,
+      foodRuleVersion: null,
+    });
+    expect(context.safetySnapshot).toEqual({
+      assurance: "none",
+      members: [],
+      mode: "idea",
+    });
+    expect(getSupabaseAdmin).not.toHaveBeenCalled();
+    expect(buildStoredGenerationContext).not.toHaveBeenCalled();
+  });
+
   it("fails closed when pantry re-query errors instead of reusing base pantryItems", async () => {
     const pantryItemId = "66000000-0000-4000-8000-000000000001";
     const stored = makeStored();
@@ -171,6 +221,7 @@ describe("createRegenerationLoaderDeps", () => {
     };
     const currentSafety = makeCurrentSafetyContext();
     vi.mocked(buildStoredGenerationContext).mockResolvedValue({
+      targetMode: "household",
       submission: {
         mealType: "breakfast",
         mainIngredients: ["ごはん"],
@@ -207,6 +258,8 @@ describe("createRegenerationLoaderDeps", () => {
           displayNameSnapshot: "家族1",
         },
       ],
+      allergenVersion: currentSafety.dictionaryVersion,
+      foodRuleVersion: currentSafety.foodRuleVersion,
       expiredPantryChecks: [],
       idempotencyKey: "82000000-0000-4000-8000-000000000003",
       preferenceSnapshot: {},

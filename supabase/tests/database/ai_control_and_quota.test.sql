@@ -3122,5 +3122,23 @@ select throws_ok($$
 $$, '23514', null,
   'regeneration snapshot household mode rejects empty target members');
 
+-- Task 5: idea_safety_fingerprint は固定 canonical JSON の SHA-256 lowercase hex
+select is(
+  private.idea_safety_fingerprint(),
+  encode(
+    extensions.digest(
+      convert_to('{"assurance":"none","members":[],"mode":"idea"}', 'UTF8'),
+      'sha256'
+    ),
+    'hex'
+  ),
+  'idea_safety_fingerprint matches fixed canonical JSON digest'
+);
+select matches(
+  private.idea_safety_fingerprint(),
+  '^[0-9a-f]{64}$',
+  'idea_safety_fingerprint is 64-char lowercase hex'
+);
+
 select * from finish();
 rollback;

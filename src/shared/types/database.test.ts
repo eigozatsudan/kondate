@@ -71,6 +71,37 @@ it("accepts nullable lineage for new-menu finalization", () => {
   expect(args.p_source_menu_id).toBeNull();
 });
 
+it("accepts household string versions and idea null versions for finalize success", () => {
+  const household = {
+    p_request_id: "40000000-0000-4000-8000-000000000010",
+    p_menu: {},
+    p_preference_snapshot: {},
+    p_safety_snapshot: {},
+    p_safety_fingerprint: "fp",
+    p_allergen_version: "allergen-v1",
+    p_food_rule_version: "food-rule-v1",
+    p_target_members: [],
+    p_expired_checks: [],
+    p_source_menu_id: null,
+    p_change_reason: null,
+    p_change_reason_custom: null,
+  } satisfies FinalizeGenerationSuccessArgs;
+  const idea = {
+    ...household,
+    p_request_id: "40000000-0000-4000-8000-000000000011",
+    p_allergen_version: null,
+    p_food_rule_version: null,
+  } satisfies FinalizeGenerationSuccessArgs;
+
+  expectTypeOf(household.p_allergen_version).toExtend<string | null>();
+  expectTypeOf(idea.p_allergen_version).toExtend<string | null>();
+  expectTypeOf(household.p_food_rule_version).toExtend<string | null>();
+  expectTypeOf(idea.p_food_rule_version).toExtend<string | null>();
+  expect(household.p_allergen_version).toBe("allergen-v1");
+  expect(idea.p_allergen_version).toBeNull();
+  expect(idea.p_food_rule_version).toBeNull();
+});
+
 const invalidUndefinedRetry = {
   p_request_id: "40000000-0000-4000-8000-000000000002",
   p_failure_code: "model_unavailable",
@@ -145,7 +176,11 @@ type GeneratedFinalizeGenerationFailure =
 type GeneratedFinalizeGenerationSuccess =
   GeneratedDatabase["public"]["Functions"]["finalize_ai_generation_success"];
 type NullableFinalizeGenerationSuccessArg =
-  "p_source_menu_id" | "p_change_reason" | "p_change_reason_custom";
+  | "p_source_menu_id"
+  | "p_change_reason"
+  | "p_change_reason_custom"
+  | "p_allergen_version"
+  | "p_food_rule_version";
 
 it("nullable 4項目以外のRPC契約を変更しない", () => {
   expectTypeOf<Omit<AppSaveDraft["Args"], NullableDraftArg>>().toEqualTypeOf<

@@ -4,6 +4,8 @@ import type { RevalidationResult } from "./_shared/revalidation-service.js";
 const requireUserMock = vi.hoisted(() => vi.fn());
 const createRevalidationDepsMock = vi.hoisted(() => vi.fn());
 const revalidateStoredMenuMock = vi.hoisted(() => vi.fn());
+const loadStoredMenuIdentityMock = vi.hoisted(() => vi.fn());
+const createUserScopedSupabaseMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./_shared/auth.js", () => ({
   requireUser: requireUserMock,
@@ -18,6 +20,16 @@ vi.mock("./_shared/revalidation-service.js", async (importOriginal) => {
     revalidateStoredMenu: revalidateStoredMenuMock,
   };
 });
+vi.mock("./_shared/stored-menu-loader.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./_shared/stored-menu-loader.js")>();
+  return {
+    ...original,
+    loadStoredMenuIdentity: loadStoredMenuIdentityMock,
+  };
+});
+vi.mock("./_shared/supabase-user.js", () => ({
+  createUserScopedSupabase: createUserScopedSupabaseMock,
+}));
 
 import handler, { config } from "./revalidate-menu.js";
 
@@ -41,9 +53,18 @@ describe("revalidate-menu", () => {
     requireUserMock.mockReset();
     createRevalidationDepsMock.mockReset();
     revalidateStoredMenuMock.mockReset();
+    loadStoredMenuIdentityMock.mockReset();
+    createUserScopedSupabaseMock.mockReset();
     requireUserMock.mockResolvedValue(user);
     createRevalidationDepsMock.mockReturnValue({ deps: true });
     revalidateStoredMenuMock.mockResolvedValue(revalidationResult);
+    createUserScopedSupabaseMock.mockReturnValue({ from: vi.fn() });
+    loadStoredMenuIdentityMock.mockResolvedValue({
+      id: menuId,
+      userId: user.userId,
+      version: 1,
+      targetMode: "household",
+    });
   });
 
   it("exposes the locked revalidate path", () => {
@@ -91,6 +112,7 @@ describe("revalidate-menu", () => {
       new Request(`http://127.0.0.1/api/menus/${menuId}/revalidate`, { method: "POST" }),
       { params: { menuId } } as never,
     );
+    expect(loadStoredMenuIdentityMock).toHaveBeenCalled();
     expect(createRevalidationDepsMock).toHaveBeenCalledWith(user);
     expect(revalidateStoredMenuMock).toHaveBeenCalledWith(
       { deps: true },
@@ -101,6 +123,29 @@ describe("revalidate-menu", () => {
       ok: true,
       data: revalidationResult,
     });
+  });
+
+  it("rejects idea menus before full revalidation", async () => {
+    loadStoredMenuIdentityMock.mockResolvedValue({
+      id: menuId,
+      userId: user.userId,
+      version: 1,
+      targetMode: "idea",
+    });
+    const response = await handler(
+      new Request(`http://127.0.0.1/api/menus/${menuId}/revalidate`, { method: "POST" }),
+      { params: { menuId } } as never,
+    );
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "idea_menu_revalidation_not_supported",
+        message: "アイデア献立は家族条件で確認できません",
+      },
+    });
+    expect(createRevalidationDepsMock).not.toHaveBeenCalled();
+    expect(revalidateStoredMenuMock).not.toHaveBeenCalled();
   });
 
   it("does not log or return free-form PII fields on failure", async () => {

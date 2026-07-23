@@ -1,15 +1,22 @@
 import {
   type GeneratedLabelConfirmation,
+  type GeneratedMenu,
   type MenuLabelConfirmation,
   type MenuValidationIssue,
   type MenuValidationResult,
   generatedMenuSchema,
   validatedMenuSchema,
 } from "../contracts/generation.js";
+import { collectPlannerRequestText } from "../contracts/planner.js";
 import { evaluateAllergens, normalizeFoodText } from "./allergens.js";
 import { createCurrentSafetyFingerprint } from "./fingerprint.js";
 import { evaluateFoodSafetyRules } from "./food-rules.js";
-import type { GenerationContext } from "./generation-context.js";
+import type {
+  GenerationContext,
+  HouseholdGenerationContext,
+  IdeaGenerationContext,
+} from "./generation-context.js";
+import { createIdeaSafetyFingerprint } from "./idea-fingerprint.js";
 import { detectUnsupportedMedicalRequest } from "./medical-scope.js";
 
 type ConfirmationIdentity = Pick<
@@ -40,150 +47,12 @@ function memberPairKey(householdMemberId: string, anonymousRef: string): string 
   return `${householdMemberId}\u0000${anonymousRef}`;
 }
 
-export function validateGeneratedMenu(
-  menu: unknown,
+/** 食事区分・ジャンル・時間・主食材・回避・在庫の共通検査（両 mode） */
+function collectCommonMenuIssues(
+  generated: GeneratedMenu,
   context: GenerationContext,
-): MenuValidationResult {
-  const parsed = generatedMenuSchema.safeParse(menu);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      issues: parsed.error.issues.map((issue) => ({
-        code: "invalid_menu_structure",
-        path: issue.path.join("."),
-        message: issue.message,
-      })),
-    };
-  }
-
-  const generated = parsed.data;
+): MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
-  const targetIds = new Set(context.targetMembers.map((member) => member.householdMemberId));
-  const requestedTargetIds = new Set(context.submission.targetMemberIds);
-  const targetRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
-  const safetyRefs = new Set(context.safety.members.map((member) => member.anonymousRef));
-  const targetPairs = new Set(
-    context.targetMembers.map((member) =>
-      memberPairKey(member.householdMemberId, member.anonymousRef),
-    ),
-  );
-  const safetyPairs = new Set(
-    context.safety.members.map((member) =>
-      memberPairKey(member.householdMemberId, member.anonymousRef),
-    ),
-  );
-  const preferencePairs = new Set(
-    context.memberPreferences.map((member) =>
-      memberPairKey(member.householdMemberId, member.anonymousMemberRef),
-    ),
-  );
-  if (
-    !sameSet(targetIds, requestedTargetIds) ||
-    !sameSet(targetRefs, safetyRefs) ||
-    !sameSet(targetPairs, safetyPairs)
-  ) {
-    issues.push({
-      code: "target_member_mismatch",
-      path: "targetMembers",
-      message: "対象メンバーが生成条件と一致しません",
-    });
-  }
-  const returnedRefs = new Set(generated.adaptations.map((item) => item.anonymousMemberRef));
-  if (!sameSet(returnedRefs, targetRefs)) {
-    issues.push({
-      code: "target_member_mismatch",
-      path: "adaptations",
-      message: "対象メンバーの取り分けが生成条件と一致しません",
-    });
-  }
-  if (!sameSet(targetPairs, preferencePairs)) {
-    issues.push({
-      code: "member_preference_mismatch",
-      path: "memberPreferences",
-      message: "対象メンバーの嗜好条件が不足または不整合です",
-    });
-  }
-
-  const dictionary = context.safety.allergenDictionary;
-  const registeredAllergenIds = new Set(
-    context.safety.members.flatMap((member) =>
-      member.allergyStatus === "registered" ? member.allergenIds : [],
-    ),
-  );
-  const dictionaryInvalid =
-    context.safety.dictionaryVersion !== dictionary.version ||
-    dictionary.catalog.some((entry) => entry.catalogVersion !== dictionary.version) ||
-    dictionary.aliases.some((alias) => alias.dictionaryVersion !== dictionary.version) ||
-    [...registeredAllergenIds].some((allergenId) => {
-      const catalogEntry = dictionary.catalog.find((entry) => entry.id === allergenId);
-      return (
-        catalogEntry === undefined ||
-        !dictionary.aliases.some(
-          (alias) =>
-            alias.allergenId === allergenId &&
-            alias.aliasKind === "direct" &&
-            !alias.requiresLabelConfirmation &&
-            normalizeFoodText(alias.normalizedAlias) ===
-              normalizeFoodText(catalogEntry.displayName),
-        )
-      );
-    });
-  const foodRulesInvalid = context.safety.foodSafetyRules.some(
-    (rule) => rule.ruleVersion !== context.safety.foodRuleVersion,
-  );
-  if (dictionaryInvalid || foodRulesInvalid) {
-    issues.push({
-      code: "safety_context_incomplete",
-      path: "safety",
-      message: "最新の安全辞書または食品安全ルールを適用できません",
-    });
-  }
-
-  for (const member of context.safety.members) {
-    if (member.allergyStatus === "unconfirmed") {
-      issues.push({
-        code: "allergy_unconfirmed",
-        path: member.anonymousRef,
-        message: "アレルギー確認が必要です",
-      });
-    }
-    if (member.allergyStatus === "registered" && member.allergenIds.length === 0) {
-      issues.push({
-        code: "allergen_missing",
-        path: member.anonymousRef,
-        message: "登録アレルゲンを選んでください",
-      });
-    }
-    if (member.hasUnmappedCustomAllergy) {
-      issues.push({
-        code: "unmapped_custom_allergy",
-        path: member.anonymousRef,
-        message: "自由登録アレルギーを固定候補へ対応付けできません",
-      });
-    }
-    if (member.unsupportedDietStatus === "unconfirmed") {
-      issues.push({
-        code: "unsupported_diet_unconfirmed",
-        path: member.anonymousRef,
-        message: "対象外条件の確認が必要です",
-      });
-    }
-    if (member.unsupportedDietStatus === "present") {
-      issues.push({
-        code: "unsupported_diet_present",
-        path: member.anonymousRef,
-        message: "対象外条件のあるメンバーは対象にできません",
-      });
-    }
-  }
-  for (const kind of detectUnsupportedMedicalRequest(context.safety.requestText)) {
-    issues.push({
-      code: "unsupported_medical_request",
-      path: "requestText",
-      message: `${kind} には対応していません`,
-    });
-  }
-
   if (generated.mealType !== context.submission.mealType) {
     issues.push({
       code: "meal_type_mismatch",
@@ -331,11 +200,226 @@ export function validateGeneratedMenu(
     }
   }
 
+  const requestText =
+    context.targetMode === "idea"
+      ? collectPlannerRequestText(context.submission)
+      : context.safety.requestText;
+  for (const kind of detectUnsupportedMedicalRequest(requestText)) {
+    issues.push({
+      code: "unsupported_medical_request",
+      path: "requestText",
+      message: `${kind} には対応していません`,
+    });
+  }
+  return issues;
+}
+
+function finalizeValidated(
+  generated: GeneratedMenu,
+  labelConfirmations: readonly MenuLabelConfirmation[],
+  safetyFingerprint: string,
+): MenuValidationResult {
+  const validated = validatedMenuSchema.safeParse({
+    ...generated,
+    labelConfirmations,
+  });
+  if (!validated.success) {
+    return {
+      ok: false,
+      issues: validated.error.issues.map((issue) => ({
+        code: "invalid_menu_structure",
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+    };
+  }
+  return {
+    ok: true,
+    menu: validated.data,
+    labelConfirmations: validated.data.labelConfirmations,
+    safetyFingerprint,
+  };
+}
+
+/**
+ * idea 出力: 家族向け取り分け・ラベル確認・family safety action を 0 件にし、
+ * 人数は凍結提出の servings と一致させる。家族安全辞書は使わない。
+ */
+function validateIdeaMenu(
+  generated: GeneratedMenu,
+  context: IdeaGenerationContext,
+): MenuValidationResult {
+  const issues: MenuValidationIssue[] = [];
+  if (generated.adaptations.length !== 0) {
+    issues.push({
+      code: "target_member_mismatch",
+      path: "adaptations",
+      message: "アイデア献立に家族向け取り分けは含められません",
+    });
+  }
+  if (generated.labelConfirmations.length !== 0) {
+    issues.push({
+      code: "unexpected_label_confirmation",
+      path: "labelConfirmations",
+      message: "アイデア献立にラベル確認は含められません",
+    });
+  }
+  const familyActions = generated.adaptations.flatMap((adaptation) => adaptation.safetyActions);
+  if (familyActions.length !== 0) {
+    issues.push({
+      code: "target_member_mismatch",
+      path: "adaptations.safetyActions",
+      message: "アイデア献立に家族向け安全手順は含められません",
+    });
+  }
+  if (generated.servings !== context.submission.servings) {
+    issues.push({
+      code: "servings_mismatch",
+      path: "servings",
+      message: "人数が指定と一致しません",
+    });
+  }
+  // idea 型上 targetMembers / targetMemberIds は空固定。家族子行は adaptations 側で拒否済み
+  issues.push(...collectCommonMenuIssues(generated, context));
+  if (issues.length > 0) return { ok: false, issues };
+  return finalizeValidated(generated, [], createIdeaSafetyFingerprint());
+}
+
+function validateHouseholdMenu(
+  generated: GeneratedMenu,
+  context: HouseholdGenerationContext,
+): MenuValidationResult {
+  const issues: MenuValidationIssue[] = [];
+  const targetIds = new Set(context.targetMembers.map((member) => member.householdMemberId));
+  const requestedTargetIds = new Set(context.submission.targetMemberIds);
+  const targetRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
+  const safetyRefs = new Set(context.safety.members.map((member) => member.anonymousRef));
+  const targetPairs = new Set(
+    context.targetMembers.map((member) =>
+      memberPairKey(member.householdMemberId, member.anonymousRef),
+    ),
+  );
+  const safetyPairs = new Set(
+    context.safety.members.map((member) =>
+      memberPairKey(member.householdMemberId, member.anonymousRef),
+    ),
+  );
+  const preferencePairs = new Set(
+    context.memberPreferences.map((member) =>
+      memberPairKey(member.householdMemberId, member.anonymousMemberRef),
+    ),
+  );
+  if (
+    !sameSet(targetIds, requestedTargetIds) ||
+    !sameSet(targetRefs, safetyRefs) ||
+    !sameSet(targetPairs, safetyPairs)
+  ) {
+    issues.push({
+      code: "target_member_mismatch",
+      path: "targetMembers",
+      message: "対象メンバーが生成条件と一致しません",
+    });
+  }
+  const returnedRefs = new Set(generated.adaptations.map((item) => item.anonymousMemberRef));
+  if (!sameSet(returnedRefs, targetRefs)) {
+    issues.push({
+      code: "target_member_mismatch",
+      path: "adaptations",
+      message: "対象メンバーの取り分けが生成条件と一致しません",
+    });
+  }
+  if (!sameSet(targetPairs, preferencePairs)) {
+    issues.push({
+      code: "member_preference_mismatch",
+      path: "memberPreferences",
+      message: "対象メンバーの嗜好条件が不足または不整合です",
+    });
+  }
+
+  const dictionary = context.safety.allergenDictionary;
+  const registeredAllergenIds = new Set(
+    context.safety.members.flatMap((member) =>
+      member.allergyStatus === "registered" ? member.allergenIds : [],
+    ),
+  );
+  const dictionaryInvalid =
+    context.safety.dictionaryVersion !== dictionary.version ||
+    dictionary.catalog.some((entry) => entry.catalogVersion !== dictionary.version) ||
+    dictionary.aliases.some((alias) => alias.dictionaryVersion !== dictionary.version) ||
+    [...registeredAllergenIds].some((allergenId) => {
+      const catalogEntry = dictionary.catalog.find((entry) => entry.id === allergenId);
+      return (
+        catalogEntry === undefined ||
+        !dictionary.aliases.some(
+          (alias) =>
+            alias.allergenId === allergenId &&
+            alias.aliasKind === "direct" &&
+            !alias.requiresLabelConfirmation &&
+            normalizeFoodText(alias.normalizedAlias) ===
+              normalizeFoodText(catalogEntry.displayName),
+        )
+      );
+    });
+  const foodRulesInvalid = context.safety.foodSafetyRules.some(
+    (rule) => rule.ruleVersion !== context.safety.foodRuleVersion,
+  );
+  if (dictionaryInvalid || foodRulesInvalid) {
+    issues.push({
+      code: "safety_context_incomplete",
+      path: "safety",
+      message: "最新の安全辞書または食品安全ルールを適用できません",
+    });
+  }
+
+  for (const member of context.safety.members) {
+    if (member.allergyStatus === "unconfirmed") {
+      issues.push({
+        code: "allergy_unconfirmed",
+        path: member.anonymousRef,
+        message: "アレルギー確認が必要です",
+      });
+    }
+    if (member.allergyStatus === "registered" && member.allergenIds.length === 0) {
+      issues.push({
+        code: "allergen_missing",
+        path: member.anonymousRef,
+        message: "登録アレルゲンを選んでください",
+      });
+    }
+    if (member.hasUnmappedCustomAllergy) {
+      issues.push({
+        code: "unmapped_custom_allergy",
+        path: member.anonymousRef,
+        message: "自由登録アレルギーを固定候補へ対応付けできません",
+      });
+    }
+    if (member.unsupportedDietStatus === "unconfirmed") {
+      issues.push({
+        code: "unsupported_diet_unconfirmed",
+        path: member.anonymousRef,
+        message: "対象外条件の確認が必要です",
+      });
+    }
+    if (member.unsupportedDietStatus === "present") {
+      issues.push({
+        code: "unsupported_diet_present",
+        path: member.anonymousRef,
+        message: "対象外条件のあるメンバーは対象にできません",
+      });
+    }
+  }
+
+  issues.push(...collectCommonMenuIssues(generated, context));
+
   const easeAction = {
     small_pieces: "cut_small",
     boneless: "remove_bones",
     soft: "soften",
   } as const;
+  const identityFoodText = generated.dishes
+    .flatMap((dish) => [dish.name, dish.description, ...dish.ingredients.map(({ name }) => name)])
+    .map(normalizeFoodText)
+    .join("\u0000");
   for (const preference of context.memberPreferences) {
     const adaptations = generated.adaptations.filter(
       (adaptation) => adaptation.anonymousMemberRef === preference.anonymousMemberRef,
@@ -412,26 +496,32 @@ export function validateGeneratedMenu(
       confirmedAt: null,
       confirmedBy: null,
     }));
-  const validated = validatedMenuSchema.safeParse({
-    ...generated,
-    labelConfirmations: canonicalLabelConfirmations,
-  });
-  if (!validated.success) {
+  return finalizeValidated(
+    generated,
+    canonicalLabelConfirmations,
+    createCurrentSafetyFingerprint(context.safety),
+  );
+}
+
+export function validateGeneratedMenu(
+  menu: unknown,
+  context: GenerationContext,
+): MenuValidationResult {
+  const parsed = generatedMenuSchema.safeParse(menu);
+  if (!parsed.success) {
     return {
       ok: false,
-      issues: validated.error.issues.map((issue) => ({
+      issues: parsed.error.issues.map((issue) => ({
         code: "invalid_menu_structure",
         path: issue.path.join("."),
         message: issue.message,
       })),
     };
   }
-  return {
-    ok: true,
-    menu: validated.data,
-    labelConfirmations: validated.data.labelConfirmations,
-    safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
-  };
+  if (context.targetMode === "idea") {
+    return validateIdeaMenu(parsed.data, context);
+  }
+  return validateHouseholdMenu(parsed.data, context);
 }
 
 export type { GenerationContext } from "./generation-context.js";

@@ -14,6 +14,10 @@ import {
 } from "../../../shared/contracts/generation.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import {
+  createIdeaSafetyFingerprint,
+  ideaSafetySnapshot,
+} from "../../../shared/safety/idea-fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { getServerEnv } from "./env.js";
 import {
@@ -426,7 +430,10 @@ function createBaseGenerationDeps(
         command,
         requestId,
         generationContext,
-        expectedSafetyFingerprint: createCurrentSafetyFingerprint(generationContext.safety),
+        expectedSafetyFingerprint:
+          generationContext.targetMode === "idea"
+            ? createIdeaSafetyFingerprint()
+            : createCurrentSafetyFingerprint(generationContext.safety),
         startedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
         deadlineAtMonotonicMs,
         regeneration: null,
@@ -592,6 +599,48 @@ function lineageFields(execution: GenerationExecutionContext): {
   };
 }
 
+/**
+ * succeed 入力を mode 判別可能 union として組み立てる。
+ * idea では version 文字列や家族対象をサム値で埋めない。
+ */
+function buildSuccessInput(
+  requestId: string,
+  menu: ValidatedMenu,
+  context: GenerationContext,
+  execution: GenerationExecutionContext,
+) {
+  const lineage = lineageFields(execution);
+  const base = {
+    requestId,
+    menu,
+    preferenceSnapshot: context.preferenceSnapshot,
+    safetyFingerprint:
+      context.targetMode === "idea"
+        ? createIdeaSafetyFingerprint()
+        : createCurrentSafetyFingerprint(context.safety),
+    expiredChecks: [...context.expiredPantryChecks],
+    ...lineage,
+  };
+  if (context.targetMode === "idea") {
+    return {
+      ...base,
+      targetMode: "idea" as const,
+      safetySnapshot: ideaSafetySnapshot,
+      allergenVersion: null,
+      foodRuleVersion: null,
+      targetMembers: [] as const,
+    };
+  }
+  return {
+    ...base,
+    targetMode: "household" as const,
+    safetySnapshot: context.safetySnapshot,
+    allergenVersion: context.allergenVersion,
+    foodRuleVersion: context.foodRuleVersion,
+    targetMembers: [...context.targetMembers],
+  };
+}
+
 class StatusHydrationError extends Error {
   constructor(readonly cause: unknown) {
     super("status_hydration_failed");
@@ -751,18 +800,9 @@ export async function runGeneration(
       const output = composeCandidate(firstResult, execution, () => deps.uuid());
       if (output.kind === "conflict") return await conflict(output.conflicts);
       if (output.kind === "valid") {
-        await deps.repository.succeed({
-          requestId,
-          menu: output.checked.menu,
-          preferenceSnapshot: context.preferenceSnapshot,
-          safetySnapshot: context.safetySnapshot,
-          safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
-          allergenVersion: context.safety.dictionaryVersion,
-          foodRuleVersion: context.safety.foodRuleVersion,
-          targetMembers: [...context.targetMembers],
-          expiredChecks: [...context.expiredPantryChecks],
-          ...lineageFields(execution),
-        });
+        await deps.repository.succeed(
+          buildSuccessInput(requestId, output.checked.menu, context, execution),
+        );
         return await hydrate();
       }
       firstIssues = output.issues;
@@ -815,18 +855,9 @@ export async function runGeneration(
         null,
       );
     }
-    await deps.repository.succeed({
-      requestId,
-      menu: repairedOutput.checked.menu,
-      preferenceSnapshot: context.preferenceSnapshot,
-      safetySnapshot: context.safetySnapshot,
-      safetyFingerprint: createCurrentSafetyFingerprint(context.safety),
-      allergenVersion: context.safety.dictionaryVersion,
-      foodRuleVersion: context.safety.foodRuleVersion,
-      targetMembers: [...context.targetMembers],
-      expiredChecks: [...context.expiredPantryChecks],
-      ...lineageFields(execution),
-    });
+    await deps.repository.succeed(
+      buildSuccessInput(requestId, repairedOutput.checked.menu, context, execution),
+    );
     return await hydrate();
   } catch (error) {
     if (error instanceof TerminalTransitionError) throw error.cause;

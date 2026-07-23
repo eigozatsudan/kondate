@@ -25,7 +25,8 @@ function asNewMenuExecution(
     },
     requestId: "81000000-0000-4000-8000-000000000001",
     generationContext: context,
-    expectedSafetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+    expectedSafetyFingerprint:
+      context.targetMode === "idea" ? "idea" : createCurrentSafetyFingerprint(context.safety),
     startedAtMonotonicMs: 0,
     deadlineAtMonotonicMs: 50_000,
     regeneration: null,

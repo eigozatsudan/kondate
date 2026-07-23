@@ -30,7 +30,11 @@ import {
   type CurrentMenuLabelWarning,
   type RevalidationResult,
 } from "./revalidation-service.js";
-import { loadStoredMenu } from "./stored-menu-loader.js";
+import {
+  loadStoredMenu,
+  loadStoredMenuIdentity,
+  type StoredMenuIdentity,
+} from "./stored-menu-loader.js";
 
 // 設計書 Task3 の listing は相対 import に拡張子を付けていないが、本リポジトリは
 // ESM (package.json の "type": "module") かつ全既存 netlify/functions ファイルが
@@ -59,6 +63,13 @@ export type ActiveShoppingSource = {
 };
 
 export type ShoppingDependencies = {
+  /** mutation key 付き create/reconcile の最初の read-only 再生 */
+  findMutationReplay(input: {
+    idempotencyKey: string;
+    requestHash: string;
+  }): Promise<CreateShoppingListResponse | null>;
+  /** full aggregate より前の identity-only 読出し（家族 nested なし） */
+  loadMenuIdentity(menuId: string): Promise<StoredMenuIdentity>;
   loadMenu(
     menuId: string,
     currentLabelWarnings: readonly CurrentMenuLabelWarning[],
@@ -89,10 +100,6 @@ export type ShoppingDependencies = {
     requestHash: string;
     resolvedDiff: ResolvedShoppingDiff;
   }): Promise<ReconcileShoppingListResponse>;
-  findMutationReplay(input: {
-    idempotencyKey: string;
-    requestHash: string;
-  }): Promise<CreateShoppingListResponse | null>;
   loadActiveListSources(listId: string): Promise<ActiveShoppingSource[]>;
   getListSafetyFingerprint(listId: string): Promise<string | null>;
   replaceCurrentSafetyProjection(input: {
@@ -169,6 +176,11 @@ function mapRpcError(error: { message: string }): never {
       "この献立はすでに今の買い物リストへ追加されています",
     ],
     menu_not_found: [404, "menu_not_found", "献立が見つかりません"],
+    idea_menu_not_supported: [
+      422,
+      "idea_menu_not_supported",
+      "アイデア献立は買い物リストに利用できません",
+    ],
   };
   const match = Object.entries(known).find(([code]) => error.message.includes(code));
   if (match !== undefined) {
@@ -447,6 +459,16 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
   const userClient = createUserScopedSupabase(user.accessToken);
   const admin = getSupabaseAdmin();
   return {
+    async findMutationReplay(input) {
+      const { data, error } = await admin.rpc("get_shopping_mutation_replay", {
+        p_user_id: user.userId,
+        p_idempotency_key: input.idempotencyKey,
+        p_request_hash: input.requestHash,
+      });
+      if (error !== null) mapRpcError(error);
+      return data === null ? null : parseRpcResponse(data, createShoppingListResponseSchema);
+    },
+    loadMenuIdentity: (menuId) => loadStoredMenuIdentity(userClient, user.userId, menuId),
     loadMenu: (menuId, currentLabelWarnings) =>
       loadShoppingMenu(userClient, user.userId, menuId, currentLabelWarnings),
     revalidate: (menuId) =>
@@ -506,15 +528,6 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
       });
       if (error !== null) mapRpcError(error);
       return parseRpcResponse(data, reconcileShoppingListResponseSchema);
-    },
-    async findMutationReplay(input) {
-      const { data, error } = await admin.rpc("get_shopping_mutation_replay", {
-        p_user_id: user.userId,
-        p_idempotency_key: input.idempotencyKey,
-        p_request_hash: input.requestHash,
-      });
-      if (error !== null) mapRpcError(error);
-      return data === null ? null : parseRpcResponse(data, createShoppingListResponseSchema);
     },
     loadActiveListSources: (listId) =>
       loadActiveShoppingListSources(userClient, user.userId, listId),

@@ -127,7 +127,9 @@ function makeNewMenuExecutionContext(
     generationContext,
     expectedSafetyFingerprint:
       overrides.expectedSafetyFingerprint ??
-      createCurrentSafetyFingerprint(generationContext.safety),
+      (generationContext.targetMode === "idea"
+        ? "idea-fingerprint"
+        : createCurrentSafetyFingerprint(generationContext.safety)),
     startedAtMonotonicMs: overrides.startedAtMonotonicMs ?? 0,
     deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 50_000,
     regeneration: null,

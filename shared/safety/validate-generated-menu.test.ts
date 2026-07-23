@@ -8,8 +8,10 @@ import {
   makeCurrentSafetyContext,
   makeGeneratedMenu,
   makeGenerationContext,
+  makeIdeaGenerationContext,
   underSixHardBeanAndNutContext,
 } from "../testing/factories.js";
+import { createIdeaSafetyFingerprint } from "./idea-fingerprint.js";
 
 function expectIssueCodes(
   result: ReturnType<typeof validateGeneratedMenu>,
@@ -955,4 +957,33 @@ it("T10 conservatively excludes mochi for a senior target", () => {
   });
 
   expectIssueCodes(validateGeneratedMenu(menuWithIngredient("餅"), context), ["age_shape_rule"]);
+});
+
+it("accepts idea menus with empty family fields and matching servings", () => {
+  const context = makeIdeaGenerationContext();
+  const menu = makeGeneratedMenu({
+    servings: 2,
+    adaptations: [],
+    labelConfirmations: [],
+  });
+  const result = validateGeneratedMenu(menu, context);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("idea menu should validate");
+  expect(result.safetyFingerprint).toBe(createIdeaSafetyFingerprint());
+  expect(result.menu.adaptations).toEqual([]);
+  expect(result.menu.labelConfirmations).toEqual([]);
+});
+
+it("rejects idea menus with adaptations or servings mismatch", () => {
+  const context = makeIdeaGenerationContext();
+  expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu({ servings: 2 }), context), [
+    "target_member_mismatch",
+  ]);
+  expectIssueCodes(
+    validateGeneratedMenu(
+      makeGeneratedMenu({ servings: 3, adaptations: [], labelConfirmations: [] }),
+      context,
+    ),
+    ["servings_mismatch"],
+  );
 });

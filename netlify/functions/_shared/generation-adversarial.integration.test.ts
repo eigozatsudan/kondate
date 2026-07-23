@@ -211,6 +211,7 @@ function makeAdversarialGenerationContext(
       : [];
 
   return {
+    targetMode: "household",
     submission: {
       mealType: "breakfast",
       mainIngredients: ["鶏肉"],
@@ -243,6 +244,8 @@ function makeAdversarialGenerationContext(
         displayNameSnapshot: "テスト家族",
       },
     ],
+    allergenVersion: safety.dictionaryVersion,
+    foodRuleVersion: safety.foodRuleVersion,
     expiredPantryChecks: [],
     idempotencyKey: "72000000-0000-4000-8000-000000000001",
     preferenceSnapshot: {},

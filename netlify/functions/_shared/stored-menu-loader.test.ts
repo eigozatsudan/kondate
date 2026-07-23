@@ -8,6 +8,7 @@ import { HttpError } from "./http.js";
 import {
   STORED_MENU_SELECT,
   loadStoredMenu,
+  loadStoredMenuIdentity,
   toStoredRevalidationCandidate,
 } from "./stored-menu-loader.js";
 
@@ -402,6 +403,32 @@ describe("loadStoredMenu", () => {
     await expect(loadStoredMenu(client as never, USER_ID, MENU_ID)).rejects.toMatchObject({
       status: 503,
       code: "menu_load_failed",
+    });
+  });
+});
+
+describe("loadStoredMenuIdentity", () => {
+  it("selects only id,user_id,version,target_mode for the owner", async () => {
+    const client = mockClient({
+      data: {
+        id: MENU_ID,
+        user_id: USER_ID,
+        version: 3,
+        target_mode: "idea",
+      },
+      error: null,
+    });
+    const identity = await loadStoredMenuIdentity(client as never, USER_ID, MENU_ID);
+    expect(client.select).toHaveBeenCalledWith("id,user_id,version,target_mode");
+    expect(client.eqCalls).toEqual([
+      ["id", MENU_ID],
+      ["user_id", USER_ID],
+    ]);
+    expect(identity).toEqual({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 3,
+      targetMode: "idea",
     });
   });
 });
