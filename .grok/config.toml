@@ -1,49 +1,50 @@
 [permission]
 rules = [
+  # ========== Git ==========
   { action = "allow", tool = "bash", pattern = "git *" },
   { action = "deny",  tool = "bash", pattern = "git push *" },
+  { action = "deny",  tool = "bash", pattern = "git reset --hard *" },
+  { action = "deny",  tool = "bash", pattern = "git clean *" },
+  { action = "deny",  tool = "bash", pattern = "git checkout -- *" },
+  { action = "deny",  tool = "bash", pattern = "git restore *" },
 
-  # ディレクトリ内の特定シェルスクリプトを許可
-  { action = "allow", tool = "bash", pattern = "./scripts/run-e2e.sh *" },
-  { action = "allow", tool = "bash", pattern = "./scripts/generate-local-secrets.sh *" },
-  { action = "allow", tool = "bash", pattern = "bash ./scripts/run-e2e.sh *" },
-  { action = "allow", tool = "bash", pattern = "bash ./scripts/generate-local-secrets.sh *" },
-
-  # 読み取り系は基本許可（安全）
-  { action = "allow", tool = "read" },
-  { action = "allow", tool = "grep" },
-
-  # よく使う安全なGitサブコマンドを明示（git * でもカバーされるが念のため）
+  # よく使う安全なGitサブコマンド（念のため明示）
   { action = "allow", tool = "bash", pattern = "git status *" },
   { action = "allow", tool = "bash", pattern = "git diff *" },
   { action = "allow", tool = "bash", pattern = "git log *" },
   { action = "allow", tool = "bash", pattern = "git branch *" },
   { action = "allow", tool = "bash", pattern = "git show *" },
 
-  # 危険なGit操作を明示的に拒否
-  { action = "deny",  tool = "bash", pattern = "git reset --hard *" },
-  { action = "deny",  tool = "bash", pattern = "git clean *" },
-  { action = "deny",  tool = "bash", pattern = "git checkout -- *" },
-  { action = "deny",  tool = "bash", pattern = "git restore *" },
+  # ========== 特定シェルスクリプト ==========
+  { action = "allow", tool = "bash", pattern = "./scripts/run-e2e.sh *" },
+  { action = "allow", tool = "bash", pattern = "./scripts/generate-local-secrets.sh *" },
+  { action = "allow", tool = "bash", pattern = "bash ./scripts/run-e2e.sh *" },
+  { action = "allow", tool = "bash", pattern = "bash ./scripts/generate-local-secrets.sh *" },
 
-  # 危険なシェルコマンド全般を拒否
-  { action = "deny",  tool = "bash", pattern = "rm -rf *" },
-  { action = "deny",  tool = "bash", pattern = "rm -r *" },
-  { action = "deny",  tool = "bash", pattern = "chmod *" },
-  { action = "deny",  tool = "bash", pattern = "chown *" },
-  { action = "deny",  tool = "bash", pattern = "sudo *" },
+  # ========== 読み取り系 ==========
+  { action = "allow", tool = "read" },
+  { action = "allow", tool = "grep" },
 
-  # よく使うDockerコマンドだけ許可
+  # ========== Docker Compose ==========
   { action = "allow", tool = "bash", pattern = "docker compose up *" },
   { action = "allow", tool = "bash", pattern = "docker compose down *" },
   { action = "allow", tool = "bash", pattern = "docker compose run *" },
+  { action = "allow", tool = "bash", pattern = "docker compose run --rm *" },
+  { action = "allow", tool = "bash", pattern = "docker compose run --rm --no-deps *" },
   { action = "allow", tool = "bash", pattern = "docker compose ps *" },
   { action = "allow", tool = "bash", pattern = "docker compose logs *" },
   { action = "allow", tool = "bash", pattern = "docker compose build *" },
   { action = "allow", tool = "bash", pattern = "docker compose restart *" },
   { action = "allow", tool = "bash", pattern = "docker compose exec *" },
 
-  # 危険になりやすいDockerコマンドを拒否
-  { action = "deny",  tool = "bash", pattern = "docker compose down -v *" },  # ボリューム削除付き
+  # 危険なDocker操作
+  { action = "deny",  tool = "bash", pattern = "docker compose down -v *" },
   { action = "deny",  tool = "bash", pattern = "docker system prune *" },
+
+  # ========== 危険なシェルコマンド ==========
+  { action = "deny",  tool = "bash", pattern = "rm -rf *" },
+  { action = "deny",  tool = "bash", pattern = "rm -r *" },
+  { action = "deny",  tool = "bash", pattern = "chmod *" },
+  { action = "deny",  tool = "bash", pattern = "chown *" },
+  { action = "deny",  tool = "bash", pattern = "sudo *" },
 ]
