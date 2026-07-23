@@ -118,21 +118,6 @@
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
-  /* fixed bottom-nav の上に主操作を常時見える位置へ置く */
-  position: sticky;
-  bottom: 64px;
-  z-index: 5;
-  padding-top: 8px;
-  background: linear-gradient(to bottom, transparent, var(--bg, #f7f2e9) 24%);
-}
-
-/* audience など WizardFrame 外の step 行も同じ底上げ */
-.page-frame .stack-row {
-  position: sticky;
-  bottom: 64px;
-  z-index: 5;
-  padding-top: 8px;
-  background: linear-gradient(to bottom, transparent, var(--bg, #f7f2e9) 24%);
 }
 
 .wizard-action {
@@ -359,15 +344,7 @@ textarea:focus-visible {
 .page-frame {
   width: min(100% - 32px, 680px);
   margin-inline: auto;
-  /* bottom-nav（min-height 56px）より下に主操作が隠れないよう底パディングを確保する */
-  padding-block: 32px 120px;
-}
-
-/* Playwright/ブラウザの scrollIntoView が fixed bottom-nav 分を見込む */
-.page-frame .primary-button,
-.page-frame .wizard-actions,
-.page-frame .stack-row {
-  scroll-margin-bottom: 88px;
+  padding-block: 32px 96px;
 }
 
 .card {
