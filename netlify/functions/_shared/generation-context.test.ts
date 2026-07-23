@@ -372,6 +372,46 @@ describe("loadGenerationContext", () => {
       loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
     ).rejects.toMatchObject({ code });
   });
+
+  it("does not query household data for idea mode", async () => {
+    // idea は家族表・dislike・現行 safety を一切読まず、固定 null/空 context を返す
+    const ideaSnapshot = {
+      ...snapshot,
+      target_mode: "idea" as const,
+      target_member_ids: [] as string[],
+      servings: 3,
+    };
+    const { from } = arrangeLoader({ snapshotData: [ideaSnapshot] });
+
+    const context = await loadGenerationContext(
+      { userId, accessToken: "access-token" },
+      requestId,
+      request,
+      now,
+    );
+
+    expect(from).not.toHaveBeenCalledWith("household_members");
+    expect(from).not.toHaveBeenCalledWith("member_dislikes");
+    expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
+    expect(context).toMatchObject({
+      targetMode: "idea",
+      safety: null,
+      memberPreferences: [],
+      targetMembers: [],
+      allergenVersion: null,
+      foodRuleVersion: null,
+    });
+    expect(context.safetySnapshot).toEqual({
+      assurance: "none",
+      members: [],
+      mode: "idea",
+    });
+    expect(context.submission).toMatchObject({
+      targetMode: "idea",
+      targetMemberIds: [],
+      servings: 3,
+    });
+  });
 });
 
 describe("validateTransientChecks", () => {

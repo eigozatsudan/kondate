@@ -3140,5 +3140,315 @@ select matches(
   'idea_safety_fingerprint is 64-char lowercase hex'
 );
 
+-- Task 5: idea finalize 成功不変条件と拒否経路（家族子行・version・quota 汚染なし）
+-- household の canonical finalizer 回帰は C4 で既に固定済み。
+do $idea_finalize$
+declare
+  -- 他 fixture の a5 等と衝突しない専用 UUID 帯
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000f5';
+  v_draft public.generation_drafts;
+  v_request_id uuid;
+  v_fingerprint text := private.idea_safety_fingerprint();
+  v_idea_snapshot jsonb := '{"assurance":"none","members":[],"mode":"idea"}'::jsonb;
+  v_result jsonb;
+  v_menu_id uuid;
+  v_dish_id uuid;
+  v_ingredient_id uuid;
+  v_step_id uuid;
+  v_timeline_id uuid;
+  v_menus_before bigint;
+  v_success_before integer;
+  v_menu jsonb;
+  v_idempotency_key uuid;
+  v_suffix text;
+  v_expected_msg text;
+  v_case text;
+  v_expected_revision bigint := 0;
+begin
+  insert into auth.users(
+    id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at
+  ) values(
+    v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','idea-finalizer@example.invalid','','{}','{}',now(),now()
+  );
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+
+  -- idea draft: 人数固定・対象家族なし
+  v_draft := public.save_generation_draft(
+    0::bigint,'dinner',array['idea-finalize'],'japanese',
+    'idea',array[]::uuid[],3::smallint,30::smallint,'standard',
+    array[]::text[],'','[]'::jsonb
+  );
+  perform public.reserve_ai_generation(
+    v_owner,'30000000-0000-4000-8000-0000000000f5',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v2',repeat('a',64),
+    jsonb_build_object(
+      'kind','new_menu',
+      'target_mode','idea',
+      'servings',3,
+      'target_member_ids','[]'::jsonb,
+      'source_menu_version',null
+    ),
+    5,45,180,'2026-07-11 02:00:00+00'
+  );
+  select id into strict v_request_id
+  from private.ai_generation_requests
+  where user_id = v_owner
+    and idempotency_key = '30000000-0000-4000-8000-0000000000f5';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 02:00:01+00');
+
+  v_menu_id := '60000000-0000-4000-8000-0000000000f5';
+  v_dish_id := '61000000-0000-4000-8000-0000000000f5';
+  v_ingredient_id := '62000000-0000-4000-8000-0000000000f5';
+  v_step_id := '63000000-0000-4000-8000-0000000000f5';
+  v_timeline_id := '64000000-0000-4000-8000-0000000000f5';
+
+  -- idea 成功用メニュー: 家族 adaptations / labelConfirmations は空配列
+  v_menu := jsonb_build_object(
+    'schemaVersion','2026-07-11.v1',
+    'menuId',v_menu_id,
+    'mealType','dinner',
+    'cuisineGenre','japanese',
+    'servings',3,
+    'totalElapsedMinutes',15,
+    'safetyTags','[]'::jsonb,
+    'dishes',jsonb_build_array(jsonb_build_object(
+      'id',v_dish_id,'role','main','position',1,'name','野菜炒め',
+      'description','シンプルな炒め物','cookingTimeMinutes',15,
+      'ingredients',jsonb_build_array(jsonb_build_object(
+        'id',v_ingredient_id,'position',1,'name','キャベツ',
+        'quantityValue',200,'quantityText','200g','unit','g',
+        'storeSection','produce','pantrySelectionId',null,
+        'labelConfirmationRequired',false)),
+      'steps',jsonb_build_array(jsonb_build_object(
+        'id',v_step_id,'position',1,'instruction','野菜を炒める')))),
+    'timeline',jsonb_build_array(jsonb_build_object(
+      'id',v_timeline_id,'position',1,'startMinute',0,'durationMinutes',15,
+      'instruction','主菜を作る','dishId',v_dish_id,'recipeStepId',v_step_id)),
+    'adaptations','[]'::jsonb,
+    'pantryUsage','[]'::jsonb,
+    'labelConfirmations','[]'::jsonb
+  );
+
+  v_result := public.finalize_ai_generation_success(
+    v_request_id,
+    v_menu,
+    jsonb_build_object('submission',jsonb_build_object('targetMode','idea','servings',3)),
+    v_idea_snapshot,
+    v_fingerprint,
+    null, -- allergen version は idea では null
+    null, -- food rule version も null
+    '[]'::jsonb,
+    '[]'::jsonb,
+    null,null,null,
+    '2026-07-11 02:00:02+00'
+  );
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'idea finalize did not succeed: %', v_result;
+  end if;
+
+  if (select jsonb_build_object(
+      'targetMode',target_mode,
+      'allergenVersion',allergen_dictionary_version,
+      'foodRuleVersion',food_safety_rule_version,
+      'fingerprint',safety_fingerprint,
+      'servings',servings,
+      'snapshot',safety_snapshot
+    )
+    from public.menus where id = v_menu_id)
+    is distinct from jsonb_build_object(
+      'targetMode','idea',
+      'allergenVersion',null,
+      'foodRuleVersion',null,
+      'fingerprint',v_fingerprint,
+      'servings',3,
+      'snapshot',v_idea_snapshot
+    )
+  then
+    raise exception 'idea finalize menu columns violated mode/null-version/fingerprint/servings invariants';
+  end if;
+
+  if (select count(*) from public.menu_target_members where menu_id = v_menu_id) <> 0
+     or (select count(*) from public.menu_member_adaptations where menu_id = v_menu_id) <> 0
+     or (select count(*) from public.menu_safety_actions where menu_id = v_menu_id) <> 0
+     or (select count(*) from public.menu_label_confirmations where menu_id = v_menu_id) <> 0
+  then
+    raise exception 'idea finalize created family child rows';
+  end if;
+
+  if (select status from private.ai_generation_requests where id = v_request_id)
+     is distinct from 'succeeded' then
+    raise exception 'idea finalize did not mark request succeeded';
+  end if;
+
+  -- 成功後 draft は soft-delete 済み。拒否経路は expected_revision=0 から再開する。
+  v_expected_revision := 0;
+
+  -- 拒否経路ヘルパ: idea processing を1件用意し、指定引数で拒否と非汚染を固定する
+  -- UUID 帯は e1〜e6（他 fixture の c*/d* と衝突しない）
+  foreach v_suffix in array array['e1','e2','e3','e4','e5','e6']
+  loop
+    v_case := case v_suffix
+      when 'e1' then 'non_empty_targets'
+      when 'e2' then 'non_null_versions'
+      when 'e3' then 'servings_mismatch'
+      when 'e4' then 'fingerprint_mismatch'
+      when 'e5' then 'snapshot_mismatch'
+      else 'family_rows'
+    end;
+    v_expected_msg := case v_suffix
+      when 'e1' then 'idea_target_members_must_be_empty'
+      when 'e2' then 'idea_safety_versions_must_be_null'
+      when 'e3' then 'idea_servings_mismatch'
+      when 'e4' then 'idea_safety_fingerprint_mismatch'
+      when 'e5' then 'idea_safety_snapshot_mismatch'
+      else 'idea_family_rows_forbidden'
+    end;
+    v_idempotency_key := ('a3000000-0000-4000-8000-0000000000' || v_suffix)::uuid;
+
+    v_draft := public.save_generation_draft(
+      v_expected_revision,'dinner',array['idea-reject-' || v_case],'japanese',
+      'idea',array[]::uuid[],3::smallint,30::smallint,'standard',
+      array[]::text[],'','[]'::jsonb
+    );
+    v_expected_revision := v_draft.revision;
+
+    perform public.reserve_ai_generation(
+      v_owner,v_idempotency_key,
+      'new_menu',v_draft.id,v_draft.revision,null,null,null,
+      'generation-command.v2',repeat('b',64),
+      jsonb_build_object(
+        'kind','new_menu',
+        'target_mode','idea',
+        'servings',3,
+        'target_member_ids','[]'::jsonb,
+        'source_menu_version',null
+      ),
+      5,45,180,'2026-07-11 02:10:00+00'
+    );
+    select id into strict v_request_id
+    from private.ai_generation_requests
+    where user_id = v_owner and idempotency_key = v_idempotency_key;
+    if (select status from private.ai_generation_requests where id = v_request_id)
+       is distinct from 'processing' then
+      raise exception 'idea reject setup % did not leave processing request', v_case;
+    end if;
+    -- 拒否経路は idea 不変条件だけを見るため mark_ai_global_sent を呼ばない。
+    -- 同一 600s 窓で複数回 mark すると user_short_window_limit で request が failed になり、
+    -- finalize が early-return して拒否例外を観測できなくなる。
+
+    select count(*) into v_menus_before from public.menus where user_id = v_owner;
+    select success_count into v_success_before
+    from private.ai_user_daily_usage
+    where user_id = v_owner and usage_day = date '2026-07-11';
+
+    v_menu_id := ('a7000000-0000-4000-8000-0000000000' || v_suffix)::uuid;
+    v_dish_id := ('a7100000-0000-4000-8000-0000000000' || v_suffix)::uuid;
+    v_ingredient_id := ('a7200000-0000-4000-8000-0000000000' || v_suffix)::uuid;
+    v_step_id := ('a7300000-0000-4000-8000-0000000000' || v_suffix)::uuid;
+    v_timeline_id := ('a7400000-0000-4000-8000-0000000000' || v_suffix)::uuid;
+
+    v_menu := jsonb_build_object(
+      'schemaVersion','2026-07-11.v1',
+      'menuId',v_menu_id,
+      'mealType','dinner',
+      'cuisineGenre','japanese',
+      'servings', case when v_suffix = 'e3' then 4 else 3 end,
+      'totalElapsedMinutes',15,
+      'safetyTags','[]'::jsonb,
+      'dishes',jsonb_build_array(jsonb_build_object(
+        'id',v_dish_id,'role','main','position',1,'name','拒否検証',
+        'description','拒否用','cookingTimeMinutes',15,
+        'ingredients',jsonb_build_array(jsonb_build_object(
+          'id',v_ingredient_id,'position',1,'name','にんじん',
+          'quantityValue',100,'quantityText','100g','unit','g',
+          'storeSection','produce','pantrySelectionId',null,
+          'labelConfirmationRequired',false)),
+        'steps',jsonb_build_array(jsonb_build_object(
+          'id',v_step_id,'position',1,'instruction','切る')))),
+      'timeline',jsonb_build_array(jsonb_build_object(
+        'id',v_timeline_id,'position',1,'startMinute',0,'durationMinutes',15,
+        'instruction','作る','dishId',v_dish_id,'recipeStepId',v_step_id)),
+      'adaptations', case
+        when v_suffix = 'e6' then jsonb_build_array(jsonb_build_object(
+          'id',('a7500000-0000-4000-8000-0000000000' || v_suffix)::uuid,
+          'dishId',v_dish_id,'anonymousMemberRef','member_1','portionText','通常量',
+          'branchBeforeRecipeStepId',v_step_id,
+          'additionalCutting',null,'additionalHeating',null,'additionalSeasoning',null,
+          'servingCheck','確認','safetyTags','[]'::jsonb,'safetyActions','[]'::jsonb))
+        else '[]'::jsonb
+      end,
+      'pantryUsage','[]'::jsonb,
+      'labelConfirmations','[]'::jsonb
+    );
+
+    begin
+      perform public.finalize_ai_generation_success(
+        v_request_id,
+        v_menu,
+        jsonb_build_object('submission',jsonb_build_object('targetMode','idea','servings',3)),
+        case
+          when v_suffix = 'e5'
+            then jsonb_build_object('assurance','none','members','[]'::jsonb,'mode','household')
+          else v_idea_snapshot
+        end,
+        case
+          when v_suffix = 'e4' then repeat('0', 64)
+          else v_fingerprint
+        end,
+        case when v_suffix = 'e2' then 'dict-v1' else null end,
+        case when v_suffix = 'e2' then 'rule-v1' else null end,
+        case
+          when v_suffix = 'e1' then jsonb_build_array(jsonb_build_object(
+            'householdMemberId','10000000-0000-4000-8000-000000000001',
+            'anonymousRef','member_1',
+            'displayNameSnapshot','漏洩防止'))
+          else '[]'::jsonb
+        end,
+        '[]'::jsonb,
+        null,null,null,
+        '2026-07-11 02:10:02+00'
+      );
+      raise exception 'idea reject case % unexpectedly succeeded (status=%)',
+        v_case,
+        (select status from private.ai_generation_requests where id = v_request_id);
+    exception
+      when sqlstate '22023' then
+        if sqlerrm is distinct from v_expected_msg then
+          raise exception 'idea reject case % expected % got %',
+            v_case, v_expected_msg, sqlerrm;
+        end if;
+    end;
+
+    -- 拒否後: 端末メニュー未作成・quota success 非増加・request は processing のまま
+    if (select count(*) from public.menus where user_id = v_owner) <> v_menus_before then
+      raise exception 'idea reject case % polluted menus', v_case;
+    end if;
+    if (select success_count from private.ai_user_daily_usage
+          where user_id = v_owner and usage_day = date '2026-07-11')
+       is distinct from v_success_before then
+      raise exception 'idea reject case % polluted success quota', v_case;
+    end if;
+    if (select status from private.ai_generation_requests where id = v_request_id)
+       is distinct from 'processing' then
+      raise exception 'idea reject case % changed request status', v_case;
+    end if;
+    if exists (select 1 from public.menus where id = v_menu_id) then
+      raise exception 'idea reject case % created menu row', v_case;
+    end if;
+
+    -- 次ケースのため reserved quota を解放（success は増やさない）
+    perform public.finalize_ai_generation_failure(
+      v_request_id,'invalid_request',null,'2026-07-11 02:10:03+00'
+    );
+  end loop;
+end
+$idea_finalize$;
+
+select pass('idea finalize success stores null versions, fixed fingerprint, empty family children');
+select pass('idea finalize rejects non-empty targets, non-null versions, servings/fingerprint/snapshot/family rows without terminal menu or quota pollution');
+
 select * from finish();
 rollback;
