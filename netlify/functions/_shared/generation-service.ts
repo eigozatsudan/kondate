@@ -740,9 +740,16 @@ export async function runGeneration(
       excludedModelIds: readonly string[] = [],
       messages: readonly OpenRouterMessage[] = originalMessages,
     ): Promise<OpenRouterGenerationResult | "terminal"> => {
+      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 20s+2s を再確認する。
+      // canRepair/外側ゲート通過後に時間が進んでも、部分 timeout で markSent しない。
+      if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
+        await deps.repository.failBeforeSend(requestId, "generation_timeout");
+        return "terminal";
+      }
       const attemptTimeout = timeoutForAttempt();
       if (attemptTimeout <= 0) {
-        throw new OpenRouterCallError("generation_timeout");
+        await deps.repository.failBeforeSend(requestId, "generation_timeout");
+        return "terminal";
       }
       const sent = await deps.repository.markSent(requestId);
       // 短期窓拒否は markSent 内で failed 終端化済み。再 fail せず status を読む。

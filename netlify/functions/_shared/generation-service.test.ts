@@ -1004,6 +1004,45 @@ describe("runGeneration", () => {
       expect(repository.reserveRepair).not.toHaveBeenCalled();
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
     });
+
+    it("rechecks REQUIRED_SEND_BUDGET_MS before repair markSent", async () => {
+      // 1 回目送信後に validate が失敗 → canRepair/reserveRepair は通るが、
+      // repair の markSent 直前で残り予算が 22s 未満になったら HTTP を送らない。
+      const repository = makeRepository();
+      vi.mocked(validateGeneratedMenu).mockReturnValueOnce({
+        ok: false,
+        issues: [{ code: "time_limit_exceeded", path: "raw", message: "budget-slip" }],
+      });
+      let nowMs = 0;
+      repository.reserveRepair.mockImplementation(() => {
+        // reserve 成功直後に共有予算が削られ、2 回目 markSent 前の再検査で落ちる。
+        nowMs = 50_000 - (REQUIRED_SEND_BUDGET_MS - 1);
+        return Promise.resolve({ reserved: true, retry_at: null });
+      });
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>().mockResolvedValue({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => nowMs,
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
+      expect(repository.markSent).toHaveBeenCalledTimes(1);
+      expect(repository.failBeforeSend).toHaveBeenCalledWith(requestId, "generation_timeout");
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("terminalizes unexpected post-reservation errors once", async () => {
