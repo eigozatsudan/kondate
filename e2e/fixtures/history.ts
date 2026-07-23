@@ -124,19 +124,23 @@ export async function readRemainingQuota(page: Page): Promise<number> {
   return body.data.success.remaining;
 }
 
+type RegenerationReason = "simpler" | "different_ingredient" | "child_friendly" | "different_flavor";
+
+const regenerationReasonLabel: Record<RegenerationReason, string> = {
+  simpler: "もっと簡単に",
+  different_ingredient: "別の食材で",
+  child_friendly: "子どもが食べやすく",
+  different_flavor: "別の味に",
+};
+
 /**
- * 結果画面（/menus または /history）から献立全体の再生成を開始する。
- * クリック後、生成完了または失敗画面への遷移を待つ。
- * household は家族再検証の完了を待ち、idea は notice 表示を待つ。
+ * 結果画面へ移動し、mode 別の準備表示（家族再検証 or idea notice）を待つ。
  */
-export async function requestWholeRegeneration(
+async function openMenuResultForRegeneration(
   page: Page,
   menuId: string,
-  reason: "simpler" | "different_ingredient" | "child_friendly" | "different_flavor",
-  options: { targetMode?: "household" | "idea" } = {},
+  targetMode: "household" | "idea",
 ): Promise<void> {
-  const targetMode = options.targetMode ?? "household";
-  // 結果画面の再生成コントロールを使う（履歴詳細と同等の UI）
   await page.goto(`/menus/${menuId}`);
   if (targetMode === "household") {
     await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
@@ -147,21 +151,22 @@ export async function requestWholeRegeneration(
       timeout: 30_000,
     });
   }
-  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled({
-    timeout: 15_000,
-  });
-  await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
-  // idea では child_friendly 自体が DOM に無い
+}
+
+/**
+ * 再生成シートで理由を選び、source 以外の /generation または /menus へ遷移するまで待つ。
+ * idea では child_friendly が DOM に無いことも同時に検証する。
+ */
+async function submitRegenerationSheet(
+  page: Page,
+  menuId: string,
+  reason: RegenerationReason,
+  targetMode: "household" | "idea",
+): Promise<void> {
   if (targetMode === "idea") {
     await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
   }
-  const reasonLabel = {
-    simpler: "もっと簡単に",
-    different_ingredient: "別の食材で",
-    child_friendly: "子どもが食べやすく",
-    different_flavor: "別の味に",
-  }[reason];
-  await page.getByRole("radio", { name: reasonLabel }).check();
+  await page.getByRole("radio", { name: regenerationReasonLabel[reason] }).check();
   // すでに /menus/:source にいるため waitForURL(/menus/) は即成立してしまう。
   // source 以外の path（/generation または別 menuId）へ移るまで待つ。
   await page.getByRole("button", { name: "別案を作る" }).click();
@@ -175,6 +180,46 @@ export async function requestWholeRegeneration(
     menuId,
     { timeout: 90_000 },
   );
+}
+
+/**
+ * 結果画面（/menus または /history）から献立全体の再生成を開始する。
+ * クリック後、生成完了または失敗画面への遷移を待つ。
+ * household は家族再検証の完了を待ち、idea は notice 表示を待つ。
+ */
+export async function requestWholeRegeneration(
+  page: Page,
+  menuId: string,
+  reason: RegenerationReason,
+  options: { targetMode?: "household" | "idea" } = {},
+): Promise<void> {
+  const targetMode = options.targetMode ?? "household";
+  // 結果画面の再生成コントロールを使う（履歴詳細と同等の UI）
+  await openMenuResultForRegeneration(page, menuId, targetMode);
+  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled({
+    timeout: 15_000,
+  });
+  await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
+  await submitRegenerationSheet(page, menuId, reason, targetMode);
+}
+
+/**
+ * 結果画面から一品再生成を開始する。既定で先頭料理（主菜）を対象にする。
+ * idea は notice 表示後に sheet を開き、child_friendly 非表示を確認する。
+ */
+export async function requestDishRegeneration(
+  page: Page,
+  menuId: string,
+  reason: RegenerationReason,
+  options: { targetMode?: "household" | "idea" } = {},
+): Promise<void> {
+  const targetMode = options.targetMode ?? "household";
+  await openMenuResultForRegeneration(page, menuId, targetMode);
+  await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled({
+    timeout: 15_000,
+  });
+  await page.getByRole("button", { name: "この一品だけ別案にする" }).click();
+  await submitRegenerationSheet(page, menuId, reason, targetMode);
 }
 
 /**

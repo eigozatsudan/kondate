@@ -303,6 +303,10 @@ const dishReplacement = {
     },
   ],
 };
+// idea 一品再生成用: 家族 member_ref を持たない（targetMembers 空で materialize する）
+const ideaDishReplacement1 = structuredClone(dishReplacement);
+ideaDishReplacement1.adaptations = [];
+ideaDishReplacement1.labelConfirmations = [];
 
 export const scenarios = recursivelyFreeze({
   success,
@@ -310,6 +314,7 @@ export const scenarios = recursivelyFreeze({
   "idea-servings-2": ideaServings2,
   "idea-servings-20": ideaServings20,
   "idea-alternate-menu-1": ideaAlternateMenu1,
+  "idea-dish-replacement-1": ideaDishReplacement1,
   "duplicate-menu": duplicateMenu,
   "alternate-menu": alternateMenu,
   "dish-replacement": dishReplacement,

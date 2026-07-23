@@ -1,6 +1,7 @@
 import {
   expect,
   readRemainingQuota,
+  requestDishRegeneration,
   requestWholeRegeneration,
   seedGeneratedIdeaMenu,
   seedGeneratedMenu,
@@ -11,7 +12,8 @@ import { localRestHeaders } from "../fixtures/local-supabase";
 import { z } from "zod";
 
 // 認証・生成・再生成・再検証を直列で含むため既定 30s では足りない
-test.setTimeout(180_000);
+// idea 経路は dish + whole の 2 回再生成を含む
+test.setTimeout(240_000);
 
 test("regenerates whole menu, groups versions, and marks the chosen menu", async ({
   historyPage: page,
@@ -71,7 +73,21 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await expect(page.getByText("家族条件を使用していません")).toBeVisible();
   await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "冷蔵庫へ反映" })).toBeVisible();
   await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
+
+  // 冷蔵庫へ反映: tip を開き post-cook 操作導線を露出する（used pantry が無い fixture では
+  // 「調理後の冷蔵庫」section は出ないが、idea でも tip 自体は許可操作として動く）
+  await page.getByRole("button", { name: "冷蔵庫へ反映" }).click();
+  await expect(
+    page.getByText("調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。"),
+  ).toBeVisible();
+
+  // 一品再生成シート: idea では child_friendly が無い
+  await page.getByRole("button", { name: "この一品だけ別案にする" }).click();
+  await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
+  await page.getByRole("button", { name: "やめる" }).click();
 
   // お気に入り
   await page.getByRole("button", { name: "お気に入りに追加" }).click();
@@ -93,7 +109,32 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
   await page.getByRole("button", { name: "やめる" }).click();
 
-  // whole 再生成後も idea を維持（servings=1 の idea 別案 fixture）
+  // dish 再生成後も idea を維持（家族 member 無しの idea 一品 fixture）
+  await setMockScenario(page, "idea-dish-replacement-1");
+  await requestDishRegeneration(page, sourceMenuId, "simpler", { targetMode: "idea" });
+  await expect(page).toHaveURL(new RegExp(`/menus/(?!${sourceMenuId})[0-9a-f-]{36}`, "iu"), {
+    timeout: 60_000,
+  });
+  await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
+  // 置換後の主菜名が表示される（dish-replacement 系 fixture）。tab と h2 の両方に出るため heading で一意化。
+  await expect(page.getByRole("heading", { name: "鶏肉のさっぱり煮" })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const dishMenuId = /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1];
+  if (dishMenuId === undefined) throw new Error("dish regenerated menu id missing");
+  const headers = await localRestHeaders(page);
+  const dishMenuLookup = await page.request.get(
+    `http://127.0.0.1:8000/rest/v1/menus?id=eq.${dishMenuId}&select=target_mode`,
+    { headers },
+  );
+  const dishMenuRows = z
+    .array(z.object({ target_mode: z.string() }))
+    .parse(await dishMenuLookup.json());
+  expect(dishMenuRows[0]?.target_mode).toBe("idea");
+
+  // whole 再生成後も idea を維持（servings=1 の idea 別案 fixture）。元 source から実行する。
   await setMockScenario(page, "idea-alternate-menu-1");
   await requestWholeRegeneration(page, sourceMenuId, "simpler", { targetMode: "idea" });
   await expect(page).toHaveURL(new RegExp(`/menus/(?!${sourceMenuId})[0-9a-f-]{36}`, "iu"), {
@@ -104,7 +145,6 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
 
   const newMenuId = /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1];
   if (newMenuId === undefined) throw new Error("regenerated menu id missing");
-  const headers = await localRestHeaders(page);
   const menuLookup = await page.request.get(
     `http://127.0.0.1:8000/rest/v1/menus?id=eq.${newMenuId}&select=target_mode`,
     { headers },
@@ -112,7 +152,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   const menuRows = z.array(z.object({ target_mode: z.string() })).parse(await menuLookup.json());
   expect(menuRows[0]?.target_mode).toBe("idea");
 
-  // result / history detail / 再生成後の各地点で shopping・family revalidate は 0
+  // result / history detail / dish・whole 再生成後の各地点で shopping・family revalidate は 0
   expect(shoppingRequests).toHaveLength(0);
   expect(revalidationRequests).toHaveLength(0);
   const shoppingSessionKeys = await page.evaluate(() =>
