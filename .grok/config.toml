@@ -32,4 +32,18 @@ rules = [
   { action = "deny",  tool = "bash", pattern = "chmod *" },
   { action = "deny",  tool = "bash", pattern = "chown *" },
   { action = "deny",  tool = "bash", pattern = "sudo *" },
+
+  # よく使うDockerコマンドだけ許可
+  { action = "allow", tool = "bash", pattern = "docker compose up *" },
+  { action = "allow", tool = "bash", pattern = "docker compose down *" },
+  { action = "allow", tool = "bash", pattern = "docker compose run *" },
+  { action = "allow", tool = "bash", pattern = "docker compose ps *" },
+  { action = "allow", tool = "bash", pattern = "docker compose logs *" },
+  { action = "allow", tool = "bash", pattern = "docker compose build *" },
+  { action = "allow", tool = "bash", pattern = "docker compose restart *" },
+  { action = "allow", tool = "bash", pattern = "docker compose exec *" },
+
+  # 危険になりやすいDockerコマンドを拒否
+  { action = "deny",  tool = "bash", pattern = "docker compose down -v *" },  # ボリューム削除付き
+  { action = "deny",  tool = "bash", pattern = "docker system prune *" },
 ]
