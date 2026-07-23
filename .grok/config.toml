@@ -8,4 +8,28 @@ rules = [
   { action = "allow", tool = "bash", pattern = "./scripts/generate-local-secrets.sh *" },
   { action = "allow", tool = "bash", pattern = "bash ./scripts/run-e2e.sh *" },
   { action = "allow", tool = "bash", pattern = "bash ./scripts/generate-local-secrets.sh *" },
+
+  # 読み取り系は基本許可（安全）
+  { action = "allow", tool = "read" },
+  { action = "allow", tool = "grep" },
+
+  # よく使う安全なGitサブコマンドを明示（git * でもカバーされるが念のため）
+  { action = "allow", tool = "bash", pattern = "git status *" },
+  { action = "allow", tool = "bash", pattern = "git diff *" },
+  { action = "allow", tool = "bash", pattern = "git log *" },
+  { action = "allow", tool = "bash", pattern = "git branch *" },
+  { action = "allow", tool = "bash", pattern = "git show *" },
+
+  # 危険なGit操作を明示的に拒否
+  { action = "deny",  tool = "bash", pattern = "git reset --hard *" },
+  { action = "deny",  tool = "bash", pattern = "git clean *" },
+  { action = "deny",  tool = "bash", pattern = "git checkout -- *" },
+  { action = "deny",  tool = "bash", pattern = "git restore *" },
+
+  # 危険なシェルコマンド全般を拒否
+  { action = "deny",  tool = "bash", pattern = "rm -rf *" },
+  { action = "deny",  tool = "bash", pattern = "rm -r *" },
+  { action = "deny",  tool = "bash", pattern = "chmod *" },
+  { action = "deny",  tool = "bash", pattern = "chown *" },
+  { action = "deny",  tool = "bash", pattern = "sudo *" },
 ]
