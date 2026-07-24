@@ -53,7 +53,9 @@ describe("wizard UI", () => {
     expect(progressbar).not.toHaveAttribute("aria-labelledby");
     expect(progressbar).toHaveAttribute("aria-valuenow", "2");
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemin", "0");
-    expect(screen.getByRole("progressbar").firstElementChild).toHaveStyle({ width: "40%" });
+    // CSP style-src 'self' のため style 属性は使わず、SVG rect の width で塗り幅を表す
+    expect(progressbar.querySelector("rect.progress-value-rect")).toHaveAttribute("width", "40");
+    expect(progressbar.querySelector("[style]")).toBeNull();
   });
 
   it("aligns the visual and accessible range for a single step", () => {
@@ -62,7 +64,7 @@ describe("wizard UI", () => {
     expect(progressbar).toHaveAttribute("aria-valuemin", "0");
     expect(progressbar).toHaveAttribute("aria-valuemax", "1");
     expect(progressbar).toHaveAttribute("aria-valuenow", "1");
-    expect(progressbar.firstElementChild).toHaveStyle({ width: "100%" });
+    expect(progressbar.querySelector("rect.progress-value-rect")).toHaveAttribute("width", "100");
   });
 
   it("does not require progress label ids across multiple instances", () => {
@@ -85,7 +87,14 @@ describe("wizard UI", () => {
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
     rerender(<ProgressIndicator currentStep={9} totalSteps={5} />);
     expect(screen.getByText("質問 5 / 5")).toBeVisible();
-    expect(screen.getByRole("progressbar").firstElementChild).toHaveStyle({ width: "100%" });
+    expect(
+      screen.getByRole("progressbar").querySelector("rect.progress-value-rect"),
+    ).toHaveAttribute("width", "100");
+  });
+
+  it("renders without JSX style attributes under strict CSP", () => {
+    const { container } = render(<ProgressIndicator currentStep={2} totalSteps={5} />);
+    expect(container.querySelector("[style]")).toBeNull();
   });
 
   it("uses alert only for errors", () => {

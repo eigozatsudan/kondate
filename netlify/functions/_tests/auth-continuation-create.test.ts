@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { config, createHandler } from "./auth-continuation-create.js";
+import { config, createHandler } from "../auth-continuation-create.js";
 
 describe("auth continuation create", () => {
   it("uses the exact unauthenticated route and never returns a secret", async () => {

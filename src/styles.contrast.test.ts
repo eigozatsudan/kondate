@@ -279,6 +279,7 @@ const allowedProtectedSelectors = new Set([
   ".progress-indicator",
   ".progress-track",
   ".progress-value",
+  ".progress-value-rect",
   ".inline-notice",
   ".inline-notice-error",
   ".inline-notice-error .inline-notice-title, .inline-notice-error .inline-notice-body",
@@ -407,9 +408,13 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     background: "var(--border)",
   },
   ".progress-value": {
+    display: "block",
+    width: "100%",
     height: "100%",
     "border-radius": "inherit",
-    background: "var(--primary-strong)",
+  },
+  ".progress-value-rect": {
+    fill: "var(--primary-strong)",
   },
   ".inline-notice": {
     border: "1px solid var(--border)",
@@ -1291,7 +1296,8 @@ describe("guided planner theme", () => {
       { color: "var(--danger)" },
     );
     expectFinalDeclarations(".progress-track", { background: "var(--border)" });
-    expectFinalDeclarations(".progress-value", { background: "var(--primary-strong)" });
+    // 塗り色は SVG rect の fill（style-src 'self' 下で width を inline にしない）
+    expectFinalDeclarations(".progress-value-rect", { fill: "var(--primary-strong)" });
     expectFinalDeclarations(
       ".inline-notice-error .inline-notice-title, .inline-notice-error .inline-notice-body",
       { color: "var(--danger)" },

@@ -1,21 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GenerationStatusData } from "../../shared/contracts/generation.js";
-import { requireUser } from "./_shared/auth.js";
+import type { GenerationStatusData } from "../../../shared/contracts/generation.js";
+import { requireUser } from "../_shared/auth.js";
 import {
   createGenerationDeps,
   runGeneration,
   type GenerationDependencies,
-} from "./_shared/generation-service.js";
-import { HttpError } from "./_shared/http.js";
-import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
-import handler from "./generate-dish.js";
+} from "../_shared/generation-service.js";
+import { HttpError } from "../_shared/http.js";
+import { readLocalMockScenario } from "../_shared/local-mock-scenario.js";
+import handler from "../generate-dish.js";
 
-vi.mock("./_shared/auth.js", () => ({ requireUser: vi.fn() }));
-vi.mock("./_shared/local-mock-scenario.js", () => ({
+vi.mock("../_shared/auth.js", () => ({ requireUser: vi.fn() }));
+vi.mock("../_shared/local-mock-scenario.js", () => ({
   readLocalMockScenario: vi.fn(() => undefined),
 }));
-vi.mock("./_shared/generation-service.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./_shared/generation-service.js")>();
+vi.mock("../_shared/generation-service.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../_shared/generation-service.js")>();
   return {
     ...original,
     createGenerationDeps: vi.fn(),

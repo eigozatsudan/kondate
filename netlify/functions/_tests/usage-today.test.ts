@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const requireUserMock = vi.hoisted(() => vi.fn());
 const rpcMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./_shared/auth.js", () => ({
+vi.mock("../_shared/auth.js", () => ({
   requireUser: requireUserMock,
 }));
-vi.mock("./_shared/supabase-admin.js", () => ({
+vi.mock("../_shared/supabase-admin.js", () => ({
   getSupabaseAdmin: () => ({ rpc: rpcMock }),
 }));
 
-import usageToday from "./usage-today.js";
+import usageToday from "../usage-today.js";
 
 describe("usage-today", () => {
   beforeEach(() => {

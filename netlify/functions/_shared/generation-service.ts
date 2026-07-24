@@ -40,6 +40,7 @@ import {
   type QuotaRequestRecord,
 } from "./generation-repository.js";
 import { HttpError, json } from "./http.js";
+import { logGenerationEvent } from "./logger.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import {
   OpenRouterCallError,
@@ -135,6 +136,11 @@ export type GenerationDependencies = {
   requestStartedAtMonotonicMs: number;
   functionTotalBudgetMs: number;
   uuid(): string;
+  /**
+   * 終端ログ（成功・閉じた失敗）。未指定時は logGenerationEvent。
+   * テストはこれを差し替えて呼び出しを検証する。
+   */
+  logTerminalEvent?: typeof logGenerationEvent;
 };
 
 const generationFailureCodeSchema = z.enum(generationFailureCodes);
@@ -706,17 +712,36 @@ export async function runGeneration(
   }
   const requestId = reserved.request_id;
   if (requestId === undefined) throw new Error("request_id_missing");
+  // 実際に OpenRouter へ送ったモデルだけを任意で載せる（未送信終端では省略）
+  let loggedModelId: string | null = null;
+  const emitTerminalLog = (level: "info" | "warn" | "error", code: string): void => {
+    const durationMs = Math.max(
+      0,
+      Math.trunc(deps.monotonicNow() - deps.requestStartedAtMonotonicMs),
+    );
+    const log = deps.logTerminalEvent ?? logGenerationEvent;
+    log(level, {
+      requestId,
+      errorCode: code,
+      durationMs,
+      modelId: loggedModelId,
+    });
+  };
   const fail = async (code: GenerationFailureCode, retryAt: string | null) => {
     try {
       await deps.repository.fail(requestId, code, retryAt);
-      return await hydrate();
+      const status = await hydrate();
+      emitTerminalLog("error", code);
+      return status;
     } catch (error) {
       throw new TerminalTransitionError(unwrapStatusHydration(error));
     }
   };
   const conflict = async (conflicts: readonly z.infer<typeof generationConflictSchema>[]) => {
     await deps.repository.conflict(requestId, [...conflicts]);
-    return await hydrate();
+    const status = await hydrate();
+    emitTerminalLog("warn", "constraint_conflict");
+    return status;
   };
   // succeed は SQL が constraint_conflict を返す正規経路と、raise を 409 に写した防御経路の両方を扱う
   const succeedOrConflict = async (
@@ -724,7 +749,9 @@ export async function runGeneration(
   ): Promise<GenerationStatusData> => {
     try {
       await deps.repository.succeed(input);
-      return await hydrate();
+      const status = await hydrate();
+      emitTerminalLog("info", "succeeded");
+      return status;
     } catch (error) {
       if (isCurrentSafetyChangedError(error)) {
         return await conflict([currentSafetyChangedConflict()]);
@@ -773,7 +800,9 @@ export async function runGeneration(
     // markSent 直前の pre-send ゲート。不足時は HTTP を一度も送らず timeout へ
     if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
       await deps.repository.failBeforeSend(requestId, "generation_timeout");
-      return await hydrate();
+      const status = await hydrate();
+      emitTerminalLog("error", "generation_timeout");
+      return status;
     }
 
     const call = async (
@@ -819,6 +848,7 @@ export async function runGeneration(
         throw new OpenRouterCallError("invalid_ai_response");
       }
       await deps.repository.recordModel(requestId, result.modelId);
+      loggedModelId = result.modelId;
       return result;
     };
 
@@ -828,7 +858,14 @@ export async function runGeneration(
     let firstWasDuplicate = false;
     try {
       const firstCall = await call();
-      if (firstCall === "terminal") return await hydrate();
+      if (firstCall === "terminal") {
+        // markSent 拒否や pre-send timeout は台帳側で終端済み。status を読みつつ閉じた失敗をログする。
+        const status = await hydrate();
+        if (status.status === "failed") {
+          emitTerminalLog("error", status.error.code);
+        }
+        return status;
+      }
       firstResult = firstCall;
       firstModelId = firstResult.modelId;
     } catch (error) {
@@ -840,6 +877,7 @@ export async function runGeneration(
       if (code.data !== "invalid_ai_response") return await fail(code.data, error.retryAt);
       firstModelId =
         error.modelId !== null && deps.models.includes(error.modelId) ? error.modelId : null;
+      if (firstModelId !== null) loggedModelId = firstModelId;
       firstIssues = [{ code: "invalid_provider_menu" }];
     }
 
@@ -884,7 +922,13 @@ export async function runGeneration(
           content: `前の結果を次の項目だけ修正し、全体JSONを一度だけ再生成してください: ${JSON.stringify(diagnostics)}`,
         },
       ]);
-      if (repairedCall === "terminal") return await hydrate();
+      if (repairedCall === "terminal") {
+        const status = await hydrate();
+        if (status.status === "failed") {
+          emitTerminalLog("error", status.error.code);
+        }
+        return status;
+      }
       repaired = repairedCall;
     } catch (error) {
       if (!(error instanceof OpenRouterCallError)) throw error;

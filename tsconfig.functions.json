@@ -16,7 +16,6 @@
   },
   "include": [
     "netlify/functions/**/*.ts",
-    "netlify/functions/tsconfig-placeholder.d.ts",
     "shared/**/*.ts",
     "src/shared/types/database.generated.ts"
   ]

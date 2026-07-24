@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   generationFailureCodes,
   type GenerationFailureCode,
-} from "../../shared/contracts/generation.js";
-import { requireUser } from "./_shared/auth.js";
-import { createGenerationRepository } from "./_shared/generation-repository.js";
-import { HttpError } from "./_shared/http.js";
-import handler from "./generation-status.js";
+} from "../../../shared/contracts/generation.js";
+import { requireUser } from "../_shared/auth.js";
+import { createGenerationRepository } from "../_shared/generation-repository.js";
+import { HttpError } from "../_shared/http.js";
+import handler from "../generation-status.js";
 
-vi.mock("./_shared/auth.js", () => ({ requireUser: vi.fn() }));
-vi.mock("./_shared/generation-repository.js", () => ({
+vi.mock("../_shared/auth.js", () => ({ requireUser: vi.fn() }));
+vi.mock("../_shared/generation-repository.js", () => ({
   createGenerationRepository: vi.fn(),
 }));
 

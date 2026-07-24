@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RevalidationResult } from "./_shared/revalidation-service.js";
+import type { RevalidationResult } from "../_shared/revalidation-service.js";
 
 const requireUserMock = vi.hoisted(() => vi.fn());
 const createRevalidationDepsMock = vi.hoisted(() => vi.fn());
@@ -7,31 +7,31 @@ const revalidateStoredMenuMock = vi.hoisted(() => vi.fn());
 const loadStoredMenuIdentityMock = vi.hoisted(() => vi.fn());
 const createUserScopedSupabaseMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./_shared/auth.js", () => ({
+vi.mock("../_shared/auth.js", () => ({
   requireUser: requireUserMock,
 }));
-vi.mock("./_shared/revalidation-adapter.js", () => ({
+vi.mock("../_shared/revalidation-adapter.js", () => ({
   createRevalidationDeps: createRevalidationDepsMock,
 }));
-vi.mock("./_shared/revalidation-service.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./_shared/revalidation-service.js")>();
+vi.mock("../_shared/revalidation-service.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../_shared/revalidation-service.js")>();
   return {
     ...original,
     revalidateStoredMenu: revalidateStoredMenuMock,
   };
 });
-vi.mock("./_shared/stored-menu-loader.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./_shared/stored-menu-loader.js")>();
+vi.mock("../_shared/stored-menu-loader.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../_shared/stored-menu-loader.js")>();
   return {
     ...original,
     loadStoredMenuIdentity: loadStoredMenuIdentityMock,
   };
 });
-vi.mock("./_shared/supabase-user.js", () => ({
+vi.mock("../_shared/supabase-user.js", () => ({
   createUserScopedSupabase: createUserScopedSupabaseMock,
 }));
 
-import handler, { config } from "./revalidate-menu.js";
+import handler, { config } from "../revalidate-menu.js";
 
 const user = {
   userId: "85000000-0000-4000-8000-000000000001",
@@ -84,7 +84,7 @@ describe("revalidate-menu", () => {
       Object.assign(new Error("auth"), { status: 401, code: "auth_required", name: "HttpError" }),
     );
     // HttpError 以外は 500 になるため、requireUser が HttpError 相当を投げる前提の実運用に合わせる
-    const { HttpError } = await import("./_shared/http.js");
+    const { HttpError } = await import("../_shared/http.js");
     requireUserMock.mockRejectedValue(new HttpError(401, "auth_required", "ログインが必要です"));
     const response = await handler(
       new Request("http://127.0.0.1/api/menus/x/revalidate", { method: "POST" }),
@@ -149,7 +149,7 @@ describe("revalidate-menu", () => {
   });
 
   it("does not log or return free-form PII fields on failure", async () => {
-    const { HttpError } = await import("./_shared/http.js");
+    const { HttpError } = await import("../_shared/http.js");
     revalidateStoredMenuMock.mockRejectedValue(
       new HttpError(404, "menu_not_found", "献立が見つかりません"),
     );

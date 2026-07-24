@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { config, createHandler } from "./auth-continuation-claim.js";
+import { config, createHandler } from "../auth-continuation-claim.js";
 
 describe("auth continuation claim", () => {
   it("uses state and secret binding and hides unavailable continuations", async () => {

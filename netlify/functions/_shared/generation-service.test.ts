@@ -227,6 +227,7 @@ function makeDeps(
     requestStartedAtMonotonicMs: 0,
     functionTotalBudgetMs: 50_000,
     uuid: () => "86000000-0000-4000-8000-000000000001",
+    logTerminalEvent: vi.fn(),
     ...overrides,
   };
 }
@@ -457,6 +458,53 @@ describe("runGeneration", () => {
     expect(repository.succeed).toHaveBeenCalledTimes(1);
     expect(repository.status).toHaveBeenCalled();
     expect(result.status).toBe("succeeded");
+  });
+
+  it("logs a closed success event with requestId, code, durationMs, and modelId", async () => {
+    const logTerminalEvent = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
+    const result = await runGeneration(
+      makeDeps({
+        logTerminalEvent,
+        monotonicNow: () => 1_500,
+        requestStartedAtMonotonicMs: 1_000,
+      }),
+      command,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(logTerminalEvent).toHaveBeenCalledTimes(1);
+    expect(logTerminalEvent).toHaveBeenCalledWith("info", {
+      requestId,
+      errorCode: "succeeded",
+      durationMs: 500,
+      modelId: models[0],
+    });
+  });
+
+  it("logs a closed failure event without sensitive payload fields", async () => {
+    const logTerminalEvent = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+      Promise.reject(new OpenRouterCallError("model_unavailable")),
+    );
+    const result = await runGeneration(
+      makeDeps({
+        logTerminalEvent,
+        callOpenRouter,
+        monotonicNow: () => 2_000,
+        requestStartedAtMonotonicMs: 500,
+      }),
+      command,
+    );
+    expect(result).toMatchObject({ status: "failed", error: { code: "model_unavailable" } });
+    expect(logTerminalEvent).toHaveBeenCalledTimes(1);
+    expect(logTerminalEvent).toHaveBeenCalledWith("error", {
+      requestId,
+      errorCode: "model_unavailable",
+      durationMs: 1_500,
+      modelId: null,
+    });
+    const payload = JSON.stringify(logTerminalEvent.mock.calls);
+    expect(payload).not.toContain("prompt");
+    expect(payload).not.toContain("allergy");
   });
 
   it("terminals fingerprint mismatch as constraint_conflict instead of failed/internal_error", async () => {

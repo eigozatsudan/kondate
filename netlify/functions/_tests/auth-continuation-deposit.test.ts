@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { config, createHandler } from "./auth-continuation-deposit.js";
+import { config, createHandler } from "../auth-continuation-deposit.js";
 
 describe("auth continuation deposit", () => {
   it("reads the ID only from the route params and rejects an ID in JSON", async () => {

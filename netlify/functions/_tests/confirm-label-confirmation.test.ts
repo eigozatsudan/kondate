@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { confirmLabelConfirmationHandler } from "./confirm-label-confirmation.js";
+import { confirmLabelConfirmationHandler } from "../confirm-label-confirmation.js";
 
 describe("confirm-label-confirmation", () => {
   const requireUser = vi.fn();

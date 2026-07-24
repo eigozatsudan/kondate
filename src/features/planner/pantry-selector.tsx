@@ -148,24 +148,13 @@ export function PantrySelector({
         </div>
       ))}
       {pendingItem !== null && (
-        <div
-          style={{
-            position: "fixed",
-            zIndex: 20,
-            inset: 0,
-            display: "grid",
-            placeItems: "center",
-            padding: "16px",
-            background: "rgb(51 44 39 / 55%)",
-          }}
-        >
+        <div className="pantry-expired-dialog-backdrop">
           <div
             role="alertdialog"
             aria-label="期限を過ぎた食材の確認"
             aria-modal="true"
             aria-describedby={descriptionId}
-            className="card stack"
-            style={{ width: "min(100%, 520px)", maxHeight: "calc(100vh - 32px)", overflow: "auto" }}
+            className="card stack pantry-expired-dialog-panel"
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();

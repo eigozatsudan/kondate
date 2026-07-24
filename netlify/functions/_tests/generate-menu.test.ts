@@ -1,30 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { scenarios } from "../../tools/openrouter-mock/fixtures/scenarios.mjs";
+import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
 import {
   generationConflictCopy,
   generationFailureCodes,
   type GenerationStatusData,
-} from "../../shared/contracts/generation.js";
-import { validateGeneratedMenu } from "../../shared/safety/validate-generated-menu.js";
+} from "../../../shared/contracts/generation.js";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import {
   makeGeneratedMenu,
   makeGenerationContext,
   makeValidatedMenu,
-} from "../../shared/testing/factories.js";
-import { requireUser } from "./_shared/auth.js";
-import { materializeAiGeneratedMenu } from "./_shared/generation-materializer.js";
-import type { QuotaRequestRecord } from "./_shared/generation-repository.js";
+} from "../../../shared/testing/factories.js";
+import { requireUser } from "../_shared/auth.js";
+import { materializeAiGeneratedMenu } from "../_shared/generation-materializer.js";
+import type { QuotaRequestRecord } from "../_shared/generation-repository.js";
 import {
   createGenerationDeps,
   runGeneration,
   type GenerationDependencies,
   type GenerationExecutionContext,
-} from "./_shared/generation-service.js";
-import { HttpError } from "./_shared/http.js";
-import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
-import handler from "./generate-menu.js";
+} from "../_shared/generation-service.js";
+import { HttpError } from "../_shared/http.js";
+import { readLocalMockScenario } from "../_shared/local-mock-scenario.js";
+import handler from "../generate-menu.js";
 
-vi.mock("./_shared/generation-integrity-context.js", () => ({
+vi.mock("../_shared/generation-integrity-context.js", () => ({
   resolveGenerationIntegrityContext: vi.fn(() =>
     Promise.resolve({
       kind: "new_menu",
@@ -35,21 +35,21 @@ vi.mock("./_shared/generation-integrity-context.js", () => ({
     }),
   ),
 }));
-vi.mock("./_shared/supabase-admin.js", () => ({
+vi.mock("../_shared/supabase-admin.js", () => ({
   getSupabaseAdmin: vi.fn(() => ({})),
 }));
-vi.mock("./_shared/auth.js", () => ({ requireUser: vi.fn() }));
-vi.mock("../../shared/safety/validate-generated-menu.js", () => ({
+vi.mock("../_shared/auth.js", () => ({ requireUser: vi.fn() }));
+vi.mock("../../../shared/safety/validate-generated-menu.js", () => ({
   validateGeneratedMenu: vi.fn(),
 }));
-vi.mock("./_shared/generation-materializer.js", () => ({
+vi.mock("../_shared/generation-materializer.js", () => ({
   materializeAiGeneratedMenu: vi.fn(),
 }));
-vi.mock("./_shared/local-mock-scenario.js", () => ({
+vi.mock("../_shared/local-mock-scenario.js", () => ({
   readLocalMockScenario: vi.fn(() => undefined),
 }));
-vi.mock("./_shared/generation-service.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./_shared/generation-service.js")>();
+vi.mock("../_shared/generation-service.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../_shared/generation-service.js")>();
   return {
     ...original,
     createGenerationDeps: vi.fn(),
@@ -320,8 +320,8 @@ describe("POST /api/generations/menu", () => {
   );
 
   it("hydrates a same-key terminal replay without duplicating generation side effects", async () => {
-    const actualService = await vi.importActual<typeof import("./_shared/generation-service.js")>(
-      "./_shared/generation-service.js",
+    const actualService = await vi.importActual<typeof import("../_shared/generation-service.js")>(
+      "../_shared/generation-service.js",
     );
     const requestId = terminalResult.requestId;
     const modelId = "mock/primary:free";

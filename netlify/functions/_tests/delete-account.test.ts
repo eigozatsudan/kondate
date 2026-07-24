@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HttpError } from "./_shared/http.js";
+import { HttpError } from "../_shared/http.js";
 
 const requireUserMock = vi.hoisted(() => vi.fn());
 const adminDeleteUserMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./_shared/auth.js", () => ({
+vi.mock("../_shared/auth.js", () => ({
   requireUser: requireUserMock,
 }));
 
-vi.mock("./_shared/supabase-admin.js", () => ({
+vi.mock("../_shared/supabase-admin.js", () => ({
   getSupabaseAdmin: () => ({
     auth: {
       admin: {
@@ -19,7 +19,7 @@ vi.mock("./_shared/supabase-admin.js", () => ({
 }));
 
 const { createDeleteAccountHandler, default: productionHandler } =
-  await import("./delete-account.js");
+  await import("../delete-account.js");
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
 const OTHER_USER_ID = "20000000-0000-4000-8000-000000000099";

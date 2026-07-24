@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HttpError } from "./_shared/http.js";
-import type { ShoppingDependencies } from "./_shared/shopping-adapter.js";
+import { HttpError } from "../_shared/http.js";
+import type { ShoppingDependencies } from "../_shared/shopping-adapter.js";
 
 // 設計書 Task4 Step1: reconcile handler は承認キー/IDのみを受け取り、
 // 解決済みの値は絶対にブラウザから来ない。ここでは path param 検証・JSON 検証・
@@ -8,13 +8,13 @@ import type { ShoppingDependencies } from "./_shared/shopping-adapter.js";
 const requireUserMock = vi.hoisted(() => vi.fn());
 const reconcileShoppingListMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./_shared/auth.js", () => ({ requireUser: requireUserMock }));
-vi.mock("./_shared/shopping-service.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./_shared/shopping-service.js")>();
+vi.mock("../_shared/auth.js", () => ({ requireUser: requireUserMock }));
+vi.mock("../_shared/shopping-service.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../_shared/shopping-service.js")>();
   return { ...original, reconcileShoppingList: reconcileShoppingListMock };
 });
 
-const { createShoppingListReconcileHandler } = await import("./shopping-list-reconcile.js");
+const { createShoppingListReconcileHandler } = await import("../shopping-list-reconcile.js");
 
 const USER_ID = "85000000-0000-4000-8000-000000000001";
 const ACCESS_TOKEN = "token-abc";

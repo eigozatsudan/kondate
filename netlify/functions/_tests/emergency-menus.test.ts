@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeCurrentSafetyContext } from "../../shared/testing/factories.js";
-import { createEmergencyMenusHandler } from "./emergency-menus.js";
+import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
+import { createEmergencyMenusHandler } from "../emergency-menus.js";
 
 const userId = "80000000-0000-4000-8000-000000000001";
 const memberId = "81000000-0000-4000-8000-000000000001";
