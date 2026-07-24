@@ -67,9 +67,7 @@ const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
 // ensureQueryData 実装が cached を any にせず unknown として扱えるよう戻り値を明示する
-const getQueryDataMock = vi.hoisted(() =>
-  vi.fn<(queryKey: readonly unknown[]) => unknown>(),
-);
+const getQueryDataMock = vi.hoisted(() => vi.fn<(queryKey: readonly unknown[]) => unknown>());
 const ensureQueryDataMock = vi.hoisted(() =>
   vi.fn(async (options: { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }) => {
     const cached: unknown = getQueryDataMock(options.queryKey);

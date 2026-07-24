@@ -156,6 +156,84 @@ test("E2E uses one worker for the shared local auth stack", async () => {
   assert.doesNotMatch(config, /process\.env\.CI \? \{ workers: 1 \}/u);
 });
 
+test("E2E retains traces video and failure screenshots only", async () => {
+  const config = await readFile("playwright.config.ts", "utf8");
+  // CI は Playwright レポートのみ失敗時アップロードし、痕跡は retain-on-failure に限定する。
+  assert.match(config, /trace:\s*"retain-on-failure"/u);
+  assert.match(config, /video:\s*"retain-on-failure"/u);
+  // screenshot は Playwright が retain-on-failure を持たないため only-on-failure が相当。
+  assert.match(config, /screenshot:\s*"only-on-failure"/u);
+});
+
+/**
+ * CI 集約スクリプトと GitHub Actions ワークフローが共有する検証ゲートの出現順を抽出する。
+ * ワークフロー固有の checkout / secrets / health / artifact / teardown は対象外。
+ * 戻り値はソース内の実際の出現位置順（ゲート定義順ではない）。
+ */
+function extractSharedCiGateOrder(source) {
+  const gatePatterns = [
+    { label: "compose-config", pattern: /docker compose config --quiet/u },
+    { label: "compose-up", pattern: /docker compose up -d --wait/u },
+    { label: "format:check", pattern: /npm run format:check/u },
+    { label: "lint", pattern: /npm run lint/u },
+    { label: "typecheck", pattern: /npm run typecheck/u },
+    { label: "vitest", pattern: /npx vitest run/u },
+    { label: "db-test", pattern: /docker compose --profile test run --rm db-test/u },
+    { label: "db:types", pattern: /npm run db:types/u },
+    {
+      label: "types-diff",
+      pattern: /git diff --exit-code -- src\/shared\/types\/database\.generated\.ts/u,
+    },
+    { label: "e2e", pattern: /\.\/scripts\/run-e2e\.sh/u },
+    { label: "audit", pattern: /npm audit --omit=dev --audit-level=high/u },
+    { label: "build", pattern: /npm run build/u },
+    {
+      label: "netlify-offline",
+      pattern: /netlify -- build --offline --context deploy-preview/u,
+    },
+  ];
+  const positions = [];
+  for (const { label, pattern } of gatePatterns) {
+    const match = pattern.exec(source);
+    assert.ok(match, `missing CI gate: ${label}`);
+    positions.push({ index: match.index, label });
+  }
+  positions.sort((a, b) => a.index - b.index);
+  return positions.map((entry) => entry.label);
+}
+
+test("ci.sh and GitHub Actions CI keep the same verification gate order", async () => {
+  const [script, workflow] = await Promise.all([
+    readFile("scripts/ci.sh", "utf8"),
+    readFile(".github/workflows/ci.yml", "utf8"),
+  ]);
+
+  assert.match(script, /^set -euo pipefail$/mu);
+  // EXIT トラップによる teardown は Task 8 拡張まで入れない（コメント内の語は除外）。
+  assert.doesNotMatch(script, /^[^#]*\btrap\b/mu);
+
+  const scriptOrder = extractSharedCiGateOrder(script);
+  const workflowOrder = extractSharedCiGateOrder(workflow);
+  assert.deepEqual(scriptOrder, workflowOrder);
+
+  // E2E は free mock モデルとプライバシーログ検証を必須にする。
+  for (const source of [script, workflow]) {
+    assert.match(source, /LOCAL_MOCK_MODELS/u);
+    assert.match(source, /mock\/kondate-primary:free,mock\/kondate-repair:free/u);
+    assert.match(source, /KONDATE_ASSERT_PRIVACY_LOGS/u);
+  }
+
+  // ジョブ env は CI のみ。シークレットや origin を job-level env に載せない。
+  assert.match(workflow, /env:\n {6}CI: "true"/u);
+  assert.doesNotMatch(workflow, /AUTH_CONTINUATION_ENCRYPTION_KEY/u);
+  assert.doesNotMatch(workflow, /GENERATION_REQUEST_HMAC_KEY/u);
+  assert.doesNotMatch(workflow, /actions\/setup-node/u);
+  assert.doesNotMatch(workflow, /playwright install/u);
+  // 実 OpenRouter への到達を避けるため e2e はラッパー経由のみ。
+  assert.doesNotMatch(workflow, /npm run e2e\b/u);
+  assert.doesNotMatch(workflow, /npx playwright test/u);
+});
+
 test("Vite ignores Playwright output directories", async () => {
   const config = await readFile("vite.config.ts", "utf8");
   assert.match(config, /"\*\*\/playwright-report\/\*\*"/u);
