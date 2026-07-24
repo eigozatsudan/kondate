@@ -1,3 +1,19 @@
+[models]
+default = "grok-build"          # コーディング用おすすめ
+web_search = "grok-4.5"         # 検索用
+
+[ui]
+permission_mode = "auto"        # バランス良い設定
+
+[session]
+auto_compact_threshold_percent = 85
+
+[tools]
+respect_gitignore = true        # .gitignoreを尊重（推奨）
+
+[sandbox]
+profile = "workspace"           # または "off"。安全性を高めたい場合
+
 [permission]
 rules = [
   # ========== Git ==========
