@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgeBand } from "../contracts/domain.js";
+import { defaultsForAgeBand } from "../../src/features/household/household-defaults.js";
 import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
 import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
 import { makeCurrentSafetyContext, makeGenerationContext } from "../testing/factories.js";
@@ -35,12 +36,20 @@ describe("reviewed emergency menus", () => {
   });
 
   it.each(["post_weaning_to_2", "adult", "senior"] satisfies readonly AgeBand[])(
-    "validates every reviewed fixture in a complete %s generation context",
+    "validates every reviewed fixture in a complete %s generation context with age defaults",
     (ageBand) => {
+      // 空制約ではなく defaultsForAgeBand を使い、未就学 cut_small を偽グリーンにしない
+      const defaults = defaultsForAgeBand(ageBand);
       for (const menu of emergencyMenuFixturesV1) {
         const base = makeGenerationContext();
         const safety = makeCurrentSafetyContext({
-          members: [{ ...base.safety.members[0]!, ageBand }],
+          members: [
+            {
+              ...base.safety.members[0]!,
+              ageBand,
+              requiredSafetyConstraints: defaults.required_safety_constraints,
+            },
+          ],
           foodSafetyRules: currentFoodSafetyRulesV1,
         });
         const context = makeGenerationContext({
@@ -52,6 +61,15 @@ describe("reviewed emergency menus", () => {
             timeLimitMinutes: 15,
           },
           safety,
+          memberPreferences: [
+            {
+              ...base.memberPreferences[0]!,
+              // 安全制約だけを年齢 defaults で検証。portion/spice 文面は fixture 共通
+              portionSize: "regular",
+              spiceLevel: "regular",
+              easePreferences: [],
+            },
+          ],
         });
 
         const result = validateGeneratedMenu(menu, context);
@@ -59,6 +77,29 @@ describe("reviewed emergency menus", () => {
       }
     },
   );
+
+  it("keeps under-six defaults non-empty through filterEmergencyMenus", () => {
+    const base = makeCurrentSafetyContext();
+    const defaults = defaultsForAgeBand("post_weaning_to_2");
+    for (const mealType of ["breakfast", "lunch", "dinner"] as const) {
+      const result = filterEmergencyMenus({
+        mealType,
+        pantryNames: [],
+        context: makeCurrentSafetyContext({
+          members: [
+            {
+              ...base.members[0]!,
+              ageBand: "post_weaning_to_2",
+              requiredSafetyConstraints: defaults.required_safety_constraints,
+            },
+          ],
+          foodSafetyRules: currentFoodSafetyRulesV1,
+        }),
+      });
+      expect(result.emptyReason, mealType).toBeNull();
+      expect(result.menus.length, mealType).toBeGreaterThan(0);
+    }
+  });
 
   it("binds every safety action to the exact protected ingredient and its owner graph", () => {
     const expectedBindings = [
@@ -91,8 +132,9 @@ describe("reviewed emergency menus", () => {
       const actions = menu.adaptations.flatMap((adaptation) =>
         adaptation.safetyActions.map((action) => ({ action, adaptation })),
       );
-      expect(actions).toHaveLength(1);
-      const binding = actions[0]!;
+      const binding = actions.find((entry) => entry.action.kind === expected.kind);
+      expect(binding).toBeDefined();
+      if (binding === undefined) continue;
       const dish = menu.dishes.find((candidate) => candidate.id === binding.action.dishId);
       const ingredient = dish?.ingredients.find(
         (candidate) => candidate.id === binding.action.ingredientId,
@@ -155,20 +197,20 @@ describe("reviewed emergency menus", () => {
     });
 
     expect(result.menus).toHaveLength(1);
-    expect(result.menus[0]?.adaptations.map((item) => item.anonymousMemberRef)).toEqual([
-      "member_1",
-      "member_2",
-    ]);
+    const memberRefs = result.menus[0]?.adaptations.map((item) => item.anonymousMemberRef) ?? [];
+    // 料理ごとの adaptation 行があるため、各メンバーが少なくとも1行持つことだけを見る
+    expect(new Set(memberRefs)).toEqual(new Set(["member_1", "member_2"]));
     expect(
       result.menus[0]?.adaptations.flatMap((item) =>
         item.safetyActions.map((action) => action.anonymousMemberRef),
       ),
-    ).toEqual(["member_1", "member_2"]);
+    ).toEqual(expect.arrayContaining(["member_1", "member_2"]));
   });
 
   it("returns no candidate when one member is incompatible with the remapped fixture", () => {
     const base = makeCurrentSafetyContext();
     const firstMember = base.members[0]!;
+    // dinner fixture は standardAllergenIds に chicken を持つ。ease 写像に依存せず拒否する。
     const result = filterEmergencyMenus({
       mealType: "dinner",
       pantryNames: [],
@@ -179,7 +221,8 @@ describe("reviewed emergency menus", () => {
             ...firstMember,
             householdMemberId: "55000000-0000-4000-8000-000000000002",
             anonymousRef: "member_2",
-            requiredSafetyConstraints: ["remove_bones"],
+            allergyStatus: "registered",
+            allergenIds: ["chicken"],
           },
         ],
       }),

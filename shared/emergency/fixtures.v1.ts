@@ -20,7 +20,8 @@ const breakfastFixture = {
   cuisineGenre: "japanese",
   servings: 2,
   totalElapsedMinutes: 15,
-  safetyTags: ["remove_bones", "soften"],
+  // cut_small は料理単位で ingredient-bound の検証証拠が必要なため全皿に付与する
+  safetyTags: ["remove_bones", "soften", "cut_small"],
   dishes: [
     {
       id: "82100000-0000-4000-8000-000000000011",
@@ -57,6 +58,7 @@ const breakfastFixture = {
         {
           id: "82300000-0000-4000-8000-000000000011",
           position: 1,
+          // 除骨の肯定証拠は「除いて…ほぐす」形。cut_small 証拠は adaptation 側に置く
           instruction: "鮭を中心まで十分に焼き、骨を完全に除いて細かくほぐす",
         },
         {
@@ -101,7 +103,8 @@ const breakfastFixture = {
         {
           id: "82300000-0000-4000-8000-000000000013",
           position: 1,
-          instruction: "野菜を小さく切り、鍋で歯ぐきでつぶせるやわらかさまで煮る",
+          // 食材名を明示し cut_small の ingredient-bound 証拠にする
+          instruction: "にんじんを小さく切り、鍋で歯ぐきでつぶせるやわらかさまで煮る",
         },
       ],
     },
@@ -112,7 +115,7 @@ const breakfastFixture = {
       position: 1,
       startMinute: 0,
       durationMinutes: 3,
-      instruction: "鮭を焼き始め、野菜を小さく切る",
+      instruction: "鮭を焼き始め、にんじんを小さく切る",
       dishId: null,
       recipeStepId: null,
     },
@@ -142,11 +145,11 @@ const breakfastFixture = {
       anonymousMemberRef: "member_1",
       portionText: "年齢と食欲に合わせた量",
       branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000011",
-      additionalCutting: "鮭を細かくほぐす",
+      additionalCutting: "鮭を細かく刻む",
       additionalHeating: "鮭の中心まで十分に加熱する",
       additionalSeasoning: null,
       servingCheck: "鮭の骨が残っていないことを確認する",
-      safetyTags: ["remove_bones"],
+      safetyTags: ["remove_bones", "cut_small"],
       safetyActions: [
         {
           kind: "remove_bones",
@@ -155,6 +158,37 @@ const breakfastFixture = {
           anonymousMemberRef: "member_1",
           beforeRecipeStepId: "82300000-0000-4000-8000-000000000011",
           instruction: "鮭の小骨を完全に除く",
+        },
+        {
+          kind: "cut_small",
+          dishId: "82100000-0000-4000-8000-000000000011",
+          ingredientId: "82200000-0000-4000-8000-000000000012",
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: "82300000-0000-4000-8000-000000000011",
+          instruction: "鮭を細かく刻む",
+        },
+      ],
+    },
+    {
+      // 副菜にも cut_small を必須（missing-evidence は料理単位）
+      id: "82500000-0000-4000-8000-000000000012",
+      dishId: "82100000-0000-4000-8000-000000000012",
+      anonymousMemberRef: "member_1",
+      portionText: "年齢と食欲に合わせた量",
+      branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000013",
+      additionalCutting: "にんじんを小さく切る",
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: "にんじんを小さく切ったことを確認する",
+      safetyTags: ["cut_small"],
+      safetyActions: [
+        {
+          kind: "cut_small",
+          dishId: "82100000-0000-4000-8000-000000000012",
+          ingredientId: "82200000-0000-4000-8000-000000000013",
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: "82300000-0000-4000-8000-000000000013",
+          instruction: "にんじんを小さく切る",
         },
       ],
     },
@@ -170,7 +204,7 @@ const lunchFixture = {
   cuisineGenre: "japanese",
   servings: 2,
   totalElapsedMinutes: 15,
-  safetyTags: ["heat_thoroughly", "soften"],
+  safetyTags: ["heat_thoroughly", "cut_small", "soften"],
   dishes: [
     {
       id: "82100000-0000-4000-8000-000000000021",
@@ -292,11 +326,11 @@ const lunchFixture = {
       anonymousMemberRef: "member_1",
       portionText: "年齢と食欲に合わせた量",
       branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000021",
-      additionalCutting: null,
+      additionalCutting: "鶏ひき肉を細かく刻む",
       additionalHeating: "鶏ひき肉の中心まで十分に加熱する",
       additionalSeasoning: null,
       servingCheck: "生焼けがないことを確認する",
-      safetyTags: ["heat_thoroughly"],
+      safetyTags: ["heat_thoroughly", "cut_small"],
       safetyActions: [
         {
           kind: "heat_thoroughly",
@@ -305,6 +339,37 @@ const lunchFixture = {
           anonymousMemberRef: "member_1",
           beforeRecipeStepId: "82300000-0000-4000-8000-000000000021",
           instruction: "鶏ひき肉の中心まで十分に加熱する",
+        },
+        {
+          kind: "cut_small",
+          dishId: "82100000-0000-4000-8000-000000000021",
+          ingredientId: "82200000-0000-4000-8000-000000000021",
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: "82300000-0000-4000-8000-000000000021",
+          instruction: "鶏ひき肉を細かく刻む",
+        },
+      ],
+    },
+    {
+      // 副菜の cut_small は adaptation の料理グラフに合わせ別行へ
+      id: "82500000-0000-4000-8000-000000000022",
+      dishId: "82100000-0000-4000-8000-000000000022",
+      anonymousMemberRef: "member_1",
+      portionText: "年齢と食欲に合わせた量",
+      branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000023",
+      additionalCutting: "かぼちゃを小さく切る",
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: "かぼちゃを小さく切ったことを確認する",
+      safetyTags: ["cut_small"],
+      safetyActions: [
+        {
+          kind: "cut_small",
+          dishId: "82100000-0000-4000-8000-000000000022",
+          ingredientId: "82200000-0000-4000-8000-000000000023",
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: "82300000-0000-4000-8000-000000000023",
+          instruction: "かぼちゃを小さく切る",
         },
       ],
     },
@@ -320,7 +385,7 @@ const dinnerFixture = {
   cuisineGenre: "japanese",
   servings: 2,
   totalElapsedMinutes: 15,
-  safetyTags: ["heat_thoroughly"],
+  safetyTags: ["heat_thoroughly", "cut_small"],
   dishes: [
     {
       id: "82100000-0000-4000-8000-000000000001",
@@ -470,11 +535,11 @@ const dinnerFixture = {
       anonymousMemberRef: "member_1",
       portionText: "年齢と食欲に合わせた量",
       branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000002",
-      additionalCutting: "鶏肉を食べやすい大きさに切る",
+      additionalCutting: "鶏肉を一口大以下に切る",
       additionalHeating: "鶏肉の中心まで十分に加熱する",
       additionalSeasoning: null,
       servingCheck: "生焼けがないことを確認する",
-      safetyTags: ["heat_thoroughly"],
+      safetyTags: ["heat_thoroughly", "cut_small"],
       safetyActions: [
         {
           kind: "heat_thoroughly",
@@ -483,6 +548,58 @@ const dinnerFixture = {
           anonymousMemberRef: "member_1",
           beforeRecipeStepId: "82300000-0000-4000-8000-000000000002",
           instruction: "鶏肉の中心まで十分に加熱する",
+        },
+        {
+          kind: "cut_small",
+          dishId: "82100000-0000-4000-8000-000000000001",
+          ingredientId: "82200000-0000-4000-8000-000000000001",
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: "82300000-0000-4000-8000-000000000001",
+          instruction: "鶏肉を一口大以下に切る",
+        },
+      ],
+    },
+    {
+      id: "82500000-0000-4000-8000-000000000002",
+      dishId: "82100000-0000-4000-8000-000000000002",
+      anonymousMemberRef: "member_1",
+      portionText: "年齢と食欲に合わせた量",
+      branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000003",
+      additionalCutting: "きゅうりを小さく切る",
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: "きゅうりを小さく切ったことを確認する",
+      safetyTags: ["cut_small"],
+      safetyActions: [
+        {
+          kind: "cut_small",
+          dishId: "82100000-0000-4000-8000-000000000002",
+          ingredientId: "82200000-0000-4000-8000-000000000004",
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: "82300000-0000-4000-8000-000000000003",
+          instruction: "きゅうりを小さく切る",
+        },
+      ],
+    },
+    {
+      id: "82500000-0000-4000-8000-000000000003",
+      dishId: "82100000-0000-4000-8000-000000000003",
+      anonymousMemberRef: "member_1",
+      portionText: "年齢と食欲に合わせた量",
+      branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000004",
+      additionalCutting: "玉ねぎを小さく切る",
+      additionalHeating: null,
+      additionalSeasoning: null,
+      servingCheck: "玉ねぎを小さく切ったことを確認する",
+      safetyTags: ["cut_small"],
+      safetyActions: [
+        {
+          kind: "cut_small",
+          dishId: "82100000-0000-4000-8000-000000000003",
+          ingredientId: "82200000-0000-4000-8000-000000000005",
+          anonymousMemberRef: "member_1",
+          beforeRecipeStepId: "82300000-0000-4000-8000-000000000004",
+          instruction: "玉ねぎを小さく切る",
         },
       ],
     },
@@ -515,19 +632,19 @@ export const emergencyFixtureMetadataV1: Readonly<
   [breakfastFixture.menuId]: {
     standardAllergenIds: ["salmon"],
     eligibleAgeBands: allReviewedAgeBands,
-    safetyTags: ["remove_bones", "soften"],
+    safetyTags: ["remove_bones", "cut_small", "soften"],
     reviewedAt: "2026-07-11",
   },
   [lunchFixture.menuId]: {
     standardAllergenIds: ["chicken"],
     eligibleAgeBands: allReviewedAgeBands,
-    safetyTags: ["heat_thoroughly", "soften"],
+    safetyTags: ["heat_thoroughly", "cut_small", "soften"],
     reviewedAt: "2026-07-11",
   },
   [dinnerFixture.menuId]: {
     standardAllergenIds: ["chicken"],
     eligibleAgeBands: allReviewedAgeBands,
-    safetyTags: ["heat_thoroughly"],
+    safetyTags: ["heat_thoroughly", "cut_small"],
     reviewedAt: "2026-07-11",
   },
 };

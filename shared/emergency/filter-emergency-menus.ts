@@ -109,14 +109,15 @@ function emergencyGenerationContext(
     },
     safety: context,
     pantryItems: [],
+    // 緊急献立の検証は真の安全条件（requiredSafetyConstraints / 食材ルール / アレルゲン）
+    // だけでゲートする。safety 制約を easePreferences に写像すると structured action の
+    // ease 経路を強制し、未検証の cut_small などで候補が空になるため写像しない。
     memberPreferences: context.members.map((member) => ({
       householdMemberId: member.householdMemberId,
       anonymousMemberRef: member.anonymousRef,
       portionSize: "regular",
       spiceLevel: "regular",
-      easePreferences: member.requiredSafetyConstraints.map((constraint) =>
-        constraint === "remove_bones" ? "boneless" : "small_pieces",
-      ),
+      easePreferences: [],
       dislikes: [],
     })),
     targetMembers: context.members.map((member, index) => ({
