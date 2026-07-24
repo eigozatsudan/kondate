@@ -102,6 +102,19 @@ describe("parseOpenRouterModels", () => {
       parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: "1" }).openRouter.globalDailyLimit,
     ).toBe(1);
   });
+
+  it("allows lowering FUNCTION_TOTAL_BUDGET_MS but rejects above the 50s design ceiling", () => {
+    expect(
+      parseServerEnv({ ...validServerEnv, FUNCTION_TOTAL_BUDGET_MS: "30000" }).openRouter
+        .functionTotalBudgetMs,
+    ).toBe(30_000);
+    expect(() =>
+      parseServerEnv({ ...validServerEnv, FUNCTION_TOTAL_BUDGET_MS: "50001" }),
+    ).toThrow();
+    expect(() =>
+      parseServerEnv({ ...validServerEnv, FUNCTION_TOTAL_BUDGET_MS: "120000" }),
+    ).toThrow();
+  });
 });
 
 it("parses the exact five-minute server continuation TTL in seconds", () => {

@@ -33,7 +33,11 @@ export function GenerationPage() {
   }
   return (
     <main className="page-frame stack">
-      <GenerationStatusPanel state={recovery.state} userId={userId} />
+      {userId === undefined ? (
+        <GenerationStatusPanel state={recovery.state} />
+      ) : (
+        <GenerationStatusPanel state={recovery.state} userId={userId} />
+      )}
     </main>
   );
 }

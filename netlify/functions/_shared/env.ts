@@ -32,6 +32,9 @@ export const continuationServerEnvSchema = z.object({
 });
 
 const positiveInteger = (fallback: number) => z.coerce.number().int().positive().default(fallback);
+// 設計の Function 総予算は最大 50s。既定値を超えさせず、短縮のみ許可する
+const cappedPositiveInteger = (fallback: number, max: number) =>
+  z.coerce.number().int().positive().max(max).default(fallback);
 const releaseLockedInteger = <const Value extends number, const Text extends string>(
   value: Value,
   text: Text,
@@ -71,7 +74,7 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
   GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(45),
   OPENROUTER_TIMEOUT_MS: positiveInteger(20_000),
-  FUNCTION_TOTAL_BUDGET_MS: positiveInteger(50_000),
+  FUNCTION_TOTAL_BUDGET_MS: cappedPositiveInteger(50_000, 50_000),
   AI_PROCESSING_STALE_SECONDS: positiveInteger(180),
 });
 
