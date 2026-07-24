@@ -21,7 +21,7 @@
 - Release-locked generation controls are exactly 5 successes/JST day, 12 sends/user/JST day, and 4 sends/fixed 600-second window. Runtime parsing and production preflight reject any drift in 5/12/4/600.
 - Every configured OpenRouter model is explicit, unique, ends in `:free`, is not `openrouter/auto`, and supports both `structured_outputs` and `response_format` according to the live Models API at deployment time. That metadata request has one five-second abort deadline and reports a closed error without response content.
 - The live-model check is mandatory for a Netlify production build but not for normal tests, which use the local mock service. The local model list is exactly what `compose.yaml` already sets — `mock/kondate-primary:free,mock/kondate-repair:free`, two entries because the repair path needs its own model. Commands in this plan write it as `OPENROUTER_MODELS="$LOCAL_MOCK_MODELS"`; export `LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free` before running them, and never collapse it to a single invented ID such as `mock/kondate:free`, which the mock does not serve.
-- The SPA works without horizontal scrolling at 320, 375, and 430 CSS pixels. Every visible interactive target is at least 44 by 44 CSS pixels and every asynchronous status is exposed through text and an appropriate live region. This now includes `/welcome`, each of the five wizard steps, the review screen, and the idea-mode result/history surfaces. Split ownership rather than re-implementing: Plan 7 Task 1 owns the `.guided-planner-theme` contrast tests, and Plan 7 Task 8 Step 5 owns the 320-pixel/44-pixel wizard sweep plus keyboard-only traversal and reduced-motion. Plan 6 adds what neither covers — axe/landmark/live-region over every route, the 375- and 430-pixel widths, and both modes' result and history surfaces — and never relaxes or restates a Plan 7 assertion. Where the 320-pixel wizard sweep below overlaps Plan 7's, the acceptance matrix cites Plan 7's test rather than counting a duplicate.
+- The SPA works without horizontal scrolling at 320, 375, and 430 CSS pixels. **Primary and secondary action buttons** (and other Plan 7 major controls) are at least **44 CSS px tall**; native radio/checkbox/textbox controls are **not** forced to a 44×44 bounding box — measure major `button`s as Plan 7 Task 8 does, and do not distort form controls to satisfy a global 44×44 myth. Every asynchronous status is exposed through text and an appropriate live region. This now includes `/welcome`, each of the five wizard steps, the review screen, and the idea-mode result/history surfaces. Split ownership rather than re-implementing: Plan 7 Task 1 owns the `.guided-planner-theme` contrast tests, and Plan 7 Task 8 Step 5 owns the 320-pixel/major-action-44-pixel wizard sweep plus keyboard-only traversal and reduced-motion. Plan 6 adds what neither covers — axe/landmark/live-region over every route, the 375- and 430-pixel widths, and both modes' result and history surfaces — and never relaxes or restates a Plan 7 assertion. Where the 320-pixel wizard sweep below overlaps Plan 7's, the acceptance matrix cites Plan 7's test rather than counting a duplicate.
 - CI runs formatting, lint, type checking, unit/component/adversarial tests, database tests, integration/E2E tests, the Netlify production build, Docker Compose validation, and dependency auditing. No deploy proceeds after a failed gate.
 - Production smoke tests are read-only except for the unauthenticated rejection probes; they do not create users, menus, or OpenRouter calls.
 - `maintenance-cleanup` uses code config `schedule: "@hourly"` with no `path`, runs only on published production deploys, and uses one fresh `pg.Client` per invocation. Its four fixed categories are stale generation reservations, terminal generation ledgers older than 30 days, `private.shopping_mutations` older than 30 days, and auth continuations past `expires_at` (default semantics match Plan 1's expire-only cleaner; expand claimed-before-expiry only with explicit pgTAP). The dedicated LOGIN has `statement_timeout='20s'` before the first SQL command; the transaction reasserts and verifies `SET LOCAL ROLE kondate_maintenance_executor` plus `SET LOCAL statement_timeout='20s'`; the driver aborts at 25 seconds; and the platform stops at 30 seconds. Every path rolls back when possible, closes the connection, and logs exactly four aggregate cleanup counts, duration, and a closed error code only.
@@ -76,7 +76,7 @@ The aggregate `ci` entry point is therefore a host shell script, not an npm scri
 
 ```sql
 begin;
-select plan(2);
+select plan(3);
 
 select is_empty(
   $$
@@ -98,7 +98,34 @@ select is_empty(
      and column_info.column_name = 'user_id'
     where column_info.column_name is null
   $$,
-  'every user-owned public relation has user_id'
+  'every expected public relation has user_id'
+);
+
+-- Reverse inventory: any public base table with user_id must appear in expected.
+-- A new user-owned table that is missing from the list must fail even if it already cascades.
+select is_empty(
+  $$
+    with expected(table_name) as (values
+      ('profiles'),('household_members'),('member_allergies'),('member_dislikes'),
+      ('privacy_consents'),('pantry_items'),('generation_drafts'),('menus'),
+      ('menu_target_members'),('generation_pantry_selections'),('dishes'),
+      ('dish_ingredients'),('recipe_steps'),('menu_timeline_steps'),
+      ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),
+      ('shopping_lists'),('shopping_list_sources'),('shopping_items'),
+      ('shopping_item_sources'),('shopping_label_confirmations'),
+      ('shopping_current_label_warnings')
+    )
+    select c.relname
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute a
+      on a.attrelid = c.oid and a.attname = 'user_id'
+     and a.attnum > 0 and not a.attisdropped
+    where n.nspname = 'public' and c.relkind in ('r', 'p')
+      and not exists (select 1 from expected e where e.table_name = c.relname)
+    order by 1
+  $$,
+  'no unexpected public user_id relation outside the account-deletion inventory'
 );
 
 select is_empty(
@@ -286,6 +313,8 @@ docker compose --profile test run --rm db-test
 ```
 
 Expected: both focused assertions and the complete pgTAP suite pass.
+
+In the same pgTAP file (or a second test in the same Task), add a **behavioral** cascade proof that is not only FK inventory: as a superuser/test role, insert `auth.users` + minimal owned graph (`public.profiles`, one `private.ai_generation_requests` terminal row, one `private.generation_regeneration_snapshots` child), `delete from auth.users where id = …`, then assert zero rows remain in those tables for that user id. This proves cascade action, not only constraint shape.
 
 - [ ] **Step 5: Commit the forward-only correction and invariant**
 
@@ -513,7 +542,7 @@ git commit -m "feat: add permanent account deletion"
 - Modify: `compose.yaml`
 - Modify: `scripts/verify-openrouter-models.mjs`
 - Create: `scripts/verify-openrouter-models.test.mjs`
-- Create (optional contract table): `scripts/openrouter-models-contract.mjs` — shared accept/reject fixtures for script + Functions tests
+- Create: `scripts/openrouter-models-contract.mjs` — **required** shared accept/reject model-list fixtures for script + Functions tests
 - Modify: `package.json`
 - Modify: `netlify/functions/_shared/env.ts`
 - Modify: `netlify/functions/_shared/env.test.ts`
@@ -527,7 +556,7 @@ git commit -m "feat: add permanent account deletion"
 1. `scripts/verify-openrouter-models.mjs` exports `parseConfiguredModels` for build/`predev`/`prebuild`/`--remote`.
 2. `netlify/functions/_shared/env.ts` keeps (or tightens) its own `OPENROUTER_MODELS` Zod transform for runtime.
 
-Do **not** claim a single shared module unless both call sites can import it without new bundling work. Instead: put the accepted and rejected model-list strings in **one table** (e.g. `scripts/openrouter-models-contract.mjs` exporting plain arrays, or a duplicated table with a comment pointer) and drive **both** `verify-openrouter-models.test.mjs` and `env.test.ts` from that same table so drift fails CI. Prose that says "one shared parser" means **one contract**, not necessarily one file.
+Do **not** claim a single shared module unless both call sites can import it without new bundling work. **Require** `scripts/openrouter-models-contract.mjs` exporting plain arrays (`acceptedFreeModelLists`, `rejectedFreeModelLists`, and the exact free-model rules docstring). Drive **both** `verify-openrouter-models.test.mjs` and `env.test.ts` from that file so drift fails CI. Prose that says "one shared parser" means **one contract file**, not necessarily one runtime implementation. The Task 3 commit **must** `git add` this contract file.
 
 The current script has no exports and does its work at module top level, so Step 1's test cannot import it as written. The refactor is therefore: extract `parseConfiguredModels`, `verifyRemoteModels`, and `main` as named exports, keep the executable guard, and keep `--remote` as the remote-check switch rather than adding a `VERIFY_OPENROUTER_REMOTE` env variable. Read the current file before rewriting it and preserve any rule it already enforces that the snippet below omits.
 
@@ -649,11 +678,11 @@ The same free-model list rules must appear in the Zod schema in `netlify/functio
 - Accept only `50000` / `"50000"` for `FUNCTION_TOTAL_BUDGET_MS`.
 - Accept only `180` / `"180"` for `AI_PROCESSING_STALE_SECONDS`.
 
-Vitest cases (required, red-first before changing the schema):
+Vitest cases (required, red-first before changing the schema) — **decision is fixed, not optional**:
 
-- exact values (number and string forms) parse to the locked numbers;
-- defaults when unset remain 20000 / 50000 / 180 if the schema still defaults, or fail closed if the plan prefers requiring explicit env — pick one and test it; Compose already sets the three values, so **require explicit env and reject unset** is acceptable;
-- **reject** neighbors such as `19999`, `20001`, `49999`, `50001`, `179`, `181`, `0`, negatives, floats, and empty strings with a closed error (no silent coerce to default).
+- **Require explicit env** for all three keys. **Reject unset** (no silent default in production parsing). Compose already sets `OPENROUTER_TIMEOUT_MS=20000`, `FUNCTION_TOTAL_BUDGET_MS=50000`, `AI_PROCESSING_STALE_SECONDS=180`; update `env.test.ts` `validServerEnv` to include all three strings.
+- Accept only exact number and string forms (`20000` / `"20000"`, etc.).
+- **Reject** neighbors such as `19999`, `20001`, `49999`, `50001`, `179`, `181`, `0`, negatives, floats, and empty strings with a closed error (no silent coerce to default).
 
 Do not claim these three are already release-locked in code before this Task; the roadmap/design intent is exact 20s / 50s / 180s, but implementation is still loose. `USER_DAILY_*` and `USER_SHORT_WINDOW_*` remain already locked — verify, do not weaken. `AUTH_CONTINUATION_TTL_SECONDS=300` comes from the continuation schema this one extends. A production-context test accepts only the exact `https://openrouter.ai/api/v1` base URL; lookalike hosts, credentials, query/fragment, HTTP, and trailing-path variants fail before build.
 
@@ -720,7 +749,7 @@ Expected: the first two checks and tests pass; the paid-model command exits nonz
 - [ ] **Step 6: Commit environment verification**
 
 ```bash
-git add .env.example compose.yaml scripts/verify-openrouter-models.mjs scripts/verify-openrouter-models.test.mjs package.json package-lock.json netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts
+git add .env.example compose.yaml scripts/verify-openrouter-models.mjs scripts/verify-openrouter-models.test.mjs scripts/openrouter-models-contract.mjs package.json package-lock.json netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts
 git commit -m "build: verify free OpenRouter models"
 ```
 
@@ -749,7 +778,7 @@ git commit -m "build: verify free OpenRouter models"
 ```ts
 // netlify/functions/_shared/logger.test.ts
 import { describe, expect, it, vi } from "vitest";
-import { createSafeLogger } from "./logger";
+import { createSafeLogger } from "./logger.js";
 
 it("serializes only the approved operational fields", () => {
   const write = vi.fn();
@@ -773,8 +802,13 @@ it("serializes only the approved operational fields", () => {
 
 ```sql
 -- supabase/tests/database/rls_inventory.test.sql
+-- plan(8) = 4 generic inventory assertions + 4 matrix symmetry assertions.
+-- Do not ship plan(4) only. The matrix CTE must be generated from
+-- docs/testing/database-access-matrix.md in the same Task (Step 2 prose).
 begin;
 select plan(8);
+
+-- (1) RLS enabled on every public user-owned table
 select is_empty(
   $$
     select format('%I.%I', n.nspname, c.relname)
@@ -785,6 +819,7 @@ select is_empty(
   $$,
   'all public user-owned tables enable RLS'
 );
+-- (2) no private table grants to browser roles
 select is_empty(
   $$
     select table_schema || '.' || table_name
@@ -794,6 +829,7 @@ select is_empty(
   $$,
   'browser roles have no private schema table grants'
 );
+-- (3) every public user-owned table has a policy
 select is_empty(
   $$ select n.nspname||'.'||c.relname from pg_class c
     join pg_namespace n on n.oid=c.relnamespace
@@ -802,15 +838,32 @@ select is_empty(
       and not exists(select 1 from pg_policy p where p.polrelid=c.oid) $$,
   'every public user-owned table has an explicit policy'
 );
+-- (4) anon has no application table grant
 select is_empty(
   $$ select table_schema||'.'||table_name||':'||privilege_type
     from information_schema.role_table_grants where grantee='anon'
       and table_schema in('public','private') $$,
   'anon has no application table grant'
 );
+
+-- (5)–(8) Matrix symmetry (fill expected_access from database-access-matrix.md).
+-- Each assertion is is_empty of the set-difference between live catalog and expected.
+-- Skeleton shape (expand rows at implementation time from migrations after Plan 7):
+-- with expected_access(object, grantee, privilege) as (values
+--   ('public.profiles','authenticated','SELECT'),
+--   ...
+-- )
+-- (5) live table grants not in expected
+-- (6) expected table grants missing from live
+-- (7) live routine privileges not in expected / expected missing
+-- (8) live policies not in expected / expected missing
+-- Implement all four as concrete is_empty queries in this file before calling finish().
+
 select * from finish();
 rollback;
 ```
+
+**Done definition for the RLS file:** `plan(8)` with **eight** executed assertions. A copy-paste that only keeps the first four and leaves (5)–(8) as comments is **not** green — implement the matrix CTE fully before Task 4 closes.
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
@@ -870,7 +923,9 @@ export const createSafeLogger = (write: LogWriter = console.log) => (event: Safe
 export const safeLog = createSafeLogger();
 ```
 
-Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Note this changes the emitted JSON: the current implementation writes camelCase `{requestId,errorCode,durationMs,modelId}` with no `level`, and the new shape is snake_case with `level`. Update the existing `logger.test.ts` assertions in the same commit, and ensure Task 6's `scripts/assert-privacy-logs.mjs` expects the new snake_case field names — a log assertion left on the old camelCase keys would pass vacuously. Replace every production Function `console.*` call — **route handlers and the scheduled `maintenance-cleanup` handler alike** — with `safeLog`. There is no second camelCase log shape for schedules. Task 8 success logs use `code: "maintenance_cleanup"` plus the four optional count fields above; failures use `code: "maintenance_cleanup_failed"` with no counts. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
+Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Prefer routing `sink[level]` so error lines stay on stderr-like sinks when a sink is injected. Note this changes the emitted JSON: the current implementation writes camelCase `{requestId,errorCode,durationMs,modelId}` with no `level`, and the new shape is snake_case with `level`. Update the existing `logger.test.ts` assertions in the same commit, and ensure Task 6's `scripts/assert-privacy-logs.mjs` expects the new snake_case field names — a log assertion left on the old camelCase keys would pass vacuously.
+
+**Call-site Done definition (do not treat “zero console.*” as complete):** today production Functions already avoid raw `console.*`, and `logGenerationEvent` is effectively unused on happy paths. Task 4 is **not** done until at least one generation completion path (success and closed failure) actually calls `logGenerationEvent` / `safeLog` with a real `requestId`, `code`, `durationMs`, and optional `modelId`. Add a focused unit or integration assertion that proves the call (spy on the logger). Replace every production Function `console.*` — **route handlers and the scheduled `maintenance-cleanup` handler alike** — with `safeLog`. There is no second camelCase log shape for schedules. Task 8 success logs use `code: "maintenance_cleanup"` plus the four optional count fields above; failures use `code: "maintenance_cleanup_failed"` with no counts. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
 
 - [ ] **Step 4: Add Netlify build, SPA fallback, and headers**
 
@@ -957,7 +1012,9 @@ After the offline Netlify build, open `dist/index.html` (or the Netlify publish 
 - [ ] **Step 6: Commit security hardening**
 
 ```bash
-git add netlify/functions netlify.toml supabase/tests/database/rls_inventory.test.sql docs/testing/database-access-matrix.md package.json package-lock.json
+git add netlify/functions netlify.toml supabase/tests/database/rls_inventory.test.sql docs/testing/database-access-matrix.md package.json package-lock.json \
+  src/features/planner/pantry-selector.tsx src/shared/ui/wizard/progress-indicator.tsx src/styles.css \
+  src/features/planner src/shared/ui/wizard
 git commit -m "security: enforce logging and deployment boundaries"
 ```
 
@@ -1020,18 +1077,26 @@ Expected: FAIL until missing labels, landmarks, focus behavior, and live regions
 
 - [ ] **Step 3: Write the failing mobile Playwright checks**
 
-`e2e/fixtures/auth.ts` is already reshaped for the optional-household flow. Read it: `authenticatedPage` ends on `/welcome` after a root re-entry; `completedOnboardingPage` completes family setup **and** privacy consent. Do not restore old onboarding consent order. Add only `ideaModePage`, leaving both existing fixtures untouched.
+`e2e/fixtures/auth.ts` is already reshaped for the optional-household flow. Read it: `authenticatedPage` ends on `/welcome` after a root re-entry; `completedOnboardingPage` completes family setup **and** privacy consent (allergy still `none` until a journey upgrades it). Do not restore old onboarding consent order. Add only `ideaModePage`, leaving both existing fixtures untouched.
 
 ```ts
-// e2e/fixtures/auth.ts — add only this fixture
+// e2e/fixtures/auth.ts — extend AuthFixtures and base.extend
+type AuthFixtures = {
+  authEmail: string;
+  authenticatedPage: Page;
+  completedOnboardingPage: Page;
+  ideaModePage: Page;
+};
+
 // ideaModePage requires onboarding_status still not_started when /welcome is opened.
 // Primary copy is 「献立アイデアを考える」(not_started). in_progress uses
 // 「設定せず献立アイデアを考える」— do not use ideaModePage after in_progress.
-ideaModePage: async ({ authenticatedPage: page }, use) => {
+// Use `provide` (not `use`) so eslint react-hooks rules on e2e/** pass — match shopping.ts.
+ideaModePage: async ({ authenticatedPage: page }, provide) => {
   await page.goto("/welcome");
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
-  await use(page);
+  await provide(page);
 },
 ```
 
@@ -1042,16 +1107,19 @@ After `ideaModePage` runs, status is `skipped` and `/welcome` redirects to `/pla
 | Contract | Source of truth |
 | --- | --- |
 | Wizard next | `clickWizardNext` in `e2e/fixtures/history.ts` (DOM `el.click()` — bottom-nav steals Playwright pointer clicks) |
-| Meal radio for mock success | **`朝食` only** — `tools/openrouter-mock` success fixture is `mealType: "breakfast"`; validator rejects meal mismatch (`history.ts` / `shopping.ts` comments) |
-| 44px targets | Plan 7: **primary/secondary `button` height only** — never require 44×44 on native `radio`/`checkbox`/`textbox` |
-| Household members | `completedOnboardingPage` leaves eligible member auto-selected; accessible name is `家族1（…）` when display_name is null — **do not** use `/^おとな/` |
-| Privacy hop | If generate disabled: privacy confirm → `/planner` → **`page.reload()`** then assert heading `5. 確認` (stale draft cache known issue) |
+| Meal radio for mock success | **`朝食` only** — `tools/openrouter-mock` success fixture is `mealType: "breakfast"`; validator rejects meal mismatch |
+| **Household mock success prep** | Default mock `success` includes soy sauce + **wheat** label confirmations. Before household generate, mirror `history.ts` `seedGeneratedMenu`: open `/settings`, set 呼び名 `家族1`, allergy `registered`, click **小麦を追加**, complete member, return to `/planner`. `completedOnboardingPage` alone (allergy `none`) **cannot** reach 「献立ができました」 against the default fixture |
+| **Idea mock scenario** | Default `success` is **rejected** for idea (non-empty adaptations/labelConfirmations). Before idea generate, call `setMockScenario(page, "idea-servings-2")` from `history.ts` (or send `x-kondate-mock-scenario: idea-servings-2`). Plan text must not omit this |
+| Draft autosave | After audience/servings changes, **wait for** `POST …/rest/v1/rpc/save_generation_draft` ok before `clickWizardNext` — same as `generation-recovery-results.spec.ts` / `history.ts`. Skipping this flakes on disabled 次へ |
+| 44px targets | Plan 7: **primary/secondary `button` height only** with **required counts** — never silent-skip missing names; never 44×44 on native radio/checkbox/textbox |
+| Household members | After wheat setup, checkbox accessible name includes `家族1` — default-selected; **do not** use `/^おとな/` |
+| Privacy hop | If generate disabled: privacy confirm → `/planner` → **`page.reload()`** then assert heading `5. 確認` |
 
 ```ts
 // e2e/specs/mobile-accessibility.spec.ts
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
-import { clickWizardNext } from "../fixtures/history";
+import { clickWizardNext, setMockScenario } from "../fixtures/history";
 
 const assertNoHorizontalScroll = async (page: Page) =>
   expect
@@ -1088,6 +1156,62 @@ const assertStepFits = async (
   await assertMajorActionHeights(page, requiredMajors);
 };
 
+/** Wait for draft RPC after a wizard field change (required before 次へ). */
+const waitDraftSave = (page: Page) =>
+  page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
+  );
+
+/**
+ * Household only: make default mock success valid (wheat label confirmations).
+ * Call once before the household wizard when using completedOnboardingPage.
+ */
+const ensureWheatMemberForMockSuccess = async (page: Page) => {
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel("呼び名").fill("家族1");
+  await page.getByLabel("アレルギーの確認").selectOption("registered");
+  await page.getByRole("button", { name: "小麦を追加" }).click();
+  await page.getByRole("button", { name: "この家族の設定を完了" }).click();
+  await page.goto("/planner");
+};
+
+/**
+ * completedOnboardingPage already has privacy; ideaModePage does not.
+ * After privacy return, reload is mandatory (same as history.ts seedGeneratedIdeaMenu).
+ * ideaMode requires setMockScenario before POST.
+ */
+const ensurePrivacyThenGenerate = async (
+  page: Page,
+  opts: { needsPrivacyHop: boolean; mockScenario?: string },
+) => {
+  if (opts.mockScenario) {
+    await setMockScenario(page, opts.mockScenario);
+  }
+  const generate = page.getByRole("button", { name: "献立を作る" });
+  if (opts.needsPrivacyHop) {
+    await expect(generate).toBeDisabled();
+    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/privacy");
+    await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
+    await page.getByRole("button", { name: "確認して進む" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
+      timeout: 15_000,
+    });
+  }
+  await expect(generate).toBeEnabled({ timeout: 15_000 });
+  await generate.click();
+  await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
+  await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+    timeout: 90_000,
+  });
+};
+
+
 const answerSharedWizardSteps = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
@@ -1110,13 +1234,16 @@ const answerSharedWizardSteps = async (page: Page) => {
 const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") => {
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   if (mode === "idea") {
+    const ideaSave = waitDraftSave(page);
     await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
     await page.getByRole("button", { name: "2人" }).click();
+    expect((await ideaSave).ok()).toBe(true);
     await assertStepFits(page, { "2人": 1, 次へ: 1 });
   } else {
-    // completedOnboardingPage: one eligible adult, default-selected as 家族1 — do not re-check.
+    const householdSave = waitDraftSave(page);
     await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
     await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
+    expect((await householdSave).ok()).toBe(true);
     await assertStepFits(page, { 次へ: 1 });
   }
   await clickWizardNext(page);
@@ -1129,43 +1256,17 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
   await assertMajorActionHeights(page, { "献立を作る": 1 });
 };
 
-/**
- * completedOnboardingPage already has privacy; ideaModePage does not.
- * After privacy return, reload is mandatory (same as history.ts seedGeneratedIdeaMenu).
- */
-const ensurePrivacyThenGenerate = async (page: Page, needsPrivacyHop: boolean) => {
-  const generate = page.getByRole("button", { name: "献立を作る" });
-  if (needsPrivacyHop) {
-    await expect(generate).toBeDisabled();
-    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/privacy");
-    await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
-    await page.getByRole("button", { name: "確認して進む" }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    await page.reload();
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
-      timeout: 15_000,
-    });
-  }
-  await expect(generate).toBeEnabled({ timeout: 15_000 });
-  await generate.click();
-  await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
-    timeout: 60_000,
-  });
-};
-
 for (const width of [320, 375, 430]) {
   test(`the household wizard and result fit ${width}px with usable targets`, async ({
     completedOnboardingPage: page,
   }) => {
     await page.setViewportSize({ width, height: 800 });
-    await page.goto("/planner");
+    await ensureWheatMemberForMockSuccess(page);
     await assertNoHorizontalScroll(page);
     await answerSharedWizardSteps(page);
     await answerAudienceAndReview(page, "household");
-    await ensurePrivacyThenGenerate(page, false);
+    await ensurePrivacyThenGenerate(page, { needsPrivacyHop: false });
     await assertNoHorizontalScroll(page);
-    // result surface (household success): live CTA from generation/history E2E
     await assertMajorActionHeights(page, { "これに決めた": 1 });
   });
 
@@ -1183,7 +1284,10 @@ for (const width of [320, 375, 430]) {
     await page.setViewportSize({ width, height: 800 });
     await answerSharedWizardSteps(page);
     await answerAudienceAndReview(page, "idea");
-    await ensurePrivacyThenGenerate(page, true);
+    await ensurePrivacyThenGenerate(page, {
+      needsPrivacyHop: true,
+      mockScenario: "idea-servings-2",
+    });
     await expect(page.getByText("家族条件を使用していません")).toBeVisible();
     await assertNoHorizontalScroll(page);
     await assertMajorActionHeights(page, { "これに決めた": 1 });
@@ -1398,14 +1502,27 @@ Neither fixture may shell out to `docker`. Playwright runs inside the `e2e` Comp
 docker compose run --rm --no-deps app node scripts/assert-privacy-logs.mjs .e2e-function.log
 ```
 
-3. `scripts/assert-privacy-logs.mjs` (and its Node tests) assert that names, synthetic test emails (`@example.invalid`), allergy free text, planner notes, prompt markers, and raw mock response strings are absent, while `request_id` / `code` / `duration_ms` / optional `model_id` (Task 4 snake_case `safeLog` shape) are present for generation traffic. Idea-journey runs must show no family identifier / member UUID payload in the log surface. Plan 7 Task 8 owns the exhaustive family-canary matrix; this script only covers the Function log surface.
+3. `scripts/assert-privacy-logs.mjs` (and its Node tests) assert:
+   - **Absence:** names, synthetic test emails (`@example.invalid`), allergy free text, planner notes, prompt markers, raw mock response strings, and (for idea runs) family/member UUID payloads.
+   - **Presence (anti false-green):** at least one log line whose JSON `code` is a generation-related closed code (or `maintenance_cleanup` when only cleanup ran — for journey runs require generation codes), and every such line includes snake_case `request_id`, `code`, `duration_ms`, and `level`. Optional `model_id` when a model was used.
+   - Empty log file or zero generation lines after a full-journey run is **failure**, not pass.
+   Plan 7 Task 8 owns the exhaustive family-canary matrix; this script only covers the Function log surface.
 4. Add `.e2e-function.log` to `.gitignore`. Do **not** create `e2e/specs/privacy-logging.spec.ts` or `e2e/fixtures/function-logs.ts` as the primary gate — they encourage false reds.
 
 Do not reintroduce a `docker` call inside the `e2e` container.
 
-Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture. It reads **`SERVICE_ROLE_KEY`** from `/workspace/.env` — that is the actual key name in `.env`/`.env.example`; `SUPABASE_SERVICE_ROLE_KEY` is only the name Compose maps it to inside the app container, and the `e2e` service declares no such environment — and creates a non-persisting admin client for `http://127.0.0.1:8000`. It exports `queryOwnedCounts(userId)`, which validates `userId` with Zod and connects to Postgres **directly with `pg`** at `127.0.0.1:54322` (published by `infra/supabase.override.yaml` and reachable because `e2e` uses host networking), querying every `public`/`private` base table containing `user_id` and returning `{table,count}` JSON without printing row values. A direct connection is required rather than PostgREST because `private` tables are deliberately not exposed to the Data API. Close the client in a `finally`. `seedCompleteOwnedGraph(page)` uses the existing onboarding, pantry, generation, revalidation, regeneration, and shopping fixture helpers, creates a generated menu targeting both a toddler and a senior with processed-food confirmation coverage, proves at least one normalized `menu_safety_actions` row was produced by Plans 2–3, and leaves a fresh planner draft. It must also seed the Plan 7 surface, because a cascade is only proven for rows that exist: at least one `target_mode = 'idea'` menu alongside the household one, and at least one row in `private.generation_regeneration_snapshots` from a completed regeneration reservation. Assert both are non-zero before deletion and zero after, so the snapshot's cascade through `private.ai_generation_requests` to `auth.users` is exercised rather than assumed. The idea menu also proves the deletion path does not depend on non-empty `menu_target_members`. Before deletion, assert only a named `requiredNonEmptyFamilies` set (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping) has positive counts; idempotency ledgers and other optional tables may legitimately remain zero. No service-role value enters `page`, browser storage, screenshots, or logs.
+Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture.
 
-`full-journey.spec.ts` covers two journeys. **Import** Task 5 locked helpers (`clickWizardNext`, meal **`朝食`**, privacy hop + **reload**, major-action 44px rules) and/or reuse `e2e/fixtures/history.ts` / `seedGeneratedIdeaMenu` rather than inventing parallel flows. The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review (including **must/prefer pantry selection on the review step**, not a separate post-review screen) → privacy hop only if still required (with reload) → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → 「献立アイデアを考える」 → shared steps with audience 「人数だけ指定してアイデアを見る」 and explicit servings → review notice → privacy + reload → generation → result with 「家族条件を使用していません」 → history idea surfaces → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason; it never converts to household mode.
+**Secrets and DB connection (verbatim — do not invent alternate names):**
+
+- Read `/workspace/.env` (e2e mount) for **`SERVICE_ROLE_KEY`** (Auth Admin / PostgREST service) and **`POSTGRES_PASSWORD`**. The Compose app renames the service key to `SUPABASE_SERVICE_ROLE_KEY` inside the app container only; the e2e process does not receive that name.
+- Auth Admin client: `http://127.0.0.1:8000` with `SERVICE_ROLE_KEY`.
+- Owned-row counts: connect with `pg` to **`postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:54322/postgres?sslmode=disable`** (port published by `infra/supabase.override.yaml`; host networking makes it reachable from the e2e container). Do not log the connection string, password, or row payloads.
+- `queryOwnedCounts(userId)` validates `userId` with Zod, queries every `public`/`private` base table that has `user_id`, returns `{table,count}[]`, closes the client in `finally`.
+
+`seedCompleteOwnedGraph(page)` uses existing onboarding/pantry/generation/revalidation/regeneration/shopping helpers. Household success against the default mock requires the **wheat member** prep (Task 5). Idea menus require **`setMockScenario(..., "idea-servings-N")`**. Seed at least one `target_mode = 'idea'` menu and one `private.generation_regeneration_snapshots` row; assert non-zero before deletion and zero after. Before deletion, assert `requiredNonEmptyFamilies` (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping, regeneration snapshots) has positive counts. No service-role value enters `page`, browser storage, screenshots, or logs.
+
+`full-journey.spec.ts` covers two journeys. **Import** Task 5 locked helpers (`clickWizardNext`, meal **`朝食`**, wheat prep, `setMockScenario("idea-servings-…")`, draft-save waits, privacy hop + **reload**, major-action 44px with counts) and/or reuse `e2e/fixtures/history.ts` / `seedGeneratedMenu` / `seedGeneratedIdeaMenu` rather than inventing parallel flows. The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review (including **must/prefer pantry selection on the review step**, not a separate post-review screen) → privacy hop only if still required (with reload) → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → 「献立アイデアを考える」 → shared steps with audience 「人数だけ指定してアイデアを見る」 and explicit servings → review notice → privacy + reload → generation → result with 「家族条件を使用していません」 → history idea surfaces → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason; it never converts to household mode.
 
 Privacy log assertions run via `scripts/assert-privacy-logs.mjs` after full-journey (and account-deletion) Playwright completes — see the host post-run contract above. When verifying Task 6 alone, invoke:
 
@@ -1436,7 +1553,7 @@ const rejected=await page.request.get("/api/usage/today",{headers:{authorization
 expect(rejected.status()).toBe(401);
 ```
 
-Add `e2e/specs/auth-callback-security.spec.ts`: create a local PKCE attempt, assert the matching state reaches the deterministic callback exchange stub once in the original browser, then assert unknown state, mismatched state, reused continuation, reused code, and `AUTH_CONTINUATION_TTL_SECONDS=300` expiry all fail with the safe retry copy and erase transient code/state. Google cancel remains automated. Real Google success is executed only in staging from `startScreen: "login"` on the exact release candidate. The operator obtains `stagingDeployId` and `stagingDeploySha` from Netlify deploy metadata—not typed memory—sets `expiresAt` to exactly 24 hours after `executedAt`, writes the external JSON artifact, and runs `node scripts/verify-release-evidence.mjs "$GOOGLE_OAUTH_RELEASE_EVIDENCE"` with `NETLIFY_AUTH_TOKEN` before expiry and before tag/deploy.
+Add `e2e/specs/auth-callback-security.spec.ts`: create a local PKCE attempt, assert the matching state reaches the deterministic callback exchange stub once in the original browser, then assert unknown state, mismatched state, reused continuation, reused code, and `AUTH_CONTINUATION_TTL_SECONDS=300` expiry all fail with the safe retry copy and erase transient code/state. **Do not sleep 300s in CI.** Expiry is proven by seeding `private.auth_continuations.expires_at` in the past via the same `pg` connection as `queryOwnedCounts` (or an existing service-role test helper), then replaying the claim/callback. Google cancel remains automated. Real Google success is executed only in staging from `startScreen: "login"` on the exact release candidate. The operator obtains `stagingDeployId` and `stagingDeploySha` from Netlify deploy metadata—not typed memory—sets `expiresAt` to exactly 24 hours after `executedAt`, writes the external JSON artifact, and runs `node scripts/verify-release-evidence.mjs "$GOOGLE_OAUTH_RELEASE_EVIDENCE"` with `NETLIFY_AUTH_TOKEN` before expiry and before tag/deploy.
 
 - [ ] **Step 4: Run the new tests and verify the expected failures**
 
@@ -1462,7 +1579,8 @@ docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
 docker compose run --rm --no-deps app node --test scripts/verify-release-evidence.test.mjs
 docker compose --profile test run --rm db-test
-./scripts/run-e2e.sh
+export LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free
+KONDATE_ASSERT_PRIVACY_LOGS=1 ./scripts/run-e2e.sh
 ```
 
 Expected: unit/component/adversarial, pgTAP, and all Playwright tests report zero failures without contacting OpenRouter.
@@ -1505,6 +1623,8 @@ docker compose run --rm --no-deps app npx vitest run
 docker compose --profile test run --rm db-test
 docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
+export LOCAL_MOCK_MODELS="${LOCAL_MOCK_MODELS:-mock/kondate-primary:free,mock/kondate-repair:free}"
+export KONDATE_ASSERT_PRIVACY_LOGS=1
 ./scripts/run-e2e.sh
 docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
 docker compose run --rm --no-deps app npm run build
@@ -1562,7 +1682,11 @@ jobs:
         run: |
           docker compose run --rm app npm run db:types
           git diff --exit-code -- src/shared/types/database.generated.ts
-      - run: ./scripts/run-e2e.sh
+      - name: E2E with privacy log assertion
+        env:
+          LOCAL_MOCK_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
+          KONDATE_ASSERT_PRIVACY_LOGS: "1"
+        run: ./scripts/run-e2e.sh
       - run: docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
       - run: docker compose run --rm --no-deps app npm run build
       - run: docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
@@ -1604,7 +1728,8 @@ docker compose run --rm --no-deps app npx vitest run
 docker compose --profile test run --rm db-test
 docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
-./scripts/run-e2e.sh
+export LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free
+KONDATE_ASSERT_PRIVACY_LOGS=1 ./scripts/run-e2e.sh
 docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
 docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app npm run build
 docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
@@ -1918,7 +2043,8 @@ docker compose --profile test run --rm db-test
 docker compose run --rm app npm run test:maintenance-db:integration
 docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
-./scripts/run-e2e.sh
+export LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free
+KONDATE_ASSERT_PRIVACY_LOGS=1 ./scripts/run-e2e.sh
 docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
 docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app sh -c 'npm run build && npm run verify:browser-secrets'
 docker compose run --rm --no-deps app sh -c 'npm exec --offline netlify -- build --offline --context deploy-preview && npm run verify:browser-secrets'
