@@ -1301,10 +1301,11 @@ for (const width of [320, 375, 430]) {
     // Live labels from src/app/layouts/app-shell.tsx — require exact counts (no silent skip).
     const shellNavLabels = ["献立", "冷蔵庫", "履歴", "買い物", "設定"] as const;
     for (const { path, heading } of [
-      { path: "/pantry", heading: /冷蔵庫|食材/u },
-      { path: "/shopping", heading: /買い物/u },
+      { path: "/pantry", heading: "食材リスト" },
+      { path: "/shopping", heading: "買い物リスト" },
       { path: "/settings", heading: "家族設定" },
-      { path: "/history", heading: /履歴/u },
+      // live history list h1 is 「作った献立」— not the nav label 「履歴」
+      { path: "/history", heading: "作った献立" },
     ] as const) {
       await page.goto(path);
       await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible({
@@ -1325,14 +1326,17 @@ for (const width of [320, 375, 430]) {
 
   test(`history detail both modes fit ${width}px`, async ({ completedOnboardingPage: page }) => {
     await page.setViewportSize({ width, height: 800 });
-    // Static import preferred at file top in real implementation:
+    // Static import preferred at file top:
     // import { seedGeneratedMenu, seedGeneratedIdeaMenu, setMockScenario } from "../fixtures/history";
-    const { seedGeneratedMenu, seedGeneratedIdeaMenu } = await import("../fixtures/history");
+    const { seedGeneratedMenu, seedGeneratedIdeaMenu, setMockScenario } =
+      await import("../fixtures/history");
     const householdId = await seedGeneratedMenu(page);
     await page.goto(`/history/${householdId}`);
     await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 30_000 });
     await assertNoHorizontalScroll(page);
     await page.goto("/planner");
+    // history.ts: idea seed requires caller to set mock scenario (default success rejects idea).
+    await setMockScenario(page, "idea-servings-2");
     const ideaId = await seedGeneratedIdeaMenu(page, 2);
     await page.goto(`/history/${ideaId}`);
     await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });

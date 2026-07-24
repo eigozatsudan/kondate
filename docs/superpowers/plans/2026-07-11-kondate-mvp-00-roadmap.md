@@ -307,7 +307,7 @@ Server configuration uses these exact names and release defaults:
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Server-only values for exact managed origin `https://<project-ref>.supabase.co`; production browser/server origins and maintenance ref must all match |
 | `SERVER_SITE_ORIGIN` | Canonical HTTPS (or locked local) origin; no path/query/fragment. **Not** duplicated as `APP_ORIGIN` — that name is retired |
 | `AUTH_CONTINUATION_ENCRYPTION_KEY` | Server-only base64 value decoding to exactly 32 bytes |
-| `GENERATION_REQUEST_HMAC_KEY` | Server-only canonical base64 decoding to exactly 32 bytes; stable `generation-command.v1` key, never a `VITE_` value |
+| `GENERATION_REQUEST_HMAC_KEY` | Server-only canonical base64 decoding to exactly 32 bytes; stable key material for **`generation-command.v2`**, never a `VITE_` value |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
 | `OPENROUTER_API_KEY` | Server-only secret |
 | `OPENROUTER_BASE_URL` | Production must equal `https://openrouter.ai/api/v1` exactly |
@@ -338,20 +338,32 @@ Retired non-variables (do not reintroduce in preflight or `.env.example`): `APP_
 20260711002000_ai_control_and_quota.sql
 20260711003000_history_regeneration.sql
 20260711004000_shopping_lists.sql
-20260711005000_account_deletion.sql
-20260711005100_maintenance_cleanup.sql
 20260712000100_onboarding_completion_boundary.sql
 20260712000200_household_allergy_and_continuation_hardening.sql
 20260712000300_serialize_member_allergy_deletion.sql
 20260715000100_allow_incomplete_unsupported_diet_drafts.sql
 20260715000200_custom_allergy_alias_boundary.sql
 20260715000300_atomic_household_onboarding_start.sql
+# … later Plan 2–5 corrective / data migrations as present under supabase/migrations/
+# Plan 7 (guided planner) — actual CLI timestamps on disk (examples; do not invent):
+#   20260722120643_optional_household_profiles.sql
+#   20260722130029_target_mode_storage.sql
+#   20260722225217_generation_command_v2.sql
+#   20260722234554_idea_generation_boundary.sql
+# Plan 6 (hardening) — create only via:
+#   docker compose run --rm --no-deps app npx supabase migration new account_deletion
+#   docker compose run --rm --no-deps app npx supabase migration new maintenance_cleanup
+# so the CLI timestamps sort **after every Plan 7 file**. Never hand-author
+# 20260711005000_account_deletion.sql / 20260711005100_maintenance_cleanup.sql — those
+# prefixes apply *before* 20260722* on a clean reset and break Plan 7. Shorthands
+# "migration 050/051" in Plan 6 mean ordered logical pairs, not fixed filenames.
+# Record each CLI-emitted path in the Task brief/report.
 ```
 
 Every migration is forward-only, enables RLS in the same file that creates a user-owned table, revokes broad default grants, and grants only the operations required by the corresponding plan.
-Migrations `20260712000100`/`20260712000200` are Plan 1 Task 13's correction-gate hardening, ratified after the fact during the Plan 1 whole-branch adversarial review (2026-07-13): the first closes the onboarding-completion consent bypass by revoking direct `authenticated` UPDATE on `profiles` and routing completion through a `set_onboarding_status` RPC; the second normalizes/bounds allergy and auth-continuation-cleanup invariants. They deviate from this table's original date-prefix convention and from Task 13's literal "modify only" file list; this entry is the required human ratification, not a silent edit — see `.superpowers/sdd/progress.md` Task 13 for the review record. They are listed last because that is their true lexical (and thus applied) filename order among migrations that exist today; in practice both were already applied to the local dev database immediately after `20260711000330_auth_continuations.sql` during Plan 1, before any Plan 2–6 migration file existed — this table's row position is a naming-order record, not a claim that they apply after Plan 6's migrations once those files are created.
-Migrations `20260712000300` and `20260715000100`–`20260715000300` are forward-only corrective migrations ratified by the 2026-07-15 implementation review. In lexical order, they serialize member-allergy deletion behind an owner-scoped RPC, permit incomplete unsupported-diet state only while a member remains a draft, prevent custom allergies from bypassing the reviewed standard alias dictionary, and make initial household-draft creation plus onboarding progress atomic. They follow `20260712000200` and remain after any future `20260711002000`–`20260711005100` files in filename order; those future files must treat these corrective boundaries as already applied dependencies.
-Migration `050` is the first corrective hardening migration: it removes competing composite/non-cascade Auth FKs, adds an exact single-column `user_id → auth.users(id) ON DELETE CASCADE`, then fails deployment if any public/private user-owned relation still violates that exact invariant. It preserves owner-composite FKs to application relations. Migration `051` adds bounded canonical cleanup overloads plus one RPC executable only by a NOLOGIN maintenance executor; the scheduled Function assumes that role from its dedicated LOGIN session. Applied migrations `001`–`051` are never rewritten; a later defect is corrected by `052+`. Database type generation always includes both `--schema public,private`, and CI fails on drift in either schema.
+Migrations `20260712000100`/`20260712000200` are Plan 1 Task 13's correction-gate hardening, ratified after the fact during the Plan 1 whole-branch adversarial review (2026-07-13): the first closes the onboarding-completion consent bypass by revoking direct `authenticated` UPDATE on `profiles` and routing completion through a `set_onboarding_status` RPC; the second normalizes/bounds allergy and auth-continuation-cleanup invariants. They deviate from this table's original date-prefix convention and from Task 13's literal "modify only" file list; this entry is the required human ratification, not a silent edit — see `.superpowers/sdd/progress.md` Task 13 for the review record. Lexical order among *existing* files is authoritative; this table is not a claim that Plan 1 corrections apply after Plan 6 once Plan 6 files exist.
+Migrations `20260712000300` and `20260715000100`–`20260715000300` are forward-only corrective migrations ratified by the 2026-07-15 implementation review. In lexical order among files that exist today, they follow `20260712000200`. Plan 6's account-deletion and maintenance migrations must be created with timestamps that sort after Plan 7, not re-use the obsolete `20260711005*` placeholders.
+Plan 6 **account_deletion** (logical "050") removes competing composite/non-cascade Auth FKs, adds an exact single-column `user_id → auth.users(id) ON DELETE CASCADE`, then fails deployment if any public/private user-owned relation still violates that exact invariant. It preserves owner-composite FKs to application relations. Plan 6 **maintenance_cleanup** (logical "051") adds bounded canonical cleanup batch helpers plus one RPC executable only by a NOLOGIN maintenance executor; the scheduled Function assumes that role from its dedicated LOGIN session. Applied migrations are never rewritten; a later defect is corrected by a new migration after the current HEAD of the chain. Database type generation always includes both public and private schemas (via the repo's pg-meta generator), and CI fails on drift in either schema.
 
 ## Attempt, Idempotency, and Retention Invariants
 
