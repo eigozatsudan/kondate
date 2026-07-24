@@ -288,25 +288,66 @@ else
   exit 1
 fi
 
+# Playwright e2e コンテナを1回起動する（引数はそのまま playwright test へ渡す）。
+run_playwright() {
+  run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+    run --rm --no-deps e2e "$@"
+}
+
+# 呼び出し側が --project を既に指定しているか（単一プロジェクト実行の制御用）。
+e2e_args_have_project() {
+  for arg in "$@"; do
+    case "$arg" in
+      --project | --project=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 # 通常の開発スタックを起動したうえで、E2E専用プロファイルのauthを追加起動し、
 # openrouter-mock/kong/oauth-mock/appをE2E向け設定で強制再作成してから、
 # 実際のPlaywrightテストランナー(e2e)を実行する。
 run_e2e_commands() {
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" up -d --wait || return $?
+  # auth は rate-limit カウンタをプロセス内に持つため、E2E 開始時に強制再作成する。
+  # compose.e2e.yaml のメール送信上限も合わせて効かせる。
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    up -d --wait auth || return $?
-  # アプリ全体で共有するAI日次枠はJST日付単位でDBに積み上がるため、
-  # 同じ日の2回目以降のスイートが後半だけ枠切れで落ちる。実行順・実行回数に
-  # 依存しないよう、テスト開始前に共有枠だけ初期化する。
+    up -d --wait --force-recreate auth || return $?
+  # アプリ全体で共有するAI日次枠はJST日付単位でDBに積み上がる。
+  # 同一日の再実行と、1スイート内の mobile+desktop 二重実行の両方で
+  # GLOBAL_DAILY_AI_LIMIT=45 を跨がないよう、共有枠だけを初期化する
+  # （上限値そのものは変更しない。ユーザ単位枠はテストごと新規ユーザで独立）。
   run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
     up -d --wait --force-recreate --no-deps openrouter-mock kong oauth-mock app || return $?
-  run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
-    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    run --rm --no-deps e2e "$@"
+
+  # 呼び出し側が --project を指定していればそのまま1回実行する。
+  # 未指定（full suite / file 指定のみ）では mobile → 枠リセット → desktop の
+  # 2段実行にし、1プロセス内の累積送信が 45 を超えて後半だけ落ちるのを防ぐ。
+  # どちらか一方が失敗しても他方は最後まで走らせ、診断用の失敗一覧を揃える。
+  if e2e_args_have_project "$@"; then
+    run_playwright "$@" || return $?
+  else
+    mobile_status=0
+    desktop_status=0
+    run_playwright --project=mobile-chromium "$@" || mobile_status=$?
+    # project 境界で AI 共有枠を空にする（auth メール枠は compose.e2e の上限引き上げと
+    # 開始時 force-recreate で賄う。ここでの auth 再作成は JWT/Kong と競合しやすい）。
+    run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
+    run_playwright --project=desktop-chromium "$@" || desktop_status=$?
+    if [ "$mobile_status" -ne 0 ]; then
+      return "$mobile_status"
+    fi
+    if [ "$desktop_status" -ne 0 ]; then
+      return "$desktop_status"
+    fi
+  fi
 }
 
 if run_e2e_commands "$@"; then

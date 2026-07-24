@@ -256,10 +256,11 @@ async function expectCompleteCandidate(
     adaptation: {
       portion: string;
       cutting: string | null;
-      heating: string;
+      heating: string | null;
       servingCheck: string;
     };
-    safetyAction: string;
+    // fixture の cut_small / heat_thoroughly など複数 safetyActions を表示順で固定する
+    safetyActions: readonly string[];
   },
 ): Promise<void> {
   // wizardからは緊急献立起動buttonが削除されているため、直接/emergency-menusを開く。
@@ -291,21 +292,35 @@ async function expectCompleteCandidate(
       await expect(stepRow).toBeVisible();
     }
   }
+  // 料理ごとに「家族向けの取り分け」があるため、term は複数要素になる。
+  // strict 単一要素前提ではなく、各 term が portion を含むことと、
+  // 主菜側の切り方/加熱/配膳時ラベル・全 safety 行を表示順で固定する。
   const adaptation = candidate.getByRole("heading", { name: "家族向けの取り分け" }).locator("..");
-  await expect(adaptation.getByRole("term")).toContainText(input.adaptation.portion);
+  const terms = adaptation.getByRole("term");
+  const termCount = await terms.count();
+  expect(termCount).toBeGreaterThan(0);
+  for (let index = 0; index < termCount; index += 1) {
+    await expect(terms.nth(index)).toContainText(input.adaptation.portion);
+  }
   if (input.adaptation.cutting !== null) {
     await expect(
       adaptation.getByText(`切り方: ${input.adaptation.cutting}`, { exact: true }),
     ).toBeVisible();
   }
-  await expect(
-    adaptation.getByText(`加熱: ${input.adaptation.heating}`, { exact: true }),
-  ).toBeVisible();
+  if (input.adaptation.heating !== null) {
+    await expect(
+      adaptation.getByText(`加熱: ${input.adaptation.heating}`, { exact: true }),
+    ).toBeVisible();
+  }
   await expect(
     adaptation.getByText(`配膳時: ${input.adaptation.servingCheck}`, { exact: true }),
   ).toBeVisible();
-  const safetyAction = adaptation.getByText("安全のための手順", { exact: true }).locator("..");
-  await expect(safetyAction.getByRole("listitem")).toHaveText(input.safetyAction);
+  // 全料理の「安全のための手順」を DOM 出現順で突き合わせる（cut_small 追加後は複数行）
+  const safetyItems = adaptation
+    .getByText("安全のための手順", { exact: true })
+    .locator("..")
+    .getByRole("listitem");
+  await expect(safetyItems).toHaveText([...input.safetyActions]);
   await expect(candidate.getByRole("heading", { name: "冷蔵庫食材の使い方" })).toBeVisible();
   await expect(candidate.getByText("今回選んだ冷蔵庫食材はありません。")).toBeVisible();
   await expect(
@@ -411,10 +426,12 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
+  // 文言は shared/emergency/fixtures.v1.ts の cut_small 肯定 stem 正本に合わせる
+  // （「一口大」だけでは stem 不一致のため「一口大以下」へ寄せた履歴がある）。
   await expectCompleteCandidate(page, {
     heading: "鶏肉とキャベツの塩蒸し・きゅうりの塩もみ・玉ねぎの塩スープ",
     timeline: [
-      "0分〜（目安3分） 湯を沸かしながら材料を切る",
+      "0分〜（目安3分） 湯を沸かしながら材料を一口大以下に切る",
       "3分〜（目安10分） 主菜を蒸し、同時にスープを煮る",
       "13分〜（目安2分） 副菜の水気を絞って盛り付ける",
     ],
@@ -427,35 +444,40 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
           ["塩", "少々"],
         ],
         steps: [
-          "鶏肉を一口大、キャベツを食べやすい大きさに切る",
+          "鶏肉を一口大以下に切り、キャベツを食べやすい大きさに切る",
           "フライパンに入れて塩を振り、ふたをして中心まで十分に加熱する",
         ],
       },
       {
         heading: "副菜・きゅうりの塩もみ",
         ingredients: [["きゅうり", "1本"]],
-        steps: ["薄切りにして塩でもみ、水気を絞る"],
+        steps: ["きゅうりを小さく切り、塩でもみ、水気を絞る"],
       },
       {
         heading: "汁物・玉ねぎの塩スープ",
         ingredients: [["玉ねぎ", "1/2個"]],
-        steps: ["薄切りの玉ねぎを水でやわらかく煮、塩で味を整える"],
+        steps: ["玉ねぎを小さく切り、水でやわらかく煮、塩で味を整える"],
       },
     ],
     adaptation: {
       portion: "年齢と食欲に合わせた量",
-      cutting: "鶏肉を食べやすい大きさに切る",
+      cutting: "鶏肉を一口大以下に切る",
       heating: "鶏肉の中心まで十分に加熱する",
       servingCheck: "生焼けがないことを確認する",
     },
-    safetyAction: "鶏肉の中心まで十分に加熱する",
+    safetyActions: [
+      "鶏肉の中心まで十分に加熱する",
+      "鶏肉を一口大以下に切る",
+      "きゅうりを小さく切る",
+      "玉ねぎを小さく切る",
+    ],
   });
 
   await savePlannerMeal(page, "朝食", "breakfast");
   await expectCompleteCandidate(page, {
     heading: "鮭おにぎり・やわらか野菜",
     timeline: [
-      "0分〜（目安3分） 鮭を焼き始め、野菜を小さく切る",
+      "0分〜（目安3分） 鮭を焼き始め、にんじんを小さく切る",
       "3分〜（目安9分） 野菜を煮ながら鮭の骨を完全に除く",
       "12分〜（目安3分） 鮭をごはんに混ぜて握り、野菜を盛る",
     ],
@@ -477,23 +499,23 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
           ["にんじん", "1/2本"],
           ["キャベツ", "2枚"],
         ],
-        steps: ["野菜を小さく切り、鍋で歯ぐきでつぶせるやわらかさまで煮る"],
+        steps: ["にんじんを小さく切り、鍋で歯ぐきでつぶせるやわらかさまで煮る"],
       },
     ],
     adaptation: {
       portion: "年齢と食欲に合わせた量",
-      cutting: "鮭を細かくほぐす",
+      cutting: "鮭を細かく刻む",
       heating: "鮭の中心まで十分に加熱する",
       servingCheck: "鮭の骨が残っていないことを確認する",
     },
-    safetyAction: "鮭の小骨を完全に除く",
+    safetyActions: ["鮭の小骨を完全に除く", "鮭を細かく刻む", "にんじんを小さく切る"],
   });
 
   await savePlannerMeal(page, "昼食", "lunch");
   await expectCompleteCandidate(page, {
     heading: "鶏そぼろ丼・やわらか温野菜",
     timeline: [
-      "0分〜（目安4分） 野菜を切り、鶏ひき肉を火にかける",
+      "0分〜（目安4分） かぼちゃを小さく切り、鶏ひき肉を火にかける",
       "4分〜（目安8分） 鶏そぼろと温野菜を同時に十分加熱する",
       "12分〜（目安3分） 丼と温野菜を盛り付ける",
     ],
@@ -512,16 +534,20 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
           ["かぼちゃ", "100g"],
           ["にんじん", "1/2本"],
         ],
-        steps: ["野菜を小さく切り、歯ぐきでつぶせるやわらかさまで加熱する"],
+        steps: ["かぼちゃを小さく切り、歯ぐきでつぶせるやわらかさまで加熱する"],
       },
     ],
     adaptation: {
       portion: "年齢と食欲に合わせた量",
-      cutting: null,
+      cutting: "鶏ひき肉を細かく刻む",
       heating: "鶏ひき肉の中心まで十分に加熱する",
       servingCheck: "生焼けがないことを確認する",
     },
-    safetyAction: "鶏ひき肉の中心まで十分に加熱する",
+    safetyActions: [
+      "鶏ひき肉の中心まで十分に加熱する",
+      "鶏ひき肉を細かく刻む",
+      "かぼちゃを小さく切る",
+    ],
   });
 
   await page.goto("/planner");

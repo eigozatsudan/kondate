@@ -5,5 +5,8 @@ services:
     command: ["node", "tools/run-e2e-app.mjs"]
   auth:
     environment:
+      # full suite は mobile+desktop で magic-link を数十〜百通超える。
+      # 既定 100 だと同一 auth 寿命内の後半で OTP/メール送信が弾かれ、
+      # authenticatedPage が / や /login に落ちる（AI quota とは別経路）。
       GOTRUE_SMTP_MAX_FREQUENCY: "1s"
-      GOTRUE_RATE_LIMIT_EMAIL_SENT: "100"
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "1000"

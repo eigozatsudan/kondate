@@ -34,7 +34,10 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByRole("button", { name: "家族を削除" }).click();
   await page.getByRole("button", { name: "家族だけを削除" }).click();
   await expect(page.getByText("子ども")).not.toBeVisible();
-  await expect(page.getByRole("button", { name: "アカウントを削除" })).toHaveCount(0);
+  // 家族削除はアカウント削除と分離されていること（DangerZone のアカウント削除は残る）
+  await expect(page.getByRole("region", { name: "DangerZone" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "アカウントを削除" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "家族を追加" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
