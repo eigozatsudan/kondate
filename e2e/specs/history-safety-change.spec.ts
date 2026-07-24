@@ -110,9 +110,8 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   // 最大60秒 poll の browser 経路を証明するため、mount 前に poll 間隔だけ短縮する。
   // 製品コードは未設定時 60_000ms を使い、ここは E2E 専用 seam。
   await page.addInitScript(() => {
-    (
-      window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }
-    ).__KONDATE_REVALIDATE_POLL_MS = 2_000;
+    (window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }).__KONDATE_REVALIDATE_POLL_MS =
+      2_000;
   });
 
   const firstRevalidate = waitForRevalidate200(page, menuId);

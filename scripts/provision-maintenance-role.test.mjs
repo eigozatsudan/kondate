@@ -34,6 +34,9 @@ test("provisions login outside migrations and sets statement_timeout", () => {
   assert.match(source, /grant\s+kondate_maintenance_executor\s+to\s+kondate_maintenance_login/u);
   assert.match(source, /docker\s+compose/u);
   assert.match(source, /exec\s+-T\s+-e\s+PGPASSWORD\s+db/u);
+  // CREATE は NOSUPERUSER 明示。再プロビジョン ALTER はローカル非 superuser postgres 向けに NOSUPERUSER を付けない。
+  assert.match(source, /create role kondate_maintenance_login[^;]*nosuperuser/iu);
+  assert.doesNotMatch(source, /alter role kondate_maintenance_login[^;]*nosuperuser/iu);
 });
 
 test("unsets password material before exit paths", () => {

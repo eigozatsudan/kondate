@@ -91,9 +91,9 @@ describe("schema-valid fixed outputs", () => {
     const body = scenarios["must-use-pantry-omission"] as {
       menu?: { pantryUsage?: Array<{ priority: string; usageStatus: string }> };
     };
-    expect(body.menu?.pantryUsage?.some((p) => p.priority === "must_use" && p.usageStatus === "unused")).toBe(
-      true,
-    );
+    expect(
+      body.menu?.pantryUsage?.some((p) => p.priority === "must_use" && p.usageStatus === "unused"),
+    ).toBe(true);
     expect(JSON.stringify(body)).not.toContain("inventoryQuantity");
   });
 });

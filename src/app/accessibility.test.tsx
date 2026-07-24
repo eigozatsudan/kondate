@@ -52,8 +52,7 @@ vi.mock("@/features/generation/api/usage-today-api", () => ({
 }));
 
 vi.mock("@/features/history/api/revalidation-api", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("@/features/history/api/revalidation-api")>();
+  const original = await importOriginal<typeof import("@/features/history/api/revalidation-api")>();
   return { ...original, revalidateMenu: revalidateMenuMock };
 });
 

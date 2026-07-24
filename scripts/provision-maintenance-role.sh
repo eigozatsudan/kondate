@@ -50,13 +50,17 @@ sql=$(cat <<SQL
 do \$\$
 begin
   if not exists (select 1 from pg_roles where rolname = 'kondate_maintenance_login') then
+    -- CREATE では NOSUPERUSER を明示する（CREATEROLE でも可）。
     execute format(
       'create role kondate_maintenance_login login password %L noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls connection limit 2',
       '${sql_password}'
     );
   else
+    -- ローカル Supabase の postgres は非 superuser。ALTER ... NOSUPERUSER だけが
+    -- 「superuser 属性の変更」として拒否されるため、再プロビジョン時は付けない
+    -- （CREATE 済みロールは rolsuper=false のまま。パスワードと接続制限を正規化する）。
     execute format(
-      'alter role kondate_maintenance_login with login password %L noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls connection limit 2',
+      'alter role kondate_maintenance_login with login password %L noinherit nocreatedb nocreaterole noreplication nobypassrls connection limit 2',
       '${sql_password}'
     );
   end if;

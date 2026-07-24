@@ -46,10 +46,7 @@ describe("assertPrivacyLogs", () => {
 
   it("fails on UUID, memo keys, Japanese names, and raw mock body markers", () => {
     assert.throws(
-      () =>
-        assertPrivacyLogs(
-          `${goodLine}\n10000000-0000-4000-8000-000000000001\n`,
-        ),
+      () => assertPrivacyLogs(`${goodLine}\n10000000-0000-4000-8000-000000000001\n`),
       /privacy_log_sensitive_present/,
     );
     assert.throws(

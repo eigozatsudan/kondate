@@ -256,14 +256,10 @@ describe("runVerifyReleaseEvidence", () => {
   });
 
   it("spawns the test-cli wrapper and requires an external evidence path", () => {
-    const result = spawnSync(
-      process.execPath,
-      ["scripts/verify-release-evidence.test-cli.mjs"],
-      {
-        encoding: "utf8",
-        env: { ...process.env, CONTEXT: "dev" },
-      },
-    );
+    const result = spawnSync(process.execPath, ["scripts/verify-release-evidence.test-cli.mjs"], {
+      encoding: "utf8",
+      env: { ...process.env, CONTEXT: "dev" },
+    });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /evidence_path_required/);
   });

@@ -219,22 +219,23 @@ describe("auth continuation deposit", () => {
     };
     const store: { row: Stored | null } = { row: null };
 
-    const deposit = vi.fn().mockImplementation(async (input: {
-      ciphertext: Uint8Array;
-      iv: Uint8Array;
-      stateHash: Uint8Array;
-    }) => {
-      store.row = {
-        ciphertext: input.ciphertext,
-        iv: input.iv,
-        stateHash: input.stateHash,
-        secretHash: await sha256(SECRET),
-        claimed: false,
-      };
-      return true;
-    });
-    const claim = vi.fn().mockImplementation(
-      async (input: { stateHash: Uint8Array; secretHash: Uint8Array }) => {
+    const deposit = vi
+      .fn()
+      .mockImplementation(
+        async (input: { ciphertext: Uint8Array; iv: Uint8Array; stateHash: Uint8Array }) => {
+          store.row = {
+            ciphertext: input.ciphertext,
+            iv: input.iv,
+            stateHash: input.stateHash,
+            secretHash: await sha256(SECRET),
+            claimed: false,
+          };
+          return true;
+        },
+      );
+    const claim = vi
+      .fn()
+      .mockImplementation(async (input: { stateHash: Uint8Array; secretHash: Uint8Array }) => {
         if (store.row === null || store.row.claimed) return null;
         if (
           !Buffer.from(input.stateHash).equals(Buffer.from(store.row.stateHash)) ||
@@ -248,8 +249,7 @@ describe("auth continuation deposit", () => {
           iv: store.row.iv,
           returnTo: RETURN_TO,
         };
-      },
-    );
+      });
 
     const depositHandler = createHandler({ origin: ORIGIN, encryptionKey, deposit });
     const depositResponse = await depositHandler(

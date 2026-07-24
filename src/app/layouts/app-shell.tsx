@@ -52,8 +52,7 @@ export function AppShell() {
   // 無い場合のみ -1 を付与する（キーボード順序に載せない）。
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const heading =
-        document.querySelector("main h1") ?? document.querySelector("h1");
+      const heading = document.querySelector("main h1") ?? document.querySelector("h1");
       if (!(heading instanceof HTMLElement)) return;
       if (!heading.hasAttribute("tabindex")) {
         heading.tabIndex = -1;
