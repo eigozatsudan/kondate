@@ -443,7 +443,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       }
       fieldErrors={fieldErrors}
       onDraftChange={setValue}
-      onStepChange={setStep}
+      onStepChange={(next) => {
+        setStep(next);
+        // 設計 §10: audience で idea を確定した時点で skipped にする（/planner 直開きでは変えない）。
+        // review submit 経路にも同処理があり、二重呼び出しは complete|skipped で no-op。
+        if (next === "review" && value.targetMode === "idea" && userId !== undefined) {
+          void setOnboardingStatusIfNeeded(client, userId, queryClient);
+        }
+      }}
       pantryItems={pantryQuery.data}
       pantryItemsStatus="loaded"
       attempt={attempt}

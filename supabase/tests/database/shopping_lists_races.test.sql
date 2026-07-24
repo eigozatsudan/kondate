@@ -11,18 +11,18 @@
 -- 触らせ、テスト終了時に自分で作った行だけを明示的に削除して後始末する。
 -- 他の *.test.sql の「1ファイル1 begin/rollback」規約には影響しない。
 -- =============================================================================
-select plan(4);
+select plan(5);
 
 -- 前回実行が途中で失敗した場合に残った行を先に削除する（commit方式のため
 -- rollbackに頼れない。auth.usersのcascade deleteでhousehold_members/
 -- member_alleriesも含めて安全に削除できる）。
 delete from public.shopping_lists where user_id in (
   'a1000000-0000-4000-8000-000000000101','a1000000-0000-4000-8000-000000000102',
-  'a1000000-0000-4000-8000-000000000103'
+  'a1000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000104'
 );
 delete from auth.users where id in (
   'a1000000-0000-4000-8000-000000000101','a1000000-0000-4000-8000-000000000102',
-  'a1000000-0000-4000-8000-000000000103'
+  'a1000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000104'
 );
 
 insert into auth.users (id,instance_id,aud,role,email) values
@@ -31,7 +31,9 @@ insert into auth.users (id,instance_id,aud,role,email) values
   ('a1000000-0000-4000-8000-000000000102','00000000-0000-0000-0000-000000000000',
     'authenticated','authenticated','shopping-race-owner-2@example.test'),
   ('a1000000-0000-4000-8000-000000000103','00000000-0000-0000-0000-000000000000',
-    'authenticated','authenticated','shopping-race-owner-3@example.test');
+    'authenticated','authenticated','shopping-race-owner-3@example.test'),
+  ('a1000000-0000-4000-8000-000000000104','00000000-0000-0000-0000-000000000000',
+    'authenticated','authenticated','shopping-race-owner-4@example.test');
 
 insert into public.household_members (
   id,user_id,status,display_name,age_band,portion_size,spice_level,
@@ -42,7 +44,9 @@ insert into public.household_members (
   ('a2000000-0000-4000-8000-000000000102','a1000000-0000-4000-8000-000000000102',
     'draft','子ども2','age_6_8','regular','mild','registered','none'),
   ('a2000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000103',
-    'draft','子ども3','age_6_8','regular','mild','registered','none');
+    'draft','子ども3','age_6_8','regular','mild','registered','none'),
+  ('a2000000-0000-4000-8000-000000000104','a1000000-0000-4000-8000-000000000104',
+    'draft','子ども4','age_6_8','regular','mild','registered','none');
 insert into public.member_allergies (
   id,user_id,member_id,allergen_id,custom_name,custom_confirmed
 ) values
@@ -51,10 +55,12 @@ insert into public.member_allergies (
   ('a3000000-0000-4000-8000-000000000102','a1000000-0000-4000-8000-000000000102',
     'a2000000-0000-4000-8000-000000000102','wheat',null,false),
   ('a3000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000103',
-    'a2000000-0000-4000-8000-000000000103','wheat',null,false);
+    'a2000000-0000-4000-8000-000000000103','wheat',null,false),
+  ('a3000000-0000-4000-8000-000000000104','a1000000-0000-4000-8000-000000000104',
+    'a2000000-0000-4000-8000-000000000104','wheat',null,false);
 update public.household_members set status='complete'
   where id in ('a2000000-0000-4000-8000-000000000101','a2000000-0000-4000-8000-000000000102',
-    'a2000000-0000-4000-8000-000000000103');
+    'a2000000-0000-4000-8000-000000000103','a2000000-0000-4000-8000-000000000104');
 
 insert into public.menus (
   id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
@@ -69,7 +75,10 @@ insert into public.menus (
     'a5000000-0000-4000-8000-000000000102',1),
   ('a4000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000103',
     'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','allergens-v1','food-v1','menu-v1',
-    'a5000000-0000-4000-8000-000000000103',1);
+    'a5000000-0000-4000-8000-000000000103',1),
+  ('a4000000-0000-4000-8000-000000000104','a1000000-0000-4000-8000-000000000104',
+    'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household','allergens-v1','food-v1','menu-v1',
+    'a5000000-0000-4000-8000-000000000104',1);
 insert into public.menu_target_members (
   id,menu_id,user_id,household_member_id,household_member_user_id,
   anonymous_ref,member_display_name_snapshot
@@ -82,7 +91,10 @@ insert into public.menu_target_members (
     'a1000000-0000-4000-8000-000000000102','member_1','子ども2'),
   ('a6000000-0000-4000-8000-000000000103','a4000000-0000-4000-8000-000000000103',
     'a1000000-0000-4000-8000-000000000103','a2000000-0000-4000-8000-000000000103',
-    'a1000000-0000-4000-8000-000000000103','member_1','子ども3');
+    'a1000000-0000-4000-8000-000000000103','member_1','子ども3'),
+  ('a6000000-0000-4000-8000-000000000104','a4000000-0000-4000-8000-000000000104',
+    'a1000000-0000-4000-8000-000000000104','a2000000-0000-4000-8000-000000000104',
+    'a1000000-0000-4000-8000-000000000104','member_1','子ども4');
 insert into public.dishes (
   id,menu_id,user_id,role,position,name,description,cooking_time_minutes
 ) values
@@ -91,7 +103,9 @@ insert into public.dishes (
   ('a8000000-0000-4000-8000-000000000102','a4000000-0000-4000-8000-000000000102',
     'a1000000-0000-4000-8000-000000000102','main',1,'煮物','race検証用の煮物2です',20),
   ('a8000000-0000-4000-8000-000000000103','a4000000-0000-4000-8000-000000000103',
-    'a1000000-0000-4000-8000-000000000103','main',1,'煮物','race検証用の煮物3です',20);
+    'a1000000-0000-4000-8000-000000000103','main',1,'煮物','race検証用の煮物3です',20),
+  ('a8000000-0000-4000-8000-000000000104','a4000000-0000-4000-8000-000000000104',
+    'a1000000-0000-4000-8000-000000000104','main',1,'煮物','race検証用の煮物4です',20);
 insert into public.dish_ingredients (
   id,menu_id,dish_id,user_id,position,name,quantity_value,quantity_text,unit,store_section
 ) values
@@ -103,6 +117,9 @@ insert into public.dish_ingredients (
     1,'にんじん',1,'1本','本','produce'),
   ('a7000000-0000-4000-8000-000000000103','a4000000-0000-4000-8000-000000000103',
     'a8000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000103',
+    1,'にんじん',1,'1本','本','produce'),
+  ('a7000000-0000-4000-8000-000000000104','a4000000-0000-4000-8000-000000000104',
+    'a8000000-0000-4000-8000-000000000104','a1000000-0000-4000-8000-000000000104',
     1,'にんじん',1,'1本','本','produce');
 
 -- fixture は psql のデフォルト autocommit により各insert文の直後にcommit済み
@@ -505,6 +522,162 @@ select ok(
   || 'until that mutation commits, so it never lands under the same stale fingerprint'
 );
 
+-- -----------------------------------------------------------------------------
+-- Race 4（設計書 Task2: two-tab mutate version race）:
+-- 両タブが list version 3 を観測した状態から始める。タブA（本セッション）が
+-- expected 3 でコミットして version 4 にしたあと、タブB（dblink 別バックエンド）が
+-- 同じ expected 3 で mutate すると list_version_conflict になり、項目は変わらない。
+--
+-- 注: 完全同時開始の lock-wait レースではなく、コミット済みタブAのあとに
+-- 別セッションが stale expected version を突きつける two-tab 契約を証明する。
+-- dblink ロールは通常 mutate 実行権を持たないため、この race の間だけ EXECUTE を
+-- 一時付与し、終了時に必ず revoke する。
+-- -----------------------------------------------------------------------------
+do $test$
+declare
+  v_owner constant uuid := 'a1000000-0000-4000-8000-000000000104';
+  v_menu constant uuid := 'a4000000-0000-4000-8000-000000000104';
+  v_dish constant uuid := 'a8000000-0000-4000-8000-000000000104';
+  v_ingredient constant uuid := 'a7000000-0000-4000-8000-000000000104';
+  v_fingerprint text;
+  v_draft jsonb;
+  v_list_id uuid;
+begin
+  v_fingerprint := public.shopping_safety_fingerprint(v_owner, v_menu);
+  v_draft := jsonb_build_object(
+    'items', jsonb_build_array(jsonb_build_object(
+      'key','carrot-race-4','displayName','にんじん','normalizedName','にんじん',
+      'storeSection','produce','quantityValue',1,'quantityText','1本','unit','本',
+      'pantryCheckRequired',false,
+      'sourceIngredients', jsonb_build_array(jsonb_build_object(
+        'ingredientId',v_ingredient,'dishId',v_dish,'dishName','煮物','name','にんじん',
+        'quantityValue',1,'quantityText','1本','unit','本','storeSection','produce'
+      )),
+      'labelWarnings','[]'::jsonb
+    )),
+    'listLabelWarnings','[]'::jsonb
+  );
+  perform public.apply_shopping_draft(
+    v_owner, v_menu, 'new', null, null, v_fingerprint,
+    'a9000000-0000-4000-8000-000000000104'::uuid,
+    encode(extensions.digest(convert_to('creation-race-4','UTF8'),'sha256'),'hex'),
+    v_draft
+  );
+  select id into v_list_id from public.shopping_lists
+    where user_id = v_owner and status = 'active';
+  -- 両タブが version 3 を見る前提に揃える（apply 直後は 1）。
+  update public.shopping_lists set version = 3 where id = v_list_id and user_id = v_owner;
+end;
+$test$;
+
+do $test$
+declare
+  v_owner constant uuid := 'a1000000-0000-4000-8000-000000000104';
+  v_list_id uuid;
+  v_item_id uuid;
+  v_list_fingerprint text;
+  v_response jsonb;
+begin
+  select id into v_list_id from public.shopping_lists
+    where user_id = v_owner and status = 'active';
+  select id into v_item_id from public.shopping_items where list_id = v_list_id limit 1;
+  v_list_fingerprint := public.shopping_list_safety_fingerprint(v_owner, v_list_id);
+
+  -- タブA: expected version 3 で set_checked=true → version 4（この DO 終了時に commit）。
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+  perform set_config(
+    'request.jwt.claims',
+    jsonb_build_object('sub', v_owner, 'role', 'authenticated')::text,
+    true
+  );
+  v_response := public.mutate_shopping_item(
+    v_list_id, 3, v_list_fingerprint, 'set_checked', v_item_id,
+    'a9000000-0000-4000-8000-000000000114'::uuid, jsonb_build_object('isChecked', true)
+  );
+  reset role;
+  if (v_response->>'version')::integer <> 4 then
+    raise exception 'race 4: tab A should advance the list version to 4, got %',
+      v_response->>'version';
+  end if;
+end;
+$test$;
+
+-- grant は DO 内だと未コミットのまま dblink 別セッションから見えない。
+-- autocommit の単独文として付与し、race 4 終了後に必ず revoke する。
+grant execute on function public.mutate_shopping_item(uuid,integer,text,text,uuid,uuid,jsonb)
+  to shopping_pgtap_dblink_test;
+
+do $test$
+declare
+  v_owner constant uuid := 'a1000000-0000-4000-8000-000000000104';
+  v_connstr constant text :=
+    'host=db port=5432 dbname=postgres user=shopping_pgtap_dblink_test password=shopping_pgtap_dblink_test_only';
+  v_list_id uuid;
+  v_item_id uuid;
+  v_list_fingerprint text;
+  v_b_error text;
+begin
+  select id into v_list_id from public.shopping_lists
+    where user_id = v_owner and status = 'active';
+  select id into v_item_id from public.shopping_items where list_id = v_list_id limit 1;
+  -- タブA コミット後の fingerprint（version は 4、安全性は不変）。
+  v_list_fingerprint := public.shopping_list_safety_fingerprint(v_owner, v_list_id);
+
+  if (select version from public.shopping_lists where id = v_list_id) <> 4 then
+    raise exception 'race 4: precondition failed — list must be at version 4 after tab A';
+  end if;
+  if not exists(select 1 from public.shopping_items where id = v_item_id and is_checked) then
+    raise exception 'race 4: precondition failed — tab A must have checked the item';
+  end if;
+
+  -- タブB: 別バックエンドから、タブA と同じ expected version 3 で isChecked=false を試みる。
+  begin
+    perform extensions.dblink_exec(v_connstr, format(
+      $sql$
+      select set_config('request.jwt.claim.sub', %L, false);
+      select set_config('request.jwt.claims', %L, false);
+      select public.mutate_shopping_item(
+        %L::uuid, 3, %L, 'set_checked', %L::uuid, %L::uuid, %L::jsonb
+      );
+      $sql$,
+      v_owner::text,
+      jsonb_build_object('sub', v_owner, 'role', 'authenticated')::text,
+      v_list_id, v_list_fingerprint, v_item_id,
+      'a9000000-0000-4000-8000-000000000124'::uuid,
+      jsonb_build_object('isChecked', false)::text
+    ));
+  exception when others then
+    v_b_error := sqlerrm;
+  end;
+
+  if v_b_error is null then
+    raise exception 'race 4: tab B unexpectedly succeeded with stale expected list version 3';
+  end if;
+  if v_b_error is distinct from 'list_version_conflict'
+    and v_b_error not like '%list_version_conflict%' then
+    raise exception 'race 4: tab B must fail with list_version_conflict, got %', v_b_error;
+  end if;
+  if not exists(select 1 from public.shopping_items where id = v_item_id and is_checked) then
+    raise exception 'race 4: tab B must not change the item after tab A committed';
+  end if;
+  if (select version from public.shopping_lists where id = v_list_id) <> 4 then
+    raise exception 'race 4: list version must remain 4 after the rejected tab B mutation';
+  end if;
+end;
+$test$;
+
+revoke execute on function public.mutate_shopping_item(uuid,integer,text,text,uuid,uuid,jsonb)
+  from shopping_pgtap_dblink_test;
+
+select ok(
+  exists(select 1 from public.shopping_items i join public.shopping_lists l on l.id = i.list_id
+    where l.user_id = 'a1000000-0000-4000-8000-000000000104'::uuid
+      and i.is_checked and l.version = 4),
+  'race 4: two tabs at list version 3 — first mutate commits version 4, second session '
+  || 'with expected 3 gets list_version_conflict and leaves the item unchanged'
+);
+
 select * from finish();
 
 -- 後始末: commit方式のため、rollbackに依存せず作成した行を明示的に削除する。
@@ -514,12 +687,15 @@ select * from finish();
 -- （直接削除すると "member_registered_allergy_required" トリガーに抵触するため
 -- auth.users 経由のcascadeに委ねるのが安全）。
 begin;
+-- race 4 が途中失敗してもテスト専用 EXECUTE を残さない
+revoke execute on function public.mutate_shopping_item(uuid,integer,text,text,uuid,uuid,jsonb)
+  from shopping_pgtap_dblink_test;
 delete from public.shopping_lists where user_id in (
   'a1000000-0000-4000-8000-000000000101','a1000000-0000-4000-8000-000000000102',
-  'a1000000-0000-4000-8000-000000000103'
+  'a1000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000104'
 );
 delete from auth.users where id in (
   'a1000000-0000-4000-8000-000000000101','a1000000-0000-4000-8000-000000000102',
-  'a1000000-0000-4000-8000-000000000103'
+  'a1000000-0000-4000-8000-000000000103','a1000000-0000-4000-8000-000000000104'
 );
 commit;

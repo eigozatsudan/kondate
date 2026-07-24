@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(61);
+select plan(62);
 select has_table('public','shopping_lists','shopping_lists exists');
 select has_table('public','shopping_items','shopping_items exists');
 select has_table('public','shopping_list_sources','shopping_list_sources exists');
@@ -890,6 +890,254 @@ $probe$;
 -- DO が証明した内容だけを 1 本の pass に対応させる（過大ラベルで plan を水増ししない）
 select pass('apply_shopping_draft/reconciliation reject idea menus with idea_menu_not_supported '
   || 'and unchanged shopping_lists/shopping_mutations row counts');
+
+-- -----------------------------------------------------------------------------
+-- owner-mutation matrix（設計書 Task2）:
+-- 1) 他ownerの item id は shopping_item_not_found（存在有無を区別しない）
+-- 2) add_manual / set_checked / edit / remove / mark_at_home / undo は各1回成功し
+--    list version をちょうど +1 する
+-- 3) checked（protected）item を reconcile remove しようとすると protected_item_conflict
+-- -----------------------------------------------------------------------------
+do $test$
+declare
+  v_owner constant uuid := 'c8000000-0000-4000-8000-000000000001';
+  v_other constant uuid := 'c8000000-0000-4000-8000-0000000000aa';
+  v_member constant uuid := 'c8000000-0000-4000-8000-000000000002';
+  v_menu constant uuid := 'c8000000-0000-4000-8000-000000000003';
+  v_dish constant uuid := 'c8000000-0000-4000-8000-000000000004';
+  v_ingredient constant uuid := 'c8000000-0000-4000-8000-000000000005';
+  v_menu_b constant uuid := 'c8000000-0000-4000-8000-000000000013';
+  v_dish_b constant uuid := 'c8000000-0000-4000-8000-000000000014';
+  v_ingredient_b constant uuid := 'c8000000-0000-4000-8000-000000000015';
+  v_list_id uuid;
+  v_derived_id uuid;
+  v_manual_id uuid;
+  v_fingerprint text;
+  v_list_fingerprint text;
+  v_draft jsonb;
+  v_response jsonb;
+  v_version integer;
+  v_raised boolean;
+begin
+  insert into auth.users (id,instance_id,aud,role,email) values
+    (v_owner,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',
+      'shopping-owner-matrix@example.test'),
+    (v_other,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',
+      'shopping-other-matrix@example.test');
+  insert into public.household_members (
+    id,user_id,status,display_name,age_band,portion_size,spice_level,
+    allergy_status,unsupported_diet_status
+  ) values (
+    v_member,v_owner,'draft','子ども','age_6_8','regular','mild','registered','none'
+  );
+  insert into public.member_allergies (
+    id,user_id,member_id,allergen_id,custom_name,custom_confirmed
+  ) values (
+    'c8000000-0000-4000-8000-000000000006',v_owner,v_member,'wheat',null,false
+  );
+  update public.household_members set status='complete' where id=v_member;
+
+  insert into public.menus (
+    id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
+    preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
+    food_safety_rule_version,output_schema_version,derivation_group_id,version
+  ) values
+    (v_menu,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household',
+      'allergens-v1','food-v1','menu-v1','c8000000-0000-4000-8000-000000000007',1),
+    (v_menu_b,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('b',64),'household',
+      'allergens-v1','food-v1','menu-v1','c8000000-0000-4000-8000-000000000017',1);
+  insert into public.menu_target_members (
+    id,menu_id,user_id,household_member_id,household_member_user_id,
+    anonymous_ref,member_display_name_snapshot
+  ) values
+    ('c8000000-0000-4000-8000-000000000008',v_menu,v_owner,v_member,v_owner,'member_1','子ども'),
+    ('c8000000-0000-4000-8000-000000000018',v_menu_b,v_owner,v_member,v_owner,'member_1','子ども');
+  insert into public.dishes (
+    id,menu_id,user_id,role,position,name,description,cooking_time_minutes
+  ) values
+    (v_dish,v_menu,v_owner,'main',1,'煮物','owner-matrix検証用の煮物です',20),
+    (v_dish_b,v_menu_b,v_owner,'main',1,'炒め物','owner-matrix検証用の炒め物です',15);
+  insert into public.dish_ingredients (
+    id,menu_id,dish_id,user_id,position,name,quantity_value,quantity_text,unit,store_section
+  ) values
+    (v_ingredient,v_menu,v_dish,v_owner,1,'にんじん',1,'1本','本','produce'),
+    (v_ingredient_b,v_menu_b,v_dish_b,v_owner,1,'たまねぎ',1,'1個','個','produce');
+
+  v_fingerprint := public.shopping_safety_fingerprint(v_owner, v_menu);
+  v_draft := jsonb_build_object(
+    'items', jsonb_build_array(jsonb_build_object(
+      'key','carrot-owner-matrix','displayName','にんじん','normalizedName','にんじん',
+      'storeSection','produce','quantityValue',1,'quantityText','1本','unit','本',
+      'pantryCheckRequired',false,
+      'sourceIngredients', jsonb_build_array(jsonb_build_object(
+        'ingredientId',v_ingredient,'dishId',v_dish,'dishName','煮物','name','にんじん',
+        'quantityValue',1,'quantityText','1本','unit','本','storeSection','produce'
+      )),
+      'labelWarnings','[]'::jsonb
+    )),
+    'listLabelWarnings','[]'::jsonb
+  );
+  v_response := public.apply_shopping_draft(
+    v_owner, v_menu, 'new', null, null, v_fingerprint,
+    'c8000000-0000-4000-8000-000000000010'::uuid,
+    encode(extensions.digest(convert_to('owner-matrix-create','UTF8'),'sha256'),'hex'),
+    v_draft
+  );
+  v_list_id := (v_response->>'listId')::uuid;
+  select id into v_derived_id from public.shopping_items where list_id = v_list_id limit 1;
+  v_list_fingerprint := public.shopping_list_safety_fingerprint(v_owner, v_list_id);
+  v_version := 1;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+  perform set_config(
+    'request.jwt.claims',
+    jsonb_build_object('sub', v_owner, 'role', 'authenticated')::text,
+    true
+  );
+
+  -- 1) wrong-owner / 未知 item id は区別せず shopping_item_not_found
+  v_raised := false;
+  begin
+    perform public.mutate_shopping_item(
+      v_list_id, v_version, v_list_fingerprint, 'set_checked',
+      'c8000000-0000-4000-8000-0000000000ff'::uuid,
+      'c8000000-0000-4000-8000-000000000020'::uuid,
+      jsonb_build_object('isChecked', true)
+    );
+  exception when others then
+    if sqlerrm = 'shopping_item_not_found' then
+      v_raised := true;
+    else
+      raise;
+    end if;
+  end;
+  if not v_raised then
+    raise exception 'owner matrix: unknown item id must raise shopping_item_not_found';
+  end if;
+  if (select version from public.shopping_lists where id = v_list_id) <> v_version then
+    raise exception 'owner matrix: unknown item id must not advance list version';
+  end if;
+
+  -- 2) 各 operation がちょうど version +1
+  v_response := public.mutate_shopping_item(
+    v_list_id, v_version, v_list_fingerprint, 'add_manual', null,
+    'c8000000-0000-4000-8000-000000000021'::uuid,
+    jsonb_build_object(
+      'displayName','牛乳','normalizedName','牛乳','storeSection','dairy_eggs',
+      'quantityText','1本','pantryCheckRequired',false
+    )
+  );
+  v_manual_id := (v_response->>'itemId')::uuid;
+  v_version := v_version + 1;
+  if (v_response->>'version')::integer <> v_version
+    or (select version from public.shopping_lists where id = v_list_id) <> v_version then
+    raise exception 'owner matrix: add_manual must advance list version to %, got %',
+      v_version, v_response->>'version';
+  end if;
+
+  v_response := public.mutate_shopping_item(
+    v_list_id, v_version, v_list_fingerprint, 'set_checked', v_derived_id,
+    'c8000000-0000-4000-8000-000000000022'::uuid,
+    jsonb_build_object('isChecked', true)
+  );
+  v_version := v_version + 1;
+  if (v_response->>'version')::integer <> v_version
+    or not exists(select 1 from public.shopping_items where id = v_derived_id and is_checked) then
+    raise exception 'owner matrix: set_checked must succeed and advance version to %', v_version;
+  end if;
+
+  v_response := public.mutate_shopping_item(
+    v_list_id, v_version, v_list_fingerprint, 'edit', v_manual_id,
+    'c8000000-0000-4000-8000-000000000023'::uuid,
+    jsonb_build_object(
+      'displayName','低脂肪乳','normalizedName','低脂肪乳','storeSection','dairy_eggs',
+      'quantityText','2本','unit','本'
+    )
+  );
+  v_version := v_version + 1;
+  if (v_response->>'version')::integer <> v_version
+    or not exists(select 1 from public.shopping_items
+      where id = v_manual_id and display_name = '低脂肪乳' and is_manually_edited) then
+    raise exception 'owner matrix: edit must succeed and advance version to %', v_version;
+  end if;
+
+  -- mark_at_home は derived を soft-remove（is_removed_by_user）する。checked は解除しない。
+  v_response := public.mutate_shopping_item(
+    v_list_id, v_version, v_list_fingerprint, 'mark_at_home', v_derived_id,
+    'c8000000-0000-4000-8000-000000000024'::uuid,
+    '{}'::jsonb
+  );
+  v_version := v_version + 1;
+  if (v_response->>'version')::integer <> v_version
+    or not exists(select 1 from public.shopping_items
+      where id = v_derived_id and is_removed_by_user) then
+    raise exception 'owner matrix: mark_at_home must soft-remove and advance version to %', v_version;
+  end if;
+
+  v_response := public.mutate_shopping_item(
+    v_list_id, v_version, v_list_fingerprint, 'undo', v_derived_id,
+    'c8000000-0000-4000-8000-000000000025'::uuid,
+    '{}'::jsonb
+  );
+  v_version := v_version + 1;
+  if (v_response->>'version')::integer <> v_version
+    or not exists(select 1 from public.shopping_items
+      where id = v_derived_id and not is_removed_by_user) then
+    raise exception 'owner matrix: undo must restore and advance version to %', v_version;
+  end if;
+
+  v_response := public.mutate_shopping_item(
+    v_list_id, v_version, v_list_fingerprint, 'remove', v_manual_id,
+    'c8000000-0000-4000-8000-000000000026'::uuid,
+    '{}'::jsonb
+  );
+  v_version := v_version + 1;
+  if (v_response->>'version')::integer <> v_version
+    or exists(select 1 from public.shopping_items where id = v_manual_id) then
+    raise exception 'owner matrix: remove on manual item must delete and advance version to %',
+      v_version;
+  end if;
+
+  reset role;
+
+  -- 3) protected（checked）item の reconcile remove は protected_item_conflict
+  -- derived は set_checked のまま is_checked=true。
+  v_fingerprint := public.shopping_safety_fingerprint(v_owner, v_menu_b);
+  v_raised := false;
+  begin
+    perform public.apply_shopping_reconciliation(
+      v_owner, v_list_id, v_version, v_menu_b, 1, v_fingerprint,
+      'c8000000-0000-4000-8000-000000000030'::uuid,
+      encode(extensions.digest(convert_to('owner-matrix-protected','UTF8'),'sha256'),'hex'),
+      jsonb_build_object(
+        'add','[]'::jsonb,
+        'replace','[]'::jsonb,
+        'removeIds', jsonb_build_array(to_jsonb(v_derived_id)),
+        'listLabelWarnings','[]'::jsonb
+      )
+    );
+  exception when others then
+    if sqlerrm = 'protected_item_conflict' then
+      v_raised := true;
+    else
+      raise;
+    end if;
+  end;
+  if not v_raised then
+    raise exception 'owner matrix: removing a checked item via reconcile must raise protected_item_conflict';
+  end if;
+  if (select version from public.shopping_lists where id = v_list_id) <> v_version then
+    raise exception 'owner matrix: protected_item_conflict must not advance list version';
+  end if;
+  if not exists(select 1 from public.shopping_items where id = v_derived_id and is_checked) then
+    raise exception 'owner matrix: protected reject must leave the checked item in place';
+  end if;
+end;
+$test$;
+select pass('owner mutation matrix: unknown item is shopping_item_not_found; '
+  || 'add_manual/set_checked/edit/mark_at_home/undo/remove each advance version once; '
+  || 'reconcile remove of a checked item raises protected_item_conflict');
 
 select * from finish();
 rollback;

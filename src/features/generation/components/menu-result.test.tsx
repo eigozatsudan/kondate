@@ -313,8 +313,15 @@ it("keeps household mode sections visible when mode is household", () => {
   expect(screen.getByRole("heading", { name: "調理後の冷蔵庫" })).toBeVisible();
 });
 
-it("defaults mode to household when the prop is omitted (existing callers keep current behavior)", () => {
-  const result = makeMenuResultViewModel();
-  render(<MenuResult result={result} />);
+it("defaults mode from result.targetMode when the prop is omitted", () => {
+  const household = makeMenuResultViewModel({ targetMode: "household" });
+  const { unmount } = render(<MenuResult result={household} />);
   expect(screen.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
+  unmount();
+
+  // idea で prop 省略しても household chrome を出さない（既定 household の footgun を閉じる）
+  const idea = makeMenuResultViewModel({ targetMode: "idea" });
+  render(<MenuResult result={idea} />);
+  expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
 });

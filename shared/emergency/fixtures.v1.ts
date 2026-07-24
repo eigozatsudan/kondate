@@ -285,7 +285,8 @@ const lunchFixture = {
         {
           id: "82300000-0000-4000-8000-000000000023",
           position: 1,
-          instruction: "野菜を小さく切り、歯ぐきでつぶせるやわらかさまで加熱する",
+          // 食材名を明示し cut_small の ingredient-bound 証拠にする
+          instruction: "かぼちゃを小さく切り、歯ぐきでつぶせるやわらかさまで加熱する",
         },
       ],
     },
@@ -296,7 +297,7 @@ const lunchFixture = {
       position: 1,
       startMinute: 0,
       durationMinutes: 4,
-      instruction: "野菜を切り、鶏ひき肉を火にかける",
+      instruction: "かぼちゃを小さく切り、鶏ひき肉を火にかける",
       dishId: null,
       recipeStepId: null,
     },
@@ -433,7 +434,8 @@ const dinnerFixture = {
         {
           id: "82300000-0000-4000-8000-000000000001",
           position: 1,
-          instruction: "鶏肉を一口大、キャベツを食べやすい大きさに切る",
+          // 「一口大以下に切る」は cut_small の肯定 stem（「一口大」だけでは不一致）
+          instruction: "鶏肉を一口大以下に切り、キャベツを食べやすい大きさに切る",
         },
         {
           id: "82300000-0000-4000-8000-000000000002",
@@ -447,7 +449,7 @@ const dinnerFixture = {
       role: "side",
       position: 2,
       name: "きゅうりの塩もみ",
-      description: "薄切りの副菜",
+      description: "小さく切った副菜",
       cookingTimeMinutes: 5,
       ingredients: [
         {
@@ -466,7 +468,7 @@ const dinnerFixture = {
         {
           id: "82300000-0000-4000-8000-000000000003",
           position: 1,
-          instruction: "薄切りにして塩でもみ、水気を絞る",
+          instruction: "きゅうりを小さく切り、塩でもみ、水気を絞る",
         },
       ],
     },
@@ -494,7 +496,7 @@ const dinnerFixture = {
         {
           id: "82300000-0000-4000-8000-000000000004",
           position: 1,
-          instruction: "薄切りの玉ねぎを水でやわらかく煮、塩で味を整える",
+          instruction: "玉ねぎを小さく切り、水でやわらかく煮、塩で味を整える",
         },
       ],
     },
@@ -505,7 +507,7 @@ const dinnerFixture = {
       position: 1,
       startMinute: 0,
       durationMinutes: 3,
-      instruction: "湯を沸かしながら材料を切る",
+      instruction: "湯を沸かしながら材料を一口大以下に切る",
       dishId: null,
       recipeStepId: null,
     },
@@ -534,6 +536,7 @@ const dinnerFixture = {
       dishId: "82100000-0000-4000-8000-000000000001",
       anonymousMemberRef: "member_1",
       portionText: "年齢と食欲に合わせた量",
+      // heat_thoroughly の beforeRecipeStepId と一致させ binding 検証を保つ
       branchBeforeRecipeStepId: "82300000-0000-4000-8000-000000000002",
       additionalCutting: "鶏肉を一口大以下に切る",
       additionalHeating: "鶏肉の中心まで十分に加熱する",

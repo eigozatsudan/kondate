@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vitest";
-import type { AgeBand } from "../contracts/domain.js";
-import { defaultsForAgeBand } from "../../src/features/household/household-defaults.js";
+import type { AgeBand, RequiredSafetyConstraint } from "../contracts/domain.js";
 import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
 import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
 import { makeCurrentSafetyContext, makeGenerationContext } from "../testing/factories.js";
 import { emergencyFixtureMetadataV1, emergencyMenuFixturesV1 } from "./fixtures.v1.js";
 import { filterEmergencyMenus } from "./filter-emergency-menus.js";
+
+// shared から src を import しない（tsconfig 境界）。
+// household-defaults の年齢帯 defaults と一致させる固定値。
+function requiredSafetyConstraintsForAgeBand(
+  ageBand: AgeBand,
+): readonly RequiredSafetyConstraint[] {
+  if (ageBand === "post_weaning_to_2" || ageBand === "age_3_5") {
+    return ["remove_bones", "cut_small"];
+  }
+  if (ageBand === "age_6_8" || ageBand === "age_9_12") {
+    return ["remove_bones"];
+  }
+  return [];
+}
 
 describe("reviewed emergency menus", () => {
   it("provides complete reviewed fixtures for every meal", () => {
@@ -38,8 +51,8 @@ describe("reviewed emergency menus", () => {
   it.each(["post_weaning_to_2", "adult", "senior"] satisfies readonly AgeBand[])(
     "validates every reviewed fixture in a complete %s generation context with age defaults",
     (ageBand) => {
-      // 空制約ではなく defaultsForAgeBand を使い、未就学 cut_small を偽グリーンにしない
-      const defaults = defaultsForAgeBand(ageBand);
+      // 空制約ではなく年齢 defaults を使い、未就学 cut_small を偽グリーンにしない
+      const requiredSafetyConstraints = requiredSafetyConstraintsForAgeBand(ageBand);
       for (const menu of emergencyMenuFixturesV1) {
         const base = makeGenerationContext();
         const safety = makeCurrentSafetyContext({
@@ -47,7 +60,7 @@ describe("reviewed emergency menus", () => {
             {
               ...base.safety.members[0]!,
               ageBand,
-              requiredSafetyConstraints: defaults.required_safety_constraints,
+              requiredSafetyConstraints,
             },
           ],
           foodSafetyRules: currentFoodSafetyRulesV1,
@@ -80,7 +93,7 @@ describe("reviewed emergency menus", () => {
 
   it("keeps under-six defaults non-empty through filterEmergencyMenus", () => {
     const base = makeCurrentSafetyContext();
-    const defaults = defaultsForAgeBand("post_weaning_to_2");
+    const requiredSafetyConstraints = requiredSafetyConstraintsForAgeBand("post_weaning_to_2");
     for (const mealType of ["breakfast", "lunch", "dinner"] as const) {
       const result = filterEmergencyMenus({
         mealType,
@@ -90,7 +103,7 @@ describe("reviewed emergency menus", () => {
             {
               ...base.members[0]!,
               ageBand: "post_weaning_to_2",
-              requiredSafetyConstraints: defaults.required_safety_constraints,
+              requiredSafetyConstraints,
             },
           ],
           foodSafetyRules: currentFoodSafetyRulesV1,
@@ -102,26 +115,69 @@ describe("reviewed emergency menus", () => {
   });
 
   it("binds every safety action to the exact protected ingredient and its owner graph", () => {
+    // 主アクション（除骨・加熱）に加え、全料理の cut_small も ingredient-bound であること
     const expectedBindings = [
       {
         mealType: "breakfast",
-        kind: "remove_bones",
+        kind: "remove_bones" as const,
         ingredientId: "82200000-0000-4000-8000-000000000012",
         ingredientName: "鮭",
       },
       {
+        mealType: "breakfast",
+        kind: "cut_small" as const,
+        ingredientId: "82200000-0000-4000-8000-000000000012",
+        ingredientName: "鮭",
+      },
+      {
+        mealType: "breakfast",
+        kind: "cut_small" as const,
+        ingredientId: "82200000-0000-4000-8000-000000000013",
+        ingredientName: "にんじん",
+      },
+      {
         mealType: "lunch",
-        kind: "heat_thoroughly",
+        kind: "heat_thoroughly" as const,
         ingredientId: "82200000-0000-4000-8000-000000000021",
         ingredientName: "鶏ひき肉",
       },
       {
+        mealType: "lunch",
+        kind: "cut_small" as const,
+        ingredientId: "82200000-0000-4000-8000-000000000021",
+        ingredientName: "鶏ひき肉",
+      },
+      {
+        mealType: "lunch",
+        kind: "cut_small" as const,
+        ingredientId: "82200000-0000-4000-8000-000000000023",
+        ingredientName: "かぼちゃ",
+      },
+      {
         mealType: "dinner",
-        kind: "heat_thoroughly",
+        kind: "heat_thoroughly" as const,
         ingredientId: "82200000-0000-4000-8000-000000000001",
         ingredientName: "鶏肉",
       },
-    ] as const;
+      {
+        mealType: "dinner",
+        kind: "cut_small" as const,
+        ingredientId: "82200000-0000-4000-8000-000000000001",
+        ingredientName: "鶏肉",
+      },
+      {
+        mealType: "dinner",
+        kind: "cut_small" as const,
+        ingredientId: "82200000-0000-4000-8000-000000000004",
+        ingredientName: "きゅうり",
+      },
+      {
+        mealType: "dinner",
+        kind: "cut_small" as const,
+        ingredientId: "82200000-0000-4000-8000-000000000005",
+        ingredientName: "玉ねぎ",
+      },
+    ];
 
     for (const expected of expectedBindings) {
       const menu = emergencyMenuFixturesV1.find(
@@ -132,8 +188,12 @@ describe("reviewed emergency menus", () => {
       const actions = menu.adaptations.flatMap((adaptation) =>
         adaptation.safetyActions.map((action) => ({ action, adaptation })),
       );
-      const binding = actions.find((entry) => entry.action.kind === expected.kind);
-      expect(binding).toBeDefined();
+      const binding = actions.find(
+        (entry) =>
+          entry.action.kind === expected.kind &&
+          entry.action.ingredientId === expected.ingredientId,
+      );
+      expect(binding, `${expected.mealType}/${expected.kind}`).toBeDefined();
       if (binding === undefined) continue;
       const dish = menu.dishes.find((candidate) => candidate.id === binding.action.dishId);
       const ingredient = dish?.ingredients.find(
@@ -149,10 +209,27 @@ describe("reviewed emergency menus", () => {
         anonymousMemberRef: binding.adaptation.anonymousMemberRef,
       });
       expect(binding.adaptation.dishId).toBe(binding.action.dishId);
-      expect(binding.adaptation.branchBeforeRecipeStepId).toBe(binding.action.beforeRecipeStepId);
+      // branch は料理内の工程へ載っていればよい（kind ごとに同一 step とは限らない）
+      expect(
+        dish?.steps.some(
+          (candidate) => candidate.id === binding.adaptation.branchBeforeRecipeStepId,
+        ),
+      ).toBe(true);
       expect(ingredient?.name).toBe(expected.ingredientName);
       expect(step).toBeDefined();
       expect(binding.action.instruction).toContain(expected.ingredientName);
+    }
+
+    // 各食事で cut_small が料理数ぶんあること（missing-evidence は料理単位）
+    for (const menu of emergencyMenuFixturesV1) {
+      const cutSmallDishIds = new Set(
+        menu.adaptations.flatMap((adaptation) =>
+          adaptation.safetyActions
+            .filter((action) => action.kind === "cut_small")
+            .map((action) => action.dishId),
+        ),
+      );
+      expect(cutSmallDishIds.size).toBe(menu.dishes.length);
     }
   });
 

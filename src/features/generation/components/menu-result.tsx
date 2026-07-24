@@ -52,7 +52,7 @@ type UndoState = {
 export function MenuResult({
   result,
   actions,
-  mode = "household",
+  mode: modeProp,
   currentLabelWarnings,
   currentSafetyFingerprint,
   onSelectedDishChange,
@@ -63,7 +63,7 @@ export function MenuResult({
    * idea では家族向け取り分け・原材料表示確認を表示しない。
    * 調理後の冷蔵庫反映は所有・version 競合検査だけで済むため idea でも許可する
    * （actions が渡されたときだけ操作 UI を出す）。
-   * 呼び出し側の result.targetMode と一致させて渡す。
+   * 省略時は result.targetMode を正とする（既定 household による誤表示を防ぐ）。
    */
   mode?: "household" | "idea";
   /**
@@ -76,6 +76,8 @@ export function MenuResult({
   currentSafetyFingerprint?: string;
   onSelectedDishChange?: (dishId: string) => void;
 }) {
+  // prop 省略・不一致の footgun を閉じる。呼び出し側が明示しても result と食い違う場合は result を正とする。
+  const mode = modeProp ?? result.targetMode;
   const { menu } = result;
   const firstDish = menu.dishes.at(0);
   // hooks は early return より前に置き、dish 不在はレンダー時に分岐する
