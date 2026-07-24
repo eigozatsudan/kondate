@@ -92,4 +92,64 @@ describe("GET /api/emergency-menus", () => {
     expect(response.status).toBe(200);
     expect(loadPantryNames).toHaveBeenCalledWith(userId, pantryItemIds);
   });
+
+  it("filters by normalized repeated main ingredients without relaxing unrelated requests", async () => {
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext: () =>
+        Promise.resolve({
+          context: makeCurrentSafetyContext(),
+          memberLabels: Object.freeze({ member_1: "家族1" }),
+        }),
+      loadPantryNames: () => Promise.resolve([]),
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E3%80%80%E9%B6%8F%E8%82%89%E3%80%80&mainIngredients=%EF%BD%B7%EF%BD%AC%EF%BE%8D%EF%BE%9E%EF%BE%82`,
+      ),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        candidates: [expect.any(Object)],
+        consumesAiQuota: false,
+      },
+    });
+
+    const unrelated = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E8%B1%9A%E8%82%89`,
+      ),
+    );
+    expect(unrelated.status).toBe(200);
+    await expect(unrelated.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        candidates: [],
+        message: "選択したメイン食材に合う固定候補がありません",
+      },
+    });
+  });
+
+  it("rejects normalized duplicate main ingredients before authentication or database reads", async () => {
+    const authenticate = vi.fn();
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate,
+      loadContext,
+      loadPantryNames: vi.fn(),
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E9%B6%8F%E8%82%89&mainIngredients=%E3%80%80%E9%B6%8F%E8%82%89%E3%80%80`,
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(loadContext).not.toHaveBeenCalled();
+  });
 });

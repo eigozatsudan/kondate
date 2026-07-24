@@ -1,7 +1,10 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import { mealTypes } from "../../shared/contracts/domain.js";
-import type { EmergencyMenusData } from "../../shared/emergency/contracts.js";
+import {
+  emergencyMainIngredientsSchema,
+  type EmergencyMenusData,
+} from "../../shared/emergency/contracts.js";
 import { emergencyFixtureVersion } from "../../shared/emergency/fixtures.v1.js";
 import {
   buildEmergencyMenuCandidate,
@@ -39,6 +42,7 @@ function uuidListSchema(maxItems: number) {
 
 const querySchema = z.object({
   meal: z.enum(mealTypes),
+  mainIngredients: emergencyMainIngredientsSchema,
   targetMemberIds: uuidListSchema(20),
   pantryItemIds: uuidListSchema(50).optional().default([]),
 });
@@ -56,6 +60,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       const url = new URL(request.url);
       const parsed = querySchema.safeParse({
         meal: url.searchParams.get("meal"),
+        mainIngredients: url.searchParams.getAll("mainIngredients"),
         targetMemberIds: url.searchParams.get("targetMemberIds"),
         pantryItemIds: url.searchParams.get("pantryItemIds") ?? undefined,
       });
@@ -76,6 +81,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       ]);
       const filtered = filterEmergencyMenus({
         mealType: parsed.data.meal,
+        mainIngredients: parsed.data.mainIngredients,
         pantryNames,
         context: loaded.context,
         memberLabels: loaded.memberLabels,
@@ -94,7 +100,9 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
           candidates,
           message:
             candidates.length === 0
-              ? "条件に合う緊急献立がありません"
+              ? filtered.emptyReason === "main_ingredient_no_match"
+                ? "選択したメイン食材に合う固定候補がありません"
+                : "条件に合う緊急献立がありません"
               : "AIを使わない15分緊急献立です",
           consumesAiQuota: false,
         },

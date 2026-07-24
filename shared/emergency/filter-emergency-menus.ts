@@ -15,7 +15,8 @@ export type {
 
 export type EmergencyFilterResult = {
   menus: readonly ValidatedMenu[];
-  emptyReason: "current_safety_unavailable" | "no_matching_fixture" | null;
+  emptyReason:
+    "current_safety_unavailable" | "main_ingredient_no_match" | "no_matching_fixture" | null;
 };
 
 export function buildEmergencyMenuCandidate(input: {
@@ -136,6 +137,7 @@ function emergencyGenerationContext(
 
 export function filterEmergencyMenus(input: {
   mealType: MealType;
+  mainIngredients?: readonly string[];
   pantryNames: readonly string[];
   context: CurrentSafetyContext;
   memberLabels?: Readonly<Record<string, string>>;
@@ -153,7 +155,7 @@ export function filterEmergencyMenus(input: {
   }
 
   const pantry = input.pantryNames.map(normalizeFoodText).filter((name) => name !== "");
-  const menus = emergencyMenuFixturesV1
+  const safetyCompatibleMenus = emergencyMenuFixturesV1
     .filter((menu) => menu.mealType === input.mealType)
     .flatMap((menu) => {
       const metadata = emergencyFixtureMetadataV1[menu.menuId];
@@ -175,6 +177,24 @@ export function filterEmergencyMenus(input: {
         emergencyGenerationContext(remapped, input.context, input.memberLabels ?? {}),
       );
       return validated.ok ? [validated.menu] : [];
+    });
+  const mainIngredients = (input.mainIngredients ?? [])
+    .map(normalizeFoodText)
+    .filter((name) => name !== "");
+  const menus = safetyCompatibleMenus
+    .filter((menu) => {
+      if (mainIngredients.length === 0) return true;
+      // 自由文の手順や説明ではなく、料理名と材料名だけをメイン食材との対応根拠にする。
+      const candidateNames = menu.dishes.flatMap((dish) => [
+        normalizeFoodText(dish.name),
+        ...dish.ingredients.map((ingredient) => normalizeFoodText(ingredient.name)),
+      ]);
+      return mainIngredients.every((mainIngredient) =>
+        candidateNames.some(
+          (candidateName) =>
+            candidateName.includes(mainIngredient) || mainIngredient.includes(candidateName),
+        ),
+      );
     })
     .sort((left, right) => {
       const score = (menu: ValidatedMenu) =>
@@ -183,5 +203,13 @@ export function filterEmergencyMenus(input: {
         ).length;
       return score(right) - score(left) || left.menuId.localeCompare(right.menuId);
     });
-  return { menus, emptyReason: menus.length === 0 ? "no_matching_fixture" : null };
+  return {
+    menus,
+    emptyReason:
+      menus.length > 0
+        ? null
+        : mainIngredients.length > 0 && safetyCompatibleMenus.length > 0
+          ? "main_ingredient_no_match"
+          : "no_matching_fixture",
+  };
 }

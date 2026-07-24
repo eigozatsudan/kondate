@@ -29,7 +29,12 @@ it.each([
   ],
 ])("対象家族IDが%sなら認証や通信の前に拒否する", async (_, targetMemberIds) => {
   await expect(
-    getEmergencyMenus({ mealType: "dinner", targetMemberIds, pantryItemIds: [] }),
+    getEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: [],
+      targetMemberIds,
+      pantryItemIds: [],
+    }),
   ).rejects.toThrow();
 
   expect(requireAccessTokenMock).not.toHaveBeenCalled();
@@ -49,6 +54,7 @@ it.each([
   await expect(
     getEmergencyMenus({
       mealType: "dinner",
+      mainIngredients: [],
       targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
       pantryItemIds,
     }),
@@ -80,6 +86,7 @@ it("冷蔵庫食材IDは上限50件まで通信に使える", async () => {
 
   await getEmergencyMenus({
     mealType: "dinner",
+    mainIngredients: [],
     targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
     pantryItemIds,
   });
@@ -106,6 +113,7 @@ it("冷蔵庫食材が空なら空のクエリ値を送らずサーバーの省�
 
   await getEmergencyMenus({
     mealType: "dinner",
+    mainIngredients: [],
     targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
     pantryItemIds: [],
   });
@@ -121,6 +129,7 @@ it("keys candidates by every ordered request dimension and the household safety 
     emergencyMenuKeys.candidates({
       userId: "user-1",
       mealType: "dinner",
+      mainIngredients: ["鶏肉"],
       targetMemberIds: ["member-b", "member-a"],
       pantryItemIds: ["pantry-2", "pantry-1"],
       householdSafetyRevision: "safety-3",
@@ -129,11 +138,65 @@ it("keys candidates by every ordered request dimension and the household safety 
     "emergency-menus",
     "user-1",
     "dinner",
+    ["鶏肉"],
     ["member-b", "member-a"],
     ["pantry-2", "pantry-1"],
     "safety-3",
   ]);
 });
+
+it("main ingredients are normalized, sent as repeated query values, and included in the cache key", async () => {
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: {
+          fixtureVersion: "2026-07-11.v1",
+          candidates: [],
+          message: "選択したメイン食材に合う固定候補がありません",
+          consumesAiQuota: false,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await getEmergencyMenus({
+    mealType: "dinner",
+    mainIngredients: ["　鶏肉　", "ｷｬﾍﾞﾂ"],
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+    pantryItemIds: [],
+  });
+
+  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
+  if (typeof requestedUrl !== "string")
+    throw new Error("緊急献立のリクエストURLを確認できませんでした");
+  expect(new URL(requestedUrl, "http://localhost").searchParams.getAll("mainIngredients")).toEqual([
+    "鶏肉",
+    "キャベツ",
+  ]);
+});
+
+it.each([
+  [["鶏肉", "　鶏肉　"]],
+  [Array.from({ length: 9 }, (_, index) => `食材${String(index)}`)],
+  [["あ".repeat(81)]],
+] as const)(
+  "main ingredients reject %s before authentication or network",
+  async (mainIngredients) => {
+    await expect(
+      getEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients,
+        targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+        pantryItemIds: [],
+      }),
+    ).rejects.toThrow();
+
+    expect(requireAccessTokenMock).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
 
 it("accepts only complete server-provided human display labels", () => {
   const menu = makeValidatedMenu();

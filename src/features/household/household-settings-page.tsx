@@ -184,6 +184,7 @@ export function HouseholdSettingsForm({
   const queryClient = useQueryClient();
   const membersKey = useMemo(() => householdKeys.members(userId), [userId]);
   const [selectedId, setSelectedId] = useState<string>();
+  const [editorOpen, setEditorOpen] = useState(true);
   const [values, setValues] = useState<HouseholdSettingsValue>();
   const [allergyRefetchEpoch, setAllergyRefetchEpoch] = useState(0);
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
@@ -208,9 +209,18 @@ export function HouseholdSettingsForm({
   const pendingRegisteredIntents = useRef(new Map<string, PendingRegisteredIntent>());
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
+  const editorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const shouldFocusEditorHeadingRef = useRef(false);
   const ageBandRef = useRef<HTMLSelectElement>(null);
   const allergyStatusRef = useRef<HTMLSelectElement>(null);
   const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    if (!editorOpen || !shouldFocusEditorHeadingRef.current) {
+      return;
+    }
+    shouldFocusEditorHeadingRef.current = false;
+    editorHeadingRef.current?.focus();
+  }, [editorOpen, selectedId]);
   const membersQuery = useQuery({
     queryKey: membersKey,
     queryFn: () => api.listMembers(),
@@ -507,6 +517,7 @@ export function HouseholdSettingsForm({
         created,
       ]);
       setSelectedId(created.id);
+      setEditorOpen(true);
     },
   });
   const [cancellingDraft, setCancellingDraft] = useState(false);
@@ -547,6 +558,7 @@ export function HouseholdSettingsForm({
         selectedMemberIdRef.current = undefined;
         setSelectedId(undefined);
         setValues(undefined);
+        setEditorOpen(false);
       }
       previousSelectedIdBeforeAddRef.current = undefined;
       await queryClient.invalidateQueries({ queryKey: membersKey });
@@ -608,9 +620,12 @@ export function HouseholdSettingsForm({
         );
         await api.invalidateSafety();
         setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
+        setEditorOpen(false);
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
       }
+    } else {
+      setEditorOpen(false);
     }
     setSaving(false);
   };
@@ -821,7 +836,7 @@ export function HouseholdSettingsForm({
       <section className="card stack" aria-labelledby="registered-household-title">
         <h2 id="registered-household-title">登録済みの家族</h2>
         <ul className="household-member-list">
-          {members.map((member) => {
+          {members.map((member, index) => {
             const displayName = householdMemberDisplayName(member);
             return (
               <li className="household-member-summary" key={member.id}>
@@ -837,12 +852,14 @@ export function HouseholdSettingsForm({
                 <button
                   className="secondary-button"
                   type="button"
-                  aria-label={`${displayName}を編集`}
-                  aria-pressed={selected.id === member.id}
+                  aria-label={`${String(index + 1)}人目の${displayName}を編集`}
+                  aria-pressed={editorOpen && selected.id === member.id}
                   onClick={() => {
+                    shouldFocusEditorHeadingRef.current = true;
                     selectedMemberIdRef.current = member.id;
                     setDeleteTarget(undefined);
                     setSelectedId(member.id);
+                    setEditorOpen(true);
                   }}
                 >
                   編集
@@ -852,462 +869,473 @@ export function HouseholdSettingsForm({
           })}
         </ul>
       </section>
-      <div className="household-editor stack">
-        <h2 id="household-editor-title">家族情報を追加・編集</h2>
-        <h3>「{householdMemberDisplayName(selected)}」を編集中</h3>
-      </div>
-      {members.length > 1 && (
-        <label className="field">
-          <span>設定する家族</span>
-          <select
-            value={selected.id}
-            onChange={(event) => {
-              const nextSelectedId = event.target.value;
-              selectedMemberIdRef.current = nextSelectedId;
-              setDeleteTarget(undefined);
-              setSelectedId(nextSelectedId);
-            }}
-          >
-            {members.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.display_name ?? "家族"}
-              </option>
-            ))}
-          </select>
-        </label>
+      {!editorOpen && (
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={createDraft.isPending}
+          onClick={() => {
+            createDraft.mutate();
+          }}
+        >
+          家族を追加
+        </button>
       )}
-      <button
-        className="secondary-button"
-        type="button"
-        disabled={createDraft.isPending}
-        onClick={() => {
-          createDraft.mutate();
-        }}
-      >
-        家族を追加
-      </button>
-      {message && (
+      {!editorOpen && message && (
         <p className="status-message" role="status" aria-live="polite">
           {message}
         </p>
       )}
-      {Object.keys(errors).length > 0 && (
+      {!editorOpen && Object.keys(errors).length > 0 && (
         <p className="error-message" role="alert">
           {Object.values(errors).join(" ")}
         </p>
       )}
-      <section className="card stack">
-        <label className="field">
-          <span>呼び名</span>
-          <input
-            value={values.displayName ?? ""}
-            onChange={(event) => {
-              updateAndSave({ displayName: event.target.value || null });
-            }}
-          />
-        </label>
-        <label className="field">
-          <span>年齢のめやす</span>
-          <select
-            ref={ageBandRef}
-            value={values.ageBand}
-            onChange={(event) => {
-              updateAndSave({
-                ageBand: event.target.value as AgeBand,
-                portionSize: defaultsForAgeBand(event.target.value as AgeBand).portion_size,
-                spiceLevel: defaultsForAgeBand(event.target.value as AgeBand).spice_level,
-                easePreferences: defaultsForAgeBand(event.target.value as AgeBand).ease_preferences,
-                requiredSafetyConstraints: defaultsForAgeBand(event.target.value as AgeBand)
-                  .required_safety_constraints,
-              });
-            }}
-          >
-            <option value="">選んでください</option>
-            <option value="post_weaning_to_2">離乳食完了後〜2歳</option>
-            <option value="age_3_5">3〜5歳</option>
-            <option value="age_6_8">6〜8歳</option>
-            <option value="age_9_12">9〜12歳</option>
-            <option value="age_13_17">13〜17歳</option>
-            <option value="adult">大人</option>
-            <option value="senior">高齢者</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>アレルギーの確認</span>
-          <select
-            ref={allergyStatusRef}
-            value={values.allergyStatus}
-            disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
-            onChange={(event) => {
-              if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
-              const allergyStatus = event.target.value as AllergyStatus;
-              updateAndSave({ allergyStatus });
-            }}
-          >
-            <option value="">選んでください</option>
-            <option value="none">なし</option>
-            <option value="registered">登録あり</option>
-            <option value="unconfirmed">未確認</option>
-          </select>
-        </label>
-        {allergiesQuery.isError && (
-          <div className="stack">
-            <p className="error-message" role="alert">
-              アレルギー情報を読み込めませんでした
-            </p>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={allergiesQuery.isFetching}
-              onClick={() => {
-                void allergiesQuery.refetch();
-              }}
-            >
-              アレルギー情報を再読み込み
-            </button>
-          </div>
-        )}
-        {values.allergyStatus === "registered" && (
-          <AllergyEditor
-            memberId={selected.id}
-            catalog={catalogQuery.data}
-            aliases={aliasesQuery.data}
-            allergies={currentAllergies}
-            addStandard={(memberId, allergenId) =>
-              runAllergyMutation(selected, async () => {
-                await api.addStandardAllergy(memberId, allergenId);
-                await finalizeAllergyChange(memberId);
-              })
-            }
-            addCustom={(memberId, name, aliases) =>
-              runAllergyMutation(selected, async () => {
-                await api.addCustomAllergy(memberId, name, aliases);
-                await finalizeAllergyChange(memberId);
-              })
-            }
-            remove={(allergyId) =>
-              runAllergyMutation(selected, async () => {
-                if (
-                  selected.status === "complete" &&
-                  values.allergyStatus === "registered" &&
-                  allergiesQuery.isSuccess &&
-                  currentAllergies.length <= 1
-                ) {
-                  setMessage("登録ありの場合は1つ以上選んでください");
-                  return;
-                }
-                await api.removeAllergy(allergyId);
-                const pending = pendingRegisteredIntents.current.get(selected.id);
-                const refetchToken = { settled: false };
-                if (pending?.values.allergyStatus === "registered") {
-                  pending.allergyRefetchPending = true;
-                  pending.allergyRefetchStarted = false;
-                  pending.registeredSaveEvidence = "unknown";
-                  pending.revision += 1;
-                  pending.allergyRefetchToken = refetchToken;
-                }
-                await queryClient.invalidateQueries({
-                  queryKey: householdKeys.allergies("settings", selected.id),
-                });
-                if (
-                  pendingRegisteredIntents.current.get(selected.id) === pending &&
-                  pending?.allergyRefetchToken === refetchToken
-                ) {
-                  refetchToken.settled = true;
-                  setAllergyRefetchEpoch((current) => current + 1);
-                }
-                await api.invalidateSafety();
-              })
-            }
-            onError={(error) => {
-              setMessage(
-                error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
-              );
-            }}
-            disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
-          />
-        )}
-        <label className="field">
-          <span>食べない食事はありますか</span>
-          <select
-            ref={unsupportedDietStatusRef}
-            value={values.unsupportedDietStatus}
-            onChange={(event) => {
-              updateAndSave({
-                unsupportedDietStatus: event.target.value as UnsupportedDietStatus,
-                unsupportedDietKinds:
-                  event.target.value === "present" ? values.unsupportedDietKinds : [],
-              });
-            }}
-          >
-            <option value="">選んでください</option>
-            <option value="none">該当なし</option>
-            <option value="present">該当あり</option>
-            <option value="unconfirmed">未確認</option>
-          </select>
-        </label>
-        {values.unsupportedDietStatus === "present" && (
-          <fieldset className="stack">
-            <legend>食べない食事</legend>
-            {unsupportedDietKinds.map((kind) => (
-              <label key={kind}>
-                <input
-                  type="checkbox"
-                  checked={values.unsupportedDietKinds.includes(kind)}
-                  onChange={(event) => {
-                    setArray("unsupportedDietKinds", kind, event.target.checked);
-                  }}
-                />
-                {kind}
-              </label>
-            ))}
-          </fieldset>
-        )}
-        <fieldset className="stack">
-          <legend>安全のための制約</legend>
-          <label>
-            <input
-              type="checkbox"
-              aria-label="骨を除く"
-              checked={values.requiredSafetyConstraints.includes("remove_bones")}
-              onChange={(event) => {
-                setArray("requiredSafetyConstraints", "remove_bones", event.target.checked);
-              }}
-            />
-            骨を除く
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              aria-label="小さく切る"
-              checked={values.requiredSafetyConstraints.includes("cut_small")}
-              onChange={(event) => {
-                setArray("requiredSafetyConstraints", "cut_small", event.target.checked);
-              }}
-            />
-            小さく切る
-          </label>
-        </fieldset>
-        <label className="field">
-          <span>食べる量</span>
-          <select
-            value={values.portionSize}
-            onChange={(event) => {
-              updateAndSave({ portionSize: event.target.value as PortionSize });
-            }}
-          >
-            <option value="small">小さめ</option>
-            <option value="regular">ふつう</option>
-            <option value="large">多め</option>
-          </select>
-        </label>
-        <fieldset className="stack">
-          <legend>苦手食材</legend>
-          <label className="field">
-            <span>苦手食材を追加</span>
-            <input
-              value={dislike}
-              onChange={(event) => {
-                setDislike(event.target.value);
-              }}
-            />
-          </label>
+      {editorOpen && (
+        <section className="household-editor stack" aria-labelledby="household-editor-title">
+          <h2 id="household-editor-title">家族情報を追加・編集</h2>
+          <h3 ref={editorHeadingRef} tabIndex={-1}>
+            「{householdMemberDisplayName(selected)}」を編集中
+          </h3>
           <button
             className="secondary-button"
             type="button"
+            disabled={createDraft.isPending}
             onClick={() => {
-              if (dislike.trim() === "") return;
-              void api
-                .addDislike(selected.id, dislike)
-                .then(() =>
-                  queryClient.invalidateQueries({
-                    queryKey: householdKeys.dislikes("settings", selected.id),
-                  }),
-                )
-                .then(() => {
-                  setDislike("");
-                  return api.invalidateSafety();
-                });
+              createDraft.mutate();
             }}
           >
-            苦手食材を追加
+            家族を追加
           </button>
-          <ul>
-            {currentDislikes.map((item) => (
-              <li key={item.id}>
-                {item.ingredient_name}
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={() =>
-                    void api
-                      .removeDislike(item.id)
-                      .then(() =>
-                        queryClient.invalidateQueries({
-                          queryKey: householdKeys.dislikes("settings", selected.id),
-                        }),
-                      )
-                      .then(() => api.invalidateSafety())
-                  }
-                >
-                  削除
-                </button>
-              </li>
-            ))}
-          </ul>
-        </fieldset>
-        <label className="field">
-          <span>辛さ</span>
-          <select
-            aria-label="辛さ"
-            value={values.spiceLevel}
-            onChange={(event) => {
-              updateAndSave({ spiceLevel: event.target.value as SpiceLevel });
-            }}
-          >
-            <option value="none">なし</option>
-            <option value="mild">控えめ</option>
-            <option value="regular">ふつう</option>
-          </select>
-        </label>
-        <fieldset className="stack">
-          <legend>食べやすさ</legend>
-          {easePreferences.map((preference) => (
-            <label key={preference}>
+          {message && (
+            <p className="status-message" role="status" aria-live="polite">
+              {message}
+            </p>
+          )}
+          {Object.keys(errors).length > 0 && (
+            <p className="error-message" role="alert">
+              {Object.values(errors).join(" ")}
+            </p>
+          )}
+          <section className="card stack">
+            <label className="field">
+              <span>呼び名</span>
               <input
-                type="checkbox"
-                aria-label={preference === "small_pieces" ? "小さめ" : preference}
-                checked={values.easePreferences.includes(preference)}
+                value={values.displayName ?? ""}
                 onChange={(event) => {
-                  setArray("easePreferences", preference, event.target.checked);
+                  updateAndSave({ displayName: event.target.value || null });
                 }}
               />
-              {preference === "small_pieces"
-                ? "小さめ"
-                : preference === "boneless"
-                  ? "骨なし"
-                  : "やわらかめ"}
             </label>
-          ))}
-        </fieldset>
-      </section>
-      <button
-        className="primary-button"
-        type="button"
-        disabled={saving || cancellingDraft}
-        onClick={() => void complete()}
-      >
-        この家族の設定を完了
-      </button>
-      {selected.status === "draft" ? (
-        // 未完了の追加中は「削除」だと対象が曖昧で混乱するため、追加中止だけを出す
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={saving || cancellingDraft || deletingMemberIds.has(selected.id)}
-          onClick={() => {
-            void cancelDraftAdd();
-          }}
-        >
-          追加をやめる
-        </button>
-      ) : (
-        <button
-          ref={deleteTrigger}
-          className="secondary-button"
-          type="button"
-          disabled={
-            selectedAllergyMutationPending || deletingMemberIds.has(selected.id) || cancellingDraft
-          }
-          onClick={() => {
-            if (
-              allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
-              deletingMemberIdsRef.current.has(selected.id)
-            ) {
-              return;
-            }
-            setDeleteTarget(selected);
-          }}
-        >
-          家族を削除
-        </button>
-      )}
-      {deleteTarget !== undefined && (
-        <div role="dialog" aria-modal="true" aria-label="家族の削除確認" className="card stack">
-          <p>この家族の設定だけを削除します。</p>
+            <label className="field">
+              <span>年齢のめやす</span>
+              <select
+                ref={ageBandRef}
+                value={values.ageBand}
+                onChange={(event) => {
+                  updateAndSave({
+                    ageBand: event.target.value as AgeBand,
+                    portionSize: defaultsForAgeBand(event.target.value as AgeBand).portion_size,
+                    spiceLevel: defaultsForAgeBand(event.target.value as AgeBand).spice_level,
+                    easePreferences: defaultsForAgeBand(event.target.value as AgeBand)
+                      .ease_preferences,
+                    requiredSafetyConstraints: defaultsForAgeBand(event.target.value as AgeBand)
+                      .required_safety_constraints,
+                  });
+                }}
+              >
+                <option value="">選んでください</option>
+                <option value="post_weaning_to_2">離乳食完了後〜2歳</option>
+                <option value="age_3_5">3〜5歳</option>
+                <option value="age_6_8">6〜8歳</option>
+                <option value="age_9_12">9〜12歳</option>
+                <option value="age_13_17">13〜17歳</option>
+                <option value="adult">大人</option>
+                <option value="senior">高齢者</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>アレルギーの確認</span>
+              <select
+                ref={allergyStatusRef}
+                value={values.allergyStatus}
+                disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
+                onChange={(event) => {
+                  if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
+                  const allergyStatus = event.target.value as AllergyStatus;
+                  updateAndSave({ allergyStatus });
+                }}
+              >
+                <option value="">選んでください</option>
+                <option value="none">なし</option>
+                <option value="registered">登録あり</option>
+                <option value="unconfirmed">未確認</option>
+              </select>
+            </label>
+            {allergiesQuery.isError && (
+              <div className="stack">
+                <p className="error-message" role="alert">
+                  アレルギー情報を読み込めませんでした
+                </p>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={allergiesQuery.isFetching}
+                  onClick={() => {
+                    void allergiesQuery.refetch();
+                  }}
+                >
+                  アレルギー情報を再読み込み
+                </button>
+              </div>
+            )}
+            {values.allergyStatus === "registered" && (
+              <AllergyEditor
+                memberId={selected.id}
+                catalog={catalogQuery.data}
+                aliases={aliasesQuery.data}
+                allergies={currentAllergies}
+                addStandard={(memberId, allergenId) =>
+                  runAllergyMutation(selected, async () => {
+                    await api.addStandardAllergy(memberId, allergenId);
+                    await finalizeAllergyChange(memberId);
+                  })
+                }
+                addCustom={(memberId, name, aliases) =>
+                  runAllergyMutation(selected, async () => {
+                    await api.addCustomAllergy(memberId, name, aliases);
+                    await finalizeAllergyChange(memberId);
+                  })
+                }
+                remove={(allergyId) =>
+                  runAllergyMutation(selected, async () => {
+                    if (
+                      selected.status === "complete" &&
+                      values.allergyStatus === "registered" &&
+                      allergiesQuery.isSuccess &&
+                      currentAllergies.length <= 1
+                    ) {
+                      setMessage("登録ありの場合は1つ以上選んでください");
+                      return;
+                    }
+                    await api.removeAllergy(allergyId);
+                    const pending = pendingRegisteredIntents.current.get(selected.id);
+                    const refetchToken = { settled: false };
+                    if (pending?.values.allergyStatus === "registered") {
+                      pending.allergyRefetchPending = true;
+                      pending.allergyRefetchStarted = false;
+                      pending.registeredSaveEvidence = "unknown";
+                      pending.revision += 1;
+                      pending.allergyRefetchToken = refetchToken;
+                    }
+                    await queryClient.invalidateQueries({
+                      queryKey: householdKeys.allergies("settings", selected.id),
+                    });
+                    if (
+                      pendingRegisteredIntents.current.get(selected.id) === pending &&
+                      pending?.allergyRefetchToken === refetchToken
+                    ) {
+                      refetchToken.settled = true;
+                      setAllergyRefetchEpoch((current) => current + 1);
+                    }
+                    await api.invalidateSafety();
+                  })
+                }
+                onError={(error) => {
+                  setMessage(
+                    error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+                  );
+                }}
+                disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
+              />
+            )}
+            <label className="field">
+              <span>食べない食事はありますか</span>
+              <select
+                ref={unsupportedDietStatusRef}
+                value={values.unsupportedDietStatus}
+                onChange={(event) => {
+                  updateAndSave({
+                    unsupportedDietStatus: event.target.value as UnsupportedDietStatus,
+                    unsupportedDietKinds:
+                      event.target.value === "present" ? values.unsupportedDietKinds : [],
+                  });
+                }}
+              >
+                <option value="">選んでください</option>
+                <option value="none">該当なし</option>
+                <option value="present">該当あり</option>
+                <option value="unconfirmed">未確認</option>
+              </select>
+            </label>
+            {values.unsupportedDietStatus === "present" && (
+              <fieldset className="stack">
+                <legend>食べない食事</legend>
+                {unsupportedDietKinds.map((kind) => (
+                  <label key={kind}>
+                    <input
+                      type="checkbox"
+                      checked={values.unsupportedDietKinds.includes(kind)}
+                      onChange={(event) => {
+                        setArray("unsupportedDietKinds", kind, event.target.checked);
+                      }}
+                    />
+                    {kind}
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            <fieldset className="stack">
+              <legend>安全のための制約</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  aria-label="骨を除く"
+                  checked={values.requiredSafetyConstraints.includes("remove_bones")}
+                  onChange={(event) => {
+                    setArray("requiredSafetyConstraints", "remove_bones", event.target.checked);
+                  }}
+                />
+                骨を除く
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  aria-label="小さく切る"
+                  checked={values.requiredSafetyConstraints.includes("cut_small")}
+                  onChange={(event) => {
+                    setArray("requiredSafetyConstraints", "cut_small", event.target.checked);
+                  }}
+                />
+                小さく切る
+              </label>
+            </fieldset>
+            <label className="field">
+              <span>食べる量</span>
+              <select
+                value={values.portionSize}
+                onChange={(event) => {
+                  updateAndSave({ portionSize: event.target.value as PortionSize });
+                }}
+              >
+                <option value="small">小さめ</option>
+                <option value="regular">ふつう</option>
+                <option value="large">多め</option>
+              </select>
+            </label>
+            <fieldset className="stack">
+              <legend>苦手食材</legend>
+              <label className="field">
+                <span>苦手食材を追加</span>
+                <input
+                  value={dislike}
+                  onChange={(event) => {
+                    setDislike(event.target.value);
+                  }}
+                />
+              </label>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  if (dislike.trim() === "") return;
+                  void api
+                    .addDislike(selected.id, dislike)
+                    .then(() =>
+                      queryClient.invalidateQueries({
+                        queryKey: householdKeys.dislikes("settings", selected.id),
+                      }),
+                    )
+                    .then(() => {
+                      setDislike("");
+                      return api.invalidateSafety();
+                    });
+                }}
+              >
+                苦手食材を追加
+              </button>
+              <ul>
+                {currentDislikes.map((item) => (
+                  <li key={item.id}>
+                    {item.ingredient_name}
+                    <button
+                      className="text-button"
+                      type="button"
+                      onClick={() =>
+                        void api
+                          .removeDislike(item.id)
+                          .then(() =>
+                            queryClient.invalidateQueries({
+                              queryKey: householdKeys.dislikes("settings", selected.id),
+                            }),
+                          )
+                          .then(() => api.invalidateSafety())
+                      }
+                    >
+                      削除
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+            <label className="field">
+              <span>辛さ</span>
+              <select
+                aria-label="辛さ"
+                value={values.spiceLevel}
+                onChange={(event) => {
+                  updateAndSave({ spiceLevel: event.target.value as SpiceLevel });
+                }}
+              >
+                <option value="none">なし</option>
+                <option value="mild">控えめ</option>
+                <option value="regular">ふつう</option>
+              </select>
+            </label>
+            <fieldset className="stack">
+              <legend>食べやすさ</legend>
+              {easePreferences.map((preference) => (
+                <label key={preference}>
+                  <input
+                    type="checkbox"
+                    aria-label={preference === "small_pieces" ? "小さめ" : preference}
+                    checked={values.easePreferences.includes(preference)}
+                    onChange={(event) => {
+                      setArray("easePreferences", preference, event.target.checked);
+                    }}
+                  />
+                  {preference === "small_pieces"
+                    ? "小さめ"
+                    : preference === "boneless"
+                      ? "骨なし"
+                      : "やわらかめ"}
+                </label>
+              ))}
+            </fieldset>
+          </section>
           <button
-            ref={deleteConfirm}
             className="primary-button"
             type="button"
-            disabled={
-              allergyMutationPendingMemberIdsRef.current.has(deleteTarget.id) ||
-              deletingMemberIds.has(deleteTarget.id)
-            }
-            onClick={() => {
-              const targetId = deleteTarget.id;
-              if (
-                allergyMutationPendingMemberIdsRef.current.has(targetId) ||
-                deletingMemberIdsRef.current.has(targetId)
-              ) {
-                return;
+            disabled={saving || cancellingDraft}
+            onClick={() => void complete()}
+          >
+            この家族の設定を完了
+          </button>
+          {selected.status === "draft" ? (
+            // 未完了の追加中は「削除」だと対象が曖昧で混乱するため、追加中止だけを出す
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={saving || cancellingDraft || deletingMemberIds.has(selected.id)}
+              onClick={() => {
+                void cancelDraftAdd();
+              }}
+            >
+              追加をやめる
+            </button>
+          ) : (
+            <button
+              ref={deleteTrigger}
+              className="secondary-button"
+              type="button"
+              disabled={
+                selectedAllergyMutationPending ||
+                deletingMemberIds.has(selected.id) ||
+                cancellingDraft
               }
-              const targetExists = queryClient
-                .getQueryData<HouseholdMemberRow[]>(membersKey)
-                ?.some((member) => member.id === targetId);
-              if (targetExists !== true) {
-                setDeleteTarget(undefined);
-                return;
-              }
-              deletingMemberIdsRef.current.add(targetId);
-              setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
-              void api
-                .deleteMember(targetId)
-                .then(async () => {
-                  setDeleteTarget((current) => (current?.id === targetId ? undefined : current));
-                  queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-                    current.filter((member) => member.id !== targetId),
-                  );
-                  valuesByMemberRef.current.delete(targetId);
-                  pendingOperationCountsRef.current.delete(targetId);
-                  failedSaveMemberIdsRef.current.delete(targetId);
-                  pendingRegisteredIntents.current.delete(targetId);
-                  allergyMutationPendingMemberIdsRef.current.delete(targetId);
-                  setAllergyMutationPendingMemberIds(
-                    new Set(allergyMutationPendingMemberIdsRef.current),
-                  );
-                  if (selectedMemberIdRef.current === targetId) {
-                    selectedMemberIdRef.current = undefined;
-                    setSelectedId(undefined);
-                    setValues(undefined);
+              onClick={() => {
+                if (
+                  allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
+                  deletingMemberIdsRef.current.has(selected.id)
+                ) {
+                  return;
+                }
+                setDeleteTarget(selected);
+              }}
+            >
+              家族を削除
+            </button>
+          )}
+          {deleteTarget !== undefined && (
+            <div role="dialog" aria-modal="true" aria-label="家族の削除確認" className="card stack">
+              <p>この家族の設定だけを削除します。</p>
+              <button
+                ref={deleteConfirm}
+                className="primary-button"
+                type="button"
+                disabled={
+                  allergyMutationPendingMemberIdsRef.current.has(deleteTarget.id) ||
+                  deletingMemberIds.has(deleteTarget.id)
+                }
+                onClick={() => {
+                  const targetId = deleteTarget.id;
+                  if (
+                    allergyMutationPendingMemberIdsRef.current.has(targetId) ||
+                    deletingMemberIdsRef.current.has(targetId)
+                  ) {
+                    return;
                   }
-                  await queryClient.invalidateQueries({ queryKey: membersKey });
-                  await api.invalidateSafety();
-                })
-                .catch((error: unknown) => {
-                  setMessage(
-                    error instanceof Error ? error.message : "家族設定を削除できませんでした",
-                  );
-                })
-                .finally(() => {
-                  deletingMemberIdsRef.current.delete(targetId);
+                  const targetExists = queryClient
+                    .getQueryData<HouseholdMemberRow[]>(membersKey)
+                    ?.some((member) => member.id === targetId);
+                  if (targetExists !== true) {
+                    setDeleteTarget(undefined);
+                    return;
+                  }
+                  deletingMemberIdsRef.current.add(targetId);
                   setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
-                });
-            }}
-          >
-            家族だけを削除
-          </button>
-          <button
-            className="text-button"
-            type="button"
-            disabled={deletingMemberIds.has(deleteTarget.id)}
-            onClick={() => {
-              if (deletingMemberIdsRef.current.has(deleteTarget.id)) return;
-              setDeleteTarget(undefined);
-            }}
-          >
-            キャンセル
-          </button>
-        </div>
+                  void api
+                    .deleteMember(targetId)
+                    .then(async () => {
+                      setDeleteTarget((current) =>
+                        current?.id === targetId ? undefined : current,
+                      );
+                      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+                        current.filter((member) => member.id !== targetId),
+                      );
+                      valuesByMemberRef.current.delete(targetId);
+                      pendingOperationCountsRef.current.delete(targetId);
+                      failedSaveMemberIdsRef.current.delete(targetId);
+                      pendingRegisteredIntents.current.delete(targetId);
+                      allergyMutationPendingMemberIdsRef.current.delete(targetId);
+                      setAllergyMutationPendingMemberIds(
+                        new Set(allergyMutationPendingMemberIdsRef.current),
+                      );
+                      if (selectedMemberIdRef.current === targetId) {
+                        selectedMemberIdRef.current = undefined;
+                        setSelectedId(undefined);
+                        setValues(undefined);
+                      }
+                      await queryClient.invalidateQueries({ queryKey: membersKey });
+                      await api.invalidateSafety();
+                    })
+                    .catch((error: unknown) => {
+                      setMessage(
+                        error instanceof Error ? error.message : "家族設定を削除できませんでした",
+                      );
+                    })
+                    .finally(() => {
+                      deletingMemberIdsRef.current.delete(targetId);
+                      setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
+                    });
+                }}
+              >
+                家族だけを削除
+              </button>
+              <button
+                className="text-button"
+                type="button"
+                disabled={deletingMemberIds.has(deleteTarget.id)}
+                onClick={() => {
+                  if (deletingMemberIdsRef.current.has(deleteTarget.id)) return;
+                  setDeleteTarget(undefined);
+                }}
+              >
+                キャンセル
+              </button>
+            </div>
+          )}
+        </section>
       )}
       {/* Plan 6: アカウント操作は本ページ所有者の下に合成するだけ。家族 CRUD は置換しない。 */}
       <AccountSettingsSection />

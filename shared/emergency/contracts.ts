@@ -5,6 +5,19 @@ const memberRefSchema = z.string().regex(/^member_[1-9][0-9]*$/u);
 const allergenIdSchema = z.string().regex(/^[a-z][a-z0-9_]*$/u);
 const humanTextSchema = z.string().trim().min(1).max(300);
 
+const emergencyMainIngredientSchema = z
+  .string()
+  .transform((value) => value.normalize("NFKC").trim())
+  .refine((value) => {
+    const length = Array.from(value).length;
+    return length >= 1 && length <= 80;
+  }, "メイン食材は1〜80文字で入力してください");
+
+export const emergencyMainIngredientsSchema = z
+  .array(emergencyMainIngredientSchema)
+  .max(8)
+  .refine((values) => new Set(values).size === values.length, "メイン食材は重複なしにしてください");
+
 export const emergencyLabelWarningSchema = z
   .object({
     sourceType: z.enum(labelSourceTypes),

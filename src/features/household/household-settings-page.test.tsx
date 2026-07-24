@@ -124,7 +124,7 @@ async function waitForAllergies(queryClient: QueryClient, memberId = "member-1")
   });
 }
 
-it("登録済み一覧と追加・編集領域を分け、一覧から編集対象を選べる", async () => {
+it("登録済み一覧と追加・編集領域を分け、同名・未設定でも一覧から一意に選べる", async () => {
   const second: HouseholdMemberRow = {
     ...member,
     id: "member-2",
@@ -133,19 +133,64 @@ it("登録済み一覧と追加・編集領域を分け、一覧から編集対�
     age_band: "age_3_5",
     sort_order: 1,
   };
-  renderSettings({ listMembers: vi.fn().mockResolvedValue([member, second]) });
+  const third: HouseholdMemberRow = {
+    ...second,
+    id: "member-3",
+    sort_order: 2,
+  };
+  renderSettings({ listMembers: vi.fn().mockResolvedValue([member, second, third]) });
 
   expect(await screen.findByRole("heading", { name: "登録済みの家族" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "家族情報を追加・編集" })).toBeVisible();
+  const editor = screen.getByRole("region", { name: "家族情報を追加・編集" });
+  expect(editor).toBeVisible();
+  expect(screen.queryByLabelText("設定する家族")).not.toBeInTheDocument();
+  expect(editor).toContainElement(screen.getByRole("button", { name: "家族を追加" }));
+  expect(editor).toContainElement(screen.getByLabelText("呼び名"));
+  expect(editor).toContainElement(screen.getByRole("button", { name: "家族を削除" }));
   expect(screen.getByText("大人", { selector: ".household-member-name" })).toBeVisible();
   expect(screen.getByText(/登録完了/u)).toBeVisible();
-  expect(screen.getByText("呼び名未設定")).toBeVisible();
+  expect(screen.getAllByText("呼び名未設定", { selector: ".household-member-name" })).toHaveLength(
+    2,
+  );
   expect(screen.getAllByText(/3〜5歳/u)[0]).toBeVisible();
-  expect(screen.getByText(/入力途中/u)).toBeVisible();
+  expect(screen.getAllByText(/入力途中/u)).toHaveLength(2);
 
-  await userEvent.click(screen.getByRole("button", { name: "呼び名未設定を編集" }));
-  expect(screen.getByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+  const secondButton = screen.getByRole("button", { name: "2人目の呼び名未設定を編集" });
+  expect(screen.getByRole("button", { name: "3人目の呼び名未設定を編集" })).toBeVisible();
+  await userEvent.click(secondButton);
+  const editorHeading = screen.getByRole("heading", { name: "「呼び名未設定」を編集中" });
+  expect(editorHeading).toBeVisible();
+  expect(editorHeading).toHaveFocus();
   expect(screen.getByLabelText("呼び名")).toHaveValue("");
+});
+
+it("closes the editor after a successful complete-member save and reopens it from the list", async () => {
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({ updateMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("家族設定が変わりました");
+  expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
+
+  await userEvent.click(screen.getByRole("button", { name: "1人目の大人を編集" }));
+  expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
+});
+
+it("keeps the editor open when completing the member fails", async () => {
+  const updateMember = vi.fn().mockRejectedValue(new Error("家族設定を保存できませんでした"));
+  renderSettings({ updateMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("家族設定を保存できませんでした");
+  expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
 });
 
 it("家族0件でも登録済み領域と追加領域を分けて表示する", async () => {
@@ -318,7 +363,7 @@ it("closes a member delete confirmation when another member is selected", async 
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   const staleConfirm = screen.getByRole("button", { name: "家族だけを削除" });
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
 
   await waitFor(() => {
     expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
@@ -349,7 +394,7 @@ it("does not delete either member after switching during the delete target's all
   const staleConfirm = screen.getByRole("button", { name: "家族だけを削除" });
   await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
 
   expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
   fireEvent.click(staleConfirm);
@@ -375,7 +420,7 @@ it("deletes only the captured member and preserves a newly selected member", asy
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
   await waitFor(() => {
     expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
   });
@@ -540,6 +585,7 @@ it("keeps every new draft field through consecutive autosaves and completes with
 
   await waitFor(() => {
     expect(completeMember).toHaveBeenCalledWith(draft.id);
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
   });
   expect(completionSave.patch).toEqual(
     expect.objectContaining({
@@ -854,7 +900,7 @@ it("cleans up a deferred registered status when its member is deleted", async ()
     queryClient.setQueryData(householdKeys.members("settings"), [member, remainingMember]);
     await Promise.resolve();
   });
-  await userEvent.selectOptions(await screen.findByLabelText("設定する家族"), member.id);
+  await userEvent.click(await screen.findByRole("button", { name: "1人目の大人を編集" }));
 
   expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("none");
 });
@@ -1000,7 +1046,11 @@ it.each([
 
     await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
     await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
-    await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: `2人目の${secondMember.display_name}を編集`,
+      }),
+    );
     await waitFor(() => {
       expect(screen.getByLabelText("呼び名")).toHaveValue(secondMember.display_name);
     });
@@ -1050,14 +1100,14 @@ it("keeps an allergy add locked for its member across switching until success", 
 
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
   await waitFor(() => {
     expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
   });
   expect(screen.getByLabelText("アレルギーの確認")).toBeEnabled();
   expect(screen.getByRole("button", { name: "家族を削除" })).toBeEnabled();
 
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), member.id);
+  await userEvent.click(screen.getByRole("button", { name: "1人目の大人を編集" }));
   await waitFor(() => {
     expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
   });
@@ -1104,8 +1154,8 @@ it("keeps the intent and unlocks a switched member after its allergy add fails",
 
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), member.id);
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
+  await userEvent.click(screen.getByRole("button", { name: "1人目の大人を編集" }));
 
   expect(screen.getByLabelText("アレルギーの確認")).toBeDisabled();
   await act(async () => {
@@ -1697,10 +1747,10 @@ it("アレルギー追加中に家族を往復してもregisteredを表示し元
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), "member-2");
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
 
   expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), "member-1");
+  await userEvent.click(screen.getByRole("button", { name: "1人目の大人を編集" }));
   expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("registered");
 
   await act(async () => {
@@ -1755,9 +1805,9 @@ it("registered保存中に家族を往復しても成功後の表示とcacheを�
     );
   });
 
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), "member-2");
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
   expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), "member-1");
+  await userEvent.click(screen.getByRole("button", { name: "1人目の大人を編集" }));
   expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("registered");
 
   await act(async () => {
@@ -1799,9 +1849,9 @@ it("registered保存失敗後に家族を往復してもローカル値を保持
     expect(screen.getByRole("status")).toHaveTextContent("家族設定の保存に失敗しました");
   });
 
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), "member-2");
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
   expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), "member-1");
+  await userEvent.click(screen.getByRole("button", { name: "1人目の大人を編集" }));
 
   expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("registered");
   expect(
@@ -2028,14 +2078,14 @@ it("uses the latest member query values after switching away and back", async ()
   });
 
   expect(await screen.findByLabelText("呼び名")).toHaveValue("大人");
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), secondMember.id);
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
   expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
 
   await act(async () => {
     queryClient.setQueryData(householdKeys.members("settings"), [latestMember, secondMember]);
     await Promise.resolve();
   });
-  await userEvent.selectOptions(screen.getByLabelText("設定する家族"), member.id);
+  await userEvent.click(screen.getByRole("button", { name: "1人目の大人を編集" }));
 
   expect(await screen.findByLabelText("呼び名")).toHaveValue("保護者");
   expect(screen.getByLabelText("辛さ")).toHaveValue("mild");

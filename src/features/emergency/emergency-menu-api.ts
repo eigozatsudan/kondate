@@ -1,5 +1,9 @@
 import { mealTypes, type MealType } from "@shared/contracts/domain";
-import { emergencyMenusDataSchema, type EmergencyMenusData } from "@shared/emergency/contracts";
+import {
+  emergencyMainIngredientsSchema,
+  emergencyMenusDataSchema,
+  type EmergencyMenusData,
+} from "@shared/emergency/contracts";
 import { z } from "zod";
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -23,6 +27,7 @@ const emergencyResponseSchema = z.discriminatedUnion("ok", [
 const emergencyMenuRequestSchema = z
   .object({
     mealType: z.enum(mealTypes),
+    mainIngredients: emergencyMainIngredientsSchema,
     targetMemberIds: z
       .array(z.uuid())
       .min(1)
@@ -40,6 +45,7 @@ export const emergencyMenuKeys = {
   candidates: (input: {
     userId: string;
     mealType: MealType;
+    mainIngredients: readonly string[];
     targetMemberIds: readonly string[];
     pantryItemIds: readonly string[];
     householdSafetyRevision: string;
@@ -48,6 +54,7 @@ export const emergencyMenuKeys = {
       "emergency-menus",
       input.userId,
       input.mealType,
+      [...input.mainIngredients],
       [...input.targetMemberIds],
       [...input.pantryItemIds],
       input.householdSafetyRevision,
@@ -62,6 +69,7 @@ export function parseEmergencyMenusResponse(value: unknown): EmergencyMenusData 
 
 export async function getEmergencyMenus(input: {
   mealType: MealType;
+  mainIngredients: readonly string[];
   targetMemberIds: readonly string[];
   pantryItemIds: readonly string[];
 }): Promise<EmergencyMenusData> {
@@ -71,6 +79,9 @@ export async function getEmergencyMenus(input: {
     meal: validatedInput.mealType,
     targetMemberIds: validatedInput.targetMemberIds.join(","),
   });
+  for (const mainIngredient of validatedInput.mainIngredients) {
+    query.append("mainIngredients", mainIngredient);
+  }
   if (validatedInput.pantryItemIds.length > 0) {
     query.set("pantryItemIds", validatedInput.pantryItemIds.join(","));
   }

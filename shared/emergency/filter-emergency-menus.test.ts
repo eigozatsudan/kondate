@@ -307,4 +307,40 @@ describe("reviewed emergency menus", () => {
 
     expect(result).toEqual({ menus: [], emptyReason: "no_matching_fixture" });
   });
+
+  it("keeps only reviewed menus whose dish or ingredient names match every main ingredient", () => {
+    const matching = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["鶏", "きゅうり"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext(),
+    });
+    expect(matching.menus).toHaveLength(1);
+
+    const unrelated = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["豚肉"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext(),
+    });
+    expect(unrelated).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+  });
+
+  it("matches normalized main ingredients bidirectionally without using instructions", () => {
+    const normalized = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["　鶏肉の塩蒸し　"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext(),
+    });
+    expect(normalized.menus).toHaveLength(1);
+
+    const instructionOnly = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["湯"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext(),
+    });
+    expect(instructionOnly).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+  });
 });

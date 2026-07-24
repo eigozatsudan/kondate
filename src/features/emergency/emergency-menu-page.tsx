@@ -97,6 +97,7 @@ export function EmergencyMenuPage() {
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
   const request = {
     mealType: draftQuery.data?.mealType ?? "dinner",
+    mainIngredients: draftQuery.data?.mainIngredients ?? [],
     targetMemberIds,
     pantryItemIds: draftQuery.data?.pantrySelections.map((item) => item.pantryItemId) ?? [],
   } as const;
@@ -126,9 +127,11 @@ export function EmergencyMenuPage() {
   if (draftQuery.isSuccess && draftQuery.data === null) {
     return (
       <main className="page-frame stack emergency-menu-page">
+        <a className="emergency-back-link" href="/planner" aria-label="献立画面へ戻る">
+          ← 献立画面へ戻る
+        </a>
         <h1>15分緊急献立</h1>
         <p role="alert">献立条件の下書きがありません。献立画面で条件を保存してください。</p>
-        <a href="/planner">献立画面へ戻る</a>
       </main>
     );
   }
@@ -141,12 +144,14 @@ export function EmergencyMenuPage() {
   ) {
     return (
       <main className="page-frame stack emergency-menu-page">
+        <a className="emergency-back-link" href="/planner" aria-label="献立画面へ戻る">
+          ← 献立画面へ戻る
+        </a>
         <h1>15分緊急献立</h1>
         <p role="alert">
           対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。
         </p>
         <a href="/onboarding">家族設定へ（任意）</a>
-        <a href="/planner">献立画面へ戻る</a>
       </main>
     );
   }
@@ -171,6 +176,9 @@ export function EmergencyMenuContent({
   const visibleResponse = loading || error !== null ? null : response;
   return (
     <main className="page-frame stack emergency-menu-page">
+      <a className="emergency-back-link" href="/planner" aria-label="献立画面へ戻る">
+        ← 献立画面へ戻る
+      </a>
       <div>
         <p className="eyebrow">AIを使わない</p>
         <h1>15分緊急献立</h1>
@@ -190,13 +198,33 @@ export function EmergencyMenuContent({
         const candidateDomId = `emergency-candidate-${String(candidateIndex + 1)}`;
         return (
           <article className="card stack emergency-candidate" key={menu.menuId}>
-            <h2>{menu.dishes.map((dish) => dish.name).join("・")}</h2>
-            <p>
+            <header className="emergency-candidate-header">
+              <p className="emergency-candidate-number">候補 {candidateIndex + 1}</p>
+              <h2>{menu.dishes.map((dish) => dish.name).join("・")}</h2>
+            </header>
+            <div
+              className="emergency-candidate-overview"
+              role="group"
+              aria-label={`候補${String(candidateIndex + 1)}の概要`}
+            >
+              <p>
+                <strong>{menu.totalElapsedMinutes}分</strong>
+                <span>食卓までの目安</span>
+              </p>
+              <p>
+                <strong>{menu.servings}人分</strong>
+                <span>分量の目安</span>
+              </p>
+            </div>
+            <p className="sr-only">
               食卓まで全体 {menu.totalElapsedMinutes}分・{menu.servings}人分
             </p>
             <details open>
               <summary>材料と作り方を表示</summary>
-              <section aria-labelledby={`${candidateDomId}-timeline`}>
+              <section
+                className="emergency-recipe-section"
+                aria-labelledby={`${candidateDomId}-timeline`}
+              >
                 <h3 id={`${candidateDomId}-timeline`}>全体の段取り</h3>
                 <ol>
                   {menu.timeline.map((step) => (
