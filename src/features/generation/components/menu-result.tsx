@@ -278,8 +278,10 @@ export function MenuResult({
     }
   };
 
+  // main はページ枠（MenuResultPage / HistoryDetailPage）が1つだけ持つ。
+  // ここに main を置くと操作バー等を包めず、ネスト landmark 違反にもなる。
   return (
-    <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <div className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm">
         <strong>AIが作成した献立です。</strong>{" "}
         内容、加熱状態、家庭内での混入を調理前に確認してください。
@@ -347,7 +349,8 @@ export function MenuResult({
         ))}
       </div>
 
-      <article
+      {/* article に role=tabpanel は aria-allowed-role 違反になるため div を使う */}
+      <div
         id={`panel-${selected.id}`}
         role="tabpanel"
         aria-labelledby={`tab-${selected.id}`}
@@ -461,7 +464,7 @@ export function MenuResult({
             </ul>
           </section>
         )}
-      </article>
+      </div>
 
       <section aria-labelledby="pantry-heading" className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
         <h2 id="pantry-heading" className="text-xl font-bold">
@@ -619,6 +622,6 @@ export function MenuResult({
             </ul>
           </section>
         )}
-    </main>
+    </div>
   );
 }

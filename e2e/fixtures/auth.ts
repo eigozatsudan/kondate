@@ -19,6 +19,7 @@ type AuthFixtures = {
   authEmail: string;
   authenticatedPage: Page;
   completedOnboardingPage: Page;
+  ideaModePage: Page;
 };
 
 export const test = base.extend<AuthFixtures>({
@@ -56,6 +57,17 @@ export const test = base.extend<AuthFixtures>({
     await page.goto("/privacy?returnTo=%2Fplanner");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await provide(page);
+  },
+
+  // ideaModePage は onboarding_status が not_started のまま /welcome を開く必要がある。
+  // 主文言は「献立アイデアを考える」(not_started)。in_progress 後は
+  // 「設定せず献立アイデアを考える」になるため、この fixture を使わない。
+  // provide（use ではない）で eslint react-hooks を通す — shopping.ts と同じ。
+  ideaModePage: async ({ authenticatedPage: page }, provide) => {
+    await page.goto("/welcome");
+    await page.getByRole("button", { name: "献立アイデアを考える" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
     await provide(page);
   },

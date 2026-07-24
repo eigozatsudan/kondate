@@ -146,7 +146,8 @@ it("leaves the label disclaimer to the page shell and keeps a 320px no-overflow 
   ).toBeNull();
   // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
   // 横方向の最大幅・はみ出し抑止・長文折返しの具体的classで固定する。
-  expect(container.querySelector("main")).toHaveClass(
+  // main はページ枠が所有する。本文ルートは横方向のはみ出し抑止 class を持つ。
+  expect(container.firstElementChild).toHaveClass(
     "w-full",
     "max-w-full",
     "overflow-x-hidden",

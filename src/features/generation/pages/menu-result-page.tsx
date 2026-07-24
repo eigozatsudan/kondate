@@ -230,8 +230,9 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
     }
   };
 
+  // 操作バー・注意書きを含めて1つの main で包む（MenuResult は本文 fragment のみ）。
   return (
-    <div className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
       <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
         <p>家族条件を使用していません</p>
@@ -349,7 +350,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
           />
         </section>
       )}
-    </div>
+    </main>
   );
 }
 
@@ -576,8 +577,9 @@ function HouseholdResultBody({
             ? "現在の家族設定で確認しました"
             : null;
 
+  // 再検証ステータス・買い物操作を含めて1つの main で包む。
   return (
-    <div className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
 
       {revalidation.phase === "checking" && (
@@ -831,6 +833,6 @@ function HouseholdResultBody({
           />
         </section>
       )}
-    </div>
+    </main>
   );
 }

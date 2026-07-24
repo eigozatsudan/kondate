@@ -121,7 +121,7 @@ export function PlannerWizard({
   onIdeaAudienceConfirmed,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
   // idea audience 確定の single-flight。ref は同期ガード、state は disabled 表示用。
   const confirmingIdeaAudienceRef = useRef(false);
   const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);
@@ -140,9 +140,11 @@ export function PlannerWizard({
     />
   ) : null;
 
+  // 各 step を <main> で包み、シェル外でも region / main ランドマーク契約を満たす。
+  // AppShell 配下でも main はページ本文として1つ（nav は別ランドマーク）になる。
   if (step === "meal") {
     return (
-      <div ref={containerRef}>
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         <MealStep
           value={draft.mealType}
@@ -156,12 +158,12 @@ export function PlannerWizard({
           errorMessage={fieldErrors.mealType ?? null}
         />
         {error !== null && <p role="alert">{error}</p>}
-      </div>
+      </main>
     );
   }
   if (step === "ingredients") {
     return (
-      <div ref={containerRef}>
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         <IngredientStep
           value={draft.mainIngredients}
@@ -178,12 +180,12 @@ export function PlannerWizard({
           errorMessage={fieldErrors.mainIngredients ?? null}
         />
         {error !== null && <p role="alert">{error}</p>}
-      </div>
+      </main>
     );
   }
   if (step === "cuisine") {
     return (
-      <div ref={containerRef}>
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         <CuisineStep
           value={draft.cuisineGenre}
@@ -200,12 +202,12 @@ export function PlannerWizard({
           errorMessage={fieldErrors.cuisineGenre ?? null}
         />
         {error !== null && <p role="alert">{error}</p>}
-      </div>
+      </main>
     );
   }
   if (step === "audience") {
     return (
-      <div ref={containerRef}>
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         <AudienceStep
           value={{
@@ -258,12 +260,12 @@ export function PlannerWizard({
           }}
         />
         {error !== null && <p role="alert">{error}</p>}
-      </div>
+      </main>
     );
   }
   // review
   return (
-    <div ref={containerRef}>
+    <main ref={containerRef} className="page-frame stack guided-planner-theme">
       {conflictChrome}
       <ReviewStep
         value={draft}
@@ -291,6 +293,6 @@ export function PlannerWizard({
           void onSubmit();
         }}
       />
-    </div>
+    </main>
   );
 }
