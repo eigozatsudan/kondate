@@ -459,6 +459,88 @@ describe("runGeneration", () => {
     expect(result.status).toBe("succeeded");
   });
 
+  it("terminals fingerprint mismatch as constraint_conflict instead of failed/internal_error", async () => {
+    const repository = makeRepository();
+    // raise 経路（repository が 409 current_safety_changed を返す）の防御。
+    // 正規 SQL 経路は succeed が constraint_conflict payload を返す。
+    repository.succeed.mockRejectedValue(
+      new HttpError(409, "current_safety_changed", generationConflictCopy.current_safety_changed),
+    );
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        callOpenRouter: vi.fn(() =>
+          Promise.resolve({
+            mode: "full_menu" as const,
+            output: scenarios.success,
+            modelId: models[0],
+          }),
+        ),
+      }),
+      command,
+    );
+    expect(result.status).toBe("constraint_conflict");
+    if (result.status !== "constraint_conflict") throw new Error("expected constraint_conflict");
+    expect(result.conflicts).toEqual([
+      {
+        code: "current_safety_changed",
+        message: generationConflictCopy.current_safety_changed,
+        conditionRefs: [],
+      },
+    ]);
+    expect(repository.conflict).toHaveBeenCalledTimes(1);
+    expect(repository.conflict).toHaveBeenCalledWith(requestId, [
+      {
+        code: "current_safety_changed",
+        message: generationConflictCopy.current_safety_changed,
+        conditionRefs: [],
+      },
+    ]);
+    expect(repository.fail).not.toHaveBeenCalled();
+  });
+
+  it("hydrates when finalize success RPC already wrote constraint_conflict", async () => {
+    const repository = makeRepository();
+    // SQL 正規経路: succeed RPC が constraint_conflict レコードを返す（raise しない）
+    repository.succeed.mockImplementation(() => {
+      const terminal = {
+        ...record("constraint_conflict"),
+        terminal_details: { conflictCodes: ["current_safety_changed"] },
+      };
+      return Promise.resolve(terminal);
+    });
+    repository.status.mockImplementation(() =>
+      Promise.resolve({
+        ...record("constraint_conflict"),
+        terminal_details: { conflictCodes: ["current_safety_changed"] },
+      }),
+    );
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        callOpenRouter: vi.fn(() =>
+          Promise.resolve({
+            mode: "full_menu" as const,
+            output: scenarios.success,
+            modelId: models[0],
+          }),
+        ),
+      }),
+      command,
+    );
+    expect(result.status).toBe("constraint_conflict");
+    if (result.status !== "constraint_conflict") throw new Error("expected constraint_conflict");
+    expect(result.conflicts).toEqual([
+      {
+        code: "current_safety_changed",
+        message: generationConflictCopy.current_safety_changed,
+        conditionRefs: [],
+      },
+    ]);
+    expect(repository.conflict).not.toHaveBeenCalled();
+    expect(repository.fail).not.toHaveBeenCalled();
+  });
+
   it("runs preflight before prompt and send", async () => {
     const repository = makeRepository();
     const buildMessages = vi.fn(() => [{ role: "user" as const, content: "prompt" }]);

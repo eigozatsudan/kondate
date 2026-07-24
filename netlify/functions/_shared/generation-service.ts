@@ -263,6 +263,19 @@ function closedFailureCode(error: unknown): GenerationFailureCode {
   return parsed.success ? parsed.data : "internal_error";
 }
 
+/** finalize の fingerprint 不一致（raise 経路）を conflict 終端へ落とす判定 */
+function isCurrentSafetyChangedError(error: unknown): boolean {
+  return error instanceof HttpError && error.code === "current_safety_changed";
+}
+
+function currentSafetyChangedConflict(): z.infer<typeof generationConflictSchema> {
+  return {
+    code: "current_safety_changed",
+    message: generationConflictCopy.current_safety_changed,
+    conditionRefs: [],
+  };
+}
+
 export function projectProviderConflicts(
   input: unknown,
   context: GenerationContext,
@@ -705,6 +718,20 @@ export async function runGeneration(
     await deps.repository.conflict(requestId, [...conflicts]);
     return await hydrate();
   };
+  // succeed は SQL が constraint_conflict を返す正規経路と、raise を 409 に写した防御経路の両方を扱う
+  const succeedOrConflict = async (
+    input: Parameters<GenerationRepository["succeed"]>[0],
+  ): Promise<GenerationStatusData> => {
+    try {
+      await deps.repository.succeed(input);
+      return await hydrate();
+    } catch (error) {
+      if (isCurrentSafetyChangedError(error)) {
+        return await conflict([currentSafetyChangedConflict()]);
+      }
+      throw error;
+    }
+  };
 
   const deadlineAtMonotonicMs = deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs;
   const remainingMs = () => deadlineAtMonotonicMs - deps.monotonicNow();
@@ -819,10 +846,9 @@ export async function runGeneration(
       const output = composeCandidate(firstResult, execution, () => deps.uuid());
       if (output.kind === "conflict") return await conflict(output.conflicts);
       if (output.kind === "valid") {
-        await deps.repository.succeed(
+        return await succeedOrConflict(
           buildSuccessInput(requestId, output.checked.menu, context, execution),
         );
-        return await hydrate();
       }
       firstIssues = output.issues;
       firstWasDuplicate = output.duplicate === true;
@@ -874,10 +900,9 @@ export async function runGeneration(
         null,
       );
     }
-    await deps.repository.succeed(
+    return await succeedOrConflict(
       buildSuccessInput(requestId, repairedOutput.checked.menu, context, execution),
     );
-    return await hydrate();
   } catch (error) {
     if (error instanceof TerminalTransitionError) throw error.cause;
     if (error instanceof StatusHydrationError) throw error.cause;

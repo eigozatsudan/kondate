@@ -3450,5 +3450,171 @@ $idea_finalize$;
 select pass('idea finalize success stores null versions, fixed fingerprint, empty family children');
 select pass('idea finalize rejects non-empty targets, non-null versions, servings/fingerprint/snapshot/family rows without terminal menu or quota pollution');
 
+-- P3#1: household finalize fingerprint 不一致は constraint_conflict/current_safety_changed
+-- （献立未作成・成功予約解放・sent 枠非返還・success_count 非増加）
+do $fp_mismatch$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000f6';
+  v_member constant uuid := '20000000-0000-4000-8000-0000000000f6';
+  v_draft public.generation_drafts;
+  v_request_id uuid;
+  v_result jsonb;
+  v_fingerprint text;
+  v_stale text;
+  v_allergen_version text;
+  v_food_rule_version text;
+  v_menu_id constant uuid := '60000000-0000-4000-8000-0000000000f6';
+  v_dish_id constant uuid := '61000000-0000-4000-8000-0000000000f6';
+  v_ingredient_id constant uuid := '62000000-0000-4000-8000-0000000000f6';
+  v_step_id constant uuid := '63000000-0000-4000-8000-0000000000f6';
+  v_timeline_id constant uuid := '64000000-0000-4000-8000-0000000000f6';
+  v_sent_before integer;
+  v_success_before integer;
+  v_reserved_before integer;
+begin
+  insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  values(v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','fp-mismatch-finalizer@example.invalid','','{}','{}',now(),now());
+  insert into public.household_members(
+    id,user_id,status,display_name,age_band,portion_size,spice_level,
+    allergy_status,unsupported_diet_status,sort_order
+  ) values(v_member,v_owner,'draft','不一致確認','adult','regular','mild',
+    'registered','none',0);
+  insert into public.member_allergies(id,user_id,member_id,allergen_id)
+  values('21000000-0000-4000-8000-0000000000f6',v_owner,v_member,'milk');
+  update public.household_members set status = 'complete' where id = v_member;
+
+  select catalog_version into strict v_allergen_version
+  from public.allergen_catalog where id = 'milk';
+  select rule_version into strict v_food_rule_version
+  from public.food_safety_rules order by id limit 1;
+  v_fingerprint := private.current_safety_fingerprint(v_owner, array[v_member]);
+  -- 実在しない 64 hex を stale expected として渡し、lock helper の P0001 を起こす
+  v_stale := repeat('a', 64);
+  if v_stale is not distinct from v_fingerprint then
+    v_stale := repeat('b', 64);
+  end if;
+
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+  v_draft := public.save_generation_draft(
+    0::bigint,'dinner',array['鶏肉'],'japanese',
+    'household',array[v_member],null::smallint,30::smallint,'standard',
+    array[]::text[],'','[]'::jsonb
+  );
+  perform public.reserve_ai_generation(
+    v_owner,'30000000-0000-4000-8000-0000000000f6',
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v2',repeat('c',64),
+    jsonb_build_object(
+      'kind','new_menu',
+      'target_mode','household',
+      'servings',null,
+      'target_member_ids',to_jsonb(array[v_member]),
+      'source_menu_version',null
+    ),
+    5,45,180,'2026-07-11 03:00:00+00'
+  );
+  select id into strict v_request_id
+  from private.ai_generation_requests
+  where user_id = v_owner
+    and idempotency_key = '30000000-0000-4000-8000-0000000000f6';
+  perform public.mark_ai_global_sent(v_request_id,'2026-07-11 03:00:01+00');
+
+  select sent_count into strict v_sent_before
+  from private.ai_user_daily_external_attempts
+  where user_id = v_owner and usage_day = date '2026-07-11';
+  select success_count, reserved_count
+    into strict v_success_before, v_reserved_before
+  from private.ai_user_daily_usage
+  where user_id = v_owner and usage_day = date '2026-07-11';
+  if v_reserved_before < 1 then
+    raise exception 'expected a reserved success slot before fingerprint mismatch finalize';
+  end if;
+
+  v_result := public.finalize_ai_generation_success(
+    v_request_id,
+    jsonb_build_object(
+      'schemaVersion','2026-07-11.v1',
+      'menuId',v_menu_id,
+      'mealType','dinner',
+      'cuisineGenre','japanese',
+      'servings',2,
+      'totalElapsedMinutes',15,
+      'safetyTags','[]'::jsonb,
+      'dishes',jsonb_build_array(jsonb_build_object(
+        'id',v_dish_id,'role','main','position',1,'name','鶏肉の塩焼き',
+        'description','主菜','cookingTimeMinutes',15,
+        'ingredients',jsonb_build_array(jsonb_build_object(
+          'id',v_ingredient_id,'position',1,'name','鶏肉',
+          'quantityValue',200,'quantityText','200g','unit','g',
+          'storeSection','meat','pantrySelectionId',null,
+          'labelConfirmationRequired',false)),
+        'steps',jsonb_build_array(jsonb_build_object(
+          'id',v_step_id,'position',1,'instruction','焼く')))),
+      'timeline',jsonb_build_array(jsonb_build_object(
+        'id',v_timeline_id,'position',1,'startMinute',0,'durationMinutes',15,
+        'instruction','主菜を作る','dishId',v_dish_id,'recipeStepId',v_step_id)),
+      'adaptations','[]'::jsonb,
+      'pantryUsage','[]'::jsonb,
+      'labelConfirmations','[]'::jsonb
+    ),
+    jsonb_build_object('mealType','dinner'),
+    jsonb_build_object('members',jsonb_build_array(jsonb_build_object(
+      'householdMemberId',v_member,'anonymousRef','member_1','ageBand','adult',
+      'allergyStatus','registered','allergenIds',jsonb_build_array('milk'),
+      'requiredSafetyConstraints','[]'::jsonb,'unsupportedDietStatus','none',
+      'unsupportedDietKinds','[]'::jsonb))),
+    v_stale,
+    v_allergen_version,
+    v_food_rule_version,
+    jsonb_build_array(jsonb_build_object(
+      'householdMemberId',v_member,'anonymousRef','member_1',
+      'displayNameSnapshot','不一致確認')),
+    '[]'::jsonb,
+    null,null,null,
+    '2026-07-11 03:00:02+00'
+  );
+
+  if v_result->>'status' is distinct from 'constraint_conflict' then
+    raise exception 'fingerprint mismatch did not terminalize as constraint_conflict: %', v_result;
+  end if;
+  -- terminal_details は ai_request_payload に乗らない。台帳行の閉じた DTO を正とする
+  if (select terminal_details from private.ai_generation_requests where id = v_request_id)
+     is distinct from jsonb_build_object(
+       'conflictCodes', jsonb_build_array('current_safety_changed')
+     ) then
+    raise exception 'fingerprint mismatch missing current_safety_changed codes on request row';
+  end if;
+  if exists (select 1 from public.menus where id = v_menu_id or user_id = v_owner) then
+    raise exception 'fingerprint mismatch created a menu row';
+  end if;
+  if (select status from private.ai_generation_requests where id = v_request_id)
+     is distinct from 'constraint_conflict' then
+    raise exception 'request row was not constraint_conflict';
+  end if;
+  if (select user_quota_reserved from private.ai_generation_requests where id = v_request_id)
+     is not false then
+    raise exception 'success reservation was not released';
+  end if;
+  if (select success_count from private.ai_user_daily_usage
+        where user_id = v_owner and usage_day = date '2026-07-11')
+     is distinct from v_success_before then
+    raise exception 'fingerprint mismatch consumed success quota';
+  end if;
+  if (select reserved_count from private.ai_user_daily_usage
+        where user_id = v_owner and usage_day = date '2026-07-11')
+     is distinct from (v_reserved_before - 1) then
+    raise exception 'fingerprint mismatch did not release the success reservation';
+  end if;
+  if (select sent_count from private.ai_user_daily_external_attempts
+        where user_id = v_owner and usage_day = date '2026-07-11')
+     is distinct from v_sent_before then
+    raise exception 'fingerprint mismatch refunded a sent attempt';
+  end if;
+end
+$fp_mismatch$;
+select pass('household finalize fingerprint mismatch terminals as constraint_conflict/current_safety_changed without menu or success consumption');
+
 select * from finish();
 rollback;

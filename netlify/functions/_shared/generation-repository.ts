@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  generationConflictCopy,
   generationConflictSchema,
   generationCommandVersionV2,
   releaseQuota,
@@ -121,6 +122,19 @@ async function rpc<Name extends PublicFunctionName>(
         409,
         "idempotency_payload_mismatch",
         "同じ操作番号で異なる内容は送信できません。最初からやり直してください。",
+      );
+    }
+    // finalize の fingerprint 不一致が raise で返る旧経路向け。
+    // 正規経路は SQL 側で constraint_conflict に原子遷移する。
+    if (
+      isPostgrestLikeError(error) &&
+      (error.code === "P0001" || error.code === "22023") &&
+      error.message === "current_safety_changed"
+    ) {
+      throw new HttpError(
+        409,
+        "current_safety_changed",
+        generationConflictCopy.current_safety_changed,
       );
     }
     throw new HttpError(500, "quota_transition_failed", "生成の受付状態を更新できませんでした。");

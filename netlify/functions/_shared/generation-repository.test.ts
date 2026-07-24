@@ -377,6 +377,35 @@ describe("createGenerationRepository", () => {
     }
   });
 
+  it.each([
+    { code: "P0001", label: "stale fingerprint raise" },
+    { code: "22023", label: "null expected fingerprint raise" },
+  ])(
+    "maps finalize current_safety_changed ($label) to a closed 409 for conflict terminalization",
+    async (testCase) => {
+      const databaseError = new PostgrestError({
+        message: "current_safety_changed",
+        details: "private fingerprint detail",
+        hint: "private fingerprint hint",
+        code: testCase.code,
+      });
+      rpcMock.mockResolvedValueOnce({ data: null, error: databaseError });
+      const repository = createGenerationRepository(user);
+
+      try {
+        await repository.succeed(succeedInput);
+        throw new Error("Expected repository.succeed to reject");
+      } catch (error: unknown) {
+        expect(error).toBeInstanceOf(HttpError);
+        if (!(error instanceof HttpError)) throw error;
+        expect(error.status).toBe(409);
+        expect(error.code).toBe("current_safety_changed");
+        expect(error.message).toBe("安全条件が更新されました。もう一度作成してください。");
+        expect(String(error)).not.toContain("private fingerprint");
+      }
+    },
+  );
+
   it("sanitizes a rejected RPC promise", async () => {
     rpcMock.mockRejectedValueOnce(new Error("private rejection detail"));
     const repository = createGenerationRepository(user);
