@@ -255,6 +255,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [step, setStep] = useState<PlannerStep>("meal");
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<PlannerFieldName, string>>>({});
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  // audience で idea 確定時の skipped 書込失敗・profile 未取得を示す再試行可能な alert
+  const [audienceStatusError, setAudienceStatusError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isOpeningEmergencyMenus, setIsOpeningEmergencyMenus] = useState(false);
   const generationAbortControllerRef = useRef<AbortController | null>(null);
@@ -433,7 +435,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         autosave.state === "saving" || isSubmitting || hasDraftConflict || isOpeningEmergencyMenus
       }
       error={
-        // 競合 chrome は wizard 側の明示 UI に任せる。ここでは submission / 利用上限のみ。
+        // 競合 chrome は wizard 側の明示 UI に任せる。ここでは audience skipped / submission / 利用上限。
+        audienceStatusError ??
         submissionError ??
         (hasDraftConflict
           ? null
@@ -443,12 +446,28 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       }
       fieldErrors={fieldErrors}
       onDraftChange={setValue}
-      onStepChange={(next) => {
-        setStep(next);
-        // 設計 §10: audience で idea を確定した時点で skipped にする（/planner 直開きでは変えない）。
-        // review submit 経路にも同処理があり、二重呼び出しは complete|skipped で no-op。
-        if (next === "review" && value.targetMode === "idea" && userId !== undefined) {
-          void setOnboardingStatusIfNeeded(client, userId, queryClient);
+      onStepChange={setStep}
+      onIdeaAudienceConfirmed={async () => {
+        // 設計 §10 / Plan8 Task4: audience で idea を確定したときだけ skipped を書く。
+        // fire-and-forget 禁止。未取得・RPC 失敗では throw して audience に留める。
+        if (userId === undefined) {
+          throw new Error("missing_user");
+        }
+        setAudienceStatusError(null);
+        try {
+          const outcome = await setOnboardingStatusIfNeeded(client, userId, queryClient);
+          if (outcome === "blocked_no_profile") {
+            setAudienceStatusError(
+              "家族設定の状態を確認できませんでした。再読み込みしてください。",
+            );
+            throw new Error("profile_unavailable");
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message === "profile_unavailable") {
+            throw error;
+          }
+          setAudienceStatusError("開始状態を保存できませんでした。もう一度お試しください");
+          throw error instanceof Error ? error : new Error("onboarding_status_write_failed");
         }
       }}
       pantryItems={pantryQuery.data}
@@ -512,11 +531,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             openPrivacyNotice();
             return;
           }
-          // audience→review で既に skipped 済みでも、review を飛ばした経路や
-          // cache 未反映の再試行に備え submit でも idempotent に呼ぶ（安全網）。
-          if (parsed.data.targetMode === "idea" && userId !== undefined) {
-            await setOnboardingStatusIfNeeded(client, userId, queryClient);
-          }
+          // skipped 書込は audience で idea 確定した単一路のみ（review submit では呼ばない）。
           const controller = new AbortController();
           generationAbortControllerRef.current?.abort();
           generationAbortControllerRef.current = controller;
@@ -540,20 +555,23 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 }
 
 /**
- * profileが not_started|in_progress のときだけ skipped へ進める。
- * すでに complete|skipped の利用者へ再送信しても Task 2 の RPC 契約上は
- * 安全だが、不要な書き込みを避けるため現在値を確認してから呼ぶ。
+ * profile が権威的に取得済みかつ not_started|in_progress のときだけ skipped へ進める。
+ * cache 未取得・未知状態は書かず blocked_no_profile。complete|skipped は no-op。
  */
 async function setOnboardingStatusIfNeeded(
   client: ReturnType<typeof getBrowserSupabaseClient>,
   userId: string,
   queryClient: ReturnType<typeof useQueryClient>,
-): Promise<void> {
-  const cached = queryClient.getQueryData<{ onboarding_status?: string } | undefined>(
+): Promise<"written" | "skipped_noop" | "blocked_no_profile"> {
+  const cached = queryClient.getQueryData<{ onboarding_status?: string }>(
     householdKeys.profile(userId),
   );
-  const currentStatus = cached?.onboarding_status;
-  if (currentStatus === "complete" || currentStatus === "skipped") return;
+  // 未取得: undefined 全体 → blocked_no_profile（書かない）
+  if (cached === undefined) return "blocked_no_profile";
+  const current = cached.onboarding_status;
+  if (current === "complete" || current === "skipped") return "skipped_noop";
+  if (current !== "not_started" && current !== "in_progress") return "blocked_no_profile";
   await setOnboardingStatus(client, userId, "skipped");
   await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+  return "written";
 }

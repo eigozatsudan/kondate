@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -48,6 +48,7 @@ function Harness({
   hasAcceptedOrDeclinedPrivacy = true,
   onOpenPrivacyNotice = vi.fn(),
   onOpenEmergencyMenus,
+  onIdeaAudienceConfirmed,
   hasDraftConflict = false,
   canResolveDraftConflict = false,
   draftConflictRefetchError = false,
@@ -64,6 +65,7 @@ function Harness({
   hasAcceptedOrDeclinedPrivacy?: boolean;
   onOpenPrivacyNotice?: () => void;
   onOpenEmergencyMenus?: () => void;
+  onIdeaAudienceConfirmed?: () => Promise<void>;
   hasDraftConflict?: boolean;
   canResolveDraftConflict?: boolean;
   draftConflictRefetchError?: boolean;
@@ -94,6 +96,7 @@ function Harness({
       canResolveDraftConflict={canResolveDraftConflict}
       draftConflictRefetchError={draftConflictRefetchError}
       {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+      {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
       {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
       {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
     />
@@ -226,6 +229,90 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     );
     expect(screen.getByRole("radio", { name: "家族に合わせて作る" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" })).not.toBeChecked();
+  });
+});
+
+describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
+  const ideaAudienceDraft: PlannerDraftInput = {
+    ...emptyDraft,
+    mealType: "dinner",
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese",
+    targetMode: "idea",
+    targetMemberIds: [],
+    servings: 2,
+  };
+
+  it("awaits onIdeaAudienceConfirmed before advancing idea audience to review", async () => {
+    const user = userEvent.setup();
+    let resolveConfirm: (() => void) | undefined;
+    const onIdeaAudienceConfirmed = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfirm = resolve;
+        }),
+    );
+    render(
+      <Harness
+        initialStep="audience"
+        initialDraft={ideaAudienceDraft}
+        onIdeaAudienceConfirmed={onIdeaAudienceConfirmed}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(onIdeaAudienceConfirmed).toHaveBeenCalledTimes(1);
+    // await 中は review へ進まない
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+
+    // resolve 後の onNext 継続（goToStep）まで act 内で microtask を消化する
+    await act(async () => {
+      resolveConfirm?.();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+  });
+
+  it("stays on audience when onIdeaAudienceConfirmed throws", async () => {
+    const user = userEvent.setup();
+    const onIdeaAudienceConfirmed = vi.fn().mockRejectedValue(new Error("blocked"));
+    render(
+      <Harness
+        initialStep="audience"
+        initialDraft={ideaAudienceDraft}
+        onIdeaAudienceConfirmed={onIdeaAudienceConfirmed}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await vi.waitFor(() => {
+      expect(onIdeaAudienceConfirmed).toHaveBeenCalled();
+    });
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+  });
+
+  it("does not call onIdeaAudienceConfirmed for household audience next", async () => {
+    const user = userEvent.setup();
+    const onIdeaAudienceConfirmed = vi.fn().mockResolvedValue(undefined);
+    render(
+      <Harness
+        initialStep="audience"
+        initialDraft={{
+          ...ideaAudienceDraft,
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+          servings: null,
+        }}
+        onIdeaAudienceConfirmed={onIdeaAudienceConfirmed}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await vi.waitFor(() => {
+      expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+    });
+    expect(onIdeaAudienceConfirmed).not.toHaveBeenCalled();
   });
 });
 

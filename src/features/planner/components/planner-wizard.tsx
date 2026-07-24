@@ -47,6 +47,11 @@ export type PlannerWizardExtraProps = {
   onRetryDraftConflict?: () => void;
   /** 設計 §5.1: review からの緊急献立導線。route が flush→navigate を所有する */
   onOpenEmergencyMenus?: () => void;
+  /**
+   * idea 対象を audience で確定したときの onboarding skipped 書込。
+   * 成功時のみ resolve。失敗は throw し、wizard は step を進めない。
+   */
+  onIdeaAudienceConfirmed?: () => Promise<void>;
 };
 
 /**
@@ -113,6 +118,7 @@ export function PlannerWizard({
   onResolveDraftConflict,
   onRetryDraftConflict,
   onOpenEmergencyMenus,
+  onIdeaAudienceConfirmed,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLDivElement>(null);
@@ -215,7 +221,17 @@ export function PlannerWizard({
             goToStep("cuisine");
           }}
           onNext={() => {
-            goToStep("review");
+            // idea 確定は route の skipped 書込を await。失敗時は audience に留まる。
+            void (async () => {
+              if (draft.targetMode === "idea" && onIdeaAudienceConfirmed !== undefined) {
+                try {
+                  await onIdeaAudienceConfirmed();
+                } catch {
+                  return;
+                }
+              }
+              goToStep("review");
+            })();
           }}
           disabled={isSaving}
           eligibleMembers={eligibleMembers}
