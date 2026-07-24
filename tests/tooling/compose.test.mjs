@@ -45,6 +45,27 @@ test("root compose owns every local entry-point service", async () => {
   assert.match(compose, /infra\/supabase\/docker-compose\.yml/);
 });
 
+test("root compose does not redeclare include-owned supabase services", async () => {
+  // Compose v5: redefining services from include fails with
+  // "services.<name> conflicts with imported resource" (CI docker compose config --quiet).
+  const [compose, override] = await Promise.all([
+    readFile("compose.yaml", "utf8"),
+    readFile("infra/supabase.override.yaml", "utf8"),
+  ]);
+  for (const name of ["kong:", "supavisor:", "db:", "auth:"]) {
+    assert.doesNotMatch(
+      compose,
+      new RegExp(`^  ${name}`, "m"),
+      `root compose must not redeclare include-owned service ${name}`,
+    );
+  }
+  // 127.0.0.1 固定は override 側の契約
+  assert.match(override, /^ {2}kong:\n {4}ports: !override/mu);
+  assert.match(override, /^ {2}supavisor:\n {4}ports: !override/mu);
+  assert.match(override, /127\.0\.0\.1:8000:8000/);
+  assert.match(override, /127\.0\.0\.1:5432:5432/);
+});
+
 test("serializes project migrations after GoTrue migrations", async () => {
   const compose = await readFile("compose.yaml", "utf8");
   const migrate = compose.match(/^ {2}migrate:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
