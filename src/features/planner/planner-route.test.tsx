@@ -66,10 +66,13 @@ const getProfileMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
-const getQueryDataMock = vi.hoisted(() => vi.fn());
+// ensureQueryData 実装が cached を any にせず unknown として扱えるよう戻り値を明示する
+const getQueryDataMock = vi.hoisted(() =>
+  vi.fn<(queryKey: readonly unknown[]) => unknown>(),
+);
 const ensureQueryDataMock = vi.hoisted(() =>
   vi.fn(async (options: { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }) => {
-    const cached = getQueryDataMock(options.queryKey);
+    const cached: unknown = getQueryDataMock(options.queryKey);
     if (cached !== undefined) return cached;
     return options.queryFn();
   }),
@@ -336,7 +339,7 @@ beforeEach(() => {
   getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
   ensureQueryDataMock.mockImplementation(
     async (options: { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }) => {
-      const cached = getQueryDataMock(options.queryKey);
+      const cached: unknown = getQueryDataMock(options.queryKey);
       if (cached !== undefined) return cached;
       return options.queryFn();
     },
