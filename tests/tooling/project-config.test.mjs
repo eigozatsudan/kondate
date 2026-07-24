@@ -209,8 +209,12 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   ]);
 
   assert.match(script, /^set -euo pipefail$/mu);
-  // EXIT トラップによる teardown は Task 8 拡張まで入れない（コメント内の語は除外）。
-  assert.doesNotMatch(script, /^[^#]*\btrap\b/mu);
+  // Task 8: EXIT で Compose / .env を teardown（秘密は印刷しない）
+  assert.match(script, /^trap teardown EXIT$/mu);
+  assert.match(script, /provision-maintenance-role\.sh/u);
+  assert.match(workflow, /provision-maintenance-role\.sh/u);
+  assert.match(script, /verify:browser-secrets/u);
+  assert.match(workflow, /verify:browser-secrets/u);
 
   const scriptOrder = extractSharedCiGateOrder(script);
   const workflowOrder = extractSharedCiGateOrder(workflow);
@@ -242,7 +246,8 @@ test("Vite ignores Playwright output directories", async () => {
 
 test("Vitest excludes the plan-mandated node:test Function server suite", async () => {
   const config = await readFile("vitest.config.ts", "utf8");
-  assert.match(config, /exclude: \["tools\/e2e-function-server\.test\.mjs"\]/u);
+  assert.match(config, /tools\/e2e-function-server\.test\.mjs/u);
+  assert.match(config, /maintenance-db\.integration\.test\.ts/u);
   assert.match(config, /"tools\/\*\*\/\*\.test\.mjs"/u);
 });
 

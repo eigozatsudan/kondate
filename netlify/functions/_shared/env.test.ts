@@ -93,6 +93,25 @@ describe("parseOpenRouterModels", () => {
     ).toThrow("server_configuration_invalid");
   });
 
+  it("rejects a browser-prefixed generation HMAC key alias even when empty", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        VITE_GENERATION_REQUEST_HMAC_KEY: "",
+      }),
+    ).toThrow("server_configuration_invalid");
+  });
+
+  it("rejects the documented sample/local GENERATION_REQUEST_HMAC_KEY placeholder shape via length", () => {
+    // runtime parser は 32 バイト canonical base64 のみ。サンプル文言は長さ不一致で閉じる。
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        GENERATION_REQUEST_HMAC_KEY: "generated-32-byte-base64-secret",
+      }),
+    ).toThrow("server_configuration_invalid");
+  });
+
   it.each(["0", "46"])("rejects out-of-range global quota %s", (value) => {
     expect(() => parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
   });

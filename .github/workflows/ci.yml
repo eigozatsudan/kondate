@@ -33,10 +33,28 @@ jobs:
       - run: docker compose config --quiet
       - run: docker compose up -d --wait
       - run: curl --fail --silent --show-error http://127.0.0.1:8788/health
+      - name: Provision least-privilege maintenance login
+        run: ./scripts/provision-maintenance-role.sh
+      - name: Local-safe Node script unit tests
+        run: >-
+          docker compose run --rm --no-deps app node --test
+          scripts/provision-maintenance-role.test.mjs
+          scripts/preflight-production.test.mjs
+          scripts/smoke-production.test.mjs
+          scripts/verify-production-deploy.test.mjs
+          scripts/verify-browser-secrets.test.mjs
       - run: docker compose run --rm --no-deps app npm run format:check
       - run: docker compose run --rm --no-deps app npm run lint
       - run: docker compose run --rm --no-deps app npm run typecheck
+      - name: Maintenance unit tests
+        run: >-
+          docker compose run --rm --no-deps app npx vitest run
+          netlify/functions/_shared/maintenance-env.test.ts
+          netlify/functions/_shared/maintenance-db.test.ts
+          netlify/functions/maintenance-cleanup.test.ts
       - run: docker compose run --rm --no-deps app npx vitest run
+      - name: Maintenance DB integration
+        run: docker compose run --rm app npm run test:maintenance-db:integration
       - run: docker compose --profile test run --rm db-test
       - name: Verify public and private generated database types
         run: |
@@ -48,7 +66,8 @@ jobs:
           KONDATE_ASSERT_PRIVACY_LOGS: "1"
         run: ./scripts/run-e2e.sh
       - run: docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
-      - run: docker compose run --rm --no-deps app npm run build
+      - name: Browser build and secret scan
+        run: docker compose run --rm --no-deps app sh -c 'npm run build && npm run verify:browser-secrets -- --require-dist'
       - run: docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
       - name: Upload Playwright report on failure
         if: failure()

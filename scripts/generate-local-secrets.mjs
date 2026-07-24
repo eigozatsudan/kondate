@@ -129,6 +129,16 @@ values.set("VITE_AUTH_PROVIDER_MODE", "oauth_mock");
 values.set("VITE_OAUTH_MOCK_ORIGIN", "http://127.0.0.1:8788");
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787/api/v1");
 
+// 時間メンテ用ローカル LOGIN。URL は Compose 内部の db:5432 のみ
+// （ホスト公開 127.0.0.1:54322 は受理しない）。値は .env にだけ書き、stdout には出さない。
+const maintenancePassword = randomBytes(24).toString("base64url");
+values.set("KONDATE_MAINTENANCE_ENV", "local");
+values.set("MAINTENANCE_DB_PASSWORD", maintenancePassword);
+values.set(
+  "SUPABASE_MAINTENANCE_DB_URL",
+  `postgresql://kondate_maintenance_login:${encodeURIComponent(maintenancePassword)}@db:5432/postgres?sslmode=disable`,
+);
+
 // 値に特殊文字が含まれる場合のみJSON文字列としてクォートし、通常の
 // KEY=VALUE 行との互換性を保つ。
 const rendered = [...values.entries()]

@@ -24,7 +24,12 @@
     "verify:openrouter:models": "node scripts/verify-openrouter-models.mjs --remote",
     "predev": "npm run verify:openrouter:config",
     "prebuild": "npm run verify:openrouter:config",
-    "test:openrouter:smoke": "vitest run netlify/functions/_shared/openrouter.smoke.test.ts"
+    "test:openrouter:smoke": "vitest run netlify/functions/_shared/openrouter.smoke.test.ts",
+    "preflight:production": "node scripts/preflight-production.mjs",
+    "smoke:production": "node scripts/smoke-production.mjs",
+    "verify:production-deploy": "node scripts/verify-production-deploy.mjs",
+    "verify:browser-secrets": "node --env-file-if-exists=.env scripts/verify-browser-secrets.mjs",
+    "test:maintenance-db:integration": "node --env-file=.env node_modules/vitest/vitest.mjs run --config vitest.maintenance-integration.config.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

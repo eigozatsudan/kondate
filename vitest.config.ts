@@ -18,7 +18,11 @@ export default defineConfig({
       "netlify/functions/**/*.test.ts",
       "tools/**/*.test.mjs",
     ],
-    exclude: ["tools/e2e-function-server.test.mjs"],
+    exclude: [
+      "tools/e2e-function-server.test.mjs",
+      // 実 DB と dedicated login が必要なため通常スイートから除外
+      "netlify/functions/_shared/maintenance-db.integration.test.ts",
+    ],
     coverage: {
       reporter: ["text", "html"],
     },
