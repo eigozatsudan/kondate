@@ -512,10 +512,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             openPrivacyNotice();
             return;
           }
-          // profileが not_started|in_progress の利用者が audience で idea を確定した
-          // 時点でだけ setOnboardingStatus(...,"skipped") を呼ぶ（brief step 8）。
-          // /planner へ直接開いただけでは status を変更しないため、この呼び出しは
-          // submit（review確定）操作の内側だけに置く。
+          // audience→review で既に skipped 済みでも、review を飛ばした経路や
+          // cache 未反映の再試行に備え submit でも idempotent に呼ぶ（安全網）。
           if (parsed.data.targetMode === "idea" && userId !== undefined) {
             await setOnboardingStatusIfNeeded(client, userId, queryClient);
           }

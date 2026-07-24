@@ -61,11 +61,13 @@ const ownerBDraft: PlannerDraft = {
 };
 
 const savePlannerDraftMock = vi.hoisted(() => vi.fn());
+const setOnboardingStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
 const getQueryDataMock = vi.hoisted(() => vi.fn());
 const cancelQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const invalidateQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: queryState.userId } } }),
@@ -75,11 +77,16 @@ vi.mock("react-router", async (importOriginal) => {
   const original = await importOriginal<typeof import("react-router")>();
   return { ...original, useNavigate: () => navigateMock };
 });
+vi.mock("@/features/household/household-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/household/household-api")>();
+  return { ...original, setOnboardingStatus: setOnboardingStatusMock };
+});
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     cancelQueries: cancelQueriesMock,
     getQueryData: getQueryDataMock,
     setQueryData: setQueryDataMock,
+    invalidateQueries: invalidateQueriesMock,
   }),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
     // usage-today は成功残数表示のみ。生成開始とは独立して常に loaded を返す。
@@ -237,6 +244,9 @@ vi.mock("./components/planner-wizard", () => ({
         >
           AIを使わない緊急献立を見る
         </button>
+        <button type="button" onClick={() => props.onStepChange("review")}>
+          review へ進む
+        </button>
       </div>
     );
   },
@@ -276,8 +286,57 @@ beforeEach(() => {
   };
   queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-11.v1" };
   savePlannerDraftMock.mockResolvedValue(draft);
+  setOnboardingStatusMock.mockResolvedValue(undefined);
+  // not_started|in_progress のときだけ skipped へ進める前提を再現する
+  getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
   generationRecoveryMock.startGeneration.mockReset();
   generationRecoveryMock.startGeneration.mockResolvedValue(undefined);
+});
+
+it("audience で idea を確定して review に進んだ時点で onboarding を skipped にする", async () => {
+  const user = userEvent.setup();
+  render(<PlannerPage />);
+
+  // 実 wizard と同様、mode 確定（draft 更新）→ step 遷移の順で閉じる。
+  // 同一 tick で両方呼ぶと parent の value がまだ household のままになり得る。
+  const initial = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  act(() => {
+    initial.onDraftChange({
+      ...initial.draft,
+      targetMode: "idea",
+      targetMemberIds: [],
+      servings: 2,
+    });
+  });
+  await vi.waitFor(() => {
+    const latest = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+    expect(latest.draft.targetMode).toBe("idea");
+  });
+
+  await user.click(screen.getByRole("button", { name: "review へ進む" }));
+
+  await vi.waitFor(() => {
+    expect(setOnboardingStatusMock).toHaveBeenCalledWith(
+      expect.anything(),
+      draft.userId,
+      "skipped",
+    );
+  });
+  // 生成 submit 前でも status を進める（/planner 直開きだけでは呼ばない）
+  expect(generationRecoveryMock.startGeneration).not.toHaveBeenCalled();
+});
+
+it("household のまま review に進んでも onboarding を skipped にしない", async () => {
+  const user = userEvent.setup();
+  render(<PlannerPage />);
+  expect((wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps).draft.targetMode).toBe(
+    "household",
+  );
+  await user.click(screen.getByRole("button", { name: "review へ進む" }));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(setOnboardingStatusMock).not.toHaveBeenCalled();
 });
 
 it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closure を破棄する", async () => {

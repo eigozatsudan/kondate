@@ -76,7 +76,7 @@ export function MenuResult({
   currentSafetyFingerprint?: string;
   onSelectedDishChange?: (dishId: string) => void;
 }) {
-  // prop 省略・不一致の footgun を閉じる。呼び出し側が明示しても result と食い違う場合は result を正とする。
+  // 省略時は result.targetMode を正とする（既定 "household" による idea 誤表示を防ぐ）。
   const mode = modeProp ?? result.targetMode;
   const { menu } = result;
   const firstDish = menu.dishes.at(0);
