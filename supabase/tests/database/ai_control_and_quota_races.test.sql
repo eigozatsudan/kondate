@@ -933,7 +933,8 @@ begin
   from private.ai_user_daily_usage
   where user_id = v_owner and usage_day = date '2026-07-22';
 
-  -- 別 session が allergy を commit（finalize より先）
+  -- 別 backend session（dblink autocommit）が allergy を commit してから finalize する。
+  -- 同一 backend 内の直列 insert ではなく、commit 済み他 session の fingerprint 変化を証明する。
   perform extensions.dblink_exec(
     v_connstr,
     format(
@@ -942,8 +943,13 @@ begin
       v_allergy_id, v_owner, v_member, 'egg'
     )
   );
+  if not exists (
+    select 1 from public.member_allergies where id = v_allergy_id and user_id = v_owner
+  ) then
+    raise exception 'allergy-first: other-session allergy row missing after dblink commit';
+  end if;
   if private.current_safety_fingerprint(v_owner, array[v_member]) is not distinct from v_stale then
-    raise exception 'allergy-first: fingerprint did not change after allergy insert';
+    raise exception 'allergy-first: fingerprint did not change after other-session allergy commit';
   end if;
 
   -- stale fingerprint で finalize → constraint_conflict

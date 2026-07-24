@@ -38,6 +38,10 @@ jobs:
       - name: Local-safe Node script unit tests
         run: >-
           docker compose run --rm --no-deps app node --test
+          tests/tooling
+          scripts/assert-privacy-logs.test.mjs
+          scripts/verify-release-evidence.test.mjs
+          scripts/verify-openrouter-models.test.mjs
           scripts/provision-maintenance-role.test.mjs
           scripts/preflight-production.test.mjs
           scripts/smoke-production.test.mjs
@@ -64,18 +68,15 @@ jobs:
         env:
           LOCAL_MOCK_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
           KONDATE_ASSERT_PRIVACY_LOGS: "1"
+          # 失敗 artifact に DOM/通信を載せない（trace/video は local のみ）
+          PLAYWRIGHT_DISABLE_TRACE: "1"
         run: ./scripts/run-e2e.sh
       - run: docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
       - name: Browser build and secret scan
         run: docker compose run --rm --no-deps app sh -c 'npm run build && npm run verify:browser-secrets -- --require-dist'
       - run: docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
-      - name: Upload Playwright report on failure
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: playwright-report
-          path: playwright-report
-          if-no-files-found: ignore
+      # Playwright HTML レポートは DOM・入力・header を含み得るため artifact に載せない。
+      # 失敗時は compose 状態のみ（秘密・.env は載せない）。
       - name: Show container health on failure
         if: failure()
         run: docker compose ps

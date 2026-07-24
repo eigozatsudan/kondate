@@ -96,8 +96,9 @@ async function insertStandardAllergyViaPg(userId: string, memberId: string, alle
 
 /**
  * P4#4: 標準アレルゲン hit 後の revalidate 200 invalid issue list、操作 disabled、
- * Plan 契約の自動 signal（focus / visibility / online / Realtime）を
- * 各 signal 独立の waitForResponse で非 vacuous に証明する。最大60秒は unit 側。
+ * Plan 契約の自動 signal（focus / visibility / online / Realtime / 最大60秒 poll）を
+ * 各 signal 独立の waitForResponse で非 vacuous に証明する。
+ * 60秒は本番 interval のまま待たず、test seam で短縮した poll を1回観測する。
  */
 test("standard allergen hit returns invalid revalidation, disables actions, and auto-signals recheck", async ({
   historyPage: page,
@@ -105,6 +106,14 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   const menuId = await seedGeneratedMenu(page);
   // 保存済み献立へ直接アレルゲン語を注入し、標準 wheat 登録と衝突させる
   await injectDirectAllergenHit(page, menuId, "小麦粉");
+
+  // 最大60秒 poll の browser 経路を証明するため、mount 前に poll 間隔だけ短縮する。
+  // 製品コードは未設定時 60_000ms を使い、ここは E2E 専用 seam。
+  await page.addInitScript(() => {
+    (
+      window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }
+    ).__KONDATE_REVALIDATE_POLL_MS = 2_000;
+  });
 
   const firstRevalidate = waitForRevalidate200(page, menuId);
   await page.goto(`/history/${menuId}`);
@@ -199,6 +208,11 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
     })
     .parse(await (await realtimeRevalidate).json());
   expect(["invalid", "changed"]).toContain(realtimeBody.data.status);
+
+  // 5) 最大60秒 poll（seam 2s）— 操作なしで次の revalidate が飛ぶこと
+  const pollRevalidate = waitForRevalidate200(page, menuId, 15_000);
+  const pollBody = invalidRevalidationSchema.parse(await (await pollRevalidate).json());
+  expect(pollBody.data.issues.length).toBeGreaterThan(0);
 
   await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
 });

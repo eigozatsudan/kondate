@@ -43,4 +43,52 @@ describe("assertPrivacyLogs", () => {
       /privacy_log_missing_request_id|privacy_log_camel_case/,
     );
   });
+
+  it("fails on UUID, memo keys, Japanese names, and raw mock body markers", () => {
+    assert.throws(
+      () =>
+        assertPrivacyLogs(
+          `${goodLine}\n10000000-0000-4000-8000-000000000001\n`,
+        ),
+      /privacy_log_sensitive_present/,
+    );
+    assert.throws(
+      () => assertPrivacyLogs(`${goodLine}\n{"memo":"secret note"}\n`),
+      /privacy_log_sensitive_present/,
+    );
+    assert.throws(
+      () => assertPrivacyLogs(`${goodLine}\n山田 太郎さんが使いました\n`),
+      /privacy_log_sensitive_present/,
+    );
+    assert.throws(
+      () => assertPrivacyLogs(`${goodLine}\nopenrouter response body dump\n`),
+      /privacy_log_sensitive_present/,
+    );
+  });
+
+  it("does not count maintenance_cleanup as generation presence", () => {
+    const maintenance = JSON.stringify({
+      level: "info",
+      code: "maintenance_cleanup",
+      request_id: "req-m",
+      duration_ms: 10,
+    });
+    assert.throws(() => assertPrivacyLogs(`${maintenance}\n`), /privacy_log_no_generation/);
+  });
+
+  it("rejects unexpected free-form fields on generation lines", () => {
+    assert.throws(
+      () =>
+        assertPrivacyLogs(
+          JSON.stringify({
+            level: "info",
+            code: "generation_succeeded",
+            request_id: "req-1",
+            duration_ms: 1,
+            extra_debug: "not allowlisted",
+          }),
+        ),
+      /privacy_log_unexpected_field/,
+    );
+  });
 });

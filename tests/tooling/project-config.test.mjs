@@ -156,28 +156,34 @@ test("E2E uses one worker for the shared local auth stack", async () => {
   assert.doesNotMatch(config, /process\.env\.CI \? \{ workers: 1 \}/u);
 });
 
-test("E2E retains traces video and failure screenshots only", async () => {
+test("E2E retains traces video and failure screenshots only on local", async () => {
   const config = await readFile("playwright.config.ts", "utf8");
-  // CI は Playwright レポートのみ失敗時アップロードし、痕跡は retain-on-failure に限定する。
-  assert.match(config, /trace:\s*"retain-on-failure"/u);
-  assert.match(config, /video:\s*"retain-on-failure"/u);
-  // screenshot は Playwright が retain-on-failure を持たないため only-on-failure が相当。
+  // CI は PLAYWRIGHT_DISABLE_TRACE=1 で trace/video を off にする。
+  assert.match(config, /PLAYWRIGHT_DISABLE_TRACE/u);
   assert.match(config, /screenshot:\s*"only-on-failure"/u);
+  assert.match(config, /trace:.*retain-on-failure/u);
+  assert.match(config, /video:.*retain-on-failure/u);
 });
 
 /**
  * CI 集約スクリプトと GitHub Actions ワークフローが共有する検証ゲートの出現順を抽出する。
- * ワークフロー固有の checkout / secrets / health / artifact / teardown は対象外。
- * 戻り値はソース内の実際の出現位置順（ゲート定義順ではない）。
+ * コメント行は無視し、各ゲートの「実行行」だけを数える。
+ * || true / continue-on-error が同一行または直後にある場合は失敗とする。
  */
 function extractSharedCiGateOrder(source) {
+  const executableLines = source
+    .split("\n")
+    .map((line, index) => ({ line: line.replace(/#.*$/u, "").trim(), index }))
+    .filter((entry) => entry.line.length > 0);
+
   const gatePatterns = [
     { label: "compose-config", pattern: /docker compose config --quiet/u },
     { label: "compose-up", pattern: /docker compose up -d --wait/u },
     { label: "format:check", pattern: /npm run format:check/u },
     { label: "lint", pattern: /npm run lint/u },
     { label: "typecheck", pattern: /npm run typecheck/u },
-    { label: "vitest", pattern: /npx vitest run/u },
+    // 最後の bare vitest run（maintenance 絞り込みではない）
+    { label: "vitest", pattern: /npx vitest run\s*$/u },
     { label: "db-test", pattern: /docker compose --profile test run --rm db-test/u },
     { label: "db:types", pattern: /npm run db:types/u },
     {
@@ -192,12 +198,23 @@ function extractSharedCiGateOrder(source) {
       pattern: /netlify -- build --offline --context deploy-preview/u,
     },
   ];
+
   const positions = [];
   for (const { label, pattern } of gatePatterns) {
-    const match = pattern.exec(source);
-    assert.ok(match, `missing CI gate: ${label}`);
-    positions.push({ index: match.index, label });
+    const matches = executableLines.filter((entry) => pattern.test(entry.line));
+    assert.ok(matches.length >= 1, `missing CI gate: ${label}`);
+    // 重複ゲートは最後の実行を採用（maintenance 用 vitest の後に full vitest）
+    const chosen = matches[matches.length - 1];
+    assert.doesNotMatch(chosen.line, /\|\|\s*true/u, `gate ${label} must not soft-pass`);
+    assert.doesNotMatch(
+      chosen.line,
+      /continue-on-error/u,
+      `gate ${label} must not continue-on-error`,
+    );
+    positions.push({ index: chosen.index, label });
   }
+  // 全体に continue-on-error: true が残っていないこと（workflow）
+  assert.doesNotMatch(source, /continue-on-error:\s*true/u);
   positions.sort((a, b) => a.index - b.index);
   return positions.map((entry) => entry.label);
 }
@@ -215,6 +232,13 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   assert.match(workflow, /provision-maintenance-role\.sh/u);
   assert.match(script, /verify:browser-secrets/u);
   assert.match(workflow, /verify:browser-secrets/u);
+  // Vitest include 外の node:test スイートを CI が実行すること
+  assert.match(script, /tests\/tooling/u);
+  assert.match(workflow, /tests\/tooling/u);
+  assert.match(script, /assert-privacy-logs\.test\.mjs/u);
+  assert.match(workflow, /assert-privacy-logs\.test\.mjs/u);
+  assert.match(script, /verify-release-evidence\.test\.mjs/u);
+  assert.match(workflow, /verify-release-evidence\.test\.mjs/u);
 
   const scriptOrder = extractSharedCiGateOrder(script);
   const workflowOrder = extractSharedCiGateOrder(workflow);
@@ -225,6 +249,7 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
     assert.match(source, /LOCAL_MOCK_MODELS/u);
     assert.match(source, /mock\/kondate-primary:free,mock\/kondate-repair:free/u);
     assert.match(source, /KONDATE_ASSERT_PRIVACY_LOGS/u);
+    assert.match(source, /PLAYWRIGHT_DISABLE_TRACE/u);
   }
 
   // ジョブ env は CI のみ。シークレットや origin を job-level env に載せない。
@@ -233,6 +258,9 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   assert.doesNotMatch(workflow, /GENERATION_REQUEST_HMAC_KEY/u);
   assert.doesNotMatch(workflow, /actions\/setup-node/u);
   assert.doesNotMatch(workflow, /playwright install/u);
+  // Playwright HTML レポート（trace 含み得る）を artifact に載せない
+  assert.doesNotMatch(workflow, /playwright-report/u);
+  assert.doesNotMatch(workflow, /upload-artifact/u);
   // 実 OpenRouter への到達を避けるため e2e はラッパー経由のみ。
   assert.doesNotMatch(workflow, /npm run e2e\b/u);
   assert.doesNotMatch(workflow, /npx playwright test/u);

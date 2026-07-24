@@ -1,77 +1,135 @@
-import {
-  clickWizardNext,
-  expect,
-  seedGeneratedIdeaMenu,
-  seedGeneratedMenu,
-  setMockScenario,
-  test,
-} from "../fixtures/acceptance";
+import { clickWizardNext, expect, setMockScenario, test } from "../fixtures/acceptance";
 import { requestWholeRegeneration } from "../fixtures/history";
 
 test.setTimeout(360_000);
 
+/**
+ * household 受け入れジャーニー。seed helper で献立生成を短絡しない。
+ * welcome →（必要なら）設定完了 → planner wizard → privacy → generate →
+ * label/tab → whole regen → history → accept → shopping create を実操作で通す。
+ */
 test("household journey: welcome through shopping reconciliation", async ({
-  acceptancePage: page,
+  completedOnboardingPage: page,
 }) => {
   await page.setViewportSize({ width: 320, height: 720 });
+
+  // 小麦ラベル確認が必要な mock success 用メンバーを整える
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel("呼び名").fill("家族1");
+  await page.getByLabel("アレルギーの確認").selectOption("registered");
+  await page.getByRole("button", { name: "小麦を追加" }).click();
+  await page.getByRole("button", { name: "この家族の設定を完了" }).click();
+
   await page.goto("/welcome");
-  // 完了済みオンボーディングでも welcome は開ける場合と /planner 直帰がある
-  if (new URL(page.url()).pathname === "/welcome") {
-    const householdCta = page.getByRole("button", { name: /家族に合わせて|家族設定|献立を作る/u });
-    if (
-      await householdCta
-        .first()
-        .isVisible()
-        .catch(() => false)
-    ) {
-      await householdCta.first().click();
-    }
+  await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible({
+    timeout: 15_000,
+  });
+  // 完了済みでも welcome から家族向け導線へ
+  const familyStart = page.getByRole("button", { name: /家族情報を登録する|家族に合わせて/u });
+  if (await familyStart.isVisible().catch(() => false)) {
+    await familyStart.click();
   }
 
-  const menuId = await seedGeneratedMenu(page);
-  await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible();
+  await page.goto("/planner");
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("radio", { name: "朝食" }).check();
+  await clickWizardNext(page);
 
-  // 料理タブ・ラベル確認の存在
-  const dishTab = page.getByRole("tab").first();
-  if (await dishTab.isVisible().catch(() => false)) {
-    await dishTab.click();
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加", exact: true }).click();
+  await clickWizardNext(page);
+
+  await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
+  await page.getByRole("radio", { name: "和食" }).check();
+  await clickWizardNext(page);
+
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
+  await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
+  await clickWizardNext(page);
+
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  // privacy 未了なら説明へ
+  const generate = page.getByRole("button", { name: "献立を作る" });
+  if (await generate.isDisabled().catch(() => false)) {
+    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/privacy");
+    await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
+    await page.getByRole("button", { name: "確認して進む" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({ timeout: 15_000 });
   }
-
-  // 全体再生成
-  await setMockScenario(page, "alternate-menu");
-  await requestWholeRegeneration(page, menuId, "simpler");
+  await expect(generate).toBeEnabled({ timeout: 15_000 });
+  await generate.click();
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
+  await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+    timeout: 90_000,
+  });
+  await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({ timeout: 30_000 });
+
+  const menuUrl = page.url();
+  const menuId = /\/menus\/([0-9a-f-]{36})/iu.exec(menuUrl)?.[1];
+  expect(menuId).toBeTruthy();
+
+  // 料理タブ
+  const dishTab = page.getByRole("tab").first();
+  await expect(dishTab).toBeVisible();
+  await dishTab.click();
+
+  // ラベル確認 UI が存在すれば操作（pending が無い fixture もあり得る）
+  const labelConfirm = page.getByRole("button", {
+    name: "本人が商品の原材料表示を確認しました",
+  });
+  if ((await labelConfirm.count()) > 0) {
+    await labelConfirm.first().click();
+  }
+
+  // 全体再生成（recovery ではないが別案経路）
+  await setMockScenario(page, "alternate-menu");
+  await requestWholeRegeneration(page, menuId!, "simpler");
+  await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
+  await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+    timeout: 60_000,
+  });
 
   // 履歴グループ
   await page.goto("/history");
-  await expect(page.getByRole("heading", { name: /履歴/u }).first()).toBeVisible({
+  await expect(page.getByRole("heading", { name: "作った献立" })).toBeVisible({
     timeout: 15_000,
   });
 
-  // 買い物リスト作成
+  // 採用
   await page.goto(`/menus/${menuId}`);
-  await expect(page.getByText(/現在の家族設定で確認しました/u))
-    .toBeVisible({
-      timeout: 30_000,
-    })
-    .catch(() => undefined);
-  const shop = page.getByRole("button", { name: "買い物リストを作る" });
-  if (await shop.isEnabled({ timeout: 15_000 }).catch(() => false)) {
-    await shop.click();
-    await expect(page)
-      .toHaveURL(/shopping/u, { timeout: 60_000 })
-      .catch(() => undefined);
-  }
+  await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+    timeout: 30_000,
+  });
+  const accept = page.getByRole("button", { name: "これに決めた" });
+  await expect(accept).toBeEnabled({ timeout: 30_000 });
+  await accept.click();
 
-  // 320px 横スクロールなし
+  // 買い物リスト作成
+  const shop = page.getByRole("button", { name: "買い物リストを作る" });
+  await expect(shop).toBeEnabled({ timeout: 30_000 });
+  await shop.click();
+  await expect(page).toHaveURL(/shopping/u, { timeout: 60_000 });
+  await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible({
+    timeout: 30_000,
+  });
+
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
   ).toBe(true);
 });
 
+/**
+ * idea ジャーニー。seed ではなく wizard から idea を生成し、
+ * 家族安全 UI / 買い物 API が無いことと mode 維持再生成を証明する。
+ */
 test("idea journey: no family safety, no shopping, mode-preserving regen", async ({
-  acceptancePage: page,
+  authenticatedPage: page,
 }) => {
   await page.setViewportSize({ width: 320, height: 720 });
 
@@ -83,25 +141,54 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
     }
   });
 
+  await page.goto("/welcome");
+  await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
+
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+  await page.getByRole("radio", { name: "朝食" }).check();
+  await clickWizardNext(page);
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加", exact: true }).click();
+  await clickWizardNext(page);
+  await page.getByRole("radio", { name: "和食" }).check();
+  await clickWizardNext(page);
+  await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
+  await page.getByRole("button", { name: "2人" }).click();
+  await clickWizardNext(page);
+
+  await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   await setMockScenario(page, "idea-servings-2");
-  const menuId = await seedGeneratedIdeaMenu(page, 2);
+  const generate = page.getByRole("button", { name: "献立を作る" });
+  if (await generate.isDisabled().catch(() => false)) {
+    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+    await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
+    await page.getByRole("button", { name: "確認して進む" }).click();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
+      timeout: 15_000,
+    });
+  }
+  await expect(generate).toBeEnabled({ timeout: 15_000 });
+  await generate.click();
+  await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
   await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/現在の家族設定で確認しました/u)).toHaveCount(0);
 
-  // child_friendly が idea 再生成 UI に出ない
+  const menuId = /\/menus\/([0-9a-f-]{36})/iu.exec(page.url())?.[1];
+  expect(menuId).toBeTruthy();
+
   await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
-  await page.keyboard.press("Escape").catch(() => undefined);
+  await page.keyboard.press("Escape");
 
   await setMockScenario(page, "idea-alternate-menu-1");
-  await requestWholeRegeneration(page, menuId, "simpler", { targetMode: "idea" });
+  await requestWholeRegeneration(page, menuId!, "simpler", { targetMode: "idea" });
   await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 60_000 });
 
-  // お気に入り（あれば）
   const fav = page.getByRole("button", { name: /お気に入り/u });
-  if (await fav.isVisible().catch(() => false)) {
-    await fav.click().catch(() => undefined);
-  }
+  await expect(fav).toBeVisible();
+  await fav.click();
 
   expect(shoppingRequests).toEqual([]);
   const shoppingKeys = await page.evaluate(() =>

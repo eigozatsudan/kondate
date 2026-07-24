@@ -160,3 +160,46 @@ test("matching state reaches callback once; unknown and mismatched state fail sa
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
 });
+
+test("reused continuation code and state are rejected after a successful exchange", async ({
+  page,
+}) => {
+  // 成功交換を1回行い、同じ callback URL を再訪しても session を増やさず safe fail する。
+  // returnTo は planner（sanitize 後の既定）。not_started は welcome ではなく / 経由で振り分け得る。
+  await page.goto("/login?returnTo=%2Fplanner");
+  await page.getByRole("button", { name: "Googleで続ける" }).click();
+  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+
+  const callbackRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.origin === "http://127.0.0.1:5173" && url.pathname === "/auth/callback";
+  });
+  await page.getByRole("link", { name: "Googleテスト利用者で続ける" }).click();
+  const firstCallback = new URL((await callbackRequest).url());
+  const code = firstCallback.searchParams.get("code");
+  const state = firstCallback.searchParams.get("state");
+  const flowId = firstCallback.searchParams.get("flow");
+  expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+  expect(state).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+  expect(flowId).toMatch(/^[0-9a-f-]{36}$/u);
+  // 初回交換成功: planner 着地（returnTo）または welcome
+  await expect(page).toHaveURL(/\/(planner|welcome)$/u, { timeout: 30_000 });
+
+  // 再利用経路を観測するためセッションを捨て、未認証で同一 callback を再訪する
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.context().clearCookies();
+
+  // 同一 code/state の再利用は拒否され、safe copy でログインへ戻る
+  await page.goto(`/auth/callback?flow=${flowId}&state=${state}&code=${code}`);
+  await expect(
+    page.getByText(
+      /ログインを確認できませんでした|ログインの情報を確認できませんでした|最初からやり直してください/u,
+    ),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.has("code")).toBe(false);
+  expect(new URL(page.url()).searchParams.has("state")).toBe(false);
+});

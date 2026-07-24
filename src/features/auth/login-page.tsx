@@ -64,6 +64,18 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     return null;
   }, [locationState.authError]);
 
+  // サインアウト / アカウント削除後の案内（クエリは表示用。認証状態は既にクリア済み）
+  const statusNotice = useMemo(() => {
+    const query = new URLSearchParams(location.search);
+    if (query.get("accountDeleted") === "1") {
+      return "アカウントを削除しました。ご利用ありがとうございました。";
+    }
+    if (query.get("signedOut") === "1") {
+      return "ログアウトしました。";
+    }
+    return null;
+  }, [location.search]);
+
   const send = async (event?: SyntheticEvent) => {
     event?.preventDefault();
     const email = "email" in state ? state.email : "";
@@ -140,6 +152,11 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
         <section className="card stack" role="alert">
           <p className="error-message">{authErrorCopy}</p>
           <p>Googleを再試行、別のGoogleアカウント、またはメールを選べます。</p>
+        </section>
+      )}
+      {statusNotice !== null && (
+        <section className="card stack" role="status">
+          <p>{statusNotice}</p>
         </section>
       )}
       <button className="primary-button" type="button" onClick={() => void startGoogle()}>

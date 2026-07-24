@@ -12,11 +12,11 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:5173",
-    // 失敗時のみ保持。DB ボリューム・.env・型付き世帯データや Function ログは上げない。
-    // screenshot は Playwright が retain-on-failure を持たないため only-on-failure が相当。
-    trace: "retain-on-failure",
+    // CI では trace/video を無効化し、DOM・入力・通信 header/body を artifact に載せない。
+    // local は retain-on-failure。screenshot は only-on-failure のまま（pixel のみ）。
+    trace: process.env.PLAYWRIGHT_DISABLE_TRACE === "1" ? "off" : "retain-on-failure",
     screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    video: process.env.PLAYWRIGHT_DISABLE_TRACE === "1" ? "off" : "retain-on-failure",
   },
   projects: [
     { name: "mobile-chromium", use: { ...devices["iPhone SE"], browserName: "chromium" } },

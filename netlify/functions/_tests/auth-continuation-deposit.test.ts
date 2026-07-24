@@ -203,4 +203,82 @@ describe("auth continuation deposit", () => {
     const other = await encryptContinuationCode(AUTH_CODE, CONTINUATION_ID, ORIGIN, encryptionKey);
     expect(Buffer.from(input.iv).equals(Buffer.from(other.iv))).toBe(false);
   });
+
+  it("deposit then claim through a shared in-memory store is a real crypto roundtrip", async () => {
+    // P1#3: deposit と claim を別テストではなく、共有 store 経由で encrypt→decrypt する。
+    const { createHandler: createClaimHandler } = await import("../auth-continuation-claim.js");
+    const encryptionKey = crypto.getRandomValues(new Uint8Array(32));
+    const SECRET = "k".repeat(43);
+    const RETURN_TO = "/planner";
+    type Stored = {
+      ciphertext: Uint8Array;
+      iv: Uint8Array;
+      stateHash: Uint8Array;
+      secretHash: Uint8Array;
+      claimed: boolean;
+    };
+    const store: { row: Stored | null } = { row: null };
+
+    const deposit = vi.fn().mockImplementation(async (input: {
+      ciphertext: Uint8Array;
+      iv: Uint8Array;
+      stateHash: Uint8Array;
+    }) => {
+      store.row = {
+        ciphertext: input.ciphertext,
+        iv: input.iv,
+        stateHash: input.stateHash,
+        secretHash: await sha256(SECRET),
+        claimed: false,
+      };
+      return true;
+    });
+    const claim = vi.fn().mockImplementation(
+      async (input: { stateHash: Uint8Array; secretHash: Uint8Array }) => {
+        if (store.row === null || store.row.claimed) return null;
+        if (
+          !Buffer.from(input.stateHash).equals(Buffer.from(store.row.stateHash)) ||
+          !Buffer.from(input.secretHash).equals(Buffer.from(store.row.secretHash))
+        ) {
+          return null;
+        }
+        store.row.claimed = true;
+        return {
+          ciphertext: store.row.ciphertext,
+          iv: store.row.iv,
+          returnTo: RETURN_TO,
+        };
+      },
+    );
+
+    const depositHandler = createHandler({ origin: ORIGIN, encryptionKey, deposit });
+    const depositResponse = await depositHandler(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { origin: ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ state: STATE, code: AUTH_CODE }),
+      }),
+      { params: { continuationId: CONTINUATION_ID } },
+    );
+    expect(depositResponse.status).toBe(204);
+    expect(store.row).not.toBeNull();
+    // store 上は平文 code ではなく ciphertext
+    expect(new TextDecoder().decode(store.row!.ciphertext)).not.toBe(AUTH_CODE);
+
+    const claimHandler = createClaimHandler({ origin: ORIGIN, encryptionKey, claim });
+    const claimResponse = await claimHandler(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { origin: ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ secret: SECRET, state: STATE }),
+      }),
+      { params: { continuationId: CONTINUATION_ID } },
+    );
+    expect(claimResponse.status).toBe(200);
+    const body = await claimResponse.json();
+    expect(body).toEqual({ ok: true, data: { code: AUTH_CODE, returnTo: RETURN_TO } });
+    const raw = JSON.stringify(body);
+    expect(raw).not.toMatch(/ciphertext|encrypted/iu);
+    expect(raw).not.toContain(Buffer.from(store.row!.ciphertext).toString("hex"));
+  });
 });

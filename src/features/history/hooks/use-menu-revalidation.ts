@@ -84,9 +84,18 @@ export function useMenuRevalidation(menuId: string) {
       .on("postgres_changes", { event: "*", schema: "public", table: "household_members" }, changed)
       .on("postgres_changes", { event: "*", schema: "public", table: "member_allergies" }, changed)
       .subscribe();
+    // 既定は 60s。E2E のみ window 上の test seam で短縮可能（本番は未設定）。
+    const pollMs = (() => {
+      const candidate = (
+        window as Window & { __KONDATE_REVALIDATE_POLL_MS?: unknown }
+      ).__KONDATE_REVALIDATE_POLL_MS;
+      return typeof candidate === "number" && candidate > 0 && candidate <= 60_000
+        ? candidate
+        : 60_000;
+    })();
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible" && navigator.onLine) changed();
-    }, 60_000);
+    }, pollMs);
     window.addEventListener(householdSafetyChangedEvent, changed);
     window.addEventListener("storage", stored);
     window.addEventListener("focus", onFocus);

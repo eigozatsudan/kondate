@@ -4,6 +4,7 @@
  */
 import { readFileSync } from "node:fs";
 
+/** generation 経路の存在証明に数える closed code のみ（maintenance や未知 code は不可） */
 const generationCodes = new Set([
   "generation_started",
   "generation_succeeded",
@@ -15,15 +16,30 @@ const generationCodes = new Set([
   "source_menu_changed",
   "quota_exhausted",
   "external_attempt_exhausted",
-  "maintenance_cleanup",
 ]);
 
 const absencePatterns = [
+  // 合成 E2E メール・一般メール
   /@example\.invalid/iu,
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/iu,
+  // UUID（所有 ID のログ流出）
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/iu,
+  // prompt / AI 生出力マーカー
   /BEGIN_PROMPT|END_PROMPT|SYSTEM_PROMPT/iu,
   /"prompt"\s*:/iu,
-  /raw mock|openrouter response body/iu,
+  /raw mock|openrouter response body|choices\s*\[/iu,
+  // 日本語氏名・メモ・アレルギー自由文の典型キー
+  /"display_name"\s*:/iu,
+  /"displayName"\s*:/iu,
+  /"memo"\s*:/iu,
+  /"custom_name"\s*:/iu,
+  /"customName"\s*:/iu,
+  /"allergy_note"\s*:/iu,
+  /"free_form"/iu,
+  // 典型的な日本語氏名パターン（姓＋名、2〜8文字の漢字連続など）
+  /[\u4e00-\u9fff]{1,4}\s*[\u4e00-\u9fff]{1,4}(?:さん|様)?/u,
+  // アクセストークン断片
+  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/u,
 ];
 
 /**
@@ -55,19 +71,36 @@ export function assertPrivacyLogs(logText, options = {}) {
     if (typeof parsed !== "object" || parsed === null) continue;
     const code = parsed.code;
     if (typeof code !== "string") continue;
-    if (!generationCodes.has(code) && !/generation|cleanup|quota|ai_/u.test(code)) {
+    // generation presence は allowlist のみ（maintenance_cleanup / 未知 code は数えない）
+    if (!generationCodes.has(code)) {
       continue;
     }
     generationLines += 1;
-    // snake_case 必須フィールド
     for (const key of ["request_id", "code", "duration_ms", "level"]) {
       if (!(key in parsed)) {
         throw new Error(`privacy_log_missing_${key}`);
       }
     }
-    // camelCase 旧形が混入していないこと
     if ("requestId" in parsed || "errorCode" in parsed || "durationMs" in parsed) {
       throw new Error("privacy_log_camel_case");
+    }
+    // 許可キー以外の自由文フィールドを拒否
+    for (const key of Object.keys(parsed)) {
+      if (
+        ![
+          "level",
+          "request_id",
+          "code",
+          "duration_ms",
+          "model_id",
+          "stale_reservations_finalized",
+          "generation_ledgers_deleted",
+          "shopping_mutations_deleted",
+          "auth_continuations_deleted",
+        ].includes(key)
+      ) {
+        throw new Error("privacy_log_unexpected_field");
+      }
     }
   }
   if (requireGeneration && generationLines === 0) {

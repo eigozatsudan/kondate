@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +74,30 @@ describe("verifyGoogleOauthEvidence", () => {
           now,
         }),
       /candidate_sha_mismatch/,
+    );
+  });
+
+  it("rejects artifact candidateSha different from deploy metadata SHA", () => {
+    assert.throws(
+      () =>
+        verifyGoogleOauthEvidence(validEvidence({ candidateSha: "e".repeat(40) }), {
+          head: HEAD,
+          deployMetadata: validMetadata(),
+          now,
+        }),
+      /candidate_sha_mismatch|staging_deploy_sha_mismatch|sha_mismatch/u,
+    );
+  });
+
+  it("rejects artifact stagingDeploySha different from deploy metadata commit_ref", () => {
+    assert.throws(
+      () =>
+        verifyGoogleOauthEvidence(validEvidence({ stagingDeploySha: "f".repeat(40) }), {
+          head: HEAD,
+          deployMetadata: validMetadata(),
+          now,
+        }),
+      /staging_deploy_sha_mismatch|sha_mismatch|candidate_sha_mismatch/u,
     );
   });
 
@@ -228,5 +253,18 @@ describe("runVerifyReleaseEvidence", () => {
         ),
       /evidence_must_be_external/,
     );
+  });
+
+  it("spawns the test-cli wrapper and requires an external evidence path", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/verify-release-evidence.test-cli.mjs"],
+      {
+        encoding: "utf8",
+        env: { ...process.env, CONTEXT: "dev" },
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /evidence_path_required/);
   });
 });
