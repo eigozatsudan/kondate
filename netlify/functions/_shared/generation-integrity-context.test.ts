@@ -116,6 +116,51 @@ describe("resolveGenerationIntegrityContext", () => {
     ).rejects.toBeInstanceOf(HttpError);
   });
 
+  // Task 8 Step 2: mode 矛盾 4 系統を integrity resolve で区別して拒否する
+  it("rejects idea draft with non-empty member IDs", async () => {
+    fromMock.mockReturnValueOnce(
+      chain({
+        data: {
+          target_mode: "idea",
+          servings: 2,
+          target_member_ids: [memberId],
+        },
+        error: null,
+      }),
+    );
+    await expect(
+      resolveGenerationIntegrityContext(admin as never, userId, newMenuCommand),
+    ).rejects.toMatchObject({ code: "invalid_request", status: 422 });
+  });
+
+  it("rejects idea draft with null servings", async () => {
+    fromMock.mockReturnValueOnce(
+      chain({
+        data: { target_mode: "idea", servings: null, target_member_ids: [] },
+        error: null,
+      }),
+    );
+    await expect(
+      resolveGenerationIntegrityContext(admin as never, userId, newMenuCommand),
+    ).rejects.toMatchObject({ code: "invalid_request", status: 422 });
+  });
+
+  it("rejects household draft with non-null direct servings", async () => {
+    fromMock.mockReturnValueOnce(
+      chain({
+        data: {
+          target_mode: "household",
+          servings: 3,
+          target_member_ids: [memberId],
+        },
+        error: null,
+      }),
+    );
+    await expect(
+      resolveGenerationIntegrityContext(admin as never, userId, newMenuCommand),
+    ).rejects.toMatchObject({ code: "invalid_request", status: 422 });
+  });
+
   it("resolves regeneration from source menu version and members", async () => {
     fromMock
       .mockReturnValueOnce(
@@ -187,6 +232,42 @@ describe("parseIntegrityContextPayload", () => {
         source_menu_version: null,
       }),
     ).toThrow(HttpError);
+  });
+
+  // Task 8 Step 2: parse 境界でも 4 系統の mode 矛盾を区別して拒否する
+  it.each([
+    {
+      label: "idea + null servings",
+      payload: {
+        kind: "new_menu" as const,
+        target_mode: "idea" as const,
+        servings: null,
+        target_member_ids: [] as string[],
+        source_menu_version: null,
+      },
+    },
+    {
+      label: "household + empty member IDs",
+      payload: {
+        kind: "new_menu" as const,
+        target_mode: "household" as const,
+        servings: null,
+        target_member_ids: [] as string[],
+        source_menu_version: null,
+      },
+    },
+    {
+      label: "household + non-null direct servings",
+      payload: {
+        kind: "new_menu" as const,
+        target_mode: "household" as const,
+        servings: 4,
+        target_member_ids: [memberId],
+        source_menu_version: null,
+      },
+    },
+  ])("rejects $label", ({ payload }) => {
+    expect(() => parseIntegrityContextPayload(payload)).toThrow(HttpError);
   });
 });
 

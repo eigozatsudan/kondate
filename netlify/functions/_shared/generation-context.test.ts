@@ -412,6 +412,92 @@ describe("loadGenerationContext", () => {
       servings: 3,
     });
   });
+
+  // Design §12.4 / Task 8 Step 1: 家族 canary が DB 相当 fixture に存在する状態で
+  // idea load を実行し、household query を起こさず・戻り値・context に canary 0 件を固定する。
+  it("seeds household canaries then loads idea without observing any canary fields", async () => {
+    const canaries = {
+      displayName: "CANARY_DISPLAY_NAME_α",
+      standardAllergy: "wheat",
+      customAllergy: "CANARY_CUSTOM_ALLERGY_γ",
+      dislike: "CANARY_DISLIKE_δ",
+      portion: "large" as const,
+      spice: "mild" as const,
+      ease: "small_pieces" as const,
+    };
+    const freeTextCanaries = [
+      canaries.displayName,
+      canaries.standardAllergy,
+      canaries.customAllergy,
+      canaries.dislike,
+    ] as const;
+    const ideaSnapshot = {
+      ...snapshot,
+      target_mode: "idea" as const,
+      target_member_ids: [] as string[],
+      servings: 2,
+    };
+    // canary を載せた家族行が「保存済み」として用意されていても idea は読まない
+    const { from } = arrangeLoader({
+      snapshotData: [ideaSnapshot],
+      members: [
+        {
+          ...completeMember,
+          display_name: canaries.displayName,
+          portion_size: canaries.portion,
+          spice_level: canaries.spice,
+          ease_preferences: [canaries.ease],
+          allergy_status: "registered",
+        },
+      ],
+      dislikes: [{ member_id: memberId, ingredient_name: canaries.dislike }],
+      safety: {
+        ...makeGenerationContext().safety,
+        members: makeGenerationContext().safety.members.map((member) => ({
+          ...member,
+          householdMemberId: memberId,
+          allergyStatus: "registered" as const,
+          allergenIds: [canaries.standardAllergy],
+          hasUnmappedCustomAllergy: true,
+        })),
+      },
+    });
+
+    const context = await loadGenerationContext(
+      { userId, accessToken: "access-token" },
+      requestId,
+      request,
+      now,
+    );
+
+    // household query 自体が 0 件（結果に canary が載る余地がない）
+    expect(from).not.toHaveBeenCalledWith("household_members");
+    expect(from).not.toHaveBeenCalledWith("member_dislikes");
+    expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
+
+    expect(context.targetMode).toBe("idea");
+    expect(context.safety).toBeNull();
+    expect(context.targetMembers).toEqual([]);
+    expect(context.memberPreferences).toEqual([]);
+    expect(context.safetySnapshot).toEqual({
+      assurance: "none",
+      members: [],
+      mode: "idea",
+    });
+    expect(context.submission.targetMemberIds).toEqual([]);
+    expect(context.submission.servings).toBe(2);
+
+    const serialized = JSON.stringify(context);
+    for (const token of freeTextCanaries) {
+      expect(serialized.includes(token), `idea context must not contain ${token}`).toBe(false);
+    }
+    for (const enumToken of [canaries.portion, canaries.spice, canaries.ease] as const) {
+      expect(
+        serialized.includes(`"${enumToken}"`) || serialized.includes(`:${enumToken}`),
+        `idea context must not embed preference enum ${enumToken}`,
+      ).toBe(false);
+    }
+  });
 });
 
 describe("validateTransientChecks", () => {

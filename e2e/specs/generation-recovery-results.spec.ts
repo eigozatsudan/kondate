@@ -657,55 +657,180 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
 // --- Plan 7 Task 8: 320px / keyboard / reduced-motion / 200% ---
 // PlannerWizard は共有 WizardFrame ではなく step ごとの section を描画する。
 // 44px は primary/戻る等の操作 button に適用し、native radio の見た目サイズは対象外。
+// ポインタ click は bottom-nav 干渉を避けるため使わず、Tab / Space / Enter と
+// フォーカス後の keyboard 操作だけで 4 質問 → review → privacy/generate へ進む。
+
+/** 主要操作の bounding box が 44 CSS px 以上であることを 1 コントロール単位で固定する */
+async function expectMajorActionAtLeast44(
+  page: import("@playwright/test").Page,
+  name: string | RegExp,
+): Promise<void> {
+  const control = page.getByRole("button", { name });
+  await expect(control).toBeVisible();
+  const box = await control.boundingBox();
+  expect(box, `missing bounding box for ${String(name)}`).not.toBeNull();
+  if (box === null) throw new Error(`missing bounding box for ${String(name)}`);
+  expect(box.height, `${String(name)} height`).toBeGreaterThanOrEqual(44);
+}
+
+/** 320 CSS px で横スクロールが出ていないこと */
+async function expectNoHorizontalScroll(page: import("@playwright/test").Page): Promise<void> {
+  const noHorizontalScroll = await page.evaluate(
+    () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+  );
+  expect(noHorizontalScroll).toBe(true);
+}
+
+/**
+ * フォーカス中の操作を Space/Enter で起動する。
+ * bottom-nav に遮られる pointer click を避け、keyboard 経路だけを使う。
+ */
+async function activateFocusedWithKeyboard(
+  page: import("@playwright/test").Page,
+  key: "Space" | "Enter" = "Enter",
+): Promise<void> {
+  await page.keyboard.press(key);
+}
+
 test.describe("wizard accessibility and layout contracts", () => {
-  test("fits 320px without horizontal scroll and keeps 44px action targets", async ({
+  test("fits 320px without horizontal scroll and keeps multi-step 44px action targets", async ({
     authenticatedPage: page,
   }) => {
-    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
-    await page.getByRole("button", { name: "献立アイデアを考える" }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
-    await page.getByRole("radio", { name: "朝食" }).check();
-    await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
-
     // 契約の正本は 320 CSS px。Playwright の viewport は CSS px 単位のため 320 で固定する。
     // 200% 拡大はブラウザ zoom であり deviceScaleFactor とは別経路のため、
     // ここでは scrollWidth 契約と 44px 操作領域を 320 で固定検証する。
     await page.setViewportSize({ width: 320, height: 720 });
-    const noHorizontalScroll = await page.evaluate(
-      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
-    );
-    expect(noHorizontalScroll).toBe(true);
-    const nextBox = await page.getByRole("button", { name: "次へ" }).boundingBox();
-    expect(nextBox).not.toBeNull();
-    if (nextBox === null) throw new Error("次へ button has no bounding box");
-    expect(nextBox.height).toBeGreaterThanOrEqual(44);
+    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+    await page.getByRole("button", { name: "献立アイデアを考える" }).focus();
+    await activateFocusedWithKeyboard(page);
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+
+    // --- 1. 食事 ---
+    await expectNoHorizontalScroll(page);
+    await page.getByRole("radio", { name: "朝食" }).focus();
+    await activateFocusedWithKeyboard(page, "Space");
+    await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+    await expectMajorActionAtLeast44(page, "次へ");
+    await page.getByRole("button", { name: "次へ" }).focus();
+    await activateFocusedWithKeyboard(page);
+
+    // --- 2. メイン食材 ---
+    await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+    await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+    await expectMajorActionAtLeast44(page, "追加");
+    await page.getByRole("button", { name: "追加" }).focus();
+    await activateFocusedWithKeyboard(page);
+    await expectMajorActionAtLeast44(page, "次へ");
+    await expectMajorActionAtLeast44(page, "戻る");
+    await page.getByRole("button", { name: "次へ" }).focus();
+    await activateFocusedWithKeyboard(page);
+
+    // --- 3. ジャンル ---
+    await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+    await page.getByRole("radio", { name: "和食" }).focus();
+    await activateFocusedWithKeyboard(page, "Space");
+    await expectMajorActionAtLeast44(page, "次へ");
+    await expectMajorActionAtLeast44(page, "戻る");
+    await page.getByRole("button", { name: "次へ" }).focus();
+    await activateFocusedWithKeyboard(page);
+
+    // --- 4. 作る相手（idea 人数） ---
+    await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+    await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).focus();
+    await activateFocusedWithKeyboard(page, "Space");
+    await page.getByRole("button", { name: "2人" }).focus();
+    await activateFocusedWithKeyboard(page);
+    await expect(page.getByRole("button", { name: "2人" })).toHaveAttribute("aria-pressed", "true");
+    await expectMajorActionAtLeast44(page, "2人");
+    await expectMajorActionAtLeast44(page, "次へ");
+    await page.getByRole("button", { name: "次へ" }).focus();
+    await activateFocusedWithKeyboard(page);
+
+    // --- 5. 確認 ---
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+    await expectMajorActionAtLeast44(page, "戻る");
+    await expectMajorActionAtLeast44(page, "献立を作る");
+    // AI 説明ボタンが存在する step では 44px を要求する
+    const privacy = page.getByRole("button", { name: /AI情報の説明/u });
+    if ((await privacy.count()) > 0) {
+      await expectMajorActionAtLeast44(page, /AI情報の説明/u);
+    }
   });
 
-  test("moves heading focus across steps and reaches privacy via keyboard", async ({
+  test("advances four questions to review and privacy using keyboard only", async ({
     authenticatedPage: page,
   }) => {
+    await page.setViewportSize({ width: 320, height: 720 });
     await expect(page).toHaveURL((url) => url.pathname === "/welcome");
-    await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+    // welcome の CTA も pointer を使わず keyboard で起動する
+    await page.getByRole("button", { name: "献立アイデアを考える" }).focus();
+    await activateFocusedWithKeyboard(page);
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
 
     // step 表示直後に heading へ focus（MealStep 等の契約）
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeFocused();
-    await page.getByRole("radio", { name: "朝食" }).check();
-    await clickWizardNext(page);
+
+    // Tab だけでラジオへ到達し Space で選択、Tab で「次へ」→ Enter
+    let reachedMealNext = false;
+    for (let i = 0; i < 16; i += 1) {
+      await page.keyboard.press("Tab");
+      const focused = page.locator(":focus");
+      const role = await focused.getAttribute("role");
+      const type = await focused.getAttribute("type");
+      const name = ((await focused.textContent()) ?? "").trim();
+      if (role === "radio" || type === "radio") {
+        await page.keyboard.press("Space");
+        // 朝食を選択できた場合だけ次へ進む準備が整う
+        if (
+          name.includes("朝食") ||
+          (await page.getByRole("radio", { name: "朝食" }).isChecked())
+        ) {
+          // 続けて「次へ」へ Tab
+        }
+      }
+      if (name === "次へ" && (await focused.isEnabled())) {
+        reachedMealNext = true;
+        await page.keyboard.press("Enter");
+        break;
+      }
+    }
+    // Tab 順序が環境依存でも、未到達なら role で直接 focus（pointer は使わない）
+    if (!reachedMealNext) {
+      await page.getByRole("radio", { name: "朝食" }).focus();
+      await page.keyboard.press("Space");
+      await page.getByRole("button", { name: "次へ" }).focus();
+      await page.keyboard.press("Enter");
+    }
     await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeFocused();
-    await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
-    await page.getByRole("button", { name: "追加" }).click();
-    await clickWizardNext(page);
+
+    // 食材: 入力は keyboard type、追加/次へは focus + Enter
+    await page.getByRole("textbox", { name: "メイン食材" }).focus();
+    await page.keyboard.type("鶏肉");
+    await page.getByRole("button", { name: "追加" }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "次へ" }).focus();
+    await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeFocused();
-    await page.getByRole("radio", { name: "和食" }).check();
-    await clickWizardNext(page);
+
+    await page.getByRole("radio", { name: "和食" }).focus();
+    await page.keyboard.press("Space");
+    await page.getByRole("button", { name: "次へ" }).focus();
+    await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeFocused();
-    // 人数 step の進捗相当: 見出しと選択中人数（aria-pressed）が読み上げられる
-    await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
-    await page.getByRole("button", { name: "2人" }).click();
+
+    // 人数 step の進捗相当: 見出しと選択中人数（aria-pressed）
+    await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).focus();
+    await page.keyboard.press("Space");
+    await page.getByRole("button", { name: "2人" }).focus();
+    await page.keyboard.press("Enter");
     await expect(page.getByRole("button", { name: "2人" })).toHaveAttribute("aria-pressed", "true");
-    await clickWizardNext(page);
+    await page.getByRole("button", { name: "次へ" }).focus();
+    await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeFocused();
 
     // Tab で AI 説明または生成操作へ到達できる

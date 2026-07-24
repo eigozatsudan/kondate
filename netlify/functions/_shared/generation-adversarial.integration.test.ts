@@ -12,12 +12,16 @@ import {
   makeIdeaGenerationContext,
 } from "../../../shared/testing/factories.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import { loadCurrentSafetyContext } from "./current-safety.js";
 import { parseServerEnv, type ServerEnv } from "./env.js";
+import { loadGenerationContext } from "./generation-context.js";
 import { materializeAiGeneratedMenu } from "./generation-materializer.js";
 import { buildGenerationMessages } from "./generation-prompt.js";
 import { GenerationOutputError } from "./generation-repair.js";
 import { runGeneration, type GenerationDependencies } from "./generation-service.js";
 import { sendMenuGeneration } from "./openrouter.js";
+import { getSupabaseAdmin } from "./supabase-admin.js";
+import { createUserScopedSupabase } from "./supabase-user.js";
 
 // このファイルが検証する adversarial scenario 名の閉じた集合。
 // scenarios.mjs のキー全体からテスト対象だけを厳密なunion型として抜き出し、
@@ -61,6 +65,12 @@ vi.mock("./generation-integrity-context.js", () => ({
 vi.mock("./supabase-admin.js", () => ({
   getSupabaseAdmin: vi.fn(() => ({})),
 }));
+// canary seed-then-idea 経路で loadGenerationContext が読む user/safety 境界
+vi.mock("./supabase-user.js", () => ({ createUserScopedSupabase: vi.fn() }));
+vi.mock("./current-safety.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./current-safety.js")>();
+  return { ...actual, loadCurrentSafetyContext: vi.fn() };
+});
 
 // docker compose の openrouter-mock サービスは app コンテナと同じDockerネットワーク上の
 // http://openrouter-mock:8787/api/v1 で到達可能。実際のHTTPリクエスト・レスポンス
@@ -565,8 +575,13 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
 // それぞれ固有 canary を置き、idea 経路では query 相当の context / OpenRouter 本文 /
 // safety snapshot / 完成献立の家族子行すべてで 0 件であること、household 対照では
 // 匿名化 DTO に必要値だけが載ることを統合検証する。
+// seed-then-idea の loader 境界は generation-context.test の canary seed case と
+// 下記 loadGenerationContext 呼び出しで結合する。
 describe("family canary matrix across idea and household generation boundaries", () => {
   const memberId = "55000000-0000-4000-8000-000000000001";
+  const canaryUserId = "70000000-0000-4000-8000-000000000099";
+  const canaryDraftId = "84000000-0000-4000-8000-000000000099";
+  const canaryRequestId = "81000000-0000-4000-8000-000000000099";
   // 各フィールドへ独立した canary。idea 経路に 1 文字でも漏れたら失敗する。
   const canaries = {
     displayName: "CANARY_DISPLAY_NAME_α",
@@ -640,25 +655,103 @@ describe("family canary matrix across idea and household generation boundaries",
     });
   }
 
-  function ideaContextFromHouseholdCanaries(): GenerationContext {
-    // idea 生成は家族表を読まず固定 snapshot だけを持つ。household canary は入力に入らない。
-    return makeIdeaGenerationContext({
-      submission: {
-        mealType: "breakfast",
-        mainIngredients: ["鶏肉"],
-        cuisineGenre: "japanese",
-        targetMode: "idea",
-        targetMemberIds: [],
-        servings: 2,
-        timeLimitMinutes: 15,
-        budgetPreference: "standard",
-        avoidIngredients: [],
-        memo: "",
-        pantrySelections: [],
-      },
-      safetySnapshot: ideaSafetySnapshot,
-      preferenceSnapshot: {},
+  /**
+   * Design §12.4: 家族 canary が保存済み（query すれば返る）状態で idea の
+   * loadGenerationContext を実行する。seed 後の idea 経路を 1 本で検証する。
+   */
+  async function loadIdeaContextWhileHouseholdCanariesExist(): Promise<{
+    context: GenerationContext;
+    from: ReturnType<typeof vi.fn>;
+  }> {
+    const ideaSnapshot = {
+      draft_id: canaryDraftId,
+      draft_revision: 1,
+      meal_type: "breakfast",
+      main_ingredients: ["鶏肉"],
+      cuisine_genre: "japanese",
+      target_mode: "idea" as const,
+      target_member_ids: [] as string[],
+      servings: 2,
+      time_limit_minutes: 15,
+      budget_preference: "standard",
+      avoid_ingredients: [] as string[],
+      memo: "",
+      pantry_selections: [] as unknown[],
+      captured_at: "2026-07-11T02:59:00.000Z",
+    };
+    // 保存済み家族行: idea が読めば canary が漏れる
+    const canaryMember = {
+      id: memberId,
+      user_id: canaryUserId,
+      status: "complete",
+      display_name: canaries.displayName,
+      age_band: "adult",
+      portion_size: canaries.portion,
+      spice_level: canaries.spice,
+      ease_preferences: [canaries.ease],
+      allergy_status: "registered",
+      unsupported_diet_status: "none",
+      unsupported_diet_kinds: [] as string[],
+    };
+    const rpc = vi.fn().mockResolvedValue({ data: [ideaSnapshot], error: null });
+    vi.mocked(getSupabaseAdmin).mockReturnValue({ rpc } as never);
+
+    type TableResult = { data: unknown; error: unknown };
+    const from = vi.fn((table: string) => {
+      const result: TableResult =
+        table === "privacy_consents"
+          ? {
+              data: {
+                user_id: canaryUserId,
+                notice_version: "2026-07-11.v1",
+                accepted_at: "2026-07-11T02:00:00.000Z",
+              },
+              error: null,
+            }
+          : table === "household_members"
+            ? { data: [canaryMember], error: null }
+            : table === "member_dislikes"
+              ? {
+                  data: [{ member_id: memberId, ingredient_name: canaries.dislike }],
+                  error: null,
+                }
+              : { data: [], error: null };
+      const builder = {
+        select: vi.fn(() => builder),
+        eq: vi.fn(() => builder),
+        in: vi.fn(() => builder),
+        order: vi.fn(() => builder),
+        maybeSingle: vi.fn(() => Promise.resolve(result)),
+        then: (resolve: (value: TableResult) => unknown) => Promise.resolve(result).then(resolve),
+      };
+      return builder;
     });
+    vi.mocked(createUserScopedSupabase).mockReturnValue({ from } as never);
+    // safety にも canary を載せておく（呼ばれたら漏れる）
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue({
+      ...makeGenerationContext().safety,
+      members: makeGenerationContext().safety.members.map((member) => ({
+        ...member,
+        householdMemberId: memberId,
+        allergyStatus: "registered" as const,
+        allergenIds: [canaries.standardAllergy],
+        hasUnmappedCustomAllergy: true,
+      })),
+    });
+
+    const context = await loadGenerationContext(
+      { userId: canaryUserId, accessToken: "access-token" },
+      canaryRequestId,
+      {
+        idempotencyKey: "56000000-0000-4000-8000-000000000099",
+        draftId: canaryDraftId,
+        draftRevision: 1,
+        privacyNoticeVersion: "2026-07-11.v1",
+        expiredPantryConfirmations: [],
+      },
+      new Date("2026-07-11T03:00:00.000Z"),
+    );
+    return { context, from };
   }
 
   function asNewMenuExecution(context: GenerationContext) {
@@ -719,8 +812,14 @@ describe("family canary matrix across idea and household generation boundaries",
     expect(userMessage).not.toContain(canaries.customAllergy);
   });
 
-  it("keeps idea GenerationContext, prompt body, and fixed safety snapshot free of all canaries", () => {
-    const idea = ideaContextFromHouseholdCanaries();
+  it("seeds household canaries then keeps idea load, OpenRouter body, and snapshot free of all canaries", async () => {
+    const { context: idea, from } = await loadIdeaContextWhileHouseholdCanariesExist();
+
+    // 家族 canary が DB 相当に存在するのに idea は household 表を読まない
+    expect(from).not.toHaveBeenCalledWith("household_members");
+    expect(from).not.toHaveBeenCalledWith("member_dislikes");
+    expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
+
     // GenerationContext 層: 家族フィールドは空/null 固定
     expect(idea.safety).toBeNull();
     expect(idea.targetMembers).toEqual([]);
@@ -729,11 +828,11 @@ describe("family canary matrix across idea and household generation boundaries",
     expect(idea.safetySnapshot).toEqual(ideaSafetySnapshot);
 
     const contextJson = JSON.stringify(idea);
-    assertNoCanary(contextJson, "idea GenerationContext");
+    assertNoCanary(contextJson, "idea GenerationContext after canary seed");
 
     const messages = buildGenerationMessages(asNewMenuExecution(idea));
     const userMessage = messages[1]?.content ?? "";
-    assertNoCanary(userMessage, "idea OpenRouter body");
+    assertNoCanary(userMessage, "idea OpenRouter body after canary seed");
     // idea は members 配列が空で、validationVersions も null 固定
     const serialized = userMessage
       .replace("<kondate_input_data>\n", "")
@@ -749,12 +848,13 @@ describe("family canary matrix across idea and household generation boundaries",
     });
   });
 
-  it("materializes idea success without family target/adaptation/action/label children or canaries", () => {
+  it("materializes idea success without family target/adaptation/action/label children or canaries after seed", async () => {
     const fixture = scenarios["idea-servings-2"];
     if (typeof fixture === "string" || fixture.outcome !== "success") {
       throw new Error("invalid_test_fixture");
     }
-    const idea = ideaContextFromHouseholdCanaries();
+    // canary を seed した状態で idea load した結果だけを materialize する
+    const { context: idea } = await loadIdeaContextWhileHouseholdCanariesExist();
     const materialized = materializeAiGeneratedMenu(fixture.menu, idea, deterministicUuid);
     const result = validateGeneratedMenu(materialized, idea);
     expect(result.ok).toBe(true);
@@ -764,8 +864,8 @@ describe("family canary matrix across idea and household generation boundaries",
     expect(result.menu.labelConfirmations).toEqual([]);
     expect(result.menu.servings).toBe(2);
     // 完成献立 JSON に canary が混入しないこと（target/adaptation/action/label 子行相当）
-    assertNoCanary(JSON.stringify(result.menu), "validated idea menu");
-    assertNoCanary(JSON.stringify(idea.safetySnapshot), "idea safety snapshot");
+    assertNoCanary(JSON.stringify(result.menu), "validated idea menu after canary seed");
+    assertNoCanary(JSON.stringify(idea.safetySnapshot), "idea safety snapshot after canary seed");
   });
 
   it("rejects an idea AI servings mismatch inside 1-20 without producing a valid menu", () => {

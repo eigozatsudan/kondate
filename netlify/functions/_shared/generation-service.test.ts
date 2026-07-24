@@ -35,6 +35,7 @@ vi.mock("./generation-integrity-context.js", () => ({
 vi.mock("./supabase-admin.js", () => ({
   getSupabaseAdmin: vi.fn(() => ({})),
 }));
+import { resolveGenerationIntegrityContext } from "./generation-integrity-context.js";
 import {
   ATTEMPT_TIMEOUT_MS,
   createGenerationDeps,
@@ -2226,36 +2227,54 @@ describe("runGeneration idea child_friendly rejection", () => {
 });
 
 // --- Plan 7 Task 8: mode 矛盾と idea 人数改変 ---
-// loadExecutionContext / integrity 拒否を provider 送信前に終端し、
-// success 消費・menu 永続化が 0 件であることを固定する。
+// integrity resolve が 4 系統の矛盾 payload を拒否したとき、reserve/provider/succeed が
+// 一切進まないことを固定する（ラベルだけの同一 stub は使わない）。
 describe("runGeneration mode contradiction and idea servings mutation matrix", () => {
-  // 共有 schema / integrity / reserve が拒否した矛盾は loadExecutionContext が
-  // HttpError で返す。ここでは 4 系統すべてが provider 送信前に同一不変条件で終端することを固定する。
+  // 各 case は integrity が返す拒否理由と draft 相当の矛盾をラベルと対応させる。
+  // resolve が throw した時点で reserveNew 以前に終端するため provider/menu/success は 0。
   it.each([
-    "idea + non-empty member IDs",
-    "idea + null servings",
-    "household + empty member IDs",
-    "household + non-null direct servings",
-  ] as const)("%s: provider send 0, succeed 0, menu 0, success consume 0", async () => {
-    const repository = makeRepository();
-    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
-    const loadExecutionContext = vi
-      .fn<GenerationDependencies["loadExecutionContext"]>()
-      .mockRejectedValue(new HttpError(422, "invalid_request", "mode contradiction"));
-    const deps = makeDeps({ repository, callOpenRouter, loadExecutionContext });
+    {
+      label: "idea + non-empty member IDs",
+      message: "アイデアモードでは対象家族を指定できません。",
+    },
+    {
+      label: "idea + null servings",
+      message: "アイデアモードでは人数が必要です。",
+    },
+    {
+      label: "household + empty member IDs",
+      message: "対象の家族人数が不正です。",
+    },
+    {
+      label: "household + non-null direct servings",
+      message: "家族モードでは人数を指定できません。",
+    },
+  ] as const)(
+    "$label: provider send 0, succeed 0, menu 0, success consume 0",
+    async ({ message }) => {
+      const repository = makeRepository();
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+      const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
+      // 実 integrity 境界と同じ invalid_request を、case ごとに異なる message で拒否する
+      vi.mocked(resolveGenerationIntegrityContext).mockRejectedValueOnce(
+        new HttpError(422, "invalid_request", message),
+      );
+      const deps = makeDeps({ repository, callOpenRouter, loadExecutionContext });
 
-    const status = await runGeneration(deps, command);
-    expect(status).toMatchObject({
-      status: "failed",
-      error: { code: "invalid_request" },
-      quota: { consumed: false },
-    });
-    expect(callOpenRouter).not.toHaveBeenCalled();
-    expect(repository.markSent).not.toHaveBeenCalled();
-    expect(repository.succeed).not.toHaveBeenCalled();
-    expect(repository.fail).toHaveBeenCalledTimes(1);
-    expect(repository.fail).toHaveBeenCalledWith(requestId, "invalid_request", null);
-  });
+      await expect(runGeneration(deps, command)).rejects.toMatchObject({
+        code: "invalid_request",
+        status: 422,
+        message,
+      });
+      // integrity 拒否は reserve 前。台帳・送信・成功へ進まない
+      expect(repository.reserveNew).not.toHaveBeenCalled();
+      expect(loadExecutionContext).not.toHaveBeenCalled();
+      expect(callOpenRouter).not.toHaveBeenCalled();
+      expect(repository.markSent).not.toHaveBeenCalled();
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects idea AI servings mismatch without succeed or success quota", async () => {
     const repository = makeRepository();
@@ -2302,4 +2321,60 @@ describe("runGeneration mode contradiction and idea servings mutation matrix", (
     expect(repository.succeed).not.toHaveBeenCalled();
     expect(repository.fail).toHaveBeenCalled();
   });
+
+  // Task 8 Step 3: 予約後・送信前の source 変更は fail へ写し provider を呼ばない
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "pre-send %s source_menu_changed fails without provider send or success",
+    async (kind) => {
+      const repository = makeRepository();
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+      const loadExecutionContext = vi
+        .fn<GenerationDependencies["loadExecutionContext"]>()
+        .mockRejectedValue(
+          new HttpError(
+            422,
+            "source_menu_changed",
+            "元の献立が更新されたため、もう一度操作してください",
+          ),
+        );
+      const regenCommand: GenerationCommand =
+        kind === "regenerate_menu"
+          ? {
+              commandVersion: "generation-command.v2",
+              kind: "regenerate_menu",
+              request: {
+                idempotencyKey: key,
+                sourceMenuId: menuId,
+                changeReason: "simpler",
+                changeReasonCustom: null,
+                expiredPantryConfirmations: [],
+              },
+            }
+          : {
+              commandVersion: "generation-command.v2",
+              kind: "regenerate_dish",
+              request: {
+                idempotencyKey: key,
+                sourceMenuId: menuId,
+                dishId: "86000000-0000-4000-8000-000000000001",
+                changeReason: "simpler",
+                changeReasonCustom: null,
+                expiredPantryConfirmations: [],
+              },
+            };
+      const status = await runGeneration(
+        makeDeps({ repository, callOpenRouter, loadExecutionContext }),
+        regenCommand,
+      );
+      expect(status).toMatchObject({
+        status: "failed",
+        error: { code: "source_menu_changed" },
+        quota: { consumed: false },
+      });
+      expect(callOpenRouter).not.toHaveBeenCalled();
+      expect(repository.markSent).not.toHaveBeenCalled();
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "source_menu_changed", null);
+    },
+  );
 });
