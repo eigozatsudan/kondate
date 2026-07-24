@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  acceptedFreeModelLists,
+  rejectedFreeModelLists,
+} from "../../../scripts/openrouter-models-contract.mjs";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import {
   parseManagedSupabaseProjectRef,
@@ -22,23 +26,19 @@ const validServerEnv = {
   USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
   USER_SHORT_WINDOW_SECONDS: "600",
+  OPENROUTER_TIMEOUT_MS: "20000",
   FUNCTION_TOTAL_BUDGET_MS: "50000",
+  AI_PROCESSING_STALE_SECONDS: "180",
 };
 
 describe("parseOpenRouterModels", () => {
-  it("preserves an explicit free-model order", () => {
-    expect(parseOpenRouterModels(validServerEnv.OPENROUTER_MODELS)).toEqual([
-      "google/gemma-3-27b-it:free",
-      "mistralai/mistral-small-3.2-24b-instruct:free",
-    ]);
+  it.each(acceptedFreeModelLists)("accepts contract free-model list %#", ({ raw, models }) => {
+    expect(parseOpenRouterModels(raw)).toEqual(models);
   });
 
-  it.each(["", "openrouter/auto", "openai/gpt-4o", "a/model:free,a/model:free"])(
-    "rejects unsafe model configuration %s",
-    (value) => {
-      expect(() => parseOpenRouterModels(value)).toThrow("OPENROUTER_MODELS");
-    },
-  );
+  it.each(rejectedFreeModelLists)("rejects unsafe model configuration %s", (value) => {
+    expect(() => parseOpenRouterModels(value)).toThrow("OPENROUTER_MODELS");
+  });
 
   it("requires the exact release-locked quota tuple", () => {
     const parsed = parseServerEnv(validServerEnv);
@@ -103,17 +103,46 @@ describe("parseOpenRouterModels", () => {
     ).toBe(1);
   });
 
-  it("allows lowering FUNCTION_TOTAL_BUDGET_MS but rejects above the 50s design ceiling", () => {
-    expect(
-      parseServerEnv({ ...validServerEnv, FUNCTION_TOTAL_BUDGET_MS: "30000" }).openRouter
-        .functionTotalBudgetMs,
-    ).toBe(30_000);
-    expect(() =>
-      parseServerEnv({ ...validServerEnv, FUNCTION_TOTAL_BUDGET_MS: "50001" }),
-    ).toThrow();
-    expect(() =>
-      parseServerEnv({ ...validServerEnv, FUNCTION_TOTAL_BUDGET_MS: "120000" }),
-    ).toThrow();
+  it.each([
+    ["OPENROUTER_TIMEOUT_MS", 20_000, "timeoutMs", 20_000],
+    ["OPENROUTER_TIMEOUT_MS", "20000", "timeoutMs", 20_000],
+    ["FUNCTION_TOTAL_BUDGET_MS", 50_000, "functionTotalBudgetMs", 50_000],
+    ["FUNCTION_TOTAL_BUDGET_MS", "50000", "functionTotalBudgetMs", 50_000],
+    ["AI_PROCESSING_STALE_SECONDS", 180, "staleAfterSeconds", 180],
+    ["AI_PROCESSING_STALE_SECONDS", "180", "staleAfterSeconds", 180],
+  ] as const)("accepts exact deadline lock %s=%s", (key, value, openRouterKey, expected) => {
+    const parsed = parseServerEnv({ ...validServerEnv, [key]: value });
+    expect(parsed.openRouter[openRouterKey]).toBe(expected);
+  });
+
+  it.each([
+    ["OPENROUTER_TIMEOUT_MS", undefined],
+    ["OPENROUTER_TIMEOUT_MS", "19999"],
+    ["OPENROUTER_TIMEOUT_MS", "20001"],
+    ["OPENROUTER_TIMEOUT_MS", "0"],
+    ["OPENROUTER_TIMEOUT_MS", "-1"],
+    ["OPENROUTER_TIMEOUT_MS", "20000.5"],
+    ["OPENROUTER_TIMEOUT_MS", ""],
+    ["OPENROUTER_TIMEOUT_MS", "020000"],
+    ["FUNCTION_TOTAL_BUDGET_MS", undefined],
+    ["FUNCTION_TOTAL_BUDGET_MS", "30000"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "49999"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "50001"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "0"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "-1"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "50000.1"],
+    ["FUNCTION_TOTAL_BUDGET_MS", ""],
+    ["AI_PROCESSING_STALE_SECONDS", undefined],
+    ["AI_PROCESSING_STALE_SECONDS", "179"],
+    ["AI_PROCESSING_STALE_SECONDS", "181"],
+    ["AI_PROCESSING_STALE_SECONDS", "0"],
+    ["AI_PROCESSING_STALE_SECONDS", "-1"],
+    ["AI_PROCESSING_STALE_SECONDS", "180.5"],
+    ["AI_PROCESSING_STALE_SECONDS", ""],
+  ] as const)("rejects missing or drifted deadline lock %s=%s", (key, value) => {
+    expect(() => parseServerEnv({ ...validServerEnv, [key]: value })).toThrow(
+      "server_configuration_invalid",
+    );
   });
 });
 
@@ -138,6 +167,7 @@ it("accepts only an exact managed Supabase origin for an HTTPS deployment", () =
     VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
     SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
     SERVER_SITE_ORIGIN: "https://kondate.example",
+    OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
   };
   expect(parseServerEnv(production).SUPABASE_URL).toBe(production.SUPABASE_URL);
   expect(parseManagedSupabaseProjectRef(production.SUPABASE_URL)).toBe("abcdefghijklmnopqrst");
@@ -159,6 +189,32 @@ it("accepts only an exact managed Supabase origin for an HTTPS deployment", () =
   }
 });
 
+it("accepts only the exact official OpenRouter base URL for an HTTPS deployment", () => {
+  const production = {
+    ...validServerEnv,
+    VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+    SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+    SERVER_SITE_ORIGIN: "https://kondate.example",
+    OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+  };
+  expect(parseServerEnv(production).openRouter.baseUrl).toBe("https://openrouter.ai/api/v1");
+  for (const unsafeUrl of [
+    "http://openrouter.ai/api/v1",
+    "https://openrouter.ai/api/v1/",
+    "https://openrouter.ai/api/v1/models",
+    "https://user:pass@openrouter.ai/api/v1",
+    "https://openrouter.ai/api/v1?x=1",
+    "https://openrouter.ai/api/v1#frag",
+    "https://evil.openrouter.ai/api/v1",
+    "https://openrouter.ai.evil.example/api/v1",
+    "https://openrouter.example/api/v1",
+  ]) {
+    expect(() => parseServerEnv({ ...production, OPENROUTER_BASE_URL: unsafeUrl })).toThrow(
+      "server_configuration_invalid",
+    );
+  }
+});
+
 it("rejects different browser and server Supabase projects for an HTTPS deployment", () => {
   expect(() =>
     parseServerEnv({
@@ -166,6 +222,7 @@ it("rejects different browser and server Supabase projects for an HTTPS deployme
       VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
       SUPABASE_URL: "https://bcdefghijklmnopqrstu.supabase.co",
       SERVER_SITE_ORIGIN: "https://kondate.example",
+      OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
     }),
   ).toThrow("server_configuration_invalid");
 });

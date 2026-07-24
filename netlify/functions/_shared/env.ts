@@ -31,10 +31,7 @@ export const continuationServerEnvSchema = z.object({
     .refine((value) => value === 300),
 });
 
-const positiveInteger = (fallback: number) => z.coerce.number().int().positive().default(fallback);
-// 設計の Function 総予算は最大 50s。既定値を超えさせず、短縮のみ許可する
-const cappedPositiveInteger = (fallback: number, max: number) =>
-  z.coerce.number().int().positive().max(max).default(fallback);
+// リリース固定整数: 数値リテラルと十進文字列のみ受理し、未設定・近傍値・coerce を拒否する
 const releaseLockedInteger = <const Value extends number, const Text extends string>(
   value: Value,
   text: Text,
@@ -73,9 +70,10 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   ),
   USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
   GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(45),
-  OPENROUTER_TIMEOUT_MS: positiveInteger(20_000),
-  FUNCTION_TOTAL_BUDGET_MS: cappedPositiveInteger(50_000, 50_000),
-  AI_PROCESSING_STALE_SECONDS: positiveInteger(180),
+  // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
+  OPENROUTER_TIMEOUT_MS: releaseLockedInteger(20_000, "20000"),
+  FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(50_000, "50000"),
+  AI_PROCESSING_STALE_SECONDS: releaseLockedInteger(180, "180"),
 });
 
 type ParsedServerEnv = z.infer<typeof rawServerEnvSchema>;
@@ -107,6 +105,10 @@ export function parseManagedSupabaseProjectRef(value: string): string | null {
   return managedSupabaseOrigin.exec(value)?.[1] ?? null;
 }
 
+/**
+ * OPENROUTER_MODELS の無料モデル規則（scripts/verify-openrouter-models.mjs の
+ * parseConfiguredModels と鏡像。共有契約は scripts/openrouter-models-contract.mjs）。
+ */
 export function parseOpenRouterModels(value: string): readonly string[] {
   const models = value
     .split(",")
@@ -123,6 +125,8 @@ export function parseOpenRouterModels(value: string): readonly string[] {
   }
   return models;
 }
+
+const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 
 export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (source.VITE_AUTH_CONTINUATION_ENCRYPTION_KEY !== undefined) {
@@ -161,6 +165,10 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       serverProjectRef === null ||
       browserProjectRef !== serverProjectRef)
   ) {
+    throw new Error("server_configuration_invalid");
+  }
+  // 本番（非ローカル）では公式 OpenRouter base URL のみ。lookalike・資格情報・query/fragment・HTTP・末尾パスを拒否する
+  if (!isLocal && result.data.OPENROUTER_BASE_URL !== officialOpenRouterBaseUrl) {
     throw new Error("server_configuration_invalid");
   }
   const { GENERATION_REQUEST_HMAC_KEY, ...publicEnv } = result.data;
