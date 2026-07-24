@@ -1,0 +1,146 @@
+.welcome-tutorial {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+  overflow-x: clip;
+}
+
+.welcome-tutorial__slide {
+  display: grid;
+  min-width: 0;
+  min-height: 280px;
+  align-content: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--surface);
+  padding: clamp(20px, 7vw, 40px);
+  text-align: center;
+  animation: welcome-tutorial-enter 240ms ease-out;
+}
+
+.welcome-tutorial__decoration {
+  font-size: clamp(2.5rem, 14vw, 4.5rem);
+  line-height: 1;
+}
+
+.welcome-tutorial__title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--question-font);
+  font-size: clamp(1.5rem, 7vw, 2rem);
+  line-height: 1.45;
+}
+
+.welcome-tutorial__title:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.welcome-tutorial__description {
+  max-width: 36rem;
+  margin: 0 auto;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+
+.welcome-tutorial__controls {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) minmax(72px, auto);
+  align-items: center;
+  gap: 8px;
+}
+
+.welcome-tutorial__move-button {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--surface);
+  padding: 8px 14px;
+}
+
+.welcome-tutorial__move-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.welcome-tutorial__indicator {
+  display: flex;
+  min-width: 0;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.welcome-tutorial__indicator-item {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
+
+.welcome-tutorial__indicator-item[aria-current="step"] {
+  border-color: var(--primary-strong);
+  color: var(--primary-ink);
+  background: var(--primary);
+  font-weight: 700;
+}
+
+.welcome-tutorial__actions {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+@keyframes welcome-tutorial-enter {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-tutorial__slide {
+    animation: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .welcome-tutorial__slide {
+    min-height: 260px;
+    padding: 20px 16px;
+  }
+
+  .welcome-tutorial__controls {
+    grid-template-columns: 64px minmax(0, 1fr) 64px;
+    gap: 4px;
+  }
+
+  .welcome-tutorial__move-button {
+    padding-inline: 8px;
+  }
+
+  .welcome-tutorial__indicator {
+    gap: 5px;
+  }
+
+  .welcome-tutorial__indicator-item {
+    width: 24px;
+    height: 24px;
+  }
+}

@@ -90,3 +90,61 @@ it("allows retrying Google after switching from a magic link and a failed start"
   // eslint-disable-next-line @typescript-eslint/unbound-method
   expect(gateway.signInWithGoogle).toHaveBeenCalledTimes(2);
 });
+
+it("uses /welcome for Google and magic link when returnTo is omitted", async () => {
+  const user = userEvent.setup();
+  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+  const sendMagicLink = vi.fn().mockResolvedValue({
+    flowId: "flow-1",
+    email: "user@example.com",
+    resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle,
+    sendMagicLink,
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/login"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
+  expect(signInWithGoogle).toHaveBeenCalledWith("/welcome");
+
+  await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
+  await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
+  expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/welcome");
+});
+
+it("preserves an explicit safe returnTo for Google and magic link", async () => {
+  const user = userEvent.setup();
+  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+  const sendMagicLink = vi.fn().mockResolvedValue({
+    flowId: "flow-1",
+    email: "user@example.com",
+    resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle,
+    sendMagicLink,
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/login?returnTo=%2Fpantry"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
+  expect(signInWithGoogle).toHaveBeenCalledWith("/pantry");
+
+  await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
+  await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
+  expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/pantry");
+});

@@ -29,7 +29,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const location = useLocation();
   const locationState = readLoginLocationState(location.state);
   const params = new URLSearchParams(location.search);
-  const returnTo = sanitizeReturnPath(params.get("returnTo"));
+  // 明示的な復帰先は従来どおり安全化し、指定がない初回ログインだけ使い方の案内へ導く。
+  const returnTo = params.has("returnTo") ? sanitizeReturnPath(params.get("returnTo")) : "/welcome";
   const [state, setState] = useState<MagicLinkState>({ status: "idle", email: "" });
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [googleError, setGoogleError] = useState(false);
