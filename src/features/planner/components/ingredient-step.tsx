@@ -33,46 +33,51 @@ export function IngredientStep({
       <h2 id="ingredient-step-title" tabIndex={-1} ref={headingRef}>
         2. メイン食材
       </h2>
-      <label>
-        メイン食材
-        <input
-          value={ingredient}
+      <div className="ingredient-entry-row">
+        <label className="field ingredient-entry-field">
+          メイン食材
+          <input
+            value={ingredient}
+            disabled={disabled}
+            aria-invalid={combinedError != null ? "true" : undefined}
+            aria-describedby={combinedError != null ? errorId : undefined}
+            onChange={(event) => {
+              const rawValue = event.target.value;
+              setIngredient(rawValue);
+              if (
+                Array.from(rawValue.normalize("NFKC").trim()).length <= mainIngredientLengthLimit
+              ) {
+                setLocalError(null);
+              } else {
+                setLocalError("メイン食材は1件80文字までです。");
+              }
+            }}
+          />
+        </label>
+        <button
+          className="secondary-button ingredient-add-button"
+          type="button"
           disabled={disabled}
-          aria-invalid={combinedError != null ? "true" : undefined}
-          aria-describedby={combinedError != null ? errorId : undefined}
-          onChange={(event) => {
-            const rawValue = event.target.value;
-            setIngredient(rawValue);
-            if (Array.from(rawValue.normalize("NFKC").trim()).length <= mainIngredientLengthLimit) {
-              setLocalError(null);
-            } else {
+          onClick={() => {
+            const next = ingredient.normalize("NFKC").trim();
+            if (Array.from(next).length > mainIngredientLengthLimit) {
               setLocalError("メイン食材は1件80文字までです。");
+              return;
             }
+            if (next !== "" && !value.includes(next) && value.length >= mainIngredientLimit) {
+              setLocalError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
+              return;
+            }
+            if (next !== "" && !value.includes(next)) {
+              onChange([...value, next]);
+            }
+            setLocalError(null);
+            setIngredient("");
           }}
-        />
-      </label>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => {
-          const next = ingredient.normalize("NFKC").trim();
-          if (Array.from(next).length > mainIngredientLengthLimit) {
-            setLocalError("メイン食材は1件80文字までです。");
-            return;
-          }
-          if (next !== "" && !value.includes(next) && value.length >= mainIngredientLimit) {
-            setLocalError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
-            return;
-          }
-          if (next !== "" && !value.includes(next)) {
-            onChange([...value, next]);
-          }
-          setLocalError(null);
-          setIngredient("");
-        }}
-      >
-        追加
-      </button>
+        >
+          追加
+        </button>
+      </div>
       {combinedError != null && (
         <p id={errorId} role="alert">
           {combinedError}
@@ -92,14 +97,19 @@ export function IngredientStep({
           </button>
         ))}
       </div>
-      <div className="stack-row">
+      <div className="wizard-actions">
         {onBack !== undefined && (
-          <button type="button" disabled={disabled} onClick={onBack}>
+          <button
+            className="wizard-action secondary-button"
+            type="button"
+            disabled={disabled}
+            onClick={onBack}
+          >
             戻る
           </button>
         )}
         <button
-          className="primary-button"
+          className="wizard-action primary-button"
           type="button"
           disabled={disabled || value.length === 0}
           onClick={onNext}

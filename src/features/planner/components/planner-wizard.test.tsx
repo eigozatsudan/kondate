@@ -113,6 +113,26 @@ const reviewDraft: PlannerDraftInput = {
 };
 
 describe("PlannerWizard 固定順とnavigation", () => {
+  it("メイン食材の入力と操作を狭い画面でも判別できる構造で表示する", () => {
+    render(<Harness initialStep="ingredients" />);
+
+    const input = screen.getByLabelText("メイン食材");
+    const inputLabel = input.closest("label");
+    const entryRow = inputLabel?.parentElement;
+    const addButton = screen.getByRole("button", { name: "追加" });
+    const backButton = screen.getByRole("button", { name: "戻る" });
+    const nextButton = screen.getByRole("button", { name: "次へ" });
+
+    expect(inputLabel).toHaveClass("field", "ingredient-entry-field");
+    expect(entryRow).toHaveClass("ingredient-entry-row");
+    expect(entryRow).toContainElement(addButton);
+    expect(addButton).toHaveClass("secondary-button", "ingredient-add-button");
+    expect(backButton.parentElement).toHaveClass("wizard-actions");
+    expect(backButton.parentElement).not.toHaveClass("stack-row");
+    expect(backButton).toHaveClass("wizard-action", "secondary-button");
+    expect(nextButton).toHaveClass("wizard-action", "primary-button");
+  });
+
   it("meal→ingredients→cuisine→audience→reviewの順で進み、戻ると回答を保持する", async () => {
     const user = userEvent.setup();
     render(<Harness />);

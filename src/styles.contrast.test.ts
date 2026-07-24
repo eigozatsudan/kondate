@@ -263,6 +263,8 @@ const allowedProtectedSelectors = new Set([
   ".guided-planner-theme .primary-button",
   ".guided-planner-theme .primary-button:hover",
   ".guided-planner-theme .primary-button:active",
+  ".guided-planner-theme .ingredient-entry-row",
+  ".guided-planner-theme .ingredient-entry-field",
   ".wizard-frame",
   ".wizard-header, .wizard-content, .wizard-actions",
   ".wizard-title",
@@ -350,6 +352,16 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     "border-color": "var(--primary-active)",
     color: "var(--primary-ink)",
     background: "var(--primary-active)",
+  },
+  ".guided-planner-theme .ingredient-entry-row": {
+    display: "grid",
+    "min-width": "0",
+    "grid-template-columns": "minmax(0, 1fr) auto",
+    "align-items": "end",
+    gap: "12px",
+  },
+  ".guided-planner-theme .ingredient-entry-field": {
+    "min-width": "0",
   },
   ".wizard-frame": { display: "grid", gap: "20px", "min-width": "0" },
   ".wizard-header, .wizard-content, .wizard-actions": { "min-width": "0" },
@@ -950,6 +962,30 @@ describe("guided planner theme", () => {
     expect(css).toMatch(
       /\.guided-planner-theme \.wizard-title:focus-visible\s*\{[^}]*outline:\s*3px solid var\(--focus\)[^}]*outline-offset:\s*2px/s,
     );
+  });
+
+  it("keeps the ingredient entry visible inside the guided planner", () => {
+    expectExactRuleDeclarations(".guided-planner-theme .ingredient-entry-row", {
+      display: "grid",
+      "min-width": "0",
+      "grid-template-columns": "minmax(0, 1fr) auto",
+      "align-items": "end",
+      gap: "12px",
+    });
+    expectExactRuleDeclarations(".guided-planner-theme .ingredient-entry-field", {
+      "min-width": "0",
+    });
+    expectEffectiveDeclarations(".field input", {
+      width: "100%",
+      "min-height": "48px",
+      border: "1px solid var(--border)",
+      background: "#fff",
+      padding: "10px 12px",
+    });
+    expectEffectiveDeclarations(".secondary-button", {
+      border: "1px solid var(--primary)",
+      background: "transparent",
+    });
   });
 
   it("preserves every existing global appearance selector", () => {

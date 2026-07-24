@@ -74,6 +74,18 @@
   background: var(--primary-active);
 }
 
+.guided-planner-theme .ingredient-entry-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.guided-planner-theme .ingredient-entry-field {
+  min-width: 0;
+}
+
 .wizard-frame {
   display: grid;
   gap: 20px;
