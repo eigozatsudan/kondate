@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import type {
   AllergenCatalogRow,
   HouseholdMemberPatch,
@@ -10,6 +10,41 @@ import type {
 } from "./household-api";
 import { householdKeys } from "./household-queries";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
+
+const navigateMock = vi.hoisted(() => vi.fn());
+const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const requireAccessTokenMock = vi.hoisted(() => vi.fn().mockResolvedValue("token"));
+
+// AccountSettingsSection が依存するナビ・掃除・トークン境界だけをモックし、家族 CRUD テストを壊さない
+vi.mock("react-router", async (importOriginal) => {
+  const original = await importOriginal<typeof import("react-router")>();
+  return { ...original, useNavigate: () => navigateMock };
+});
+vi.mock("@/features/auth/auth-cleanup", () => ({
+  clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
+}));
+vi.mock("@/features/auth/session", () => ({
+  requireAccessToken: requireAccessTokenMock,
+}));
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: () => ({ auth: {} }),
+}));
+
+beforeEach(() => {
+  navigateMock.mockReset();
+  clearLocalAuthAndDraftsMock.mockReset();
+  requireAccessTokenMock.mockReset();
+  clearLocalAuthAndDraftsMock.mockResolvedValue(undefined);
+  requireAccessTokenMock.mockResolvedValue("token");
+  if (typeof HTMLDialogElement !== "undefined") {
+    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    };
+  }
+});
 
 const member: HouseholdMemberRow = {
   id: "member-1",
@@ -89,10 +124,60 @@ async function waitForAllergies(queryClient: QueryClient, memberId = "member-1")
   });
 }
 
-it("renders the complete household editor without account deletion", async () => {
-  renderSettings();
+it("keeps family CRUD controls and composes the account danger zone on the same Plan 1 page", async () => {
+  const second: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  const addDislike = vi.fn().mockResolvedValue({
+    id: "dislike-1",
+    user_id: "user-1",
+    member_id: "member-1",
+    ingredient_name: "ピーマン",
+    created_at: "2026-07-11T00:00:00.000Z",
+  });
+  const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  const { updateMember } = renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, second]),
+    addDislike,
+    addStandardAllergy,
+    deleteMember,
+    listAllergies: vi.fn().mockResolvedValue([]),
+    listDislikes: vi.fn().mockResolvedValue([]),
+  });
+
+  // 既存の家族 CRUD が引き続き同一ページ所有者上で動くこと
   expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "アカウントを削除" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
+  await userEvent.clear(screen.getByLabelText("呼び名"));
+  await userEvent.type(screen.getByLabelText("呼び名"), "保護者");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalled();
+  });
+
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを追加" }));
+  expect(addStandardAllergy).toHaveBeenCalledWith("member-1", "walnut");
+
+  await userEvent.type(screen.getByLabelText("苦手食材を追加"), "ピーマン");
+  await userEvent.click(screen.getByRole("button", { name: "苦手食材を追加" }));
+  expect(addDislike).toHaveBeenCalledWith("member-1", "ピーマン");
+
+  await userEvent.click(screen.getByRole("button", { name: "家族を削除" }));
+  expect(screen.getByRole("button", { name: "家族だけを削除" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "キャンセル" }));
+
+  // Plan 6 の DangerZone は同一 main 内に合成される（ページ所有者は置換しない）
+  expect(screen.getAllByRole("heading", { name: "家族設定" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "DangerZone" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "アカウントを削除" }));
+  expect(screen.getByText(/家族設定、献立履歴、冷蔵庫の食材、買い物リスト/u)).toBeVisible();
+  // アカウント削除と家族削除は別操作
+  expect(deleteMember).not.toHaveBeenCalled();
 });
 
 it("creates and selects a new draft while an existing member is present", async () => {

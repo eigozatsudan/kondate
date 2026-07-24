@@ -12,6 +12,7 @@ import {
   type UnsupportedDietKind,
   type UnsupportedDietStatus,
 } from "@shared/contracts/domain";
+import { AccountSettingsSection } from "@/features/account/account-settings-section";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
@@ -1173,6 +1174,8 @@ export function HouseholdSettingsForm({
           </button>
         </div>
       )}
+      {/* Plan 6: アカウント操作は本ページ所有者の下に合成するだけ。家族 CRUD は置換しない。 */}
+      <AccountSettingsSection />
     </main>
   );
 }
