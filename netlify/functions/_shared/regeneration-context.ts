@@ -47,6 +47,32 @@ const dishSignatureInput = (dish: ValidatedMenu["dishes"][number]): DishSignatur
   primaryIngredients: dish.ingredients.map((item) => item.name),
 });
 
+
+/**
+ * 削除済みメンバーの取り分け・安全処理・ラベルを現行対象だけへ射影する。
+ * 設計 §4.4: 削除済みは AI 入力にも新 version にも複製しない。
+ * 再生成前の validate が target_member_mismatch で誤拒否するのも防ぐ。
+ */
+export function projectMenuForSurvivingTargets(
+  menu: ValidatedMenu,
+  survivingAnonymousRefs: ReadonlySet<string>,
+): ValidatedMenu {
+  return {
+    ...menu,
+    adaptations: menu.adaptations
+      .filter((adaptation) => survivingAnonymousRefs.has(adaptation.anonymousMemberRef))
+      .map((adaptation) => ({
+        ...adaptation,
+        safetyActions: adaptation.safetyActions.filter((action) =>
+          survivingAnonymousRefs.has(action.anonymousMemberRef),
+        ),
+      })),
+    labelConfirmations: menu.labelConfirmations.filter((label) =>
+      survivingAnonymousRefs.has(label.anonymousMemberRef),
+    ),
+  };
+}
+
 /**
  * 既存 derivation のシグネチャ文字列を material 判定入力へ戻す。
  * 破損シグネチャは比較不能として null（一致扱いにしない）。
@@ -188,6 +214,12 @@ export function buildDishRegenerationPrompt(input: {
     throw new HttpError(404, "replace_dish_not_found", "変更する料理が見つかりません");
   }
 
+  // 現行対象だけへ射影してから AI 入力を組み立てる（削除メンバーの自由文・ref を載せない）
+  const survivingRefs = new Set(
+    input.generationContext.targetMembers.map((member) => member.anonymousRef),
+  );
+  const projectedMenu = projectMenuForSurvivingTargets(source.menu, survivingRefs);
+
   // 保持 + 置換対象の全 dish/ingredient/step を id→ref に反転
   const full = toRetainedDishPrompt(source.menu, null);
   const idToRef = reverseRefMap(full.refMap);
@@ -213,7 +245,7 @@ export function buildDishRegenerationPrompt(input: {
     });
 
   let adaptationIndex = 0;
-  const sourceAdaptations = source.menu.adaptations.map((adaptation) => {
+  const sourceAdaptations = projectedMenu.adaptations.map((adaptation) => {
     adaptationIndex += 1;
     const adaptationRef = `adaptation_${String(adaptationIndex)}`;
     mutableRefMap.set(adaptationRef, adaptation.id);
@@ -298,7 +330,7 @@ export function buildDishRegenerationPrompt(input: {
   }
 
   let labelIndex = 0;
-  const sourceLabelConfirmations = source.menu.labelConfirmations.map((label) => {
+  const sourceLabelConfirmations = projectedMenu.labelConfirmations.map((label) => {
     labelIndex += 1;
     const labelRef = `label_${String(labelIndex)}`;
     // ラベル identity は sourceId をキーに登録（DB 行 id が無い generated 形）
@@ -371,6 +403,8 @@ export type LoaderDeps = {
   buildCurrentContext(input: {
     user: AuthenticatedUser;
     stored: StoredMenuAggregate;
+    /** request snapshot.target_mode。idea/household 分岐の唯一の正本 */
+    authorityTargetMode: "household" | "idea";
     idempotencyKey: string;
     expiredPantryConfirmations: RegenerationCommand["request"]["expiredPantryConfirmations"];
     now: Date;
@@ -465,6 +499,14 @@ export async function loadRegenerationExecutionContext(
       "元の献立が更新されたため、もう一度操作してください",
     );
   }
+  // version 直後・空メンバー前: live mode と snapshot の構造不一致は source_menu_changed
+  if (source.targetMode !== snapshot.target_mode) {
+    throw new HttpError(
+      422,
+      "source_menu_changed",
+      "元の献立が更新されたため、もう一度操作してください",
+    );
+  }
   if (snapshot.target_mode === "household" && source.targetMemberIds.length === 0) {
     throw new HttpError(422, "current_target_member_required", "現在の家族を1人以上選んでください");
   }
@@ -479,16 +521,22 @@ export async function loadRegenerationExecutionContext(
     deps.buildCurrentContext({
       user,
       stored: source,
+      // 分岐の正本は request snapshot。preference / live から mode を推測しない
+      authorityTargetMode: snapshot.target_mode,
       idempotencyKey: command.request.idempotencyKey,
       expiredPantryConfirmations: command.request.expiredPantryConfirmations,
       now: deps.now(),
     }),
   ]);
 
-  // idea は家族再検証ではなく idea 出力契約のみ。household は現行家族安全を必須。
-  if (snapshot.target_mode === "household" || generationContext.targetMode === "household") {
+  // 再検証ゲートは snapshot 一本。generationContext との OR は dual-source を許すため禁止
+  if (snapshot.target_mode === "household") {
+    const survivingRefs = new Set(
+      generationContext.targetMembers.map((member) => member.anonymousRef),
+    );
+    const projectedForGate = projectMenuForSurvivingTargets(source.menu, survivingRefs);
     const validation = validateGeneratedMenu(
-      toStoredRevalidationCandidate(source.menu, generationContext),
+      toStoredRevalidationCandidate(projectedForGate, generationContext),
       generationContext,
     );
     if (!validation.ok) {
