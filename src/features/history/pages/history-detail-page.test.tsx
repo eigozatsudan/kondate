@@ -22,6 +22,8 @@ const channelHandlers = vi.hoisted(() => ({
   members: null as null | (() => void),
   allergies: null as null | (() => void),
 }));
+// hoisted mock から参照する固定 UUID（下の const より前に置く）
+const MOCK_USER_ID = "31000000-0000-4000-8000-000000000001";
 
 vi.mock("../api/revalidation-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/revalidation-api")>();
@@ -51,17 +53,56 @@ vi.mock("@/shared/lib/supabase", () => ({
           if (filter.table === "member_allergies") channelHandlers.allergies = callback;
           return api;
         },
-        subscribe: () => api,
+        subscribe: (statusCallback?: (status: string) => void) => {
+          // 買い物安全ゲートが SUBSCRIBED を受けて refresh できるようにする
+          if (typeof statusCallback === "function") statusCallback("SUBSCRIBED");
+          return api;
+        },
         unsubscribe: vi.fn(),
       };
       return api;
     },
+    removeChannel: vi.fn(),
     auth: {
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
       getSession: () => Promise.resolve({ data: { session: { access_token: "t" } }, error: null }),
+      // 買い物ゲートは getUser 失敗で閉じる。履歴 household でも所有者を返す。
+      getUser: () => Promise.resolve({ data: { user: { id: MOCK_USER_ID } }, error: null }),
     },
   }),
 }));
+
+// 買い物 hooks を決定論的に通す（Realtime/getUser 依存のゲートを page テストから外す）
+vi.mock("@/features/shopping/hooks/use-shopping-list", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/shopping/hooks/use-shopping-list")>();
+  return {
+    ...original,
+    useShoppingList: () => ({
+      data: null,
+      isFetching: false,
+      isSuccess: true,
+      isPending: false,
+      isError: false,
+    }),
+    useShoppingSafetyGate: () => ({
+      blocked: false,
+      error: false,
+      message: null,
+      safetyFingerprint: null,
+      currentLabelWarnings: [],
+    }),
+    useCreateShoppingList: () => ({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    }),
+    useReconcileShoppingList: () => ({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    }),
+    useResumeShoppingCommand: () => undefined,
+  };
+});
 
 const MENU_ID = "30000000-0000-4000-8000-000000000001";
 const USER_ID = "31000000-0000-4000-8000-000000000001";
@@ -313,6 +354,25 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByRole("button", { name: "これに決めた" })).toBeDisabled();
     expect(acceptMenuVersionMock).not.toHaveBeenCalled();
   });
+
+  it("wires shopping create sheet and fridge tip when household actions are enabled", async () => {
+    // P4#3: /history/:menuId の買い物・冷蔵庫は enabled でも no-op だった。結果画面と同等に配線する。
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+
+    const shopping = await screen.findByRole("button", { name: "買い物リストを作る" });
+    expect(shopping).toBeEnabled();
+    await user.click(shopping);
+    // CreateListSheet（section + 見出し）が開く
+    expect(await screen.findByRole("heading", { name: /買い物リスト/i })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "冷蔵庫へ反映" }));
+    expect(
+      screen.getByText("調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。"),
+    ).toBeVisible();
+  });
 });
 
 describe("HistoryDetailPage idea permitted actions boundary", () => {
@@ -376,7 +436,11 @@ describe("MenuResultPage shared revalidation gate", () => {
     act(() => {
       dispatchHouseholdSafetyStorageEvent();
     });
-    expect(screen.getByRole("status")).toHaveTextContent("現在の家族設定で確認しています");
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((node) => (node.textContent ?? "").includes("現在の家族設定で確認しています")),
+    ).toBe(true);
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
   });
@@ -405,7 +469,12 @@ describe("MenuResultPage shared revalidation gate", () => {
         fireSafetySignal(signal);
       });
     }
-    expect(screen.getByRole("status")).toHaveTextContent("現在の家族設定で確認しています");
+    // MenuResult 内の status と競合し得るため、文言で絞る
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((node) => (node.textContent ?? "").includes("現在の家族設定で確認しています")),
+    ).toBe(true);
     expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
     act(() => {
       revalidate.resolve(validRevalidation);
