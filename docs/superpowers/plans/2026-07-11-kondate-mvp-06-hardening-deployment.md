@@ -513,12 +513,21 @@ git commit -m "feat: add permanent account deletion"
 - Modify: `compose.yaml`
 - Modify: `scripts/verify-openrouter-models.mjs`
 - Create: `scripts/verify-openrouter-models.test.mjs`
+- Create (optional contract table): `scripts/openrouter-models-contract.mjs` — shared accept/reject fixtures for script + Functions tests
 - Modify: `package.json`
 - Modify: `netlify/functions/_shared/env.ts`
+- Modify: `netlify/functions/_shared/env.test.ts`
 
 **Interfaces:**
 - Consumes: the **existing** `scripts/verify-openrouter-models.mjs`, the existing `verify:openrouter:config` / `verify:openrouter:models` scripts and their `predev`/`prebuild` callers, `OPENROUTER_MODELS` parsing from Plan 3, and the OpenRouter `GET /api/v1/models` response.
-- Produces: a testable refactor of that same script and one shared model-list parser used by build and Functions. **The script names do not change.** `verify:openrouter:config` and `verify:openrouter:models` keep their current names and their `--remote` argument convention, because `predev` and `prebuild` already call them; introducing `verify:models:config`/`verify:models:remote` would break both.
+- Produces: a testable refactor of that same script **plus** a Functions-side Zod mirror of the same free-model list rules, locked together by a shared contract test table. **The script names do not change.** `verify:openrouter:config` and `verify:openrouter:models` keep their current names and their `--remote` argument convention, because `predev` and `prebuild` already call them; introducing `verify:models:config`/`verify:models:remote` would break both.
+
+**Single contract, two runtimes (not two independent designs):** build/CLI cannot import the Functions Zod stack without pulling Netlify runtime into `predev`, and Functions cannot depend on a Node script path for cold starts. Therefore keep two implementations that **must stay mirror-identical**:
+
+1. `scripts/verify-openrouter-models.mjs` exports `parseConfiguredModels` for build/`predev`/`prebuild`/`--remote`.
+2. `netlify/functions/_shared/env.ts` keeps (or tightens) its own `OPENROUTER_MODELS` Zod transform for runtime.
+
+Do **not** claim a single shared module unless both call sites can import it without new bundling work. Instead: put the accepted and rejected model-list strings in **one table** (e.g. `scripts/openrouter-models-contract.mjs` exporting plain arrays, or a duplicated table with a comment pointer) and drive **both** `verify-openrouter-models.test.mjs` and `env.test.ts` from that same table so drift fails CI. Prose that says "one shared parser" means **one contract**, not necessarily one file.
 
 The current script has no exports and does its work at module top level, so Step 1's test cannot import it as written. The refactor is therefore: extract `parseConfiguredModels`, `verifyRemoteModels`, and `main` as named exports, keep the executable guard, and keep `--remote` as the remote-check switch rather than adding a `VERIFY_OPENROUTER_REMOTE` env variable. Read the current file before rewriting it and preserve any rule it already enforces that the snippet below omits.
 
@@ -562,9 +571,13 @@ test("bounds the live Models API request and closes transport failures", async (
 
 - [ ] **Step 2: Run the Node test and verify failure**
 
-Run: `node --test scripts/verify-openrouter-models.test.mjs`
+Run (container-routed; host `node --test` is not an execution context for this plan):
 
-Expected: FAIL because the verifier module does not exist.
+```bash
+docker compose run --rm --no-deps app node --test scripts/verify-openrouter-models.test.mjs
+```
+
+Expected: FAIL because the verifier module does not export the tested functions (or the test file is red for the missing export).
 
 - [ ] **Step 3: Implement structural and remote verification**
 
@@ -628,7 +641,21 @@ if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").hre
 }
 ```
 
-The same `parseConfiguredModels` rules must be represented in the Zod schema in `netlify/functions/_shared/env.ts`; its Vitest table reuses the accepted and rejected values above so runtime and build cannot drift. That schema **already** fixes `USER_DAILY_AI_LIMIT=5`, `USER_DAILY_EXTERNAL_CALL_LIMIT=12`, `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`, `USER_SHORT_WINDOW_SECONDS=600`, `OPENROUTER_TIMEOUT_MS=20000`, `FUNCTION_TOTAL_BUDGET_MS=50000`, and `AI_PROCESSING_STALE_SECONDS=180` through `releaseLockedInteger`/`positiveInteger`; verify rather than re-add them, and do not weaken an existing lock into a plain default. `AUTH_CONTINUATION_TTL_SECONDS=300` comes from the continuation schema this one extends. A production-context test accepts only the exact `https://openrouter.ai/api/v1` base URL; lookalike hosts, credentials, query/fragment, HTTP, and trailing-path variants fail before build.
+The same free-model list rules must appear in the Zod schema in `netlify/functions/_shared/env.ts` as a **mirror** of `parseConfiguredModels` (see Interfaces above). Drive both the script Node tests and `env.test.ts` from the shared contract table so runtime and build cannot drift.
+
+**Quota locks vs deadline locks — do not confuse them.** Today (`env.ts`) the 5/12/4/600 fields already use `releaseLockedInteger` and reject drift. **`OPENROUTER_TIMEOUT_MS`, `FUNCTION_TOTAL_BUDGET_MS`, and `AI_PROCESSING_STALE_SECONDS` do not:** they are `positiveInteger(...)` with defaults `20000` / `50000` / `180`, so any positive integer is accepted. Task 3 must **promote those three to exact-value locks** (same pattern as `releaseLockedInteger` or an equivalent `z.union([z.literal(20000), z.literal("20000")]).transform(() => 20000)`):
+
+- Accept only `20000` / `"20000"` for `OPENROUTER_TIMEOUT_MS`.
+- Accept only `50000` / `"50000"` for `FUNCTION_TOTAL_BUDGET_MS`.
+- Accept only `180` / `"180"` for `AI_PROCESSING_STALE_SECONDS`.
+
+Vitest cases (required, red-first before changing the schema):
+
+- exact values (number and string forms) parse to the locked numbers;
+- defaults when unset remain 20000 / 50000 / 180 if the schema still defaults, or fail closed if the plan prefers requiring explicit env — pick one and test it; Compose already sets the three values, so **require explicit env and reject unset** is acceptable;
+- **reject** neighbors such as `19999`, `20001`, `49999`, `50001`, `179`, `181`, `0`, negatives, floats, and empty strings with a closed error (no silent coerce to default).
+
+Do not claim these three are already release-locked in code before this Task; the roadmap/design intent is exact 20s / 50s / 180s, but implementation is still loose. `USER_DAILY_*` and `USER_SHORT_WINDOW_*` remain already locked — verify, do not weaken. `AUTH_CONTINUATION_TTL_SECONDS=300` comes from the continuation schema this one extends. A production-context test accepts only the exact `https://openrouter.ai/api/v1` base URL; lookalike hosts, credentials, query/fragment, HTTP, and trailing-path variants fail before build.
 
 - [ ] **Step 4: Add scripts and a mock-safe environment template**
 
@@ -708,6 +735,10 @@ git commit -m "build: verify free OpenRouter models"
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Modify: every `netlify/functions/*.ts` route handler
+- Modify: `src/features/planner/pantry-selector.tsx` (remove inline styles for CSP)
+- Modify: `src/shared/ui/wizard/progress-indicator.tsx` (remove dynamic inline width)
+- Modify: `src/styles.css` and/or feature CSS as needed for the relocated rules
+- Modify: focused tests that assert pantry dialog / progress indicator structure
 
 **Interfaces:**
 - Consumes: function result/error codes and actual model IDs from Plans 2–5 and Plan 7 (including `idea_menu_not_supported`, `idea_menu_revalidation_not_supported`, `source_menu_changed`, and `idempotency_payload_mismatch`).
@@ -894,6 +925,19 @@ This is a merge into the existing `netlify.toml`, not a replacement of it. The f
 
 Supabase authentication redirects use top-level navigation and do not require adding Google domains to `connect-src`. If a custom Supabase domain is used, add that exact HTTPS and WSS origin to `connect-src` in the deployment commit.
 
+**CSP vs existing React inline styles (must fix in this Task, not later):**
+The header above uses `style-src 'self'` with **no** `'unsafe-inline'`. That is intentional for security, but the current SPA will break under that policy until inline styles are removed:
+
+- `src/features/planner/pantry-selector.tsx` — expired-pantry confirm dialog uses `style={{ position: "fixed", zIndex: 20, inset: 0, … }}` and a second inline `width`/`maxHeight`/`overflow` block.
+- `src/shared/ui/wizard/progress-indicator.tsx` — progress fill uses `style={{ width: percentage }}`.
+
+Before enabling the CSP header (or in the same commit as enabling it):
+
+1. Move the pantry dialog chrome into named CSS classes under the existing planner/pantry styles (or a small shared overlay class in `src/styles.css` if used by ≥3 call sites — prefer feature-local first).
+2. For the progress bar, prefer a CSS custom property set once on the track (`style={{ ["--progress" as string]: percentage }}` is still an inline style attribute — **avoid** that under strict `style-src 'self'`). Use a discrete set of width utility classes, a `transform: scaleX(...)` with a class, or an SVG/`progress` element whose visual does not need a dynamic inline `width`. If a dynamic value is unavoidable, document an explicit, minimal CSP exception for that single pattern and get human approval — default is **no exception**.
+3. Grep `src` for `style={{` and remaining `style=` before merge; zero production hits except any approved exception list.
+4. Add a focused unit/component test that the pantry dialog and progress indicator still render without `style` attributes (or only the approved exception).
+
 - [ ] **Step 5: Run security boundary and Netlify build checks**
 
 Run:
@@ -903,9 +947,12 @@ docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/l
 docker compose --profile test run --rm db-test supabase/tests/database/rls_inventory.test.sql
 docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app npm run build
 docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
+# Prove the built site would not need unsafe-inline styles under the published CSP:
+docker compose run --rm --no-deps app sh -c \
+  'if grep -rnE "style=\\{\\{|style=\"" src --include="*.tsx" --include="*.ts" --include="*.jsx" --include="*.js"; then exit 1; fi'
 ```
 
-Expected: tests pass, no private-schema grant or RLS omission is listed, Vite emits `dist/`, and Netlify accepts the configuration. The deploy-preview context deliberately uses structural model validation and makes no live Models API call; the production context always performs the remote check.
+After the offline Netlify build, open `dist/index.html` (or the Netlify publish directory) and confirm `netlify.toml` CSP is the one that would apply to `/*`. Prefer a small Node assertion that parses `netlify.toml` headers and fails if `style-src` contains `unsafe-inline` while any `src/**/*.tsx` still contains `style={{`. Expected: tests pass, no private-schema grant or RLS omission is listed, Vite emits `dist/`, Netlify accepts the configuration, and the SPA has no production inline styles that the CSP would block. The deploy-preview context deliberately uses structural model validation and makes no live Models API call; the production context always performs the remote check.
 
 - [ ] **Step 6: Commit security hardening**
 
@@ -1011,38 +1058,53 @@ const assertNoHorizontalScroll = async (page: Page) =>
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true);
 
-/** Plan 7 contract: major action buttons' height ≥ 44. Native radios/checkboxes are out of scope. */
-const assertMajorActionHeights = async (page: Page, names: readonly string[]) => {
-  for (const name of names) {
+/**
+ * Plan 7 contract: major action buttons' height ≥ 44. Native radios/checkboxes are out of scope.
+ * Never silently skip a missing name — that turns a missing primary control into a false green.
+ * Callers pass only buttons that **must** exist in the current route × mode × step; use
+ * `assertMajorActionHeights(page, { "次へ": 1 })` form when a single instance is required.
+ */
+const assertMajorActionHeights = async (
+  page: Page,
+  required: Readonly<Record<string, number>>,
+) => {
+  for (const [name, expectedCount] of Object.entries(required)) {
     const control = page.getByRole("button", { name });
-    if ((await control.count()) === 0) continue;
-    const box = await control.first().boundingBox();
-    expect(box, name).not.toBeNull();
-    expect(box?.height, `${name} height`).toBeGreaterThanOrEqual(44);
+    await expect(control, `missing required control: ${name}`).toHaveCount(expectedCount);
+    for (let index = 0; index < expectedCount; index += 1) {
+      const box = await control.nth(index).boundingBox();
+      expect(box, `${name}[${String(index)}] box`).not.toBeNull();
+      expect(box?.height, `${name}[${String(index)}] height`).toBeGreaterThanOrEqual(44);
+    }
   }
 };
 
-const assertStepFits = async (page: Page) => {
+/** Per-step required majors — do not pass a union of every wizard button on every step. */
+const assertStepFits = async (
+  page: Page,
+  requiredMajors: Readonly<Record<string, number>>,
+) => {
   await assertNoHorizontalScroll(page);
-  await assertMajorActionHeights(page, ["次へ", "戻る", "追加", "献立を作る"]);
+  await assertMajorActionHeights(page, requiredMajors);
 };
 
 const answerSharedWizardSteps = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
+  // meal step: 次へ required after selection
+  await assertStepFits(page, { 次へ: 1 });
   await clickWizardNext(page);
-  await assertStepFits(page);
 
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await assertStepFits(page, { 追加: 1, 次へ: 1 });
   await page.getByRole("button", { name: "追加", exact: true }).click();
   await clickWizardNext(page);
-  await assertStepFits(page);
 
   await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
   await page.getByRole("radio", { name: "和食" }).check();
+  await assertStepFits(page, { 次へ: 1 });
   await clickWizardNext(page);
-  await assertStepFits(page);
 };
 
 const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") => {
@@ -1050,18 +1112,21 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
   if (mode === "idea") {
     await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
     await page.getByRole("button", { name: "2人" }).click();
+    await assertStepFits(page, { "2人": 1, 次へ: 1 });
   } else {
     // completedOnboardingPage: one eligible adult, default-selected as 家族1 — do not re-check.
     await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
     await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
+    await assertStepFits(page, { 次へ: 1 });
   }
   await clickWizardNext(page);
-  await assertStepFits(page);
 
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   if (mode === "idea") {
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   }
+  // review may show 献立を作る disabled until privacy; still require the control to exist
+  await assertMajorActionHeights(page, { "献立を作る": 1 });
 };
 
 /**
@@ -1095,20 +1160,23 @@ for (const width of [320, 375, 430]) {
   }) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/planner");
-    await assertStepFits(page);
+    await assertNoHorizontalScroll(page);
     await answerSharedWizardSteps(page);
     await answerAudienceAndReview(page, "household");
     await ensurePrivacyThenGenerate(page, false);
     await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, ["献立を作る"]);
+    // result surface (household success): live CTA from generation/history E2E
+    await assertMajorActionHeights(page, { "これに決めた": 1 });
   });
 
   test(`the start screen fits ${width}px with usable targets`, async ({ authenticatedPage: page }) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/welcome");
-    await expect(page.getByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, ["献立アイデアを考える", "家族情報を登録する"]);
+    await assertMajorActionHeights(page, {
+      "献立アイデアを考える": 1,
+      "家族情報を登録する": 1,
+    });
   });
 
   test(`the idea wizard and result fit ${width}px with usable targets`, async ({ ideaModePage: page }) => {
@@ -1118,6 +1186,7 @@ for (const width of [320, 375, 430]) {
     await ensurePrivacyThenGenerate(page, true);
     await expect(page.getByText("家族条件を使用していません")).toBeVisible();
     await assertNoHorizontalScroll(page);
+    await assertMajorActionHeights(page, { "これに決めた": 1 });
   });
 }
 ```
@@ -1238,25 +1307,53 @@ export function verifyGoogleOauthEvidence(value,{head,deployMetadata,now}){
   if(now.getTime()>expires)throw new Error("evidence_expired");
   return evidence;
 }
-export async function main(path=process.argv[2],env=process.env,fetchImpl=fetch){
+/**
+ * Transport seam for Netlify metadata. Pure unit tests inject `{fetchImpl, now, head, readFile}`.
+ * CLI spawn tests cannot reach a default `fetch` closed over in the module without a seam —
+ * use one of the two deterministic options below (pick one, document it, test both unit and spawn).
+ *
+ * Option A (preferred): env-gated mock module path for child processes only.
+ *   KONDATE_RELEASE_EVIDENCE_FETCH_MODULE=/abs/path/to/mock-fetch.mjs
+ *   That module default-exports `(url, init) => Promise<Response>`.
+ * Option B: optional second CLI arg `--fetch-fixture=/abs/path/to/deploy.json` that
+ *   short-circuits Netlify HTTP and feeds deploy metadata from disk (production CLI forbids
+ *   this unless CONTEXT is unset / test; production runner never sets the flag).
+ */
+export async function main(
+  path=process.argv[2],
+  env=process.env,
+  {
+    fetchImpl=fetch,
+    now=()=>new Date(),
+    revParseHead=()=>execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}),
+    revParseTopLevel=()=>execFileSync("git",["rev-parse","--show-toplevel"],{encoding:"utf8"}),
+    readEvidence=(p)=>readFileSync(p,"utf8"),
+  }={},
+){
   if(path===undefined)throw new Error("evidence_path_required");
-  const root=realpathSync(execFileSync("git",["rev-parse","--show-toplevel"],
-    {encoding:"utf8"}).trim());
+  const root=realpathSync(revParseTopLevel().trim());
   const evidencePath=realpathSync(path);
   if(evidencePath===root||evidencePath.startsWith(`${root}${sep}`)){
     throw new Error("evidence_must_be_external");
   }
-  const value=JSON.parse(readFileSync(evidencePath,"utf8"));
-  const head=execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"});
+  // Child-process inject: dynamic import only when env points outside the repo or to a tmp file.
+  let resolvedFetch=fetchImpl;
+  if(env.KONDATE_RELEASE_EVIDENCE_FETCH_MODULE){
+    const mod=await import(env.KONDATE_RELEASE_EVIDENCE_FETCH_MODULE);
+    resolvedFetch=mod.default??mod.fetchImpl;
+    if(typeof resolvedFetch!=="function")throw new Error("fetch_module_invalid");
+  }
+  const value=JSON.parse(readEvidence(evidencePath));
+  const head=revParseHead();
   const parsed=googleOauthEvidenceSchema.parse(value);
   if(!env.NETLIFY_AUTH_TOKEN)throw new Error("netlify_auth_required");
-  const response=await fetchImpl(
+  const response=await resolvedFetch(
     `https://api.netlify.com/api/v1/deploys/${encodeURIComponent(parsed.stagingDeployId)}`,
     {headers:{authorization:`Bearer ${env.NETLIFY_AUTH_TOKEN}`},
       signal:AbortSignal.timeout(5_000)},
   );
   if(!response.ok)throw new Error("staging_metadata_unavailable");
-  verifyGoogleOauthEvidence(parsed,{head,deployMetadata:await response.json(),now:new Date()});
+  verifyGoogleOauthEvidence(parsed,{head,deployMetadata:await response.json(),now:now()});
   process.stdout.write("google_oauth_evidence: pass\n");
 }
 if(process.argv[1]&&import.meta.url===new URL(process.argv[1],"file:").href){
@@ -1268,7 +1365,21 @@ if(process.argv[1]&&import.meta.url===new URL(process.argv[1],"file:").href){
 }
 ```
 
-The executable guard catches every error, emits only a closed code (never Zod input, deploy metadata, token, or file content), and exits nonzero. Tests call `verifyGoogleOauthEvidence` with injected metadata/clock and spawn the CLI with a temporary file outside the repository plus a mock Netlify fetch; a repository-local evidence path is rejected as `evidence_must_be_external`.
+The executable guard catches every error, emits only a closed code (never Zod input, deploy metadata, token, or file content), and exits nonzero.
+
+**Tests (two layers — both required):**
+
+1. **Unit:** call `verifyGoogleOauthEvidence` and `main(..., { fetchImpl, now, revParseHead, readEvidence })` with injected deps — no network, no `spawn`.
+2. **CLI spawn:** write evidence JSON outside the repo; write a tiny mock fetch module (or fixture file if Option B); run
+
+```bash
+docker compose run --rm --no-deps \
+  -e NETLIFY_AUTH_TOKEN=test-token \
+  -e KONDATE_RELEASE_EVIDENCE_FETCH_MODULE=/workspace/tmp/mock-netlify-fetch.mjs \
+  app node scripts/verify-release-evidence.mjs /tmp/evidence-outside-repo.json
+```
+
+assert stdout `google_oauth_evidence: pass` and that a repository-local evidence path exits nonzero with `evidence_must_be_external`. Do **not** claim “spawn with mock fetch” without this env (or `--fetch-fixture`) inject point — a bare `spawn` always hits real `fetch`.
 
 - [ ] **Step 2: Add deterministic adversarial fixtures**
 
