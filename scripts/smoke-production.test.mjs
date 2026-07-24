@@ -38,7 +38,11 @@ test("runSmokeProbes hits exact probes with unchanged origin", async () => {
       return {
         status: 401,
         text: async () => "",
-        json: async () => ({ code: "auth_required" }),
+        // handleError と同一の nested envelope
+        json: async () => ({
+          ok: false,
+          error: { code: "auth_required", message: "ログインが必要です" },
+        }),
       };
     }
     if (url === `${origin}/api/account`) {
@@ -46,7 +50,10 @@ test("runSmokeProbes hits exact probes with unchanged origin", async () => {
       return {
         status: 401,
         text: async () => "",
-        json: async () => ({ code: "auth_required" }),
+        json: async () => ({
+          ok: false,
+          error: { code: "auth_required", message: "ログインが必要です" },
+        }),
       };
     }
     throw new Error(`unexpected url ${url}`);
@@ -70,10 +77,31 @@ test("main never authorizes generation routes", async () => {
     return {
       status: 401,
       text: async () => "",
-      json: async () => ({ code: "auth_required" }),
+      json: async () => ({
+        ok: false,
+        error: { code: "auth_required", message: "ログインが必要です" },
+      }),
     };
   };
   const code = await main([origin], fetchImpl, (line) => lines.push(line));
   assert.equal(code, 0);
   assert.equal(lines.length, 0);
+});
+
+test("runSmokeProbes rejects flat code envelope that is not the Functions contract", async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/")) {
+      return { status: 200, text: async () => '<div id="root"></div>', json: async () => ({}) };
+    }
+    // 誤った flat 形状は本番ゲートで拒否する（false-green 防止）
+    return {
+      status: 401,
+      text: async () => "",
+      json: async () => ({ code: "auth_required" }),
+    };
+  };
+  await assert.rejects(
+    () => runSmokeProbes(origin, fetchImpl),
+    (error) => error instanceof Error && /auth_required_missing/u.test(error.message),
+  );
 });

@@ -269,8 +269,13 @@ test("uses the isolated E2E Function server without changing the public origin",
   assert.doesNotMatch(compose, /KONDATE_E2E_FUNCTION_SERVER/u);
   assert.doesNotMatch(compose, /GOTRUE_RATE_LIMIT_EMAIL_SENT/u);
   assert.match(composeE2e, /KONDATE_E2E_FUNCTION_SERVER: "1"/u);
-  assert.match(composeE2e, /\s{2}auth:\n\s{4}environment:\n\s{6}GOTRUE_SMTP_MAX_FREQUENCY: "1s"/u);
-  assert.match(composeE2e, /GOTRUE_RATE_LIMIT_EMAIL_SENT: "100"/u);
+  // environment 直下に意図コメントがあっても SMTP 頻度は固定
+  assert.match(
+    composeE2e,
+    /\s{2}auth:\n\s{4}environment:\n(?:\s{6}#[^\n]*\n)*\s{6}GOTRUE_SMTP_MAX_FREQUENCY: "1s"/u,
+  );
+  // full suite のメール送信枠。100 では後半が弾かれるため 1000 を固定する
+  assert.match(composeE2e, /GOTRUE_RATE_LIMIT_EMAIL_SENT: "1000"/u);
   assert.match(composeE2e, /command: \["node", "tools\/run-e2e-app\.mjs"\]/u);
   assert.match(viteConfig, /functions: \{ enabled: !isE2eFunctionServer \}/u);
   assert.match(viteConfig, /target: "http:\/\/127\.0\.0\.1:5174"/u);
@@ -286,13 +291,18 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   assert.match(runner, /ensure-compose-project-env\.sh/u);
   assert.match(runner, /--project-directory "\$repo_root" --project-name "\$project_name"/u);
   assert.match(runner, /-f "\$repo_root\/compose\.yaml"[\s\\]*\n?\s*up -d --wait/u);
-  assert.match(runner, /--profile e2e[\s\\]*up -d --wait auth/u);
+  // auth は rate-limit カウンタを持つため force-recreate する
+  assert.match(runner, /--profile e2e[\s\\]*up -d --wait --force-recreate auth/u);
   assert.match(
     runner,
-    /--profile e2e[\s\\]*up -d --wait --force-recreate --no-deps kong oauth-mock app/u,
+    /--profile e2e[\s\\]*up -d --wait --force-recreate --no-deps openrouter-mock kong oauth-mock app/u,
   );
   assert.match(runner, /run --rm --no-deps e2e/u);
-  assert.match(runner, /run --rm --no-deps e2e "\$@"/u);
+  // full suite は mobile → desktop の 2 段（共有 AI 枠リセット込み）
+  assert.match(runner, /--project=mobile-chromium/u);
+  assert.match(runner, /--project=desktop-chromium/u);
+  assert.match(runner, /reset-e2e-ai-quota\.sh/u);
+  assert.match(runner, /logs --no-color app/u);
   assert.doesNotMatch(runner, /exec docker compose/u);
   assert.match(runner, /trap cleanup_on_exit EXIT/u);
   assert.match(runner, /--profile e2e[\s\\]*kill --signal SIGKILL e2e/u);

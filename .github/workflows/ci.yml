@@ -37,9 +37,12 @@ jobs:
       - name: Provision least-privilege maintenance login
         run: ./scripts/provision-maintenance-role.sh
       - name: Local-safe Node script unit tests
+        # Node 24 は directory 引数をモジュールとして解決するため、明示 .mjs を列挙する
         run: >-
           docker compose run --rm --no-deps app node --test
-          tests/tooling
+          tests/tooling/compose.test.mjs
+          tests/tooling/local-development-scripts.test.mjs
+          tests/tooling/project-config.test.mjs
           scripts/assert-privacy-logs.test.mjs
           scripts/verify-release-evidence.test.mjs
           scripts/verify-openrouter-models.test.mjs
@@ -48,6 +51,7 @@ jobs:
           scripts/smoke-production.test.mjs
           scripts/verify-production-deploy.test.mjs
           scripts/verify-browser-secrets.test.mjs
+          scripts/verify-acceptance-matrix.test.mjs
       - run: docker compose run --rm --no-deps app npm run format:check
       - run: docker compose run --rm --no-deps app npm run lint
       - run: docker compose run --rm --no-deps app npm run typecheck
@@ -56,7 +60,7 @@ jobs:
           docker compose run --rm --no-deps app npx vitest run
           netlify/functions/_shared/maintenance-env.test.ts
           netlify/functions/_shared/maintenance-db.test.ts
-          netlify/functions/maintenance-cleanup.test.ts
+          netlify/functions/_tests/maintenance-cleanup.test.ts
       - run: docker compose run --rm --no-deps app npx vitest run
       - name: Maintenance DB integration
         run: docker compose run --rm app npm run test:maintenance-db:integration
@@ -75,7 +79,12 @@ jobs:
       - run: docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
       - name: Browser build and secret scan
         run: docker compose run --rm --no-deps app sh -c 'npm run build && npm run verify:browser-secrets -- --require-dist'
-      - run: docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
+      # Netlify offline 成果物も同一ステップで秘密スキャンする（context 固有の混入を見逃さない）
+      - name: Netlify offline build and secret scan
+        run: >-
+          docker compose run --rm --no-deps app sh -c
+          'npm exec --offline netlify -- build --offline --context deploy-preview
+          && npm run verify:browser-secrets -- --require-dist'
       # Playwright HTML レポートは DOM・入力・header を含み得るため artifact に載せない。
       # 失敗時は compose 状態のみ（秘密・.env は載せない）。
       - name: Show container health on failure

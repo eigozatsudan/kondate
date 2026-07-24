@@ -23,6 +23,8 @@ const SECRET_VALUE_KEYS = [
   "SUPABASE_MAINTENANCE_DB_URL",
   "MAINTENANCE_DB_PASSWORD",
   "NETLIFY_AUTH_TOKEN",
+  // 名前スキャンに加え、値だけの dist 漏洩も検知する
+  "AUTH_CONTINUATION_ENCRYPTION_KEY",
 ];
 
 const SCAN_ROOTS = ["src", "shared", "dist"];

@@ -285,43 +285,68 @@ function expectedResetInvocations(root, projectName) {
 }
 
 function expectedE2EInvocations(root, projectName, arguments_ = [], cleanupE2EContainers = true) {
+  // scripts/run-e2e.sh の現行シーケンスに合わせる:
+  // base up → force-recreate auth → AI 枠リセット → E2E app 群 recreate →
+  // （--project 未指定なら mobile → 枠リセット → desktop）→ cleanup で app ログ採取 →
+  // 失敗時のみ e2e kill/rm → auth/app 復元
   const compose = ["compose", "--project-directory", root, "--project-name", projectName];
+  const baseComposeFile = ["-f", join(root, "compose.yaml")];
+  const e2eComposeFiles = [
+    "-f",
+    join(root, "compose.yaml"),
+    "-f",
+    join(root, "compose.e2e.yaml"),
+    "--profile",
+    "e2e",
+  ];
+  const quotaReset = [
+    ...compose,
+    ...baseComposeFile,
+    "run",
+    "--rm",
+    "--no-deps",
+    "--entrypoint",
+    "sh",
+    "migrate",
+    "-c",
+    'psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "truncate private.ai_global_daily_usage"',
+  ];
+  const hasProject = arguments_.some(
+    (arg) => arg === "--project" || String(arg).startsWith("--project="),
+  );
+  const playwrightRuns = hasProject
+    ? [[...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...arguments_]]
+    : [
+        [
+          ...compose,
+          ...e2eComposeFiles,
+          "run",
+          "--rm",
+          "--no-deps",
+          "e2e",
+          "--project=mobile-chromium",
+          ...arguments_,
+        ],
+        quotaReset,
+        [
+          ...compose,
+          ...e2eComposeFiles,
+          "run",
+          "--rm",
+          "--no-deps",
+          "e2e",
+          "--project=desktop-chromium",
+          ...arguments_,
+        ],
+      ];
+
   return [
-    [...compose, "-f", join(root, "compose.yaml"), "up", "-d", "--wait"],
+    [...compose, ...baseComposeFile, "up", "-d", "--wait"],
+    [...compose, ...e2eComposeFiles, "up", "-d", "--wait", "--force-recreate", "auth"],
+    quotaReset,
     [
       ...compose,
-      "-f",
-      join(root, "compose.yaml"),
-      "-f",
-      join(root, "compose.e2e.yaml"),
-      "--profile",
-      "e2e",
-      "up",
-      "-d",
-      "--wait",
-      "auth",
-    ],
-    [
-      ...compose,
-      "-f",
-      join(root, "compose.yaml"),
-      "run",
-      "--rm",
-      "--no-deps",
-      "--entrypoint",
-      "sh",
-      "migrate",
-      "-c",
-      'psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "truncate private.ai_global_daily_usage"',
-    ],
-    [
-      ...compose,
-      "-f",
-      join(root, "compose.yaml"),
-      "-f",
-      join(root, "compose.e2e.yaml"),
-      "--profile",
-      "e2e",
+      ...e2eComposeFiles,
       "up",
       "-d",
       "--wait",
@@ -332,53 +357,18 @@ function expectedE2EInvocations(root, projectName, arguments_ = [], cleanupE2ECo
       "oauth-mock",
       "app",
     ],
-    [
-      ...compose,
-      "-f",
-      join(root, "compose.yaml"),
-      "-f",
-      join(root, "compose.e2e.yaml"),
-      "--profile",
-      "e2e",
-      "run",
-      "--rm",
-      "--no-deps",
-      "e2e",
-      ...arguments_,
-    ],
+    ...playwrightRuns,
+    // cleanup は成否に関わらず Function ログを host へ採取する
+    [...compose, ...baseComposeFile, "logs", "--no-color", "app"],
     ...(cleanupE2EContainers
       ? [
-          [
-            ...compose,
-            "-f",
-            join(root, "compose.yaml"),
-            "-f",
-            join(root, "compose.e2e.yaml"),
-            "--profile",
-            "e2e",
-            "kill",
-            "--signal",
-            "SIGKILL",
-            "e2e",
-          ],
-          [
-            ...compose,
-            "-f",
-            join(root, "compose.yaml"),
-            "-f",
-            join(root, "compose.e2e.yaml"),
-            "--profile",
-            "e2e",
-            "rm",
-            "--force",
-            "e2e",
-          ],
+          [...compose, ...e2eComposeFiles, "kill", "--signal", "SIGKILL", "e2e"],
+          [...compose, ...e2eComposeFiles, "rm", "--force", "e2e"],
         ]
       : []),
     [
       ...compose,
-      "-f",
-      join(root, "compose.yaml"),
+      ...baseComposeFile,
       "up",
       "-d",
       "--wait",
@@ -667,6 +657,8 @@ test("E2E runner reports a lock release failure after a successful run", async (
 });
 
 test("E2E runner restores the base stack after every forwarded signal", async (t) => {
+  // 単一 --project で e2e 待機に割り込み、dual mobile/desktop 分岐を避ける
+  const e2eArgs = ["--project=mobile-chromium"];
   for (const fixture of [
     { signal: "SIGHUP", status: 129 },
     { signal: "SIGINT", status: 130 },
@@ -679,7 +671,7 @@ test("E2E runner restores the base stack after every forwarded signal", async (t
       const logDir = join(root, `${fixture.signal} log`);
       const readyFile = join(root, `${fixture.signal} ready`);
       await mkdir(logDir);
-      const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+      const child = spawn(join(root, "scripts", "run-e2e.sh"), e2eArgs, {
         cwd: tmpdir(),
         env: {
           ...process.env,
@@ -712,13 +704,14 @@ test("E2E runner restores the base stack after every forwarded signal", async (t
       assert.equal(isProcessAlive(fakeDockerPid), false);
       assert.deepEqual(
         await readDockerInvocations(logDir),
-        expectedE2EInvocations(root, await expectedProjectName(root)),
+        expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
     });
   }
 });
 
 test("E2E runner force-kills a child that ignores two forwarded signals", async (t) => {
+  const e2eArgs = ["--project=mobile-chromium"];
   for (const fixture of [
     { signal: "SIGHUP", status: 129 },
     { signal: "SIGINT", status: 130 },
@@ -731,7 +724,7 @@ test("E2E runner force-kills a child that ignores two forwarded signals", async 
       const logDir = join(root, `${fixture.signal} ignored log`);
       const readyFile = join(root, `${fixture.signal} ignored ready`);
       await mkdir(logDir);
-      const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+      const child = spawn(join(root, "scripts", "run-e2e.sh"), e2eArgs, {
         cwd: tmpdir(),
         env: {
           ...process.env,
@@ -767,13 +760,14 @@ test("E2E runner force-kills a child that ignores two forwarded signals", async 
       assert.equal(isProcessAlive(fakeDockerPid), false);
       assert.deepEqual(
         await readDockerInvocations(logDir),
-        expectedE2EInvocations(root, await expectedProjectName(root)),
+        expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
     });
   }
 });
 
 test("E2E runner watchdog kills a child that ignores one forwarded signal", async (t) => {
+  const e2eArgs = ["--project=mobile-chromium"];
   for (const fixture of [
     { signal: "SIGHUP", status: 129 },
     { signal: "SIGINT", status: 130 },
@@ -786,7 +780,7 @@ test("E2E runner watchdog kills a child that ignores one forwarded signal", asyn
       const logDir = join(root, `${fixture.signal} watchdog log`);
       const readyFile = join(root, `${fixture.signal} watchdog ready`);
       await mkdir(logDir);
-      const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+      const child = spawn(join(root, "scripts", "run-e2e.sh"), e2eArgs, {
         cwd: tmpdir(),
         env: {
           ...process.env,
@@ -826,13 +820,14 @@ test("E2E runner watchdog kills a child that ignores one forwarded signal", asyn
         assert.equal(isProcessAlive(pid), false);
       assert.deepEqual(
         await readDockerInvocations(logDir),
-        expectedE2EInvocations(root, await expectedProjectName(root)),
+        expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
     });
   }
 });
 
 test("E2E runner reaps a child that signals during launch", async (t) => {
+  const e2eArgs = ["--project=mobile-chromium"];
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await t.test(`attempt ${attempt + 1}`, async (subtest) => {
       const root = await createDatabaseScriptFixture("run-e2e.sh");
@@ -842,7 +837,7 @@ test("E2E runner reaps a child that signals during launch", async (t) => {
       const readyFile = join(root, `launch race ready ${attempt + 1}`);
 
       await assert.rejects(
-        runE2E(root, bin, logDir, [], {
+        runE2E(root, bin, logDir, e2eArgs, {
           DOCKER_READY_FILE: readyFile,
           DOCKER_SIGNAL_PARENT_ON_START: "SIGTERM",
           E2E_WAIT_FOR_SIGNAL: "1",
@@ -854,7 +849,7 @@ test("E2E runner reaps a child that signals during launch", async (t) => {
       assert.equal(isProcessAlive(fakeDockerPid), false);
       assert.deepEqual(
         await readDockerInvocations(logDir),
-        expectedE2EInvocations(root, await expectedProjectName(root)),
+        expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
     });
   }
@@ -955,6 +950,8 @@ test("E2E runner bounds one signal while a base restoration is stuck", async (t)
 });
 
 test("E2E runner preserves every early failure when cleanup also fails", async (t) => {
+  // 単一 project で期待列を短くし、cleanup 末尾は logs + kill + rm + restore
+  const e2eArgs = ["--project=mobile-chromium"];
   for (let failureStage = 1; failureStage <= 4; failureStage += 1) {
     await t.test(`stage ${failureStage}`, async (subtest) => {
       const root = await createDatabaseScriptFixture("run-e2e.sh");
@@ -964,7 +961,7 @@ test("E2E runner preserves every early failure when cleanup also fails", async (
       const failureStatus = 50 + failureStage;
 
       await assert.rejects(
-        runE2E(root, bin, logDir, [], {
+        runE2E(root, bin, logDir, e2eArgs, {
           DOCKER_FAIL_AT: String(failureStage),
           DOCKER_FAIL_STATUS: String(failureStatus),
           E2E_CLEANUP_STATUS: "79",
@@ -974,12 +971,11 @@ test("E2E runner preserves every early failure when cleanup also fails", async (
         (error) => error && typeof error === "object" && error.code === failureStatus,
       );
 
-      const expected = expectedE2EInvocations(root, await expectedProjectName(root));
+      const expected = expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs);
+      // cleanup は成否に関わらず logs を先に採取し、失敗時は kill/rm 後に restore
       assert.deepEqual(await readDockerInvocations(logDir), [
         ...expected.slice(0, failureStage),
-        expected.at(-3),
-        expected.at(-2),
-        expected.at(-1),
+        ...expected.slice(-4),
       ]);
     });
   }
@@ -1018,6 +1014,7 @@ test("E2E runner reports a base stack restoration failure after a successful run
 });
 
 test("E2E runner kills and removes a daemon-side E2E child before restoring", async (t) => {
+  const e2eArgs = ["--project=mobile-chromium"];
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
@@ -1026,7 +1023,7 @@ test("E2E runner kills and removes a daemon-side E2E child before restoring", as
   const daemonChildFile = join(root, "daemon child pid");
   const removedFile = join(root, "daemon child removed");
   await mkdir(logDir);
-  const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+  const child = spawn(join(root, "scripts", "run-e2e.sh"), e2eArgs, {
     cwd: tmpdir(),
     env: {
       ...process.env,
@@ -1061,7 +1058,7 @@ test("E2E runner kills and removes a daemon-side E2E child before restoring", as
   assert.equal(await readFile(removedFile, "utf8"), "removed\n");
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
   );
 });
 
@@ -1080,6 +1077,7 @@ test("E2E runner does not remove the completed E2E container", async (t) => {
 });
 
 test("E2E runner escalates a second signal across the cleanup phase", async (t) => {
+  const e2eArgs = ["--project=mobile-chromium"];
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
@@ -1087,7 +1085,7 @@ test("E2E runner escalates a second signal across the cleanup phase", async (t) 
   const e2eReadyFile = join(root, "E2E phase ready");
   const cleanupReadyFile = join(root, "cleanup phase ready");
   await mkdir(logDir);
-  const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+  const child = spawn(join(root, "scripts", "run-e2e.sh"), e2eArgs, {
     cwd: tmpdir(),
     env: {
       ...process.env,
@@ -1122,11 +1120,12 @@ test("E2E runner escalates a second signal across the cleanup phase", async (t) 
   assert.equal(isProcessAlive(cleanupPid), false);
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
   );
 });
 
 test("E2E runner rearms its watchdog for a stuck restore after an E2E signal", async (t) => {
+  const e2eArgs = ["--project=mobile-chromium"];
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
@@ -1134,7 +1133,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an E2E signal", a
   const e2eReadyFile = join(root, "E2E signal ready");
   const cleanupReadyFile = join(root, "E2E signal restore ready");
   await mkdir(logDir);
-  const child = spawn(join(root, "scripts", "run-e2e.sh"), {
+  const child = spawn(join(root, "scripts", "run-e2e.sh"), e2eArgs, {
     cwd: tmpdir(),
     env: {
       ...process.env,
@@ -1175,7 +1174,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an E2E signal", a
     assert.equal(isProcessAlive(pid), false);
   assert.deepEqual(
     await readDockerInvocations(logDir),
-    expectedE2EInvocations(root, await expectedProjectName(root)),
+    expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
   );
 });
 

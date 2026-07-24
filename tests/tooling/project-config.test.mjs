@@ -232,13 +232,30 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   assert.match(workflow, /provision-maintenance-role\.sh/u);
   assert.match(script, /verify:browser-secrets/u);
   assert.match(workflow, /verify:browser-secrets/u);
-  // Vitest include 外の node:test スイートを CI が実行すること
-  assert.match(script, /tests\/tooling/u);
-  assert.match(workflow, /tests\/tooling/u);
+  // Vitest include 外の node:test スイートを CI が実行すること（Node 24 向け明示パス）
+  assert.match(script, /tests\/tooling\/compose\.test\.mjs/u);
+  assert.match(workflow, /tests\/tooling\/compose\.test\.mjs/u);
+  assert.match(script, /tests\/tooling\/local-development-scripts\.test\.mjs/u);
+  assert.match(workflow, /tests\/tooling\/local-development-scripts\.test\.mjs/u);
+  assert.match(script, /tests\/tooling\/project-config\.test\.mjs/u);
+  assert.match(workflow, /tests\/tooling\/project-config\.test\.mjs/u);
   assert.match(script, /assert-privacy-logs\.test\.mjs/u);
   assert.match(workflow, /assert-privacy-logs\.test\.mjs/u);
   assert.match(script, /verify-release-evidence\.test\.mjs/u);
   assert.match(workflow, /verify-release-evidence\.test\.mjs/u);
+  assert.match(script, /verify-acceptance-matrix\.test\.mjs/u);
+  assert.match(workflow, /verify-acceptance-matrix\.test\.mjs/u);
+  // Netlify offline 成果物も browser secret scan を通す
+  assert.match(
+    script,
+    /netlify -- build --offline --context deploy-preview && npm run verify:browser-secrets/u,
+  );
+  assert.match(
+    workflow,
+    /netlify -- build --offline --context deploy-preview\s*&& npm run verify:browser-secrets/u,
+  );
+  assert.match(script, /_tests\/maintenance-cleanup\.test\.ts/u);
+  assert.match(workflow, /_tests\/maintenance-cleanup\.test\.ts/u);
 
   const scriptOrder = extractSharedCiGateOrder(script);
   const workflowOrder = extractSharedCiGateOrder(workflow);

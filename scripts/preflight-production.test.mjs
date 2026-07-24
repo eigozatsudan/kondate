@@ -60,6 +60,7 @@ test("rejects VITE_ aliases of server secrets even when empty", () => {
     "VITE_OPENROUTER_API_KEY",
     "VITE_GENERATION_REQUEST_HMAC_KEY",
     "VITE_SUPABASE_MAINTENANCE_DB_URL",
+    "VITE_AUTH_CONTINUATION_ENCRYPTION_KEY",
   ]) {
     assert.throws(() => validateProductionEnv(completeEnv({ [key]: "" })), new RegExp(key));
   }

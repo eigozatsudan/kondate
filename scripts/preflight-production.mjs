@@ -106,6 +106,8 @@ const FORBIDDEN_VITE_ALIASES = [
   "VITE_OPENROUTER_API_KEY",
   "VITE_GENERATION_REQUEST_HMAC_KEY",
   "VITE_SUPABASE_MAINTENANCE_DB_URL",
+  // Vite は VITE_ をブラウザへ公開し得るため、continuation 暗号鍵 alias も拒否する
+  "VITE_AUTH_CONTINUATION_ENCRYPTION_KEY",
 ];
 
 function requirePositiveIntegerString(env, key, exact) {

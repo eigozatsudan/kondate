@@ -16,8 +16,11 @@ trap teardown EXIT
 docker compose config --quiet
 docker compose up -d --wait --wait-timeout 600
 ./scripts/provision-maintenance-role.sh
+# Node 24 は directory 引数をモジュールとして解決するため、明示 .mjs を列挙する
 docker compose run --rm --no-deps app node --test \
-  tests/tooling \
+  tests/tooling/compose.test.mjs \
+  tests/tooling/local-development-scripts.test.mjs \
+  tests/tooling/project-config.test.mjs \
   scripts/assert-privacy-logs.test.mjs \
   scripts/verify-release-evidence.test.mjs \
   scripts/verify-openrouter-models.test.mjs \
@@ -25,14 +28,15 @@ docker compose run --rm --no-deps app node --test \
   scripts/preflight-production.test.mjs \
   scripts/smoke-production.test.mjs \
   scripts/verify-production-deploy.test.mjs \
-  scripts/verify-browser-secrets.test.mjs
+  scripts/verify-browser-secrets.test.mjs \
+  scripts/verify-acceptance-matrix.test.mjs
 docker compose run --rm --no-deps app npm run format:check
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps app npx vitest run \
   netlify/functions/_shared/maintenance-env.test.ts \
   netlify/functions/_shared/maintenance-db.test.ts \
-  netlify/functions/maintenance-cleanup.test.ts
+  netlify/functions/_tests/maintenance-cleanup.test.ts
 docker compose run --rm --no-deps app npx vitest run
 docker compose run --rm app npm run test:maintenance-db:integration
 docker compose --profile test run --rm db-test
@@ -44,4 +48,6 @@ export PLAYWRIGHT_DISABLE_TRACE=1
 ./scripts/run-e2e.sh
 docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
 docker compose run --rm --no-deps app sh -c 'npm run build && npm run verify:browser-secrets -- --require-dist'
-docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
+# Netlify offline 成果物も同一ステップで秘密スキャンする
+docker compose run --rm --no-deps app sh -c \
+  'npm exec --offline netlify -- build --offline --context deploy-preview && npm run verify:browser-secrets -- --require-dist'

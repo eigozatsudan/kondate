@@ -24,8 +24,9 @@ const PROBES = [
     method: "POST",
     assert: async (response) => {
       if (response.status !== 401) return `generations_menu ${response.status}`;
+      // 実APIは handleError の nested envelope: { ok:false, error:{ code } }
       const body = await response.json().catch(() => null);
-      if (!body || body.code !== "auth_required") {
+      if (!body || body.ok !== false || body.error?.code !== "auth_required") {
         return "generations_menu auth_required_missing";
       }
       return null;
@@ -38,7 +39,7 @@ const PROBES = [
     assert: async (response) => {
       if (response.status !== 401) return `account_delete ${response.status}`;
       const body = await response.json().catch(() => null);
-      if (!body || body.code !== "auth_required") {
+      if (!body || body.ok !== false || body.error?.code !== "auth_required") {
         return "account_delete auth_required_missing";
       }
       return null;
