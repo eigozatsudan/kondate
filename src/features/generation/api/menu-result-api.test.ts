@@ -84,6 +84,7 @@ function rawMenuRow() {
     output_schema_version: "2026-07-11.v1",
     target_mode: "household" as string,
     preference_snapshot: HOUSEHOLD_PREFERENCE_SNAPSHOT as unknown,
+    is_favorite: false as boolean,
     dishes: [
       {
         id: DISH2_ID,
@@ -594,6 +595,16 @@ describe("getMenuResult", () => {
     const result = await getMenuResult(MENU_ID);
     expect(result.targetMode).toBe("idea");
     expect(result.sourceSubmission?.targetMode).toBe("idea");
+  });
+
+  it("maps menus.is_favorite into MenuResultViewModel.isFavorite", async () => {
+    const row = rawMenuRow();
+    row.is_favorite = true;
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.isFavorite).toBe(true);
   });
 
   it("行が見つからない場合はmenu_not_foundを送出する", async () => {

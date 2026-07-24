@@ -137,11 +137,14 @@ function renderHistoryDetail(
   options: {
     revalidate?: () => Promise<RevalidationResult>;
     revalidation?: HistoryDetailRevalidationView;
+    queryClient?: QueryClient;
   } = {},
 ) {
   if (options.revalidate !== undefined) {
     revalidateMenuMock.mockImplementation(options.revalidate);
   }
+  const queryClient =
+    options.queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [
       {
@@ -160,9 +163,7 @@ function renderHistoryDetail(
   );
   render(
     <AuthContext.Provider value={authValue(USER_ID)}>
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
+      <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
     </AuthContext.Provider>,
@@ -423,6 +424,44 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
     });
     expect(screen.queryByText("家族条件を使用していません")).toBeNull();
   });
+
+  it("hydrates favorite button from result.isFavorite on idea mount", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "idea", isFavorite: true }),
+    );
+
+    renderHistoryDetail();
+
+    const favorite = await screen.findByRole("button", { name: "お気に入りを外す" });
+    expect(favorite).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("syncs favorite chrome when result.isFavorite changes for the same menuId", async () => {
+    // query 再取得で favorite だけ変わるケースを useEffect 経路でカバーする
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "idea", isFavorite: false }),
+    );
+
+    renderHistoryDetail({ queryClient });
+
+    expect(await screen.findByRole("button", { name: "お気に入りに追加" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+
+    act(() => {
+      queryClient.setQueryData(
+        ["menu-result", USER_ID, MENU_ID],
+        makeMenuResultViewModel({ targetMode: "idea", isFavorite: true }),
+      );
+    });
+
+    expect(await screen.findByRole("button", { name: "お気に入りを外す" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
 });
 
 describe("MenuResultPage shared revalidation gate", () => {
@@ -439,7 +478,7 @@ describe("MenuResultPage shared revalidation gate", () => {
     expect(
       screen
         .getAllByRole("status")
-        .some((node) => (node.textContent ?? "").includes("現在の家族設定で確認しています")),
+        .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
     ).toBe(true);
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
@@ -473,7 +512,7 @@ describe("MenuResultPage shared revalidation gate", () => {
     expect(
       screen
         .getAllByRole("status")
-        .some((node) => (node.textContent ?? "").includes("現在の家族設定で確認しています")),
+        .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
     ).toBe(true);
     expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
     act(() => {

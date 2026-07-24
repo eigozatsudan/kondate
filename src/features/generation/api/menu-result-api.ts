@@ -19,7 +19,7 @@ export function buildMenuResultQuery(
     .select(
       `
       id, meal_type, cuisine_genre, servings, total_elapsed_minutes, output_schema_version,
-      target_mode, preference_snapshot,
+      target_mode, preference_snapshot, is_favorite,
       dishes!dishes_menu_owner_fkey (
         id, role, position, name, description, cooking_time_minutes,
         dish_ingredients!dish_ingredients_dish_owner_fkey (
@@ -330,6 +330,8 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
   return {
     targetMode: targetModeParsed.data,
     sourceSubmission,
+    // menus.is_favorite は DB/生成型とも boolean 非 null。そのまま投影する。
+    isFavorite: data.is_favorite,
     menu,
     memberLabels: Object.fromEntries(memberLabels),
     labelConfirmations: data.menu_label_confirmations.map((item) => {

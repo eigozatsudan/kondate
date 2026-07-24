@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -556,6 +556,45 @@ describe("MenuResultPage", () => {
         expect(revalidateMenuMock).toHaveBeenCalled();
       });
       expect(screen.queryByText("家族条件を使用していません")).toBeNull();
+    });
+
+    it("hydrates favorite button from result.isFavorite on idea mount", async () => {
+      getMenuResultMock.mockResolvedValue(
+        makeMenuResultViewModel({ targetMode: "idea", isFavorite: true }),
+      );
+
+      renderPage(`/menus/${VALID_MENU_ID}`);
+
+      const favorite = await screen.findByRole("button", { name: "お気に入りを外す" });
+      expect(favorite).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("syncs favorite chrome when result.isFavorite changes for the same menuId", async () => {
+      // query 再取得で favorite だけ変わるケースを useEffect 経路でカバーする
+      // （key={menuId} のみに頼ると同一 route では state が古いまま残る）
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      getMenuResultMock.mockResolvedValue(
+        makeMenuResultViewModel({ targetMode: "idea", isFavorite: false }),
+      );
+
+      renderPage(`/menus/${VALID_MENU_ID}`, queryClient);
+
+      expect(await screen.findByRole("button", { name: "お気に入りに追加" })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+
+      act(() => {
+        queryClient.setQueryData(
+          ["menu-result", USER_A_ID, VALID_MENU_ID],
+          makeMenuResultViewModel({ targetMode: "idea", isFavorite: true }),
+        );
+      });
+
+      expect(await screen.findByRole("button", { name: "お気に入りを外す" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
     });
   });
 });

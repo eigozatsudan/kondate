@@ -295,7 +295,9 @@ export function underSixHardBeanAndNutContext(): GenerationContext {
 // を上書きする。
 //
 export function makeMenuResultViewModel(
-  overrides: Partial<Pick<MenuResultViewModel, "targetMode" | "sourceSubmission">> = {},
+  overrides: Partial<
+    Pick<MenuResultViewModel, "targetMode" | "sourceSubmission" | "isFavorite">
+  > = {},
 ): MenuResultViewModel {
   const dish1Id = "50000000-0000-4000-8000-000000000001";
   const dish2Id = "50000000-0000-4000-8000-000000000002";
@@ -417,6 +419,8 @@ export function makeMenuResultViewModel(
     // 呼び出し側で上書きする（下記の overrides 引数を参照）。
     targetMode: "household",
     sourceSubmission: null,
+    // お気に入り未設定が大半のケースなので既定 false。hydrate テストだけ true を渡す。
+    isFavorite: false,
     menu,
     memberLabels: { member_1: "子ども", member_2: "大人" },
     labelConfirmations: [

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { z } from "zod";
@@ -151,10 +151,15 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
   const favorite = useToggleFavorite();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
-  const [isFavorite, setIsFavorite] = useState(false);
+  // DB hydrate: query の isFavorite を初期値にし、同一 route での再取得も useEffect で同期する
+  const [isFavorite, setIsFavorite] = useState(result.isFavorite);
   const [fridgeOpen, setFridgeOpen] = useState(false);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
+
+  useEffect(() => {
+    setIsFavorite(result.isFavorite);
+  }, [result.isFavorite]);
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;

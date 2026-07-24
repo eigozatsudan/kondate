@@ -50,6 +50,11 @@ export type MenuResultViewModel = {
    * 再現に失敗した場合でも安全側へ倒し、存在しない条件を捏造しない）。
    */
   sourceSubmission: PlannerSubmission | null;
+  /**
+   * menus.is_favorite の所有者向け投影。idea 結果/履歴のローカルお気に入り
+   * トグル初期値と query 再取得後の同期元になる（false 既定で安全側）。
+   */
+  isFavorite: boolean;
   menu: ValidatedMenu;
   memberLabels: Readonly<Record<string, string>>;
   labelConfirmations: readonly MenuResultLabelConfirmation[];
