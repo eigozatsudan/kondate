@@ -21,16 +21,8 @@ test("household journey: welcome through shopping reconciliation", async ({
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
 
-  await page.goto("/welcome");
-  await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible({
-    timeout: 15_000,
-  });
-  // 完了済みでも welcome から家族向け導線へ
-  const familyStart = page.getByRole("button", { name: /家族情報を登録する|家族に合わせて/u });
-  if (await familyStart.isVisible().catch(() => false)) {
-    await familyStart.click();
-  }
-
+  // completedOnboardingPage は onboarding_status=complete のため /welcome は
+  // WelcomePage 契約どおり /planner へ即時リダイレクトする。welcome 見出しは期待しない。
   await page.goto("/planner");
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({ timeout: 15_000 });
   await page.getByRole("radio", { name: "朝食" }).check();
@@ -165,8 +157,11 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   const generate = page.getByRole("button", { name: "献立を作る" });
   if (await generate.isDisabled().catch(() => false)) {
     await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
+    // reload 前に同意保存と planner 復帰を待つ（即 reload すると privacy に残る）
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
     await page.reload();
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
       timeout: 15_000,

@@ -4,8 +4,8 @@ import { assertPrivacyLogs } from "./assert-privacy-logs.mjs";
 
 const goodLine = JSON.stringify({
   level: "info",
-  code: "generation_succeeded",
-  request_id: "req-1",
+  code: "succeeded",
+  request_id: "50000000-0000-4000-8000-000000000099",
   duration_ms: 120,
   model_id: "mock/kondate-primary:free",
 });
@@ -34,7 +34,7 @@ describe("assertPrivacyLogs", () => {
         assertPrivacyLogs(
           JSON.stringify({
             level: "info",
-            code: "generation_succeeded",
+            code: "succeeded",
             requestId: "x",
             durationMs: 1,
             errorCode: "y",
@@ -44,7 +44,9 @@ describe("assertPrivacyLogs", () => {
     );
   });
 
-  it("fails on UUID, memo keys, Japanese names, and raw mock body markers", () => {
+  it("allows UUID only inside request_id and fails bare UUID / memo / names / raw body", () => {
+    // request_id 内の UUID は redacted 後に検査するため通過する
+    assert.equal(assertPrivacyLogs(`${goodLine}\n`).generationLines, 1);
     assert.throws(
       () => assertPrivacyLogs(`${goodLine}\n10000000-0000-4000-8000-000000000001\n`),
       /privacy_log_sensitive_present/,
@@ -79,7 +81,7 @@ describe("assertPrivacyLogs", () => {
         assertPrivacyLogs(
           JSON.stringify({
             level: "info",
-            code: "generation_succeeded",
+            code: "succeeded",
             request_id: "req-1",
             duration_ms: 1,
             extra_debug: "not allowlisted",

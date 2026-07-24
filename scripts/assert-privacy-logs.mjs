@@ -6,16 +6,21 @@ import { readFileSync } from "node:fs";
 
 /** generation 経路の存在証明に数える closed code のみ（maintenance や未知 code は不可） */
 const generationCodes = new Set([
-  "generation_started",
-  "generation_succeeded",
-  "generation_failed",
-  "generation_conflict",
+  // generation-service 終端が実際に出す code（errorCode を code としてログ）
+  "succeeded",
+  "generation_timeout",
+  "model_unavailable",
   "invalid_ai_response",
   "current_safety_changed",
   "constraint_conflict",
   "source_menu_changed",
   "quota_exhausted",
   "external_attempt_exhausted",
+  // 旧称・互換（合成フィクスチャ用）
+  "generation_started",
+  "generation_succeeded",
+  "generation_failed",
+  "generation_conflict",
 ]);
 
 const absencePatterns = [
@@ -46,13 +51,23 @@ const absencePatterns = [
  * @param {string} logText
  * @param {{ requireGeneration?: boolean }} [options]
  */
+/**
+ * request_id は台帳 ID（UUID）を載せてよい契約。所有 user id の裸 UUID 漏れだけを弾くため、
+ * 許可キー request_id の値は検査前に伏せる。
+ * @param {string} logText
+ */
+function redactAllowedRequestIds(logText) {
+  return logText.replace(/"request_id"\s*:\s*"[^"]*"/gu, '"request_id":"<redacted>"');
+}
+
 export function assertPrivacyLogs(logText, options = {}) {
   const requireGeneration = options.requireGeneration !== false;
   if (logText.trim().length === 0) {
     throw new Error("privacy_log_empty");
   }
+  const scanned = redactAllowedRequestIds(logText);
   for (const pattern of absencePatterns) {
-    if (pattern.test(logText)) {
+    if (pattern.test(scanned)) {
       throw new Error("privacy_log_sensitive_present");
     }
   }
