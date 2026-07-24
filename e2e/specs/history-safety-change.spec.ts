@@ -6,7 +6,7 @@ import {
   seedGeneratedMenu,
   test,
 } from "../fixtures/history";
-import { localRestHeaders } from "../fixtures/local-supabase";
+import { accessTokenFromPage } from "../fixtures/local-supabase";
 
 test.setTimeout(180_000);
 
@@ -24,10 +24,80 @@ test("automatically revalidates on mount and blocks stale history after safety c
   await expect(page.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
 });
 
+/** POST /api/menus/:menuId/revalidate の 200 応答を待つ（signal 単位で独立に張る） */
+function waitForRevalidate200(
+  page: import("@playwright/test").Page,
+  menuId: string,
+  timeout = 30_000,
+) {
+  return page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `/api/menus/${menuId}/revalidate` &&
+      response.status() === 200,
+    { timeout },
+  );
+}
+
+const invalidRevalidationSchema = z.object({
+  ok: z.literal(true),
+  data: z.object({
+    status: z.literal("invalid"),
+    issues: z.array(z.object({ code: z.string(), message: z.string() })).min(1),
+  }),
+});
+
+/**
+ * service DB（pg）で member_allergies を必ず挿入し、Realtime postgres_changes を発火する。
+ * ブラウザ JWT / RLS 経由だと拒否され得るため soft-skip せず必須経路にする。
+ */
+async function insertStandardAllergyViaPg(userId: string, memberId: string, allergenId: string) {
+  const { readFile } = await import("node:fs/promises");
+  const { Client } = await import("pg");
+  const envText = await readFile("/workspace/.env", "utf8").catch(async () =>
+    readFile(".env", "utf8"),
+  );
+  const password = z
+    .string()
+    .min(1)
+    .parse(/^POSTGRES_PASSWORD=(.+)$/mu.exec(envText)?.[1]?.trim());
+  const client = new Client({
+    connectionString: `postgresql://postgres:${encodeURIComponent(password)}@127.0.0.1:54322/postgres?sslmode=disable`,
+  });
+  await client.connect();
+  try {
+    // 既に同一標準アレルゲンがある場合は更新で WAL 変更を起こす
+    const updated = await client.query(
+      `update public.member_allergies
+          set custom_aliases = array_append(coalesce(custom_aliases, '{}'::text[]), 'e2e-realtime')
+        where member_id = $1::uuid
+          and user_id = $2::uuid
+          and allergen_id = $3
+        returning id`,
+      [memberId, userId, allergenId],
+    );
+    if ((updated.rowCount ?? 0) > 0) {
+      return;
+    }
+    const inserted = await client.query(
+      `insert into public.member_allergies (
+         member_id, user_id, allergen_id, custom_name, custom_confirmed
+       ) values ($1::uuid, $2::uuid, $3, null, false)
+       returning id`,
+      [memberId, userId, allergenId],
+    );
+    if ((inserted.rowCount ?? 0) !== 1) {
+      throw new Error(`member_allergies seed failed for allergen ${allergenId}`);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 /**
  * P4#4: 標準アレルゲン hit 後の revalidate 200 invalid issue list、操作 disabled、
- * Plan 契約の自動 signal（focus / visibility / online / Realtime / 最大60秒）を
- * 非 vacuous に証明する。
+ * Plan 契約の自動 signal（focus / visibility / online / Realtime）を
+ * 各 signal 独立の waitForResponse で非 vacuous に証明する。最大60秒は unit 側。
  */
 test("standard allergen hit returns invalid revalidation, disables actions, and auto-signals recheck", async ({
   historyPage: page,
@@ -36,41 +106,10 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   // 保存済み献立へ直接アレルゲン語を注入し、標準 wheat 登録と衝突させる
   await injectDirectAllergenHit(page, menuId, "小麦粉");
 
-  const revalidationBodies: unknown[] = [];
-  page.on("response", (response) => {
-    const path = new URL(response.url()).pathname;
-    if (
-      response.request().method() === "POST" &&
-      path === `/api/menus/${menuId}/revalidate` &&
-      response.status() === 200
-    ) {
-      void response
-        .json()
-        .then((body: unknown) => {
-          revalidationBodies.push(body);
-        })
-        .catch(() => undefined);
-    }
-  });
-
-  const firstRevalidate = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === `/api/menus/${menuId}/revalidate` &&
-      response.status() === 200,
-    { timeout: 30_000 },
-  );
+  const firstRevalidate = waitForRevalidate200(page, menuId);
   await page.goto(`/history/${menuId}`);
   const first = await firstRevalidate;
-  const firstBody = z
-    .object({
-      ok: z.literal(true),
-      data: z.object({
-        status: z.literal("invalid"),
-        issues: z.array(z.object({ code: z.string(), message: z.string() })).min(1),
-      }),
-    })
-    .parse(await first.json());
+  const firstBody = invalidRevalidationSchema.parse(await first.json());
   expect(
     firstBody.data.issues.some((issue) => /allergen|アレルゲン/iu.test(issue.code + issue.message)),
   ).toBe(true);
@@ -87,80 +126,79 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
     await expect(page.getByText(issueMessage).first()).toBeVisible({ timeout: 15_000 });
   }
 
-  const countBeforeSignals = revalidationBodies.length;
+  // --- Plan 契約の自動 signal を独立に証明（バッチしない） ---
+  // 1) focus
+  const focusRevalidate = waitForRevalidate200(page, menuId);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  const focusBody = invalidRevalidationSchema.parse(await (await focusRevalidate).json());
+  expect(focusBody.data.issues.length).toBeGreaterThan(0);
 
-  // Plan 契約の自動 signal: focus / visibility / online
-  // （Realtime は member_allergies 更新、60s は clock 操作が重いため signal 契約の代表を E2E で固定）
-  const signalRevalidate = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === `/api/menus/${menuId}/revalidate` &&
-      response.status() === 200,
-    { timeout: 30_000 },
-  );
+  // 2) visibilitychange（visible 復帰）
+  const visibilityRevalidate = waitForRevalidate200(page, menuId);
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       get: () => "visible",
     });
-    window.dispatchEvent(new Event("focus"));
     document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const visibilityBody = invalidRevalidationSchema.parse(await (await visibilityRevalidate).json());
+  expect(visibilityBody.data.issues.length).toBeGreaterThan(0);
+
+  // 3) online
+  const onlineRevalidate = waitForRevalidate200(page, menuId);
+  await page.evaluate(() => {
     window.dispatchEvent(new Event("online"));
   });
-  const signalBody = z
-    .object({
-      ok: z.literal(true),
-      data: z.object({
-        status: z.literal("invalid"),
-        issues: z.array(z.unknown()).min(1),
-      }),
-    })
-    .parse(await (await signalRevalidate).json());
-  expect(signalBody.data.status).toBe("invalid");
-  expect(signalBody.data.issues.length).toBeGreaterThan(0);
+  const onlineBody = invalidRevalidationSchema.parse(await (await onlineRevalidate).json());
+  expect(onlineBody.data.issues.length).toBeGreaterThan(0);
 
-  // Realtime: member_allergies 変更で再検査が走る
-  const realtimeRevalidate = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === `/api/menus/${menuId}/revalidate` &&
-      response.status() === 200,
-    { timeout: 45_000 },
+  // 4) Realtime: member_allergies 変更は pg 経由で必須（RLS soft-skip 禁止）
+  const token = await accessTokenFromPage(page);
+  const payload = JSON.parse(
+    Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
+  ) as { sub?: string };
+  const userId = z.uuid().parse(payload.sub);
+
+  const { readFile } = await import("node:fs/promises");
+  const { Client } = await import("pg");
+  const envText = await readFile("/workspace/.env", "utf8").catch(async () =>
+    readFile(".env", "utf8"),
   );
-  // 追加の標準 allergen（egg）を登録して Realtime postgres_changes を発火
-  const headers = await localRestHeaders(page);
-  const members = z
-    .array(z.object({ id: z.uuid() }))
-    .parse(
-      await (
-        await page.request.get(
-          "http://127.0.0.1:8000/rest/v1/household_members?status=eq.complete&select=id&limit=1",
-          { headers },
-        )
-      ).json(),
-    );
-  const memberId = z.uuid().parse(members[0]?.id);
-  const allergyInsert = await page.request.post("http://127.0.0.1:8000/rest/v1/member_allergies", {
-    headers: { ...headers, prefer: "return=minimal" },
-    data: {
-      member_id: memberId,
-      allergen_id: "egg",
-      custom_name: null,
-      custom_confirmed: false,
-    },
+  const password = z
+    .string()
+    .min(1)
+    .parse(/^POSTGRES_PASSWORD=(.+)$/mu.exec(envText)?.[1]?.trim());
+  const lookup = new Client({
+    connectionString: `postgresql://postgres:${encodeURIComponent(password)}@127.0.0.1:54322/postgres?sslmode=disable`,
   });
-  // RLS で拒否されても focus/online は既に証明済み。Realtime は成功時のみ必須。
-  if (allergyInsert.ok()) {
-    const realtimeBody = z
-      .object({
-        ok: z.literal(true),
-        data: z.object({ status: z.enum(["invalid", "changed", "valid"]) }),
-      })
-      .parse(await (await realtimeRevalidate).json());
-    expect(["invalid", "changed"]).toContain(realtimeBody.data.status);
+  await lookup.connect();
+  let memberId: string;
+  try {
+    const members = await lookup.query<{ id: string }>(
+      `select id::text as id from public.household_members
+        where user_id = $1::uuid and status = 'complete'
+        order by created_at asc
+        limit 1`,
+      [userId],
+    );
+    memberId = z.uuid().parse(members.rows[0]?.id);
+  } finally {
+    await lookup.end();
   }
 
-  // 少なくとも mount + signal の2回は 200 invalid を観測していること
-  expect(revalidationBodies.length).toBeGreaterThan(countBeforeSignals);
+  const realtimeRevalidate = waitForRevalidate200(page, menuId, 45_000);
+  // 追加の標準 allergen（egg）を service DB で登録し Realtime を必須発火
+  await insertStandardAllergyViaPg(userId, memberId, "egg");
+  const realtimeBody = z
+    .object({
+      ok: z.literal(true),
+      data: z.object({ status: z.enum(["invalid", "changed", "valid"]) }),
+    })
+    .parse(await (await realtimeRevalidate).json());
+  expect(["invalid", "changed"]).toContain(realtimeBody.data.status);
+
   await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
 });

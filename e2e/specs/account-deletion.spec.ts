@@ -16,20 +16,10 @@ test("deletes the account through settings and zeroes owned rows and auth user",
   const { userId, oldToken } = await seedCompleteOwnedGraph(page);
   const before = await queryOwnedCounts(userId);
 
-  // 必須ファミリーは可能な限り positive。seed 不能な表は 0 でも削除後 0 を検証する。
+  // Plan 契約: requiredNonEmptyFamilies はすべて positive でなければならない
   for (const table of requiredNonEmptyFamilies) {
     const count = before.find((row) => row.table === table)?.count ?? 0;
-    // pantry / shopping / adaptations 等は UI 経路で埋まらない場合があるため、
-    // profiles / household / privacy / menus / dishes だけを厳格に要求する。
-    if (
-      table === "public.profiles" ||
-      table === "public.household_members" ||
-      table === "public.privacy_consents" ||
-      table === "public.menus" ||
-      table === "public.dishes"
-    ) {
-      expect(count, `${table} must be seeded`).toBeGreaterThan(0);
-    }
+    expect(count, `${table} must be seeded`).toBeGreaterThan(0);
   }
 
   // 設定画面でメンバー編集コントロールが残っていることを先に証明

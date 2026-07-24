@@ -94,6 +94,42 @@ const routes = new Map([
       default: async (_request, context) => Response.json(context.params),
     },
   ],
+  [
+    "/netlify/functions/shopping-list-from-menu.ts",
+    {
+      config: { path: "/api/shopping-lists/from-menu", method: "POST" },
+      default: async () => Response.json({ ok: true }),
+    },
+  ],
+  [
+    "/netlify/functions/shopping-list-preview.ts",
+    {
+      config: { path: "/api/shopping-lists/:listId/preview", method: "POST" },
+      default: async () => Response.json({ ok: true }),
+    },
+  ],
+  [
+    "/netlify/functions/shopping-list-reconcile.ts",
+    {
+      config: { path: "/api/shopping-lists/:listId/reconcile", method: "POST" },
+      default: async () => Response.json({ ok: true }),
+    },
+  ],
+  [
+    "/netlify/functions/shopping-list-revalidate.ts",
+    {
+      config: { path: "/api/shopping-lists/:listId/revalidate", method: "POST" },
+      default: async () => Response.json({ ok: true }),
+    },
+  ],
+  [
+    "/netlify/functions/delete-account.ts",
+    {
+      config: { path: "/api/account" },
+      default: async (request) =>
+        Response.json({ method: request.method, body: await request.text() }),
+    },
+  ],
 ]);
 
 async function withServer(loadModule, run) {

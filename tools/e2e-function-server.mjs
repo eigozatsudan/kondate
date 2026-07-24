@@ -20,6 +20,8 @@ const functionModulePaths = [
   "/netlify/functions/shopping-list-preview.ts",
   "/netlify/functions/shopping-list-reconcile.ts",
   "/netlify/functions/shopping-list-revalidate.ts",
+  // Plan 6 アカウント削除 E2E（設定 DangerZone → DELETE /api/account）
+  "/netlify/functions/delete-account.ts",
 ];
 
 function escapeRegex(value) {
