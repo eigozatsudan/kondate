@@ -297,6 +297,29 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByText("アイデア・1人分")).toBeVisible();
   });
 
+  // 設計 §5.3: idea 注意は主操作「献立を作る」の直前。visible だけでは順序を固定できない。
+  it("places idea safety note immediately before the generate primary action", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "idea",
+          servings: 1,
+        }}
+      />,
+    );
+    const note = screen.getByRole("note");
+    expect(note).toHaveTextContent(/家族の年齢・アレルギーは確認されません/);
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    expect(note.compareDocumentPosition(generate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // primary ボタン行（stack-row）の直前 sibling が note であること
+    expect(generate.parentElement?.previousElementSibling).toBe(note);
+  });
+
   it("household 確認では現在の家族・安全条件の免責を表示する", () => {
     render(
       <Harness

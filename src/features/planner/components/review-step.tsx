@@ -123,11 +123,6 @@ export function ReviewStep({
       {value.targetMode === "household" && safetyMembers.length > 0 && (
         <CurrentSafetySummary members={safetyMembers} />
       )}
-      {value.targetMode === "idea" && (
-        <p role="note">
-          家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
-        </p>
-      )}
       <dl>
         <dt>食事</dt>
         <dd>{value.mealType}</dd>
@@ -282,6 +277,12 @@ export function ReviewStep({
         </p>
       )}
       {summaryError != null && <p role="alert">{summaryError}</p>}
+      {/* 設計 §5.3: idea 注意は主操作直前。summary / 追加条件 / privacy より下に置く */}
+      {value.targetMode === "idea" && (
+        <p role="note">
+          家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
+        </p>
+      )}
       <div className="stack-row">
         {onBack !== undefined && (
           <button type="button" disabled={disabled} onClick={onBack}>
