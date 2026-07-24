@@ -31,7 +31,8 @@ jobs:
           test "$VITE_AUTH_PROVIDER_MODE" = "oauth_mock"
           test "$VITE_OAUTH_MOCK_ORIGIN" = "http://127.0.0.1:8788"
       - run: docker compose config --quiet
-      - run: docker compose up -d --wait
+      # --wait-timeout: pooler 初回 migrate を含む全 healthy を待つ上限（秒）
+      - run: docker compose up -d --wait --wait-timeout 600
       - run: curl --fail --silent --show-error http://127.0.0.1:8788/health
       - name: Provision least-privilege maintenance login
         run: ./scripts/provision-maintenance-role.sh
@@ -79,7 +80,10 @@ jobs:
       # 失敗時は compose 状態のみ（秘密・.env は載せない）。
       - name: Show container health on failure
         if: failure()
-        run: docker compose ps
+        run: |
+          docker compose ps -a
+          # pooler 不調時の切り分け用（秘密は env に出さない。直近ログのみ）
+          docker compose logs --no-color --tail 80 supavisor || true
       - name: Tear down and remove ephemeral secrets
         if: always()
         run: |

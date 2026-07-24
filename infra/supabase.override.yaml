@@ -10,6 +10,24 @@ services:
     ports: !override
       - "127.0.0.1:5432:5432"
       - "127.0.0.1:6543:6543"
+    # 初回起動は migrate + tenant eval + server の直列で、CI コールドスタートでは
+    #  upstream 既定 start_period(30s) を超えやすい。期間中の失敗はカウントされないため
+    # 猶予を延ばし、通常開発の待ち時間増は start_period 内の成功で打ち切られる。
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-sSfL",
+          "--head",
+          "-o",
+          "/dev/null",
+          "http://127.0.0.1:4000/api/health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 180s
   auth:
     environment:
       GOTRUE_SITE_URL: ${SITE_URL}

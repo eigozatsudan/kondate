@@ -14,7 +14,7 @@ teardown() {
 trap teardown EXIT
 
 docker compose config --quiet
-docker compose up -d --wait
+docker compose up -d --wait --wait-timeout 600
 ./scripts/provision-maintenance-role.sh
 docker compose run --rm --no-deps app node --test \
   tests/tooling \

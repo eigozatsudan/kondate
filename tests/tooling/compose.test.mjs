@@ -64,6 +64,8 @@ test("root compose does not redeclare include-owned supabase services", async ()
   assert.match(override, /^ {2}supavisor:\n {4}ports: !override/mu);
   assert.match(override, /127\.0\.0\.1:8000:8000/);
   assert.match(override, /127\.0\.0\.1:5432:5432/);
+  // CI コールドスタート向け: pooler health の start_period を十分長くする
+  assert.match(override, /start_period:\s*180s/u);
 });
 
 test("serializes project migrations after GoTrue migrations", async () => {
