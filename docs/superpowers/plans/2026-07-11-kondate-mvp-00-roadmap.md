@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver the approved Kondate MVP as six reviewable, testable increments from an empty repository to a Netlify and Supabase production deployment.
+**Goal:** Deliver the approved Kondate MVP as seven reviewable, testable increments (Plans 1–5, guided planner Plan 7, then hardening Plan 6) from an empty repository to a Netlify and Supabase production deployment.
 
 **Architecture:** A React 19 SPA built with Vite 8 and Tailwind CSS 4 talks directly to Supabase for RLS-protected reads and approved owner CRUD, uses expected-version plus current-safety owner RPCs for shopping-item writes, and calls narrowly scoped Netlify Functions for AI, safety revalidation, derived shopping-list writes, and account deletion. The root Docker Compose project includes a pinned official Supabase self-host stack, a development app container, Mailpit, local-only `oauth-mock`, and a deterministic OpenRouter mock; production uses real Supabase OAuth on Netlify and managed Supabase, with bounded cleanup invoked by an hourly Scheduled Function through a dedicated least-privilege database login whose 20-second statement timeout is active before the RPC command starts.
 
@@ -16,7 +16,7 @@
 - Use React 19.2.7 or later within React 19, Vite 8, Tailwind CSS 4 through `@tailwindcss/vite`, React Router 8 Data Mode through one `createBrowserRouter`, and TanStack Query 5. React Router 8's official baseline forbids earlier React 19.2 patches; import `RouterProvider` from `react-router/dom` and all other used router APIs from `react-router`.
 - All user-facing copy is Japanese. Internal identifiers, code comments, commits, and test names are English.
 - Mobile-first layout must work at 320 CSS pixels without horizontal scrolling; interactive targets are at least 44 by 44 CSS pixels.
-- Use the approved visual direction: warm off-white background, terracotta primary action, subdued green pantry accents, three-step planner home, and tabbed dish results with an overall timeline first.
+- Use the approved visual direction: warm off-white background, terracotta primary action, subdued green pantry accents, the Plan 7 five-step guided planner wizard (meal → ingredients → cuisine → audience → review) with optional household setup, and tabbed dish results with an overall timeline first. Plan 7 supersedes the earlier single-screen / three-step planner home wording for product UI.
 - OpenRouter is called only from Netlify Functions. `OPENROUTER_MODELS` must contain only explicit model IDs ending in `:free`; paid fallback and `openrouter/auto` are rejected.
 - Release-locked user limits are exactly 5 successful generations per Japan calendar day, 12 actual OpenRouter sends per user/Japan day, and 4 sends per fixed 600-second window; application-wide actual sends default to 45 per Japan day. Preflight rejects any 5/12/4/600 drift. Sent attempts are never refunded.
 - Every OpenRouter attempt is bounded to 20 seconds and the complete synchronous Function to 50 seconds. Before each `markSent`, at least the full 20-second provider budget plus a 2-second finalization reserve must remain; otherwise no HTTP is sent and every unsent reservation is released. Timeout, connection loss, or an unknown first result never starts repair; repair is allowed once only when the remaining monotonic deadline leaves room for the second attempt and finalization.
@@ -48,9 +48,10 @@
 | 3 | `2026-07-11-kondate-mvp-03-ai-generation-results.md` | Plans 1–2 | Authenticated generation, quota, idempotent recovery, structured validation, timeline, adaptations, and result UI work against the mock and OpenRouter smoke test |
 | 4 | `2026-07-11-kondate-mvp-04-history-regeneration.md` | Plan 3 | Grouped history, provenance-preserving current-safety revalidation, canonical-quota whole/dish regeneration, deterministic replacement composition, deduplication, and selection work |
 | 5 | `2026-07-11-kondate-mvp-05-shopping-list.md` | Plans 2–4 | Replay-first creation/reconciliation and owner-versioned item mutation preserve protected edits while re-deriving all warning labels as pending |
-| 6 | `2026-07-11-kondate-mvp-06-hardening-deployment.md` | Plans 1–5 | Full accessibility/E2E/security suite, bounded scheduled maintenance, offline Netlify/type gates, same-SHA staging evidence, and deployment runbooks are ready |
+| 6 | `2026-07-22-guided-planner-optional-household.md` (Plan ID **7**) | Plans 1–5 | Optional household (`skipped`), `/welcome` + five-step wizard, `TargetMode` household/idea, `generation-command.v2`, idea isolation (no shopping / no `child_friendly`), mode-aware result/history |
+| 7 | `2026-07-11-kondate-mvp-06-hardening-deployment.md` (Plan ID **6**) | Plans 1–5 **and** Plan 7 | Full accessibility/E2E/security suite, bounded scheduled maintenance, offline Netlify/type gates, same-SHA staging evidence, and deployment runbooks are ready |
 
-Execute plans in order. A plan may begin only after the prior plan’s full verification command and review gate pass.
+Execute plans in **this table's order**. A plan may begin only after every plan it depends on has passed its full verification command and review gate. Numeric plan IDs in filenames (`01`…`06`) and the guided-planner plan's internal Plan ID **7** are stable labels for handoffs and progress; **delivery sequence is not the same as the `06` filename number** — hardening (Plan 6) runs **after** guided planner (Plan 7).
 
 ## Locked File Structure
 
@@ -128,6 +129,7 @@ Execute plans in order. A plan may begin only after the prior plan’s full veri
 │   ├── shopping-list-from-menu.ts
 │   ├── shopping-list-preview.ts
 │   ├── shopping-list-reconcile.ts
+│   ├── shopping-list-revalidate.ts
 │   ├── maintenance-cleanup.ts       # schedule code config only; no HTTP path
 │   └── delete-account.ts
 ├── supabase/
@@ -385,7 +387,7 @@ Plan 6 creates `docs/testing/acceptance-matrix.md` with exactly 22 rows matching
 | 13 | Plan 4 | Canonical quota path, full retained/local-ref replacement contract, surviving-member filtering, deterministic composition, reason persistence, and duplicate non-consumption |
 | 14 | Plan 4 | Grouping/selection and event/Realtime/focus/visibility/online/60-second current-safety revalidation; pantry/preference drift is non-blocking |
 | 15 | Plan 5 | Replay-before-state recovery, human per-operation approval, immutable pending provenance/current projection, removed/protected delta, cross-device all-source revalidation, locked item safety fingerprint, quantity/unit/section editing, pantry matching, undo, no duplicate source |
-| 16 | Plans 1–6 | Owner/RLS/grant matrix, continuation isolation, cross-user negative tests |
+| 16 | Plans 1–7 then Plan 6 | Owner/RLS/grant matrix, continuation isolation, cross-user negative tests |
 | 17 | Plans 3, 5, 6 | Concurrent 5-success/12-daily/4-per-600s/45-global gates and bounded 30-day generation/shopping-replay retention |
 | 18 | Plans 2, 3 | No-paid-fallback and complete deterministic breakfast/lunch/dinner emergency menus |
 | 19 | Plans 3, 6 | Structural plus live production `:free`/capability verification |

@@ -18,18 +18,23 @@ step entirely.
 ## What this repository is
 
 こんだて日和 (Kondate) MVP — a mobile-first React/Vite SPA backed by Supabase and
-Netlify Functions. The full product spec and the six-plan delivery roadmap are the
-only sources of truth for scope and design:
+Netlify Functions. The full product spec and the delivery roadmap are the only
+sources of truth for scope and design:
 
 - Design spec: `docs/superpowers/specs/2026-07-11-kondate-mvp-design.md`
   (baseline commit `cd0cb70` or a later commit that only clarifies it — never a
-  silent fallback to older wording).
+  silent fallback to older wording). Guided planner / optional household:
+  `docs/superpowers/specs/2026-07-22-guided-planner-optional-household-design.md`.
 - Roadmap: `docs/superpowers/plans/2026-07-11-kondate-mvp-00-roadmap.md`
-- Plans 1–6: `docs/superpowers/plans/2026-07-11-kondate-mvp-0{1..6}-*.md`
+- Plans 1–5: `docs/superpowers/plans/2026-07-11-kondate-mvp-0{1..5}-*.md`
+- Plan 7 (guided planner): `docs/superpowers/plans/2026-07-22-guided-planner-optional-household.md`
+- Plan 6 (hardening/deployment): `docs/superpowers/plans/2026-07-11-kondate-mvp-06-hardening-deployment.md`
 
-Plans execute strictly in order (1 → 2 → … → 6); a plan begins only after the prior
-plan's full verification gate and review pass. Within a plan, Tasks execute in
-numeric order — do not skip ahead or reorder because a later Task looks easier.
+Delivery order follows the roadmap table (1 → 2 → 3 → 4 → 5 → **7 → 6**), not the
+filename number on Plan 6: hardening runs only after Plans 1–5 and Plan 7. A plan
+begins only after every plan it depends on has passed its full verification gate
+and review. Within a plan, Tasks execute in numeric order — do not skip ahead or
+reorder because a later Task looks easier.
 
 **Never re-derive or simplify the design.** These documents were produced through an
 adversarial review process and contain exact values (ports, origins, TTLs, quotas,

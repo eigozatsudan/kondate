@@ -28,6 +28,17 @@
 - The release checklist/matrix commit precedes the final gate. Local, staging Google, tag, and the currently published production deployment all resolve to the same candidate SHA; the protected verifier reads Netlify deploy metadata and current site `published_deploy` metadata before and after smoke. Evidence is external and no evidence-result commit follows it.
 - Follow red-green-refactor and end every task with a focused commit.
 
+### Start gate (before Task 1)
+
+Do not open Task 1 until all of the following hold:
+
+1. **Delivery order:** Plans 1–5 and Plan 7 are complete per `git log` and `.superpowers/sdd/progress.md` (trust `git log` on disagreement). Plan 6 depends on that closed surface; it does not re-open product mode contracts.
+2. **Cross-plan Important findings:** Read `.superpowers/sdd/plan-reviews-2026-07-24/00-cross-plan-summary.md` (or the latest equivalent). Every **Important** finding that can fail Plan 6's acceptance matrix (22 MVP + 8 guided-planner), full-journey E2E, cascade seed, or release gate must be either **closed with a commit** or **explicitly deferred in writing** with owner, residual risk, and which matrix row(s) remain at risk. Safety, privacy, authorization, data-loss, paid-model, and accessibility Importants cannot be deferred into Plan 6 as "fix when the journey fails."
+3. **Known high-impact residual themes** (close or document before Task 1; do not discover them only in Task 6): finalize fingerprint terminalization and failure UI wiring (Plan 3), shopping identity/mutation race honesty (Plan 5), regeneration context mode from request snapshot (Plan 7 defense-in-depth). Empty this list only by evidence, not by hoping journeys skip the paths.
+4. **Clean worktree for Plan 6 ownership:** no half-applied Plan 6 migrations, no uncommitted rewrite of locked Plan 7 contracts, and no concurrent Implementer on the same worktree.
+
+Record the gate outcome (closed Importants + any approved deferrals) in the Task 1 brief before writing the first red test.
+
 ### How every command in this plan is executed
 
 This repository installs no host tooling: the host has Node but no `psql`, no `rg`, and the `app` container has no Docker socket. Earlier drafts of this plan assumed a conventional checkout and are corrected here. There are exactly three execution contexts, and every command below states which one it belongs to.
@@ -138,7 +149,11 @@ rollback;
 
 - [ ] **Step 2: Run the focused test and record the offending tables**
 
-Run: `npm run db:test -- supabase/tests/database/account_deletion.test.sql`
+Run (host-issued Compose; never inside `app`):
+
+```bash
+docker compose --profile test run --rm db-test supabase/tests/database/account_deletion.test.sql
+```
 
 Expected: FAIL if any earlier migration omitted the required cascading foreign key; the diagnostic lists each offending schema and table.
 
@@ -293,7 +308,8 @@ git commit -m "test: enforce account deletion cascades"
 - Create: `src/features/auth/auth-cleanup.test.ts`
 - Modify: `src/features/household/household-settings-page.tsx`
 - Modify: `src/features/household/household-settings-page.test.tsx`
-- Modify: `src/features/auth/session.ts`
+
+Do **not** modify `src/features/auth/session.ts`. Plan 1's `requireAccessToken` stays untouched; sign-out and post-delete cleanup live only in `auth-cleanup.ts` and `AccountSettingsSection`.
 
 **Interfaces:**
 - Consumes: `requireUser(request)`, `getSupabaseAdmin()`, and Plan 2's `parseJson`, `json`, `methodNotAllowed`, `HttpError`, and `handleError` helpers.
@@ -317,19 +333,25 @@ The injected handler test covers: a non-`DELETE` request returns `405 method_not
 
 - [ ] **Step 2: Run the function test and verify failure**
 
-Run: `npm test -- --run netlify/functions/delete-account.test.ts`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run netlify/functions/delete-account.test.ts
+```
 
 Expected: FAIL because the contract and function do not exist.
 
 - [ ] **Step 3: Implement the function with injected dependencies**
 
+Netlify Function modules use `tsconfig.functions.json` (`module`/`moduleResolution`: `NodeNext`). Every relative and shared import must carry the **`.js` extension** (same convention as `usage-today.ts` and the rest of `netlify/functions/`).
+
 ```ts
 // netlify/functions/delete-account.ts
 import type { Config } from "@netlify/functions";
-import { deleteAccountRequestSchema, type DeleteAccountResult } from "../../shared/contracts/account";
-import { requireUser } from "./_shared/auth";
-import { handleError, HttpError, json, methodNotAllowed, parseJson } from "./_shared/http";
-import { getSupabaseAdmin } from "./_shared/supabase-admin";
+import { deleteAccountRequestSchema, type DeleteAccountResult } from "../../shared/contracts/account.js";
+import { requireUser } from "./_shared/auth.js";
+import { handleError, HttpError, json, methodNotAllowed, parseJson } from "./_shared/http.js";
+import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
 export type DeleteAccountDeps = {
   authenticate: typeof requireUser;
@@ -368,7 +390,11 @@ export const config: Config = { path: "/api/account" };
 
 - [ ] **Step 4: Run the focused function test**
 
-Run: `npm test -- --run netlify/functions/delete-account.test.ts`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run netlify/functions/delete-account.test.ts
+```
 
 Expected: all account API cases pass.
 
@@ -457,7 +483,7 @@ export async function clearLocalAuthAndDrafts(client:SupabaseClient<Database>):P
 
 Plan 1 owns and exports `ownedAuthStoragePrefixes` from `auth-flow.ts` as the exact `kondate.auth.flow.` and configured `kondate.auth.supabase` prefixes, plus `clearOwnedAuthStorage(storage)` implemented only from that export; the latter prefix covers Supabase session and library-owned PKCE verifier derivatives. Plan 6 calls that helper and never hardcodes a broad `sb-` rule or a second copy of an auth prefix. Also remove the exact privacy-minimal `kondate:household-safety-revision` key alongside every generation/shopping recovery key. `auth-cleanup.test.ts` seeds `kondate.auth.flow.*`, the Supabase session key and verifier derivative, `kondate:generation:v2` with a custom-reason command, shopping recovery keys, the safety revision, and an unrelated `kondate:preferences` key in both storage areas; cleanup removes only those owned keys/prefixes, retains the unrelated key, and resolves even when `signOut` reports that the already-deleted server user is absent. Import `useEffect`, `useRef`, and `useState` from React. `AccountSettingsSection` owns the account API mutation and ordinary sign-out. Deletion invokes cleanup only after the server delete succeeds; ordinary sign-out always awaits cleanup directly. Both navigate only after cleanup, and the ordinary path never calls `DELETE /api/account`.
 
-Modify—not replace—Plan 1's `HouseholdSettingsPage`: import `AccountSettingsSection` from `@/features/account/account-settings-section` and render `<AccountSettingsSection />` after the existing complete member/allergy/dislike editor inside its current `<main>`. Do not extract, rename, or substitute that editor. Do not create another settings page, change the `/settings` route, or replace `HouseholdSettingsPage` in `router.tsx`. Its integration test first adds/edits/deletes a member and updates allergy/dislike state, then opens the composed danger zone; it proves all existing family CRUD controls remain present and the route still renders exactly one Plan 1 page owner.
+Modify—not replace—Plan 1's `HouseholdSettingsPage` / `HouseholdSettingsForm`: import `AccountSettingsSection` from `@/features/account/account-settings-section` and render `<AccountSettingsSection />` **immediately before the closing `</main>`** of the loaded settings form (after the complete member/allergy/dislike editor, including any member-delete dialog still inside that same `main`). Do not extract, rename, or substitute that editor. Do not create another settings page, change the `/settings` route, or replace `HouseholdSettingsPage` in `router.tsx`. Its integration test first adds/edits/deletes a member and updates allergy/dislike state, then opens the composed danger zone; it proves all existing family CRUD controls remain present and the route still renders exactly one Plan 1 page owner.
 
 - [ ] **Step 7: Run component, type, and build checks**
 
@@ -475,7 +501,7 @@ Expected: tests pass, the settings route compiles, and `dist/` is produced.
 - [ ] **Step 8: Commit account deletion**
 
 ```bash
-git add shared/contracts/account.ts netlify/functions/delete-account.ts netlify/functions/delete-account.test.ts src/features/account src/features/household/household-settings-page.tsx src/features/household/household-settings-page.test.tsx src/features/auth/auth-cleanup.ts src/features/auth/auth-cleanup.test.ts src/features/auth/session.ts
+git add shared/contracts/account.ts netlify/functions/delete-account.ts netlify/functions/delete-account.test.ts src/features/account src/features/household/household-settings-page.tsx src/features/household/household-settings-page.test.tsx src/features/auth/auth-cleanup.ts src/features/auth/auth-cleanup.test.ts
 git commit -m "feat: add permanent account deletion"
 ```
 
@@ -774,6 +800,11 @@ export type SafeLogEvent = {
   code: string;
   durationMs: number;
   modelId?: string;
+  /** Hourly maintenance only — four aggregate counts, never row IDs. */
+  staleReservationsFinalized?: number;
+  generationLedgersDeleted?: number;
+  shoppingMutationsDeleted?: number;
+  authContinuationsDeleted?: number;
 };
 
 type LogWriter = (serialized: string) => void;
@@ -785,18 +816,36 @@ export const createSafeLogger = (write: LogWriter = console.log) => (event: Safe
     code: event.code,
     duration_ms: event.durationMs,
   };
-  if (event.modelId) record.model_id = event.modelId;
+  if (event.modelId !== undefined) record.model_id = event.modelId;
+  if (event.staleReservationsFinalized !== undefined) {
+    record.stale_reservations_finalized = event.staleReservationsFinalized;
+  }
+  if (event.generationLedgersDeleted !== undefined) {
+    record.generation_ledgers_deleted = event.generationLedgersDeleted;
+  }
+  if (event.shoppingMutationsDeleted !== undefined) {
+    record.shopping_mutations_deleted = event.shoppingMutationsDeleted;
+  }
+  if (event.authContinuationsDeleted !== undefined) {
+    record.auth_continuations_deleted = event.authContinuationsDeleted;
+  }
   write(JSON.stringify(record));
 };
 
 export const safeLog = createSafeLogger();
 ```
 
-Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Note this changes the emitted JSON: the current implementation writes camelCase `{requestId,errorCode,durationMs,modelId}` with no `level`, and the new shape is snake_case with `level`. Update the existing `logger.test.ts` assertions in the same commit, and write `privacy-logging.spec.ts` against the new field names — a log assertion left on the old keys would pass vacuously. Replace every route-handler `console.*` call with `safeLog`. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
+Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Note this changes the emitted JSON: the current implementation writes camelCase `{requestId,errorCode,durationMs,modelId}` with no `level`, and the new shape is snake_case with `level`. Update the existing `logger.test.ts` assertions in the same commit, and write `privacy-logging.spec.ts` against the new field names — a log assertion left on the old keys would pass vacuously. Replace every production Function `console.*` call — **route handlers and the scheduled `maintenance-cleanup` handler alike** — with `safeLog`. There is no second camelCase log shape for schedules. Task 8 success logs use `code: "maintenance_cleanup"` plus the four optional count fields above; failures use `code: "maintenance_cleanup_failed"` with no counts. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
 
 - [ ] **Step 4: Add Netlify build, SPA fallback, and headers**
 
-Run `npm install --save-dev --save-exact netlify-cli@26.2.0`; commit the resulting lockfile. The CLI is local and reproducible—`npx` network fallback is forbidden.
+Run:
+
+```bash
+docker compose run --rm --no-deps app npm install --save-dev --save-exact netlify-cli@26.2.0
+```
+
+Commit the resulting lockfile. The CLI is local and reproducible—`npx` network fallback is forbidden.
 
 ```toml
 [build]
@@ -878,26 +927,43 @@ git commit -m "security: enforce logging and deployment boundaries"
 
 - [ ] **Step 1: Add axe-core and write failing route tests**
 
-Run: `npm install --save-dev axe-core`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npm install --save-dev axe-core
+```
 
 Create `src/test/axe.ts` with `runAxe(container: Element): Promise<AxeResults>` that calls `axe.run(container, { rules: { region: { enabled: true } } })` and throws a formatted assertion containing violation IDs and target selectors when `violations.length > 0`.
 
-`src/app/accessibility.test.tsx` renders one representative state for each route and asserts:
+`src/app/accessibility.test.tsx` renders one representative state for each route and always asserts:
 
 ```ts
 await expect(runAxe(container)).resolves.toMatchObject({ violations: [] });
 expect(screen.getByRole("main")).toBeVisible();
-expect(screen.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
-expect(screen.getByRole("status")).toHaveTextContent(/作成中|保存しました|残り/);
 ```
 
-Login has no authenticated navigation, so its test requires exactly one `main`, a named Google button, a labeled email input, and a textual error region instead. `/welcome` is the same kind of exception: it is a pre-navigation start screen, so its test requires exactly one `main`, the primary 「献立アイデアを考える」 action, the secondary family-setup action, and zero same-weight competing primaries — not the bottom navigation.
+Then assert **by route class** — never one shared status regex on every page (most routes have no permanent `role="status"` with 「作成中|保存しました|残り」):
 
-Cover each wizard step (`meal`, `ingredients`, `cuisine`, `audience`, `review`) as its own representative state, plus an audience step with zero available family members (family mode disabled, idea mode selectable, family-registration link present) and a review state in each mode. The idea-mode review and result states additionally assert the always-present 「家族条件を使用していません」 notice, and that no shopping control, family-adaptation region, or label-confirmation region is in the accessibility tree at all — an idea surface must not merely disable them.
+| Route class | Extra assertions |
+| --- | --- |
+| Login (unauthenticated) | No bottom nav; named Google button; labeled email input; a textual error/live region when an error is shown |
+| `/welcome` | No bottom nav; primary 「献立アイデアを考える」; secondary family-setup action; zero same-weight competing primaries |
+| Shell routes (planner empty, pantry, history list, shopping empty, settings) | `navigation` named 「メインメニュー」; page `h1`; if a loading or save status is in the representative state, it uses `role="status"` or `role="alert"` with real copy from that feature — do not invent a global status string |
+| Wizard steps | Each of `meal`, `ingredients`, `cuisine`, `audience`, `review` as its own state; step heading focusable; primary/secondary controls have accessible names |
+| Audience with zero members | Family mode disabled, idea mode selectable, family-registration link present |
+| Review (household / idea) | Idea review shows 「家族の年齢・アレルギーは確認されません」; generate control named 「献立を作る」 |
+| Generation processing | Heading or status exposes 「献立を作っています」 (or the panel's live status text) |
+| Result / history detail | Household may show shopping and safety regions; idea always shows 「家族条件を使用していません」 and **no** shopping control, family-adaptation region, or label-confirmation region in the tree (not merely disabled) |
+
+Cover each wizard step plus the zero-member audience and both review modes. An idea surface must not merely disable forbidden controls — they must be absent from the accessibility tree.
 
 - [ ] **Step 2: Run the component accessibility test and capture violations**
 
-Run: `npm test -- --run src/app/accessibility.test.tsx`
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx vitest run src/app/accessibility.test.tsx
+```
 
 Expected: FAIL until missing labels, landmarks, focus behavior, and live regions are corrected.
 
@@ -925,40 +991,23 @@ The explicit `goto("/welcome")` is required and is safe only here: the fixture's
 
 ```ts
 // e2e/specs/mobile-accessibility.spec.ts
+// Labels and step transitions must match Plan 7's live UI and e2e/specs/*journey*
+// helpers (generation-recovery-results.spec.ts is the reference for idea flow).
+// Do not invent alternate copy. If production copy changes, update this file in
+// the same commit as the product change.
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
-
-const answerWizard = async (page: Page, mode: "household" | "idea") => {
-  await page.getByRole("button", { name: "夕食" }).click();
-  await assertStepFits(page);
-  await page.getByRole("button", { name: "鶏肉" }).click();
-  await page.getByRole("button", { name: "次へ" }).click();
-  await assertStepFits(page);
-  await page.getByRole("button", { name: "和食" }).click();
-  await assertStepFits(page);
-  if (mode === "idea") {
-    await page.getByRole("button", { name: "家族設定を使わず、アイデアだけ見る" }).click();
-    await page.getByRole("button", { name: "2人分" }).click();
-  } else {
-    await page.getByRole("button", { name: "登録した家族に合わせる" }).click();
-    await page.getByRole("checkbox", { name: /^おとな/u }).check();
-  }
-  await page.getByRole("button", { name: "次へ" }).click();
-};
 
 const assertNoHorizontalScroll = async (page: Page) =>
   expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true);
 
-const assertStepFits = async (page: Page) => {
-  await assertNoHorizontalScroll(page);
-  await assertTargetSizes(page);
-};
-
 const assertTargetSizes = async (page: Page) => {
-  const visibleControls = page.locator("a:visible,button:visible,input:visible,select:visible,textarea:visible");
-  for (let index = 0; index < await visibleControls.count(); index += 1) {
+  const visibleControls = page.locator(
+    "a:visible,button:visible,input:visible,select:visible,textarea:visible",
+  );
+  for (let index = 0; index < (await visibleControls.count()); index += 1) {
     const box = await visibleControls.nth(index).boundingBox();
     expect(box, `control ${index} has a box`).not.toBeNull();
     expect(box?.height, `control ${index} height`).toBeGreaterThanOrEqual(44);
@@ -966,20 +1015,87 @@ const assertTargetSizes = async (page: Page) => {
   }
 };
 
+const assertStepFits = async (page: Page) => {
+  await assertNoHorizontalScroll(page);
+  await assertTargetSizes(page);
+};
+
+/** Meal / ingredients / cuisine — same path for both modes. Assert fit after every step. */
+const answerSharedWizardSteps = async (page: Page) => {
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+  // Meal and cuisine use radio options (not auto-advance); ingredients are free text + 追加.
+  await page.getByRole("radio", { name: "夕食" }).check();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await assertStepFits(page);
+
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
+  await page.getByRole("button", { name: "追加" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await assertStepFits(page);
+
+  await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
+  await page.getByRole("radio", { name: "和食" }).check();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await assertStepFits(page);
+};
+
+const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") => {
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  if (mode === "idea") {
+    await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
+    // 1–6 servings are buttons labelled "N人" (not "N人分"); 7–20 use the number input.
+    await page.getByRole("button", { name: "2人" }).click();
+  } else {
+    await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
+    await page.getByRole("checkbox", { name: /^おとな/u }).check();
+  }
+  await page.getByRole("button", { name: "次へ" }).click();
+  await assertStepFits(page);
+
+  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  if (mode === "idea") {
+    await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
+  }
+};
+
+/**
+ * Privacy consent is a generation precondition, not part of onboarding completion.
+ * completedOnboardingPage already saves consent; ideaModePage does not — first generate
+ * must hop to /privacy and return to review with answers intact.
+ */
+const ensurePrivacyThenGenerate = async (page: Page, needsPrivacyHop: boolean) => {
+  const generate = page.getByRole("button", { name: "献立を作る" });
+  if (needsPrivacyHop) {
+    await expect(generate).toBeDisabled();
+    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/privacy");
+    await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
+    await page.getByRole("button", { name: "確認して進む" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  }
+  await expect(generate).toBeEnabled();
+  await generate.click();
+  await expect(page.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+    timeout: 60_000,
+  });
+};
+
 for (const width of [320, 375, 430]) {
-  test(`the household wizard and result fit ${width}px with usable targets`, async ({ completedOnboardingPage: page }) => {
+  test(`the household wizard and result fit ${width}px with usable targets`, async ({
+    completedOnboardingPage: page,
+  }) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/planner");
+    await assertStepFits(page);
+    await answerSharedWizardSteps(page);
+    await answerAudienceAndReview(page, "household");
+    // completedOnboardingPage already confirmed privacy; no second hop required.
+    await ensurePrivacyThenGenerate(page, false);
     await assertNoHorizontalScroll(page);
     await assertTargetSizes(page);
-    await answerWizard(page, "household");
-    await assertNoHorizontalScroll(page);
-    await assertTargetSizes(page);
-
-    await page.getByRole("button", { name: "この内容で作る" }).click();
-    await expect(page.getByRole("status")).toContainText("献立を作っています");
-    await expect(page.getByRole("heading", { name: "今日の献立" })).toBeVisible();
-    await assertNoHorizontalScroll(page);
   });
 
   test(`the start screen fits ${width}px with usable targets`, async ({ authenticatedPage: page }) => {
@@ -991,10 +1107,9 @@ for (const width of [320, 375, 430]) {
 
   test(`the idea wizard and result fit ${width}px with usable targets`, async ({ ideaModePage: page }) => {
     await page.setViewportSize({ width, height: 800 });
-    await answerWizard(page, "idea");
-    await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
-    await page.getByRole("button", { name: "この内容で作る" }).click();
-    await expect(page.getByRole("heading", { name: "今日の献立" })).toBeVisible();
+    await answerSharedWizardSteps(page);
+    await answerAudienceAndReview(page, "idea");
+    await ensurePrivacyThenGenerate(page, true);
     await expect(page.getByText("家族条件を使用していません")).toBeVisible();
     await assertNoHorizontalScroll(page);
     await assertTargetSizes(page);
@@ -1004,9 +1119,7 @@ for (const width of [320, 375, 430]) {
 
 Assert horizontal fit and target size **at every wizard step**, not only the first and last: a step that overflows at 320 pixels is invisible to an end-to-end assertion taken after the answers are already entered.
 
-This snippet is a skeleton, and the implementation wins every disagreement with it. Its labels (`夕食`, `鶏肉`, `和食`, `2人分`, `次へ`, `この内容で作る`) and its assumption about which choices auto-advance versus need an explicit next control are illustrative only — Plan 7 Task 6 owns the real copy and the real step-transition contract, and this file is corrected to match, never the reverse. The design fixes only that 1–6 servings are selection buttons and 7–20 is a numeric input, not their labels.
-
-The skeleton also omits one step the prose requires: on each fixture's first generation the AI-information screen appears before generation starts, because consent is now a generation precondition rather than an onboarding step. Follow it, confirm, and assert the wizard answers survive the round trip back to review. Both mode tests must include that hop.
+**Locked copy (do not re-derive):** meal/cuisine radios (`夕食`/`和食`/…), ingredients free-text + `追加`, audience radios `家族に合わせて作る` / `人数だけ指定してアイデアを見る`, servings buttons `N人`, primary generate `献立を作る`, processing heading `献立を作っています`, result heading `献立ができました`, idea review notice `家族の年齢・アレルギーは確認されません`, idea result notice `家族条件を使用していません`, privacy hop `AI情報の説明を見る` → confirm → return to review. If a focused E2E already asserts a label, cite that test rather than inventing a synonym.
 
 - [ ] **Step 4: Correct shared UI primitives, focus, and status announcements**
 
@@ -1154,7 +1267,7 @@ Add the capture step to `run-e2e.sh` in the same task, inside its existing clean
 
 Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture. It reads **`SERVICE_ROLE_KEY`** from `/workspace/.env` — that is the actual key name in `.env`/`.env.example`; `SUPABASE_SERVICE_ROLE_KEY` is only the name Compose maps it to inside the app container, and the `e2e` service declares no such environment — and creates a non-persisting admin client for `http://127.0.0.1:8000`. It exports `queryOwnedCounts(userId)`, which validates `userId` with Zod and connects to Postgres **directly with `pg`** at `127.0.0.1:54322` (published by `infra/supabase.override.yaml` and reachable because `e2e` uses host networking), querying every `public`/`private` base table containing `user_id` and returning `{table,count}` JSON without printing row values. A direct connection is required rather than PostgREST because `private` tables are deliberately not exposed to the Data API. Close the client in a `finally`. `seedCompleteOwnedGraph(page)` uses the existing onboarding, pantry, generation, revalidation, regeneration, and shopping fixture helpers, creates a generated menu targeting both a toddler and a senior with processed-food confirmation coverage, proves at least one normalized `menu_safety_actions` row was produced by Plans 2–3, and leaves a fresh planner draft. It must also seed the Plan 7 surface, because a cascade is only proven for rows that exist: at least one `target_mode = 'idea'` menu alongside the household one, and at least one row in `private.generation_regeneration_snapshots` from a completed regeneration reservation. Assert both are non-zero before deletion and zero after, so the snapshot's cascade through `private.ai_generation_requests` to `auth.users` is exercised rather than assumed. The idea menu also proves the deletion path does not depend on non-empty `menu_target_members`. Before deletion, assert only a named `requiredNonEmptyFamilies` set (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping) has positive counts; idempotency ledgers and other optional tables may legitimately remain zero. No service-role value enters `page`, browser storage, screenshots, or logs.
 
-`full-journey.spec.ts` covers two journeys. The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review → privacy confirmation at generation start and return to review with answers intact → pantry must/prefer selection → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → skip family setup → the same four questions with an explicit servings count → review showing 「家族の年齢・アレルギーは確認されません」 → privacy confirmation → generation → a result carrying 「家族条件を使用していません」 and matching `N人分` → history card and detail showing the mode → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason anywhere in its run; it never converts to household mode.
+`full-journey.spec.ts` covers two journeys. Reuse the locked wizard helpers and copy from Task 5 (radios, free-text ingredients, `N人` servings, `献立を作る`, `献立ができました`, privacy hop). The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review → privacy confirmation when still required and return to review with answers intact → pantry must/prefer selection → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → 「献立アイデアを考える」 → the same shared steps with audience 「人数だけ指定してアイデアを見る」 and an explicit servings button → review showing 「家族の年齢・アレルギーは確認されません」 → privacy confirmation → generation → a result carrying 「家族条件を使用していません」 and servings display consistent with the chosen count → history card/detail showing the idea mode → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason anywhere in its run; it never converts to household mode.
 
 `privacy-logging.spec.ts` captures mock Function logs and asserts that names, test email, allergy free text, planner note, prompt markers, and raw mock response strings are absent while request ID, safe error code, duration, and model ID are present. It runs over both journeys. Plan 7 Task 8 owns the exhaustive family-canary matrix across DB reads, context DTOs, request bodies, snapshots, and menu child rows; this spec does not restate it and instead asserts the log surface specifically — including that the idea journey's logs carry no family identifier, no member ID, and no servings-bearing payload.
 
@@ -1195,7 +1308,7 @@ Expected: FAIL on every missing cross-feature fixture or behavior; failures iden
 
 - [ ] **Step 5: Fix only the surfaced integration gaps and complete the matrix**
 
-Update product files owned by Plans 1–5 only where a failing acceptance test proves a gap. Add the exact final test title to its matrix row after the test passes. Do not weaken safety fixtures, replace assertions with snapshots, or skip an acceptance criterion.
+Update product files where a failing acceptance test proves a gap, including surfaces owned by **Plans 1–5 and Plan 7** (welcome, wizard, idea result/history, mode-aware generation, settings composition). Stay within existing ownership boundaries: fix wiring, a11y, copy consistency, cascade, and logging holes — do **not** add new product modes, reopen locked contracts (`TargetMode`, HMAC v2, shopping idea reject codes), or invent features outside the approved designs. Add the exact final test title to its matrix row after the test passes. Do not weaken safety fixtures, replace assertions with snapshots, or skip an acceptance criterion.
 
 - [ ] **Step 6: Run the complete deterministic test suite**
 
@@ -1413,7 +1526,7 @@ Plan 7's `private.generation_regeneration_snapshots` is deliberately **not** a f
 
 Write `maintenance-env.test.ts`, `maintenance-db.test.ts`, and `maintenance-cleanup.test.ts` red first. The local environment test accepts exactly `kondate_maintenance_login@db:5432/postgres?sslmode=disable` solely in explicit local-test mode — the container-internal address, since all Node commands are container-routed. Production parsing additionally requires an explicit expected project ref previously extracted from the exact server Supabase origin, plus a `postgres:`/`postgresql:` URL with a non-empty password, canonical dedicated-login identity, exact `/postgres` path, canonical host/port, and `sslmode=require`, `verify-ca`, or `verify-full`. Accepted production shapes are direct `kondate_maintenance_login@db.<expected-project-ref>.supabase.co:5432` and IPv4 Supavisor Session `kondate_maintenance_login.<expected-project-ref>@<region>.pooler.supabase.com:5432`; the same valid shapes with another project ref, port `6543`, and every transaction-mode/dedicated pooler fail. They reject fragments, duplicate parameters, and every query key except the one `sslmode` key—especially `options`, `search_path`, timeout, role, and application-name overrides. They reject `localhost`, alternate local ports, credentials/query details in errors, and `VITE_SUPABASE_MAINTENANCE_DB_URL` even when empty. Mode-selection tests allow local parsing only for the conjunction `CONTEXT=dev && KONDATE_MAINTENANCE_ENV=local`; either key alone, any other value, deploy-preview, branch-deploy, or production selects strict production parsing and rejects loopback. Production preflight rejects the presence of `KONDATE_MAINTENANCE_ENV` even when empty. The adapter unit tests assert a single client per invocation, one overall deadline that begins before connection and never resets, parameterized fixed RPC SQL, the role/timeout guards, strict four-count result parsing before `COMMIT`, `ROLLBACK` when safe, and one idempotent `client.end()` after success, SQL failure, result-parse failure, server cancellation, and client timeout; environment-parse failure constructs no client. No log or thrown public error contains the URL, project ref, password, host, or raw driver error.
 
-The Function test injects the clock, database adapter, and logger. It asserts one parsed counts-only maintenance call, `204`, safe metrics containing only `staleReservationsFinalized`, `generationLedgersDeleted`, `shoppingMutationsDeleted`, `authContinuationsDeleted`, and duration, closed `maintenance_cleanup_failed` logging, and no Supabase REST/admin client import. It imports `config`, expects `config` to equal `{schedule:"@hourly"}`, and rejects a `path` key. The source/config test documents that a Scheduled Function runs only for a published production deploy, has no directly invokable URL, and is locally debugged by starting `npm exec --offline netlify dev` with the generated local `.env`, then running `npm exec --offline netlify functions:invoke maintenance-cleanup` from a second terminal.
+The Function test injects the clock, database adapter, and **Task 4 `safeLog` / `createSafeLogger` sink**. It asserts one parsed counts-only maintenance call, `204`, and a success log whose JSON keys are only `level`, `request_id`, `code` (`maintenance_cleanup`), `duration_ms`, and the four snake_case aggregates (`stale_reservations_finalized`, `generation_ledgers_deleted`, `shopping_mutations_deleted`, `auth_continuations_deleted`). Failure logging uses `code: "maintenance_cleanup_failed"` with no counts and no raw driver text. Assert no Supabase REST/admin client import, no camelCase `durationMs`/`errorCode` emission, and no `console.*` in the handler source. It imports `config`, expects `config` to equal `{schedule:"@hourly"}`, and rejects a `path` key. The source/config test documents that a Scheduled Function runs only for a published production deploy, has no directly invokable URL, and is locally debugged by starting `docker compose run --rm --no-deps app npm exec --offline netlify -- dev` with the generated local `.env`, then running `docker compose run --rm --no-deps app npm exec --offline netlify -- functions:invoke maintenance-cleanup` from a second terminal (or the host equivalent once `netlify-cli` is in the image).
 
 Write `maintenance-db.integration.test.ts` against the real local PostgreSQL path and dedicated login. Exclude it from the ordinary suite in the same commit: `vitest.config.ts` currently includes `netlify/functions/**/*.test.ts` with a global `jsdom` environment, so without an `exclude` entry this file would also run inside `docker compose run --rm --no-deps app npx vitest run`, where the stack is absent and `pg` would be running under jsdom. Add it to `exclude`, mark the file `// @vitest-environment node`, and run it only through its dedicated command (which omits `--no-deps` because it needs `db`). Before the transaction it asserts `session_user=current_user='kondate_maintenance_login'` and `current_setting('statement_timeout')='20s'`; inside it asserts `session_user='kondate_maintenance_login'`, `current_user='kondate_maintenance_executor'`, and the local timeout remains `20s`. A fixed test-only seam, unavailable to requests and production call sites, runs the actual maintenance RPC and then `pg_sleep(21)` before commit; expect SQLSTATE `57014` near 20 seconds, assert all generation, shopping-mutation, and continuation writes rolled back from an independent admin connection, and prove the `kondate-maintenance` connection disappeared from `pg_stat_activity`. A second test lets earlier categories change rows while an admin connection holds an `ACCESS EXCLUSIVE` lock on the later `private.auth_continuations` table; the same real RPC must be canceled with `57014`, roll back the earlier generation and shopping deletion changes, release/close both clients in `finally`, and leave no partial cleanup. The 25-second client ceiling is a backstop and must not win over the database's 20-second error in either test.
 
@@ -1494,45 +1607,68 @@ commit;
 
 The pre-transaction guard must see the dedicated LOGIN and `20s`; the in-transaction guard must see that LOGIN as `session_user`, the executor as `current_user`, and `20s`. The timestamp and fixed batch `250` are parameters; no request controls a role, identifier, SQL fragment, timeout, or batch. Parse the exact four-key, non-negative-integer counts object before `COMMIT`, including `shoppingMutationsDeleted`; a missing, extra, or malformed count rolls the entire transaction back. On a server error including SQLSTATE `57014`, issue `ROLLBACK` only while the connection is usable. If the overall 25-second deadline/client timeout fires or protocol state is uncertain, issue no further SQL and close the socket so PostgreSQL rolls back the open transaction. In every path, remove the deadline listener and await the same idempotent `client.end()` in `finally`; use no global pool and leave no warm-invocation connection. Cleanup failure is folded into the same closed error code and never replaces or logs the original error.
 
-Implement the Scheduled Function with the current Netlify code configuration and no HTTP route:
+Implement the Scheduled Function with the current Netlify code configuration and no HTTP route. Logging uses Task 4's `safeLog` only — never a parallel camelCase `console.*` shape:
 
 ```ts
 import type { Config } from "@netlify/functions";
-import { runMaintenance } from "./_shared/maintenance-db";
-import { parseMaintenanceDatabaseEnv, selectMaintenanceEnvironmentMode } from "./_shared/maintenance-env";
-import { parseManagedSupabaseProjectRef } from "./_shared/env";
+import { parseManagedSupabaseProjectRef } from "./_shared/env.js";
+import { safeLog } from "./_shared/logger.js";
+import { runMaintenance } from "./_shared/maintenance-db.js";
+import {
+  parseMaintenanceDatabaseEnv,
+  selectMaintenanceEnvironmentMode,
+} from "./_shared/maintenance-env.js";
 
-export default async function maintenanceCleanup():Promise<Response>{
-  const started=performance.now();
-  const deadline=AbortSignal.timeout(25_000);
-  try{
-    const mode=selectMaintenanceEnvironmentMode(process.env);
-    let connectionString:string;
-    if(mode==="local"){
-      connectionString=parseMaintenanceDatabaseEnv(process.env,{mode});
-    }else{
-      const expectedProjectRef=parseManagedSupabaseProjectRef(
-        String(process.env.SUPABASE_URL ?? ""));
-      if(expectedProjectRef===null) throw new Error("supabase_project_invalid");
-      connectionString=parseMaintenanceDatabaseEnv(process.env,
-        {mode,expectedProjectRef});
+export default async function maintenanceCleanup(): Promise<Response> {
+  const started = performance.now();
+  const deadline = AbortSignal.timeout(25_000);
+  const requestId = "maintenance";
+  try {
+    const mode = selectMaintenanceEnvironmentMode(process.env);
+    let connectionString: string;
+    if (mode === "local") {
+      connectionString = parseMaintenanceDatabaseEnv(process.env, { mode });
+    } else {
+      const expectedProjectRef = parseManagedSupabaseProjectRef(
+        String(process.env.SUPABASE_URL ?? ""),
+      );
+      if (expectedProjectRef === null) throw new Error("supabase_project_invalid");
+      connectionString = parseMaintenanceDatabaseEnv(process.env, {
+        mode,
+        expectedProjectRef,
+      });
     }
-    const counts=await runMaintenance({
-      connectionString,now:new Date().toISOString(),batchSize:250,
-      signal:deadline,
+    const counts = await runMaintenance({
+      connectionString,
+      now: new Date().toISOString(),
+      batchSize: 250,
+      signal: deadline,
     });
-    console.info(JSON.stringify({event:"maintenance_cleanup",...counts,
-      durationMs:Math.round(performance.now()-started)}));
-    return new Response(null,{status:204});
-  }catch{
-    console.error(JSON.stringify({event:"maintenance_cleanup",
-      errorCode:"maintenance_cleanup_failed",
-      durationMs:Math.round(performance.now()-started)}));
-    return new Response(null,{status:500});
+    safeLog({
+      level: "info",
+      requestId,
+      code: "maintenance_cleanup",
+      durationMs: Math.round(performance.now() - started),
+      staleReservationsFinalized: counts.staleReservationsFinalized,
+      generationLedgersDeleted: counts.generationLedgersDeleted,
+      shoppingMutationsDeleted: counts.shoppingMutationsDeleted,
+      authContinuationsDeleted: counts.authContinuationsDeleted,
+    });
+    return new Response(null, { status: 204 });
+  } catch {
+    safeLog({
+      level: "error",
+      requestId,
+      code: "maintenance_cleanup_failed",
+      durationMs: Math.round(performance.now() - started),
+    });
+    return new Response(null, { status: 500 });
   }
 }
-export const config:Config={schedule:"@hourly"};
+export const config: Config = { schedule: "@hourly" };
 ```
+
+RPC/JSON counts stay camelCase in the TypeScript result object (matching `run_kondate_maintenance`); only the serialized log lines use snake_case via `createSafeLogger`. Never emit raw `console.*` or camelCase log keys from production Functions.
 
 The login-default/database ceiling (20 seconds), node-postgres client timeout (25 seconds), and Netlify Scheduled Function maximum (30 seconds) are ordered and independently tested. `schedule` is mutually exclusive with `path`; this Function therefore appears in no API route table and cannot be invoked by URL. It runs only on published production deploys, not deploy previews. The local runbook provisions the dedicated local login, starts Netlify Dev in its canonical `dev` context so the generated local-mode marker is honored, and then uses the CLI invocation above; standalone or production-context invocation with a loopback or cross-project URL fails closed. Monitoring records the four counts, duration, and a closed error code only—never row IDs, mutation response JSON, continuation fields, prompts, user data, project refs, database error text, hostnames, usernames, or connection strings.
 
