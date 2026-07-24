@@ -1040,9 +1040,10 @@ describe("previewShoppingListDiff", () => {
     expect(labels[0]?.memberDisplayName).toBe("子ども");
   });
 
-  it("rejects a stale list version before revalidating the source menu", async () => {
-    const revalidate = vi.fn<ShoppingDependencies["revalidate"]>();
-    const deps = makeShoppingDependencies({ revalidate });
+  it("rejects a stale list version after household identity passes", async () => {
+    // identity/mode は list version より先。household で identity が通ったあとだけ
+    // list_version_conflict になる（SQL の owner→version→mode→list 優先と揃える）。
+    const deps = makeShoppingDependencies();
     await expect(
       previewShoppingListDiff(deps, {
         userId: USER_ID,
@@ -1052,11 +1053,16 @@ describe("previewShoppingListDiff", () => {
         expectedListVersion: 2,
       }),
     ).rejects.toMatchObject({ status: 409, code: "list_version_conflict" });
-    expect(revalidate).not.toHaveBeenCalled();
+    /* eslint-disable @typescript-eslint/unbound-method -- makeShoppingDependencies の
+       vi.fn プロパティは this を使わない純粋関数なので束縛外れの危険はない */
+    expect(deps.revalidate).toHaveBeenCalled();
+    expect(deps.loadActiveList).toHaveBeenCalled();
+    /* eslint-enable @typescript-eslint/unbound-method */
   });
 
-  it("rejects a stale source menu version", async () => {
-    const deps = makeShoppingDependencies();
+  it("rejects a stale source menu version before the list version check", async () => {
+    const loadActiveList = vi.fn<ShoppingDependencies["loadActiveList"]>();
+    const deps = makeShoppingDependencies({ loadActiveList });
     await expect(
       previewShoppingListDiff(deps, {
         userId: USER_ID,
@@ -1066,6 +1072,7 @@ describe("previewShoppingListDiff", () => {
         expectedListVersion: 3,
       }),
     ).rejects.toMatchObject({ status: 409, code: "source_menu_version_conflict" });
+    expect(loadActiveList).not.toHaveBeenCalled();
   });
 });
 
@@ -1094,22 +1101,30 @@ describe("reconcileShoppingList", () => {
     /* eslint-enable @typescript-eslint/unbound-method */
   });
 
-  it("rejects a stale list version before applying the reconciliation", async () => {
+  it("rejects a stale list version after household identity passes", async () => {
+    // household identity が通ったあとだけ list_version_conflict を返す。
+    // idea + stale list の dual-fault は idea_menu_not_supported 側のテストで固定する。
     const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
     const deps = makeShoppingDependencies({ applyReconciliation });
     await expect(
       reconcileShoppingList(deps, { ...reconcileCommand, expectedListVersion: 2 }),
     ).rejects.toMatchObject({ status: 409, code: "list_version_conflict" });
     expect(applyReconciliation).not.toHaveBeenCalled();
+    /* eslint-disable @typescript-eslint/unbound-method -- vi.fn プロパティは this 非依存 */
+    expect(deps.revalidate).toHaveBeenCalled();
+    expect(deps.loadActiveList).toHaveBeenCalled();
+    /* eslint-enable @typescript-eslint/unbound-method */
   });
 
-  it("rejects a stale source menu version before applying the reconciliation", async () => {
+  it("rejects a stale source menu version before the list version check", async () => {
     const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
-    const deps = makeShoppingDependencies({ applyReconciliation });
+    const loadActiveList = vi.fn<ShoppingDependencies["loadActiveList"]>();
+    const deps = makeShoppingDependencies({ applyReconciliation, loadActiveList });
     await expect(
       reconcileShoppingList(deps, { ...reconcileCommand, sourceMenuVersion: 2 }),
     ).rejects.toMatchObject({ status: 409, code: "source_menu_version_conflict" });
     expect(applyReconciliation).not.toHaveBeenCalled();
+    expect(loadActiveList).not.toHaveBeenCalled();
   });
 
   it("passes the just-read safety fingerprint and the canonical request hash to the RPC", async () => {
@@ -1301,4 +1316,195 @@ describe("idea menu shopping boundaries", () => {
     expect(mocks.loadMenu).not.toHaveBeenCalled();
     expect(mocks.applyReconciliation).not.toHaveBeenCalled();
   });
+
+  it("prefers idea_menu_not_supported over list_version_conflict on dual-fault reconcile", async () => {
+    // SQL と同じ identity 優先: idea 出典 + stale expectedListVersion では
+    // list_version_conflict ではなく idea_menu_not_supported を返す。
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(null);
+    mocks.loadActiveList.mockResolvedValue({
+      id: LIST_ID,
+      status: "active",
+      version: 3,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadMenuIdentity.mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "idea",
+    });
+    const deps = toDeps(mocks);
+    await expect(
+      reconcileShoppingList(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        expectedListVersion: 2,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "idea_menu_not_supported",
+    });
+    expect(mocks.loadMenuIdentity).toHaveBeenCalledWith(MENU_ID);
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.loadMenu).not.toHaveBeenCalled();
+    expect(mocks.loadActiveList).not.toHaveBeenCalled();
+    expect(mocks.applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  it("prefers idea_menu_not_supported over list_version_conflict on dual-fault preview", async () => {
+    const mocks = makeMocks();
+    mocks.loadActiveList.mockResolvedValue({
+      id: LIST_ID,
+      status: "active",
+      version: 3,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadMenuIdentity.mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "idea",
+    });
+    const deps = toDeps(mocks);
+    await expect(
+      previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 2,
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "idea_menu_not_supported" });
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.loadMenu).not.toHaveBeenCalled();
+    expect(mocks.loadActiveList).not.toHaveBeenCalled();
+  });
+
+  it("rejects idea reconcile with matching versions without revalidate or loadMenu", async () => {
+    // matching list/menu versions でも mode 拒否は full aggregate より前。
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(null);
+    mocks.loadActiveList.mockResolvedValue({
+      id: LIST_ID,
+      status: "active",
+      version: 3,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadMenuIdentity.mockResolvedValue({
+      id: MENU_ID,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "idea",
+    });
+    const deps = toDeps(mocks);
+    await expect(
+      reconcileShoppingList(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "idea_menu_not_supported" });
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.loadMenu).not.toHaveBeenCalled();
+    expect(mocks.loadActiveList).not.toHaveBeenCalled();
+  });
+});
+
+describe("reconcile identity priority order", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    {
+      name: "idea source beats stale list version",
+      targetMode: "idea" as const,
+      expectedListVersion: 2,
+      sourceMenuVersion: 1,
+      expectedCode: "idea_menu_not_supported",
+      expectedStatus: 422,
+      shouldLoadList: false,
+    },
+    {
+      name: "household identity then stale list version",
+      targetMode: "household" as const,
+      expectedListVersion: 2,
+      sourceMenuVersion: 1,
+      expectedCode: "list_version_conflict",
+      expectedStatus: 409,
+      shouldLoadList: true,
+    },
+    {
+      name: "stale source menu version before list load",
+      targetMode: "household" as const,
+      expectedListVersion: 3,
+      sourceMenuVersion: 99,
+      expectedCode: "source_menu_version_conflict",
+      expectedStatus: 409,
+      shouldLoadList: false,
+    },
+  ])(
+    "documents priority: $name",
+    async ({
+      targetMode,
+      expectedListVersion,
+      sourceMenuVersion,
+      expectedCode,
+      expectedStatus,
+      shouldLoadList,
+    }) => {
+      const mocks = makeMocks();
+      mocks.findMutationReplay.mockResolvedValue(null);
+      mocks.loadMenuIdentity.mockResolvedValue({
+        id: MENU_ID,
+        userId: USER_ID,
+        version: 1,
+        targetMode,
+      });
+      mocks.loadActiveList.mockResolvedValue({
+        id: LIST_ID,
+        status: "active",
+        version: 3,
+        items: [],
+        listLabelWarnings: [],
+      });
+      // household で source version が一致するときだけ loadMenu が version 1 を返す。
+      // sourceMenuVersion 不一致は loadMenu 後に弾くため、menu.version は常に 1。
+      mocks.loadMenu.mockResolvedValue(makeMenu({ version: 1 }));
+      const deps = toDeps(mocks);
+      await expect(
+        reconcileShoppingList(deps, {
+          userId: USER_ID,
+          listId: LIST_ID,
+          expectedListVersion,
+          sourceMenuId: MENU_ID,
+          sourceMenuVersion,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+        }),
+      ).rejects.toMatchObject({ status: expectedStatus, code: expectedCode });
+      if (targetMode === "idea") {
+        expect(mocks.revalidate).not.toHaveBeenCalled();
+        expect(mocks.loadMenu).not.toHaveBeenCalled();
+      }
+      if (shouldLoadList) {
+        expect(mocks.loadActiveList).toHaveBeenCalled();
+      } else {
+        expect(mocks.loadActiveList).not.toHaveBeenCalled();
+      }
+      expect(mocks.applyReconciliation).not.toHaveBeenCalled();
+    },
+  );
 });

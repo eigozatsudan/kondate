@@ -124,15 +124,17 @@ export async function previewShoppingListDiff(
     expectedListVersion: number;
   },
 ): Promise<ShoppingDiff> {
+  // SQL apply_shopping_reconciliation と同じ identity 優先順:
+  // owner / source_menu_version / mode を list version より先に判定する。
+  // preview は mutation replay なし。list 不在は引き続き 404。
+  const { menu, draft } = await validatedDraft(deps, command.sourceMenuId);
+  if (menu.version !== command.sourceMenuVersion)
+    throw new HttpError(409, "source_menu_version_conflict", "献立が更新されました");
   const list = await deps.loadActiveList(command.listId);
   if (list === null)
     throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   if (list.version !== command.expectedListVersion)
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
-  // preview は mutation replay なし。identity から開始する
-  const { menu, draft } = await validatedDraft(deps, command.sourceMenuId);
-  if (menu.version !== command.sourceMenuVersion)
-    throw new HttpError(409, "source_menu_version_conflict", "献立が更新されました");
   return computeShoppingDiff(list, draft);
 }
 
@@ -383,15 +385,19 @@ export async function reconcileShoppingList(
     requestHash,
   });
   if (replay !== null) return replay;
+  // SQL apply_shopping_reconciliation と同じ identity 優先順:
+  // menu owner / expected source version / mode を list version より先に判定する。
+  // dual-fault（idea 出典 + stale list version）では list_version_conflict ではなく
+  // idea_menu_not_supported を返す契約と一致させる。
+  const { menu, draft, safetyFingerprint } = await validatedDraft(deps, command.sourceMenuId);
+  if (menu.version !== command.sourceMenuVersion) {
+    throw new HttpError(409, "source_menu_version_conflict", "献立が更新されました");
+  }
   const list = await deps.loadActiveList(command.listId);
   if (list === null)
     throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   if (list.version !== command.expectedListVersion) {
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
-  }
-  const { menu, draft, safetyFingerprint } = await validatedDraft(deps, command.sourceMenuId);
-  if (menu.version !== command.sourceMenuVersion) {
-    throw new HttpError(409, "source_menu_version_conflict", "献立が更新されました");
   }
   const resolved = resolveApprovedDiff(computeShoppingDiff(list, draft), command.approval);
   return deps.applyReconciliation({
