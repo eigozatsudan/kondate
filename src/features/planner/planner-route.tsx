@@ -10,6 +10,7 @@ import {
 import { privacyNoticeVersion } from "@shared/contracts/domain";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import {
+  getProfile,
   listAllergenCatalog,
   listHouseholdMembers,
   listMemberAllergies,
@@ -448,25 +449,22 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onDraftChange={setValue}
       onStepChange={setStep}
       onIdeaAudienceConfirmed={async () => {
-        // 設計 §10 / Plan8 Task4: audience で idea を確定したときだけ skipped を書く。
-        // fire-and-forget 禁止。未取得・RPC 失敗では throw して audience に留める。
+        // 設計 §10: audience で idea を確定した時点で skipped を書く（主経路）。
+        // fire-and-forget 禁止。profile 取得/RPC 失敗では throw して audience に留める。
         if (userId === undefined) {
           throw new Error("missing_user");
         }
         setAudienceStatusError(null);
         try {
-          const outcome = await setOnboardingStatusIfNeeded(client, userId, queryClient);
-          if (outcome === "blocked_no_profile") {
+          await ensureIdeaOnboardingSkipped(client, userId, queryClient);
+        } catch (error) {
+          if (error instanceof IdeaOnboardingSkipError && error.code === "profile_unavailable") {
             setAudienceStatusError(
               "家族設定の状態を確認できませんでした。再読み込みしてください。",
             );
-            throw new Error("profile_unavailable");
+          } else {
+            setAudienceStatusError("開始状態を保存できませんでした。もう一度お試しください");
           }
-        } catch (error) {
-          if (error instanceof Error && error.message === "profile_unavailable") {
-            throw error;
-          }
-          setAudienceStatusError("開始状態を保存できませんでした。もう一度お試しください");
           throw error instanceof Error ? error : new Error("onboarding_status_write_failed");
         }
       }}
@@ -525,13 +523,32 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }
         if (startGeneration === undefined) return;
         setIsSubmitting(true);
+        setAudienceStatusError(null);
         try {
           const saved = await flushDraft();
           if (!hasAcceptedOrDeclinedPrivacy) {
             openPrivacyNotice();
             return;
           }
-          // skipped 書込は audience で idea 確定した単一路のみ（review submit では呼ばない）。
+          // resume で audience を踏まず review に着いた idea 下書きでも skipped を揃える安全網。
+          // complete|skipped は no-op。取得/書込失敗では生成を開始しない（fail-closed）。
+          if (parsed.data.targetMode === "idea" && userId !== undefined) {
+            try {
+              await ensureIdeaOnboardingSkipped(client, userId, queryClient);
+            } catch (error) {
+              if (
+                error instanceof IdeaOnboardingSkipError &&
+                error.code === "profile_unavailable"
+              ) {
+                setSubmissionError(
+                  "家族設定の状態を確認できませんでした。再読み込みしてください。",
+                );
+              } else {
+                setSubmissionError("開始状態を保存できませんでした。もう一度お試しください");
+              }
+              return;
+            }
+          }
           const controller = new AbortController();
           generationAbortControllerRef.current?.abort();
           generationAbortControllerRef.current = controller;
@@ -554,24 +571,48 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   );
 }
 
+/** idea → skipped 書込の失敗理由。UI は code で文言を分岐する。 */
+class IdeaOnboardingSkipError extends Error {
+  readonly code: "profile_unavailable" | "write_failed";
+  constructor(code: "profile_unavailable" | "write_failed", message?: string) {
+    super(message ?? code);
+    this.name = "IdeaOnboardingSkipError";
+    this.code = code;
+  }
+}
+
 /**
- * profile が権威的に取得済みかつ not_started|in_progress のときだけ skipped へ進める。
- * cache 未取得・未知状態は書かず blocked_no_profile。complete|skipped は no-op。
+ * idea 確定時に not_started|in_progress なら skipped へ進める。
+ * profile は cache miss 時に ensureQueryData → getProfile で権威取得する（/planner 直開き対応）。
+ * complete|skipped は no-op。取得失敗・未知状態は profile_unavailable。RPC 失敗は write_failed。
  */
-async function setOnboardingStatusIfNeeded(
+async function ensureIdeaOnboardingSkipped(
   client: ReturnType<typeof getBrowserSupabaseClient>,
   userId: string,
   queryClient: ReturnType<typeof useQueryClient>,
-): Promise<"written" | "skipped_noop" | "blocked_no_profile"> {
-  const cached = queryClient.getQueryData<{ onboarding_status?: string }>(
-    householdKeys.profile(userId),
-  );
-  // 未取得: undefined 全体 → blocked_no_profile（書かない）
-  if (cached === undefined) return "blocked_no_profile";
-  const current = cached.onboarding_status;
+): Promise<"written" | "skipped_noop"> {
+  let profile: { onboarding_status?: string };
+  try {
+    profile = await queryClient.ensureQueryData({
+      queryKey: householdKeys.profile(userId),
+      queryFn: () => getProfile(client, userId),
+    });
+  } catch {
+    throw new IdeaOnboardingSkipError("profile_unavailable");
+  }
+  const current = profile.onboarding_status;
   if (current === "complete" || current === "skipped") return "skipped_noop";
-  if (current !== "not_started" && current !== "in_progress") return "blocked_no_profile";
-  await setOnboardingStatus(client, userId, "skipped");
+  if (current !== "not_started" && current !== "in_progress") {
+    throw new IdeaOnboardingSkipError("profile_unavailable");
+  }
+  try {
+    await setOnboardingStatus(client, userId, "skipped");
+  } catch (error) {
+    throw new IdeaOnboardingSkipError(
+      "write_failed",
+      error instanceof Error ? error.message : "write_failed",
+    );
+  }
   await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
   return "written";
 }

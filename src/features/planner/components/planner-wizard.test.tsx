@@ -314,6 +314,44 @@ describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
     });
     expect(onIdeaAudienceConfirmed).not.toHaveBeenCalled();
   });
+
+  it("disables audience next while idea confirm is in flight to prevent double submit", async () => {
+    const user = userEvent.setup();
+    let resolveConfirm: (() => void) | undefined;
+    const onIdeaAudienceConfirmed = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfirm = resolve;
+        }),
+    );
+    render(
+      <Harness
+        initialStep="audience"
+        initialDraft={ideaAudienceDraft}
+        onIdeaAudienceConfirmed={onIdeaAudienceConfirmed}
+      />,
+    );
+
+    const nextButton = screen.getByRole("button", { name: "次へ" });
+    await user.click(nextButton);
+    expect(onIdeaAudienceConfirmed).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(nextButton).toBeDisabled();
+    });
+    // mode ラジオも disabled（await 中の切替を塞ぐ）
+    expect(screen.getByRole("radio", { name: "家族に合わせて作る" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" })).toBeDisabled();
+
+    // 二重クリックしても in-flight 中は追加呼び出ししない
+    await user.click(nextButton);
+    expect(onIdeaAudienceConfirmed).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveConfirm?.();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+  });
 });
 
 describe("PlannerWizard review step", () => {

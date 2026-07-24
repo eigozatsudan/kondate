@@ -62,10 +62,18 @@ const ownerBDraft: PlannerDraft = {
 
 const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 const setOnboardingStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const getProfileMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
 const getQueryDataMock = vi.hoisted(() => vi.fn());
+const ensureQueryDataMock = vi.hoisted(() =>
+  vi.fn(async (options: { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }) => {
+    const cached = getQueryDataMock(options.queryKey);
+    if (cached !== undefined) return cached;
+    return options.queryFn();
+  }),
+);
 const cancelQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const invalidateQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
@@ -79,13 +87,18 @@ vi.mock("react-router", async (importOriginal) => {
 });
 vi.mock("@/features/household/household-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/household/household-api")>();
-  return { ...original, setOnboardingStatus: setOnboardingStatusMock };
+  return {
+    ...original,
+    setOnboardingStatus: setOnboardingStatusMock,
+    getProfile: getProfileMock,
+  };
 });
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     cancelQueries: cancelQueriesMock,
     getQueryData: getQueryDataMock,
     setQueryData: setQueryDataMock,
+    ensureQueryData: ensureQueryDataMock,
     invalidateQueries: invalidateQueriesMock,
   }),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
@@ -250,9 +263,12 @@ vi.mock("./components/planner-wizard", () => ({
         <button
           type="button"
           onClick={() => {
-            // 実 wizard と同じ: idea 確定は await 成功後だけ review へ進む（fire-and-forget 禁止）
+            // 実 wizard と同じ: idea のときだけ confirm を await し、成功後だけ review へ進む
             void (async () => {
-              if (props.onIdeaAudienceConfirmed !== undefined) {
+              if (
+                props.draft.targetMode === "idea" &&
+                props.onIdeaAudienceConfirmed !== undefined
+              ) {
                 try {
                   await props.onIdeaAudienceConfirmed();
                 } catch {
@@ -268,6 +284,7 @@ vi.mock("./components/planner-wizard", () => ({
         <button
           type="button"
           onClick={() => {
+            // household など idea 以外は confirm を呼ばず step だけ進める
             props.onStepChange("review");
           }}
         >
@@ -313,26 +330,50 @@ beforeEach(() => {
   queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-11.v1" };
   savePlannerDraftMock.mockResolvedValue(draft);
   setOnboardingStatusMock.mockResolvedValue(undefined);
+  getProfileMock.mockReset();
+  getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
   // not_started|in_progress のときだけ skipped へ進める前提を再現する
   getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
+  ensureQueryDataMock.mockImplementation(
+    async (options: { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }) => {
+      const cached = getQueryDataMock(options.queryKey);
+      if (cached !== undefined) return cached;
+      return options.queryFn();
+    },
+  );
   generationRecoveryMock.startGeneration.mockReset();
   generationRecoveryMock.startGeneration.mockResolvedValue(undefined);
 });
 
 describe("idea audience 確定時の onboarding skipped 契約", () => {
-  function goToAudienceStep(): void {
+  const ideaDraft = {
+    ...draft,
+    targetMode: "idea" as const,
+    targetMemberIds: [] as string[],
+    servings: 2,
+  };
+
+  function goToAudienceStepWithIdeaDraft(): void {
     const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+    // 実 wizard と同様: mode を idea に確定してから confirm ボタンを押す
     act(() => {
-      props.onStepChange("audience");
+      props.onDraftChange(ideaDraft);
+    });
+    act(() => {
+      const latest = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+      latest.onStepChange("audience");
     });
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    expect((wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps).draft.targetMode).toBe(
+      "idea",
+    );
   }
 
   it("writes skipped when audience advances with idea and profile is not_started", async () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
     render(<PlannerPage />);
-    goToAudienceStep();
+    goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
 
@@ -352,7 +393,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "in_progress" });
     render(<PlannerPage />);
-    goToAudienceStep();
+    goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
 
@@ -370,7 +411,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "complete" });
     render(<PlannerPage />);
-    goToAudienceStep();
+    goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
 
@@ -384,7 +425,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "skipped" });
     render(<PlannerPage />);
-    goToAudienceStep();
+    goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
 
@@ -394,30 +435,33 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     expect(setOnboardingStatusMock).not.toHaveBeenCalled();
   });
 
-  it("does not write and stays on audience when profile cache is missing", async () => {
+  it("fetches profile and writes skipped when cache is missing", async () => {
     const user = userEvent.setup();
+    // /planner 直開き等で cache が無い場合は getProfile で権威取得する
     getQueryDataMock.mockReturnValue(undefined);
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     render(<PlannerPage />);
-    goToAudienceStep();
+    goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
 
     await vi.waitFor(() => {
-      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(getProfileMock).toHaveBeenCalled();
+      expect(setOnboardingStatusMock).toHaveBeenCalledWith(
+        expect.anything(),
+        draft.userId,
+        "skipped",
+      );
     });
-    expect(setOnboardingStatusMock).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "家族設定の状態を確認できませんでした。再読み込みしてください。",
-    );
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
   });
 
-  it("does not write and shows alert when profile query failed", async () => {
-    // 取得失敗後は cache が無いか不正のため blocked と同じく書込せず audience に留める
+  it("stays on audience when profile fetch fails", async () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue(undefined);
+    getProfileMock.mockRejectedValue(new Error("network"));
     render(<PlannerPage />);
-    goToAudienceStep();
+    goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
 
@@ -435,7 +479,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockRejectedValue(new Error("rpc failed"));
     render(<PlannerPage />);
-    goToAudienceStep();
+    goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
 
@@ -459,9 +503,9 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
 
-  it("does not call setOnboardingStatus from review generate submit", async () => {
+  it("writes skipped on review generate submit when idea draft resumes without audience", async () => {
     const user = userEvent.setup();
-    // idea 下書きで review から生成しても skipped は audience 確定時の単一路だけ
+    // 完全な idea 下書きは firstIncomplete で review に着く。audience を踏まない経路の安全網。
     queryState.draft = {
       ...draft,
       targetMode: "idea",
@@ -469,6 +513,54 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
       servings: 2,
     };
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
+    const startGeneration = vi.fn().mockResolvedValue(undefined);
+    render(<PlannerPage startGeneration={startGeneration} />);
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(setOnboardingStatusMock).toHaveBeenCalledWith(
+        expect.anything(),
+        draft.userId,
+        "skipped",
+      );
+      expect(startGeneration).toHaveBeenCalled();
+    });
+  });
+
+  it("does not generate when idea resume submit cannot load profile", async () => {
+    const user = userEvent.setup();
+    queryState.draft = {
+      ...draft,
+      targetMode: "idea",
+      targetMemberIds: [],
+      servings: 2,
+    };
+    getQueryDataMock.mockReturnValue(undefined);
+    getProfileMock.mockRejectedValue(new Error("network"));
+    const startGeneration = vi.fn().mockResolvedValue(undefined);
+    render(<PlannerPage startGeneration={startGeneration} />);
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "家族設定の状態を確認できませんでした。再読み込みしてください。",
+      );
+    });
+    expect(startGeneration).not.toHaveBeenCalled();
+    expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite skipped on idea generate when profile is already complete", async () => {
+    const user = userEvent.setup();
+    queryState.draft = {
+      ...draft,
+      targetMode: "idea",
+      targetMemberIds: [],
+      servings: 2,
+    };
+    getQueryDataMock.mockReturnValue({ onboarding_status: "complete" });
     const startGeneration = vi.fn().mockResolvedValue(undefined);
     render(<PlannerPage startGeneration={startGeneration} />);
 
@@ -491,6 +583,24 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
       await Promise.resolve();
     });
     expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("household draft のまま audience idea ボタンを押しても confirm しない", async () => {
+    // mock が draft.targetMode を無視すると偽グリーンになるため、mode ゲートを固定する
+    const user = userEvent.setup();
+    getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
+    render(<PlannerPage />);
+    const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+    expect(props.draft.targetMode).toBe("household");
+    act(() => {
+      props.onStepChange("audience");
+    });
+    await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
   });
 });
 

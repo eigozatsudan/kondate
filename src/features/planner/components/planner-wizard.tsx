@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PantryItem } from "@shared/contracts/pantry";
@@ -122,6 +122,9 @@ export function PlannerWizard({
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLDivElement>(null);
+  // idea audience 確定の single-flight。ref は同期ガード、state は disabled 表示用。
+  const confirmingIdeaAudienceRef = useRef(false);
+  const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);
 
   const goToStep = (next: (typeof plannerSteps)[number]): void => {
     onStepChange(next);
@@ -211,6 +214,8 @@ export function PlannerWizard({
             servings: draft.servings,
           }}
           onChange={(audience) => {
+            // 確定中は mode/人数の変更を捨てる（await 中に household へ戻して二重確定を避ける）
+            if (confirmingIdeaAudienceRef.current) return;
             onDraftChange({
               ...draft,
               ...audience,
@@ -218,22 +223,33 @@ export function PlannerWizard({
             });
           }}
           onBack={() => {
+            if (confirmingIdeaAudienceRef.current) return;
             goToStep("cuisine");
           }}
           onNext={() => {
             // idea 確定は route の skipped 書込を await。失敗時は audience に留まる。
-            void (async () => {
-              if (draft.targetMode === "idea" && onIdeaAudienceConfirmed !== undefined) {
+            // ref は await 前に同期で立て、disabled 再描画前の double-click を塞ぐ。
+            if (confirmingIdeaAudienceRef.current) return;
+            if (draft.targetMode === "idea" && onIdeaAudienceConfirmed !== undefined) {
+              confirmingIdeaAudienceRef.current = true;
+              setConfirmingIdeaAudience(true);
+              void (async () => {
                 try {
                   await onIdeaAudienceConfirmed();
                 } catch {
+                  confirmingIdeaAudienceRef.current = false;
+                  setConfirmingIdeaAudience(false);
                   return;
                 }
-              }
-              goToStep("review");
-            })();
+                confirmingIdeaAudienceRef.current = false;
+                setConfirmingIdeaAudience(false);
+                goToStep("review");
+              })();
+              return;
+            }
+            goToStep("review");
           }}
-          disabled={isSaving}
+          disabled={isSaving || confirmingIdeaAudience}
           eligibleMembers={eligibleMembers}
           fieldErrors={{
             targetMode: fieldErrors.targetMode ?? null,
