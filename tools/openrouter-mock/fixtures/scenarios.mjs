@@ -174,6 +174,58 @@ pantryMismatch.menu.pantryUsage = [
 const overTime = clone();
 overTime.menu.totalElapsedMinutes = 30;
 
+// Plan 6 Task 6 adversarial corpus（scenarios に登録し X-Kondate-Mock-Scenario で選択）
+const seniorTexture = clone();
+seniorTexture.menu.dishes[0].name = "餅入り雑煮";
+seniorTexture.menu.dishes[0].ingredients[0].name = "切り餅";
+seniorTexture.menu.dishes[0].steps[0].instruction = "餅を柔らかくなるまで煮る";
+seniorTexture.menu.safetyTags = ["senior_texture"];
+
+const medicalTherapeutic = {
+  outcome: "constraint_conflict",
+  conflicts: [
+    {
+      code: "unsupported_medical_request",
+      message: "治療食・嚥下調整食の依頼は通常献立として生成できません。",
+      conditionRefs: ["medical_scope"],
+    },
+  ],
+};
+
+const missingPortionBranch = clone();
+missingPortionBranch.menu.adaptations[0].portionText = "";
+missingPortionBranch.menu.adaptations[0].beforeStepRef = null;
+
+const mustUsePantryOmission = clone();
+mustUsePantryOmission.menu.pantryUsage = [
+  {
+    pantryRef: "pantry_1",
+    priority: "must_use",
+    usageStatus: "unused",
+    plannedQuantity: 200,
+    unit: "g",
+    dishRefs: [],
+    unusedReason: "omitted_without_reason",
+  },
+];
+
+const unavailablePantryQuantity = clone();
+unavailablePantryQuantity.menu.pantryUsage = [
+  {
+    pantryRef: "pantry_1",
+    priority: "prefer",
+    usageStatus: "used",
+    plannedQuantity: 9999,
+    unit: "g",
+    dishRefs: ["dish_1"],
+    unusedReason: null,
+  },
+];
+unavailablePantryQuantity.menu.dishes[0].ingredients[0].pantryRef = "pantry_1";
+
+const fallbackModelSuccess = clone();
+fallbackModelSuccess.menu.dishes[0].description = "fallback model success fixture";
+
 const recursivelyFreeze = (value) => {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) recursivelyFreeze(child);
@@ -308,6 +360,11 @@ const ideaDishReplacement1 = structuredClone(dishReplacement);
 ideaDishReplacement1.adaptations = [];
 ideaDishReplacement1.labelConfirmations = [];
 
+// 成功主菜と同一 material 近傍で duplicate dish regeneration を誘発
+const duplicateDish = structuredClone(dishReplacement);
+duplicateDish.replacementDish.name = "鶏肉と白菜のやわらか煮";
+duplicateDish.replacementDish.ingredients[0].name = "鶏もも肉";
+
 export const scenarios = recursivelyFreeze({
   success,
   "idea-servings-1": ideaServings1,
@@ -331,9 +388,19 @@ export const scenarios = recursivelyFreeze({
   "malformed-json": "{not-json",
   "direct-allergen": directAllergen,
   "alias-in-step": aliasInStep,
+  "allergen-alias": aliasInStep,
   "missing-label-confirmation": missingLabel,
+  "processed-label-confirmation": missingLabel,
   "unsafe-age-shape": unsafeAge,
+  "unsafe-child-shape": unsafeAge,
+  "senior-texture-adaptation": seniorTexture,
+  "unsupported-medical": medicalTherapeutic,
   "invalid-adaptation-branch": badBranch,
+  "missing-portion-branch": missingPortionBranch,
   "invalid-pantry-dish-link": pantryMismatch,
+  "must-use-pantry-omission": mustUsePantryOmission,
+  "unavailable-pantry-quantity": unavailablePantryQuantity,
   "over-time-limit": overTime,
+  "duplicate-dish-regeneration": duplicateDish,
+  "fallback-model-success": fallbackModelSuccess,
 });

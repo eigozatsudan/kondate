@@ -19,14 +19,28 @@ type ScenarioName =
   | "unsafe-age-shape"
   | "invalid-adaptation-branch"
   | "invalid-pantry-dish-link"
-  | "over-time-limit";
+  | "over-time-limit"
+  | "allergen-alias"
+  | "processed-label-confirmation"
+  | "unsafe-child-shape"
+  | "senior-texture-adaptation"
+  | "unsupported-medical"
+  | "missing-portion-branch"
+  | "must-use-pantry-omission"
+  | "unavailable-pantry-quantity"
+  | "duplicate-dish-regeneration"
+  | "fallback-model-success";
 
-type DishScenarioName = "dish-replacement" | "idea-dish-replacement-1";
+type DishScenarioName =
+  | "dish-replacement"
+  | "idea-dish-replacement-1"
+  | "duplicate-dish-regeneration";
 
 export declare const scenarios: Readonly<
   Record<Exclude<ScenarioName, "malformed-json" | DishScenarioName>, AiGenerationResponse> & {
     readonly "malformed-json": string;
     readonly "dish-replacement": DishRegenerationAiOutput;
     readonly "idea-dish-replacement-1": DishRegenerationAiOutput;
+    readonly "duplicate-dish-regeneration": DishRegenerationAiOutput;
   }
 >;

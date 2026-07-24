@@ -11,6 +11,7 @@ playwright-report/
 test-results/
 .DS_Store
 *.log
+.e2e-function.log
 .superpowers/
 *.tsbuildinfo
 .worktrees/

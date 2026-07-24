@@ -7,7 +7,8 @@
 -- Task 8: 予約後の source 変更/削除を pre-send / post-send で検証し、
 -- source_menu_changed・attempt 返却/消費・success 非消費・menu 0 を固定する。
 -- =============================================================================
-select plan(20);
+-- plan: 既存 20 + P3#5 finalize対allergy 二session 2 分岐 = 22
+select plan(22);
 
 delete from auth.users where id in (
   'c1000000-0000-4000-8000-000000000101',
@@ -786,10 +787,464 @@ select is(
   'post-send regenerate_dish source delete: source_menu_changed, attempt consumed, success non-consume, no new menu'
 );
 
+-- =============================================================================
+-- P3#5: finalize 対 allergy mutation の二 session 競合
+-- allergy 先勝ち: finalize は constraint_conflict / current_safety_changed、
+--                 menu 0、成功予約解放、送信済み attempt は消費維持
+-- finalize 先勝ち: matching fingerprint で menu 1 件 success、予約/attempt 成功消費、
+--                 lock 解放後に待機 allergy が commit できる（終了後 fingerprint 不一致は許容）
+-- =============================================================================
+
+-- 既存 fixture owner の processing を解放し、専用 owner を用意する
+do $release_processing$
+declare
+  v_id uuid;
+begin
+  select id into v_id
+  from private.ai_generation_requests
+  where user_id = 'c1000000-0000-4000-8000-000000000101'
+    and status = 'processing'
+  limit 1;
+  if v_id is not null then
+    perform public.finalize_ai_generation_failure(
+      v_id, 'internal_error', null, '2026-07-22 00:20:00+00'
+    );
+  end if;
+end
+$release_processing$;
+
+delete from auth.users where id in (
+  'c1000000-0000-4000-8000-000000000103',
+  'c1000000-0000-4000-8000-000000000104'
+);
+
+-- allergy insert は bypassrls 付き shopping_pgtap_dblink_test を使う
+-- （generation_pgtap_dblink_test は reserve EXECUTE 専用で RLS を抜けられない）
+
+-- P3#5 用 fixture（dblink から見えるよう autocommit で先に確定）
+insert into auth.users (id, instance_id, aud, role, email) values
+  ('c1000000-0000-4000-8000-000000000103', '00000000-0000-0000-0000-000000000000',
+    'authenticated', 'authenticated', 'gen-race-allergy-first@example.test'),
+  ('c1000000-0000-4000-8000-000000000104', '00000000-0000-0000-0000-000000000000',
+    'authenticated', 'authenticated', 'gen-race-finalize-first@example.test');
+
+insert into public.household_members (
+  id, user_id, status, display_name, age_band, portion_size, spice_level,
+  allergy_status, unsupported_diet_status
+) values
+  ('c2000000-0000-4000-8000-000000000103', 'c1000000-0000-4000-8000-000000000103',
+    'complete', '子どもA', 'age_6_8', 'regular', 'mild', 'none', 'none'),
+  ('c2000000-0000-4000-8000-000000000104', 'c1000000-0000-4000-8000-000000000104',
+    'complete', '子どもB', 'age_6_8', 'regular', 'mild', 'none', 'none');
+
+insert into public.generation_drafts (
+  id, user_id, meal_type, main_ingredients, cuisine_genre, target_mode, target_member_ids,
+  servings, time_limit_minutes, budget_preference, avoid_ingredients, memo,
+  pantry_selections, revision
+) values
+  ('c3000000-0000-4000-8000-000000000103', 'c1000000-0000-4000-8000-000000000103',
+    'dinner', array['鶏肉'], 'japanese', 'household',
+    array['c2000000-0000-4000-8000-000000000103'::uuid],
+    null, 30, 'standard', array[]::text[], '', '[]'::jsonb, 1),
+  ('c3000000-0000-4000-8000-000000000104', 'c1000000-0000-4000-8000-000000000104',
+    'dinner', array['豆腐'], 'japanese', 'household',
+    array['c2000000-0000-4000-8000-000000000104'::uuid],
+    null, 30, 'standard', array[]::text[], '', '[]'::jsonb, 1);
+
+-- 予約時点 fingerprint を一時表に保存（allergy 投入前）
+create temporary table p3_5_fingerprints as
+select
+  'c1000000-0000-4000-8000-000000000103'::uuid as owner_id,
+  private.current_safety_fingerprint(
+    'c1000000-0000-4000-8000-000000000103',
+    array['c2000000-0000-4000-8000-000000000103'::uuid]
+  ) as fingerprint
+union all
+select
+  'c1000000-0000-4000-8000-000000000104'::uuid,
+  private.current_safety_fingerprint(
+    'c1000000-0000-4000-8000-000000000104',
+    array['c2000000-0000-4000-8000-000000000104'::uuid]
+  );
+
+select public.reserve_ai_generation(
+  'c1000000-0000-4000-8000-000000000103', 'c9000000-0000-4000-8000-000000000021',
+  'new_menu', 'c3000000-0000-4000-8000-000000000103', 1, null, null, null,
+  'generation-command.v2', repeat('d', 64),
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb,
+  5, 45, 180, '2026-07-22 00:21:00+00'
+);
+select public.mark_ai_global_sent(
+  (select id from private.ai_generation_requests
+    where idempotency_key = 'c9000000-0000-4000-8000-000000000021'),
+  '2026-07-22 00:21:01+00'
+);
+
+select public.reserve_ai_generation(
+  'c1000000-0000-4000-8000-000000000104', 'c9000000-0000-4000-8000-000000000022',
+  'new_menu', 'c3000000-0000-4000-8000-000000000104', 1, null, null, null,
+  'generation-command.v2', repeat('e', 64),
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb,
+  5, 45, 180, '2026-07-22 00:22:00+00'
+);
+select public.mark_ai_global_sent(
+  (select id from private.ai_generation_requests
+    where idempotency_key = 'c9000000-0000-4000-8000-000000000022'),
+  '2026-07-22 00:22:01+00'
+);
+
+-- ---- Branch A: allergy mutation 先勝ち（別 session が allergy を commit 済み）----
+do $allergy_first$
+declare
+  v_owner constant uuid := 'c1000000-0000-4000-8000-000000000103';
+  v_member constant uuid := 'c2000000-0000-4000-8000-000000000103';
+  v_request_id uuid;
+  v_result jsonb;
+  v_stale text;
+  v_allergen_version text;
+  v_food_rule_version text;
+  v_menu_id constant uuid := 'c6000000-0000-4000-8000-000000000103';
+  v_dish_id constant uuid := 'c6100000-0000-4000-8000-000000000103';
+  v_ingredient_id constant uuid := 'c6200000-0000-4000-8000-000000000103';
+  v_step_id constant uuid := 'c6300000-0000-4000-8000-000000000103';
+  v_timeline_id constant uuid := 'c6400000-0000-4000-8000-000000000103';
+  v_sent_before integer;
+  v_success_before integer;
+  v_reserved_before integer;
+  v_allergy_id constant uuid := 'c3000000-0000-4000-8000-000000000193';
+  v_connstr constant text :=
+    'host=db port=5432 dbname=postgres user=shopping_pgtap_dblink_test password=shopping_pgtap_dblink_test_only';
+begin
+  select fingerprint into strict v_stale from p3_5_fingerprints where owner_id = v_owner;
+  select catalog_version into strict v_allergen_version
+  from public.allergen_catalog where id = 'egg';
+  select rule_version into strict v_food_rule_version
+  from public.food_safety_rules order by id limit 1;
+  select id into strict v_request_id
+  from private.ai_generation_requests
+  where user_id = v_owner
+    and idempotency_key = 'c9000000-0000-4000-8000-000000000021';
+
+  select sent_count into strict v_sent_before
+  from private.ai_user_daily_external_attempts
+  where user_id = v_owner and usage_day = date '2026-07-22';
+  select success_count, reserved_count
+    into strict v_success_before, v_reserved_before
+  from private.ai_user_daily_usage
+  where user_id = v_owner and usage_day = date '2026-07-22';
+
+  -- 別 session が allergy を commit（finalize より先）
+  perform extensions.dblink_exec(
+    v_connstr,
+    format(
+      'insert into public.member_allergies(id,user_id,member_id,allergen_id,custom_name,custom_confirmed) '
+      || 'values (%L::uuid,%L::uuid,%L::uuid,%L,null,false)',
+      v_allergy_id, v_owner, v_member, 'egg'
+    )
+  );
+  if private.current_safety_fingerprint(v_owner, array[v_member]) is not distinct from v_stale then
+    raise exception 'allergy-first: fingerprint did not change after allergy insert';
+  end if;
+
+  -- stale fingerprint で finalize → constraint_conflict
+  v_result := public.finalize_ai_generation_success(
+    v_request_id,
+    jsonb_build_object(
+      'schemaVersion', '2026-07-11.v1',
+      'menuId', v_menu_id,
+      'mealType', 'dinner',
+      'cuisineGenre', 'japanese',
+      'servings', 2,
+      'totalElapsedMinutes', 15,
+      'safetyTags', '[]'::jsonb,
+      'dishes', jsonb_build_array(jsonb_build_object(
+        'id', v_dish_id, 'role', 'main', 'position', 1, 'name', '鶏肉の塩焼き',
+        'description', '主菜', 'cookingTimeMinutes', 15,
+        'ingredients', jsonb_build_array(jsonb_build_object(
+          'id', v_ingredient_id, 'position', 1, 'name', '鶏肉',
+          'quantityValue', 200, 'quantityText', '200g', 'unit', 'g',
+          'storeSection', 'meat', 'pantrySelectionId', null,
+          'labelConfirmationRequired', false)),
+        'steps', jsonb_build_array(jsonb_build_object(
+          'id', v_step_id, 'position', 1, 'instruction', '焼く')))),
+      'timeline', jsonb_build_array(jsonb_build_object(
+        'id', v_timeline_id, 'position', 1, 'startMinute', 0, 'durationMinutes', 15,
+        'instruction', '主菜を作る', 'dishId', v_dish_id, 'recipeStepId', v_step_id)),
+      'adaptations', '[]'::jsonb,
+      'pantryUsage', '[]'::jsonb,
+      'labelConfirmations', '[]'::jsonb
+    ),
+    jsonb_build_object('mealType', 'dinner'),
+    jsonb_build_object('members', jsonb_build_array(jsonb_build_object(
+      'householdMemberId', v_member, 'anonymousRef', 'member_1', 'ageBand', 'age_6_8',
+      'allergyStatus', 'none', 'allergenIds', '[]'::jsonb,
+      'requiredSafetyConstraints', '[]'::jsonb, 'unsupportedDietStatus', 'none',
+      'unsupportedDietKinds', '[]'::jsonb))),
+    v_stale,
+    v_allergen_version,
+    v_food_rule_version,
+    jsonb_build_array(jsonb_build_object(
+      'householdMemberId', v_member, 'anonymousRef', 'member_1',
+      'displayNameSnapshot', '子どもA')),
+    '[]'::jsonb,
+    null, null, null,
+    '2026-07-22 00:21:02+00'
+  );
+
+  if v_result->>'status' is distinct from 'constraint_conflict' then
+    raise exception 'allergy-first: expected constraint_conflict, got %', v_result;
+  end if;
+  if (select terminal_details from private.ai_generation_requests where id = v_request_id)
+     is distinct from jsonb_build_object(
+       'conflictCodes', jsonb_build_array('current_safety_changed')
+     ) then
+    raise exception 'allergy-first: missing current_safety_changed conflict codes';
+  end if;
+  if exists (select 1 from public.menus where user_id = v_owner) then
+    raise exception 'allergy-first: menu row was persisted';
+  end if;
+  if (select status from private.ai_generation_requests where id = v_request_id)
+     is distinct from 'constraint_conflict' then
+    raise exception 'allergy-first: request status was not constraint_conflict';
+  end if;
+  if (select user_quota_reserved from private.ai_generation_requests where id = v_request_id)
+     is not false then
+    raise exception 'allergy-first: success reservation was not released';
+  end if;
+  if (select success_count from private.ai_user_daily_usage
+        where user_id = v_owner and usage_day = date '2026-07-22')
+     is distinct from v_success_before then
+    raise exception 'allergy-first: success quota was consumed';
+  end if;
+  if (select reserved_count from private.ai_user_daily_usage
+        where user_id = v_owner and usage_day = date '2026-07-22')
+     is distinct from (v_reserved_before - 1) then
+    raise exception 'allergy-first: success reservation was not released from usage';
+  end if;
+  if (select sent_count from private.ai_user_daily_external_attempts
+        where user_id = v_owner and usage_day = date '2026-07-22')
+     is distinct from v_sent_before then
+    raise exception 'allergy-first: sent attempt was refunded';
+  end if;
+end
+$allergy_first$;
+
+select ok(
+  exists(
+    select 1 from private.ai_generation_requests
+    where user_id = 'c1000000-0000-4000-8000-000000000103'
+      and status = 'constraint_conflict'
+      and terminal_details = jsonb_build_object(
+        'conflictCodes', jsonb_build_array('current_safety_changed')
+      )
+  )
+  and not exists (
+    select 1 from public.menus where user_id = 'c1000000-0000-4000-8000-000000000103'
+  ),
+  'P3#5 allergy-first: finalize terminals as constraint_conflict/current_safety_changed with menu 0 and reservation release'
+);
+
+-- ---- Branch B: finalize 先勝ち（lock 保持中に allergy が待ち、commit 後に完了）----
+do $finalize_first$
+declare
+  v_owner constant uuid := 'c1000000-0000-4000-8000-000000000104';
+  v_member constant uuid := 'c2000000-0000-4000-8000-000000000104';
+  v_request_id uuid;
+  v_result jsonb;
+  v_fingerprint text;
+  v_allergen_version text;
+  v_food_rule_version text;
+  v_menu_id constant uuid := 'c6000000-0000-4000-8000-000000000104';
+  v_dish_id constant uuid := 'c6100000-0000-4000-8000-000000000104';
+  v_ingredient_id constant uuid := 'c6200000-0000-4000-8000-000000000104';
+  v_step_id constant uuid := 'c6300000-0000-4000-8000-000000000104';
+  v_timeline_id constant uuid := 'c6400000-0000-4000-8000-000000000104';
+  v_allergy_id constant uuid := 'c3000000-0000-4000-8000-000000000194';
+  v_connstr constant text :=
+    'host=db port=5432 dbname=postgres user=shopping_pgtap_dblink_test password=shopping_pgtap_dblink_test_only';
+  v_wait_event text;
+  v_attempt integer;
+  v_completed_before_commit boolean := false;
+  v_sent_before integer;
+  v_success_before integer;
+  v_stored_fingerprint text;
+begin
+  select fingerprint into strict v_fingerprint from p3_5_fingerprints where owner_id = v_owner;
+  select catalog_version into strict v_allergen_version
+  from public.allergen_catalog where id = 'egg';
+  select rule_version into strict v_food_rule_version
+  from public.food_safety_rules order by id limit 1;
+  select id into strict v_request_id
+  from private.ai_generation_requests
+  where user_id = v_owner
+    and idempotency_key = 'c9000000-0000-4000-8000-000000000022';
+
+  select sent_count into strict v_sent_before
+  from private.ai_user_daily_external_attempts
+  where user_id = v_owner and usage_day = date '2026-07-22';
+  select success_count into strict v_success_before
+  from private.ai_user_daily_usage
+  where user_id = v_owner and usage_day = date '2026-07-22';
+
+  -- finalize が household_members FOR UPDATE を取る（この DO トランザクションが保持）
+  v_result := public.finalize_ai_generation_success(
+    v_request_id,
+    jsonb_build_object(
+      'schemaVersion', '2026-07-11.v1',
+      'menuId', v_menu_id,
+      'mealType', 'dinner',
+      'cuisineGenre', 'japanese',
+      'servings', 2,
+      'totalElapsedMinutes', 15,
+      'safetyTags', '[]'::jsonb,
+      'dishes', jsonb_build_array(jsonb_build_object(
+        'id', v_dish_id, 'role', 'main', 'position', 1, 'name', '豆腐の煮物',
+        'description', '主菜', 'cookingTimeMinutes', 15,
+        'ingredients', jsonb_build_array(jsonb_build_object(
+          'id', v_ingredient_id, 'position', 1, 'name', '豆腐',
+          'quantityValue', 1, 'quantityText', '1丁', 'unit', 'piece',
+          'storeSection', 'produce', 'pantrySelectionId', null,
+          'labelConfirmationRequired', false)),
+        'steps', jsonb_build_array(jsonb_build_object(
+          'id', v_step_id, 'position', 1, 'instruction', '煮る')))),
+      'timeline', jsonb_build_array(jsonb_build_object(
+        'id', v_timeline_id, 'position', 1, 'startMinute', 0, 'durationMinutes', 15,
+        'instruction', '主菜を作る', 'dishId', v_dish_id, 'recipeStepId', v_step_id)),
+      'adaptations', '[]'::jsonb,
+      'pantryUsage', '[]'::jsonb,
+      'labelConfirmations', '[]'::jsonb
+    ),
+    jsonb_build_object('mealType', 'dinner'),
+    jsonb_build_object('members', jsonb_build_array(jsonb_build_object(
+      'householdMemberId', v_member, 'anonymousRef', 'member_1', 'ageBand', 'age_6_8',
+      'allergyStatus', 'none', 'allergenIds', '[]'::jsonb,
+      'requiredSafetyConstraints', '[]'::jsonb, 'unsupportedDietStatus', 'none',
+      'unsupportedDietKinds', '[]'::jsonb))),
+    v_fingerprint,
+    v_allergen_version,
+    v_food_rule_version,
+    jsonb_build_array(jsonb_build_object(
+      'householdMemberId', v_member, 'anonymousRef', 'member_1',
+      'displayNameSnapshot', '子どもB')),
+    '[]'::jsonb,
+    null, null, null,
+    '2026-07-22 00:22:02+00'
+  );
+
+  if v_result->>'status' is distinct from 'succeeded' then
+    raise exception 'finalize-first: expected succeeded, got %', v_result;
+  end if;
+  if (select count(*) from public.menus where id = v_menu_id and user_id = v_owner) <> 1 then
+    raise exception 'finalize-first: expected exactly one menu';
+  end if;
+  select safety_fingerprint into strict v_stored_fingerprint
+  from public.menus where id = v_menu_id;
+  if v_stored_fingerprint is distinct from v_fingerprint then
+    raise exception 'finalize-first: stored fingerprint does not match locked fingerprint';
+  end if;
+  if (select success_count from private.ai_user_daily_usage
+        where user_id = v_owner and usage_day = date '2026-07-22')
+     is distinct from (v_success_before + 1) then
+    raise exception 'finalize-first: success was not consumed';
+  end if;
+  if (select sent_count from private.ai_user_daily_external_attempts
+        where user_id = v_owner and usage_day = date '2026-07-22')
+     is distinct from v_sent_before then
+    raise exception 'finalize-first: sent attempt accounting drifted';
+  end if;
+
+  -- lock 保持中に別 session の allergy insert を非同期送出
+  perform extensions.dblink_connect('gen_finalize_first', v_connstr);
+  perform extensions.dblink_exec('gen_finalize_first', 'begin');
+  perform extensions.dblink_send_query(
+    'gen_finalize_first',
+    format(
+      'insert into public.member_allergies(id,user_id,member_id,allergen_id,custom_name,custom_confirmed) '
+      || 'values (%L::uuid,%L::uuid,%L::uuid,%L,null,false)',
+      v_allergy_id, v_owner, v_member, 'egg'
+    )
+  );
+
+  for v_attempt in 1..40 loop
+    perform pg_sleep(0.05);
+    select wait_event into v_wait_event from pg_stat_activity
+      where wait_event_type = 'Lock'
+        and query ilike '%member_allergies%'
+        and query ilike '%' || v_allergy_id::text || '%'
+      limit 1;
+    if v_wait_event is not null then
+      exit;
+    end if;
+    if exists(select 1 from public.member_allergies where id = v_allergy_id) then
+      v_completed_before_commit := true;
+      exit;
+    end if;
+  end loop;
+
+  if v_completed_before_commit then
+    raise exception 'finalize-first: allergy completed while finalize still held member locks';
+  end if;
+  if v_wait_event is null then
+    raise exception 'finalize-first: allergy did not block on finalize member locks';
+  end if;
+
+  -- finalize 側トランザクションを commit して lock を解放
+  commit;
+
+  for v_attempt in 1..40 loop
+    perform pg_sleep(0.05);
+    exit when extensions.dblink_is_busy('gen_finalize_first') = 0;
+  end loop;
+  loop
+    declare
+      v_drained integer;
+    begin
+      select count(*) into v_drained
+        from extensions.dblink_get_result('gen_finalize_first') as t(status text);
+      exit when v_drained = 0;
+    end;
+  end loop;
+  perform extensions.dblink_exec('gen_finalize_first', 'commit');
+  perform extensions.dblink_disconnect('gen_finalize_first');
+
+  if not exists(select 1 from public.member_allergies where id = v_allergy_id) then
+    raise exception 'finalize-first: allergy did not commit after lock release';
+  end if;
+  -- 仕様: 競合終了後の current と stored の不一致は許容（history/revalidation が扱う）
+  if private.current_safety_fingerprint(v_owner, array[v_member])
+     is not distinct from v_stored_fingerprint then
+    raise exception 'finalize-first: expected current fingerprint to diverge after allergy';
+  end if;
+  if (select count(*) from public.menus where id = v_menu_id) <> 1 then
+    raise exception 'finalize-first: menu disappeared after allergy commit';
+  end if;
+end
+$finalize_first$;
+
+select ok(
+  exists(
+    select 1 from public.menus
+    where id = 'c6000000-0000-4000-8000-000000000104'
+      and user_id = 'c1000000-0000-4000-8000-000000000104'
+  )
+  and exists(
+    select 1 from public.member_allergies
+    where id = 'c3000000-0000-4000-8000-000000000194'
+  )
+  and exists(
+    select 1 from private.ai_generation_requests
+    where user_id = 'c1000000-0000-4000-8000-000000000104'
+      and status = 'succeeded'
+  ),
+  'P3#5 finalize-first: success menu 1 committed under lock, then waiting allergy commits after release'
+);
+
 -- cleanup
 delete from auth.users where id in (
   'c1000000-0000-4000-8000-000000000101',
-  'c1000000-0000-4000-8000-000000000102'
+  'c1000000-0000-4000-8000-000000000102',
+  'c1000000-0000-4000-8000-000000000103',
+  'c1000000-0000-4000-8000-000000000104'
 );
 
 select * from finish();

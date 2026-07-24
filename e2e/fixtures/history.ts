@@ -324,3 +324,51 @@ export async function changeFirstMemberSafety(page: Page): Promise<void> {
     throw new Error(`member safety update failed: ${String(response.status())}`);
   }
 }
+
+/**
+ * 保存済み献立の材料名を標準アレルゲン語へ書き換えて、revalidate が
+ * direct_allergen_match（status=invalid）を返す状態を作る。
+ * dish_ingredients は authenticated に UPDATE が無いため、service DB（pg）で注入する。
+ * seedGeneratedMenu は小麦登録済みのため、既定の「小麦粉」で直接 hit する。
+ */
+export async function injectDirectAllergenHit(
+  page: Page,
+  menuId: string,
+  allergenText = "小麦粉",
+): Promise<void> {
+  const parsedMenuId = z.uuid().parse(menuId);
+  // page 引数は呼び出し対称性のため受け取るが、ブラウザへ secret を渡さない
+  void page;
+  const { readFile } = await import("node:fs/promises");
+  const { Client } = await import("pg");
+  const envText = await readFile("/workspace/.env", "utf8").catch(async () =>
+    readFile(".env", "utf8"),
+  );
+  const password = z
+    .string()
+    .min(1)
+    .parse(/^POSTGRES_PASSWORD=(.+)$/mu.exec(envText)?.[1]?.trim());
+  const client = new Client({
+    connectionString: `postgresql://postgres:${encodeURIComponent(password)}@127.0.0.1:54322/postgres?sslmode=disable`,
+  });
+  await client.connect();
+  try {
+    const result = await client.query(
+      `update public.dish_ingredients
+         set name = $1
+       where id = (
+         select id from public.dish_ingredients
+         where menu_id = $2::uuid
+         order by position asc
+         limit 1
+       )
+       returning id`,
+      [allergenText, parsedMenuId],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error(`direct allergen inject updated ${String(result.rowCount)} rows`);
+    }
+  } finally {
+    await client.end();
+  }
+}

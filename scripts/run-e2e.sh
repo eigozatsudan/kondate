@@ -193,6 +193,26 @@ cleanup() {
   kill_status=0
   removal_status=0
   restore_status=0
+  privacy_status=0
+  # Playwright 終了後・app 再作成前に Function ログを host へ書き出す（Plan 6 Task 6）。
+  # docker compose down はしないが、force-recreate 前に取らないとログが消える。
+  function_log_path=${KONDATE_E2E_FUNCTION_LOG:-$repo_root/.e2e-function.log}
+  if docker compose --project-directory "$repo_root" --project-name "$project_name" \
+    -f "$repo_root/compose.yaml" logs --no-color app >"$function_log_path" 2>/dev/null; then
+    :
+  else
+    # ログ取得失敗は空ファイルとして後段 assert に任せる
+    : >"$function_log_path" || true
+  fi
+  if [ "${KONDATE_ASSERT_PRIVACY_LOGS:-}" = "1" ]; then
+    if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+      -f "$repo_root/compose.yaml" run --rm --no-deps \
+      app node scripts/assert-privacy-logs.mjs .e2e-function.log; then
+      :
+    else
+      privacy_status=$?
+    fi
+  fi
   if [ "$original_status" -ne 0 ] || [ "$termination_status" -ne 0 ]; then
     # run --rmが正常終了した場合はE2Eコンテナも既に削除済みであるため、
     # kill/rmの対象なしを失敗として扱わない。一方、失敗・中断時は残存した
@@ -223,6 +243,8 @@ cleanup() {
     original_status=$termination_status
   elif [ "$original_status" -ne 0 ]; then
     :
+  elif [ "$privacy_status" -ne 0 ]; then
+    original_status=$privacy_status
   elif [ "$kill_status" -ne 0 ]; then
     original_status=$kill_status
   elif [ "$removal_status" -ne 0 ]; then
