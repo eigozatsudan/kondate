@@ -88,6 +88,11 @@
   min-width: 0;
 }
 
+.guided-planner-theme .ingredient-pantry {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
 /* 献立 wizard の単一・複数選択。label が横並びで崩れないよう 1 列カード化する */
 .guided-planner-theme .wizard-option-list {
   display: grid;
@@ -665,7 +670,20 @@ textarea:focus-visible {
   list-style: none;
 }
 
+.pantry-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pantry-section-heading h2 {
+  margin: 0;
+}
+
 .pantry-card h2,
+.pantry-card h3,
 .pantry-card p {
   margin-block: 0 8px;
 }
@@ -683,6 +701,38 @@ textarea:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.household-member-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 12px;
+  list-style: none;
+}
+
+.household-member-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.household-member-summary p {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.household-member-name {
+  overflow-wrap: anywhere;
+}
+
+.household-editor {
+  border-top: 2px solid var(--border);
+  padding-top: 20px;
 }
 
 @media (min-width: 480px) {

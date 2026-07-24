@@ -124,6 +124,39 @@ async function waitForAllergies(queryClient: QueryClient, memberId = "member-1")
   });
 }
 
+it("登録済み一覧と追加・編集領域を分け、一覧から編集対象を選べる", async () => {
+  const second: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    status: "draft",
+    display_name: null,
+    age_band: "age_3_5",
+    sort_order: 1,
+  };
+  renderSettings({ listMembers: vi.fn().mockResolvedValue([member, second]) });
+
+  expect(await screen.findByRole("heading", { name: "登録済みの家族" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.getByText("大人", { selector: ".household-member-name" })).toBeVisible();
+  expect(screen.getByText(/登録完了/u)).toBeVisible();
+  expect(screen.getByText("呼び名未設定")).toBeVisible();
+  expect(screen.getAllByText(/3〜5歳/u)[0]).toBeVisible();
+  expect(screen.getByText(/入力途中/u)).toBeVisible();
+
+  await userEvent.click(screen.getByRole("button", { name: "呼び名未設定を編集" }));
+  expect(screen.getByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+  expect(screen.getByLabelText("呼び名")).toHaveValue("");
+});
+
+it("家族0件でも登録済み領域と追加領域を分けて表示する", async () => {
+  renderSettings({ listMembers: vi.fn().mockResolvedValue([]) });
+
+  expect(await screen.findByRole("heading", { name: "登録済みの家族" })).toBeVisible();
+  expect(screen.getByText("登録済みの家族はいません。")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
+});
+
 it("keeps family CRUD controls and composes the account danger zone on the same Plan 1 page", async () => {
   const second: HouseholdMemberRow = {
     ...member,

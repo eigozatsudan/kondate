@@ -208,6 +208,8 @@ export function PlannerWizard({
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mainIngredients ?? null}
+          pantryItems={pantryItems}
+          pantryItemsStatus={pantryItemsStatus}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>

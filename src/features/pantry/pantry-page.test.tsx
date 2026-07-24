@@ -51,6 +51,62 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+it("登録済み一覧と件数を先に表示し、追加操作を始めるまでフォームを展開しない", async () => {
+  const user = userEvent.setup();
+  render(
+    <PantryPageContent
+      items={[expired]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onDelete={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { name: "登録済みの食材（1件）" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "食材を追加" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "食材を追加" }));
+  expect(screen.getByRole("heading", { name: "食材を追加" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "キャンセル" }));
+  expect(screen.queryByRole("heading", { name: "食材を追加" })).not.toBeInTheDocument();
+});
+
+it("新規登録成功後は一覧へ戻り、失敗時は入力とフォームを保持する", async () => {
+  const user = userEvent.setup();
+  const onCreate = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("save failed"))
+    .mockResolvedValueOnce(undefined);
+  render(
+    <PantryPageContent
+      items={[]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={onCreate}
+      onUpdate={vi.fn()}
+      onDelete={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "食材を追加" }));
+  await user.type(screen.getByLabelText("食材名"), "豆腐");
+  await user.type(screen.getByLabelText("分量"), "1");
+  await user.type(screen.getByLabelText("単位"), "丁");
+  await user.click(screen.getByRole("button", { name: "追加する" }));
+  await waitFor(() => {
+    expect(onCreate).toHaveBeenCalledTimes(1);
+  });
+  expect(screen.getByLabelText("食材名")).toHaveValue("豆腐");
+
+  await user.click(screen.getByRole("button", { name: "追加する" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("heading", { name: "食材を追加" })).not.toBeInTheDocument();
+  });
+});
+
 it("shows entered expiry/open state and confirms before deletion", async () => {
   const user = userEvent.setup();
   const onDelete = vi.fn();
@@ -312,6 +368,7 @@ it.each([
       api.update.mockResolvedValueOnce(expired);
     },
     fail: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "食材を追加" }));
       await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
       await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
       await user.type(screen.getByRole("textbox", { name: "単位" }), "丁");
@@ -351,6 +408,7 @@ it.each([
       await user.click(screen.getByRole("button", { name: "牛乳を削除" }));
     },
     succeed: async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "食材を追加" }));
       await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
       await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
       await user.type(screen.getByRole("textbox", { name: "単位" }), "丁");
@@ -394,7 +452,7 @@ it.each([
     leaveConflict: async (user: ReturnType<typeof userEvent.setup>) => {
       await user.click(screen.getByRole("button", { name: "キャンセル" }));
     },
-    expectedHeading: "食材を追加",
+    expectedHeading: "登録済みの食材（2件）",
   },
   {
     nextAction: "別の食材へ切替",

@@ -55,6 +55,8 @@ function Harness({
   draftConflictRefetchError = false,
   onResolveDraftConflict,
   onRetryDraftConflict,
+  pantryItems = [],
+  pantryItemsStatus = "loaded",
 }: {
   initialStep?: PlannerStep;
   initialDraft?: PlannerDraftInput;
@@ -73,6 +75,8 @@ function Harness({
   draftConflictRefetchError?: boolean;
   onResolveDraftConflict?: () => void;
   onRetryDraftConflict?: () => void;
+  pantryItems?: readonly PantryItem[];
+  pantryItemsStatus?: "loading" | "loaded";
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
@@ -88,8 +92,8 @@ function Harness({
       onDraftChange={setDraft}
       onStepChange={setStep}
       onSubmit={onSubmit}
-      pantryItems={[] as PantryItem[]}
-      pantryItemsStatus="loaded"
+      pantryItems={pantryItems}
+      pantryItemsStatus={pantryItemsStatus}
       attempt={attempt}
       onAttemptChange={setAttempt}
       hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
@@ -116,6 +120,44 @@ const reviewDraft: PlannerDraftInput = {
 };
 
 describe("PlannerWizard 固定順とnavigation", () => {
+  it("冷蔵庫の候補をメイン食材へ追加しても冷蔵庫の使用条件は変更しない", async () => {
+    const user = userEvent.setup();
+    const pantryItem: PantryItem = {
+      id: "60000000-0000-4000-8000-000000000001",
+      userId: "70000000-0000-4000-8000-000000000001",
+      name: "　鶏肉　",
+      quantity: 1,
+      unit: "枚",
+      expiresOn: null,
+      expirationType: null,
+      openedState: null,
+      createdAt: "2026-07-25T00:00:00.000Z",
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    };
+    render(<Harness initialStep="ingredients" pantryItems={[pantryItem]} />);
+
+    expect(screen.getByRole("heading", { name: "冷蔵庫から選ぶ" })).toBeVisible();
+    expect(screen.getByText(/必ず使う／使えれば使う/u)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "鶏肉を追加" }));
+
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await user.click(screen.getByRole("radio", { name: "和食" }));
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await user.click(screen.getByRole("radio", { name: "家族に合わせて作る" }));
+    await user.click(screen.getByRole("checkbox", { name: /^子ども/u }));
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("checkbox", { name: /鶏肉/u })).not.toBeChecked();
+  });
+
+  it("冷蔵庫候補の読み込み中と空状態を表示する", () => {
+    const { rerender } = render(<Harness initialStep="ingredients" pantryItemsStatus="loading" />);
+    expect(screen.getByText("冷蔵庫の食材を読み込んでいます…")).toBeVisible();
+
+    rerender(<Harness initialStep="ingredients" pantryItemsStatus="loaded" pantryItems={[]} />);
+    expect(screen.getByText("冷蔵庫に登録した食材はありません。")).toBeVisible();
+  });
+
   it("メイン食材の入力と操作を狭い画面でも判別できる構造で表示する", () => {
     render(<Harness initialStep="ingredients" />);
 

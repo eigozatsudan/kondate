@@ -163,6 +163,7 @@ export function PantryPageContent({
   onEditingSessionChange,
 }: PantryPageContentProps) {
   const [editing, setEditing] = useState<PantryItem | null>(null);
+  const [creating, setCreating] = useState(false);
   const latestEditingItem =
     editing !== null && conflictedItemId === editing.id
       ? items.find((item) => item.id === editing.id)
@@ -175,9 +176,83 @@ export function PantryPageContent({
         <h1>食材リスト</h1>
       </header>
       <p>期限日は並べ替えと注意表示のための入力です。アプリは食べられるかを判断しません。</p>
-      {editing === null ? (
-        <PantryForm saving={saving} onSubmit={onCreate} />
-      ) : (
+      <section className="pantry-overview stack" aria-labelledby="pantry-list-heading">
+        <div className="pantry-section-heading">
+          <h2 id="pantry-list-heading">登録済みの食材（{String(items.length)}件）</h2>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={saving || creating}
+            onClick={() => {
+              onEditingSessionChange?.();
+              setEditing(null);
+              setCreating(true);
+            }}
+          >
+            食材を追加
+          </button>
+        </div>
+        {loading && <p>読み込み中…</p>}
+        {!loading && items.length === 0 && <p>登録した食材はありません。</p>}
+        <ul className="stack pantry-list" aria-label="冷蔵庫の食材">
+          {items.map((item) => (
+            <li className="card pantry-card" key={item.id}>
+              <h3 className="pantry-card-text">{item.name}</h3>
+              <p className="pantry-card-text">
+                {item.quantity === null
+                  ? "分量未入力"
+                  : `${String(item.quantity)}${item.unit ?? ""}`}
+              </p>
+              {item.expiresOn !== null && (
+                <p>
+                  {item.expirationType === null ? "期限" : expiryLabels[item.expirationType]}{" "}
+                  {item.expiresOn}
+                </p>
+              )}
+              {item.openedState !== null && <p>{openedLabels[item.openedState]}</p>}
+              <div className="pantry-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  aria-label={`${item.name}を編集`}
+                  onClick={() => {
+                    onEditingSessionChange?.();
+                    setCreating(false);
+                    setEditing(item);
+                  }}
+                >
+                  編集
+                </button>
+                <button
+                  className="text-button"
+                  type="button"
+                  aria-label={`${item.name}を削除`}
+                  onClick={() => {
+                    if (window.confirm("この食材を削除しますか？")) {
+                      onDelete(item.id, item.updatedAt);
+                    }
+                  }}
+                >
+                  削除
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+      {creating && (
+        <PantryForm
+          saving={saving}
+          onSubmit={async (input) => {
+            await onCreate(input);
+            setCreating(false);
+          }}
+          onCancel={() => {
+            setCreating(false);
+          }}
+        />
+      )}
+      {editing !== null && (
         <PantryForm
           key={`${editing.id}:${editing.updatedAt}`}
           saving={saving}
@@ -233,50 +308,6 @@ export function PantryPageContent({
           </button>
         </section>
       )}
-      {loading && <p>読み込み中…</p>}
-      {!loading && items.length === 0 && <p>登録した食材はありません。</p>}
-      <ul className="stack pantry-list" aria-label="冷蔵庫の食材">
-        {items.map((item) => (
-          <li className="card pantry-card" key={item.id}>
-            <h2 className="pantry-card-text">{item.name}</h2>
-            <p className="pantry-card-text">
-              {item.quantity === null ? "分量未入力" : `${String(item.quantity)}${item.unit ?? ""}`}
-            </p>
-            {item.expiresOn !== null && (
-              <p>
-                {item.expirationType === null ? "期限" : expiryLabels[item.expirationType]}{" "}
-                {item.expiresOn}
-              </p>
-            )}
-            {item.openedState !== null && <p>{openedLabels[item.openedState]}</p>}
-            <div className="pantry-actions">
-              <button
-                className="secondary-button"
-                type="button"
-                aria-label={`${item.name}を編集`}
-                onClick={() => {
-                  onEditingSessionChange?.();
-                  setEditing(item);
-                }}
-              >
-                編集
-              </button>
-              <button
-                className="text-button"
-                type="button"
-                aria-label={`${item.name}を削除`}
-                onClick={() => {
-                  if (window.confirm("この食材を削除しますか？")) {
-                    onDelete(item.id, item.updatedAt);
-                  }
-                }}
-              >
-                削除
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
     </main>
   );
 }

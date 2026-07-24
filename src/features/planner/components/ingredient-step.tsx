@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import type { PantryItem } from "@shared/contracts/pantry";
+import type { PantryItemsStatus } from "../pantry-selector";
 import type { PlannerStepProps } from "./planner-wizard-props";
 
 const mainIngredientLimit = 8;
@@ -6,7 +8,13 @@ const mainIngredientLengthLimit = 80;
 
 export type IngredientStepProps = PlannerStepProps<readonly string[]> & {
   errorMessage?: string | null;
+  pantryItems: readonly PantryItem[];
+  pantryItemsStatus: PantryItemsStatus;
 };
+
+function normalizeMainIngredient(value: string): string {
+  return value.normalize("NFKC").trim();
+}
 
 /**
  * 主食材を1件ずつ追加するstep。既存 PlannerForm の8件/80文字制限をそのまま維持し、
@@ -19,6 +27,8 @@ export function IngredientStep({
   onNext,
   disabled,
   errorMessage,
+  pantryItems,
+  pantryItemsStatus,
 }: IngredientStepProps) {
   const [ingredient, setIngredient] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -45,7 +55,7 @@ export function IngredientStep({
               const rawValue = event.target.value;
               setIngredient(rawValue);
               if (
-                Array.from(rawValue.normalize("NFKC").trim()).length <= mainIngredientLengthLimit
+                Array.from(normalizeMainIngredient(rawValue)).length <= mainIngredientLengthLimit
               ) {
                 setLocalError(null);
               } else {
@@ -59,7 +69,7 @@ export function IngredientStep({
           type="button"
           disabled={disabled}
           onClick={() => {
-            const next = ingredient.normalize("NFKC").trim();
+            const next = normalizeMainIngredient(ingredient);
             if (Array.from(next).length > mainIngredientLengthLimit) {
               setLocalError("メイン食材は1件80文字までです。");
               return;
@@ -98,6 +108,51 @@ export function IngredientStep({
           </button>
         ))}
       </div>
+      <section className="ingredient-pantry stack" aria-labelledby="ingredient-pantry-title">
+        <div>
+          <h3 id="ingredient-pantry-title">冷蔵庫から選ぶ</h3>
+          <p>
+            ここでは料理の中心にしたい食材を追加します。「必ず使う／使えれば使う」は確認画面で別に選べます。
+          </p>
+        </div>
+        {pantryItemsStatus === "loading" && <p>冷蔵庫の食材を読み込んでいます…</p>}
+        {pantryItemsStatus === "loaded" && pantryItems.length === 0 && (
+          <p>冷蔵庫に登録した食材はありません。</p>
+        )}
+        {pantryItemsStatus === "loaded" && pantryItems.length > 0 && (
+          <div className="wizard-chip-row">
+            {pantryItems.map((item) => {
+              const normalizedName = normalizeMainIngredient(item.name);
+              const selected = value.includes(normalizedName);
+              return (
+                <button
+                  className="wizard-chip"
+                  type="button"
+                  key={item.id}
+                  disabled={disabled || selected}
+                  onClick={() => {
+                    if (
+                      normalizedName === "" ||
+                      Array.from(normalizedName).length > mainIngredientLengthLimit
+                    ) {
+                      setLocalError("メイン食材は1件80文字までです。");
+                      return;
+                    }
+                    if (value.length >= mainIngredientLimit) {
+                      setLocalError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
+                      return;
+                    }
+                    onChange([...value, normalizedName]);
+                    setLocalError(null);
+                  }}
+                >
+                  {normalizedName}を追加
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
       <div className="wizard-actions">
         {onBack !== undefined && (
           <button

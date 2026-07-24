@@ -60,6 +60,20 @@ type PendingRegisteredIntent = {
   inFlight?: Promise<boolean | undefined>;
 };
 
+const householdAgeLabels: Readonly<Record<string, string>> = {
+  post_weaning_to_2: "離乳食完了後〜2歳",
+  age_3_5: "3〜5歳",
+  age_6_8: "6〜8歳",
+  age_9_12: "9〜12歳",
+  age_13_17: "13〜17歳",
+  adult: "大人",
+  senior: "高齢者",
+};
+
+function householdMemberDisplayName(member: HouseholdMemberRow): string {
+  return member.display_name?.trim() || "呼び名未設定";
+}
+
 function registeredSaveBlockedMessage(
   evidence: PendingRegisteredIntent["registeredSaveEvidence"],
 ): string | undefined {
@@ -758,21 +772,31 @@ export function HouseholdSettingsForm({
         <p role="alert">家族設定を読み込めませんでした。</p>
       </main>
     );
+  if (values === undefined && selected !== undefined) {
+    return <main className="page-frame">家族設定を読み込んでいます…</main>;
+  }
   if (values === undefined || selected === undefined) {
     return (
       <main className="page-frame stack">
         <h1>家族設定</h1>
-        <p>家族を追加してください</p>
-        <button
-          className="primary-button"
-          type="button"
-          disabled={createDraft.isPending}
-          onClick={() => {
-            createDraft.mutate();
-          }}
-        >
-          家族を追加
-        </button>
+        <section className="card stack" aria-labelledby="registered-household-empty-title">
+          <h2 id="registered-household-empty-title">登録済みの家族</h2>
+          <p>登録済みの家族はいません。</p>
+        </section>
+        <section className="card stack" aria-labelledby="household-editor-empty-title">
+          <h2 id="household-editor-empty-title">家族情報を追加・編集</h2>
+          <p>家族を追加してください</p>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={createDraft.isPending}
+            onClick={() => {
+              createDraft.mutate();
+            }}
+          >
+            家族を追加
+          </button>
+        </section>
         {/* アカウント操作は家族の有無に依存しない。空状態でも家族CRUDの下へ常時合成する。 */}
         <AccountSettingsSection />
       </main>
@@ -794,6 +818,44 @@ export function HouseholdSettingsForm({
   return (
     <main className="page-frame stack">
       <h1>家族設定</h1>
+      <section className="card stack" aria-labelledby="registered-household-title">
+        <h2 id="registered-household-title">登録済みの家族</h2>
+        <ul className="household-member-list">
+          {members.map((member) => {
+            const displayName = householdMemberDisplayName(member);
+            return (
+              <li className="household-member-summary" key={member.id}>
+                <div>
+                  <strong className="household-member-name">{displayName}</strong>
+                  <p>
+                    {member.age_band === null
+                      ? "年齢未設定"
+                      : (householdAgeLabels[member.age_band] ?? "年齢未設定")}
+                    ・{member.status === "complete" ? "登録完了" : "入力途中"}
+                  </p>
+                </div>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  aria-label={`${displayName}を編集`}
+                  aria-pressed={selected.id === member.id}
+                  onClick={() => {
+                    selectedMemberIdRef.current = member.id;
+                    setDeleteTarget(undefined);
+                    setSelectedId(member.id);
+                  }}
+                >
+                  編集
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+      <div className="household-editor stack">
+        <h2 id="household-editor-title">家族情報を追加・編集</h2>
+        <h3>「{householdMemberDisplayName(selected)}」を編集中</h3>
+      </div>
       {members.length > 1 && (
         <label className="field">
           <span>設定する家族</span>

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
 import { useAuth } from "@/features/auth/use-auth";
+import { listHouseholdMembers, type HouseholdMemberRow } from "@/features/household/household-api";
 import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
 import {
   householdSafetyChangedEvent,
@@ -17,6 +18,16 @@ const roleLabels = {
   staple: "主食",
   other: "料理",
 } as const;
+
+const emergencyTargetMemberLimit = 20;
+
+function isEmergencyEligibleMember(member: HouseholdMemberRow): boolean {
+  return (
+    member.status === "complete" &&
+    (member.allergy_status === "none" || member.allergy_status === "registered") &&
+    member.unsupported_diet_status === "none"
+  );
+}
 
 function quantityText(value: number | null, unit: string | null, fallback: string): string {
   return value === null ? fallback : `${String(value)}${unit ?? ""}`;
@@ -56,10 +67,33 @@ export function EmergencyMenuPage() {
     enabled: userId !== undefined,
     queryFn: () => getPlannerDraft(getBrowserSupabaseClient(), userId ?? ""),
   });
-  // 下書きなし、またはidea下書き（家族条件を持たない）の場合は対象家族が0人になる。
-  // route entryだけを理由に緊急献立APIや家族安全再検証を発生させない
-  // （Step 10要件）ため、eligibleMembersが0件のときはクエリ自体を無効化する。
-  const targetMemberIds = draftQuery.data?.targetMemberIds ?? [];
+  const shouldLoadHouseholdTargets =
+    draftQuery.data !== null &&
+    draftQuery.data !== undefined &&
+    draftQuery.data.targetMode !== "idea";
+  const shouldResolveUnselectedTargets =
+    draftQuery.data?.targetMode === null && draftQuery.data.targetMemberIds.length === 0;
+  const householdQuery = useQuery({
+    queryKey: ["emergency-household-targets", userId ?? "missing"],
+    enabled:
+      userId !== undefined &&
+      draftQuery.isSuccess &&
+      !draftQuery.isFetching &&
+      shouldLoadHouseholdTargets,
+    queryFn: () => listHouseholdMembers(getBrowserSupabaseClient(), userId ?? ""),
+  });
+  // mode未選択の下書きだけは、後から完了した家族を初期対象にできる。
+  // ideaまたは明示済みhouseholdから別家族へ黙って切り替えない。
+  const eligibleMemberIds = (householdQuery.data ?? [])
+    .filter(isEmergencyEligibleMember)
+    .map((member) => member.id);
+  const targetMemberIds = shouldResolveUnselectedTargets
+    ? eligibleMemberIds.slice(0, emergencyTargetMemberLimit)
+    : draftQuery.data?.targetMode === "household"
+      ? draftQuery.data.targetMemberIds
+          .filter((memberId) => eligibleMemberIds.includes(memberId))
+          .slice(0, emergencyTargetMemberLimit)
+      : [];
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
   const request = {
     mealType: draftQuery.data?.mealType ?? "dinner",
@@ -77,11 +111,18 @@ export function EmergencyMenuPage() {
       draftQuery.isSuccess &&
       draftQuery.data !== null &&
       !draftQuery.isFetching &&
+      (!shouldLoadHouseholdTargets || householdQuery.isSuccess) &&
       hasEligibleHouseholdMembers,
     queryFn: () => getEmergencyMenus(request),
   });
-  const loading = draftQuery.isFetching || query.isFetching;
-  const error = draftQuery.isError || query.isError ? "緊急献立を読み込めませんでした" : null;
+  const loading =
+    draftQuery.isFetching ||
+    (shouldLoadHouseholdTargets && householdQuery.isFetching) ||
+    query.isFetching;
+  const error =
+    draftQuery.isError || (shouldLoadHouseholdTargets && householdQuery.isError) || query.isError
+      ? "緊急献立を読み込めませんでした"
+      : null;
   if (draftQuery.isSuccess && draftQuery.data === null) {
     return (
       <main className="page-frame stack emergency-menu-page">
@@ -91,7 +132,13 @@ export function EmergencyMenuPage() {
       </main>
     );
   }
-  if (draftQuery.isSuccess && draftQuery.data !== null && !hasEligibleHouseholdMembers) {
+  if (
+    draftQuery.isSuccess &&
+    draftQuery.data !== null &&
+    !loading &&
+    error === null &&
+    !hasEligibleHouseholdMembers
+  ) {
     return (
       <main className="page-frame stack emergency-menu-page">
         <h1>15分緊急献立</h1>

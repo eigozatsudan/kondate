@@ -4,12 +4,17 @@ import { makeValidatedMenu } from "@shared/testing/factories";
 import type { ValidatedMenu } from "@shared/contracts/generation";
 
 const useQueryMock = vi.hoisted(() => vi.fn());
+const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({ useQuery: useQueryMock }));
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "72000000-0000-4000-8000-000000000001" } } }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
+vi.mock("./emergency-menu-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./emergency-menu-api")>();
+  return { ...original, getEmergencyMenus: getEmergencyMenusMock };
+});
 
 import { EmergencyMenuContent, EmergencyMenuPage } from "./emergency-menu-page";
 
@@ -30,13 +35,19 @@ it("下書きがない直接アクセスでは候補を取得せず献立画面�
       isSuccess: false,
       isFetching: false,
       isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
     });
 
   render(<EmergencyMenuPage />);
 
   expect(screen.getByRole("alert")).toHaveTextContent("献立条件の下書きがありません");
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
-  expect(useQueryMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
+  expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
 });
 
 // Step 10: 下書きなし・idea下書きのいずれでも対象家族が0人なら、緊急献立APIを呼ばず
@@ -54,14 +65,20 @@ it("下書きなしで対象家族が0人の場合は緊急献立APIを呼ばず
       isSuccess: false,
       isFetching: false,
       isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
     });
 
   render(<EmergencyMenuPage />);
 
   // 2回目の useQuery 呼び出し（緊急献立候補クエリ）が enabled: false のまま、
   // 対象家族0人であることを理由に一切APIを呼ばないことを固定する。
-  expect(useQueryMock).toHaveBeenCalledTimes(2);
-  expect(useQueryMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
+  expect(useQueryMock).toHaveBeenCalledTimes(3);
+  expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toBeInTheDocument();
 });
 
@@ -95,18 +112,137 @@ it("idea下書きで対象家族が0人の場合も緊急献立APIを呼ばず�
       isSuccess: false,
       isFetching: false,
       isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
     });
 
   render(<EmergencyMenuPage />);
 
-  expect(useQueryMock).toHaveBeenCalledTimes(2);
-  expect(useQueryMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
+  expect(useQueryMock).toHaveBeenCalledTimes(3);
+  expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
   expect(
     screen.getByText(
       "対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。",
     ),
   ).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "家族設定へ（任意）" })).toBeInTheDocument();
+});
+
+it("対象未選択の下書きでは後から登録した有効な家族だけを初期対象にする", async () => {
+  const eligibleId = "72000000-0000-4000-8000-000000000010";
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-1",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        cuisineGenre: "japanese",
+        targetMode: null,
+        targetMemberIds: [],
+        servings: null,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+        revision: 1,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: [
+        {
+          id: eligibleId,
+          status: "complete",
+          allergy_status: "none",
+          unsupported_diet_status: "none",
+        },
+        {
+          id: "72000000-0000-4000-8000-000000000011",
+          status: "draft",
+          allergy_status: "none",
+          unsupported_diet_status: "none",
+        },
+        {
+          id: "72000000-0000-4000-8000-000000000012",
+          status: "complete",
+          allergy_status: "unconfirmed",
+          unsupported_diet_status: "none",
+        },
+      ],
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+  getEmergencyMenusMock.mockResolvedValue({ candidates: [] });
+
+  render(<EmergencyMenuPage />);
+
+  const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
+    enabled: boolean;
+    queryFn: () => Promise<unknown>;
+  };
+  expect(candidateQuery.enabled).toBe(true);
+  await candidateQuery.queryFn();
+  expect(getEmergencyMenusMock).toHaveBeenCalledWith(
+    expect.objectContaining({ targetMemberIds: [eligibleId] }),
+  );
+});
+
+it("household下書きの選択家族が無効になっても別の家族を補完しない", () => {
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-1",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        targetMode: "household",
+        targetMemberIds: ["72000000-0000-4000-8000-000000000099"],
+        pantrySelections: [],
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: [
+        {
+          id: "72000000-0000-4000-8000-000000000010",
+          status: "complete",
+          allergy_status: "none",
+          unsupported_diet_status: "none",
+        },
+      ],
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  render(<EmergencyMenuPage />);
+
+  expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
+  expect(screen.getByRole("alert")).toHaveTextContent("対象の家族が登録されていない");
 });
 
 it("states that no candidate exists without suggesting weaker safety conditions", () => {
