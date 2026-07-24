@@ -406,6 +406,10 @@ export type Database = {
         Args: { p_limit?: number; p_user_id: string }
         Returns: number
       }
+      cleanup_shopping_mutations: {
+        Args: { p_before: string; p_limit: number }
+        Returns: number
+      }
       current_safety_fingerprint: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: string
@@ -445,6 +449,10 @@ export type Database = {
           p_target_member_ids: string[]
           p_user_id: string
         }
+        Returns: undefined
+      }
+      lock_and_assert_selected_pantry_rows: {
+        Args: { p_pantry_usage: Json; p_user_id: string }
         Returns: undefined
       }
       lock_and_check_shopping_list_safety: {
@@ -2037,9 +2045,21 @@ export type Database = {
         Args: { p_before: string; p_user_id?: string }
         Returns: number
       }
+      cleanup_ai_generation_requests_batch: {
+        Args: { p_before: string; p_limit: number }
+        Returns: number
+      }
       cleanup_auth_continuations: { Args: { p_now: string }; Returns: number }
+      cleanup_auth_continuations_batch: {
+        Args: { p_limit: number; p_now: string }
+        Returns: number
+      }
       cleanup_stale_ai_generations: {
         Args: { p_now?: string }
+        Returns: number
+      }
+      cleanup_stale_ai_generations_batch: {
+        Args: { p_limit: number; p_now: string }
         Returns: number
       }
       complete_household_member: {
@@ -2317,6 +2337,10 @@ export type Database = {
       }
       reserve_ai_repair_call: {
         Args: { p_global_limit: number; p_now?: string; p_request_id: string }
+        Returns: Json
+      }
+      run_kondate_maintenance: {
+        Args: { p_limit: number; p_now: string }
         Returns: Json
       }
       save_generation_draft: {
