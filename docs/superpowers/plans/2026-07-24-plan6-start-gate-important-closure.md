@@ -46,16 +46,22 @@ commit集合は `17a31bd`、`9e76991`、`a1bf89a`、`42db9ad`、`badbaa1`、
 ### P3#5 — finalize対allergy mutationの二session競合
 
 - **残余リスク:** helper/unitでは終端化を確認済みだが、実DBでallergy更新と
-  finalizeを停止・再開する二session競合を証明していない。lock取得順により、
-  古いfingerprintのmenuが保存されたり、成功予約の解放・attempt accountingが
-  崩れる可能性が残る。
+  finalizeを停止・再開する二session競合を証明していない。allergy mutation
+  先勝ち時のrollback/accountingと、finalize先勝ち時のsnapshot successおよび
+  待機updateのcommit順序が崩れる可能性が残る。
 - **MVP rows:** **#6、#20**。
 - **Task 6追加scope:** authority file
   `supabase/tests/database/ai_control_and_quota_races.test.sql` に二sessionの
   finalize対allergy mutation raceを追加する。
-- **完了条件:** どちらのlock順でもstored fingerprint不一致のmenuが0件である。
-  競合時は `constraint_conflict` / `current_safety_changed`、menu 0件、成功予約の
-  解放とattempt accountingの整合を実assertで証明する。
+- **完了条件:** 次の二分岐を実assertで証明する。
+  - allergy mutation先勝ちではfinalizeが
+    `constraint_conflict` / `current_safety_changed`、menu 0件となり、成功予約を
+    解放する。すでに送信済みのattempt消費は維持する。
+  - finalize先勝ちでは、finalize transactionがlockしたrowsとstored fingerprint
+    が一致するmenu 1件をsuccess保存してcommitする。lock解放後、待機中のallergy
+    updateがcommitできる。競合終了後にcurrent fingerprintとstored fingerprintが
+    異なる状態は仕様上許容し、history/revalidationが扱う。成功予約と送信済み
+    attemptは成功分岐として消費済みを維持する。
 
 ### P4#4 — history safety-changeの非vacuuous E2E
 
