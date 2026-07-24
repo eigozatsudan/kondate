@@ -367,6 +367,22 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setDraftConflictRefetchError(false);
   }, [latestConflictDraft, safetyQuery.data]);
 
+  /** 利用者の明示操作で入力を空に戻す。autosave が空下書きを保存する。 */
+  const resetPlannerDraft = useCallback((): void => {
+    generationAbortControllerRef.current?.abort();
+    setValue({ ...emptyDraft });
+    setStep("meal");
+    setFieldErrors({});
+    setSubmissionError(null);
+    setAudienceStatusError(null);
+    setAttempt(createPlannerAttempt());
+    setHasDraftConflict(false);
+    setLatestConflictDraft(undefined);
+    setDraftConflictRefetchError(false);
+    // baseline は維持し、次の保存が現 revision の上に空内容を書く。resetToken で in-flight 保存を無効化。
+    setResetToken((current) => current + 1);
+  }, []);
+
   const hasAcceptedOrDeclinedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
   const openPrivacyNotice = useCallback((): void => {
     // review resume 付きの returnTo で /privacy へ往復する（brief step 9）。
@@ -482,6 +498,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         void loadLatestConflictDraft();
       }}
       onOpenEmergencyMenus={openEmergencyMenus}
+      onReset={resetPlannerDraft}
       onSubmit={async () => {
         setSubmissionError(null);
         setFieldErrors({});

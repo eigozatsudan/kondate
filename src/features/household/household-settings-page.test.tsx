@@ -202,6 +202,7 @@ it("creates and selects a new draft while an existing member is present", async 
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("");
   expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("");
   expect(screen.getByRole("button", { name: "この家族の設定を完了" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "追加をやめる" })).toBeVisible();
 
   await act(async () => {
     queryClient.setQueryData(["household", "members", "settings"], [member]);
@@ -209,6 +210,33 @@ it("creates and selects a new draft while an existing member is present", async 
   });
   expect(await screen.findByText("家族を追加してください")).toBeVisible();
   expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
+});
+
+it("cancels a newly added draft without completing it", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    status: "draft",
+    display_name: null,
+    age_band: null,
+    allergy_status: null,
+    unsupported_diet_status: null,
+    sort_order: 1,
+  };
+  const createDraft = vi.fn().mockResolvedValue(draft);
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  const { queryClient } = renderSettings({ createDraft, deleteMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  expect(await screen.findByRole("button", { name: "追加をやめる" })).toBeVisible();
+
+  await userEvent.click(screen.getByRole("button", { name: "追加をやめる" }));
+
+  expect(deleteMember).toHaveBeenCalledWith("member-2");
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("大人");
+  expect(screen.queryByRole("button", { name: "追加をやめる" })).not.toBeInTheDocument();
+  expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([member]);
+  expect(await screen.findByText("家族の追加をやめました")).toBeVisible();
 });
 
 it("removes a deleted member from cache before selecting the remaining member", async () => {
@@ -238,6 +266,8 @@ it("shows the empty add screen immediately after deleting the last member", asyn
 
   expect(await screen.findByText("家族を追加してください")).toBeVisible();
   expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
+  // 空状態でもアカウント操作は常時表示し、家族追加の結果としてログアウトが現れるようにしない
+  expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
   expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([]);
 });
 

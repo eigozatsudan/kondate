@@ -1,14 +1,8 @@
 import { useEffect, useRef } from "react";
 import { mealTypes } from "@shared/contracts/domain";
 import type { MealType } from "@shared/contracts/domain";
+import { mealLabels } from "../model/planner-labels";
 import type { PlannerStepProps } from "./planner-wizard-props";
-
-// 既存 PlannerForm と同一の日本語ラベルを使い、wizard 化しても利用者が見る文言を変えない。
-const mealLabels: Readonly<Record<MealType, string>> = {
-  breakfast: "朝食",
-  lunch: "昼食",
-  dinner: "夕食",
-} as const;
 
 export type MealStepProps = PlannerStepProps<MealType | null> & {
   errorMessage?: string | null;
@@ -38,9 +32,13 @@ export function MealStep({
       <h2 id="meal-step-title" tabIndex={-1} ref={headingRef}>
         1. 食事
       </h2>
-      <div role="radiogroup" aria-describedby={errorMessage != null ? errorId : undefined}>
+      <div
+        className="wizard-option-list"
+        role="radiogroup"
+        aria-describedby={errorMessage != null ? errorId : undefined}
+      >
         {mealTypes.map((key) => (
-          <label key={key}>
+          <label key={key} className="wizard-option">
             <input
               type="radio"
               name="meal"
@@ -51,7 +49,7 @@ export function MealStep({
                 onChange(key);
               }}
             />
-            {mealLabels[key]}
+            <span>{mealLabels[key]}</span>
           </label>
         ))}
       </div>
@@ -60,14 +58,19 @@ export function MealStep({
           {errorMessage}
         </p>
       )}
-      <div className="stack-row">
+      <div className="wizard-actions">
         {onBack !== undefined && (
-          <button type="button" disabled={disabled} onClick={onBack}>
+          <button
+            className="wizard-action secondary-button"
+            type="button"
+            disabled={disabled}
+            onClick={onBack}
+          >
             戻る
           </button>
         )}
         <button
-          className="primary-button"
+          className="wizard-action primary-button"
           type="button"
           disabled={disabled || value === null}
           onClick={onNext}

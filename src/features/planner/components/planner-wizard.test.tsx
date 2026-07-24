@@ -49,6 +49,7 @@ function Harness({
   onOpenPrivacyNotice = vi.fn(),
   onOpenEmergencyMenus,
   onIdeaAudienceConfirmed,
+  onReset,
   hasDraftConflict = false,
   canResolveDraftConflict = false,
   draftConflictRefetchError = false,
@@ -66,6 +67,7 @@ function Harness({
   onOpenPrivacyNotice?: () => void;
   onOpenEmergencyMenus?: () => void;
   onIdeaAudienceConfirmed?: () => Promise<void>;
+  onReset?: () => void;
   hasDraftConflict?: boolean;
   canResolveDraftConflict?: boolean;
   draftConflictRefetchError?: boolean;
@@ -97,6 +99,7 @@ function Harness({
       draftConflictRefetchError={draftConflictRefetchError}
       {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
       {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
+      {...(onReset !== undefined ? { onReset } : {})}
       {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
       {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
     />
@@ -180,12 +183,70 @@ describe("PlannerWizard 固定順とnavigation", () => {
     expect(screen.getByRole("radio", { name: "夕食" })).not.toBeChecked();
     expect(screen.getByRole("button", { name: "次へ" })).toBeDisabled();
   });
+
+  it("食事ステップも wizard-actions と option list で狭幅向けに組む", () => {
+    render(<Harness initialStep="meal" />);
+    const nextButton = screen.getByRole("button", { name: "次へ" });
+    expect(nextButton.parentElement).toHaveClass("wizard-actions");
+    expect(nextButton).toHaveClass("wizard-action", "primary-button");
+    const breakfast = screen.getByRole("radio", { name: "朝食" });
+    expect(breakfast.closest("label")).toHaveClass("wizard-option");
+    expect(breakfast.closest('[role="radiogroup"]')).toHaveClass("wizard-option-list");
+  });
+
+  it("入力をリセットは確認後に onReset を呼ぶ", async () => {
+    const user = userEvent.setup();
+    const onReset = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<Harness onReset={onReset} />);
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(onReset).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
+  });
+
+  it("入力をリセットをキャンセルすると onReset を呼ばない", async () => {
+    const user = userEvent.setup();
+    const onReset = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<Harness onReset={onReset} />);
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    expect(onReset).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+});
+
+describe("PlannerWizard review の日本語表示", () => {
+  it("食事とジャンルを日本語ラベルで表示する", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+        }}
+      />,
+    );
+    expect(screen.getByText("夕食")).toBeVisible();
+    expect(screen.getByText("和食")).toBeVisible();
+    expect(screen.queryByText("dinner")).not.toBeInTheDocument();
+    expect(screen.queryByText("japanese")).not.toBeInTheDocument();
+  });
 });
 
 describe("PlannerWizard audience step のmode不変条件", () => {
-  it("利用可能家族が0件ならhousehold選択をdisabledにし、家族追加linkを表示する", () => {
+  it("利用可能家族が0件ならhousehold選択をdisabledにし、理由と家族追加linkを表示する", () => {
     render(<Harness initialStep="audience" eligibleMembers={[]} />);
-    expect(screen.getByRole("radio", { name: "家族に合わせて作る" })).toBeDisabled();
+    const household = screen.getByRole("radio", { name: "家族に合わせて作る" });
+    expect(household).toBeDisabled();
+    expect(household).toHaveAttribute("aria-describedby", "audience-household-disabled-reason");
+    expect(
+      screen.getByText(/家族設定がまだないため、「家族に合わせて作る」は選べません/u),
+    ).toBeVisible();
     expect(screen.getByRole("link", { name: "家族を追加する" })).toBeInTheDocument();
   });
 
@@ -198,6 +259,9 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     };
     render(<Harness initialStep="audience" eligibleMembers={[blocked]} />);
     expect(screen.getByRole("radio", { name: "家族に合わせて作る" })).toBeDisabled();
+    expect(
+      screen.getByText(/献立に使える家族がいないため、「家族に合わせて作る」は選べません/u),
+    ).toBeVisible();
     expect(screen.getByText("アレルギー確認が完了していません")).toBeVisible();
     expect(screen.getByRole("heading", { name: "現在の家族・安全条件" })).toBeInTheDocument();
   });
@@ -461,7 +525,8 @@ describe("PlannerWizard review step", () => {
     expect(note).toHaveTextContent(/家族の年齢・アレルギーは確認されません/);
     const generate = screen.getByRole("button", { name: "献立を作る" });
     expect(note.compareDocumentPosition(generate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // primary ボタン行（stack-row）の直前 sibling が note であること
+    // primary ボタン行（wizard-actions）の直前 sibling が note であること
+    expect(generate.parentElement).toHaveClass("wizard-actions");
     expect(generate.parentElement?.previousElementSibling).toBe(note);
   });
 

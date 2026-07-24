@@ -4,6 +4,7 @@ import { collectPlannerRequestText, type PlannerDraftInput } from "@shared/contr
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import { CurrentSafetySummary } from "../current-safety-summary";
+import { cuisineGenreLabel, mealLabel } from "../model/planner-labels";
 import { PantrySelector, type PantryItemsStatus } from "../pantry-selector";
 import type { PlannerSafetyMember } from "../planner-safety-member";
 import type { PlannerStepProps } from "./planner-wizard-props";
@@ -123,23 +124,31 @@ export function ReviewStep({
       {value.targetMode === "household" && safetyMembers.length > 0 && (
         <CurrentSafetySummary members={safetyMembers} />
       )}
-      <dl>
-        <dt>食事</dt>
-        <dd>{value.mealType}</dd>
-        <dt>メイン食材</dt>
-        <dd>{value.mainIngredients.join("・")}</dd>
-        <dt>ジャンル</dt>
-        <dd>{value.cuisineGenre}</dd>
-        <dt>対象</dt>
-        <dd>
-          {value.targetMode === "idea"
-            ? value.servings === null
-              ? "アイデア（人数未設定）"
-              : `アイデア・${String(value.servings)}人分`
-            : value.targetMode === "household"
-              ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
-              : "未選択"}
-        </dd>
+      <dl className="wizard-review-list">
+        <div className="wizard-review-item">
+          <dt>食事</dt>
+          <dd>{mealLabel(value.mealType)}</dd>
+        </div>
+        <div className="wizard-review-item">
+          <dt>メイン食材</dt>
+          <dd>{value.mainIngredients.join("・")}</dd>
+        </div>
+        <div className="wizard-review-item">
+          <dt>ジャンル</dt>
+          <dd>{cuisineGenreLabel(value.cuisineGenre)}</dd>
+        </div>
+        <div className="wizard-review-item">
+          <dt>対象</dt>
+          <dd>
+            {value.targetMode === "idea"
+              ? value.servings === null
+                ? "アイデア（人数未設定）"
+                : `アイデア・${String(value.servings)}人分`
+              : value.targetMode === "household"
+                ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
+                : "未選択"}
+          </dd>
+        </div>
       </dl>
       <details className="card">
         <summary>追加条件</summary>
@@ -283,14 +292,19 @@ export function ReviewStep({
           家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
         </p>
       )}
-      <div className="stack-row">
+      <div className="wizard-actions">
         {onBack !== undefined && (
-          <button type="button" disabled={disabled} onClick={onBack}>
+          <button
+            className="wizard-action secondary-button"
+            type="button"
+            disabled={disabled}
+            onClick={onBack}
+          >
             戻る
           </button>
         )}
         <button
-          className="primary-button"
+          className="wizard-action primary-button"
           type="button"
           disabled={generateDisabled}
           onClick={onSubmit}
@@ -299,7 +313,12 @@ export function ReviewStep({
         </button>
       </div>
       {onOpenEmergencyMenus !== undefined && (
-        <button type="button" disabled={disabled} onClick={onOpenEmergencyMenus}>
+        <button
+          className="wizard-action secondary-button"
+          type="button"
+          disabled={disabled}
+          onClick={onOpenEmergencyMenus}
+        >
           AIを使わない緊急献立を見る
         </button>
       )}

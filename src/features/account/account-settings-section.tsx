@@ -114,6 +114,8 @@ export function AccountSettingsSection() {
 
   return (
     <section className="stack" aria-label="アカウント設定">
+      {/* 家族CRUDと並べて合成されるため、操作の境界が一目で分かる見出しを置く */}
+      <h2 className="text-base font-bold">アカウント</h2>
       <button
         type="button"
         className="secondary-button min-h-11"

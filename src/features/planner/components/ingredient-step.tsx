@@ -83,9 +83,10 @@ export function IngredientStep({
           {combinedError}
         </p>
       )}
-      <div>
+      <div className="wizard-chip-row">
         {value.map((item) => (
           <button
+            className="wizard-chip"
             type="button"
             key={item}
             disabled={disabled}

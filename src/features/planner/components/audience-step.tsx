@@ -54,7 +54,7 @@ function NumberInput({
 }) {
   const [text, setText] = useState(servings !== null && servings >= 7 ? String(servings) : "");
   return (
-    <label>
+    <label className="field">
       7人以上（20人まで）
       <input
         type="number"
@@ -155,24 +155,32 @@ export function AudienceStep({
       </h2>
       {eligibleMembers.length > 0 && <CurrentSafetySummary members={eligibleMembers} />}
       <div
+        className="wizard-option-list"
         role="radiogroup"
         aria-describedby={fieldErrors?.targetMode != null ? targetModeErrorId : undefined}
       >
-        <label>
+        <label className="wizard-option">
           <input
             type="radio"
             name="audience-mode"
             disabled={disabled || !hasEligibleMembers}
             checked={value.targetMode === "household"}
             aria-invalid={fieldErrors?.targetMode != null ? "true" : undefined}
+            aria-describedby={
+              !hasEligibleMembers
+                ? "audience-household-disabled-reason"
+                : fieldErrors?.targetMode != null
+                  ? targetModeErrorId
+                  : undefined
+            }
             onChange={() => {
               setHasServingsRangeError(false);
               setMode("household");
             }}
           />
-          家族に合わせて作る
+          <span>家族に合わせて作る</span>
         </label>
-        <label>
+        <label className="wizard-option">
           <input
             type="radio"
             name="audience-mode"
@@ -184,7 +192,7 @@ export function AudienceStep({
               setMode("idea");
             }}
           />
-          人数だけ指定してアイデアを見る
+          <span>人数だけ指定してアイデアを見る</span>
         </label>
       </div>
       {fieldErrors?.targetMode != null && (
@@ -193,8 +201,10 @@ export function AudienceStep({
         </p>
       )}
       {!hasEligibleMembers && (
-        <p>
-          献立を作れる家族がいません。
+        <p id="audience-household-disabled-reason" className="wizard-disabled-reason" role="note">
+          {eligibleMembers.length === 0
+            ? "家族設定がまだないため、「家族に合わせて作る」は選べません。"
+            : "献立に使える家族がいないため、「家族に合わせて作る」は選べません。アレルギー確認などが未完了の家族は下の一覧で理由を確認できます。"}{" "}
           <a href="/settings">家族を追加する</a>
         </p>
       )}
@@ -207,8 +217,8 @@ export function AudienceStep({
             const isBlocked = member.blockedReason !== null;
             const descriptionId = `audience-member-${member.id}-description`;
             return (
-              <div key={member.id}>
-                <label>
+              <div key={member.id} className="wizard-option-block">
+                <label className="wizard-option">
                   <input
                     type="checkbox"
                     disabled={
@@ -231,10 +241,12 @@ export function AudienceStep({
                       onChange({ ...value, targetMemberIds: nextIds });
                     }}
                   />
-                  {member.displayName}
-                  <span>（{memberSafetyText(member)}）</span>
+                  <span>
+                    {member.displayName}
+                    <span className="wizard-option-meta">（{memberSafetyText(member)}）</span>
+                  </span>
                 </label>
-                <p id={descriptionId}>
+                <p id={descriptionId} className="wizard-option-description">
                   {isBlocked ? member.blockedReason : memberSafetyText(member)}
                 </p>
               </div>
@@ -253,10 +265,11 @@ export function AudienceStep({
           aria-describedby={servingsError !== null ? servingsErrorId : undefined}
         >
           <p>人数</p>
-          <div role="group" aria-label="人数（1〜6人）">
+          <div className="wizard-chip-row" role="group" aria-label="人数（1〜6人）">
             {ideaButtonServings.map((count) => (
               <button
                 key={count}
+                className="wizard-chip"
                 type="button"
                 disabled={disabled}
                 aria-pressed={value.servings === count}
@@ -289,14 +302,19 @@ export function AudienceStep({
           )}
         </div>
       )}
-      <div className="stack-row">
+      <div className="wizard-actions">
         {onBack !== undefined && (
-          <button type="button" disabled={disabled} onClick={onBack}>
+          <button
+            className="wizard-action secondary-button"
+            type="button"
+            disabled={disabled}
+            onClick={onBack}
+          >
             戻る
           </button>
         )}
         <button
-          className="primary-button"
+          className="wizard-action primary-button"
           type="button"
           disabled={disabled || (!isComplete && !canAttemptInvalidServingsNext)}
           onClick={handleNext}

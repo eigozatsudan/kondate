@@ -52,6 +52,8 @@ export type PlannerWizardExtraProps = {
    * 成功時のみ resolve。失敗は throw し、wizard は step を進めない。
    */
   onIdeaAudienceConfirmed?: () => Promise<void>;
+  /** 入力内容を空に戻し step を meal へ戻す。route が draft / autosave を所有する */
+  onReset?: () => void;
 };
 
 /**
@@ -119,6 +121,7 @@ export function PlannerWizard({
   onRetryDraftConflict,
   onOpenEmergencyMenus,
   onIdeaAudienceConfirmed,
+  onReset,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLElement>(null);
@@ -140,12 +143,38 @@ export function PlannerWizard({
     />
   ) : null;
 
+  const resetChrome =
+    onReset !== undefined ? (
+      <div className="wizard-reset-row">
+        <button
+          className="text-button wizard-action"
+          type="button"
+          disabled={isSaving}
+          onClick={() => {
+            // 誤タップで下書きを消さないよう、ブラウザ確認後にだけ route へ委譲する
+            if (
+              typeof window !== "undefined" &&
+              !window.confirm(
+                "入力した献立条件をすべて消して最初からやり直します。よろしいですか？",
+              )
+            ) {
+              return;
+            }
+            onReset();
+          }}
+        >
+          入力をリセット
+        </button>
+      </div>
+    ) : null;
+
   // 各 step を <main> で包み、シェル外でも region / main ランドマーク契約を満たす。
   // AppShell 配下でも main はページ本文として1つ（nav は別ランドマーク）になる。
   if (step === "meal") {
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {resetChrome}
         <MealStep
           value={draft.mealType}
           onChange={(mealType) => {
@@ -165,6 +194,7 @@ export function PlannerWizard({
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {resetChrome}
         <IngredientStep
           value={draft.mainIngredients}
           onChange={(mainIngredients) => {
@@ -187,6 +217,7 @@ export function PlannerWizard({
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {resetChrome}
         <CuisineStep
           value={draft.cuisineGenre}
           onChange={(cuisineGenre) => {
@@ -209,6 +240,7 @@ export function PlannerWizard({
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {resetChrome}
         <AudienceStep
           value={{
             targetMode: draft.targetMode,
@@ -267,6 +299,7 @@ export function PlannerWizard({
   return (
     <main ref={containerRef} className="page-frame stack guided-planner-theme">
       {conflictChrome}
+      {resetChrome}
       <ReviewStep
         value={draft}
         onChange={(next) => {

@@ -189,6 +189,8 @@ export function HouseholdSettingsForm({
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
   const deletingMemberIdsRef = useRef(new Set<string>());
   const selectedMemberIdRef = useRef<string | undefined>(undefined);
+  // 「家族を追加」直前の選択。下書き追加をやめるときに戻す先。
+  const previousSelectedIdBeforeAddRef = useRef<string | undefined>(undefined);
   const pendingRegisteredIntents = useRef(new Map<string, PendingRegisteredIntent>());
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
@@ -481,6 +483,10 @@ export function HouseholdSettingsForm({
   );
   const createDraft = useMutation({
     mutationFn: () => api.createDraft(members.length),
+    onMutate: () => {
+      // 成功後に戻れるよう、追加操作を始めた時点の選択を記録する
+      previousSelectedIdBeforeAddRef.current = selectedMemberIdRef.current;
+    },
     onSuccess: (created) => {
       queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) => [
         ...current,
@@ -489,6 +495,55 @@ export function HouseholdSettingsForm({
       setSelectedId(created.id);
     },
   });
+  const [cancellingDraft, setCancellingDraft] = useState(false);
+  const cancelDraftAdd = useCallback(async (): Promise<void> => {
+    if (selected === undefined || selected.status !== "draft" || cancellingDraft) return;
+    const targetId = selected.id;
+    if (deletingMemberIdsRef.current.has(targetId)) return;
+    setCancellingDraft(true);
+    setMessage("");
+    try {
+      await api.deleteMember(targetId);
+      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+        current.filter((member) => member.id !== targetId),
+      );
+      valuesByMemberRef.current.delete(targetId);
+      pendingOperationCountsRef.current.delete(targetId);
+      failedSaveMemberIdsRef.current.delete(targetId);
+      pendingRegisteredIntents.current.delete(targetId);
+      allergyMutationPendingMemberIdsRef.current.delete(targetId);
+      setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
+      setDeleteTarget((current) => (current?.id === targetId ? undefined : current));
+      const remaining =
+        queryClient
+          .getQueryData<HouseholdMemberRow[]>(membersKey)
+          ?.filter((member) => member.id !== targetId) ?? [];
+      const restoreId = previousSelectedIdBeforeAddRef.current;
+      const restore =
+        restoreId !== undefined && restoreId !== targetId
+          ? remaining.find((member) => member.id === restoreId)
+          : undefined;
+      if (restore !== undefined) {
+        selectedMemberIdRef.current = restore.id;
+        setSelectedId(restore.id);
+      } else if (remaining[0] !== undefined) {
+        selectedMemberIdRef.current = remaining[0].id;
+        setSelectedId(remaining[0].id);
+      } else {
+        selectedMemberIdRef.current = undefined;
+        setSelectedId(undefined);
+        setValues(undefined);
+      }
+      previousSelectedIdBeforeAddRef.current = undefined;
+      await queryClient.invalidateQueries({ queryKey: membersKey });
+      await api.invalidateSafety();
+      setMessage("家族の追加をやめました");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "追加のキャンセルに失敗しました");
+    } finally {
+      setCancellingDraft(false);
+    }
+  }, [api, cancellingDraft, membersKey, queryClient, selected]);
   const complete = async () => {
     if (selected === undefined || values === undefined) return;
     const parsed = householdSettingsSchema.safeParse(values);
@@ -718,6 +773,8 @@ export function HouseholdSettingsForm({
         >
           家族を追加
         </button>
+        {/* アカウント操作は家族の有無に依存しない。空状態でも家族CRUDの下へ常時合成する。 */}
+        <AccountSettingsSection />
       </main>
     );
   }
@@ -1075,16 +1132,30 @@ export function HouseholdSettingsForm({
       <button
         className="primary-button"
         type="button"
-        disabled={saving}
+        disabled={saving || cancellingDraft}
         onClick={() => void complete()}
       >
         この家族の設定を完了
       </button>
+      {selected.status === "draft" && (
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={saving || cancellingDraft || deletingMemberIds.has(selected.id)}
+          onClick={() => {
+            void cancelDraftAdd();
+          }}
+        >
+          追加をやめる
+        </button>
+      )}
       <button
         ref={deleteTrigger}
         className="secondary-button"
         type="button"
-        disabled={selectedAllergyMutationPending || deletingMemberIds.has(selected.id)}
+        disabled={
+          selectedAllergyMutationPending || deletingMemberIds.has(selected.id) || cancellingDraft
+        }
         onClick={() => {
           if (
             allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
