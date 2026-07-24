@@ -48,8 +48,9 @@ test("accepts a complete synthetic production environment", () => {
 for (const key of Object.keys(completeEnv())) {
   test(`rejects missing ${key}`, () => {
     const env = completeEnv();
-    delete env[key];
-    assert.throws(() => validateProductionEnv(env), new RegExp(key));
+    // no-dynamic-delete: キーを除いたコピーで欠落を表現する
+    const without = Object.fromEntries(Object.entries(env).filter(([k]) => k !== key));
+    assert.throws(() => validateProductionEnv(without), new RegExp(key));
   });
 }
 

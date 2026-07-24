@@ -55,7 +55,7 @@ describe("auth continuation claim", () => {
       { params: { continuationId: CONTINUATION_ID } },
     );
     expect(response.status).toBe(404);
-    const body = await response.json();
+    const body: unknown = await response.json();
     expect(body).toEqual({
       ok: false,
       error: {
@@ -108,13 +108,19 @@ describe("auth continuation claim", () => {
       { params: { continuationId: CONTINUATION_ID } },
     );
     expect(response.status).toBe(404);
-    expect(claim).toHaveBeenCalledWith({
-      id: CONTINUATION_ID,
-      stateHash: await sha256(STATE),
-      secretHash: await sha256(SECRET),
-      origin: ORIGIN,
-      now: expect.any(String),
-    });
+    expect(claim).toHaveBeenCalledTimes(1);
+    const claimInput = claim.mock.calls[0]?.[0] as {
+      id: string;
+      stateHash: Uint8Array;
+      secretHash: Uint8Array;
+      origin: string;
+      now: string;
+    };
+    expect(claimInput.id).toBe(CONTINUATION_ID);
+    expect(claimInput.origin).toBe(ORIGIN);
+    expect(typeof claimInput.now).toBe("string");
+    expect(claimInput.stateHash).toEqual(await sha256(STATE));
+    expect(claimInput.secretHash).toEqual(await sha256(SECRET));
     const text = await response.text();
     expect(text).not.toContain(SECRET);
     expect(text).not.toContain(STATE);
@@ -174,7 +180,7 @@ describe("auth continuation claim", () => {
     );
 
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body: unknown = await response.json();
     expect(body).toEqual({
       ok: true,
       data: { code: AUTH_CODE, returnTo: RETURN_TO },

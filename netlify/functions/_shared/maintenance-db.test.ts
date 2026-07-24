@@ -28,7 +28,7 @@ const counts = {
 function mockHappyPath(): void {
   connect.mockResolvedValue(undefined);
   end.mockResolvedValue(undefined);
-  query.mockImplementation(async (sql: string) => {
+  query.mockImplementation((sql: string) => {
     if (sql.startsWith("select session_user")) {
       // pre-begin: login / login; in-tx after set local role: login / executor
       const callIndex = query.mock.calls.filter((c) =>
@@ -94,7 +94,7 @@ describe("runMaintenance", () => {
 
   it("rolls back and ends on malformed counts", async () => {
     mockHappyPath();
-    query.mockImplementation(async (sql: string) => {
+    query.mockImplementation((sql: string) => {
       if (sql.startsWith("select session_user")) {
         const callIndex = query.mock.calls.filter((c) =>
           String(c[0]).startsWith("select session_user"),
@@ -150,7 +150,7 @@ describe("runMaintenance", () => {
 
   it("ends the client after SQL failure and never leaks driver text", async () => {
     mockHappyPath();
-    query.mockImplementation(async (sql: string) => {
+    query.mockImplementation((sql: string) => {
       if (sql.startsWith("select session_user")) {
         return {
           rows: [
@@ -198,7 +198,7 @@ describe("runMaintenance", () => {
 
   it("rejects wrong pre-transaction role/timeout without beginning work", async () => {
     mockHappyPath();
-    query.mockImplementation(async (sql: string) => {
+    query.mockImplementation((sql: string) => {
       if (sql.startsWith("select session_user")) {
         return {
           rows: [

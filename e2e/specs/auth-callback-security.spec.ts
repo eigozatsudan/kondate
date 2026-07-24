@@ -122,6 +122,9 @@ test("matching state reaches callback once; unknown and mismatched state fail sa
   const providerUrl = new URL(page.url());
   const flow = providerUrl.searchParams.get("flow");
   const state = providerUrl.searchParams.get("state");
+  if (flow === null || state === null) {
+    throw new Error("oauth-mock authorize must expose flow and state");
+  }
 
   const callbackRequest = page.waitForRequest((request) => {
     const url = new URL(request.url());
@@ -182,6 +185,9 @@ test("reused continuation code and state are rejected after a successful exchang
   expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/u);
   expect(state).toMatch(/^[A-Za-z0-9_-]{43}$/u);
   expect(flowId).toMatch(/^[0-9a-f-]{36}$/u);
+  if (code === null || state === null || flowId === null) {
+    throw new Error("callback must expose code, state, and flow");
+  }
   // 初回交換成功: planner 着地（returnTo）または welcome
   await expect(page).toHaveURL(/\/(planner|welcome)$/u, { timeout: 30_000 });
 

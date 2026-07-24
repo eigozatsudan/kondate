@@ -130,7 +130,7 @@ export async function runMaintenance(input: RunMaintenanceInput): Promise<Mainte
       // idle_in_transaction_session_timeout は起動オプションとして渡す
       //（ドライバが認識するキーは ClientConfig の範囲に限定）
       idle_in_transaction_session_timeout: 25_000,
-    } as pg.ClientConfig);
+    });
 
     await Promise.race([client.connect(), abortWait]);
 
@@ -209,7 +209,8 @@ export async function runMaintenance(input: RunMaintenanceInput): Promise<Mainte
     inTransaction = false;
     return counts;
   } catch (error) {
-    if (inTransaction && client !== null && !ended) {
+    // inTransaction が true の間は client は接続済みで end 前（finally より先）
+    if (inTransaction && client !== null) {
       try {
         await client.query("rollback");
       } catch {

@@ -42,7 +42,7 @@ describe("maintenance-db integration", () => {
     // 残留接続がないことを軽く確認
     const admin = adminClient();
     await admin.connect();
-    const active = await admin.query(
+    const active = await admin.query<{ n: number }>(
       `select count(*)::int as n from pg_stat_activity
        where application_name = 'kondate-maintenance'`,
     );
@@ -56,21 +56,16 @@ describe("maintenance-db integration", () => {
       now: new Date().toISOString(),
       batchSize: 250,
     });
-    expect(counts).toEqual({
-      staleReservationsFinalized: expect.any(Number),
-      generationLedgersDeleted: expect.any(Number),
-      shoppingMutationsDeleted: expect.any(Number),
-      authContinuationsDeleted: expect.any(Number),
-    });
-    for (const value of Object.values(counts)) {
-      expect(value).toBeGreaterThanOrEqual(0);
-    }
+    expect(counts.staleReservationsFinalized).toBeGreaterThanOrEqual(0);
+    expect(counts.generationLedgersDeleted).toBeGreaterThanOrEqual(0);
+    expect(counts.shoppingMutationsDeleted).toBeGreaterThanOrEqual(0);
+    expect(counts.authContinuationsDeleted).toBeGreaterThanOrEqual(0);
   });
 
   it("cancels with SQLSTATE 57014 near 20s on pg_sleep after RPC and rolls back", async () => {
     const admin = adminClient();
     await admin.connect();
-    const marker = `maint-int-${Date.now()}`;
+    const marker = `maint-int-${String(Date.now())}`;
     const userId = "f9000000-0000-4000-8000-000000000001";
     await admin.query(
       `insert into auth.users (id, instance_id, aud, role, email)
@@ -107,13 +102,13 @@ describe("maintenance-db integration", () => {
     expect(elapsed).toBeGreaterThanOrEqual(15_000);
     expect(elapsed).toBeLessThan(28_000);
 
-    const leftover = await admin.query(
+    const leftover = await admin.query<{ n: number }>(
       `select count(*)::int as n from private.ai_generation_requests
        where id = 'f9100000-0000-4000-8000-000000000001'`,
     );
     expect(leftover.rows[0]?.n).toBe(1);
 
-    const activity = await admin.query(
+    const activity = await admin.query<{ n: number }>(
       `select count(*)::int as n from pg_stat_activity
        where application_name = 'kondate-maintenance'`,
     );
@@ -174,18 +169,18 @@ describe("maintenance-db integration", () => {
 
     await admin.query("rollback");
 
-    const gen = await admin.query(
+    const gen = await admin.query<{ n: number }>(
       `select count(*)::int as n from private.ai_generation_requests
        where id = 'f9100000-0000-4000-8000-000000000002'`,
     );
-    const shop = await admin.query(
+    const shop = await admin.query<{ n: number }>(
       `select count(*)::int as n from private.shopping_mutations
        where idempotency_key = 'f9300000-0000-4000-8000-000000000001'`,
     );
     expect(gen.rows[0]?.n).toBe(1);
     expect(shop.rows[0]?.n).toBe(1);
 
-    const activity = await admin.query(
+    const activity = await admin.query<{ n: number }>(
       `select count(*)::int as n from pg_stat_activity
        where application_name = 'kondate-maintenance'`,
     );

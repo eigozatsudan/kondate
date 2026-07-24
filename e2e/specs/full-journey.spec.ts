@@ -89,7 +89,10 @@ test("household journey: welcome through shopping reconciliation", async ({
 
   // 全体再生成（recovery ではないが別案経路）
   await setMockScenario(page, "alternate-menu");
-  await requestWholeRegeneration(page, menuId!, "simpler");
+  if (menuId === undefined) {
+    throw new Error("menuId required for household regeneration");
+  }
+  await requestWholeRegeneration(page, menuId, "simpler");
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 60_000,
@@ -183,7 +186,10 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await page.keyboard.press("Escape");
 
   await setMockScenario(page, "idea-alternate-menu-1");
-  await requestWholeRegeneration(page, menuId!, "simpler", { targetMode: "idea" });
+  if (menuId === undefined) {
+    throw new Error("menuId required for idea regeneration");
+  }
+  await requestWholeRegeneration(page, menuId, "simpler", { targetMode: "idea" });
   await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 60_000 });
 
   const fav = page.getByRole("button", { name: /お気に入り/u });

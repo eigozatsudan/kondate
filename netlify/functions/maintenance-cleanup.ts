@@ -22,9 +22,7 @@ export default async function maintenanceCleanup(): Promise<Response> {
     if (mode === "local") {
       connectionString = parseMaintenanceDatabaseEnv(process.env, { mode });
     } else {
-      const expectedProjectRef = parseManagedSupabaseProjectRef(
-        String(process.env.SUPABASE_URL ?? ""),
-      );
+      const expectedProjectRef = parseManagedSupabaseProjectRef(process.env.SUPABASE_URL ?? "");
       if (expectedProjectRef === null) throw new Error("supabase_project_invalid");
       connectionString = parseMaintenanceDatabaseEnv(process.env, {
         mode,

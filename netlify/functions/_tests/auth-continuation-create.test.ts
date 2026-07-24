@@ -61,7 +61,7 @@ describe("auth continuation create", () => {
       }),
     );
     expect(response.status).toBe(400);
-    const body = await response.json();
+    const body: unknown = await response.json();
     expect(body).toEqual({
       ok: false,
       error: { code: "invalid_request", message: "リクエストを確認してください" },

@@ -56,7 +56,7 @@ describe("auth continuation deposit", () => {
       { params: { continuationId: CONTINUATION_ID } },
     );
     expect(response.status).toBe(404);
-    const body = await response.json();
+    const body: unknown = await response.json();
     expect(body).toEqual({
       ok: false,
       error: {
@@ -134,7 +134,7 @@ describe("auth continuation deposit", () => {
     const deposit = vi
       .fn()
       .mockImplementation(
-        async (input: {
+        (input: {
           ciphertext: Uint8Array;
           iv: Uint8Array;
           stateHash: Uint8Array;
@@ -235,7 +235,7 @@ describe("auth continuation deposit", () => {
       );
     const claim = vi
       .fn()
-      .mockImplementation(async (input: { stateHash: Uint8Array; secretHash: Uint8Array }) => {
+      .mockImplementation((input: { stateHash: Uint8Array; secretHash: Uint8Array }) => {
         if (store.row === null || store.row.claimed) return null;
         if (
           !Buffer.from(input.stateHash).equals(Buffer.from(store.row.stateHash)) ||
@@ -275,7 +275,7 @@ describe("auth continuation deposit", () => {
       { params: { continuationId: CONTINUATION_ID } },
     );
     expect(claimResponse.status).toBe(200);
-    const body = await claimResponse.json();
+    const body: unknown = await claimResponse.json();
     expect(body).toEqual({ ok: true, data: { code: AUTH_CODE, returnTo: RETURN_TO } });
     const raw = JSON.stringify(body);
     expect(raw).not.toMatch(/ciphertext|encrypted/iu);

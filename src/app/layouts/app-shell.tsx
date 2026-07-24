@@ -59,7 +59,9 @@ export function AppShell() {
       }
       heading.focus({ preventScroll: true });
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
   }, [location.pathname]);
 
   return (
