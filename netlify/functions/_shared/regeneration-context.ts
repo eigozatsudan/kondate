@@ -47,7 +47,6 @@ const dishSignatureInput = (dish: ValidatedMenu["dishes"][number]): DishSignatur
   primaryIngredients: dish.ingredients.map((item) => item.name),
 });
 
-
 /**
  * 削除済みメンバーの取り分け・安全処理・ラベルを現行対象だけへ射影する。
  * 設計 §4.4: 削除済みは AI 入力にも新 version にも複製しない。

@@ -122,7 +122,10 @@ describe("projectMenuForSurvivingTargets / dish-regen AI strip", () => {
   }
 
   it("projects adaptations and labels to surviving anonymous refs only", () => {
-    const projected = projectMenuForSurvivingTargets(menuWithDeletedMember(), new Set(["member_1"]));
+    const projected = projectMenuForSurvivingTargets(
+      menuWithDeletedMember(),
+      new Set(["member_1"]),
+    );
     expect(projected.adaptations.map((row) => row.anonymousMemberRef)).toEqual(["member_1"]);
     expect(projected.labelConfirmations).toEqual([]);
     expect(projected.adaptations[0]?.portionText).toBe("生存メンバーの取り分け");
