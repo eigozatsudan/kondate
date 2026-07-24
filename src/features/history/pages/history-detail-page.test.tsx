@@ -4,6 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  ShoppingDiff,
+  ShoppingList,
+  ShoppingListSafetyData,
+} from "@shared/contracts/shopping";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
@@ -11,6 +16,7 @@ import {
   householdSafetyChangedEvent,
   householdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
+import { pendingShoppingCommandStorageKey } from "@/features/shopping/api/shopping-api";
 import type { RevalidationResult } from "../api/revalidation-api";
 import { HistoryDetailPage, type HistoryDetailRevalidationView } from "./history-detail-page";
 
@@ -18,12 +24,28 @@ const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const getMenuResultMock = vi.hoisted(() => vi.fn());
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
 const acceptMenuVersionMock = vi.hoisted(() => vi.fn());
+const confirmLabelConfirmationMock = vi.hoisted(() => vi.fn());
+const deletePantryItemMock = vi.hoisted(() => vi.fn());
+const updatePantryItemMock = vi.hoisted(() => vi.fn());
+const createPantryItemMock = vi.hoisted(() => vi.fn());
+// revalidation と shopping safety gate の両方が channel を購読するため、
+// 後勝ち上書きせず全 callback を保持する（Realtime シグナルの偽グリーン防止）。
 const channelHandlers = vi.hoisted(() => ({
-  members: null as null | (() => void),
-  allergies: null as null | (() => void),
+  members: [] as Array<() => void>,
+  allergies: [] as Array<() => void>,
 }));
 // hoisted mock から参照する固定 UUID（下の const より前に置く）
 const MOCK_USER_ID = "31000000-0000-4000-8000-000000000001";
+
+type ShoppingApiModule = typeof import("@/features/shopping/api/shopping-api");
+const shoppingApi = vi.hoisted(() => ({
+  fetchActiveShoppingList: vi.fn<ShoppingApiModule["fetchActiveShoppingList"]>(),
+  revalidateActiveShoppingList: vi.fn<ShoppingApiModule["revalidateActiveShoppingList"]>(),
+  createShoppingList: vi.fn<ShoppingApiModule["createShoppingList"]>(),
+  reconcileShoppingListRequest: vi.fn<ShoppingApiModule["reconcileShoppingListRequest"]>(),
+  previewShoppingDiff: vi.fn<ShoppingApiModule["previewShoppingDiff"]>(),
+  fetchReconcilableMenuSource: vi.fn<ShoppingApiModule["fetchReconcilableMenuSource"]>(),
+}));
 
 vi.mock("../api/revalidation-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/revalidation-api")>();
@@ -35,6 +57,9 @@ vi.mock("@/features/generation/api/menu-result-api", () => ({
 vi.mock("@/features/generation/api/usage-today-api", () => ({
   getUsageToday: getUsageTodayMock,
 }));
+vi.mock("@/features/generation/api/confirm-label-api", () => ({
+  confirmLabelConfirmation: confirmLabelConfirmationMock,
+}));
 vi.mock("../api/history-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/history-api")>();
   return { ...original, acceptMenuVersion: acceptMenuVersionMock };
@@ -44,13 +69,29 @@ vi.mock("@/features/generation/model/pending-generation", async (importOriginal)
     await importOriginal<typeof import("@/features/generation/model/pending-generation")>();
   return { ...original, clearPendingGeneration: vi.fn() };
 });
+// 買い物は API 層だけ差し替え。persistedShoppingCommand / clearShoppingCommand /
+// useResumeShoppingCommand は実体のまま動かし、送信・resume を偽グリーンにしない。
+vi.mock("@/features/shopping/api/shopping-api", async (importOriginal) => {
+  const original = await importOriginal<ShoppingApiModule>();
+  return { ...original, ...shoppingApi };
+});
+// 冷蔵庫 CRUD は Supabase client 境界を mock し、actions 到達だけを固定する。
+vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
+  return {
+    ...original,
+    deletePantryItem: deletePantryItemMock,
+    updatePantryItem: updatePantryItemMock,
+    createPantryItem: createPantryItemMock,
+  };
+});
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
     channel: () => {
       const api = {
         on: (_event: string, filter: { table?: string }, callback: () => void) => {
-          if (filter.table === "household_members") channelHandlers.members = callback;
-          if (filter.table === "member_allergies") channelHandlers.allergies = callback;
+          if (filter.table === "household_members") channelHandlers.members.push(callback);
+          if (filter.table === "member_allergies") channelHandlers.allergies.push(callback);
           return api;
         },
         subscribe: (statusCallback?: (status: string) => void) => {
@@ -72,40 +113,12 @@ vi.mock("@/shared/lib/supabase", () => ({
   }),
 }));
 
-// 買い物 hooks を決定論的に通す（Realtime/getUser 依存のゲートを page テストから外す）
-vi.mock("@/features/shopping/hooks/use-shopping-list", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("@/features/shopping/hooks/use-shopping-list")>();
-  return {
-    ...original,
-    useShoppingList: () => ({
-      data: null,
-      isFetching: false,
-      isSuccess: true,
-      isPending: false,
-      isError: false,
-    }),
-    useShoppingSafetyGate: () => ({
-      blocked: false,
-      error: false,
-      message: null,
-      safetyFingerprint: null,
-      currentLabelWarnings: [],
-    }),
-    useCreateShoppingList: () => ({
-      mutateAsync: vi.fn(),
-      isPending: false,
-    }),
-    useReconcileShoppingList: () => ({
-      mutateAsync: vi.fn(),
-      isPending: false,
-    }),
-    useResumeShoppingCommand: () => undefined,
-  };
-});
-
 const MENU_ID = "30000000-0000-4000-8000-000000000001";
 const USER_ID = "31000000-0000-4000-8000-000000000001";
+const SHOPPING_LIST_ID = "32000000-0000-4000-8000-000000000001";
+const SHOPPING_ITEM_ID = "32000000-0000-4000-8000-000000000002";
+const SHOPPING_FINGERPRINT = "f".repeat(64);
+const CREATE_IDEMPOTENCY_KEY = "40000000-0000-4000-8000-0000000000aa";
 
 const validRevalidation: RevalidationResult = {
   status: "valid",
@@ -115,6 +128,57 @@ const validRevalidation: RevalidationResult = {
   issues: [],
   changedDetails: [],
   currentLabelWarnings: [],
+};
+
+const activeShoppingList: ShoppingList = {
+  id: SHOPPING_LIST_ID,
+  status: "active",
+  version: 4,
+  items: [],
+  listLabelWarnings: [],
+};
+
+const validShoppingSafety: ShoppingListSafetyData = {
+  status: "valid",
+  safetyFingerprint: SHOPPING_FINGERPRINT,
+  checkedSourceMenuIds: [MENU_ID],
+  currentLabelWarnings: [],
+  issues: [],
+};
+
+const invalidShoppingSafety: ShoppingListSafetyData = {
+  status: "invalid",
+  safetyFingerprint: null,
+  checkedSourceMenuIds: [MENU_ID],
+  currentLabelWarnings: [],
+  issues: [
+    {
+      code: "current_safety_invalid",
+      message: "現在の家族設定ではこのリストを使えません",
+      sourceMenuId: MENU_ID,
+    },
+  ],
+};
+
+const shoppingDiff: ShoppingDiff = {
+  add: [
+    {
+      key: "add-key-1",
+      displayName: "たまねぎ",
+      normalizedName: "たまねぎ",
+      storeSection: "produce",
+      quantityValue: 2,
+      quantityText: "2個",
+      unit: "個",
+      pantryCheckRequired: false,
+      sourceIngredients: [],
+      labelWarnings: [],
+    },
+  ],
+  replace: [],
+  remove: [],
+  protectedItemIds: [SHOPPING_ITEM_ID],
+  listLabelWarnings: [],
 };
 
 function deferredPromise<T>() {
@@ -158,6 +222,7 @@ function renderHistoryDetail(
       },
       { path: "/history", element: <h1>履歴</h1> },
       { path: "/generation", element: <h1>作成状況</h1> },
+      { path: "/shopping", element: <h1>買い物リスト</h1> },
     ],
     { initialEntries: [`/history/${MENU_ID}`] },
   );
@@ -251,11 +316,11 @@ function fireSafetySignal(
     return;
   }
   if (signal === "realtime-household-member") {
-    channelHandlers.members?.();
+    for (const handler of channelHandlers.members) handler();
     return;
   }
   if (signal === "realtime-member-allergy") {
-    channelHandlers.allergies?.();
+    for (const handler of channelHandlers.allergies) handler();
     return;
   }
   if (signal === "same-tab-event") {
@@ -267,8 +332,9 @@ function fireSafetySignal(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  channelHandlers.members = null;
-  channelHandlers.allergies = null;
+  sessionStorage.clear();
+  channelHandlers.members = [];
+  channelHandlers.allergies = [];
   revalidateMenuMock.mockResolvedValue(validRevalidation);
   getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
   getUsageTodayMock.mockResolvedValue({
@@ -279,10 +345,48 @@ beforeEach(() => {
     retryAt: null,
   });
   acceptMenuVersionMock.mockResolvedValue(undefined);
+  confirmLabelConfirmationMock.mockResolvedValue(undefined);
+  deletePantryItemMock.mockResolvedValue({ id: "66000000-0000-4000-8000-000000000001" });
+  updatePantryItemMock.mockResolvedValue({
+    id: "66000000-0000-4000-8000-000000000001",
+    name: "しょうゆ",
+    quantity: 50,
+    unit: "ml",
+    expiresOn: "2026-12-01",
+    expirationType: "best_before",
+    openedState: "opened",
+    updatedAt: "2026-07-11T00:00:00.000Z",
+  });
+  createPantryItemMock.mockResolvedValue({
+    id: "66000000-0000-4000-8000-000000000099",
+    name: "しょうゆ",
+    quantity: 200,
+    unit: "ml",
+    expiresOn: "2026-12-01",
+    expirationType: "best_before",
+    openedState: "opened",
+    updatedAt: "2026-07-11T00:00:00.000Z",
+  });
+  // 結果画面テストと同型: active list + valid gate を既定にし、送信・resume を到達させる
+  shoppingApi.fetchActiveShoppingList.mockResolvedValue(activeShoppingList);
+  shoppingApi.revalidateActiveShoppingList.mockResolvedValue(validShoppingSafety);
+  shoppingApi.fetchReconcilableMenuSource.mockResolvedValue(null);
+  shoppingApi.createShoppingList.mockResolvedValue({
+    listId: SHOPPING_LIST_ID,
+    version: 5,
+    replayed: false,
+  });
+  shoppingApi.reconcileShoppingListRequest.mockResolvedValue({
+    listId: SHOPPING_LIST_ID,
+    version: 5,
+    replayed: false,
+  });
+  shoppingApi.previewShoppingDiff.mockResolvedValue(shoppingDiff);
 });
 
 afterEach(() => {
   cleanup();
+  sessionStorage.clear();
   vi.useRealTimers();
 });
 
@@ -357,22 +461,197 @@ describe("HistoryDetailPage safety gate", () => {
   });
 
   it("wires shopping create sheet and fridge tip when household actions are enabled", async () => {
-    // P4#3: /history/:menuId の買い物・冷蔵庫は enabled でも no-op だった。結果画面と同等に配線する。
+    // シート表示と冷蔵庫 tip は残す。送信・resume・actions 到達は後続テストで固定する。
     const user = userEvent.setup();
     renderHistoryDetail({
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
     const shopping = await screen.findByRole("button", { name: "買い物リストを作る" });
-    expect(shopping).toBeEnabled();
+    await waitFor(() => {
+      expect(shopping).toBeEnabled();
+    });
     await user.click(shopping);
-    // CreateListSheet（section + 見出し）が開く
-    expect(await screen.findByRole("heading", { name: /買い物リスト/i })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "冷蔵庫へ反映" }));
     expect(
       screen.getByText("調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。"),
     ).toBeVisible();
+  });
+
+  it("submits create shopping list command after sheet confirm", async () => {
+    // sheet が開くだけでは不合格。CreateShoppingListRequest 相当の実送信を固定する。
+    const user = userEvent.setup();
+    const router = renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+
+    const shopping = await screen.findByRole("button", { name: "買い物リストを作る" });
+    await waitFor(() => {
+      expect(shopping).toBeEnabled();
+    });
+    await user.click(shopping);
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "作成する" }));
+
+    await waitFor(() => {
+      expect(shoppingApi.createShoppingList).toHaveBeenCalledTimes(1);
+    });
+    // TanStack Query は mutationFn へ第2引数（内部 context）も渡すため、コマンド本体だけ比較する。
+    const command = shoppingApi.createShoppingList.mock.calls[0]?.[0];
+    expect(Object.keys(command ?? {}).sort()).toEqual([
+      "activeListId",
+      "expectedListVersion",
+      "idempotencyKey",
+      "menuId",
+      "mode",
+    ]);
+    expect(command).toMatchObject({
+      menuId: MENU_ID,
+      mode: "append",
+      activeListId: SHOPPING_LIST_ID,
+      expectedListVersion: 4,
+    });
+    expect(typeof command?.idempotencyKey).toBe("string");
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/shopping");
+    });
+    expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).toBeNull();
+  });
+
+  it("resumes persisted create shopping command on mount", async () => {
+    // pending create が session にあるとき、クリックなしで submit が再実行される
+    const pendingCommand = {
+      menuId: MENU_ID,
+      mode: "new" as const,
+      activeListId: null,
+      expectedListVersion: null,
+      idempotencyKey: CREATE_IDEMPOTENCY_KEY,
+    };
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", MENU_ID),
+      JSON.stringify({ createdAtMs: Date.now(), command: pendingCommand }),
+    );
+
+    const router = renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+
+    await waitFor(() => {
+      expect(shoppingApi.createShoppingList).toHaveBeenCalledTimes(1);
+    });
+    expect(shoppingApi.createShoppingList.mock.calls[0]?.[0]).toEqual(pendingCommand);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/shopping");
+    });
+    expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).toBeNull();
+  });
+
+  it("disables shopping controls while safety gate is blocked", async () => {
+    shoppingApi.revalidateActiveShoppingList.mockResolvedValue(invalidShoppingSafety);
+
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+
+    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    await waitFor(() => {
+      expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
+    });
+    expect(create).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+  });
+
+  it("invokes pantry delete through MenuResult actions on household history detail", async () => {
+    // tip 文だけでは不合格。MenuResult actions 経由で onDeletePantry が実到達すること。
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+
+    expect(await screen.findByRole("heading", { name: "調理後の冷蔵庫" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "使い切った" }));
+    await user.click(screen.getByRole("button", { name: "削除する" }));
+
+    await waitFor(() => {
+      expect(deletePantryItemMock).toHaveBeenCalledTimes(1);
+    });
+    expect(deletePantryItemMock).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      "66000000-0000-4000-8000-000000000001",
+      "2026-07-11T00:00:00.000Z",
+    );
+  });
+
+  it("label confirm through MenuResult actions triggers beginRecheck", async () => {
+    // ラベル確認成功/失敗の後に beginRecheck が走り、ゲートが checking へ戻ること。
+    const view = makeMenuResultViewModel();
+    getMenuResultMock.mockResolvedValue(view);
+    const warning = {
+      confirmationId: "48000000-0000-4000-8000-000000000099",
+      sourceType: "ingredient" as const,
+      sourceId: view.menu.dishes[0]?.ingredients[0]?.id ?? "53000000-0000-4000-8000-000000000001",
+      sourcePath: "dishes.0.ingredients.0.name",
+      sourceText: "確認対象の加工品",
+      allergenId: "egg",
+      allergenName: "卵",
+      anonymousMemberRef: "member_1",
+      memberLabel: "子ども",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending" as const,
+    };
+    let revalidateCalls = 0;
+    const afterConfirm = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockImplementation(() => {
+      revalidateCalls += 1;
+      if (revalidateCalls === 1) {
+        return Promise.resolve({ ...validRevalidation, currentLabelWarnings: [warning] });
+      }
+      return afterConfirm.promise;
+    });
+    confirmLabelConfirmationMock.mockRejectedValue(new Error("not_found"));
+
+    // 注入 revalidation だと beginRecheck が no-op になるため live gate を使う
+    renderHistoryDetail();
+
+    expect(
+      await screen.findByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    ).toBeEnabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    );
+
+    expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeDisabled();
+    expect(confirmLabelConfirmationMock).toHaveBeenCalledWith(
+      MENU_ID,
+      warning.confirmationId,
+      "current",
+    );
+  });
+
+  it("previews reconcile when active list source exists", async () => {
+    shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 2,
+    });
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+
+    const reconcile = await screen.findByRole("button", { name: "買い物リストとの差分を確認" });
+    await waitFor(() => {
+      expect(reconcile).toBeEnabled();
+    });
+    await user.click(reconcile);
+
+    await waitFor(() => {
+      expect(shoppingApi.previewShoppingDiff).toHaveBeenCalledWith(MENU_ID, 2, activeShoppingList);
+    });
+    expect(await screen.findByRole("heading", { name: "献立変更の差分" })).toBeVisible();
   });
 });
 
@@ -384,9 +663,12 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
 
     expect(await screen.findByText("家族条件を使用していません")).toBeVisible();
     expect(screen.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
-    // idea では家族 revalidation と買い物を mount しない
+    // idea では家族 revalidation と買い物 hooks/API を mount しない
     expect(revalidateMenuMock).not.toHaveBeenCalled();
+    expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
+    expect(shoppingApi.fetchReconcilableMenuSource).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
     // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
     expect(screen.getByRole("button", { name: "これに決めた" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
@@ -394,6 +676,10 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
     expect(screen.getByRole("button", { name: "冷蔵庫へ反映" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeEnabled();
     expect(acceptMenuVersionMock).not.toHaveBeenCalled();
+    // idea では sessionStorage に再送用 shopping 記録を一切作らない
+    expect(
+      Object.keys(sessionStorage).filter((key) => key.startsWith("kondate:shopping:")),
+    ).toHaveLength(0);
   });
 
   it("does not interpret the stored snapshot as a family safety confirmation on the idea child root", async () => {
