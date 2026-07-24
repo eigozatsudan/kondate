@@ -150,128 +150,131 @@ export function ReviewStep({
           </dd>
         </div>
       </dl>
-      <details className="card">
-        <summary>追加条件</summary>
-        <label>
-          献立全体の調理時間
-          <select
-            value={value.timeLimitMinutes ?? ""}
-            disabled={disabled}
-            aria-invalid={fieldErrors?.timeLimitMinutes != null ? "true" : undefined}
-            aria-describedby={
-              fieldErrors?.timeLimitMinutes != null ? "review-time-limit-error" : undefined
-            }
-            onChange={(event) => {
-              const selected = event.target.value;
-              onChange({
-                ...value,
-                timeLimitMinutes:
-                  selected === "" ? null : selected === "15" ? 15 : selected === "30" ? 30 : 45,
-              });
-            }}
-          >
-            <option value="">指定なし</option>
-            <option value="15">15分以内</option>
-            <option value="30">30分以内</option>
-            <option value="45">45分以内</option>
-          </select>
-        </label>
-        {fieldErrors?.timeLimitMinutes != null && (
-          <p id="review-time-limit-error" role="alert">
-            {fieldErrors.timeLimitMinutes}
-          </p>
-        )}
-        <label>
-          予算
-          <select
-            value={value.budgetPreference ?? ""}
-            disabled={disabled}
-            aria-invalid={fieldErrors?.budgetPreference != null ? "true" : undefined}
-            aria-describedby={
-              fieldErrors?.budgetPreference != null ? "review-budget-error" : undefined
-            }
-            onChange={(event) => {
-              onChange({
-                ...value,
-                budgetPreference:
-                  event.target.value === "economy"
-                    ? "economy"
-                    : event.target.value === "standard"
-                      ? "standard"
-                      : null,
-              });
-            }}
-          >
-            <option value="">指定なし</option>
-            <option value="economy">節約優先</option>
-            <option value="standard">標準</option>
-          </select>
-        </label>
-        {fieldErrors?.budgetPreference != null && (
-          <p id="review-budget-error" role="alert">
-            {fieldErrors.budgetPreference}
-          </p>
-        )}
-        <label>
-          今回だけ避ける食材
-          <input
-            value={avoidIngredientText}
-            disabled={disabled}
-            aria-invalid={fieldErrors?.avoidIngredients != null ? "true" : undefined}
-            aria-describedby={
-              fieldErrors?.avoidIngredients != null ? "review-avoid-ingredients-error" : undefined
-            }
-            onChange={(event) => {
-              const parsed = parseAvoidIngredientInput(event.target.value);
-              setAvoidIngredientText(parsed.text);
-              if (
-                parsed.items.length !== value.avoidIngredients.length ||
-                parsed.items.some((item, index) => item !== value.avoidIngredients[index])
-              ) {
-                onChange({ ...value, avoidIngredients: parsed.items });
+      <details className="wizard-details">
+        <summary className="wizard-details-summary">追加条件</summary>
+        {/* summary 直下に stack を置き、label/input が横に流れないよう縦積みにする */}
+        <div className="stack wizard-details-body">
+          <label className="field">
+            献立全体の調理時間
+            <select
+              value={value.timeLimitMinutes ?? ""}
+              disabled={disabled}
+              aria-invalid={fieldErrors?.timeLimitMinutes != null ? "true" : undefined}
+              aria-describedby={
+                fieldErrors?.timeLimitMinutes != null ? "review-time-limit-error" : undefined
               }
-            }}
-          />
-        </label>
-        {fieldErrors?.avoidIngredients != null && (
-          <p id="review-avoid-ingredients-error" role="alert">
-            {fieldErrors.avoidIngredients}
-          </p>
-        )}
-        <label>
-          自由メモ
-          <textarea
-            maxLength={200}
-            value={value.memo}
+              onChange={(event) => {
+                const selected = event.target.value;
+                onChange({
+                  ...value,
+                  timeLimitMinutes:
+                    selected === "" ? null : selected === "15" ? 15 : selected === "30" ? 30 : 45,
+                });
+              }}
+            >
+              <option value="">指定なし</option>
+              <option value="15">15分以内</option>
+              <option value="30">30分以内</option>
+              <option value="45">45分以内</option>
+            </select>
+          </label>
+          {fieldErrors?.timeLimitMinutes != null && (
+            <p id="review-time-limit-error" role="alert">
+              {fieldErrors.timeLimitMinutes}
+            </p>
+          )}
+          <label className="field">
+            予算
+            <select
+              value={value.budgetPreference ?? ""}
+              disabled={disabled}
+              aria-invalid={fieldErrors?.budgetPreference != null ? "true" : undefined}
+              aria-describedby={
+                fieldErrors?.budgetPreference != null ? "review-budget-error" : undefined
+              }
+              onChange={(event) => {
+                onChange({
+                  ...value,
+                  budgetPreference:
+                    event.target.value === "economy"
+                      ? "economy"
+                      : event.target.value === "standard"
+                        ? "standard"
+                        : null,
+                });
+              }}
+            >
+              <option value="">指定なし</option>
+              <option value="economy">節約優先</option>
+              <option value="standard">標準</option>
+            </select>
+          </label>
+          {fieldErrors?.budgetPreference != null && (
+            <p id="review-budget-error" role="alert">
+              {fieldErrors.budgetPreference}
+            </p>
+          )}
+          <label className="field">
+            今回だけ避ける食材
+            <input
+              value={avoidIngredientText}
+              disabled={disabled}
+              aria-invalid={fieldErrors?.avoidIngredients != null ? "true" : undefined}
+              aria-describedby={
+                fieldErrors?.avoidIngredients != null ? "review-avoid-ingredients-error" : undefined
+              }
+              onChange={(event) => {
+                const parsed = parseAvoidIngredientInput(event.target.value);
+                setAvoidIngredientText(parsed.text);
+                if (
+                  parsed.items.length !== value.avoidIngredients.length ||
+                  parsed.items.some((item, index) => item !== value.avoidIngredients[index])
+                ) {
+                  onChange({ ...value, avoidIngredients: parsed.items });
+                }
+              }}
+            />
+          </label>
+          {fieldErrors?.avoidIngredients != null && (
+            <p id="review-avoid-ingredients-error" role="alert">
+              {fieldErrors.avoidIngredients}
+            </p>
+          )}
+          <label className="field">
+            自由メモ
+            <textarea
+              maxLength={200}
+              value={value.memo}
+              disabled={disabled}
+              aria-invalid={fieldErrors?.memo != null ? "true" : undefined}
+              aria-describedby={fieldErrors?.memo != null ? "review-memo-error" : undefined}
+              onChange={(event) => {
+                onChange({ ...value, memo: event.target.value });
+              }}
+            />
+          </label>
+          {fieldErrors?.memo != null && (
+            <p id="review-memo-error" role="alert">
+              {fieldErrors.memo}
+            </p>
+          )}
+          <PantrySelector
+            items={pantryItems}
+            itemsStatus={pantryItemsStatus}
+            selections={value.pantrySelections}
+            attempt={attempt}
+            onAttemptChange={onAttemptChange}
             disabled={disabled}
-            aria-invalid={fieldErrors?.memo != null ? "true" : undefined}
-            aria-describedby={fieldErrors?.memo != null ? "review-memo-error" : undefined}
-            onChange={(event) => {
-              onChange({ ...value, memo: event.target.value });
+            onChange={(pantrySelections) => {
+              onChange({ ...value, pantrySelections: [...pantrySelections] });
             }}
           />
-        </label>
-        {fieldErrors?.memo != null && (
-          <p id="review-memo-error" role="alert">
-            {fieldErrors.memo}
-          </p>
-        )}
-        <PantrySelector
-          items={pantryItems}
-          itemsStatus={pantryItemsStatus}
-          selections={value.pantrySelections}
-          attempt={attempt}
-          onAttemptChange={onAttemptChange}
-          disabled={disabled}
-          onChange={(pantrySelections) => {
-            onChange({ ...value, pantrySelections: [...pantrySelections] });
-          }}
-        />
-        {fieldErrors?.pantrySelections != null && (
-          <p id="review-pantry-selections-error" role="alert">
-            {fieldErrors.pantrySelections}
-          </p>
-        )}
+          {fieldErrors?.pantrySelections != null && (
+            <p id="review-pantry-selections-error" role="alert">
+              {fieldErrors.pantrySelections}
+            </p>
+          )}
+        </div>
       </details>
       {hasUnavailablePantrySelections && (
         <p role="alert">冷蔵庫から削除された食材の選択を解除してから献立を作ってください。</p>

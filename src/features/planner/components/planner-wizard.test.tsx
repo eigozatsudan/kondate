@@ -460,6 +460,38 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByLabelText("献立全体の調理時間")).toHaveValue("30");
   });
 
+  it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+        }}
+      />,
+    );
+
+    const summary = screen.getByText("追加条件");
+    const details = summary.closest("details");
+    expect(details).toHaveClass("wizard-details");
+    expect(summary).toHaveClass("wizard-details-summary");
+
+    await user.click(summary);
+    const timeSelect = screen.getByLabelText("献立全体の調理時間");
+    const timeLabel = timeSelect.closest("label");
+    const body = timeLabel?.parentElement;
+    expect(timeLabel).toHaveClass("field");
+    expect(body).toHaveClass("stack", "wizard-details-body");
+    expect(body).toContainElement(screen.getByLabelText("予算"));
+    expect(body).toContainElement(screen.getByLabelText("今回だけ避ける食材"));
+    expect(body).toContainElement(screen.getByLabelText("自由メモ"));
+  });
+
   it("privacy未確認では生成buttonをdisabledにし説明linkを表示する", () => {
     render(<Harness initialStep="review" hasAcceptedOrDeclinedPrivacy={false} />);
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();

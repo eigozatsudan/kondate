@@ -1137,7 +1137,8 @@ export function HouseholdSettingsForm({
       >
         この家族の設定を完了
       </button>
-      {selected.status === "draft" && (
+      {selected.status === "draft" ? (
+        // 未完了の追加中は「削除」だと対象が曖昧で混乱するため、追加中止だけを出す
         <button
           className="secondary-button"
           type="button"
@@ -1148,26 +1149,27 @@ export function HouseholdSettingsForm({
         >
           追加をやめる
         </button>
-      )}
-      <button
-        ref={deleteTrigger}
-        className="secondary-button"
-        type="button"
-        disabled={
-          selectedAllergyMutationPending || deletingMemberIds.has(selected.id) || cancellingDraft
-        }
-        onClick={() => {
-          if (
-            allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
-            deletingMemberIdsRef.current.has(selected.id)
-          ) {
-            return;
+      ) : (
+        <button
+          ref={deleteTrigger}
+          className="secondary-button"
+          type="button"
+          disabled={
+            selectedAllergyMutationPending || deletingMemberIds.has(selected.id) || cancellingDraft
           }
-          setDeleteTarget(selected);
-        }}
-      >
-        家族を削除
-      </button>
+          onClick={() => {
+            if (
+              allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
+              deletingMemberIdsRef.current.has(selected.id)
+            ) {
+              return;
+            }
+            setDeleteTarget(selected);
+          }}
+        >
+          家族を削除
+        </button>
+      )}
       {deleteTarget !== undefined && (
         <div role="dialog" aria-modal="true" aria-label="家族の削除確認" className="card stack">
           <p>この家族の設定だけを削除します。</p>

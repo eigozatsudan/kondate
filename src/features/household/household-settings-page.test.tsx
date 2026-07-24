@@ -203,6 +203,8 @@ it("creates and selects a new draft while an existing member is present", async 
   expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("");
   expect(screen.getByRole("button", { name: "この家族の設定を完了" })).toBeVisible();
   expect(screen.getByRole("button", { name: "追加をやめる" })).toBeVisible();
+  // 下書き追加中は「家族を削除」を出さず、中止操作だけに絞る
+  expect(screen.queryByRole("button", { name: "家族を削除" })).not.toBeInTheDocument();
 
   await act(async () => {
     queryClient.setQueryData(["household", "members", "settings"], [member]);
@@ -229,12 +231,14 @@ it("cancels a newly added draft without completing it", async () => {
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
   expect(await screen.findByRole("button", { name: "追加をやめる" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "家族を削除" })).not.toBeInTheDocument();
 
   await userEvent.click(screen.getByRole("button", { name: "追加をやめる" }));
 
   expect(deleteMember).toHaveBeenCalledWith("member-2");
   expect(await screen.findByLabelText("呼び名")).toHaveValue("大人");
   expect(screen.queryByRole("button", { name: "追加をやめる" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "家族を削除" })).toBeVisible();
   expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([member]);
   expect(await screen.findByText("家族の追加をやめました")).toBeVisible();
 });
