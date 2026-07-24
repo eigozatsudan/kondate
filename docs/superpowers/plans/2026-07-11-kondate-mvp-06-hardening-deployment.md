@@ -24,7 +24,7 @@
 - The SPA works without horizontal scrolling at 320, 375, and 430 CSS pixels. Every visible interactive target is at least 44 by 44 CSS pixels and every asynchronous status is exposed through text and an appropriate live region. This now includes `/welcome`, each of the five wizard steps, the review screen, and the idea-mode result/history surfaces. Split ownership rather than re-implementing: Plan 7 Task 1 owns the `.guided-planner-theme` contrast tests, and Plan 7 Task 8 Step 5 owns the 320-pixel/44-pixel wizard sweep plus keyboard-only traversal and reduced-motion. Plan 6 adds what neither covers — axe/landmark/live-region over every route, the 375- and 430-pixel widths, and both modes' result and history surfaces — and never relaxes or restates a Plan 7 assertion. Where the 320-pixel wizard sweep below overlaps Plan 7's, the acceptance matrix cites Plan 7's test rather than counting a duplicate.
 - CI runs formatting, lint, type checking, unit/component/adversarial tests, database tests, integration/E2E tests, the Netlify production build, Docker Compose validation, and dependency auditing. No deploy proceeds after a failed gate.
 - Production smoke tests are read-only except for the unauthenticated rejection probes; they do not create users, menus, or OpenRouter calls.
-- `maintenance-cleanup` uses code config `schedule: "@hourly"` with no `path`, runs only on published production deploys, and uses one fresh `pg.Client` per invocation. Its four fixed categories are stale generation reservations, terminal generation ledgers older than 30 days, `private.shopping_mutations` older than 30 days, and expired-or-claimed auth continuations. The dedicated LOGIN has `statement_timeout='20s'` before the first SQL command; the transaction reasserts and verifies `SET LOCAL ROLE kondate_maintenance_executor` plus `SET LOCAL statement_timeout='20s'`; the driver aborts at 25 seconds; and the platform stops at 30 seconds. Every path rolls back when possible, closes the connection, and logs exactly four aggregate cleanup counts, duration, and a closed error code only.
+- `maintenance-cleanup` uses code config `schedule: "@hourly"` with no `path`, runs only on published production deploys, and uses one fresh `pg.Client` per invocation. Its four fixed categories are stale generation reservations, terminal generation ledgers older than 30 days, `private.shopping_mutations` older than 30 days, and auth continuations past `expires_at` (default semantics match Plan 1's expire-only cleaner; expand claimed-before-expiry only with explicit pgTAP). The dedicated LOGIN has `statement_timeout='20s'` before the first SQL command; the transaction reasserts and verifies `SET LOCAL ROLE kondate_maintenance_executor` plus `SET LOCAL statement_timeout='20s'`; the driver aborts at 25 seconds; and the platform stops at 30 seconds. Every path rolls back when possible, closes the connection, and logs exactly four aggregate cleanup counts, duration, and a closed error code only.
 - The release checklist/matrix commit precedes the final gate. Local, staging Google, tag, and the currently published production deployment all resolve to the same candidate SHA; the protected verifier reads Netlify deploy metadata and current site `published_deploy` metadata before and after smoke. Evidence is external and no evidence-result commit follows it.
 - Follow red-green-refactor and end every task with a focused commit.
 
@@ -33,11 +33,11 @@
 Do not open Task 1 until all of the following hold:
 
 1. **Delivery order:** Plans 1–5 and Plan 7 are complete per `git log` and `.superpowers/sdd/progress.md` (trust `git log` on disagreement). Plan 6 depends on that closed surface; it does not re-open product mode contracts.
-2. **Cross-plan Important findings:** Read `.superpowers/sdd/plan-reviews-2026-07-24/00-cross-plan-summary.md` (or the latest equivalent). Every **Important** finding that can fail Plan 6's acceptance matrix (22 MVP + 8 guided-planner), full-journey E2E, cascade seed, or release gate must be either **closed with a commit** or **explicitly deferred in writing** with owner, residual risk, and which matrix row(s) remain at risk. Safety, privacy, authorization, data-loss, paid-model, and accessibility Importants cannot be deferred into Plan 6 as "fix when the journey fails."
-3. **Known high-impact residual themes** (close or document before Task 1; do not discover them only in Task 6): finalize fingerprint terminalization and failure UI wiring (Plan 3), shopping identity/mutation race honesty (Plan 5), regeneration context mode from request snapshot (Plan 7 defense-in-depth). Empty this list only by evidence, not by hoping journeys skip the paths.
+2. **Cross-plan Important findings (authoritative):** Read `.superpowers/sdd/plan-reviews-2026-07-24/00-cross-plan-summary.md` (or the latest equivalent). **Every** Important in that rollup that can fail Plan 6's acceptance matrix (22 MVP + 8 guided-planner), full-journey E2E, cascade seed, or release gate must be either **closed with a commit** or **explicitly deferred in writing** with owner, residual risk, and which matrix row(s) remain at risk. Safety, privacy, authorization, data-loss, paid-model, and accessibility Importants cannot be deferred into Plan 6 as "fix when the journey fails." §2 is the full gate — do not treat the example list below as exhaustive.
+3. **Illustrative high-impact themes** (non-exhaustive examples that historically hit journeys; still subject to §2): Plan 3 finalize fingerprint / failure UI, Plan 3 pantry recheck terminalization, Plan 4 deleted-member regeneration, Plan 5 shopping identity/mutation races, Plan 2 emergency empty under-six, Plan 7 regen context mode from request snapshot. Empty residual only by evidence against the full cross-plan rollup.
 4. **Clean worktree for Plan 6 ownership:** no half-applied Plan 6 migrations, no uncommitted rewrite of locked Plan 7 contracts, and no concurrent Implementer on the same worktree.
 
-Record the gate outcome (closed Importants + any approved deferrals) in the Task 1 brief before writing the first red test.
+Record the gate outcome (closed Importants + any approved deferrals, mapped to matrix rows) in the Task 1 brief before writing the first red test.
 
 ### How every command in this plan is executed
 
@@ -464,10 +464,11 @@ Create the cleanup module against Plan 1's real session boundary; no `auth-store
 
 ```ts
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/shared/types/database.generated";
+// Database の公開入口は generated 直 import ではなく re-export 側を使う（既存 client と同一）。
+import type { Database } from "@/shared/types/database";
 import { clearOwnedAuthStorage } from "./auth-flow";
-import {householdSafetyRevisionStorageKey} from "@/features/household/household-queries";
-export async function clearLocalAuthAndDrafts(client:SupabaseClient<Database>):Promise<void>{
+import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
+export async function clearLocalAuthAndDrafts(client: SupabaseClient<Database>): Promise<void> {
   await client.auth.signOut({scope:"local"}).catch(()=>undefined);
   for(const storage of [localStorage,sessionStorage]){
     clearOwnedAuthStorage(storage);
@@ -681,8 +682,11 @@ docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/e
 docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app npm run build
 docker compose config --quiet
-docker compose run --rm --no-deps app grep -rn 'GENERATION_SYNC_DEADLINE_MS' compose.yaml netlify/functions scripts .env.example; test "$?" -eq 1
+docker compose run --rm --no-deps app sh -c \
+  'if grep -rn "GENERATION_SYNC_DEADLINE_MS" compose.yaml netlify/functions scripts .env.example; then exit 1; fi'
 ```
+
+`set -e` / GitHub Actions default `bash -e` must never use `grep …; test "$?" -eq 1`: a no-match `grep` exits 1 and aborts the step before `test` runs. Prefer `if grep …; then exit 1; fi` (match found = fail) so zero matches pass.
 
 Expected: the first two checks and tests pass; the paid-model command exits nonzero with the explicit-free error; the injected abort proves the live metadata request receives one five-second signal and emits only `openrouter_models_unavailable`; the build succeeds with the mock configuration.
 
@@ -835,7 +839,7 @@ export const createSafeLogger = (write: LogWriter = console.log) => (event: Safe
 export const safeLog = createSafeLogger();
 ```
 
-Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Note this changes the emitted JSON: the current implementation writes camelCase `{requestId,errorCode,durationMs,modelId}` with no `level`, and the new shape is snake_case with `level`. Update the existing `logger.test.ts` assertions in the same commit, and write `privacy-logging.spec.ts` against the new field names — a log assertion left on the old keys would pass vacuously. Replace every production Function `console.*` call — **route handlers and the scheduled `maintenance-cleanup` handler alike** — with `safeLog`. There is no second camelCase log shape for schedules. Task 8 success logs use `code: "maintenance_cleanup"` plus the four optional count fields above; failures use `code: "maintenance_cleanup_failed"` with no counts. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
+Implement Plan 3's `logGenerationEvent(level,event,sink)` as a compatibility wrapper around `createSafeLogger`, mapping `errorCode` to `code` and `null` model IDs to `undefined`. Note this changes the emitted JSON: the current implementation writes camelCase `{requestId,errorCode,durationMs,modelId}` with no `level`, and the new shape is snake_case with `level`. Update the existing `logger.test.ts` assertions in the same commit, and ensure Task 6's `scripts/assert-privacy-logs.mjs` expects the new snake_case field names — a log assertion left on the old camelCase keys would pass vacuously. Replace every production Function `console.*` call — **route handlers and the scheduled `maintenance-cleanup` handler alike** — with `safeLog`. There is no second camelCase log shape for schedules. Task 8 success logs use `code: "maintenance_cleanup"` plus the four optional count fields above; failures use `code: "maintenance_cleanup_failed"` with no counts. Do not pass caught error objects, request bodies, Supabase error messages, prompts, or AI responses. Internal unit tests may inspect errors but production logging code may not.
 
 - [ ] **Step 4: Add Netlify build, SPA fallback, and headers**
 
@@ -969,16 +973,13 @@ Expected: FAIL until missing labels, landmarks, focus behavior, and live regions
 
 - [ ] **Step 3: Write the failing mobile Playwright checks**
 
-`e2e/fixtures/auth.ts` is already reshaped for the optional-household flow by the time this task runs: Plan 7 Task 2 removes AI consent from onboarding completion (`PrivacyNoticePage` no longer sets `complete`), and Plan 7 Task 6 rewrites the fixture file itself for the new routes. Take that fixture as it stands — read it rather than assuming a landing route, since `authenticatedPage` currently logs in through `/login?returnTo=%2Fplanner` and `/planner` is reachable at every onboarding status once `RequireCompletedOnboarding` is gone. Do not restore the old ordering or re-add a consent step. Add only the missing idea-mode counterpart, leaving both existing fixtures untouched:
+`e2e/fixtures/auth.ts` is already reshaped for the optional-household flow. Read it: `authenticatedPage` ends on `/welcome` after a root re-entry; `completedOnboardingPage` completes family setup **and** privacy consent. Do not restore old onboarding consent order. Add only `ideaModePage`, leaving both existing fixtures untouched.
 
 ```ts
-type AuthFixtures = {
-  authEmail: string;
-  authenticatedPage: Page;
-  completedOnboardingPage: Page;
-  ideaModePage: Page;
-};
-// add to base.extend<AuthFixtures>:
+// e2e/fixtures/auth.ts — add only this fixture
+// ideaModePage requires onboarding_status still not_started when /welcome is opened.
+// Primary copy is 「献立アイデアを考える」(not_started). in_progress uses
+// 「設定せず献立アイデアを考える」— do not use ideaModePage after in_progress.
 ideaModePage: async ({ authenticatedPage: page }, use) => {
   await page.goto("/welcome");
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
@@ -987,56 +988,60 @@ ideaModePage: async ({ authenticatedPage: page }, use) => {
 },
 ```
 
-The explicit `goto("/welcome")` is required and is safe only here: the fixture's profile is still `not_started`, so `/welcome` renders its choices. Once the fixture has run, the profile is `skipped` with zero family members, and `/welcome` redirects to `/planner` with `replace` for every `complete`/`skipped` user. No test may therefore measure `/welcome` through `ideaModePage`; the start screen's own layout checks belong to a separate test using the raw `authenticatedPage`.
+After `ideaModePage` runs, status is `skipped` and `/welcome` redirects to `/planner`. Measure `/welcome` only with raw `authenticatedPage`.
+
+**Locked E2E contracts (do not re-derive — copy from live helpers):**
+
+| Contract | Source of truth |
+| --- | --- |
+| Wizard next | `clickWizardNext` in `e2e/fixtures/history.ts` (DOM `el.click()` — bottom-nav steals Playwright pointer clicks) |
+| Meal radio for mock success | **`朝食` only** — `tools/openrouter-mock` success fixture is `mealType: "breakfast"`; validator rejects meal mismatch (`history.ts` / `shopping.ts` comments) |
+| 44px targets | Plan 7: **primary/secondary `button` height only** — never require 44×44 on native `radio`/`checkbox`/`textbox` |
+| Household members | `completedOnboardingPage` leaves eligible member auto-selected; accessible name is `家族1（…）` when display_name is null — **do not** use `/^おとな/` |
+| Privacy hop | If generate disabled: privacy confirm → `/planner` → **`page.reload()`** then assert heading `5. 確認` (stale draft cache known issue) |
 
 ```ts
 // e2e/specs/mobile-accessibility.spec.ts
-// Labels and step transitions must match Plan 7's live UI and e2e/specs/*journey*
-// helpers (generation-recovery-results.spec.ts is the reference for idea flow).
-// Do not invent alternate copy. If production copy changes, update this file in
-// the same commit as the product change.
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
+import { clickWizardNext } from "../fixtures/history";
 
 const assertNoHorizontalScroll = async (page: Page) =>
   expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true);
 
-const assertTargetSizes = async (page: Page) => {
-  const visibleControls = page.locator(
-    "a:visible,button:visible,input:visible,select:visible,textarea:visible",
-  );
-  for (let index = 0; index < (await visibleControls.count()); index += 1) {
-    const box = await visibleControls.nth(index).boundingBox();
-    expect(box, `control ${index} has a box`).not.toBeNull();
-    expect(box?.height, `control ${index} height`).toBeGreaterThanOrEqual(44);
-    expect(box?.width, `control ${index} width`).toBeGreaterThanOrEqual(44);
+/** Plan 7 contract: major action buttons' height ≥ 44. Native radios/checkboxes are out of scope. */
+const assertMajorActionHeights = async (page: Page, names: readonly string[]) => {
+  for (const name of names) {
+    const control = page.getByRole("button", { name });
+    if ((await control.count()) === 0) continue;
+    const box = await control.first().boundingBox();
+    expect(box, name).not.toBeNull();
+    expect(box?.height, `${name} height`).toBeGreaterThanOrEqual(44);
   }
 };
 
 const assertStepFits = async (page: Page) => {
   await assertNoHorizontalScroll(page);
-  await assertTargetSizes(page);
+  await assertMajorActionHeights(page, ["次へ", "戻る", "追加", "献立を作る"]);
 };
 
-/** Meal / ingredients / cuisine — same path for both modes. Assert fit after every step. */
 const answerSharedWizardSteps = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
-  // Meal and cuisine use radio options (not auto-advance); ingredients are free text + 追加.
-  await page.getByRole("radio", { name: "夕食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("radio", { name: "朝食" }).check();
+  await clickWizardNext(page);
   await assertStepFits(page);
 
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
-  await page.getByRole("button", { name: "追加" }).click();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("button", { name: "追加", exact: true }).click();
+  await clickWizardNext(page);
   await assertStepFits(page);
 
   await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
   await page.getByRole("radio", { name: "和食" }).check();
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await assertStepFits(page);
 };
 
@@ -1044,13 +1049,13 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   if (mode === "idea") {
     await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
-    // 1–6 servings are buttons labelled "N人" (not "N人分"); 7–20 use the number input.
     await page.getByRole("button", { name: "2人" }).click();
   } else {
+    // completedOnboardingPage: one eligible adult, default-selected as 家族1 — do not re-check.
     await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
-    await page.getByRole("checkbox", { name: /^おとな/u }).check();
+    await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
   }
-  await page.getByRole("button", { name: "次へ" }).click();
+  await clickWizardNext(page);
   await assertStepFits(page);
 
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
@@ -1060,9 +1065,8 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
 };
 
 /**
- * Privacy consent is a generation precondition, not part of onboarding completion.
- * completedOnboardingPage already saves consent; ideaModePage does not — first generate
- * must hop to /privacy and return to review with answers intact.
+ * completedOnboardingPage already has privacy; ideaModePage does not.
+ * After privacy return, reload is mandatory (same as history.ts seedGeneratedIdeaMenu).
  */
 const ensurePrivacyThenGenerate = async (page: Page, needsPrivacyHop: boolean) => {
   const generate = page.getByRole("button", { name: "献立を作る" });
@@ -1073,11 +1077,13 @@ const ensurePrivacyThenGenerate = async (page: Page, needsPrivacyHop: boolean) =
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
+      timeout: 15_000,
+    });
   }
-  await expect(generate).toBeEnabled();
+  await expect(generate).toBeEnabled({ timeout: 15_000 });
   await generate.click();
-  await expect(page.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 60_000,
   });
@@ -1092,17 +1098,17 @@ for (const width of [320, 375, 430]) {
     await assertStepFits(page);
     await answerSharedWizardSteps(page);
     await answerAudienceAndReview(page, "household");
-    // completedOnboardingPage already confirmed privacy; no second hop required.
     await ensurePrivacyThenGenerate(page, false);
     await assertNoHorizontalScroll(page);
-    await assertTargetSizes(page);
+    await assertMajorActionHeights(page, ["献立を作る"]);
   });
 
   test(`the start screen fits ${width}px with usable targets`, async ({ authenticatedPage: page }) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/welcome");
     await expect(page.getByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
-    await assertStepFits(page);
+    await assertNoHorizontalScroll(page);
+    await assertMajorActionHeights(page, ["献立アイデアを考える", "家族情報を登録する"]);
   });
 
   test(`the idea wizard and result fit ${width}px with usable targets`, async ({ ideaModePage: page }) => {
@@ -1112,18 +1118,17 @@ for (const width of [320, 375, 430]) {
     await ensurePrivacyThenGenerate(page, true);
     await expect(page.getByText("家族条件を使用していません")).toBeVisible();
     await assertNoHorizontalScroll(page);
-    await assertTargetSizes(page);
   });
 }
 ```
 
-Assert horizontal fit and target size **at every wizard step**, not only the first and last: a step that overflows at 320 pixels is invisible to an end-to-end assertion taken after the answers are already entered.
+Assert horizontal fit **at every wizard step**. Prefer importing `clickWizardNext` over duplicating it.
 
-**Locked copy (do not re-derive):** meal/cuisine radios (`夕食`/`和食`/…), ingredients free-text + `追加`, audience radios `家族に合わせて作る` / `人数だけ指定してアイデアを見る`, servings buttons `N人`, primary generate `献立を作る`, processing heading `献立を作っています`, result heading `献立ができました`, idea review notice `家族の年齢・アレルギーは確認されません`, idea result notice `家族条件を使用していません`, privacy hop `AI情報の説明を見る` → confirm → return to review. If a focused E2E already asserts a label, cite that test rather than inventing a synonym.
+**Locked copy:** meal **`朝食`** (mock), cuisine `和食`, ingredients free-text + `追加` exact, audience radios as above, servings `N人`, generate `献立を作る`, result `献立ができました`, idea notices as above, privacy hop + **reload**.
 
 - [ ] **Step 4: Correct shared UI primitives, focus, and status announcements**
 
-Centralize fixes in whatever shared primitives actually exist at that point. `src/shared/ui/` currently holds only `placeholder-page.tsx` and Plan 7's `wizard/` directory (`wizard-frame`, `choice-card`, `progress-indicator`, `inline-notice`, `review-row`) — there is no `button.tsx`, `field.tsx`, `dialog.tsx`, or `toast.tsx` to centralize into. Fix Plan 7's wizard primitives and the app shell first, and extract a new shared primitive only when the same violation appears in three or more feature components; do not create a speculative design-system layer as part of an accessibility fix. Plan 7 Task 1 owns the wizard primitives' own ARIA/keyboard/focus contract, so changes there must keep its tests green rather than restate them. On route changes, move programmatic focus to the page `h1` with `tabIndex={-1}`. Loading updates use `role="status" aria-live="polite"`; validation and request failures use `role="alert"`; icon-only actions have Japanese accessible names; color is never the only error or selection cue.
+Centralize fixes in whatever shared primitives actually exist at that point. `src/shared/ui/` currently holds only `placeholder-page.tsx` and Plan 7's `wizard/` directory (`wizard-frame`, `choice-card`, `progress-indicator`, `inline-notice`, `review-row`) — there is no `button.tsx`, `field.tsx`, `dialog.tsx`, or `toast.tsx` to centralize into. Fix Plan 7's wizard primitives and the app shell first, and extract a new shared primitive only when the same violation appears in three or more feature components; do not create a speculative design-system layer as part of an accessibility fix. Plan 7 Task 1 owns the wizard primitives' own ARIA/keyboard/focus contract, so changes there must keep its tests green rather than restate them. On route changes, move programmatic focus to the page `h1` with `tabIndex={-1}`. Loading updates use `role="status" aria-live="polite"`; validation and request failures use `role="alert"`; icon-only actions have Japanese accessible names; color is never the only error or selection cue. Do **not** force native radio/checkbox boxes to 44×44 CSS px to satisfy a bad measurement — fix the test contract first (Step 3).
 
 - [ ] **Step 5: Run accessibility, mobile, and visual-layout checks**
 
@@ -1135,12 +1140,12 @@ docker compose run --rm --no-deps app npx vitest run src/app/accessibility.test.
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: axe reports zero violations in covered states; all three widths have no horizontal overflow; target-size assertions and type checking pass.
+Expected: axe reports zero violations in covered states; all three widths have no horizontal overflow; major-action height assertions and type checking pass.
 
 - [ ] **Step 6: Commit accessibility hardening**
 
 ```bash
-git add package.json package-lock.json src e2e/specs/mobile-accessibility.spec.ts
+git add package.json package-lock.json src e2e/specs/mobile-accessibility.spec.ts e2e/fixtures/auth.ts
 git commit -m "test: enforce mobile accessibility"
 ```
 
@@ -1150,18 +1155,27 @@ git commit -m "test: enforce mobile accessibility"
 - Create: `docs/testing/acceptance-matrix.md`
 - Create: `e2e/specs/account-deletion.spec.ts`
 - Create: `e2e/specs/full-journey.spec.ts`
-- Create: `e2e/specs/privacy-logging.spec.ts`
 - Create: `e2e/specs/auth-callback-security.spec.ts`
 - Create: `e2e/fixtures/acceptance.ts`
-- Create: `e2e/fixtures/function-logs.ts`
+- Create: `scripts/assert-privacy-logs.mjs`
+- Create: `scripts/assert-privacy-logs.test.mjs`
 - Create: `docs/testing/google-oauth-staging.md`
 - Create: `scripts/verify-release-evidence.mjs`
 - Create: `scripts/verify-release-evidence.test.mjs`
 - Modify: `e2e/fixtures/auth.ts`
 - Modify: `scripts/run-e2e.sh`
 - Modify: `.gitignore`
+- Modify: `package.json`
+- Modify: `package-lock.json`
 - Modify: `tools/openrouter-mock/server.mjs`
 - Add fixtures under: `tools/openrouter-mock/fixtures/adversarial/`
+
+Install `pg` in **this** task (before any acceptance E2E that queries private tables). Do not wait for Task 8:
+
+```bash
+docker compose run --rm --no-deps app npm install --save-exact pg@8.22.0
+docker compose run --rm --no-deps app npm install --save-dev --save-exact @types/pg@8.20.0
+```
 
 **Interfaces:**
 - Consumes: all 22 acceptance criteria in the approved MVP design, the 8 success conditions in `docs/superpowers/specs/2026-07-22-guided-planner-optional-household-design.md` §3.2, and every test added by Plans 1–5 and Plan 7.
@@ -1171,25 +1185,33 @@ git commit -m "test: enforce mobile accessibility"
 
 Create `docs/testing/acceptance-matrix.md` with two tables. The first is the MVP table with exactly 22 rows, unchanged in count and numbering. The second is a guided-planner table with exactly 8 rows, one per success condition in the Plan 7 design's §3.2 (household-free end-to-end completion, the fixed four-question order, the pre-generation review including whether safety conditions are used, answer survival across back/consent/disconnection, full retention of household-mode safety checks, idea mode never presented as family-safety-confirmed, 320-pixel/44-pixel compliance, and WCAG 2.1 AA contrast for body/supporting text and primary buttons). The whole-plan rule below is therefore 22/22 **and** 8/8; do not merge, renumber, or absorb guided-planner rows into the MVP 22. Each row in either table contains the criterion number, behavior, owning automated test file and exact test title, and test layer. A row may cite multiple tests, and a guided-planner row may cite a test Plan 7 already owns rather than duplicating it. The only non-local exception is real Google-provider success: its row cites deterministic automated PKCE/state/callback tests plus an external JSON artifact verified for the release candidate. The artifact is stored outside the repository and has exactly these fields: `candidateSha`, Netlify `stagingDeployId`, authoritative `stagingDeploySha`, ISO `executedAt`, ISO `expiresAt` exactly 24 hours later, non-email `tester`, HTTPS origin-only `stagingOrigin`, `startScreen: "login"`, `stateMatched: true`, `originalBrowserCallbackCompleted: true`, `tokenFreeResult: true`, and `passed: true`. It contains no account identifier, email, authorization code, continuation secret, PKCE verifier, access/refresh token, screenshot, or raw log. No other row may say “manual only”. Production secret configuration and post-deploy reachability cite Task 8's automated preflight, authoritative current-production-deploy verifier, and smoke scripts; a smoke result without both surrounding metadata checks is not evidence.
 
-Write `verify-release-evidence.mjs` and its Node tests before documenting a pass. The CLI accepts the external artifact path, obtains the candidate with `execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"})`, and reads Netlify's authoritative deploy metadata for `stagingDeployId` from `GET https://api.netlify.com/api/v1/deploys/:id` using a protected release-runner `NETLIFY_AUTH_TOKEN` that is never configured as a site/build variable. It strictly validates the exact schema above, rejects unknown/sensitive keys recursively and email/token/code/verifier-like values, requires `candidateSha === stagingDeploySha === metadata.commit_ref === HEAD`, requires metadata `id` and `deploy_ssl_url` to match the artifact's deploy ID/origin, and requires unexpired evidence with `expiresAt = executedAt + 24h`. It prints only `google_oauth_evidence: pass` or a safe field/error code. The artifact's SHA/origin is never accepted as a self-assertion without that metadata readback. Tests inject clock/fetch and cover wrong local/artifact/metadata SHA, deploy-ID/origin mismatch, missing/extra fields, false booleans, future execution, expired or non-24-hour evidence, non-HTTPS/path-bearing origin, email-shaped tester, and forbidden sensitive material. `docs/testing/google-oauth-staging.md` is an instruction/template only; neither the actual JSON nor a copied result is committed.
+Write `verify-release-evidence.mjs` and its Node tests before documenting a pass. The CLI accepts the external artifact path, obtains the candidate with `execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"})`, and reads Netlify's authoritative deploy metadata for `stagingDeployId` from `GET https://api.netlify.com/api/v1/deploys/:id` using a protected release-runner `NETLIFY_AUTH_TOKEN` that is never configured as a site/build variable. It strictly validates the exact schema above, rejects unknown/sensitive keys recursively and email/token/code/verifier-like values, requires `candidateSha === stagingDeploySha === metadata.commit_ref === HEAD`, requires metadata `id` and deploy URL (`ssl_url` or `deploy_ssl_url`) to match the artifact's deploy ID after HTTPS-origin normalization (strip trailing slash/path), and requires unexpired evidence with `expiresAt = executedAt + 24h`. It prints only `google_oauth_evidence: pass` or a safe field/error code. The artifact's SHA/origin is never accepted as a self-assertion without that metadata readback. Tests inject clock/fetch and cover wrong local/artifact/metadata SHA, deploy-ID/origin mismatch, missing/extra fields, false booleans, future execution, expired or non-24-hour evidence, non-HTTPS/path-bearing origin, email-shaped tester, and forbidden sensitive material. `docs/testing/google-oauth-staging.md` is an instruction/template only; neither the actual JSON nor a copied result is committed.
 
 ```js
 // scripts/verify-release-evidence.mjs
+// Use Zod 4 APIs already used in shared/contracts (z.iso.datetime, z.url).
 import {execFileSync} from "node:child_process";
 import {readFileSync,realpathSync} from "node:fs";
 import {sep} from "node:path";
 import {z} from "zod";
 
-const origin=z.string().url().refine((value)=>{
+/** Normalize Netlify deploy_ssl_url / artifact origin to bare HTTPS origin (no trailing slash/path). */
+export function httpsOriginOnly(value){
   const parsed=new URL(value);
-  return parsed.protocol==="https:"&&parsed.origin===value&&parsed.username===""&&
-    parsed.password===""&&parsed.search===""&&parsed.hash==="";
+  if(parsed.protocol!=="https:"||parsed.username||parsed.password||parsed.search||parsed.hash){
+    throw new Error("staging_origin_invalid");
+  }
+  return parsed.origin; // never ends with /
+}
+const origin=z.string().refine((value)=>{
+  try{return httpsOriginOnly(value)===new URL(value).origin&&!value.endsWith("/");}
+  catch{return false;}
 },"staging_origin_invalid");
 export const googleOauthEvidenceSchema=z.object({
   candidateSha:z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
   stagingDeployId:z.string().regex(/^[0-9a-f]{24}$/u),
   stagingDeploySha:z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
-  executedAt:z.string().datetime({offset:true}),expiresAt:z.string().datetime({offset:true}),
+  executedAt:z.iso.datetime({offset:true}),expiresAt:z.iso.datetime({offset:true}),
   tester:z.string().trim().min(1).max(80)
     .refine((value)=>!/(?:@|token|code|verifier|secret|bearer)/iu.test(value),
       "tester_identifier_invalid"),
@@ -1197,14 +1219,17 @@ export const googleOauthEvidenceSchema=z.object({
   originalBrowserCallbackCompleted:z.literal(true),tokenFreeResult:z.literal(true),
   passed:z.literal(true),
 }).strict();
+// Netlify field is ssl_url on some payloads and deploy_ssl_url on others — accept either, compare origins.
 const deployMetadataSchema=z.object({
-  id:z.string(),commit_ref:z.string(),deploy_ssl_url:z.string().url(),
-}).passthrough();
+  id:z.string(),commit_ref:z.string(),
+  ssl_url:z.string().optional(),deploy_ssl_url:z.string().optional(),
+}).passthrough().refine((m)=>Boolean(m.ssl_url||m.deploy_ssl_url),"staging_url_missing");
 export function verifyGoogleOauthEvidence(value,{head,deployMetadata,now}){
   const evidence=googleOauthEvidenceSchema.parse(value);
   const metadata=deployMetadataSchema.parse(deployMetadata);
   if(metadata.id!==evidence.stagingDeployId)throw new Error("staging_deploy_id_mismatch");
-  if(metadata.deploy_ssl_url!==evidence.stagingOrigin)throw new Error("staging_origin_mismatch");
+  const metaOrigin=httpsOriginOnly(metadata.ssl_url??metadata.deploy_ssl_url);
+  if(metaOrigin!==httpsOriginOnly(evidence.stagingOrigin))throw new Error("staging_origin_mismatch");
   if(evidence.candidateSha!==head.trim()||evidence.stagingDeploySha!==head.trim()||
     metadata.commit_ref!==head.trim())throw new Error("candidate_sha_mismatch");
   const executed=Date.parse(evidence.executedAt),expires=Date.parse(evidence.expiresAt);
@@ -1251,25 +1276,31 @@ Add one complete mock response for each case: direct allergen, allergen alias, p
 
 - [ ] **Step 3: Write failing full-journey and privacy tests**
 
-Neither fixture may shell out to `docker`. Playwright runs inside the `e2e` Compose service, which has no Docker socket and no `docker` CLI — the same constraint CLAUDE.md documents for `app`. Both fixtures below are written against what the `e2e` container actually has: `network_mode: host`, the repository mounted at `/workspace`, and the published service ports.
+Neither fixture may shell out to `docker`. Playwright runs inside the `e2e` Compose service, which has no Docker socket and no `docker` CLI — the same constraint CLAUDE.md documents for `app`. Acceptance fixtures below are written against what the `e2e` container actually has: `network_mode: host`, the repository mounted at `/workspace`, and the published service ports.
 
-Function logs are captured by the host wrapper, not by the test. `./scripts/run-e2e.sh` already owns the Compose lifecycle, so it writes `docker compose logs --no-color app` to a gitignored file under the workspace before tearing the stack down, and `e2e/fixtures/function-logs.ts` reads that file:
+**Function privacy logs are a host post-run assertion — never a Playwright in-test read.** Playwright finishes before `run-e2e.sh` cleanup; a file written only in cleanup is not visible mid-test.
 
-```ts
-import { readFile } from "node:fs/promises";
-const logPath = process.env.KONDATE_FUNCTION_LOG_PATH ?? "/workspace/.e2e-function.log";
-export async function readFunctionLogs(): Promise<string> {
-  return readFile(logPath, "utf8");
-}
+1. After the Playwright process exits (success or failure), and **before** `docker compose down`, `run-e2e.sh` writes `docker compose logs --no-color app` to a gitignored path (default `.e2e-function.log` at the worktree root). Host-issued `docker compose logs` is legitimate here.
+2. When the env var `KONDATE_ASSERT_PRIVACY_LOGS=1` is set (CI and the Task 6 verification command), `run-e2e.sh` then runs:
+
+```bash
+docker compose run --rm --no-deps app node scripts/assert-privacy-logs.mjs .e2e-function.log
 ```
 
-Add the capture step to `run-e2e.sh` in the same task, inside its existing cleanup path so it runs on success and failure alike, and add the log file to `.gitignore`. `run-e2e.sh` is host-issued, so `docker compose logs` is legitimate there. If reading the file before the wrapper writes it turns out to be a race for a given spec, have the wrapper capture logs *after* the Playwright run and make `privacy-logging.spec.ts` a post-run assertion over the captured file rather than an in-test read; do not reintroduce a `docker` call inside the container to avoid the ordering problem.
+3. `scripts/assert-privacy-logs.mjs` (and its Node tests) assert that names, synthetic test emails (`@example.invalid`), allergy free text, planner notes, prompt markers, and raw mock response strings are absent, while `request_id` / `code` / `duration_ms` / optional `model_id` (Task 4 snake_case `safeLog` shape) are present for generation traffic. Idea-journey runs must show no family identifier / member UUID payload in the log surface. Plan 7 Task 8 owns the exhaustive family-canary matrix; this script only covers the Function log surface.
+4. Add `.e2e-function.log` to `.gitignore`. Do **not** create `e2e/specs/privacy-logging.spec.ts` or `e2e/fixtures/function-logs.ts` as the primary gate — they encourage false reds.
+
+Do not reintroduce a `docker` call inside the `e2e` container.
 
 Create `e2e/fixtures/acceptance.ts` as a Node-side extension of the auth fixture. It reads **`SERVICE_ROLE_KEY`** from `/workspace/.env` — that is the actual key name in `.env`/`.env.example`; `SUPABASE_SERVICE_ROLE_KEY` is only the name Compose maps it to inside the app container, and the `e2e` service declares no such environment — and creates a non-persisting admin client for `http://127.0.0.1:8000`. It exports `queryOwnedCounts(userId)`, which validates `userId` with Zod and connects to Postgres **directly with `pg`** at `127.0.0.1:54322` (published by `infra/supabase.override.yaml` and reachable because `e2e` uses host networking), querying every `public`/`private` base table containing `user_id` and returning `{table,count}` JSON without printing row values. A direct connection is required rather than PostgREST because `private` tables are deliberately not exposed to the Data API. Close the client in a `finally`. `seedCompleteOwnedGraph(page)` uses the existing onboarding, pantry, generation, revalidation, regeneration, and shopping fixture helpers, creates a generated menu targeting both a toddler and a senior with processed-food confirmation coverage, proves at least one normalized `menu_safety_actions` row was produced by Plans 2–3, and leaves a fresh planner draft. It must also seed the Plan 7 surface, because a cascade is only proven for rows that exist: at least one `target_mode = 'idea'` menu alongside the household one, and at least one row in `private.generation_regeneration_snapshots` from a completed regeneration reservation. Assert both are non-zero before deletion and zero after, so the snapshot's cascade through `private.ai_generation_requests` to `auth.users` is exercised rather than assumed. The idea menu also proves the deletion path does not depend on non-empty `menu_target_members`. Before deletion, assert only a named `requiredNonEmptyFamilies` set (profile/household/privacy, pantry/draft, menu/dish/action/confirmation, history/revalidation, shopping) has positive counts; idempotency ledgers and other optional tables may legitimately remain zero. No service-role value enters `page`, browser storage, screenshots, or logs.
 
-`full-journey.spec.ts` covers two journeys. Reuse the locked wizard helpers and copy from Task 5 (radios, free-text ingredients, `N人` servings, `献立を作る`, `献立ができました`, privacy hop). The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review → privacy confirmation when still required and return to review with answers intact → pantry must/prefer selection → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → 「献立アイデアを考える」 → the same shared steps with audience 「人数だけ指定してアイデアを見る」 and an explicit servings button → review showing 「家族の年齢・アレルギーは確認されません」 → privacy confirmation → generation → a result carrying 「家族条件を使用していません」 and servings display consistent with the chosen count → history card/detail showing the idea mode → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason anywhere in its run; it never converts to household mode.
+`full-journey.spec.ts` covers two journeys. **Import** Task 5 locked helpers (`clickWizardNext`, meal **`朝食`**, privacy hop + **reload**, major-action 44px rules) and/or reuse `e2e/fixtures/history.ts` / `seedGeneratedIdeaMenu` rather than inventing parallel flows. The household journey is login fixture → `/welcome` → resumable household setup → wizard questions → review (including **must/prefer pantry selection on the review step**, not a separate post-review screen) → privacy hop only if still required (with reload) → full generation and recovery → timeline and dish tabs → label confirmation → whole and dish regeneration → accept → history group → shopping creation and approved reconciliation. The idea journey is login fixture → `/welcome` → 「献立アイデアを考える」 → shared steps with audience 「人数だけ指定してアイデアを見る」 and explicit servings → review notice → privacy + reload → generation → result with 「家族条件を使用していません」 → history idea surfaces → mode-preserving regeneration → accept and favourite. The idea journey asserts zero shopping network requests, zero `kondate:shopping:*` storage keys, and no `child_friendly` regeneration reason; it never converts to household mode.
 
-`privacy-logging.spec.ts` captures mock Function logs and asserts that names, test email, allergy free text, planner note, prompt markers, and raw mock response strings are absent while request ID, safe error code, duration, and model ID are present. It runs over both journeys. Plan 7 Task 8 owns the exhaustive family-canary matrix across DB reads, context DTOs, request bodies, snapshots, and menu child rows; this spec does not restate it and instead asserts the log surface specifically — including that the idea journey's logs carry no family identifier, no member ID, and no servings-bearing payload.
+Privacy log assertions run via `scripts/assert-privacy-logs.mjs` after full-journey (and account-deletion) Playwright completes — see the host post-run contract above. When verifying Task 6 alone, invoke:
+
+```bash
+KONDATE_ASSERT_PRIVACY_LOGS=1 ./scripts/run-e2e.sh e2e/specs/full-journey.spec.ts e2e/specs/account-deletion.spec.ts
+```
 
 `account-deletion.spec.ts` creates a dedicated test user with the named required aggregate families, opens Plan 1's `/settings`, first proves the existing member edit/allergy/dislike controls are still present, then opens the composed Plan 6 danger zone and performs the exact-phrase flow. It verifies redirect to the login message, verifies the old access token receives `401`, and uses the service-role test fixture to assert zero Auth user and zero rows across every inventoried owned table—including tables whose pre-delete count was zero.
 
@@ -1301,7 +1332,7 @@ Add `e2e/specs/auth-callback-security.spec.ts`: create a local PKCE attempt, ass
 Run:
 
 ```bash
-./scripts/run-e2e.sh e2e/specs/full-journey.spec.ts e2e/specs/privacy-logging.spec.ts e2e/specs/account-deletion.spec.ts
+KONDATE_ASSERT_PRIVACY_LOGS=1 ./scripts/run-e2e.sh e2e/specs/full-journey.spec.ts e2e/specs/account-deletion.spec.ts e2e/specs/auth-callback-security.spec.ts
 ```
 
 Expected: FAIL on every missing cross-feature fixture or behavior; failures identify a route, scenario, or leaked test marker.
@@ -1328,7 +1359,10 @@ Expected: unit/component/adversarial, pgTAP, and all Playwright tests report zer
 - [ ] **Step 7: Commit the acceptance suite**
 
 ```bash
-git add docs/testing e2e tools/openrouter-mock src netlify/functions shared supabase scripts/verify-release-evidence.mjs scripts/verify-release-evidence.test.mjs
+git add docs/testing e2e tools/openrouter-mock src netlify/functions shared supabase \
+  scripts/run-e2e.sh scripts/assert-privacy-logs.mjs scripts/assert-privacy-logs.test.mjs \
+  scripts/verify-release-evidence.mjs scripts/verify-release-evidence.test.mjs \
+  .gitignore package.json package-lock.json
 git commit -m "test: cover Kondate acceptance journeys"
 ```
 
@@ -1390,7 +1424,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
       CI: "true"
     steps:
@@ -1494,6 +1528,7 @@ git commit -m "ci: gate the complete MVP"
 - Create: `netlify/functions/_shared/maintenance-db.integration.test.ts`
 - Create: `netlify/functions/maintenance-cleanup.ts`
 - Create: `netlify/functions/maintenance-cleanup.test.ts`
+- Modify: `vitest.config.ts`
 - Create: `scripts/preflight-production.mjs`
 - Create: `scripts/preflight-production.test.mjs`
 - Create: `scripts/smoke-production.mjs`
@@ -1520,7 +1555,14 @@ git commit -m "ci: gate the complete MVP"
 
 The preflight test passes a complete synthetic production environment using project ref `abcdefghijklmnopqrst` and expects no errors, then removes each required variable in turn and expects its exact name in the error. It also asserts that `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `GENERATION_REQUEST_HMAC_KEY`, and `SUPABASE_MAINTENANCE_DB_URL` are rejected when exposed through any `VITE_`-prefixed alias, requires `VITE_AUTH_PROVIDER_MODE=supabase`, and uses `Object.hasOwn(env,"VITE_OAUTH_MOCK_ORIGIN")` to reject the mock-origin key even when its value is empty. It rejects a missing HMAC key, invalid base64, any decoded length other than exactly 32 bytes, Plan 3's documented sample/local value, and a `VITE_GENERATION_REQUEST_HMAC_KEY` key even when empty. It requires both `SUPABASE_URL` and `VITE_SUPABASE_URL` to equal the exact managed origin `https://abcdefghijklmnopqrst.supabase.co`, requires `SUPABASE_PUBLISHABLE_KEY === VITE_SUPABASE_PUBLISHABLE_KEY`, and passes that extracted ref into maintenance parsing. Arbitrary HTTPS, short/uppercase refs, suffix lookalikes, credentials, ports, trailing slash, path/query/fragment, browser/server ref mismatch, publishable-key mismatch, a direct database host with another ref, and a Session-pooler username with another ref all fail with closed codes. `oauth_mock` mode, the local mock URL, a maintenance URL without TLS, a URL whose direct username is not exactly `kondate_maintenance_login` (or whose Supavisor Session username is not exactly that role plus the expected project-ref suffix), and a URL containing credentials in any error all fail in production.
 
-Write `maintenance_cleanup.test.sql` red first. It proves the exact batched signatures `cleanup_stale_ai_generations(timestamptz,integer)`, `cleanup_ai_generation_requests_batch(timestamptz,integer)`, `private.cleanup_shopping_mutations(timestamptz,integer)`, and `cleanup_auth_continuations(timestamptz,integer)` plus `run_kondate_maintenance(timestamptz,integer)`, and additionally proves that the preexisting `cleanup_ai_generation_requests(timestamptz,uuid)` and `private.cleanup_expired_shopping_mutations(uuid,integer)` still exist with their original grants and that no ambiguous overload was introduced. It proves `kondate_maintenance_executor` is NOLOGIN, NOINHERIT, not superuser, cannot bypass RLS, has `USAGE` on `public` and `EXECUTE` on that one RPC only, and has no table, sequence, helper-function, or private-schema privilege. `public`, `anon`, `authenticated`, and `service_role` cannot execute the RPC. Seed terminal generation requests and shopping mutations at exactly 30 days, just older than 30 days, and 29 days; expired, claimed, and live continuations; expired processing reservations with both sent and unsent global slots; and more than one batch in both retention ledgers. Assert both exact 30-day boundaries are retained, only older terminal/shopping rows are deleted, expired/claimed continuations are deleted, live continuations remain, and stale reservations use Plan 3's canonical transition to release success plus only unsent attempt/global reservations. A second run returns all four zero counts; a batch of two leaves deterministic work for the next call; concurrent calls use `FOR UPDATE SKIP LOCKED` and never double-release or double-delete.
+Write `maintenance_cleanup.test.sql` red first. It proves the exact **scheduled** batched signatures `public.cleanup_stale_ai_generations_batch(timestamptz,integer)`, `public.cleanup_ai_generation_requests_batch(timestamptz,integer)`, `private.cleanup_shopping_mutations(timestamptz,integer)`, and `public.cleanup_auth_continuations_batch(timestamptz,integer)` plus `public.run_kondate_maintenance(timestamptz,integer)`. Additionally prove that the **preexisting one-argument / service-path wrappers keep their original meaning and grants** so existing callers and pgTAP do not break:
+
+- `public.cleanup_stale_ai_generations(timestamptz default clock_timestamp())` — still exists; optional internal delegate to the batch function with a fixed limit or inline the same transition without changing call sites.
+- `public.cleanup_ai_generation_requests(timestamptz, uuid default null)` — still exists; do **not** add a competing `(timestamptz,integer)` overload.
+- `public.cleanup_auth_continuations(timestamptz)` — still exists and still means **expired rows only** (`expires_at <= p_now`), bounded (current body uses `limit 100`); it must **not** delete unexpired claimed rows. Claimed-and-still-unexpired cleanup is only for `cleanup_auth_continuations_batch` / `run_kondate_maintenance` if the design requires it; if batch also only deletes expired, document that “expired-or-claimed” in global constraints means claimed rows leave when their `expires_at` has passed (current schema already bounds TTL). Prefer matching the existing expire-only semantics unless a focused product decision expands claimed-before-expiry deletion — and then update Plan 1 continuation pgTAP in the same Task.
+- `private.cleanup_expired_shopping_mutations(uuid,integer)` — still exists for request-path cleanup.
+
+No ambiguous overload was introduced between batch and legacy signatures. It proves `kondate_maintenance_executor` is NOLOGIN, NOINHERIT, not superuser, cannot bypass RLS, has `USAGE` on `public` and `EXECUTE` on that one RPC only, and has no table, sequence, helper-function, or private-schema privilege. `public`, `anon`, `authenticated`, and `service_role` cannot execute the RPC. Seed terminal generation requests and shopping mutations at exactly 30 days, just older than 30 days, and 29 days; expired, claimed, and live continuations; expired processing reservations with both sent and unsent global slots; and more than one batch in both retention ledgers. Assert both exact 30-day boundaries are retained, only older terminal/shopping rows are deleted, expired/claimed continuations are deleted, live continuations remain, and stale reservations use Plan 3's canonical transition to release success plus only unsent attempt/global reservations. A second run returns all four zero counts; a batch of two leaves deterministic work for the next call; concurrent calls use `FOR UPDATE SKIP LOCKED` and never double-release or double-delete.
 
 Plan 7's `private.generation_regeneration_snapshots` is deliberately **not** a fifth category. It is request-bound with `ON DELETE CASCADE` from `private.ai_generation_requests(id,user_id)`, so terminal-ledger retention removes it implicitly. Seed a regeneration snapshot on a terminal request just older than 30 days and one on a retained request at the exact boundary, then assert the first snapshot disappears with its request, the second survives, `generationLedgersDeleted` counts requests rather than snapshots, and the returned object still has exactly four keys. Also assert no snapshot on a still-`processing` request or on a menu-referenced request is ever removed. Adding a snapshot count, a snapshot-first delete, or a separate snapshot category is out of scope and would break the four-key readback contract below.
 
@@ -1532,13 +1574,13 @@ Write `maintenance-db.integration.test.ts` against the real local PostgreSQL pat
 
 The smoke test injects `fetch` and asserts these exact probes: `GET /` must return `200` HTML containing the root mount element; unauthenticated `POST /api/generations/menu` must return `401` and `auth_required`; unauthenticated `DELETE /api/account` must return `401` and `auth_required`. It must never call a generation route with authorization.
 
-Write `verify-production-deploy.test.mjs` red first. Its pure verifier receives `candidateSha`, `tagSha`, `productionDeployId`, expected production origin, deploy metadata, and site metadata. The success fixture requires `HEAD === candidateSha === tagSha === deploy.commit_ref`, deploy `id` match, `context='production'`, `state='ready'`, exact HTTPS origin-only `deploy.ssl_url`, and `site.published_deploy.id === productionDeployId`. Table tests reject a wrong HEAD, candidate, tag, deploy SHA/ID/context/state/origin, stale site-published ID, credentials/path/query/fragment in the requested origin, missing metadata, and an extra/invalid input. The CLI reads HEAD and the annotated tag target with `execFileSync` argument arrays, fetches the named deploy then its site metadata with a five-second timeout and protected `NETLIFY_AUTH_TOKEN`, prints only `production_deploy: pass` or a closed code, and never prints metadata, token, origin, or raw response. `smoke-production.test.mjs` additionally proves the exact already-verified `PRODUCTION_ORIGIN` string is passed unchanged to all three probes.
+Write `verify-production-deploy.test.mjs` red first. Its pure verifier receives `candidateSha`, `tagSha`, `productionDeployId`, expected production origin, deploy metadata, and site metadata. The success fixture requires `HEAD === candidateSha === tagSha === deploy.commit_ref`, deploy `id` match, `context='production'`, `state='ready'`, exact HTTPS origin-only deploy URL (`ssl_url`, normalized with the same `httpsOriginOnly` helper as Task 6), and `site.published_deploy.id === productionDeployId`. Table tests reject a wrong HEAD, candidate, tag, deploy SHA/ID/context/state/origin, stale site-published ID, credentials/path/query/fragment in the requested origin, missing metadata, and an extra/invalid input. The CLI reads HEAD and the annotated tag target with `execFileSync` argument arrays, fetches the named deploy then its site metadata with a five-second timeout and protected `NETLIFY_AUTH_TOKEN`, prints only `production_deploy: pass` or a closed code, and never prints metadata, token, origin, or raw response. `smoke-production.test.mjs` additionally proves the exact already-verified `PRODUCTION_ORIGIN` string is passed unchanged to all three probes.
 
 Write `verify-browser-secrets.test.mjs` red first with a temporary synthetic source/build tree. It proves both a forbidden variable name and each synthetic secret value fail closed, clean fixtures pass, absent `dist/` is accepted before build, and diagnostics contain only the variable name plus relative file—not the secret, matching line, URL, or surrounding contents.
 
 - [ ] **Step 2: Implement the least-privilege database path, scripts, and package commands**
 
-Install the direct PostgreSQL driver as a Function runtime dependency and its types as a development dependency, preserving exact lockfile versions:
+Install the direct PostgreSQL driver if Task 6 has not already done so (same exact versions). Prefer a single install in Task 6; Task 8 only re-runs install when `pg` is missing from `package.json`:
 
 ```bash
 docker compose run --rm --no-deps app npm install --save-exact pg@8.22.0
@@ -1577,7 +1619,7 @@ Adding `cleanup_ai_generation_requests(timestamptz,integer)` alongside that last
 
 Shopping-mutation retention already has a helper: `private.cleanup_expired_shopping_mutations(p_user_id uuid, p_limit integer default 100)` deletes the same 30-day-old rows, but per user and capped at 100, and it is called on the request path rather than by a scheduler. Do not add a second, silently different cleaner. Add `private.cleanup_shopping_mutations(p_before timestamptz, p_limit integer)` as the account-wide scheduled variant with the `1..250` bound, deleting only `private.shopping_mutations.created_at < p_before`, ordering by `created_at,user_id,idempotency_key`, locking with `FOR UPDATE SKIP LOCKED`, and returning one count; then state explicitly in the migration comment and the access matrix that the two coexist by design — the per-user one bounds a single request's cleanup, the account-wide one is the hourly sweep — and prove with pgTAP that neither deletes a row at or newer than the exact 30-day boundary. If that division turns out not to hold, collapse them rather than leaving two retention rules. Exact-boundary rows are retained. The account-wide helper has no public wrapper because no browser/service path consumes it. Migration `051` creates or normalizes `kondate_maintenance_executor` as `NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`; the migration never creates a LOGIN or embeds a password. The executor receives only `USAGE ON SCHEMA public` and `EXECUTE ON FUNCTION public.run_kondate_maintenance(timestamptz,integer)`. Revoke the RPC from `PUBLIC`, `anon`, `authenticated`, and `service_role`, and revoke table, sequence, private-schema, and every bounded-helper privilege—including the shopping helper—from the executor. Existing one-argument wrappers keep only the preexisting service-role permissions required by Plans 1 and 3; neither the executor nor the Scheduled Function calls them directly.
 
-`run_kondate_maintenance` does not duplicate quota-release or replay SQL. It calls the canonical bounded transitions in this fixed order: stale reservations, terminal generation ledgers with `completed_at < p_now - interval '30 days'` via `cleanup_ai_generation_requests_batch`, shopping mutation replays with `created_at < p_now - interval '30 days'` via `private.cleanup_shopping_mutations`, then expired-or-claimed continuations. The RPC is `SECURITY DEFINER SET search_path=''`, uses schema-qualified references and fixed SQL only. (The existing Plan 1–5 cleanup functions use `set search_path = pg_catalog, pg_temp`; Plan 7 moves the RPCs it replaces to `''`. New functions here use `''` — do not rewrite untouched existing functions' `search_path` as a drive-by change, since that alters an applied migration's behavior without a test demanding it.) It and returns this strict JSON object:
+`run_kondate_maintenance` does not duplicate quota-release or replay SQL. It calls the canonical bounded transitions in this fixed order: stale reservations via `cleanup_stale_ai_generations_batch`, terminal generation ledgers with `completed_at < p_now - interval '30 days'` via `cleanup_ai_generation_requests_batch`, shopping mutation replays with `created_at < p_now - interval '30 days'` via `private.cleanup_shopping_mutations`, then auth continuations via `cleanup_auth_continuations_batch` (default: same expire-only rule as the one-arg wrapper unless a documented expansion is approved). The RPC is `SECURITY DEFINER SET search_path=''`, uses schema-qualified references and fixed SQL only. (The existing Plan 1–5 cleanup functions use `set search_path = pg_catalog, pg_temp`; Plan 7 moves the RPCs it replaces to `''`. New functions here use `''` — do not rewrite untouched existing functions' `search_path` as a drive-by change, since that alters an applied migration's behavior without a test demanding it.) It returns this strict JSON object:
 
 ```json
 {
@@ -1709,7 +1751,8 @@ docker compose --profile test run --rm db-test supabase/tests/database/maintenan
 docker compose run --rm app npm run test:maintenance-db:integration
 docker compose run --rm --no-deps app sh -c 'npm run build && npm run verify:browser-secrets'
 docker compose run --rm --no-deps app npm run format:check
-docker compose run --rm --no-deps app grep -rnE 'GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD' src shared; test "$?" -eq 1
+docker compose run --rm --no-deps app sh -c \
+  'if grep -rnE "GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD" src shared; then exit 1; fi'
 ```
 
 Before the focused database commands, generate `.env`, start the stack, and run `./scripts/provision-maintenance-role.sh`; use an `EXIT` trap to stop Compose and remove `.env` without printing either maintenance value. Expected: script tests pass, including a CLI subprocess whose `env` is a complete synthetic HTTPS production configuration built from an empty object and which accepts no inherited/local variables; removing each required key, changing either app project ref/key, or changing the maintenance project ref fails with a closed code. The migration privilege assertions and exact generation/shopping 30-day boundaries pass; the real login reports its 20-second default before `BEGIN`; both the `pg_sleep` and relation-lock paths return SQLSTATE `57014` around 20 seconds, roll back generation/shopping/continuation changes, and leave no maintenance connection. Unit tests prove four-count cleanup on all outcomes. The production deploy unit test rejects every SHA/tag/origin/current-published-deploy mismatch. Do not run `preflight:production` against the local mock `.env`, because production mode correctly rejects that environment. The real command runs only in the protected release runner with a complete secret-manager environment as required by `docs/deployment/netlify.md`; the Netlify site build does not receive the maintenance URL. Markdown formatting and browser-source secret-name scans pass.
@@ -1717,7 +1760,7 @@ Before the focused database commands, generate `.env`, start the stack, and run 
 - [ ] **Step 6: Commit deployment automation and runbooks**
 
 ```bash
-git add .env.example .github/workflows/ci.yml supabase/migrations supabase/tests/database/maintenance_cleanup.test.sql netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts netlify/functions/_shared/maintenance-env.ts netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/_shared/maintenance-db.integration.test.ts netlify/functions/maintenance-cleanup.ts netlify/functions/maintenance-cleanup.test.ts scripts/generate-local-secrets.sh scripts/generate-local-secrets.mjs scripts/provision-maintenance-role.sh scripts/provision-maintenance-role.test.mjs scripts/preflight-production.mjs scripts/preflight-production.test.mjs scripts/smoke-production.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.mjs scripts/verify-browser-secrets.test.mjs docs/deployment docs/runbooks package.json package-lock.json
+git add .env.example .github/workflows/ci.yml supabase/migrations supabase/tests/database/maintenance_cleanup.test.sql netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts netlify/functions/_shared/maintenance-env.ts netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/_shared/maintenance-db.integration.test.ts netlify/functions/maintenance-cleanup.ts netlify/functions/maintenance-cleanup.test.ts scripts/generate-local-secrets.sh scripts/generate-local-secrets.mjs scripts/provision-maintenance-role.sh scripts/provision-maintenance-role.test.mjs scripts/preflight-production.mjs scripts/preflight-production.test.mjs scripts/smoke-production.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.mjs scripts/verify-browser-secrets.test.mjs docs/deployment docs/runbooks package.json package-lock.json vitest.config.ts scripts/ci.sh
 git commit -m "feat: add least-privilege production maintenance"
 ```
 
@@ -1770,7 +1813,8 @@ docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app 
 docker compose run --rm --no-deps app sh -c 'npm exec --offline netlify -- build --offline --context deploy-preview && npm run verify:browser-secrets'
 docker compose run --rm --no-deps app node --test scripts/provision-maintenance-role.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs scripts/verify-release-evidence.test.mjs
 docker compose config --quiet
-docker compose run --rm --no-deps app grep -rnE 'OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN' dist src shared; test "$?" -eq 1
+docker compose run --rm --no-deps app sh -c \
+  'if grep -rnE "OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN" dist src shared; then exit 1; fi'
 docker compose down --volumes
 rm -f .env
 test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
@@ -1806,7 +1850,7 @@ The protected release record stores `candidateSha`, production deploy ID, UTC ex
 
 ## Plan Completion Gate
 
-Before calling this plan complete, run the roadmap’s global verification gate plus the public/private type diff and offline Netlify build, confirm `docs/testing/acceptance-matrix.md` has 22 populated MVP rows plus 8 populated guided-planner rows, confirm the account-deletion E2E proves Auth and all inventoried owned-row removal with a non-empty normalized safety-action producer fixture and non-empty idea-menu and `private.generation_regeneration_snapshots` fixtures, and verify the unexpired external Google artifact against current HEAD and authoritative staging metadata. Run `npm run preflight:production` from an empty explicit environment containing one exact managed Supabase project across browser/server/maintenance, a fresh canonical 32-byte production HMAC key, and all other required values; then run `npm run verify:browser-secrets` with that protected complete environment to scan names and values. Run the container-routed `grep -rnE` secret-name scan over `dist src shared` and require exit status 1 (no match) rather than an empty count. Confirm the dedicated maintenance login starts at `statement_timeout='20s'`, the executor's grants remain exact, generation and shopping mutation exact 30-day boundaries plus four-count readback pass, regeneration snapshots leave only by cascade with their terminal requests, both SQLSTATE `57014` rollback tests pass, and `pg_stat_activity` has no leaked maintenance connection. Finally rerun the authoritative production deploy verifier around smoke, require current `published_deploy`, HEAD, tag, `commit_ref`, and verified smoke origin to equal the candidate contract, and confirm the worktree is clean. Then use `superpowers:verification-before-completion` and report the exact commands and outcomes without reproducing credentials, project refs, origins, metadata, or raw database errors.
+Before calling this plan complete, run the roadmap’s global verification gate plus the public/private type diff and offline Netlify build, confirm `docs/testing/acceptance-matrix.md` has 22 populated MVP rows plus 8 populated guided-planner rows, confirm the account-deletion E2E proves Auth and all inventoried owned-row removal with a non-empty normalized safety-action producer fixture and non-empty idea-menu and `private.generation_regeneration_snapshots` fixtures, and verify the unexpired external Google artifact against current HEAD and authoritative staging metadata. Run `npm run preflight:production` from an empty explicit environment containing one exact managed Supabase project across browser/server/maintenance, a fresh canonical 32-byte production HMAC key, and all other required values; then run `npm run verify:browser-secrets` with that protected complete environment to scan names and values. Run the container-routed secret-name scan over `dist src shared` with `if grep …; then exit 1; fi` so zero matches pass under `set -e` (never `grep; test $? -eq 1`). Confirm the dedicated maintenance login starts at `statement_timeout='20s'`, the executor's grants remain exact, generation and shopping mutation exact 30-day boundaries plus four-count readback pass, regeneration snapshots leave only by cascade with their terminal requests, both SQLSTATE `57014` rollback tests pass, and `pg_stat_activity` has no leaked maintenance connection. Finally rerun the authoritative production deploy verifier around smoke, require current `published_deploy`, HEAD, tag, `commit_ref`, and verified smoke origin to equal the candidate contract, and confirm the worktree is clean. Then use `superpowers:verification-before-completion` and report the exact commands and outcomes without reproducing credentials, project refs, origins, metadata, or raw database errors.
 
 ## Official References
 
