@@ -3616,5 +3616,209 @@ end
 $fp_mismatch$;
 select pass('household finalize fingerprint mismatch terminals as constraint_conflict/current_safety_changed without menu or success consumption');
 
+-- P3#2: finalize 前に選択 pantry を lock/再検査し、名前変更・削除は
+-- constraint_conflict/current_safety_changed（献立未作成・成功枠非消費）
+do $pantry_recheck$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000f7';
+  v_member constant uuid := '20000000-0000-4000-8000-0000000000f7';
+  v_pantry constant uuid := '22000000-0000-4000-8000-0000000000f7';
+  v_draft public.generation_drafts;
+  v_request_id uuid;
+  v_result jsonb;
+  v_fingerprint text;
+  v_allergen_version text;
+  v_food_rule_version text;
+  v_menu jsonb;
+  v_menu_id uuid;
+  v_selection_id uuid;
+  v_dish_id uuid;
+  v_ingredient_id uuid;
+  v_step_id uuid;
+  v_timeline_id uuid;
+  v_success_before integer;
+  v_case text;
+begin
+  insert into auth.users(id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  values(v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','pantry-recheck-finalizer@example.invalid','','{}','{}',now(),now());
+  insert into public.household_members(
+    id,user_id,status,display_name,age_band,portion_size,spice_level,
+    allergy_status,unsupported_diet_status,sort_order
+  ) values(v_member,v_owner,'draft','再検査','adult','regular','mild',
+    'none','none',0);
+  update public.household_members set status = 'complete' where id = v_member;
+  insert into public.pantry_items(
+    id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state
+  ) values(v_pantry,v_owner,'ホワイトソース',200,'g','2026-07-20','use_by','opened');
+
+  select catalog_version into strict v_allergen_version
+  from public.allergen_catalog where id = 'milk';
+  select rule_version into strict v_food_rule_version
+  from public.food_safety_rules order by id limit 1;
+  v_fingerprint := private.current_safety_fingerprint(v_owner, array[v_member]);
+
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+
+  foreach v_case in array array['rename', 'delete'] loop
+    v_menu_id := case v_case
+      when 'rename' then '60000000-0000-4000-8000-0000000000f7'::uuid
+      else '60000000-0000-4000-8000-0000000000f8'::uuid
+    end;
+    v_selection_id := case v_case
+      when 'rename' then '65000000-0000-4000-8000-0000000000f7'::uuid
+      else '65000000-0000-4000-8000-0000000000f8'::uuid
+    end;
+    v_dish_id := case v_case
+      when 'rename' then '61000000-0000-4000-8000-0000000000f7'::uuid
+      else '61000000-0000-4000-8000-0000000000f8'::uuid
+    end;
+    v_ingredient_id := case v_case
+      when 'rename' then '62000000-0000-4000-8000-0000000000f7'::uuid
+      else '62000000-0000-4000-8000-0000000000f8'::uuid
+    end;
+    v_step_id := case v_case
+      when 'rename' then '63000000-0000-4000-8000-0000000000f7'::uuid
+      else '63000000-0000-4000-8000-0000000000f8'::uuid
+    end;
+    v_timeline_id := case v_case
+      when 'rename' then '64000000-0000-4000-8000-0000000000f7'::uuid
+      else '64000000-0000-4000-8000-0000000000f8'::uuid
+    end;
+
+    -- rename ケースで削除済みなら再作成 / 名前を戻す
+    if not exists (select 1 from public.pantry_items where id = v_pantry) then
+      insert into public.pantry_items(
+        id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state
+      ) values(v_pantry,v_owner,'ホワイトソース',200,'g','2026-07-20','use_by','opened');
+    else
+      update public.pantry_items
+      set name = 'ホワイトソース', quantity = 200, unit = 'g', updated_at = now()
+      where id = v_pantry;
+    end if;
+
+    -- ケース間で draft revision を進める（0 固定は 2 周目で draft_revision_conflict）
+    select * into v_draft
+    from public.generation_drafts
+    where user_id = v_owner and deleted_at is null
+    order by created_at desc
+    limit 1;
+    v_draft := public.save_generation_draft(
+      coalesce(v_draft.revision, 0)::bigint,'dinner',array['ソース'],'japanese',
+      'household',array[v_member],null::smallint,30::smallint,'standard',
+      array[]::text[],'',
+      jsonb_build_array(jsonb_build_object('pantryItemId',v_pantry,'priority','must_use'))
+    );
+    perform public.reserve_ai_generation(
+      v_owner,
+      case v_case
+        when 'rename' then '30000000-0000-4000-8000-0000000000f7'::uuid
+        else '30000000-0000-4000-8000-0000000000f8'::uuid
+      end,
+      'new_menu',v_draft.id,v_draft.revision,null,null,null,
+      'generation-command.v2',repeat('d',64),
+      jsonb_build_object(
+        'kind','new_menu',
+        'target_mode','household',
+        'servings',null,
+        'target_member_ids',to_jsonb(array[v_member]),
+        'source_menu_version',null
+      ),
+      5,45,180,'2026-07-11 04:00:00+00'
+    );
+    select id into strict v_request_id
+    from private.ai_generation_requests
+    where user_id = v_owner
+      and idempotency_key = case v_case
+        when 'rename' then '30000000-0000-4000-8000-0000000000f7'::uuid
+        else '30000000-0000-4000-8000-0000000000f8'::uuid
+      end;
+    perform public.mark_ai_global_sent(v_request_id,'2026-07-11 04:00:01+00');
+
+    select success_count into strict v_success_before
+    from private.ai_user_daily_usage
+    where user_id = v_owner and usage_day = date '2026-07-11';
+
+    -- OpenRouter 待ち中の変更をシミュレート
+    if v_case = 'rename' then
+      update public.pantry_items set name = '別名ソース', updated_at = now()
+      where id = v_pantry;
+    else
+      delete from public.pantry_items where id = v_pantry;
+    end if;
+
+    v_menu := jsonb_build_object(
+      'schemaVersion','2026-07-11.v1',
+      'menuId',v_menu_id,
+      'mealType','dinner',
+      'cuisineGenre','japanese',
+      'servings',2,
+      'totalElapsedMinutes',15,
+      'safetyTags','[]'::jsonb,
+      'dishes',jsonb_build_array(jsonb_build_object(
+        'id',v_dish_id,'role','main','position',1,'name','ソース煮',
+        'description','主菜','cookingTimeMinutes',15,
+        'ingredients',jsonb_build_array(jsonb_build_object(
+          'id',v_ingredient_id,'position',1,'name','ホワイトソース',
+          'quantityValue',200,'quantityText','200g','unit','g',
+          'storeSection','seasonings','pantrySelectionId',v_selection_id,
+          'labelConfirmationRequired',false)),
+        'steps',jsonb_build_array(jsonb_build_object(
+          'id',v_step_id,'position',1,'instruction','煮込む')))),
+      'timeline',jsonb_build_array(jsonb_build_object(
+        'id',v_timeline_id,'position',1,'startMinute',0,'durationMinutes',15,
+        'instruction','主菜を作る','dishId',v_dish_id,'recipeStepId',v_step_id)),
+      'adaptations','[]'::jsonb,
+      'pantryUsage',jsonb_build_array(jsonb_build_object(
+        'selectionId',v_selection_id,'pantryItemId',v_pantry,
+        'pantryItemName','ホワイトソース','priority','must_use','usageStatus','used',
+        'plannedQuantity',200,'inventoryQuantity',200,'shortageQuantity',0,'unit','g',
+        'dishIds',jsonb_build_array(v_dish_id),'unusedReason',null)),
+      'labelConfirmations','[]'::jsonb
+    );
+
+    v_result := public.finalize_ai_generation_success(
+      v_request_id,
+      v_menu,
+      jsonb_build_object('mealType','dinner'),
+      jsonb_build_object('members',jsonb_build_array(jsonb_build_object(
+        'householdMemberId',v_member,'anonymousRef','member_1','ageBand','adult',
+        'allergyStatus','none','allergenIds','[]'::jsonb,
+        'requiredSafetyConstraints','[]'::jsonb,'unsupportedDietStatus','none',
+        'unsupportedDietKinds','[]'::jsonb))),
+      v_fingerprint,
+      v_allergen_version,
+      v_food_rule_version,
+      jsonb_build_array(jsonb_build_object(
+        'householdMemberId',v_member,'anonymousRef','member_1',
+        'displayNameSnapshot','再検査')),
+      '[]'::jsonb,
+      null,null,null,
+      '2026-07-11 04:00:02+00'
+    );
+
+    if v_result->>'status' is distinct from 'constraint_conflict' then
+      raise exception 'pantry % did not terminalize as constraint_conflict: %', v_case, v_result;
+    end if;
+    if (select terminal_details from private.ai_generation_requests where id = v_request_id)
+       is distinct from jsonb_build_object(
+         'conflictCodes', jsonb_build_array('current_safety_changed')
+       ) then
+      raise exception 'pantry % missing current_safety_changed codes', v_case;
+    end if;
+    if exists (select 1 from public.menus where id = v_menu_id) then
+      raise exception 'pantry % created a menu row', v_case;
+    end if;
+    if (select success_count from private.ai_user_daily_usage
+          where user_id = v_owner and usage_day = date '2026-07-11')
+       is distinct from v_success_before then
+      raise exception 'pantry % consumed success quota', v_case;
+    end if;
+  end loop;
+end
+$pantry_recheck$;
+select pass('finalize pantry rename/delete terminals as constraint_conflict without menu or success consumption');
+
 select * from finish();
 rollback;
