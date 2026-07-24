@@ -148,3 +148,37 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
   await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
   expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/pantry");
 });
+
+it.each([
+  ["empty", "/login?returnTo="],
+  ["bare slash", "/login?returnTo=%2F"],
+  ["external URL", "/login?returnTo=https%3A%2F%2Fattacker.example"],
+  ["protocol-relative URL", "/login?returnTo=%2F%2Fattacker.example"],
+])("sanitizes an explicit %s returnTo for Google and magic link", async (_label, entry) => {
+  const user = userEvent.setup();
+  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+  const sendMagicLink = vi.fn().mockResolvedValue({
+    flowId: "flow-1",
+    email: "user@example.com",
+    resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle,
+    sendMagicLink,
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
+  expect(signInWithGoogle).toHaveBeenCalledWith("/planner");
+
+  await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
+  await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
+  expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/planner");
+});

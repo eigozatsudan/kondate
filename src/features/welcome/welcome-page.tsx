@@ -63,19 +63,22 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
 
   return (
     <main className="page-frame guided-planner-theme welcome-tutorial">
-      <section className="welcome-tutorial__slide" aria-labelledby="welcome-tutorial-title">
+      <header className="welcome-tutorial__header">
         <p className="eyebrow">はじめに</p>
+        <h1 className="welcome-tutorial__page-title">どちらから始めますか？</h1>
+      </header>
+      <section className="welcome-tutorial__slide" aria-labelledby="welcome-tutorial-title">
         <span className="welcome-tutorial__decoration" aria-hidden="true">
           {slide.decoration}
         </span>
-        <h1
+        <h2
           className="welcome-tutorial__title"
           id="welcome-tutorial-title"
           ref={headingRef}
           tabIndex={-1}
         >
           {slide.title}
-        </h1>
+        </h2>
         <p className="welcome-tutorial__description">{slide.description}</p>
       </section>
 
