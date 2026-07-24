@@ -105,11 +105,16 @@ test("household journey: welcome through shopping reconciliation", async ({
   await expect(accept).toBeEnabled({ timeout: 30_000 });
   await accept.click();
 
-  // 買い物リスト作成
+  // 買い物リスト作成（結果画面は確認パネル →「作成する」で /shopping へ）
   const shop = page.getByRole("button", { name: "買い物リストを作る" });
-  await expect(shop).toBeEnabled({ timeout: 30_000 });
+  await expect(shop).toBeEnabled({ timeout: 60_000 });
   await shop.click();
-  await expect(page).toHaveURL(/shopping/u, { timeout: 60_000 });
+  const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
+  if (await newChoice.isVisible().catch(() => false)) {
+    await newChoice.check();
+  }
+  await page.getByRole("button", { name: "作成する" }).click();
+  await expect(page).toHaveURL(/\/shopping$/u, { timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible({
     timeout: 30_000,
   });
