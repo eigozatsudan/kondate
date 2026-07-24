@@ -76,7 +76,7 @@ The aggregate `ci` entry point is therefore a host shell script, not an npm scri
 
 ```sql
 begin;
-select plan(3);
+select plan(4);
 
 select is_empty(
   $$
@@ -314,7 +314,7 @@ docker compose --profile test run --rm db-test
 
 Expected: both focused assertions and the complete pgTAP suite pass.
 
-In the same pgTAP file (or a second test in the same Task), add a **behavioral** cascade proof that is not only FK inventory: as a superuser/test role, insert `auth.users` + minimal owned graph (`public.profiles`, one `private.ai_generation_requests` terminal row, one `private.generation_regeneration_snapshots` child), `delete from auth.users where id = …`, then assert zero rows remain in those tables for that user id. This proves cascade action, not only constraint shape.
+In the **same** pgTAP file, add a fourth assertion (**plan(4)** total — keep the three inventory checks and this behavioral one; do not leave plan(3) after adding the seed): as a superuser/test role, insert `auth.users` + minimal owned graph (`public.profiles`, one `private.ai_generation_requests` terminal row, one `private.generation_regeneration_snapshots` child), `delete from auth.users where id = …`, then `is`/`is_empty` that zero rows remain in those tables for that user id. This proves cascade action, not only constraint shape. If the behavioral seed is split to a second file, that file gets its own `plan(N)` and the first file stays at `plan(3)` — never claim plan(3) while executing four assertions in one file.
 
 - [ ] **Step 5: Commit the forward-only correction and invariant**
 
@@ -707,13 +707,13 @@ Task 3 adds no script keys here. If the verifier needs `.env` values when run st
 
 Server values such as `SUPABASE_URL=http://kong:8000`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `OPENROUTER_MODELS`, and `OPENROUTER_BASE_URL` are supplied by `compose.yaml`'s app service rather than `.env.example`; documenting them here is optional and must not contradict Compose. The only variables Task 3 may need to add are ones this plan actually introduces and something actually reads — see the note below, and drop any that no runtime consumes.
 
-`APP_ORIGIN`, `FAILED_GENERATION_LEDGER_RETENTION_DAYS`, and `VITE_PRIVACY_POLICY_URL` appeared in earlier drafts of this plan but exist nowhere in the codebase — no source file, Compose service, script, or `.env.example` key. They have been removed from this plan's `.env.example` block, CI environment, and production preflight list rather than invented at release time:
+**Canonical environment contract (roadmap + this plan, aligned with the codebase):** do **not** invent or preflight `APP_ORIGIN`, `FAILED_GENERATION_LEDGER_RETENTION_DAYS`, or `VITE_PRIVACY_POLICY_URL`. They are **retired**:
 
-- `APP_ORIGIN` duplicated `SERVER_SITE_ORIGIN`, which already carries the canonical origin and is actually read. One name for one value.
-- `FAILED_GENERATION_LEDGER_RETENTION_DAYS` is a hardcoded 30-day interval inside the cleanup SQL, not configuration. Task 8 keeps it in SQL; the retention constant stays release-locked there.
-- `VITE_PRIVACY_POLICY_URL` has no consumer; the privacy notice is an in-app route.
+- Use **`SERVER_SITE_ORIGIN` only** for the canonical site origin (never a second `APP_ORIGIN` alias).
+- Terminal generation and shopping-mutation retention is **hardcoded 30 days in maintenance SQL** (`interval '30 days'`). Preflight and runbooks may assert the constant `30` as a **code/SQL invariant**, not as an environment variable name.
+- Privacy policy is the **in-app** `/privacy` route; there is no browser `VITE_PRIVACY_POLICY_URL`.
 
-If a later task genuinely needs one of them, introduce the runtime consumer and the Zod schema entry in the same commit that adds the variable — never a preflight requirement for a variable nothing reads.
+The roadmap Locked Environment Contract is revised to match. Reject any Task 8/9 preflight list that reintroduces these three names as required env keys.
 
 The root Compose project has the Plan 1 service named exactly `oauth-mock`, with container origin `http://oauth-mock:8788`, browser origin `http://127.0.0.1:8788`, and `GET /health`. The focused Compose contract test asserts that exact service/healthcheck/port and the app's local provider variables. Environment tests accept these two browser variables only in local/mock mode. A production-context test requires `VITE_AUTH_PROVIDER_MODE=supabase` and rejects `VITE_OAUTH_MOCK_ORIGIN` even if it contains the expected local URL; production can never silently enable the pseudo-provider.
 
@@ -1004,7 +1004,9 @@ docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app 
 docker compose run --rm --no-deps app npm exec --offline netlify -- build --offline --context deploy-preview
 # Prove the built site would not need unsafe-inline styles under the published CSP:
 docker compose run --rm --no-deps app sh -c \
-  'if grep -rnE "style=\\{\\{|style=\"" src --include="*.tsx" --include="*.ts" --include="*.jsx" --include="*.js"; then exit 1; fi'
+  'if grep -rnE "style\s*=\s*\{\{|style\s*=\s*\"" src --include="*.tsx" --include="*.ts" --include="*.jsx" --include="*.js"; then exit 1; fi'
+# Prefer a tiny Node AST walk (e.g. ts-morph/acorn) that flags JSXAttribute name===\"style\" in src/;
+# regex alone misses `style = {{`, multiline attributes, and string-built styles.
 ```
 
 After the offline Netlify build, open `dist/index.html` (or the Netlify publish directory) and confirm `netlify.toml` CSP is the one that would apply to `/*`. Prefer a small Node assertion that parses `netlify.toml` headers and fails if `style-src` contains `unsafe-inline` while any `src/**/*.tsx` still contains `style={{`. Expected: tests pass, no private-schema grant or RLS omission is listed, Vite emits `dist/`, Netlify accepts the configuration, and the SPA has no production inline styles that the CSP would block. The deploy-preview context deliberately uses structural model validation and makes no live Models API call; the production context always performs the remote check.
@@ -1292,6 +1294,50 @@ for (const width of [320, 375, 430]) {
     await assertNoHorizontalScroll(page);
     await assertMajorActionHeights(page, { "これに決めた": 1 });
   });
+
+  // Global Constraints require 375/430 coverage beyond wizard: shell routes + both history modes.
+  test(`shell routes fit ${width}px with usable majors`, async ({ completedOnboardingPage: page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    // Live labels from src/app/layouts/app-shell.tsx — require exact counts (no silent skip).
+    const shellNavLabels = ["献立", "冷蔵庫", "履歴", "買い物", "設定"] as const;
+    for (const { path, heading } of [
+      { path: "/pantry", heading: /冷蔵庫|食材/u },
+      { path: "/shopping", heading: /買い物/u },
+      { path: "/settings", heading: "家族設定" },
+      { path: "/history", heading: /履歴/u },
+    ] as const) {
+      await page.goto(path);
+      await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible({
+        timeout: 15_000,
+      });
+      await assertNoHorizontalScroll(page);
+      const nav = page.getByRole("navigation", { name: "メインメニュー" });
+      await expect(nav).toBeVisible();
+      for (const name of shellNavLabels) {
+        const item = nav.getByRole("link", { name, exact: true });
+        await expect(item, `missing shell nav link: ${name} on ${path}`).toHaveCount(1);
+        const box = await item.boundingBox();
+        expect(box, name).not.toBeNull();
+        expect(box?.height, `${name} height`).toBeGreaterThanOrEqual(44);
+      }
+    }
+  });
+
+  test(`history detail both modes fit ${width}px`, async ({ completedOnboardingPage: page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    // Static import preferred at file top in real implementation:
+    // import { seedGeneratedMenu, seedGeneratedIdeaMenu, setMockScenario } from "../fixtures/history";
+    const { seedGeneratedMenu, seedGeneratedIdeaMenu } = await import("../fixtures/history");
+    const householdId = await seedGeneratedMenu(page);
+    await page.goto(`/history/${householdId}`);
+    await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 30_000 });
+    await assertNoHorizontalScroll(page);
+    await page.goto("/planner");
+    const ideaId = await seedGeneratedIdeaMenu(page, 2);
+    await page.goto(`/history/${ideaId}`);
+    await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });
+    await assertNoHorizontalScroll(page);
+  });
 }
 ```
 
@@ -1335,6 +1381,7 @@ git commit -m "test: enforce mobile accessibility"
 - Create: `docs/testing/google-oauth-staging.md`
 - Create: `scripts/verify-release-evidence.mjs`
 - Create: `scripts/verify-release-evidence.test.mjs`
+- Create: `scripts/verify-release-evidence.test-cli.mjs` — **test-only** spawn wrapper; never a production package script or Task 9 command
 - Modify: `e2e/fixtures/auth.ts`
 - Modify: `scripts/run-e2e.sh`
 - Modify: `.gitignore`
@@ -1412,19 +1459,22 @@ export function verifyGoogleOauthEvidence(value,{head,deployMetadata,now}){
   return evidence;
 }
 /**
- * Transport seam for Netlify metadata. Pure unit tests inject `{fetchImpl, now, head, readFile}`.
- * CLI spawn tests cannot reach a default `fetch` closed over in the module without a seam —
- * use one of the two deterministic options below (pick one, document it, test both unit and spawn).
+ * Production CLI path: `main()` uses only real `fetch` + real `process.env`.
+ * **Never** honor `KONDATE_RELEASE_EVIDENCE_FETCH_MODULE`, `--fetch-fixture`, or any
+ * other runtime env/flag that swaps Netlify metadata transport in the production entrypoint.
+ * That seam is a release-evidence forgery risk if left on the shipped CLI.
  *
- * Option A (preferred): env-gated mock module path for child processes only.
- *   KONDATE_RELEASE_EVIDENCE_FETCH_MODULE=/abs/path/to/mock-fetch.mjs
- *   That module default-exports `(url, init) => Promise<Response>`.
- * Option B: optional second CLI arg `--fetch-fixture=/abs/path/to/deploy.json` that
- *   short-circuits Netlify HTTP and feeds deploy metadata from disk (production CLI forbids
- *   this unless CONTEXT is unset / test; production runner never sets the flag).
+ * Test seams (allowed):
+ * 1. Unit: call `verifyGoogleOauthEvidence` and `runVerifyReleaseEvidence(deps)` (exported pure
+ *    runner) with injected `{ fetchImpl, now, revParseHead, revParseTopLevel, readEvidence, env }`.
+ * 2. Spawn: invoke `scripts/verify-release-evidence.test-cli.mjs` (or equivalent test-only wrapper
+ *    under `scripts/` that is **not** referenced by package.json production scripts, Netlify
+ *    runbooks, or Task 9 release commands). The wrapper imports `runVerifyReleaseEvidence` and
+ *    injects a mock fetch; it must refuse to run when `CONTEXT=production` or when
+ *    `NETLIFY_AUTH_TOKEN` looks like a real production secret pattern if you add that guard.
  */
-export async function main(
-  path=process.argv[2],
+export async function runVerifyReleaseEvidence(
+  path,
   env=process.env,
   {
     fetchImpl=fetch,
@@ -1440,18 +1490,11 @@ export async function main(
   if(evidencePath===root||evidencePath.startsWith(`${root}${sep}`)){
     throw new Error("evidence_must_be_external");
   }
-  // Child-process inject: dynamic import only when env points outside the repo or to a tmp file.
-  let resolvedFetch=fetchImpl;
-  if(env.KONDATE_RELEASE_EVIDENCE_FETCH_MODULE){
-    const mod=await import(env.KONDATE_RELEASE_EVIDENCE_FETCH_MODULE);
-    resolvedFetch=mod.default??mod.fetchImpl;
-    if(typeof resolvedFetch!=="function")throw new Error("fetch_module_invalid");
-  }
   const value=JSON.parse(readEvidence(evidencePath));
   const head=revParseHead();
   const parsed=googleOauthEvidenceSchema.parse(value);
   if(!env.NETLIFY_AUTH_TOKEN)throw new Error("netlify_auth_required");
-  const response=await resolvedFetch(
+  const response=await fetchImpl(
     `https://api.netlify.com/api/v1/deploys/${encodeURIComponent(parsed.stagingDeployId)}`,
     {headers:{authorization:`Bearer ${env.NETLIFY_AUTH_TOKEN}`},
       signal:AbortSignal.timeout(5_000)},
@@ -1459,6 +1502,11 @@ export async function main(
   if(!response.ok)throw new Error("staging_metadata_unavailable");
   verifyGoogleOauthEvidence(parsed,{head,deployMetadata:await response.json(),now:now()});
   process.stdout.write("google_oauth_evidence: pass\n");
+}
+
+/** Production entry — no transport swap hooks. */
+export async function main(path=process.argv[2], env=process.env){
+  return runVerifyReleaseEvidence(path, env, {}); // always default fetch
 }
 if(process.argv[1]&&import.meta.url===new URL(process.argv[1],"file:").href){
   main().catch((error)=>{
@@ -1469,21 +1517,29 @@ if(process.argv[1]&&import.meta.url===new URL(process.argv[1],"file:").href){
 }
 ```
 
+Also create `scripts/verify-release-evidence.test-cli.mjs` (test-only; not a package script for release):
+
+```js
+// test-only wrapper — inject mock fetch for spawn coverage
+import { runVerifyReleaseEvidence } from "./verify-release-evidence.mjs";
+const mockFetch = async () => /* Response with fixture deploy metadata */;
+await runVerifyReleaseEvidence(process.argv[2], process.env, { fetchImpl: mockFetch });
+```
+
 The executable guard catches every error, emits only a closed code (never Zod input, deploy metadata, token, or file content), and exits nonzero.
 
 **Tests (two layers — both required):**
 
-1. **Unit:** call `verifyGoogleOauthEvidence` and `main(..., { fetchImpl, now, revParseHead, readEvidence })` with injected deps — no network, no `spawn`.
-2. **CLI spawn:** write evidence JSON outside the repo; write a tiny mock fetch module (or fixture file if Option B); run
+1. **Unit:** call `verifyGoogleOauthEvidence` and `runVerifyReleaseEvidence(..., { fetchImpl, now, revParseHead, readEvidence })` with injected deps — no network, no `spawn`, no env transport swap.
+2. **CLI spawn (test wrapper only):** write evidence JSON outside the repo; run
 
 ```bash
 docker compose run --rm --no-deps \
   -e NETLIFY_AUTH_TOKEN=test-token \
-  -e KONDATE_RELEASE_EVIDENCE_FETCH_MODULE=/workspace/tmp/mock-netlify-fetch.mjs \
-  app node scripts/verify-release-evidence.mjs /tmp/evidence-outside-repo.json
+  app node scripts/verify-release-evidence.test-cli.mjs /tmp/evidence-outside-repo.json
 ```
 
-assert stdout `google_oauth_evidence: pass` and that a repository-local evidence path exits nonzero with `evidence_must_be_external`. Do **not** claim “spawn with mock fetch” without this env (or `--fetch-fixture`) inject point — a bare `spawn` always hits real `fetch`.
+assert stdout `google_oauth_evidence: pass`. Spawn **`node scripts/verify-release-evidence.mjs`** only for negative cases that need no Netlify call (e.g. missing path, repo-local evidence → `evidence_must_be_external`). Production Task 9 / runbooks invoke **only** `verify-release-evidence.mjs`, never the `.test-cli.mjs` wrapper.
 
 - [ ] **Step 2: Add deterministic adversarial fixtures**
 
@@ -1590,7 +1646,7 @@ Expected: unit/component/adversarial, pgTAP, and all Playwright tests report zer
 ```bash
 git add docs/testing e2e tools/openrouter-mock src netlify/functions shared supabase \
   scripts/run-e2e.sh scripts/assert-privacy-logs.mjs scripts/assert-privacy-logs.test.mjs \
-  scripts/verify-release-evidence.mjs scripts/verify-release-evidence.test.mjs \
+  scripts/verify-release-evidence.mjs scripts/verify-release-evidence.test.mjs scripts/verify-release-evidence.test-cli.mjs \
   .gitignore package.json package-lock.json
 git commit -m "test: cover Kondate acceptance journeys"
 ```
@@ -1752,6 +1808,8 @@ git commit -m "ci: gate the complete MVP"
 **Files:**
 - Create via CLI: migration logical name `maintenance_cleanup` (created after the account-deletion migration; referred to below as the maintenance migration / "051")
 - Create: `supabase/tests/database/maintenance_cleanup.test.sql`
+- Modify: `docs/testing/database-access-matrix.md` — add `run_kondate_maintenance`, batch helpers, executor role/grants after migration
+- Modify: `supabase/tests/database/rls_inventory.test.sql` — refresh `expected_access` CTE / matrix symmetry so new RPCs and grants cannot drift past Task 4
 - Modify: `.env.example`
 - Modify: `scripts/generate-local-secrets.sh`
 - Modify: `scripts/generate-local-secrets.mjs`
@@ -1984,6 +2042,7 @@ Run:
 docker compose run --rm --no-deps app node --test scripts/provision-maintenance-role.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs
 docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/maintenance-cleanup.test.ts
 docker compose --profile test run --rm db-test supabase/tests/database/maintenance_cleanup.test.sql
+docker compose --profile test run --rm db-test supabase/tests/database/rls_inventory.test.sql
 docker compose run --rm app npm run test:maintenance-db:integration
 docker compose run --rm --no-deps app sh -c 'npm run build && npm run verify:browser-secrets'
 docker compose run --rm --no-deps app npm run format:check
@@ -1991,12 +2050,12 @@ docker compose run --rm --no-deps app sh -c \
   'if grep -rnE "GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD" src shared; then exit 1; fi'
 ```
 
-Before the focused database commands, generate `.env`, start the stack, and run `./scripts/provision-maintenance-role.sh`; use an `EXIT` trap to stop Compose and remove `.env` without printing either maintenance value. Expected: script tests pass, including a CLI subprocess whose `env` is a complete synthetic HTTPS production configuration built from an empty object and which accepts no inherited/local variables; removing each required key, changing either app project ref/key, or changing the maintenance project ref fails with a closed code. The migration privilege assertions and exact generation/shopping 30-day boundaries pass; the real login reports its 20-second default before `BEGIN`; both the `pg_sleep` and relation-lock paths return SQLSTATE `57014` around 20 seconds, roll back generation/shopping/continuation changes, and leave no maintenance connection. Unit tests prove four-count cleanup on all outcomes. The production deploy unit test rejects every SHA/tag/origin/current-published-deploy mismatch. Do not run `preflight:production` against the local mock `.env`, because production mode correctly rejects that environment. The real command runs only in the protected release runner with a complete secret-manager environment as required by `docs/deployment/netlify.md`; the Netlify site build does not receive the maintenance URL. Markdown formatting and browser-source secret-name scans pass.
+Before the focused database commands, generate `.env`, start the stack, and run `./scripts/provision-maintenance-role.sh`; use an `EXIT` trap to stop Compose and remove `.env` without printing either maintenance value. Expected: script tests pass, including a CLI subprocess whose `env` is a complete synthetic HTTPS production configuration built from an empty object and which accepts no inherited/local variables; removing each required key, changing either app project ref/key, or changing the maintenance project ref fails with a closed code. The migration privilege assertions and exact generation/shopping 30-day boundaries pass; the refreshed access matrix and `rls_inventory` suite still pass after maintenance RPC/role grants; the real login reports its 20-second default before `BEGIN`; both the `pg_sleep` and relation-lock paths return SQLSTATE `57014` around 20 seconds, roll back generation/shopping/continuation changes, and leave no maintenance connection. Unit tests prove four-count cleanup on all outcomes. The production deploy unit test rejects every SHA/tag/origin/current-published-deploy mismatch. Do not run `preflight:production` against the local mock `.env`, because production mode correctly rejects that environment. The real command runs only in the protected release runner with a complete secret-manager environment as required by `docs/deployment/netlify.md`; the Netlify site build does not receive the maintenance URL. Markdown formatting and browser-source secret-name scans pass.
 
 - [ ] **Step 6: Commit deployment automation and runbooks**
 
 ```bash
-git add .env.example .github/workflows/ci.yml supabase/migrations supabase/tests/database/maintenance_cleanup.test.sql netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts netlify/functions/_shared/maintenance-env.ts netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/_shared/maintenance-db.integration.test.ts netlify/functions/maintenance-cleanup.ts netlify/functions/maintenance-cleanup.test.ts scripts/generate-local-secrets.sh scripts/generate-local-secrets.mjs scripts/provision-maintenance-role.sh scripts/provision-maintenance-role.test.mjs scripts/preflight-production.mjs scripts/preflight-production.test.mjs scripts/smoke-production.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.mjs scripts/verify-browser-secrets.test.mjs docs/deployment docs/runbooks package.json package-lock.json vitest.config.ts scripts/ci.sh
+git add .env.example .github/workflows/ci.yml supabase/migrations supabase/tests/database/maintenance_cleanup.test.sql supabase/tests/database/rls_inventory.test.sql docs/testing/database-access-matrix.md netlify/functions/_shared/env.ts netlify/functions/_shared/env.test.ts netlify/functions/_shared/maintenance-env.ts netlify/functions/_shared/maintenance-env.test.ts netlify/functions/_shared/maintenance-db.ts netlify/functions/_shared/maintenance-db.test.ts netlify/functions/_shared/maintenance-db.integration.test.ts netlify/functions/maintenance-cleanup.ts netlify/functions/maintenance-cleanup.test.ts scripts/generate-local-secrets.sh scripts/generate-local-secrets.mjs scripts/provision-maintenance-role.sh scripts/provision-maintenance-role.test.mjs scripts/preflight-production.mjs scripts/preflight-production.test.mjs scripts/smoke-production.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.mjs scripts/verify-browser-secrets.test.mjs docs/deployment docs/runbooks package.json package-lock.json vitest.config.ts scripts/ci.sh
 git commit -m "feat: add least-privilege production maintenance"
 ```
 

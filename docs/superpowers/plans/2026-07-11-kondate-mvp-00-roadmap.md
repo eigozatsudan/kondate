@@ -291,7 +291,7 @@ The Scheduled Function exports `config = {schedule:"@hourly"}` and no `path` bec
 
 ## Locked Environment Contract
 
-Browser-visible configuration is limited to `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_PRIVACY_POLICY_URL`, `VITE_MAGIC_LINK_RESEND_SECONDS=60`, `VITE_AUTH_CONTINUATION_TTL_MS=300000`, and the authentication-provider switch below. No service key, OpenRouter key, continuation encryption key, prompt, or household value may use a `VITE_` prefix.
+Browser-visible configuration is limited to `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_MAGIC_LINK_RESEND_SECONDS=60`, `VITE_AUTH_CONTINUATION_TTL_MS=300000`, and the authentication-provider switch below. There is **no** `VITE_PRIVACY_POLICY_URL` — privacy copy is an in-app route. No service key, OpenRouter key, continuation encryption key, prompt, or household value may use a `VITE_` prefix.
 
 | Browser auth variable | Local rule | Production rule |
 |---|---|---|
@@ -305,7 +305,7 @@ Server configuration uses these exact names and release defaults:
 | Variable | Locked production rule/default |
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Server-only values for exact managed origin `https://<project-ref>.supabase.co`; production browser/server origins and maintenance ref must all match |
-| `SERVER_SITE_ORIGIN`, `APP_ORIGIN` | Same canonical HTTPS origin; no path/query/fragment |
+| `SERVER_SITE_ORIGIN` | Canonical HTTPS (or locked local) origin; no path/query/fragment. **Not** duplicated as `APP_ORIGIN` — that name is retired |
 | `AUTH_CONTINUATION_ENCRYPTION_KEY` | Server-only base64 value decoding to exactly 32 bytes |
 | `GENERATION_REQUEST_HMAC_KEY` | Server-only canonical base64 decoding to exactly 32 bytes; stable `generation-command.v1` key, never a `VITE_` value |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
@@ -319,11 +319,11 @@ Server configuration uses these exact names and release defaults:
 | `GLOBAL_DAILY_AI_LIMIT` | Default `45` actual external sends per JST day; operator may lower this positive-integer safety valve |
 | `OPENROUTER_TIMEOUT_MS` | `20000` per attempt |
 | `FUNCTION_TOTAL_BUDGET_MS` | `50000` total synchronous budget |
-| `FAILED_GENERATION_LEDGER_RETENTION_DAYS` | `30` |
-| `AI_PROCESSING_STALE_SECONDS` | `180` |
+| Terminal generation / shopping-mutation retention | Release-locked **30 days**, enforced in maintenance SQL (`interval '30 days'`), **not** an environment variable |
+| `AI_PROCESSING_STALE_SECONDS` | Release-locked `180` |
 | `SUPABASE_MAINTENANCE_DB_URL` | Functions-only TLS URL: direct `kondate_maintenance_login@db.<ref>:5432` or IPv4 Supavisor Session `kondate_maintenance_login.<ref>@<region>.pooler:5432`; port 6543 is forbidden and the connected `session_user` must be exact `kondate_maintenance_login`; never a build/browser variable |
 
-`OPENROUTER_MOCK_SCENARIO` is test-only and is honored only with the exact local mock base URL. Plan 6's environment parser and production preflight validate all names and fixed values from an explicit, environment-clean input; they reject leaked `VITE_` secrets, production OpenRouter lookalike URLs, arbitrary/lookalike Supabase hosts, path/query/credential URLs, and browser/server/direct/session project-ref mismatch. Local parsers continue to accept only the explicitly locked Compose origins.
+Retired non-variables (do not reintroduce in preflight or `.env.example`): `APP_ORIGIN` (use `SERVER_SITE_ORIGIN`), `FAILED_GENERATION_LEDGER_RETENTION_DAYS` (hardcoded 30-day SQL), `VITE_PRIVACY_POLICY_URL` (in-app privacy route). `OPENROUTER_MOCK_SCENARIO` is test-only and is honored only with the exact local mock base URL. Plan 6's environment parser and production preflight validate all names and fixed values from an explicit, environment-clean input; they reject leaked `VITE_` secrets, production OpenRouter lookalike URLs, arbitrary/lookalike Supabase hosts, path/query/credential URLs, and browser/server/direct/session project-ref mismatch. Local parsers continue to accept only the explicitly locked Compose origins.
 
 ## Migration Order
 
