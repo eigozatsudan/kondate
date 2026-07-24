@@ -154,11 +154,12 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await page.getByRole("radio", { name: "和食" }).check();
   await clickWizardNext(page);
   await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
-  await page.getByRole("button", { name: "2人" }).click();
+  // idea-alternate-menu-1 は servings=1 固定のため初回も 1 人で揃える
+  await page.getByRole("button", { name: "1人" }).click();
   await clickWizardNext(page);
 
   await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
-  await setMockScenario(page, "idea-servings-2");
+  await setMockScenario(page, "idea-servings-1");
   const generate = page.getByRole("button", { name: "献立を作る" });
   if (await generate.isDisabled().catch(() => false)) {
     await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
@@ -183,13 +184,16 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
 
   await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "やめる" }).click();
 
   await setMockScenario(page, "idea-alternate-menu-1");
   if (menuId === undefined) {
     throw new Error("menuId required for idea regeneration");
   }
   await requestWholeRegeneration(page, menuId, "simpler", { targetMode: "idea" });
+  await expect(page).toHaveURL(new RegExp(`/menus/(?!${menuId})[0-9a-f-]{36}`, "iu"), {
+    timeout: 90_000,
+  });
   await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 60_000 });
 
   const fav = page.getByRole("button", { name: /お気に入り/u });
