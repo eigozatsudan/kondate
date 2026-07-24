@@ -25,6 +25,8 @@ export type StoredMenuAggregate = {
   safetyFingerprint: string;
   derivationGroupId: string;
   version: number;
+  /** live menus.target_mode。再生成では snapshot と照合し不一致なら source_menu_changed */
+  targetMode: TargetMode;
   preferenceSnapshot: unknown;
   targetMemberIds: readonly string[];
   targetMembers: readonly {
@@ -38,7 +40,7 @@ export type StoredMenuAggregate = {
 // 所有者複合 FK を !constraint で固定し、PostgREST の曖昧な関係推論を避ける。
 // adaptation は dish 所有者関係のみ、safety actions は adaptation 配下に載せる。
 export const STORED_MENU_SELECT = `
-  id,user_id,safety_fingerprint,derivation_group_id,version,preference_snapshot,
+  id,user_id,safety_fingerprint,derivation_group_id,version,target_mode,preference_snapshot,
   meal_type,cuisine_genre,servings,total_elapsed_minutes,output_schema_version,
   menu_target_members!menu_target_members_menu_owner_fkey(
     household_member_id,member_display_name_snapshot,anonymous_ref,
@@ -117,6 +119,10 @@ export async function loadStoredMenu(
   const { data, error } = await buildStoredMenuQuery(client, userId, menuId);
   if (error !== null) throw new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
   if (data === null) throw new HttpError(404, "menu_not_found", "献立が見つかりません");
+  // target_mode は identity 読出しと同じく household|idea のみ。不正値は fail-closed
+  if (data.target_mode !== "household" && data.target_mode !== "idea") {
+    throw new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
+  }
 
   const dishes = data.dishes
     .toSorted((a, b) => a.position - b.position)
@@ -258,6 +264,7 @@ export async function loadStoredMenu(
     safetyFingerprint: data.safety_fingerprint,
     derivationGroupId: data.derivation_group_id,
     version: data.version,
+    targetMode: data.target_mode,
     preferenceSnapshot: data.preference_snapshot,
     targetMembers,
     // 削除済みリンクは fingerprint / loadCurrentSafety に渡さない

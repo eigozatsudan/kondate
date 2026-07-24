@@ -34,7 +34,12 @@ vi.mock("./supabase-admin.js", () => ({
 import { createDishSignature, createMenuSignature } from "../../../shared/safety/deduplicate.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
-import { makeGenerationContext, makeValidatedMenu } from "../../../shared/testing/factories.js";
+import {
+  makeGenerationContext,
+  makeIdeaGenerationContext,
+  makeValidatedMenu,
+} from "../../../shared/testing/factories.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import type { GenerationCommand } from "../../../shared/contracts/generation.js";
 import type { DishRegenerationAiOutput } from "../../../shared/contracts/regeneration.js";
 import { HttpError } from "./http.js";
@@ -94,6 +99,8 @@ function makeStoredMenu(
     safetyFingerprint: "source-fp",
     derivationGroupId: "a1000000-0000-4000-8000-000000000001",
     version: 1,
+    // live menus.target_mode の正本。snapshot と照合する
+    targetMode: "household",
     preferenceSnapshot: {
       mealType: "breakfast",
       mainIngredients: ["ごはん"],
@@ -122,7 +129,7 @@ function makeLoaderDeps(
   extras: {
     group?: readonly StoredMenuAggregate[];
     recent?: readonly StoredMenuAggregate[];
-    generationContext?: ReturnType<typeof makeGenerationContext>;
+    generationContext?: GenerationContext;
   } = {},
 ): LoaderDeps & {
   loadSource: ReturnType<typeof vi.fn>;
@@ -131,19 +138,11 @@ function makeLoaderDeps(
   buildCurrentContext: ReturnType<typeof vi.fn>;
 } {
   const generationContext = extras.generationContext ?? makeGenerationContext();
-  // fingerprint を current-v3 に固定したいテスト用
-  const withFingerprint = {
-    ...generationContext,
-    safety: {
-      ...generationContext.safety,
-      // createCurrentSafetyFingerprint は決定論的。モックで上書きするため spy 側で対応
-    },
-  };
   return {
     loadSource: vi.fn(() => Promise.resolve(source)),
     loadGroup: vi.fn(() => Promise.resolve(extras.group ?? [source])),
     loadRecent: vi.fn(() => Promise.resolve(extras.recent ?? [source])),
-    buildCurrentContext: vi.fn(() => Promise.resolve(withFingerprint)),
+    buildCurrentContext: vi.fn(() => Promise.resolve(generationContext)),
     requestStartedAtMonotonicMs: 1_000,
     now: () => new Date("2026-07-11T00:00:00.000Z"),
     monotonicNow: () => 1_000,
@@ -395,6 +394,128 @@ describe("loadRegenerationExecutionContext", () => {
       ),
     ).rejects.toMatchObject({ code: "source_menu_changed", status: 422 });
     expect(deps.buildCurrentContext).not.toHaveBeenCalled();
+  });
+
+  it("returns source_menu_changed when live targetMode disagrees with snapshot after version match", async () => {
+    // snapshot は household（beforeEach 既定）、version 一致、live だけ idea
+    const deps = makeLoaderDeps(makeStoredMenu({ targetMode: "idea" }));
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({
+      code: "source_menu_changed",
+      status: 422,
+      message: "元の献立が更新されたため、もう一度操作してください",
+    });
+    expect(deps.buildCurrentContext).not.toHaveBeenCalled();
+  });
+
+  it("does not report current_target_member_required when mode flipped to idea before empty-member check", async () => {
+    // snapshot household のまま live が idea + 空メンバー → mode 不一致が先
+    const deps = makeLoaderDeps(
+      makeStoredMenu({
+        targetMode: "idea",
+        targetMemberIds: [],
+        targetMembers: [],
+      }),
+    );
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({ code: "source_menu_changed", status: 422 });
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.not.toMatchObject({ code: "current_target_member_required" });
+    expect(deps.buildCurrentContext).not.toHaveBeenCalled();
+  });
+
+  it("passes snapshot.target_mode as authorityTargetMode into buildCurrentContext", async () => {
+    // idea revalidation ゲートは snapshot のみなので household validate を走らせない
+    const ideaContext = makeIdeaGenerationContext();
+    const deps = makeLoaderDeps(makeStoredMenu({ targetMode: "idea" }), {
+      generationContext: ideaContext,
+    });
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_dish",
+            source_menu_id: "52000000-0000-4000-8000-000000000001",
+            source_menu_version: 1,
+            replace_dish_id: dish2Id,
+            target_mode: "idea",
+            servings: 2,
+            target_member_ids: [],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+
+    await loadRegenerationExecutionContext(
+      deps,
+      user,
+      dishCommand,
+      "91000000-0000-4000-8000-000000000001",
+      50_000,
+    );
+
+    expect(deps.buildCurrentContext).toHaveBeenCalledWith(
+      expect.objectContaining({ authorityTargetMode: "idea" }),
+    );
+
+    // household snapshot でも同様に伝播する
+    const householdDeps = makeLoaderDeps(makeStoredMenu({ targetMode: "household" }));
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_dish",
+            source_menu_id: "52000000-0000-4000-8000-000000000001",
+            source_menu_version: 1,
+            replace_dish_id: dish2Id,
+            target_mode: "household",
+            servings: 2,
+            target_member_ids: ["55000000-0000-4000-8000-000000000001"],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+    await loadRegenerationExecutionContext(
+      householdDeps,
+      user,
+      dishCommand,
+      "91000000-0000-4000-8000-000000000002",
+      50_000,
+    );
+    expect(householdDeps.buildCurrentContext).toHaveBeenCalledWith(
+      expect.objectContaining({ authorityTargetMode: "household" }),
+    );
   });
 });
 

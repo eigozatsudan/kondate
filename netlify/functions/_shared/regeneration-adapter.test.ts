@@ -25,13 +25,15 @@ const user = {
 
 const memberId = "55000000-0000-4000-8000-000000000001";
 
-function makeStored(): StoredMenuAggregate {
+function makeStored(overrides: Partial<StoredMenuAggregate> = {}): StoredMenuAggregate {
   return {
     menu: makeValidatedMenu(),
     userId: user.userId,
     safetyFingerprint: "source-fp",
     derivationGroupId: "a1000000-0000-4000-8000-000000000001",
     version: 1,
+    // live menus.target_mode。分岐の正本は authorityTargetMode（snapshot）
+    targetMode: "household",
     preferenceSnapshot: {
       submission: {
         mealType: "breakfast",
@@ -57,6 +59,7 @@ function makeStored(): StoredMenuAggregate {
         displayName: "家族1",
       },
     ],
+    ...overrides,
   };
 }
 
@@ -132,6 +135,7 @@ describe("createRegenerationLoaderDeps", () => {
     const context = await deps.buildCurrentContext({
       user,
       stored,
+      authorityTargetMode: "household",
       idempotencyKey: "82000000-0000-4000-8000-000000000001",
       expiredPantryConfirmations: [],
       now: new Date("2026-07-11T00:00:00.000Z"),
@@ -146,6 +150,7 @@ describe("createRegenerationLoaderDeps", () => {
       deps.buildCurrentContext({
         user,
         stored: { ...stored, preferenceSnapshot: { broken: true } },
+        authorityTargetMode: "household",
         idempotencyKey: "82000000-0000-4000-8000-000000000002",
         expiredPantryConfirmations: [],
         now: new Date("2026-07-11T00:00:00.000Z"),
@@ -154,30 +159,33 @@ describe("createRegenerationLoaderDeps", () => {
   });
 
   it("builds idea context without household safety or stored generation builder", async () => {
-    const stored = makeStored();
-    stored.preferenceSnapshot = {
-      submission: {
-        mealType: "breakfast",
-        mainIngredients: ["ごはん"],
-        cuisineGenre: "japanese",
-        targetMode: "idea",
-        targetMemberIds: [],
-        servings: 2,
-        timeLimitMinutes: 15,
-        budgetPreference: "standard",
-        avoidIngredients: [],
-        memo: "",
-        pantrySelections: [],
+    const stored = makeStored({
+      targetMode: "idea",
+      targetMemberIds: [],
+      targetMembers: [],
+      preferenceSnapshot: {
+        submission: {
+          mealType: "breakfast",
+          mainIngredients: ["ごはん"],
+          cuisineGenre: "japanese",
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          timeLimitMinutes: 15,
+          budgetPreference: "standard",
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [],
+        },
+        memberPreferences: [],
       },
-      memberPreferences: [],
-    };
-    stored.targetMemberIds = [];
-    stored.targetMembers = [];
+    });
 
     const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
     const context = await deps.buildCurrentContext({
       user,
       stored,
+      authorityTargetMode: "idea",
       idempotencyKey: "82000000-0000-4000-8000-000000000099",
       expiredPantryConfirmations: [],
       now: new Date("2026-07-11T00:00:00.000Z"),
@@ -200,25 +208,88 @@ describe("createRegenerationLoaderDeps", () => {
     expect(buildStoredGenerationContext).not.toHaveBeenCalled();
   });
 
+  it("fails closed with invalid_request when preference targetMode disagrees with authorityTargetMode", async () => {
+    // preference は household、authority は idea → invalid_request（source_menu_changed ではない）
+    const stored = makeStored({ targetMode: "idea" });
+    const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
+
+    await expect(
+      deps.buildCurrentContext({
+        user,
+        stored,
+        authorityTargetMode: "idea",
+        idempotencyKey: "82000000-0000-4000-8000-000000000010",
+        expiredPantryConfirmations: [],
+        now: new Date("2026-07-11T00:00:00.000Z"),
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_request",
+      status: 422,
+      message: "献立の対象モードを確認してください",
+    });
+    expect(buildStoredGenerationContext).not.toHaveBeenCalled();
+    expect(getSupabaseAdmin).not.toHaveBeenCalled();
+  });
+
+  it("branches idea exclusively from authorityTargetMode when preference matches", async () => {
+    // 両方 idea → 家族 safety / stored builder を呼ばない
+    const stored = makeStored({
+      targetMode: "idea",
+      targetMemberIds: [],
+      targetMembers: [],
+      preferenceSnapshot: {
+        submission: {
+          mealType: "breakfast",
+          mainIngredients: ["ごはん"],
+          cuisineGenre: "japanese",
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          timeLimitMinutes: 15,
+          budgetPreference: "standard",
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [],
+        },
+        memberPreferences: [],
+      },
+    });
+    const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
+    const context = await deps.buildCurrentContext({
+      user,
+      stored,
+      authorityTargetMode: "idea",
+      idempotencyKey: "82000000-0000-4000-8000-000000000011",
+      expiredPantryConfirmations: [],
+      now: new Date("2026-07-11T00:00:00.000Z"),
+    });
+
+    expect(context.targetMode).toBe("idea");
+    expect(context.safety).toBeNull();
+    expect(getSupabaseAdmin).not.toHaveBeenCalled();
+    expect(buildStoredGenerationContext).not.toHaveBeenCalled();
+  });
+
   it("fails closed when pantry re-query errors instead of reusing base pantryItems", async () => {
     const pantryItemId = "66000000-0000-4000-8000-000000000001";
-    const stored = makeStored();
-    stored.preferenceSnapshot = {
-      submission: {
-        mealType: "breakfast",
-        mainIngredients: ["ごはん"],
-        cuisineGenre: "japanese",
-        targetMode: "household",
-        targetMemberIds: [memberId],
-        servings: null,
-        timeLimitMinutes: 15,
-        budgetPreference: "standard",
-        avoidIngredients: [],
-        memo: "",
-        pantrySelections: [{ pantryItemId, priority: "prefer_use" as const }],
+    const stored = makeStored({
+      preferenceSnapshot: {
+        submission: {
+          mealType: "breakfast",
+          mainIngredients: ["ごはん"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [memberId],
+          servings: null,
+          timeLimitMinutes: 15,
+          budgetPreference: "standard",
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [{ pantryItemId, priority: "prefer_use" as const }],
+        },
+        memberPreferences: [],
       },
-      memberPreferences: [],
-    };
+    });
     const currentSafety = makeCurrentSafetyContext();
     vi.mocked(buildStoredGenerationContext).mockResolvedValue({
       targetMode: "household",
@@ -280,6 +351,7 @@ describe("createRegenerationLoaderDeps", () => {
       deps.buildCurrentContext({
         user,
         stored,
+        authorityTargetMode: "household",
         idempotencyKey: "82000000-0000-4000-8000-000000000003",
         expiredPantryConfirmations: [],
         now: new Date("2026-07-11T00:00:00.000Z"),

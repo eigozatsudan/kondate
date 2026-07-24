@@ -756,7 +756,8 @@ export async function runGeneration(
     }
 
     // idea 再生成は年齢適合を意味する child_friendly を外部送信前に拒否する。
-    // snapshot（loadExecutionContext）作成後・markSent 前で確定する。
+    // context.targetMode は request snapshot 権威（loadRegenerationExecutionContext の
+    // live mode 照合・preference 一致検査の後）が buildCurrentContext で確定した値。
     // UI でも非表示だが、直接 API 呼び出しに対するサーバー境界として必須。
     if (
       (execution.kind === "regenerate_menu" || execution.kind === "regenerate_dish") &&

@@ -49,6 +49,8 @@ function rawStoredMenuRow(overrides: Record<string, unknown> = {}) {
     safety_fingerprint: "b".repeat(64),
     derivation_group_id: "c1000000-0000-4000-8000-000000000001",
     version: 2,
+    // 既定は household。mode 権威テストは overrides で idea / 不正値を上書きする
+    target_mode: "household",
     preference_snapshot: {
       memberPreferences: [
         {
@@ -400,6 +402,26 @@ describe("loadStoredMenu", () => {
 
   it("fails closed when PostgREST returns an error", async () => {
     const client = mockClient({ data: null, error: { message: "boom" } });
+    await expect(loadStoredMenu(client as never, USER_ID, MENU_ID)).rejects.toMatchObject({
+      status: 503,
+      code: "menu_load_failed",
+    });
+  });
+
+  it("maps menus.target_mode into StoredMenuAggregate.targetMode", async () => {
+    const client = mockClient({
+      data: rawStoredMenuRow({ target_mode: "idea" }),
+      error: null,
+    });
+    const aggregate = await loadStoredMenu(client as never, USER_ID, MENU_ID);
+    expect(aggregate.targetMode).toBe("idea");
+  });
+
+  it("fails closed when target_mode is not household|idea", async () => {
+    const client = mockClient({
+      data: rawStoredMenuRow({ target_mode: "unknown" }),
+      error: null,
+    });
     await expect(loadStoredMenu(client as never, USER_ID, MENU_ID)).rejects.toMatchObject({
       status: 503,
       code: "menu_load_failed",

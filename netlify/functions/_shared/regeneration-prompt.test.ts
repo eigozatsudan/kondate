@@ -90,6 +90,7 @@ describe("buildDishRegenerationPrompt", () => {
       safetyFingerprint: "source-fp",
       derivationGroupId: "a1000000-0000-4000-8000-000000000001",
       version: 1,
+      targetMode: "household",
       preferenceSnapshot: {},
       targetMemberIds: ["55000000-0000-4000-8000-000000000001"],
       targetMembers: [

@@ -134,6 +134,8 @@ export function createRegenerationLoaderDeps(
   const buildCurrentContext = async (input: {
     user: AuthenticatedUser;
     stored: StoredMenuAggregate;
+    /** request snapshot.target_mode。分岐の唯一の正本（preference から推測しない） */
+    authorityTargetMode: "household" | "idea";
     idempotencyKey: string;
     expiredPantryConfirmations: LoaderDeps["buildCurrentContext"] extends (arg: infer A) => unknown
       ? A extends { expiredPantryConfirmations: infer E }
@@ -142,7 +144,6 @@ export function createRegenerationLoaderDeps(
       : never;
     now: Date;
   }): Promise<GenerationContext> => {
-    // 保存済み preference の mode を先に判別する（request snapshot と一致する提出が正本）
     let submission: PlannerSubmission;
     try {
       const envelope = preferenceSnapshotEnvelopeSchema.parse(input.stored.preferenceSnapshot);
@@ -151,8 +152,16 @@ export function createRegenerationLoaderDeps(
       throw new HttpError(422, "invalid_request", "献立条件を確認してください");
     }
 
-    if (submission.targetMode === "idea") {
+    // preference envelope と snapshot 権威の不一致は invalid_request（live↔snapshot とは別防御）
+    // live stored.targetMode と authority の不一致は context 層で source_menu_changed 済み
+    if (submission.targetMode !== input.authorityTargetMode) {
+      throw new HttpError(422, "invalid_request", "献立の対象モードを確認してください");
+    }
+
+    // idea/household 分岐は authority のみ。preference の mode で分岐しない
+    if (input.authorityTargetMode === "idea") {
       // idea branch: current household safety と buildStoredGenerationContext を呼ばない
+      // submission.targetMode は上で authority と一致済み
       const pantryItems = await loadPantryForSubmission(input.user, submission, []);
       const today = getJstDateKey(input.now);
       const expiredSelectedIds = submission.pantrySelections
@@ -169,7 +178,7 @@ export function createRegenerationLoaderDeps(
       );
       const ideaContext: IdeaGenerationContext = {
         targetMode: "idea",
-        submission,
+        submission: submission as Extract<PlannerSubmission, { targetMode: "idea" }>,
         safety: null,
         pantryItems,
         memberPreferences: [],
@@ -213,6 +222,7 @@ export function createRegenerationLoaderDeps(
     try {
       submission = plannerSubmissionSchema.parse({
         ...submission,
+        targetMode: "household",
         targetMemberIds: [...input.stored.targetMemberIds],
       });
     } catch {
