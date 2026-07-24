@@ -53,6 +53,37 @@ DBはPostgres 17です。サービスがhealthyで、`migrate`がexit 0になっ
 docker compose up -d --wait
 ```
 
+### ローカルでのログイン（Google）
+
+アプリは次の正規オリジンだけを使います。
+
+```text
+http://127.0.0.1:5173
+```
+
+ログイン画面: [http://127.0.0.1:5173/login](http://127.0.0.1:5173/login)
+
+1. 「Googleで続ける」を押す
+2. 表示される **oauth-mock**（「ローカルGoogle認証」）で「Googleテスト利用者で続ける」を選ぶ
+
+ローカルでは本物の Google OAuth は使いません。`VITE_AUTH_PROVIDER_MODE=oauth_mock` のとき、ブラウザは `http://127.0.0.1:8788` の mock に飛び、成功後に認証継続 API（`/api/auth/continuations`）と Supabase セッション確立へ進みます。
+
+#### なぜ `localhost` ではログインできないか
+
+`http://localhost:5173` と `http://127.0.0.1:5173` はブラウザ上で**別オリジン**です。ローカル契約は次のように `127.0.0.1` に固定されています。
+
+| 設定 | 値 |
+| --- | --- |
+| アプリ / `SERVER_SITE_ORIGIN` / `SITE_URL` | `http://127.0.0.1:5173` |
+| oauth-mock の `appOrigin` / exchange CORS | `http://127.0.0.1:5173` のみ |
+| Supabase redirect allow list | `http://127.0.0.1:5173/**` |
+
+そのため `localhost` で開くと、認証継続 create が Origin 不一致で失敗したり、callback / CORS が噛み合わず、Google ログインが成立しません。ブックマークやアドレスバーも常に `127.0.0.1` を使ってください。
+
+#### `/api/auth/continuations` が 404 になる場合
+
+通常の `npm run dev`（Compose の `app`）では、`@netlify/vite-plugin` の **middleware 経由**で Netlify Functions を配信します。本番 CSP をローカルに載せないために middleware 全体を切ると、Function も一緒に死に、`POST /api/auth/continuations` が空の 404 になります。CSP だけ落とす現行の `vite.config.ts` を変えず、スタックを `docker compose up -d --wait` で起動した状態で `127.0.0.1` から開いてください。
+
 主な検証コマンド:
 
 ```bash
