@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router";
+import { useAuth } from "@/features/auth/use-auth";
 import { GenerationStatusPanel } from "../components/generation-status-panel";
 import { useGenerationRecovery } from "../hooks/use-generation-recovery";
 
@@ -13,8 +14,13 @@ import { useGenerationRecovery } from "../hooks/use-generation-recovery";
 // あっても mount effect が確定する前に /planner へ遷移してしまう。そのため
 // 1 レンダー分だけ判定を遅らせ、復旧フックの mount effect と同じコミットの
 // パッシブエフェクトで checked を true にしてから idle 判定を行う。
+//
+// 終端画面の AI 通信試行残数は request-local quota ではなく useUsageToday が正。
+// session の userId をパネルへ渡さないと本番経路で残数領域が描画されない。
 export function GenerationPage() {
   const recovery = useGenerationRecovery();
+  const auth = useAuth();
+  const userId = auth.session?.user.id;
   const [checked, setChecked] = useState(false);
   useEffect(() => {
     setChecked(true);
@@ -27,7 +33,7 @@ export function GenerationPage() {
   }
   return (
     <main className="page-frame stack">
-      <GenerationStatusPanel state={recovery.state} />
+      <GenerationStatusPanel state={recovery.state} userId={userId} />
     </main>
   );
 }

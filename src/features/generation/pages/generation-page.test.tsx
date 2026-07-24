@@ -13,6 +13,7 @@ import { GenerationPage } from "./generation-page";
 
 const mockPost = vi.hoisted(() => vi.fn());
 const mockStatus = vi.hoisted(() => vi.fn());
+const mockGetUsageToday = vi.hoisted(() => vi.fn());
 const unsubscribeMock = vi.hoisted(() => vi.fn());
 const currentUserIdRef = vi.hoisted(() => ({ current: "" }));
 
@@ -34,6 +35,9 @@ vi.mock("@/shared/lib/supabase", () => ({
 vi.mock("../api/generation-api", () => ({
   postGeneration: mockPost,
   getGenerationStatus: mockStatus,
+}));
+vi.mock("../api/usage-today-api", () => ({
+  getUsageToday: mockGetUsageToday,
 }));
 
 // --- フィクスチャ --------------------------------------------------------
@@ -75,6 +79,21 @@ function processingStatus(
   };
 }
 
+function failedStatus(idempotencyKey: string): Extract<GenerationStatusData, { status: "failed" }> {
+  return {
+    status: "failed",
+    idempotencyKey,
+    requestId: "50000000-0000-4000-8000-000000000001",
+    error: {
+      code: "invalid_ai_response",
+      message: "献立を作成できませんでした。成功回数には含まれません。",
+      retryable: true,
+    },
+    completedAt: "2026-07-11T00:00:01.000Z",
+    quota,
+  };
+}
+
 function renderGenerationPage() {
   const router = createMemoryRouter(
     [
@@ -97,6 +116,13 @@ function renderGenerationPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   currentUserIdRef.current = USER_ID;
+  mockGetUsageToday.mockResolvedValue({
+    success: { consumed: 1, limit: 5, remaining: 4 },
+    attempts: { sent: 2, limit: 12, remaining: 10 },
+    shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+    globalAvailable: true,
+    retryAt: null,
+  });
 });
 
 describe("GenerationPage", () => {
@@ -130,5 +156,24 @@ describe("GenerationPage", () => {
       expect(router.state.location.pathname).toBe("/planner");
     });
     expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+  });
+
+  it("wires session userId so terminal failure shows live usage today", async () => {
+    // ページが userId を渡さないと request-local quota だけになり、
+    // useUsageToday（AI通信試行残数）が本番経路で動かない。
+    const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
+    savePendingGeneration(pending);
+    mockStatus.mockResolvedValue(failedStatus(KEY_A));
+
+    renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+    });
+    expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
+    expect(screen.getByText("AI通信試行：本日あと10回")).toBeVisible();
+    expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
+    // request-local の成功回数だけ表示するフォールバック経路ではないこと
+    expect(mockGetUsageToday).toHaveBeenCalled();
   });
 });
