@@ -1,0 +1,52 @@
+# UI feedback remediation / Task 2 report
+
+- status: `DONE_WITH_CONCERNS`
+- REDで確認した失敗:
+  - 前回実装時に、追加した仕様テストを含むfocusedテストで28件の失敗を確認した。
+  - 再開後、外部変更で再導入された「設定する家族」プルダウンを削除してfocusedテストを実行し、パラメータ化テストの固定表示名参照による1件の失敗を確認した。実データの表示名を参照するよう修正した。
+- 実装内容と設計判断:
+  - planner下書きのメイン食材をクライアント、query、Function、共有filterまで渡し、NFKC正規化・件数・文字数・重複を検証する。
+  - 安全条件を満たす固定候補について、料理名または材料名が全メイン食材に対応する場合だけ返す。該当なしでは条件を緩めない。
+  - 緊急献立の全状態に献立画面への戻り導線を置き、候補番号、料理名、所要時間、人数、材料・作り方を区切った。
+  - 家族切り替えを一覧の編集ボタンへ一本化した。完了成功時は編集フォームを閉じ、失敗時は開いたままにし、再編集時は編集中見出しへフォーカスする。
+- 実行した検証と結果:
+  - focused Vitest: 5 files、109 tests PASS。
+  - `npm run typecheck`: FAIL。Task外で未変更の `vite.config.ts:33` に既存の型エラー。
+  - `npm run lint`: FAIL。Task外で未変更の `vite.config.ts:26` に既存のLintエラー（ほか既存warning 2件）。
+  - `npm run format:check`: FAIL。Task外のworktree内permission errorと、未変更の `README.md`、`infra/supabase.override.yaml` の既存不整形。
+  - Task所有12ファイルのscoped Prettier check: PASS。
+  - `git diff --check`: PASS。
+- self-review:
+  - メイン食材は手順・説明文では一致させず、家族・アレルギー・対象外食の安全filterと冷蔵庫食材による並び替えを維持した。
+  - 緊急献立の既存情報、家族設定の保存queue、registered保留intent、complete/draft分岐、削除確認を維持した。
+  - Task外の `.codex/config.toml`、pantry 3ファイル、planner 2ファイルは編集・stage・commitしていない。
+- commit hash: `d8d1ea1`
+- 未解決事項:
+  - repository全体のtypecheck、lint、format:checkは上記Task外の既存問題により未通過。
+
+## Fix round
+
+- status: `DONE_WITH_CONCERNS`
+- REDで確認した失敗:
+  - filter / Function / household settings / styles contrast の132件中、指摘を再現する12件の失敗を確認した。
+  - 内部空白・句読点・format文字の過剰一致、安全条件による固定候補0件時の文言、complete/draft完了中の編集対象切替、Task追加CSSのglobal appearance guard違反を再現した。
+- 実装内容と設計判断:
+  - メイン食材の一致専用処理をNFKC + trimだけに限定し、安全判定用の文字除去正規化と分離した。
+  - 非空メイン食材で安全な最終候補が0件なら、安全条件を緩めず `main_ingredient_no_match` を返す。
+  - 完了開始時のmember IDを捕捉し、成功時点でも同じ家族を編集中の場合だけフォームを閉じる。
+  - 候補番号の見た目を緊急献立ページ内へscopeし、既存のsection tint tokenを使用した。
+- 実行した検証と結果:
+  - focused Vitest 5 files: 121 tests PASS。
+  - `src/styles.contrast.test.ts`: Task起因の `.emergency-candidate-number` 失敗は解消。Task外の既存 `.guided-planner-theme .ingredient-pantry` による2 testsのみFAIL。
+  - Task変更6ファイルのscoped Prettier check: PASS。
+  - `npm run typecheck`: FAIL。Task外の `vite.config.ts:33` に既存の型エラー。
+  - `npm run lint`: FAIL。Task外の `vite.config.ts:26` に既存のLintエラー（ほか既存warning 2件）。
+  - `npm run format:check`: FAIL。Task外worktreeのpermission errorと、未変更の `README.md`、`infra/supabase.override.yaml` の既存不整形。
+  - `git diff --check`: PASS。
+- self-review:
+  - safety filterの順序・除外条件、料理名と材料名だけを使う照合、complete/draft API分岐と失敗時のフォーム維持を変更していない。
+  - complete memberの遅延成功・失敗、draft memberの遅延成功、`completeMember`失敗をテストした。
+  - Task外の `.codex/config.toml`、pantry 3ファイル、planner 2ファイルは編集・stageしていない。
+- fix round commit hash: 本reportを含むcommitの確定hashを親へ報告する。
+- 未解決事項:
+  - repository全体のstyles contrast、typecheck、lint、format checkは上記Task外の既存問題により未通過。

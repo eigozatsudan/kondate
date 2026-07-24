@@ -511,15 +511,15 @@
 }
 
 .emergency-candidate-header h2,
-.emergency-candidate-number,
+.emergency-menu-page .emergency-candidate-number,
 .emergency-candidate-overview p {
   margin: 0;
 }
 
-.emergency-candidate-number {
+.emergency-menu-page .emergency-candidate-number {
   width: fit-content;
   border-radius: 999px;
-  background: #f8ece7;
+  background: var(--section-tint);
   color: var(--primary-strong);
   padding: 3px 10px;
   font-weight: 700;

@@ -343,4 +343,38 @@ describe("reviewed emergency menus", () => {
     });
     expect(instructionOnly).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
   });
+
+  it.each(["鶏 肉", "鶏。肉", "\u200B"])(
+    "does not over-match a main ingredient that differs after NFKC and trim: %s",
+    (mainIngredient) => {
+      const result = filterEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: [mainIngredient],
+        pantryNames: [],
+        context: makeCurrentSafetyContext(),
+      });
+
+      expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    },
+  );
+
+  it("keeps the main-ingredient empty reason when safety excludes every fixture", () => {
+    const context = makeCurrentSafetyContext();
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["鶏肉"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext({
+        members: [
+          {
+            ...context.members[0]!,
+            allergyStatus: "registered",
+            allergenIds: ["chicken"],
+          },
+        ],
+      }),
+    });
+
+    expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+  });
 });

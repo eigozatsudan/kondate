@@ -572,6 +572,7 @@ export function HouseholdSettingsForm({
   }, [api, cancellingDraft, membersKey, queryClient, selected]);
   const complete = async () => {
     if (selected === undefined || values === undefined) return;
+    const completingMemberId = selected.id;
     const parsed = householdSettingsSchema.safeParse(values);
     if (!parsed.success) {
       const nextErrors = toHouseholdFieldErrors(parsed.error);
@@ -620,11 +621,13 @@ export function HouseholdSettingsForm({
         );
         await api.invalidateSafety();
         setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
-        setEditorOpen(false);
+        if (selectedMemberIdRef.current === completingMemberId) {
+          setEditorOpen(false);
+        }
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
       }
-    } else {
+    } else if (selectedMemberIdRef.current === completingMemberId) {
       setEditorOpen(false);
     }
     setSaving(false);

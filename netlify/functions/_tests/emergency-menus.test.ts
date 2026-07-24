@@ -152,4 +152,73 @@ describe("GET /api/emergency-menus", () => {
     expect(authenticate).not.toHaveBeenCalled();
     expect(loadContext).not.toHaveBeenCalled();
   });
+
+  it.each(["鶏 肉", "鶏。肉", "\u200B"])(
+    "does not over-match the adversarial main ingredient %s",
+    async (mainIngredient) => {
+      const handler = createEmergencyMenusHandler({
+        authenticate: () => Promise.resolve({ userId }),
+        loadContext: () =>
+          Promise.resolve({
+            context: makeCurrentSafetyContext(),
+            memberLabels: Object.freeze({ member_1: "家族1" }),
+          }),
+        loadPantryNames: () => Promise.resolve([]),
+      });
+      const query = new URLSearchParams({
+        meal: "dinner",
+        targetMemberIds: memberId,
+        mainIngredients: mainIngredient,
+      });
+
+      const response = await handler(
+        new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        data: {
+          candidates: [],
+          message: "選択したメイン食材に合う固定候補がありません",
+        },
+      });
+    },
+  );
+
+  it("keeps the main-ingredient message when a standard allergen excludes every fixture", async () => {
+    const context = makeCurrentSafetyContext();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext: () =>
+        Promise.resolve({
+          context: makeCurrentSafetyContext({
+            members: [
+              {
+                ...context.members[0]!,
+                allergyStatus: "registered",
+                allergenIds: ["chicken"],
+              },
+            ],
+          }),
+          memberLabels: Object.freeze({ member_1: "家族1" }),
+        }),
+      loadPantryNames: () => Promise.resolve([]),
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E9%B6%8F%E8%82%89`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        candidates: [],
+        message: "選択したメイン食材に合う固定候補がありません",
+      },
+    });
+  });
 });

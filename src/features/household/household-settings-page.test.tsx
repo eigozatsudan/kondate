@@ -193,6 +193,145 @@ it("keeps the editor open when completing the member fails", async () => {
   expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
 });
 
+it("does not close member B when member A complete save succeeds after switching", async () => {
+  const secondMember: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  let resolveUpdate: ((saved: HouseholdMemberRow) => void) | undefined;
+  const updateMember = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveUpdate = resolve;
+      }),
+  );
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(member.id, expect.any(Object));
+  });
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+
+  await act(async () => {
+    resolveUpdate?.(member);
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
+  });
+});
+
+it("does not close a newly added draft when an earlier draft completion succeeds", async () => {
+  const firstDraft: HouseholdMemberRow = {
+    ...member,
+    id: "draft-1",
+    status: "draft",
+    display_name: "追加中",
+  };
+  const nextDraft: HouseholdMemberRow = {
+    ...firstDraft,
+    id: "draft-2",
+    display_name: null,
+    sort_order: 1,
+  };
+  let resolveComplete: ((saved: HouseholdMemberRow) => void) | undefined;
+  const completeMember = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveComplete = resolve;
+      }),
+  );
+  const createDraft = vi.fn().mockResolvedValue(nextDraft);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([firstDraft]),
+    updateDraft: vi.fn().mockResolvedValue(firstDraft),
+    completeMember,
+    createDraft,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith(firstDraft.id);
+  });
+  await userEvent.click(screen.getByRole("button", { name: "家族を追加" }));
+  expect(await screen.findByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+
+  await act(async () => {
+    resolveComplete?.({ ...firstDraft, status: "complete" });
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+  });
+});
+
+it("keeps member B open when member A complete save fails after switching", async () => {
+  const secondMember: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  let rejectUpdate: ((error: Error) => void) | undefined;
+  const updateMember = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((_resolve, reject) => {
+        rejectUpdate = reject;
+      }),
+  );
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalled();
+  });
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
+
+  await act(async () => {
+    rejectUpdate?.(new Error("家族設定を保存できませんでした"));
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
+  });
+});
+
+it("keeps a draft editor open when completeMember fails", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "draft-1",
+    status: "draft",
+    display_name: "追加中",
+  };
+  const completeMember = vi.fn().mockRejectedValue(new Error("家族設定を完了できませんでした"));
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    updateDraft: vi.fn().mockResolvedValue(draft),
+    completeMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("家族設定を完了できませんでした");
+  expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+});
+
 it("家族0件でも登録済み領域と追加領域を分けて表示する", async () => {
   renderSettings({ listMembers: vi.fn().mockResolvedValue([]) });
 

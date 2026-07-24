@@ -135,6 +135,10 @@ function emergencyGenerationContext(
   };
 }
 
+function normalizeMainIngredientForMatch(value: string): string {
+  return value.normalize("NFKC").trim();
+}
+
 export function filterEmergencyMenus(input: {
   mealType: MealType;
   mainIngredients?: readonly string[];
@@ -178,16 +182,14 @@ export function filterEmergencyMenus(input: {
       );
       return validated.ok ? [validated.menu] : [];
     });
-  const mainIngredients = (input.mainIngredients ?? [])
-    .map(normalizeFoodText)
-    .filter((name) => name !== "");
+  const mainIngredients = (input.mainIngredients ?? []).map(normalizeMainIngredientForMatch);
   const menus = safetyCompatibleMenus
     .filter((menu) => {
       if (mainIngredients.length === 0) return true;
       // 自由文の手順や説明ではなく、料理名と材料名だけをメイン食材との対応根拠にする。
       const candidateNames = menu.dishes.flatMap((dish) => [
-        normalizeFoodText(dish.name),
-        ...dish.ingredients.map((ingredient) => normalizeFoodText(ingredient.name)),
+        normalizeMainIngredientForMatch(dish.name),
+        ...dish.ingredients.map((ingredient) => normalizeMainIngredientForMatch(ingredient.name)),
       ]);
       return mainIngredients.every((mainIngredient) =>
         candidateNames.some(
@@ -208,7 +210,7 @@ export function filterEmergencyMenus(input: {
     emptyReason:
       menus.length > 0
         ? null
-        : mainIngredients.length > 0 && safetyCompatibleMenus.length > 0
+        : mainIngredients.length > 0
           ? "main_ingredient_no_match"
           : "no_matching_fixture",
   };
