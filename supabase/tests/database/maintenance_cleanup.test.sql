@@ -557,8 +557,20 @@ begin
     raise exception 'exact boundary shopping mutation deleted by per-user cleaner';
   end if;
 
-  if private.cleanup_shopping_mutations(v_exact, 250) <> 0 then
-    raise exception 'account-wide cleaner deleted exact-boundary row';
+  -- account-wide は全ユーザの古い行を消す。他スイート残留で削除件数 > 0 になり得るため、
+  -- 件数ゼロではなく「exact 境界キーが残る」ことだけを契約として固定する。
+  perform private.cleanup_shopping_mutations(v_exact, 250);
+  if not exists (
+    select 1 from private.shopping_mutations
+    where idempotency_key = 'f4500000-0000-4000-8000-000000000002'
+  ) then
+    raise exception 'exact boundary shopping mutation deleted by account-wide cleaner';
+  end if;
+  if exists (
+    select 1 from private.shopping_mutations
+    where idempotency_key = 'f4500000-0000-4000-8000-000000000001'
+  ) then
+    raise exception 'older shopping mutation reappeared after account-wide cleaner';
   end if;
 end;
 $shop_boundary$;
