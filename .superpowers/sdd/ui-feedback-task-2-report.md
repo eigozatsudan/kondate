@@ -50,3 +50,22 @@
 - fix round commit hash: 本reportを含むcommitの確定hashを親へ報告する。
 - 未解決事項:
   - repository全体のstyles contrast、typecheck、lint、format checkは上記Task外の既存問題により未通過。
+
+## Fix round 2
+
+- status: `DONE_WITH_CONCERNS`
+- REDで確認した失敗:
+  - `unsupportedDietStatus: "present"` と未対応custom allergyの早期安全除外について、filter 2件・Function 2件が期待どおり失敗した。
+- 実装内容と設計判断:
+  - 安全除外条件と候補生成は変更せず、非空メイン食材がある早期安全除外のempty reasonだけを `main_ingredient_no_match` に統一した。
+  - メイン食材なしの早期安全除外は従来どおり `current_safety_unavailable` を維持した。
+- 実行した検証と結果:
+  - focused Vitest 5 files: 125 tests PASS。
+  - Task変更3ファイルのscoped Prettier check: PASS。
+  - `git diff --check`: PASS。
+- self-review:
+  - 対象外食・未確認/未対応アレルギーによる安全除外を緩めず、表示理由だけをAcceptanceの空候補文言へ結び付けた。
+  - Task外の `.codex/config.toml`、pantry 3ファイル、planner 2ファイルは編集・stageしていない。
+- fix round 2 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
+- 未解決事項:
+  - repository全体の既存問題とDocker競合は前回Verifier報告どおり未解決。

@@ -39,6 +39,41 @@ describe("GET /api/emergency-menus", () => {
     });
   });
 
+  it.each([{ unsupportedDietStatus: "present" as const }, { hasUnmappedCustomAllergy: true }])(
+    "keeps the main-ingredient message for an early safety exclusion",
+    async (memberPatch) => {
+      const context = makeCurrentSafetyContext();
+      const handler = createEmergencyMenusHandler({
+        authenticate: () => Promise.resolve({ userId }),
+        loadContext: () =>
+          Promise.resolve({
+            context: makeCurrentSafetyContext({
+              members: [{ ...context.members[0]!, ...memberPatch }],
+            }),
+            memberLabels: Object.freeze({ member_1: "家族1" }),
+          }),
+        loadPantryNames: () => Promise.resolve([]),
+      });
+      const query = new URLSearchParams({
+        meal: "dinner",
+        targetMemberIds: memberId,
+        mainIngredients: "鶏肉",
+      });
+
+      const response = await handler(
+        new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+      );
+
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        data: {
+          candidates: [],
+          message: "選択したメイン食材に合う固定候補がありません",
+        },
+      });
+    },
+  );
+
   it.each([
     [
       Array.from(

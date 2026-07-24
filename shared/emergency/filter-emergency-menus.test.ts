@@ -377,4 +377,21 @@ describe("reviewed emergency menus", () => {
 
     expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
   });
+
+  it.each([{ unsupportedDietStatus: "present" as const }, { hasUnmappedCustomAllergy: true }])(
+    "keeps the main-ingredient reason for an early safety exclusion",
+    (memberPatch) => {
+      const context = makeCurrentSafetyContext();
+      const result = filterEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        pantryNames: [],
+        context: makeCurrentSafetyContext({
+          members: [{ ...context.members[0]!, ...memberPatch }],
+        }),
+      });
+
+      expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    },
+  );
 });

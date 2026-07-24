@@ -146,6 +146,7 @@ export function filterEmergencyMenus(input: {
   context: CurrentSafetyContext;
   memberLabels?: Readonly<Record<string, string>>;
 }): EmergencyFilterResult {
+  const mainIngredients = (input.mainIngredients ?? []).map(normalizeMainIngredientForMatch);
   if (
     input.context.members.length === 0 ||
     input.context.members.some(
@@ -155,7 +156,11 @@ export function filterEmergencyMenus(input: {
         member.unsupportedDietStatus !== "none",
     )
   ) {
-    return { menus: [], emptyReason: "current_safety_unavailable" };
+    return {
+      menus: [],
+      emptyReason:
+        mainIngredients.length > 0 ? "main_ingredient_no_match" : "current_safety_unavailable",
+    };
   }
 
   const pantry = input.pantryNames.map(normalizeFoodText).filter((name) => name !== "");
@@ -182,7 +187,6 @@ export function filterEmergencyMenus(input: {
       );
       return validated.ok ? [validated.menu] : [];
     });
-  const mainIngredients = (input.mainIngredients ?? []).map(normalizeMainIngredientForMatch);
   const menus = safetyCompatibleMenus
     .filter((menu) => {
       if (mainIngredients.length === 0) return true;
