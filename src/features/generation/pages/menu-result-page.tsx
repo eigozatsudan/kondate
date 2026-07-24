@@ -107,12 +107,13 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
         </Link>
       </main>
     );
-  // 献立読み込み中でも操作バー枠は出さず、中立ステータスのみ
+  // 読み込み中も main ランドマークを維持する（axe region / ルート a11y 契約）。
+  // 操作バーは出さず、中立ステータスのみ。
   if (query.isPending)
     return (
-      <p role="status" className="p-4">
-        献立を読み込んでいます
-      </p>
+      <main className="p-4">
+        <p role="status">献立を読み込んでいます</p>
+      </main>
     );
 
   // targetMode をUI分岐の唯一の判定元とし、conditional hook呼び出しではなく

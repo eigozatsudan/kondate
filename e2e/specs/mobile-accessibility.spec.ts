@@ -13,10 +13,9 @@ const assertNoHorizontalScroll = async (page: Page) =>
     .toBe(true);
 
 /**
- * Plan 7 contract: major action buttons' height ≥ 44. Native radios/checkboxes are out of scope.
- * Never silently skip a missing name — that turns a missing primary control into a false green.
- * Callers pass only buttons that **must** exist in the current route × mode × step; use
- * `assertMajorActionHeights(page, { "次へ": 1 })` form when a single instance is required.
+ * Plan 7 契約: 主要 action ボタン高さ ≥ 44。native radio/checkbox は対象外。
+ * 名前欠落を黙ってスキップすると偽 green になるため、必須コントロールは件数固定で検査する。
+ * 呼び出し側は「その step で必ず存在する」ボタンだけを渡す。
  */
 const assertMajorActionHeights = async (page: Page, required: Readonly<Record<string, number>>) => {
   for (const [name, expectedCount] of Object.entries(required)) {
@@ -30,13 +29,13 @@ const assertMajorActionHeights = async (page: Page, required: Readonly<Record<st
   }
 };
 
-/** Per-step required majors — do not pass a union of every wizard button on every step. */
+/** 横スクロール無し + 主要操作高さ。全 wizard step（review 含む）で使う。 */
 const assertStepFits = async (page: Page, requiredMajors: Readonly<Record<string, number>>) => {
   await assertNoHorizontalScroll(page);
   await assertMajorActionHeights(page, requiredMajors);
 };
 
-/** Wait for draft RPC after a wizard field change (required before 次へ). */
+/** 下書き autosave RPC 完了待ち（次へ前に必須）。 */
 const waitDraftSave = (page: Page) =>
   page.waitForResponse(
     (response) =>
@@ -45,8 +44,8 @@ const waitDraftSave = (page: Page) =>
   );
 
 /**
- * Household only: make default mock success valid (wheat label confirmations).
- * Call once before the household wizard when using completedOnboardingPage.
+ * household のみ: 既定 mock success が通るよう小麦ラベル確認を家族に載せる。
+ * completedOnboardingPage 利用時、household wizard の前に1回呼ぶ。
  */
 const ensureWheatMemberForMockSuccess = async (page: Page) => {
   await page.goto("/settings");
@@ -59,9 +58,9 @@ const ensureWheatMemberForMockSuccess = async (page: Page) => {
 };
 
 /**
- * completedOnboardingPage already has privacy; ideaModePage does not.
- * After privacy return, reload is mandatory (same as history.ts seedGeneratedIdeaMenu).
- * ideaMode requires setMockScenario before POST.
+ * completedOnboardingPage は privacy 済み、ideaModePage は未。
+ * privacy 復帰後は reload 必須（history.ts の seedGeneratedIdeaMenu と同じ）。
+ * idea 生成前は setMockScenario が必要。
  */
 const ensurePrivacyThenGenerate = async (
   page: Page,
@@ -94,7 +93,7 @@ const ensurePrivacyThenGenerate = async (
 const answerSharedWizardSteps = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
-  // meal step: 次へ required after selection
+  // meal: 選択後に「次へ」が必須
   await assertStepFits(page, { 次へ: 1 });
   await clickWizardNext(page);
 
@@ -131,8 +130,9 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
   if (mode === "idea") {
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   }
-  // review may show 献立を作る disabled until privacy; still require the control to exist
-  await assertMajorActionHeights(page, { 献立を作る: 1 });
+  // review 自身も meal〜audience と同様に横スクロール無しを要求する。
+  // privacy 未了では「献立を作る」が disabled でもコントロール自体は存在する。
+  await assertStepFits(page, { 献立を作る: 1 });
 };
 
 for (const width of [320, 375, 430]) {

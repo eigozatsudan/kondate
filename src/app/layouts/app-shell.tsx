@@ -46,6 +46,23 @@ export function AppShell() {
       window.removeEventListener(householdSafetyChangedEvent, invalidate);
     };
   }, [queryClient, userId]);
+
+  // ルート遷移後、ページ h1 へプログラムフォーカスする（Plan 6 Task 5 契約）。
+  // 描画後の DOM を対象にするため rAF で1フレーム待つ。既に tabindex がある見出しは尊重し、
+  // 無い場合のみ -1 を付与する（キーボード順序に載せない）。
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const heading =
+        document.querySelector("main h1") ?? document.querySelector("h1");
+      if (!(heading instanceof HTMLElement)) return;
+      if (!heading.hasAttribute("tabindex")) {
+        heading.tabIndex = -1;
+      }
+      heading.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.pathname]);
+
   return (
     <div className="app-section" data-section={sectionForPath(location.pathname)}>
       <Outlet />
