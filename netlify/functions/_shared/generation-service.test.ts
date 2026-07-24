@@ -2226,36 +2226,36 @@ describe("runGeneration idea child_friendly rejection", () => {
   });
 });
 
-// --- Plan 7 Task 8: mode 矛盾と idea 人数改変 ---
-// integrity resolve が 4 系統の矛盾 payload を拒否したとき、reserve/provider/succeed が
-// 一切進まないことを固定する（ラベルだけの同一 stub は使わない）。
-describe("runGeneration mode contradiction and idea servings mutation matrix", () => {
-  // 各 case は integrity が返す拒否理由と draft 相当の矛盾をラベルと対応させる。
-  // resolve が throw した時点で reserveNew 以前に終端するため provider/menu/success は 0。
+// --- Plan 7 Task 8: runGeneration のオーケストレーション短絡 ---
+// ここは integrity / validate をモックして「拒否後に reserve・送信・succeed へ進まない」ことだけを固定する。
+// mode 矛盾 payload の実検出は generation-integrity-context / planner Zod / pgTAP の責務。
+// servings_mismatch の実検出は validate-generated-menu / adversarial / finalize pgTAP の責務。
+describe("runGeneration propagates integrity invalid_request before reserve", () => {
+  // メッセージは伝播確認用の固定文言。mode 矛盾をこの層で検出したことの証明ではない。
   it.each([
     {
-      label: "idea + non-empty member IDs",
+      label: "integrity message A",
       message: "アイデアモードでは対象家族を指定できません。",
     },
     {
-      label: "idea + null servings",
+      label: "integrity message B",
       message: "アイデアモードでは人数が必要です。",
     },
     {
-      label: "household + empty member IDs",
+      label: "integrity message C",
       message: "対象の家族人数が不正です。",
     },
     {
-      label: "household + non-null direct servings",
+      label: "integrity message D",
       message: "家族モードでは人数を指定できません。",
     },
   ] as const)(
-    "$label: provider send 0, succeed 0, menu 0, success consume 0",
+    "$label: throws invalid_request without reserve/send/succeed",
     async ({ message }) => {
       const repository = makeRepository();
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
       const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
-      // 実 integrity 境界と同じ invalid_request を、case ごとに異なる message で拒否する
+      // integrity 境界が既に拒否したあとの伝播だけを見る（payload 自体は組み立てない）
       vi.mocked(resolveGenerationIntegrityContext).mockRejectedValueOnce(
         new HttpError(422, "invalid_request", message),
       );
@@ -2276,7 +2276,9 @@ describe("runGeneration mode contradiction and idea servings mutation matrix", (
     },
   );
 
-  it("rejects idea AI servings mismatch without succeed or success quota", async () => {
+  // validateGeneratedMenu が既に servings_mismatch を返したときの終端だけを固定する。
+  // AI 出力からの mismatch 検出自体は unmocked validator テスト側の証明。
+  it("terminalizes mocked validation servings_mismatch without succeed or success quota", async () => {
     const repository = makeRepository();
     const ideaContext = makeIdeaGenerationContext({
       submission: {
@@ -2285,7 +2287,7 @@ describe("runGeneration mode contradiction and idea servings mutation matrix", (
         mainIngredients: ["鶏肉"],
       },
     });
-    // materialize は通過させ、validate だけ servings_mismatch で拒否する（敵対人数改変）
+    // materialize は通過させ、validate をモックで servings_mismatch にする（検出ロジックは見ない）
     vi.mocked(materializeAiGeneratedMenu).mockReturnValue(
       makeGeneratedMenu({ servings: 5, adaptations: [], labelConfirmations: [] }),
     );

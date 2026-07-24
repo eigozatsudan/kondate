@@ -657,8 +657,9 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
 // --- Plan 7 Task 8: 320px / keyboard / reduced-motion / 200% ---
 // PlannerWizard は共有 WizardFrame ではなく step ごとの section を描画する。
 // 44px は primary/戻る等の操作 button に適用し、native radio の見た目サイズは対象外。
-// ポインタ click は bottom-nav 干渉を避けるため使わず、Tab / Space / Enter と
-// フォーカス後の keyboard 操作だけで 4 質問 → review → privacy/generate へ進む。
+//
+// レイアウト契約（320px / 44px）は programmatic focus + keyboard 起動で測定する。
+// Tab 順の証明は「keyboard only」test に限定し、未到達時の .focus() フォールバックは使わない。
 
 /** 主要操作の bounding box が 44 CSS px 以上であることを 1 コントロール単位で固定する */
 async function expectMajorActionAtLeast44(
@@ -683,13 +684,88 @@ async function expectNoHorizontalScroll(page: import("@playwright/test").Page): 
 
 /**
  * フォーカス中の操作を Space/Enter で起動する。
- * bottom-nav に遮られる pointer click を避け、keyboard 経路だけを使う。
+ * レイアウト契約用。Tab 順証明には使わない programmatic focus 経路の補助。
  */
 async function activateFocusedWithKeyboard(
   page: import("@playwright/test").Page,
   key: "Space" | "Enter" = "Enter",
 ): Promise<void> {
   await page.keyboard.press(key);
+}
+
+/** 現在フォーカス要素の role / name 等を読む（Tab 順プローブ用） */
+async function readFocusedControl(page: import("@playwright/test").Page): Promise<{
+  role: string | null;
+  type: string | null;
+  name: string;
+  tagName: string;
+  disabled: boolean;
+}> {
+  return page.evaluate(() => {
+    const normalize = (value: string): string => value.replace(/\s+/gu, " ").trim();
+    const el = document.activeElement as HTMLElement | null;
+    if (el === null || el === document.body || el === document.documentElement) {
+      return { role: null, type: null, name: "", tagName: "", disabled: true };
+    }
+    const role = el.getAttribute("role");
+    const type = el.getAttribute("type");
+    // accessible name の近似: aria-label → <label> 関連付け → 自身の textContent。
+    // native radio は input 自身の textContent が空で、label 内テキストが名前になる。
+    const ariaLabel = el.getAttribute("aria-label");
+    let name = "";
+    if (ariaLabel !== null && ariaLabel !== "") {
+      name = normalize(ariaLabel);
+    } else if (
+      (el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLSelectElement) &&
+      el.labels !== null &&
+      el.labels.length > 0
+    ) {
+      name = normalize(
+        Array.from(el.labels)
+          .map((label) => label.textContent)
+          .join(" "),
+      );
+    } else {
+      name = normalize(el.textContent);
+    }
+    const disabledAttr = el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true";
+    const formDisabled =
+      el instanceof HTMLButtonElement ||
+      el instanceof HTMLInputElement ||
+      el instanceof HTMLSelectElement ||
+      el instanceof HTMLTextAreaElement
+        ? el.disabled
+        : false;
+    return {
+      role,
+      type,
+      name,
+      tagName: el.tagName.toLowerCase(),
+      disabled: disabledAttr || formDisabled,
+    };
+  });
+}
+
+/**
+ * Tab を押し続けて predicate に合うコントロールへ到達する。
+ * 未到達は fail hard（programmatic .focus() フォールバック禁止）。
+ */
+async function tabUntil(
+  page: import("@playwright/test").Page,
+  match: (focus: Awaited<ReturnType<typeof readFocusedControl>>) => boolean,
+  label: string,
+  maxTabs = 32,
+): Promise<void> {
+  for (let i = 0; i < maxTabs; i += 1) {
+    await page.keyboard.press("Tab");
+    const focus = await readFocusedControl(page);
+    if (match(focus)) {
+      return;
+    }
+  }
+  throw new Error(`Tab did not reach ${label} within ${String(maxTabs)} presses`);
 }
 
 test.describe("wizard accessibility and layout contracts", () => {
@@ -699,6 +775,7 @@ test.describe("wizard accessibility and layout contracts", () => {
     // 契約の正本は 320 CSS px。Playwright の viewport は CSS px 単位のため 320 で固定する。
     // 200% 拡大はブラウザ zoom であり deviceScaleFactor とは別経路のため、
     // ここでは scrollWidth 契約と 44px 操作領域を 320 で固定検証する。
+    // 本 test はレイアウト測定専用で、Tab 順の証明はしない（下記 keyboard-only test が担う）。
     await page.setViewportSize({ width: 320, height: 720 });
     await expect(page).toHaveURL((url) => url.pathname === "/welcome");
     await page.getByRole("button", { name: "献立アイデアを考える" }).focus();
@@ -765,90 +842,107 @@ test.describe("wizard accessibility and layout contracts", () => {
   test("advances four questions to review and privacy using keyboard only", async ({
     authenticatedPage: page,
   }) => {
+    // Tab / Space / Enter のみ。未到達時の programmatic .focus() フォールバックは禁止。
     await page.setViewportSize({ width: 320, height: 720 });
     await expect(page).toHaveURL((url) => url.pathname === "/welcome");
-    // welcome の CTA も pointer を使わず keyboard で起動する
-    await page.getByRole("button", { name: "献立アイデアを考える" }).focus();
-    await activateFocusedWithKeyboard(page);
-    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
 
+    await tabUntil(
+      page,
+      (focus) => focus.name.includes("献立アイデアを考える") && !focus.disabled,
+      'welcome CTA "献立アイデアを考える"',
+    );
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
     // step 表示直後に heading へ focus（MealStep 等の契約）
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeFocused();
 
-    // Tab だけでラジオへ到達し Space で選択、Tab で「次へ」→ Enter
-    let reachedMealNext = false;
-    for (let i = 0; i < 16; i += 1) {
-      await page.keyboard.press("Tab");
-      const focused = page.locator(":focus");
-      const role = await focused.getAttribute("role");
-      const type = await focused.getAttribute("type");
-      const name = ((await focused.textContent()) ?? "").trim();
-      if (role === "radio" || type === "radio") {
-        await page.keyboard.press("Space");
-        // 朝食を選択できた場合だけ次へ進む準備が整う
-        if (
-          name.includes("朝食") ||
-          (await page.getByRole("radio", { name: "朝食" }).isChecked())
-        ) {
-          // 続けて「次へ」へ Tab
-        }
-      }
-      if (name === "次へ" && (await focused.isEnabled())) {
-        reachedMealNext = true;
-        await page.keyboard.press("Enter");
-        break;
-      }
-    }
-    // Tab 順序が環境依存でも、未到達なら role で直接 focus（pointer は使わない）
-    if (!reachedMealNext) {
-      await page.getByRole("radio", { name: "朝食" }).focus();
-      await page.keyboard.press("Space");
-      await page.getByRole("button", { name: "次へ" }).focus();
-      await page.keyboard.press("Enter");
-    }
+    // --- 1. 食事: Tab → 朝食 radio → Space → Tab → 次へ → Enter ---
+    await tabUntil(
+      page,
+      (focus) => (focus.role === "radio" || focus.type === "radio") && focus.name.includes("朝食"),
+      'meal radio "朝食"',
+    );
+    await page.keyboard.press("Space");
+    await expect(page.getByRole("radio", { name: "朝食" })).toBeChecked();
+    await tabUntil(
+      page,
+      (focus) => focus.name === "次へ" && !focus.disabled,
+      'meal primary "次へ"',
+    );
+    await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeFocused();
 
-    // 食材: 入力は keyboard type、追加/次へは focus + Enter
-    await page.getByRole("textbox", { name: "メイン食材" }).focus();
+    // --- 2. メイン食材: Tab → textbox → type → Tab → 追加 → Enter → Tab → 次へ → Enter ---
+    await tabUntil(
+      page,
+      (focus) =>
+        (focus.tagName === "input" || focus.tagName === "textarea" || focus.role === "textbox") &&
+        focus.name.includes("メイン食材"),
+      'ingredient textbox "メイン食材"',
+      40,
+    );
+    await expect(page.getByRole("textbox", { name: "メイン食材" })).toBeFocused();
     await page.keyboard.type("鶏肉");
-    await page.getByRole("button", { name: "追加" }).focus();
+    await tabUntil(page, (focus) => focus.name === "追加" && !focus.disabled, 'ingredient "追加"');
     await page.keyboard.press("Enter");
-    await page.getByRole("button", { name: "次へ" }).focus();
+    await tabUntil(
+      page,
+      (focus) => focus.name === "次へ" && !focus.disabled,
+      'ingredient primary "次へ"',
+    );
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeFocused();
 
-    await page.getByRole("radio", { name: "和食" }).focus();
+    // --- 3. ジャンル ---
+    await tabUntil(
+      page,
+      (focus) => (focus.role === "radio" || focus.type === "radio") && focus.name.includes("和食"),
+      'cuisine radio "和食"',
+    );
     await page.keyboard.press("Space");
-    await page.getByRole("button", { name: "次へ" }).focus();
+    await tabUntil(
+      page,
+      (focus) => focus.name === "次へ" && !focus.disabled,
+      'cuisine primary "次へ"',
+    );
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeFocused();
 
-    // 人数 step の進捗相当: 見出しと選択中人数（aria-pressed）
-    await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).focus();
+    // --- 4. 作る相手（idea + 2人） ---
+    await tabUntil(
+      page,
+      (focus) =>
+        (focus.role === "radio" || focus.type === "radio") &&
+        focus.name.includes("人数だけ指定してアイデアを見る"),
+      "audience idea radio",
+      40,
+    );
     await page.keyboard.press("Space");
-    await page.getByRole("button", { name: "2人" }).focus();
+    await tabUntil(
+      page,
+      (focus) => focus.name === "2人" && !focus.disabled,
+      'audience servings "2人"',
+    );
     await page.keyboard.press("Enter");
     await expect(page.getByRole("button", { name: "2人" })).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "次へ" }).focus();
+    await tabUntil(
+      page,
+      (focus) => focus.name === "次へ" && !focus.disabled,
+      'audience primary "次へ"',
+    );
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeFocused();
 
-    // Tab で AI 説明または生成操作へ到達できる
-    let reachedPrivacyOrGenerate = false;
-    for (let i = 0; i < 24; i += 1) {
-      await page.keyboard.press("Tab");
-      const focused = page.locator(":focus");
-      const name = (
-        (await focused.getAttribute("aria-label")) ??
-        (await focused.textContent()) ??
-        ""
-      ).trim();
-      if (name.includes("AI情報の説明を見る") || name.includes("献立を作る")) {
-        reachedPrivacyOrGenerate = true;
-        break;
-      }
-    }
-    expect(reachedPrivacyOrGenerate).toBe(true);
+    // --- 5. 確認: Tab で AI 説明または生成操作へ到達 ---
+    await tabUntil(
+      page,
+      (focus) =>
+        focus.name.includes("AI情報の説明を見る") ||
+        focus.name.includes("AI情報の説明") ||
+        focus.name.includes("献立を作る"),
+      "review privacy or generate action",
+      40,
+    );
   });
 
   test("disables wizard-transition animation under prefers-reduced-motion", async ({

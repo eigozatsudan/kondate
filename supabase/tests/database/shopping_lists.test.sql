@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(64);
+select plan(61);
 select has_table('public','shopping_lists','shopping_lists exists');
 select has_table('public','shopping_items','shopping_items exists');
 select has_table('public','shopping_list_sources','shopping_list_sources exists');
@@ -810,7 +810,11 @@ select pass('reconcile idempotency: apply_shopping_reconciliation records versio
   || 'key/hash replays the saved response even with the old expected version 3, and a changed '
   || 'approval under the same key raises idempotency_payload_mismatch before any version error');
 
--- Task 5: idea menu は shopping draft/reconciliation を list/version 不変で拒否する
+-- Task 5: idea menu は shopping draft/reconciliation を idea_menu_not_supported で拒否し、
+-- list/mutation の行数を増やさない。
+-- 注意: この DO は error code + shopping_lists / shopping_mutations の row count 不変だけを証明する。
+-- list.version / ledger payload / row lock 不在 / owner→version→mode 優先順位はここでは主張しない
+-- （それらは service 層と shopping race / identity 系テストの責務）。
 insert into public.menus (
   id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
   preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
@@ -883,10 +887,9 @@ begin
 end;
 $probe$;
 
-select pass('apply_shopping_draft/reconciliation reject idea menus without list or mutation growth');
-select pass('idea shopping rejection leaves list version and mutation ledger unchanged');
-select pass('idea shopping rejection uses idea_menu_not_supported without row locks writes');
-select pass('idea shopping rejection priority is mode after owner/version identity read');
+-- DO が証明した内容だけを 1 本の pass に対応させる（過大ラベルで plan を水増ししない）
+select pass('apply_shopping_draft/reconciliation reject idea menus with idea_menu_not_supported '
+  || 'and unchanged shopping_lists/shopping_mutations row counts');
 
 select * from finish();
 rollback;
