@@ -8,14 +8,15 @@ const parseMaintenanceDatabaseEnv = vi.fn();
 const selectMaintenanceEnvironmentMode = vi.fn();
 const logLines: string[] = [];
 
-vi.mock("./_shared/maintenance-db.js", () => ({ runMaintenance }));
-vi.mock("./_shared/env.js", () => ({ parseManagedSupabaseProjectRef }));
-vi.mock("./_shared/maintenance-env.js", () => ({
+vi.mock("../_shared/maintenance-db.js", () => ({ runMaintenance }));
+vi.mock("../_shared/env.js", () => ({ parseManagedSupabaseProjectRef }));
+vi.mock("../_shared/maintenance-env.js", () => ({
   parseMaintenanceDatabaseEnv,
   selectMaintenanceEnvironmentMode,
 }));
-vi.mock("./_shared/logger.js", async () => {
-  const actual = await vi.importActual<typeof import("./_shared/logger.js")>("./_shared/logger.js");
+vi.mock("../_shared/logger.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../_shared/logger.js")>("../_shared/logger.js");
   return {
     ...actual,
     safeLog: actual.createSafeLogger((line) => {
@@ -24,7 +25,7 @@ vi.mock("./_shared/logger.js", async () => {
   };
 });
 
-const { default: maintenanceCleanup, config } = await import("./maintenance-cleanup.js");
+const { default: maintenanceCleanup, config } = await import("../maintenance-cleanup.js");
 
 afterEach(() => {
   vi.clearAllMocks();
