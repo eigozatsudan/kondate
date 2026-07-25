@@ -30,13 +30,13 @@
  * 段階値は新しい色を持ち込まず、既存のカスタムプロパティと同一の色にする。
  * これにより styles.contrast.test.ts が実証済みの配色から外れない。
  *   50  = --notice         100 = --selection        700 = --primary
- * 700 は text-white を載せる箇所があるため、白文字で 5.92:1（AA 合格）を
- * 確保できる深いテラコッタに置く。淡い塗りに置くと白文字が読めない。
+ * 700 は text-white を載せる箇所があるため、白文字で 4.5:1（AA）以上を
+ * 確保できるテラコッタに置く。淡い塗りに置くと白文字が読めない。
  */
 @theme {
   --color-terracotta-50: #fdf1ec;
   --color-terracotta-100: #f9e3da;
-  --color-terracotta-700: #a8452a;
+  --color-terracotta-700: #b85033;
 
   /*
    * Tailwind 記法で書かれた画面（献立結果・履歴）が、セマンティックCSS側と
@@ -84,16 +84,16 @@
   --surface: #ffffff;
   --text: #26211e;
   --muted: #57504b;
-  --primary: #a8452a;
-  --primary-hover: #94381f;
-  --primary-active: #8a331c;
+  --primary: #b85033;
+  --primary-hover: #a84328;
+  --primary-active: #9c3c23;
   --primary-ink: #ffffff;
-  --primary-strong: #8f3a22;
+  --primary-strong: #a13d24;
   --selection: #f9e3da;
   --notice: #fdf1ec;
   --border: #e7e2dd;
   --border-strong: #8e8681;
-  --focus: #8f3a22;
+  --focus: #a13d24;
   --pantry: #3f6b57;
   --danger: #b3261e;
 }
@@ -120,16 +120,16 @@
   --surface: #ffffff;
   --text: #26211e;
   --muted: #57504b;
-  --primary: #a8452a;
-  --primary-hover: #94381f;
-  --primary-active: #8a331c;
+  --primary: #b85033;
+  --primary-hover: #a84328;
+  --primary-active: #9c3c23;
   --primary-ink: #ffffff;
-  --primary-strong: #8f3a22;
+  --primary-strong: #a13d24;
   --selection: #f9e3da;
   --notice: #fdf1ec;
   --border: #e7e2dd;
   --border-strong: #8e8681;
-  --focus: #8f3a22;
+  --focus: #a13d24;
   --pantry: #3f6b57;
   --danger: #b3261e;
   --question-font: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
@@ -798,7 +798,11 @@ textarea:focus-visible {
 .page-frame {
   width: min(100% - 32px, 680px);
   margin-inline: auto;
-  padding-block: 32px 96px;
+  /*
+   * 下余白は固定ナビ（.nav-item の min-height 56px）＋わずかな呼吸と
+   * iOS ホームインジケータ分。safe-area を足さないと端末下端で内容が隠れる。
+   */
+  padding-block: 32px calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
 .card {
@@ -985,6 +989,12 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * 下部ナビはセクション面（--section-tint）を床として連続させる。
+ * 以前の半透明白＋ blur と、720px 以上で 680px 幅に左右 border を付けた
+ * 「浮いた箱」は、main の tint とのあいだに切れ目を作っていた。
+ * フル幅の同一面＋上辺の区切り線だけにし、safe-area でホームインジケータも避ける。
+ */
 .bottom-nav {
   position: fixed;
   z-index: 10;
@@ -994,8 +1004,8 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   border-top: 1px solid var(--border);
-  background: rgb(255 255 255 / 96%);
-  backdrop-filter: blur(8px);
+  background: var(--section-tint);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .nav-item {
@@ -1014,15 +1024,4 @@ textarea:focus-visible {
 .nav-item-active {
   border-top-color: var(--primary);
   color: var(--primary-strong);
-}
-
-@media (min-width: 720px) {
-  .bottom-nav {
-    right: 50%;
-    left: auto;
-    width: min(680px, 100%);
-    transform: translateX(50%);
-    border-right: 1px solid var(--border);
-    border-left: 1px solid var(--border);
-  }
 }

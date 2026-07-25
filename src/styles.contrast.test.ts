@@ -368,16 +368,16 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     "--surface": "#ffffff",
     "--text": "#26211e",
     "--muted": "#57504b",
-    "--primary": "#a8452a",
-    "--primary-hover": "#94381f",
-    "--primary-active": "#8a331c",
+    "--primary": "#b85033",
+    "--primary-hover": "#a84328",
+    "--primary-active": "#9c3c23",
     "--primary-ink": "#ffffff",
-    "--primary-strong": "#8f3a22",
+    "--primary-strong": "#a13d24",
     "--selection": "#f9e3da",
     "--notice": "#fdf1ec",
     "--border": "#e7e2dd",
     "--border-strong": "#8e8681",
-    "--focus": "#8f3a22",
+    "--focus": "#a13d24",
     "--pantry": "#3f6b57",
     "--danger": "#b3261e",
     "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
@@ -693,16 +693,16 @@ const globalRuleDeclarations: Readonly<
       "--surface": "#ffffff",
       "--text": "#26211e",
       "--muted": "#57504b",
-      "--primary": "#a8452a",
-      "--primary-hover": "#94381f",
-      "--primary-active": "#8a331c",
+      "--primary": "#b85033",
+      "--primary-hover": "#a84328",
+      "--primary-active": "#9c3c23",
       "--primary-ink": "#ffffff",
-      "--primary-strong": "#8f3a22",
+      "--primary-strong": "#a13d24",
       "--selection": "#f9e3da",
       "--notice": "#fdf1ec",
       "--border": "#e7e2dd",
       "--border-strong": "#8e8681",
-      "--focus": "#8f3a22",
+      "--focus": "#a13d24",
       "--pantry": "#3f6b57",
       "--danger": "#b3261e",
     },
@@ -1156,16 +1156,16 @@ describe("guided planner theme", () => {
     surface: "#ffffff",
     text: "#26211e",
     muted: "#57504b",
-    primary: "#a8452a",
-    "primary-hover": "#94381f",
-    "primary-active": "#8a331c",
+    primary: "#b85033",
+    "primary-hover": "#a84328",
+    "primary-active": "#9c3c23",
     "primary-ink": "#ffffff",
-    "primary-strong": "#8f3a22",
+    "primary-strong": "#a13d24",
     selection: "#f9e3da",
     notice: "#fdf1ec",
     border: "#e7e2dd",
     "border-strong": "#8e8681",
-    focus: "#8f3a22",
+    focus: "#a13d24",
     pantry: "#3f6b57",
     danger: "#b3261e",
   } as const;
@@ -1198,11 +1198,11 @@ describe("guided planner theme", () => {
 
   it("keeps the new palette scoped and fixes visual contracts", () => {
     // 全タブの主操作を献立タブと同じソフトクレイへ揃える
-    expect(token("primary").toLowerCase()).toBe("#a8452a");
+    expect(token("primary").toLowerCase()).toBe("#b85033");
     expect(token("primary-ink").toLowerCase()).toBe("#ffffff");
     expect(css).toMatch(/body\s*\{[^}]*font-size:\s*16px/s);
     expect(css).toMatch(/\.app-section\s*\{[^}]*var\(--section-tint\)/s);
-    expect(css).toMatch(/\.guided-planner-theme[^}]*--focus:\s*#8f3a22/s);
+    expect(css).toMatch(/\.guided-planner-theme[^}]*--focus:\s*#a13d24/s);
     expect(css).toMatch(/\.choice-card\[aria-pressed="true"\][^}]*border-color:/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*border-radius:\s*(18|19|20)px/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*box-shadow:/s);
@@ -1276,16 +1276,16 @@ describe("guided planner theme", () => {
       "--surface": "#ffffff",
       "--text": "#26211e",
       "--muted": "#57504b",
-      "--primary": "#a8452a",
-      "--primary-hover": "#94381f",
-      "--primary-active": "#8a331c",
+      "--primary": "#b85033",
+      "--primary-hover": "#a84328",
+      "--primary-active": "#9c3c23",
       "--primary-ink": "#ffffff",
-      "--primary-strong": "#8f3a22",
+      "--primary-strong": "#a13d24",
       "--selection": "#f9e3da",
       "--notice": "#fdf1ec",
       "--border": "#e7e2dd",
       "--border-strong": "#8e8681",
-      "--focus": "#8f3a22",
+      "--focus": "#a13d24",
       "--pantry": "#3f6b57",
       "--danger": "#b3261e",
       "--section-tint": "#faf9f8",
@@ -1376,8 +1376,8 @@ describe("guided planner theme", () => {
     const fixture = `
       .guided-planner-theme .probe, body { color: #faf9f8; }
       body { background: #faf9f8; }
-      .shell .primary-button { background: #8a331c; }
-      .field input { color: #8f3a22 !important; }
+      .shell .primary-button { background: #9c3c23; }
+      .field input { color: #a13d24 !important; }
     `;
     // :root の primary 系共有は許可。背景・本文色の body 流出は検出する。
     expect(findUnscopedDesignColorLeaks(fixture, guidedPalette)).toEqual([
