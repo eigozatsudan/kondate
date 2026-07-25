@@ -78,13 +78,13 @@ export function HistoryCard({ group }: HistoryCardProps) {
         <p
           className={
             representative.targetMode === "idea"
-              ? "inline-flex w-fit shrink-0 items-center rounded-full border border-stone-400 bg-stone-100 px-3 py-1 text-sm font-semibold"
+              ? "inline-flex w-fit shrink-0 items-center rounded-full border border-line-strong bg-canvas px-3 py-1 text-sm font-semibold"
               : "inline-flex w-fit shrink-0 items-center rounded-full border border-terracotta-700 bg-terracotta-50 px-3 py-1 text-sm font-semibold"
           }
         >
           {representative.targetMode === "idea" ? "アイデア" : "家族に合わせた献立"}
         </p>
-        <p className="text-sm text-stone-700">
+        <p className="text-sm text-ink-muted">
           {representative.targetMode === "idea"
             ? "開いても家族条件は確認しません"
             : "開くと現在の家族設定で再確認します"}
@@ -93,7 +93,7 @@ export function HistoryCard({ group }: HistoryCardProps) {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-3 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-3 font-semibold"
           aria-pressed={representative.isFavorite}
           aria-label={representative.isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
           disabled={favoritePending}
@@ -103,7 +103,7 @@ export function HistoryCard({ group }: HistoryCardProps) {
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-3 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-3 font-semibold"
           aria-label="この履歴を削除"
           disabled={deletePending}
           onClick={openDeleteDialog}
@@ -145,7 +145,7 @@ export function HistoryCard({ group }: HistoryCardProps) {
           </button>
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             disabled={deletePending}
             onClick={closeDeleteDialog}
           >

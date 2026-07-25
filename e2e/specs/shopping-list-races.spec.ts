@@ -67,7 +67,7 @@ test("disables shopping actions immediately after member or allergy mutation", a
   );
   // 設計書の「表示名 / 家族設定を保存」は本リポジトリの設定UIに存在しない。
   // 同じ household_members 更新を行う実コントロール（呼び名 + 設定完了）へ読み替える。
-  await settingsPage.getByLabel("呼び名").fill("更新後の家族");
+  await settingsPage.getByRole("textbox", { name: "呼び名" }).fill("更新後の家族");
   await settingsPage.getByRole("button", { name: "この家族の設定を完了" }).click();
   await expect(
     shoppingPage.getByRole("checkbox", { name: /購入済みにする/u }).first(),

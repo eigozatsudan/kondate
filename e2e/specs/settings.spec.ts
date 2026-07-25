@@ -14,7 +14,7 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await expect(page.getByRole("alert")).toContainText("年齢のめやすを選んでください");
   await expect(page.getByLabel("年齢のめやす")).toBeFocused();
-  await page.getByLabel("呼び名").fill("子ども");
+  await page.getByRole("textbox", { name: "呼び名" }).fill("子ども");
   await page.getByLabel("年齢のめやす").selectOption("age_3_5");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "くるみを追加" }).click();
@@ -27,13 +27,16 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByRole("checkbox", { name: "小さめ" }).check();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
-  await page.getByLabel("自由登録名").fill("えんどう豆たんぱく");
+  // 完了後は編集領域が閉じるため、一覧から再度開いて自由登録を続ける
+  await page.getByRole("button", { name: "2人目の子どもを編集" }).click();
+  await page.getByRole("textbox", { name: "自由登録名" }).fill("えんどう豆たんぱく");
   await page.getByLabel("一覧にないアレルギーとして登録").check();
   await page.getByRole("button", { name: "自由登録を追加" }).click();
   await page.getByRole("button", { name: "くるみを削除" }).click();
   await page.getByRole("button", { name: "家族を削除" }).click();
   await page.getByRole("button", { name: "家族だけを削除" }).click();
-  await expect(page.getByText("子ども")).not.toBeVisible();
+  // 一覧名と「編集中」見出しの両方に一致しうる getByText ではなく、編集ボタンの消滅で確認する
+  await expect(page.getByRole("button", { name: "2人目の子どもを編集" })).toHaveCount(0);
   // 家族削除はアカウント削除と分離されていること（DangerZone のアカウント削除は残る）
   await expect(page.getByRole("region", { name: "DangerZone" })).toBeVisible();
   await expect(page.getByRole("button", { name: "アカウントを削除" })).toBeVisible();

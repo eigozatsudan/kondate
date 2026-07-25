@@ -84,11 +84,16 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   shortWindowRetryAt?: string | null;
 };
 
+/** privacy 未確認のまま生成を押したときのダイアログ本文 */
+export const privacyNoticeRequiredMessage =
+  "献立を作る前に、AI情報の説明を確認してください。「AI情報の説明を見る」を押してください。";
+
 /**
  * 任意条件（時間・予算・避ける食材・memo・pantry選択）をdetailsから開き、
  * 生成直前の最終確認と送信を担うstep。
- * privacy確認が済んでいない場合は生成buttonをdisabledにし、説明linkを表示する
- * （brief step 9: 「reviewはprivacy query未確認なら生成buttonをdisabledにして説明linkを表示する」）。
+ * privacy 未確認時は「AI情報の説明を見る」を secondary ボタンで明示し、
+ * 「献立を作る」押下では生成せず alertdialog で同じ操作へ誘導する
+ * （disabled のままでは押下フィードバックが無いため、見た目有効＋ダイアログで案内する）。
  */
 export function ReviewStep({
   value,
@@ -110,10 +115,24 @@ export function ReviewStep({
   shortWindowRetryAt = null,
 }: ReviewStepProps) {
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
+  // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
+  const [privacyGateOpen, setPrivacyGateOpen] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const privacyNoticeButtonRef = useRef<HTMLButtonElement>(null);
+  const privacyGatePrimaryRef = useRef<HTMLButtonElement>(null);
+  const privacyGateCloseRef = useRef<HTMLButtonElement>(null);
+  const privacyGateDescriptionId = "privacy-gate-description";
   useEffect(() => {
     headingRef.current?.focus();
   }, []);
+  // 同意が付いたらダイアログを残さない
+  useEffect(() => {
+    if (hasAcceptedOrDeclinedPrivacy) setPrivacyGateOpen(false);
+  }, [hasAcceptedOrDeclinedPrivacy]);
+  // ダイアログ表示時は主ボタンへフォーカス（pantry 期限切れ alertdialog と同じ）
+  useEffect(() => {
+    if (privacyGateOpen) privacyGatePrimaryRef.current?.focus();
+  }, [privacyGateOpen]);
   const pantryItemIds = new Set(pantryItems.map((item) => item.id));
   const hasUnavailablePantrySelections =
     pantryItemsStatus === "loaded" &&
@@ -121,8 +140,11 @@ export function ReviewStep({
   // Plan 2: AI 送信前のクライアント医療境界。サーバー preflight と同一 detector を使う。
   const medicalBlocked =
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
-  const generateDisabled =
-    disabled || !hasAcceptedOrDeclinedPrivacy || hasUnavailablePantrySelections || medicalBlocked;
+  // privacy 未確認だけでは disabled にしない（押下で案内を出す）。医療・pantry・保存中のみ止める。
+  const generateDisabled = disabled || hasUnavailablePantrySelections || medicalBlocked;
+  const closePrivacyGate = (): void => {
+    setPrivacyGateOpen(false);
+  };
   return (
     <section className="card stack" aria-labelledby="review-step-title">
       <h2 id="review-step-title" tabIndex={-1} ref={headingRef}>
@@ -288,12 +310,21 @@ export function ReviewStep({
       )}
       {medicalBlocked && <p role="alert">{medicalRequestBlockedMessage}</p>}
       {!hasAcceptedOrDeclinedPrivacy && (
-        <p>
-          AI情報の説明をまだ確認していません。
-          <button type="button" onClick={onOpenPrivacyNotice}>
+        <div className="stack privacy-notice-gate">
+          <p>AI情報の説明をまだ確認していません。献立を作る前に説明を確認してください。</p>
+          <button
+            ref={privacyNoticeButtonRef}
+            className="wizard-action secondary-button"
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              closePrivacyGate();
+              onOpenPrivacyNotice();
+            }}
+          >
             AI情報の説明を見る
           </button>
-        </p>
+        </div>
       )}
       {summaryError != null && <p role="alert">{summaryError}</p>}
       {/* 設計 §5.3: idea 注意は主操作直前。summary / 追加条件 / privacy より下に置く */}
@@ -332,11 +363,83 @@ export function ReviewStep({
           className="wizard-action primary-button"
           type="button"
           disabled={generateDisabled}
-          onClick={onSubmit}
+          onClick={() => {
+            // 同意前は生成を開始せず、ダイアログで説明へ誘導する
+            if (!hasAcceptedOrDeclinedPrivacy) {
+              setPrivacyGateOpen(true);
+              return;
+            }
+            closePrivacyGate();
+            onSubmit();
+          }}
         >
           献立を作る
         </button>
       </div>
+      {privacyGateOpen && (
+        <div
+          className="pantry-expired-dialog-backdrop"
+          onClick={(event) => {
+            // 背景クリックで閉じる（パネル内クリックは伝播させない）
+            if (event.target === event.currentTarget) closePrivacyGate();
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="privacy-gate-title"
+            aria-describedby={privacyGateDescriptionId}
+            className="card stack pantry-expired-dialog-panel"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closePrivacyGate();
+                return;
+              }
+              if (event.key !== "Tab") return;
+              // 2 ボタン間でフォーカストラップ（pantry 期限切れダイアログと同型）
+              event.preventDefault();
+              if (event.shiftKey) {
+                if (document.activeElement === privacyGatePrimaryRef.current) {
+                  privacyGateCloseRef.current?.focus();
+                } else {
+                  privacyGatePrimaryRef.current?.focus();
+                }
+              } else if (document.activeElement === privacyGateCloseRef.current) {
+                privacyGatePrimaryRef.current?.focus();
+              } else {
+                privacyGateCloseRef.current?.focus();
+              }
+            }}
+          >
+            <h2 id="privacy-gate-title">AI情報の説明の確認</h2>
+            <p id={privacyGateDescriptionId}>{privacyNoticeRequiredMessage}</p>
+            <button
+              ref={privacyGatePrimaryRef}
+              className="wizard-action primary-button"
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                closePrivacyGate();
+                onOpenPrivacyNotice();
+              }}
+            >
+              AI情報の説明を見る
+            </button>
+            <button
+              ref={privacyGateCloseRef}
+              className="wizard-action secondary-button"
+              type="button"
+              onClick={closePrivacyGate}
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
       {value.targetMode === "household" && onOpenEmergencyMenus !== undefined && (
         <button
           className="wizard-action secondary-button"

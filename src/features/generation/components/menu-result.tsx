@@ -281,7 +281,7 @@ export function MenuResult({
   // main はページ枠（MenuResultPage / HistoryDetailPage）が1つだけ持つ。
   // ここに main を置くと操作バー等を包めず、ネスト landmark 違反にもなる。
   return (
-    <div className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <div className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm">
         <strong>AIが作成した献立です。</strong>{" "}
         内容、加熱状態、家庭内での混入を調理前に確認してください。
@@ -310,12 +310,14 @@ export function MenuResult({
           {menu.timeline.map((step) => (
             <li
               key={step.id}
-              className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-3 border-l-4 border-terracotta-500 pl-3"
+              // レールは薄い --primary 相当（2.17:1）では WCAG 1.4.11 の非テキスト 3:1 を
+              // 満たさないため、6.19:1 を確保できる terracotta-700 を使う。
+              className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-3 border-l-4 border-terracotta-700 pl-3"
             >
               <span className="font-semibold">{step.startMinute}分〜</span>
               <span>
                 {step.instruction}
-                <span className="block text-sm text-stone-600">目安 {step.durationMinutes}分</span>
+                <span className="block text-sm text-ink-muted">目安 {step.durationMinutes}分</span>
               </span>
             </li>
           ))}
@@ -325,7 +327,7 @@ export function MenuResult({
       <div
         role="tablist"
         aria-label="料理"
-        className="sticky top-0 z-10 mt-6 flex gap-2 overflow-x-auto bg-stone-50 py-2"
+        className="sticky top-0 z-10 mt-6 flex gap-2 overflow-x-auto bg-canvas py-2"
       >
         {menu.dishes.map((dish) => (
           <button
@@ -395,7 +397,7 @@ export function MenuResult({
               <p className="mt-2">この料理の取り分け案はありません。</p>
             ) : (
               selectedAdaptations.map((item) => (
-                <dl key={item.id} className="mt-2 rounded-xl bg-stone-50 p-3">
+                <dl key={item.id} className="mt-2 rounded-xl bg-canvas p-3">
                   <dt className="font-bold">
                     {result.memberLabels[item.anonymousMemberRef] ?? "家族"}・{item.portionText}
                   </dt>
@@ -440,13 +442,11 @@ export function MenuResult({
               {labels.map((item) => (
                 <li key={item.confirmationId} className="break-words">
                   {item.sourceText}：{item.allergenName}（{item.memberLabel}）
-                  <span className="block text-sm text-stone-600">
+                  <span className="block text-sm text-ink-muted">
                     辞書版 {item.dictionaryVersion}
                   </span>
                   {item.confirmationStatus === "confirmed" ? (
-                    <span className="mt-1 inline-block rounded bg-stone-200 px-2 text-sm">
-                      確認済み
-                    </span>
+                    <span className="mt-1 inline-block rounded bg-line px-2 text-sm">確認済み</span>
                   ) : actions === undefined ? null : (
                     <button
                       type="button"
@@ -519,7 +519,7 @@ export function MenuResult({
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
                             type="button"
-                            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+                            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
                             disabled={busy}
                             onClick={() => {
                               setDeletePendingId(target.selectionId);
@@ -530,7 +530,7 @@ export function MenuResult({
                           </button>
                           <button
                             type="button"
-                            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+                            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
                             disabled={busy}
                             onClick={() => {
                               setRemainderTargetId(target.selectionId);
@@ -541,7 +541,7 @@ export function MenuResult({
                           </button>
                         </div>
                         {deletePendingId === target.selectionId && (
-                          <div className="mt-3 rounded-lg bg-stone-50 p-3">
+                          <div className="mt-3 rounded-lg bg-canvas p-3">
                             <p>この食材を冷蔵庫から削除しますか？</p>
                             <div className="mt-2 flex flex-wrap gap-2">
                               <button
@@ -568,7 +568,7 @@ export function MenuResult({
                           </div>
                         )}
                         {remainderTargetId === target.selectionId && (
-                          <div className="mt-3 space-y-2 rounded-lg bg-stone-50 p-3">
+                          <div className="mt-3 space-y-2 rounded-lg bg-canvas p-3">
                             <label className="block">
                               残りの分量（任意）
                               <input

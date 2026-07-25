@@ -150,16 +150,16 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
   expect(editor).toContainElement(screen.getByRole("button", { name: "家族を削除" }));
   expect(screen.getByText("大人", { selector: ".household-member-name" })).toBeVisible();
   expect(screen.getByText(/登録完了/u)).toBeVisible();
-  expect(screen.getAllByText("呼び名未設定", { selector: ".household-member-name" })).toHaveLength(
+  expect(screen.getAllByText("名前未設定", { selector: ".household-member-name" })).toHaveLength(
     2,
   );
   expect(screen.getAllByText(/3〜5歳/u)[0]).toBeVisible();
   expect(screen.getAllByText(/入力途中/u)).toHaveLength(2);
 
-  const secondButton = screen.getByRole("button", { name: "2人目の呼び名未設定を編集" });
-  expect(screen.getByRole("button", { name: "3人目の呼び名未設定を編集" })).toBeVisible();
+  const secondButton = screen.getByRole("button", { name: "2人目の名前未設定を編集" });
+  expect(screen.getByRole("button", { name: "3人目の名前未設定を編集" })).toBeVisible();
   await userEvent.click(secondButton);
-  const editorHeading = screen.getByRole("heading", { name: "「呼び名未設定」を編集中" });
+  const editorHeading = screen.getByRole("heading", { name: "「名前未設定」を編集中" });
   expect(editorHeading).toBeVisible();
   expect(editorHeading).toHaveFocus();
   expect(screen.getByLabelText("呼び名")).toHaveValue("");
@@ -520,7 +520,7 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
     await Promise.resolve();
   });
 
-  expect(await screen.findByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "「名前未設定」を編集中" })).toBeVisible();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
