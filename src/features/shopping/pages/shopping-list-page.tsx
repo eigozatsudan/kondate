@@ -8,20 +8,10 @@ import {
 import { normalizeIngredientName } from "@shared/shopping/normalize";
 import { reviewedShoppingAliases } from "@shared/shopping/reviewed-aliases";
 import { mutateShoppingItem } from "../api/shopping-api";
+import { categoryLabel } from "../category-label";
 import { ShoppingItemRow } from "../components/shopping-item-row";
 import { useShoppingList, useShoppingSafetyGate } from "../hooks/use-shopping-list";
 
-const sectionLabels: Record<StoreSection, string> = {
-  produce: "野菜",
-  meat_fish: "肉・魚",
-  dairy_eggs: "乳製品・卵",
-  dry_goods: "乾物",
-  seasonings: "調味料",
-  other: "その他",
-};
-export function categoryLabel(section: StoreSection): string {
-  return sectionLabels[section];
-}
 const sections: readonly StoreSection[] = [
   "produce",
   "meat_fish",

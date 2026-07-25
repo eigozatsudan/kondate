@@ -19,7 +19,8 @@ import type {
 import { CreateListSheet } from "../components/create-list-sheet";
 import { ReconcileListSheet } from "../components/reconcile-list-sheet";
 import { shoppingKeys, useResumeShoppingCommand } from "../hooks/use-shopping-list";
-import { categoryLabel, ShoppingListPage } from "./shopping-list-page";
+import { categoryLabel } from "../category-label";
+import { ShoppingListPage } from "./shopping-list-page";
 import {
   clearShoppingCommand,
   fetchReconcilableMenuSource,

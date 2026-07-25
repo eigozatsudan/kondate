@@ -476,14 +476,15 @@ function HouseholdDetailBody({
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
 
-  const beginRecheck = revalidation.beginRecheck ?? (() => undefined);
-
   const actions = useMemo((): MenuResultActions | undefined => {
     if (userId === undefined || revalidation.result === undefined) {
       return undefined;
     }
     const client = getBrowserSupabaseClient();
     const safetyFingerprint = revalidation.result.safetyFingerprint;
+    // beginRecheck は live gate 由来で安定。注入テストで未指定なら no-op。
+    // レンダーごとに作るフォールバック関数を deps に載せない（exhaustive-deps 警告回避）。
+    const beginRecheck = revalidation.beginRecheck;
     return {
       menuId,
       userId,
@@ -495,9 +496,9 @@ function HouseholdDetailBody({
             expectedSafetyFingerprint || safetyFingerprint,
           );
           await queryClient.invalidateQueries({ queryKey });
-          beginRecheck();
+          beginRecheck?.();
         } catch (error) {
-          beginRecheck();
+          beginRecheck?.();
           throw error;
         }
       },
@@ -517,7 +518,7 @@ function HouseholdDetailBody({
         await queryClient.invalidateQueries({ queryKey });
       },
     };
-  }, [beginRecheck, menuId, queryClient, queryKey, revalidation.result, userId]);
+  }, [menuId, queryClient, queryKey, revalidation.beginRecheck, revalidation.result, userId]);
 
   const statusCopy = useMemo(() => {
     if (revalidation.phase === "checking") return "現在の家族設定で確認しています";
