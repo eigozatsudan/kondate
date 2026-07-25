@@ -7,6 +7,7 @@ import type {
   HouseholdMemberPatch,
   HouseholdMemberRow,
   MemberAllergyRow,
+  MemberDislikeRow,
 } from "./household-api";
 import { householdKeys } from "./household-queries";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
@@ -335,6 +336,86 @@ it("does not start completion while the last draft allergy deletion is pending",
   fireEvent.click(completeButton);
   expect(updateDraft).not.toHaveBeenCalled();
   expect(completeMember).not.toHaveBeenCalled();
+});
+
+it("does not start completion while adding a dislike is pending", async () => {
+  const addDislike = vi.fn(() => new Promise<MemberDislikeRow>(() => undefined));
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({ addDislike, updateMember });
+
+  await userEvent.type(await screen.findByLabelText("苦手食材を追加"), "ピーマン");
+  await userEvent.click(screen.getByRole("button", { name: "苦手食材を追加" }));
+  expect(addDislike).toHaveBeenCalledWith(member.id, "ピーマン");
+
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  expect(completeButton).toBeDisabled();
+  await userEvent.click(completeButton);
+
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+it("does not start completion while removing a dislike is pending", async () => {
+  const dislike: MemberDislikeRow = {
+    id: "dislike-1",
+    user_id: "user-1",
+    member_id: member.id,
+    ingredient_name: "ピーマン",
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const removeDislike = vi.fn(() => new Promise<void>(() => undefined));
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({
+    listDislikes: vi.fn().mockResolvedValue([dislike]),
+    removeDislike,
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "削除" }));
+  expect(removeDislike).toHaveBeenCalledWith(dislike.id);
+
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  expect(completeButton).toBeDisabled();
+  await userEvent.click(completeButton);
+
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+it("keeps the editor open and reports a failed dislike addition", async () => {
+  const addDislike = vi.fn().mockRejectedValue(new Error("苦手食材を追加できませんでした"));
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({ addDislike, updateMember });
+
+  await userEvent.type(await screen.findByLabelText("苦手食材を追加"), "ピーマン");
+  await userEvent.click(screen.getByRole("button", { name: "苦手食材を追加" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("苦手食材を追加できませんでした");
+  expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.getByLabelText("苦手食材を追加")).toHaveValue("ピーマン");
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+it("keeps the editor open and reports a failed dislike deletion", async () => {
+  const dislike: MemberDislikeRow = {
+    id: "dislike-1",
+    user_id: "user-1",
+    member_id: member.id,
+    ingredient_name: "ピーマン",
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const removeDislike = vi.fn().mockRejectedValue(new Error("苦手食材を削除できませんでした"));
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({
+    listDislikes: vi.fn().mockResolvedValue([dislike]),
+    removeDislike,
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "削除" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("苦手食材を削除できませんでした");
+  expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.getByText("ピーマン")).toBeVisible();
+  expect(updateMember).not.toHaveBeenCalled();
 });
 
 it("does not start completion while deleting the selected member", async () => {

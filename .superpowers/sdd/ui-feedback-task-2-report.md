@@ -156,3 +156,25 @@
   - Task外の既存変更には触れていない。
 - fix round 6 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
 - 未解決事項: なし。
+
+## Fix round 7
+
+- status: `DONE`
+- REDで確認した失敗:
+  - household settings 79件中、苦手食材の追加・削除中でも完了できる2件と、追加・削除失敗が未処理でフォームに表示されない2件の計4件だけが期待どおり失敗した。
+- 実装内容と設計判断:
+  - 家族単位の苦手食材mutation pendingを同期refと表示用stateで管理し、API開始前に設定して `finally` で解除する。
+  - 完了入口、完了ボタン、フォームclose判定へ同じpending条件を含め、苦手食材更新中に完了APIを開始しない。
+  - 追加・削除失敗は、操作開始時の家族とfeedback revisionが現在も一致する場合だけ表示し、フォームと追加入力を維持する。
+- 実行した検証と結果:
+  - RED focused household: 79 tests中、追加した4 testsのみFAIL。
+  - GREEN focused household: 79 tests PASS。
+  - GREEN focused 5 files: 137 tests PASS。
+  - Task変更3ファイルのscoped Prettier check: PASS。
+  - Task変更3ファイルの `git diff --check`: PASS。
+- self-review:
+  - `savingRef` の同期guardを維持し、苦手食材mutationと完了保存の相互競合をrefで防いだ。
+  - 選択家族を切り替えた後に古い失敗文言や追加成功時の入力クリアを公開しない。
+  - Task外6ファイルと既存untracked設計書には触れていない。
+- fix round 7 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
+- 未解決事項: なし。

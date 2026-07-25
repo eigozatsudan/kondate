@@ -204,6 +204,9 @@ export function HouseholdSettingsForm({
   const [allergyMutationPendingMemberIds, setAllergyMutationPendingMemberIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  const [dislikeMutationPendingMemberIds, setDislikeMutationPendingMemberIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const savingRef = useRef(false);
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
@@ -212,6 +215,7 @@ export function HouseholdSettingsForm({
   const pendingOperationCountsRef = useRef(new Map<string, number>());
   const failedSaveMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
+  const dislikeMutationPendingMemberIdsRef = useRef(new Set<string>());
   const deletingMemberIdsRef = useRef(new Set<string>());
   const creatingDraftRef = useRef(false);
   const cancellingDraftRef = useRef(false);
@@ -449,6 +453,38 @@ export function HouseholdSettingsForm({
       finishAllergyMutation(targetMember.id);
     }
   };
+  const beginDislikeMutation = (memberId: string) => {
+    // 完了処理との競合を同期的に防ぐため、API開始前に家族単位の更新中状態を確定する。
+    if (savingRef.current || dislikeMutationPendingMemberIdsRef.current.has(memberId)) return false;
+    dislikeMutationPendingMemberIdsRef.current.add(memberId);
+    setDislikeMutationPendingMemberIds(new Set(dislikeMutationPendingMemberIdsRef.current));
+    return true;
+  };
+  const finishDislikeMutation = (memberId: string) => {
+    dislikeMutationPendingMemberIdsRef.current.delete(memberId);
+    setDislikeMutationPendingMemberIds(new Set(dislikeMutationPendingMemberIdsRef.current));
+  };
+  const runDislikeMutation = async (
+    memberId: string,
+    operation: () => Promise<void>,
+    fallbackMessage: string,
+    onCurrentSuccess?: () => void,
+  ) => {
+    if (!beginDislikeMutation(memberId)) return;
+    const feedbackRevision = feedbackRevisionRef.current;
+    const isCurrentFeedback = () =>
+      selectedMemberIdRef.current === memberId && feedbackRevisionRef.current === feedbackRevision;
+    try {
+      await operation();
+      if (isCurrentFeedback()) onCurrentSuccess?.();
+    } catch (error) {
+      if (isCurrentFeedback()) {
+        setMessage(error instanceof Error ? error.message : fallbackMessage);
+      }
+    } finally {
+      finishDislikeMutation(memberId);
+    }
+  };
   const queueSave = useCallback(
     (
       member: HouseholdMemberRow,
@@ -671,6 +707,7 @@ export function HouseholdSettingsForm({
       selected === undefined ||
       values === undefined ||
       allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
+      dislikeMutationPendingMemberIdsRef.current.has(selected.id) ||
       deletingMemberIdsRef.current.has(selected.id)
     )
       return;
@@ -713,6 +750,7 @@ export function HouseholdSettingsForm({
     const canCloseCompletedEditor = () =>
       canPublishSaveMessage(lineage) &&
       (pendingOperationCountsRef.current.get(completingMemberId) ?? 0) === 0 &&
+      !dislikeMutationPendingMemberIdsRef.current.has(completingMemberId) &&
       !failedSaveMemberIdsRef.current.has(completingMemberId);
     try {
       await saveQueue.current;
@@ -946,8 +984,10 @@ export function HouseholdSettingsForm({
   }
   const currentDislikes = dislikesQuery.data ?? [];
   const selectedAllergyMutationPending = allergyMutationPendingMemberIds.has(selected.id);
+  const selectedDislikeMutationPending = dislikeMutationPendingMemberIds.has(selected.id);
   const completionBlockedByMutation =
     selectedAllergyMutationPending ||
+    selectedDislikeMutationPending ||
     deletingMemberIds.has(selected.id) ||
     createDraft.isPending ||
     cancellingDraft;
@@ -1272,20 +1312,24 @@ export function HouseholdSettingsForm({
               <button
                 className="secondary-button"
                 type="button"
+                disabled={saving || selectedDislikeMutationPending}
                 onClick={() => {
                   if (savingRef.current) return;
                   if (dislike.trim() === "") return;
-                  void api
-                    .addDislike(selected.id, dislike)
-                    .then(() =>
-                      queryClient.invalidateQueries({
-                        queryKey: householdKeys.dislikes("settings", selected.id),
-                      }),
-                    )
-                    .then(() => {
-                      setDislike("");
-                      return api.invalidateSafety();
-                    });
+                  const memberId = selected.id;
+                  const name = dislike;
+                  void runDislikeMutation(
+                    memberId,
+                    async () => {
+                      await api.addDislike(memberId, name);
+                      await queryClient.invalidateQueries({
+                        queryKey: householdKeys.dislikes("settings", memberId),
+                      });
+                      await api.invalidateSafety();
+                    },
+                    "苦手食材を追加できませんでした",
+                    () => setDislike(""),
+                  );
                 }}
               >
                 苦手食材を追加
@@ -1297,16 +1341,21 @@ export function HouseholdSettingsForm({
                     <button
                       className="text-button"
                       type="button"
+                      disabled={saving || selectedDislikeMutationPending}
                       onClick={() => {
                         if (savingRef.current) return;
-                        void api
-                          .removeDislike(item.id)
-                          .then(() =>
-                            queryClient.invalidateQueries({
-                              queryKey: householdKeys.dislikes("settings", selected.id),
-                            }),
-                          )
-                          .then(() => api.invalidateSafety());
+                        const memberId = selected.id;
+                        void runDislikeMutation(
+                          memberId,
+                          async () => {
+                            await api.removeDislike(item.id);
+                            await queryClient.invalidateQueries({
+                              queryKey: householdKeys.dislikes("settings", memberId),
+                            });
+                            await api.invalidateSafety();
+                          },
+                          "苦手食材を削除できませんでした",
+                        );
                       }}
                     >
                       削除
