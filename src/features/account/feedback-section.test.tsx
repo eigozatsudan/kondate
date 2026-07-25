@@ -14,6 +14,11 @@ vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
 
+async function expandFeedback(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole("button", { name: "改善要望・不具合を送る" }));
+  expect(screen.getByLabelText("内容（10〜2000文字）")).toBeVisible();
+}
+
 describe("FeedbackSection", () => {
   beforeEach(() => {
     requireAccessTokenMock.mockReset();
@@ -22,9 +27,20 @@ describe("FeedbackSection", () => {
     vi.stubGlobal("fetch", fetchMock);
   });
 
+  it("starts collapsed and hides the form until expanded", () => {
+    render(<FeedbackSection />);
+    expect(screen.getByRole("heading", { name: "フィードバック" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "改善要望・不具合を送る" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByLabelText("内容（10〜2000文字）")).not.toBeInTheDocument();
+  });
+
   it("validates minimum length before calling the API", async () => {
     const user = userEvent.setup();
     render(<FeedbackSection />);
+    await expandFeedback(user);
     await user.type(screen.getByLabelText("内容（10〜2000文字）"), "短い");
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(screen.getByRole("alert")).toHaveTextContent("もう少し詳しく書いてください");
@@ -38,6 +54,7 @@ describe("FeedbackSection", () => {
       json: async () => ({ ok: true, data: { id: "feedback-1" } }),
     });
     render(<FeedbackSection />);
+    await expandFeedback(user);
     await user.click(screen.getByRole("radio", { name: "不具合の報告" }));
     await user.type(
       screen.getByLabelText("内容（10〜2000文字）"),
@@ -62,6 +79,15 @@ describe("FeedbackSection", () => {
     expect(screen.getByLabelText("内容（10〜2000文字）")).toHaveValue("");
   });
 
+  it("can collapse again with 閉じる", async () => {
+    const user = userEvent.setup();
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+    expect(screen.queryByLabelText("内容（10〜2000文字）")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "改善要望・不具合を送る" })).toBeVisible();
+  });
+
   it("shows rate-limit copy from the API", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue({
@@ -72,6 +98,7 @@ describe("FeedbackSection", () => {
       }),
     });
     render(<FeedbackSection />);
+    await expandFeedback(user);
     await user.type(
       screen.getByLabelText("内容（10〜2000文字）"),
       "もう一度送りたいフィードバック本文です。",

@@ -27,9 +27,10 @@ function mapError(code: string | undefined, fallback: string): string {
 
 /**
  * 設定ページのフィードバック。機能改善と不具合報告を受け付ける。
- * 本文はサーバへだけ送り、ブラウザコンソールやクライアントログには出さない。
+ * 既定は折りたたみ。本文はサーバへだけ送り、クライアントログには出さない。
  */
 export function FeedbackSection() {
+  const [expanded, setExpanded] = useState(false);
   const [category, setCategory] = useState<FeedbackCategory>("feature_request");
   const [body, setBody] = useState("");
   const [pending, setPending] = useState(false);
@@ -94,57 +95,84 @@ export function FeedbackSection() {
       <h2 id="feedback-title" className="settings-section-title">
         フィードバック
       </h2>
-      <p className="type-small">
-        使っていて不便な点や、あると助かる機能があれば教えてください。不具合の報告もこちらから送れます。
-      </p>
-      <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
-        <fieldset className="stack" disabled={pending}>
-          <legend className="type-small">種類</legend>
-          <div className="stack" role="radiogroup" aria-label="フィードバックの種類">
-            {feedbackCategories.map((value) => (
-              <label key={value} className="min-h-11 flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="feedback-category"
-                  value={value}
-                  checked={category === value}
-                  onChange={() => {
-                    setCategory(value);
-                  }}
-                />
-                <span>{categoryLabels[value]}</span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
-        <label className="field">
-          内容（10〜2000文字）
-          <textarea
-            value={body}
-            maxLength={2000}
-            rows={5}
-            disabled={pending}
-            aria-required="true"
-            placeholder="例: 買い物リストで売り場の順番を変えられると助かります"
-            onChange={(event) => {
-              setBody(event.target.value);
-            }}
-          />
-        </label>
-        {errorMessage !== null && (
-          <p className="error-message" role="alert">
-            {errorMessage}
-          </p>
-        )}
-        {statusMessage !== null && (
-          <p className="status-message" role="status" aria-live="polite">
-            {statusMessage}
-          </p>
-        )}
-        <button className="primary-button min-h-11" type="submit" disabled={pending}>
-          {pending ? "送信しています…" : "送信する"}
+      {!expanded ? (
+        <button
+          type="button"
+          className="secondary-button min-h-11"
+          aria-expanded="false"
+          onClick={() => {
+            setExpanded(true);
+          }}
+        >
+          改善要望・不具合を送る
         </button>
-      </form>
+      ) : (
+        <>
+          <p className="type-small">
+            使っていて不便な点や、あると助かる機能があれば教えてください。不具合の報告もこちらから送れます。
+          </p>
+          <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
+            <fieldset className="stack" disabled={pending}>
+              <legend className="type-small">種類</legend>
+              <div className="stack" role="radiogroup" aria-label="フィードバックの種類">
+                {feedbackCategories.map((value) => (
+                  <label key={value} className="min-h-11 flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="feedback-category"
+                      value={value}
+                      checked={category === value}
+                      onChange={() => {
+                        setCategory(value);
+                      }}
+                    />
+                    <span>{categoryLabels[value]}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <label className="field">
+              内容（10〜2000文字）
+              <textarea
+                value={body}
+                maxLength={2000}
+                rows={5}
+                disabled={pending}
+                aria-required="true"
+                placeholder="例: 買い物リストで売り場の順番を変えられると助かります"
+                onChange={(event) => {
+                  setBody(event.target.value);
+                }}
+              />
+            </label>
+            {errorMessage !== null && (
+              <p className="error-message" role="alert">
+                {errorMessage}
+              </p>
+            )}
+            {statusMessage !== null && (
+              <p className="status-message" role="status" aria-live="polite">
+                {statusMessage}
+              </p>
+            )}
+            <div className="wizard-actions">
+              <button
+                className="secondary-button min-h-11 wizard-action"
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  setExpanded(false);
+                }}
+              >
+                閉じる
+              </button>
+              <button className="primary-button min-h-11 wizard-action" type="submit" disabled={pending}>
+                {pending ? "送信しています…" : "送信する"}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
     </section>
   );
 }
