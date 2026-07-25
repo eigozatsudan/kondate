@@ -206,9 +206,12 @@ function reducedMotionDeclarations(source: string, selector: string): CssDeclara
   return result;
 }
 
-/** scope selector自身の全blockを順番に畳み込み、後置blockの最終tokenを返す。 */
+/**
+ * 配色トークンの正本。トークンは :root に集約したため、:root の宣言を返す。
+ * 旧名 scoped はテスト互換のため残す。
+ */
 function scopedDeclarations(source: string): CssDeclarations {
-  return declarationsForSelector(source, ".guided-planner-theme");
+  return declarationsForSelector(source, ":root");
 }
 
 const allowedGuidedSelectors = new Set([
@@ -266,7 +269,8 @@ const protectedSelectorFragments = [
 
 const allowedProtectedSelectors = new Set([
   ":root",
-  ".guided-planner-theme",
+  // .guided-planner-theme 単体のトークンブロックは :root へ集約済み。
+  // 配下セレクタ（.guided-planner-theme .…）のみ残す。
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
   ".guided-planner-theme .wizard-title:focus-visible",
   ".guided-planner-theme .primary-button",
@@ -357,31 +361,6 @@ const allowedProtectedSelectors = new Set([
 ]);
 
 const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  ".guided-planner-theme": {
-    color: "#26211e",
-    background: "#faf9f8",
-    "font-family":
-      '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
-    "font-synthesis": "none",
-    "text-rendering": "optimizeLegibility",
-    "--app-background": "#faf9f8",
-    "--surface": "#ffffff",
-    "--text": "#26211e",
-    "--muted": "#57504b",
-    "--primary": "#b85033",
-    "--primary-hover": "#a84328",
-    "--primary-active": "#9c3c23",
-    "--primary-ink": "#ffffff",
-    "--primary-strong": "#a13d24",
-    "--selection": "#f9e3da",
-    "--notice": "#fdf1ec",
-    "--border": "#e7e2dd",
-    "--border-strong": "#8e8681",
-    "--focus": "#a13d24",
-    "--pantry": "#3f6b57",
-    "--danger": "#b3261e",
-    "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
-  },
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible": {
     outline: "3px solid var(--focus)",
     "outline-offset": "2px",
@@ -565,7 +544,9 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     margin: "0",
     color: "var(--text)",
     "font-family": "var(--question-font)",
-    "line-height": "1.4",
+    "font-size": "var(--text-display)",
+    "font-weight": "700",
+    "line-height": "var(--leading-display)",
     "overflow-wrap": "anywhere",
   },
   ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value":
@@ -705,11 +686,38 @@ const globalRuleDeclarations: Readonly<
       "--focus": "#a13d24",
       "--pantry": "#3f6b57",
       "--danger": "#b3261e",
+      "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
+      "--text-display": "clamp(1.5rem, 6vw, 2rem)",
+      "--text-h1": "1.5rem",
+      "--text-h2": "1.25rem",
+      "--text-body": "1rem",
+      "--text-small": "0.875rem",
+      "--leading-display": "1.35",
+      "--leading-h1": "1.4",
+      "--leading-h2": "1.5",
+      "--leading-body": "1.75",
+      "--radius-sm": "10px",
+      "--radius-md": "14px",
+      "--radius-lg": "20px",
+      "--radius-pill": "999px",
+      "--space-1": "4px",
+      "--space-2": "8px",
+      "--space-3": "12px",
+      "--space-4": "16px",
+      "--space-5": "24px",
+      "--space-6": "32px",
+      "--space-7": "48px",
     },
     { "--section-tint": "#faf9f8" },
   ],
   "html, body, #root": [{ "min-width": "320px", "min-height": "100%", margin: "0" }],
-  body: [{ "min-height": "100vh", "font-size": "16px", "line-height": "1.6" }],
+  body: [
+    {
+      "min-height": "100vh",
+      "font-size": "16px",
+      "line-height": "var(--leading-body)",
+    },
+  ],
   "button, a, input, select, textarea": [{ font: "inherit" }],
   "button, .button-link": [{ "min-width": "44px", "min-height": "44px" }],
   "button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible":
@@ -1202,7 +1210,7 @@ describe("guided planner theme", () => {
     expect(token("primary-ink").toLowerCase()).toBe("#ffffff");
     expect(css).toMatch(/body\s*\{[^}]*font-size:\s*16px/s);
     expect(css).toMatch(/\.app-section\s*\{[^}]*var\(--section-tint\)/s);
-    expect(css).toMatch(/\.guided-planner-theme[^}]*--focus:\s*#a13d24/s);
+    expect(css).toMatch(/:root[^}]*--focus:\s*#a13d24/s);
     expect(css).toMatch(/\.choice-card\[aria-pressed="true"\][^}]*border-color:/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*border-radius:\s*(18|19|20)px/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*box-shadow:/s);
@@ -1288,6 +1296,27 @@ describe("guided planner theme", () => {
       "--focus": "#a13d24",
       "--pantry": "#3f6b57",
       "--danger": "#b3261e",
+      "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
+      "--text-display": "clamp(1.5rem, 6vw, 2rem)",
+      "--text-h1": "1.5rem",
+      "--text-h2": "1.25rem",
+      "--text-body": "1rem",
+      "--text-small": "0.875rem",
+      "--leading-display": "1.35",
+      "--leading-h1": "1.4",
+      "--leading-h2": "1.5",
+      "--leading-body": "1.75",
+      "--radius-sm": "10px",
+      "--radius-md": "14px",
+      "--radius-lg": "20px",
+      "--radius-pill": "999px",
+      "--space-1": "4px",
+      "--space-2": "8px",
+      "--space-3": "12px",
+      "--space-4": "16px",
+      "--space-5": "24px",
+      "--space-6": "32px",
+      "--space-7": "48px",
       "--section-tint": "#faf9f8",
     });
     expectEffectiveDeclarations("body", {
@@ -1295,7 +1324,7 @@ describe("guided planner theme", () => {
       "min-height": "100vh",
       margin: "0",
       "font-size": "16px",
-      "line-height": "1.6",
+      "line-height": "var(--leading-body)",
     });
     for (const selector of ["button", "a", "input", "select", "textarea"]) {
       expectEffectiveDeclarations(selector, { font: "inherit" });
