@@ -827,7 +827,7 @@ it("cancels a newly added draft without completing it", async () => {
   expect(await screen.findByText("家族の追加をやめました")).toBeVisible();
 });
 
-it("removes a deleted member from cache before selecting the remaining member", async () => {
+it("removes a deleted member from cache and closes the editor", async () => {
   const remaining = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
   const listMembers = vi
     .fn()
@@ -838,8 +838,13 @@ it("removes a deleted member from cache before selecting the remaining member", 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
 
-  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+  // 編集中の家族を削除したらフォームを閉じ、残った家族は一覧に残る
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("button", { name: "1人目の子どもを編集" })).toBeVisible();
   expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([remaining]);
+  expect(await screen.findByText("家族の設定を削除しました")).toBeVisible();
 });
 
 it("shows the empty add screen immediately after deleting the last member", async () => {
@@ -1428,8 +1433,11 @@ it("cleans up a deferred registered status when its member is deleted", async ()
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
-  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
 
+  // 削除した大人をキャッシュへ戻して再編集しても、保留中の registered は残らない
   await act(async () => {
     queryClient.setQueryData(householdKeys.members("settings"), [member, remainingMember]);
     await Promise.resolve();
