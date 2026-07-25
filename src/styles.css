@@ -799,10 +799,11 @@ textarea:focus-visible {
   width: min(100% - 32px, 680px);
   margin-inline: auto;
   /*
-   * 下余白は固定ナビ（.nav-item の min-height 56px）＋わずかな呼吸と
-   * iOS ホームインジケータ分。safe-area を足さないと端末下端で内容が隠れる。
+   * 下余白は固定ナビ（.nav-item min-height 56px）の直上まで寄せる。
+   * 以前の 96px はナビ高さ以上の空きができ、main と nav のあいだが
+   * 途切れて見えた。safe-area はナビ側にも足すので、ここでも同じ分を確保する。
    */
-  padding-block: 32px calc(72px + env(safe-area-inset-bottom, 0px));
+  padding-block: 32px calc(56px + 8px + env(safe-area-inset-bottom, 0px));
 }
 
 .card {
@@ -990,10 +991,10 @@ textarea:focus-visible {
 }
 
 /*
- * 下部ナビはセクション面（--section-tint）を床として連続させる。
- * 以前の半透明白＋ blur と、720px 以上で 680px 幅に左右 border を付けた
- * 「浮いた箱」は、main の tint とのあいだに切れ目を作っていた。
- * フル幅の同一面＋上辺の区切り線だけにし、safe-area でホームインジケータも避ける。
+ * 下部ナビ。幅は main（.page-frame の 680px）と揃える（フル幅にはしない）。
+ * 問題は横ではなく上下: 半透明白＋ blur だと section-tint の main 面と色が
+ * 分かれ、padding の空きと合わせて「main が途切れて nav が浮く」ように見える。
+ * 同じ --section-tint を床にし、safe-area でホームインジケータを避ける。
  */
 .bottom-nav {
   position: fixed;
@@ -1024,4 +1025,15 @@ textarea:focus-visible {
 .nav-item-active {
   border-top-color: var(--primary);
   color: var(--primary-strong);
+}
+
+@media (min-width: 720px) {
+  .bottom-nav {
+    right: 50%;
+    left: auto;
+    width: min(680px, 100%);
+    transform: translateX(50%);
+    border-right: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+  }
 }
