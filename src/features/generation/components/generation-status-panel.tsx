@@ -45,9 +45,12 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
 export function GenerationStatusPanel({
   state,
   userId,
+  onClear,
 }: {
   state: GenerationClientState;
   userId?: string;
+  /** request_conflict から idle へ戻し、planner 再入力へ進ませる */
+  onClear?: () => void;
 }) {
   if (state.phase === "checking") {
     return <p role="status">保存した作成状況を確認しています</p>;
@@ -109,6 +112,27 @@ export function GenerationStatusPanel({
         </a>
         <a className="button-link" href="/history">
           作った献立を見る
+        </a>
+      </>
+    );
+  }
+  if (state.phase === "request_conflict") {
+    return (
+      <>
+        <h1>同じ操作を続けられませんでした</h1>
+        <p>{state.message}</p>
+        {userId !== undefined ? <TerminalGenerationUsage userId={userId} /> : null}
+        {onClear !== undefined ? (
+          <button type="button" className="button-link" onClick={onClear}>
+            最初からやり直す
+          </button>
+        ) : (
+          <a className="button-link" href="/planner">
+            最初からやり直す
+          </a>
+        )}
+        <a className="button-link" href="/emergency-menus">
+          15分緊急献立を見る
         </a>
       </>
     );

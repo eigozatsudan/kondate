@@ -721,4 +721,28 @@ describe("useGenerationRecovery", () => {
     expect(mockStatus).not.toHaveBeenCalled();
     expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
   });
+
+  // Plan 3: 409 idempotency_payload_mismatch は offline 再POST ループに落とさない。
+  it("maps POST idempotency_payload_mismatch to request_conflict without offline retry", async () => {
+    mockPost.mockRejectedValueOnce(new Error("idempotency_payload_mismatch"));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("request_conflict");
+    if (recovery.result.current.state.phase !== "request_conflict") {
+      throw new Error("expected request_conflict");
+    }
+    expect(recovery.result.current.state.code).toBe("idempotency_payload_mismatch");
+    expect(recovery.result.current.state.message).toContain("再送できません");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    mockPost.mockClear();
+    mockStatus.mockClear();
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      emitAuth("TOKEN_REFRESHED", { user: { id: USER_ID } } as Session);
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("request_conflict");
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockStatus).not.toHaveBeenCalled();
+  });
 });

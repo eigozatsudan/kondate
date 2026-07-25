@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { issueMessages } from "@shared/contracts/generation";
 import { getGenerationStatus, postGeneration } from "../api/generation-api";
 import {
   generationReducer,
@@ -136,8 +137,21 @@ export function useGenerationRecovery(
           if (!isCurrent(token)) return;
           token.phase = data.status === "not_started" ? "submitting" : data.status;
           dispatch({ type: "status", data });
-        } catch {
+        } catch (error) {
           if (!isCurrent(token)) return;
+          // Plan 3: 409 idempotency_payload_mismatch は offline 再試行ループへ落とさない。
+          // 任意の Error.message は端末化しない（transport/auth は従来どおり offline）。
+          if (error instanceof Error && error.message === "idempotency_payload_mismatch") {
+            token.phase = "request_conflict";
+            // remount / C1 安全のため pending は即消し、端末 UI はメモリ上に残す。
+            clearPendingGeneration();
+            dispatch({
+              type: "request_conflict",
+              code: "idempotency_payload_mismatch",
+              message: issueMessages.idempotency_payload_mismatch,
+            });
+            return;
+          }
           token.phase = "offline";
           dispatch({ type: "network_error" });
         }
@@ -228,7 +242,8 @@ export function useGenerationRecovery(
         previousPhase === "idle" ||
         previousPhase === "succeeded" ||
         previousPhase === "failed" ||
-        previousPhase === "constraint_conflict";
+        previousPhase === "constraint_conflict" ||
+        previousPhase === "request_conflict";
       if (!allowed || userId === null || pending.ownerUserId !== userId) {
         throw new Error("generation operation is active");
       }
@@ -321,6 +336,12 @@ export function useGenerationRecovery(
           queryKey: usageTodayQueryKey(userId, jstDayKey()),
         });
       }
+    }
+    // request_conflict は submit 時に pending を消済み。利用状況だけ更新する。
+    if (state.phase === "request_conflict" && userId !== null) {
+      void queryClient.invalidateQueries({
+        queryKey: usageTodayQueryKey(userId, jstDayKey()),
+      });
     }
     if (state.phase === "succeeded" && userId !== null) {
       void queryClient.invalidateQueries({

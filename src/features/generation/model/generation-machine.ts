@@ -25,6 +25,13 @@ export type GenerationClientState =
       effect: "none";
     }
   | {
+      // 409 idempotency_payload_mismatch 専用。offline 再POST ループに落とさない。
+      phase: "request_conflict";
+      code: "idempotency_payload_mismatch";
+      message: string;
+      effect: "none";
+    }
+  | {
       phase: "offline";
       previous: Exclude<GenerationClientState, { phase: "offline" }>;
       effect: "wait_online";
@@ -36,6 +43,11 @@ export type GenerationEvent =
   | { type: "status"; data: GenerationStatusData }
   | { type: "network_error" }
   | { type: "online" }
+  | {
+      type: "request_conflict";
+      code: "idempotency_payload_mismatch";
+      message: string;
+    }
   | { type: "clear" };
 
 export function generationReducer(
@@ -44,6 +56,28 @@ export function generationReducer(
 ): GenerationClientState {
   if (event.type === "clear") {
     return { phase: "idle", effect: "none" };
+  }
+
+  // request_conflict は明示 clear / 新しい start 以外では動かさない（Plan 3）。
+  if (state.phase === "request_conflict") {
+    if (event.type === "request_conflict") {
+      return {
+        phase: "request_conflict",
+        code: event.code,
+        message: event.message,
+        effect: "none",
+      };
+    }
+    return state;
+  }
+
+  if (event.type === "request_conflict") {
+    return {
+      phase: "request_conflict",
+      code: event.code,
+      message: event.message,
+      effect: "none",
+    };
   }
   if (event.type === "network_error") {
     return state.phase === "offline"
