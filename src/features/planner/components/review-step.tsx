@@ -163,86 +163,96 @@ export function ReviewStep({
       )}
       <dl className="wizard-review-list">
         {/*
-          3列グリッド（項目名 | 回答 | 変更）。変更ラベルは「変更」で幅を揃え、
+          項目名 | 回答。変更ボタンは dd 内に置き definition-list を満たす。
           操作対象は aria-label で一意にする（getByRole 用）。
         */}
         <div className="wizard-review-item">
           <dt>食事</dt>
-          <dd>{mealLabel(value.mealType)}</dd>
-          {onEditStep !== undefined && (
-            <button
-              className="text-button min-h-11 review-edit-action"
-              type="button"
-              disabled={disabled}
-              aria-label="食事を変更"
-              onClick={() => {
-                onEditStep("meal");
-              }}
-            >
-              変更
-            </button>
-          )}
+          <dd className="review-answer-cell">
+            <span>{mealLabel(value.mealType)}</span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11 review-edit-action"
+                type="button"
+                disabled={disabled}
+                aria-label="食事を変更"
+                onClick={() => {
+                  onEditStep("meal");
+                }}
+              >
+                変更
+              </button>
+            )}
+          </dd>
         </div>
         <div className="wizard-review-item">
           <dt>メイン食材</dt>
-          <dd>
-            {value.mainIngredients.length === 0 ? "未選択" : value.mainIngredients.join("・")}
+          <dd className="review-answer-cell">
+            <span>
+              {value.mainIngredients.length === 0
+                ? "未選択"
+                : value.mainIngredients.join("・")}
+            </span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11 review-edit-action"
+                type="button"
+                disabled={disabled}
+                aria-label="メイン食材を変更"
+                onClick={() => {
+                  onEditStep("ingredients");
+                }}
+              >
+                変更
+              </button>
+            )}
           </dd>
-          {onEditStep !== undefined && (
-            <button
-              className="text-button min-h-11 review-edit-action"
-              type="button"
-              disabled={disabled}
-              aria-label="メイン食材を変更"
-              onClick={() => {
-                onEditStep("ingredients");
-              }}
-            >
-              変更
-            </button>
-          )}
         </div>
         <div className="wizard-review-item">
           <dt>ジャンル</dt>
-          <dd>{cuisineGenreLabel(value.cuisineGenre)}</dd>
-          {onEditStep !== undefined && (
-            <button
-              className="text-button min-h-11 review-edit-action"
-              type="button"
-              disabled={disabled}
-              aria-label="ジャンルを変更"
-              onClick={() => {
-                onEditStep("cuisine");
-              }}
-            >
-              変更
-            </button>
-          )}
+          <dd className="review-answer-cell">
+            <span>{cuisineGenreLabel(value.cuisineGenre)}</span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11 review-edit-action"
+                type="button"
+                disabled={disabled}
+                aria-label="ジャンルを変更"
+                onClick={() => {
+                  onEditStep("cuisine");
+                }}
+              >
+                変更
+              </button>
+            )}
+          </dd>
         </div>
         <div className="wizard-review-item">
           <dt>対象</dt>
-          <dd>
-            {value.targetMode === "idea"
-              ? value.servings === null
-                ? "アイデア（人数未設定）"
-                : `アイデア・${String(value.servings)}人分`
-              : value.targetMode === "household"
-                ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
-                : "未選択"}
+          <dd className="review-answer-cell">
+            <span>
+              {value.targetMode === "idea"
+                ? value.servings === null
+                  ? "アイデア（人数未設定）"
+                  : `アイデア・${String(value.servings)}人分`
+                : value.targetMode === "household"
+                  ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
+                  : "未選択"}
+            </span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11 review-edit-action"
+                type="button"
+                disabled={disabled}
+                aria-label="対象を変更"
+                onClick={() => {
+                  onEditStep("audience");
+                }}
+              >
+                変更
+              </button>
+            )}
           </dd>
-          {onEditStep !== undefined && (
-            <button
-              className="text-button min-h-11 review-edit-action"
-              type="button"
-              disabled={disabled}
-              aria-label="対象を変更"
-              onClick={() => {
-                onEditStep("audience");
-              }}
-            >
-              変更
-            </button>
-          )}
         </div>
       </dl>
       {onEditStep !== undefined && (

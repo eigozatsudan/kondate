@@ -173,7 +173,6 @@ export function ShoppingListPage() {
   return (
     <main className="page-frame stack">
       <header className="shopping-page-header">
-        <p className="eyebrow">買い物</p>
         <h1>買い物リスト</h1>
         {totalCount > 0 && (
           <p className="shopping-progress" aria-live="polite">

@@ -1016,10 +1016,7 @@ export function HouseholdSettingsForm({
 
   return (
     <main className="page-frame stack">
-      <header className="settings-page-header">
-        <p className="eyebrow">設定</p>
-        <h1>家族設定</h1>
-      </header>
+      <h1>家族設定</h1>
       <section className="card stack settings-section" aria-labelledby="registered-household-title">
         <h2 id="registered-household-title" className="settings-section-title">
           登録済みの家族

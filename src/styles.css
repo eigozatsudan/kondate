@@ -271,8 +271,8 @@
 
 .guided-planner-theme .wizard-review-item {
   display: grid;
-  /* 項目名 | 回答 | 変更。列幅を固定して行ごとのガタつきを抑える */
-  grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+  /* 項目名 | 回答（変更は dd 内）。列幅を固定してガタつきを抑える */
+  grid-template-columns: 5.5rem minmax(0, 1fr);
   align-items: center;
   gap: 8px 12px;
   border-bottom: 1px solid var(--border);
@@ -291,9 +291,15 @@
   overflow-wrap: anywhere;
 }
 
-/* 確認の「変更」列。幅を揃えて右端を一直線にする（.wizard- 断片は使わない） */
+/* 回答と「変更」を1行に。ボタンは dd 内に置き definition-list を満たす */
+.review-answer-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+}
+
 .review-edit-action {
-  justify-self: end;
   min-width: 4.5rem;
   padding-inline: 8px;
 }

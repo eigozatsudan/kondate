@@ -190,10 +190,7 @@ export function PantryPageContent({
 
   return (
     <main className="page-frame stack">
-      <header>
-        <p className="eyebrow">冷蔵庫</p>
-        <h1>食材リスト</h1>
-      </header>
+      <h1>食材リスト</h1>
       <p>期限日は並べ替えと注意表示のための入力です。アプリは食べられるかを判断しません。</p>
       <section className="pantry-overview stack" aria-labelledby="pantry-list-heading">
         <div className="pantry-section-heading">
