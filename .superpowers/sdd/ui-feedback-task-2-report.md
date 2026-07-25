@@ -178,3 +178,21 @@
   - Task外6ファイルと既存untracked設計書には触れていない。
 - fix round 7 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
 - 未解決事項: なし。
+
+## Fix round 8
+
+- status: `DONE`
+- REDで確認した失敗:
+  - 対象ファイル単独のESLintで、苦手食材追加成功callbackの省略形が `@typescript-eslint/no-confusing-void-expression` の1件だけ期待どおり失敗した。
+- 実装内容と設計判断:
+  - state更新callbackをblock bodyへ変更し、戻り値を利用しない意図を明確にした。実行条件や成功時の入力クリア動作は変更していない。
+- 実行した検証と結果:
+  - focused household settings: 79 tests PASS。
+  - 対象ファイルのscoped Prettier check: PASS。
+  - 対象ファイル単独のESLint: PASS。
+  - 対象ファイルの `git diff --check`: PASS。
+- self-review:
+  - Lint規約への適合だけを行い、家族設定の保存・苦手食材追加・フォーム表示の挙動に変更がないことを確認した。
+  - Task外ファイルと既存の未コミット変更には触れていない。
+- fix round 8 commit hash: `4af938f`
+- 未解決事項: なし。
