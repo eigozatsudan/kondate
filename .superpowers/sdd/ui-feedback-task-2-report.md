@@ -196,3 +196,26 @@
   - Task外ファイルと既存の未コミット変更には触れていない。
 - fix round 8 commit hash: `4af938f`
 - 未解決事項: なし。
+
+## Fix round 9
+
+- status: `DONE_WITH_CONCERNS`
+- REDで確認した失敗:
+  - `still completes the original member after createDraft fails` が、修正前は create 失敗後の `role="status"`（「家族の追加に失敗しました」）を見つけられず FAIL。
+  - 選択クリア自体による完了失敗は、render 本体の `selectedMemberIdRef.current = selected?.id` 同期により通常フローではマスクされる。ただし `onMutate` が `undefined` を渡すのは失敗時の復元契約がなく意図として誤りのため修正した。
+- 実装内容と設計判断:
+  - `createDraft.onMutate` を `beginEditorTransition(selectedMemberIdRef.current)` に変更し、feedback revision の更新と message クリアだけ行い選択は維持する。
+  - `onSuccess` は従来どおり `beginEditorTransition(created.id)` + `setSelectedId` + `setEditorOpen(true)`。
+  - `onError` で平易な日本語エラーを表示（選択・revision は変えない）。
+- 実行した検証と結果:
+  - RED: 上記1件のみ FAIL（create 失敗 status 不在）。
+  - GREEN focused household: 80 tests PASS。
+  - GREEN focused 5 files: 138 tests PASS。
+  - scoped Prettier check: PASS。
+  - `git diff --check`: PASS。
+- self-review:
+  - 成功時の created.id 切替契約と、create 中の complete 無効化、追加キャンセル時の previousSelectedId 復元を維持した。
+  - onError は feedbackRevision を進めないため、失敗後の元メンバー完了 lineage を壊さない。
+- fix round 9 commit hash: （commit 後に確定）
+- 未解決事項:
+  - 二次レビューが指摘した「選択クリアで完了不可」は render 同期により通常は再現しにくい。今回の修正は選択維持を明示し、失敗表示を足した防御的修正。

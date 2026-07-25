@@ -617,7 +617,9 @@ export function HouseholdSettingsForm({
     onMutate: () => {
       // 成功後に戻れるよう、追加操作を始めた時点の選択を記録する
       previousSelectedIdBeforeAddRef.current = selectedMemberIdRef.current;
-      beginEditorTransition(undefined);
+      // 失敗時も元の家族フォームが残るため、選択は維持し feedback だけ更新する。
+      // 作成成功時に onSuccess で created.id へ切り替える。
+      beginEditorTransition(selectedMemberIdRef.current);
     },
     onSuccess: (created) => {
       queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) => [
@@ -627,6 +629,10 @@ export function HouseholdSettingsForm({
       beginEditorTransition(created.id);
       setSelectedId(created.id);
       setEditorOpen(true);
+    },
+    onError: (error) => {
+      // 下書き作成失敗は選択を変えず、平易なエラーだけを表示する
+      setMessage(error instanceof Error ? error.message : "家族の追加に失敗しました");
     },
     onSettled: () => {
       creatingDraftRef.current = false;

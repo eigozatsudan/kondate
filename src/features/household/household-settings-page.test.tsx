@@ -451,6 +451,33 @@ it("does not start completion while creating another draft", async () => {
   expect(updateMember).not.toHaveBeenCalled();
 });
 
+it("still completes the original member after createDraft fails", async () => {
+  // 下書き作成失敗で selectedMemberIdRef が失われると、残った元フォームの完了で
+  // 成功 message もフォーム close も出ない回帰を防ぐ。
+  const createDraft = vi.fn().mockRejectedValue(new Error("家族の追加に失敗しました"));
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({ createDraft, updateMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を追加" }));
+  await waitFor(() => {
+    expect(createDraft).toHaveBeenCalledTimes(1);
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent("家族の追加に失敗しました");
+
+  // 失敗後も元の家族フォームが開いたまま
+  expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
+
+  await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("家族設定が変わりました");
+  expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
+});
+
 it("clears an earlier completion failure as soon as a new draft is requested", async () => {
   const firstDraft: HouseholdMemberRow = {
     ...member,
