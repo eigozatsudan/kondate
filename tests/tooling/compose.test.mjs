@@ -52,6 +52,10 @@ test("root compose does not redeclare include-owned supabase services", async ()
     readFile("compose.yaml", "utf8"),
     readFile("infra/supabase.override.yaml", "utf8"),
   ]);
+  const supavisor = override.match(
+    /^ {2}supavisor:\n(?<body>[\s\S]*?)(?=^ {2}[\w-]+:|(?![\s\S]))/mu,
+  )?.groups?.body;
+  assert.ok(supavisor, "supavisor override service is missing");
   for (const name of ["kong:", "supavisor:", "db:", "auth:"]) {
     assert.doesNotMatch(
       compose,
@@ -61,13 +65,13 @@ test("root compose does not redeclare include-owned supabase services", async ()
   }
   // 127.0.0.1 固定は override 側の契約
   assert.match(override, /^ {2}kong:\n {4}ports: !override/mu);
-  assert.match(override, /^ {2}supavisor:\n {4}ports: !override/mu);
   assert.match(override, /127\.0\.0\.1:8000:8000/);
-  assert.match(override, /127\.0\.0\.1:5432:5432/);
+  assert.match(supavisor, /^ {4}ports: !override/mu);
+  assert.match(supavisor, /127\.0\.0\.1:5432:5432/u);
   // Supavisor image が起動時に要求する上限値を Docker 側でも保証する
-  assert.match(override, /^ {4}ulimits:\n {6}nofile:\n {8}soft: 100000\n {8}hard: 100000$/mu);
+  assert.match(supavisor, /^ {4}ulimits:\n {6}nofile:\n {8}soft: 100000\n {8}hard: 100000$/mu);
   // CI コールドスタート向け: pooler health の start_period を十分長くする
-  assert.match(override, /start_period:\s*180s/u);
+  assert.match(supavisor, /start_period:\s*180s/u);
 });
 
 test("serializes project migrations after GoTrue migrations", async () => {
