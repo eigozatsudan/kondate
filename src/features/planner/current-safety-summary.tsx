@@ -11,7 +11,10 @@ export function CurrentSafetySummary({ members }: { members: readonly PlannerSaf
           {member.blockedReason !== null && <p role="alert">{member.blockedReason}</p>}
         </div>
       ))}
-      <a href="/settings">家族設定を変更</a>
+      {/* ナビ先は設定画面。見た目は実体のあるボタン（secondary）にする */}
+      <a className="secondary-button min-h-11" href="/settings">
+        家族設定を変更
+      </a>
       <p>
         AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
       </p>
