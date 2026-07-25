@@ -9,11 +9,12 @@ export type SafeLogEvent = {
   code: string;
   durationMs: number;
   modelId?: string;
-  /** 時間メンテのみ — 集計件数4つ。行 ID は出さない。 */
+  /** 時間メンテのみ — 集計件数。行 ID は出さない。 */
   staleReservationsFinalized?: number;
   generationLedgersDeleted?: number;
   shoppingMutationsDeleted?: number;
   authContinuationsDeleted?: number;
+  userFeedbackDeleted?: number;
 };
 
 type LogWriter = (serialized: string) => void;
@@ -52,6 +53,9 @@ export const createSafeLogger =
     }
     if (event.authContinuationsDeleted !== undefined) {
       record.auth_continuations_deleted = event.authContinuationsDeleted;
+    }
+    if (event.userFeedbackDeleted !== undefined) {
+      record.user_feedback_deleted = event.userFeedbackDeleted;
     }
     write(JSON.stringify(record));
   };

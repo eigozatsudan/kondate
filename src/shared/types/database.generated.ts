@@ -2265,17 +2265,6 @@ export type Database = {
         Args: { p_global_limit?: number; p_now?: string; p_user_id: string }
         Returns: Json
       }
-      insert_user_feedback_rate_limited: {
-        Args: {
-          p_body: string
-          p_category: string
-          p_client_path: string | null
-          p_limit?: number
-          p_user_id: string
-          p_window_seconds?: number
-        }
-        Returns: Json
-      }
       get_current_safety_snapshot: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: Json
@@ -2285,6 +2274,17 @@ export type Database = {
           p_idempotency_key: string
           p_request_hash: string
           p_user_id: string
+        }
+        Returns: Json
+      }
+      insert_user_feedback_rate_limited: {
+        Args: {
+          p_body: string
+          p_category: string
+          p_client_path: string
+          p_limit?: number
+          p_user_id: string
+          p_window_seconds?: number
         }
         Returns: Json
       }

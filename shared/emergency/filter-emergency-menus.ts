@@ -195,11 +195,10 @@ export function filterEmergencyMenus(input: {
         normalizeMainIngredientForMatch(dish.name),
         ...dish.ingredients.map((ingredient) => normalizeMainIngredientForMatch(ingredient.name)),
       ]);
+      // 候補がユーザー指定を含む方向だけを見る。
+      // 逆方向（"塩鮭".includes("塩")）は調味料・短い総称語で過剰マッチするため使わない。
       return mainIngredients.every((mainIngredient) =>
-        candidateNames.some(
-          (candidateName) =>
-            candidateName.includes(mainIngredient) || mainIngredient.includes(candidateName),
-        ),
+        candidateNames.some((candidateName) => candidateName.includes(mainIngredient)),
       );
     })
     .sort((left, right) => {

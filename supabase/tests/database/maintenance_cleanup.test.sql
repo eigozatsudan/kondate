@@ -361,7 +361,8 @@ select is(
     'staleReservationsFinalized', 2,
     'generationLedgersDeleted', 1,
     'shoppingMutationsDeleted', 4,
-    'authContinuationsDeleted', 2
+    'authContinuationsDeleted', 2,
+    'userFeedbackDeleted', 0
   ),
   'first maintenance run finalizes stale, deletes older ledgers/mutations/continuations'
 );
@@ -455,7 +456,8 @@ select is(
     'staleReservationsFinalized', 0,
     'generationLedgersDeleted', 0,
     'shoppingMutationsDeleted', 0,
-    'authContinuationsDeleted', 0
+    'authContinuationsDeleted', 0,
+    'userFeedbackDeleted', 0
   ),
   'second maintenance run is idempotent zero counts'
 );
@@ -576,7 +578,7 @@ end;
 $shop_boundary$;
 select pass('per-user and account-wide shopping cleaners retain exact 30-day boundary');
 
--- 返却キーは厳密に 4 つ
+-- 返却キーは厳密に 5 つ（user_feedback 30 日保持を含む）
 select is(
   (
     select array_agg(key order by key)
@@ -588,9 +590,10 @@ select is(
     'authContinuationsDeleted',
     'generationLedgersDeleted',
     'shoppingMutationsDeleted',
-    'staleReservationsFinalized'
+    'staleReservationsFinalized',
+    'userFeedbackDeleted'
   ]::text[],
-  'run_kondate_maintenance returns exactly four camelCase count keys'
+  'run_kondate_maintenance returns exactly five camelCase count keys'
 );
 
 select * from finish();

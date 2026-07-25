@@ -456,15 +456,16 @@ function HouseholdDetailBody({
     [menuId, userId],
   );
 
+  const ownerId = userId ?? "missing";
   const reconcileTarget = useQuery({
-    queryKey: ["shopping", "reconcile-target", menuId, activeList?.id ?? "none"],
+    queryKey: shoppingKeys.reconcileTarget(ownerId, menuId, activeList?.id ?? "none"),
     queryFn: () => fetchReconcilableMenuSource(menuId, activeList?.id ?? "none"),
     enabled: activeList !== null && actionsEnabled,
     staleTime: 30_000,
   });
 
   const finishShoppingCommand = async (kind: "create" | "reconcile", targetId: string) => {
-    await queryClient.invalidateQueries({ queryKey: shoppingKeys.active });
+    await queryClient.invalidateQueries({ queryKey: shoppingKeys.active(ownerId) });
     await queryClient.invalidateQueries({ queryKey: ["shopping", "reconcile-target"] });
     clearShoppingCommand(kind, targetId);
     setShoppingSheet(null);
@@ -473,7 +474,7 @@ function HouseholdDetailBody({
   const failShoppingCommand = (kind: "create" | "reconcile", targetId: string, error: unknown) => {
     if (error instanceof Error && "code" in error) {
       clearShoppingCommand(kind, targetId);
-      void queryClient.invalidateQueries({ queryKey: shoppingKeys.active });
+      void queryClient.invalidateQueries({ queryKey: shoppingKeys.active(ownerId) });
       void queryClient.invalidateQueries({ queryKey });
       setShoppingSheet(null);
       setShoppingDiff(null);

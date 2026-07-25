@@ -5,6 +5,10 @@ import { expect, it, vi } from "vitest";
 import type { AuthGateway } from "./auth-gateway";
 import { LoginPage } from "./login-page";
 
+vi.mock("./use-auth", () => ({
+  useAuth: () => ({ status: "unauthenticated", session: null }),
+}));
+
 it("places Google first and renders the complete sent state", async () => {
   const user = userEvent.setup();
   const gateway: AuthGateway = {

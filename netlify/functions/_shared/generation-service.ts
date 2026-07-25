@@ -48,6 +48,7 @@ import {
   type OpenRouterGenerationResult,
   type OpenRouterMessage,
 } from "./openrouter.js";
+import { runWithOpenRouterMockScenario } from "./openrouter-mock-scenario.js";
 import { createRegenerationLoaderDeps } from "./regeneration-adapter.js";
 import {
   isRegenerationDuplicate,
@@ -490,23 +491,12 @@ export function createGenerationDeps(
 ): GenerationDependencies {
   const base = createBaseGenerationDeps(user, timing);
   const localTestScenario = timing.localTestScenario;
-  // 並行リクエストで環境変数を奪い合わないよう、call 中だけ差し替えて finally で戻す
+  // 並行リクエストで process.env を奪い合わないよう、ALS でリクエスト単位にシナリオを渡す
   const callOpenRouter: GenerationDependencies["callOpenRouter"] =
     localTestScenario === undefined
       ? sendMenuGeneration
-      : async (input) => {
-          const previous = process.env.OPENROUTER_MOCK_SCENARIO;
-          process.env.OPENROUTER_MOCK_SCENARIO = localTestScenario;
-          try {
-            return await sendMenuGeneration(input);
-          } finally {
-            if (previous === undefined) {
-              delete process.env.OPENROUTER_MOCK_SCENARIO;
-            } else {
-              process.env.OPENROUTER_MOCK_SCENARIO = previous;
-            }
-          }
-        };
+      : async (input) =>
+          runWithOpenRouterMockScenario(localTestScenario, () => sendMenuGeneration(input));
   return {
     ...base,
     callOpenRouter,

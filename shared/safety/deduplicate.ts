@@ -50,8 +50,15 @@ export function isMateriallySameDish(left: DishSignatureInput, right: DishSignat
 
 export function isMateriallySameMenu(left: MenuSignatureInput, right: MenuSignatureInput): boolean {
   if (left.dishes.length !== right.dishes.length) return false;
-  return left.dishes.every((dish) => {
-    const counterpart = right.dishes.find((candidate) => candidate.role === dish.role);
-    return counterpart !== undefined && isMateriallySameDish(dish, counterpart);
-  });
+  // 同一 role が複数あるとき、最初の候補だけに全部マッチさせない（1 対 1 で消費する）。
+  const remaining = right.dishes.map((dish, index) => ({ dish, index }));
+  for (const dish of left.dishes) {
+    const matchAt = remaining.findIndex(
+      (candidate) =>
+        candidate.dish.role === dish.role && isMateriallySameDish(dish, candidate.dish),
+    );
+    if (matchAt === -1) return false;
+    remaining.splice(matchAt, 1);
+  }
+  return true;
 }

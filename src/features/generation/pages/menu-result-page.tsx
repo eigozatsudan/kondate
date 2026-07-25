@@ -466,18 +466,21 @@ function HouseholdResultBody({
     !shoppingList.isSuccess ||
     menuId === null;
 
+  const ownerId = userId ?? "missing";
   const reconcileTarget = useQuery({
-    queryKey: ["shopping", "reconcile-target", menuId ?? "invalid", activeList?.id ?? "none"],
+    queryKey: shoppingKeys.reconcileTarget(ownerId, menuId ?? "invalid", activeList?.id ?? "none"),
     queryFn: () => fetchReconcilableMenuSource(menuId ?? "invalid", activeList?.id ?? "none"),
     enabled: menuId !== null && activeList !== null && actionsEnabled,
     staleTime: 30_000,
   });
 
   const finishShoppingCommand = async (kind: "create" | "reconcile", targetId: string) => {
-    await queryClient.invalidateQueries({ queryKey: shoppingKeys.active });
+    await queryClient.invalidateQueries({ queryKey: shoppingKeys.active(ownerId) });
     // 反映後は「古い版を取り込んでいるか」の判定も作り直す（staleTime のあいだ
     // 反映済みリストに対して差分を出さないため）。
-    await queryClient.invalidateQueries({ queryKey: ["shopping", "reconcile-target"] });
+    await queryClient.invalidateQueries({
+      queryKey: ["shopping", "reconcile-target"],
+    });
     clearShoppingCommand(kind, targetId);
     setShoppingSheet(null);
     setShoppingDiff(null);
@@ -486,7 +489,7 @@ function HouseholdResultBody({
     // code 付き（HTTP/ドメイン）失敗は自動再送しない。記録を捨てて承認をやり直す。
     if (error instanceof Error && "code" in error) {
       clearShoppingCommand(kind, targetId);
-      void queryClient.invalidateQueries({ queryKey: shoppingKeys.active });
+      void queryClient.invalidateQueries({ queryKey: shoppingKeys.active(ownerId) });
       void queryClient.invalidateQueries({ queryKey });
       setShoppingSheet(null);
       setShoppingDiff(null);

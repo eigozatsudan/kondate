@@ -21,6 +21,7 @@ docker compose run --rm --no-deps app node --test \
   tests/tooling/compose.test.mjs \
   tests/tooling/local-development-scripts.test.mjs \
   tests/tooling/project-config.test.mjs \
+  tools/e2e-function-server.test.mjs \
   scripts/assert-privacy-logs.test.mjs \
   scripts/verify-release-evidence.test.mjs \
   scripts/verify-openrouter-models.test.mjs \

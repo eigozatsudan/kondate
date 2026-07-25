@@ -263,7 +263,9 @@ it.each([
   ["-1", null],
   ["Fri, 10 Jul 2026 00:00:00 GMT", null],
   ["2026-07-11T00:00:05.000Z", null],
-  ["999999999999999999999999", null],
+  // 巨大秒数・遠い HTTP-date は 24h 上限にクランプする
+  ["999999999999999999999999", "2026-07-12T00:00:00.000Z"],
+  ["Fri, 01 Jan 2100 00:00:00 GMT", "2026-07-12T00:00:00.000Z"],
   ["Sat, 31 Feb 2026 00:00:05 GMT", null],
   ["Fri, 11 Jul 2026 00:00:05 GMT", null],
 ] as const)("parses Retry-After %s", async (value, expectedRetryAt) => {

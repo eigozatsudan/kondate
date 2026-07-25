@@ -110,4 +110,22 @@ describe("material duplicate helpers", () => {
       ),
     ).toBe(false);
   });
+
+  it("matches same-role dishes one-to-one without reusing a counterpart", () => {
+    const left = {
+      dishes: [
+        { role: "side", name: "A", primaryIngredients: ["にんじん"] },
+        { role: "side", name: "A", primaryIngredients: ["にんじん"] },
+      ],
+    };
+    const right = {
+      dishes: [
+        { role: "side", name: "A", primaryIngredients: ["にんじん"] },
+        { role: "side", name: "B", primaryIngredients: ["大根"] },
+      ],
+    };
+    // 左の 2 品目は右の "B" と実質同一ではない。候補を使い回すと誤って true になる。
+    expect(isMateriallySameMenu(left, right)).toBe(false);
+    expect(isMateriallySameMenu(right, left)).toBe(false);
+  });
 });

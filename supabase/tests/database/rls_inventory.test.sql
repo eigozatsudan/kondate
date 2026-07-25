@@ -260,9 +260,9 @@ select is_empty(
   ('public.get_ai_generation_status(p_user_id uuid, p_idempotency_key uuid, p_user_limit integer, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.get_ai_generation_submission_snapshot(p_request_id uuid, p_user_id uuid)', 'service_role', 'EXECUTE'),
   ('public.get_ai_usage_today(p_user_id uuid, p_now timestamp with time zone, p_global_limit integer)', 'service_role', 'EXECUTE'),
-  ('public.insert_user_feedback_rate_limited(p_user_id uuid, p_category text, p_body text, p_client_path text, p_limit integer, p_window_seconds integer)', 'service_role', 'EXECUTE'),
   ('public.get_current_safety_snapshot(p_user_id uuid, p_target_member_ids uuid[])', 'service_role', 'EXECUTE'),
   ('public.get_shopping_mutation_replay(p_user_id uuid, p_idempotency_key uuid, p_request_hash text)', 'service_role', 'EXECUTE'),
+  ('public.insert_user_feedback_rate_limited(p_user_id uuid, p_category text, p_body text, p_client_path text, p_limit integer, p_window_seconds integer)', 'service_role', 'EXECUTE'),
   ('public.lookup_ai_generation_request(p_user_id uuid, p_idempotency_key uuid)', 'service_role', 'EXECUTE'),
   ('public.mark_ai_global_sent(p_request_id uuid, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.mutate_shopping_item(p_list_id uuid, p_expected_list_version integer, p_expected_safety_fingerprint text, p_operation text, p_item_id uuid, p_idempotency_key uuid, p_payload jsonb)', 'authenticated', 'EXECUTE'),
@@ -341,7 +341,8 @@ select is_empty(
   ('public.shopping_items', 'shopping_items_select_own', 'SELECT'),
   ('public.shopping_label_confirmations', 'shopping_labels_select_own', 'SELECT'),
   ('public.shopping_list_sources', 'shopping_list_sources_select_own', 'SELECT'),
-  ('public.shopping_lists', 'shopping_lists_select_own', 'SELECT')
+  ('public.shopping_lists', 'shopping_lists_select_own', 'SELECT'),
+  ('public.user_feedback', 'user_feedback_deny_all', 'ALL')
     ),
     live as (
       select n.nspname||'.'||c.relname as object,

@@ -84,7 +84,7 @@ describe("AccountSettingsSection", () => {
   it("renders sign-out and a separately labelled DangerZone", () => {
     render(<AccountSettingsSection />);
     expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
-    expect(screen.getByRole("region", { name: "DangerZone" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "危険な操作" })).toBeVisible();
     expect(screen.getByRole("button", { name: "アカウントを削除" })).toBeVisible();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });

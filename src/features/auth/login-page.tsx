@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
-import { useLocation } from "react-router";
+import { Navigate, useLocation } from "react-router";
 import { createAuthGateway, type AuthGateway } from "./auth-gateway";
 import type { MagicLinkState } from "./magic-link-state";
 import { sanitizeReturnPath } from "./auth-flow";
+import { useAuth } from "./use-auth";
 
 type LoginLocationState = {
   authError?:
@@ -24,6 +25,7 @@ function readLoginLocationState(value: unknown): LoginLocationState {
 }
 
 export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
+  const auth = useAuth();
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
   const activeGateway = gateway ?? defaultGateway;
   const location = useLocation();
@@ -34,6 +36,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const [state, setState] = useState<MagicLinkState>({ status: "idle", email: "" });
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [googleError, setGoogleError] = useState(false);
+  const [googlePending, setGooglePending] = useState(false);
 
   useEffect(() => {
     if (state.status !== "sent") return;
@@ -94,13 +97,28 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   };
 
   const startGoogle = async (): Promise<void> => {
+    if (googlePending) return;
     setGoogleError(false);
+    setGooglePending(true);
     try {
       await activeGateway.signInWithGoogle(returnTo);
     } catch {
       setGoogleError(true);
+      setGooglePending(false);
     }
   };
+
+  // 既にセッションがある場合はフォームを出さず returnTo へ進める
+  if (auth.status === "authenticated") {
+    return <Navigate to={returnTo} replace />;
+  }
+  if (auth.status === "loading") {
+    return (
+      <main className="page-frame stack">
+        <p>読み込み中…</p>
+      </main>
+    );
+  }
 
   if (state.status === "sent") {
     return (
@@ -129,8 +147,13 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
           >
             メールアドレスを変更
           </button>
-          <button className="secondary-button" type="button" onClick={() => void startGoogle()}>
-            Googleに切り替える
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={googlePending}
+            onClick={() => void startGoogle()}
+          >
+            {googlePending ? "Googleへ移動中…" : "Googleに切り替える"}
           </button>
           {googleError && (
             <p className="error-message" role="alert">
@@ -160,8 +183,13 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
           <p>{statusNotice}</p>
         </section>
       )}
-      <button className="primary-button" type="button" onClick={() => void startGoogle()}>
-        Googleで続ける
+      <button
+        className="primary-button"
+        type="button"
+        disabled={googlePending}
+        onClick={() => void startGoogle()}
+      >
+        {googlePending ? "Googleへ移動中…" : "Googleで続ける"}
       </button>
       {googleError && (
         <p className="error-message" role="alert">

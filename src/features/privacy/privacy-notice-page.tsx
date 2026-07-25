@@ -70,9 +70,8 @@ export function PrivacyNoticeContent({
       <section className="card">
         <h2>送信先について</h2>
         <p>{providerExplanation}</p>
-        <a href="/privacy" target="_blank" rel="noreferrer">
-          運営者のプライバシー説明
-        </a>
+        {/* 同画面への自己リンクは避け、説明本文はこのページ内セクションで足りる */}
+        <p className="type-small">この画面の説明が運営者のプライバシー説明です。</p>
       </section>
       <p>
         AI生成レシピだけでアレルギーの安全は保証できません。加工品の原材料表示と家庭内の混入を確認してください。

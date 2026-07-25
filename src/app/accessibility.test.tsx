@@ -114,6 +114,12 @@ const authenticated: AuthContextValue = {
   refreshSession: vi.fn(),
 };
 
+const unauthenticated: AuthContextValue = {
+  status: "unauthenticated",
+  session: null,
+  refreshSession: vi.fn(),
+};
+
 beforeEach(() => {
   getMenuResultMock.mockReset();
   getUsageTodayMock.mockReset();
@@ -221,11 +227,13 @@ describe("route accessibility", () => {
       resumeFlow: vi.fn(),
     };
     const { container } = render(
-      <MemoryRouter
-        initialEntries={[{ pathname: "/login", state: { authError: "oauth_cancelled" } }]}
-      >
-        <LoginPage gateway={gateway} />
-      </MemoryRouter>,
+      <AuthContext.Provider value={unauthenticated}>
+        <MemoryRouter
+          initialEntries={[{ pathname: "/login", state: { authError: "oauth_cancelled" } }]}
+        >
+          <LoginPage gateway={gateway} />
+        </MemoryRouter>
+      </AuthContext.Provider>,
     );
 
     await expectAccessible(container);

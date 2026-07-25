@@ -56,6 +56,10 @@ const shoppingApi = vi.hoisted(() => ({
   previewShoppingDiff: vi.fn<ShoppingApiModule["previewShoppingDiff"]>(),
 }));
 
+vi.mock("@/features/auth/use-auth", () => ({
+  useAuth: () => ({ session: { user: { id: OWNER_ID } } }),
+}));
+
 vi.mock("../api/shopping-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/shopping-api")>();
   return { ...original, ...shoppingApi };
@@ -266,7 +270,7 @@ async function rerenderRemovedPage(): Promise<void> {
     makeShoppingList([makeItem({ isRemovedByUser: true })], { version: 2 }),
   );
   await act(async () => {
-    await queryClient.refetchQueries({ queryKey: shoppingKeys.active });
+    await queryClient.refetchQueries({ queryKey: shoppingKeys.active(OWNER_ID) });
   });
   await screen.findByRole("button", { name: "元に戻す" });
 }
@@ -336,7 +340,7 @@ describe("ShoppingListPage safety gate", () => {
     // 同一 tick で閉じる
     expect(screen.getByRole("checkbox", { name: /購入済みにする/u })).toBeDisabled();
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: shoppingKeys.active, exact: true }),
+      expect.objectContaining({ queryKey: shoppingKeys.active(OWNER_ID), exact: true }),
     );
 
     // リスト再取得だけを解決してもゲートは開かない

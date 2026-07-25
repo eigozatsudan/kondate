@@ -16,6 +16,10 @@ vi.mock("../api/shopping-api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/features/auth/use-auth", () => ({
+  useAuth: () => ({ session: { user: { id: "owner-1" } } }),
+}));
+
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
     channel: () => {

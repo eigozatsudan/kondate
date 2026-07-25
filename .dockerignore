@@ -6,7 +6,13 @@ coverage
 playwright-report
 test-results
 .env
+.env.local
+.env.*.local
 .env.tmp-*
+*.log
+.e2e-function.log
+.netlify
+.superpowers
 .run-e2e.lock
 infra/.supabase-refresh.*
 infra/.supabase-refresh.lock

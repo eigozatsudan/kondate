@@ -5,6 +5,7 @@ import type {
   CurrentShoppingLabelWarning,
   ReconcileShoppingListRequest,
 } from "@shared/contracts/shopping";
+import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
@@ -22,12 +23,21 @@ import {
   revalidateActiveShoppingList,
 } from "../api/shopping-api";
 
+/** 買い物クエリは所有者 ID で名前空間化し、ユーザー切替時の stale キャッシュ混入を防ぐ。 */
 export const shoppingKeys = {
-  active: [...householdSafetyQueryPrefixes.shopping, "active"] as const,
+  active: (userId: string) => [...householdSafetyQueryPrefixes.shopping, "active", userId] as const,
+  reconcileTarget: (userId: string, menuId: string, listId: string) =>
+    [...householdSafetyQueryPrefixes.shopping, "reconcile-target", userId, menuId, listId] as const,
 };
 
-export const useShoppingList = () =>
-  useQuery({ queryKey: shoppingKeys.active, queryFn: fetchActiveShoppingList });
+export const useShoppingList = () => {
+  const userId = useAuth().session?.user.id;
+  return useQuery({
+    queryKey: shoppingKeys.active(userId ?? "missing"),
+    queryFn: fetchActiveShoppingList,
+    enabled: userId !== undefined && userId.length > 0,
+  });
+};
 
 /**
  * 買い物リストの現行安全ゲート。ready 以外は全ての書き込み操作を止める。
@@ -36,6 +46,7 @@ export const useShoppingList = () =>
  */
 export function useShoppingSafetyGate() {
   const cache = useQueryClient();
+  const userId = useAuth().session?.user.id;
   const epoch = useRef(0);
   const [state, setState] = useState<
     | { phase: "checking" }
@@ -47,12 +58,13 @@ export function useShoppingSafetyGate() {
     | { phase: "blocked"; message: string }
   >({ phase: "checking" });
   const refresh = useCallback(async () => {
+    const ownerId = userId ?? "missing";
     const current = ++epoch.current;
     setState({ phase: "checking" });
     try {
-      await cache.invalidateQueries({ queryKey: shoppingKeys.active, exact: true });
+      await cache.invalidateQueries({ queryKey: shoppingKeys.active(ownerId), exact: true });
       const list = await cache.fetchQuery({
-        queryKey: shoppingKeys.active,
+        queryKey: shoppingKeys.active(ownerId),
         queryFn: fetchActiveShoppingList,
         staleTime: 0,
       });
@@ -78,7 +90,7 @@ export function useShoppingSafetyGate() {
       if (epoch.current === current)
         setState({ phase: "blocked", message: "現在の家族設定を確認できませんでした" });
     }
-  }, [cache]);
+  }, [cache, userId]);
   useEffect(() => {
     const changed = () => {
       void refresh();
@@ -174,19 +186,27 @@ const retryLostResponse = (failureCount: number, error: unknown) =>
 
 export function useCreateShoppingList() {
   const cache = useQueryClient();
+  const userId = useAuth().session?.user.id;
   return useMutation({
     mutationFn: createShoppingList,
-    onSuccess: () => cache.invalidateQueries({ queryKey: shoppingKeys.active }),
+    onSuccess: () => {
+      if (userId === undefined) return;
+      void cache.invalidateQueries({ queryKey: shoppingKeys.active(userId) });
+    },
     retry: retryLostResponse,
   });
 }
 
 export function useReconcileShoppingList() {
   const cache = useQueryClient();
+  const userId = useAuth().session?.user.id;
   return useMutation({
     mutationFn: ({ listId, input }: { listId: string; input: ReconcileShoppingListRequest }) =>
       reconcileShoppingListRequest(listId, input),
-    onSuccess: () => cache.invalidateQueries({ queryKey: shoppingKeys.active }),
+    onSuccess: () => {
+      if (userId === undefined) return;
+      void cache.invalidateQueries({ queryKey: shoppingKeys.active(userId) });
+    },
     retry: retryLostResponse,
   });
 }

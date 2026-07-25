@@ -298,19 +298,25 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
+  // 緊急献立への遷移中に対象が消えたら navigate を中止し、無言で /emergency-menus へ落ちない。
   useEffect(() => {
     if (!initialized || safetyQuery.data === undefined) return;
     if (value.targetMode === "idea") return;
     const eligibleIds = new Set(safetyQuery.data.eligibleMemberIds);
     const nextIds = value.targetMemberIds.filter((id) => eligibleIds.has(id));
     if (nextIds.length === value.targetMemberIds.length) return;
+    if (isOpeningEmergencyMenus) {
+      emergencyOperationIdRef.current += 1;
+      setIsOpeningEmergencyMenus(false);
+      setSubmissionError("作る相手の条件が変わったため、緊急献立への移動を中止しました。");
+    }
     setValue({
       ...value,
       targetMemberIds: nextIds,
       targetMode: nextIds.length > 0 ? "household" : null,
       servings: null,
     });
-  }, [initialized, safetyQuery.data, value]);
+  }, [initialized, isOpeningEmergencyMenus, safetyQuery.data, value]);
 
   const save = useCallback(
     (next: PlannerDraftInput, revision: number) =>
@@ -391,7 +397,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setResetToken((current) => current + 1);
   }, []);
 
-  const hasAcceptedOrDeclinedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
+  // 同意のみが生成許可。拒否（「今はAIを使わない」）は永続化せず、毎回ゲートする。
+  const hasAcceptedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
   const openPrivacyNotice = useCallback((): void => {
     // privacy 往復前に下書きを flush し、react-query cache へ同期する。
     // 未 flush だと return 時に stale な draft で step 1 へ巻き戻る。
@@ -511,7 +518,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       pantryItemsStatus="loaded"
       attempt={attempt}
       onAttemptChange={setAttempt}
-      hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
+      hasAcceptedOrDeclinedPrivacy={hasAcceptedPrivacy}
       onOpenPrivacyNotice={openPrivacyNotice}
       hasDraftConflict={hasDraftConflict}
       draftConflictRefetchError={draftConflictRefetchError}
@@ -566,7 +573,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         setAudienceStatusError(null);
         try {
           const saved = await flushDraft();
-          if (!hasAcceptedOrDeclinedPrivacy) {
+          if (!hasAcceptedPrivacy) {
             openPrivacyNotice();
             return;
           }

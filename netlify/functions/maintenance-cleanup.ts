@@ -44,6 +44,7 @@ export default async function maintenanceCleanup(): Promise<Response> {
       generationLedgersDeleted: counts.generationLedgersDeleted,
       shoppingMutationsDeleted: counts.shoppingMutationsDeleted,
       authContinuationsDeleted: counts.authContinuationsDeleted,
+      userFeedbackDeleted: counts.userFeedbackDeleted,
     });
     return new Response(null, { status: 204 });
   } catch {

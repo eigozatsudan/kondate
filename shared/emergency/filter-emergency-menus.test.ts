@@ -326,10 +326,11 @@ describe("reviewed emergency menus", () => {
     expect(unrelated).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
   });
 
-  it("matches normalized main ingredients bidirectionally without using instructions", () => {
+  it("matches main ingredients only as substrings of dish/ingredient names (not reverse)", () => {
+    // NFKC/trim 後に fixture の材料名「鶏肉」へ forward 部分一致する
     const normalized = filterEmergencyMenus({
       mealType: "dinner",
-      mainIngredients: ["　鶏肉の塩蒸し　"],
+      mainIngredients: ["　鶏肉　"],
       pantryNames: [],
       context: makeCurrentSafetyContext(),
     });
@@ -342,6 +343,15 @@ describe("reviewed emergency menus", () => {
       context: makeCurrentSafetyContext(),
     });
     expect(instructionOnly).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+
+    // 逆方向 includes（"塩鮭".includes("塩")）は調味料などで過剰マッチするため採用しない
+    const shortToken = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["塩鮭"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext(),
+    });
+    expect(shortToken).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
   });
 
   it.each(["鶏 肉", "鶏。肉", "\u200B"])(

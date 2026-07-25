@@ -14,7 +14,7 @@ const assertNoHorizontalScroll = async (page: Page) =>
     .toBe(true);
 
 /**
- * Plan 7 契約: 主要 action ボタン高さ ≥ 44。native radio/checkbox は対象外。
+ * Plan 7 契約: 主要 action は 44×44 CSS px 以上。native radio/checkbox は対象外。
  * 名前欠落を黙ってスキップすると偽 green になるため、必須コントロールは件数固定で検査する。
  * 呼び出し側は「その step で必ず存在する」ボタンだけを渡す。
  */
@@ -26,6 +26,7 @@ const assertMajorActionHeights = async (page: Page, required: Readonly<Record<st
       const box = await control.nth(index).boundingBox();
       expect(box, `${name}[${String(index)}] box`).not.toBeNull();
       expect(box?.height, `${name}[${String(index)}] height`).toBeGreaterThanOrEqual(44);
+      expect(box?.width, `${name}[${String(index)}] width`).toBeGreaterThanOrEqual(44);
     }
   }
 };

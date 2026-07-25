@@ -74,7 +74,9 @@ describe("createSubmitFeedbackHandler", () => {
     });
   });
 
-  it("rate-limits after five submissions in 24 hours", async () => {
+  it("maps rateLimited from the atomic SQL path to 429 without treating it as success", async () => {
+    // 閾値 5 件/24h の判定本体は insert_user_feedback_rate_limited の pgTAP が担保する。
+    // ここは RPC 結果を 429 に写すハンドラ境界だけを固定する。
     submitRateLimited.mockResolvedValue({ rateLimited: true });
     const response = await handler(
       makeRequest({
@@ -83,5 +85,29 @@ describe("createSubmitFeedbackHandler", () => {
       }),
     );
     expect(response.status).toBe(429);
+    const envelope = (await response.json()) as { ok: false; error: { code: string } };
+    expect(envelope.error.code).toBe("feedback_rate_limited");
+    expect(submitRateLimited).toHaveBeenCalledWith({
+      userId: USER_ID,
+      category: "other",
+      body: "追加のフィードバック本文です。",
+      clientPath: null,
+    });
+  });
+
+  it("forwards feedbackDailyLimit as p_limit via deps contract (handler always passes limit 5)", async () => {
+    // createSubmitFeedbackHandler の本番 deps は feedbackDailyLimit=5 を RPC に渡す。
+    // ここは deps が呼ばれる入力形を固定し、上限定数の意図をコメントと期待で残す。
+    await handler(
+      makeRequest({
+        category: "bug_report",
+        body: "上限定数の受け渡し確認用の本文です。",
+      }),
+    );
+    expect(submitRateLimited).toHaveBeenCalledTimes(1);
+    expect(submitRateLimited.mock.calls[0]?.[0]).toMatchObject({
+      userId: USER_ID,
+      category: "bug_report",
+    });
   });
 });

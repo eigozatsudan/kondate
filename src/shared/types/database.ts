@@ -67,6 +67,13 @@ type FinalizeGenerationSuccessArgs = Omit<
 };
 
 type GeneratedSetOnboardingStatus = GeneratedFunctions["set_onboarding_status"];
+type GeneratedInsertUserFeedback = GeneratedFunctions["insert_user_feedback_rate_limited"];
+type GeneratedInsertUserFeedbackArgs = GeneratedInsertUserFeedback["Args"];
+
+// Postgres Meta は nullable 引数を非 null として生成するため、overlay で復元する
+type InsertUserFeedbackArgs = Omit<GeneratedInsertUserFeedbackArgs, "p_client_path"> & {
+  p_client_path: GeneratedInsertUserFeedbackArgs["p_client_path"] | null;
+};
 
 // Postgres Meta は household 凍結の null servings を非 null number として生成するため復元する
 type SubmissionSnapshotRow = Omit<GeneratedSubmissionSnapshotReturns, "servings"> & {
@@ -105,6 +112,7 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       | "finalize_ai_generation_success"
       | "get_ai_generation_submission_snapshot"
       | "set_onboarding_status"
+      | "insert_user_feedback_rate_limited"
     > & {
       save_generation_draft: Omit<GeneratedSaveDraft, "Args"> & {
         Args: SaveDraftArgs;
@@ -124,6 +132,9 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       set_onboarding_status: Omit<GeneratedSetOnboardingStatus, "Args" | "Returns"> & {
         Args: { p_status: OnboardingStatus };
         Returns: ProfilesRow;
+      };
+      insert_user_feedback_rate_limited: Omit<GeneratedInsertUserFeedback, "Args"> & {
+        Args: InsertUserFeedbackArgs;
       };
     };
   };

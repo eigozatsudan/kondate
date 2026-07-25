@@ -9,6 +9,7 @@ import {
   type DishRegenerationAiOutput,
 } from "../../../shared/contracts/regeneration.js";
 import { getServerEnv } from "./env.js";
+import { readOpenRouterMockScenario } from "./openrouter-mock-scenario.js";
 
 export type OpenRouterMessage = {
   role: "system" | "user" | "assistant";
@@ -83,11 +84,17 @@ function isExactLocalMockBaseUrl(value: string): boolean {
   }
 }
 
+/** 外部 Retry-After を UI/台帳へ載せる上限（秒）。それ以上は切り詰める。 */
+const maxRetryAfterSeconds = 86_400;
+
 function retryAt(response: Response, now: number): string | null {
   const retryAfter = response.headers.get("retry-after");
   if (!retryAfter) return null;
+  const maxTarget = now + maxRetryAfterSeconds * 1_000;
   if (/^\d+$/u.test(retryAfter)) {
-    const target = now + Number(retryAfter) * 1_000;
+    const seconds = Number(retryAfter);
+    if (!Number.isFinite(seconds) || seconds < 0) return null;
+    const target = Math.min(now + seconds * 1_000, maxTarget);
     return Number.isFinite(target) && !Number.isNaN(new Date(target).getTime())
       ? new Date(target).toISOString()
       : null;
@@ -96,7 +103,9 @@ function retryAt(response: Response, now: number): string | null {
   const parsed = Date.parse(retryAfter);
   if (!Number.isFinite(parsed)) return null;
   const date = new Date(parsed);
-  return date.toUTCString() === retryAfter && parsed >= now ? date.toISOString() : null;
+  if (date.toUTCString() !== retryAfter || parsed < now) return null;
+  // HTTP-date も 24h 超はクランプし、外部入力による「数十年後まで再試行不可」を防ぐ
+  return new Date(Math.min(parsed, maxTarget)).toISOString();
 }
 
 export async function sendMenuGeneration(
@@ -125,7 +134,8 @@ export async function sendMenuGeneration(
   }
 
   const timeoutMs = Math.min(config.timeoutMs, input.timeoutMs);
-  const testScenario = process.env.OPENROUTER_MOCK_SCENARIO;
+  // 並行安全: ALS 経由のリクエスト単位シナリオを優先し、無いときだけ env（単体テスト用）
+  const testScenario = readOpenRouterMockScenario() ?? process.env.OPENROUTER_MOCK_SCENARIO;
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort();

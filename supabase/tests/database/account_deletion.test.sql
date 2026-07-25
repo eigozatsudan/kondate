@@ -11,7 +11,7 @@ select is_empty(
       ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),
       ('shopping_lists'),('shopping_list_sources'),('shopping_items'),
       ('shopping_item_sources'),('shopping_label_confirmations'),
-      ('shopping_current_label_warnings')
+      ('shopping_current_label_warnings'),('user_feedback')
     )
     select expected.table_name
     from expected
@@ -36,7 +36,7 @@ select is_empty(
       ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),
       ('shopping_lists'),('shopping_list_sources'),('shopping_items'),
       ('shopping_item_sources'),('shopping_label_confirmations'),
-      ('shopping_current_label_warnings')
+      ('shopping_current_label_warnings'),('user_feedback')
     )
     select c.relname
     from pg_class c

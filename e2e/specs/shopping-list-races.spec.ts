@@ -107,6 +107,10 @@ test("disables shopping actions immediately after member or allergy mutation", a
     shoppingPage.getByRole("checkbox", { name: /購入済みにする/u }).first(),
   ).toBeDisabled();
   await allergyRevalidation.release();
+  // 再検証完了後も fail-closed のまま（くるみ追加後は操作を解放しない）。
+  await expect(
+    shoppingPage.getByRole("checkbox", { name: /購入済みにする/u }).first(),
+  ).toBeDisabled();
 });
 
 test("fails closed on a server-only household change without browser events", async ({

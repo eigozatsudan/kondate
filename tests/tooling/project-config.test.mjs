@@ -94,8 +94,14 @@ test("ignores local temporary and refresh files from Git and Docker contexts", a
       ".env.tmp-*",
       "infra/.supabase-refresh.*",
       "infra/.supabase-refresh.lock",
+      ".env.local",
+      "*.log",
+      ".netlify",
     ]) {
-      assert.ok(ignore.split(/\r?\n/u).includes(pattern));
+      assert.ok(
+        ignore.split(/\r?\n/u).includes(pattern),
+        `${pattern} must appear in both .gitignore and .dockerignore`,
+      );
     }
   }
 });
@@ -239,6 +245,8 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   assert.match(workflow, /tests\/tooling\/local-development-scripts\.test\.mjs/u);
   assert.match(script, /tests\/tooling\/project-config\.test\.mjs/u);
   assert.match(workflow, /tests\/tooling\/project-config\.test\.mjs/u);
+  assert.match(script, /tools\/e2e-function-server\.test\.mjs/u);
+  assert.match(workflow, /tools\/e2e-function-server\.test\.mjs/u);
   assert.match(script, /assert-privacy-logs\.test\.mjs/u);
   assert.match(workflow, /assert-privacy-logs\.test\.mjs/u);
   assert.match(script, /verify-release-evidence\.test\.mjs/u);

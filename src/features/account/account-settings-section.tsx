@@ -25,8 +25,14 @@ export function DangerZone({
 }) {
   return (
     // 親のアカウント card 内に置くため、外側に二重 card は付けない
-    <div className="account-danger-block stack" aria-label="DangerZone" role="region">
-      <h3 className="settings-section-title">危険な操作</h3>
+    <div
+      className="account-danger-block stack"
+      role="region"
+      aria-labelledby="account-danger-zone-title"
+    >
+      <h3 id="account-danger-zone-title" className="settings-section-title">
+        危険な操作
+      </h3>
       {!expanded ? (
         <button type="button" className="secondary-button min-h-11" onClick={onExpand}>
           アカウントを削除
@@ -120,11 +126,7 @@ export function AccountSettingsSection() {
   }
 
   return (
-    <section
-      className="card stack settings-section"
-      aria-label="アカウント設定"
-      aria-labelledby="account-settings-title"
-    >
+    <section className="card stack settings-section" aria-labelledby="account-settings-title">
       {/* 家族CRUDと同型の白カードで操作境界を示す */}
       <h2 id="account-settings-title" className="settings-section-title">
         アカウント

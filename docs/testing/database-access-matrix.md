@@ -45,7 +45,7 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `public.shopping_label_confirmations` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_list_sources` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_lists` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
-| `public.user_feedback` | postgres | none | none | ALL | on (no authenticated policies) | Function+service_role only; free-form body rate-limited in Netlify |
+| `public.user_feedback` | postgres | none | none | ALL | on + deny-all policy | Function+service_role only; free-form body rate-limited via SECURITY DEFINER RPC; 30-day retention |
 
 ## Column write grants (browser roles)
 
@@ -190,9 +190,10 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.get_ai_generation_regeneration_snapshot(p_request_id uuid, p_user_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_ai_generation_status(p_user_id uuid, p_idempotency_key uuid, p_user_limit integer, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_ai_generation_submission_snapshot(p_request_id uuid, p_user_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
-| `public.get_ai_usage_today(p_user_id uuid, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
+| `public.get_ai_usage_today(p_user_id uuid, p_now timestamp with time zone, p_global_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_current_safety_snapshot(p_user_id uuid, p_target_member_ids uuid[])` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_shopping_mutation_replay(p_user_id uuid, p_idempotency_key uuid, p_request_hash text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
+| `public.insert_user_feedback_rate_limited(p_user_id uuid, p_category text, p_body text, p_client_path text, p_limit integer, p_window_seconds integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; atomic 5/24h feedback rate limit |
 | `public.lookup_ai_generation_request(p_user_id uuid, p_idempotency_key uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.mark_ai_global_sent(p_request_id uuid, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.mutate_shopping_item(p_list_id uuid, p_expected_list_version integer, p_expected_safety_fingerprint text, p_operation text, p_item_id uuid, p_idempotency_key uuid, p_payload jsonb)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC |
@@ -250,6 +251,7 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.shopping_label_confirmations` | `shopping_labels_select_own` | SELECT |
 | `public.shopping_list_sources` | `shopping_list_sources_select_own` | SELECT |
 | `public.shopping_lists` | `shopping_lists_select_own` | SELECT |
+| `public.user_feedback` | `user_feedback_deny_all` | ALL |
 
 ## Notes
 

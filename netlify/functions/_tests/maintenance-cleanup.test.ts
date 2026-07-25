@@ -45,6 +45,7 @@ describe("maintenance-cleanup scheduled function", () => {
       generationLedgersDeleted: 2,
       shoppingMutationsDeleted: 3,
       authContinuationsDeleted: 4,
+      userFeedbackDeleted: 5,
     });
 
     const response = await maintenanceCleanup();
@@ -66,6 +67,7 @@ describe("maintenance-cleanup scheduled function", () => {
         "request_id",
         "shopping_mutations_deleted",
         "stale_reservations_finalized",
+        "user_feedback_deleted",
       ].sort(),
     );
     expect(parsed).toMatchObject({
@@ -113,6 +115,7 @@ describe("maintenance-cleanup scheduled function", () => {
       generationLedgersDeleted: 0,
       shoppingMutationsDeleted: 0,
       authContinuationsDeleted: 0,
+      userFeedbackDeleted: 0,
     });
     await maintenanceCleanup();
     expect(parseManagedSupabaseProjectRef).toHaveBeenCalled();

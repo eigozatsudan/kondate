@@ -19,6 +19,7 @@ export default defineConfig({
       "tools/**/*.test.mjs",
     ],
     exclude: [
+      // node:test ベース。scripts/ci.sh の node --test 列挙で実行する
       "tools/e2e-function-server.test.mjs",
       // 実 DB と dedicated login が必要なため通常スイートから除外
       "netlify/functions/_shared/maintenance-db.integration.test.ts",
