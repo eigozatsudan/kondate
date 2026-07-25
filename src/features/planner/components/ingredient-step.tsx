@@ -23,9 +23,9 @@ export type IngredientStepProps = PlannerStepProps<readonly string[]> & {
  * 同じ canonical helper と onChange(mainIngredients) 経由で更新する。
  * 質問順・8件/80文字制限・pantrySelections 非干渉は既存契約を維持する。
  */
-/** メイン食材ゼロのまま「次へ」したときに出す案内（dialog と role=alert で共用） */
+/** メイン食材ゼロのまま進もうとしたときに出す案内（dialog と role=alert で共用） */
 export const mainIngredientRequiredMessage =
-  "献立の中心になる食材を1つ以上選んでから「次へ」を押してください。";
+  "献立の中心になる食材を1つ以上選んでから進んでください。";
 
 export function IngredientStep({
   value,
@@ -36,6 +36,8 @@ export function IngredientStep({
   errorMessage,
   pantryItems,
   pantryItemsStatus,
+  nextLabel = "次へ",
+  backLabel = "戻る",
 }: IngredientStepProps) {
   const [ingredient, setIngredient] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -245,7 +247,7 @@ export function IngredientStep({
             disabled={disabled}
             onClick={onBack}
           >
-            戻る
+            {backLabel}
           </button>
         )}
         <button
@@ -261,7 +263,7 @@ export function IngredientStep({
             onNext();
           }}
         >
-          次へ
+          {nextLabel}
         </button>
       </div>
       {emptyGateOpen && (

@@ -247,7 +247,7 @@ export function ReviewStep({
       </dl>
       {onEditStep !== undefined && (
         <p className="type-small">
-          「戻る」で1つ前の質問へ、「変更」でその質問へ直接戻れます。直したあとは「次へ」で確認へ戻ります。
+          「戻る」で1つ前の質問へ、「変更」でその質問へ直接戻れます。直したあとは「確認に戻る」でこの画面に戻ります。
         </p>
       )}
       <details className="wizard-details">

@@ -620,13 +620,14 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
 
-    // 確認からの変更中は「次へ」で 3.ジャンル ではなく 5.確認 へ戻る
-    await user.click(screen.getByRole("button", { name: "次へ" }));
+    // 確認からの変更中は「確認に戻る」と表示し、3.ジャンルではなく 5.確認 へ戻る
+    expect(screen.queryByRole("button", { name: "次へ" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "確認に戻る" }));
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
     expect(screen.getByText("鶏肉")).toBeVisible();
   });
 
-  it("確認画面から食事・ジャンル・対象へ飛び、次へで確認に戻れる", async () => {
+  it("確認画面から食事・ジャンル・対象へ飛び、確認に戻るで復帰できる", async () => {
     const user = userEvent.setup();
     const draft = {
       ...emptyDraft,
@@ -641,18 +642,18 @@ describe("PlannerWizard review step", () => {
     await user.click(screen.getByRole("button", { name: "食事を変更" }));
     expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "夕食" })).toBeChecked();
-    // 食事 step にも編集戻り用の「戻る」が出る
-    await user.click(screen.getByRole("button", { name: "戻る" }));
+    // 食事 step には編集中止用の「やめる」が出る
+    await user.click(screen.getByRole("button", { name: "やめる" }));
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "ジャンルを変更" }));
     expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await user.click(screen.getByRole("button", { name: "確認に戻る" }));
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "対象を変更" }));
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await user.click(screen.getByRole("button", { name: "確認に戻る" }));
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
   });
 
@@ -1132,7 +1133,7 @@ describe("IngredientStep quick select", () => {
     const dialog = screen.getByRole("alertdialog", { name: "メイン食材を選んでください" });
     expect(dialog).toBeVisible();
     expect(dialog).toHaveTextContent(
-      "献立の中心になる食材を1つ以上選んでから「次へ」を押してください。",
+      "献立の中心になる食材を1つ以上選んでから進んでください。",
     );
     // ダイアログ中は step を進めない
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();

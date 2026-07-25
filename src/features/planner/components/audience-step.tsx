@@ -38,6 +38,8 @@ export function AudienceStep({
   disabled,
   eligibleMembers,
   fieldErrors,
+  nextLabel = "次へ",
+  backLabel = "戻る",
 }: AudienceStepProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const servingsSelectRef = useRef<HTMLSelectElement>(null);
@@ -259,7 +261,7 @@ export function AudienceStep({
             disabled={disabled}
             onClick={onBack}
           >
-            戻る
+            {backLabel}
           </button>
         )}
         <button
@@ -268,7 +270,7 @@ export function AudienceStep({
           disabled={disabled || !isComplete}
           onClick={handleNext}
         >
-          次へ
+          {nextLabel}
         </button>
       </div>
     </section>

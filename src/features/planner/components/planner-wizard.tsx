@@ -161,6 +161,11 @@ export function PlannerWizard({
     goToStep(sequentialBack);
   };
 
+  // 確認の「変更」経由時だけボタン文言を差し替え、順送りの「次へ」と混同させない。
+  const editReturnActionLabels = returnToReviewAfterEdit
+    ? { nextLabel: "確認に戻る", backLabel: "やめる" }
+    : {};
+
   // exactOptionalPropertyTypes: undefined を明示代入せず、定義済みキーだけ渡す。
   const conflictChrome = hasDraftConflict ? (
     <DraftConflictChrome
@@ -235,6 +240,7 @@ export function PlannerWizard({
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mealType ?? null}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
@@ -260,6 +266,7 @@ export function PlannerWizard({
           errorMessage={fieldErrors.mainIngredients ?? null}
           pantryItems={pantryItems}
           pantryItemsStatus={pantryItemsStatus}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
@@ -283,6 +290,7 @@ export function PlannerWizard({
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.cuisineGenre ?? null}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
@@ -345,6 +353,7 @@ export function PlannerWizard({
             targetMemberIds: fieldErrors.targetMemberIds ?? null,
             servings: fieldErrors.servings ?? null,
           }}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
