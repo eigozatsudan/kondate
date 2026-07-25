@@ -120,6 +120,78 @@ const reviewDraft: PlannerDraftInput = {
 };
 
 describe("PlannerWizard 固定順とnavigation", () => {
+  it.each([
+    ["ｶﾚｰ", "カレー"],
+    [" ㌔ ", "キロ"],
+    ["　鶏肉　", "鶏肉"],
+  ])("既存値 %s とcanonical等価な自由入力・冷蔵庫候補を重複追加しない", async (saved, input) => {
+    const user = userEvent.setup();
+    const pantryItem: PantryItem = {
+      id: `pantry-${input}`,
+      userId: eligibleMember.id,
+      name: input,
+      quantity: null,
+      unit: null,
+      expiresOn: null,
+      expirationType: null,
+      openedState: null,
+      createdAt: "2026-07-25T00:00:00.000Z",
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    };
+    render(
+      <Harness
+        initialStep="ingredients"
+        initialDraft={{ ...emptyDraft, mainIngredients: [saved] }}
+        pantryItems={[pantryItem]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: `${input}を追加` })).toBeDisabled();
+    await user.type(screen.getByLabelText("メイン食材"), input);
+    await user.click(screen.getByRole("button", { name: "追加" }));
+
+    const removeButtons = screen.getAllByRole("button", { name: /を外す$/u });
+    expect(removeButtons).toHaveLength(1);
+  });
+
+  it("冷蔵庫候補にも8件上限と80 code point上限を適用する", async () => {
+    const user = userEvent.setup();
+    const pantryItem = {
+      id: "pantry-limit",
+      userId: eligibleMember.id,
+      name: "追加候補",
+      quantity: null,
+      unit: null,
+      expiresOn: null,
+      expirationType: null,
+      openedState: null,
+      createdAt: "2026-07-25T00:00:00.000Z",
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    } satisfies PantryItem;
+    const { rerender } = render(
+      <Harness
+        initialStep="ingredients"
+        initialDraft={{
+          ...emptyDraft,
+          mainIngredients: Array.from({ length: 8 }, (_, index) => `食材${String(index + 1)}`),
+        }}
+        pantryItems={[pantryItem]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "追加候補を追加" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("メイン食材は8件までです。");
+
+    rerender(
+      <Harness
+        initialStep="ingredients"
+        pantryItems={[{ ...pantryItem, id: "pantry-long", name: "あ".repeat(81) }]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: `${"あ".repeat(81)}を追加` }));
+    expect(screen.getByRole("alert")).toHaveTextContent("メイン食材は1件80文字までです。");
+  });
+
   it("冷蔵庫の候補をメイン食材へ追加しても冷蔵庫の使用条件は変更しない", async () => {
     const user = userEvent.setup();
     const pantryItem: PantryItem = {

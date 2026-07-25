@@ -16,6 +16,11 @@ function normalizeMainIngredient(value: string): string {
   return value.normalize("NFKC").trim();
 }
 
+function includesCanonicalMainIngredient(values: readonly string[], candidate: string): boolean {
+  const normalizedCandidate = normalizeMainIngredient(candidate);
+  return values.some((value) => normalizeMainIngredient(value) === normalizedCandidate);
+}
+
 /**
  * 主食材を1件ずつ追加するstep。既存 PlannerForm の8件/80文字制限をそのまま維持し、
  * 戻る操作をしても選択済みの主食材が失われないことをテストで固定する。
@@ -70,15 +75,16 @@ export function IngredientStep({
           disabled={disabled}
           onClick={() => {
             const next = normalizeMainIngredient(ingredient);
+            const alreadySelected = includesCanonicalMainIngredient(value, next);
             if (Array.from(next).length > mainIngredientLengthLimit) {
               setLocalError("メイン食材は1件80文字までです。");
               return;
             }
-            if (next !== "" && !value.includes(next) && value.length >= mainIngredientLimit) {
+            if (next !== "" && !alreadySelected && value.length >= mainIngredientLimit) {
               setLocalError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
               return;
             }
-            if (next !== "" && !value.includes(next)) {
+            if (next !== "" && !alreadySelected) {
               onChange([...value, next]);
             }
             setLocalError(null);
@@ -123,7 +129,7 @@ export function IngredientStep({
           <div className="wizard-chip-row">
             {pantryItems.map((item) => {
               const normalizedName = normalizeMainIngredient(item.name);
-              const selected = value.includes(normalizedName);
+              const selected = includesCanonicalMainIngredient(value, normalizedName);
               return (
                 <button
                   className="wizard-chip"
