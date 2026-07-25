@@ -1016,9 +1016,14 @@ export function HouseholdSettingsForm({
 
   return (
     <main className="page-frame stack">
-      <h1>家族設定</h1>
-      <section className="card stack" aria-labelledby="registered-household-title">
-        <h2 id="registered-household-title">登録済みの家族</h2>
+      <header className="settings-page-header">
+        <p className="eyebrow">設定</p>
+        <h1>家族設定</h1>
+      </header>
+      <section className="card stack settings-section" aria-labelledby="registered-household-title">
+        <h2 id="registered-household-title" className="settings-section-title">
+          登録済みの家族
+        </h2>
         <ul className="household-member-list">
           {members.map((member, index) => {
             const displayName = householdMemberDisplayName(member);
@@ -1078,8 +1083,13 @@ export function HouseholdSettingsForm({
         </p>
       )}
       {editorOpen && (
-        <section className="household-editor stack" aria-labelledby="household-editor-title">
-          <h2 id="household-editor-title">家族情報を追加・編集</h2>
+        <section
+          className="household-editor stack settings-section"
+          aria-labelledby="household-editor-title"
+        >
+          <h2 id="household-editor-title" className="settings-section-title">
+            家族情報を追加・編集
+          </h2>
           <h3 ref={editorHeadingRef} tabIndex={-1}>
             「{householdMemberDisplayName(selected)}」を編集中
           </h3>
@@ -1103,7 +1113,8 @@ export function HouseholdSettingsForm({
               {Object.values(errors).join(" ")}
             </p>
           )}
-          <fieldset className="card stack" disabled={saving}>
+          <fieldset className="card stack" disabled={saving} aria-label="基本情報">
+            <legend className="settings-section-title">基本情報</legend>
             <label className="field">
               <span>呼び名</span>
               <input
@@ -1459,87 +1470,94 @@ export function HouseholdSettingsForm({
             </button>
           )}
           {deleteTarget !== undefined && (
-            <div role="dialog" aria-modal="true" aria-label="家族の削除確認" className="card stack">
-              <p>この家族の設定だけを削除します。</p>
-              <button
-                ref={deleteConfirm}
-                className="primary-button"
-                type="button"
-                disabled={
-                  saving ||
-                  allergyMutationPendingMemberIdsRef.current.has(deleteTarget.id) ||
-                  deletingMemberIds.has(deleteTarget.id)
-                }
-                onClick={() => {
-                  const targetId = deleteTarget.id;
-                  if (
-                    savingRef.current ||
-                    allergyMutationPendingMemberIdsRef.current.has(targetId) ||
-                    deletingMemberIdsRef.current.has(targetId)
-                  ) {
-                    return;
+            <div className="pantry-expired-dialog-backdrop">
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="家族の削除確認"
+                className="card stack pantry-expired-dialog-panel"
+              >
+                <p>この家族の設定だけを削除します。</p>
+                <button
+                  ref={deleteConfirm}
+                  className="primary-button"
+                  type="button"
+                  disabled={
+                    saving ||
+                    allergyMutationPendingMemberIdsRef.current.has(deleteTarget.id) ||
+                    deletingMemberIds.has(deleteTarget.id)
                   }
-                  const targetExists = queryClient
-                    .getQueryData<HouseholdMemberRow[]>(membersKey)
-                    ?.some((member) => member.id === targetId);
-                  if (targetExists !== true) {
+                  onClick={() => {
+                    const targetId = deleteTarget.id;
+                    if (
+                      savingRef.current ||
+                      allergyMutationPendingMemberIdsRef.current.has(targetId) ||
+                      deletingMemberIdsRef.current.has(targetId)
+                    ) {
+                      return;
+                    }
+                    const targetExists = queryClient
+                      .getQueryData<HouseholdMemberRow[]>(membersKey)
+                      ?.some((member) => member.id === targetId);
+                    if (targetExists !== true) {
+                      setDeleteTarget(undefined);
+                      return;
+                    }
+                    deletingMemberIdsRef.current.add(targetId);
+                    setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
+                    void api
+                      .deleteMember(targetId)
+                      .then(async () => {
+                        setDeleteTarget((current) =>
+                          current?.id === targetId ? undefined : current,
+                        );
+                        queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+                          current.filter((member) => member.id !== targetId),
+                        );
+                        valuesByMemberRef.current.delete(targetId);
+                        editRevisionsByMemberRef.current.delete(targetId);
+                        operationTokensByMemberRef.current.delete(targetId);
+                        pendingOperationCountsRef.current.delete(targetId);
+                        failedSaveMemberIdsRef.current.delete(targetId);
+                        pendingRegisteredIntents.current.delete(targetId);
+                        allergyMutationPendingMemberIdsRef.current.delete(targetId);
+                        setAllergyMutationPendingMemberIds(
+                          new Set(allergyMutationPendingMemberIdsRef.current),
+                        );
+                        if (selectedMemberIdRef.current === targetId) {
+                          selectedMemberIdRef.current = undefined;
+                          setSelectedId(undefined);
+                          setValues(undefined);
+                        }
+                        await queryClient.invalidateQueries({ queryKey: membersKey });
+                        await api.invalidateSafety();
+                      })
+                      .catch((error: unknown) => {
+                        setMessage(
+                          error instanceof Error ? error.message : "家族設定を削除できませんでした",
+                        );
+                      })
+                      .finally(() => {
+                        deletingMemberIdsRef.current.delete(targetId);
+                        setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
+                      });
+                  }}
+                >
+                  家族だけを削除
+                </button>
+                <button
+                  className="text-button"
+                  type="button"
+                  disabled={saving || deletingMemberIds.has(deleteTarget.id)}
+                  onClick={() => {
+                    if (savingRef.current || deletingMemberIdsRef.current.has(deleteTarget.id))
+                      return;
                     setDeleteTarget(undefined);
-                    return;
-                  }
-                  deletingMemberIdsRef.current.add(targetId);
-                  setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
-                  void api
-                    .deleteMember(targetId)
-                    .then(async () => {
-                      setDeleteTarget((current) =>
-                        current?.id === targetId ? undefined : current,
-                      );
-                      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-                        current.filter((member) => member.id !== targetId),
-                      );
-                      valuesByMemberRef.current.delete(targetId);
-                      editRevisionsByMemberRef.current.delete(targetId);
-                      operationTokensByMemberRef.current.delete(targetId);
-                      pendingOperationCountsRef.current.delete(targetId);
-                      failedSaveMemberIdsRef.current.delete(targetId);
-                      pendingRegisteredIntents.current.delete(targetId);
-                      allergyMutationPendingMemberIdsRef.current.delete(targetId);
-                      setAllergyMutationPendingMemberIds(
-                        new Set(allergyMutationPendingMemberIdsRef.current),
-                      );
-                      if (selectedMemberIdRef.current === targetId) {
-                        selectedMemberIdRef.current = undefined;
-                        setSelectedId(undefined);
-                        setValues(undefined);
-                      }
-                      await queryClient.invalidateQueries({ queryKey: membersKey });
-                      await api.invalidateSafety();
-                    })
-                    .catch((error: unknown) => {
-                      setMessage(
-                        error instanceof Error ? error.message : "家族設定を削除できませんでした",
-                      );
-                    })
-                    .finally(() => {
-                      deletingMemberIdsRef.current.delete(targetId);
-                      setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
-                    });
-                }}
-              >
-                家族だけを削除
-              </button>
-              <button
-                className="text-button"
-                type="button"
-                disabled={saving || deletingMemberIds.has(deleteTarget.id)}
-                onClick={() => {
-                  if (savingRef.current || deletingMemberIdsRef.current.has(deleteTarget.id))
-                    return;
-                  setDeleteTarget(undefined);
-                }}
-              >
-                キャンセル
-              </button>
+                  }}
+                >
+                  キャンセル
+                </button>
+              </div>
             </div>
           )}
         </section>

@@ -301,26 +301,74 @@ export function MenuResult({
 
       <section
         aria-labelledby="timeline-heading"
-        className="mt-6 rounded-2xl bg-white p-4 shadow-sm"
+        className="cook-timeline-panel mt-6 rounded-2xl bg-white p-4 shadow-sm"
       >
         <h2 id="timeline-heading" className="text-xl font-bold">
           全体の段取り
         </h2>
-        <ol className="mt-3 space-y-3">
-          {menu.timeline.map((step) => (
-            <li
-              key={step.id}
-              // レールは薄い --primary 相当（2.17:1）では WCAG 1.4.11 の非テキスト 3:1 を
-              // 満たさないため、6.19:1 を確保できる terracotta-700 を使う。
-              className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-3 border-l-4 border-terracotta-700 pl-3"
-            >
-              <span className="font-semibold">{step.startMinute}分〜</span>
-              <span>
-                {step.instruction}
-                <span className="block text-sm text-ink-muted">目安 {step.durationMinutes}分</span>
-              </span>
-            </li>
-          ))}
+        {/*
+          縮退版: duration 比例の縦幅は契約上 180 分まで伸びるため採用しない。
+          時間の tabular-nums 強調・レール色・料理名テキスト・並行の文字明示に絞る。
+        */}
+        <ol className="cook-timeline">
+          {menu.timeline.map((step) => {
+            const dish =
+              step.dishId === null
+                ? null
+                : (menu.dishes.find((item) => item.id === step.dishId) ?? null);
+            const dishIndex =
+              dish === null
+                ? 0
+                : Math.max(
+                    0,
+                    menu.dishes.findIndex((item) => item.id === dish.id),
+                  );
+            const stepEnd = step.startMinute + step.durationMinutes;
+            const parallel = menu.timeline.filter((other) => {
+              if (other.id === step.id) return false;
+              const otherEnd = other.startMinute + other.durationMinutes;
+              return step.startMinute < otherEnd && other.startMinute < stepEnd;
+            });
+            return (
+              <li
+                key={step.id}
+                // レールは薄い色では WCAG 1.4.11 の非テキスト 3:1 を満たさないため
+                // terracotta-700 を使う。色は補助で、料理名テキストを必ず併記する。
+                className={`cook-timeline-step cook-timeline-dish-${String(dishIndex % 5)} border-l-4 border-terracotta-700`}
+              >
+                <div className="cook-timeline-time tabular-nums">
+                  <span className="cook-timeline-start">{step.startMinute}分〜</span>
+                  <span className="cook-timeline-duration type-small">
+                    目安 {step.durationMinutes}分
+                  </span>
+                </div>
+                <div className="cook-timeline-body">
+                  {dish !== null && (
+                    <span className="cook-timeline-dish-label type-small">
+                      {roleLabels[dish.role]}・{dish.name}
+                    </span>
+                  )}
+                  <span className="cook-timeline-instruction">{step.instruction}</span>
+                  {parallel.length > 0 && (
+                    <span className="cook-timeline-parallel type-small">
+                      並行：
+                      {parallel
+                        .map((other) => {
+                          const otherDish =
+                            other.dishId === null
+                              ? null
+                              : menu.dishes.find((item) => item.id === other.dishId);
+                          return otherDish !== null && otherDish !== undefined
+                            ? `${roleLabels[otherDish.role]}・${otherDish.name}`
+                            : other.instruction;
+                        })
+                        .join("、")}
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ol>
       </section>
 

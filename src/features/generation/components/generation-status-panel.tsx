@@ -42,6 +42,22 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
   );
 }
 
+function RecoveryLinks() {
+  return (
+    <div className="gen-status-actions">
+      <a className="button-link" href="/planner">
+        条件を直してやり直す
+      </a>
+      <a className="button-link" href="/emergency-menus">
+        15分緊急献立を見る
+      </a>
+      <a className="button-link" href="/history">
+        作った献立を見る
+      </a>
+    </div>
+  );
+}
+
 export function GenerationStatusPanel({
   state,
   userId,
@@ -53,31 +69,49 @@ export function GenerationStatusPanel({
   onClear?: () => void;
 }) {
   if (state.phase === "checking") {
-    return <p role="status">保存した作成状況を確認しています</p>;
+    return (
+      <div className="gen-status-panel" data-phase="checking">
+        <div className="gen-status-indicator" aria-hidden="true" />
+        <p role="status" aria-live="polite">
+          保存した作成状況を確認しています
+        </p>
+      </div>
+    );
   }
   if (state.phase === "submitting") {
-    return <p role="status">条件を確認しています</p>;
+    return (
+      <div className="gen-status-panel" data-phase="submitting">
+        <div className="gen-status-indicator" aria-hidden="true" />
+        <p role="status" aria-live="polite">
+          条件を確認しています
+        </p>
+      </div>
+    );
   }
   if (state.phase === "processing") {
     return (
-      <>
+      <div className="gen-status-panel" data-phase="processing">
+        <div className="gen-status-indicator" aria-hidden="true" />
         <h1>献立を作っています</h1>
-        <p role="status">料理の組み合わせと全体の段取りを確認しています</p>
+        <p role="status" aria-live="polite">
+          料理の組み合わせと全体の段取りを確認しています
+        </p>
         <p>この画面を閉じても、同じ作成IDであとから確認できます。</p>
-      </>
+      </div>
     );
   }
   if (state.phase === "offline") {
     return (
-      <>
+      <div className="gen-status-panel" data-phase="offline">
+        <div className="gen-status-indicator" aria-hidden="true" />
         <h1>通信を確認しています</h1>
         <p>接続が戻ると、保存した作成IDから自動で確認します。</p>
-      </>
+      </div>
     );
   }
   if (state.phase === "constraint_conflict") {
     return (
-      <>
+      <div className="gen-status-panel" data-phase="constraint_conflict">
         <h1>条件を同時に満たせませんでした</h1>
         {state.data.conflicts.map((item) => (
           <p key={`${item.code}-${item.conditionRefs.join()}`}>{item.message}</p>
@@ -88,21 +122,13 @@ export function GenerationStatusPanel({
         ) : (
           <p>成功回数：本日あと{state.data.quota.remaining}回</p>
         )}
-        <a className="button-link" href="/planner">
-          条件を直してやり直す
-        </a>
-        <a className="button-link" href="/emergency-menus">
-          15分緊急献立を見る
-        </a>
-        <a className="button-link" href="/history">
-          作った献立を見る
-        </a>
-      </>
+        <RecoveryLinks />
+      </div>
     );
   }
   if (state.phase === "failed") {
     return (
-      <>
+      <div className="gen-status-panel" data-phase="failed">
         <h1>献立を作成できませんでした</h1>
         <p>{state.data.error.message}</p>
         {!state.data.quota.consumed && <p>成功回数には含まれません</p>}
@@ -116,37 +142,31 @@ export function GenerationStatusPanel({
             )}
           </>
         )}
-        <a className="button-link" href="/planner">
-          条件を直してやり直す
-        </a>
-        <a className="button-link" href="/emergency-menus">
-          15分緊急献立を見る
-        </a>
-        <a className="button-link" href="/history">
-          作った献立を見る
-        </a>
-      </>
+        <RecoveryLinks />
+      </div>
     );
   }
   if (state.phase === "request_conflict") {
     return (
-      <>
+      <div className="gen-status-panel" data-phase="request_conflict">
         <h1>同じ操作を続けられませんでした</h1>
         <p>{state.message}</p>
         {userId !== undefined ? <TerminalGenerationUsage userId={userId} /> : null}
-        {onClear !== undefined ? (
-          <button type="button" className="button-link" onClick={onClear}>
-            最初からやり直す
-          </button>
-        ) : (
-          <a className="button-link" href="/planner">
-            最初からやり直す
+        <div className="gen-status-actions">
+          {onClear !== undefined ? (
+            <button type="button" className="button-link" onClick={onClear}>
+              最初からやり直す
+            </button>
+          ) : (
+            <a className="button-link" href="/planner">
+              最初からやり直す
+            </a>
+          )}
+          <a className="button-link" href="/emergency-menus">
+            15分緊急献立を見る
           </a>
-        )}
-        <a className="button-link" href="/emergency-menus">
-          15分緊急献立を見る
-        </a>
-      </>
+        </div>
+      </div>
     );
   }
   return null;
