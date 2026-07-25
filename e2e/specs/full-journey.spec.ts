@@ -74,13 +74,12 @@ test("household journey: welcome through shopping reconciliation", async ({
   await expect(dishTab).toBeVisible();
   await dishTab.click();
 
-  // ラベル確認 UI が存在すれば操作（pending が無い fixture もあり得る）
+  // mock success + 小麦メンバーでは labelConfirmation が必須。無いと契約退行を見逃す。
   const labelConfirm = page.getByRole("button", {
     name: "本人が商品の原材料表示を確認しました",
   });
-  if ((await labelConfirm.count()) > 0) {
-    await labelConfirm.first().click();
-  }
+  await expect(labelConfirm).toBeVisible({ timeout: 30_000 });
+  await labelConfirm.click();
 
   // 全体再生成（recovery ではないが別案経路）
   await setMockScenario(page, "alternate-menu");
@@ -93,11 +92,12 @@ test("household journey: welcome through shopping reconciliation", async ({
     timeout: 60_000,
   });
 
-  // 履歴グループ
+  // 履歴グループ: 全体再生成後は同一 derivation に 2 案あることまで固定する
   await page.goto("/history");
   await expect(page.getByRole("heading", { name: "作った献立" })).toBeVisible({
     timeout: 15_000,
   });
+  await expect(page.getByText("2案")).toBeVisible({ timeout: 15_000 });
 
   // 採用
   await page.goto(`/menus/${menuId}`);

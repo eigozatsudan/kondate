@@ -520,6 +520,34 @@ describe("HistoryDetailPage safety gate", () => {
     expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).toBeNull();
   });
 
+  it("submits create mode=new with the active list id and version for archive OCC", async () => {
+    // active がある「新しいリストにする」は SQL が id/version を要求する。
+    // 親が null へ落とすと list_version_conflict になる回帰を固定する。
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+
+    const shopping = await screen.findByRole("button", { name: "買い物リストを作る" });
+    await waitFor(() => {
+      expect(shopping).toBeEnabled();
+    });
+    await user.click(shopping);
+    await user.click(screen.getByRole("radio", { name: "新しいリストにする" }));
+    await user.click(screen.getByRole("button", { name: "作成する" }));
+
+    await waitFor(() => {
+      expect(shoppingApi.createShoppingList).toHaveBeenCalledTimes(1);
+    });
+    const command = shoppingApi.createShoppingList.mock.calls[0]?.[0];
+    expect(command).toMatchObject({
+      menuId: MENU_ID,
+      mode: "new",
+      activeListId: SHOPPING_LIST_ID,
+      expectedListVersion: 4,
+    });
+  });
+
   it("resumes persisted create shopping command on mount", async () => {
     // pending create が session にあるとき、クリックなしで submit が再実行される
     const pendingCommand = {

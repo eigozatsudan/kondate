@@ -1,4 +1,5 @@
 import type { Config } from "@netlify/functions";
+import { z } from "zod";
 import {
   submitFeedbackRequestSchema,
   type SubmitFeedbackResult,
@@ -10,15 +11,20 @@ import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 /** 利用者あたり直近 24 時間の送信上限（連投・スパム抑止）。 */
 const feedbackDailyLimit = 5;
 
+const rateLimitedInsertResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), id: z.uuid() }),
+  z.object({ ok: z.literal(false), code: z.literal("feedback_rate_limited") }),
+]);
+
 export type SubmitFeedbackDeps = {
   authenticate: typeof requireUser;
-  insertFeedback: (input: {
+  /** 原子的な rate-limit + insert。RPC で advisory lock を取る。 */
+  submitRateLimited: (input: {
     userId: string;
     category: string;
     body: string;
     clientPath: string | null;
-  }) => Promise<{ id: string } | { error: string }>;
-  countRecentFeedback: (userId: string, sinceIso: string) => Promise<number>;
+  }) => Promise<{ id: string } | { rateLimited: true } | { error: string }>;
 };
 
 /**
@@ -33,30 +39,27 @@ export const createSubmitFeedbackHandler =
       const auth = await deps.authenticate(request);
       const payload = await parseJson(request, submitFeedbackRequestSchema);
 
-      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const recentCount = await deps.countRecentFeedback(auth.userId, since);
-      if (recentCount >= feedbackDailyLimit) {
+      const result = await deps.submitRateLimited({
+        userId: auth.userId,
+        category: payload.category,
+        body: payload.body,
+        clientPath: payload.clientPath ?? null,
+      });
+      if ("rateLimited" in result) {
         throw new HttpError(
           429,
           "feedback_rate_limited",
           "送信回数の上限に達しました。時間をおいてもう一度お試しください",
         );
       }
-
-      const inserted = await deps.insertFeedback({
-        userId: auth.userId,
-        category: payload.category,
-        body: payload.body,
-        clientPath: payload.clientPath ?? null,
-      });
-      if ("error" in inserted) {
+      if ("error" in result) {
         throw new HttpError(
           503,
           "feedback_save_failed",
           "送信できませんでした。時間をおいてもう一度お試しください",
         );
       }
-      return json<SubmitFeedbackResult>(201, { ok: true, data: { id: inserted.id } });
+      return json<SubmitFeedbackResult>(201, { ok: true, data: { id: result.id } });
     } catch (error) {
       return handleError(error);
     }
@@ -64,34 +67,19 @@ export const createSubmitFeedbackHandler =
 
 const handler = createSubmitFeedbackHandler({
   authenticate: requireUser,
-  countRecentFeedback: async (userId, sinceIso) => {
-    const { count, error } = await getSupabaseAdmin()
-      .from("user_feedback")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .gte("created_at", sinceIso);
-    if (error !== null) {
-      throw new HttpError(
-        503,
-        "feedback_save_failed",
-        "送信できませんでした。時間をおいてもう一度お試しください",
-      );
-    }
-    return count ?? 0;
-  },
-  insertFeedback: async (input) => {
-    const { data, error } = await getSupabaseAdmin()
-      .from("user_feedback")
-      .insert({
-        user_id: input.userId,
-        category: input.category,
-        body: input.body,
-        client_path: input.clientPath,
-      })
-      .select("id")
-      .single();
+  submitRateLimited: async (input) => {
+    const { data, error } = await getSupabaseAdmin().rpc("insert_user_feedback_rate_limited", {
+      p_user_id: input.userId,
+      p_category: input.category,
+      p_body: input.body,
+      p_client_path: input.clientPath,
+      p_limit: feedbackDailyLimit,
+    });
     if (error !== null || data === null) return { error: "insert_failed" };
-    return { id: data.id };
+    const payload = rateLimitedInsertResultSchema.safeParse(data);
+    if (!payload.success) return { error: "insert_failed" };
+    if (payload.data.ok) return { id: payload.data.id };
+    return { rateLimited: true };
   },
 });
 

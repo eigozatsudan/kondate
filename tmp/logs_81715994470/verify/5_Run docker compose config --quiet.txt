@@ -1,0 +1,6 @@
+﻿2026-07-25T08:58:48.1988811Z ##[group]Run docker compose config --quiet
+2026-07-25T08:58:48.1989170Z [36;1mdocker compose config --quiet[0m
+2026-07-25T08:58:48.2033138Z shell: /usr/bin/bash -e {0}
+2026-07-25T08:58:48.2033393Z env:
+2026-07-25T08:58:48.2033582Z   CI: true
+2026-07-25T08:58:48.2033774Z ##[endgroup]

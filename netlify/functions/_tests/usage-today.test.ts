@@ -2,12 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireUserMock = vi.hoisted(() => vi.fn());
 const rpcMock = vi.hoisted(() => vi.fn());
+const getServerEnvMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    openRouter: { globalDailyLimit: 45 },
+  })),
+);
 
 vi.mock("../_shared/auth.js", () => ({
   requireUser: requireUserMock,
 }));
 vi.mock("../_shared/supabase-admin.js", () => ({
   getSupabaseAdmin: () => ({ rpc: rpcMock }),
+}));
+vi.mock("../_shared/env.js", () => ({
+  getServerEnv: getServerEnvMock,
 }));
 
 import usageToday from "../usage-today.js";
@@ -16,6 +24,10 @@ describe("usage-today", () => {
   beforeEach(() => {
     requireUserMock.mockReset();
     rpcMock.mockReset();
+    getServerEnvMock.mockReset();
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 45 },
+    });
     requireUserMock.mockResolvedValue({
       userId: "10000000-0000-4000-8000-000000000001",
       accessToken: "token",
@@ -69,6 +81,18 @@ describe("usage-today", () => {
     });
     expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {
       p_user_id: "10000000-0000-4000-8000-000000000001",
+      p_global_limit: 45,
+    });
+  });
+
+  it("forwards GLOBAL_DAILY_AI_LIMIT to the usage RPC for globalAvailable", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 30 },
+    });
+    await usageToday(new Request("http://127.0.0.1/api/usage/today", { method: "GET" }));
+    expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {
+      p_user_id: "10000000-0000-4000-8000-000000000001",
+      p_global_limit: 30,
     });
   });
 });

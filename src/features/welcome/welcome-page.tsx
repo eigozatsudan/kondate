@@ -36,6 +36,8 @@ const tutorialSlides = [
 // （ここで status を skipped/complete へ書き換えることはしない。判断済みの状態を尊重するだけ）。
 export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }: WelcomePageProps) {
   const [slideIndex, setSlideIndex] = useState(0);
+  const [pendingAction, setPendingAction] = useState<"idea" | "household" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const hasMounted = useRef(false);
 
@@ -60,6 +62,21 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
     onboardingStatus === "in_progress" ? "設定せず献立アイデアを考える" : "献立アイデアを考える";
   const householdLabel =
     onboardingStatus === "in_progress" ? "家族設定を続ける" : "家族情報を登録する";
+  const isPending = pendingAction !== null;
+
+  async function runStart(kind: "idea" | "household", action: () => Promise<void>): Promise<void> {
+    // 同時タップで skipped ↔ in_progress が競合しないよう pending 中は拒否する。
+    if (pendingAction !== null) return;
+    setPendingAction(kind);
+    setActionError(null);
+    try {
+      await action();
+    } catch {
+      setActionError("開始できませんでした。通信を確認してもう一度お試しください。");
+    } finally {
+      setPendingAction(null);
+    }
+  }
 
   return (
     <main className="page-frame guided-planner-theme welcome-tutorial">
@@ -86,7 +103,7 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
         <button
           className="welcome-tutorial__move-button"
           type="button"
-          disabled={isFirstSlide}
+          disabled={isFirstSlide || isPending}
           onClick={() => {
             setSlideIndex((current) => Math.max(0, current - 1));
           }}
@@ -110,7 +127,7 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
         <button
           className="welcome-tutorial__move-button"
           type="button"
-          disabled={isLastSlide}
+          disabled={isLastSlide || isPending}
           onClick={() => {
             setSlideIndex((current) => Math.min(tutorialSlides.length - 1, current + 1));
           }}
@@ -119,24 +136,32 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
         </button>
       </div>
 
+      {actionError !== null ? (
+        <p className="error-message" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+
       <div className="welcome-tutorial__actions">
         <button
           className="primary-button"
           type="button"
+          disabled={isPending}
           onClick={() => {
-            void onStartIdea();
+            void runStart("idea", onStartIdea);
           }}
         >
-          {ideaLabel}
+          {pendingAction === "idea" ? "準備しています…" : ideaLabel}
         </button>
         <button
           className="secondary-button"
           type="button"
+          disabled={isPending}
           onClick={() => {
-            void onStartHousehold();
+            void runStart("household", onStartHousehold);
           }}
         >
-          {householdLabel}
+          {pendingAction === "household" ? "準備しています…" : householdLabel}
         </button>
       </div>
     </main>

@@ -153,7 +153,8 @@ export function GenerationStatusPanel({
         ) : (
           <p>成功回数：本日あと{state.data.quota.remaining}回</p>
         )}
-        <RecoveryLinks onClear={onClear} />
+        {/* exactOptionalPropertyTypes: undefined を明示渡ししない */}
+        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }
@@ -173,7 +174,7 @@ export function GenerationStatusPanel({
             )}
           </>
         )}
-        <RecoveryLinks onClear={onClear} />
+        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }

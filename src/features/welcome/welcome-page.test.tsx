@@ -47,6 +47,25 @@ it("idea 導線をクリックすると onStartIdea を呼ぶ", async () => {
   expect(onStartIdea).toHaveBeenCalledOnce();
 });
 
+it("開始操作が失敗したら alert を出し、再試行できる", async () => {
+  const user = userEvent.setup();
+  const onStartIdea = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("rpc failed"))
+    .mockResolvedValueOnce(undefined);
+  render(
+    <WelcomePage
+      onboardingStatus="not_started"
+      onStartIdea={onStartIdea}
+      onStartHousehold={vi.fn().mockResolvedValue(undefined)}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("開始できませんでした");
+  await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+  expect(onStartIdea).toHaveBeenCalledTimes(2);
+});
+
 it("家族導線をクリックすると onStartHousehold を呼ぶ", async () => {
   const user = userEvent.setup();
   const onStartHousehold = vi.fn().mockResolvedValue(undefined);

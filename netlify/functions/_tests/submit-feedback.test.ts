@@ -21,21 +21,17 @@ function makeRequest(body: unknown, options: { authorization?: string | null } =
 
 describe("createSubmitFeedbackHandler", () => {
   const authenticate = vi.fn();
-  const insertFeedback = vi.fn();
-  const countRecentFeedback = vi.fn();
+  const submitRateLimited = vi.fn();
   const handler = createSubmitFeedbackHandler({
     authenticate,
-    insertFeedback,
-    countRecentFeedback,
+    submitRateLimited,
   });
 
   beforeEach(() => {
     authenticate.mockReset();
-    insertFeedback.mockReset();
-    countRecentFeedback.mockReset();
+    submitRateLimited.mockReset();
     authenticate.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
-    countRecentFeedback.mockResolvedValue(0);
-    insertFeedback.mockResolvedValue({ id: "feedback-1" });
+    submitRateLimited.mockResolvedValue({ id: "feedback-1" });
   });
 
   it("rejects non-POST methods", async () => {
@@ -56,7 +52,7 @@ describe("createSubmitFeedbackHandler", () => {
     expect(response.status).toBe(400);
     const envelope = (await response.json()) as { ok: false; error: { code: string } };
     expect(envelope.error.code).toBe("invalid_request");
-    expect(insertFeedback).not.toHaveBeenCalled();
+    expect(submitRateLimited).not.toHaveBeenCalled();
   });
 
   it("stores valid feedback and returns 201", async () => {
@@ -70,7 +66,7 @@ describe("createSubmitFeedbackHandler", () => {
     expect(response.status).toBe(201);
     const envelope = (await response.json()) as { ok: true; data: { id: string } };
     expect(envelope.data.id).toBe("feedback-1");
-    expect(insertFeedback).toHaveBeenCalledWith({
+    expect(submitRateLimited).toHaveBeenCalledWith({
       userId: USER_ID,
       category: "feature_request",
       body: "買い物リストに並び替えがあると助かります。",
@@ -79,7 +75,7 @@ describe("createSubmitFeedbackHandler", () => {
   });
 
   it("rate-limits after five submissions in 24 hours", async () => {
-    countRecentFeedback.mockResolvedValue(5);
+    submitRateLimited.mockResolvedValue({ rateLimited: true });
     const response = await handler(
       makeRequest({
         category: "other",
@@ -87,6 +83,5 @@ describe("createSubmitFeedbackHandler", () => {
       }),
     );
     expect(response.status).toBe(429);
-    expect(insertFeedback).not.toHaveBeenCalled();
   });
 });

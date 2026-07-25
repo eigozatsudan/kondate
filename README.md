@@ -1,6 +1,8 @@
 # こんだて日和
 
-「こんだて日和」は、家族構成、食事の希望、冷蔵庫にある食材をもとに、家庭向けの献立作りを支援するWebアプリケーションです。
+「こんだて日和」は、食事の希望や使いたい食材などへの簡単な質問から家庭向けの献立を作る Web アプリケーションです。
+家族情報の登録は任意で、登録するとアレルギーや人数などを踏まえた家族向け献立、未登録でも一般的な献立アイデアを作れます。
+履歴の見返しや（家族向け献立からの）買い物リスト、生成失敗時の緊急献立なども用意しています。
 
 このrepositoryにはReactアプリ、Netlify Functions、共有contract、Supabaseのschemaとローカル開発環境が含まれます。
 
@@ -8,7 +10,7 @@
 
 - React 19 / TypeScript / Vite
 - React Router / TanStack Query / React Hook Form / Zod
-- Supabase PostgreSQL 17 / Auth / Storage / Realtime
+- Supabase PostgreSQL 17 / Auth / Realtime（ローカル stack には Storage サービスも含む）
 - Netlify Functions
 - Vitest / React Testing Library / Playwright / pgTAP
 - Docker Compose
@@ -72,13 +74,20 @@ http://127.0.0.1:5173
 
 `http://localhost:5173` と `http://127.0.0.1:5173` はブラウザ上で**別オリジン**です。ローカル契約は次のように `127.0.0.1` に固定されています。
 
-| 設定 | 値 |
-| --- | --- |
-| アプリ / `SERVER_SITE_ORIGIN` / `SITE_URL` | `http://127.0.0.1:5173` |
-| oauth-mock の `appOrigin` / exchange CORS | `http://127.0.0.1:5173` のみ |
-| Supabase redirect allow list | `http://127.0.0.1:5173/**` |
+| 設定                                       | 値                           |
+| ------------------------------------------ | ---------------------------- |
+| アプリ / `SERVER_SITE_ORIGIN` / `SITE_URL` | `http://127.0.0.1:5173`      |
+| oauth-mock の `appOrigin` / exchange CORS  | `http://127.0.0.1:5173` のみ |
+| Supabase redirect allow list               | `http://127.0.0.1:5173/**`   |
 
 そのため `localhost` で開くと、認証継続 create が Origin 不一致で失敗したり、callback / CORS が噛み合わず、Google ログインが成立しません。ブックマークやアドレスバーも常に `127.0.0.1` を使ってください。
+
+#### メール（マジックリンク）でログインする場合
+
+1. ログイン画面でメールアドレスを入れ「ログイン用メールを送る」
+2. Mailpit UI（[http://127.0.0.1:8025](http://127.0.0.1:8025)）でメールを開き、リンクから続行する
+
+ローカルの SMTP は Compose の `mailpit`（ホスト `1025` / `8025`）です。本番 Google の検証は [docs/testing/google-oauth-staging.md](docs/testing/google-oauth-staging.md) を参照してください。
 
 #### `/api/auth/continuations` が 404 になる場合
 
@@ -147,18 +156,22 @@ docker compose run --rm --no-deps app npm run verify:openrouter:models
 #### 5. ブラウザで試す
 
 1. [http://127.0.0.1:5173](http://127.0.0.1:5173) を開く（`localhost` ではない）
-2. ログイン → ウィザードで条件を入力 → **献立を作る**
-3. 生成中画面のあと結果が表示されれば、実 OpenRouter 経由で動いている
+2. `/login` で Google（oauth-mock）またはメールログイン
+3. 初回は `/welcome`。「献立アイデアを考える」または「家族情報を登録する」を選ぶ
+4. `/planner` のウィザード（食事 → 食材 → ジャンル → 家族/アイデア → 確認）で条件を入れ、**献立を作る**
+   - 未同意なら AI 情報送信の説明（`/privacy`）を先に確認する
+5. `/generation` のあと結果（`/menus/:menuId`）が出れば、実 OpenRouter 経由で動いている
 
 #### 制約（本番と同じ）
 
-| 項目 | 値 |
-| --- | --- |
-| 成功生成 / 利用者 / JST 日 | 5 |
-| 外部 AI 送信 / 利用者 / JST 日 | 12 |
-| 外部送信 / 600 秒窓 | 4 |
-| 1 試行タイムアウト | 20 秒 |
-| Function 総予算 | 50 秒 |
+| 項目                                       | 値    |
+| ------------------------------------------ | ----- |
+| 成功生成 / 利用者 / JST 日                 | 5     |
+| 外部 AI 送信 / 利用者 / JST 日             | 12    |
+| 外部送信 / 600 秒窓                        | 4     |
+| 外部 AI 送信 / アプリ全体 / JST 日（既定） | 45    |
+| 1 試行タイムアウト                         | 20 秒 |
+| Function 総予算                            | 50 秒 |
 
 free モデルは提供状況・レート制限が変わります。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費します）。
 
@@ -200,3 +213,4 @@ vendorしたSupabase公式Docker構成は、次のwrapperで更新します。
 - E2Eは同じcheckout内で排他実行され、終了時に通常のAuthとapp構成を復元します。
 
 より詳しいセットアップ、検証、Supabase更新、lockやsignalからの復旧は[docs/local-development.md](docs/local-development.md)を参照してください。
+本番デプロイとリリースゲートは[docs/testing/release-checklist.md](docs/testing/release-checklist.md)を参照してください。

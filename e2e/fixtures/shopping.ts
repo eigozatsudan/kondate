@@ -40,7 +40,10 @@ export async function ensurePlannerReady(page: Page): Promise<void> {
     { timeout: 30_000 },
   );
   if (await onboardingHeading.isVisible()) {
+    // 家族初回設定完了は /planner へ直接遷移し privacy を踏まない。
+    // completedOnboardingPage と同様に privacy を別遷移で完了してから設定へ進む。
     await completeMinimumOnboarding(page);
+    await page.goto("/privacy?returnTo=%2Fplanner");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
   }

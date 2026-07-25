@@ -18,7 +18,7 @@ const avoidIngredientLimit = 20;
 const avoidIngredientLengthLimit = 80;
 
 /**
- * 既存 planner-page.tsx の parseAvoidIngredientInput をreview stepでも再利用する。
+ * parseAvoidIngredientInput を review step でも共有する。
  * 全角/半角混在の区切り文字（、,）を正規化し、80文字制限・20件制限を維持する。
  */
 function parseAvoidIngredientInput(rawValue: string): {
@@ -193,9 +193,7 @@ export function ReviewStep({
           <dt>メイン食材</dt>
           <dd className="review-answer-cell">
             <span>
-              {value.mainIngredients.length === 0
-                ? "未選択"
-                : value.mainIngredients.join("・")}
+              {value.mainIngredients.length === 0 ? "未選択" : value.mainIngredients.join("・")}
             </span>
             {onEditStep !== undefined && (
               <button

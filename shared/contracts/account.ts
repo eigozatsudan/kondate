@@ -7,3 +7,13 @@ export const deleteAccountRequestSchema = z.object({
 
 export type DeleteAccountRequest = z.infer<typeof deleteAccountRequestSchema>;
 export type DeleteAccountResult = { deleted: true };
+
+/** Function 応答 envelope。ネットワーク境界では safeParse で検証する。 */
+export const deleteAccountEnvelopeSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), data: z.object({ deleted: z.literal(true) }) }),
+  z.object({
+    ok: z.literal(false),
+    error: z.object({ code: z.string(), message: z.string() }),
+  }),
+]);
+export type DeleteAccountEnvelope = z.infer<typeof deleteAccountEnvelopeSchema>;

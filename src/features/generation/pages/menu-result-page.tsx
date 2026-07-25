@@ -835,8 +835,10 @@ function HouseholdResultBody({
               (idempotencyKey) => ({
                 menuId,
                 mode: input.mode,
-                activeListId: input.mode === "append" ? input.activeListId : null,
-                expectedListVersion: input.mode === "append" ? input.expectedListVersion : null,
+                // mode=new でも active があるときは SQL がアーカイブ用に正確な id/version を要求する。
+                // append 専用に null へ落とすと list_version_conflict になり「新しいリストにする」が常に失敗する。
+                activeListId: input.activeListId,
+                expectedListVersion: input.expectedListVersion,
                 idempotencyKey,
               }),
             );

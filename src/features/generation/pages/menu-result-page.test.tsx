@@ -415,6 +415,33 @@ describe("MenuResultPage", () => {
     ).toBeNull();
   });
 
+  it("submits create mode=new with the active list id and version for archive OCC", async () => {
+    // active がある「新しいリストにする」は SQL が id/version を要求する。
+    // 親が null へ落とすと list_version_conflict になる回帰を固定する。
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    await waitFor(() => {
+      expect(create).toBeEnabled();
+    });
+    await userEvent.click(create);
+    await userEvent.click(screen.getByRole("radio", { name: "新しいリストにする" }));
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    await waitFor(() => {
+      expect(shoppingApi.createShoppingList).toHaveBeenCalledTimes(1);
+    });
+    const command = shoppingApi.createShoppingList.mock.calls[0]?.[0];
+    expect(command).toMatchObject({
+      menuId: VALID_MENU_ID,
+      mode: "new",
+      activeListId: SHOPPING_LIST_ID,
+      expectedListVersion: 4,
+    });
+  });
+
   it("previews the diff for display only and opens the reconcile sheet", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
     shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({

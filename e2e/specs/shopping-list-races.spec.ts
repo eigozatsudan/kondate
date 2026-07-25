@@ -86,6 +86,9 @@ test("disables shopping actions immediately after member or allergy mutation", a
   await expect(shoppingPage.getByRole("checkbox", { name: /購入済みにする/u }).first()).toBeEnabled(
     { timeout: 30_000 },
   );
+  // 設定完了で editor が閉じるため、アレルギー操作前に一覧から再オープンする
+  // （settings.spec と同じ editorOpen 既定 false 契約）。
+  await openFirstMemberEditor(settingsPage);
   // 同じく「アレルギーを編集 / アレルギーを保存」は存在しない。
   // アレルギー編集を開く操作＝「アレルギーの確認」を登録ありにする、
   // member_allergies を書き込む操作＝「くるみを追加」に読み替える。

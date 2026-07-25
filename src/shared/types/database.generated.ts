@@ -2262,7 +2262,18 @@ export type Database = {
         }[]
       }
       get_ai_usage_today: {
-        Args: { p_now?: string; p_user_id: string }
+        Args: { p_global_limit?: number; p_now?: string; p_user_id: string }
+        Returns: Json
+      }
+      insert_user_feedback_rate_limited: {
+        Args: {
+          p_body: string
+          p_category: string
+          p_client_path: string | null
+          p_limit?: number
+          p_user_id: string
+          p_window_seconds?: number
+        }
         Returns: Json
       }
       get_current_safety_snapshot: {

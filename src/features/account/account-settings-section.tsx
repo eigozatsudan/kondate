@@ -1,11 +1,9 @@
 import { useState } from "react";
+import { deleteAccountEnvelopeSchema } from "@shared/contracts/account";
 import { clearLocalAuthAndDrafts } from "@/features/auth/auth-cleanup";
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { DeleteAccountDialog } from "./delete-account-dialog";
-
-type DeleteAccountEnvelope =
-  { ok: true; data: { deleted: true } } | { ok: false; error: { code: string; message: string } };
 
 function mapDeleteError(code: string | undefined): string {
   if (code === "invalid_request") return "「削除する」と入力してください";
@@ -95,15 +93,20 @@ export function AccountSettingsSection() {
         body: JSON.stringify({ confirmation }),
         cache: "no-store",
       });
-      let envelope: DeleteAccountEnvelope;
+      let raw: unknown;
       try {
-        envelope = (await response.json()) as DeleteAccountEnvelope;
+        raw = await response.json();
       } catch {
         setErrorMessage(mapDeleteError(undefined));
         return;
       }
-      if (!envelope.ok) {
-        setErrorMessage(mapDeleteError(envelope.error.code));
+      const parsed = deleteAccountEnvelopeSchema.safeParse(raw);
+      if (!parsed.success) {
+        setErrorMessage(mapDeleteError(undefined));
+        return;
+      }
+      if (!parsed.data.ok) {
+        setErrorMessage(mapDeleteError(parsed.data.error.code));
         return;
       }
       // サーバー削除成功後だけローカル掃除。失敗時はダイアログを開いたまま再試行可能にする
