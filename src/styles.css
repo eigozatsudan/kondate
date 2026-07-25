@@ -992,9 +992,9 @@ textarea:focus-visible {
 
 /*
  * 下部ナビ。幅は main（.page-frame の 680px）と揃える（フル幅にはしない）。
- * 問題は横ではなく上下: 半透明白＋ blur だと section-tint の main 面と色が
- * 分かれ、padding の空きと合わせて「main が途切れて nav が浮く」ように見える。
- * 同じ --section-tint を床にし、safe-area でホームインジケータを避ける。
+ * 背景はセクション tint に連動させず --surface（白）に固定する。
+ * tint と同じ色だとタブ面と一体化して「床」が判別しづらい。
+ * 半透明＋ blur は使わず不透明にし、safe-area でホームインジケータを避ける。
  */
 .bottom-nav {
   position: fixed;
@@ -1005,7 +1005,7 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   border-top: 1px solid var(--border);
-  background: var(--section-tint);
+  background: var(--surface);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -1036,4 +1036,126 @@ textarea:focus-visible {
     border-right: 1px solid var(--border);
     border-left: 1px solid var(--border);
   }
+}
+
+/*
+ * 買い物リスト。項目ごとの .card（二重影＋20px padding）をやめ、
+ * 売り場カテゴリ単位の1面に行を並べる。見出しは sticky、購入済みは
+ * 取り消し線＋減光。クラス名は .shopping-* に閉じ、コントラストガードの
+ * 保護断片（.wizard- / .card 等）に載せない。
+ */
+.shopping-page-header {
+  display: grid;
+  gap: 4px;
+}
+
+.shopping-page-header h1 {
+  margin: 0;
+}
+
+.shopping-progress {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.shopping-section {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.shopping-section-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  padding: 12px 16px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.shopping-item-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shopping-item-row {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding: 8px 16px 12px;
+}
+
+.shopping-item-list > .shopping-item-row:first-child {
+  border-top: 0;
+}
+
+.shopping-item-row--removed {
+  display: flex;
+  min-height: 44px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shopping-item-row[data-checked="true"] {
+  opacity: 0.56;
+}
+
+.shopping-item-row[data-checked="true"] .shopping-item-name {
+  text-decoration: line-through;
+}
+
+.shopping-item-main {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  cursor: pointer;
+  align-items: center;
+  gap: 12px;
+}
+
+.shopping-item-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.shopping-item-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.shopping-item-quantity {
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.shopping-item-note,
+.shopping-item-warning {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.shopping-item-warning {
+  display: grid;
+  gap: 4px;
+}
+
+.shopping-item-warning p {
+  margin: 0;
+}
+
+.shopping-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
 }

@@ -18,7 +18,10 @@ export function HistoryPage() {
   if (isError) {
     return (
       <main className="page-frame stack">
-        <h1>作った献立</h1>
+        <header>
+          <p className="eyebrow">履歴</p>
+          <h1>作った献立</h1>
+        </header>
         <p role="alert">履歴を読み込めませんでした</p>
         <button
           type="button"
@@ -42,7 +45,10 @@ export function HistoryPageContent({ groups }: { groups: readonly HistoryGroup[]
   if (groups.length === 0) {
     return (
       <main className="page-frame stack">
-        <h1>作った献立</h1>
+        <header>
+          <p className="eyebrow">履歴</p>
+          <h1>作った献立</h1>
+        </header>
         <p>まだ献立がありません</p>
         <Link className="min-h-11 inline-flex items-center font-semibold" to="/planner">
           献立を作る
@@ -53,7 +59,10 @@ export function HistoryPageContent({ groups }: { groups: readonly HistoryGroup[]
 
   return (
     <main className="page-frame stack">
-      <h1>作った献立</h1>
+      <header>
+        <p className="eyebrow">履歴</p>
+        <h1>作った献立</h1>
+      </header>
       <ul className="grid gap-4">
         {groups.map((group) => (
           <li key={group.derivationGroupId}>
