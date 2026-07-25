@@ -19,6 +19,8 @@ export function MealStep({
   onNext,
   disabled,
   errorMessage,
+  nextLabel = "次へ",
+  backLabel = "戻る",
 }: MealStepProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -66,7 +68,7 @@ export function MealStep({
             disabled={disabled}
             onClick={onBack}
           >
-            戻る
+            {backLabel}
           </button>
         )}
         <button
@@ -75,7 +77,7 @@ export function MealStep({
           disabled={disabled || value === null}
           onClick={onNext}
         >
-          次へ
+          {nextLabel}
         </button>
       </div>
     </section>

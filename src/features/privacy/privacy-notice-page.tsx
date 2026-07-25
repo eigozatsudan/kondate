@@ -77,7 +77,7 @@ export function PrivacyNoticeContent({
       <p>
         AI生成レシピだけでアレルギーの安全は保証できません。加工品の原材料表示と家庭内の混入を確認してください。
       </p>
-      <label>
+      <label className="control-label">
         <input
           type="checkbox"
           checked={checked}

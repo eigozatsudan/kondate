@@ -26,7 +26,7 @@ export function CreateListSheet({
       {activeList !== null && (
         <fieldset>
           <legend>作り方</legend>
-          <label className="min-h-11 flex items-center">
+          <label className="control-label">
             <input
               type="radio"
               name="create-list-mode"
@@ -37,7 +37,7 @@ export function CreateListSheet({
             />
             今のリストへ追加（{activeList.itemCount}件）
           </label>
-          <label className="min-h-11 flex items-center">
+          <label className="control-label">
             <input
               type="radio"
               name="create-list-mode"

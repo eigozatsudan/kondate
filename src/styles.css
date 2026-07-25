@@ -30,13 +30,13 @@
  * 段階値は新しい色を持ち込まず、既存のカスタムプロパティと同一の色にする。
  * これにより styles.contrast.test.ts が実証済みの配色から外れない。
  *   50  = --notice         100 = --selection        700 = --primary
- * 700 は text-white を載せる箇所があるため、白文字で 5.92:1（AA 合格）を
- * 確保できる深いテラコッタに置く。淡い塗りに置くと白文字が読めない。
+ * 700 は text-white を載せる箇所があるため、白文字で 4.5:1（AA）以上を
+ * 確保できるテラコッタに置く。淡い塗りに置くと白文字が読めない。
  */
 @theme {
   --color-terracotta-50: #fdf1ec;
   --color-terracotta-100: #f9e3da;
-  --color-terracotta-700: #a8452a;
+  --color-terracotta-700: #b85033;
 
   /*
    * Tailwind 記法で書かれた画面（献立結果・履歴）が、セマンティックCSS側と
@@ -84,18 +84,40 @@
   --surface: #ffffff;
   --text: #26211e;
   --muted: #57504b;
-  --primary: #a8452a;
-  --primary-hover: #94381f;
-  --primary-active: #8a331c;
+  --primary: #b85033;
+  --primary-hover: #a84328;
+  --primary-active: #9c3c23;
   --primary-ink: #ffffff;
-  --primary-strong: #8f3a22;
+  --primary-strong: #a13d24;
   --selection: #f9e3da;
   --notice: #fdf1ec;
   --border: #e7e2dd;
   --border-strong: #8e8681;
-  --focus: #8f3a22;
+  --focus: #a13d24;
   --pantry: #3f6b57;
   --danger: #b3261e;
+  /* タイプスケール・半径・余白。本文 lh は和文向けに 1.75。 */
+  --question-font: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --text-display: clamp(1.5rem, 6vw, 2rem);
+  --text-h1: 1.5rem;
+  --text-h2: 1.25rem;
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+  --leading-display: 1.35;
+  --leading-h1: 1.4;
+  --leading-h2: 1.5;
+  --leading-body: 1.75;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
 }
 
 :root {
@@ -103,37 +125,10 @@
 }
 
 /*
- * 献立ウィザード側のテーマ。値は :root と完全に同一で、アプリ全体が単一の
- * 配色になる。クラス自体は配下の .wizard-* / .choice-card 等の
- * コンポーネント規則が依存しているため残す。
- * トークン宣言を :root へ集約してこのブロックを畳む整理は、
- * 見た目を変えない純粋なリファクタとして別途行う。
+ * 献立ウィザード側のスコープクラス（.guided-planner-theme）自体にトークンは
+ * 持たせない。配色は :root が正本で、配下セレクタ（.guided-planner-theme .…）
+ * がコンポーネント規則の境界になる。
  */
-.guided-planner-theme {
-  color: #26211e;
-  background: #faf9f8;
-  font-family:
-    "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  --app-background: #faf9f8;
-  --surface: #ffffff;
-  --text: #26211e;
-  --muted: #57504b;
-  --primary: #a8452a;
-  --primary-hover: #94381f;
-  --primary-active: #8a331c;
-  --primary-ink: #ffffff;
-  --primary-strong: #8f3a22;
-  --selection: #f9e3da;
-  --notice: #fdf1ec;
-  --border: #e7e2dd;
-  --border-strong: #8e8681;
-  --focus: #8f3a22;
-  --pantry: #3f6b57;
-  --danger: #b3261e;
-  --question-font: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
-}
 
 .guided-planner-theme :is(button, a, input, select, textarea):focus-visible {
   outline: 3px solid var(--focus);
@@ -276,8 +271,10 @@
 
 .guided-planner-theme .wizard-review-item {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 8px 16px;
+  /* 項目名 | 回答（変更は dd 内）。列幅を固定してガタつきを抑える */
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
   border-bottom: 1px solid var(--border);
   padding-block: 12px;
 }
@@ -294,10 +291,59 @@
   overflow-wrap: anywhere;
 }
 
+/* 回答と「変更」を1行に。ボタンは dd 内に置き definition-list を満たす */
+.review-answer-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.review-edit-action {
+  min-width: 4.5rem;
+  padding-inline: 8px;
+}
+
 .guided-planner-theme .wizard-reset-row {
   display: flex;
   min-width: 0;
   justify-content: flex-end;
+}
+
+/*
+ * 入力のリセット。下書きを全消去する破壊的操作なので、下線リンク（.text-button）
+ * ではなく輪郭のある実体のボタンにする。主操作（次へ・献立を作る）と競合しないよう
+ * 塗りは持たせず、枠と控えめな文字色で「押せるが主役ではない」ことを示す。
+ */
+.guided-planner-theme .wizard-reset-button {
+  display: inline-flex;
+  min-height: 44px;
+  cursor: pointer;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 8px 16px;
+  font-weight: 700;
+}
+
+.guided-planner-theme .wizard-reset-button:hover:not(:disabled) {
+  border-color: var(--primary-strong);
+  color: var(--primary-strong);
+  background: var(--notice);
+}
+
+.guided-planner-theme .wizard-reset-button:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.guided-planner-theme .wizard-reset-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
 }
 
 .guided-planner-theme .wizard-disabled-reason {
@@ -397,7 +443,9 @@
   margin: 0;
   color: var(--text);
   font-family: var(--question-font);
-  line-height: 1.4;
+  font-size: var(--text-display);
+  font-weight: 700;
+  line-height: var(--leading-display);
   overflow-wrap: anywhere;
 }
 
@@ -425,6 +473,14 @@
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
+}
+
+/*
+ * 「1. 食事」は戻る先が無いため次へ1つだけになる。space-between では左端に寄って
+ * 他stepの次へ（右端）と位置が揃わないので、単独のときは右へ送る。
+ */
+.wizard-actions > :only-child {
+  margin-inline-start: auto;
 }
 
 .wizard-action {
@@ -725,7 +781,38 @@ body,
 body {
   min-height: 100vh;
   font-size: 16px;
-  line-height: 1.6;
+  line-height: var(--leading-body);
+}
+
+/* ページ見出しの基本階層。Tailwind 直書きの結果画面は独自 class を優先する。 */
+.page-frame h1 {
+  margin: 0;
+  font-size: var(--text-h1);
+  font-weight: 700;
+  line-height: var(--leading-h1);
+}
+
+.page-frame h2 {
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.type-display {
+  font-family: var(--question-font);
+  font-size: var(--text-display);
+  font-weight: 700;
+  line-height: var(--leading-display);
+}
+
+.type-small {
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: 400;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
 button,
@@ -742,6 +829,28 @@ button,
   min-height: 44px;
 }
 
+/*
+ * 生成失敗時などの復帰導線。以前は min サイズだけで見た目がなく素のリンクだった。
+ * secondary-button と同型の輪郭ボタンにし、主操作（primary）と競合させない。
+ */
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-md);
+  color: var(--primary-strong);
+  background: transparent;
+  padding: 10px 16px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button-link:hover {
+  background: var(--notice);
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -754,7 +863,12 @@ textarea:focus-visible {
 .page-frame {
   width: min(100% - 32px, 680px);
   margin-inline: auto;
-  padding-block: 32px 96px;
+  /*
+   * 下余白は固定ナビ（.nav-item min-height 56px）の直上まで寄せる。
+   * 以前の 96px はナビ高さ以上の空きができ、main と nav のあいだが
+   * 途切れて見えた。safe-area はナビ側にも足すので、ここでも同じ分を確保する。
+   */
+  padding-block: 32px calc(56px + 8px + env(safe-area-inset-bottom, 0px));
 }
 
 .card {
@@ -835,6 +949,18 @@ textarea:focus-visible {
   border-radius: 10px;
   background: #fff;
   padding: 10px 12px;
+}
+
+/*
+ * チェック／ラジオ＋文言の横並びラベル。
+ * 素の label はブラウザ既定で密着するため、フォームの複数選択に付与する。
+ * （要素セレクタ input を直接書くと contrast ガードの保護規則に掛かる）
+ */
+.control-label {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 12px;
 }
 
 .field textarea {
@@ -924,9 +1050,26 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.household-member-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .household-editor {
   border-top: 2px solid var(--border);
   padding-top: 20px;
+}
+
+/* 編集フォーム末尾: 完了・やめる/削除を横並び */
+.household-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
 }
 
 @media (min-width: 480px) {
@@ -941,6 +1084,12 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * 下部ナビ。幅は main（.page-frame の 680px）と揃える（フル幅にはしない）。
+ * 背景はセクション tint に連動させず --surface（白）に固定する。
+ * tint と同じ色だとタブ面と一体化して「床」が判別しづらい。
+ * 半透明＋ blur は使わず不透明にし、safe-area でホームインジケータを避ける。
+ */
 .bottom-nav {
   position: fixed;
   z-index: 10;
@@ -950,21 +1099,37 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   border-top: 1px solid var(--border);
-  background: rgb(255 255 255 / 96%);
-  backdrop-filter: blur(8px);
+  background: var(--surface);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .nav-item {
   display: flex;
   min-width: 0;
   min-height: 56px;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   border-top: 3px solid transparent;
   color: var(--muted);
+  padding-block: 6px;
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
+}
+
+.nav-item-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+}
+
+.nav-item-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item-active {
@@ -981,4 +1146,290 @@ textarea:focus-visible {
     border-right: 1px solid var(--border);
     border-left: 1px solid var(--border);
   }
+}
+
+/*
+ * 買い物リスト。項目ごとの .card（二重影＋20px padding）をやめ、
+ * 売り場カテゴリ単位の1面に行を並べる。見出しは sticky、購入済みは
+ * 取り消し線＋減光。クラス名は .shopping-* に閉じ、コントラストガードの
+ * 保護断片（.wizard- / .card 等）に載せない。
+ */
+.shopping-page-header {
+  display: grid;
+  gap: 4px;
+}
+
+.shopping-page-header h1 {
+  margin: 0;
+}
+
+.shopping-progress {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.shopping-section {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.shopping-section-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  padding: 12px 16px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.shopping-item-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shopping-item-row {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding: 8px 16px 12px;
+}
+
+.shopping-item-list > .shopping-item-row:first-child {
+  border-top: 0;
+}
+
+.shopping-item-row--removed {
+  display: flex;
+  min-height: 44px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shopping-item-row[data-checked="true"] {
+  opacity: 0.56;
+}
+
+.shopping-item-row[data-checked="true"] .shopping-item-name {
+  text-decoration: line-through;
+}
+
+.shopping-item-main {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  cursor: pointer;
+  align-items: center;
+  /* チェックと商品名の隙間（密着防止） */
+  gap: 12px;
+}
+
+.shopping-item-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.shopping-item-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.shopping-item-quantity {
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.shopping-item-note,
+.shopping-item-warning {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.shopping-item-warning {
+  display: grid;
+  gap: 4px;
+}
+
+.shopping-item-warning p {
+  margin: 0;
+}
+
+.shopping-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
+}
+
+/*
+ * 調理タイムライン（縮退版）。比例配分はせず、時間の強調・料理ラベル・
+ * 並行テキストで段取りを伝える。dish 色は 5 枠まで（契約 dishes max 5）。
+ */
+.cook-timeline {
+  display: grid;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  gap: 12px;
+}
+
+.cook-timeline-step {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 12px;
+  min-height: 44px;
+  padding-left: 12px;
+}
+
+.cook-timeline-time {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+
+.cook-timeline-start {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.cook-timeline-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cook-timeline-dish-label {
+  font-weight: 700;
+}
+
+/* 色は補助。料理名テキストが本体（色のみでの状態表現は禁止）。 */
+.cook-timeline-dish-0 .cook-timeline-dish-label {
+  color: var(--primary-strong);
+}
+
+.cook-timeline-dish-1 .cook-timeline-dish-label {
+  color: var(--pantry);
+}
+
+.cook-timeline-dish-2 .cook-timeline-dish-label {
+  color: var(--danger);
+}
+
+.cook-timeline-dish-3 .cook-timeline-dish-label {
+  color: var(--primary);
+}
+
+.cook-timeline-dish-4 .cook-timeline-dish-label {
+  color: var(--muted);
+}
+
+.cook-timeline-instruction {
+  overflow-wrap: anywhere;
+}
+
+.cook-timeline-parallel {
+  display: block;
+}
+
+/*
+ * 生成待ちパネル。6フェーズ共通の枠。演出はクラス駆動のみで、
+ * prefers-reduced-motion ではインジケータを止める。
+ */
+.gen-status-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.gen-status-panel h1 {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-display);
+  font-weight: 700;
+  line-height: var(--leading-display);
+}
+
+.gen-status-panel p {
+  margin: 0;
+}
+
+.gen-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.gen-status-indicator {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--primary);
+  border-radius: var(--radius-pill);
+  animation: gen-status-spin 0.9s linear infinite;
+}
+
+.gen-status-panel[data-phase="constraint_conflict"] .gen-status-indicator,
+.gen-status-panel[data-phase="failed"] .gen-status-indicator,
+.gen-status-panel[data-phase="request_conflict"] .gen-status-indicator {
+  display: none;
+}
+
+@keyframes gen-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gen-status-indicator {
+    animation: none;
+    border-top-color: var(--border-strong);
+  }
+}
+
+/* デスクトップ用の細い上部セクションバー。操作順はスマホと同一。 */
+.desktop-section-bar {
+  display: none;
+}
+
+@media (min-width: 720px) {
+  .desktop-section-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    width: min(680px, 100% - 32px);
+    min-height: 40px;
+    margin-inline: auto;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    padding-inline: 16px;
+    color: var(--muted);
+    font-size: var(--text-small);
+    font-weight: 700;
+  }
+}
+
+.settings-page-header {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-section-title {
+  margin: 0;
 }

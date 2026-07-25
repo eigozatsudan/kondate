@@ -13,6 +13,7 @@ import {
   type UnsupportedDietStatus,
 } from "@shared/contracts/domain";
 import { AccountSettingsSection } from "@/features/account/account-settings-section";
+import { FeedbackSection } from "@/features/account/feedback-section";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
@@ -194,7 +195,9 @@ export function HouseholdSettingsForm({
   const queryClient = useQueryClient();
   const membersKey = useMemo(() => householdKeys.members(userId), [userId]);
   const [selectedId, setSelectedId] = useState<string>();
-  const [editorOpen, setEditorOpen] = useState(true);
+  // 登録済み家族がある状態でページを開き直したとき、編集フォームを自動展開しない。
+  // 一覧だけ見せ、編集は「編集」／追加は「家族を追加」の明示操作でのみ開く。
+  const [editorOpen, setEditorOpen] = useState(false);
   const [values, setValues] = useState<HouseholdSettingsValue>();
   const [allergyRefetchEpoch, setAllergyRefetchEpoch] = useState(0);
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
@@ -332,13 +335,13 @@ export function HouseholdSettingsForm({
 
   useEffect(() => {
     if (deleteTarget === undefined) return;
-    if (
-      selected?.id !== deleteTarget.id ||
-      !members.some((member) => member.id === deleteTarget.id)
-    ) {
+    // 一覧の別行削除では selected と deleteTarget が食い違うのが正常。
+    // 対象がメンバー一覧から消えたときだけダイアログを閉じる。
+    // （別メンバーの「編集」は onClick 側で setDeleteTarget(undefined) する）
+    if (!members.some((member) => member.id === deleteTarget.id)) {
       setDeleteTarget(undefined);
     }
-  }, [deleteTarget, members, selected?.id]);
+  }, [deleteTarget, members]);
 
   useEffect(() => {
     if (deleteTarget === undefined) return;
@@ -650,67 +653,133 @@ export function HouseholdSettingsForm({
     createDraft.mutate();
   };
   const [cancellingDraft, setCancellingDraft] = useState(false);
-  const cancelDraftAdd = useCallback(async (): Promise<void> => {
-    if (
-      savingRef.current ||
-      creatingDraftRef.current ||
-      cancellingDraftRef.current ||
-      selected === undefined ||
-      selected.status !== "draft" ||
-      cancellingDraft
-    )
-      return;
-    const targetId = selected.id;
-    if (deletingMemberIdsRef.current.has(targetId)) return;
-    cancellingDraftRef.current = true;
-    setCancellingDraft(true);
-    setMessage("");
-    try {
-      await api.deleteMember(targetId);
-      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-        current.filter((member) => member.id !== targetId),
-      );
-      valuesByMemberRef.current.delete(targetId);
-      editRevisionsByMemberRef.current.delete(targetId);
-      operationTokensByMemberRef.current.delete(targetId);
-      pendingOperationCountsRef.current.delete(targetId);
-      failedSaveMemberIdsRef.current.delete(targetId);
-      pendingRegisteredIntents.current.delete(targetId);
-      allergyMutationPendingMemberIdsRef.current.delete(targetId);
-      setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
-      setDeleteTarget((current) => (current?.id === targetId ? undefined : current));
-      const remaining =
-        queryClient
-          .getQueryData<HouseholdMemberRow[]>(membersKey)
-          ?.filter((member) => member.id !== targetId) ?? [];
-      const restoreId = previousSelectedIdBeforeAddRef.current;
-      const restore =
-        restoreId !== undefined && restoreId !== targetId
-          ? remaining.find((member) => member.id === restoreId)
-          : undefined;
-      if (restore !== undefined) {
-        selectedMemberIdRef.current = restore.id;
-        setSelectedId(restore.id);
-      } else if (remaining[0] !== undefined) {
-        selectedMemberIdRef.current = remaining[0].id;
-        setSelectedId(remaining[0].id);
-      } else {
-        selectedMemberIdRef.current = undefined;
-        setSelectedId(undefined);
-        setValues(undefined);
-        setEditorOpen(false);
+
+  /** 削除対象に紐づくローカル編集状態を掃除する。 */
+  const clearMemberLocalState = useCallback((targetId: string) => {
+    valuesByMemberRef.current.delete(targetId);
+    editRevisionsByMemberRef.current.delete(targetId);
+    operationTokensByMemberRef.current.delete(targetId);
+    pendingOperationCountsRef.current.delete(targetId);
+    failedSaveMemberIdsRef.current.delete(targetId);
+    pendingRegisteredIntents.current.delete(targetId);
+    allergyMutationPendingMemberIdsRef.current.delete(targetId);
+    setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
+  }, []);
+
+  /**
+   * メンバー削除の共通処理。
+   * - asCancelDraft: 入力途中の「追加をやめる」。前の選択へ戻し、削除成功メッセージを変える。
+   * - それ以外: 確認ダイアログ経由の削除。対象が編集中なら編集を閉じる。
+   */
+  const performMemberDelete = useCallback(
+    async (
+      target: HouseholdMemberRow,
+      options: { asCancelDraft: boolean },
+    ): Promise<void> => {
+      const targetId = target.id;
+      if (
+        savingRef.current ||
+        creatingDraftRef.current ||
+        cancellingDraftRef.current ||
+        deletingMemberIdsRef.current.has(targetId)
+      ) {
+        return;
       }
-      previousSelectedIdBeforeAddRef.current = undefined;
-      await queryClient.invalidateQueries({ queryKey: membersKey });
-      await api.invalidateSafety();
-      setMessage("家族の追加をやめました");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "追加のキャンセルに失敗しました");
-    } finally {
-      cancellingDraftRef.current = false;
-      setCancellingDraft(false);
-    }
-  }, [api, cancellingDraft, membersKey, queryClient, selected]);
+      if (options.asCancelDraft) {
+        cancellingDraftRef.current = true;
+        setCancellingDraft(true);
+      } else {
+        deletingMemberIdsRef.current.add(targetId);
+        setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
+      }
+      setMessage("");
+      try {
+        await api.deleteMember(targetId);
+        queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+          current.filter((member) => member.id !== targetId),
+        );
+        clearMemberLocalState(targetId);
+        setDeleteTarget((current) => (current?.id === targetId ? undefined : current));
+        const remaining =
+          queryClient
+            .getQueryData<HouseholdMemberRow[]>(membersKey)
+            ?.filter((member) => member.id !== targetId) ?? [];
+        const wasSelected = selectedMemberIdRef.current === targetId;
+
+        if (options.asCancelDraft) {
+          // 追加キャンセル: 追加前に見ていた家族へ戻す。無ければ先頭、誰もいなければ閉じる。
+          const restoreId = previousSelectedIdBeforeAddRef.current;
+          const restore =
+            restoreId !== undefined && restoreId !== targetId
+              ? remaining.find((member) => member.id === restoreId)
+              : undefined;
+          if (restore !== undefined) {
+            selectedMemberIdRef.current = restore.id;
+            setSelectedId(restore.id);
+          } else if (remaining[0] !== undefined) {
+            selectedMemberIdRef.current = remaining[0].id;
+            setSelectedId(remaining[0].id);
+          } else {
+            selectedMemberIdRef.current = undefined;
+            setSelectedId(undefined);
+            setValues(undefined);
+            setEditorOpen(false);
+          }
+          previousSelectedIdBeforeAddRef.current = undefined;
+          setMessage("家族の追加をやめました");
+        } else if (wasSelected) {
+          // 編集中の家族を削除したらフォームを閉じ、一覧だけ残す。
+          selectedMemberIdRef.current = undefined;
+          setSelectedId(undefined);
+          setValues(undefined);
+          setEditorOpen(false);
+          previousSelectedIdBeforeAddRef.current = undefined;
+          setMessage(
+            target.status === "draft"
+              ? "入力途中の家族をリストから外しました"
+              : "家族の設定を削除しました",
+          );
+        } else {
+          // 一覧から別の家族を削除。編集中の選択はそのまま。
+          setMessage(
+            target.status === "draft"
+              ? "入力途中の家族をリストから外しました"
+              : "家族の設定を削除しました",
+          );
+        }
+        await queryClient.invalidateQueries({ queryKey: membersKey });
+        await api.invalidateSafety();
+      } catch (error) {
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : options.asCancelDraft
+              ? "追加のキャンセルに失敗しました"
+              : "家族設定を削除できませんでした",
+        );
+      } finally {
+        if (options.asCancelDraft) {
+          cancellingDraftRef.current = false;
+          setCancellingDraft(false);
+        } else {
+          deletingMemberIdsRef.current.delete(targetId);
+          setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
+        }
+      }
+    },
+    [api, clearMemberLocalState, membersKey, queryClient],
+  );
+
+  const cancelDraftAdd = useCallback(async (): Promise<void> => {
+    if (selected === undefined || selected.status !== "draft" || cancellingDraft) return;
+    await performMemberDelete(selected, { asCancelDraft: true });
+  }, [cancellingDraft, performMemberDelete, selected]);
+
+  const confirmDeleteTarget = useCallback(async (): Promise<void> => {
+    if (deleteTarget === undefined) return;
+    // 確認ダイアログ経由は常に「削除」経路（draft も complete も同じ）
+    await performMemberDelete(deleteTarget, { asCancelDraft: false });
+  }, [deleteTarget, performMemberDelete]);
   const complete = async () => {
     if (
       savingRef.current ||
@@ -964,10 +1033,12 @@ export function HouseholdSettingsForm({
         <p role="alert">家族設定を読み込めませんでした。</p>
       </main>
     );
-  if (values === undefined && selected !== undefined) {
+  // 編集を開いているときだけ values を要求する。一覧表示中に values 未初期化で
+  // 画面全体をローディングへ落とさない（削除後の不整合を防ぐ）。
+  if (editorOpen && values === undefined && selected !== undefined) {
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
   }
-  if (values === undefined || selected === undefined) {
+  if (members.length === 0) {
     return (
       <main className="page-frame stack">
         <h1>家族設定</h1>
@@ -989,18 +1060,25 @@ export function HouseholdSettingsForm({
             家族を追加
           </button>
         </section>
+        <FeedbackSection />
         {/* アカウント操作は家族の有無に依存しない。空状態でも家族CRUDの下へ常時合成する。 */}
         <AccountSettingsSection />
       </main>
     );
   }
+  // 一覧表示のみ（編集クローズ）で selected/values が揃う前でも一覧を出す
+  if (editorOpen && (values === undefined || selected === undefined)) {
+    return <main className="page-frame">家族設定を読み込んでいます…</main>;
+  }
   const currentDislikes = dislikesQuery.data ?? [];
-  const selectedAllergyMutationPending = allergyMutationPendingMemberIds.has(selected.id);
-  const selectedDislikeMutationPending = dislikeMutationPendingMemberIds.has(selected.id);
+  const selectedAllergyMutationPending =
+    selected !== undefined && allergyMutationPendingMemberIds.has(selected.id);
+  const selectedDislikeMutationPending =
+    selected !== undefined && dislikeMutationPendingMemberIds.has(selected.id);
   const completionBlockedByMutation =
     selectedAllergyMutationPending ||
     selectedDislikeMutationPending ||
-    deletingMemberIds.has(selected.id) ||
+    (selected !== undefined && deletingMemberIds.has(selected.id)) ||
     createDraft.isPending ||
     cancellingDraft;
   const setArray = (
@@ -1008,6 +1086,7 @@ export function HouseholdSettingsForm({
     item: string,
     checked: boolean,
   ) => {
+    if (values === undefined) return;
     const current = values[key] as string[];
     updateAndSave({
       [key]: checked ? [...current, item] : current.filter((value) => value !== item),
@@ -1017,8 +1096,10 @@ export function HouseholdSettingsForm({
   return (
     <main className="page-frame stack">
       <h1>家族設定</h1>
-      <section className="card stack" aria-labelledby="registered-household-title">
-        <h2 id="registered-household-title">登録済みの家族</h2>
+      <section className="card stack settings-section" aria-labelledby="registered-household-title">
+        <h2 id="registered-household-title" className="settings-section-title">
+          登録済みの家族
+        </h2>
         <ul className="household-member-list">
           {members.map((member, index) => {
             const displayName = householdMemberDisplayName(member);
@@ -1033,23 +1114,49 @@ export function HouseholdSettingsForm({
                     ・{member.status === "complete" ? "登録完了" : "入力途中"}
                   </p>
                 </div>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={saving}
-                  aria-label={`${String(index + 1)}人目の${displayName}を編集`}
-                  aria-pressed={editorOpen && selected.id === member.id}
-                  onClick={() => {
-                    if (savingRef.current) return;
-                    shouldFocusEditorHeadingRef.current = true;
-                    beginEditorTransition(member.id);
-                    setDeleteTarget(undefined);
-                    setSelectedId(member.id);
-                    setEditorOpen(true);
-                  }}
-                >
-                  編集
-                </button>
+                <div className="household-member-actions">
+                  <button
+                    className="secondary-button min-h-11"
+                    type="button"
+                    disabled={saving}
+                    aria-label={`${String(index + 1)}人目の${displayName}を編集`}
+                    aria-pressed={editorOpen && selected?.id === member.id}
+                    onClick={() => {
+                      if (savingRef.current) return;
+                      shouldFocusEditorHeadingRef.current = true;
+                      beginEditorTransition(member.id);
+                      setDeleteTarget(undefined);
+                      setSelectedId(member.id);
+                      setEditorOpen(true);
+                    }}
+                  >
+                    編集
+                  </button>
+                  <button
+                    className="secondary-button min-h-11"
+                    type="button"
+                    disabled={
+                      saving ||
+                      deletingMemberIds.has(member.id) ||
+                      cancellingDraft ||
+                      createDraft.isPending
+                    }
+                    aria-label={`${String(index + 1)}人目の${displayName}を削除`}
+                    onClick={() => {
+                      if (
+                        savingRef.current ||
+                        deletingMemberIdsRef.current.has(member.id) ||
+                        cancellingDraftRef.current
+                      ) {
+                        return;
+                      }
+                      // 一覧からも同じ確認ダイアログへ。編集を開かずに削除できる。
+                      setDeleteTarget(member);
+                    }}
+                  >
+                    削除
+                  </button>
+                </div>
               </li>
             );
           })}
@@ -1077,22 +1184,17 @@ export function HouseholdSettingsForm({
           {Object.values(errors).join(" ")}
         </p>
       )}
-      {editorOpen && (
-        <section className="household-editor stack" aria-labelledby="household-editor-title">
-          <h2 id="household-editor-title">家族情報を追加・編集</h2>
+      {editorOpen && selected !== undefined && values !== undefined && (
+        <section
+          className="household-editor stack settings-section"
+          aria-labelledby="household-editor-title"
+        >
+          <h2 id="household-editor-title" className="settings-section-title">
+            家族情報を追加・編集
+          </h2>
           <h3 ref={editorHeadingRef} tabIndex={-1}>
             「{householdMemberDisplayName(selected)}」を編集中
           </h3>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={createDraft.isPending || saving}
-            onClick={() => {
-              requestCreateDraft();
-            }}
-          >
-            家族を追加
-          </button>
           {message && (
             <p className="status-message" role="status" aria-live="polite">
               {message}
@@ -1103,7 +1205,8 @@ export function HouseholdSettingsForm({
               {Object.values(errors).join(" ")}
             </p>
           )}
-          <fieldset className="card stack" disabled={saving}>
+          <fieldset className="card stack" disabled={saving} aria-label="基本情報">
+            <legend className="settings-section-title">基本情報</legend>
             <label className="field">
               <span>呼び名</span>
               <input
@@ -1259,7 +1362,7 @@ export function HouseholdSettingsForm({
               <fieldset className="stack">
                 <legend>食べない食事</legend>
                 {unsupportedDietKinds.map((kind) => (
-                  <label key={kind}>
+                  <label key={kind} className="control-label">
                     <input
                       type="checkbox"
                       checked={values.unsupportedDietKinds.includes(kind)}
@@ -1274,7 +1377,7 @@ export function HouseholdSettingsForm({
             )}
             <fieldset className="stack">
               <legend>安全のための制約</legend>
-              <label>
+              <label className="control-label">
                 <input
                   type="checkbox"
                   aria-label="骨を除く"
@@ -1285,7 +1388,7 @@ export function HouseholdSettingsForm({
                 />
                 骨を除く
               </label>
-              <label>
+              <label className="control-label">
                 <input
                   type="checkbox"
                   aria-label="小さく切る"
@@ -1395,7 +1498,7 @@ export function HouseholdSettingsForm({
             <fieldset className="stack">
               <legend>食べやすさ</legend>
               {easePreferences.map((preference) => (
-                <label key={preference}>
+                <label key={preference} className="control-label">
                   <input
                     type="checkbox"
                     aria-label={preference === "small_pieces" ? "小さめ" : preference}
@@ -1413,137 +1516,114 @@ export function HouseholdSettingsForm({
               ))}
             </fieldset>
           </fieldset>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={saving || completionBlockedByMutation}
-            onClick={() => void complete()}
-          >
-            この家族の設定を完了
-          </button>
-          {selected.status === "draft" ? (
-            // 未完了の追加中は「削除」だと対象が曖昧で混乱するため、追加中止だけを出す
+          {/*
+            フォーム末尾に操作を横並び:
+            設定を完了 / 追加をやめる or 家族を削除 / さらに家族を追加
+          */}
+          <div className="household-editor-actions">
             <button
-              className="secondary-button"
+              className="primary-button min-h-11"
               type="button"
-              disabled={saving || cancellingDraft || deletingMemberIds.has(selected.id)}
-              onClick={() => {
-                void cancelDraftAdd();
-              }}
+              disabled={saving || completionBlockedByMutation}
+              onClick={() => void complete()}
             >
-              追加をやめる
+              この家族の設定を完了
             </button>
-          ) : (
-            <button
-              ref={deleteTrigger}
-              className="secondary-button"
-              type="button"
-              disabled={
-                saving ||
-                selectedAllergyMutationPending ||
-                deletingMemberIds.has(selected.id) ||
-                cancellingDraft
-              }
-              onClick={() => {
-                if (
-                  savingRef.current ||
-                  allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
-                  deletingMemberIdsRef.current.has(selected.id)
-                ) {
-                  return;
-                }
-                setDeleteTarget(selected);
-              }}
-            >
-              家族を削除
-            </button>
-          )}
-          {deleteTarget !== undefined && (
-            <div role="dialog" aria-modal="true" aria-label="家族の削除確認" className="card stack">
-              <p>この家族の設定だけを削除します。</p>
+            {selected.status === "draft" ? (
               <button
-                ref={deleteConfirm}
-                className="primary-button"
+                className="secondary-button min-h-11"
+                type="button"
+                disabled={saving || cancellingDraft || deletingMemberIds.has(selected.id)}
+                onClick={() => {
+                  void cancelDraftAdd();
+                }}
+              >
+                追加をやめる
+              </button>
+            ) : (
+              <button
+                ref={deleteTrigger}
+                className="secondary-button min-h-11"
                 type="button"
                 disabled={
                   saving ||
-                  allergyMutationPendingMemberIdsRef.current.has(deleteTarget.id) ||
-                  deletingMemberIds.has(deleteTarget.id)
+                  selectedAllergyMutationPending ||
+                  deletingMemberIds.has(selected.id) ||
+                  cancellingDraft
                 }
                 onClick={() => {
-                  const targetId = deleteTarget.id;
                   if (
                     savingRef.current ||
-                    allergyMutationPendingMemberIdsRef.current.has(targetId) ||
-                    deletingMemberIdsRef.current.has(targetId)
+                    allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
+                    deletingMemberIdsRef.current.has(selected.id)
                   ) {
                     return;
                   }
-                  const targetExists = queryClient
-                    .getQueryData<HouseholdMemberRow[]>(membersKey)
-                    ?.some((member) => member.id === targetId);
-                  if (targetExists !== true) {
-                    setDeleteTarget(undefined);
-                    return;
-                  }
-                  deletingMemberIdsRef.current.add(targetId);
-                  setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
-                  void api
-                    .deleteMember(targetId)
-                    .then(async () => {
-                      setDeleteTarget((current) =>
-                        current?.id === targetId ? undefined : current,
-                      );
-                      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-                        current.filter((member) => member.id !== targetId),
-                      );
-                      valuesByMemberRef.current.delete(targetId);
-                      editRevisionsByMemberRef.current.delete(targetId);
-                      operationTokensByMemberRef.current.delete(targetId);
-                      pendingOperationCountsRef.current.delete(targetId);
-                      failedSaveMemberIdsRef.current.delete(targetId);
-                      pendingRegisteredIntents.current.delete(targetId);
-                      allergyMutationPendingMemberIdsRef.current.delete(targetId);
-                      setAllergyMutationPendingMemberIds(
-                        new Set(allergyMutationPendingMemberIdsRef.current),
-                      );
-                      if (selectedMemberIdRef.current === targetId) {
-                        selectedMemberIdRef.current = undefined;
-                        setSelectedId(undefined);
-                        setValues(undefined);
-                      }
-                      await queryClient.invalidateQueries({ queryKey: membersKey });
-                      await api.invalidateSafety();
-                    })
-                    .catch((error: unknown) => {
-                      setMessage(
-                        error instanceof Error ? error.message : "家族設定を削除できませんでした",
-                      );
-                    })
-                    .finally(() => {
-                      deletingMemberIdsRef.current.delete(targetId);
-                      setDeletingMemberIds(new Set(deletingMemberIdsRef.current));
-                    });
+                  setDeleteTarget(selected);
                 }}
               >
-                家族だけを削除
+                家族を削除
               </button>
-              <button
-                className="text-button"
-                type="button"
-                disabled={saving || deletingMemberIds.has(deleteTarget.id)}
-                onClick={() => {
-                  if (savingRef.current || deletingMemberIdsRef.current.has(deleteTarget.id))
-                    return;
-                  setDeleteTarget(undefined);
-                }}
-              >
-                キャンセル
-              </button>
-            </div>
-          )}
+            )}
+            <button
+              className="secondary-button min-h-11"
+              type="button"
+              disabled={createDraft.isPending || saving || cancellingDraft}
+              onClick={() => {
+                requestCreateDraft();
+              }}
+            >
+              家族を追加
+            </button>
+          </div>
         </section>
       )}
+      {/* 削除確認は編集の開閉に依存させない（一覧からいつでも出せる） */}
+      {deleteTarget !== undefined && (
+        <div className="pantry-expired-dialog-backdrop">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="家族の削除確認"
+            className="card stack pantry-expired-dialog-panel"
+          >
+            <p>
+              {deleteTarget.status === "draft"
+                ? "入力途中の家族をリストから外します。よろしいですか？"
+                : "この家族の設定だけを削除します。"}
+            </p>
+            <button
+              ref={deleteConfirm}
+              className="primary-button min-h-11"
+              type="button"
+              disabled={
+                saving ||
+                allergyMutationPendingMemberIds.has(deleteTarget.id) ||
+                deletingMemberIds.has(deleteTarget.id) ||
+                cancellingDraft
+              }
+              onClick={() => {
+                void confirmDeleteTarget();
+              }}
+            >
+              {deleteTarget.status === "draft" ? "リストから外す" : "家族だけを削除"}
+            </button>
+            <button
+              className="text-button min-h-11"
+              type="button"
+              disabled={saving || deletingMemberIds.has(deleteTarget.id)}
+              onClick={() => {
+                if (savingRef.current || deletingMemberIdsRef.current.has(deleteTarget.id)) return;
+                setDeleteTarget(undefined);
+              }}
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
+      {/* 機能改善・不具合報告。家族 CRUD / アカウント操作のあいだに置く。 */}
+      <FeedbackSection />
       {/* Plan 6: アカウント操作は本ページ所有者の下に合成するだけ。家族 CRUD は置換しない。 */}
       <AccountSettingsSection />
     </main>

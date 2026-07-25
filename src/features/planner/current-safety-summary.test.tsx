@@ -32,5 +32,8 @@ describe("CurrentSafetySummary", () => {
     expect(screen.getByText(/要確認/)).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("年齢情報を確認してください");
     expect(screen.getByText(/AI生成だけでアレルギーの安全は保証できません/)).toBeVisible();
+    const settingsLink = screen.getByRole("link", { name: "家族設定を変更" });
+    expect(settingsLink).toHaveAttribute("href", "/settings");
+    expect(settingsLink).toHaveClass("secondary-button", "min-h-11");
   });
 });

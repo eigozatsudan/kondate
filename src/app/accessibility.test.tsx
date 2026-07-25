@@ -289,7 +289,7 @@ describe("route accessibility", () => {
     await expectAccessible(container);
     expect(screen.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
     expect(screen.getByText("買い物リストは空です")).toBeVisible();
-    expect(screen.getByRole("link", { name: "献立から作る" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "献立を作る" })).toBeVisible();
   });
 
   it("shell settings empty uses real HouseholdSettingsForm structure", async () => {

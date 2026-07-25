@@ -387,7 +387,7 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     expect(screen.getByRole("heading", { name: "現在の家族・安全条件" })).toBeInTheDocument();
   });
 
-  it("idea人数は1〜6がbutton、7〜20はnumber inputで入力する", async () => {
+  it("idea人数は1〜6がbutton、7〜20はプルダウンで選ぶ", async () => {
     const user = userEvent.setup();
     render(<Harness initialStep="audience" />);
     await user.click(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }));
@@ -395,25 +395,40 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     await user.click(screen.getByRole("button", { name: "3人" }));
     expect(screen.getByRole("button", { name: "3人" })).toHaveAttribute("aria-pressed", "true");
 
-    const numberInput = screen.getByLabelText("7人以上（20人まで）");
-    await user.type(numberInput, "12");
-    expect(numberInput).toHaveValue(12);
+    const servingsSelect = screen.getByLabelText("7人以上（20人まで）");
+    await user.selectOptions(servingsSelect, "12");
+    expect(servingsSelect).toHaveValue("12");
   });
 
-  it("範囲外のidea人数ではfield-local errorを表示し、最初のinvalid fieldへfocusする", async () => {
+  it("人数プルダウンは7〜20人だけを持ち、範囲外の人数を選べない", async () => {
     const user = userEvent.setup();
     render(<Harness initialStep="audience" />);
     await user.click(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }));
 
-    const numberInput = screen.getByLabelText("7人以上（20人まで）");
-    await user.type(numberInput, "21");
-    await user.click(screen.getByRole("button", { name: "次へ" }));
-
-    expect(screen.getByText("人数は7人から20人の範囲で入力してください。")).toBeVisible();
-    expect(numberInput).toHaveAttribute("aria-invalid", "true");
-    expect(numberInput).toHaveAttribute("aria-describedby", "audience-servings-error");
-    expect(numberInput).toHaveFocus();
-    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+    // number input だった頃は21のような範囲外値を打ててしまい、field-local error で
+    // 弾く必要があった。プルダウンでは範囲外がそもそも表現できないため、
+    // 選択肢の集合そのものを fail-closed の担保として固定する。
+    const servingsSelect = screen.getByLabelText("7人以上（20人まで）");
+    const options = Array.from(servingsSelect.querySelectorAll("option")).map(
+      (option) => option.value,
+    );
+    expect(options).toEqual([
+      "",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+    ]);
   });
 
   it("household選択後に対象家族が0件になった場合はmode未選択へ戻り、ideaへ自動降格しない", () => {
@@ -581,6 +596,67 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByLabelText("献立全体の調理時間")).toHaveValue("30");
   });
 
+  it("戻るで1つ前の質問へ、変更後の次へで確認へ直行できる", async () => {
+    const user = userEvent.setup();
+    const reviewDraftFilled = {
+      ...emptyDraft,
+      mealType: "dinner" as const,
+      mainIngredients: ["鶏肉"],
+      cuisineGenre: "japanese" as const,
+      targetMode: "household" as const,
+      targetMemberIds: [eligibleMember.id],
+    };
+    render(<Harness initialStep="review" initialDraft={reviewDraftFilled} />);
+
+    // 1ページずつ戻る（順送り用の戻る。編集モードではない）
+    await user.click(screen.getByRole("button", { name: "戻る" }));
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+
+    // 再度 review へ進んで直接編集
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "メイン食材を変更" }));
+    expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
+
+    // 確認からの変更中は「確認に戻る」と表示し、3.ジャンルではなく 5.確認 へ戻る
+    expect(screen.queryByRole("button", { name: "次へ" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "確認に戻る" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+    expect(screen.getByText("鶏肉")).toBeVisible();
+  });
+
+  it("確認画面から食事・ジャンル・対象へ飛び、確認に戻るで復帰できる", async () => {
+    const user = userEvent.setup();
+    const draft = {
+      ...emptyDraft,
+      mealType: "dinner" as const,
+      mainIngredients: ["鶏肉"],
+      cuisineGenre: "japanese" as const,
+      targetMode: "household" as const,
+      targetMemberIds: [eligibleMember.id],
+    };
+
+    render(<Harness initialStep="review" initialDraft={draft} />);
+    await user.click(screen.getByRole("button", { name: "食事を変更" }));
+    expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "夕食" })).toBeChecked();
+    // 食事 step には編集中止用の「やめる」が出る
+    await user.click(screen.getByRole("button", { name: "やめる" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "ジャンルを変更" }));
+    expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "確認に戻る" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "対象を変更" }));
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "確認に戻る" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+  });
+
   it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", async () => {
     const user = userEvent.setup();
     render(
@@ -730,6 +806,36 @@ describe("PlannerWizard review step", () => {
     ).toBeVisible();
   });
 
+  it("household 確認の安全条件は対象に選んだ家族だけを出す", () => {
+    const otherMember: PlannerSafetyMember = {
+      id: "70000000-0000-4000-8000-000000000099",
+      displayName: "大人",
+      ageBandLabel: "大人",
+      allergyLabel: "卵アレルギー",
+      safetyLabels: [],
+      blockedReason: null,
+    };
+    render(
+      <Harness
+        initialStep="review"
+        eligibleMembers={[eligibleMember, otherMember]}
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          // 子どもだけが対象。大人は eligible でも要約に出さない。
+          targetMemberIds: [eligibleMember.id],
+        }}
+      />,
+    );
+    const summary = screen.getByRole("region", { name: "現在の家族・安全条件" });
+    expect(within(summary).getByText("子ども")).toBeVisible();
+    expect(within(summary).queryByText("大人")).not.toBeInTheDocument();
+    expect(within(summary).queryByText("卵アレルギー")).not.toBeInTheDocument();
+  });
+
   it("保存失敗時は現在stepを維持する", () => {
     render(<Harness initialStep="review" error="献立条件を保存できませんでした。" />);
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
@@ -795,7 +901,9 @@ describe("PlannerWizard review step", () => {
       screen.queryByRole("button", { name: "AIを使わない緊急献立を見る" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます/),
+      screen.getByText(
+        /家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます/,
+      ),
     ).toBeVisible();
   });
 
@@ -1042,6 +1150,27 @@ describe("IngredientStep quick select", () => {
     await user.click(screen.getByRole("button", { name: "次へ" }));
 
     expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
+  });
+
+  it("shows a dialog when next is pressed without any main ingredient", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" />);
+
+    const nextButton = screen.getByRole("button", { name: "次へ" });
+    expect(nextButton).toBeEnabled();
+    await user.click(nextButton);
+
+    const dialog = screen.getByRole("alertdialog", { name: "メイン食材を選んでください" });
+    expect(dialog).toBeVisible();
+    expect(dialog).toHaveTextContent(
+      "献立の中心になる食材を1つ以上選んでから進んでください。",
+    );
+    // ダイアログ中は step を進めない
+    expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "3. ジャンル" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("does not change pantrySelections when selecting a quick candidate", async () => {
