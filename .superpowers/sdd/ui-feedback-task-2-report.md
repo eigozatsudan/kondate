@@ -91,3 +91,26 @@
 - fix round 3 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
 - 未解決事項:
   - repository全体の既存問題は前回Verifier報告どおり未解決。
+
+## Fix round 4
+
+- status: `DONE`
+- REDで確認した失敗:
+  - household settings 72件中、家族Aの古い完了成功による家族Bの保存失敗文言上書き、同一家族の古い完了失敗による後続autosave成功文言上書き、新draft作成後の旧draft完了失敗による文言汚染を再現する3件だけが期待どおり失敗した。
+- 実装内容と設計判断:
+  - 保存開始時に対象家族、編集revision、家族ごとのoperation tokenを捕捉した。
+  - cacheと保存失敗状態は対象家族の最新revisionに一致する結果だけを反映する。
+  - 画面メッセージとフォームcloseは、さらに現在選択中の家族と最新operation tokenが一致する場合だけ反映する。
+  - 家族削除・draft追加中止時はoperation tokenも他の家族別状態と一緒に破棄する。
+- 実行した検証と結果:
+  - RED focused household: 72 tests中、追加した3 testsのみFAIL。
+  - GREEN focused household: 72 tests PASS。
+  - GREEN focused 5 files: 130 tests PASS。
+  - Task変更2ファイルのscoped Prettier check: PASS。
+  - Task変更2ファイルの `git diff --check`: PASS。
+- self-review:
+  - 古い完了結果でも対象家族のrevisionが最新ならcache反映を許可し、他の家族の最新メッセージは変更しない。
+  - 後続autosaveがある同一家族では、古い完了成功・失敗からcache、failed、メッセージ、closeを公開しない。
+  - Task外の `.codex/config.toml`、pantry 3ファイル、planner 2ファイルは編集・stageしていない。
+- fix round 4 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
+- 未解決事項: なし。

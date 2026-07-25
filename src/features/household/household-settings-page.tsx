@@ -60,6 +60,12 @@ type PendingRegisteredIntent = {
   inFlight?: Promise<boolean | undefined>;
 };
 
+type SaveLineage = {
+  memberId: string;
+  revision: number;
+  operationToken: number;
+};
+
 const householdAgeLabels: Readonly<Record<string, string>> = {
   post_weaning_to_2: "離乳食完了後〜2歳",
   age_3_5: "3〜5歳",
@@ -200,6 +206,7 @@ export function HouseholdSettingsForm({
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
   const editRevisionsByMemberRef = useRef(new Map<string, number>());
+  const operationTokensByMemberRef = useRef(new Map<string, number>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
   const failedSaveMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
@@ -215,6 +222,27 @@ export function HouseholdSettingsForm({
   const ageBandRef = useRef<HTMLSelectElement>(null);
   const allergyStatusRef = useRef<HTMLSelectElement>(null);
   const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
+  const beginSaveLineage = useCallback((memberId: string): SaveLineage => {
+    const operationToken = (operationTokensByMemberRef.current.get(memberId) ?? 0) + 1;
+    operationTokensByMemberRef.current.set(memberId, operationToken);
+    return {
+      memberId,
+      revision: editRevisionsByMemberRef.current.get(memberId) ?? 0,
+      operationToken,
+    };
+  }, []);
+  const isLatestSaveRevision = useCallback(
+    (lineage: SaveLineage) =>
+      (editRevisionsByMemberRef.current.get(lineage.memberId) ?? 0) === lineage.revision,
+    [],
+  );
+  const canPublishSaveMessage = useCallback(
+    (lineage: SaveLineage) =>
+      selectedMemberIdRef.current === lineage.memberId &&
+      isLatestSaveRevision(lineage) &&
+      operationTokensByMemberRef.current.get(lineage.memberId) === lineage.operationToken,
+    [isLatestSaveRevision],
+  );
   useEffect(() => {
     if (!editorOpen || !shouldFocusEditorHeadingRef.current) {
       return;
@@ -322,7 +350,7 @@ export function HouseholdSettingsForm({
     async (
       member: HouseholdMemberRow,
       next: HouseholdSettingsValue,
-      shouldPublishResult: () => boolean = () => true,
+      lineage: SaveLineage,
     ): Promise<boolean> => {
       const parsed = householdSettingsSchema.safeParse(next);
       if (!parsed.success) {
@@ -336,7 +364,7 @@ export function HouseholdSettingsForm({
           member.status === "draft"
             ? await api.updateDraft(member.id, patch)
             : await api.updateMember(member.id, patch);
-        if (shouldPublishResult()) {
+        if (isLatestSaveRevision(lineage)) {
           const cachedMember = { ...saved, ...patch };
           queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
             current.map((currentMember) =>
@@ -345,7 +373,7 @@ export function HouseholdSettingsForm({
           );
         }
         await api.invalidateSafety();
-        if (shouldPublishResult()) {
+        if (canPublishSaveMessage(lineage)) {
           const pending = pendingRegisteredIntents.current.get(member.id);
           setMessage(
             pending?.values.allergyStatus === "registered"
@@ -356,11 +384,13 @@ export function HouseholdSettingsForm({
         }
         return true;
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
+        if (canPublishSaveMessage(lineage)) {
+          setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
+        }
         return false;
       }
     },
-    [api, membersKey, queryClient],
+    [api, canPublishSaveMessage, isLatestSaveRevision, membersKey, queryClient],
   );
   const beginPendingOperation = useCallback(
     (targetMember: HouseholdMemberRow, next?: HouseholdSettingsValue) => {
@@ -410,6 +440,7 @@ export function HouseholdSettingsForm({
       shouldSave?: () => boolean,
     ) => {
       let skipped = false;
+      const lineage = beginSaveLineage(member.id);
       beginPendingOperation(member, localSnapshot);
       saveQueue.current = saveQueue.current
         .then(() => {
@@ -417,11 +448,11 @@ export function HouseholdSettingsForm({
             skipped = true;
             return true;
           }
-          return save(member, persistedValues);
+          return save(member, persistedValues, lineage);
         })
         .catch(() => false)
         .then((saved) => {
-          if (!skipped) {
+          if (!skipped && isLatestSaveRevision(lineage)) {
             if (saved) failedSaveMemberIdsRef.current.delete(member.id);
             else failedSaveMemberIdsRef.current.add(member.id);
           }
@@ -432,7 +463,7 @@ export function HouseholdSettingsForm({
         });
       return saveQueue.current;
     },
-    [beginPendingOperation, finishPendingOperation, save],
+    [beginPendingOperation, beginSaveLineage, finishPendingOperation, isLatestSaveRevision, save],
   );
   const savePendingRegisteredStatus = useCallback(
     (memberId: string): Promise<boolean | undefined> => {
@@ -548,6 +579,7 @@ export function HouseholdSettingsForm({
       );
       valuesByMemberRef.current.delete(targetId);
       editRevisionsByMemberRef.current.delete(targetId);
+      operationTokensByMemberRef.current.delete(targetId);
       pendingOperationCountsRef.current.delete(targetId);
       failedSaveMemberIdsRef.current.delete(targetId);
       pendingRegisteredIntents.current.delete(targetId);
@@ -618,19 +650,19 @@ export function HouseholdSettingsForm({
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
-    const completionRevision = editRevisionsByMemberRef.current.get(completingMemberId) ?? 0;
-    const completionHasNoLaterEdits = () =>
-      (editRevisionsByMemberRef.current.get(completingMemberId) ?? 0) === completionRevision;
+    const lineage = beginSaveLineage(completingMemberId);
+    const completionHasNoLaterEdits = () => isLatestSaveRevision(lineage);
     const canCloseCompletedEditor = () =>
-      selectedMemberIdRef.current === completingMemberId &&
-      completionHasNoLaterEdits() &&
+      canPublishSaveMessage(lineage) &&
       (pendingOperationCountsRef.current.get(completingMemberId) ?? 0) === 0 &&
       !failedSaveMemberIdsRef.current.has(completingMemberId);
     setSaving(true);
     await saveQueue.current;
-    const saved = await save(selected, parsed.data, completionHasNoLaterEdits);
+    const saved = await save(selected, parsed.data, lineage);
     if (!saved) {
-      failedSaveMemberIdsRef.current.add(selected.id);
+      if (completionHasNoLaterEdits()) {
+        failedSaveMemberIdsRef.current.add(selected.id);
+      }
       setSaving(false);
       return;
     }
@@ -641,23 +673,22 @@ export function HouseholdSettingsForm({
     if (selected.status === "draft") {
       try {
         const completed = await api.completeMember(selected.id);
-        const latestValues = valuesByMemberRef.current.get(completingMemberId);
-        const cachedCompleted =
-          completionHasNoLaterEdits() || latestValues === undefined
-            ? completed
-            : { ...completed, ...toMemberPatch(latestValues) };
-        queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-          current.map((member) => (member.id === completed.id ? cachedCompleted : member)),
-        );
-        await api.invalidateSafety();
         if (completionHasNoLaterEdits()) {
+          queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+            current.map((member) => (member.id === completed.id ? completed : member)),
+          );
+        }
+        await api.invalidateSafety();
+        if (canPublishSaveMessage(lineage)) {
           setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
         }
         if (canCloseCompletedEditor()) {
           setEditorOpen(false);
         }
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
+        if (canPublishSaveMessage(lineage)) {
+          setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
+        }
       }
     } else if (canCloseCompletedEditor()) {
       setEditorOpen(false);
@@ -1330,6 +1361,7 @@ export function HouseholdSettingsForm({
                       );
                       valuesByMemberRef.current.delete(targetId);
                       editRevisionsByMemberRef.current.delete(targetId);
+                      operationTokensByMemberRef.current.delete(targetId);
                       pendingOperationCountsRef.current.delete(targetId);
                       failedSaveMemberIdsRef.current.delete(targetId);
                       pendingRegisteredIntents.current.delete(targetId);

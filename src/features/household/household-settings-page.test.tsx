@@ -230,6 +230,60 @@ it("does not close member B when member A complete save succeeds after switching
   });
 });
 
+it("keeps member B's autosave error when member A's earlier completion succeeds", async () => {
+  const secondMember: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "子ども",
+    sort_order: 1,
+  };
+  let resolveCompletionSave: ((saved: HouseholdMemberRow) => void) | undefined;
+  let rejectAutosave: ((error: Error) => void) | undefined;
+  const updateMember = vi.fn((memberId: string) => {
+    if (memberId === member.id) {
+      return new Promise<HouseholdMemberRow>((resolve) => {
+        resolveCompletionSave = resolve;
+      });
+    }
+    return new Promise<HouseholdMemberRow>((_resolve, reject) => {
+      rejectAutosave = reject;
+    });
+  });
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(member.id, expect.any(Object));
+  });
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
+  fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "変更後の子ども" } });
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      secondMember.id,
+      expect.objectContaining({ display_name: "変更後の子ども" }),
+    );
+  });
+
+  await act(async () => {
+    rejectAutosave?.(new Error("子どもの保存に失敗しました"));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("子どもの保存に失敗しました");
+
+  await act(async () => {
+    resolveCompletionSave?.(member);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(screen.getByRole("status")).toHaveTextContent("子どもの保存に失敗しました");
+  expect(screen.getByLabelText("呼び名")).toHaveValue("変更後の子ども");
+});
+
 it.each(["success", "failure"] as const)(
   "keeps the editor open when a later autosave reports %s during completion",
   async (autosaveResult) => {
@@ -293,6 +347,52 @@ it.each(["success", "failure"] as const)(
   },
 );
 
+it("keeps a later autosave success when an earlier completion save fails", async () => {
+  let rejectCompletionSave: ((error: Error) => void) | undefined;
+  let resolveAutosave: ((saved: HouseholdMemberRow) => void) | undefined;
+  const updateMember = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<HouseholdMemberRow>((_resolve, reject) => {
+          rejectCompletionSave = reject;
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise<HouseholdMemberRow>((resolve) => {
+          resolveAutosave = resolve;
+        }),
+    );
+  renderSettings({ updateMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+  });
+  fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "最新の呼び名" } });
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+
+  await act(async () => {
+    resolveAutosave?.({ ...member, display_name: "最新の呼び名" });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("家族設定が変わりました");
+
+  await act(async () => {
+    rejectCompletionSave?.(new Error("古い完了保存に失敗しました"));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(screen.getByRole("status")).toHaveTextContent("家族設定が変わりました");
+  expect(screen.getByRole("status")).not.toHaveTextContent("古い完了保存に失敗しました");
+  expect(screen.getByLabelText("呼び名")).toHaveValue("最新の呼び名");
+});
+
 it("does not close a newly added draft when creation and an earlier completion settle together", async () => {
   const firstDraft: HouseholdMemberRow = {
     ...member,
@@ -347,6 +447,50 @@ it("does not close a newly added draft when creation and an earlier completion s
     expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
   });
+});
+
+it("does not show an earlier draft completion error after a new draft is created", async () => {
+  const firstDraft: HouseholdMemberRow = {
+    ...member,
+    id: "draft-1",
+    status: "draft",
+    display_name: "追加中",
+  };
+  const nextDraft: HouseholdMemberRow = {
+    ...firstDraft,
+    id: "draft-2",
+    display_name: null,
+    sort_order: 1,
+  };
+  let rejectComplete: ((error: Error) => void) | undefined;
+  const completeMember = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((_resolve, reject) => {
+        rejectComplete = reject;
+      }),
+  );
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([firstDraft]),
+    updateDraft: vi.fn().mockResolvedValue(firstDraft),
+    completeMember,
+    createDraft: vi.fn().mockResolvedValue(nextDraft),
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith(firstDraft.id);
+  });
+  await userEvent.click(screen.getByRole("button", { name: "家族を追加" }));
+  expect(await screen.findByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+
+  await act(async () => {
+    rejectComplete?.(new Error("古い下書きの完了に失敗しました"));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(screen.getByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+  expect(screen.getByRole("status")).not.toHaveTextContent("古い下書きの完了に失敗しました");
 });
 
 it("keeps member B open when member A complete save fails after switching", async () => {
