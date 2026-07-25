@@ -76,6 +76,18 @@
   background: var(--primary-active);
 }
 
+/* クイック選択・選択件数・自由入力のセクション間隔（320px 折返し前提） */
+.guided-planner-theme .ingredient-quick-select,
+.guided-planner-theme .ingredient-selected,
+.guided-planner-theme .ingredient-free-input {
+  min-width: 0;
+}
+
+.guided-planner-theme .ingredient-selected-count {
+  margin: 0;
+  font-weight: 700;
+}
+
 .guided-planner-theme .ingredient-entry-row {
   display: grid;
   min-width: 0;
@@ -88,6 +100,7 @@
   min-width: 0;
 }
 
+.guided-planner-theme .ingredient-free-input,
 .guided-planner-theme .ingredient-pantry {
   border-top: 1px solid var(--border);
   padding-top: 16px;
