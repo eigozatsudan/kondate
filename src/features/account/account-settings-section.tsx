@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
 import { clearLocalAuthAndDrafts } from "@/features/auth/auth-cleanup";
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -53,11 +52,15 @@ export function DangerZone({
 
 /**
  * 設定ページ下部に合成するアカウント操作。
- * 通常ログアウトとアカウント削除の両方で、ナビゲート前に clearLocalAuthAndDrafts を待つ。
+ * 通常ログアウトとアカウント削除の両方で、遷移前に clearLocalAuthAndDrafts を待つ。
  * 通常ログアウトは DELETE /api/account を呼ばない。
+ *
+ * 掃除後は React Router の navigate ではなく window.location.replace を使う。
+ * signOut で session が消えると RequireSession が同一描画で
+ * /login?returnTo=... へ割り込み、クライアント navigate が負けたり消えるため。
+ * フル遷移なら復帰先なしのログイン URL を確定でき、再ログインで設定へ戻らない。
  */
 export function AccountSettingsSection() {
-  const navigate = useNavigate();
   const [dangerExpanded, setDangerExpanded] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -68,9 +71,9 @@ export function AccountSettingsSection() {
     if (signingOut) return;
     setSigningOut(true);
     try {
-      // ナビより先に掃除を完了させ、復帰キーが残ったまま /login へ行かない
+      // 遷移より先に掃除を完了させ、復帰キーが残ったまま /login へ行かない
       await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
-      await navigate("/login?signedOut=1", { replace: true });
+      window.location.replace("/login?signedOut=1");
     } finally {
       setSigningOut(false);
     }
@@ -104,7 +107,7 @@ export function AccountSettingsSection() {
       }
       // サーバー削除成功後だけローカル掃除。失敗時はダイアログを開いたまま再試行可能にする
       await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
-      await navigate("/login?accountDeleted=1", { replace: true });
+      window.location.replace("/login?accountDeleted=1");
     } catch {
       setErrorMessage(mapDeleteError(undefined));
     } finally {

@@ -1,19 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
 import { AccountSettingsSection } from "./account-settings-section";
 
-const navigateMock = vi.hoisted(() => vi.fn());
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
-
-vi.mock("react-router", async (importOriginal) => {
-  const original = await importOriginal<typeof import("react-router")>();
-  return { ...original, useNavigate: () => navigateMock };
-});
+const locationReplaceMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/features/auth/auth-cleanup", () => ({
   clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
@@ -40,16 +35,20 @@ function seedOwnedStorage(): void {
 }
 
 beforeEach(() => {
-  navigateMock.mockReset();
   clearLocalAuthAndDraftsMock.mockReset();
   requireAccessTokenMock.mockReset();
   getBrowserSupabaseClientMock.mockReset();
   fetchMock.mockReset();
+  locationReplaceMock.mockReset();
   localStorage.clear();
   sessionStorage.clear();
-  navigateMock.mockResolvedValue(undefined);
   requireAccessTokenMock.mockResolvedValue("access-token");
   getBrowserSupabaseClientMock.mockReturnValue({ auth: {} });
+  // jsdom の location.replace は差し替え不能なことがあるため、defineProperty で固定する
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...window.location, replace: locationReplaceMock },
+  });
   // 実ストレージ掃除を再現しつつ deferred 制御できるようにする
   clearLocalAuthAndDraftsMock.mockImplementation(() => {
     for (const storage of [localStorage, sessionStorage]) {
@@ -77,6 +76,10 @@ beforeEach(() => {
   }
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("AccountSettingsSection", () => {
   it("renders sign-out and a separately labelled DangerZone", () => {
     render(<AccountSettingsSection />);
@@ -86,7 +89,7 @@ describe("AccountSettingsSection", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("awaits cleanup before navigating on ordinary sign-out and never calls DELETE /api/account", async () => {
+  it("awaits cleanup before hard-navigating on ordinary sign-out without returnTo and never calls DELETE /api/account", async () => {
     const user = userEvent.setup();
     seedOwnedStorage();
     let resolveCleanup: (() => void) | undefined;
@@ -104,12 +107,13 @@ describe("AccountSettingsSection", () => {
     expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledWith(
       getBrowserSupabaseClientMock.mock.results[0]?.value ?? getBrowserSupabaseClientMock(),
     );
-    expect(navigateMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
 
     resolveCleanup?.();
     await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/login?signedOut=1", { replace: true });
+      // returnTo を付けない。RequireSession 競合を避け再ログインで設定へ戻さない
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?signedOut=1");
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -150,7 +154,7 @@ describe("AccountSettingsSection", () => {
     ).toBeVisible();
     expect(screen.getByRole("dialog", { name: "アカウントを削除しますか？" })).toBeVisible();
     expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
   });
 
   it("closes without a request on cancel or Escape", async () => {
@@ -208,11 +212,11 @@ describe("AccountSettingsSection", () => {
       );
     });
     expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledTimes(1);
-    expect(navigateMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
 
     resolveCleanup?.();
     await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/login?accountDeleted=1", { replace: true });
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
     });
   });
 });
