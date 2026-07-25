@@ -268,6 +268,11 @@ const allowedProtectedSelectors = new Set([
   ".guided-planner-theme .primary-button:active",
   ".guided-planner-theme .ingredient-entry-row",
   ".guided-planner-theme .ingredient-entry-field",
+  // 18ac407（メイン食材のクイック選択）が styles.css に追加したが許可リストへの
+  // 追記が漏れ、このガード自体が常時失敗していた3件。CSS 側は既にレビュー済み。
+  ".guided-planner-theme .ingredient-quick-select, .guided-planner-theme .ingredient-selected, .guided-planner-theme .ingredient-free-input",
+  ".guided-planner-theme .ingredient-selected-count",
+  ".guided-planner-theme .ingredient-free-input, .guided-planner-theme .ingredient-pantry",
   ".guided-planner-theme .wizard-option-list",
   ".guided-planner-theme .wizard-option",
   ".guided-planner-theme .wizard-option:has(input:checked)",
