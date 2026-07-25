@@ -1031,6 +1031,54 @@ describe("IngredientStep quick select", () => {
       }),
     ).toBeVisible();
   });
+
+  /**
+   * Plan 9 Task 3: キーボード操作の a11y 証拠。
+   * E2E の Tab 連鎖は step 見出しの初期 focus と auth fixture 依存で不安定なため、
+   * 候補 button の Enter/Space トグルは component テストで固定する。
+   */
+  it("selects and deselects a quick-select chip with keyboard Enter", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" />);
+
+    const chicken = screen.getByRole("button", { name: "鶏肉" });
+    expect(chicken).toHaveAttribute("aria-pressed", "false");
+
+    chicken.focus();
+    expect(chicken).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
+    expect(screen.getByText("選んだ食材（1/8）")).toBeVisible();
+
+    // Space でもトグル解除できる（button の既定アクティベーション）
+    screen.getByRole("button", { name: "鶏肉" }).focus();
+    await user.keyboard(" ");
+
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("button", { name: "鶏肉を外す" })).not.toBeInTheDocument();
+    expect(screen.getByText("選んだ食材（0/8）")).toBeVisible();
+  });
+
+  it("keeps focus on the quick-select chip after keyboard select (does not jump to step heading or 次へ)", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" />);
+
+    // マウント時の見出し focus が落ち着いた後に候補へ移動する
+    const chicken = screen.getByRole("button", { name: "鶏肉" });
+    chicken.focus();
+    expect(chicken).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+
+    const selectedChicken = screen.getByRole("button", { name: "鶏肉" });
+    expect(selectedChicken).toHaveAttribute("aria-pressed", "true");
+    // 選択後に focus が step 見出しや「次へ」へ飛ばないこと（チップ上に留まる）
+    expect(selectedChicken).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "2. メイン食材" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "次へ" })).not.toHaveFocus();
+  });
 });
 
 describe("buildPlannerSubmissionFieldErrors", () => {
