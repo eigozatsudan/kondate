@@ -84,7 +84,12 @@ vi.mock("@/features/auth/use-auth", () => ({
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 vi.mock("react-router", async (importOriginal) => {
   const original = await importOriginal<typeof import("react-router")>();
-  return { ...original, useNavigate: () => navigateMock };
+  return {
+    ...original,
+    useNavigate: () => navigateMock,
+    // Router 未 wrap の unit でも resume query を読めるようにする
+    useSearchParams: () => [new URLSearchParams(), vi.fn()],
+  };
 });
 vi.mock("@/features/household/household-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/household/household-api")>();
@@ -803,7 +808,10 @@ it("privacy notice への遷移操作は review resume 付きの returnTo を組
   const user = userEvent.setup();
   render(<PlannerPage />);
   await user.click(screen.getByRole("button", { name: "privacy notice" }));
-  expect(navigateMock).toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+  // flushDraft 完了後に navigate するため waitFor する
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+  });
 });
 
 describe("PlannerRoutePage", () => {

@@ -19,17 +19,19 @@ export function HistoryPage() {
     return (
       <main className="page-frame stack">
         <h1>作った献立</h1>
-        <p role="alert">履歴を読み込めませんでした</p>
-        <button
-          type="button"
-          className="min-h-11 inline-flex items-center rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={isFetching}
-          onClick={() => {
-            void refetch();
-          }}
-        >
-          もう一度読み込む
-        </button>
+        <section className="card stack">
+          <p role="alert">履歴を読み込めませんでした</p>
+          <button
+            type="button"
+            className="secondary-button min-h-11"
+            disabled={isFetching}
+            onClick={() => {
+              void refetch();
+            }}
+          >
+            もう一度読み込む
+          </button>
+        </section>
       </main>
     );
   }
@@ -43,10 +45,13 @@ export function HistoryPageContent({ groups }: { groups: readonly HistoryGroup[]
     return (
       <main className="page-frame stack">
         <h1>作った献立</h1>
-        <p>まだ献立がありません</p>
-        <Link className="min-h-11 inline-flex items-center font-semibold" to="/planner">
-          献立を作る
-        </Link>
+        <section className="card stack">
+          <p>まだ献立がありません</p>
+          <p className="field-hint">条件を入れて献立をつくると、ここに並びます。</p>
+          <Link className="primary-button min-h-11" to="/planner">
+            献立を作る
+          </Link>
+        </section>
       </main>
     );
   }
@@ -54,7 +59,7 @@ export function HistoryPageContent({ groups }: { groups: readonly HistoryGroup[]
   return (
     <main className="page-frame stack">
       <h1>作った献立</h1>
-      <ul className="grid gap-4">
+      <ul className="history-list">
         {groups.map((group) => (
           <li key={group.derivationGroupId}>
             <HistoryCard group={group} />

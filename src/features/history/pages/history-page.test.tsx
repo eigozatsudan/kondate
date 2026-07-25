@@ -136,7 +136,9 @@ describe("HistoryPage", () => {
     renderConnectedHistoryPage();
     expect(await screen.findByText("まだ献立がありません")).toBeVisible();
     expect(screen.getByRole("heading", { name: "作った献立" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "献立を作る" })).toHaveAttribute("href", "/planner");
+    const cta = screen.getByRole("link", { name: "献立を作る" });
+    expect(cta).toHaveAttribute("href", "/planner");
+    expect(cta.className).toMatch(/primary-button/);
   });
 
   it("shows a heading and a retry control when loading fails", async () => {

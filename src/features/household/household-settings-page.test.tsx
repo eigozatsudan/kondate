@@ -139,6 +139,28 @@ async function openMemberEditor(buttonName: string | RegExp = /を編集$/u) {
   expect(await screen.findByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
 }
 
+/**
+ * 編集領域が開いているあいだは「家族を追加」が出ない。
+ * 一覧だけの状態にしてから追加ボタンを押す。
+ */
+async function clickAddFamilyFromList() {
+  const editor = screen.queryByRole("region", { name: "家族情報を追加・編集" });
+  if (editor !== null) {
+    const cancel = screen.queryByRole("button", { name: "追加をやめる" });
+    if (cancel !== null) {
+      await userEvent.click(cancel);
+    } else {
+      await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+    }
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("region", { name: "家族情報を追加・編集" }),
+      ).not.toBeInTheDocument();
+    });
+  }
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+}
+
 async function waitForAllergies(queryClient: QueryClient, memberId = "member-1") {
   await waitFor(() => {
     expect(
@@ -187,16 +209,14 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
   const editor = screen.getByRole("region", { name: "家族情報を追加・編集" });
   expect(editor).toBeVisible();
   expect(editor).toContainElement(screen.getByLabelText("呼び名"));
-  // 末尾操作は横並び: 完了 / 追加をやめる / 家族を追加
+  // 末尾操作は横並び: 完了 / 追加をやめる。編集中は「家族を追加」を出さない。
   const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
   const cancelAddButton = screen.getByRole("button", { name: "追加をやめる" });
-  const addAnotherButton = screen.getByRole("button", { name: "家族を追加" });
   expect(editor).toContainElement(completeButton);
   expect(editor).toContainElement(cancelAddButton);
-  expect(editor).toContainElement(addAnotherButton);
   expect(completeButton.parentElement).toHaveClass("household-editor-actions");
   expect(completeButton.parentElement).toContainElement(cancelAddButton);
-  expect(completeButton.parentElement).toContainElement(addAnotherButton);
+  expect(screen.queryByRole("button", { name: "家族を追加" })).not.toBeInTheDocument();
   const editorHeading = screen.getByRole("heading", { name: "「名前未設定」を編集中" });
   expect(editorHeading).toBeVisible();
   expect(editorHeading).toHaveFocus();
@@ -284,7 +304,8 @@ it.each(["complete", "draft"] as const)(
     fireEvent.change(screen.getByLabelText("年齢のめやす"), { target: { value: "senior" } });
     fireEvent.click(screen.getByLabelText("骨を除く"));
     fireEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
-    fireEvent.click(screen.getByRole("button", { name: "家族を追加" }));
+    // 編集中は「家族を追加」非表示（完了ロック中の誤追加経路を塞ぐ）
+    expect(screen.queryByRole("button", { name: "家族を追加" })).not.toBeInTheDocument();
 
     expect(saveApi).toHaveBeenCalledTimes(1);
     expect(createDraft).not.toHaveBeenCalled();
@@ -476,16 +497,17 @@ it("does not start completion while deleting the selected member", async () => {
 it("does not start completion while creating another draft", async () => {
   const createDraft = vi.fn(() => new Promise<HouseholdMemberRow>(() => undefined));
   const updateMember = vi.fn().mockResolvedValue(member);
-  await renderSettings({ createDraft, updateMember });
+  // 一覧から追加する（編集中は「家族を追加」非表示）
+  await renderSettings({ createDraft, updateMember }, { startClosed: true });
 
-  await userEvent.click(await screen.findByRole("button", { name: "家族を追加" }));
+  const addButton = await screen.findByRole("button", { name: /^家族を追加$/u });
+  await userEvent.click(addButton);
   await waitFor(() => {
     expect(createDraft).toHaveBeenCalledTimes(1);
   });
-
-  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
-  expect(completeButton).toBeDisabled();
-  fireEvent.click(completeButton);
+  // 作成中は一覧の追加ボタンを二重押しできない
+  expect(addButton).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "この家族の設定を完了" })).not.toBeInTheDocument();
   expect(updateMember).not.toHaveBeenCalled();
 });
 
@@ -494,15 +516,16 @@ it("still completes the original member after createDraft fails", async () => {
   // 成功 message もフォーム close も出ない回帰を防ぐ。
   const createDraft = vi.fn().mockRejectedValue(new Error("家族の追加に失敗しました"));
   const updateMember = vi.fn().mockResolvedValue(member);
-  await renderSettings({ createDraft, updateMember });
+  await renderSettings({ createDraft, updateMember }, { startClosed: true });
 
-  await userEvent.click(await screen.findByRole("button", { name: "家族を追加" }));
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
   await waitFor(() => {
     expect(createDraft).toHaveBeenCalledTimes(1);
   });
   expect(await screen.findByRole("status")).toHaveTextContent("家族の追加に失敗しました");
 
-  // 失敗後も元の家族フォームが開いたまま
+  // 失敗後は一覧のまま。元の家族を編集して完了できる
+  await userEvent.click(screen.getByRole("button", { name: /を編集$/u }));
   expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
   expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
 
@@ -536,22 +559,29 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
         resolveCreate = resolve;
       }),
   );
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
   await renderSettings({
     listMembers: vi.fn().mockResolvedValue([firstDraft]),
     updateDraft: vi.fn().mockResolvedValue(firstDraft),
     completeMember: vi.fn().mockRejectedValue(new Error("古い下書きの完了に失敗しました")),
     createDraft,
+    deleteMember,
   });
 
   await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
   expect(await screen.findByRole("status")).toHaveTextContent("古い下書きの完了に失敗しました");
 
-  await userEvent.click(screen.getByRole("button", { name: "家族を追加" }));
+  // 編集中は追加できないため、追加をやめて一覧へ戻ってから新規追加する
+  await userEvent.click(screen.getByRole("button", { name: "追加をやめる" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  await userEvent.click(screen.getByRole("button", { name: /^家族を追加$/u }));
   await waitFor(() => {
     expect(createDraft).toHaveBeenCalledTimes(1);
   });
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  // 追加要求時点で古い完了失敗メッセージは消えている
+  expect(screen.queryByText("古い下書きの完了に失敗しました")).not.toBeInTheDocument();
 
   await act(async () => {
     resolveCreate?.(nextDraft);
@@ -559,8 +589,7 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
   });
 
   expect(await screen.findByRole("heading", { name: "「名前未設定」を編集中" })).toBeVisible();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByText("古い下書きの完了に失敗しました")).not.toBeInTheDocument();
 });
 
 it("clears the previous member's validation feedback when switching members", async () => {
@@ -773,7 +802,7 @@ it("creates and selects a new draft while an existing member is present", async 
     sort_order: 1,
   };
   const createDraft = vi.fn().mockResolvedValue(draft);
-  const { queryClient } = await renderSettings({ createDraft });
+  const { queryClient } = await renderSettings({ createDraft }, { startClosed: true });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
 
@@ -811,7 +840,7 @@ it("cancels a newly added draft without completing it", async () => {
   };
   const createDraft = vi.fn().mockResolvedValue(draft);
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  const { queryClient } = await renderSettings({ createDraft, deleteMember });
+  const { queryClient } = await renderSettings({ createDraft, deleteMember }, { startClosed: true });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
   expect(await screen.findByRole("button", { name: "追加をやめる" })).toBeVisible();
@@ -820,11 +849,14 @@ it("cancels a newly added draft without completing it", async () => {
   await userEvent.click(screen.getByRole("button", { name: "追加をやめる" }));
 
   expect(deleteMember).toHaveBeenCalledWith("member-2");
-  expect(await screen.findByLabelText("呼び名")).toHaveValue("大人");
+  // 編集フォームを閉じ、末尾の「家族を削除」すり替わり連打を防ぐ
+  expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "追加をやめる" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "家族を削除" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
   expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([member]);
   expect(await screen.findByText("家族の追加をやめました")).toBeVisible();
+  // 視線・フォーカスはページ見出し（上部）へ戻る
+  expect(screen.getByRole("heading", { name: "家族設定" })).toHaveFocus();
 });
 
 it("removes a deleted member from cache and closes the editor", async () => {
@@ -1145,6 +1177,21 @@ it("saves a changed safety field and invalidates dependents", async () => {
   await waitFor(() => {
     expect(invalidateSafety.mock.calls.length).toBeGreaterThan(0);
   });
+});
+
+it("shows Japanese labels for unsupported diet kinds, not English enum keys", async () => {
+  // 回帰: 設定編集フォームが weaning_food 等のキーをそのまま出していた
+  await renderSettings();
+  await userEvent.selectOptions(
+    await screen.findByLabelText("食べない食事はありますか"),
+    "present",
+  );
+  expect(screen.getByText("離乳食")).toBeInTheDocument();
+  expect(screen.getByText("飲み込み・むせの不安")).toBeInTheDocument();
+  expect(screen.getByText("医師等から指示された治療食")).toBeInTheDocument();
+  expect(screen.queryByText("weaning_food")).not.toBeInTheDocument();
+  expect(screen.queryByText("swallowing_concern")).not.toBeInTheDocument();
+  expect(screen.queryByText("therapeutic_diet")).not.toBeInTheDocument();
 });
 
 it.each([

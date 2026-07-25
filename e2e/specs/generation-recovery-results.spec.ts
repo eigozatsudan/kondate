@@ -1,6 +1,6 @@
 import { expect, test } from "../fixtures/auth";
 import { z } from "zod";
-import { clickWizardNext } from "../fixtures/history";
+import { clickWizardNext, openFirstMemberEditor } from "../fixtures/history";
 import { localRestHeaders } from "../fixtures/local-supabase";
 import type { Page, Request, Route } from "@playwright/test";
 
@@ -102,6 +102,8 @@ async function completeMinimumPlanner(page: Page) {
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
     timeout: 15_000,
   });
+  // editorOpen 既定 false のため、呼び名入力前に編集フォームを開く
+  await openFirstMemberEditor(page);
   await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
@@ -338,7 +340,7 @@ async function assertIdeaResultBoundary(page: Page, servings: number): Promise<v
   // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成は利用できる
   await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeVisible();
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "冷蔵庫へ反映" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeVisible();
   await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
   // 買い物だけは idea では非表示のまま

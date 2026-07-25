@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
-import { clickWizardNext } from "../fixtures/history";
+import { clickWizardNext, openFirstMemberEditor } from "../fixtures/history";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74,6 +74,20 @@ async function savePlannerMeal(
   );
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  // 緊急献立はメイン食材 AND 一致で絞る。前の食事の「鶏肉」などが残ると
+  // 朝食の鮭 fixture などが main_ingredient_no_match で消えるため、ここで外す。
+  const selectedIngredients = page.getByRole("button", { name: /を外す$/u });
+  while ((await selectedIngredients.count()) > 0) {
+    const remainingBefore = await selectedIngredients.count();
+    await updatePlannerAndAwaitAutosave(
+      page,
+      () => selectedIngredients.first().click(),
+      (body) => {
+        const mains = body.p_main_ingredients;
+        return Array.isArray(mains) && mains.length === remainingBefore - 1;
+      },
+    );
+  }
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
   await clickWizardNext(page);
@@ -272,7 +286,11 @@ async function expectCompleteCandidate(
   });
   await expect(candidate).toBeVisible();
   await expect(page.getByText("AI利用回数は消費しません。")).toBeVisible();
-  await expect(candidate.getByText("食卓まで全体 15分・2人分")).toBeVisible();
+  // overview は「15分 / 食卓までの目安」「N人分 / 分量の目安」の二段（旧一文明「食卓まで全体…」は廃止）
+  await expect(candidate.getByText("15分", { exact: true })).toBeVisible();
+  await expect(candidate.getByText("食卓までの目安")).toBeVisible();
+  await expect(candidate.getByText("2人分", { exact: true })).toBeVisible();
+  await expect(candidate.getByText("分量の目安")).toBeVisible();
   await expect(candidate.getByRole("heading", { name: "全体の段取り" })).toBeVisible();
   for (const timelineStep of input.timeline) {
     await expect(candidate.getByText(timelineStep, { exact: false })).toBeVisible();
@@ -598,6 +616,9 @@ test("keeps an incompatible current allergy as an explicit no-candidate result",
 }) => {
   await page.setViewportSize({ width: 320, height: 780 });
   await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
+  // 登録済み一覧のみのとき編集フォームは閉じている
+  await openFirstMemberEditor(page);
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "鶏肉を追加" }).click();
   await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
@@ -605,7 +626,8 @@ test("keeps an incompatible current allergy as an explicit no-candidate result",
   await expect(
     selectedAllergies.getByRole("button", { name: "鶏肉を削除", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "鶏肉を追加" })).toBeDisabled();
+  // 追加済み標準品は候補ボタンを非表示（disabled ではなく消える）
+  await expect(page.getByRole("button", { name: "鶏肉を追加" })).toHaveCount(0);
   await advanceToReviewWithHousehold(page, "夕食");
   // wizardからは緊急献立起動buttonが削除されているため、直接/emergency-menusを開く。
   await page.goto("/emergency-menus");

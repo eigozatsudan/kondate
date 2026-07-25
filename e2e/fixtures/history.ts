@@ -33,6 +33,19 @@ export async function clickWizardNext(page: Page): Promise<void> {
   });
 }
 
+/** 登録済み一覧のみのとき編集フォームを開く（editorOpen 既定 false 対応） */
+export async function openFirstMemberEditor(page: Page): Promise<void> {
+  const nameField = page.getByRole("textbox", { name: "呼び名" });
+  if (await nameField.isVisible().catch(() => false)) return;
+  const edit = page.getByRole("button", { name: /を編集$/u }).first();
+  if ((await edit.count()) > 0) {
+    await edit.click();
+  } else {
+    await page.getByRole("button", { name: "家族を追加" }).click();
+  }
+  await expect(nameField).toBeVisible({ timeout: 15_000 });
+}
+
 /** 次の generation POST だけに mock シナリオヘッダを付ける（Compose mock 時のみサーバが尊重） */
 export async function setMockScenario(page: Page, scenario: string): Promise<void> {
   await page.route(
@@ -64,13 +77,17 @@ export async function seedGeneratedMenu(page: Page): Promise<string> {
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
     timeout: 15_000,
   });
+  // editorOpen 既定 false のため、呼び名入力前に編集フォームを開く
+  await openFirstMemberEditor(page);
   // 編集ボタンの aria-label と部分一致しないよう textbox に限定する
   await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({
+    timeout: 15_000,
+  });
   await page.getByRole("radio", { name: "朝食" }).check();
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();

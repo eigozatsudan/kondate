@@ -1,5 +1,5 @@
 import { clickWizardNext, expect, setMockScenario, test } from "../fixtures/acceptance";
-import { requestWholeRegeneration } from "../fixtures/history";
+import { openFirstMemberEditor, requestWholeRegeneration } from "../fixtures/history";
 
 test.setTimeout(360_000);
 
@@ -16,6 +16,8 @@ test("household journey: welcome through shopping reconciliation", async ({
   // 小麦ラベル確認が必要な mock success 用メンバーを整える
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
+  // editorOpen 既定 false のため、呼び名入力前に編集フォームを開く
+  await openFirstMemberEditor(page);
   await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();

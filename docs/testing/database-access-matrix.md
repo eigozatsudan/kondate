@@ -45,6 +45,7 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `public.shopping_label_confirmations` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_list_sources` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_lists` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
+| `public.user_feedback` | postgres | none | none | ALL | on (no authenticated policies) | Function+service_role only; free-form body rate-limited in Netlify |
 
 ## Column write grants (browser roles)
 

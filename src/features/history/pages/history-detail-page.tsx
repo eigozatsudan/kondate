@@ -82,6 +82,10 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
     enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
     staleTime: 30_000,
   });
+  // pending はここでは消さない。
+  // 進行中の生成中に履歴詳細を開くと recovery ハンドルが消え /generation が idle→planner
+  // に落ちる（敵対的レビュー C1）。terminal 掃除は RecoveryLinks / 成功 navigate /
+  // use-regeneration 側に任せる。
 
   if (!parsed.success || menuId === null) return <Navigate to="/history" replace />;
 

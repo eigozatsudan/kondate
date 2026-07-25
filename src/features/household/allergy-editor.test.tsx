@@ -50,7 +50,7 @@ it("searches all 29 standard items and adds the selected catalog id", async () =
     />,
   );
   await userEvent.type(
-    screen.getByRole("searchbox", { name: "よくあるアレルギーから探す" }),
+    screen.getByRole("searchbox", { name: "よくあるアレルギーを絞り込む" }),
     "くるみ",
   );
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
@@ -76,8 +76,44 @@ it("lists standard and custom allergies by name and removes either", async () =>
   expect(screen.getByRole("list", { name: "選択済みアレルギー" })).toHaveTextContent(
     "えんどう豆たんぱく",
   );
+  // 追加済みの標準品は候補ボタンを出さない（選択済みリスト側だけ）
+  expect(screen.queryByRole("button", { name: "くるみを追加" })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "くるみを削除" }));
   expect(remove).toHaveBeenCalledWith("allergy-1");
+});
+
+it("hides already-added standard allergy buttons from the candidate list", () => {
+  render(
+    <AllergyEditor
+      memberId="member-1"
+      catalog={catalog}
+      allergies={[allergy({ allergen_id: "walnut", custom_name: null })]}
+      addStandard={vi.fn()}
+      addCustom={vi.fn()}
+      remove={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "くるみを追加" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "項目1を追加" })).toBeVisible();
+  expect(screen.getByRole("list", { name: "選択済みアレルギー" })).toHaveTextContent("くるみ");
+});
+
+it("places the selected allergy list above the filter searchbox", () => {
+  render(
+    <AllergyEditor
+      memberId="member-1"
+      catalog={catalog}
+      allergies={[allergy({ allergen_id: "walnut", custom_name: null })]}
+      addStandard={vi.fn()}
+      addCustom={vi.fn()}
+      remove={vi.fn()}
+    />,
+  );
+  const selected = screen.getByRole("list", { name: "選択済みアレルギー" });
+  const filter = screen.getByRole("searchbox", { name: "よくあるアレルギーを絞り込む" });
+  expect(
+    selected.compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
 });
 
 it("finds a standard item by a reviewed alias", async () => {
@@ -94,7 +130,7 @@ it("finds a standard item by a reviewed alias", async () => {
   );
 
   await userEvent.type(
-    screen.getByRole("searchbox", { name: "よくあるアレルギーから探す" }),
+    screen.getByRole("searchbox", { name: "よくあるアレルギーを絞り込む" }),
     "たまご",
   );
 
@@ -177,7 +213,7 @@ it.each(["success", "failure"] as const)(
 
     await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
 
-    expect(screen.getByRole("searchbox", { name: "よくあるアレルギーから探す" })).toBeDisabled();
+    expect(screen.getByRole("searchbox", { name: "よくあるアレルギーを絞り込む" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "項目1を追加" })).toBeDisabled();
     expect(screen.getByLabelText("自由登録名")).toBeDisabled();
     expect(screen.getByLabelText("別名（カンマ区切り・任意）")).toBeDisabled();
