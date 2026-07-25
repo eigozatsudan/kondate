@@ -294,18 +294,42 @@ test("provides the complete locked generation environment to the app service", a
   }
 });
 
-test("runs the development app as the node user and keeps generated Vite cache outside mounted dependencies", async () => {
-  const [compose, dockerfile, viteConfig] = await Promise.all([
+test("starts app as root then drops to LOCAL_UID via entrypoint; keeps Vite cache outside mounted deps", async () => {
+  // GHA 等で LOCAL_UID≠1000 のとき、node_modules(volume=uid 1000) への直接起動は
+  // Vite の .vite-temp 書き込みと Deno の home 解決で即死する。entrypoint が整える。
+  const [compose, dockerfile, viteConfig, entrypoint] = await Promise.all([
     readFile("compose.yaml", "utf8"),
     readFile("Dockerfile", "utf8"),
     readFile("vite.config.ts", "utf8"),
+    readFile("scripts/app-entrypoint.sh", "utf8"),
   ]);
-  assert.match(
-    compose,
-    /\sapp:\n(?:.*\n)*?\s{4}user: "\$\{LOCAL_UID:-1000\}:\$\{LOCAL_GID:-1000\}"/u,
-  );
+  const app = compose.match(/^ {2}app:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
+  assert.ok(app, "app service is missing");
+  assert.match(app, /^ {4}user: "0:0"$/mu);
+  assert.match(app, /^ {4}entrypoint: \["\/usr\/local\/bin\/app-entrypoint\.sh"\]$/mu);
+  assert.match(app, /^ {6}LOCAL_UID: "\$\{LOCAL_UID:-1000\}"$/mu);
+  assert.match(app, /^ {6}LOCAL_GID: "\$\{LOCAL_GID:-1000\}"$/mu);
   assert.match(dockerfile, /^USER node$/m);
+  assert.match(dockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/app-entrypoint\.sh"\]/u);
+  assert.match(dockerfile, /app-entrypoint\.sh/u);
   assert.match(viteConfig, /cacheDir: "\/tmp\/vite"/u);
+  assert.match(entrypoint, /setpriv --reuid=/u);
+  assert.match(entrypoint, /node_modules\/\.vite-temp/u);
+  assert.match(entrypoint, /useradd/u);
+});
+
+test("runs e2e through the same privilege-dropping entrypoint", async () => {
+  const compose = await readFile("compose.yaml", "utf8");
+  const e2e = compose.match(/^ {2}e2e:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu)?.[1];
+  assert.ok(e2e, "e2e service is missing");
+  assert.match(e2e, /^ {4}user: "0:0"$/mu);
+  assert.match(
+    e2e,
+    /^ {4}entrypoint: \["\/usr\/local\/bin\/app-entrypoint\.sh", "npx", "playwright", "test"\]$/mu,
+  );
+  assert.doesNotMatch(e2e, /^ {4}command:/mu);
+  assert.match(e2e, /^ {6}LOCAL_UID: "\$\{LOCAL_UID:-1000\}"$/mu);
+  assert.match(e2e, /^ {6}LOCAL_GID: "\$\{LOCAL_GID:-1000\}"$/mu);
 });
 
 test("uses the isolated E2E Function server without changing the public origin", async () => {

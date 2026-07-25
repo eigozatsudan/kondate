@@ -145,7 +145,13 @@ services:
       OPENROUTER_TIMEOUT_MS: "20000"
       FUNCTION_TOTAL_BUDGET_MS: "50000"
       AI_PROCESSING_STALE_SECONDS: "180"
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+      # entrypoint が setpriv で落とす先。Compose の user 補間とは別に process.env へ渡す。
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
+    # root で entrypoint を起動し、node_modules/.vite-temp と passwd/home を整えてから LOCAL_UID へ落とす。
+    # （GHA runner 等 LOCAL_UID≠1000 でも Vite / Netlify Edge Deno が起動できるようにする）
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/app-entrypoint.sh"]
     ports:
       - "127.0.0.1:5173:5173"
     volumes:
@@ -170,11 +176,16 @@ services:
     depends_on:
       app:
         condition: service_healthy
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
+    # app と同じく root→LOCAL_UID。Playwright のキャッシュ解決にも passwd/home が必要。
+    # entrypoint に playwright まで含め、compose run e2e の追加引数が末尾連結される形を保つ。
+    user: "0:0"
     volumes:
       - .:/workspace
       - node_modules:/workspace/node_modules
-    entrypoint: ["npx", "playwright", "test"]
+    entrypoint: ["/usr/local/bin/app-entrypoint.sh", "npx", "playwright", "test"]
 
 volumes:
   node_modules:
