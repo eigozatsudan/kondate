@@ -331,7 +331,13 @@ export function useGenerationRecovery(
   }, [isCurrent, navigate, queryClient, retryStatus, state, userId]);
 
   useEffect(() => {
+    // イベント駆動の復旧は「保存済み pending があるときだけ」。
+    // failed / constraint_conflict は terminal UI を残したまま pending を消すため、
+    // 無条件 online / TOKEN_REFRESHED は checking 永久スピナーになる（C1）。
+    // マウント時 recover と同じく pending を正とする。visibilitychange は
+    // retryStatus のみで phase を変えないためこのガード対象外。
     const recover = () => {
+      if (read() === null) return;
       const token = lifecycleRef.current;
       if (token !== null) token.phase = "checking";
       dispatch({ type: "online" });
@@ -354,7 +360,7 @@ export function useGenerationRecovery(
       document.removeEventListener("visibilitychange", visible);
       data.subscription.unsubscribe();
     };
-  }, [clearGeneration, dispatch, retryStatus, userId]);
+  }, [clearGeneration, dispatch, read, retryStatus, userId]);
 
   return { state, startGeneration, retryStatus, clearGeneration };
 }
