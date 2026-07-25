@@ -335,13 +335,13 @@ export function HouseholdSettingsForm({
 
   useEffect(() => {
     if (deleteTarget === undefined) return;
-    if (
-      selected?.id !== deleteTarget.id ||
-      !members.some((member) => member.id === deleteTarget.id)
-    ) {
+    // 一覧の別行削除では selected と deleteTarget が食い違うのが正常。
+    // 対象がメンバー一覧から消えたときだけダイアログを閉じる。
+    // （別メンバーの「編集」は onClick 側で setDeleteTarget(undefined) する）
+    if (!members.some((member) => member.id === deleteTarget.id)) {
       setDeleteTarget(undefined);
     }
-  }, [deleteTarget, members, selected?.id]);
+  }, [deleteTarget, members]);
 
   useEffect(() => {
     if (deleteTarget === undefined) return;

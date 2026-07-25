@@ -877,6 +877,28 @@ it("closes a member delete confirmation when another member is selected", async 
   expect(deleteMember).not.toHaveBeenCalled();
 });
 
+it("can delete a list member who is not the currently edited one", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    deleteMember,
+  });
+
+  // renderSettings は先頭（大人）を編集中。一覧から子どもを削除できること。
+  expect(screen.getByRole("heading", { name: "「大人」を編集中" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを削除" }));
+  expect(screen.getByRole("dialog", { name: "家族の削除確認" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+
+  await waitFor(() => {
+    expect(deleteMember).toHaveBeenCalledWith("member-2");
+  });
+  expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
+  // 編集中の大人は残る（削除対象は子ども）
+  expect(screen.getByRole("heading", { name: "「大人」を編集中" })).toBeVisible();
+});
+
 it("does not delete either member after switching during the delete target's allergy add", async () => {
   const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
   let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
