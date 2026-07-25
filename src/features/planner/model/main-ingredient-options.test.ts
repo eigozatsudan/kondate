@@ -1,9 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  commonMainIngredients,
   excludeCanonicalMainIngredient,
   includesCanonicalMainIngredient,
   normalizeMainIngredient,
 } from "./main-ingredient-options";
+
+describe("commonMainIngredients", () => {
+  it("matches the human-approved order and strings", () => {
+    // Gate 0 で承認された順序・文字列。エージェントが勝手に増やしたり並べ替えてはいけない。
+    expect(commonMainIngredients).toEqual([
+      "鶏肉",
+      "豚肉",
+      "牛肉",
+      "ひき肉",
+      "鮭",
+      "さば",
+      "卵",
+      "豆腐",
+    ]);
+  });
+
+  it("every candidate is non-empty, NFKC+trim stable, and within 80 code points", () => {
+    expect(commonMainIngredients).toHaveLength(8);
+    for (const item of commonMainIngredients) {
+      expect(item.length).toBeGreaterThan(0);
+      expect(normalizeMainIngredient(item)).toBe(item);
+      expect(Array.from(item).length).toBeGreaterThan(0);
+      expect(Array.from(item).length).toBeLessThanOrEqual(80);
+    }
+  });
+});
 
 describe("normalizeMainIngredient", () => {
   it("applies NFKC and trims ASCII/full-width spaces", () => {

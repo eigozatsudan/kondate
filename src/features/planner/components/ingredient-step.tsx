@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
+  commonMainIngredients,
   excludeCanonicalMainIngredient,
   includesCanonicalMainIngredient,
   normalizeMainIngredient,
@@ -18,8 +19,9 @@ export type IngredientStepProps = PlannerStepProps<readonly string[]> & {
 };
 
 /**
- * 主食材を1件ずつ追加するstep。既存 PlannerForm の8件/80文字制限をそのまま維持し、
- * 戻る操作をしても選択済みの主食材が失われないことをテストで固定する。
+ * 主食材を1件ずつ追加するstep。クイック選択・自由入力・冷蔵庫候補はすべて
+ * 同じ canonical helper と onChange(mainIngredients) 経由で更新する。
+ * 質問順・8件/80文字制限・pantrySelections 非干渉は既存契約を維持する。
  */
 export function IngredientStep({
   value,
@@ -39,78 +41,152 @@ export function IngredientStep({
   }, []);
   const errorId = "ingredient-step-error";
   const combinedError = errorMessage ?? localError;
+
+  /**
+   * 未選択の候補を1件追加する。重複・空・長さ超過・8件上限はここで一元判定する。
+   * @returns "added" | "duplicate_or_empty" | "too_long" | "at_limit"
+   */
+  const tryAddIngredient = (
+    raw: string,
+  ): "added" | "duplicate_or_empty" | "too_long" | "at_limit" => {
+    const next = normalizeMainIngredient(raw);
+    if (next === "") {
+      return "duplicate_or_empty";
+    }
+    if (Array.from(next).length > mainIngredientLengthLimit) {
+      setLocalError("メイン食材は1件80文字までです。");
+      return "too_long";
+    }
+    if (includesCanonicalMainIngredient(value, next)) {
+      return "duplicate_or_empty";
+    }
+    if (value.length >= mainIngredientLimit) {
+      setLocalError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
+      return "at_limit";
+    }
+    onChange([...value, next]);
+    setLocalError(null);
+    return "added";
+  };
+
+  /** クイック選択トグルと選択済みチップ解除の共通経路。excludeCanonical のみを使う。 */
+  const removeIngredient = (candidate: string) => {
+    onChange(excludeCanonicalMainIngredient(value, candidate));
+    setLocalError(null);
+  };
+
+  const toggleQuickIngredient = (candidate: string) => {
+    if (includesCanonicalMainIngredient(value, candidate)) {
+      removeIngredient(candidate);
+      return;
+    }
+    // 上限到達時も未選択チップは disabled にせず、押下でエラー表示だけにする
+    tryAddIngredient(candidate);
+  };
+
   return (
     <section className="card stack" aria-labelledby="ingredient-step-title">
       <h2 id="ingredient-step-title" tabIndex={-1} ref={headingRef}>
         2. メイン食材
       </h2>
-      <div className="ingredient-entry-row">
-        <label className="field ingredient-entry-field">
-          メイン食材
-          <input
-            value={ingredient}
-            disabled={disabled}
-            aria-invalid={combinedError != null ? "true" : undefined}
-            aria-describedby={combinedError != null ? errorId : undefined}
-            onChange={(event) => {
-              const rawValue = event.target.value;
-              setIngredient(rawValue);
-              if (
-                Array.from(normalizeMainIngredient(rawValue)).length <= mainIngredientLengthLimit
-              ) {
-                setLocalError(null);
-              } else {
-                setLocalError("メイン食材は1件80文字までです。");
-              }
-            }}
-          />
-        </label>
-        <button
-          className="secondary-button ingredient-add-button"
-          type="button"
-          disabled={disabled}
-          onClick={() => {
-            const next = normalizeMainIngredient(ingredient);
-            const alreadySelected = includesCanonicalMainIngredient(value, next);
-            if (Array.from(next).length > mainIngredientLengthLimit) {
-              setLocalError("メイン食材は1件80文字までです。");
-              return;
-            }
-            if (next !== "" && !alreadySelected && value.length >= mainIngredientLimit) {
-              setLocalError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
-              return;
-            }
-            if (next !== "" && !alreadySelected) {
-              onChange([...value, next]);
-            }
-            setLocalError(null);
-            setIngredient("");
-          }}
-        >
-          追加
-        </button>
+
+      <section className="ingredient-quick-select stack" aria-labelledby="ingredient-quick-title">
+        <h3 id="ingredient-quick-title">よく使う食材から選ぶ</h3>
+        <div className="wizard-chip-row">
+          {commonMainIngredients.map((candidate) => {
+            const pressed = includesCanonicalMainIngredient(value, candidate);
+            return (
+              <button
+                className="wizard-chip"
+                type="button"
+                key={candidate}
+                disabled={disabled}
+                aria-pressed={pressed}
+                onClick={() => {
+                  toggleQuickIngredient(candidate);
+                }}
+              >
+                {candidate}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="ingredient-selected stack">
+        <p className="ingredient-selected-count">
+          選んだ食材（{String(value.length)}/{String(mainIngredientLimit)}）
+        </p>
+        <div className="wizard-chip-row">
+          {value.map((item) => (
+            <button
+              className="wizard-chip"
+              type="button"
+              key={item}
+              disabled={disabled}
+              onClick={() => {
+                // 追加経路と同じ canonical 規則で解除する（厳密等価の経路分岐を残さない）
+                removeIngredient(item);
+              }}
+            >
+              {item}を外す
+            </button>
+          ))}
+        </div>
       </div>
+
+      <section className="ingredient-free-input stack" aria-labelledby="ingredient-free-title">
+        {/*
+          セクション見出しと input の accessible name を分離する。
+          label は「メイン食材」のままにし、既存 E2E / getByLabelText を壊さない。
+        */}
+        <h3 id="ingredient-free-title">一覧にない食材を入力</h3>
+        <div className="ingredient-entry-row">
+          <label className="field ingredient-entry-field">
+            メイン食材
+            <input
+              value={ingredient}
+              disabled={disabled}
+              aria-invalid={combinedError != null ? "true" : undefined}
+              aria-describedby={combinedError != null ? errorId : undefined}
+              onChange={(event) => {
+                const rawValue = event.target.value;
+                setIngredient(rawValue);
+                if (
+                  Array.from(normalizeMainIngredient(rawValue)).length <= mainIngredientLengthLimit
+                ) {
+                  setLocalError(null);
+                } else {
+                  setLocalError("メイン食材は1件80文字までです。");
+                }
+              }}
+            />
+          </label>
+          <button
+            className="secondary-button ingredient-add-button"
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              // 既存挙動: 空・重複はエラーなしで入力クリア。長さ超過・上限はエラーを出して入力を残す。
+              const result = tryAddIngredient(ingredient);
+              if (result === "too_long" || result === "at_limit") {
+                return;
+              }
+              setLocalError(null);
+              setIngredient("");
+            }}
+          >
+            追加
+          </button>
+        </div>
+      </section>
+
       {combinedError != null && (
         <p id={errorId} role="alert">
           {combinedError}
         </p>
       )}
-      <div className="wizard-chip-row">
-        {value.map((item) => (
-          <button
-            className="wizard-chip"
-            type="button"
-            key={item}
-            disabled={disabled}
-            onClick={() => {
-              // 追加経路と同じ canonical 規則で解除する（厳密等価の経路分岐を残さない）
-              onChange(excludeCanonicalMainIngredient(value, item));
-            }}
-          >
-            {item}を外す
-          </button>
-        ))}
-      </div>
+
       <section className="ingredient-pantry stack" aria-labelledby="ingredient-pantry-title">
         <div>
           <h3 id="ingredient-pantry-title">冷蔵庫から選ぶ</h3>
@@ -134,19 +210,8 @@ export function IngredientStep({
                   key={item.id}
                   disabled={disabled || selected}
                   onClick={() => {
-                    if (
-                      normalizedName === "" ||
-                      Array.from(normalizedName).length > mainIngredientLengthLimit
-                    ) {
-                      setLocalError("メイン食材は1件80文字までです。");
-                      return;
-                    }
-                    if (value.length >= mainIngredientLimit) {
-                      setLocalError(`メイン食材は${String(mainIngredientLimit)}件までです。`);
-                      return;
-                    }
-                    onChange([...value, normalizedName]);
-                    setLocalError(null);
+                    // 選択済みは disabled のためここには来ない。トグル解除しない（意図的非対称）。
+                    tryAddIngredient(normalizedName);
                   }}
                 >
                   {normalizedName}を追加
@@ -156,6 +221,7 @@ export function IngredientStep({
           </div>
         )}
       </section>
+
       <div className="wizard-actions">
         {onBack !== undefined && (
           <button

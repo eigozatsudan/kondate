@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import type { PlannerDraftInput } from "@shared/contracts/planner";
 import type { PlannerFieldName, PlannerStep } from "../model/planner-wizard";
 import type { PlannerSafetyMember } from "../planner-safety-member";
 import { createPlannerAttempt } from "../expired-pantry-checks";
+import { commonMainIngredients } from "../model/main-ingredient-options";
 import { buildPlannerSubmissionFieldErrors } from "../model/planner-wizard";
 import { PlannerWizard } from "./planner-wizard";
 
@@ -790,6 +791,245 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "再試行" }));
     expect(onRetryDraftConflict).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * メイン食材クイック選択（Plan 9 Task 2）。
+ * 候補トグル・自由入力・冷蔵庫は同じ mainIngredients 契約と Task 1 helper 経由であること、
+ * accessible name「メイン食材」と DOM 表示順を壊さないことを固定する。
+ */
+describe("IngredientStep quick select", () => {
+  function makePantryItem(name: string, id = "60000000-0000-4000-8000-000000000001"): PantryItem {
+    return {
+      id,
+      userId: eligibleMember.id,
+      name,
+      quantity: null,
+      unit: null,
+      expiresOn: null,
+      expirationType: null,
+      openedState: null,
+      createdAt: "2026-07-25T00:00:00.000Z",
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    };
+  }
+
+  function expectDocumentOrder(earlier: HTMLElement, later: HTMLElement) {
+    // 320px 折返し前提でも document order が UI 契約どおりであることを構造証拠にする
+    expect(earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+
+  it("shows eight approved quick-select candidates under よく使う食材から選ぶ", () => {
+    render(<Harness initialStep="ingredients" />);
+
+    expect(screen.getByRole("heading", { name: "よく使う食材から選ぶ" })).toBeVisible();
+    for (const name of commonMainIngredients) {
+      const chip = screen.getByRole("button", { name });
+      expect(chip).toBeVisible();
+      expect(chip).toHaveAttribute("aria-pressed", "false");
+    }
+    expect(commonMainIngredients).toHaveLength(8);
+  });
+
+  it("toggles a quick-select candidate on then off via aria-pressed", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" />);
+
+    const chicken = screen.getByRole("button", { name: "鶏肉" });
+    expect(chicken).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("選んだ食材（0/8）")).toBeVisible();
+
+    await user.click(chicken);
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
+    expect(screen.getByText("選んだ食材（1/8）")).toBeVisible();
+
+    // 同じ候補をもう一度押すと excludeCanonical 相当の解除になる
+    await user.click(screen.getByRole("button", { name: "鶏肉" }));
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("button", { name: "鶏肉を外す" })).not.toBeInTheDocument();
+    expect(screen.getByText("選んだ食材（0/8）")).toBeVisible();
+  });
+
+  it("marks a quick candidate selected when free input adds a canonical match", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" />);
+
+    // 全角空白付きでも NFKC+trim 後に候補「鶏肉」と一致する
+    await user.type(screen.getByLabelText("メイン食材"), "　鶏肉　");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
+    expect(screen.getByText("選んだ食材（1/8）")).toBeVisible();
+  });
+
+  it("does not duplicate when quick-selecting a pantry-added canonical match", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" pantryItems={[makePantryItem("　鶏肉　")]} />);
+
+    await user.click(screen.getByRole("button", { name: "鶏肉を追加" }));
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("button", { name: /を外す$/u })).toHaveLength(1);
+
+    // 既選択のクイック候補を押すとトグル解除（重複追加にならない）
+    await user.click(screen.getByRole("button", { name: "鶏肉" }));
+    expect(screen.queryByRole("button", { name: "鶏肉を外す" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("disables pantry add when quick-selected and re-enables after toggle off", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" pantryItems={[makePantryItem("鶏肉")]} />);
+
+    const pantryAdd = screen.getByRole("button", { name: "鶏肉を追加" });
+    expect(pantryAdd).not.toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "鶏肉" }));
+    expect(screen.getByRole("button", { name: "鶏肉を追加" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "鶏肉" }));
+    expect(screen.getByRole("button", { name: "鶏肉を追加" })).not.toBeDisabled();
+  });
+
+  it("at 8 items shows limit alert for unselected quick chips without disabling them", async () => {
+    const user = userEvent.setup();
+    const filled = Array.from({ length: 8 }, (_, index) => `食材${String(index + 1)}`);
+    render(
+      <Harness
+        initialStep="ingredients"
+        initialDraft={{ ...emptyDraft, mainIngredients: filled }}
+      />,
+    );
+
+    expect(screen.getByText("選んだ食材（8/8）")).toBeVisible();
+    const chicken = screen.getByRole("button", { name: "鶏肉" });
+    expect(chicken).not.toBeDisabled();
+    expect(chicken).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(chicken);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("メイン食材は8件までです。");
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getAllByRole("button", { name: /を外す$/u })).toHaveLength(8);
+    expect(screen.getByText("選んだ食材（8/8）")).toBeVisible();
+    // 未選択候補を disabled にして解除不能にしない
+    expect(screen.getByRole("button", { name: "鶏肉" })).not.toBeDisabled();
+  });
+
+  it("allows removing a selected quick candidate and remove-chip while at the 8-item limit", async () => {
+    const user = userEvent.setup();
+    // 鶏肉 + 7 件の埋めで上限。選択済み候補のトグル解除と「を外す」は常に可能
+    const filled = ["鶏肉", ...Array.from({ length: 7 }, (_, index) => `食材${String(index + 1)}`)];
+    render(
+      <Harness
+        initialStep="ingredients"
+        initialDraft={{ ...emptyDraft, mainIngredients: filled }}
+      />,
+    );
+
+    expect(screen.getByText("選んだ食材（8/8）")).toBeVisible();
+    const chicken = screen.getByRole("button", { name: "鶏肉" });
+    expect(chicken).toHaveAttribute("aria-pressed", "true");
+    expect(chicken).not.toBeDisabled();
+
+    await user.click(chicken);
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("選んだ食材（7/8）")).toBeVisible();
+
+    // 再度選んでから選択済みチップ「を外す」でも解除できる
+    await user.click(screen.getByRole("button", { name: "鶏肉" }));
+    expect(screen.getByText("選んだ食材（8/8）")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "鶏肉を外す" }));
+    expect(screen.getByRole("button", { name: "鶏肉" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("選んだ食材（7/8）")).toBeVisible();
+  });
+
+  it("disables quick chips, free input, and remove chips while saving", () => {
+    render(
+      <Harness
+        initialStep="ingredients"
+        initialDraft={{ ...emptyDraft, mainIngredients: ["鶏肉"] }}
+        isSaving
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "鶏肉" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "豚肉" })).toBeDisabled();
+    expect(screen.getByLabelText("メイン食材")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "追加" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeDisabled();
+  });
+
+  it("keeps free-input accessible name メイン食材 and allows advancing to the next step", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" />);
+
+    expect(screen.getByRole("heading", { name: "一覧にない食材を入力" })).toBeVisible();
+    const input = screen.getByLabelText("メイン食材");
+    expect(input).toBeVisible();
+    expect(screen.getByRole("button", { name: "追加" })).toBeVisible();
+
+    await user.type(input, "アスパラ");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+
+    expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
+  });
+
+  it("does not change pantrySelections when selecting a quick candidate", async () => {
+    const user = userEvent.setup();
+    const pantryItem = makePantryItem("玉ねぎ", "60000000-0000-4000-8000-000000000099");
+    render(
+      <Harness
+        initialStep="ingredients"
+        initialDraft={{
+          ...emptyDraft,
+          pantrySelections: [{ pantryItemId: pantryItem.id, priority: "must_use" }],
+        }}
+        pantryItems={[pantryItem]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "鶏肉" }));
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
+
+    // 確認画面まで進み、既存の pantrySelections（必ず使う）がクイック選択で消えないことを確認する
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await user.click(screen.getByRole("radio", { name: "和食" }));
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    await user.click(screen.getByRole("radio", { name: "家族に合わせて作る" }));
+    await user.click(screen.getByRole("checkbox", { name: /^子ども/u }));
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+
+    expect(screen.getByRole("checkbox", { name: /玉ねぎ/u })).toBeChecked();
+  });
+
+  it("keeps document order: quick select → selected → free input → pantry → next", () => {
+    render(<Harness initialStep="ingredients" pantryItems={[makePantryItem("玉ねぎ")]} />);
+
+    const quickHeading = screen.getByRole("heading", { name: "よく使う食材から選ぶ" });
+    const selectedLabel = screen.getByText("選んだ食材（0/8）");
+    const freeHeading = screen.getByRole("heading", { name: "一覧にない食材を入力" });
+    const pantryHeading = screen.getByRole("heading", { name: "冷蔵庫から選ぶ" });
+    const nextButton = screen.getByRole("button", { name: "次へ" });
+
+    expectDocumentOrder(quickHeading, selectedLabel);
+    expectDocumentOrder(selectedLabel, freeHeading);
+    expectDocumentOrder(freeHeading, pantryHeading);
+    expectDocumentOrder(pantryHeading, nextButton);
+
+    // 自由入力の accessible name は見出しではなく label「メイン食材」のまま
+    expect(screen.getByLabelText("メイン食材")).toBeVisible();
+    // クイック候補は chip 行に並ぶ（折返し用の構造クラス）
+    const chicken = screen.getByRole("button", { name: "鶏肉" });
+    expect(chicken.closest(".wizard-chip-row")).not.toBeNull();
+    expect(
+      within(chicken.closest(".wizard-chip-row") as HTMLElement).getByRole("button", {
+        name: "豆腐",
+      }),
+    ).toBeVisible();
   });
 });
 
