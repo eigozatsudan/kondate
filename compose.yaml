@@ -150,8 +150,10 @@ services:
       LOCAL_GID: "${LOCAL_GID:-1000}"
     # root で entrypoint を起動し、node_modules/.vite-temp と passwd/home を整えてから LOCAL_UID へ落とす。
     # （GHA runner 等 LOCAL_UID≠1000 でも Vite / Netlify Edge Deno が起動できるようにする）
+    # Compose が entrypoint を上書きすると image の CMD が null になるため command を明示する。
     user: "0:0"
     entrypoint: ["/usr/local/bin/app-entrypoint.sh"]
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     ports:
       - "127.0.0.1:5173:5173"
     volumes:
