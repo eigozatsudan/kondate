@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
 import {
+  clearPendingGeneration,
   createPendingGeneration,
   pendingGenerationCommand,
   readPendingGeneration,
@@ -102,6 +103,8 @@ describe("useRegeneration", () => {
     userIdRef.current = USER_ID;
     postMock.mockReset();
     statusMock.mockReset();
+    // 単一スロットの残留 pending が他ケースを汚さないようにする。
+    clearPendingGeneration();
   });
 
   it("refuses to build a command while revalidation is not actionable", async () => {
@@ -356,6 +359,85 @@ describe("useRegeneration", () => {
     if (command.kind !== "regenerate_dish") throw new Error("expected regenerate_dish");
     expect(command.request.dishId).toBe(DISH_ID);
     expect(command.request.sourceMenuId).toBe(MENU_ID);
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
+  });
+
+  // C2: 進行中 pending を再生成で上書きすると generation_in_progress 端末で
+  // 元の作成 ID が消える。既存 pending があるときは保存せず /generation へ戻す。
+  it("does not overwrite existing pending on startWhole; navigates to resume", async () => {
+    const existing = createPendingGeneration(
+      {
+        commandVersion: "generation-command.v2",
+        kind: "new_menu",
+        request: {
+          idempotencyKey: "10000000-0000-4000-8000-000000000099",
+          draftId: "20000000-0000-4000-8000-000000000001",
+          draftRevision: 1,
+          privacyNoticeVersion: "2026-07-11.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      USER_ID,
+    );
+    savePendingGeneration(existing);
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+        }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
+    });
+    const after = readPendingGeneration(USER_ID, new Date());
+    expect(after).not.toBeNull();
+    if (after === null) throw new Error("pending required");
+    expect(after.request.idempotencyKey).toBe(existing.request.idempotencyKey);
+    expect(after.kind).toBe("new_menu");
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite existing pending on startDish (idea); navigates to resume", async () => {
+    const existing = createPendingGeneration(
+      {
+        commandVersion: "generation-command.v2",
+        kind: "new_menu",
+        request: {
+          idempotencyKey: "10000000-0000-4000-8000-000000000088",
+          draftId: "20000000-0000-4000-8000-000000000001",
+          draftRevision: 1,
+          privacyNoticeVersion: "2026-07-11.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      USER_ID,
+    );
+    savePendingGeneration(existing);
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "idea",
+          menuId: MENU_ID,
+          phase: null,
+          result: null,
+        }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.startDish(DISH_ID, {
+        changeReason: "different_flavor",
+        changeReasonCustom: null,
+      });
+    });
+    const after = readPendingGeneration(USER_ID, new Date());
+    expect(after).not.toBeNull();
+    if (after === null) throw new Error("pending required");
+    expect(after.request.idempotencyKey).toBe(existing.request.idempotencyKey);
     expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 });
