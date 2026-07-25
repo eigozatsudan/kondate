@@ -387,7 +387,7 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     expect(screen.getByRole("heading", { name: "現在の家族・安全条件" })).toBeInTheDocument();
   });
 
-  it("idea人数は1〜6がbutton、7〜20はnumber inputで入力する", async () => {
+  it("idea人数は1〜6がbutton、7〜20はプルダウンで選ぶ", async () => {
     const user = userEvent.setup();
     render(<Harness initialStep="audience" />);
     await user.click(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }));
@@ -395,25 +395,40 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     await user.click(screen.getByRole("button", { name: "3人" }));
     expect(screen.getByRole("button", { name: "3人" })).toHaveAttribute("aria-pressed", "true");
 
-    const numberInput = screen.getByLabelText("7人以上（20人まで）");
-    await user.type(numberInput, "12");
-    expect(numberInput).toHaveValue(12);
+    const servingsSelect = screen.getByLabelText("7人以上（20人まで）");
+    await user.selectOptions(servingsSelect, "12");
+    expect(servingsSelect).toHaveValue("12");
   });
 
-  it("範囲外のidea人数ではfield-local errorを表示し、最初のinvalid fieldへfocusする", async () => {
+  it("人数プルダウンは7〜20人だけを持ち、範囲外の人数を選べない", async () => {
     const user = userEvent.setup();
     render(<Harness initialStep="audience" />);
     await user.click(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }));
 
-    const numberInput = screen.getByLabelText("7人以上（20人まで）");
-    await user.type(numberInput, "21");
-    await user.click(screen.getByRole("button", { name: "次へ" }));
-
-    expect(screen.getByText("人数は7人から20人の範囲で入力してください。")).toBeVisible();
-    expect(numberInput).toHaveAttribute("aria-invalid", "true");
-    expect(numberInput).toHaveAttribute("aria-describedby", "audience-servings-error");
-    expect(numberInput).toHaveFocus();
-    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+    // number input だった頃は21のような範囲外値を打ててしまい、field-local error で
+    // 弾く必要があった。プルダウンでは範囲外がそもそも表現できないため、
+    // 選択肢の集合そのものを fail-closed の担保として固定する。
+    const servingsSelect = screen.getByLabelText("7人以上（20人まで）");
+    const options = Array.from(servingsSelect.querySelectorAll("option")).map(
+      (option) => option.value,
+    );
+    expect(options).toEqual([
+      "",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+    ]);
   });
 
   it("household選択後に対象家族が0件になった場合はmode未選択へ戻り、ideaへ自動降格しない", () => {
@@ -795,7 +810,9 @@ describe("PlannerWizard review step", () => {
       screen.queryByRole("button", { name: "AIを使わない緊急献立を見る" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます/),
+      screen.getByText(
+        /家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます/,
+      ),
     ).toBeVisible();
   });
 

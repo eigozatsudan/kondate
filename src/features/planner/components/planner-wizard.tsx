@@ -153,7 +153,7 @@ export function PlannerWizard({
     onReset !== undefined ? (
       <div className="wizard-reset-row">
         <button
-          className="text-button wizard-action"
+          className="wizard-reset-button"
           type="button"
           disabled={isSaving}
           onClick={() => {
@@ -169,6 +169,21 @@ export function PlannerWizard({
             onReset();
           }}
         >
+          {/* 破壊的操作なので下線リンクではなく実体のあるボタンにする。矢印は装飾で、
+              ラベルが操作内容を担うため支援技術からは隠す。 */}
+          <svg
+            className="wizard-reset-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+            <path d="M20 4v4h-4" />
+          </svg>
           入力をリセット
         </button>
       </div>

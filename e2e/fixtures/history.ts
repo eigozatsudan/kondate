@@ -268,7 +268,7 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
   if (servings >= 1 && servings <= 6) {
     await page.getByRole("button", { name: `${String(servings)}人` }).click();
   } else {
-    await page.getByLabel("7人以上（20人まで）").fill(String(servings));
+    await page.getByLabel("7人以上（20人まで）").selectOption(String(servings));
   }
   expect((await ideaSave).ok()).toBe(true);
   await clickWizardNext(page);
