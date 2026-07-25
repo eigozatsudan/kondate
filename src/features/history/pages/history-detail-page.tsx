@@ -87,7 +87,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
 
   if (menuQuery.isPending) {
     return (
-      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
         <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
         <p role="status" className="mt-4">
           献立を読み込んでいます
@@ -98,7 +98,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
 
   if (menuQuery.isError) {
     return (
-      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
         <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
         <div className="mt-4 stack gap-2">
           <h1>献立を表示できません</h1>
@@ -221,7 +221,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
   };
 
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
       <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
         <p>家族条件を使用していません</p>
@@ -238,7 +238,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         />
       )}
       {fridgeOpen && (
-        <p className="mt-2 text-sm text-stone-700">
+        <p className="mt-2 text-sm text-ink-muted">
           調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。
         </p>
       )}
@@ -246,7 +246,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
       <div className="mt-6 flex flex-wrap gap-2">
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           onClick={() => {
             setSheetMode("whole");
           }}
@@ -255,7 +255,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={dishIdForRegen === null}
           onClick={() => {
             setSheetMode("dish");
@@ -265,7 +265,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           onClick={() => {
             setFridgeOpen(true);
           }}
@@ -274,7 +274,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={favorite.isPending}
           aria-pressed={isFavorite}
           aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
@@ -305,7 +305,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         {result.sourceSubmission !== null && (
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             disabled={retargetPending}
             onClick={() => {
               void onRetarget();
@@ -559,7 +559,7 @@ function HouseholdDetailBody({
   };
 
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
 
       {revalidation.phase === "checking" && (
@@ -573,7 +573,7 @@ function HouseholdDetailBody({
           <p role="alert">{statusCopy}</p>
           <button
             type="button"
-            className="min-h-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             onClick={() => {
               revalidation.refetch?.();
             }}
@@ -618,7 +618,7 @@ function HouseholdDetailBody({
             />
           )}
           {fridgeOpen && (
-            <p className="mt-2 text-sm text-stone-700">
+            <p className="mt-2 text-sm text-ink-muted">
               調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。
             </p>
           )}
@@ -628,7 +628,7 @@ function HouseholdDetailBody({
       <div className="mt-6 flex flex-wrap gap-2">
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={!actionsEnabled}
           onClick={() => {
             setSheetMode("whole");
@@ -638,7 +638,7 @@ function HouseholdDetailBody({
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={!actionsEnabled || dishIdForRegen === null}
           onClick={() => {
             setSheetMode("dish");
@@ -648,7 +648,7 @@ function HouseholdDetailBody({
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={shoppingBlocked || createList.isPending}
           onClick={() => {
             setShoppingError(null);
@@ -660,7 +660,7 @@ function HouseholdDetailBody({
         {reconcileTarget.data !== null && reconcileTarget.data !== undefined && (
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             disabled={shoppingBlocked || reconcileList.isPending}
             onClick={() => {
               const target = reconcileTarget.data;
@@ -681,7 +681,7 @@ function HouseholdDetailBody({
         )}
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={!actionsEnabled}
           onClick={() => {
             setFridgeOpen(true);
@@ -702,7 +702,7 @@ function HouseholdDetailBody({
         {result.sourceSubmission !== null && (
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             disabled={retargetPending}
             onClick={() => {
               void onRetarget();

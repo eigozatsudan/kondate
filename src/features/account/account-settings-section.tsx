@@ -39,7 +39,7 @@ export function DangerZone({
           </p>
           <button
             type="button"
-            className="min-h-11 rounded-xl bg-red-700 px-4 font-semibold text-white"
+            className="min-h-11 rounded-xl bg-danger-700 px-4 font-semibold text-white"
             onClick={onOpenDialog}
           >
             削除の確認へ進む

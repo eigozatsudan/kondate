@@ -224,8 +224,14 @@ const allowedGuidedSelectors = new Set([
 
 function findUnscopedDesignColorLeaks(source: string, colors: ReadonlySet<string>): string[] {
   const leaks: string[] = [];
+  // 純白・純黒はブランド固有の色相ではなく、--surface や素の背景として
+  // スタイルシート全域に正当に現れる（例: .field input の background: #fff）。
+  // リーク検出はブランド色の scope 外流出を捕まえるのが目的なので、無彩色は除く。
+  const achromatic = new Set(["#ffffff", "#fff", "#000000", "#000"]);
   const canonicalColors = new Set(
-    Array.from(colors).flatMap((color) => [color, canonicalCssValue("color", color)]),
+    Array.from(colors)
+      .filter((color) => !achromatic.has(color.toLowerCase()))
+      .flatMap((color) => [color, canonicalCssValue("color", color)]),
   );
   for (const rule of cssRules(source)) {
     const usesDesignColor = Array.from(rule.declarations.values()).some((value) =>
@@ -346,27 +352,28 @@ const allowedProtectedSelectors = new Set([
 
 const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   ".guided-planner-theme": {
-    color: "#423a32",
-    background: "#f7f2e9",
+    color: "#26211e",
+    background: "#faf9f8",
     "font-family":
       '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
     "font-synthesis": "none",
     "text-rendering": "optimizeLegibility",
-    "--app-background": "#f7f2e9",
-    "--surface": "#fffdf8",
-    "--text": "#423a32",
-    "--muted": "#6b5e52",
-    "--primary": "#d9a48f",
-    "--primary-hover": "#cf947d",
-    "--primary-active": "#cc927b",
-    "--primary-ink": "#3b302b",
-    "--primary-strong": "#8b4e3b",
-    "--selection": "#f4e6df",
-    "--notice": "#f8ece7",
-    "--border": "#d8c9bc",
-    "--focus": "#8b4e3b",
-    "--pantry": "#416b5a",
-    "--danger": "#9f342c",
+    "--app-background": "#faf9f8",
+    "--surface": "#ffffff",
+    "--text": "#26211e",
+    "--muted": "#57504b",
+    "--primary": "#a8452a",
+    "--primary-hover": "#94381f",
+    "--primary-active": "#8a331c",
+    "--primary-ink": "#ffffff",
+    "--primary-strong": "#8f3a22",
+    "--selection": "#f9e3da",
+    "--notice": "#fdf1ec",
+    "--border": "#e7e2dd",
+    "--border-strong": "#8e8681",
+    "--focus": "#8f3a22",
+    "--pantry": "#3f6b57",
+    "--danger": "#b3261e",
     "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
   },
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible": {
@@ -641,32 +648,37 @@ const globalRuleDeclarations: Readonly<
   "*": [{ "box-sizing": "border-box" }],
   ":root": [
     {
-      color: "#1e293b",
-      background: "#f8fafc",
+      color: "#26211e",
+      background: "#faf9f8",
       "font-family":
         '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
       "font-synthesis": "none",
       "text-rendering": "optimizeLegibility",
+      "--app-background": "#faf9f8",
       "--surface": "#ffffff",
-      "--text": "#1e293b",
-      "--muted": "#475569",
-      "--primary": "#d9a48f",
-      "--primary-hover": "#cf947d",
-      "--primary-active": "#cc927b",
-      "--primary-ink": "#3b302b",
-      "--primary-strong": "#8b4e3b",
-      "--pantry": "#0f766e",
-      "--danger": "#dc2626",
-      "--border": "#e2e8f0",
+      "--text": "#26211e",
+      "--muted": "#57504b",
+      "--primary": "#a8452a",
+      "--primary-hover": "#94381f",
+      "--primary-active": "#8a331c",
+      "--primary-ink": "#ffffff",
+      "--primary-strong": "#8f3a22",
+      "--selection": "#f9e3da",
+      "--notice": "#fdf1ec",
+      "--border": "#e7e2dd",
+      "--border-strong": "#8e8681",
+      "--focus": "#8f3a22",
+      "--pantry": "#3f6b57",
+      "--danger": "#b3261e",
     },
-    { "--section-tint": "#f8fafc" },
+    { "--section-tint": "#faf9f8" },
   ],
   "html, body, #root": [{ "min-width": "320px", "min-height": "100%", margin: "0" }],
   body: [{ "min-height": "100vh", "font-size": "16px", "line-height": "1.6" }],
   "button, a, input, select, textarea": [{ font: "inherit" }],
   "button, .button-link": [{ "min-width": "44px", "min-height": "44px" }],
   "button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible":
-    [{ outline: "3px solid #3f6f88", "outline-offset": "2px" }],
+    [{ outline: "3px solid var(--focus)", "outline-offset": "2px" }],
   ".primary-button, .secondary-button, .text-button": [
     {
       display: "inline-flex",
@@ -720,7 +732,7 @@ const globalRuleDeclarations: Readonly<
     {
       width: "100%",
       "min-height": "48px",
-      border: "1px solid var(--border)",
+      border: "1px solid var(--border-strong)",
       "border-radius": "10px",
       background: "#fff",
       padding: "10px 12px",
@@ -1056,7 +1068,7 @@ describe("color token contrast", () => {
   const white = "#ffffff";
 
   it("keeps body text readable on the page background", () => {
-    expect(contrast(token("text"), "#f8fafc")).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(token("text"), "#faf9f8")).toBeGreaterThanOrEqual(4.5);
   });
 
   it("keeps muted text readable on card surfaces", () => {
@@ -1080,11 +1092,11 @@ describe("color token contrast", () => {
   });
 
   const tints = {
-    planner: "#fff1e6",
-    pantry: "#e6f4f1",
-    history: "#efebfb",
-    shopping: "#fdf0f3",
-    settings: "#f1f5f9",
+    planner: "#fdf4ef",
+    pantry: "#f0f5f1",
+    history: "#f3f1f7",
+    shopping: "#fdf2f2",
+    settings: "#f6f6f4",
   } as const;
 
   for (const [section, tint] of Object.entries(tints)) {
@@ -1105,21 +1117,22 @@ describe("color token contrast", () => {
 
 describe("guided planner theme", () => {
   const expectedTokens = {
-    "app-background": "#f7f2e9",
-    surface: "#fffdf8",
-    text: "#423a32",
-    muted: "#6b5e52",
-    primary: "#d9a48f",
-    "primary-hover": "#cf947d",
-    "primary-active": "#cc927b",
-    "primary-ink": "#3b302b",
-    "primary-strong": "#8b4e3b",
-    selection: "#f4e6df",
-    notice: "#f8ece7",
-    border: "#d8c9bc",
-    focus: "#8b4e3b",
-    pantry: "#416b5a",
-    danger: "#9f342c",
+    "app-background": "#faf9f8",
+    surface: "#ffffff",
+    text: "#26211e",
+    muted: "#57504b",
+    primary: "#a8452a",
+    "primary-hover": "#94381f",
+    "primary-active": "#8a331c",
+    "primary-ink": "#ffffff",
+    "primary-strong": "#8f3a22",
+    selection: "#f9e3da",
+    notice: "#fdf1ec",
+    border: "#e7e2dd",
+    "border-strong": "#8e8681",
+    focus: "#8f3a22",
+    pantry: "#3f6b57",
+    danger: "#b3261e",
   } as const;
 
   it("declares the exact scoped palette", () => {
@@ -1140,21 +1153,21 @@ describe("guided planner theme", () => {
     expect(
       contrast(scopedToken("primary-ink"), scopedToken("primary-active")),
     ).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(scopedToken("text"), scopedToken("selection"))).toBeCloseTo(9.15, 1);
-    expect(contrast(scopedToken("muted"), scopedToken("selection"))).toBeCloseTo(5.15, 1);
-    expect(contrast(scopedToken("text"), scopedToken("notice"))).toBeCloseTo(9.64, 1);
-    expect(contrast(scopedToken("muted"), scopedToken("notice"))).toBeCloseTo(5.42, 1);
-    expect(contrast(scopedToken("danger"), scopedToken("notice"))).toBeCloseTo(6.04, 1);
-    expect(contrast(scopedToken("pantry"), scopedToken("surface"))).toBeCloseTo(5.94, 1);
+    expect(contrast(scopedToken("text"), scopedToken("selection"))).toBeCloseTo(12.91, 1);
+    expect(contrast(scopedToken("muted"), scopedToken("selection"))).toBeCloseTo(6.42, 1);
+    expect(contrast(scopedToken("text"), scopedToken("notice"))).toBeCloseTo(14.39, 1);
+    expect(contrast(scopedToken("muted"), scopedToken("notice"))).toBeCloseTo(7.15, 1);
+    expect(contrast(scopedToken("danger"), scopedToken("notice"))).toBeCloseTo(5.9, 1);
+    expect(contrast(scopedToken("pantry"), scopedToken("surface"))).toBeCloseTo(6.08, 1);
   });
 
   it("keeps the new palette scoped and fixes visual contracts", () => {
     // 全タブの主操作を献立タブと同じソフトクレイへ揃える
-    expect(token("primary").toLowerCase()).toBe("#d9a48f");
-    expect(token("primary-ink").toLowerCase()).toBe("#3b302b");
+    expect(token("primary").toLowerCase()).toBe("#a8452a");
+    expect(token("primary-ink").toLowerCase()).toBe("#ffffff");
     expect(css).toMatch(/body\s*\{[^}]*font-size:\s*16px/s);
     expect(css).toMatch(/\.app-section\s*\{[^}]*var\(--section-tint\)/s);
-    expect(css).toMatch(/\.guided-planner-theme[^}]*--focus:\s*#8b4e3b/s);
+    expect(css).toMatch(/\.guided-planner-theme[^}]*--focus:\s*#8f3a22/s);
     expect(css).toMatch(/\.choice-card\[aria-pressed="true"\][^}]*border-color:/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*border-radius:\s*(18|19|20)px/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*box-shadow:/s);
@@ -1178,7 +1191,7 @@ describe("guided planner theme", () => {
     expectEffectiveDeclarations(".field input", {
       width: "100%",
       "min-height": "48px",
-      border: "1px solid var(--border)",
+      border: "1px solid var(--border-strong)",
       background: "#fff",
       padding: "10px 12px",
     });
@@ -1218,24 +1231,29 @@ describe("guided planner theme", () => {
 
   it("preserves every existing global appearance selector", () => {
     expectEffectiveDeclarations(":root", {
-      color: "#1e293b",
-      background: "#f8fafc",
+      color: "#26211e",
+      background: "#faf9f8",
       "font-family":
         '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
       "font-synthesis": "none",
       "text-rendering": "optimizeLegibility",
+      "--app-background": "#faf9f8",
       "--surface": "#ffffff",
-      "--text": "#1e293b",
-      "--muted": "#475569",
-      "--primary": "#d9a48f",
-      "--primary-hover": "#cf947d",
-      "--primary-active": "#cc927b",
-      "--primary-ink": "#3b302b",
-      "--primary-strong": "#8b4e3b",
-      "--pantry": "#0f766e",
-      "--danger": "#dc2626",
-      "--border": "#e2e8f0",
-      "--section-tint": "#f8fafc",
+      "--text": "#26211e",
+      "--muted": "#57504b",
+      "--primary": "#a8452a",
+      "--primary-hover": "#94381f",
+      "--primary-active": "#8a331c",
+      "--primary-ink": "#ffffff",
+      "--primary-strong": "#8f3a22",
+      "--selection": "#f9e3da",
+      "--notice": "#fdf1ec",
+      "--border": "#e7e2dd",
+      "--border-strong": "#8e8681",
+      "--focus": "#8f3a22",
+      "--pantry": "#3f6b57",
+      "--danger": "#b3261e",
+      "--section-tint": "#faf9f8",
     });
     expectEffectiveDeclarations("body", {
       "min-width": "320px",
@@ -1302,7 +1320,7 @@ describe("guided planner theme", () => {
       expectEffectiveDeclarations(selector, {
         width: "100%",
         "min-height": selector === ".field textarea" ? "96px" : "48px",
-        border: "1px solid var(--border)",
+        border: "1px solid var(--border-strong)",
         "border-radius": "10px",
         background: "#fff",
         padding: "10px 12px",
@@ -1321,10 +1339,10 @@ describe("guided planner theme", () => {
   it("detects adversarial global leaks without splitting functional selector lists", () => {
     const guidedPalette = new Set<string>(Object.values(expectedTokens));
     const fixture = `
-      .guided-planner-theme .probe, body { color: #f7f2e9; }
-      body { background: #f7f2e9; }
-      .shell .primary-button { background: #cc927b; }
-      .field input { color: #3b302b !important; }
+      .guided-planner-theme .probe, body { color: #faf9f8; }
+      body { background: #faf9f8; }
+      .shell .primary-button { background: #8a331c; }
+      .field input { color: #8f3a22 !important; }
     `;
     // :root の primary 系共有は許可。背景・本文色の body 流出は検出する。
     expect(findUnscopedDesignColorLeaks(fixture, guidedPalette)).toEqual([
@@ -1340,8 +1358,8 @@ describe("guided planner theme", () => {
       .guided-planner-theme :is(.primary-button, .choice-card) { color: #fff; }
       .guided-planner-theme :not(.wizard-title) { color: #fff; }
       .guided-planner-theme :where(.inline-notice) { color: #fff; }
-      .guided-planner-theme + .outside { color: #f7f2e9; }
-      .guided-planner-theme .choice-card, body { color: #f7f2e9; }
+      .guided-planner-theme + .outside { color: #faf9f8; }
+      .guided-planner-theme .choice-card, body { color: #faf9f8; }
       #app .guided-planner-theme .primary-button { color: #fff !important; }
       .guided-planner-theme .primary-button { color: #fff !important; }
     `;

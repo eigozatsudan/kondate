@@ -137,7 +137,7 @@ export function RegenerationSheet({
       <p>別の献立が完成した場合に1回使用・現在残り{remaining}回</p>
       <div className="flex flex-wrap gap-2">
         <button
-          className="min-h-11 rounded-xl bg-slate-900 px-4 font-semibold text-white"
+          className="min-h-11 rounded-xl bg-terracotta-700 px-4 font-semibold text-white"
           type="submit"
           disabled={form.formState.isSubmitting}
         >
@@ -145,7 +145,7 @@ export function RegenerationSheet({
         </button>
         <button
           type="button"
-          className="min-h-11 rounded-xl border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 rounded-xl border-2 border-terracotta-700 px-4 font-semibold"
           disabled={form.formState.isSubmitting}
           onClick={onCancel}
         >
