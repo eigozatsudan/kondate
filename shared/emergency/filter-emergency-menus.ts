@@ -158,8 +158,8 @@ export function filterEmergencyMenus(input: {
   ) {
     return {
       menus: [],
-      emptyReason:
-        mainIngredients.length > 0 ? "main_ingredient_no_match" : "current_safety_unavailable",
+      // 安全条件未充足が原因。メイン食材の有無で理由をすり替えない。
+      emptyReason: "current_safety_unavailable",
     };
   }
 
@@ -214,8 +214,11 @@ export function filterEmergencyMenus(input: {
     emptyReason:
       menus.length > 0
         ? null
-        : mainIngredients.length > 0
-          ? "main_ingredient_no_match"
-          : "no_matching_fixture",
+        : // 安全条件で候補が0のときはメイン食材不足と誤表示しない
+          safetyCompatibleMenus.length === 0
+          ? "no_matching_fixture"
+          : mainIngredients.length > 0
+            ? "main_ingredient_no_match"
+            : "no_matching_fixture",
   };
 }

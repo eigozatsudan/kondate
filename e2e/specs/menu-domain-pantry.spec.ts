@@ -56,10 +56,16 @@ async function updatePlannerAndAwaitAutosave(
  * firstIncompletePlannerStepの判定でreview stepへ直接resumeする。そこから
  * 「戻る」を4回押してmeal stepまで戻り、食事だけを変更してから再びreviewへ進む。
  */
+/**
+ * 食事帯を切り替えて review へ戻す。
+ * 緊急献立はメイン食材 AND 一致で絞るため、対象 fixture に合う mainIngredient を載せる
+ * （朝食=鮭 / 昼食=ひき肉 / 夕食=鶏肉。空にすると ingredient 空ゲートで次へ進めない）。
+ */
 async function savePlannerMeal(
   page: Page,
   mealName: "朝食" | "昼食" | "夕食",
   mealType: "breakfast" | "lunch" | "dinner",
+  mainIngredient: "鮭" | "ひき肉" | "鶏肉",
 ): Promise<void> {
   await page.goto("/planner");
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
@@ -74,8 +80,7 @@ async function savePlannerMeal(
   );
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
-  // 緊急献立はメイン食材 AND 一致で絞る。前の食事の「鶏肉」などが残ると
-  // 朝食の鮭 fixture などが main_ingredient_no_match で消えるため、ここで外す。
+  // 既存選択を外してから対象食材だけにする
   const selectedIngredients = page.getByRole("button", { name: /を外す$/u });
   while ((await selectedIngredients.count()) > 0) {
     const remainingBefore = await selectedIngredients.count();
@@ -88,6 +93,19 @@ async function savePlannerMeal(
       },
     );
   }
+  await updatePlannerAndAwaitAutosave(
+    page,
+    () => page.getByRole("button", { name: mainIngredient, exact: true }).click(),
+    (body) => {
+      const mains = body.p_main_ingredients;
+      return (
+        Array.isArray(mains) &&
+        mains.length === 1 &&
+        typeof mains[0] === "string" &&
+        mains[0] === mainIngredient
+      );
+    },
+  );
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "3. ジャンル" })).toBeVisible();
   await clickWizardNext(page);
@@ -495,7 +513,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
     ],
   });
 
-  await savePlannerMeal(page, "朝食", "breakfast");
+  await savePlannerMeal(page, "朝食", "breakfast", "鮭");
   await expectCompleteCandidate(page, {
     heading: "鮭おにぎり・やわらか野菜",
     timeline: [
@@ -533,7 +551,7 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
     safetyActions: ["鮭の小骨を完全に除く", "鮭を細かく刻む", "にんじんを小さく切る"],
   });
 
-  await savePlannerMeal(page, "昼食", "lunch");
+  await savePlannerMeal(page, "昼食", "lunch", "ひき肉");
   await expectCompleteCandidate(page, {
     heading: "鶏そぼろ丼・やわらか温野菜",
     timeline: [
