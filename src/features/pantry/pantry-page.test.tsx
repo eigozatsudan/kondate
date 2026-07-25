@@ -67,10 +67,20 @@ it("登録済み一覧と件数を先に表示し、追加操作を始めるま�
 
   expect(screen.getByRole("heading", { name: "登録済みの食材（1件）" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "食材を追加" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "食材を追加" }));
-  expect(screen.getByRole("heading", { name: "食材を追加" })).toBeVisible();
+  const addButton = screen.getByRole("button", { name: "食材を追加" });
+  expect(addButton).toHaveAttribute("aria-expanded", "false");
+  expect(addButton).toHaveAttribute("aria-controls", "pantry-editor");
+  await user.click(addButton);
+  const formHeading = screen.getByRole("heading", { name: "食材を追加" });
+  expect(formHeading).toBeVisible();
+  expect(formHeading).toHaveFocus();
+  expect(addButton).toHaveAttribute("aria-expanded", "true");
+  expect(formHeading.compareDocumentPosition(screen.getByRole("heading", { name: "牛乳" }))).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
   await user.click(screen.getByRole("button", { name: "キャンセル" }));
   expect(screen.queryByRole("heading", { name: "食材を追加" })).not.toBeInTheDocument();
+  expect(addButton).toHaveFocus();
 });
 
 it("新規登録成功後は一覧へ戻り、失敗時は入力とフォームを保持する", async () => {

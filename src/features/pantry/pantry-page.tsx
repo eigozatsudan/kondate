@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PantryItem, PantryItemInput } from "@shared/contracts/pantry";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -164,10 +164,29 @@ export function PantryPageContent({
 }: PantryPageContentProps) {
   const [editing, setEditing] = useState<PantryItem | null>(null);
   const [creating, setCreating] = useState(false);
+  const addTriggerRef = useRef<HTMLButtonElement>(null);
+  const editorTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const shouldReturnFocusRef = useRef(false);
   const latestEditingItem =
     editing !== null && conflictedItemId === editing.id
       ? items.find((item) => item.id === editing.id)
       : undefined;
+
+  useEffect(() => {
+    if (!creating && editing === null) {
+      if (shouldReturnFocusRef.current) {
+        shouldReturnFocusRef.current = false;
+        editorTriggerRef.current?.focus();
+      }
+      return;
+    }
+    editorContainerRef.current?.querySelector<HTMLHeadingElement>("h2")?.focus();
+  }, [creating, editing]);
+
+  const closeEditorAndReturnFocus = () => {
+    shouldReturnFocusRef.current = true;
+  };
 
   return (
     <main className="page-frame stack">
@@ -180,11 +199,15 @@ export function PantryPageContent({
         <div className="pantry-section-heading">
           <h2 id="pantry-list-heading">登録済みの食材（{String(items.length)}件）</h2>
           <button
+            ref={addTriggerRef}
             className="primary-button"
             type="button"
             disabled={saving || creating}
+            aria-expanded={creating}
+            aria-controls="pantry-editor"
             onClick={() => {
               onEditingSessionChange?.();
+              editorTriggerRef.current = addTriggerRef.current;
               setEditing(null);
               setCreating(true);
             }}
@@ -192,6 +215,43 @@ export function PantryPageContent({
             食材を追加
           </button>
         </div>
+        {(creating || editing !== null) && (
+          <div id="pantry-editor" ref={editorContainerRef}>
+            {creating && (
+              <PantryForm
+                saving={saving}
+                onSubmit={async (input) => {
+                  await onCreate(input);
+                  closeEditorAndReturnFocus();
+                  setCreating(false);
+                }}
+                onCancel={() => {
+                  closeEditorAndReturnFocus();
+                  setCreating(false);
+                }}
+              />
+            )}
+            {editing !== null && (
+              <PantryForm
+                key={`${editing.id}:${editing.updatedAt}`}
+                saving={saving}
+                title={`${editing.name}を編集`}
+                submitLabel="変更を保存"
+                initialValue={inputFromItem(editing)}
+                onSubmit={async (input) => {
+                  await onUpdate(editing.id, editing.updatedAt, input);
+                  closeEditorAndReturnFocus();
+                  setEditing(null);
+                }}
+                onCancel={() => {
+                  onEditingSessionChange?.();
+                  closeEditorAndReturnFocus();
+                  setEditing(null);
+                }}
+              />
+            )}
+          </div>
+        )}
         {loading && <p>読み込み中…</p>}
         {!loading && items.length === 0 && <p>登録した食材はありません。</p>}
         <ul className="stack pantry-list" aria-label="冷蔵庫の食材">
@@ -215,8 +275,9 @@ export function PantryPageContent({
                   className="secondary-button"
                   type="button"
                   aria-label={`${item.name}を編集`}
-                  onClick={() => {
+                  onClick={(event) => {
                     onEditingSessionChange?.();
+                    editorTriggerRef.current = event.currentTarget;
                     setCreating(false);
                     setEditing(item);
                   }}
@@ -240,35 +301,6 @@ export function PantryPageContent({
           ))}
         </ul>
       </section>
-      {creating && (
-        <PantryForm
-          saving={saving}
-          onSubmit={async (input) => {
-            await onCreate(input);
-            setCreating(false);
-          }}
-          onCancel={() => {
-            setCreating(false);
-          }}
-        />
-      )}
-      {editing !== null && (
-        <PantryForm
-          key={`${editing.id}:${editing.updatedAt}`}
-          saving={saving}
-          title={`${editing.name}を編集`}
-          submitLabel="変更を保存"
-          initialValue={inputFromItem(editing)}
-          onSubmit={async (input) => {
-            await onUpdate(editing.id, editing.updatedAt, input);
-            setEditing(null);
-          }}
-          onCancel={() => {
-            onEditingSessionChange?.();
-            setEditing(null);
-          }}
-        />
-      )}
       {error !== null && (
         <p role="alert" aria-live="assertive" className="error-message">
           {error}
@@ -299,8 +331,9 @@ export function PantryPageContent({
           <button
             className="secondary-button"
             type="button"
-            onClick={() => {
+            onClick={(event) => {
               onEditingSessionChange?.();
+              editorTriggerRef.current = event.currentTarget;
               setEditing(latestEditingItem);
             }}
           >
