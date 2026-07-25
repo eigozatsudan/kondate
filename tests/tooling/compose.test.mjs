@@ -64,6 +64,8 @@ test("root compose does not redeclare include-owned supabase services", async ()
   assert.match(override, /^ {2}supavisor:\n {4}ports: !override/mu);
   assert.match(override, /127\.0\.0\.1:8000:8000/);
   assert.match(override, /127\.0\.0\.1:5432:5432/);
+  // Supavisor image が起動時に要求する上限値を Docker 側でも保証する
+  assert.match(override, /^ {4}ulimits:\n {6}nofile:\n {8}soft: 100000\n {8}hard: 100000$/mu);
   // CI コールドスタート向け: pooler health の start_period を十分長くする
   assert.match(override, /start_period:\s*180s/u);
 });

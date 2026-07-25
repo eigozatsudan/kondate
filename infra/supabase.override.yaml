@@ -10,20 +10,17 @@ services:
     ports: !override
       - "127.0.0.1:5432:5432"
       - "127.0.0.1:6543:6543"
+    # Supavisor image が起動時に 100000 へ引き上げるため、Docker 側の上限も一致させる。
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
     # 初回起動は migrate + tenant eval + server の直列で、CI コールドスタートでは
     #  upstream 既定 start_period(30s) を超えやすい。期間中の失敗はカウントされないため
     # 猶予を延ばし、通常開発の待ち時間増は start_period 内の成功で打ち切られる。
     healthcheck:
       test:
-        [
-          "CMD",
-          "curl",
-          "-sSfL",
-          "--head",
-          "-o",
-          "/dev/null",
-          "http://127.0.0.1:4000/api/health",
-        ]
+        ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"]
       interval: 5s
       timeout: 5s
       retries: 36
