@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
+import {
+  excludeCanonicalMainIngredient,
+  includesCanonicalMainIngredient,
+  normalizeMainIngredient,
+} from "../model/main-ingredient-options";
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PlannerStepProps } from "./planner-wizard-props";
 
@@ -11,15 +16,6 @@ export type IngredientStepProps = PlannerStepProps<readonly string[]> & {
   pantryItems: readonly PantryItem[];
   pantryItemsStatus: PantryItemsStatus;
 };
-
-function normalizeMainIngredient(value: string): string {
-  return value.normalize("NFKC").trim();
-}
-
-function includesCanonicalMainIngredient(values: readonly string[], candidate: string): boolean {
-  const normalizedCandidate = normalizeMainIngredient(candidate);
-  return values.some((value) => normalizeMainIngredient(value) === normalizedCandidate);
-}
 
 /**
  * 主食材を1件ずつ追加するstep。既存 PlannerForm の8件/80文字制限をそのまま維持し、
@@ -107,7 +103,8 @@ export function IngredientStep({
             key={item}
             disabled={disabled}
             onClick={() => {
-              onChange(value.filter((current) => current !== item));
+              // 追加経路と同じ canonical 規則で解除する（厳密等価の経路分岐を残さない）
+              onChange(excludeCanonicalMainIngredient(value, item));
             }}
           >
             {item}を外す
