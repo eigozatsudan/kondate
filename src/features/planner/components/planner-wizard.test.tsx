@@ -806,6 +806,36 @@ describe("PlannerWizard review step", () => {
     ).toBeVisible();
   });
 
+  it("household 確認の安全条件は対象に選んだ家族だけを出す", () => {
+    const otherMember: PlannerSafetyMember = {
+      id: "70000000-0000-4000-8000-000000000099",
+      displayName: "大人",
+      ageBandLabel: "大人",
+      allergyLabel: "卵アレルギー",
+      safetyLabels: [],
+      blockedReason: null,
+    };
+    render(
+      <Harness
+        initialStep="review"
+        eligibleMembers={[eligibleMember, otherMember]}
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          // 子どもだけが対象。大人は eligible でも要約に出さない。
+          targetMemberIds: [eligibleMember.id],
+        }}
+      />,
+    );
+    const summary = screen.getByRole("region", { name: "現在の家族・安全条件" });
+    expect(within(summary).getByText("子ども")).toBeVisible();
+    expect(within(summary).queryByText("大人")).not.toBeInTheDocument();
+    expect(within(summary).queryByText("卵アレルギー")).not.toBeInTheDocument();
+  });
+
   it("保存失敗時は現在stepを維持する", () => {
     render(<Harness initialStep="review" error="献立条件を保存できませんでした。" />);
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();

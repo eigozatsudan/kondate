@@ -153,14 +153,18 @@ export function ReviewStep({
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };
+  // 確認では「今回の献立の対象」だけを出す。eligible 全員だと未選択の家族まで
+  // 安全条件が並び、誰向けか誤読されやすい。
+  const targetSafetyMembers =
+    value.targetMode === "household"
+      ? safetyMembers.filter((member) => value.targetMemberIds.includes(member.id))
+      : [];
   return (
     <section className="card stack" aria-labelledby="review-step-title">
       <h2 id="review-step-title" tabIndex={-1} ref={headingRef}>
         5. 確認
       </h2>
-      {value.targetMode === "household" && safetyMembers.length > 0 && (
-        <CurrentSafetySummary members={safetyMembers} />
-      )}
+      {targetSafetyMembers.length > 0 && <CurrentSafetySummary members={targetSafetyMembers} />}
       <dl className="wizard-review-list">
         {/*
           項目名 | 回答。変更ボタンは dd 内に置き definition-list を満たす。
