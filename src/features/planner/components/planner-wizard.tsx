@@ -329,10 +329,14 @@ export function PlannerWizard({
           onDraftChange(next);
         }}
         onBack={() => {
+          // 1ページずつ戻る（audience ← cuisine ← … は各 step の onBack が担う）
           goToStep("audience");
         }}
         onNext={() => {
           // review step自体には「次へ」はなく、明示的な献立生成buttonがonSubmitを呼ぶ。
+        }}
+        onEditStep={(target) => {
+          goToStep(target);
         }}
         disabled={isSaving}
         pantryItems={pantryItems}

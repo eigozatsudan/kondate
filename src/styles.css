@@ -289,6 +289,16 @@
   overflow-wrap: anywhere;
 }
 
+/* 確認画面の回答＋直接編集導線。.wizard- 断片を避け許可リスト外で定義する。 */
+.review-answer-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .guided-planner-theme .wizard-reset-row {
   display: flex;
   min-width: 0;

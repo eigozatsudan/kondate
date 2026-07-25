@@ -596,6 +596,65 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByLabelText("献立全体の調理時間")).toHaveValue("30");
   });
 
+  it("戻るで1つ前の質問へ、変更ボタンで該当 step へ直接遷移できる", async () => {
+    const user = userEvent.setup();
+    const reviewDraftFilled = {
+      ...emptyDraft,
+      mealType: "dinner" as const,
+      mainIngredients: ["鶏肉"],
+      cuisineGenre: "japanese" as const,
+      targetMode: "household" as const,
+      targetMemberIds: [eligibleMember.id],
+    };
+    render(<Harness initialStep="review" initialDraft={reviewDraftFilled} />);
+
+    // 1ページずつ戻る
+    await user.click(screen.getByRole("button", { name: "戻る" }));
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+
+    // 再度 review へ進んで直接編集
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "メイン食材を変更" }));
+    expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
+
+    // 食材のまま戻って確認へは resume ではないのでユーザーが進める必要があるが、
+    // 直接ジャンプ後も回答が残っていることだけ固定する。
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "和食" })).toBeChecked();
+  });
+
+  it("確認画面から食事・ジャンル・対象へも直接遷移できる", async () => {
+    const user = userEvent.setup();
+    const draft = {
+      ...emptyDraft,
+      mealType: "dinner" as const,
+      mainIngredients: ["鶏肉"],
+      cuisineGenre: "japanese" as const,
+      targetMode: "household" as const,
+      targetMemberIds: [eligibleMember.id],
+    };
+
+    const { unmount } = render(<Harness initialStep="review" initialDraft={draft} />);
+    await user.click(screen.getByRole("button", { name: "食事を変更" }));
+    expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "夕食" })).toBeChecked();
+    unmount();
+
+    render(<Harness initialStep="review" initialDraft={draft} />);
+    await user.click(screen.getByRole("button", { name: "ジャンルを変更" }));
+    expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "和食" })).toBeChecked();
+    unmount();
+
+    render(<Harness initialStep="review" initialDraft={draft} />);
+    await user.click(screen.getByRole("button", { name: "対象を変更" }));
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+  });
+
   it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", async () => {
     const user = userEvent.setup();
     render(
@@ -1059,6 +1118,27 @@ describe("IngredientStep quick select", () => {
     await user.click(screen.getByRole("button", { name: "次へ" }));
 
     expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
+  });
+
+  it("shows a dialog when next is pressed without any main ingredient", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialStep="ingredients" />);
+
+    const nextButton = screen.getByRole("button", { name: "次へ" });
+    expect(nextButton).toBeEnabled();
+    await user.click(nextButton);
+
+    const dialog = screen.getByRole("alertdialog", { name: "メイン食材を選んでください" });
+    expect(dialog).toBeVisible();
+    expect(dialog).toHaveTextContent(
+      "献立の中心になる食材を1つ以上選んでから「次へ」を押してください。",
+    );
+    // ダイアログ中は step を進めない
+    expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "3. ジャンル" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("does not change pantrySelections when selecting a quick candidate", async () => {

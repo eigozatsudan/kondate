@@ -7,6 +7,7 @@ import { CurrentSafetySummary } from "../current-safety-summary";
 import { cuisineGenreLabel, mealLabel } from "../model/planner-labels";
 import { PantrySelector, type PantryItemsStatus } from "../pantry-selector";
 import type { PlannerSafetyMember } from "../planner-safety-member";
+import type { PlannerStep } from "../model/planner-wizard";
 import type { PlannerStepProps } from "./planner-wizard-props";
 
 /** Plan 2 由来の医療・治療食依頼拒否コピー（旧 PlannerForm と同一文言） */
@@ -82,6 +83,12 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   usageRemaining?: number | null;
   /** short-window 残 0 のときの再開時刻 ISO。null なら短時間枠メッセージを出さない */
   shortWindowRetryAt?: string | null;
+  /**
+   * 確認画面から質問 step へ直接戻る。戻るボタン（1ページずつ）とは別に、
+   * 食事・食材・ジャンル・対象をその場で直せるようにする。
+   * review 自身への遷移は呼ばない。
+   */
+  onEditStep?: (step: Exclude<PlannerStep, "review">) => void;
 };
 
 /** privacy 未確認のまま生成を押したときのダイアログ本文 */
@@ -113,6 +120,7 @@ export function ReviewStep({
   onOpenEmergencyMenus,
   usageRemaining = null,
   shortWindowRetryAt = null,
+  onEditStep,
 }: ReviewStepProps) {
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
   // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
@@ -156,29 +164,92 @@ export function ReviewStep({
       <dl className="wizard-review-list">
         <div className="wizard-review-item">
           <dt>食事</dt>
-          <dd>{mealLabel(value.mealType)}</dd>
+          <dd className="review-answer-row">
+            <span>{mealLabel(value.mealType)}</span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11"
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  onEditStep("meal");
+                }}
+              >
+                食事を変更
+              </button>
+            )}
+          </dd>
         </div>
         <div className="wizard-review-item">
           <dt>メイン食材</dt>
-          <dd>{value.mainIngredients.join("・")}</dd>
+          <dd className="review-answer-row">
+            <span>
+              {value.mainIngredients.length === 0 ? "未選択" : value.mainIngredients.join("・")}
+            </span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11"
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  onEditStep("ingredients");
+                }}
+              >
+                メイン食材を変更
+              </button>
+            )}
+          </dd>
         </div>
         <div className="wizard-review-item">
           <dt>ジャンル</dt>
-          <dd>{cuisineGenreLabel(value.cuisineGenre)}</dd>
+          <dd className="review-answer-row">
+            <span>{cuisineGenreLabel(value.cuisineGenre)}</span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11"
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  onEditStep("cuisine");
+                }}
+              >
+                ジャンルを変更
+              </button>
+            )}
+          </dd>
         </div>
         <div className="wizard-review-item">
           <dt>対象</dt>
-          <dd>
-            {value.targetMode === "idea"
-              ? value.servings === null
-                ? "アイデア（人数未設定）"
-                : `アイデア・${String(value.servings)}人分`
-              : value.targetMode === "household"
-                ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
-                : "未選択"}
+          <dd className="review-answer-row">
+            <span>
+              {value.targetMode === "idea"
+                ? value.servings === null
+                  ? "アイデア（人数未設定）"
+                  : `アイデア・${String(value.servings)}人分`
+                : value.targetMode === "household"
+                  ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
+                  : "未選択"}
+            </span>
+            {onEditStep !== undefined && (
+              <button
+                className="text-button min-h-11"
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  onEditStep("audience");
+                }}
+              >
+                対象を変更
+              </button>
+            )}
           </dd>
         </div>
       </dl>
+      {onEditStep !== undefined && (
+        <p className="type-small">
+          「戻る」で1つ前の質問へ、「〇〇を変更」でその質問へ直接戻れます。
+        </p>
+      )}
       <details className="wizard-details">
         <summary className="wizard-details-summary">追加条件</summary>
         {/* summary 直下に stack を置き、label/input が横に流れないよう縦積みにする */}
@@ -334,9 +405,7 @@ export function ReviewStep({
         </p>
       )}
       {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・短時間枠の再開時刻を平易表示 */}
-      {usageRemaining !== null && (
-        <p role="status">本日あと{usageRemaining}回作成できます</p>
-      )}
+      {usageRemaining !== null && <p role="status">本日あと{usageRemaining}回作成できます</p>}
       {shortWindowRetryAt !== null && (
         <p role="status">
           10分間の通信試行上限に達しました。
