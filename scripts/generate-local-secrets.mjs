@@ -127,6 +127,10 @@ values.set("VITE_MAGIC_LINK_RESEND_SECONDS", "60");
 values.set("VITE_AUTH_CONTINUATION_TTL_MS", "300000");
 values.set("VITE_AUTH_PROVIDER_MODE", "oauth_mock");
 values.set("VITE_OAUTH_MOCK_ORIGIN", "http://127.0.0.1:8788");
+// 既定はローカル mock。実 OpenRouter は .env を手で上書きする（README 参照）。
+// secrets 再生成後は mock に戻るので、実キーは再設定が必要。
+values.set("OPENROUTER_API_KEY", "local-mock-key");
+values.set("OPENROUTER_MODELS", "mock/kondate-primary:free,mock/kondate-repair:free");
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787/api/v1");
 
 // 時間メンテ用ローカル LOGIN。URL は Compose 内部の db:5432 のみ

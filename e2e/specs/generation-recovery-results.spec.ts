@@ -66,14 +66,14 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   if (servings >= 1 && servings <= 6) {
     await page.getByRole("button", { name: `${String(servings)}人` }).click();
   } else {
-    await page.getByLabel("7人以上（20人まで）").fill(String(servings));
+    await page.getByLabel("7人以上（20人まで）").selectOption(String(servings));
   }
   expect((await servingsSaveResponse).ok()).toBe(true);
   await clickWizardNext(page);
 
-  // 5. 確認（review）。privacy未確認のため生成buttonはdisabledで説明linkが出る。
+  // 5. 確認（review）。privacy 未確認でも生成は有効で、説明は secondary ボタンで出す。
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
   await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/privacy");
   await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
@@ -102,7 +102,7 @@ async function completeMinimumPlanner(page: Page) {
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByLabel("呼び名").fill("家族1");
+  await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
@@ -498,15 +498,14 @@ for (const servings of [1, 20] as const) {
   });
 }
 
-test("shows a field-local range error and focuses the first invalid servings field", async ({
+test("offers only in-range servings so an out-of-range draft cannot be composed", async ({
   authenticatedPage: page,
 }) => {
   // shared/contracts/planner.tsのservingsスキーマ（1〜20）とDB CHECK制約
-  // （generation_drafts_target_mode_servings_check）は1〜20の範囲を要求するが、
-  // その範囲を外れたservingsはUI（AudienceStepのNumberInput）自体が
-  // onServingsChangeへ反映しないため、range違反のdraftそのものが成立しない
-  // （DB RPC経由の直接注入もCHECK制約でreject）。したがってfield-local errorは
-  // 「範囲外の値を選択させない」というUI側のfail-closedな振る舞いとして検証する。
+  // （generation_drafts_target_mode_servings_check）は1〜20の範囲を要求する。
+  // 7人以上の入力は number input からプルダウンへ変えたため、範囲外の値は
+  // UI上に存在しない=range違反のdraftが構成不能になった（DB RPC経由の直接注入も
+  // CHECK制約でreject）。fail-closed を「選択肢の集合」として検証する。
   await expect(page).toHaveURL((url) => url.pathname === "/welcome");
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
@@ -518,24 +517,35 @@ test("shows a field-local range error and focuses the first invalid servings fie
   await page.getByRole("radio", { name: "和食" }).check();
   await clickWizardNext(page);
   await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
-  const servingsInput = page.getByLabel("7人以上（20人まで）");
-  await servingsInput.fill("21");
-  // 21は親の下書きへ保存せず、field-local errorを表示して最初のinvalid
-  // field（人数input）へfocusする。範囲外値を送信可能なdraftにしない設計と、
-  // エラー位置を利用者に明示するアクセシビリティ要件を両立させる。
+  const servingsSelect = page.getByLabel("7人以上（20人まで）");
+  // 未選択のうちは1〜6のチップも押されておらず、次へは進めない。
   for (const count of [1, 2, 3, 4, 5, 6]) {
     await expect(page.getByRole("button", { name: `${String(count)}人` })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
   }
-  await clickWizardNext(page);
-  await expect(page.getByRole("alert")).toHaveText("人数は7人から20人の範囲で入力してください。");
-  await expect(servingsInput).toHaveAttribute("aria-invalid", "true");
-  await expect(servingsInput).toHaveAttribute("aria-describedby", "audience-servings-error");
-  await expect(servingsInput).toBeFocused();
+  await expect(page.getByRole("button", { name: "次へ" })).toBeDisabled();
+  // 21のような範囲外は選択肢として存在しない。
+  await expect(servingsSelect.locator("option")).toHaveText([
+    "選ばない",
+    "7人",
+    "8人",
+    "9人",
+    "10人",
+    "11人",
+    "12人",
+    "13人",
+    "14人",
+    "15人",
+    "16人",
+    "17人",
+    "18人",
+    "19人",
+    "20人",
+  ]);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
-  await servingsInput.fill("20");
+  await servingsSelect.selectOption("20");
   await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
 });
 

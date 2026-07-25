@@ -206,9 +206,12 @@ function reducedMotionDeclarations(source: string, selector: string): CssDeclara
   return result;
 }
 
-/** scope selector自身の全blockを順番に畳み込み、後置blockの最終tokenを返す。 */
+/**
+ * 配色トークンの正本。トークンは :root に集約したため、:root の宣言を返す。
+ * 旧名 scoped はテスト互換のため残す。
+ */
 function scopedDeclarations(source: string): CssDeclarations {
-  return declarationsForSelector(source, ".guided-planner-theme");
+  return declarationsForSelector(source, ":root");
 }
 
 const allowedGuidedSelectors = new Set([
@@ -224,8 +227,14 @@ const allowedGuidedSelectors = new Set([
 
 function findUnscopedDesignColorLeaks(source: string, colors: ReadonlySet<string>): string[] {
   const leaks: string[] = [];
+  // 純白・純黒はブランド固有の色相ではなく、--surface や素の背景として
+  // スタイルシート全域に正当に現れる（例: .field input の background: #fff）。
+  // リーク検出はブランド色の scope 外流出を捕まえるのが目的なので、無彩色は除く。
+  const achromatic = new Set(["#ffffff", "#fff", "#000000", "#000"]);
   const canonicalColors = new Set(
-    Array.from(colors).flatMap((color) => [color, canonicalCssValue("color", color)]),
+    Array.from(colors)
+      .filter((color) => !achromatic.has(color.toLowerCase()))
+      .flatMap((color) => [color, canonicalCssValue("color", color)]),
   );
   for (const rule of cssRules(source)) {
     const usesDesignColor = Array.from(rule.declarations.values()).some((value) =>
@@ -260,7 +269,8 @@ const protectedSelectorFragments = [
 
 const allowedProtectedSelectors = new Set([
   ":root",
-  ".guided-planner-theme",
+  // .guided-planner-theme 単体のトークンブロックは :root へ集約済み。
+  // 配下セレクタ（.guided-planner-theme .…）のみ残す。
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
   ".guided-planner-theme .wizard-title:focus-visible",
   ".guided-planner-theme .primary-button",
@@ -268,6 +278,14 @@ const allowedProtectedSelectors = new Set([
   ".guided-planner-theme .primary-button:active",
   ".guided-planner-theme .ingredient-entry-row",
   ".guided-planner-theme .ingredient-entry-field",
+  // 18ac407（メイン食材のクイック選択）が styles.css に追加したが許可リストへの
+  // 追記が漏れ、このガード自体が常時失敗していた3件。CSS 側は既にレビュー済み。
+  ".guided-planner-theme .ingredient-quick-select, .guided-planner-theme .ingredient-selected, .guided-planner-theme .ingredient-free-input",
+  ".guided-planner-theme .ingredient-selected-count",
+  ".guided-planner-theme .ingredient-free-input, .guided-planner-theme .ingredient-pantry",
+  // privacy 未確認時の案内ゲート。CSS 追加時に許可リストへの追記が漏れていた2件。
+  ".guided-planner-theme .privacy-notice-gate",
+  ".guided-planner-theme .privacy-notice-gate .wizard-action",
   ".guided-planner-theme .wizard-option-list",
   ".guided-planner-theme .wizard-option",
   ".guided-planner-theme .wizard-option:has(input:checked)",
@@ -284,6 +302,11 @@ const allowedProtectedSelectors = new Set([
   ".guided-planner-theme .wizard-review-item dt",
   ".guided-planner-theme .wizard-review-item dd",
   ".guided-planner-theme .wizard-reset-row",
+  // 入力のリセットを下線リンクから実体のあるボタンへ変更したときの4件。
+  ".guided-planner-theme .wizard-reset-button",
+  ".guided-planner-theme .wizard-reset-button:hover:not(:disabled)",
+  ".guided-planner-theme .wizard-reset-button:disabled",
+  ".guided-planner-theme .wizard-reset-icon",
   ".guided-planner-theme .wizard-disabled-reason",
   ".guided-planner-theme .wizard-details",
   ".guided-planner-theme .wizard-details-summary",
@@ -300,6 +323,7 @@ const allowedProtectedSelectors = new Set([
   ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value",
   ".wizard-description, .choice-card-description, .inline-notice-body",
   ".wizard-actions",
+  ".wizard-actions > :only-child",
   ".wizard-action",
   ".choice-card",
   ".choice-card:disabled",
@@ -337,30 +361,6 @@ const allowedProtectedSelectors = new Set([
 ]);
 
 const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  ".guided-planner-theme": {
-    color: "#423a32",
-    background: "#f7f2e9",
-    "font-family":
-      '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
-    "font-synthesis": "none",
-    "text-rendering": "optimizeLegibility",
-    "--app-background": "#f7f2e9",
-    "--surface": "#fffdf8",
-    "--text": "#423a32",
-    "--muted": "#6b5e52",
-    "--primary": "#d9a48f",
-    "--primary-hover": "#cf947d",
-    "--primary-active": "#cc927b",
-    "--primary-ink": "#3b302b",
-    "--primary-strong": "#8b4e3b",
-    "--selection": "#f4e6df",
-    "--notice": "#f8ece7",
-    "--border": "#d8c9bc",
-    "--focus": "#8b4e3b",
-    "--pantry": "#416b5a",
-    "--danger": "#9f342c",
-    "--question-font": '"Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif',
-  },
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible": {
     outline: "3px solid var(--focus)",
     "outline-offset": "2px",
@@ -463,8 +463,9 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   },
   ".guided-planner-theme .wizard-review-item": {
     display: "grid",
-    "grid-template-columns": "minmax(0, auto) minmax(0, 1fr)",
-    gap: "8px 16px",
+    "grid-template-columns": "5.5rem minmax(0, 1fr)",
+    "align-items": "center",
+    gap: "8px 12px",
     "border-bottom": "1px solid var(--border)",
     "padding-block": "12px",
   },
@@ -544,7 +545,9 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     margin: "0",
     color: "var(--text)",
     "font-family": "var(--question-font)",
-    "line-height": "1.4",
+    "font-size": "var(--text-display)",
+    "font-weight": "700",
+    "line-height": "var(--leading-display)",
     "overflow-wrap": "anywhere",
   },
   ".wizard-title, .wizard-description, .wizard-action, .choice-card > *, .inline-notice-title, .inline-notice-body, .review-row-label, .review-row-value":
@@ -562,7 +565,36 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     "justify-content": "space-between",
     gap: "12px",
   },
+  // 戻る先が無い「1. 食事」で次へが左端に落ちないよう、単独の操作は右へ送る。
+  ".wizard-actions > :only-child": { "margin-inline-start": "auto" },
   ".wizard-action": { "min-height": "44px" },
+  ".guided-planner-theme .wizard-reset-button": {
+    display: "inline-flex",
+    "min-height": "44px",
+    cursor: "pointer",
+    "align-items": "center",
+    gap: "8px",
+    border: "1px solid var(--border-strong)",
+    "border-radius": "999px",
+    color: "var(--muted)",
+    background: "var(--surface)",
+    padding: "8px 16px",
+    "font-weight": "700",
+  },
+  ".guided-planner-theme .wizard-reset-button:hover:not(:disabled)": {
+    "border-color": "var(--primary-strong)",
+    color: "var(--primary-strong)",
+    background: "var(--notice)",
+  },
+  ".guided-planner-theme .wizard-reset-button:disabled": {
+    opacity: "0.56",
+    cursor: "not-allowed",
+  },
+  ".guided-planner-theme .wizard-reset-icon": {
+    flex: "0 0 auto",
+    width: "18px",
+    height: "18px",
+  },
   ".choice-card": {
     display: "grid",
     width: "100%",
@@ -633,32 +665,64 @@ const globalRuleDeclarations: Readonly<
   "*": [{ "box-sizing": "border-box" }],
   ":root": [
     {
-      color: "#1e293b",
-      background: "#f8fafc",
+      color: "#26211e",
+      background: "#faf9f8",
       "font-family":
-        '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
+        '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
       "font-synthesis": "none",
       "text-rendering": "optimizeLegibility",
+      "--app-background": "#faf9f8",
       "--surface": "#ffffff",
-      "--text": "#1e293b",
-      "--muted": "#475569",
-      "--primary": "#d9a48f",
-      "--primary-hover": "#cf947d",
-      "--primary-active": "#cc927b",
-      "--primary-ink": "#3b302b",
-      "--primary-strong": "#8b4e3b",
-      "--pantry": "#0f766e",
-      "--danger": "#dc2626",
-      "--border": "#e2e8f0",
+      "--text": "#26211e",
+      "--muted": "#57504b",
+      "--primary": "#b85033",
+      "--primary-hover": "#a84328",
+      "--primary-active": "#9c3c23",
+      "--primary-ink": "#ffffff",
+      "--primary-strong": "#a13d24",
+      "--selection": "#f9e3da",
+      "--notice": "#fdf1ec",
+      "--border": "#e7e2dd",
+      "--border-strong": "#8e8681",
+      "--focus": "#a13d24",
+      "--pantry": "#3f6b57",
+      "--danger": "#b3261e",
+      "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
+      "--text-display": "clamp(1.5rem, 6vw, 2rem)",
+      "--text-h1": "1.5rem",
+      "--text-h2": "1.25rem",
+      "--text-body": "1rem",
+      "--text-small": "0.875rem",
+      "--leading-display": "1.35",
+      "--leading-h1": "1.4",
+      "--leading-h2": "1.5",
+      "--leading-body": "1.75",
+      "--radius-sm": "10px",
+      "--radius-md": "14px",
+      "--radius-lg": "20px",
+      "--radius-pill": "999px",
+      "--space-1": "4px",
+      "--space-2": "8px",
+      "--space-3": "12px",
+      "--space-4": "16px",
+      "--space-5": "24px",
+      "--space-6": "32px",
+      "--space-7": "48px",
     },
-    { "--section-tint": "#f8fafc" },
+    { "--section-tint": "#faf9f8" },
   ],
   "html, body, #root": [{ "min-width": "320px", "min-height": "100%", margin: "0" }],
-  body: [{ "min-height": "100vh", "font-size": "16px", "line-height": "1.6" }],
+  body: [
+    {
+      "min-height": "100vh",
+      "font-size": "16px",
+      "line-height": "var(--leading-body)",
+    },
+  ],
   "button, a, input, select, textarea": [{ font: "inherit" }],
   "button, .button-link": [{ "min-width": "44px", "min-height": "44px" }],
   "button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible":
-    [{ outline: "3px solid #3f6f88", "outline-offset": "2px" }],
+    [{ outline: "3px solid var(--focus)", "outline-offset": "2px" }],
   ".primary-button, .secondary-button, .text-button": [
     {
       display: "inline-flex",
@@ -712,7 +776,7 @@ const globalRuleDeclarations: Readonly<
     {
       width: "100%",
       "min-height": "48px",
-      border: "1px solid var(--border)",
+      border: "1px solid var(--border-strong)",
       "border-radius": "10px",
       background: "#fff",
       padding: "10px 12px",
@@ -1048,7 +1112,7 @@ describe("color token contrast", () => {
   const white = "#ffffff";
 
   it("keeps body text readable on the page background", () => {
-    expect(contrast(token("text"), "#f8fafc")).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(token("text"), "#faf9f8")).toBeGreaterThanOrEqual(4.5);
   });
 
   it("keeps muted text readable on card surfaces", () => {
@@ -1072,11 +1136,11 @@ describe("color token contrast", () => {
   });
 
   const tints = {
-    planner: "#fff1e6",
-    pantry: "#e6f4f1",
-    history: "#efebfb",
-    shopping: "#fdf0f3",
-    settings: "#f1f5f9",
+    planner: "#fdf4ef",
+    pantry: "#f0f5f1",
+    history: "#f3f1f7",
+    shopping: "#fdf2f2",
+    settings: "#f6f6f4",
   } as const;
 
   for (const [section, tint] of Object.entries(tints)) {
@@ -1097,21 +1161,22 @@ describe("color token contrast", () => {
 
 describe("guided planner theme", () => {
   const expectedTokens = {
-    "app-background": "#f7f2e9",
-    surface: "#fffdf8",
-    text: "#423a32",
-    muted: "#6b5e52",
-    primary: "#d9a48f",
-    "primary-hover": "#cf947d",
-    "primary-active": "#cc927b",
-    "primary-ink": "#3b302b",
-    "primary-strong": "#8b4e3b",
-    selection: "#f4e6df",
-    notice: "#f8ece7",
-    border: "#d8c9bc",
-    focus: "#8b4e3b",
-    pantry: "#416b5a",
-    danger: "#9f342c",
+    "app-background": "#faf9f8",
+    surface: "#ffffff",
+    text: "#26211e",
+    muted: "#57504b",
+    primary: "#b85033",
+    "primary-hover": "#a84328",
+    "primary-active": "#9c3c23",
+    "primary-ink": "#ffffff",
+    "primary-strong": "#a13d24",
+    selection: "#f9e3da",
+    notice: "#fdf1ec",
+    border: "#e7e2dd",
+    "border-strong": "#8e8681",
+    focus: "#a13d24",
+    pantry: "#3f6b57",
+    danger: "#b3261e",
   } as const;
 
   it("declares the exact scoped palette", () => {
@@ -1132,21 +1197,21 @@ describe("guided planner theme", () => {
     expect(
       contrast(scopedToken("primary-ink"), scopedToken("primary-active")),
     ).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(scopedToken("text"), scopedToken("selection"))).toBeCloseTo(9.15, 1);
-    expect(contrast(scopedToken("muted"), scopedToken("selection"))).toBeCloseTo(5.15, 1);
-    expect(contrast(scopedToken("text"), scopedToken("notice"))).toBeCloseTo(9.64, 1);
-    expect(contrast(scopedToken("muted"), scopedToken("notice"))).toBeCloseTo(5.42, 1);
-    expect(contrast(scopedToken("danger"), scopedToken("notice"))).toBeCloseTo(6.04, 1);
-    expect(contrast(scopedToken("pantry"), scopedToken("surface"))).toBeCloseTo(5.94, 1);
+    expect(contrast(scopedToken("text"), scopedToken("selection"))).toBeCloseTo(12.91, 1);
+    expect(contrast(scopedToken("muted"), scopedToken("selection"))).toBeCloseTo(6.42, 1);
+    expect(contrast(scopedToken("text"), scopedToken("notice"))).toBeCloseTo(14.39, 1);
+    expect(contrast(scopedToken("muted"), scopedToken("notice"))).toBeCloseTo(7.15, 1);
+    expect(contrast(scopedToken("danger"), scopedToken("notice"))).toBeCloseTo(5.9, 1);
+    expect(contrast(scopedToken("pantry"), scopedToken("surface"))).toBeCloseTo(6.08, 1);
   });
 
   it("keeps the new palette scoped and fixes visual contracts", () => {
     // 全タブの主操作を献立タブと同じソフトクレイへ揃える
-    expect(token("primary").toLowerCase()).toBe("#d9a48f");
-    expect(token("primary-ink").toLowerCase()).toBe("#3b302b");
+    expect(token("primary").toLowerCase()).toBe("#b85033");
+    expect(token("primary-ink").toLowerCase()).toBe("#ffffff");
     expect(css).toMatch(/body\s*\{[^}]*font-size:\s*16px/s);
     expect(css).toMatch(/\.app-section\s*\{[^}]*var\(--section-tint\)/s);
-    expect(css).toMatch(/\.guided-planner-theme[^}]*--focus:\s*#8b4e3b/s);
+    expect(css).toMatch(/:root[^}]*--focus:\s*#a13d24/s);
     expect(css).toMatch(/\.choice-card\[aria-pressed="true"\][^}]*border-color:/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*border-radius:\s*(18|19|20)px/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*box-shadow:/s);
@@ -1170,7 +1235,7 @@ describe("guided planner theme", () => {
     expectEffectiveDeclarations(".field input", {
       width: "100%",
       "min-height": "48px",
-      border: "1px solid var(--border)",
+      border: "1px solid var(--border-strong)",
       background: "#fff",
       padding: "10px 12px",
     });
@@ -1210,31 +1275,57 @@ describe("guided planner theme", () => {
 
   it("preserves every existing global appearance selector", () => {
     expectEffectiveDeclarations(":root", {
-      color: "#1e293b",
-      background: "#f8fafc",
+      color: "#26211e",
+      background: "#faf9f8",
       "font-family":
-        '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
+        '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
       "font-synthesis": "none",
       "text-rendering": "optimizeLegibility",
+      "--app-background": "#faf9f8",
       "--surface": "#ffffff",
-      "--text": "#1e293b",
-      "--muted": "#475569",
-      "--primary": "#d9a48f",
-      "--primary-hover": "#cf947d",
-      "--primary-active": "#cc927b",
-      "--primary-ink": "#3b302b",
-      "--primary-strong": "#8b4e3b",
-      "--pantry": "#0f766e",
-      "--danger": "#dc2626",
-      "--border": "#e2e8f0",
-      "--section-tint": "#f8fafc",
+      "--text": "#26211e",
+      "--muted": "#57504b",
+      "--primary": "#b85033",
+      "--primary-hover": "#a84328",
+      "--primary-active": "#9c3c23",
+      "--primary-ink": "#ffffff",
+      "--primary-strong": "#a13d24",
+      "--selection": "#f9e3da",
+      "--notice": "#fdf1ec",
+      "--border": "#e7e2dd",
+      "--border-strong": "#8e8681",
+      "--focus": "#a13d24",
+      "--pantry": "#3f6b57",
+      "--danger": "#b3261e",
+      "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
+      "--text-display": "clamp(1.5rem, 6vw, 2rem)",
+      "--text-h1": "1.5rem",
+      "--text-h2": "1.25rem",
+      "--text-body": "1rem",
+      "--text-small": "0.875rem",
+      "--leading-display": "1.35",
+      "--leading-h1": "1.4",
+      "--leading-h2": "1.5",
+      "--leading-body": "1.75",
+      "--radius-sm": "10px",
+      "--radius-md": "14px",
+      "--radius-lg": "20px",
+      "--radius-pill": "999px",
+      "--space-1": "4px",
+      "--space-2": "8px",
+      "--space-3": "12px",
+      "--space-4": "16px",
+      "--space-5": "24px",
+      "--space-6": "32px",
+      "--space-7": "48px",
+      "--section-tint": "#faf9f8",
     });
     expectEffectiveDeclarations("body", {
       "min-width": "320px",
       "min-height": "100vh",
       margin: "0",
       "font-size": "16px",
-      "line-height": "1.6",
+      "line-height": "var(--leading-body)",
     });
     for (const selector of ["button", "a", "input", "select", "textarea"]) {
       expectEffectiveDeclarations(selector, { font: "inherit" });
@@ -1294,7 +1385,7 @@ describe("guided planner theme", () => {
       expectEffectiveDeclarations(selector, {
         width: "100%",
         "min-height": selector === ".field textarea" ? "96px" : "48px",
-        border: "1px solid var(--border)",
+        border: "1px solid var(--border-strong)",
         "border-radius": "10px",
         background: "#fff",
         padding: "10px 12px",
@@ -1313,10 +1404,10 @@ describe("guided planner theme", () => {
   it("detects adversarial global leaks without splitting functional selector lists", () => {
     const guidedPalette = new Set<string>(Object.values(expectedTokens));
     const fixture = `
-      .guided-planner-theme .probe, body { color: #f7f2e9; }
-      body { background: #f7f2e9; }
-      .shell .primary-button { background: #cc927b; }
-      .field input { color: #3b302b !important; }
+      .guided-planner-theme .probe, body { color: #faf9f8; }
+      body { background: #faf9f8; }
+      .shell .primary-button { background: #9c3c23; }
+      .field input { color: #a13d24 !important; }
     `;
     // :root の primary 系共有は許可。背景・本文色の body 流出は検出する。
     expect(findUnscopedDesignColorLeaks(fixture, guidedPalette)).toEqual([
@@ -1332,8 +1423,8 @@ describe("guided planner theme", () => {
       .guided-planner-theme :is(.primary-button, .choice-card) { color: #fff; }
       .guided-planner-theme :not(.wizard-title) { color: #fff; }
       .guided-planner-theme :where(.inline-notice) { color: #fff; }
-      .guided-planner-theme + .outside { color: #f7f2e9; }
-      .guided-planner-theme .choice-card, body { color: #f7f2e9; }
+      .guided-planner-theme + .outside { color: #faf9f8; }
+      .guided-planner-theme .choice-card, body { color: #faf9f8; }
       #app .guided-planner-theme .primary-button { color: #fff !important; }
       .guided-planner-theme .primary-button { color: #fff !important; }
     `;

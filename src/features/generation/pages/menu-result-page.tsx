@@ -166,7 +166,9 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   // DB hydrate: query の isFavorite を初期値にし、同一 route での再取得も useEffect で同期する
   const [isFavorite, setIsFavorite] = useState(result.isFavorite);
-  const [fridgeOpen, setFridgeOpen] = useState(false);
+  const [acceptFeedback, setAcceptFeedback] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
 
@@ -233,7 +235,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
 
   // 操作バー・注意書きを含めて1つの main で包む（MenuResult は本文 fragment のみ）。
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
       <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
         <p>家族条件を使用していません</p>
@@ -249,16 +251,31 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
           onSelectedDishChange={setSelectedDishId}
         />
       )}
-      {fridgeOpen && (
-        <p className="mt-2 text-sm text-stone-700">
-          調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。
+      {result.pantryPostCookTargets.length === 0 && (
+        <p className="mt-2 text-sm text-ink-muted" role="note">
+          今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。
+        </p>
+      )}
+      {acceptFeedback !== null && (
+        <p className="mt-2" role="status">
+          {acceptFeedback}
+        </p>
+      )}
+      {acceptError !== null && (
+        <p className="mt-2" role="alert">
+          {acceptError}
+        </p>
+      )}
+      {favoriteError !== null && (
+        <p className="mt-2" role="alert">
+          {favoriteError}
         </p>
       )}
 
       <div className="mt-6 flex flex-wrap gap-2">
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           onClick={() => {
             setSheetMode("whole");
           }}
@@ -267,7 +284,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={dishIdForRegen === null}
           onClick={() => {
             setSheetMode("dish");
@@ -277,27 +294,39 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+          disabled={result.pantryPostCookTargets.length === 0}
           onClick={() => {
-            setFridgeOpen(true);
+            const heading = document.getElementById("post-cook-heading");
+            if (heading instanceof HTMLElement) {
+              // jsdom 等では scrollIntoView が未実装のことがある
+              if (typeof heading.scrollIntoView === "function") {
+                heading.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+              heading.focus({ preventScroll: true });
+            }
           }}
         >
-          冷蔵庫へ反映
+          調理後の冷蔵庫を開く
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={favorite.isPending || menuId === null}
           aria-pressed={isFavorite}
           aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
           onClick={() => {
             if (menuId === null) return;
             const next = !isFavorite;
+            setFavoriteError(null);
             favorite.mutate(
               { menuId, isFavorite: next },
               {
                 onSuccess: () => {
                   setIsFavorite(next);
+                },
+                onError: () => {
+                  setFavoriteError("お気に入りを更新できませんでした");
                 },
               },
             );
@@ -311,7 +340,16 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
           disabled={accept.isPending || menuId === null}
           onClick={() => {
             if (menuId === null) return;
-            accept.mutate(menuId);
+            setAcceptFeedback(null);
+            setAcceptError(null);
+            accept.mutate(menuId, {
+              onSuccess: () => {
+                setAcceptFeedback("この案を採用しました");
+              },
+              onError: () => {
+                setAcceptError("採用を保存できませんでした。もう一度お試しください");
+              },
+            });
           }}
         >
           これに決めた
@@ -319,7 +357,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
         {result.sourceSubmission !== null && (
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             disabled={retargetPending}
             onClick={() => {
               void onRetarget();
@@ -400,7 +438,8 @@ function HouseholdResultBody({
   const accept = useAcceptMenuVersion();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
-  const [fridgeOpen, setFridgeOpen] = useState(false);
+  const [acceptFeedback, setAcceptFeedback] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
 
@@ -580,7 +619,7 @@ function HouseholdResultBody({
 
   // 再検証ステータス・買い物操作を含めて1つの main で包む。
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-stone-900 sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
 
       {revalidation.phase === "checking" && (
@@ -594,7 +633,7 @@ function HouseholdResultBody({
           <p role="alert">{statusCopy}</p>
           <button
             type="button"
-            className="min-h-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             onClick={() => {
               revalidation.refetch?.();
             }}
@@ -638,9 +677,19 @@ function HouseholdResultBody({
               onSelectedDishChange={setSelectedDishId}
             />
           )}
-          {fridgeOpen && (
-            <p className="mt-2 text-sm text-stone-700">
-              調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。
+          {result.pantryPostCookTargets.length === 0 && (
+            <p className="mt-2 text-sm text-ink-muted" role="note">
+              今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。
+            </p>
+          )}
+          {acceptFeedback !== null && (
+            <p className="mt-2" role="status">
+              {acceptFeedback}
+            </p>
+          )}
+          {acceptError !== null && (
+            <p className="mt-2" role="alert">
+              {acceptError}
             </p>
           )}
         </>
@@ -649,7 +698,7 @@ function HouseholdResultBody({
       <div className="mt-6 flex flex-wrap gap-2">
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={!actionsEnabled}
           onClick={() => {
             setSheetMode("whole");
@@ -659,7 +708,7 @@ function HouseholdResultBody({
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={!actionsEnabled || dishIdForRegen === null}
           onClick={() => {
             setSheetMode("dish");
@@ -669,7 +718,7 @@ function HouseholdResultBody({
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={shoppingBlocked || createList.isPending}
           onClick={() => {
             setShoppingError(null);
@@ -681,7 +730,7 @@ function HouseholdResultBody({
         {reconcileTarget.data !== null && reconcileTarget.data !== undefined && (
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             disabled={shoppingBlocked || reconcileList.isPending}
             onClick={() => {
               const target = reconcileTarget.data;
@@ -703,13 +752,20 @@ function HouseholdResultBody({
         )}
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
-          disabled={!actionsEnabled}
+          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+          disabled={!actionsEnabled || result.pantryPostCookTargets.length === 0}
           onClick={() => {
-            setFridgeOpen(true);
+            const heading = document.getElementById("post-cook-heading");
+            if (heading instanceof HTMLElement) {
+              // jsdom 等では scrollIntoView が未実装のことがある
+              if (typeof heading.scrollIntoView === "function") {
+                heading.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+              heading.focus({ preventScroll: true });
+            }
           }}
         >
-          冷蔵庫へ反映
+          調理後の冷蔵庫を開く
         </button>
         <button
           type="button"
@@ -717,7 +773,16 @@ function HouseholdResultBody({
           disabled={!actionsEnabled || accept.isPending || menuId === null}
           onClick={() => {
             if (menuId === null) return;
-            accept.mutate(menuId);
+            setAcceptFeedback(null);
+            setAcceptError(null);
+            accept.mutate(menuId, {
+              onSuccess: () => {
+                setAcceptFeedback("この案を採用しました");
+              },
+              onError: () => {
+                setAcceptError("採用を保存できませんでした。もう一度お試しください");
+              },
+            });
           }}
         >
           これに決めた
@@ -725,7 +790,7 @@ function HouseholdResultBody({
         {result.sourceSubmission !== null && (
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
             disabled={retargetPending}
             onClick={() => {
               void onRetarget();

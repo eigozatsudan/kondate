@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { issueMessages } from "@shared/contracts/generation";
 import { getGenerationStatus, postGeneration } from "../api/generation-api";
 import {
   generationReducer,
@@ -136,8 +137,21 @@ export function useGenerationRecovery(
           if (!isCurrent(token)) return;
           token.phase = data.status === "not_started" ? "submitting" : data.status;
           dispatch({ type: "status", data });
-        } catch {
+        } catch (error) {
           if (!isCurrent(token)) return;
+          // Plan 3: 409 idempotency_payload_mismatch は offline 再試行ループへ落とさない。
+          // 任意の Error.message は端末化しない（transport/auth は従来どおり offline）。
+          if (error instanceof Error && error.message === "idempotency_payload_mismatch") {
+            token.phase = "request_conflict";
+            // remount / C1 安全のため pending は即消し、端末 UI はメモリ上に残す。
+            clearPendingGeneration();
+            dispatch({
+              type: "request_conflict",
+              code: "idempotency_payload_mismatch",
+              message: issueMessages.idempotency_payload_mismatch,
+            });
+            return;
+          }
           token.phase = "offline";
           dispatch({ type: "network_error" });
         }
@@ -228,7 +242,8 @@ export function useGenerationRecovery(
         previousPhase === "idle" ||
         previousPhase === "succeeded" ||
         previousPhase === "failed" ||
-        previousPhase === "constraint_conflict";
+        previousPhase === "constraint_conflict" ||
+        previousPhase === "request_conflict";
       if (!allowed || userId === null || pending.ownerUserId !== userId) {
         throw new Error("generation operation is active");
       }
@@ -315,12 +330,22 @@ export function useGenerationRecovery(
       token.idempotencyKey === state.data.idempotencyKey &&
       isCurrent(token)
     ) {
-      clearPendingGeneration();
+      // pending はここでは消さない。
+      // Planner が POST 完了後に /generation へ遷移する経路では、終端化と同時に
+      // pending を消すと新しい Recovery インスタンスが idle のまま /planner へ戻り、
+      // 失敗・条件競合のメッセージが一度も表示されない。
+      // TTL 切れ・次の startGeneration（上書き）・clearGeneration が掃除を担う。
       if (userId !== null) {
         void queryClient.invalidateQueries({
           queryKey: usageTodayQueryKey(userId, jstDayKey()),
         });
       }
+    }
+    // request_conflict は submit 時に pending を消済み。利用状況だけ更新する。
+    if (state.phase === "request_conflict" && userId !== null) {
+      void queryClient.invalidateQueries({
+        queryKey: usageTodayQueryKey(userId, jstDayKey()),
+      });
     }
     if (state.phase === "succeeded" && userId !== null) {
       void queryClient.invalidateQueries({
@@ -331,7 +356,13 @@ export function useGenerationRecovery(
   }, [isCurrent, navigate, queryClient, retryStatus, state, userId]);
 
   useEffect(() => {
+    // イベント駆動の復旧は「保存済み pending があるときだけ」。
+    // failed / constraint_conflict は terminal UI を残したまま pending を消すため、
+    // 無条件 online / TOKEN_REFRESHED は checking 永久スピナーになる（C1）。
+    // マウント時 recover と同じく pending を正とする。visibilitychange は
+    // retryStatus のみで phase を変えないためこのガード対象外。
     const recover = () => {
+      if (read() === null) return;
       const token = lifecycleRef.current;
       if (token !== null) token.phase = "checking";
       dispatch({ type: "online" });
@@ -354,7 +385,7 @@ export function useGenerationRecovery(
       document.removeEventListener("visibilitychange", visible);
       data.subscription.unsubscribe();
     };
-  }, [clearGeneration, dispatch, retryStatus, userId]);
+  }, [clearGeneration, dispatch, read, retryStatus, userId]);
 
   return { state, startGeneration, retryStatus, clearGeneration };
 }

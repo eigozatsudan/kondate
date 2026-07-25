@@ -4,6 +4,7 @@ import type { ChangeReason } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   createPendingGeneration,
+  readPendingGeneration,
   savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
 import { isRevalidationActionable, type RevalidationResult } from "../api/revalidation-api";
@@ -56,6 +57,12 @@ export function useRegeneration(input: UseRegenerationInput) {
       if (!canRegenerate || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
       }
+      // 単一スロット kondate:generation:v2 を上書きすると、進行中の作成 ID が失われ
+      // generation_in_progress 端末で pending ごと消える（C2）。既存 pending は再開のみ。
+      if (readPendingGeneration(userId, new Date()) !== null) {
+        void navigate("/generation");
+        return Promise.resolve();
+      }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
       const pending = createPendingGeneration(
@@ -84,6 +91,10 @@ export function useRegeneration(input: UseRegenerationInput) {
     (dishId: string, reason: RegenerationReasonInput) => {
       if (!canRegenerate || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
+      }
+      if (readPendingGeneration(userId, new Date()) !== null) {
+        void navigate("/generation");
+        return Promise.resolve();
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;

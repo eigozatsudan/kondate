@@ -34,9 +34,13 @@ export function GenerationPage() {
   return (
     <main className="page-frame stack">
       {userId === undefined ? (
-        <GenerationStatusPanel state={recovery.state} />
+        <GenerationStatusPanel state={recovery.state} onClear={recovery.clearGeneration} />
       ) : (
-        <GenerationStatusPanel state={recovery.state} userId={userId} />
+        <GenerationStatusPanel
+          state={recovery.state}
+          userId={userId}
+          onClear={recovery.clearGeneration}
+        />
       )}
     </main>
   );

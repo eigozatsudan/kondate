@@ -50,7 +50,8 @@ const waitDraftSave = (page: Page) =>
 const ensureWheatMemberForMockSuccess = async (page: Page) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
-  await page.getByLabel("呼び名").fill("家族1");
+  // 編集ボタンの aria-label と部分一致しないよう textbox に限定する
+  await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
@@ -71,7 +72,8 @@ const ensurePrivacyThenGenerate = async (
   }
   const generate = page.getByRole("button", { name: "献立を作る" });
   if (opts.needsPrivacyHop) {
-    await expect(generate).toBeDisabled();
+    // 未確認時も生成ボタンは有効（押下で説明 CTA へ誘導）。説明は secondary ボタン。
+    await expect(generate).toBeEnabled();
     await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
@@ -131,7 +133,7 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   }
   // review 自身も meal〜audience と同様に横スクロール無しを要求する。
-  // privacy 未了では「献立を作る」が disabled でもコントロール自体は存在する。
+  // privacy 未了でも「献立を作る」は有効（押下で説明へ誘導）でコントロール自体は存在する。
   await assertStepFits(page, { 献立を作る: 1 });
 };
 

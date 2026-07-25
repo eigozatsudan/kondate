@@ -12,6 +12,16 @@ export type PlannerStepProps<TValue> = {
   onBack?: () => void;
   onNext: () => void;
   disabled: boolean;
+  /**
+   * 確認画面の「変更」から飛んできたときの主ボタン文言。
+   * 未指定なら「次へ」。編集戻りでは「確認に戻る」を渡し、順送りの「次へ」と区別する。
+   */
+  nextLabel?: string;
+  /**
+   * 確認からの編集時の戻るボタン文言。未指定なら「戻る」。
+   * 編集中止は「やめる」とし、主ボタンの「確認に戻る」と役割を分ける。
+   */
+  backLabel?: string;
 };
 
 /**

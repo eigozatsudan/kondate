@@ -725,7 +725,8 @@ describe("ShoppingListPage warnings and grouping", () => {
       </Providers>,
     );
     expect(await screen.findByText("買い物リストは空です")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "献立から作る" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "献立を作る" })).toHaveAttribute("href", "/planner");
+    expect(screen.getByRole("link", { name: "履歴から選ぶ" })).toHaveAttribute("href", "/history");
     expect(revalidateActiveShoppingList).not.toHaveBeenCalled();
   });
 
@@ -751,6 +752,37 @@ describe("ShoppingListPage warnings and grouping", () => {
     expect(screen.getByRole("checkbox", { name: /購入済みにする/u }).parentElement).toHaveClass(
       "min-h-11",
     );
+  });
+
+  it("shows checked progress excluding removed items", async () => {
+    await renderPage(
+      makeShoppingList([
+        makeItem({ id: ITEM_ID, displayName: "にんじん", isChecked: true }),
+        makeItem({
+          id: OTHER_ITEM_ID,
+          displayName: "しょうゆ",
+          storeSection: "seasonings",
+          isChecked: false,
+        }),
+        makeItem({
+          id: "40000000-0000-4000-8000-000000000099",
+          displayName: "玉ねぎ",
+          isRemovedByUser: true,
+          isChecked: true,
+        }),
+      ]),
+    );
+    // 削除済みは分母・分子どちらにも入れない（2件のうち1件）。
+    expect(screen.getByText("2件のうち1件")).toBeInTheDocument();
+  });
+
+  it("matches edit form field chrome to the add form", async () => {
+    await renderPage(makeShoppingList([makeItem({ displayName: "にんじん" })]));
+    await user.click(screen.getByRole("button", { name: "数量・単位・売り場を編集" }));
+    expect(screen.getByLabelText("にんじんの数量").closest("label")).toHaveClass("field");
+    expect(screen.getByLabelText("にんじんの分量表記").closest("label")).toHaveClass("field");
+    expect(screen.getByLabelText("にんじんの単位").closest("label")).toHaveClass("field");
+    expect(screen.getByLabelText("にんじんの売り場").closest("label")).toHaveClass("field");
   });
 });
 

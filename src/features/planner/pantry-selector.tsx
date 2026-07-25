@@ -91,7 +91,7 @@ export function PantrySelector({
         const selected = selections.find((entry) => entry.pantryItemId === item.id);
         return (
           <div key={item.id}>
-            <label>
+            <label className="control-label">
               <input
                 type="checkbox"
                 checked={selected !== undefined}

@@ -19,6 +19,8 @@ export function CuisineStep({
   onNext,
   disabled,
   errorMessage,
+  nextLabel = "次へ",
+  backLabel = "戻る",
 }: CuisineStepProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -64,7 +66,7 @@ export function CuisineStep({
             disabled={disabled}
             onClick={onBack}
           >
-            戻る
+            {backLabel}
           </button>
         )}
         <button
@@ -73,7 +75,7 @@ export function CuisineStep({
           disabled={disabled || value === null}
           onClick={onNext}
         >
-          次へ
+          {nextLabel}
         </button>
       </div>
     </section>

@@ -23,8 +23,8 @@ export function ShoppingItemRow({
 }: ShoppingItemRowProps) {
   if (item.isRemovedByUser)
     return (
-      <li className="card flex min-h-11 items-center justify-between">
-        <span>{item.displayName}をリストから外しました</span>
+      <li className="shopping-item-row shopping-item-row--removed">
+        <span className="shopping-item-name">{item.displayName}をリストから外しました</span>
         <button
           type="button"
           disabled={disabled}
@@ -38,8 +38,8 @@ export function ShoppingItemRow({
       </li>
     );
   return (
-    <li className="card stack">
-      <label className="flex min-h-11 items-center gap-2">
+    <li className="shopping-item-row" data-checked={item.isChecked ? "true" : "false"}>
+      <label className="shopping-item-main min-h-11">
         <input
           type="checkbox"
           checked={item.isChecked}
@@ -49,12 +49,14 @@ export function ShoppingItemRow({
             onChecked(item.id, event.target.checked);
           }}
         />
-        {item.displayName}
+        <span className="shopping-item-copy">
+          <span className="shopping-item-name">{item.displayName}</span>
+          <span className="shopping-item-quantity">{item.quantityText}</span>
+        </span>
       </label>
-      <span>{item.quantityText}</span>
-      {item.pantryCheckRequired && <span>在庫量を確認</span>}
+      {item.pantryCheckRequired && <span className="shopping-item-note">在庫量を確認</span>}
       {currentLabelWarnings.length > 0 && (
-        <div>
+        <div className="shopping-item-warning">
           <strong>加工品は原材料表示を確認</strong>
           {currentLabelWarnings.map((warning) => (
             <p key={warning.warningKey}>
@@ -64,36 +66,38 @@ export function ShoppingItemRow({
           ))}
         </div>
       )}
-      <button
-        type="button"
-        disabled={disabled}
-        className="text-button min-h-11"
-        onClick={() => {
-          onEdit(item);
-        }}
-      >
-        数量・単位・売り場を編集
-      </button>
-      <button
-        type="button"
-        disabled={disabled}
-        className="text-button min-h-11"
-        onClick={() => {
-          onAtHome(item.id);
-        }}
-      >
-        家にある
-      </button>
-      <button
-        type="button"
-        disabled={disabled}
-        className="text-button min-h-11"
-        onClick={() => {
-          onRemove(item);
-        }}
-      >
-        削除
-      </button>
+      <div className="shopping-item-actions">
+        <button
+          type="button"
+          disabled={disabled}
+          className="text-button min-h-11"
+          onClick={() => {
+            onEdit(item);
+          }}
+        >
+          数量・単位・売り場を編集
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          className="text-button min-h-11"
+          onClick={() => {
+            onAtHome(item.id);
+          }}
+        >
+          家にある
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          className="text-button min-h-11"
+          onClick={() => {
+            onRemove(item);
+          }}
+        >
+          削除
+        </button>
+      </div>
     </li>
   );
 }

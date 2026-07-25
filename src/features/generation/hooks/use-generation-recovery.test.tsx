@@ -619,4 +619,130 @@ describe("useGenerationRecovery", () => {
       expect(mockDispatches).toContainEqual({ type: "status", data: processingA });
     },
   );
+
+  // C1: terminal 後に pending を消した状態で online / TOKEN_REFRESHED が
+  // 無条件 recover すると checking 永久スピナーになる。pending が無いときは no-op。
+  it("keeps failed UI after pending clear when window online fires", async () => {
+    const recovery = renderHook(
+      () =>
+        useGenerationRecovery({
+          state: failedState,
+          token: {
+            ownerUserId: USER_ID,
+            idempotencyKey: KEY_A,
+            epoch: 0,
+            phase: "failed",
+          },
+        }),
+      { wrapper: recoveryWrapper },
+    );
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("failed");
+    expect(recovery.result.current.state).toMatchObject(failedState);
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
+  it("keeps constraint_conflict UI after pending clear when TOKEN_REFRESHED fires", async () => {
+    const recovery = renderHook(
+      () =>
+        useGenerationRecovery({
+          state: constraintConflictState,
+          token: {
+            ownerUserId: USER_ID,
+            idempotencyKey: KEY_A,
+            epoch: 0,
+            phase: "constraint_conflict",
+          },
+        }),
+      { wrapper: recoveryWrapper },
+    );
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      emitAuth("TOKEN_REFRESHED", { user: { id: USER_ID } } as Session);
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("constraint_conflict");
+    expect(recovery.result.current.state).toMatchObject(constraintConflictState);
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
+  it("recovers offline to processing on online when pending still present", async () => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockResolvedValue(processingA);
+    const recovery = renderRecoveryAt(offlineState, pendingA);
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises();
+    });
+    await waitFor(() => {
+      expect(recovery.result.current.state.phase).toBe("processing");
+    });
+    expect(mockStatus).toHaveBeenCalled();
+    expect(mockDispatches).toContainEqual({ type: "status", data: processingA });
+  });
+
+  it("TOKEN_REFRESHED with pending processing rechecks status without double POST", async () => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockResolvedValue(processingA);
+    mockPost.mockClear();
+    const recovery = renderRecoveryAt(processingState, pendingA);
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      emitAuth("TOKEN_REFRESHED", { user: { id: USER_ID } } as Session);
+      await flushPromises();
+    });
+    await waitFor(() => {
+      expect(mockStatus).toHaveBeenCalled();
+    });
+    expect(recovery.result.current.state.phase).toBe("processing");
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("online with no pending from idle does not enter checking", async () => {
+    const recovery = renderRecoveryAt(idleState, null);
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("idle");
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
+  // Plan 3: 409 idempotency_payload_mismatch は offline 再POST ループに落とさない。
+  it("maps POST idempotency_payload_mismatch to request_conflict without offline retry", async () => {
+    mockPost.mockRejectedValueOnce(new Error("idempotency_payload_mismatch"));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("request_conflict");
+    if (recovery.result.current.state.phase !== "request_conflict") {
+      throw new Error("expected request_conflict");
+    }
+    expect(recovery.result.current.state.code).toBe("idempotency_payload_mismatch");
+    expect(recovery.result.current.state.message).toContain("再送できません");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    mockPost.mockClear();
+    mockStatus.mockClear();
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      emitAuth("TOKEN_REFRESHED", { user: { id: USER_ID } } as Session);
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("request_conflict");
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockStatus).not.toHaveBeenCalled();
+  });
 });

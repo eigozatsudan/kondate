@@ -84,6 +84,84 @@ http://127.0.0.1:5173
 
 通常の `npm run dev`（Compose の `app`）では、`@netlify/vite-plugin` の **middleware 経由**で Netlify Functions を配信します。本番 CSP をローカルに載せないために middleware 全体を切ると、Function も一緒に死に、`POST /api/auth/continuations` が空の 404 になります。CSP だけ落とす現行の `vite.config.ts` を変えず、スタックを `docker compose up -d --wait` で起動した状態で `127.0.0.1` から開いてください。
 
+### ローカルで OpenRouter 実 API を使う（献立を作る）
+
+既定のローカル構成は **openrouter-mock** です。決定論的なモック応答で E2E・単体が安定します。
+API キーを設定すると、同じ UI から **本番と同じ OpenRouter 経路**で「献立を作る」を試せます。
+
+#### 1. 鍵とモデルを用意する
+
+1. [OpenRouter](https://openrouter.ai/) で API キーを発行する
+2. **`:free` で終わるモデル ID だけ**を使う（有料モデルと `openrouter/auto` は起動時に拒否される）
+3. 候補は Models API で確認する（構造化出力 `structured_outputs` + `response_format` 対応が必要）
+
+例（利用可能な free モデルは時期で変わるため、必ず最新を確認すること）:
+
+```text
+google/gemma-3-27b-it:free
+mistralai/mistral-small-3.2-24b-instruct:free
+```
+
+#### 2. `.env` を上書きする
+
+リポジトリ直下の `.env`（`generate-local-secrets.sh` が作る）を編集します。**コミットしないでください。**
+
+```bash
+# 実 API（本番相当）
+OPENROUTER_API_KEY=sk-or-v1-xxxxxxxx
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODELS=google/gemma-3-27b-it:free,mistralai/mistral-small-3.2-24b-instruct:free
+```
+
+注意:
+
+- `VITE_OPENROUTER_API_KEY` は使わない（ブラウザへ漏れるため禁止）
+- `OPENROUTER_BASE_URL` は末尾スラッシュなしで `https://openrouter.ai/api/v1` と完全一致させる
+- `OPENROUTER_MODELS` はカンマ区切り・重複なし・すべて `:free` 終わり
+- 既定 mock に戻すときは次のいずれかにする:
+
+```bash
+OPENROUTER_API_KEY=local-mock-key
+OPENROUTER_BASE_URL=http://openrouter-mock:8787/api/v1
+OPENROUTER_MODELS=mock/kondate-primary:free,mock/kondate-repair:free
+```
+
+または `./scripts/generate-local-secrets.sh --force` のあと必要な鍵だけ復元する（OpenRouter 3 変数は mock 既定に戻る）。
+
+#### 3. app を作り直して反映する
+
+`.env` は Compose の変数置換経由で `app` に入るため、変更後は **app の再作成**が必要です。
+
+```bash
+docker compose up -d --wait --force-recreate app
+```
+
+#### 4. モデル設定を確認する（任意・推奨）
+
+```bash
+docker compose run --rm --no-deps app npm run verify:openrouter:config
+# 実 Models API まで見る場合（ネットワーク必須）
+docker compose run --rm --no-deps app npm run verify:openrouter:models
+```
+
+#### 5. ブラウザで試す
+
+1. [http://127.0.0.1:5173](http://127.0.0.1:5173) を開く（`localhost` ではない）
+2. ログイン → ウィザードで条件を入力 → **献立を作る**
+3. 生成中画面のあと結果が表示されれば、実 OpenRouter 経由で動いている
+
+#### 制約（本番と同じ）
+
+| 項目 | 値 |
+| --- | --- |
+| 成功生成 / 利用者 / JST 日 | 5 |
+| 外部 AI 送信 / 利用者 / JST 日 | 12 |
+| 外部送信 / 600 秒窓 | 4 |
+| 1 試行タイムアウト | 20 秒 |
+| Function 総予算 | 50 秒 |
+
+free モデルは提供状況・レート制限が変わります。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費します）。
+
 主な検証コマンド:
 
 ```bash

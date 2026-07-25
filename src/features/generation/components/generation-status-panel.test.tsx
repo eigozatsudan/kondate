@@ -78,6 +78,33 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
   });
 
+  it("shows request_conflict copy and fresh-start without success-count claim", async () => {
+    vi.useRealTimers();
+    const onClear = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const requestConflictState: GenerationClientState = {
+      phase: "request_conflict",
+      code: "idempotency_payload_mismatch",
+      message: "前回と異なる内容で再送できません。もう一度操作してください",
+      effect: "none",
+    };
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel
+          state={requestConflictState}
+          userId={USER_ID}
+          onClear={onClear}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("heading", { name: "同じ操作を続けられませんでした" })).toBeVisible();
+    expect(screen.getByText(/再送できません/)).toBeVisible();
+    expect(screen.queryByText("成功回数には含まれません")).toBeNull();
+    expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
+    screen.getByRole("button", { name: "最初からやり直す" }).click();
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a status message while checking saved progress", () => {
     render(<GenerationStatusPanel state={{ phase: "checking", effect: "status" }} />);
     expect(screen.getByRole("status")).toHaveTextContent("保存した作成状況を確認しています");

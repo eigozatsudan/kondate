@@ -173,7 +173,8 @@ const failureCopy: Record<GenerationFailureCode, { message: string; retryable: b
     retryable: false,
   },
   user_attempt_limit: {
-    message: "本日のAI通信試行上限に達しました。明日0:00（日本時間）から利用できます",
+    message:
+      "本日のAIへの送信上限に達しました。献立の成功回数とは別の上限です。明日0:00（日本時間）から利用できます",
     retryable: false,
   },
   user_short_window_limit: {

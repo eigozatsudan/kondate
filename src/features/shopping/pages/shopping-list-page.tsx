@@ -53,8 +53,17 @@ export function ShoppingListPage() {
     );
   if (query.isError)
     return (
-      <main className="page-frame">
+      <main className="page-frame stack">
         <p role="alert">読み込めませんでした</p>
+        <button
+          type="button"
+          className="primary-button min-h-11"
+          onClick={() => {
+            void query.refetch();
+          }}
+        >
+          もう一度読み込む
+        </button>
       </main>
     );
   if (query.data === null)
@@ -62,8 +71,11 @@ export function ShoppingListPage() {
       <main className="page-frame stack">
         <h1>買い物リスト</h1>
         <p>買い物リストは空です</p>
-        <a className="primary-button min-h-11" href="/history">
-          献立から作る
+        <a className="primary-button min-h-11" href="/planner">
+          献立を作る
+        </a>
+        <a className="secondary-button min-h-11" href="/history">
+          履歴から選ぶ
         </a>
       </main>
     );
@@ -153,9 +165,21 @@ export function ShoppingListPage() {
     setAdding(false);
     await query.refetch();
   };
+  // 削除済みは進捗から外す。店舗で「まだ買うもの」と「済んだもの」の比だけを見せる。
+  const progressItems = list.items.filter((item) => !item.isRemovedByUser);
+  const checkedCount = progressItems.filter((item) => item.isChecked).length;
+  const totalCount = progressItems.length;
+
   return (
     <main className="page-frame stack">
-      <h1>買い物リスト</h1>
+      <header className="shopping-page-header">
+        <h1>買い物リスト</h1>
+        {totalCount > 0 && (
+          <p className="shopping-progress" aria-live="polite">
+            {totalCount}件のうち{checkedCount}件
+          </p>
+        )}
+      </header>
       {safetyGate.error && <p role="alert">{safetyGate.message}</p>}
       {storedProvenanceWarnings.length > 0 && (
         <section className="card" aria-label="過去の原材料表示警告">
@@ -185,9 +209,15 @@ export function ShoppingListPage() {
       {sections.map((section) => {
         const items = list.items.filter((item) => item.storeSection === section);
         return items.length === 0 ? null : (
-          <section key={section} aria-labelledby={`section-${section}`}>
-            <h2 id={`section-${section}`}>{categoryLabel(section)}</h2>
-            <ul className="stack">
+          <section
+            key={section}
+            className="shopping-section"
+            aria-labelledby={`section-${section}`}
+          >
+            <h2 id={`section-${section}`} className="shopping-section-heading">
+              {categoryLabel(section)}
+            </h2>
+            <ul className="shopping-item-list">
               {items.map((item) => (
                 <ShoppingItemRow
                   key={item.id}
@@ -261,7 +291,8 @@ export function ShoppingListPage() {
         >
           <h2>{editingItem.displayName}を編集</h2>
           {fieldError !== null && <p role="alert">{fieldError}</p>}
-          <label>
+          {/* 追加フォームと同じ .field を付け、入力欄の見た目を揃える。 */}
+          <label className="field">
             数値（任意）
             <input
               ref={editFirstField}
@@ -275,7 +306,7 @@ export function ShoppingListPage() {
               }}
             />
           </label>
-          <label>
+          <label className="field">
             表示する分量
             <input
               aria-label={`${editingItem.displayName}の分量表記`}
@@ -286,7 +317,7 @@ export function ShoppingListPage() {
               }}
             />
           </label>
-          <label>
+          <label className="field">
             単位（任意）
             <input
               aria-label={`${editingItem.displayName}の単位`}
@@ -297,7 +328,7 @@ export function ShoppingListPage() {
               }}
             />
           </label>
-          <label>
+          <label className="field">
             売り場
             <select
               aria-label={`${editingItem.displayName}の売り場`}

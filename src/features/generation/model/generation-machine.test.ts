@@ -80,6 +80,12 @@ const offline: GenerationClientState = {
   previous: processing,
   effect: "wait_online",
 };
+const requestConflict: GenerationClientState = {
+  phase: "request_conflict",
+  code: "idempotency_payload_mismatch",
+  message: "前回と異なる内容で再送できません。もう一度操作してください",
+  effect: "none",
+};
 
 describe("generationReducer", () => {
   it("starts an explicit submit only from idle", () => {
@@ -89,12 +95,39 @@ describe("generationReducer", () => {
     });
   });
 
-  it.each([checking, submitting, processing, offline, succeeded, failed, conflict])(
-    "keeps every non-idle state on an explicit submit",
-    (state) => {
-      expect(generationReducer(state, { type: "submit" })).toBe(state);
+  it.each([
+    checking,
+    submitting,
+    processing,
+    offline,
+    succeeded,
+    failed,
+    conflict,
+    requestConflict,
+  ])("keeps every non-idle state on an explicit submit", (state) => {
+    expect(generationReducer(state, { type: "submit" })).toBe(state);
+  });
+
+  it("enters request_conflict from the dedicated event", () => {
+    expect(
+      generationReducer(submitting, {
+        type: "request_conflict",
+        code: "idempotency_payload_mismatch",
+        message: requestConflict.message,
+      }),
+    ).toEqual(requestConflict);
+  });
+
+  it.each(["online", "recover", "network_error"] as const)(
+    "ignores %s while in request_conflict",
+    (type) => {
+      expect(generationReducer(requestConflict, { type })).toBe(requestConflict);
     },
   );
+
+  it("clears request_conflict to idle", () => {
+    expect(generationReducer(requestConflict, { type: "clear" })).toEqual(idle);
+  });
 
   it.each([
     [statuses.not_started, "submitting", "submit"],

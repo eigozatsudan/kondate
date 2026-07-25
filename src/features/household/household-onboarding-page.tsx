@@ -345,7 +345,7 @@ export function HouseholdOnboardingForm({
                 }}
               />
             </label>
-            <label>
+            <label className="control-label">
               <input
                 type="checkbox"
                 checked={customConfirmed}

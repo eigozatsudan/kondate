@@ -63,7 +63,7 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
         </button>
         <button
           type="button"
-          className="min-h-11 rounded-xl bg-red-700 text-white disabled:opacity-50"
+          className="min-h-11 rounded-xl bg-danger-700 text-white disabled:opacity-50"
           disabled={confirmation !== "削除する" || props.pending}
           onClick={() => {
             void props.onConfirm("削除する");

@@ -32,6 +32,8 @@
     "test:maintenance-db:integration": "node --env-file=.env node_modules/vitest/vitest.mjs run --config vitest.maintenance-integration.config.ts"
   },
   "dependencies": {
+    "@fontsource/zen-kaku-gothic-new": "^5.3.0",
+    "@fontsource/zen-old-mincho": "^5.3.0",
     "@supabase/supabase-js": "^2.57.0",
     "@tanstack/react-query": "^5.87.0",
     "pg": "8.22.0",

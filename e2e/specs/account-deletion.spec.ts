@@ -26,7 +26,8 @@ test("deletes the account through settings and zeroes owned rows and auth user",
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByLabel("アレルギーの確認").first()).toBeVisible();
-  await expect(page.getByLabel("呼び名").first()).toBeVisible();
+  // 曖昧な .first() ではなく textbox に限定して一意にする
+  await expect(page.getByRole("textbox", { name: "呼び名" })).toBeVisible();
   await expect(page.getByLabel("苦手食材を追加")).toBeVisible();
   await expect(page.getByRole("button", { name: "苦手食材を追加" })).toBeVisible();
   await expect(page.getByRole("region", { name: "DangerZone" })).toBeVisible();

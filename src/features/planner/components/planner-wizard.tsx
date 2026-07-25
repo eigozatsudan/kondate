@@ -54,6 +54,10 @@ export type PlannerWizardExtraProps = {
   onIdeaAudienceConfirmed?: () => Promise<void>;
   /** 入力内容を空に戻し step を meal へ戻す。route が draft / autosave を所有する */
   onReset?: () => void;
+  /** 設計 §10.3: review の生成ボタン近くに出す成功残数（未取得は null） */
+  usageRemaining?: number | null;
+  /** short-window 残 0 時の再開時刻 ISO（未該当は null） */
+  shortWindowRetryAt?: string | null;
 };
 
 /**
@@ -122,16 +126,45 @@ export function PlannerWizard({
   onOpenEmergencyMenus,
   onIdeaAudienceConfirmed,
   onReset,
+  usageRemaining = null,
+  shortWindowRetryAt = null,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLElement>(null);
   // idea audience 確定の single-flight。ref は同期ガード、state は disabled 表示用。
   const confirmingIdeaAudienceRef = useRef(false);
   const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);
+  // 確認画面の「変更」から飛んだとき true。次へ／戻るで確認へ直行する。
+  const [returnToReviewAfterEdit, setReturnToReviewAfterEdit] = useState(false);
 
   const goToStep = (next: (typeof plannerSteps)[number]): void => {
     onStepChange(next);
   };
+
+  /** 通常の順送り先。確認からの編集中なら review へ戻す。 */
+  const advanceFromEditOr = (sequentialNext: (typeof plannerSteps)[number]): void => {
+    if (returnToReviewAfterEdit) {
+      setReturnToReviewAfterEdit(false);
+      goToStep("review");
+      return;
+    }
+    goToStep(sequentialNext);
+  };
+
+  /** 通常の戻り先。確認からの編集中なら review へ戻す（編集をやめる）。 */
+  const backFromEditOr = (sequentialBack: (typeof plannerSteps)[number]): void => {
+    if (returnToReviewAfterEdit) {
+      setReturnToReviewAfterEdit(false);
+      goToStep("review");
+      return;
+    }
+    goToStep(sequentialBack);
+  };
+
+  // 確認の「変更」経由時だけボタン文言を差し替え、順送りの「次へ」と混同させない。
+  const editReturnActionLabels = returnToReviewAfterEdit
+    ? { nextLabel: "確認に戻る", backLabel: "やめる" }
+    : {};
 
   // exactOptionalPropertyTypes: undefined を明示代入せず、定義済みキーだけ渡す。
   const conflictChrome = hasDraftConflict ? (
@@ -147,7 +180,7 @@ export function PlannerWizard({
     onReset !== undefined ? (
       <div className="wizard-reset-row">
         <button
-          className="text-button wizard-action"
+          className="wizard-reset-button"
           type="button"
           disabled={isSaving}
           onClick={() => {
@@ -163,6 +196,21 @@ export function PlannerWizard({
             onReset();
           }}
         >
+          {/* 破壊的操作なので下線リンクではなく実体のあるボタンにする。矢印は装飾で、
+              ラベルが操作内容を担うため支援技術からは隠す。 */}
+          <svg
+            className="wizard-reset-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+            <path d="M20 4v4h-4" />
+          </svg>
           入力をリセット
         </button>
       </div>
@@ -180,11 +228,19 @@ export function PlannerWizard({
           onChange={(mealType) => {
             onDraftChange({ ...draft, mealType });
           }}
+          {...(returnToReviewAfterEdit
+            ? {
+                onBack: () => {
+                  backFromEditOr("meal");
+                },
+              }
+            : {})}
           onNext={() => {
-            goToStep("ingredients");
+            advanceFromEditOr("ingredients");
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mealType ?? null}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
@@ -201,15 +257,16 @@ export function PlannerWizard({
             onDraftChange({ ...draft, mainIngredients: [...mainIngredients] });
           }}
           onBack={() => {
-            goToStep("meal");
+            backFromEditOr("meal");
           }}
           onNext={() => {
-            goToStep("cuisine");
+            advanceFromEditOr("cuisine");
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mainIngredients ?? null}
           pantryItems={pantryItems}
           pantryItemsStatus={pantryItemsStatus}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
@@ -226,13 +283,14 @@ export function PlannerWizard({
             onDraftChange({ ...draft, cuisineGenre });
           }}
           onBack={() => {
-            goToStep("ingredients");
+            backFromEditOr("ingredients");
           }}
           onNext={() => {
-            goToStep("audience");
+            advanceFromEditOr("audience");
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.cuisineGenre ?? null}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
@@ -260,7 +318,7 @@ export function PlannerWizard({
           }}
           onBack={() => {
             if (confirmingIdeaAudienceRef.current) return;
-            goToStep("cuisine");
+            backFromEditOr("cuisine");
           }}
           onNext={() => {
             // idea 確定は route の skipped 書込を await。失敗時は audience に留まる。
@@ -279,10 +337,13 @@ export function PlannerWizard({
                 }
                 confirmingIdeaAudienceRef.current = false;
                 setConfirmingIdeaAudience(false);
+                // idea の next 先は常に review（編集戻りでも同じ）
+                setReturnToReviewAfterEdit(false);
                 goToStep("review");
               })();
               return;
             }
+            setReturnToReviewAfterEdit(false);
             goToStep("review");
           }}
           disabled={isSaving || confirmingIdeaAudience}
@@ -292,6 +353,7 @@ export function PlannerWizard({
             targetMemberIds: fieldErrors.targetMemberIds ?? null,
             servings: fieldErrors.servings ?? null,
           }}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
       </main>
@@ -308,10 +370,16 @@ export function PlannerWizard({
           onDraftChange(next);
         }}
         onBack={() => {
+          // 1ページずつ戻る（audience ← cuisine ← … は各 step の onBack が担う）
+          setReturnToReviewAfterEdit(false);
           goToStep("audience");
         }}
         onNext={() => {
           // review step自体には「次へ」はなく、明示的な献立生成buttonがonSubmitを呼ぶ。
+        }}
+        onEditStep={(target) => {
+          setReturnToReviewAfterEdit(true);
+          goToStep(target);
         }}
         disabled={isSaving}
         pantryItems={pantryItems}
@@ -324,6 +392,8 @@ export function PlannerWizard({
         onOpenPrivacyNotice={onOpenPrivacyNotice}
         safetyMembers={eligibleMembers}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+        usageRemaining={usageRemaining}
+        shortWindowRetryAt={shortWindowRetryAt}
         onSubmit={() => {
           void onSubmit();
         }}

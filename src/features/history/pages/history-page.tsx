@@ -22,7 +22,7 @@ export function HistoryPage() {
         <p role="alert">履歴を読み込めませんでした</p>
         <button
           type="button"
-          className="min-h-11 inline-flex items-center rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          className="min-h-11 inline-flex items-center rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
           disabled={isFetching}
           onClick={() => {
             void refetch();

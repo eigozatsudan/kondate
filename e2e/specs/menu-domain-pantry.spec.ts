@@ -143,7 +143,7 @@ test("waits for the latest draft save before requesting emergency menus", async 
   );
   await page.getByRole("button", { name: "家族を追加" }).click();
   const selectedMemberId = await readCreatedId(await memberCreated);
-  await page.getByLabel("呼び名").fill("緊急用家族");
+  await page.getByRole("textbox", { name: "呼び名" }).fill("緊急用家族");
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
   await page.getByLabel("食べない食事はありますか").selectOption("none");
@@ -161,7 +161,9 @@ test("waits for the latest draft save before requesting emergency menus", async 
       response.request().method() === "POST" &&
       new URL(response.url()).pathname.endsWith("/rest/v1/pantry_items"),
   );
-  await page.getByLabel("食材名").fill("緊急用豆腐");
+  // 追加フォームは既定で閉じており、トリガーを押してから入力する
+  await page.getByRole("button", { name: "食材を追加" }).click();
+  await page.getByRole("textbox", { name: "食材名" }).fill("緊急用豆腐");
   await page.getByLabel("分量").fill("1");
   await page.getByLabel("単位").fill("丁");
   await page.getByRole("button", { name: "追加する" }).click();
@@ -355,7 +357,9 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await page.setViewportSize({ width: 320, height: 780 });
 
   await page.goto("/pantry");
-  await page.getByLabel("食材名").fill("キャベツ");
+  // 追加フォームは既定で閉じており、トリガーを押してから入力する
+  await page.getByRole("button", { name: "食材を追加" }).click();
+  await page.getByRole("textbox", { name: "食材名" }).fill("キャベツ");
   await page.getByLabel("分量").fill("1");
   await page.getByLabel("単位").fill("個");
   await page.getByLabel("期限日").fill("2000-01-01");

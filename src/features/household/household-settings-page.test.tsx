@@ -87,7 +87,15 @@ const standardAllergy: MemberAllergyRow = {
 };
 const walnutAllergy = standardAllergy;
 
-function renderSettings(overrides: Partial<HouseholdSettingsApi> = {}) {
+/**
+ * 設定画面を描画する。
+ * 製品の初期表示は編集を閉じるが、操作系テストの大半はフォーム前提のため、
+ * メンバーがあるときは先頭の「編集」を自動で開く（startClosed: true で閉じたまま）。
+ */
+async function renderSettings(
+  overrides: Partial<HouseholdSettingsApi> = {},
+  options: { startClosed?: boolean } = {},
+) {
   const updateMember = vi.fn().mockResolvedValue(member);
   const invalidateSafety = vi.fn().mockResolvedValue(undefined);
   const api: HouseholdSettingsApi = {
@@ -114,7 +122,21 @@ function renderSettings(overrides: Partial<HouseholdSettingsApi> = {}) {
       <HouseholdSettingsForm api={api} />
     </QueryClientProvider>,
   );
+  if (!options.startClosed) {
+    await screen.findByRole("heading", { name: "登録済みの家族" });
+    const editButtons = screen.queryAllByRole("button", { name: /を編集$/u });
+    if (editButtons[0] !== undefined) {
+      await userEvent.click(editButtons[0]);
+      await screen.findByRole("region", { name: "家族情報を追加・編集" });
+    }
+  }
   return { api, queryClient, updateMember, invalidateSafety };
+}
+
+/** 一覧から特定メンバーの編集を開く。 */
+async function openMemberEditor(buttonName: string | RegExp = /を編集$/u) {
+  await userEvent.click(await screen.findByRole("button", { name: buttonName }));
+  expect(await screen.findByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
 }
 
 async function waitForAllergies(queryClient: QueryClient, memberId = "member-1") {
@@ -139,27 +161,43 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
     id: "member-3",
     sort_order: 2,
   };
-  renderSettings({ listMembers: vi.fn().mockResolvedValue([member, second, third]) });
+  await renderSettings(
+    { listMembers: vi.fn().mockResolvedValue([member, second, third]) },
+    { startClosed: true },
+  );
 
   expect(await screen.findByRole("heading", { name: "登録済みの家族" })).toBeVisible();
-  const editor = screen.getByRole("region", { name: "家族情報を追加・編集" });
-  expect(editor).toBeVisible();
-  expect(screen.queryByLabelText("設定する家族")).not.toBeInTheDocument();
-  expect(editor).toContainElement(screen.getByRole("button", { name: "家族を追加" }));
-  expect(editor).toContainElement(screen.getByLabelText("呼び名"));
-  expect(editor).toContainElement(screen.getByRole("button", { name: "家族を削除" }));
+  // 登録済みがある初期表示は一覧のみ。編集領域は自動で開かない。
+  expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
   expect(screen.getByText("大人", { selector: ".household-member-name" })).toBeVisible();
   expect(screen.getByText(/登録完了/u)).toBeVisible();
-  expect(screen.getAllByText("呼び名未設定", { selector: ".household-member-name" })).toHaveLength(
+  expect(screen.getAllByText("名前未設定", { selector: ".household-member-name" })).toHaveLength(
     2,
   );
   expect(screen.getAllByText(/3〜5歳/u)[0]).toBeVisible();
   expect(screen.getAllByText(/入力途中/u)).toHaveLength(2);
+  // 一覧の各行に編集と削除が並ぶ
+  expect(screen.getByRole("button", { name: "1人目の大人を削除" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "2人目の名前未設定を削除" })).toBeVisible();
 
-  const secondButton = screen.getByRole("button", { name: "2人目の呼び名未設定を編集" });
-  expect(screen.getByRole("button", { name: "3人目の呼び名未設定を編集" })).toBeVisible();
+  const secondButton = screen.getByRole("button", { name: "2人目の名前未設定を編集" });
+  expect(screen.getByRole("button", { name: "3人目の名前未設定を編集" })).toBeVisible();
   await userEvent.click(secondButton);
-  const editorHeading = screen.getByRole("heading", { name: "「呼び名未設定」を編集中" });
+  const editor = screen.getByRole("region", { name: "家族情報を追加・編集" });
+  expect(editor).toBeVisible();
+  expect(editor).toContainElement(screen.getByLabelText("呼び名"));
+  // 末尾操作は横並び: 完了 / 追加をやめる / 家族を追加
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  const cancelAddButton = screen.getByRole("button", { name: "追加をやめる" });
+  const addAnotherButton = screen.getByRole("button", { name: "家族を追加" });
+  expect(editor).toContainElement(completeButton);
+  expect(editor).toContainElement(cancelAddButton);
+  expect(editor).toContainElement(addAnotherButton);
+  expect(completeButton.parentElement).toHaveClass("household-editor-actions");
+  expect(completeButton.parentElement).toContainElement(cancelAddButton);
+  expect(completeButton.parentElement).toContainElement(addAnotherButton);
+  const editorHeading = screen.getByRole("heading", { name: "「名前未設定」を編集中" });
   expect(editorHeading).toBeVisible();
   expect(editorHeading).toHaveFocus();
   expect(screen.getByLabelText("呼び名")).toHaveValue("");
@@ -167,7 +205,7 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
 
 it("closes the editor after a successful complete-member save and reopens it from the list", async () => {
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({ updateMember });
+  await renderSettings({ updateMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
 
@@ -186,7 +224,7 @@ it("closes the editor after a successful complete-member save and reopens it fro
 
 it("keeps the editor open when completing the member fails", async () => {
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定を保存できませんでした"));
-  renderSettings({ updateMember });
+  await renderSettings({ updateMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
 
@@ -225,7 +263,7 @@ it.each(["complete", "draft"] as const)(
         }),
     );
     const createDraft = vi.fn();
-    renderSettings({
+    await renderSettings({
       listMembers: vi.fn().mockResolvedValue([target, secondMember]),
       updateMember,
       updateDraft,
@@ -290,7 +328,7 @@ it("does not start completion while an allergy addition is pending", async () =>
   const registeredMember = { ...member, allergy_status: "registered" as const };
   const addStandardAllergy = vi.fn(() => new Promise<MemberAllergyRow>(() => undefined));
   const updateMember = vi.fn().mockResolvedValue(registeredMember);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([registeredMember]),
     listAllergies: vi.fn().mockResolvedValue([existingCustomAllergy]),
     addStandardAllergy,
@@ -318,7 +356,7 @@ it("does not start completion while the last draft allergy deletion is pending",
   const removeAllergy = vi.fn(() => new Promise<void>(() => undefined));
   const updateDraft = vi.fn().mockResolvedValue(draft);
   const completeMember = vi.fn().mockResolvedValue({ ...draft, status: "complete" as const });
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([draft]),
     listAllergies: vi.fn().mockResolvedValue([{ ...standardAllergy, member_id: draft.id }]),
     removeAllergy,
@@ -341,7 +379,7 @@ it("does not start completion while the last draft allergy deletion is pending",
 it("does not start completion while adding a dislike is pending", async () => {
   const addDislike = vi.fn(() => new Promise<MemberDislikeRow>(() => undefined));
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({ addDislike, updateMember });
+  await renderSettings({ addDislike, updateMember });
 
   await userEvent.type(await screen.findByLabelText("苦手食材を追加"), "ピーマン");
   await userEvent.click(screen.getByRole("button", { name: "苦手食材を追加" }));
@@ -364,7 +402,7 @@ it("does not start completion while removing a dislike is pending", async () => 
   };
   const removeDislike = vi.fn(() => new Promise<void>(() => undefined));
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({
+  await renderSettings({
     listDislikes: vi.fn().mockResolvedValue([dislike]),
     removeDislike,
     updateMember,
@@ -383,7 +421,7 @@ it("does not start completion while removing a dislike is pending", async () => 
 it("keeps the editor open and reports a failed dislike addition", async () => {
   const addDislike = vi.fn().mockRejectedValue(new Error("苦手食材を追加できませんでした"));
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({ addDislike, updateMember });
+  await renderSettings({ addDislike, updateMember });
 
   await userEvent.type(await screen.findByLabelText("苦手食材を追加"), "ピーマン");
   await userEvent.click(screen.getByRole("button", { name: "苦手食材を追加" }));
@@ -404,7 +442,7 @@ it("keeps the editor open and reports a failed dislike deletion", async () => {
   };
   const removeDislike = vi.fn().mockRejectedValue(new Error("苦手食材を削除できませんでした"));
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({
+  await renderSettings({
     listDislikes: vi.fn().mockResolvedValue([dislike]),
     removeDislike,
     updateMember,
@@ -421,7 +459,7 @@ it("keeps the editor open and reports a failed dislike deletion", async () => {
 it("does not start completion while deleting the selected member", async () => {
   const deleteMember = vi.fn(() => new Promise<void>(() => undefined));
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({ deleteMember, updateMember });
+  await renderSettings({ deleteMember, updateMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
@@ -438,7 +476,7 @@ it("does not start completion while deleting the selected member", async () => {
 it("does not start completion while creating another draft", async () => {
   const createDraft = vi.fn(() => new Promise<HouseholdMemberRow>(() => undefined));
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({ createDraft, updateMember });
+  await renderSettings({ createDraft, updateMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を追加" }));
   await waitFor(() => {
@@ -456,7 +494,7 @@ it("still completes the original member after createDraft fails", async () => {
   // 成功 message もフォーム close も出ない回帰を防ぐ。
   const createDraft = vi.fn().mockRejectedValue(new Error("家族の追加に失敗しました"));
   const updateMember = vi.fn().mockResolvedValue(member);
-  renderSettings({ createDraft, updateMember });
+  await renderSettings({ createDraft, updateMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を追加" }));
   await waitFor(() => {
@@ -498,7 +536,7 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
         resolveCreate = resolve;
       }),
   );
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([firstDraft]),
     updateDraft: vi.fn().mockResolvedValue(firstDraft),
     completeMember: vi.fn().mockRejectedValue(new Error("古い下書きの完了に失敗しました")),
@@ -520,7 +558,7 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
     await Promise.resolve();
   });
 
-  expect(await screen.findByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "「名前未設定」を編集中" })).toBeVisible();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
@@ -532,7 +570,7 @@ it("clears the previous member's validation feedback when switching members", as
     display_name: "子ども",
     sort_order: 1,
   };
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
   });
 
@@ -562,7 +600,7 @@ it("does not publish a queued validation error after switching to another member
         resolveFirstSave = resolve;
       }),
   );
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     updateMember,
   });
@@ -608,7 +646,7 @@ it("does not publish a queued save failure after switching to another member", a
           rejectSecondSave = reject;
         }),
     );
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     updateMember,
   });
@@ -646,7 +684,7 @@ it("keeps a draft editor open when completeMember fails", async () => {
     display_name: "追加中",
   };
   const completeMember = vi.fn().mockRejectedValue(new Error("家族設定を完了できませんでした"));
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([draft]),
     updateDraft: vi.fn().mockResolvedValue(draft),
     completeMember,
@@ -659,7 +697,7 @@ it("keeps a draft editor open when completeMember fails", async () => {
 });
 
 it("家族0件でも登録済み領域と追加領域を分けて表示する", async () => {
-  renderSettings({ listMembers: vi.fn().mockResolvedValue([]) });
+  await renderSettings({ listMembers: vi.fn().mockResolvedValue([]) });
 
   expect(await screen.findByRole("heading", { name: "登録済みの家族" })).toBeVisible();
   expect(screen.getByText("登録済みの家族はいません。")).toBeVisible();
@@ -683,7 +721,7 @@ it("keeps family CRUD controls and composes the account danger zone on the same 
   });
   const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  const { updateMember } = renderSettings({
+  const { updateMember } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, second]),
     addDislike,
     addStandardAllergy,
@@ -735,7 +773,7 @@ it("creates and selects a new draft while an existing member is present", async 
     sort_order: 1,
   };
   const createDraft = vi.fn().mockResolvedValue(draft);
-  const { queryClient } = renderSettings({ createDraft });
+  const { queryClient } = await renderSettings({ createDraft });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
 
@@ -773,7 +811,7 @@ it("cancels a newly added draft without completing it", async () => {
   };
   const createDraft = vi.fn().mockResolvedValue(draft);
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  const { queryClient } = renderSettings({ createDraft, deleteMember });
+  const { queryClient } = await renderSettings({ createDraft, deleteMember });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
   expect(await screen.findByRole("button", { name: "追加をやめる" })).toBeVisible();
@@ -789,19 +827,24 @@ it("cancels a newly added draft without completing it", async () => {
   expect(await screen.findByText("家族の追加をやめました")).toBeVisible();
 });
 
-it("removes a deleted member from cache before selecting the remaining member", async () => {
+it("removes a deleted member from cache and closes the editor", async () => {
   const remaining = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
   const listMembers = vi
     .fn()
     .mockResolvedValueOnce([member, remaining])
     .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
-  const { queryClient } = renderSettings({ listMembers });
+  const { queryClient } = await renderSettings({ listMembers });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
 
-  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+  // 編集中の家族を削除したらフォームを閉じ、残った家族は一覧に残る
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("button", { name: "1人目の子どもを編集" })).toBeVisible();
   expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([remaining]);
+  expect(await screen.findByText("家族の設定を削除しました")).toBeVisible();
 });
 
 it("shows the empty add screen immediately after deleting the last member", async () => {
@@ -809,7 +852,7 @@ it("shows the empty add screen immediately after deleting the last member", asyn
     .fn()
     .mockResolvedValueOnce([member])
     .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
-  const { queryClient } = renderSettings({ listMembers });
+  const { queryClient } = await renderSettings({ listMembers });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
@@ -824,7 +867,7 @@ it("shows the empty add screen immediately after deleting the last member", asyn
 it("closes a member delete confirmation when another member is selected", async () => {
   const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     deleteMember,
   });
@@ -841,6 +884,28 @@ it("closes a member delete confirmation when another member is selected", async 
   expect(deleteMember).not.toHaveBeenCalled();
 });
 
+it("can delete a list member who is not the currently edited one", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    deleteMember,
+  });
+
+  // renderSettings は先頭（大人）を編集中。一覧から子どもを削除できること。
+  expect(screen.getByRole("heading", { name: "「大人」を編集中" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを削除" }));
+  expect(screen.getByRole("dialog", { name: "家族の削除確認" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+
+  await waitFor(() => {
+    expect(deleteMember).toHaveBeenCalledWith("member-2");
+  });
+  expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
+  // 編集中の大人は残る（削除対象は子ども）
+  expect(screen.getByRole("heading", { name: "「大人」を編集中" })).toBeVisible();
+});
+
 it("does not delete either member after switching during the delete target's allergy add", async () => {
   const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
   let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
@@ -851,7 +916,7 @@ it("does not delete either member after switching during the delete target's all
       }),
   );
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     listAllergies: vi.fn().mockResolvedValue([]),
     addStandardAllergy,
@@ -884,7 +949,7 @@ it("deletes only the captured member and preserves a newly selected member", asy
     .fn()
     .mockResolvedValueOnce([member, secondMember])
     .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
-  const { queryClient } = renderSettings({ listMembers, deleteMember });
+  const { queryClient } = await renderSettings({ listMembers, deleteMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
@@ -908,7 +973,7 @@ it("deletes only the captured member and preserves a newly selected member", asy
 it("closes a delete confirmation when its target disappears from the member cache", async () => {
   const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     deleteMember,
   });
@@ -947,7 +1012,7 @@ it("submits a member delete confirmation only once", async () => {
     resolveDelete = resolve;
   });
   const deleteMember = vi.fn().mockReturnValue(pendingDelete);
-  renderSettings({ deleteMember });
+  await renderSettings({ deleteMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   const confirm = screen.getByRole("button", { name: "家族だけを削除" });
@@ -970,7 +1035,7 @@ it("prevents duplicate draft creation from the empty add screen", async () => {
         resolveCreate = resolve;
       }),
   );
-  renderSettings({ listMembers: vi.fn().mockResolvedValue([]), createDraft });
+  await renderSettings({ listMembers: vi.fn().mockResolvedValue([]), createDraft });
   const add = await screen.findByRole("button", { name: /^家族を追加$/u });
 
   await userEvent.click(add);
@@ -1006,7 +1071,7 @@ it("keeps every new draft field through consecutive autosaves and completes with
       }),
   );
   const completeMember = vi.fn().mockResolvedValue({ ...draft, status: "complete" });
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([]),
     createDraft: vi.fn().mockResolvedValue(draft),
     updateDraft,
@@ -1072,7 +1137,7 @@ it("keeps every new draft field through consecutive autosaves and completes with
 });
 
 it("saves a changed safety field and invalidates dependents", async () => {
-  const { updateMember, invalidateSafety } = renderSettings();
+  const { updateMember, invalidateSafety } = await renderSettings();
   await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
   await waitFor(() => {
     expect(updateMember.mock.calls.length).toBeGreaterThan(0);
@@ -1092,7 +1157,7 @@ it.each([
     const updateMember = vi.fn().mockResolvedValue(registeredMember);
     const addStandardAllergy = vi.fn().mockResolvedValue(undefined);
     const addCustomAllergy = vi.fn().mockResolvedValue(undefined);
-    renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
+    await renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
 
     await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
 
@@ -1145,7 +1210,7 @@ it.each([
       custom_name: "えんどう豆たんぱく",
       custom_confirmed: true,
     });
-    renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
+    await renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
 
     await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
     await waitFor(() => {
@@ -1194,7 +1259,7 @@ it("keeps only the deferred registered status over newer member query values", a
   const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
     Promise.resolve({ ...latestMember, ...patch }),
   );
-  const { queryClient } = renderSettings({ updateMember });
+  const { queryClient } = await renderSettings({ updateMember });
 
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await act(async () => {
@@ -1228,7 +1293,7 @@ it.each(["none", "unconfirmed"] as const)(
   async (allergyStatus) => {
     const savedMember = { ...member, allergy_status: allergyStatus };
     const updateMember = vi.fn().mockResolvedValue(savedMember);
-    const { queryClient } = renderSettings({ updateMember });
+    const { queryClient } = await renderSettings({ updateMember });
 
     const allergyStatusSelect = await screen.findByLabelText("アレルギーの確認");
     await userEvent.selectOptions(allergyStatusSelect, "registered");
@@ -1264,7 +1329,7 @@ it("keeps a deferred registered intent when the first allergy add fails", async 
     .mockImplementation((_memberId: string, patch: HouseholdMemberPatch) =>
       Promise.resolve({ ...member, ...patch }),
     );
-  renderSettings({ addStandardAllergy, updateMember });
+  await renderSettings({ addStandardAllergy, updateMember });
 
   await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
   await waitFor(() => {
@@ -1297,7 +1362,7 @@ it("keeps a deferred registered intent when the first allergy add fails", async 
 
 it("keeps a deferred registered status when saving it after the first allergy fails", async () => {
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定を保存できませんでした"));
-  renderSettings({
+  await renderSettings({
     updateMember,
     addStandardAllergy: vi.fn().mockResolvedValue(standardAllergy),
   });
@@ -1314,7 +1379,7 @@ it("keeps a deferred registered status when saving it after the first allergy fa
 it("rejects removing the last allergy from a complete registered member", async () => {
   const registeredMember = { ...member, allergy_status: "registered" as const };
   const removeAllergy = vi.fn().mockResolvedValue(undefined);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([registeredMember]),
     listAllergies: vi.fn().mockResolvedValue([standardAllergy]),
     removeAllergy,
@@ -1338,7 +1403,7 @@ it("shows a remove error when deleting from multiple registered allergies fails"
     custom_confirmed: true,
   };
   const removeAllergy = vi.fn().mockRejectedValue(new Error("アレルギーを削除できませんでした"));
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([registeredMember]),
     listAllergies: vi.fn().mockResolvedValue([standardAllergy, customAllergy]),
     removeAllergy,
@@ -1363,13 +1428,16 @@ it("cleans up a deferred registered status when its member is deleted", async ()
     .fn()
     .mockResolvedValueOnce([member, remainingMember])
     .mockImplementation(() => new Promise<HouseholdMemberRow[]>(() => undefined));
-  const { queryClient } = renderSettings({ listMembers });
+  const { queryClient } = await renderSettings({ listMembers });
 
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
-  expect(await screen.findByLabelText("呼び名")).toHaveValue("子ども");
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
 
+  // 削除した大人をキャッシュへ戻して再編集しても、保留中の registered は残らない
   await act(async () => {
     queryClient.setQueryData(householdKeys.members("settings"), [member, remainingMember]);
     await Promise.resolve();
@@ -1388,7 +1456,7 @@ it("disables the allergy status until existing allergies finish loading", async 
       }),
   );
   const updateMember = vi.fn().mockResolvedValue({ ...member, allergy_status: "registered" });
-  renderSettings({ listAllergies, updateMember });
+  await renderSettings({ listAllergies, updateMember });
 
   const allergyStatus = await screen.findByLabelText("アレルギーの確認");
   expect(allergyStatus).toBeDisabled();
@@ -1430,7 +1498,7 @@ it("keeps newer edits in the registered save after a delayed standard allergy ad
         allergy_status: patch.allergy_status ?? member.allergy_status,
       });
     });
-  renderSettings({ addStandardAllergy, updateMember });
+  await renderSettings({ addStandardAllergy, updateMember });
 
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
@@ -1509,7 +1577,7 @@ it.each([
         allergy_status: patch.allergy_status ?? source.allergy_status,
       });
     });
-    renderSettings({
+    await renderSettings({
       listMembers: vi.fn().mockResolvedValue([member, secondMember]),
       listAllergies: vi.fn((memberId: string) =>
         Promise.resolve(memberId === member.id ? [] : secondAllergies),
@@ -1565,7 +1633,7 @@ it("keeps an allergy add locked for its member across switching until success", 
   const updateMember = vi.fn((memberId: string, patch: HouseholdMemberPatch) =>
     Promise.resolve({ ...(memberId === member.id ? member : secondMember), ...patch }),
   );
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     listAllergies: vi.fn().mockResolvedValue([]),
     addStandardAllergy,
@@ -1620,7 +1688,7 @@ it("keeps the intent and unlocks a switched member after its allergy add fails",
     rejectAdd = reject;
   });
   const addStandardAllergy = vi.fn().mockReturnValue(pendingAdd);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     listAllergies: vi.fn().mockResolvedValue([]),
     addStandardAllergy,
@@ -1655,7 +1723,7 @@ it("blocks a previously opened member delete confirmation during an allergy add"
       }),
   );
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  renderSettings({ addStandardAllergy, deleteMember });
+  await renderSettings({ addStandardAllergy, deleteMember });
 
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   const confirmDelete = screen.getByRole("button", { name: "家族だけを削除" });
@@ -1688,7 +1756,7 @@ it("disables every allergy operation while a registered member allergy query is 
   const addStandardAllergy = vi.fn();
   const addCustomAllergy = vi.fn();
   const removeAllergy = vi.fn();
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([{ ...member, allergy_status: "registered" }]),
     listAllergies,
     addStandardAllergy,
@@ -1736,7 +1804,7 @@ it("keeps allergy operations disabled after failure and enables them only after 
   const addStandardAllergy = vi.fn().mockResolvedValue(standardAllergy);
   const addCustomAllergy = vi.fn().mockResolvedValue(customAllergy);
   const removeAllergy = vi.fn().mockResolvedValue(undefined);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([registeredMember]),
     listAllergies,
     updateMember,
@@ -1795,7 +1863,7 @@ it("keeps allergy operations disabled after failure and enables them only after 
 
 it("saves a registered allergy status immediately when an allergy already exists", async () => {
   const updateMember = vi.fn().mockResolvedValue({ ...member, allergy_status: "registered" });
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     updateMember,
     listAllergies: vi.fn().mockResolvedValue([standardAllergy]),
   });
@@ -1824,7 +1892,7 @@ it("keeps explicitly empty saved preferences when loading and saving another fie
     required_safety_constraints: [],
   };
   const updateMember = vi.fn().mockResolvedValue(savedWithoutPreferences);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([savedWithoutPreferences]),
     updateMember,
   });
@@ -1850,7 +1918,7 @@ it("keeps explicitly empty saved preferences when loading and saving another fie
 });
 
 it("アレルギー0件のcomplete家族ではregisteredの保存を保留する", async () => {
-  const { queryClient, updateMember } = renderSettings();
+  const { queryClient, updateMember } = await renderSettings();
 
   await waitForAllergies(queryClient);
 
@@ -1876,7 +1944,7 @@ it("0件確認中のsafe保存後はregisteredを送らず追加成功後に再�
     )
     .mockResolvedValueOnce(registeredMember);
   const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
-  const { queryClient } = renderSettings({ addStandardAllergy, updateMember });
+  const { queryClient } = await renderSettings({ addStandardAllergy, updateMember });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -1914,7 +1982,7 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
         resolveAdd = resolve;
       }),
   );
-  const { queryClient, updateMember, invalidateSafety } = renderSettings({ addStandardAllergy });
+  const { queryClient, updateMember, invalidateSafety } = await renderSettings({ addStandardAllergy });
 
   await waitForAllergies(queryClient);
 
@@ -1949,7 +2017,7 @@ it("既存registered家族はアレルギー取得中でも通常の編集を保
     allergy_status: "registered",
   };
   const updateMember = vi.fn().mockResolvedValue(registeredMember);
-  renderSettings({
+  await renderSettings({
     listMembers: vi.fn().mockResolvedValue([registeredMember]),
     listAllergies: vi.fn(() => new Promise<MemberAllergyRow[]>(() => undefined)),
     updateMember,
@@ -1967,7 +2035,7 @@ it("既存registered家族はアレルギー取得中でも通常の編集を保
 
 it("標準アレルギー追加失敗時はregisteredも成功表示も保存しない", async () => {
   const addStandardAllergy = vi.fn().mockRejectedValue(new Error("追加失敗"));
-  const { queryClient, updateMember } = renderSettings({ addStandardAllergy });
+  const { queryClient, updateMember } = await renderSettings({ addStandardAllergy });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -1987,7 +2055,7 @@ it("自由登録アレルギー追加成功後に保留したregisteredを保存
     custom_name: "マンゴー",
     custom_confirmed: true,
   });
-  const { queryClient, updateMember } = renderSettings({ addCustomAllergy });
+  const { queryClient, updateMember } = await renderSettings({ addCustomAllergy });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2012,7 +2080,7 @@ it("自由登録INSERT失敗時は入力と確認状態を保持する", async (
         rejectAdd = reject;
       }),
   );
-  const { queryClient, updateMember } = renderSettings({ addCustomAllergy });
+  const { queryClient, updateMember } = await renderSettings({ addCustomAllergy });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2042,7 +2110,7 @@ it("自由登録INSERT成功後のregistered保存失敗では入力をクリア
     custom_confirmed: true,
   });
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定の保存に失敗しました"));
-  const { queryClient } = renderSettings({ addCustomAllergy, updateMember });
+  const { queryClient } = await renderSettings({ addCustomAllergy, updateMember });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2067,7 +2135,7 @@ it("アレルギー追加中の別フィールド変更を最新snapshotで保�
         resolveAdd = resolve;
       }),
   );
-  const { queryClient, updateMember } = renderSettings({ addStandardAllergy });
+  const { queryClient, updateMember } = await renderSettings({ addStandardAllergy });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2111,7 +2179,7 @@ it("registered保存中の別フィールド変更を後続の最新snapshotで�
         }),
     )
     .mockResolvedValueOnce(latestRegisteredMember);
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listAllergies: vi.fn().mockResolvedValue([walnutAllergy]),
     updateMember,
   });
@@ -2167,7 +2235,7 @@ it("完了ロック後はregisteredの後続保存を追加せず最新snapshot�
         }),
     )
     .mockResolvedValue(latestRegisteredMember);
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listAllergies: vi.fn().mockResolvedValue([walnutAllergy]),
     updateMember,
   });
@@ -2217,7 +2285,7 @@ it("registered保存中のnone変更を後続保存して最終状態へ反映�
         }),
     )
     .mockResolvedValueOnce(member);
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listAllergies: vi.fn().mockResolvedValue([walnutAllergy]),
     updateMember,
   });
@@ -2266,7 +2334,7 @@ it("アレルギー追加中に家族を往復してもregisteredを表示し元
       }),
   );
   const updateMember = vi.fn().mockResolvedValue(member);
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     addStandardAllergy,
     updateMember,
@@ -2316,7 +2384,7 @@ it("registered保存中に家族を往復しても成功後の表示とcacheを�
         resolveUpdate = resolve;
       }),
   );
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     listAllergies: vi.fn((memberId: string) =>
       Promise.resolve(memberId === "member-1" ? [walnutAllergy] : []),
@@ -2363,7 +2431,7 @@ it("registered保存失敗後に家族を往復してもローカル値を保持
     sort_order: 1,
   };
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定の保存に失敗しました"));
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     listAllergies: vi.fn((memberId: string) =>
       Promise.resolve(memberId === "member-1" ? [walnutAllergy] : []),
@@ -2390,7 +2458,7 @@ it("registered保存失敗後に家族を往復してもローカル値を保持
 it("アレルギー追加後のregistered保存失敗を成功表示で上書きしない", async () => {
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定の保存に失敗しました"));
   const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
-  const { queryClient } = renderSettings({ addStandardAllergy, updateMember });
+  const { queryClient } = await renderSettings({ addStandardAllergy, updateMember });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2425,7 +2493,7 @@ it.each(["standard", "custom"] as const)(
       custom_name: "マンゴー",
       custom_confirmed: true,
     });
-    const { queryClient } = renderSettings({
+    const { queryClient } = await renderSettings({
       addCustomAllergy,
       addStandardAllergy,
       invalidateSafety,
@@ -2472,7 +2540,7 @@ it.each(["standard", "custom"] as const)(
 );
 
 it("applies age defaults when the user selects an age band", async () => {
-  const { updateMember } = renderSettings();
+  const { updateMember } = await renderSettings();
 
   await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
 
@@ -2489,7 +2557,7 @@ it("applies age defaults when the user selects an age band", async () => {
 });
 
 it("persists an edit that only changes the display name", async () => {
-  const { updateMember } = renderSettings();
+  const { updateMember } = await renderSettings();
   const input = await screen.findByLabelText("呼び名");
 
   fireEvent.change(input, { target: { value: "保護者" } });
@@ -2508,7 +2576,7 @@ it("keeps newer local edits when an older save response updates the member query
     resolveFirstSave = resolve;
   });
   const updateMember = vi.fn().mockReturnValue(firstSave);
-  renderSettings({ updateMember });
+  await renderSettings({ updateMember });
   const input = await screen.findByLabelText("呼び名");
 
   fireEvent.change(input, { target: { value: "最初の入力" } });
@@ -2530,7 +2598,7 @@ it("keeps the latest local snapshot after a queued success then failure", async 
       Promise.resolve({ ...member, ...patch }),
     )
     .mockRejectedValueOnce(new Error("後の保存に失敗しました"));
-  const { queryClient } = renderSettings({ updateMember });
+  const { queryClient } = await renderSettings({ updateMember });
   const displayName = await screen.findByLabelText("呼び名");
 
   fireEvent.change(displayName, { target: { value: "保護者" } });
@@ -2560,7 +2628,7 @@ it("clears a failed local snapshot after the next queued full save succeeds", as
     .mockImplementationOnce((_memberId: string, patch: HouseholdMemberPatch) =>
       Promise.resolve({ ...member, ...patch }),
     );
-  const { queryClient } = renderSettings({ updateMember });
+  const { queryClient } = await renderSettings({ updateMember });
   const displayName = await screen.findByLabelText("呼び名");
 
   fireEvent.change(displayName, { target: { value: "保護者" } });
@@ -2600,7 +2668,7 @@ it("uses the latest member query values after switching away and back", async ()
     updated_at: "2026-07-18T00:00:00.000Z",
   };
   const updateMember = vi.fn().mockResolvedValue(latestMember);
-  const { queryClient } = renderSettings({
+  const { queryClient } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     updateMember,
   });
