@@ -71,7 +71,8 @@ const ensurePrivacyThenGenerate = async (
   }
   const generate = page.getByRole("button", { name: "献立を作る" });
   if (opts.needsPrivacyHop) {
-    await expect(generate).toBeDisabled();
+    // 未確認時も生成ボタンは有効（押下で説明 CTA へ誘導）。説明は secondary ボタン。
+    await expect(generate).toBeEnabled();
     await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
@@ -131,7 +132,7 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   }
   // review 自身も meal〜audience と同様に横スクロール無しを要求する。
-  // privacy 未了では「献立を作る」が disabled でもコントロール自体は存在する。
+  // privacy 未了でも「献立を作る」は有効（押下で説明へ誘導）でコントロール自体は存在する。
   await assertStepFits(page, { 献立を作る: 1 });
 };
 

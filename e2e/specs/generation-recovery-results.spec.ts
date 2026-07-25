@@ -71,9 +71,9 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   expect((await servingsSaveResponse).ok()).toBe(true);
   await clickWizardNext(page);
 
-  // 5. 確認（review）。privacy未確認のため生成buttonはdisabledで説明linkが出る。
+  // 5. 確認（review）。privacy 未確認でも生成は有効で、説明は secondary ボタンで出す。
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
   await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/privacy");
   await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();

@@ -315,7 +315,11 @@ export function useGenerationRecovery(
       token.idempotencyKey === state.data.idempotencyKey &&
       isCurrent(token)
     ) {
-      clearPendingGeneration();
+      // pending はここでは消さない。
+      // Planner が POST 完了後に /generation へ遷移する経路では、終端化と同時に
+      // pending を消すと新しい Recovery インスタンスが idle のまま /planner へ戻り、
+      // 失敗・条件競合のメッセージが一度も表示されない。
+      // TTL 切れ・次の startGeneration（上書き）・clearGeneration が掃除を担う。
       if (userId !== null) {
         void queryClient.invalidateQueries({
           queryKey: usageTodayQueryKey(userId, jstDayKey()),

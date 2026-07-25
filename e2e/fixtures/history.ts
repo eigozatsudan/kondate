@@ -276,9 +276,10 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
   // privacy 未確認なら説明へ。returnTo=/planner?resume=review で戻ったあと、
   // react-query の stale draft cache で step 1 へ巻き戻る既知差異を reload で回避する
   // （generation-recovery-results の completeIdeaPlannerToReview と同手順）。
-  const generateButton = page.getByRole("button", { name: "献立を作る" });
-  if (await generateButton.isDisabled()) {
-    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+  // privacy 未了では説明 CTA が見える（生成ボタンは案内のため有効のまま）
+  const privacyCta = page.getByRole("button", { name: "AI情報の説明を見る" });
+  if (await privacyCta.isVisible().catch(() => false)) {
+    await privacyCta.click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();

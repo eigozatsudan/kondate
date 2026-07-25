@@ -43,10 +43,11 @@ test("household journey: welcome through shopping reconciliation", async ({
   await clickWizardNext(page);
 
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  // privacy 未了なら説明へ
+  // privacy 未了なら説明へ（生成ボタンは有効のまま案内するので、CTA の有無で判定する）
   const generate = page.getByRole("button", { name: "献立を作る" });
-  if (await generate.isDisabled().catch(() => false)) {
-    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+  const privacyCta = page.getByRole("button", { name: "AI情報の説明を見る" });
+  if (await privacyCta.isVisible().catch(() => false)) {
+    await privacyCta.click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
@@ -161,8 +162,9 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   await setMockScenario(page, "idea-servings-1");
   const generate = page.getByRole("button", { name: "献立を作る" });
-  if (await generate.isDisabled().catch(() => false)) {
-    await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
+  const privacyCta = page.getByRole("button", { name: "AI情報の説明を見る" });
+  if (await privacyCta.isVisible().catch(() => false)) {
+    await privacyCta.click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();

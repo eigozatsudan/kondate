@@ -607,10 +607,35 @@ describe("PlannerWizard review step", () => {
     expect(body).toContainElement(screen.getByLabelText("自由メモ"));
   });
 
-  it("privacy未確認では生成buttonをdisabledにし説明linkを表示する", () => {
-    render(<Harness initialStep="review" hasAcceptedOrDeclinedPrivacy={false} />);
-    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "AI情報の説明を見る" })).toBeInTheDocument();
+  it("privacy未確認では説明ボタンを表示し、生成押下でダイアログへ誘導する", async () => {
+    const user = userEvent.setup();
+    const onOpenPrivacyNotice = vi.fn();
+    const onSubmit = vi.fn(async () => undefined);
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        hasAcceptedOrDeclinedPrivacy={false}
+        onOpenPrivacyNotice={onOpenPrivacyNotice}
+        onSubmit={onSubmit}
+      />,
+    );
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    const privacy = screen.getByRole("button", { name: "AI情報の説明を見る" });
+    expect(generate).toBeEnabled();
+    expect(privacy).toBeEnabled();
+    expect(privacy).toHaveClass("secondary-button");
+    await user.click(generate);
+    expect(onSubmit).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("alertdialog", { name: "AI情報の説明の確認" });
+    expect(dialog).toHaveTextContent(
+      "献立を作る前に、AI情報の説明を確認してください。「AI情報の説明を見る」を押してください。",
+    );
+    const dialogPrimary = within(dialog).getByRole("button", { name: "AI情報の説明を見る" });
+    expect(dialogPrimary).toHaveFocus();
+    await user.click(dialogPrimary);
+    expect(onOpenPrivacyNotice).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("医療・治療食 free-text があるとき生成を止め、Plan 2 の拒否文言を表示する", () => {

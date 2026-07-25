@@ -72,6 +72,61 @@ const jsonResponse = (response, status, payload) => {
   response.end(JSON.stringify(payload));
 };
 
+/**
+ * idea 検証が要求する形へ success 系 full_menu を整える。
+ * adaptations / labelConfirmations を空にし、人数を提出値に合わせる。
+ */
+const applyIdeaMenuShape = (fixture, servings) => {
+  if (fixture === null || typeof fixture !== "object" || Array.isArray(fixture)) {
+    return fixture;
+  }
+  if (!isPlainObject(fixture.menu)) return fixture;
+  return {
+    ...fixture,
+    menu: {
+      ...fixture.menu,
+      servings,
+      adaptations: [],
+      labelConfirmations: [],
+    },
+  };
+};
+
+/**
+ * idea の system 指示と user の kondate_input_data から人数を読む。
+ * household プロンプト（members 非空・idea 指示なし）では null。
+ */
+const readIdeaServingsFromMessages = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  const system = messages.find((message) => message?.role === "system");
+  const systemContent = typeof system?.content === "string" ? system.content : "";
+  // generation-prompt.ts の idea system 文と一致する判定（世帯向け system には無い）
+  if (!systemContent.includes("家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列")) {
+    return null;
+  }
+  const user = messages.find((message) => message?.role === "user");
+  const userContent = typeof user?.content === "string" ? user.content : "";
+  const match = /<kondate_input_data>\n([\s\S]*?)\n<\/kondate_input_data>/u.exec(userContent);
+  if (match === null) return null;
+  try {
+    const payload = JSON.parse(match[1]);
+    if (!isPlainObject(payload) || !isPlainObject(payload.preferences)) return null;
+    if (!Array.isArray(payload.members) || payload.members.length !== 0) return null;
+    const servings = payload.preferences.servings;
+    if (
+      typeof servings !== "number" ||
+      !Number.isInteger(servings) ||
+      servings < 1 ||
+      servings > 20
+    ) {
+      return null;
+    }
+    return servings;
+  } catch {
+    return null;
+  }
+};
+
 const readRequestBody = (request, response) =>
   new Promise((resolve, reject) => {
     const chunks = [];
@@ -188,12 +243,39 @@ async function handleRequest(request, response) {
         ? "dish-replacement"
         : scenario;
   const key = resolvedScenario;
-  if (typeof key !== "string" || !Object.hasOwn(scenarios, key)) {
+  // idea-servings-N（1..20）は静的 scenarios に無い人数でも合成する。
+  // ブラウザ手動操作は X-Kondate-Mock-Scenario を付けないため、default success も
+  // idea プロンプトなら同じ変換を当てる（家族向け子行を落とす・人数一致）。
+  const ideaServingsMatch =
+    typeof key === "string" ? /^idea-servings-(\d{1,2})$/u.exec(key) : null;
+  const ideaServingsFromKey =
+    ideaServingsMatch !== null ? Number(ideaServingsMatch[1]) : null;
+  const ideaServingsValid =
+    ideaServingsFromKey !== null &&
+    Number.isInteger(ideaServingsFromKey) &&
+    ideaServingsFromKey >= 1 &&
+    ideaServingsFromKey <= 20;
+
+  if (
+    typeof key !== "string" ||
+    (!Object.hasOwn(scenarios, key) && !ideaServingsValid)
+  ) {
     jsonResponse(response, 404, { error: "not_found" });
     return;
   }
 
-  const fixture = structuredClone(scenarios[key]);
+  let fixture = ideaServingsValid
+    ? structuredClone(scenarios.success)
+    : structuredClone(scenarios[key]);
+  if (ideaServingsValid) {
+    fixture = applyIdeaMenuShape(fixture, ideaServingsFromKey);
+  } else if (key === "success" && !dishMode) {
+    // ヘッダ無しの手動 idea 生成: プロンプトが idea なら default success を idea 形へ
+    const ideaServings = readIdeaServingsFromMessages(body.messages);
+    if (ideaServings !== null) {
+      fixture = applyIdeaMenuShape(fixture, ideaServings);
+    }
+  }
   const content = typeof fixture === "string" ? fixture : JSON.stringify(fixture);
   jsonResponse(response, 200, {
     id: "mock-fixed",
