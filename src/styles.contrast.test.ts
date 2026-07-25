@@ -273,6 +273,9 @@ const allowedProtectedSelectors = new Set([
   ".guided-planner-theme .ingredient-quick-select, .guided-planner-theme .ingredient-selected, .guided-planner-theme .ingredient-free-input",
   ".guided-planner-theme .ingredient-selected-count",
   ".guided-planner-theme .ingredient-free-input, .guided-planner-theme .ingredient-pantry",
+  // privacy 未確認時の案内ゲート。CSS 追加時に許可リストへの追記が漏れていた2件。
+  ".guided-planner-theme .privacy-notice-gate",
+  ".guided-planner-theme .privacy-notice-gate .wizard-action",
   ".guided-planner-theme .wizard-option-list",
   ".guided-planner-theme .wizard-option",
   ".guided-planner-theme .wizard-option:has(input:checked)",
@@ -346,7 +349,7 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     color: "#423a32",
     background: "#f7f2e9",
     "font-family":
-      '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
+      '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
     "font-synthesis": "none",
     "text-rendering": "optimizeLegibility",
     "--app-background": "#f7f2e9",
@@ -364,7 +367,7 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     "--focus": "#8b4e3b",
     "--pantry": "#416b5a",
     "--danger": "#9f342c",
-    "--question-font": '"Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif',
+    "--question-font": '"Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif',
   },
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible": {
     outline: "3px solid var(--focus)",
@@ -641,7 +644,7 @@ const globalRuleDeclarations: Readonly<
       color: "#1e293b",
       background: "#f8fafc",
       "font-family":
-        '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
+        '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
       "font-synthesis": "none",
       "text-rendering": "optimizeLegibility",
       "--surface": "#ffffff",
@@ -1218,7 +1221,7 @@ describe("guided planner theme", () => {
       color: "#1e293b",
       background: "#f8fafc",
       "font-family":
-        '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
+        '"Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif',
       "font-synthesis": "none",
       "text-rendering": "optimizeLegibility",
       "--surface": "#ffffff",

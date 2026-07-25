@@ -1,6 +1,27 @@
 @import "tailwindcss";
 
 /*
+ * 和文書体のセルフホスト。
+ * これまで font-family で "Noto Sans JP" / "Noto Serif JP" を指定していたが、
+ * index.html にフォント参照が無く @font-face も存在しなかったため、
+ * どちらも一度も読み込まれていなかった。OS が持っていない端末では
+ * 無言でシステムフォントに落ち、特に --question-font の明朝は
+ * ウィザードと welcome の見出しで意図した字面が出ていなかった。
+ * CSP が font-src 'self' なので CDN は使えず、npm 経由で同一オリジンに置く。
+ *
+ * 参照先は 400.css / 700.css（unicode-range で121分割されたスライス）で、
+ * 単一ファイルの japanese-400.css（944KB）ではない。ブラウザはページ上の
+ * 文字を含むスライスだけを取得する。
+ * 明朝を 700 にしているのは、--question-font の適用先 3 箇所
+ * （.wizard-title / .welcome-tutorial__page-title / .welcome-tutorial__title）が
+ * すべて h1・h2 でブラウザ既定の bold になるため。:root は
+ * font-synthesis: none なので、実体のある重みを読む必要がある。
+ */
+@import "@fontsource/zen-kaku-gothic-new/400.css";
+@import "@fontsource/zen-kaku-gothic-new/700.css";
+@import "@fontsource/zen-old-mincho/700.css";
+
+/*
  * Tailwind v4 のカラーパレット定義。
  * TSX 側は以前から bg-terracotta-700 等を使っていたが @theme が存在せず、
  * Tailwind は未知のユーティリティに対して CSS を一切出力しないため、
@@ -21,7 +42,8 @@
 :root {
   color: #1e293b;
   background: #f8fafc;
-  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+  font-family:
+    "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --surface: #ffffff;
@@ -45,7 +67,8 @@
 .guided-planner-theme {
   color: #423a32;
   background: #f7f2e9;
-  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+  font-family:
+    "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --app-background: #f7f2e9;
@@ -63,7 +86,7 @@
   --focus: #8b4e3b;
   --pantry: #416b5a;
   --danger: #9f342c;
-  --question-font: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --question-font: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
 }
 
 .guided-planner-theme :is(button, a, input, select, textarea):focus-visible {
