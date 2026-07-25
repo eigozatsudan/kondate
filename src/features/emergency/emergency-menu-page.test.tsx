@@ -11,7 +11,18 @@ vi.mock("@tanstack/react-query", () => ({ useQuery: useQueryMock }));
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "72000000-0000-4000-8000-000000000001" } } }),
 }));
-vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: () => {
+    const channel = {
+      on: () => channel,
+      subscribe: () => channel,
+    };
+    return {
+      channel: () => channel,
+      removeChannel: vi.fn(),
+    };
+  },
+}));
 vi.mock("./emergency-menu-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("./emergency-menu-api")>();
   return { ...original, getEmergencyMenus: getEmergencyMenusMock };

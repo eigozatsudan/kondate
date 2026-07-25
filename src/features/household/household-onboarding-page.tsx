@@ -20,7 +20,7 @@ import {
   type HouseholdMemberRow,
 } from "./household-api";
 import { defaultsForAgeBand } from "./household-defaults";
-import { householdKeys } from "./household-queries";
+import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
 import { AllergyEditor } from "./allergy-editor";
 
 const unsupportedDietOptions: ReadonlyArray<readonly [UnsupportedDietKind, string]> = [
@@ -441,6 +441,9 @@ export function HouseholdOnboardingForm({
               return;
             }
             replaceMember(completed);
+            // complete 成功後は家族安全依存 query を必ず無効化し、
+            // localStorage 失敗時でも revision/event 経由で緊急献立などを更新する。
+            await invalidateHouseholdSafetyDependents(queryClient, userId);
             await finishOnboarding();
           });
         }}

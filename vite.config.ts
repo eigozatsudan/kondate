@@ -23,15 +23,13 @@ function stripNetlifyDevContentSecurityPolicy(): Plugin {
     configureServer(server) {
       server.middlewares.use((_request, response, next) => {
         const originalSetHeader = response.setHeader.bind(response);
-        response.setHeader = ((
-          name: string | number,
-          value: number | string | readonly string[],
-        ) => {
-          if (String(name).toLowerCase() === "content-security-policy") {
+        // Node の setHeader は header 名を string として受け取る。
+        response.setHeader = (name: string, value: number | string | readonly string[]) => {
+          if (name.toLowerCase() === "content-security-policy") {
             return response;
           }
           return originalSetHeader(name, value);
-        }) as typeof response.setHeader;
+        };
         next();
       });
     },

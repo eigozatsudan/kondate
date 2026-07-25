@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
 import { useAuth } from "@/features/auth/use-auth";
 import { listHouseholdMembers, type HouseholdMemberRow } from "@/features/household/household-api";
 import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
 import {
+  householdKeys,
   householdSafetyChangedEvent,
   householdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
@@ -35,6 +36,8 @@ function quantityText(value: number | null, unit: string | null, fallback: strin
 
 export function EmergencyMenuPage() {
   const userId = useAuth().session?.user.id;
+  const draftQueryEnabled = userId !== undefined;
+  const householdSafetyEventVersion = useRef(0);
   const [householdSafetyRevision, setHouseholdSafetyRevision] = useState(() => {
     try {
       return localStorage.getItem(householdSafetyRevisionStorageKey) ?? "initial";
@@ -42,29 +45,67 @@ export function EmergencyMenuPage() {
       return "initial";
     }
   });
+  // 別端末・他タブでの家族/アレルギー変更を、history revalidation と同様に
+  // owner-scoped Realtime + focus/visible/online + 60s poll で拾う。
+  // revision を query key に載せ、signal 直後は旧候補を閉じて再取得完了まで fail closed。
   useEffect(() => {
+    if (userId === undefined) return;
     const refreshRevision = () => {
+      householdSafetyEventVersion.current += 1;
       setHouseholdSafetyRevision((current) => {
         try {
-          return localStorage.getItem(householdSafetyRevisionStorageKey) ?? `${current}:changed`;
+          const storedRevision = localStorage.getItem(householdSafetyRevisionStorageKey);
+          return `${storedRevision ?? current}:event:${String(householdSafetyEventVersion.current)}`;
         } catch {
-          return `${current}:changed`;
+          return `${current}:event:${String(householdSafetyEventVersion.current)}`;
         }
       });
     };
     const handleStorage = (event: StorageEvent) => {
       if (event.key === householdSafetyRevisionStorageKey) refreshRevision();
     };
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") refreshRevision();
+    };
+    const client = getBrowserSupabaseClient();
+    // Realtime は user_id で絞り、他ownerの変更は購読側で捨てる。
+    const ownerFilter = `user_id=eq.${userId}`;
+    const channel = client
+      .channel(`emergency-safety:${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "household_members", filter: ownerFilter },
+        refreshRevision,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "member_allergies", filter: ownerFilter },
+        refreshRevision,
+      )
+      .subscribe();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) refreshRevision();
+    }, 60_000);
     window.addEventListener(householdSafetyChangedEvent, refreshRevision);
     window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", handleVisible);
+    window.addEventListener("online", refreshRevision);
+    window.addEventListener("offline", refreshRevision);
+    document.addEventListener("visibilitychange", handleVisible);
     return () => {
+      window.clearInterval(timer);
       window.removeEventListener(householdSafetyChangedEvent, refreshRevision);
       window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", handleVisible);
+      window.removeEventListener("online", refreshRevision);
+      window.removeEventListener("offline", refreshRevision);
+      document.removeEventListener("visibilitychange", handleVisible);
+      void client.removeChannel(channel);
     };
-  }, []);
+  }, [userId]);
   const draftQuery = useQuery({
     queryKey: plannerKeys.draft(userId ?? "missing"),
-    enabled: userId !== undefined,
+    enabled: draftQueryEnabled,
     queryFn: () => getPlannerDraft(getBrowserSupabaseClient(), userId ?? ""),
   });
   const shouldLoadHouseholdTargets =
@@ -73,13 +114,16 @@ export function EmergencyMenuPage() {
     draftQuery.data.targetMode !== "idea";
   const shouldResolveUnselectedTargets =
     draftQuery.data?.targetMode === null && draftQuery.data.targetMemberIds.length === 0;
+  const householdQueryEnabled =
+    userId !== undefined &&
+    draftQuery.isSuccess &&
+    !draftQuery.isFetching &&
+    shouldLoadHouseholdTargets;
   const householdQuery = useQuery({
-    queryKey: ["emergency-household-targets", userId ?? "missing"],
-    enabled:
-      userId !== undefined &&
-      draftQuery.isSuccess &&
-      !draftQuery.isFetching &&
-      shouldLoadHouseholdTargets,
+    // 家族設定のauthority key配下に安全revisionを加え、家族更新のinvalidationと
+    // 同画面・別画面の安全更新eventのどちらでもfresh cacheを再利用しない。
+    queryKey: [...householdKeys.members(userId ?? "missing"), "emergency", householdSafetyRevision],
+    enabled: householdQueryEnabled,
     queryFn: () => listHouseholdMembers(getBrowserSupabaseClient(), userId ?? ""),
   });
   // mode未選択の下書きだけは、後から完了した家族を初期対象にできる。
@@ -101,25 +145,26 @@ export function EmergencyMenuPage() {
     targetMemberIds,
     pantryItemIds: draftQuery.data?.pantrySelections.map((item) => item.pantryItemId) ?? [],
   } as const;
+  const candidateQueryEnabled =
+    userId !== undefined &&
+    draftQuery.isSuccess &&
+    draftQuery.data !== null &&
+    !draftQuery.isFetching &&
+    (!shouldLoadHouseholdTargets || householdQuery.isSuccess) &&
+    hasEligibleHouseholdMembers;
   const query = useQuery({
     queryKey: emergencyMenuKeys.candidates({
       userId: userId ?? "missing",
       ...request,
       householdSafetyRevision,
     }),
-    enabled:
-      userId !== undefined &&
-      draftQuery.isSuccess &&
-      draftQuery.data !== null &&
-      !draftQuery.isFetching &&
-      (!shouldLoadHouseholdTargets || householdQuery.isSuccess) &&
-      hasEligibleHouseholdMembers,
+    enabled: candidateQueryEnabled,
     queryFn: () => getEmergencyMenus(request),
   });
   const loading =
-    draftQuery.isFetching ||
-    (shouldLoadHouseholdTargets && householdQuery.isFetching) ||
-    query.isFetching;
+    (draftQueryEnabled && (draftQuery.isPending || draftQuery.isFetching)) ||
+    (householdQueryEnabled && (householdQuery.isPending || householdQuery.isFetching)) ||
+    (candidateQueryEnabled && (query.isPending || query.isFetching));
   const error =
     draftQuery.isError || (shouldLoadHouseholdTargets && householdQuery.isError) || query.isError
       ? "緊急献立を読み込めませんでした"

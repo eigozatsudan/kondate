@@ -280,8 +280,11 @@ export function HouseholdSettingsForm({
     queryFn: () => api.listAliases?.() ?? Promise.resolve([]),
   });
   const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
+  // 選択中IDが外部削除などで消えたら残存先頭へ同期し、空editorや誤保存対象を防ぐ。
   const selected =
-    selectedId === undefined ? members[0] : members.find((member) => member.id === selectedId);
+    selectedId === undefined
+      ? members[0]
+      : (members.find((member) => member.id === selectedId) ?? members[0]);
   selectedMemberIdRef.current = selected?.id;
   const allergiesQuery = useQuery({
     queryKey: selected

@@ -19,6 +19,8 @@ export const householdSafetyQueryPrefixes = {
   historyRevalidation: ["history-revalidation"],
   generation: ["generation"],
   shopping: ["shopping"],
+  // 緊急献立候補は家族安全条件に依存するため、settings/onboarding 更新時に必ず無効化する。
+  emergencyMenus: ["emergency-menus"],
 } as const;
 export async function invalidateHouseholdSafetyQueries(
   queryClient: QueryClient,

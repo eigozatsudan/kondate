@@ -753,8 +753,11 @@ it("creates and selects a new draft while an existing member is present", async 
     queryClient.setQueryData(["household", "members", "settings"], [member]);
     await Promise.resolve();
   });
-  expect(await screen.findByText("家族を追加してください")).toBeVisible();
-  expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
+  // 選択中draftがcacheから消えても、残存memberへ同期して空画面へ落とさない。
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("大人");
+  expect(screen.queryByText("家族を追加してください")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "家族を削除" })).toBeVisible();
+  expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([member]);
 });
 
 it("cancels a newly added draft without completing it", async () => {
@@ -919,14 +922,20 @@ it("closes a delete confirmation when its target disappears from the member cach
   await waitFor(() => {
     expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
   });
-
-  await act(async () => {
-    queryClient.setQueryData(householdKeys.members("settings"), [member, secondMember]);
-    await Promise.resolve();
-  });
+  // 外部削除相当で選択中memberが消え、残存先頭memberへeditor・一覧・cacheが同期する。
   await waitFor(() => {
-    expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
+    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
   });
+  expect(
+    screen.getByRole("heading", {
+      name: "「子ども」を編集中",
+    }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "1人目の子どもを編集" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(queryClient.getQueryData(householdKeys.members("settings"))).toEqual([secondMember]);
   expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
   fireEvent.click(staleConfirm);
   expect(deleteMember).not.toHaveBeenCalled();

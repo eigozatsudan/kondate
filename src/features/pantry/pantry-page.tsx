@@ -197,7 +197,9 @@ export function PantryPageContent({
       <p>期限日は並べ替えと注意表示のための入力です。アプリは食べられるかを判断しません。</p>
       <section className="pantry-overview stack" aria-labelledby="pantry-list-heading">
         <div className="pantry-section-heading">
-          <h2 id="pantry-list-heading">登録済みの食材（{String(items.length)}件）</h2>
+          <h2 id="pantry-list-heading">
+            登録済みの食材（{loading ? "件数を確認中" : `${String(items.length)}件`}）
+          </h2>
           <button
             ref={addTriggerRef}
             className="primary-button"
