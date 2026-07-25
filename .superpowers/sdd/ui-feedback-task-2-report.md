@@ -216,6 +216,6 @@
 - self-review:
   - 成功時の created.id 切替契約と、create 中の complete 無効化、追加キャンセル時の previousSelectedId 復元を維持した。
   - onError は feedbackRevision を進めないため、失敗後の元メンバー完了 lineage を壊さない。
-- fix round 9 commit hash: （commit 後に確定）
+- fix round 9 commit hash: `d51d1bb`
 - 未解決事項:
   - 二次レビューが指摘した「選択クリアで完了不可」は render 同期により通常は再現しにくい。今回の修正は選択維持を明示し、失敗表示を足した防御的修正。
