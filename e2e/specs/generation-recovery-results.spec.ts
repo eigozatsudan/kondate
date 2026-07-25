@@ -102,7 +102,7 @@ async function completeMinimumPlanner(page: Page) {
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByLabel("呼び名").fill("家族1");
+  await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();

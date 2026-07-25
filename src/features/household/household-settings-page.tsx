@@ -78,7 +78,10 @@ const householdAgeLabels: Readonly<Record<string, string>> = {
 };
 
 function householdMemberDisplayName(member: HouseholdMemberRow): string {
-  return member.display_name?.trim() || "呼び名未設定";
+  // 未設定時に「呼び名」を含むと、編集ボタンの aria-label が
+  // フォーム項目「呼び名」と部分一致し、スクリーンリーダーと Playwright の
+  // getByLabel で同一コントロールと紛らわしくなる。ラベル語を避けた文言にする。
+  return member.display_name?.trim() || "名前未設定";
 }
 
 function registeredSaveBlockedMessage(
