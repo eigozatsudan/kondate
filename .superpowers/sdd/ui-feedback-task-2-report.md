@@ -219,3 +219,26 @@
 - fix round 9 commit hash: `d51d1bb`
 - 未解決事項:
   - 二次レビューが指摘した「選択クリアで完了不可」は render 同期により通常は再現しにくい。今回の修正は選択維持を明示し、失敗表示を足した防御的修正。
+
+## Fix round 9 verification / review close
+
+- status: `DONE_WITH_CONCERNS`
+- base (作業開始前 HEAD): `48775cd`
+- head: `d7816ca`（実装 `d51d1bb` + report hash `d7816ca`）
+- 後続commit保持: `972a7d7` / `9fe9770` / `e995fd0` / `48775cd` は改変・revertしていない
+- 独立Verifier（fresh）:
+  - focused 5 files: **138/138 PASS**
+  - `git diff --check`: PASS
+  - `./scripts/reset-local-db.sh`: PASS
+  - `docker compose --profile test run --rm db-test`: **773 PASS**
+  - `format:check`: FAIL（Task外 `README.md` / `infra/supabase.override.yaml`、および `.worktrees/.../volumes/db/data` の permission denied）
+  - `lint`: FAIL（Task外 `vite.config.ts:26` no-unnecessary-type-assertion。既存warning 2件）
+  - `typecheck`: FAIL（Task外 `vite.config.ts:33` string|number → string）
+  - full Vitest: 2 FAIL in `src/styles.contrast.test.ts`（Task外 `.guided-planner-theme .ingredient-pantry`）
+  - e2e / build: env blocker（container に `pg` / `axe-core` 未インストール）
+- 一次レビュー（fresh）: Spec PASS / Code PASS、Critical 0 / Important 0 / Minor 2（API fallback文言差、root cause の理論性）
+- 独立二次レビュー（fresh）: APPROVED、Critical 0 / Important 0 / Minor 3（pending create 中の編集×ungarded onError、RED が主に onError を証明、empty UI の message 非表示は既存）
+- 元 Important の評価: 通常フローでは render 同期でマスクされやすいが、選択維持の明示 + create 失敗表示 + 完了/close 回帰テストでユーザ可視経路は閉じた
+- 未解決（Task外 / 環境）:
+  - repository 全体の format / lint / typecheck / styles.contrast / e2e / build は上記どおり Task外または環境依存で未通過
+  - 外部 container の停止・削除は行っていない
