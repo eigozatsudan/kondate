@@ -452,14 +452,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         autosave.state === "saving" || isSubmitting || hasDraftConflict || isOpeningEmergencyMenus
       }
       error={
-        // 競合 chrome は wizard 側の明示 UI に任せる。ここでは audience skipped / submission / 利用上限。
-        audienceStatusError ??
-        submissionError ??
-        (hasDraftConflict
-          ? null
-          : usage.data?.shortWindow.remaining === 0
-            ? "10分間の通信試行上限に達しました。しばらくしてから再試行してください。"
-            : null)
+        // 競合 chrome は wizard 側の明示 UI に任せる。短時間枠・成功残数は review の生成ボタン近く
+        // （設計 §10.3）。ここでは audience skipped / submission のみ。
+        audienceStatusError ?? submissionError
+      }
+      usageRemaining={usage.isSuccess ? usage.data.success.remaining : null}
+      shortWindowRetryAt={
+        usage.isSuccess && usage.data.shortWindow.remaining === 0
+          ? usage.data.shortWindow.retryAt
+          : null
       }
       fieldErrors={fieldErrors}
       onDraftChange={setValue}

@@ -58,6 +58,8 @@ function Harness({
   onRetryDraftConflict,
   pantryItems = [],
   pantryItemsStatus = "loaded",
+  usageRemaining = null,
+  shortWindowRetryAt = null,
 }: {
   initialStep?: PlannerStep;
   initialDraft?: PlannerDraftInput;
@@ -78,6 +80,8 @@ function Harness({
   onRetryDraftConflict?: () => void;
   pantryItems?: readonly PantryItem[];
   pantryItemsStatus?: "loading" | "loaded";
+  usageRemaining?: number | null;
+  shortWindowRetryAt?: string | null;
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
@@ -102,6 +106,8 @@ function Harness({
       hasDraftConflict={hasDraftConflict}
       canResolveDraftConflict={canResolveDraftConflict}
       draftConflictRefetchError={draftConflictRefetchError}
+      usageRemaining={usageRemaining}
+      shortWindowRetryAt={shortWindowRetryAt}
       {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
       {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
       {...(onReset !== undefined ? { onReset } : {})}
@@ -731,6 +737,41 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+  });
+
+  it("review に成功残数と短時間枠の再開時刻を生成ボタン近くへ出す", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        shortWindowRetryAt="2026-07-25T05:10:00.000Z"
+      />,
+    );
+    expect(screen.getByText("本日あと3回作成できます")).toBeVisible();
+    expect(screen.getByText(/10分間の通信試行上限に達しました/)).toBeVisible();
+    expect(screen.getByText(/以降に再試行してください/)).toBeVisible();
+  });
+
+  it("idea の review では緊急献立ボタンの代わりに切替案内を出す", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+        }}
+        onOpenEmergencyMenus={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "AIを使わない緊急献立を見る" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます/),
+    ).toBeVisible();
   });
 
   it("meal など review 以外の step では緊急献立ボタンを出さない", () => {

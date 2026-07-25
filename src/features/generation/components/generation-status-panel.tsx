@@ -88,6 +88,15 @@ export function GenerationStatusPanel({
         ) : (
           <p>成功回数：本日あと{state.data.quota.remaining}回</p>
         )}
+        <a className="button-link" href="/planner">
+          条件を直してやり直す
+        </a>
+        <a className="button-link" href="/emergency-menus">
+          15分緊急献立を見る
+        </a>
+        <a className="button-link" href="/history">
+          作った献立を見る
+        </a>
       </>
     );
   }
@@ -107,6 +116,9 @@ export function GenerationStatusPanel({
             )}
           </>
         )}
+        <a className="button-link" href="/planner">
+          条件を直してやり直す
+        </a>
         <a className="button-link" href="/emergency-menus">
           15分緊急献立を見る
         </a>

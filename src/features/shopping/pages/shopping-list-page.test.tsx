@@ -725,7 +725,8 @@ describe("ShoppingListPage warnings and grouping", () => {
       </Providers>,
     );
     expect(await screen.findByText("買い物リストは空です")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "献立から作る" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "献立を作る" })).toHaveAttribute("href", "/planner");
+    expect(screen.getByRole("link", { name: "履歴から選ぶ" })).toHaveAttribute("href", "/history");
     expect(revalidateActiveShoppingList).not.toHaveBeenCalled();
   });
 

@@ -75,8 +75,13 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
    * 設計 §5.1: AI を使わない緊急献立への導線。
    * route が flush→navigate を所有するため、ここはクリック通知だけを受け取る。
    * 未指定ならボタン自体を出さない（meal 等の step では渡さない）。
+   * idea モードでは CTA を出さず案内文のみ（緊急献立は家族対象を要する）。
    */
   onOpenEmergencyMenus?: () => void;
+  /** GET /api/usage/today の成功残数。未取得時は null（偽の残数を出さない） */
+  usageRemaining?: number | null;
+  /** short-window 残 0 のときの再開時刻 ISO。null なら短時間枠メッセージを出さない */
+  shortWindowRetryAt?: string | null;
 };
 
 /**
@@ -101,6 +106,8 @@ export function ReviewStep({
   onSubmit,
   safetyMembers = [],
   onOpenEmergencyMenus,
+  usageRemaining = null,
+  shortWindowRetryAt = null,
 }: ReviewStepProps) {
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -295,6 +302,21 @@ export function ReviewStep({
           家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
         </p>
       )}
+      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・短時間枠の再開時刻を平易表示 */}
+      {usageRemaining !== null && (
+        <p role="status">本日あと{usageRemaining}回作成できます</p>
+      )}
+      {shortWindowRetryAt !== null && (
+        <p role="status">
+          10分間の通信試行上限に達しました。
+          {new Intl.DateTimeFormat("ja-JP", {
+            timeZone: "Asia/Tokyo",
+            dateStyle: "short",
+            timeStyle: "short",
+          }).format(new Date(shortWindowRetryAt))}
+          以降に再試行してください
+        </p>
+      )}
       <div className="wizard-actions">
         {onBack !== undefined && (
           <button
@@ -315,7 +337,7 @@ export function ReviewStep({
           献立を作る
         </button>
       </div>
-      {onOpenEmergencyMenus !== undefined && (
+      {value.targetMode === "household" && onOpenEmergencyMenus !== undefined && (
         <button
           className="wizard-action secondary-button"
           type="button"
@@ -324,6 +346,11 @@ export function ReviewStep({
         >
           AIを使わない緊急献立を見る
         </button>
+      )}
+      {value.targetMode === "idea" && onOpenEmergencyMenus !== undefined && (
+        <p role="note">
+          家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます。
+        </p>
       )}
     </section>
   );

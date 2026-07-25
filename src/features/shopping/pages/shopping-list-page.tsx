@@ -53,8 +53,17 @@ export function ShoppingListPage() {
     );
   if (query.isError)
     return (
-      <main className="page-frame">
+      <main className="page-frame stack">
         <p role="alert">読み込めませんでした</p>
+        <button
+          type="button"
+          className="primary-button min-h-11"
+          onClick={() => {
+            void query.refetch();
+          }}
+        >
+          もう一度読み込む
+        </button>
       </main>
     );
   if (query.data === null)
@@ -62,8 +71,11 @@ export function ShoppingListPage() {
       <main className="page-frame stack">
         <h1>買い物リスト</h1>
         <p>買い物リストは空です</p>
-        <a className="primary-button min-h-11" href="/history">
-          献立から作る
+        <a className="primary-button min-h-11" href="/planner">
+          献立を作る
+        </a>
+        <a className="secondary-button min-h-11" href="/history">
+          履歴から選ぶ
         </a>
       </main>
     );

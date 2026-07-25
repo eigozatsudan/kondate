@@ -896,7 +896,8 @@ const nonConflictIssueMessages = {
   invalid_request: "献立条件を確認してください。",
   generation_in_progress: "別の献立を作成中です。",
   user_daily_limit: "今日は5回利用しました。明日0:00（日本時間）から利用できます",
-  user_attempt_limit: "本日のAI通信試行上限に達しました。明日0:00（日本時間）から利用できます",
+  user_attempt_limit:
+    "本日のAIへの送信上限に達しました。献立の成功回数とは別の上限です。明日0:00（日本時間）から利用できます",
   user_short_window_limit: "10分間の通信試行上限に達しました。しばらくしてから再度お試しください",
   global_daily_limit:
     "本日分のAI受付がいっぱいです。成功回数には含まれません。明日0:00から再開します",

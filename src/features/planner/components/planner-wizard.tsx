@@ -54,6 +54,10 @@ export type PlannerWizardExtraProps = {
   onIdeaAudienceConfirmed?: () => Promise<void>;
   /** 入力内容を空に戻し step を meal へ戻す。route が draft / autosave を所有する */
   onReset?: () => void;
+  /** 設計 §10.3: review の生成ボタン近くに出す成功残数（未取得は null） */
+  usageRemaining?: number | null;
+  /** short-window 残 0 時の再開時刻 ISO（未該当は null） */
+  shortWindowRetryAt?: string | null;
 };
 
 /**
@@ -122,6 +126,8 @@ export function PlannerWizard({
   onOpenEmergencyMenus,
   onIdeaAudienceConfirmed,
   onReset,
+  usageRemaining = null,
+  shortWindowRetryAt = null,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLElement>(null);
@@ -324,6 +330,8 @@ export function PlannerWizard({
         onOpenPrivacyNotice={onOpenPrivacyNotice}
         safetyMembers={eligibleMembers}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+        usageRemaining={usageRemaining}
+        shortWindowRetryAt={shortWindowRetryAt}
         onSubmit={() => {
           void onSubmit();
         }}

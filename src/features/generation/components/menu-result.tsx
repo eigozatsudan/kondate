@@ -502,7 +502,7 @@ export function MenuResult({
             aria-labelledby="post-cook-heading"
             className="mt-6 rounded-2xl bg-white p-4 shadow-sm"
           >
-            <h2 id="post-cook-heading" className="text-xl font-bold">
+            <h2 id="post-cook-heading" className="text-xl font-bold" tabIndex={-1}>
               調理後の冷蔵庫
             </h2>
             <ul className="mt-3 space-y-4">

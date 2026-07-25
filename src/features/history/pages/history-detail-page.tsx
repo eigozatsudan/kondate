@@ -153,7 +153,9 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   // DB hydrate: query の isFavorite を初期値にし、同一 route での再取得も useEffect で同期する
   const [isFavorite, setIsFavorite] = useState(result.isFavorite);
-  const [fridgeOpen, setFridgeOpen] = useState(false);
+  const [acceptFeedback, setAcceptFeedback] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
 
@@ -237,9 +239,24 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
           onSelectedDishChange={setSelectedDishId}
         />
       )}
-      {fridgeOpen && (
-        <p className="mt-2 text-sm text-stone-700">
-          調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。
+      {result.pantryPostCookTargets.length === 0 && (
+        <p className="mt-2 text-sm text-stone-700" role="note">
+          今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。
+        </p>
+      )}
+      {acceptFeedback !== null && (
+        <p className="mt-2" role="status">
+          {acceptFeedback}
+        </p>
+      )}
+      {acceptError !== null && (
+        <p className="mt-2" role="alert">
+          {acceptError}
+        </p>
+      )}
+      {favoriteError !== null && (
+        <p className="mt-2" role="alert">
+          {favoriteError}
         </p>
       )}
 
@@ -266,11 +283,19 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
+          disabled={result.pantryPostCookTargets.length === 0}
           onClick={() => {
-            setFridgeOpen(true);
+            const heading = document.getElementById("post-cook-heading");
+            if (heading instanceof HTMLElement) {
+              // jsdom 等では scrollIntoView が未実装のことがある
+              if (typeof heading.scrollIntoView === "function") {
+                heading.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+              heading.focus({ preventScroll: true });
+            }
           }}
         >
-          冷蔵庫へ反映
+          調理後の冷蔵庫を開く
         </button>
         <button
           type="button"
@@ -280,11 +305,15 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
           aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
           onClick={() => {
             const next = !isFavorite;
+            setFavoriteError(null);
             favorite.mutate(
               { menuId, isFavorite: next },
               {
                 onSuccess: () => {
                   setIsFavorite(next);
+                },
+                onError: () => {
+                  setFavoriteError("お気に入りを更新できませんでした");
                 },
               },
             );
@@ -297,7 +326,16 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
           className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
           disabled={accept.isPending}
           onClick={() => {
-            accept.mutate(menuId);
+            setAcceptFeedback(null);
+            setAcceptError(null);
+            accept.mutate(menuId, {
+              onSuccess: () => {
+                setAcceptFeedback("この案を採用しました");
+              },
+              onError: () => {
+                setAcceptError("採用を保存できませんでした。もう一度お試しください");
+              },
+            });
           }}
         >
           これに決めた
@@ -383,7 +421,8 @@ function HouseholdDetailBody({
   const accept = useAcceptMenuVersion();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
-  const [fridgeOpen, setFridgeOpen] = useState(false);
+  const [acceptFeedback, setAcceptFeedback] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
 
@@ -617,9 +656,19 @@ function HouseholdDetailBody({
               onSelectedDishChange={setSelectedDishId}
             />
           )}
-          {fridgeOpen && (
-            <p className="mt-2 text-sm text-stone-700">
-              調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。
+          {result.pantryPostCookTargets.length === 0 && (
+            <p className="mt-2 text-sm text-stone-700" role="note">
+              今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。
+            </p>
+          )}
+          {acceptFeedback !== null && (
+            <p className="mt-2" role="status">
+              {acceptFeedback}
+            </p>
+          )}
+          {acceptError !== null && (
+            <p className="mt-2" role="alert">
+              {acceptError}
             </p>
           )}
         </>
@@ -682,19 +731,35 @@ function HouseholdDetailBody({
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-stone-800 px-4 font-semibold"
-          disabled={!actionsEnabled}
+          disabled={!actionsEnabled || result.pantryPostCookTargets.length === 0}
           onClick={() => {
-            setFridgeOpen(true);
+            const heading = document.getElementById("post-cook-heading");
+            if (heading instanceof HTMLElement) {
+              // jsdom 等では scrollIntoView が未実装のことがある
+              if (typeof heading.scrollIntoView === "function") {
+                heading.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+              heading.focus({ preventScroll: true });
+            }
           }}
         >
-          冷蔵庫へ反映
+          調理後の冷蔵庫を開く
         </button>
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
           disabled={!actionsEnabled || accept.isPending}
           onClick={() => {
-            accept.mutate(menuId);
+            setAcceptFeedback(null);
+            setAcceptError(null);
+            accept.mutate(menuId, {
+              onSuccess: () => {
+                setAcceptFeedback("この案を採用しました");
+              },
+              onError: () => {
+                setAcceptError("採用を保存できませんでした。もう一度お試しください");
+              },
+            });
           }}
         >
           これに決めた
