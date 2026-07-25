@@ -194,7 +194,9 @@ export function HouseholdSettingsForm({
   const queryClient = useQueryClient();
   const membersKey = useMemo(() => householdKeys.members(userId), [userId]);
   const [selectedId, setSelectedId] = useState<string>();
-  const [editorOpen, setEditorOpen] = useState(true);
+  // 登録済み家族がある状態でページを開き直したとき、編集フォームを自動展開しない。
+  // 一覧だけ見せ、編集は「編集」／追加は「家族を追加」の明示操作でのみ開く。
+  const [editorOpen, setEditorOpen] = useState(false);
   const [values, setValues] = useState<HouseholdSettingsValue>();
   const [allergyRefetchEpoch, setAllergyRefetchEpoch] = useState(0);
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
