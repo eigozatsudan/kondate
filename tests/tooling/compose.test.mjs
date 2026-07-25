@@ -52,10 +52,15 @@ test("root compose does not redeclare include-owned supabase services", async ()
     readFile("compose.yaml", "utf8"),
     readFile("infra/supabase.override.yaml", "utf8"),
   ]);
-  const supavisor = override.match(
-    /^ {2}supavisor:\n(?<body>[\s\S]*?)(?=^ {2}[\w-]+:|(?![\s\S]))/mu,
-  )?.groups?.body;
-  assert.ok(supavisor, "supavisor override service is missing");
+  const overrideLines = override.split("\n");
+  const supavisorStart = overrideLines.indexOf("  supavisor:");
+  assert.notEqual(supavisorStart, -1, "supavisor override service is missing");
+  const nextServiceOffset = overrideLines
+    .slice(supavisorStart + 1)
+    .findIndex((line) => /^ {2}(?!#)\S.*:/u.test(line));
+  const supavisorEnd =
+    nextServiceOffset === -1 ? overrideLines.length : supavisorStart + 1 + nextServiceOffset;
+  const supavisor = overrideLines.slice(supavisorStart + 1, supavisorEnd).join("\n");
   for (const name of ["kong:", "supavisor:", "db:", "auth:"]) {
     assert.doesNotMatch(
       compose,
