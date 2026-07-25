@@ -30,6 +30,25 @@ const runLocalEnvValidation = async ({ body, composeFile, mode }) => {
   });
 };
 
+const extractIndentedMappingBody = (source, entry, indent) => {
+  const lines = source.split("\n");
+  const entryStart = lines.indexOf(`${" ".repeat(indent)}${entry}:`);
+  assert.notEqual(entryStart, -1, `${entry} mapping entry is missing`);
+  const nextEntryOffset = lines.slice(entryStart + 1).findIndex((line) => {
+    const contentStart = line.search(/\S/u);
+    return (
+      contentStart !== -1 && contentStart < indent + 2 && !line.slice(contentStart).startsWith("#")
+    );
+  });
+  const entryEnd = nextEntryOffset === -1 ? lines.length : entryStart + 1 + nextEntryOffset;
+  return lines.slice(entryStart + 1, entryEnd).join("\n");
+};
+
+const extractComposeServiceBody = (source, service) => {
+  const services = extractIndentedMappingBody(source, "services", 0);
+  return extractIndentedMappingBody(services, service, 2);
+};
+
 test("root compose owns every local entry-point service", async () => {
   const compose = await readFile("compose.yaml", "utf8");
   for (const name of [
@@ -45,6 +64,33 @@ test("root compose owns every local entry-point service", async () => {
   assert.match(compose, /infra\/supabase\/docker-compose\.yml/);
 });
 
+test("stops an indented mapping body at explicit keys and top-level dedents", () => {
+  for (const boundary of [
+    "  ? auth\n  :\n    ulimits:\n      nofile:\n        soft: 100000",
+    "x-extension:\n  ulimits:\n    nofile:\n      soft: 100000",
+  ]) {
+    const source = `services:\n  supavisor:\n    ports: !override\n${boundary}\n`;
+    const supavisor = extractComposeServiceBody(source, "supavisor");
+    assert.match(supavisor, /^ {4}ports: !override$/mu);
+    assert.doesNotMatch(supavisor, /ulimits/u);
+  }
+});
+
+test("selects supavisor only from the services mapping", () => {
+  const source =
+    "x-decoy:\n" +
+    "  supavisor:\n" +
+    "    ulimits:\n" +
+    "      nofile:\n" +
+    "        soft: 100000\n" +
+    "services:\n" +
+    "  supavisor:\n" +
+    "    ports: !override\n";
+  const supavisor = extractComposeServiceBody(source, "supavisor");
+  assert.match(supavisor, /^ {4}ports: !override$/mu);
+  assert.doesNotMatch(supavisor, /ulimits/u);
+});
+
 test("root compose does not redeclare include-owned supabase services", async () => {
   // Compose v5: redefining services from include fails with
   // "services.<name> conflicts with imported resource" (CI docker compose config --quiet).
@@ -52,6 +98,7 @@ test("root compose does not redeclare include-owned supabase services", async ()
     readFile("compose.yaml", "utf8"),
     readFile("infra/supabase.override.yaml", "utf8"),
   ]);
+  const supavisor = extractComposeServiceBody(override, "supavisor");
   for (const name of ["kong:", "supavisor:", "db:", "auth:"]) {
     assert.doesNotMatch(
       compose,
@@ -61,11 +108,13 @@ test("root compose does not redeclare include-owned supabase services", async ()
   }
   // 127.0.0.1 固定は override 側の契約
   assert.match(override, /^ {2}kong:\n {4}ports: !override/mu);
-  assert.match(override, /^ {2}supavisor:\n {4}ports: !override/mu);
   assert.match(override, /127\.0\.0\.1:8000:8000/);
-  assert.match(override, /127\.0\.0\.1:5432:5432/);
+  assert.match(supavisor, /^ {4}ports: !override/mu);
+  assert.match(supavisor, /127\.0\.0\.1:5432:5432/u);
+  // Supavisor image が起動時に要求する上限値を Docker 側でも保証する
+  assert.match(supavisor, /^ {4}ulimits:\n {6}nofile:\n {8}soft: 100000\n {8}hard: 100000$/mu);
   // CI コールドスタート向け: pooler health の start_period を十分長くする
-  assert.match(override, /start_period:\s*180s/u);
+  assert.match(supavisor, /start_period:\s*180s/u);
 });
 
 test("serializes project migrations after GoTrue migrations", async () => {
