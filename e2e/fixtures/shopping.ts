@@ -1,7 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 import { z } from "zod";
 import { completeMinimumOnboarding, expect, test as authTest } from "./auth";
-import { clickWizardNext } from "./history";
+import { clickWizardNext, openFirstMemberEditor } from "./history";
 import { localRestHeaders } from "./local-supabase";
 
 type ShoppingFixtures = { shoppingMenuId: string };
@@ -46,6 +46,8 @@ export async function ensurePlannerReady(page: Page): Promise<void> {
   }
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
+  // editorOpen 既定 false のため、呼び名入力前に編集フォームを開く
+  await openFirstMemberEditor(page);
   // 編集ボタンの aria-label と部分一致しないよう textbox に限定する
   await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");

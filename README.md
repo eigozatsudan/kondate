@@ -166,7 +166,7 @@ free モデルは提供状況・レート制限が変わります。失敗時は
 
 ```bash
 docker compose run --rm --no-deps app npx vitest run
-docker compose run --rm db-test
+docker compose --profile test run --rm db-test
 docker compose run --rm --no-deps app npm run build
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run typecheck

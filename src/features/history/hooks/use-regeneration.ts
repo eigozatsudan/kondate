@@ -59,6 +59,8 @@ export function useRegeneration(input: UseRegenerationInput) {
       }
       // 単一スロット kondate:generation:v2 を上書きすると、進行中の作成 ID が失われ
       // generation_in_progress 端末で pending ごと消える（C2）。既存 pending は再開のみ。
+      // 終端（failed 等）の pending は RecoveryLinks の onClear と結果/履歴詳細の
+      // clearPendingGeneration で消す前提。残っていれば /generation で再開表示する。
       if (readPendingGeneration(userId, new Date()) !== null) {
         void navigate("/generation");
         return Promise.resolve();

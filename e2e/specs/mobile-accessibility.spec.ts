@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
 import {
   clickWizardNext,
+  openFirstMemberEditor,
   seedGeneratedIdeaMenu,
   seedGeneratedMenu,
   setMockScenario,
@@ -50,6 +51,8 @@ const waitDraftSave = (page: Page) =>
 const ensureWheatMemberForMockSuccess = async (page: Page) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
+  // editorOpen 既定 false のため、呼び名入力前に編集フォームを開く
+  await openFirstMemberEditor(page);
   // 編集ボタンの aria-label と部分一致しないよう textbox に限定する
   await page.getByRole("textbox", { name: "呼び名" }).fill("家族1");
   await page.getByLabel("アレルギーの確認").selectOption("registered");

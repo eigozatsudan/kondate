@@ -148,7 +148,9 @@ export function AudienceStep({
           {eligibleMembers.length === 0
             ? "家族設定がまだないため、「家族に合わせて作る」は選べません。"
             : "献立に使える家族がいないため、「家族に合わせて作る」は選べません。アレルギー確認などが未完了の家族は下の一覧で理由を確認できます。"}{" "}
-          <a href="/settings">家族を追加する</a>
+          <a className="secondary-button min-h-11" href="/settings">
+            家族を追加する
+          </a>
         </p>
       )}
       {value.targetMode === "household" && (

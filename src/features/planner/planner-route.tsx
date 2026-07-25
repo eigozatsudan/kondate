@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   collectPlannerRequestText,
   plannerSubmissionSchema,
@@ -220,6 +220,7 @@ type PlannerPageForOwnerProps = {
 
 function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerProps) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const client = getBrowserSupabaseClient();
   const draftQuery = useQuery({
@@ -284,9 +285,16 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setBaselineRevision(draftQuery.data?.revision ?? 0);
     // 下書きの回答状況からresume先stepを判定する（brief: 「resumes an incomplete
     // target draft at audience without losing answers」）。
-    setStep(firstIncompletePlannerStep(sanitized));
+    // privacy 往復後の resume=review は、下書きが確認まで揃っているときだけ step を固定する
+    // （本命は openPrivacyNotice の flush+cache。resume は二重の安全策）。
+    const firstIncomplete = firstIncompletePlannerStep(sanitized);
+    if (searchParams.get("resume") === "review" && firstIncomplete === "review") {
+      setStep("review");
+    } else {
+      setStep(firstIncomplete);
+    }
     setInitialized(true);
-  }, [draftQuery.data, initialized, safetyQuery.data]);
+  }, [draftQuery.data, initialized, safetyQuery.data, searchParams]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
@@ -385,11 +393,25 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   const hasAcceptedOrDeclinedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
   const openPrivacyNotice = useCallback((): void => {
-    // review resume 付きの returnTo で /privacy へ往復する（brief step 9）。
-    // sanitizeReturnPath と同じ形へ揃えるため、pathとqueryをまとめて
-    // encodeURIComponent した固定文字列を使う（"/planner?resume=review"）。
-    void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
-  }, [navigate]);
+    // privacy 往復前に下書きを flush し、react-query cache へ同期する。
+    // 未 flush だと return 時に stale な draft で step 1 へ巻き戻る。
+    // シグネチャは () => void のまま（非同期処理は fire-and-forget）。
+    void (async () => {
+      try {
+        await flushDraft();
+      } catch {
+        if (mountedRef.current) {
+          setSubmissionError("献立条件を保存できなかったため、説明画面へ進めませんでした。");
+        }
+        return;
+      }
+      if (!mountedRef.current) return;
+      // review resume 付きの returnTo で /privacy へ往復する（brief step 9）。
+      // sanitizeReturnPath と同じ形へ揃えるため、pathとqueryをまとめて
+      // encodeURIComponent した固定文字列を使う（"/planner?resume=review"）。
+      void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+    })();
+  }, [flushDraft, navigate]);
 
   // 設計 §5.1: AI を使わない緊急献立への導線。route が flush 後に navigate を所有する。
   const openEmergencyMenus = useCallback((): void => {

@@ -74,15 +74,13 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "冷蔵庫へ反映" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
-
-  // 冷蔵庫へ反映: tip を開き post-cook 操作導線を露出する（used pantry が無い fixture では
-  // 「調理後の冷蔵庫」section は出ないが、idea でも tip 自体は許可操作として動く）
-  await page.getByRole("button", { name: "冷蔵庫へ反映" }).click();
+  // used pantry が無い idea fixture では CTA は disabled（反映対象なし）
+  await expect(page.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeDisabled();
   await expect(
-    page.getByText("調理後の冷蔵庫操作は献立本文の「調理後の冷蔵庫」から行えます。"),
+    page.getByText("今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。"),
   ).toBeVisible();
+  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
 
   // 一品再生成シート: idea では child_friendly が無い
   await page.getByRole("button", { name: "この一品だけ別案にする" }).click();

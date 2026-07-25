@@ -90,10 +90,10 @@ export function HistoryCard({ group }: HistoryCardProps) {
             : "開くと現在の家族設定で再確認します"}
         </p>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="history-card-actions">
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-3 font-semibold"
+          className="secondary-button min-h-11"
           aria-pressed={representative.isFavorite}
           aria-label={representative.isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
           disabled={favoritePending}
@@ -103,7 +103,7 @@ export function HistoryCard({ group }: HistoryCardProps) {
         </button>
         <button
           type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-3 font-semibold"
+          className="secondary-button min-h-11"
           aria-label="この履歴を削除"
           disabled={deletePending}
           onClick={openDeleteDialog}
@@ -130,10 +130,10 @@ export function HistoryCard({ group }: HistoryCardProps) {
             {deleteError}
           </p>
         )}
-        <div className="flex flex-wrap gap-2">
+        <div className="history-card-actions">
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+            className="primary-button min-h-11"
             disabled={deletePending}
             onClick={confirmDelete}
           >
@@ -145,7 +145,7 @@ export function HistoryCard({ group }: HistoryCardProps) {
           </button>
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+            className="secondary-button min-h-11"
             disabled={deletePending}
             onClick={closeDeleteDialog}
           >

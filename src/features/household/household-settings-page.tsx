@@ -78,6 +78,13 @@ const householdAgeLabels: Readonly<Record<string, string>> = {
   senior: "高齢者",
 };
 
+/** 食べない食事の表示ラベル。enum キー（英語）を画面に出さない（オンボーディングと同文言）。 */
+const unsupportedDietKindLabels: Readonly<Record<UnsupportedDietKind, string>> = {
+  weaning_food: "離乳食",
+  swallowing_concern: "飲み込み・むせの不安",
+  therapeutic_diet: "医師等から指示された治療食",
+};
+
 function householdMemberDisplayName(member: HouseholdMemberRow): string {
   // 未設定時に「呼び名」を含むと、編集ボタンの aria-label が
   // フォーム項目「呼び名」と部分一致し、スクリーンリーダーと Playwright の
@@ -233,7 +240,10 @@ export function HouseholdSettingsForm({
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
   const editorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const pageHeadingRef = useRef<HTMLHeadingElement>(null);
   const shouldFocusEditorHeadingRef = useRef(false);
+  // 「追加をやめる」成功後に一覧上部へ戻す（末尾の削除ボタン誤操作を防ぐ）
+  const shouldScrollToPageTopRef = useRef(false);
   const ageBandRef = useRef<HTMLSelectElement>(null);
   const allergyStatusRef = useRef<HTMLSelectElement>(null);
   const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
@@ -273,6 +283,26 @@ export function HouseholdSettingsForm({
     shouldFocusEditorHeadingRef.current = false;
     editorHeadingRef.current?.focus();
   }, [editorOpen, selectedId]);
+  useEffect(() => {
+    if (!shouldScrollToPageTopRef.current) return;
+    shouldScrollToPageTopRef.current = false;
+    // 編集フォーム末尾にいた視線を一覧・見出しへ戻す。
+    // focus 可能な見出しへ寄せ、画面スクロールも合わせて先頭へ。
+    // jsdom には scrollIntoView が無い環境があるため存在確認する。
+    const heading = pageHeadingRef.current;
+    if (heading === null) return;
+    try {
+      if (typeof heading.scrollIntoView === "function") {
+        heading.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+      if (typeof window !== "undefined") {
+        window.scrollTo(0, 0);
+      }
+    } catch {
+      // jsdom など scroll API 未実装環境では無視する
+    }
+    heading.focus({ preventScroll: true });
+  }, [editorOpen, message]);
   const membersQuery = useQuery({
     queryKey: membersKey,
     queryFn: () => api.listMembers(),
@@ -707,25 +737,21 @@ export function HouseholdSettingsForm({
         const wasSelected = selectedMemberIdRef.current === targetId;
 
         if (options.asCancelDraft) {
-          // 追加キャンセル: 追加前に見ていた家族へ戻す。無ければ先頭、誰もいなければ閉じる。
+          // 追加キャンセル: フォームは必ず閉じる。
+          // 末尾の「追加をやめる」が「家族を削除」にすり替わり、連打で全員消えるのを防ぐ。
+          // 視線は一覧・見出し（上部）へ戻す。
           const restoreId = previousSelectedIdBeforeAddRef.current;
           const restore =
             restoreId !== undefined && restoreId !== targetId
               ? remaining.find((member) => member.id === restoreId)
               : undefined;
-          if (restore !== undefined) {
-            selectedMemberIdRef.current = restore.id;
-            setSelectedId(restore.id);
-          } else if (remaining[0] !== undefined) {
-            selectedMemberIdRef.current = remaining[0].id;
-            setSelectedId(remaining[0].id);
-          } else {
-            selectedMemberIdRef.current = undefined;
-            setSelectedId(undefined);
-            setValues(undefined);
-            setEditorOpen(false);
-          }
+          const nextSelected = restore ?? remaining[0];
+          selectedMemberIdRef.current = nextSelected?.id;
+          setSelectedId(nextSelected?.id);
+          setValues(undefined);
+          setEditorOpen(false);
           previousSelectedIdBeforeAddRef.current = undefined;
+          shouldScrollToPageTopRef.current = true;
           setMessage("家族の追加をやめました");
         } else if (wasSelected) {
           // 編集中の家族を削除したらフォームを閉じ、一覧だけ残す。
@@ -1060,9 +1086,9 @@ export function HouseholdSettingsForm({
             家族を追加
           </button>
         </section>
-        <FeedbackSection />
-        {/* アカウント操作は家族の有無に依存しない。空状態でも家族CRUDの下へ常時合成する。 */}
+        {/* アカウント操作（ログアウト等）の下にフィードバックを置く */}
         <AccountSettingsSection />
+        <FeedbackSection />
       </main>
     );
   }
@@ -1095,7 +1121,9 @@ export function HouseholdSettingsForm({
 
   return (
     <main className="page-frame stack">
-      <h1>家族設定</h1>
+      <h1 ref={pageHeadingRef} tabIndex={-1}>
+        家族設定
+      </h1>
       <section className="card stack settings-section" aria-labelledby="registered-household-title">
         <h2 id="registered-household-title" className="settings-section-title">
           登録済みの家族
@@ -1359,7 +1387,7 @@ export function HouseholdSettingsForm({
               </select>
             </label>
             {values.unsupportedDietStatus === "present" && (
-              <fieldset className="stack">
+              <fieldset className="control-group">
                 <legend>食べない食事</legend>
                 {unsupportedDietKinds.map((kind) => (
                   <label key={kind} className="control-label">
@@ -1370,12 +1398,12 @@ export function HouseholdSettingsForm({
                         setArray("unsupportedDietKinds", kind, event.target.checked);
                       }}
                     />
-                    {kind}
+                    {unsupportedDietKindLabels[kind]}
                   </label>
                 ))}
               </fieldset>
             )}
-            <fieldset className="stack">
+            <fieldset className="control-group">
               <legend>安全のための制約</legend>
               <label className="control-label">
                 <input
@@ -1495,7 +1523,7 @@ export function HouseholdSettingsForm({
                 <option value="regular">ふつう</option>
               </select>
             </label>
-            <fieldset className="stack">
+            <fieldset className="control-group">
               <legend>食べやすさ</legend>
               {easePreferences.map((preference) => (
                 <label key={preference} className="control-label">
@@ -1517,8 +1545,8 @@ export function HouseholdSettingsForm({
             </fieldset>
           </fieldset>
           {/*
-            フォーム末尾に操作を横並び:
-            設定を完了 / 追加をやめる or 家族を削除 / さらに家族を追加
+            フォーム末尾に操作を横並び: 設定を完了 / 追加をやめる or 家族を削除。
+            「家族を追加」は編集領域が開いているあいだは出さない（一覧側だけ）。
           */}
           <div className="household-editor-actions">
             <button
@@ -1565,16 +1593,6 @@ export function HouseholdSettingsForm({
                 家族を削除
               </button>
             )}
-            <button
-              className="secondary-button min-h-11"
-              type="button"
-              disabled={createDraft.isPending || saving || cancellingDraft}
-              onClick={() => {
-                requestCreateDraft();
-              }}
-            >
-              家族を追加
-            </button>
           </div>
         </section>
       )}
@@ -1622,10 +1640,10 @@ export function HouseholdSettingsForm({
           </div>
         </div>
       )}
-      {/* 機能改善・不具合報告。家族 CRUD / アカウント操作のあいだに置く。 */}
-      <FeedbackSection />
       {/* Plan 6: アカウント操作は本ページ所有者の下に合成するだけ。家族 CRUD は置換しない。 */}
       <AccountSettingsSection />
+      {/* フィードバックはログアウト等のアカウント操作の下へ。日常操作の邪魔にしない。 */}
+      <FeedbackSection />
     </main>
   );
 }

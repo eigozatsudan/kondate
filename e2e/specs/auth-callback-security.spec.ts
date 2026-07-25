@@ -135,8 +135,10 @@ test("matching state reaches callback once; unknown and mismatched state fail sa
   expect(callbackUrl.searchParams.get("flow")).toBe(flow);
   expect(callbackUrl.searchParams.get("state")).toBe(state);
   expect(callbackUrl.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-  await expect(page).toHaveURL(/\/welcome$/u, { timeout: 30_000 });
-  // success 後も code/state は残らない
+  // 成功後は code/state を消し、アプリ内の安全な着地先へ。
+  // oauth-mock の固定 Google 利用者は DB に残り得るため、not_started→/welcome と
+  // complete/skipped→/planner の両方を成功経路として認める（本ケースの関心は state 一致交換）。
+  await expect(page).toHaveURL(/\/(welcome|planner)(\?|$)/u, { timeout: 30_000 });
   expect(new URL(page.url()).searchParams.has("code")).toBe(false);
   expect(new URL(page.url()).searchParams.has("state")).toBe(false);
 

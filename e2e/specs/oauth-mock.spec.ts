@@ -24,8 +24,11 @@ test("local Google success returns the bound code to the app and establishes a S
   expect(callbackUrl.searchParams.get("state")).toBe(providerUrl.searchParams.get("state"));
   expect(callbackUrl.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
   expect(callbackUrl.href).not.toMatch(/access_token|refresh_token|password|email/iu);
-  await expect(page).toHaveURL(/\/welcome$/u);
-  await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible();
+  // oauth-mock の固定 Google 利用者は DB に残り得るため、
+  // not_started→/welcome と complete/skipped→/planner の両方を成功経路として認める。
+  await expect(page).toHaveURL(/\/(welcome|planner)(\?|$)/u, { timeout: 30_000 });
+  expect(new URL(page.url()).searchParams.has("code")).toBe(false);
+  expect(new URL(page.url()).searchParams.has("state")).toBe(false);
 });
 
 test("local Google cancellation returns through the app callback with actionable choices", async ({

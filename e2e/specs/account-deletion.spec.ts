@@ -7,6 +7,7 @@ import {
   test,
   createServiceAdmin,
 } from "../fixtures/acceptance";
+import { openFirstMemberEditor } from "../fixtures/history";
 
 test.setTimeout(300_000);
 
@@ -25,6 +26,8 @@ test("deletes the account through settings and zeroes owned rows and auth user",
   // 設定画面でメンバー編集・苦手食材コントロールと DangerZone が同居すること
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
+  // editorOpen 既定 false のため、呼び名等のフィールド検証前に編集フォームを開く
+  await openFirstMemberEditor(page);
   await expect(page.getByLabel("アレルギーの確認").first()).toBeVisible();
   // 曖昧な .first() ではなく textbox に限定して一意にする
   await expect(page.getByRole("textbox", { name: "呼び名" })).toBeVisible();

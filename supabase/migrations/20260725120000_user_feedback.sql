@@ -1,5 +1,6 @@
 -- 利用者からの機能改善・不具合報告。本文は free-form だがログへは出さない。
--- 本人 insert/select のみ。運営読取は service_role（RLS 外）を想定。
+-- ブラウザ（authenticated/anon）からは直接触れない。
+-- 書き込みは Netlify Function が service_role 経由でのみ行い、rate limit も Function 側。
 
 create table public.user_feedback (
   id uuid primary key default gen_random_uuid(),
@@ -16,20 +17,11 @@ create table public.user_feedback (
 create index user_feedback_user_created_idx
   on public.user_feedback (user_id, created_at desc);
 
+-- RLS は有効のまま（ポリシー無し = authenticated/anon は deny）。
+-- ブラウザ向け policy/grant は置かず、service_role のみが Data API 外で操作する。
 alter table public.user_feedback enable row level security;
 
-create policy user_feedback_insert_own
-  on public.user_feedback
-  for insert
-  to authenticated
-  with check (user_id = (select auth.uid()));
-
-create policy user_feedback_select_own
-  on public.user_feedback
-  for select
-  to authenticated
-  using (user_id = (select auth.uid()));
-
 revoke all on public.user_feedback from public;
-grant select, insert on public.user_feedback to authenticated;
+revoke all on public.user_feedback from anon;
+revoke all on public.user_feedback from authenticated;
 grant all on public.user_feedback to service_role;

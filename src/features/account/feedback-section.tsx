@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import {
   feedbackCategories,
+  feedbackEnvelopeSchema,
   submitFeedbackRequestSchema,
   type FeedbackCategory,
 } from "@shared/contracts/feedback";
@@ -12,9 +13,6 @@ const categoryLabels: Readonly<Record<FeedbackCategory, string>> = {
   bug_report: "不具合の報告",
   other: "その他",
 };
-
-type FeedbackEnvelope =
-  { ok: true; data: { id: string } } | { ok: false; error: { code: string; message: string } };
 
 function mapError(code: string | undefined, fallback: string): string {
   if (code === "feedback_rate_limited") {
@@ -67,16 +65,24 @@ export function FeedbackSection() {
         body: JSON.stringify(parsed.data),
         cache: "no-store",
       });
-      let envelope: FeedbackEnvelope;
+      let raw: unknown;
       try {
-        envelope = (await response.json()) as FeedbackEnvelope;
+        raw = await response.json();
       } catch {
         setErrorMessage("送信できませんでした。時間をおいてもう一度お試しください");
         return;
       }
-      if (!envelope.ok) {
+      const envelope = feedbackEnvelopeSchema.safeParse(raw);
+      if (!envelope.success) {
+        setErrorMessage("送信できませんでした。時間をおいてもう一度お試しください");
+        return;
+      }
+      if (!envelope.data.ok) {
         setErrorMessage(
-          mapError(envelope.error.code, envelope.error.message || "送信できませんでした"),
+          mapError(
+            envelope.data.error.code,
+            envelope.data.error.message || "送信できませんでした",
+          ),
         );
         return;
       }

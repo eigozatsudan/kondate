@@ -358,7 +358,7 @@ describe("reviewed emergency menus", () => {
     },
   );
 
-  it("keeps the main-ingredient empty reason when safety excludes every fixture", () => {
+  it("prefers safety exclusion over main-ingredient when every fixture is unsafe", () => {
     const context = makeCurrentSafetyContext();
     const result = filterEmergencyMenus({
       mealType: "dinner",
@@ -375,11 +375,12 @@ describe("reviewed emergency menus", () => {
       }),
     });
 
-    expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    // メイン食材があっても、安全条件で候補が0なら no_matching_fixture
+    expect(result).toEqual({ menus: [], emptyReason: "no_matching_fixture" });
   });
 
   it.each([{ unsupportedDietStatus: "present" as const }, { hasUnmappedCustomAllergy: true }])(
-    "keeps the main-ingredient reason for an early safety exclusion",
+    "uses current_safety_unavailable for early safety exclusion even with main ingredients",
     (memberPatch) => {
       const context = makeCurrentSafetyContext();
       const result = filterEmergencyMenus({
@@ -391,7 +392,7 @@ describe("reviewed emergency menus", () => {
         }),
       });
 
-      expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+      expect(result).toEqual({ menus: [], emptyReason: "current_safety_unavailable" });
     },
   );
 });

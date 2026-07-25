@@ -1,6 +1,7 @@
 import { getNextJstMidnight } from "@shared/time/jst";
 import type { GenerationClientState } from "../model/generation-machine";
 import { useUsageToday } from "../hooks/use-usage-today";
+import { clearPendingGeneration } from "../model/pending-generation";
 
 // 本日分の成功回数上限に伴う retryAt は JST 日次リセット（翌0:00）に一致するため、
 // 生の日時ではなく「明日H:MM」の相対表現で示す。
@@ -42,16 +43,46 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
   );
 }
 
-function RecoveryLinks() {
+/**
+ * 終端（failed / constraint_conflict）からの復帰導線。
+ * 「条件を直してやり直す」は onClear（pending+machine）で idle→/planner。
+ * 緊急献立・履歴は pending のみ消す（machine を idle にすると GenerationPage の
+ * Navigate と <a href> が競合するため）。
+ */
+function RecoveryLinks({ onClear }: { onClear?: () => void }) {
   return (
     <div className="gen-status-actions">
-      <a className="button-link" href="/planner">
-        条件を直してやり直す
-      </a>
-      <a className="button-link" href="/emergency-menus">
+      {onClear !== undefined ? (
+        <button type="button" className="button-link" onClick={onClear}>
+          条件を直してやり直す
+        </button>
+      ) : (
+        <a
+          className="button-link"
+          href="/planner"
+          onClick={() => {
+            clearPendingGeneration();
+          }}
+        >
+          条件を直してやり直す
+        </a>
+      )}
+      <a
+        className="button-link"
+        href="/emergency-menus"
+        onClick={() => {
+          clearPendingGeneration();
+        }}
+      >
         15分緊急献立を見る
       </a>
-      <a className="button-link" href="/history">
+      <a
+        className="button-link"
+        href="/history"
+        onClick={() => {
+          clearPendingGeneration();
+        }}
+      >
         作った献立を見る
       </a>
     </div>
@@ -122,7 +153,7 @@ export function GenerationStatusPanel({
         ) : (
           <p>成功回数：本日あと{state.data.quota.remaining}回</p>
         )}
-        <RecoveryLinks />
+        <RecoveryLinks onClear={onClear} />
       </div>
     );
   }
@@ -142,7 +173,7 @@ export function GenerationStatusPanel({
             )}
           </>
         )}
-        <RecoveryLinks />
+        <RecoveryLinks onClear={onClear} />
       </div>
     );
   }

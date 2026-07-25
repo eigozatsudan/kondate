@@ -10,6 +10,7 @@ import {
   regenerateWholeMenu,
   test,
 } from "../fixtures/shopping";
+import { openFirstMemberEditor } from "../fixtures/history";
 
 // 献立生成を伴うため既定の30秒では足りない（既存の履歴系specと同じ扱い）。
 test.setTimeout(180_000);
@@ -60,6 +61,8 @@ test("disables shopping actions immediately after member or allergy mutation", a
   await createListFromMenu(shoppingPage, shoppingMenuId);
   const settingsPage = await shoppingPage.context().newPage();
   await settingsPage.goto("/settings");
+  // editorOpen 既定 false のため、呼び名入力前に編集フォームを開く
+  await openFirstMemberEditor(settingsPage);
   const reload = await deferMatchingRequest(shoppingPage, "**/rest/v1/shopping_lists*");
   const sourceRevalidation = await deferMatchingRequest(
     shoppingPage,

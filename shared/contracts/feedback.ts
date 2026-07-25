@@ -25,3 +25,13 @@ export type SubmitFeedbackRequest = z.infer<typeof submitFeedbackRequestSchema>;
 export type SubmitFeedbackResult = {
   id: string;
 };
+
+/** Function 応答 envelope。ネットワーク境界では safeParse で検証する。 */
+export const feedbackEnvelopeSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), data: z.object({ id: z.string().min(1) }) }),
+  z.object({
+    ok: z.literal(false),
+    error: z.object({ code: z.string(), message: z.string() }),
+  }),
+]);
+export type FeedbackEnvelope = z.infer<typeof feedbackEnvelopeSchema>;

@@ -963,6 +963,25 @@ textarea:focus-visible {
   gap: 12px;
 }
 
+/*
+ * チェック／ラジオの縦並びグループ。
+ * .stack の 16px だと行間が空きすぎるので、44px ターゲットを保ちつつ詰める。
+ */
+.control-group {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.control-group legend {
+  margin-bottom: 6px;
+  padding: 0;
+  font-weight: 700;
+}
+
 .field textarea {
   min-height: 96px;
   resize: vertical;
@@ -1062,6 +1081,89 @@ textarea:focus-visible {
 .household-editor {
   border-top: 2px solid var(--border);
   padding-top: 20px;
+}
+
+/* よくあるアレルギー追加: チップ状に横へ並べ、折り返す（フロート風） */
+.allergy-add-chip-list {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.allergy-add-chip-list__empty {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--muted);
+}
+
+.allergy-add-chip {
+  min-height: 44px;
+  border-radius: 999px;
+  padding-inline: 14px;
+  white-space: nowrap;
+}
+
+/* 選択済みアレルギー（絞り込み欄の上） */
+.allergy-selected-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.allergy-selected-list__empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.allergy-selected-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 6px 10px;
+}
+
+.allergy-selected-item__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.field-hint {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.account-danger-block {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.history-list {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* 編集フォーム末尾: 完了・やめる/削除を横並び */
