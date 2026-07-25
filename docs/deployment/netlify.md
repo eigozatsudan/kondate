@@ -53,6 +53,18 @@
 本番ビルドは `verify:openrouter:models`（5 秒メタデータ期限）を含む経路を使う。
 デプロイログでプロバイダ / live model 検証の成功を別途確認する。
 
+各 context の build 末尾で `node scripts/emit-deploy-headers.mjs` が `dist/_headers` に
+Content-Security-Policy を書く（Netlify の `[[headers]]` は context 分割不可のため）。
+
+| Context | `connect-src` の Supabase 部分 |
+| --- | --- |
+| `production` | `VITE_SUPABASE_URL` の exact origin（`https` / `wss`）のみ。`*.supabase.co` 禁止 |
+| `deploy-preview` / `branch-deploy` | `https://*.supabase.co` と `wss://*.supabase.co`（preview が別 project を指し得る） |
+
+`npm run preflight:production` は production 用 CSP 純関数が `VITE_SUPABASE_URL` と
+一致することを検証する。ref 変更時は Netlify の `VITE_SUPABASE_URL` / `SUPABASE_URL` を
+同時に更新すればよく、CSP を手編集する必要はない。
+
 ## Protected release runner（サイトビルドの外）
 
 1. シークレットマネージャから完全なサーバ秘密集合を一時環境へ注入する。

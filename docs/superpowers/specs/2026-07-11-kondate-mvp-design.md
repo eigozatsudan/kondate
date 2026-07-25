@@ -387,6 +387,7 @@ OpenRouterの `models` パラメータでモデル間フォールバックを行
 - `USER_DAILY_AI_LIMIT`: MVP固定値5。成功した通常生成、全体再生成、1品再生成を合算する。
 - `USER_DAILY_EXTERNAL_CALL_LIMIT`: MVP固定値12。利用者ごとにOpenRouterへ実際に送った初回・修正HTTPリクエストを、成功・失敗を問わず合算する。成功生成上限とは独立し、別idempotency keyや失敗で回避できない。
 - `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT`: MVP固定値4回/10分。利用者ごとの外部送信直前にDBで原子的に判定し、時間窓と再開時刻を返す。
+- 短期窓の実装形: `USER_SHORT_WINDOW_SECONDS=600` の**固定タンブリング窓**（`floor(epoch/600)*600` で窓起点を整列）。スライディング窓ではない。窓境界の前後にまたがると実効上限が最大 8 回/約 10 秒まで上がり得るが、日次の `USER_DAILY_EXTERNAL_CALL_LIMIT=12` が別レイヤで総量を担保する。MVP ではこの解釈を既知の制約として固定し、スライド窓化は値の解釈変更として別仕様改訂で扱う。
 - `GLOBAL_DAILY_AI_LIMIT`: 初期値45。無料枠と公開規模に合わせて運営者が引き下げられるアプリ全体の安全弁とし、NetlifyからOpenRouterへ実際に送ったHTTPリクエストを、成功・失敗を問わず合算する。有料モデルへの切替には使用しない。
 - 日付境界: `Asia/Tokyo`
 - 同時実行: 1ユーザー1件

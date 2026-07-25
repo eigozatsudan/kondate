@@ -249,6 +249,10 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   assert.match(workflow, /tools\/e2e-function-server\.test\.mjs/u);
   assert.match(script, /assert-privacy-logs\.test\.mjs/u);
   assert.match(workflow, /assert-privacy-logs\.test\.mjs/u);
+  assert.match(script, /csp-headers\.test\.mjs/u);
+  assert.match(workflow, /csp-headers\.test\.mjs/u);
+  assert.match(script, /emit-deploy-headers\.test\.mjs/u);
+  assert.match(workflow, /emit-deploy-headers\.test\.mjs/u);
   assert.match(script, /verify-release-evidence\.test\.mjs/u);
   assert.match(workflow, /verify-release-evidence\.test\.mjs/u);
   assert.match(script, /verify-acceptance-matrix\.test\.mjs/u);
@@ -295,6 +299,53 @@ test("Vite ignores Playwright output directories", async () => {
   const config = await readFile("vite.config.ts", "utf8");
   assert.match(config, /"\*\*\/playwright-report\/\*\*"/u);
   assert.match(config, /"\*\*\/test-results\/\*\*"/u);
+});
+
+/**
+ * Netlify CSP は context 別に dist/_headers へ emit する。
+ * グローバル [[headers]] に Content-Security-Policy を戻すと production exact origin が無効化される。
+ */
+test("netlify.toml emits context CSP via _headers and keeps global headers CSP-free", async () => {
+  const [toml, emitScript, cspModule] = await Promise.all([
+    readFile("netlify.toml", "utf8"),
+    readFile("scripts/emit-deploy-headers.mjs", "utf8"),
+    readFile("scripts/csp-headers.mjs", "utf8"),
+  ]);
+
+  // グローバル [[headers]] に CSP を置かない（Netlify は headers を context 分割できない）
+  assert.doesNotMatch(toml, /Content-Security-Policy\s*=/u);
+  assert.match(toml, /Referrer-Policy\s*=\s*"strict-origin-when-cross-origin"/u);
+  assert.match(toml, /X-Content-Type-Options\s*=\s*"nosniff"/u);
+  assert.match(toml, /X-Frame-Options\s*=\s*"DENY"/u);
+  assert.match(
+    toml,
+    /Permissions-Policy\s*=\s*"camera=\(\), microphone=\(\), geolocation=\(\), payment=\(\)"/u,
+  );
+
+  // 各 context の build が emit を実行する
+  for (const pattern of [
+    /command = "npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
+    /command = "npm run verify:openrouter:models && npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
+  ]) {
+    assert.match(toml, pattern);
+  }
+  assert.match(toml, /\[context\.production\]/u);
+  assert.match(toml, /\[context\.deploy-preview\]/u);
+  assert.match(toml, /\[context\.branch-deploy\]/u);
+
+  assert.match(emitScript, /buildDeployHeadersFile/u);
+  assert.match(emitScript, /_headers/u);
+  assert.match(cspModule, /buildProductionConnectSrc/u);
+  assert.match(cspModule, /PREVIEW_CONNECT_SRC/u);
+  assert.match(cspModule, /assertProductionCspMatchesSupabaseUrl/u);
+  // production は exact origin、preview は wildcard。CSP_STATIC は style-src 'self' のみ。
+  assert.match(cspModule, /https:\/\/\$\{match\[1\]\}\.supabase\.co/u);
+  assert.match(cspModule, /https:\/\/\*\.supabase\.co/u);
+  assert.match(
+    cspModule,
+    /CSP_STATIC_DIRECTIVES =\n {2}"default-src 'self';[^"]*style-src 'self'; script-src 'self'"/u,
+  );
+  assert.doesNotMatch(cspModule, /CSP_STATIC_DIRECTIVES =\n {2}"[^"]*unsafe-inline/u);
 });
 
 test("Vitest excludes the plan-mandated node:test Function server suite", async () => {

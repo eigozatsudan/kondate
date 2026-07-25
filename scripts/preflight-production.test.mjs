@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { main, validateProductionEnv } from "./preflight-production.mjs";
+import { main, validateProductionCsp, validateProductionEnv } from "./preflight-production.mjs";
+import { buildDeployHeadersFile } from "./csp-headers.mjs";
 
 const projectRef = "abcdefghijklmnopqrst";
 const otherRef = "zyxwvutsrqponmlkjihg";
@@ -113,6 +114,30 @@ test("rejects browser/server project ref mismatch", () => {
         }),
       ),
     /supabase_project_ref_mismatch/,
+  );
+});
+
+test("production CSP connect-src matches VITE_SUPABASE_URL without wildcards", () => {
+  const env = completeEnv();
+  assert.deepEqual(validateProductionEnv(env), { projectRef });
+  assert.equal(validateProductionCsp(env.VITE_SUPABASE_URL), true);
+
+  const headers = buildDeployHeadersFile({
+    context: "production",
+    supabaseUrl: env.VITE_SUPABASE_URL,
+  });
+  assert.doesNotMatch(headers, /\*\.supabase\.co/u);
+  assert.match(
+    headers,
+    new RegExp(
+      `connect-src 'self' https://${projectRef}\\.supabase\\.co wss://${projectRef}\\.supabase\\.co`,
+    ),
+  );
+
+  assert.throws(() => validateProductionCsp("http://127.0.0.1:8000"), /csp_supabase_url/);
+  assert.throws(
+    () => validateProductionCsp(`https://${otherRef}.supabase.co.evil.example`),
+    /csp_supabase_url/,
   );
 });
 

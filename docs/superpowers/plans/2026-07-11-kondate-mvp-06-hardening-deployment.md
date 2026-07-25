@@ -939,7 +939,7 @@ Commit the resulting lockfile. The CLI is local and reproducible—`npx` network
 
 ```toml
 [build]
-  command = "npm run build"
+  command = "npm run build && node scripts/emit-deploy-headers.mjs"
   publish = "dist"
   functions = "netlify/functions"
 
@@ -947,13 +947,13 @@ Commit the resulting lockfile. The CLI is local and reproducible—`npx` network
   NODE_VERSION = "24"
 
 [context.production]
-  command = "npm run verify:openrouter:models && npm run build"
+  command = "npm run verify:openrouter:models && npm run build && node scripts/emit-deploy-headers.mjs"
 
 [context.deploy-preview]
-  command = "npm run build"
+  command = "npm run build && node scripts/emit-deploy-headers.mjs"
 
 [context.branch-deploy]
-  command = "npm run build"
+  command = "npm run build && node scripts/emit-deploy-headers.mjs"
 
 # Keep every existing redirect, in its existing order, above the SPA fallback.
 [[redirects]]
@@ -966,22 +966,41 @@ Commit the resulting lockfile. The CLI is local and reproducible—`npx` network
   to = "/index.html"
   status = 200
 
+# CSP 以外の固定セキュリティヘッダのみグローバルに置く。
+# Netlify の [[headers]] は deploy context で分割できない（公式ドキュメント:
+# headers are global for all builds）。CSP の connect-src だけ context 別に
+# 変えるため、ビルド後に scripts/emit-deploy-headers.mjs が publish 先
+# dist/_headers を書く（Netlify 推奨の per-deploy ワークアラウンド）。
 [[headers]]
   for = "/*"
   [headers.values]
-    Content-Security-Policy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; form-action 'self'"
     Referrer-Policy = "strict-origin-when-cross-origin"
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
 ```
 
-This is a merge into the existing `netlify.toml`, not a replacement of it. The file already exists with `[build]`, `[build.environment]`, the `/api/emergency-menus` redirect, and the SPA fallback; Task 4 adds the context commands and the headers block and leaves everything else byte-identical. Do not drop the emergency-menus redirect because `emergency-menus.ts` also declares `config.path` — establish why the redirect exists before touching it, and keep it unless that investigation proves it dead. SPA catch-all stays last.
+**CSP `connect-src`（2026-07 改訂 — XSS exfiltration 経路の閉鎖）:**
 
-Supabase authentication redirects use top-level navigation and do not require adding Google domains to `connect-src`. If a custom Supabase domain is used, add that exact HTTPS and WSS origin to `connect-src` in the deployment commit.
+| Deploy context | `connect-src` Supabase 部分 | 理由 |
+| --- | --- | --- |
+| `production` | 正確な managed origin のみ `https://<20-char-ref>.supabase.co` と `wss://` 同 origin | 本番 `VITE_SUPABASE_URL` は 1 project に固定。`*.supabase.co` は攻撃者の別プロジェクトへの fetch を許す |
+| `deploy-preview` / `branch-deploy` / 既定 | `https://*.supabase.co` と `wss://*.supabase.co` | preview が別 managed プロジェクトを指し得る暫定策。本番より広い |
+
+Production の CSP 本文はリポジトリに project ref を直書きせず、ビルド時の `VITE_SUPABASE_URL`（公開値）から `scripts/csp-headers.mjs` が生成する。`npm run preflight:production` は同じ純関数で「生成される connect-src が `VITE_SUPABASE_URL` の origin と完全一致し、`*.supabase.co` を含まない」ことを検証する。ref 変更時は Netlify の env だけ更新すればよく、CSP と env の不一致で本番 API が静かに全部落ちる事故を preflight が止める。
+
+CSP 本体（context 共通の directive、connect-src だけ差し替え）:
+
+```
+default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src <context-specific>; form-action 'self'
+```
+
+This is a merge into the existing `netlify.toml`, not a replacement of it. The file already exists with `[build]`, `[build.environment]`, the `/api/emergency-menus` redirect, and the SPA fallback; keep those and the emergency-menus redirect (it coexists with `emergency-menus.ts` `config.path`). SPA catch-all stays last. Do not put `Content-Security-Policy` back into global `[[headers]]` — that would re-apply the same CSP to every context and defeat the production exact-origin tightening.
+
+Supabase authentication redirects use top-level navigation and do not require adding Google domains to `connect-src`. If a custom Supabase domain is used, extend `scripts/csp-headers.mjs` so production `connect-src` includes that exact HTTPS and WSS origin, and keep the preflight equality check against the browser origin contract.
 
 **CSP vs existing React inline styles (must fix in this Task, not later):**
-The header above uses `style-src 'self'` with **no** `'unsafe-inline'`. That is intentional for security, but the current SPA will break under that policy until inline styles are removed:
+The CSP uses `style-src 'self'` with **no** `'unsafe-inline'`. That is intentional for security, but the current SPA will break under that policy until inline styles are removed:
 
 - `src/features/planner/pantry-selector.tsx` — expired-pantry confirm dialog uses `style={{ position: "fixed", zIndex: 20, inset: 0, … }}` and a second inline `width`/`maxHeight`/`overflow` block.
 - `src/shared/ui/wizard/progress-indicator.tsx` — progress fill uses `style={{ width: percentage }}`.

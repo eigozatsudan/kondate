@@ -106,7 +106,7 @@ KONDATE_ASSERT_PRIVACY_LOGS=1 ./scripts/run-e2e.sh
 docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
 docker compose run --rm --no-deps -e OPENROUTER_MODELS="$LOCAL_MOCK_MODELS" app sh -c 'npm run build && npm run verify:browser-secrets'
 docker compose run --rm --no-deps app sh -c 'npm exec --offline netlify -- build --offline --context deploy-preview && npm run verify:browser-secrets'
-docker compose run --rm --no-deps app node --test scripts/provision-maintenance-role.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs scripts/verify-release-evidence.test.mjs
+docker compose run --rm --no-deps app node --test scripts/provision-maintenance-role.test.mjs scripts/csp-headers.test.mjs scripts/emit-deploy-headers.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs scripts/verify-release-evidence.test.mjs
 docker compose config --quiet
 docker compose run --rm --no-deps app sh -c \
   'if grep -rnE "OPENROUTER_API_KEY|SUPABASE_SERVICE_ROLE_KEY|GENERATION_REQUEST_HMAC_KEY|SUPABASE_MAINTENANCE_DB_URL|MAINTENANCE_DB_PASSWORD|NETLIFY_AUTH_TOKEN" dist src shared; then exit 1; fi'

@@ -5,6 +5,7 @@
  */
 import { Buffer } from "node:buffer";
 import { pathToFileURL } from "node:url";
+import { assertProductionCspMatchesSupabaseUrl, buildDeployHeadersFile } from "./csp-headers.mjs";
 
 // TS の parseOpenRouterModels / parseManagedSupabaseProjectRef と
 // maintenance-env はビルド成果ではなくソースを Node から直接は import できない。
@@ -14,6 +15,20 @@ const sampleHmacPlaceholder = "generated-32-byte-base64-secret";
 
 export function parseManagedSupabaseProjectRef(value) {
   return managedSupabaseOrigin.exec(value)?.[1] ?? null;
+}
+
+/**
+ * production ビルドが書く _headers の connect-src が
+ * VITE_SUPABASE_URL と一致し、*.supabase.co を含まないことを検証する。
+ * リポジトリに project ref を直書きせず、emit と同じ純関数を再利用する。
+ */
+export function validateProductionCsp(supabaseUrl) {
+  const headers = buildDeployHeadersFile({
+    context: "production",
+    supabaseUrl,
+  });
+  assertProductionCspMatchesSupabaseUrl(headers, supabaseUrl);
+  return true;
 }
 
 export function parseOpenRouterModels(value) {
@@ -242,6 +257,10 @@ export function validateProductionEnv(env) {
   }
 
   parseProductionMaintenanceUrl(String(env.SUPABASE_MAINTENANCE_DB_URL), serverRef);
+
+  // production CSP の connect-src が browser managed origin と一致すること。
+  // 不一致だと本番だけ API が CSP ブロックされるため、preflight で fail-closed する。
+  validateProductionCsp(browserUrl);
 
   return { projectRef: serverRef };
 }

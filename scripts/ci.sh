@@ -26,6 +26,8 @@ docker compose run --rm --no-deps app node --test \
   scripts/verify-release-evidence.test.mjs \
   scripts/verify-openrouter-models.test.mjs \
   scripts/provision-maintenance-role.test.mjs \
+  scripts/csp-headers.test.mjs \
+  scripts/emit-deploy-headers.test.mjs \
   scripts/preflight-production.test.mjs \
   scripts/smoke-production.test.mjs \
   scripts/verify-production-deploy.test.mjs \
