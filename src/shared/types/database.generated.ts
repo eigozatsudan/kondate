@@ -1970,6 +1970,33 @@ export type Database = {
         }
         Relationships: []
       }
+      user_feedback: {
+        Row: {
+          body: string
+          category: string
+          client_path: string | null
+          created_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          category: string
+          client_path?: string | null
+          created_at?: string
+          id?: string
+          user_id?: string
+        }
+        Update: {
+          body?: string
+          category?: string
+          client_path?: string | null
+          created_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
