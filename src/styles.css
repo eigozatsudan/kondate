@@ -1038,9 +1038,26 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.household-member-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .household-editor {
   border-top: 2px solid var(--border);
   padding-top: 20px;
+}
+
+/* 編集フォーム末尾: 完了・やめる/削除を横並び */
+.household-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
 }
 
 @media (min-width: 480px) {

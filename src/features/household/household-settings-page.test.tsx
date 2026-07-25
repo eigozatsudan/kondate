@@ -177,6 +177,9 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
   );
   expect(screen.getAllByText(/3〜5歳/u)[0]).toBeVisible();
   expect(screen.getAllByText(/入力途中/u)).toHaveLength(2);
+  // 一覧の各行に編集と削除が並ぶ
+  expect(screen.getByRole("button", { name: "1人目の大人を削除" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "2人目の名前未設定を削除" })).toBeVisible();
 
   const secondButton = screen.getByRole("button", { name: "2人目の名前未設定を編集" });
   expect(screen.getByRole("button", { name: "3人目の名前未設定を編集" })).toBeVisible();
@@ -185,8 +188,13 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
   expect(editor).toBeVisible();
   expect(editor).toContainElement(screen.getByRole("button", { name: "家族を追加" }));
   expect(editor).toContainElement(screen.getByLabelText("呼び名"));
-  // 2人目は draft のため削除ではなく追加キャンセル
-  expect(editor).toContainElement(screen.getByRole("button", { name: "追加をやめる" }));
+  // 2人目は draft のため削除ではなく追加キャンセル。完了ボタンと横並び。
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  const cancelAddButton = screen.getByRole("button", { name: "追加をやめる" });
+  expect(editor).toContainElement(completeButton);
+  expect(editor).toContainElement(cancelAddButton);
+  expect(completeButton.parentElement).toHaveClass("household-editor-actions");
+  expect(completeButton.parentElement).toContainElement(cancelAddButton);
   const editorHeading = screen.getByRole("heading", { name: "「名前未設定」を編集中" });
   expect(editorHeading).toBeVisible();
   expect(editorHeading).toHaveFocus();

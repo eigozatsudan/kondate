@@ -1038,23 +1038,49 @@ export function HouseholdSettingsForm({
                     ・{member.status === "complete" ? "登録完了" : "入力途中"}
                   </p>
                 </div>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={saving}
-                  aria-label={`${String(index + 1)}人目の${displayName}を編集`}
-                  aria-pressed={editorOpen && selected.id === member.id}
-                  onClick={() => {
-                    if (savingRef.current) return;
-                    shouldFocusEditorHeadingRef.current = true;
-                    beginEditorTransition(member.id);
-                    setDeleteTarget(undefined);
-                    setSelectedId(member.id);
-                    setEditorOpen(true);
-                  }}
-                >
-                  編集
-                </button>
+                <div className="household-member-actions">
+                  <button
+                    className="secondary-button min-h-11"
+                    type="button"
+                    disabled={saving}
+                    aria-label={`${String(index + 1)}人目の${displayName}を編集`}
+                    aria-pressed={editorOpen && selected?.id === member.id}
+                    onClick={() => {
+                      if (savingRef.current) return;
+                      shouldFocusEditorHeadingRef.current = true;
+                      beginEditorTransition(member.id);
+                      setDeleteTarget(undefined);
+                      setSelectedId(member.id);
+                      setEditorOpen(true);
+                    }}
+                  >
+                    編集
+                  </button>
+                  <button
+                    className="secondary-button min-h-11"
+                    type="button"
+                    disabled={
+                      saving ||
+                      deletingMemberIds.has(member.id) ||
+                      cancellingDraft ||
+                      createDraft.isPending
+                    }
+                    aria-label={`${String(index + 1)}人目の${displayName}を削除`}
+                    onClick={() => {
+                      if (
+                        savingRef.current ||
+                        deletingMemberIdsRef.current.has(member.id) ||
+                        cancellingDraftRef.current
+                      ) {
+                        return;
+                      }
+                      // 一覧からも同じ確認ダイアログへ。編集を開かずに削除できる。
+                      setDeleteTarget(member);
+                    }}
+                  >
+                    削除
+                  </button>
+                </div>
               </li>
             );
           })}
@@ -1424,51 +1450,56 @@ export function HouseholdSettingsForm({
               ))}
             </fieldset>
           </fieldset>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={saving || completionBlockedByMutation}
-            onClick={() => void complete()}
-          >
-            この家族の設定を完了
-          </button>
-          {selected.status === "draft" ? (
-            // 未完了の追加中は「削除」だと対象が曖昧で混乱するため、追加中止だけを出す
+          {/*
+            保存相当の主操作（設定を完了）と中止/削除をフォーム末尾で横並びにする。
+            入力途中の下書きは「追加をやめる」、登録完了済みは「家族を削除」。
+          */}
+          <div className="household-editor-actions">
             <button
-              className="secondary-button"
+              className="primary-button min-h-11"
               type="button"
-              disabled={saving || cancellingDraft || deletingMemberIds.has(selected.id)}
-              onClick={() => {
-                void cancelDraftAdd();
-              }}
+              disabled={saving || completionBlockedByMutation}
+              onClick={() => void complete()}
             >
-              追加をやめる
+              この家族の設定を完了
             </button>
-          ) : (
-            <button
-              ref={deleteTrigger}
-              className="secondary-button"
-              type="button"
-              disabled={
-                saving ||
-                selectedAllergyMutationPending ||
-                deletingMemberIds.has(selected.id) ||
-                cancellingDraft
-              }
-              onClick={() => {
-                if (
-                  savingRef.current ||
-                  allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
-                  deletingMemberIdsRef.current.has(selected.id)
-                ) {
-                  return;
+            {selected.status === "draft" ? (
+              <button
+                className="secondary-button min-h-11"
+                type="button"
+                disabled={saving || cancellingDraft || deletingMemberIds.has(selected.id)}
+                onClick={() => {
+                  void cancelDraftAdd();
+                }}
+              >
+                追加をやめる
+              </button>
+            ) : (
+              <button
+                ref={deleteTrigger}
+                className="secondary-button min-h-11"
+                type="button"
+                disabled={
+                  saving ||
+                  selectedAllergyMutationPending ||
+                  deletingMemberIds.has(selected.id) ||
+                  cancellingDraft
                 }
-                setDeleteTarget(selected);
-              }}
-            >
-              家族を削除
-            </button>
-          )}
+                onClick={() => {
+                  if (
+                    savingRef.current ||
+                    allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
+                    deletingMemberIdsRef.current.has(selected.id)
+                  ) {
+                    return;
+                  }
+                  setDeleteTarget(selected);
+                }}
+              >
+                家族を削除
+              </button>
+            )}
+          </div>
           {deleteTarget !== undefined && (
             <div className="pantry-expired-dialog-backdrop">
               <div
