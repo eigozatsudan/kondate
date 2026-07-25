@@ -64,6 +64,7 @@ type SaveLineage = {
   memberId: string;
   revision: number;
   operationToken: number;
+  feedbackRevision: number;
 };
 
 const householdAgeLabels: Readonly<Record<string, string>> = {
@@ -203,6 +204,7 @@ export function HouseholdSettingsForm({
   const [allergyMutationPendingMemberIds, setAllergyMutationPendingMemberIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  const savingRef = useRef(false);
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
   const editRevisionsByMemberRef = useRef(new Map<string, number>());
@@ -212,6 +214,7 @@ export function HouseholdSettingsForm({
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
   const deletingMemberIdsRef = useRef(new Set<string>());
   const selectedMemberIdRef = useRef<string | undefined>(undefined);
+  const feedbackRevisionRef = useRef(0);
   // 「家族を追加」直前の選択。下書き追加をやめるときに戻す先。
   const previousSelectedIdBeforeAddRef = useRef<string | undefined>(undefined);
   const pendingRegisteredIntents = useRef(new Map<string, PendingRegisteredIntent>());
@@ -229,6 +232,7 @@ export function HouseholdSettingsForm({
       memberId,
       revision: editRevisionsByMemberRef.current.get(memberId) ?? 0,
       operationToken,
+      feedbackRevision: feedbackRevisionRef.current,
     };
   }, []);
   const isLatestSaveRevision = useCallback(
@@ -239,10 +243,17 @@ export function HouseholdSettingsForm({
   const canPublishSaveMessage = useCallback(
     (lineage: SaveLineage) =>
       selectedMemberIdRef.current === lineage.memberId &&
+      feedbackRevisionRef.current === lineage.feedbackRevision &&
       isLatestSaveRevision(lineage) &&
       operationTokensByMemberRef.current.get(lineage.memberId) === lineage.operationToken,
     [isLatestSaveRevision],
   );
+  const beginEditorTransition = (memberId: string | undefined) => {
+    feedbackRevisionRef.current += 1;
+    selectedMemberIdRef.current = memberId;
+    setMessage("");
+    setErrors({});
+  };
   useEffect(() => {
     if (!editorOpen || !shouldFocusEditorHeadingRef.current) {
       return;
@@ -334,7 +345,7 @@ export function HouseholdSettingsForm({
   }, [deleteTarget]);
 
   const update = (patch: Partial<HouseholdSettingsValue>) => {
-    if (selected === undefined) return undefined;
+    if (savingRef.current || selected === undefined) return undefined;
     const current = valuesByMemberRef.current.get(selected.id);
     if (current === undefined) return undefined;
     const next = { ...current, ...patch };
@@ -354,10 +365,14 @@ export function HouseholdSettingsForm({
     ): Promise<boolean> => {
       const parsed = householdSettingsSchema.safeParse(next);
       if (!parsed.success) {
-        setErrors(toHouseholdFieldErrors(parsed.error));
+        if (canPublishSaveMessage(lineage)) {
+          setErrors(toHouseholdFieldErrors(parsed.error));
+        }
         return false;
       }
-      setErrors({});
+      if (canPublishSaveMessage(lineage)) {
+        setErrors({});
+      }
       try {
         const patch = toMemberPatch(parsed.data);
         const saved =
@@ -412,7 +427,7 @@ export function HouseholdSettingsForm({
   }, []);
   const beginAllergyMutation = (memberId: string) => {
     // Editorが家族切替で再生成されても、同じ家族のアレルギー更新は重複開始させない。
-    if (allergyMutationPendingMemberIdsRef.current.has(memberId)) return false;
+    if (savingRef.current || allergyMutationPendingMemberIdsRef.current.has(memberId)) return false;
     allergyMutationPendingMemberIdsRef.current.add(memberId);
     setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
     return true;
@@ -467,6 +482,7 @@ export function HouseholdSettingsForm({
   );
   const savePendingRegisteredStatus = useCallback(
     (memberId: string): Promise<boolean | undefined> => {
+      if (savingRef.current) return Promise.resolve(undefined);
       const pending = pendingRegisteredIntents.current.get(memberId);
       if (pending === undefined) return Promise.resolve(undefined);
       if (pending.inFlight !== undefined) return pending.inFlight;
@@ -480,7 +496,9 @@ export function HouseholdSettingsForm({
             current.registeredSaveEvidence !== "allergy-insert"
           ) {
             delete current.inFlight;
-            setMessage(registeredSaveBlockedMessage(current.registeredSaveEvidence) ?? "");
+            if (selectedMemberIdRef.current === memberId) {
+              setMessage(registeredSaveBlockedMessage(current.registeredSaveEvidence) ?? "");
+            }
             return undefined;
           }
           const revision = current.revision;
@@ -501,7 +519,9 @@ export function HouseholdSettingsForm({
               latest.registeredSaveEvidence !== "allergy-insert"
             ) {
               skipReason = "blocked";
-              setMessage(registeredSaveBlockedMessage(latest.registeredSaveEvidence) ?? "");
+              if (selectedMemberIdRef.current === memberId) {
+                setMessage(registeredSaveBlockedMessage(latest.registeredSaveEvidence) ?? "");
+              }
               return false;
             }
             return true;
@@ -554,20 +574,27 @@ export function HouseholdSettingsForm({
     onMutate: () => {
       // 成功後に戻れるよう、追加操作を始めた時点の選択を記録する
       previousSelectedIdBeforeAddRef.current = selectedMemberIdRef.current;
+      beginEditorTransition(undefined);
     },
     onSuccess: (created) => {
       queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) => [
         ...current,
         created,
       ]);
-      selectedMemberIdRef.current = created.id;
+      beginEditorTransition(created.id);
       setSelectedId(created.id);
       setEditorOpen(true);
     },
   });
   const [cancellingDraft, setCancellingDraft] = useState(false);
   const cancelDraftAdd = useCallback(async (): Promise<void> => {
-    if (selected === undefined || selected.status !== "draft" || cancellingDraft) return;
+    if (
+      savingRef.current ||
+      selected === undefined ||
+      selected.status !== "draft" ||
+      cancellingDraft
+    )
+      return;
     const targetId = selected.id;
     if (deletingMemberIdsRef.current.has(targetId)) return;
     setCancellingDraft(true);
@@ -618,7 +645,7 @@ export function HouseholdSettingsForm({
     }
   }, [api, cancellingDraft, membersKey, queryClient, selected]);
   const complete = async () => {
-    if (selected === undefined || values === undefined) return;
+    if (savingRef.current || selected === undefined || values === undefined) return;
     const completingMemberId = selected.id;
     const parsed = householdSettingsSchema.safeParse(values);
     if (!parsed.success) {
@@ -650,53 +677,59 @@ export function HouseholdSettingsForm({
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
+    // 完了snapshotの保存中は同じフォームから新しい書込みを開始させず、DBの後勝ち競合を防ぐ。
+    savingRef.current = true;
+    setSaving(true);
     const lineage = beginSaveLineage(completingMemberId);
     const completionHasNoLaterEdits = () => isLatestSaveRevision(lineage);
     const canCloseCompletedEditor = () =>
       canPublishSaveMessage(lineage) &&
       (pendingOperationCountsRef.current.get(completingMemberId) ?? 0) === 0 &&
       !failedSaveMemberIdsRef.current.has(completingMemberId);
-    setSaving(true);
-    await saveQueue.current;
-    const saved = await save(selected, parsed.data, lineage);
-    if (!saved) {
-      if (completionHasNoLaterEdits()) {
-        failedSaveMemberIdsRef.current.add(selected.id);
-      }
-      setSaving(false);
-      return;
-    }
-    if (completionHasNoLaterEdits()) {
-      failedSaveMemberIdsRef.current.delete(selected.id);
-      pendingRegisteredIntents.current.delete(selected.id);
-    }
-    if (selected.status === "draft") {
-      try {
-        const completed = await api.completeMember(selected.id);
+    try {
+      await saveQueue.current;
+      const saved = await save(selected, parsed.data, lineage);
+      if (!saved) {
         if (completionHasNoLaterEdits()) {
-          queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-            current.map((member) => (member.id === completed.id ? completed : member)),
-          );
+          failedSaveMemberIdsRef.current.add(selected.id);
         }
-        await api.invalidateSafety();
-        if (canPublishSaveMessage(lineage)) {
-          setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
-        }
-        if (canCloseCompletedEditor()) {
-          setEditorOpen(false);
-        }
-      } catch (error) {
-        if (canPublishSaveMessage(lineage)) {
-          setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
-        }
+        return;
       }
-    } else if (canCloseCompletedEditor()) {
-      setEditorOpen(false);
+      if (completionHasNoLaterEdits()) {
+        failedSaveMemberIdsRef.current.delete(selected.id);
+        pendingRegisteredIntents.current.delete(selected.id);
+      }
+      if (selected.status === "draft") {
+        try {
+          const completed = await api.completeMember(selected.id);
+          if (completionHasNoLaterEdits()) {
+            queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+              current.map((member) => (member.id === completed.id ? completed : member)),
+            );
+          }
+          await api.invalidateSafety();
+          if (canPublishSaveMessage(lineage)) {
+            setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
+          }
+          if (canCloseCompletedEditor()) {
+            setEditorOpen(false);
+          }
+        } catch (error) {
+          if (canPublishSaveMessage(lineage)) {
+            setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
+          }
+        }
+      } else if (canCloseCompletedEditor()) {
+        setEditorOpen(false);
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
+    if (savingRef.current) return;
     const next = update(patch);
     if (selected === undefined || next === undefined) return;
     const persistedMember =
@@ -870,8 +903,9 @@ export function HouseholdSettingsForm({
           <button
             className="primary-button"
             type="button"
-            disabled={createDraft.isPending}
+            disabled={createDraft.isPending || saving}
             onClick={() => {
+              if (savingRef.current) return;
               createDraft.mutate();
             }}
           >
@@ -918,11 +952,13 @@ export function HouseholdSettingsForm({
                 <button
                   className="secondary-button"
                   type="button"
+                  disabled={saving}
                   aria-label={`${String(index + 1)}人目の${displayName}を編集`}
                   aria-pressed={editorOpen && selected.id === member.id}
                   onClick={() => {
+                    if (savingRef.current) return;
                     shouldFocusEditorHeadingRef.current = true;
-                    selectedMemberIdRef.current = member.id;
+                    beginEditorTransition(member.id);
                     setDeleteTarget(undefined);
                     setSelectedId(member.id);
                     setEditorOpen(true);
@@ -939,8 +975,9 @@ export function HouseholdSettingsForm({
         <button
           className="secondary-button"
           type="button"
-          disabled={createDraft.isPending}
+          disabled={createDraft.isPending || saving}
           onClick={() => {
+            if (savingRef.current) return;
             createDraft.mutate();
           }}
         >
@@ -966,8 +1003,9 @@ export function HouseholdSettingsForm({
           <button
             className="secondary-button"
             type="button"
-            disabled={createDraft.isPending}
+            disabled={createDraft.isPending || saving}
             onClick={() => {
+              if (savingRef.current) return;
               createDraft.mutate();
             }}
           >
@@ -983,7 +1021,7 @@ export function HouseholdSettingsForm({
               {Object.values(errors).join(" ")}
             </p>
           )}
-          <section className="card stack">
+          <fieldset className="card stack" disabled={saving}>
             <label className="field">
               <span>呼び名</span>
               <input
@@ -1108,11 +1146,12 @@ export function HouseholdSettingsForm({
                   })
                 }
                 onError={(error) => {
+                  if (selectedMemberIdRef.current !== selected.id) return;
                   setMessage(
                     error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
                   );
                 }}
-                disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
+                disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending || saving}
               />
             )}
             <label className="field">
@@ -1204,6 +1243,7 @@ export function HouseholdSettingsForm({
                 className="secondary-button"
                 type="button"
                 onClick={() => {
+                  if (savingRef.current) return;
                   if (dislike.trim() === "") return;
                   void api
                     .addDislike(selected.id, dislike)
@@ -1227,7 +1267,8 @@ export function HouseholdSettingsForm({
                     <button
                       className="text-button"
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        if (savingRef.current) return;
                         void api
                           .removeDislike(item.id)
                           .then(() =>
@@ -1235,8 +1276,8 @@ export function HouseholdSettingsForm({
                               queryKey: householdKeys.dislikes("settings", selected.id),
                             }),
                           )
-                          .then(() => api.invalidateSafety())
-                      }
+                          .then(() => api.invalidateSafety());
+                      }}
                     >
                       削除
                     </button>
@@ -1278,7 +1319,7 @@ export function HouseholdSettingsForm({
                 </label>
               ))}
             </fieldset>
-          </section>
+          </fieldset>
           <button
             className="primary-button"
             type="button"
@@ -1305,12 +1346,14 @@ export function HouseholdSettingsForm({
               className="secondary-button"
               type="button"
               disabled={
+                saving ||
                 selectedAllergyMutationPending ||
                 deletingMemberIds.has(selected.id) ||
                 cancellingDraft
               }
               onClick={() => {
                 if (
+                  savingRef.current ||
                   allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
                   deletingMemberIdsRef.current.has(selected.id)
                 ) {
@@ -1330,12 +1373,14 @@ export function HouseholdSettingsForm({
                 className="primary-button"
                 type="button"
                 disabled={
+                  saving ||
                   allergyMutationPendingMemberIdsRef.current.has(deleteTarget.id) ||
                   deletingMemberIds.has(deleteTarget.id)
                 }
                 onClick={() => {
                   const targetId = deleteTarget.id;
                   if (
+                    savingRef.current ||
                     allergyMutationPendingMemberIdsRef.current.has(targetId) ||
                     deletingMemberIdsRef.current.has(targetId)
                   ) {
@@ -1393,9 +1438,10 @@ export function HouseholdSettingsForm({
               <button
                 className="text-button"
                 type="button"
-                disabled={deletingMemberIds.has(deleteTarget.id)}
+                disabled={saving || deletingMemberIds.has(deleteTarget.id)}
                 onClick={() => {
-                  if (deletingMemberIdsRef.current.has(deleteTarget.id)) return;
+                  if (savingRef.current || deletingMemberIdsRef.current.has(deleteTarget.id))
+                    return;
                   setDeleteTarget(undefined);
                 }}
               >

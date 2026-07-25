@@ -114,3 +114,23 @@
   - Task外の `.codex/config.toml`、pantry 3ファイル、planner 2ファイルは編集・stageしていない。
 - fix round 4 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
 - 未解決事項: なし。
+
+## Fix round 5
+
+- status: `DONE`
+- REDで確認した失敗:
+  - household settings 74件中、完了中のdraft/complete家族で入力・追加・切替を止める2件、新draft作成時と家族切替時のfeedback消去2件、非選択家族の遅延validation非表示1件の計5件だけが期待どおり失敗した。
+- 実装内容と設計判断:
+  - 完了snapshotの検証後、最初の非同期処理より前に `savingRef` を同期的に立て、完了保存とdraftのstatus遷移がsettleするまで対象フォームの入力、配列変更、アレルギー・苦手食材操作、家族追加・切替・削除・追加中止を拒否した。
+  - UIのdisabled状態に加えて各mutation入口で同期guardし、完了中に後続autosaveや家族CRUDを開始しない。
+  - 家族切替とdraft作成intent・選択時にmessage/errorsを消去し、feedback revisionで旧操作の遅延結果を公開しない。保存時validationも選択家族とlineageが一致する場合だけ表示する。
+- 実行した検証と結果:
+  - RED focused household: 74 tests中、追加・更新した5 testsのみFAIL。
+  - GREEN focused household: 70 tests PASS。
+  - GREEN focused 5 files: 127 tests PASS。遅延save failure test追加後のhousehold 70 testsもPASS。
+  - Task変更2ファイルのscoped Prettier check: PASS。
+- self-review:
+  - draft/completeのAPI分岐、既存save queue、registered保留intentを維持し、完了開始前にqueue済みの保存だけを待ってからロック中のsnapshotを保存する。
+  - 完了失敗後はロックを必ず解除し、フォームを開いたまま再修正できる。Task外6ファイルは編集・stageしていない。
+- fix round 5 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
+- 未解決事項: なし。
