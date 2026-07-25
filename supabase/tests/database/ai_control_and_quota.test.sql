@@ -2781,6 +2781,74 @@ end
 $test$;
 select pass('get_ai_usage_today balances consumed/sent while reservations are held');
 
+-- 台帳 0 行（未生成ユーザー）でも usageTodayDataSchema を満たすフル残数を返す
+do $test$
+declare
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000a7';
+  v_now timestamptz := '2026-07-10 15:00:00+00';
+  v_usage jsonb;
+begin
+  perform tests.create_supabase_user(v_owner, 'usage-empty-ledger@example.invalid');
+
+  -- 成功 / attempt / shortWindow / global いずれも行なし
+  if exists (
+    select 1 from private.ai_user_daily_usage
+    where user_id = v_owner and usage_day = private.ai_jst_day(v_now)
+  ) then
+    raise exception 'fixture polluted: daily usage row present';
+  end if;
+  if exists (
+    select 1 from private.ai_user_daily_external_attempts
+    where user_id = v_owner and usage_day = private.ai_jst_day(v_now)
+  ) then
+    raise exception 'fixture polluted: attempt row present';
+  end if;
+  if exists (
+    select 1 from private.ai_user_rate_windows where user_id = v_owner
+  ) then
+    raise exception 'fixture polluted: rate window row present';
+  end if;
+
+  v_usage := public.get_ai_usage_today(v_owner, v_now);
+
+  if (v_usage->'success'->>'consumed')::integer <> 0
+     or (v_usage->'success'->>'remaining')::integer <> 5
+     or (v_usage->'success'->>'limit')::integer <> 5 then
+    raise exception 'empty ledger success expected full remaining: %', v_usage->'success';
+  end if;
+  if (v_usage->'attempts'->>'sent')::integer <> 0
+     or (v_usage->'attempts'->>'remaining')::integer <> 12
+     or (v_usage->'attempts'->>'limit')::integer <> 12 then
+    raise exception 'empty ledger attempts expected full remaining: %', v_usage->'attempts';
+  end if;
+  if (v_usage->'shortWindow'->>'sent')::integer <> 0
+     or (v_usage->'shortWindow'->>'remaining')::integer <> 4
+     or (v_usage->'shortWindow'->>'limit')::integer <> 4
+     or (v_usage->'shortWindow'->>'retryAt') is not null then
+    raise exception 'empty ledger shortWindow expected open window: %', v_usage->'shortWindow';
+  end if;
+  if (v_usage->>'globalAvailable') is distinct from 'true' then
+    raise exception 'empty ledger globalAvailable expected true: %', v_usage->>'globalAvailable';
+  end if;
+  if (v_usage->>'retryAt') is not null then
+    raise exception 'empty ledger retryAt expected null: %', v_usage->>'retryAt';
+  end if;
+  -- balance 不変条件（usageTodayDataSchema.superRefine と同等）
+  if (v_usage->'success'->>'consumed')::integer
+       + (v_usage->'success'->>'remaining')::integer
+       <> (v_usage->'success'->>'limit')::integer
+     or (v_usage->'attempts'->>'sent')::integer
+       + (v_usage->'attempts'->>'remaining')::integer
+       <> (v_usage->'attempts'->>'limit')::integer
+     or (v_usage->'shortWindow'->>'sent')::integer
+       + (v_usage->'shortWindow'->>'remaining')::integer
+       <> (v_usage->'shortWindow'->>'limit')::integer then
+    raise exception 'empty ledger counts do not balance: %', v_usage;
+  end if;
+end
+$test$;
+select pass('get_ai_usage_today returns full remaining for empty ledger');
+
 -- repair の attempt 上限 deny は reserved/retry_at のみ（code なし）
 do $test$
 declare
