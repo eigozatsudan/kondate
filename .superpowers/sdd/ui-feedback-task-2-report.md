@@ -134,3 +134,25 @@
   - 完了失敗後はロックを必ず解除し、フォームを開いたまま再修正できる。Task外6ファイルは編集・stageしていない。
 - fix round 5 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
 - 未解決事項: なし。
+
+## Fix round 6
+
+- status: `DONE`
+- REDで確認した失敗:
+  - household settings 75件中、完了ロック後にregistered保存Q2が追加される競合と、アレルギー追加・最後の削除・選択家族削除・draft作成中に完了処理を開始できる4件の計5件が期待どおり失敗した。
+  - emergency page 15件中、所要時間と人数の読み上げ用文言が視覚表示と重複する1件が期待どおり失敗した。
+- 実装内容と設計判断:
+  - 完了ロック取得後は `queueSave` とregistered intent loopから新規保存を追加しない。ロック前のqueueだけをdrainし、完了時点の最新snapshotを直接保存してからpending intentを解消する。
+  - 対象家族のアレルギーmutation・削除、draft作成・追加中止を同期refで判定し、進行中は完了入口を拒否する。完了ボタンにも同じ状態を反映する。
+  - 緊急献立の視覚的な所要時間・人数をアクセシブルな正本とし、同内容の `sr-only` 文言を削除した。
+- 実行した検証と結果:
+  - RED focused 2 files: 90 tests中、追加・更新した6 testsのみFAIL。
+  - GREEN focused 5 files: 133 tests PASS。
+  - Task変更5ファイルのscoped Prettier check: PASS。
+  - Task変更ファイルの `git diff --check`: PASS。
+- self-review:
+  - 完了処理は既存queueを待った後に最新値を1回保存し、Q1中のrevision更新を失わず、余分なQ2を作らず正常にフォームを閉じる。
+  - 完了入口とUIの両方で進行中mutationを拒否し、完了開始後の既存ロック、draft/complete分岐、registered保留intentを維持した。
+  - Task外の既存変更には触れていない。
+- fix round 6 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
+- 未解決事項: なし。

@@ -575,7 +575,9 @@ it("renders complete human-labelled cooking instructions without raw identifiers
     />,
   );
 
-  expect(screen.getByText("食卓まで全体 15分・2人分")).toBeInTheDocument();
+  expect(screen.getByText("15分")).toBeInTheDocument();
+  expect(screen.getByText("2人分")).toBeInTheDocument();
+  expect(screen.queryByText("食卓まで全体 15分・2人分")).not.toBeInTheDocument();
   expect(screen.getByText("候補 1")).toBeInTheDocument();
   expect(screen.getByRole("group", { name: "候補1の概要" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "全体の段取り" })).toBeInTheDocument();

@@ -216,9 +216,6 @@ export function EmergencyMenuContent({
                 <span>分量の目安</span>
               </p>
             </div>
-            <p className="sr-only">
-              食卓まで全体 {menu.totalElapsedMinutes}分・{menu.servings}人分
-            </p>
             <details open>
               <summary>材料と作り方を表示</summary>
               <section

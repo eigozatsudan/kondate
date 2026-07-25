@@ -278,6 +278,98 @@ it.each(["complete", "draft"] as const)(
   },
 );
 
+it("does not start completion while an allergy addition is pending", async () => {
+  const existingCustomAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "マンゴー",
+    custom_confirmed: true,
+  };
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const addStandardAllergy = vi.fn(() => new Promise<MemberAllergyRow>(() => undefined));
+  const updateMember = vi.fn().mockResolvedValue(registeredMember);
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([registeredMember]),
+    listAllergies: vi.fn().mockResolvedValue([existingCustomAllergy]),
+    addStandardAllergy,
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalledTimes(1);
+  });
+
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  expect(completeButton).toBeDisabled();
+  fireEvent.click(completeButton);
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+it("does not start completion while the last draft allergy deletion is pending", async () => {
+  const draft = {
+    ...member,
+    id: "draft-1",
+    status: "draft" as const,
+    allergy_status: "registered" as const,
+  };
+  const removeAllergy = vi.fn(() => new Promise<void>(() => undefined));
+  const updateDraft = vi.fn().mockResolvedValue(draft);
+  const completeMember = vi.fn().mockResolvedValue({ ...draft, status: "complete" as const });
+  renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    listAllergies: vi.fn().mockResolvedValue([{ ...standardAllergy, member_id: draft.id }]),
+    removeAllergy,
+    updateDraft,
+    completeMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledTimes(1);
+  });
+
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  expect(completeButton).toBeDisabled();
+  fireEvent.click(completeButton);
+  expect(updateDraft).not.toHaveBeenCalled();
+  expect(completeMember).not.toHaveBeenCalled();
+});
+
+it("does not start completion while deleting the selected member", async () => {
+  const deleteMember = vi.fn(() => new Promise<void>(() => undefined));
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({ deleteMember, updateMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+  await waitFor(() => {
+    expect(deleteMember).toHaveBeenCalledTimes(1);
+  });
+
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  expect(completeButton).toBeDisabled();
+  fireEvent.click(completeButton);
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+it("does not start completion while creating another draft", async () => {
+  const createDraft = vi.fn(() => new Promise<HouseholdMemberRow>(() => undefined));
+  const updateMember = vi.fn().mockResolvedValue(member);
+  renderSettings({ createDraft, updateMember });
+
+  await userEvent.click(await screen.findByRole("button", { name: "家族を追加" }));
+  await waitFor(() => {
+    expect(createDraft).toHaveBeenCalledTimes(1);
+  });
+
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
+  expect(completeButton).toBeDisabled();
+  fireEvent.click(completeButton);
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
 it("clears an earlier completion failure as soon as a new draft is requested", async () => {
   const firstDraft: HouseholdMemberRow = {
     ...member,
@@ -1937,6 +2029,60 @@ it("registered保存中の別フィールド変更を後続の最新snapshotで�
   expect(
     queryClient.getQueryData<HouseholdMemberRow[]>(["household", "members", "settings"]),
   ).toEqual([latestRegisteredMember]);
+});
+
+it("完了ロック後はregisteredの後続保存を追加せず最新snapshotで正常終了する", async () => {
+  const registeredMember: HouseholdMemberRow = {
+    ...member,
+    allergy_status: "registered",
+  };
+  const latestRegisteredMember: HouseholdMemberRow = {
+    ...registeredMember,
+    display_name: "更新後",
+  };
+  let resolveFirstUpdate: ((saved: HouseholdMemberRow) => void) | undefined;
+  const updateMember = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<HouseholdMemberRow>((resolve) => {
+          resolveFirstUpdate = resolve;
+        }),
+    )
+    .mockResolvedValue(latestRegisteredMember);
+  const { queryClient } = renderSettings({
+    listAllergies: vi.fn().mockResolvedValue([walnutAllergy]),
+    updateMember,
+  });
+
+  await waitForAllergies(queryClient);
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+  });
+  fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "更新後" } });
+  await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+
+  await act(async () => {
+    resolveFirstUpdate?.(registeredMember);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  expect(updateMember).toHaveBeenLastCalledWith(
+    member.id,
+    expect.objectContaining({
+      allergy_status: "registered",
+      display_name: "更新後",
+    }),
+  );
+  expect(queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members("settings"))).toEqual(
+    [latestRegisteredMember],
+  );
 });
 
 it("registered保存中のnone変更を後続保存して最終状態へ反映する", async () => {

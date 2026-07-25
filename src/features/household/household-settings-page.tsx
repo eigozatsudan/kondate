@@ -213,6 +213,8 @@ export function HouseholdSettingsForm({
   const failedSaveMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
   const deletingMemberIdsRef = useRef(new Set<string>());
+  const creatingDraftRef = useRef(false);
+  const cancellingDraftRef = useRef(false);
   const selectedMemberIdRef = useRef<string | undefined>(undefined);
   const feedbackRevisionRef = useRef(0);
   // 「家族を追加」直前の選択。下書き追加をやめるときに戻す先。
@@ -454,6 +456,7 @@ export function HouseholdSettingsForm({
       persistedValues: HouseholdSettingsValue = localSnapshot,
       shouldSave?: () => boolean,
     ) => {
+      if (savingRef.current) return Promise.resolve(undefined);
       let skipped = false;
       const lineage = beginSaveLineage(member.id);
       beginPendingOperation(member, localSnapshot);
@@ -488,6 +491,10 @@ export function HouseholdSettingsForm({
       if (pending.inFlight !== undefined) return pending.inFlight;
       const inFlight = (async (): Promise<boolean | undefined> => {
         for (;;) {
+          if (savingRef.current) {
+            delete pending.inFlight;
+            return undefined;
+          }
           const current = pendingRegisteredIntents.current.get(memberId);
           if (current !== pending) return false;
           if (
@@ -585,11 +592,21 @@ export function HouseholdSettingsForm({
       setSelectedId(created.id);
       setEditorOpen(true);
     },
+    onSettled: () => {
+      creatingDraftRef.current = false;
+    },
   });
+  const requestCreateDraft = () => {
+    if (savingRef.current || creatingDraftRef.current || cancellingDraftRef.current) return;
+    creatingDraftRef.current = true;
+    createDraft.mutate();
+  };
   const [cancellingDraft, setCancellingDraft] = useState(false);
   const cancelDraftAdd = useCallback(async (): Promise<void> => {
     if (
       savingRef.current ||
+      creatingDraftRef.current ||
+      cancellingDraftRef.current ||
       selected === undefined ||
       selected.status !== "draft" ||
       cancellingDraft
@@ -597,6 +614,7 @@ export function HouseholdSettingsForm({
       return;
     const targetId = selected.id;
     if (deletingMemberIdsRef.current.has(targetId)) return;
+    cancellingDraftRef.current = true;
     setCancellingDraft(true);
     setMessage("");
     try {
@@ -641,11 +659,21 @@ export function HouseholdSettingsForm({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "追加のキャンセルに失敗しました");
     } finally {
+      cancellingDraftRef.current = false;
       setCancellingDraft(false);
     }
   }, [api, cancellingDraft, membersKey, queryClient, selected]);
   const complete = async () => {
-    if (savingRef.current || selected === undefined || values === undefined) return;
+    if (
+      savingRef.current ||
+      creatingDraftRef.current ||
+      cancellingDraftRef.current ||
+      selected === undefined ||
+      values === undefined ||
+      allergyMutationPendingMemberIdsRef.current.has(selected.id) ||
+      deletingMemberIdsRef.current.has(selected.id)
+    )
+      return;
     const completingMemberId = selected.id;
     const parsed = householdSettingsSchema.safeParse(values);
     if (!parsed.success) {
@@ -905,8 +933,7 @@ export function HouseholdSettingsForm({
             type="button"
             disabled={createDraft.isPending || saving}
             onClick={() => {
-              if (savingRef.current) return;
-              createDraft.mutate();
+              requestCreateDraft();
             }}
           >
             家族を追加
@@ -919,6 +946,11 @@ export function HouseholdSettingsForm({
   }
   const currentDislikes = dislikesQuery.data ?? [];
   const selectedAllergyMutationPending = allergyMutationPendingMemberIds.has(selected.id);
+  const completionBlockedByMutation =
+    selectedAllergyMutationPending ||
+    deletingMemberIds.has(selected.id) ||
+    createDraft.isPending ||
+    cancellingDraft;
   const setArray = (
     key: "unsupportedDietKinds" | "requiredSafetyConstraints" | "easePreferences",
     item: string,
@@ -977,8 +1009,7 @@ export function HouseholdSettingsForm({
           type="button"
           disabled={createDraft.isPending || saving}
           onClick={() => {
-            if (savingRef.current) return;
-            createDraft.mutate();
+            requestCreateDraft();
           }}
         >
           家族を追加
@@ -1005,8 +1036,7 @@ export function HouseholdSettingsForm({
             type="button"
             disabled={createDraft.isPending || saving}
             onClick={() => {
-              if (savingRef.current) return;
-              createDraft.mutate();
+              requestCreateDraft();
             }}
           >
             家族を追加
@@ -1323,7 +1353,7 @@ export function HouseholdSettingsForm({
           <button
             className="primary-button"
             type="button"
-            disabled={saving || cancellingDraft}
+            disabled={saving || completionBlockedByMutation}
             onClick={() => void complete()}
           >
             この家族の設定を完了
