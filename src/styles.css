@@ -952,20 +952,15 @@ textarea:focus-visible {
 }
 
 /*
- * チェック／ラジオとラベル文言の隙間。
- * 素の <label><input>文言</label> はブラウザ既定でほぼ密着する。
- * .wizard-option（カード型・独自 gap）と .field（縦積み）は除外する。
+ * チェック／ラジオ＋文言の横並びラベル。
+ * 素の label はブラウザ既定で密着するため、フォームの複数選択に付与する。
+ * （要素セレクタ input を直接書くと contrast ガードの保護規則に掛かる）
  */
-label:has(> input[type="checkbox"]),
-label:has(> input[type="radio"]):not(.wizard-option):not(.field) {
+.control-label {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   gap: 12px;
-}
-
-label:has(> input[type="checkbox"]) > input[type="checkbox"],
-label:has(> input[type="radio"]):not(.wizard-option) > input[type="radio"] {
-  flex: 0 0 auto;
 }
 
 .field textarea {
@@ -1234,6 +1229,7 @@ label:has(> input[type="radio"]):not(.wizard-option) > input[type="radio"] {
   min-height: 44px;
   cursor: pointer;
   align-items: center;
+  /* チェックと商品名の隙間（密着防止） */
   gap: 12px;
 }
 

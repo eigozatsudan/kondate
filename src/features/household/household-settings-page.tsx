@@ -1296,7 +1296,7 @@ export function HouseholdSettingsForm({
               <fieldset className="stack">
                 <legend>食べない食事</legend>
                 {unsupportedDietKinds.map((kind) => (
-                  <label key={kind}>
+                  <label key={kind} className="control-label">
                     <input
                       type="checkbox"
                       checked={values.unsupportedDietKinds.includes(kind)}
@@ -1311,7 +1311,7 @@ export function HouseholdSettingsForm({
             )}
             <fieldset className="stack">
               <legend>安全のための制約</legend>
-              <label>
+              <label className="control-label">
                 <input
                   type="checkbox"
                   aria-label="骨を除く"
@@ -1322,7 +1322,7 @@ export function HouseholdSettingsForm({
                 />
                 骨を除く
               </label>
-              <label>
+              <label className="control-label">
                 <input
                   type="checkbox"
                   aria-label="小さく切る"
@@ -1432,7 +1432,7 @@ export function HouseholdSettingsForm({
             <fieldset className="stack">
               <legend>食べやすさ</legend>
               {easePreferences.map((preference) => (
-                <label key={preference}>
+                <label key={preference} className="control-label">
                   <input
                     type="checkbox"
                     aria-label={preference === "small_pieces" ? "小さめ" : preference}

@@ -140,7 +140,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
             {normalizedCustomName}）。一覧から先に選んでください
           </p>
         )}
-        <label>
+        <label className="control-label">
           <input
             type="checkbox"
             aria-label="一覧にないアレルギーとして登録"

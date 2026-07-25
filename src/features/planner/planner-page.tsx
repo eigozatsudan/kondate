@@ -179,7 +179,7 @@ export function PlannerForm({
           const descriptionId = `planner-member-${String(memberIndex + 1)}-description`;
           return (
             <div key={member.id}>
-              <label>
+              <label className="control-label">
                 <input
                   type="checkbox"
                   aria-describedby={descriptionId}
@@ -221,7 +221,7 @@ export function PlannerForm({
       <section className="card">
         <h2>1. 食事</h2>
         {Object.entries(mealLabels).map(([key, label]) => (
-          <label key={key}>
+          <label key={key} className="control-label">
             <input
               type="radio"
               name="meal"
@@ -302,7 +302,7 @@ export function PlannerForm({
       <section className="card">
         <h2>3. ジャンル</h2>
         {Object.entries(genreLabels).map(([key, label]) => (
-          <label key={key}>
+          <label key={key} className="control-label">
             <input
               type="radio"
               name="genre"

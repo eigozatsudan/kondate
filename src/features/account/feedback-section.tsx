@@ -116,7 +116,7 @@ export function FeedbackSection() {
               <legend className="type-small">種類</legend>
               <div className="stack" role="radiogroup" aria-label="フィードバックの種類">
                 {feedbackCategories.map((value) => (
-                  <label key={value} className="min-h-11 flex items-center gap-2">
+                  <label key={value} className="control-label">
                     <input
                       type="radio"
                       name="feedback-category"
