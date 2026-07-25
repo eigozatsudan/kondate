@@ -30,6 +30,18 @@ const runLocalEnvValidation = async ({ body, composeFile, mode }) => {
   });
 };
 
+const extractIndentedMappingBody = (source, entry) => {
+  const lines = source.split("\n");
+  const entryStart = lines.indexOf(`  ${entry}:`);
+  assert.notEqual(entryStart, -1, `${entry} mapping entry is missing`);
+  const nextEntryOffset = lines.slice(entryStart + 1).findIndex((line) => {
+    const contentStart = line.search(/\S/u);
+    return contentStart !== -1 && contentStart < 4 && !line.slice(contentStart).startsWith("#");
+  });
+  const entryEnd = nextEntryOffset === -1 ? lines.length : entryStart + 1 + nextEntryOffset;
+  return lines.slice(entryStart + 1, entryEnd).join("\n");
+};
+
 test("root compose owns every local entry-point service", async () => {
   const compose = await readFile("compose.yaml", "utf8");
   for (const name of [
@@ -45,6 +57,18 @@ test("root compose owns every local entry-point service", async () => {
   assert.match(compose, /infra\/supabase\/docker-compose\.yml/);
 });
 
+test("stops an indented mapping body at explicit keys and top-level dedents", () => {
+  for (const boundary of [
+    "  ? auth\n  :\n    ulimits:\n      nofile:\n        soft: 100000",
+    "x-extension:\n  ulimits:\n    nofile:\n      soft: 100000",
+  ]) {
+    const source = `services:\n  supavisor:\n    ports: !override\n${boundary}\n`;
+    const supavisor = extractIndentedMappingBody(source, "supavisor");
+    assert.match(supavisor, /^ {4}ports: !override$/mu);
+    assert.doesNotMatch(supavisor, /ulimits/u);
+  }
+});
+
 test("root compose does not redeclare include-owned supabase services", async () => {
   // Compose v5: redefining services from include fails with
   // "services.<name> conflicts with imported resource" (CI docker compose config --quiet).
@@ -52,15 +76,7 @@ test("root compose does not redeclare include-owned supabase services", async ()
     readFile("compose.yaml", "utf8"),
     readFile("infra/supabase.override.yaml", "utf8"),
   ]);
-  const overrideLines = override.split("\n");
-  const supavisorStart = overrideLines.indexOf("  supavisor:");
-  assert.notEqual(supavisorStart, -1, "supavisor override service is missing");
-  const nextServiceOffset = overrideLines
-    .slice(supavisorStart + 1)
-    .findIndex((line) => /^ {2}(?!#)\S.*:/u.test(line));
-  const supavisorEnd =
-    nextServiceOffset === -1 ? overrideLines.length : supavisorStart + 1 + nextServiceOffset;
-  const supavisor = overrideLines.slice(supavisorStart + 1, supavisorEnd).join("\n");
+  const supavisor = extractIndentedMappingBody(override, "supavisor");
   for (const name of ["kong:", "supavisor:", "db:", "auth:"]) {
     assert.doesNotMatch(
       compose,
