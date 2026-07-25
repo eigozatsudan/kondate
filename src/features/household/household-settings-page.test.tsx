@@ -230,7 +230,70 @@ it("does not close member B when member A complete save succeeds after switching
   });
 });
 
-it("does not close a newly added draft when an earlier draft completion succeeds", async () => {
+it.each(["success", "failure"] as const)(
+  "keeps the editor open when a later autosave reports %s during completion",
+  async (autosaveResult) => {
+    let resolveCompletionSave: ((saved: HouseholdMemberRow) => void) | undefined;
+    let resolveAutosave: ((saved: HouseholdMemberRow) => void) | undefined;
+    let rejectAutosave: ((error: Error) => void) | undefined;
+    const updateMember = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<HouseholdMemberRow>((resolve) => {
+            resolveCompletionSave = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<HouseholdMemberRow>((resolve, reject) => {
+            resolveAutosave = resolve;
+            rejectAutosave = reject;
+          }),
+      )
+      .mockImplementation(() => new Promise<HouseholdMemberRow>(() => undefined));
+    renderSettings({ updateMember });
+
+    await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+    await waitFor(() => {
+      expect(updateMember).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "変更後" } });
+    await waitFor(() => {
+      expect(updateMember).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      resolveCompletionSave?.(member);
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+    expect(screen.getByLabelText("呼び名")).toHaveValue("変更後");
+
+    await act(async () => {
+      if (autosaveResult === "success") {
+        resolveAutosave?.({ ...member, display_name: "変更後" });
+      } else {
+        rejectAutosave?.(new Error("後続の保存に失敗しました"));
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+      expect(screen.getByLabelText("呼び名")).toHaveValue("変更後");
+    });
+    if (autosaveResult === "failure") {
+      expect(screen.getByRole("status")).toHaveTextContent("後続の保存に失敗しました");
+      expect(screen.getByLabelText("呼び名")).toBeEnabled();
+    }
+  },
+);
+
+it("does not close a newly added draft when creation and an earlier completion settle together", async () => {
   const firstDraft: HouseholdMemberRow = {
     ...member,
     id: "draft-1",
@@ -250,7 +313,13 @@ it("does not close a newly added draft when an earlier draft completion succeeds
         resolveComplete = resolve;
       }),
   );
-  const createDraft = vi.fn().mockResolvedValue(nextDraft);
+  let resolveCreate: ((saved: HouseholdMemberRow) => void) | undefined;
+  const createDraft = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveCreate = resolve;
+      }),
+  );
   renderSettings({
     listMembers: vi.fn().mockResolvedValue([firstDraft]),
     updateDraft: vi.fn().mockResolvedValue(firstDraft),
@@ -263,9 +332,13 @@ it("does not close a newly added draft when an earlier draft completion succeeds
     expect(completeMember).toHaveBeenCalledWith(firstDraft.id);
   });
   await userEvent.click(screen.getByRole("button", { name: "家族を追加" }));
-  expect(await screen.findByRole("heading", { name: "「呼び名未設定」を編集中" })).toBeVisible();
+  await waitFor(() => {
+    expect(createDraft).toHaveBeenCalled();
+  });
 
   await act(async () => {
+    resolveCreate?.(nextDraft);
+    await Promise.resolve();
     resolveComplete?.({ ...firstDraft, status: "complete" });
     await Promise.resolve();
   });

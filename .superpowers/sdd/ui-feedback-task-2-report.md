@@ -69,3 +69,25 @@
 - fix round 2 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
 - 未解決事項:
   - repository全体の既存問題とDocker競合は前回Verifier報告どおり未解決。
+
+## Fix round 3
+
+- status: `DONE_WITH_CONCERNS`
+- REDで確認した失敗:
+  - household settings 69件中、完了中の同一家族に対する後続autosave成功・失敗と、新draft作成成功直後の旧draft完了成功を再現する3件が期待どおり失敗した。
+- 実装内容と設計判断:
+  - 家族ごとの編集revisionを記録し、完了成功時は対象家族が選択中、revision不変、pending保存0件、保存失敗なしの場合だけフォームを閉じる。
+  - 完了開始後の編集がある場合は、古い完了保存応答で最新のcache・メッセージを上書きしない。draft完了時のcacheは最新ローカル値を維持する。
+  - `createDraft.onSuccess` で `selectedMemberIdRef` を作成した家族IDへ同期し、React描画前に旧完了処理が解決しても新しいフォームを閉じない。
+- 実行した検証と結果:
+  - RED focused household: 69 tests中、追加した3 testsのみFAIL。
+  - GREEN focused 5 files: 127 tests PASS。
+  - Task変更2ファイルのscoped Prettier check: PASS。
+  - Task変更2ファイルの `git diff --check`: PASS。
+- self-review:
+  - 保存queue、registered保留intent、draft/complete API分岐を維持し、完了開始後の新しい保存結果だけを優先する。
+  - revisionは入力更新時だけ進め、家族削除・draft追加中止時に関連状態と一緒に破棄する。
+  - Task外の `.codex/config.toml`、pantry 3ファイル、planner 2ファイルは編集・stageしていない。
+- fix round 3 commit hash: 本reportを含むcommitの確定hashを親へ報告する。
+- 未解決事項:
+  - repository全体の既存問題は前回Verifier報告どおり未解決。

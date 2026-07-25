@@ -199,6 +199,7 @@ export function HouseholdSettingsForm({
   >(() => new Set());
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
+  const editRevisionsByMemberRef = useRef(new Map<string, number>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
   const failedSaveMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
@@ -309,12 +310,20 @@ export function HouseholdSettingsForm({
     const current = valuesByMemberRef.current.get(selected.id);
     if (current === undefined) return undefined;
     const next = { ...current, ...patch };
+    editRevisionsByMemberRef.current.set(
+      selected.id,
+      (editRevisionsByMemberRef.current.get(selected.id) ?? 0) + 1,
+    );
     valuesByMemberRef.current.set(selected.id, next);
     setValues(next);
     return next;
   };
   const save = useCallback(
-    async (member: HouseholdMemberRow, next: HouseholdSettingsValue): Promise<boolean> => {
+    async (
+      member: HouseholdMemberRow,
+      next: HouseholdSettingsValue,
+      shouldPublishResult: () => boolean = () => true,
+    ): Promise<boolean> => {
       const parsed = householdSettingsSchema.safeParse(next);
       if (!parsed.success) {
         setErrors(toHouseholdFieldErrors(parsed.error));
@@ -327,20 +336,24 @@ export function HouseholdSettingsForm({
           member.status === "draft"
             ? await api.updateDraft(member.id, patch)
             : await api.updateMember(member.id, patch);
-        const cachedMember = { ...saved, ...patch };
-        queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-          current.map((currentMember) =>
-            currentMember.id === saved.id ? cachedMember : currentMember,
-          ),
-        );
+        if (shouldPublishResult()) {
+          const cachedMember = { ...saved, ...patch };
+          queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+            current.map((currentMember) =>
+              currentMember.id === saved.id ? cachedMember : currentMember,
+            ),
+          );
+        }
         await api.invalidateSafety();
-        const pending = pendingRegisteredIntents.current.get(member.id);
-        setMessage(
-          pending?.values.allergyStatus === "registered"
-            ? (registeredSaveBlockedMessage(pending.registeredSaveEvidence) ??
-                "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します")
-            : "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します",
-        );
+        if (shouldPublishResult()) {
+          const pending = pendingRegisteredIntents.current.get(member.id);
+          setMessage(
+            pending?.values.allergyStatus === "registered"
+              ? (registeredSaveBlockedMessage(pending.registeredSaveEvidence) ??
+                  "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します")
+              : "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します",
+          );
+        }
         return true;
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
@@ -516,6 +529,7 @@ export function HouseholdSettingsForm({
         ...current,
         created,
       ]);
+      selectedMemberIdRef.current = created.id;
       setSelectedId(created.id);
       setEditorOpen(true);
     },
@@ -533,6 +547,7 @@ export function HouseholdSettingsForm({
         current.filter((member) => member.id !== targetId),
       );
       valuesByMemberRef.current.delete(targetId);
+      editRevisionsByMemberRef.current.delete(targetId);
       pendingOperationCountsRef.current.delete(targetId);
       failedSaveMemberIdsRef.current.delete(targetId);
       pendingRegisteredIntents.current.delete(targetId);
@@ -603,31 +618,48 @@ export function HouseholdSettingsForm({
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
     }
+    const completionRevision = editRevisionsByMemberRef.current.get(completingMemberId) ?? 0;
+    const completionHasNoLaterEdits = () =>
+      (editRevisionsByMemberRef.current.get(completingMemberId) ?? 0) === completionRevision;
+    const canCloseCompletedEditor = () =>
+      selectedMemberIdRef.current === completingMemberId &&
+      completionHasNoLaterEdits() &&
+      (pendingOperationCountsRef.current.get(completingMemberId) ?? 0) === 0 &&
+      !failedSaveMemberIdsRef.current.has(completingMemberId);
     setSaving(true);
     await saveQueue.current;
-    const saved = await save(selected, parsed.data);
+    const saved = await save(selected, parsed.data, completionHasNoLaterEdits);
     if (!saved) {
       failedSaveMemberIdsRef.current.add(selected.id);
       setSaving(false);
       return;
     }
-    failedSaveMemberIdsRef.current.delete(selected.id);
-    pendingRegisteredIntents.current.delete(selected.id);
+    if (completionHasNoLaterEdits()) {
+      failedSaveMemberIdsRef.current.delete(selected.id);
+      pendingRegisteredIntents.current.delete(selected.id);
+    }
     if (selected.status === "draft") {
       try {
         const completed = await api.completeMember(selected.id);
+        const latestValues = valuesByMemberRef.current.get(completingMemberId);
+        const cachedCompleted =
+          completionHasNoLaterEdits() || latestValues === undefined
+            ? completed
+            : { ...completed, ...toMemberPatch(latestValues) };
         queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
-          current.map((member) => (member.id === completed.id ? completed : member)),
+          current.map((member) => (member.id === completed.id ? cachedCompleted : member)),
         );
         await api.invalidateSafety();
-        setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
-        if (selectedMemberIdRef.current === completingMemberId) {
+        if (completionHasNoLaterEdits()) {
+          setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
+        }
+        if (canCloseCompletedEditor()) {
           setEditorOpen(false);
         }
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "家族設定を完了できませんでした");
       }
-    } else if (selectedMemberIdRef.current === completingMemberId) {
+    } else if (canCloseCompletedEditor()) {
       setEditorOpen(false);
     }
     setSaving(false);
@@ -1297,6 +1329,7 @@ export function HouseholdSettingsForm({
                         current.filter((member) => member.id !== targetId),
                       );
                       valuesByMemberRef.current.delete(targetId);
+                      editRevisionsByMemberRef.current.delete(targetId);
                       pendingOperationCountsRef.current.delete(targetId);
                       failedSaveMemberIdsRef.current.delete(targetId);
                       pendingRegisteredIntents.current.delete(targetId);
