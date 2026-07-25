@@ -1328,7 +1328,9 @@ export function HouseholdSettingsForm({
                       await api.invalidateSafety();
                     },
                     "苦手食材を追加できませんでした",
-                    () => setDislike(""),
+                    () => {
+                      setDislike("");
+                    },
                   );
                 }}
               >
