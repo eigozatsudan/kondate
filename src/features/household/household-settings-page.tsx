@@ -1119,16 +1119,6 @@ export function HouseholdSettingsForm({
           <h3 ref={editorHeadingRef} tabIndex={-1}>
             「{householdMemberDisplayName(selected)}」を編集中
           </h3>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={createDraft.isPending || saving}
-            onClick={() => {
-              requestCreateDraft();
-            }}
-          >
-            家族を追加
-          </button>
           {message && (
             <p className="status-message" role="status" aria-live="polite">
               {message}
@@ -1451,8 +1441,8 @@ export function HouseholdSettingsForm({
             </fieldset>
           </fieldset>
           {/*
-            保存相当の主操作（設定を完了）と中止/削除をフォーム末尾で横並びにする。
-            入力途中の下書きは「追加をやめる」、登録完了済みは「家族を削除」。
+            フォーム末尾に操作を横並び:
+            設定を完了 / 追加をやめる or 家族を削除 / さらに家族を追加
           */}
           <div className="household-editor-actions">
             <button
@@ -1499,6 +1489,16 @@ export function HouseholdSettingsForm({
                 家族を削除
               </button>
             )}
+            <button
+              className="secondary-button min-h-11"
+              type="button"
+              disabled={createDraft.isPending || saving || cancellingDraft}
+              onClick={() => {
+                requestCreateDraft();
+              }}
+            >
+              家族を追加
+            </button>
           </div>
           {deleteTarget !== undefined && (
             <div className="pantry-expired-dialog-backdrop">

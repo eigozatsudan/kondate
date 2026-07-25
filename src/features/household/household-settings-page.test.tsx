@@ -186,15 +186,17 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
   await userEvent.click(secondButton);
   const editor = screen.getByRole("region", { name: "家族情報を追加・編集" });
   expect(editor).toBeVisible();
-  expect(editor).toContainElement(screen.getByRole("button", { name: "家族を追加" }));
   expect(editor).toContainElement(screen.getByLabelText("呼び名"));
-  // 2人目は draft のため削除ではなく追加キャンセル。完了ボタンと横並び。
+  // 末尾操作は横並び: 完了 / 追加をやめる / 家族を追加
   const completeButton = screen.getByRole("button", { name: "この家族の設定を完了" });
   const cancelAddButton = screen.getByRole("button", { name: "追加をやめる" });
+  const addAnotherButton = screen.getByRole("button", { name: "家族を追加" });
   expect(editor).toContainElement(completeButton);
   expect(editor).toContainElement(cancelAddButton);
+  expect(editor).toContainElement(addAnotherButton);
   expect(completeButton.parentElement).toHaveClass("household-editor-actions");
   expect(completeButton.parentElement).toContainElement(cancelAddButton);
+  expect(completeButton.parentElement).toContainElement(addAnotherButton);
   const editorHeading = screen.getByRole("heading", { name: "「名前未設定」を編集中" });
   expect(editorHeading).toBeVisible();
   expect(editorHeading).toHaveFocus();
