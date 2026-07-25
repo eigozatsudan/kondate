@@ -310,7 +310,9 @@ export function MenuResult({
           {menu.timeline.map((step) => (
             <li
               key={step.id}
-              className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-3 border-l-4 border-terracotta-500 pl-3"
+              // レールは薄い --primary 相当（2.17:1）では WCAG 1.4.11 の非テキスト 3:1 を
+              // 満たさないため、6.19:1 を確保できる terracotta-700 を使う。
+              className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-3 border-l-4 border-terracotta-700 pl-3"
             >
               <span className="font-semibold">{step.startMinute}分〜</span>
               <span>

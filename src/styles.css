@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/*
+ * Tailwind v4 のカラーパレット定義。
+ * TSX 側は以前から bg-terracotta-700 等を使っていたが @theme が存在せず、
+ * Tailwind は未知のユーティリティに対して CSS を一切出力しないため、
+ * 献立結果・履歴詳細・履歴カードの主操作ボタンが「白背景に白文字」で
+ * 描画され事実上操作できなくなっていた（料理タブの選択状態も同様に不可視）。
+ * 段階値は新しい色を持ち込まず、既存のカスタムプロパティと同一の色にする。
+ * これにより styles.contrast.test.ts が実証済みの配色から外れない。
+ *   50  = --notice         100 = --selection        700 = --primary-strong
+ * 700 は text-white を載せる箇所があるため、白文字で 6.46:1（AA 合格）を
+ * 確保できる --primary-strong 側に置く。薄い --primary に置くと 2.17:1 で不合格。
+ */
+@theme {
+  --color-terracotta-50: #f8ece7;
+  --color-terracotta-100: #f4e6df;
+  --color-terracotta-700: #8b4e3b;
+}
+
 :root {
   color: #1e293b;
   background: #f8fafc;
@@ -217,6 +235,20 @@
   margin: 0;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+/* privacy 未確認ブロック: 説明へ進む CTA を主操作と同列の押しやすさにする */
+.guided-planner-theme .privacy-notice-gate {
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+
+.guided-planner-theme .privacy-notice-gate .wizard-action {
+  width: 100%;
+  min-height: 44px;
 }
 
 /* 確認 step の任意条件。summary と本文を分離し、field が横並びで崩れないようにする */
