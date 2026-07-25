@@ -162,92 +162,92 @@ export function ReviewStep({
         <CurrentSafetySummary members={safetyMembers} />
       )}
       <dl className="wizard-review-list">
+        {/*
+          3列グリッド（項目名 | 回答 | 変更）。変更ラベルは「変更」で幅を揃え、
+          操作対象は aria-label で一意にする（getByRole 用）。
+        */}
         <div className="wizard-review-item">
           <dt>食事</dt>
-          <dd className="review-answer-row">
-            <span>{mealLabel(value.mealType)}</span>
-            {onEditStep !== undefined && (
-              <button
-                className="text-button min-h-11"
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  onEditStep("meal");
-                }}
-              >
-                食事を変更
-              </button>
-            )}
-          </dd>
+          <dd>{mealLabel(value.mealType)}</dd>
+          {onEditStep !== undefined && (
+            <button
+              className="text-button min-h-11 review-edit-action"
+              type="button"
+              disabled={disabled}
+              aria-label="食事を変更"
+              onClick={() => {
+                onEditStep("meal");
+              }}
+            >
+              変更
+            </button>
+          )}
         </div>
         <div className="wizard-review-item">
           <dt>メイン食材</dt>
-          <dd className="review-answer-row">
-            <span>
-              {value.mainIngredients.length === 0 ? "未選択" : value.mainIngredients.join("・")}
-            </span>
-            {onEditStep !== undefined && (
-              <button
-                className="text-button min-h-11"
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  onEditStep("ingredients");
-                }}
-              >
-                メイン食材を変更
-              </button>
-            )}
+          <dd>
+            {value.mainIngredients.length === 0 ? "未選択" : value.mainIngredients.join("・")}
           </dd>
+          {onEditStep !== undefined && (
+            <button
+              className="text-button min-h-11 review-edit-action"
+              type="button"
+              disabled={disabled}
+              aria-label="メイン食材を変更"
+              onClick={() => {
+                onEditStep("ingredients");
+              }}
+            >
+              変更
+            </button>
+          )}
         </div>
         <div className="wizard-review-item">
           <dt>ジャンル</dt>
-          <dd className="review-answer-row">
-            <span>{cuisineGenreLabel(value.cuisineGenre)}</span>
-            {onEditStep !== undefined && (
-              <button
-                className="text-button min-h-11"
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  onEditStep("cuisine");
-                }}
-              >
-                ジャンルを変更
-              </button>
-            )}
-          </dd>
+          <dd>{cuisineGenreLabel(value.cuisineGenre)}</dd>
+          {onEditStep !== undefined && (
+            <button
+              className="text-button min-h-11 review-edit-action"
+              type="button"
+              disabled={disabled}
+              aria-label="ジャンルを変更"
+              onClick={() => {
+                onEditStep("cuisine");
+              }}
+            >
+              変更
+            </button>
+          )}
         </div>
         <div className="wizard-review-item">
           <dt>対象</dt>
-          <dd className="review-answer-row">
-            <span>
-              {value.targetMode === "idea"
-                ? value.servings === null
-                  ? "アイデア（人数未設定）"
-                  : `アイデア・${String(value.servings)}人分`
-                : value.targetMode === "household"
-                  ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
-                  : "未選択"}
-            </span>
-            {onEditStep !== undefined && (
-              <button
-                className="text-button min-h-11"
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  onEditStep("audience");
-                }}
-              >
-                対象を変更
-              </button>
-            )}
+          <dd>
+            {value.targetMode === "idea"
+              ? value.servings === null
+                ? "アイデア（人数未設定）"
+                : `アイデア・${String(value.servings)}人分`
+              : value.targetMode === "household"
+                ? `家族に合わせる（${String(value.targetMemberIds.length)}人）`
+                : "未選択"}
           </dd>
+          {onEditStep !== undefined && (
+            <button
+              className="text-button min-h-11 review-edit-action"
+              type="button"
+              disabled={disabled}
+              aria-label="対象を変更"
+              onClick={() => {
+                onEditStep("audience");
+              }}
+            >
+              変更
+            </button>
+          )}
         </div>
       </dl>
       {onEditStep !== undefined && (
         <p className="type-small">
-          「戻る」で1つ前の質問へ、「〇〇を変更」でその質問へ直接戻れます。
+          「戻る」で1つ前の質問へ、「変更」でその質問へ直接戻れます。直したあとは「次へ」で確認へ戻ります。
         </p>
       )}
       <details className="wizard-details">

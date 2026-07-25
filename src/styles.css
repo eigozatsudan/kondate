@@ -271,8 +271,10 @@
 
 .guided-planner-theme .wizard-review-item {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 8px 16px;
+  /* 項目名 | 回答 | 変更。列幅を固定して行ごとのガタつきを抑える */
+  grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
   border-bottom: 1px solid var(--border);
   padding-block: 12px;
 }
@@ -289,14 +291,11 @@
   overflow-wrap: anywhere;
 }
 
-/* 確認画面の回答＋直接編集導線。.wizard- 断片を避け許可リスト外で定義する。 */
-.review-answer-row {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+/* 確認の「変更」列。幅を揃えて右端を一直線にする（.wizard- 断片は使わない） */
+.review-edit-action {
+  justify-self: end;
+  min-width: 4.5rem;
+  padding-inline: 8px;
 }
 
 .guided-planner-theme .wizard-reset-row {

@@ -596,7 +596,7 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByLabelText("献立全体の調理時間")).toHaveValue("30");
   });
 
-  it("戻るで1つ前の質問へ、変更ボタンで該当 step へ直接遷移できる", async () => {
+  it("戻るで1つ前の質問へ、変更後の次へで確認へ直行できる", async () => {
     const user = userEvent.setup();
     const reviewDraftFilled = {
       ...emptyDraft,
@@ -608,7 +608,7 @@ describe("PlannerWizard review step", () => {
     };
     render(<Harness initialStep="review" initialDraft={reviewDraftFilled} />);
 
-    // 1ページずつ戻る
+    // 1ページずつ戻る（順送り用の戻る。編集モードではない）
     await user.click(screen.getByRole("button", { name: "戻る" }));
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
 
@@ -620,14 +620,13 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
 
-    // 食材のまま戻って確認へは resume ではないのでユーザーが進める必要があるが、
-    // 直接ジャンプ後も回答が残っていることだけ固定する。
+    // 確認からの変更中は「次へ」で 3.ジャンル ではなく 5.確認 へ戻る
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "和食" })).toBeChecked();
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+    expect(screen.getByText("鶏肉")).toBeVisible();
   });
 
-  it("確認画面から食事・ジャンル・対象へも直接遷移できる", async () => {
+  it("確認画面から食事・ジャンル・対象へ飛び、次へで確認に戻れる", async () => {
     const user = userEvent.setup();
     const draft = {
       ...emptyDraft,
@@ -638,21 +637,23 @@ describe("PlannerWizard review step", () => {
       targetMemberIds: [eligibleMember.id],
     };
 
-    const { unmount } = render(<Harness initialStep="review" initialDraft={draft} />);
+    render(<Harness initialStep="review" initialDraft={draft} />);
     await user.click(screen.getByRole("button", { name: "食事を変更" }));
     expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "夕食" })).toBeChecked();
-    unmount();
+    // 食事 step にも編集戻り用の「戻る」が出る
+    await user.click(screen.getByRole("button", { name: "戻る" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
 
-    render(<Harness initialStep="review" initialDraft={draft} />);
     await user.click(screen.getByRole("button", { name: "ジャンルを変更" }));
     expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "和食" })).toBeChecked();
-    unmount();
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
 
-    render(<Harness initialStep="review" initialDraft={draft} />);
     await user.click(screen.getByRole("button", { name: "対象を変更" }));
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
   });
 
   it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", async () => {

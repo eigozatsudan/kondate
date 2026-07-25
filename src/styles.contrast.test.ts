@@ -463,8 +463,9 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   },
   ".guided-planner-theme .wizard-review-item": {
     display: "grid",
-    "grid-template-columns": "minmax(0, auto) minmax(0, 1fr)",
-    gap: "8px 16px",
+    "grid-template-columns": "5.5rem minmax(0, 1fr) auto",
+    "align-items": "center",
+    gap: "8px 12px",
     "border-bottom": "1px solid var(--border)",
     "padding-block": "12px",
   },

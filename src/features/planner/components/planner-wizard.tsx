@@ -134,9 +134,31 @@ export function PlannerWizard({
   // idea audience 確定の single-flight。ref は同期ガード、state は disabled 表示用。
   const confirmingIdeaAudienceRef = useRef(false);
   const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);
+  // 確認画面の「変更」から飛んだとき true。次へ／戻るで確認へ直行する。
+  const [returnToReviewAfterEdit, setReturnToReviewAfterEdit] = useState(false);
 
   const goToStep = (next: (typeof plannerSteps)[number]): void => {
     onStepChange(next);
+  };
+
+  /** 通常の順送り先。確認からの編集中なら review へ戻す。 */
+  const advanceFromEditOr = (sequentialNext: (typeof plannerSteps)[number]): void => {
+    if (returnToReviewAfterEdit) {
+      setReturnToReviewAfterEdit(false);
+      goToStep("review");
+      return;
+    }
+    goToStep(sequentialNext);
+  };
+
+  /** 通常の戻り先。確認からの編集中なら review へ戻す（編集をやめる）。 */
+  const backFromEditOr = (sequentialBack: (typeof plannerSteps)[number]): void => {
+    if (returnToReviewAfterEdit) {
+      setReturnToReviewAfterEdit(false);
+      goToStep("review");
+      return;
+    }
+    goToStep(sequentialBack);
   };
 
   // exactOptionalPropertyTypes: undefined を明示代入せず、定義済みキーだけ渡す。
@@ -201,8 +223,15 @@ export function PlannerWizard({
           onChange={(mealType) => {
             onDraftChange({ ...draft, mealType });
           }}
+          {...(returnToReviewAfterEdit
+            ? {
+                onBack: () => {
+                  backFromEditOr("meal");
+                },
+              }
+            : {})}
           onNext={() => {
-            goToStep("ingredients");
+            advanceFromEditOr("ingredients");
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mealType ?? null}
@@ -222,10 +251,10 @@ export function PlannerWizard({
             onDraftChange({ ...draft, mainIngredients: [...mainIngredients] });
           }}
           onBack={() => {
-            goToStep("meal");
+            backFromEditOr("meal");
           }}
           onNext={() => {
-            goToStep("cuisine");
+            advanceFromEditOr("cuisine");
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mainIngredients ?? null}
@@ -247,10 +276,10 @@ export function PlannerWizard({
             onDraftChange({ ...draft, cuisineGenre });
           }}
           onBack={() => {
-            goToStep("ingredients");
+            backFromEditOr("ingredients");
           }}
           onNext={() => {
-            goToStep("audience");
+            advanceFromEditOr("audience");
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.cuisineGenre ?? null}
@@ -281,7 +310,7 @@ export function PlannerWizard({
           }}
           onBack={() => {
             if (confirmingIdeaAudienceRef.current) return;
-            goToStep("cuisine");
+            backFromEditOr("cuisine");
           }}
           onNext={() => {
             // idea 確定は route の skipped 書込を await。失敗時は audience に留まる。
@@ -300,10 +329,13 @@ export function PlannerWizard({
                 }
                 confirmingIdeaAudienceRef.current = false;
                 setConfirmingIdeaAudience(false);
+                // idea の next 先は常に review（編集戻りでも同じ）
+                setReturnToReviewAfterEdit(false);
                 goToStep("review");
               })();
               return;
             }
+            setReturnToReviewAfterEdit(false);
             goToStep("review");
           }}
           disabled={isSaving || confirmingIdeaAudience}
@@ -330,12 +362,14 @@ export function PlannerWizard({
         }}
         onBack={() => {
           // 1ページずつ戻る（audience ← cuisine ← … は各 step の onBack が担う）
+          setReturnToReviewAfterEdit(false);
           goToStep("audience");
         }}
         onNext={() => {
           // review step自体には「次へ」はなく、明示的な献立生成buttonがonSubmitを呼ぶ。
         }}
         onEditStep={(target) => {
+          setReturnToReviewAfterEdit(true);
           goToStep(target);
         }}
         disabled={isSaving}
