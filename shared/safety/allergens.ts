@@ -62,7 +62,17 @@ const EXCLUDED_ALIAS_CONTEXTS = new Map<string, readonly string[]>([
   ["もも", ["鶏もも", "鳥もも"]],
   ["かに", ["やわらかに"]],
   ["いか", ["食べやすいか"]],
-  ["そば", ["のそばで"]],
+  [
+    "そば",
+    [
+      "コンロのそばで",
+      "コンロのそばに",
+      "火のそばで",
+      "火のそばに",
+      "ストーブのそばで",
+      "ストーブのそばに",
+    ],
+  ],
   ["もち", ["もちもち食感"]],
 ]);
 
@@ -131,7 +141,7 @@ export function foodTextContainsAlias(sourceText: string, alias: string): boolea
 
   const excludedSpans: TextSpan[] = [];
   for (const context of EXCLUDED_ALIAS_CONTEXTS.get(needle) ?? []) {
-    for (const span of findTextSpans(source.compact, context)) {
+    for (const span of findTextSpans(source.compact, normalizeFoodText(context))) {
       if (!spanCrossesSeparator(span, source.separatorOffsets)) {
         excludedSpans.push(span);
       }

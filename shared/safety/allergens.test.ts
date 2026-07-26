@@ -33,6 +33,13 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias("ざるソバ", "そば")).toBe(true);
   });
 
+  it.each(["十割のそばです", "きつねのそばです"])(
+    "detects buckwheat in an unknown food phrase %s",
+    (sourceText) => {
+      expect(foodTextContainsAlias(sourceText, "そば")).toBe(true);
+    },
+  );
+
   it.each([
     ["あまえびフライ", "えび"],
     ["やりいかそうめん", "いか"],
@@ -64,6 +71,7 @@ describe("foodTextContainsAlias", () => {
 
   it("does not match そば as a location particle phrase", () => {
     expect(foodTextContainsAlias("コンロのそばで冷ます", "そば")).toBe(false);
+    expect(foodTextContainsAlias("火のそばで冷ます", "そば")).toBe(false);
   });
 
   it("does not match もち in an onomatopoeic texture phrase", () => {
