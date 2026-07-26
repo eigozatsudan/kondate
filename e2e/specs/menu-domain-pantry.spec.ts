@@ -145,12 +145,28 @@ async function advanceToReviewWithHousehold(
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
 }
 
-/** review step内のdetailsを開き、pantry選択セクションへのアクセスを確保する */
+/**
+ * review step内の details を開き、pantry 選択セクションへのアクセスを確保する。
+ * - `getAttribute("open")` は open 時に空文字を返すため falsy 判定だと誤って閉じる。
+ * - pantry 一覧のロード完了で親が再描画されると details が閉じ直すことがあるため、
+ *   「冷蔵庫から使う食材」見出しが見えるまで開状態を再確認する。
+ */
 async function openReviewOptionalDetails(page: Page): Promise<void> {
   const details = page.locator("details").filter({ hasText: "追加条件" });
-  if (!(await details.getAttribute("open"))) {
-    await details.locator("summary").click();
-  }
+  const ensureOpen = async (): Promise<void> => {
+    const isOpen = await details.evaluate((el) => (el as HTMLDetailsElement).open);
+    if (!isOpen) {
+      await details.locator("summary").click();
+    }
+    await expect(details).toHaveAttribute("open", "");
+  };
+  await ensureOpen();
+  await expect(async () => {
+    await ensureOpen();
+    await expect(page.getByRole("heading", { name: "冷蔵庫から使う食材" })).toBeVisible({
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 15_000 });
 }
 
 test("waits for the latest draft save before requesting emergency menus", async ({
@@ -386,6 +402,8 @@ async function expectCompleteCandidate(
 test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewed meals", async ({
   completedOnboardingPage: page,
 }) => {
+  // 献立帯の切替・緊急候補検証・pantry 削除/解除を含む長尺シナリオ
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 320, height: 780 });
 
   await page.goto("/pantry");
@@ -610,9 +628,12 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await openReviewOptionalDetails(page);
   await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  // 解除ボタンは details 内。open 再確認後に明示待ちしてから autosave 同期する。
+  const clearDeleted = page.getByRole("button", { name: "削除された食材の選択を解除" });
+  await expect(clearDeleted).toBeVisible({ timeout: 15_000 });
   await updatePlannerAndAwaitAutosave(
     page,
-    () => page.getByRole("button", { name: "削除された食材の選択を解除" }).click(),
+    () => clearDeleted.click(),
     (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
   );
   await expect(page.getByRole("alert")).toHaveCount(0);
