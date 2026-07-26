@@ -105,11 +105,43 @@ export function parseManagedSupabaseProjectRef(value: string): string | null {
   return managedSupabaseOrigin.exec(value)?.[1] ?? null;
 }
 
+/** parseOpenRouterModels が参照する base URL 文脈（mock 例外判定に必須） */
+export type OpenRouterModelsParseContext = {
+  openRouterBaseUrl: string;
+};
+
 /**
- * OPENROUTER_MODELS の無料モデル規則（scripts/verify-openrouter-models.mjs の
- * parseConfiguredModels と鏡像。共有契約は scripts/openrouter-models-contract.mjs）。
+ * exact mock base URL 判定（openrouter.ts / verify-openrouter-models.mjs と規則同一の鏡像）。
+ * mock 例外は OPENROUTER_BASE_URL の exact 一致のみ。isLocal は使わない。
  */
-export function parseOpenRouterModels(value: string): readonly string[] {
+function isExactLocalMockBaseUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" &&
+      parsed.hostname === "openrouter-mock" &&
+      parsed.port === "8787" &&
+      parsed.pathname === "/api/v1" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.search === "" &&
+      parsed.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * OPENROUTER_MODELS の有料 allowlist / mock 例外規則。
+ * 正本: scripts/openrouter-models-contract.mjs。
+ * 鏡像: scripts/verify-openrouter-models.mjs の parseConfiguredModels、
+ * scripts/preflight-production.mjs の parseOpenRouterModels。
+ */
+export function parseOpenRouterModels(
+  value: string,
+  context: OpenRouterModelsParseContext,
+): readonly string[] {
   const models = value
     .split(",")
     .map((item) => item.trim())
@@ -118,9 +150,18 @@ export function parseOpenRouterModels(value: string): readonly string[] {
   if (new Set(models).size !== models.length) {
     throw new Error("OPENROUTER_MODELS must not contain duplicates");
   }
+  const mockPath = isExactLocalMockBaseUrl(context.openRouterBaseUrl);
+  const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   for (const model of models) {
-    if (model === "openrouter/auto" || !model.endsWith(":free")) {
-      throw new Error(`OPENROUTER_MODELS contains a non-free model: ${model}`);
+    if (routers.has(model)) {
+      throw new Error(`OPENROUTER_MODELS rejects router model ID: ${model}`);
+    }
+    if (mockPath) {
+      if (!model.startsWith("mock/") || !model.endsWith(":free")) {
+        throw new Error(`OPENROUTER_MODELS mock path accepts only mock/*:free: ${model}`);
+      }
+    } else if (model.endsWith(":free")) {
+      throw new Error(`OPENROUTER_MODELS rejects :free model on non-mock base: ${model}`);
     }
   }
   return models;
@@ -182,7 +223,9 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     openRouter: {
       apiKey: result.data.OPENROUTER_API_KEY,
       baseUrl: result.data.OPENROUTER_BASE_URL.replace(/\/$/u, ""),
-      models: parseOpenRouterModels(result.data.OPENROUTER_MODELS),
+      models: parseOpenRouterModels(result.data.OPENROUTER_MODELS, {
+        openRouterBaseUrl: result.data.OPENROUTER_BASE_URL,
+      }),
       userDailyLimit: result.data.USER_DAILY_AI_LIMIT,
       userDailyAttemptLimit: result.data.USER_DAILY_EXTERNAL_CALL_LIMIT,
       userShortWindowLimit: result.data.USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT,

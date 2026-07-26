@@ -1,14 +1,42 @@
 # OpenRouter 運用ランブック
 
+## モデル方針（有料 allowlist）
+
+- 本番 / 公式 `OPENROUTER_BASE_URL`（`https://openrouter.ai/api/v1`）では **有料 allowlist のみ**。`:free` モデルは起動・デプロイ検証で拒否される。
+- `openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` は常に拒否する。
+- 各設定 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$0.50 / 1M tokens** であること。
+- mock 例外は **`OPENROUTER_BASE_URL` が exact** `http://openrouter-mock:8787/api/v1` のときだけ `mock/*:free` を受理する。
+  - `isLocal` / `SERVER_SITE_ORIGIN` だけでは mock 例外にならない。
+
 ## モデル更新
 
-1. Models API を固定 5 秒メタデータ期限で問い合わせ、現在の `:free` ID を確認する。
-2. 各モデルが `structured_outputs` と `response_format` を公開していることを要求する。
-3. 固定 adversarial corpus をステージングで実行する。
-4. モデル順を明示し、`OPENROUTER_MODELS` だけを更新して再デプロイする。
-5. 有料モデルや `openrouter/auto` が混入していないことを確認する。
+1. Models API を固定 5 秒メタデータ期限で問い合わせ、候補 ID と単価を確認する。
+2. 各モデルが `structured_outputs` と `response_format` を公開していることを要求する（片方だけでは不足）。
+3. prompt+completion が $0.50/1M 以下であることを確認する。
+4. 固定 adversarial corpus をステージングで実行する。
+5. モデル順を明示し、`OPENROUTER_MODELS` だけを更新して再デプロイする。
+6. `:free`・router ID・単価超過が混入していないことを確認する。
 
-検証済み free モデルが無い場合は AI を利用不可のままにし、緊急メニューを有効のままにする。
+検証済みモデルが無い場合は AI を利用不可のままにし、緊急メニューを有効のままにする。
+
+## ローカル mock と実 API 切替
+
+### ローカル既定（compose / generate-local-secrets）
+
+- `OPENROUTER_BASE_URL=http://openrouter-mock:8787/api/v1`（exact 一致のみ）
+- `OPENROUTER_MODELS=mock/kondate-primary:free,mock/kondate-repair:free`
+- この組だけが mock 例外。構造化応答は openrouter-mock フィクスチャが保証する。
+
+### 公式 base + `:free` MODELS
+
+Task 2 以降は **起動検証・preflight が失敗**する。使わない。
+
+### 実 API を試すとき
+
+1. 有料 allowlist ID を `OPENROUTER_MODELS` に設定する。
+2. `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`
+3. 有効な `OPENROUTER_API_KEY` とクレジットを用意する（**実費が発生する**）。
+4. 戻すときは mock base + `mock/*:free` に戻し、`app` コンテナを recreate する。
 
 ## リリース固定コントロール（運用チューニング禁止）
 

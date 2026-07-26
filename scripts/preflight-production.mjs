@@ -31,7 +31,17 @@ export function validateProductionCsp(supabaseUrl) {
   return true;
 }
 
-export function parseOpenRouterModels(value) {
+/**
+ * 本番 preflight 用 OPENROUTER_MODELS パーサ。
+ * 正本: scripts/openrouter-models-contract.mjs。
+ * 鏡像: env.ts / verify-openrouter-models.mjs。
+ * preflight は常に公式 base 前提（mock 例外は到達不能）。
+ */
+export function parseOpenRouterModels(value, context = {}) {
+  const openRouterBaseUrl =
+    typeof context.openRouterBaseUrl === "string" && context.openRouterBaseUrl.length > 0
+      ? context.openRouterBaseUrl
+      : "https://openrouter.ai/api/v1";
   const models = String(value)
     .split(",")
     .map((item) => item.trim())
@@ -40,9 +50,33 @@ export function parseOpenRouterModels(value) {
   if (new Set(models).size !== models.length) {
     throw new Error("OPENROUTER_MODELS must not contain duplicates");
   }
+  // preflight は本番のみ。exact mock 判定は規則同一だが到達しない経路として残す
+  let mockPath = false;
+  try {
+    const parsed = new URL(openRouterBaseUrl);
+    mockPath =
+      parsed.protocol === "http:" &&
+      parsed.hostname === "openrouter-mock" &&
+      parsed.port === "8787" &&
+      parsed.pathname === "/api/v1" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.search === "" &&
+      parsed.hash === "";
+  } catch {
+    mockPath = false;
+  }
+  const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   for (const model of models) {
-    if (model === "openrouter/auto" || !model.endsWith(":free")) {
-      throw new Error(`OPENROUTER_MODELS contains a non-free model: ${model}`);
+    if (routers.has(model)) {
+      throw new Error(`OPENROUTER_MODELS rejects router model ID: ${model}`);
+    }
+    if (mockPath) {
+      if (!model.startsWith("mock/") || !model.endsWith(":free")) {
+        throw new Error(`OPENROUTER_MODELS mock path accepts only mock/*:free: ${model}`);
+      }
+    } else if (model.endsWith(":free")) {
+      throw new Error(`OPENROUTER_MODELS rejects :free model on non-mock base: ${model}`);
     }
   }
   return models;
@@ -224,7 +258,10 @@ export function validateProductionEnv(env) {
   if (String(env.OPENROUTER_BASE_URL) !== "https://openrouter.ai/api/v1") {
     throw new Error("OPENROUTER_BASE_URL_invalid");
   }
-  parseOpenRouterModels(String(env.OPENROUTER_MODELS));
+  // 本番 preflight は常に公式 base（mock 例外は到達不能）
+  parseOpenRouterModels(String(env.OPENROUTER_MODELS), {
+    openRouterBaseUrl: "https://openrouter.ai/api/v1",
+  });
 
   decodeExact32Base64(
     String(env.AUTH_CONTINUATION_ENCRYPTION_KEY),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  acceptedFreeModelLists,
-  rejectedFreeModelLists,
+  acceptedModelLists,
+  rejectedModelLists,
 } from "../../../scripts/openrouter-models-contract.mjs";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import {
@@ -11,6 +11,7 @@ import {
   supabaseServerEnvSchema,
 } from "./env.js";
 
+// compose 現実に近い: exact mock base + mock/*:free（quota 5/12/45 は Task 3 まで据え置き）
 const validServerEnv = {
   VITE_SUPABASE_URL: "http://127.0.0.1:8000",
   SUPABASE_URL: "http://kong:8000",
@@ -20,7 +21,8 @@ const validServerEnv = {
   AUTH_CONTINUATION_TTL_SECONDS: "300",
   SUPABASE_PUBLISHABLE_KEY: "publishable-test",
   OPENROUTER_API_KEY: "mock-key",
-  OPENROUTER_MODELS: "google/gemma-3-27b-it:free,mistralai/mistral-small-3.2-24b-instruct:free",
+  OPENROUTER_MODELS: "mock/kondate-primary:free,mock/kondate-repair:free",
+  OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   USER_DAILY_AI_LIMIT: "5",
   USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
@@ -31,13 +33,18 @@ const validServerEnv = {
   AI_PROCESSING_STALE_SECONDS: "180",
 };
 
+/** HTTPS 本番 fixture 用の有料 MODELS（公式 base と組） */
+const productionPaidModels = "mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b";
+
 describe("parseOpenRouterModels", () => {
-  it.each(acceptedFreeModelLists)("accepts contract free-model list %#", ({ raw, models }) => {
-    expect(parseOpenRouterModels(raw)).toEqual(models);
+  it.each(acceptedModelLists)("accepts contract model list %#", ({ raw, models, baseUrl }) => {
+    expect(parseOpenRouterModels(raw, { openRouterBaseUrl: baseUrl })).toEqual(models);
   });
 
-  it.each(rejectedFreeModelLists)("rejects unsafe model configuration %s", (value) => {
-    expect(() => parseOpenRouterModels(value)).toThrow("OPENROUTER_MODELS");
+  it.each(rejectedModelLists)("rejects unsafe model configuration %s", ({ raw, baseUrl }) => {
+    expect(() => parseOpenRouterModels(raw, { openRouterBaseUrl: baseUrl })).toThrow(
+      "OPENROUTER_MODELS",
+    );
   });
 
   it("requires the exact release-locked quota tuple", () => {
@@ -187,6 +194,7 @@ it("accepts only an exact managed Supabase origin for an HTTPS deployment", () =
     SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
     SERVER_SITE_ORIGIN: "https://kondate.example",
     OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+    OPENROUTER_MODELS: productionPaidModels,
   };
   expect(parseServerEnv(production).SUPABASE_URL).toBe(production.SUPABASE_URL);
   expect(parseManagedSupabaseProjectRef(production.SUPABASE_URL)).toBe("abcdefghijklmnopqrst");
@@ -215,6 +223,7 @@ it("accepts only the exact official OpenRouter base URL for an HTTPS deployment"
     SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
     SERVER_SITE_ORIGIN: "https://kondate.example",
     OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+    OPENROUTER_MODELS: productionPaidModels,
   };
   expect(parseServerEnv(production).openRouter.baseUrl).toBe("https://openrouter.ai/api/v1");
   for (const unsafeUrl of [
@@ -242,6 +251,7 @@ it("rejects different browser and server Supabase projects for an HTTPS deployme
       SUPABASE_URL: "https://bcdefghijklmnopqrstu.supabase.co",
       SERVER_SITE_ORIGIN: "https://kondate.example",
       OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+      OPENROUTER_MODELS: productionPaidModels,
     }),
   ).toThrow("server_configuration_invalid");
 });

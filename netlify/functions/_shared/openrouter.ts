@@ -158,11 +158,17 @@ export async function sendMenuGeneration(
 ): Promise<OpenRouterGenerationResult> {
   const mode: GenerationWireMode = input.mode ?? "full_menu";
   const config = getServerEnv().openRouter;
-  if (
+  // 有料 allowlist ガード: router 集合・空・重複は常に拒否。
+  // real API base 上の :free も拒否（mock 例外は exact mock base のみ）。
+  const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
+  const rejectsRouterOrEmptyOrDup =
     config.models.length === 0 ||
     new Set(config.models).size !== config.models.length ||
-    config.models.some((model) => model === "openrouter/auto" || !model.endsWith(":free"))
-  ) {
+    config.models.some((model) => routers.has(model));
+  const rejectsFreeOnRealApi =
+    !isExactLocalMockBaseUrl(config.baseUrl) &&
+    config.models.some((model) => model.endsWith(":free"));
+  if (rejectsRouterOrEmptyOrDup || rejectsFreeOnRealApi) {
     throw new OpenRouterCallError("model_unavailable");
   }
 

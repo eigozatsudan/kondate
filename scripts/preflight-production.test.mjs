@@ -28,7 +28,7 @@ function completeEnv(overrides = {}) {
     GENERATION_REQUEST_HMAC_KEY: hmacKey,
     OPENROUTER_API_KEY: "openrouter-key",
     OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
-    OPENROUTER_MODELS: "google/gemma-3-27b-it:free",
+    OPENROUTER_MODELS: "mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b",
     GLOBAL_DAILY_AI_LIMIT: "45",
     USER_DAILY_AI_LIMIT: "5",
     USER_DAILY_EXTERNAL_CALL_LIMIT: "12",

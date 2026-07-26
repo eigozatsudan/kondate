@@ -31,7 +31,7 @@
 | `SUPABASE_MAINTENANCE_DB_URL` | 同一 project ref に束縛した TLS DB URL。Functions スコープのみ |
 | `OPENROUTER_API_KEY` | プロバイダ鍵 |
 | `OPENROUTER_BASE_URL` | 正確に `https://openrouter.ai/api/v1` |
-| `OPENROUTER_MODELS` | 順序付き一意の `:free` ID。`openrouter/auto` 禁止 |
+| `OPENROUTER_MODELS` | 順序付き一意の有料 allowlist ID。`:free`・`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` 禁止。各 ID は `structured_outputs` AND `response_format` と prompt+completion ≤ $0.50/1M を満たすこと |
 | `USER_DAILY_AI_LIMIT` | `5` |
 | `USER_DAILY_EXTERNAL_CALL_LIMIT` | `12` |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | `4` |
