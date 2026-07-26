@@ -656,6 +656,39 @@ it.each([
   ]);
 });
 
+// 先行ひらがなだけでは「さけ」を除外しない（焼きさけ＝実食材、さけるチーズ＝動詞連続のみ除外）
+it.each([
+  ["鮭", "焼きさけ"],
+  ["さけ", "焼きさけ"],
+] as const)(
+  "accepts grilled salmon kana compound from %s to %s without left-hiragana rejection",
+  (requested, generated) => {
+    const base = makeGenerationContext();
+    const context = makeGenerationContext({
+      submission: { ...base.submission, mainIngredients: [requested] },
+    });
+
+    expect(validateGeneratedMenu(menuWithIngredient(generated), context)).toMatchObject({
+      ok: true,
+    });
+  },
+);
+
+it("accepts real salmon after a particle in dish description", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: baseMenu.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: "素材はさけ" } : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: ["鮭"] },
+  });
+
+  expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+});
+
 it.each([
   ["鮭", "鯖"],
   ["鮭フレーク", "サーモン"],

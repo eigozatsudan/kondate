@@ -54,8 +54,8 @@ const reviewedMainIngredientSynonymGroups: readonly ReadonlySet<string>[] = [
 ];
 const reviewedMainIngredientNonFoodContext = /^(?:の)?(?:風|香り|ふれーばー)/u;
 const reviewedKanaMainIngredientAliases = new Set(["さけ", "しゃけ"].map(normalizeFoodText));
+// 動詞連続（さける等）のみ除外する。先行ひらがなは「焼きさけ」「素材はさけ」まで落とすため使わない。
 const reviewedKanaWordContinuation = /^(?:る|ない|ます|ました|て|た|れば|よう)/u;
-const hiraganaCharacter = /\p{Script=Hiragana}/u;
 
 function containsReviewedMainIngredientOccurrence(sourceText: string, candidate: string): boolean {
   let from = 0;
@@ -63,10 +63,8 @@ function containsReviewedMainIngredientOccurrence(sourceText: string, candidate:
     const start = sourceText.indexOf(candidate, from);
     if (start === -1) return false;
     const suffix = sourceText.slice(start + candidate.length);
-    const precedingCharacter = start === 0 ? "" : sourceText[start - 1]!;
     const embeddedKanaWord =
-      reviewedKanaMainIngredientAliases.has(candidate) &&
-      (hiraganaCharacter.test(precedingCharacter) || reviewedKanaWordContinuation.test(suffix));
+      reviewedKanaMainIngredientAliases.has(candidate) && reviewedKanaWordContinuation.test(suffix);
     if (!reviewedMainIngredientNonFoodContext.test(suffix) && !embeddedKanaWord) {
       return true;
     }
