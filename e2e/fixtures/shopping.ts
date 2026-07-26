@@ -66,6 +66,8 @@ export async function ensurePlannerReady(page: Page): Promise<void> {
 
 /** 買い物リストの元になる献立を1件生成し、menuId を返す */
 export async function generateShoppingMenu(page: Page): Promise<string> {
+  const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
+  await resetGlobalAiQuotaForE2e();
   await page.goto("/planner");
   // 設計書は「夕食」を指定するが、ローカルの OpenRouter mock が返す success fixture は
   // mealType=breakfast のため、夕食で要求すると生成が成立しない。既存の history.ts と

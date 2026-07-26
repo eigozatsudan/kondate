@@ -58,6 +58,9 @@ export const test = base.extend<AuthFixtures>({
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    // GLOBAL 日次 20 はスイート全体で共有。製品上限は据え置き、カウンタのみ空にする。
+    const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
+    await resetGlobalAiQuotaForE2e();
     await provide(page);
   },
 
@@ -69,6 +72,8 @@ export const test = base.extend<AuthFixtures>({
     await page.goto("/welcome");
     await page.getByRole("button", { name: "献立アイデアを考える" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
+    await resetGlobalAiQuotaForE2e();
     await provide(page);
   },
 });

@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { z } from "zod";
 import { expect, test as authTest } from "./auth";
 import { accessTokenFromPage, localRestHeaders } from "./local-supabase";
+import { resetGlobalAiQuotaForE2e } from "./reset-global-ai-quota";
 
 type HistoryFixtures = { historyPage: Page };
 
@@ -107,6 +108,8 @@ export async function setMockScenario(page: Page, scenario: string): Promise<voi
  * 固定 success fixture と整合する条件で献立を1件生成し、menuId を返す。
  */
 export async function seedGeneratedMenu(page: Page): Promise<string> {
+  // スイート後半で GLOBAL 20 に当たらないよう、生成直前に共有枠だけ空にする
+  await resetGlobalAiQuotaForE2e();
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
     timeout: 15_000,
@@ -275,6 +278,7 @@ export async function requestDishRegeneration(
  * mock scenario は呼び出し側で setMockScenario する。
  */
 export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2): Promise<string> {
+  await resetGlobalAiQuotaForE2e();
   const waitDraftSave = () =>
     page.waitForResponse(
       (response) =>
