@@ -24,6 +24,26 @@ function underSixContext() {
   });
 }
 
+function seniorMochiContext() {
+  const base = makeCurrentSafetyContext();
+  return makeCurrentSafetyContext({
+    members: [{ ...base.members[0]!, ageBand: "senior", requiredSafetyConstraints: [] }],
+    foodSafetyRules: base.foodSafetyRules.filter((rule) => rule.id === "mochi_senior"),
+  });
+}
+
+it("does not trigger the forbidden mochi rule for a chewy-texture expression", () => {
+  expect(
+    evaluateFoodSafetyRules(menuWithNamedIngredient("もちもち食感のうどん"), seniorMochiContext()),
+  ).toEqual([]);
+});
+
+it.each(["餅", "もち入り"])("triggers the forbidden mochi rule for actual food %s", (name) => {
+  expect(evaluateFoodSafetyRules(menuWithNamedIngredient(name), seniorMochiContext())).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]),
+  );
+});
+
 function requiredConstraintContext(required: "remove_bones" | "cut_small") {
   const base = makeCurrentSafetyContext();
   return makeCurrentSafetyContext({

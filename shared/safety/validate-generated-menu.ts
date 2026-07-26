@@ -49,6 +49,18 @@ function memberPairKey(householdMemberId: string, anonymousRef: string): string 
   return `${householdMemberId}\u0000${anonymousRef}`;
 }
 
+const reviewedMainIngredientSynonymGroups: readonly ReadonlySet<string>[] = [
+  new Set(["鮭", "さけ", "しゃけ", "サーモン"].map(normalizeFoodText)),
+];
+
+function mainIngredientCandidates(requested: string): readonly string[] {
+  const normalizedRequested = normalizeFoodText(requested);
+  const reviewedGroup = reviewedMainIngredientSynonymGroups.find((group) =>
+    group.has(normalizedRequested),
+  );
+  return reviewedGroup === undefined ? [normalizedRequested] : [...reviewedGroup];
+}
+
 /** 食事区分・ジャンル・時間・主食材・回避・在庫の共通検査（両 mode） */
 function collectCommonMenuIssues(
   generated: GeneratedMenu,
@@ -100,7 +112,9 @@ function collectCommonMenuIssues(
     .map(normalizeFoodText)
     .join("\u0000");
   for (const requested of context.submission.mainIngredients) {
-    if (!identityFoodText.includes(normalizeFoodText(requested))) {
+    if (
+      !mainIngredientCandidates(requested).some((candidate) => identityFoodText.includes(candidate))
+    ) {
       issues.push({
         code: "main_ingredient_missing",
         path: "dishes",

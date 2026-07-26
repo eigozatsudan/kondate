@@ -50,15 +50,14 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
     if (bucket?.length === 0) nextBuckets.delete(key);
     return candidate;
   };
-  /**
-   * D-C2: protected 行が完全一致キーを持てないときのフォールバック。
-   * 以前は同名候補をバケットから奪っていたため、後ろの未保護行が remove に落ちた。
-   * 候補は消費せずコピーを返し、未保護行が後で exact match できるようにする。
-   */
-  const peekCandidateByName = (normalizedName: string): ShoppingDraftItem | undefined => {
-    for (const bucket of nextBuckets.values()) {
-      const candidate = bucket.find((entry) => entry.normalizedName === normalizedName);
-      if (candidate !== undefined) return candidate;
+  const takeCandidateByName = (normalizedName: string): ShoppingDraftItem | undefined => {
+    for (const [key, bucket] of nextBuckets) {
+      const candidateIndex = bucket.findIndex((entry) => entry.normalizedName === normalizedName);
+      if (candidateIndex !== -1) {
+        const [candidate] = bucket.splice(candidateIndex, 1);
+        if (bucket.length === 0) nextBuckets.delete(key);
+        return candidate;
+      }
     }
     return undefined;
   };
@@ -66,6 +65,7 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
   const replace: ShoppingDiff["replace"] = [];
   const remove: ShoppingDiff["remove"] = [];
   const protectedItemIds: string[] = [];
+  const protectedFallbackItems: ShoppingList["items"][number][] = [];
 
   for (const item of current.items) {
     if (protectedItem(item)) {
@@ -74,9 +74,7 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
       // まず完全一致キーで候補を探す（同unit・同ambiguous形状なら安全な差分にできる）。
       // 完全一致がなければ、同じ正規化名の候補を numeric/ambiguous を問わず探す
       // （設計仕様: 同単位なら安全な差分、そうでなければ別項目で確認を求める）。
-      // exact 一致だけ消費。name フォールバックは peek（非消費）でレビュー用 add にする。
       const exact = takeCandidate(diffKey(item));
-      const candidate = exact ?? peekCandidateByName(item.normalizedName);
       if (
         exact !== undefined &&
         item.quantityValue !== null &&
@@ -92,12 +90,15 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
             quantityValue: delta,
             quantityText: `${String(delta)}${exact.unit}`,
           });
-      } else if (candidate !== undefined) {
+      } else if (exact !== undefined) {
         add.push({
-          ...candidate,
-          key: `${candidate.key}_review_${item.id}`,
+          ...exact,
+          key: `${exact.key}_review_${item.id}`,
           pantryCheckRequired: true,
         });
+      } else {
+        // 同名fallbackは未保護行のexact match後に解決し、next候補を複数操作へ複製しない。
+        protectedFallbackItems.push(item);
       }
       continue;
     }
@@ -121,6 +122,16 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
           storeSection: item.storeSection,
         },
         next: candidate,
+      });
+    }
+  }
+  for (const item of protectedFallbackItems) {
+    const candidate = takeCandidateByName(item.normalizedName);
+    if (candidate !== undefined) {
+      add.push({
+        ...candidate,
+        key: `${candidate.key}_review_${item.id}`,
+        pantryCheckRequired: true,
       });
     }
   }

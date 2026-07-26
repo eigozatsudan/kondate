@@ -81,9 +81,8 @@ it("preserves a checked derived row and proposes only its positive required delt
   expect(diff.remove).toEqual([]);
 });
 
-it("does not remove a plain row when a protected same-name row peeks the only draft item", () => {
-  // D-C2: checked にんじん 適量 + plain にんじん 100g / draft にんじん 150g
-  // 旧実装は protected が name フォールバックで候補を奪い plain が remove に落ちた。
+it("assigns a next item to only the exact plain-row replacement", () => {
+  // protected の同名fallbackより未保護行の完全一致を優先し、同じ候補の二重反映を防ぐ。
   const checkedId = "20000000-0000-4000-8000-000000000001";
   const plainId = "20000000-0000-4000-8000-000000000002";
   const current = makeShoppingList([
@@ -117,8 +116,35 @@ it("does not remove a plain row when a protected same-name row peeks the only dr
     storeSection: "produce",
   };
   const diff = computeShoppingDiff(current, next);
-  expect(diff.remove.map((row) => row.itemId)).not.toContain(plainId);
-  expect(diff.protectedItemIds).toContain(checkedId);
+  expect(diff).toMatchObject({
+    add: [],
+    replace: [
+      {
+        itemId: plainId,
+        current: { quantityText: "100g" },
+        next: { key: "carrot-150", quantityText: "150g" },
+      },
+    ],
+    remove: [],
+    protectedItemIds: [checkedId],
+  });
+
+  const resolved = resolveApprovedDiff(diff, {
+    addKeys: [],
+    replaceItemIds: [plainId],
+    removeItemIds: [],
+  });
+  expect(resolved).toMatchObject({
+    add: [],
+    replace: [
+      {
+        existingItemId: plainId,
+        key: "carrot-150",
+        quantityText: "150g",
+      },
+    ],
+    removeIds: [],
+  });
 });
 
 it("keeps a removed row and proposes its larger known delta or unknown review item", () => {

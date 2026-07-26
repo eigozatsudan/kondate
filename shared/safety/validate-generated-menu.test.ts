@@ -579,6 +579,34 @@ it("does not count a negated timeline-only mention as a requested main ingredien
   expectIssueCodes(validateGeneratedMenu(menu, context), ["main_ingredient_missing"]);
 });
 
+it.each([
+  ["鮭", "サーモン"],
+  ["サーモン", "鮭"],
+  ["さけ", "サーモン"],
+  ["しゃけ", "鮭"],
+] as const)("accepts reviewed salmon synonyms from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expect(validateGeneratedMenu(menuWithIngredient(generated), context)).toMatchObject({ ok: true });
+});
+
+it.each([
+  ["鮭", "鯖"],
+  ["鮭フレーク", "サーモン"],
+] as const)("does not widen salmon synonyms from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient(generated), context), [
+    "main_ingredient_missing",
+  ]);
+});
+
 it("T5-FR-02 rejects missing preferences for a target member", () => {
   expectIssueCodes(
     validateGeneratedMenu(makeGeneratedMenu(), makeGenerationContext({ memberPreferences: [] })),
