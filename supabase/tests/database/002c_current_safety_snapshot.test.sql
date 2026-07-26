@@ -267,14 +267,70 @@ select is(public.get_current_safety_snapshot(
   '70000000-0000-4000-8000-000000000001',
   array['71000000-0000-4000-8000-000000000003']::uuid[]
 ), '{"status":"unavailable"}'::jsonb, 'draft member input is unavailable');
-select is(public.get_current_safety_snapshot(
-  '70000000-0000-4000-8000-000000000001',
-  array['71000000-0000-4000-8000-000000000004']::uuid[]
-), '{"status":"unavailable"}'::jsonb, 'unconfirmed allergy state is unavailable');
-select is(public.get_current_safety_snapshot(
-  '70000000-0000-4000-8000-000000000001',
-  array['71000000-0000-4000-8000-000000000005']::uuid[]
-), '{"status":"unavailable"}'::jsonb, 'unconfirmed unsupported diet state is unavailable');
+select is(
+  (
+    select jsonb_build_object(
+      'status', current_snapshot.value->>'status',
+      'member_count', jsonb_array_length(current_snapshot.value->'members'),
+      'member', jsonb_build_object(
+        'id', current_snapshot.value#>>'{members,0,id}',
+        'display_name', current_snapshot.value#>>'{members,0,display_name}',
+        'allergy_status', current_snapshot.value#>>'{members,0,allergy_status}',
+        'unsupported_diet_status',
+        current_snapshot.value#>>'{members,0,unsupported_diet_status}'
+      )
+    )
+    from (
+      select public.get_current_safety_snapshot(
+        '70000000-0000-4000-8000-000000000001',
+        array['71000000-0000-4000-8000-000000000004']::uuid[]
+      ) as value
+    ) current_snapshot
+  ),
+  jsonb_build_object(
+    'status', 'available',
+    'member_count', 1,
+    'member', jsonb_build_object(
+      'id', '71000000-0000-4000-8000-000000000004',
+      'display_name', 'アレルギー未確認',
+      'allergy_status', 'unconfirmed',
+      'unsupported_diet_status', 'none'
+    )
+  ),
+  'unconfirmed allergy state is available to downstream validation'
+);
+select is(
+  (
+    select jsonb_build_object(
+      'status', current_snapshot.value->>'status',
+      'member_count', jsonb_array_length(current_snapshot.value->'members'),
+      'member', jsonb_build_object(
+        'id', current_snapshot.value#>>'{members,0,id}',
+        'display_name', current_snapshot.value#>>'{members,0,display_name}',
+        'allergy_status', current_snapshot.value#>>'{members,0,allergy_status}',
+        'unsupported_diet_status',
+        current_snapshot.value#>>'{members,0,unsupported_diet_status}'
+      )
+    )
+    from (
+      select public.get_current_safety_snapshot(
+        '70000000-0000-4000-8000-000000000001',
+        array['71000000-0000-4000-8000-000000000005']::uuid[]
+      ) as value
+    ) current_snapshot
+  ),
+  jsonb_build_object(
+    'status', 'available',
+    'member_count', 1,
+    'member', jsonb_build_object(
+      'id', '71000000-0000-4000-8000-000000000005',
+      'display_name', '食事制限未確認',
+      'allergy_status', 'none',
+      'unsupported_diet_status', 'unconfirmed'
+    )
+  ),
+  'unconfirmed unsupported diet state is available to downstream validation'
+);
 select is(public.get_current_safety_snapshot(
   '70000000-0000-4000-8000-000000000001', null
 ), '{"status":"unavailable"}'::jsonb, 'null member array is unavailable');

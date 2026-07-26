@@ -197,11 +197,11 @@ begin
     limit p_limit
     for update skip locked
   )
-  delete from private.generation_draft_submission_versions freeze
+  delete from private.generation_draft_submission_versions submission_version
   using doomed
-  where freeze.draft_id = doomed.draft_id
-    and freeze.user_id = doomed.user_id
-    and freeze.draft_revision = doomed.draft_revision;
+  where submission_version.draft_id = doomed.draft_id
+    and submission_version.user_id = doomed.user_id
+    and submission_version.draft_revision = doomed.draft_revision;
 
   get diagnostics deleted_count = row_count;
   return deleted_count;
