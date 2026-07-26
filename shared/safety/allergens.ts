@@ -149,9 +149,7 @@ export function foodTextContainsAlias(sourceText: string, alias: string): boolea
   }
   return findTextSpans(source.compact, needle).some(
     (match) =>
-      !excludedSpans.some(
-        (excluded) => excluded.start <= match.start && match.end <= excluded.end,
-      ),
+      !excludedSpans.some((excluded) => excluded.start <= match.start && match.end <= excluded.end),
   );
 }
 
@@ -271,9 +269,30 @@ export function collectMenuTextSources(
   return sources;
 }
 
+/**
+ * A-C2 residual: 表示名スナップショット等を渡す任意オプション。
+ * 未指定時は member_N → 「家族N」、非対応 ref は「ご家族」。内部 ID は出さない。
+ */
+export type EvaluateAllergensOptions = {
+  memberLabels?: Readonly<Record<string, string>>;
+};
+
+/** 主婦向けメンバー表示名。内部 anonymousRef を本文に出さない。 */
+export function resolveAllergenMemberLabel(
+  anonymousRef: string,
+  memberLabels?: Readonly<Record<string, string>>,
+): string {
+  const fromMap = memberLabels?.[anonymousRef]?.trim();
+  if (fromMap !== undefined && fromMap !== "") return fromMap;
+  const mapped = anonymousRef.match(/^member_(\d+)$/u);
+  if (mapped !== null) return `家族${mapped[1]!}`;
+  return "ご家族";
+}
+
 export function evaluateAllergens(
   menu: GeneratedMenu | ValidatedMenu,
   context: CurrentSafetyContext,
+  options?: EvaluateAllergensOptions,
 ): {
   issues: readonly MenuValidationIssue[];
   labelConfirmations: readonly GeneratedLabelConfirmation[];
@@ -291,17 +310,23 @@ export function evaluateAllergens(
       );
       const allergenDisplayName = catalogEntry?.displayName ?? "登録アレルギー";
       // anonymousRef (member_1) や英語 ID を主婦向け本文に出さない（A-C2 / design L221）。
-      // 生成時コンテキストは表示名を持たないため、member_N → 「家族N」にだけ写像する。
-      const memberLabel = member.anonymousRef.replace(/^member_(\d+)$/u, "家族$1");
+      // 表示名があれば優先し、無ければ member_N → 「家族N」（生成経路は targetMembers から渡す）。
+      const memberLabel = resolveAllergenMemberLabel(member.anonymousRef, options?.memberLabels);
       for (const source of sources) {
         const matched = aliases.filter((alias) =>
           foodTextContainsAlias(source.text, alias.normalizedAlias),
         );
         if (matched.some((alias) => !alias.requiresLabelConfirmation)) {
+          // 材料・工程テキストを軽く添える（design L221 の「主菜の…」方向。DTO 再設計はしない）。
+          const sourceSnippet = source.text.trim();
+          const withSource =
+            sourceSnippet === ""
+              ? `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`
+              : `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が「${sourceSnippet}」に残っています`;
           issues.push({
             code: "direct_allergen_match",
             path: source.sourcePath,
-            message: `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`,
+            message: withSource,
           });
           continue;
         }

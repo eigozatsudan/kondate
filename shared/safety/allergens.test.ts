@@ -123,6 +123,36 @@ describe("evaluateAllergens", () => {
     expect(evaluateAllergens(menu, context).issues[0]?.code).toBe("direct_allergen_match");
   });
 
+  it("uses human-facing member/allergen labels and source text (A-C2 residual)", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "鶏卵" }] } : dish,
+      ),
+    });
+    const issue = evaluateAllergens(menu, context, {
+      memberLabels: { member_1: "太郎" },
+    }).issues[0];
+    expect(issue?.code).toBe("direct_allergen_match");
+    expect(issue?.message).toContain("太郎");
+    expect(issue?.message).toContain("卵");
+    expect(issue?.message).toContain("鶏卵");
+    expect(issue?.message).not.toMatch(/member_1|\begg\b/u);
+  });
+
+  it("falls back to 家族N without leaking internal IDs when no display name is given", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "鶏卵" }] } : dish,
+      ),
+    });
+    const message = evaluateAllergens(menu, context).issues[0]?.message ?? "";
+    expect(message).toContain("家族1");
+    expect(message).toContain("卵");
+    expect(message).not.toMatch(/member_1|\begg\b/u);
+  });
+
   it("retains canonical processed-food provenance", () => {
     const base = makeValidatedMenu();
     const menu = makeValidatedMenu({

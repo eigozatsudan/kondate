@@ -511,7 +511,13 @@ function validateHouseholdMenu(
     }
   }
 
-  const allergenResult = evaluateAllergens(generated, context.safety);
+  // A-C2 residual: 生成経路は targetMembers の表示名スナップショットを issue 本文に使う。
+  const allergenMemberLabels = Object.fromEntries(
+    context.targetMembers.map((member) => [member.anonymousRef, member.displayNameSnapshot.trim()]),
+  );
+  const allergenResult = evaluateAllergens(generated, context.safety, {
+    memberLabels: allergenMemberLabels,
+  });
   issues.push(...allergenResult.issues, ...evaluateFoodSafetyRules(generated, context.safety));
   const emitted = new Set(generated.labelConfirmations.map(confirmationKey));
   const required = new Set(allergenResult.labelConfirmations.map(confirmationKey));

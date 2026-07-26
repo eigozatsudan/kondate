@@ -159,10 +159,12 @@ function makeRevalidationGenerationContext(
 
 /**
  * 在庫名スナップショットも現行アレルギー辞書へ通す（材料・手順テキスト収集外の leaf）。
+ * A-C2 residual: memberDisplayLabel と同じ優先順（live → snapshot → 家族N）。
  */
 function scanPantryNameSnapshotIssues(
   menu: GeneratedMenu | StoredMenuAggregate["menu"],
   safety: CurrentSafetyContext,
+  stored: StoredMenuAggregate,
 ): readonly MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
   for (const [index, usage] of menu.pantryUsage.entries()) {
@@ -180,11 +182,15 @@ function scanPantryNameSnapshotIssues(
             (entry) => entry.id === allergenId,
           );
           const allergenDisplayName = catalogEntry?.displayName ?? "登録アレルギー";
-          const memberLabel = member.anonymousRef.replace(/^member_(\d+)$/u, "家族$1");
+          const memberLabel = memberDisplayLabel(stored, member.anonymousRef);
+          const pantryName = usage.pantryItemName.trim();
           issues.push({
             code: "direct_allergen_match",
             path: `pantryUsage.${String(index)}.pantryItemName`,
-            message: `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`,
+            message:
+              pantryName === ""
+                ? `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`
+                : `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が「${pantryName}」に残っています`,
           });
         }
       }
@@ -339,9 +345,18 @@ export async function validateStoredMenuCurrentSafety(input: {
   const generationContext = makeRevalidationGenerationContext(stored, safety);
   const candidate = toStoredRevalidationCandidate(stored.menu, generationContext);
 
-  const allergenResult = evaluateAllergens(candidate, safety);
+  // A-C2 residual: invalid allergen もラベル警告と同じ memberDisplayLabel を使う。
+  const allergenMemberLabels = Object.fromEntries(
+    safety.members.map((member) => [
+      member.anonymousRef,
+      memberDisplayLabel(stored, member.anonymousRef),
+    ]),
+  );
+  const allergenResult = evaluateAllergens(candidate, safety, {
+    memberLabels: allergenMemberLabels,
+  });
   const foodIssues = evaluateFoodSafetyRules(candidate, safety);
-  const pantryIssues = scanPantryNameSnapshotIssues(candidate, safety);
+  const pantryIssues = scanPantryNameSnapshotIssues(candidate, safety, stored);
   const issues: MenuValidationIssue[] = [...allergenResult.issues, ...foodIssues, ...pantryIssues];
 
   for (const member of safety.members) {
