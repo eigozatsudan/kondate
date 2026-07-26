@@ -46,6 +46,7 @@ describe("maintenance-cleanup scheduled function", () => {
       shoppingMutationsDeleted: 3,
       authContinuationsDeleted: 4,
       userFeedbackDeleted: 5,
+      draftSubmissionsDeleted: 6,
     });
 
     const response = await maintenanceCleanup();
@@ -61,6 +62,7 @@ describe("maintenance-cleanup scheduled function", () => {
       [
         "auth_continuations_deleted",
         "code",
+        "draft_submissions_deleted",
         "duration_ms",
         "generation_ledgers_deleted",
         "level",
@@ -116,6 +118,7 @@ describe("maintenance-cleanup scheduled function", () => {
       shoppingMutationsDeleted: 0,
       authContinuationsDeleted: 0,
       userFeedbackDeleted: 0,
+      draftSubmissionsDeleted: 0,
     });
     await maintenanceCleanup();
     expect(parseManagedSupabaseProjectRef).toHaveBeenCalled();

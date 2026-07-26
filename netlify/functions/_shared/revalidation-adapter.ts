@@ -359,6 +359,13 @@ export async function validateStoredMenuCurrentSafety(input: {
         message: "自由登録アレルギーを固定候補へ対応付けできません",
       });
     }
+    if (member.unsupportedDietStatus === "unconfirmed") {
+      issues.push({
+        code: "unsupported_diet_unconfirmed",
+        path: member.anonymousRef,
+        message: "対象外条件の確認が必要です",
+      });
+    }
     if (member.unsupportedDietStatus === "present") {
       issues.push({
         code: "unsupported_diet_present",

@@ -14,6 +14,7 @@ export type MaintenanceCounts = {
   shoppingMutationsDeleted: number;
   authContinuationsDeleted: number;
   userFeedbackDeleted: number;
+  draftSubmissionsDeleted: number;
 };
 
 export type RunMaintenanceInput = {
@@ -36,6 +37,7 @@ const COUNT_KEYS = [
   "shoppingMutationsDeleted",
   "authContinuationsDeleted",
   "userFeedbackDeleted",
+  "draftSubmissionsDeleted",
 ] as const;
 
 function parseCounts(value: unknown): MaintenanceCounts {

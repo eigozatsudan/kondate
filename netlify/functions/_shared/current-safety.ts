@@ -143,11 +143,11 @@ const memberSchema = z
     portion_size: z.enum(portionSizes).nullable(),
     spice_level: z.enum(spiceLevels).nullable(),
     ease_preferences: z.array(z.enum(easePreferences)),
-    allergy_status: z.enum(allergyStatuses).refine((value) => value !== "unconfirmed"),
+    // 未確認は RPC から返る。拒否すると revalidation / 緊急献立が 500 になり救済コードが死ぬ（A-I3）。
+    // 呼び出し側が allergy_unconfirmed / current_safety_unavailable で閉じて 500 にしない。
+    allergy_status: z.enum(allergyStatuses),
     required_safety_constraints: z.array(z.enum(requiredSafetyConstraints)),
-    unsupported_diet_status: z
-      .enum(unsupportedDietStatuses)
-      .refine((value) => value !== "unconfirmed"),
+    unsupported_diet_status: z.enum(unsupportedDietStatuses),
     unsupported_diet_kinds: z.array(z.enum(unsupportedDietKinds)),
     allergies: z.array(z.discriminatedUnion("kind", [standardAllergySchema, customAllergySchema])),
   })

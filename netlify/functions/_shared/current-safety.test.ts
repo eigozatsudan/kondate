@@ -321,6 +321,25 @@ const manifestMutations: readonly ManifestMutation[] = [
 ];
 
 describe("current safety snapshot RPC boundary", () => {
+  it("loads unconfirmed allergy members without failing closed (A-I3 relief path)", async () => {
+    const snapshot = availableSnapshot([firstMemberId]);
+    // ランタイム RPC は unconfirmed を返す。fixture ヘルパの型は complete 中心なので raw を差し替える。
+    const unconfirmedMember = {
+      ...snapshot.members[0]!,
+      allergy_status: "unconfirmed",
+      allergies: [] as const,
+    };
+    const data = {
+      ...snapshot,
+      members: [unconfirmedMember],
+    };
+    const { admin } = adminWithRpc({ data, error: null });
+
+    const context = await loadCurrentSafetyContext(admin, userId, [firstMemberId]);
+    expect(context.members).toHaveLength(1);
+    expect(context.members[0]?.allergyStatus).toBe("unconfirmed");
+  });
+
   it("loads context and labels from exactly one strict snapshot in requested order", async () => {
     const targetMemberIds = [secondMemberId, firstMemberId] as const;
     const { admin, rpc, from } = adminWithRpc({ data: availableSnapshot(), error: null });
