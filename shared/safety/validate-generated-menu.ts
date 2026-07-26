@@ -52,7 +52,10 @@ function memberPairKey(householdMemberId: string, anonymousRef: string): string 
 const reviewedMainIngredientSynonymGroups: readonly ReadonlySet<string>[] = [
   new Set(["鮭", "さけ", "しゃけ", "サーモン"].map(normalizeFoodText)),
 ];
-const reviewedMainIngredientNonFoodSuffixes = ["風味", "風調味料"].map(normalizeFoodText);
+const reviewedMainIngredientNonFoodContext = /^(?:の)?(?:風|香り|ふれーばー)/u;
+const reviewedKanaMainIngredientAliases = new Set(["さけ", "しゃけ"].map(normalizeFoodText));
+const reviewedKanaWordContinuation = /^(?:る|ない|ます|ました|て|た|れば|よう)/u;
+const hiraganaCharacter = /\p{Script=Hiragana}/u;
 
 function containsReviewedMainIngredientOccurrence(sourceText: string, candidate: string): boolean {
   let from = 0;
@@ -60,7 +63,11 @@ function containsReviewedMainIngredientOccurrence(sourceText: string, candidate:
     const start = sourceText.indexOf(candidate, from);
     if (start === -1) return false;
     const suffix = sourceText.slice(start + candidate.length);
-    if (!reviewedMainIngredientNonFoodSuffixes.some((excluded) => suffix.startsWith(excluded))) {
+    const precedingCharacter = start === 0 ? "" : sourceText[start - 1]!;
+    const embeddedKanaWord =
+      reviewedKanaMainIngredientAliases.has(candidate) &&
+      (hiraganaCharacter.test(precedingCharacter) || reviewedKanaWordContinuation.test(suffix));
+    if (!reviewedMainIngredientNonFoodContext.test(suffix) && !embeddedKanaWord) {
       return true;
     }
     from = start + 1;

@@ -584,6 +584,8 @@ it.each([
   ["サーモン", "鮭"],
   ["さけ", "サーモン"],
   ["しゃけ", "鮭"],
+  ["鮭", "紅鮭"],
+  ["鮭", "鮭フレーク"],
 ] as const)("accepts reviewed salmon synonyms from %s to %s", (requested, generated) => {
   const base = makeGenerationContext();
   const context = makeGenerationContext({
@@ -612,6 +614,38 @@ it.each([
   ["鮭", "鮭風味"],
   ["サーモン", "サーモン風調味料"],
 ] as const)("does not count a flavor-only expression from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient(generated), context), [
+    "main_ingredient_missing",
+  ]);
+});
+
+it.each(["name", "description"] as const)(
+  "does not count a flavor-only salmon expression in dish %s",
+  (field) => {
+    const base = makeGenerationContext();
+    const baseMenu = makeGeneratedMenu();
+    const menu = makeGeneratedMenu({
+      dishes: baseMenu.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, [field]: "鮭の風味を再現したパスタ" } : dish,
+      ),
+    });
+    const context = makeGenerationContext({
+      submission: { ...base.submission, mainIngredients: ["鮭"] },
+    });
+
+    expectIssueCodes(validateGeneratedMenu(menu, context), ["main_ingredient_missing"]);
+  },
+);
+
+it.each([
+  ["鮭", "さけるチーズ"],
+  ["鮭", "サーモン風ソース"],
+] as const)("does not count an embedded salmon alias from %s to %s", (requested, generated) => {
   const base = makeGenerationContext();
   const context = makeGenerationContext({
     submission: { ...base.submission, mainIngredients: [requested] },

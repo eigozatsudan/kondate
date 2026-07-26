@@ -55,6 +55,57 @@ it("resolves only operation IDs contained in the server diff", () => {
   ).toThrow("approved_diff_mismatch");
 });
 
+it("rejects a duplicated approved add key", () => {
+  const diff = computeShoppingDiff(makeShoppingList([]), makeDraft());
+  expect(() =>
+    resolveApprovedDiff(diff, {
+      addKeys: ["add-key", "add-key"],
+      replaceItemIds: [],
+      removeItemIds: [],
+    }),
+  ).toThrow("approved_diff_mismatch");
+});
+
+it("rejects a duplicated approved replacement ID", () => {
+  const itemId = "10000000-0000-4000-8000-000000000020";
+  const current = makeShoppingList([makeItem({ id: itemId })]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 3,
+    quantityText: "3本",
+    unit: "本",
+  };
+  const diff = computeShoppingDiff(current, next);
+
+  expect(() =>
+    resolveApprovedDiff(diff, {
+      addKeys: [],
+      replaceItemIds: [itemId, itemId],
+      removeItemIds: [],
+    }),
+  ).toThrow("approved_diff_mismatch");
+});
+
+it("rejects a duplicated approved removal ID", () => {
+  const itemId = "10000000-0000-4000-8000-000000000021";
+  const diff = computeShoppingDiff(makeShoppingList([makeItem({ id: itemId })]), {
+    items: [],
+    listLabelWarnings: [],
+  });
+
+  expect(() =>
+    resolveApprovedDiff(diff, {
+      addKeys: [],
+      replaceItemIds: [],
+      removeItemIds: [itemId, itemId],
+    }),
+  ).toThrow("approved_diff_mismatch");
+});
+
 it("preserves a checked derived row and proposes only its positive required delta", () => {
   const current = makeShoppingList([
     makeItem({
@@ -80,6 +131,150 @@ it("preserves a checked derived row and proposes only its positive required delt
   expect(diff.add[0]).toMatchObject({ quantityValue: 2, quantityText: "2本" });
   expect(diff.remove).toEqual([]);
 });
+
+it.each(["plain-first", "protected-first"] as const)(
+  "prioritizes a protected numeric exact match for %s order",
+  (order) => {
+    const checkedId = "20000000-0000-4000-8000-000000000010";
+    const plainId = "20000000-0000-4000-8000-000000000011";
+    const checked = makeItem({
+      id: checkedId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+      isChecked: true,
+    });
+    const plain = makeItem({
+      id: plainId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+    });
+    const current = makeShoppingList(order === "plain-first" ? [plain, checked] : [checked, plain]);
+    const next = makeDraft();
+    next.items[0] = {
+      ...next.items[0]!,
+      key: "carrot-150",
+      displayName: "にんじん",
+      normalizedName: "にんじん",
+      storeSection: "produce",
+      quantityValue: 150,
+      quantityText: "150g",
+      unit: "g",
+    };
+
+    const diff = computeShoppingDiff(current, next);
+    expect(diff.add).toEqual([
+      expect.objectContaining({
+        key: `carrot-150_delta_${checkedId}`,
+        quantityValue: 50,
+        quantityText: "50g",
+      }),
+    ]);
+    expect(diff.replace).toEqual([]);
+    expect(diff.remove).toEqual([
+      expect.objectContaining({
+        itemId: plainId,
+        quantityText: "100g",
+      }),
+    ]);
+    expect(diff.protectedItemIds).toEqual([checkedId]);
+  },
+);
+
+it.each(["plain-first", "protected-first"] as const)(
+  "prioritizes a protected ambiguous exact match for %s order",
+  (order) => {
+    const checkedId = "20000000-0000-4000-8000-000000000012";
+    const plainId = "20000000-0000-4000-8000-000000000013";
+    const checked = makeItem({
+      id: checkedId,
+      quantityValue: null,
+      quantityText: "適量",
+      unit: null,
+      isChecked: true,
+    });
+    const plain = makeItem({
+      id: plainId,
+      quantityValue: null,
+      quantityText: "適量",
+      unit: null,
+    });
+    const current = makeShoppingList(order === "plain-first" ? [plain, checked] : [checked, plain]);
+    const next = makeDraft();
+    next.items[0] = {
+      ...next.items[0]!,
+      key: "carrot-as-needed",
+      displayName: "にんじん",
+      normalizedName: "にんじん",
+      storeSection: "produce",
+      quantityValue: null,
+      quantityText: "適量",
+      unit: null,
+    };
+
+    const diff = computeShoppingDiff(current, next);
+    expect(diff.add).toEqual([
+      expect.objectContaining({
+        key: `carrot-as-needed_review_${checkedId}`,
+        quantityText: "適量",
+        pantryCheckRequired: true,
+      }),
+    ]);
+    expect(diff.replace).toEqual([]);
+    expect(diff.remove).toEqual([
+      expect.objectContaining({
+        itemId: plainId,
+        quantityText: "適量",
+      }),
+    ]);
+    expect(diff.protectedItemIds).toEqual([checkedId]);
+  },
+);
+
+it.each(["manual-first", "plain-first"] as const)(
+  "does not let a manual row consume an exact candidate for %s order",
+  (order) => {
+    const manualId = "20000000-0000-4000-8000-000000000014";
+    const plainId = "20000000-0000-4000-8000-000000000015";
+    const manual = makeItem({
+      id: manualId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+      isManual: true,
+    });
+    const plain = makeItem({
+      id: plainId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+    });
+    const current = makeShoppingList(order === "manual-first" ? [manual, plain] : [plain, manual]);
+    const next = makeDraft();
+    next.items[0] = {
+      ...next.items[0]!,
+      key: "carrot-150",
+      displayName: "にんじん",
+      normalizedName: "にんじん",
+      storeSection: "produce",
+      quantityValue: 150,
+      quantityText: "150g",
+      unit: "g",
+    };
+
+    const diff = computeShoppingDiff(current, next);
+    expect(diff.add).toEqual([]);
+    expect(diff.replace).toEqual([
+      expect.objectContaining({
+        itemId: plainId,
+        next: expect.objectContaining({ key: "carrot-150", quantityText: "150g" }),
+      }),
+    ]);
+    expect(diff.remove).toEqual([]);
+    expect(diff.protectedItemIds).toEqual([manualId]);
+  },
+);
 
 it("assigns a next item to only the exact plain-row replacement", () => {
   // protected の同名fallbackより未保護行の完全一致を優先し、同じ候補の二重反映を防ぐ。
