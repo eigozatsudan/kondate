@@ -734,10 +734,29 @@ export async function runGeneration(
     emitTerminalLog("warn", "constraint_conflict");
     return status;
   };
-  // succeed は SQL が constraint_conflict を返す正規経路と、raise を 409 に写した防御経路の両方を扱う
+  const deadlineAtMonotonicMs = deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs;
+  const remainingMs = () => deadlineAtMonotonicMs - deps.monotonicNow();
+  const timeoutForAttempt = () =>
+    Math.min(
+      ATTEMPT_TIMEOUT_MS,
+      deps.openRouterTimeoutMs,
+      Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
+    );
+  const canRepair = () => remainingMs() >= REQUIRED_SEND_BUDGET_MS;
+  // A-I9: provider 返却後も 50s 予算を守り、残 deadline が尽きたら succeed しない。
+  const abortIfDeadlineExceeded = async (): Promise<GenerationStatusData | null> => {
+    if (remainingMs() > 0) return null;
+    return await fail("generation_timeout", null);
+  };
+
+  // succeed は SQL が constraint_conflict を返す正規経路と、raise を 409 に写した防御経路の両方を扱う。
+  // A-I9: outer post-provider 検査と入口の二重ゲート。succeed 実行中（SQL 途中）の abort は
+  // 原子 finalize の再設計なしでは不可（入口で残り予算を再確認する防御に留める）。
   const succeedOrConflict = async (
     input: Parameters<GenerationRepository["succeed"]>[0],
   ): Promise<GenerationStatusData> => {
+    const timedOut = await abortIfDeadlineExceeded();
+    if (timedOut !== null) return timedOut;
     try {
       await deps.repository.succeed(input);
       const status = await hydrate();
@@ -757,21 +776,6 @@ export async function runGeneration(
       }
       throw error;
     }
-  };
-
-  const deadlineAtMonotonicMs = deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs;
-  const remainingMs = () => deadlineAtMonotonicMs - deps.monotonicNow();
-  const timeoutForAttempt = () =>
-    Math.min(
-      ATTEMPT_TIMEOUT_MS,
-      deps.openRouterTimeoutMs,
-      Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
-    );
-  const canRepair = () => remainingMs() >= REQUIRED_SEND_BUDGET_MS;
-  // A-I9: provider 返却後も 50s 予算を守り、残 deadline が尽きたら succeed しない。
-  const abortIfDeadlineExceeded = async (): Promise<GenerationStatusData | null> => {
-    if (remainingMs() > 0) return null;
-    return await fail("generation_timeout", null);
   };
 
   try {

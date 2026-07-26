@@ -240,7 +240,7 @@ beforeEach(() => {
     menu: makeValidatedMenu(),
     labelConfirmations: [],
     safetyFingerprint: "sha256:test",
-    preferenceGaps: []
+    preferenceGaps: [],
   });
 });
 
@@ -839,7 +839,7 @@ describe("runGeneration", () => {
         menu: makeValidatedMenu(),
         labelConfirmations: [],
         safetyFingerprint: "sha256:test",
-        preferenceGaps: []
+        preferenceGaps: [],
       });
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
@@ -1208,6 +1208,47 @@ describe("runGeneration", () => {
           requestStartedAtMonotonicMs: 0,
           functionTotalBudgetMs: 50_000,
           monotonicNow: () => nowMs,
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    });
+
+    it("aborts at succeedOrConflict entry when deadline elapses after the outer post-provider check", async () => {
+      // A-I9 防御: outer abort 通過直後〜succeed 直前で予算超過しても succeed しない。
+      // repository.succeed 実行中（SQL 途中）の abort は再設計なしでは不可（report に記載）。
+      const repository = makeRepository();
+      let nowMs = 0;
+      let postProviderClockReads = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
+        // provider 返却後の clock 読み取りを数える
+        nowMs = 49_999;
+        postProviderClockReads = 0;
+        return Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        });
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => {
+            if (nowMs < 49_999) return nowMs;
+            // 1 回目: outer abortIfDeadlineExceeded（残り 1ms → 通過）
+            // 2 回目以降: succeedOrConflict 入口（超過 → fail）
+            postProviderClockReads += 1;
+            return postProviderClockReads === 1 ? 49_999 : 50_001;
+          },
         }),
         command,
       );
@@ -1899,7 +1940,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu,
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
-      preferenceGaps: []
+      preferenceGaps: [],
     });
     const repository = makeRepository();
     // 2 モデルあるため repair でも同一 model が選ばれ得る。両回とも duplicate になるよう modelId を分ける
@@ -2070,7 +2111,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu: nearDuplicateMenu,
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
-      preferenceGaps: []
+      preferenceGaps: [],
     });
     const repository = makeRepository();
     const callOpenRouter = vi
@@ -2176,7 +2217,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu: freshMenu,
       labelConfirmations: freshMenu.labelConfirmations,
       safetyFingerprint: "sha256:test",
-      preferenceGaps: []
+      preferenceGaps: [],
     });
     const repository = makeRepository();
     const result = await runGeneration(
@@ -2389,7 +2430,7 @@ describe("runGeneration idea child_friendly rejection", () => {
       }),
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
-      preferenceGaps: []
+      preferenceGaps: [],
     });
     await runGeneration(
       makeDeps({
