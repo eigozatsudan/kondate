@@ -107,16 +107,16 @@ export const releaseQuota = {
 
 - [ ] **Step 2: MVP §11.2 上限を 3 / 6 / 20 に更新**
 
-- `USER_DAILY_AI_LIMIT`: 3  
-- `USER_DAILY_EXTERNAL_CALL_LIMIT`: 6  
-- `GLOBAL_DAILY_AI_LIMIT` 初期: 20  
-- 短期 4/600s・時間予算は据え置き  
-- 成功 3×repair と attempt 6 の相互作用（成功保証ではない）を一文で残す  
+- `USER_DAILY_AI_LIMIT`: 3
+- `USER_DAILY_EXTERNAL_CALL_LIMIT`: 6
+- `GLOBAL_DAILY_AI_LIMIT` 初期: 20
+- 短期 4/600s・時間予算は据え置き
+- 成功 3×repair と attempt 6 の相互作用（成功保証ではない）を一文で残す
 
 - [ ] **Step 3: §18 と受入箇条書きの free-only を改訂**
 
-- 「有料へ自動移行しない」→ 運営が env で有料 allowlist を明示する前提に更新  
-- 「`:free` 以外で起動失敗」→「有料規則違反（:free / auto / 単価 / structured 欠落）で起動・デプロイ検証失敗」  
+- 「有料へ自動移行しない」→ 運営が env で有料 allowlist を明示する前提に更新
+- 「`:free` 以外で起動失敗」→「有料規則違反（:free / auto / 単価 / structured 欠落）で起動・デプロイ検証失敗」
 
 - [ ] **Step 4: 本設計の状態行を更新**
 
@@ -564,10 +564,10 @@ EOF
 
 処理順:
 
-1. Models API 取得  
-2. 各 ID: 不在 / structured AND 欠落 / 単価超過 → 除外し理由 print  
-3. 残存 ID 各 10 回: 実 `menuResponseFormat`（`shared/contracts` から生成するか JSON を同梱）+ `require_parameters: true`  
-4. 合格: 10/10 が 20s 未満かつ形状最低条件  
+1. Models API 取得
+2. 各 ID: 不在 / structured AND 欠落 / 単価超過 → 除外し理由 print
+3. 残存 ID 各 10 回: 実 `menuResponseFormat`（`shared/contracts` から生成するか JSON を同梱）+ `require_parameters: true`
+4. 合格: 10/10 が 20s 未満かつ形状最低条件
 
 終了コード: 1 本も合格でなければ non-zero。
 
@@ -658,7 +658,7 @@ Plan complete and saved to `docs/superpowers/plans/2026-07-26-paid-openrouter-mo
 
 **Two execution options:**
 
-1. **Subagent-Driven (recommended)** — 各 Task ごとに新規 subagent、Task 間でレビュー  
-2. **Inline Execution** — このセッションで `executing-plans` に従いチェックポイント付き実行  
+1. **Subagent-Driven (recommended)** — 各 Task ごとに新規 subagent、Task 間でレビュー
+2. **Inline Execution** — このセッションで `executing-plans` に従いチェックポイント付き実行
 
 **Which approach?**
