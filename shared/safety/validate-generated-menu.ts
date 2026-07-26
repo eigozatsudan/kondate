@@ -52,13 +52,38 @@ function memberPairKey(householdMemberId: string, anonymousRef: string): string 
 const reviewedMainIngredientSynonymGroups: readonly ReadonlySet<string>[] = [
   new Set(["鮭", "さけ", "しゃけ", "サーモン"].map(normalizeFoodText)),
 ];
+const reviewedMainIngredientNonFoodSuffixes = ["風味", "風調味料"].map(normalizeFoodText);
 
-function mainIngredientCandidates(requested: string): readonly string[] {
+function containsReviewedMainIngredientOccurrence(sourceText: string, candidate: string): boolean {
+  let from = 0;
+  while (from <= sourceText.length - candidate.length) {
+    const start = sourceText.indexOf(candidate, from);
+    if (start === -1) return false;
+    const suffix = sourceText.slice(start + candidate.length);
+    if (!reviewedMainIngredientNonFoodSuffixes.some((excluded) => suffix.startsWith(excluded))) {
+      return true;
+    }
+    from = start + 1;
+  }
+  return false;
+}
+
+function containsRequestedMainIngredient(
+  identityFoodTexts: readonly string[],
+  requested: string,
+): boolean {
   const normalizedRequested = normalizeFoodText(requested);
   const reviewedGroup = reviewedMainIngredientSynonymGroups.find((group) =>
     group.has(normalizedRequested),
   );
-  return reviewedGroup === undefined ? [normalizedRequested] : [...reviewedGroup];
+  if (reviewedGroup === undefined) {
+    return identityFoodTexts.some((sourceText) => sourceText.includes(normalizedRequested));
+  }
+  return [...reviewedGroup].some((candidate) =>
+    identityFoodTexts.some((sourceText) =>
+      containsReviewedMainIngredientOccurrence(sourceText, candidate),
+    ),
+  );
 }
 
 /** 食事区分・ジャンル・時間・主食材・回避・在庫の共通検査（両 mode） */
@@ -107,14 +132,12 @@ function collectCommonMenuIssues(
     });
   }
 
-  const identityFoodText = generated.dishes
+  const identityFoodTexts = generated.dishes
     .flatMap((dish) => [dish.name, dish.description, ...dish.ingredients.map(({ name }) => name)])
-    .map(normalizeFoodText)
-    .join("\u0000");
+    .map(normalizeFoodText);
+  const identityFoodText = identityFoodTexts.join("\u0000");
   for (const requested of context.submission.mainIngredients) {
-    if (
-      !mainIngredientCandidates(requested).some((candidate) => identityFoodText.includes(candidate))
-    ) {
+    if (!containsRequestedMainIngredient(identityFoodTexts, requested)) {
       issues.push({
         code: "main_ingredient_missing",
         path: "dishes",

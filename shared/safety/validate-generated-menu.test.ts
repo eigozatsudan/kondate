@@ -593,6 +593,35 @@ it.each([
   expect(validateGeneratedMenu(menuWithIngredient(generated), context)).toMatchObject({ ok: true });
 });
 
+it("accepts a reviewed salmon synonym in a dish name", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: baseMenu.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, name: "サーモンのムニエル" } : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: ["鮭"] },
+  });
+
+  expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+});
+
+it.each([
+  ["鮭", "鮭風味"],
+  ["サーモン", "サーモン風調味料"],
+] as const)("does not count a flavor-only expression from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient(generated), context), [
+    "main_ingredient_missing",
+  ]);
+});
+
 it.each([
   ["鮭", "鯖"],
   ["鮭フレーク", "サーモン"],
