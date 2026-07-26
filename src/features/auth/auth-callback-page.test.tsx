@@ -53,9 +53,11 @@ it("deposits in an isolated WebView and directs the user to the original browser
   render(<RouterProvider router={router} />);
   expect(
     await screen.findByText(
-      "元のブラウザでログインを続けてください。この画面に認証情報は保存されません",
+      "元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません",
     ),
   ).toBeInTheDocument();
+  // B-C1: deposited にはやり直し CTA が必須（session は作らない）
+  expect(screen.getByRole("button", { name: "最初からやり直す" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "家族設定" })).not.toBeInTheDocument();
 });
 
@@ -107,7 +109,7 @@ it("creates the default gateway once and completes the callback once", async () 
   render(<RouterProvider router={router} />);
 
   await screen.findByText(
-    "元のブラウザでログインを続けてください。この画面に認証情報は保存されません",
+    "元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません",
   );
   expect(createAuthGatewayMock).toHaveBeenCalledTimes(1);
   // eslint-disable-next-line @typescript-eslint/unbound-method

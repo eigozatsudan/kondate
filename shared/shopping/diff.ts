@@ -50,16 +50,15 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
     if (bucket?.length === 0) nextBuckets.delete(key);
     return candidate;
   };
-  // 同じ正規化名の候補を numeric/ambiguous を問わず探す（protected row 専用のフォールバック）。
-  // 完全一致キーでは見つからない場合にだけ使う。one-to-one 消費を維持するため、
-  // 見つけた候補はバケットから取り除く。
-  const takeCandidateByName = (normalizedName: string): ShoppingDraftItem | undefined => {
-    for (const [key, bucket] of nextBuckets) {
-      const index = bucket.findIndex((entry) => entry.normalizedName === normalizedName);
-      if (index === -1) continue;
-      const [candidate] = bucket.splice(index, 1);
-      if (bucket.length === 0) nextBuckets.delete(key);
-      return candidate;
+  /**
+   * D-C2: protected 行が完全一致キーを持てないときのフォールバック。
+   * 以前は同名候補をバケットから奪っていたため、後ろの未保護行が remove に落ちた。
+   * 候補は消費せずコピーを返し、未保護行が後で exact match できるようにする。
+   */
+  const peekCandidateByName = (normalizedName: string): ShoppingDraftItem | undefined => {
+    for (const bucket of nextBuckets.values()) {
+      const candidate = bucket.find((entry) => entry.normalizedName === normalizedName);
+      if (candidate !== undefined) return candidate;
     }
     return undefined;
   };
@@ -75,21 +74,23 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
       // まず完全一致キーで候補を探す（同unit・同ambiguous形状なら安全な差分にできる）。
       // 完全一致がなければ、同じ正規化名の候補を numeric/ambiguous を問わず探す
       // （設計仕様: 同単位なら安全な差分、そうでなければ別項目で確認を求める）。
-      const candidate = takeCandidate(diffKey(item)) ?? takeCandidateByName(item.normalizedName);
+      // exact 一致だけ消費。name フォールバックは peek（非消費）でレビュー用 add にする。
+      const exact = takeCandidate(diffKey(item));
+      const candidate = exact ?? peekCandidateByName(item.normalizedName);
       if (
-        candidate !== undefined &&
+        exact !== undefined &&
         item.quantityValue !== null &&
-        candidate.quantityValue !== null &&
+        exact.quantityValue !== null &&
         item.unit !== null &&
-        candidate.unit === item.unit
+        exact.unit === item.unit
       ) {
-        const delta = candidate.quantityValue - item.quantityValue;
+        const delta = exact.quantityValue - item.quantityValue;
         if (delta > 0)
           add.push({
-            ...candidate,
-            key: `${candidate.key}_delta_${item.id}`,
+            ...exact,
+            key: `${exact.key}_delta_${item.id}`,
             quantityValue: delta,
-            quantityText: `${String(delta)}${candidate.unit}`,
+            quantityText: `${String(delta)}${exact.unit}`,
           });
       } else if (candidate !== undefined) {
         add.push({

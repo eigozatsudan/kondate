@@ -1,6 +1,59 @@
 import { describe, expect, it } from "vitest";
-import { collectMenuTextSources, evaluateAllergens } from "./allergens.js";
+import {
+  collectMenuTextSources,
+  evaluateAllergens,
+  foodTextContainsAlias,
+  normalizeFoodText,
+} from "./allergens.js";
 import { makeCurrentSafetyContext, makeValidatedMenu } from "../testing/factories.js";
+
+describe("normalizeFoodText", () => {
+  it("folds katakana to hiragana", () => {
+    expect(normalizeFoodText("サーモン")).toBe(normalizeFoodText("さーもん"));
+    expect(normalizeFoodText("タマゴ")).toBe(normalizeFoodText("たまご"));
+    expect(normalizeFoodText("ざるソバ")).toBe(normalizeFoodText("ざるそば"));
+  });
+});
+
+describe("foodTextContainsAlias", () => {
+  it("detects 玉子 as egg alias form", () => {
+    expect(foodTextContainsAlias("玉子焼き", "玉子")).toBe(true);
+  });
+
+  it("detects ミルク for milk after normalization", () => {
+    expect(foodTextContainsAlias("ミルクティー", "ミルク")).toBe(true);
+  });
+
+  it("detects folded katakana dish names for fish aliases", () => {
+    expect(foodTextContainsAlias("サーモンのムニエル", "さーもん")).toBe(true);
+    expect(foodTextContainsAlias("サバの味噌煮", "さば")).toBe(true);
+  });
+
+  it("detects buckwheat after kana fold", () => {
+    expect(foodTextContainsAlias("ざるソバ", "そば")).toBe(true);
+  });
+
+  it("does not match 乳 inside 豆乳", () => {
+    expect(foodTextContainsAlias("豆乳スープ", "乳")).toBe(false);
+  });
+
+  it("does not match もも inside 鶏もも肉", () => {
+    expect(foodTextContainsAlias("鶏もも肉のソテー", "もも")).toBe(false);
+  });
+
+  it("does not match かに mid-hiragana phrase", () => {
+    expect(foodTextContainsAlias("やわらかになるまで煮る", "かに")).toBe(false);
+  });
+
+  it("does not match いか mid-hiragana phrase", () => {
+    expect(foodTextContainsAlias("食べやすいから小さく切る", "いか")).toBe(false);
+  });
+
+  it("does not match そば as a location particle phrase", () => {
+    expect(foodTextContainsAlias("コンロのそばで冷ます", "そば")).toBe(false);
+  });
+});
+
 
 const member = {
   ...makeCurrentSafetyContext().members[0]!,

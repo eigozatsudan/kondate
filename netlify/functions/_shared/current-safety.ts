@@ -90,6 +90,19 @@ const additionalAliasValues: readonly (readonly [
   ["milk", "ハム", "processed", true],
   ["wheat", "コンソメ", "processed", true],
   ["soy", "みそ", "processed", true],
+  // A-C1: 高頻度表記ゆれ（玉子・ミルク・小麦麺類・魚カナ表記）
+  ["egg", "玉子", "direct", false],
+  ["milk", "ミルク", "direct", false],
+  ["milk", "みるく", "direct", false],
+  ["wheat", "うどん", "derived", false],
+  ["wheat", "パスタ", "derived", false],
+  ["wheat", "ラーメン", "derived", false],
+  ["wheat", "そばつゆ", "processed", true],
+  ["salmon", "サーモン", "direct", false],
+  ["salmon", "さーもん", "direct", false],
+  ["mackerel", "サバ", "direct", false],
+  ["walnut", "クルミ", "direct", false],
+  ["buckwheat", "ソバ", "direct", false],
 ];
 
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [

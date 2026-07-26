@@ -92,7 +92,22 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
       <main className="page-frame stack">
         <h1>ログイン情報を元のブラウザへ渡しました</h1>
         <section className="card stack">
-          <p>元のブラウザでログインを続けてください。この画面に認証情報は保存されません</p>
+          <p>元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません</p>
+          <ol className="stack type-small">
+            <li>このアプリを開いていた元のブラウザのタブへ戻る</li>
+            <li>元のタブでログイン完了を待つ</li>
+            <li>元のタブが分からない・閉じた場合は、下のボタンからやり直す</li>
+          </ol>
+          {/* B-C1: WebView 内で session を作らず、continuation も再消費しない。新規ログインのみ。 */}
+          <button
+            type="button"
+            className="primary-button min-h-11"
+            onClick={() => {
+              void navigate("/login", { replace: true });
+            }}
+          >
+            最初からやり直す
+          </button>
         </section>
       </main>
     );

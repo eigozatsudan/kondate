@@ -37,16 +37,37 @@ function base64url(bytes: Uint8Array): string {
 }
 
 export function sanitizeReturnPath(value: string | null | undefined): string {
-  // Function側contractの returnTo と同じ形（先頭"/"＋非"/"の1文字以上）に揃える。
-  // protocol-relative "//" に加えて、単独の "/" もここで既定値へ寄せる。
-  if (value === undefined || value === null || !/^\/[^/]/u.test(value)) {
+  // B-I3/B-I5: URL 正規化**後**の pathname が安全であること。
+  // - 裸 "/" は RootEntry（welcome/planner 分岐）へ戻すために許可する
+  // - "/planner/..//evil" のような collapse 後 "//evil" は拒否する
+  // - protocol-relative "//host" は拒否する
+  if (value === undefined || value === null || value === "") {
+    return "/planner";
+  }
+  if (value === "/") {
+    return "/";
+  }
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
     return "/planner";
   }
   try {
     const parsed = new URL(value, window.location.origin);
-    return parsed.origin === window.location.origin
-      ? `${parsed.pathname}${parsed.search}${parsed.hash}`
-      : "/planner";
+    if (parsed.origin !== window.location.origin) {
+      return "/planner";
+    }
+    const { pathname } = parsed;
+    // collapse 後に protocol-relative や不正パスになったら拒否
+    if (pathname.startsWith("//") || pathname.includes("\\") || pathname.includes("//")) {
+      return "/planner";
+    }
+    if (pathname === "/") {
+      return `${pathname}${parsed.search}${parsed.hash}`;
+    }
+    // 正規化後も「先頭 / のあと非 /」を要求（DB/Function 契約と同型）
+    if (!/^\/[^/]/u.test(pathname)) {
+      return "/planner";
+    }
+    return `${pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return "/planner";
   }

@@ -20,11 +20,12 @@ export function ReconcileListSheet({
   onApply,
   onCancel,
 }: ReconcileListSheetProps) {
+  // 追加・数量変更は既定で確認対象。削除候補は無断削除を防ぐため既定オフ（D-C2 / §9.2）。
   const [addKeys, setAddKeys] = useState(() => new Set(diff.add.map((item) => item.key)));
   const [replaceIds, setReplaceIds] = useState(
     () => new Set(diff.replace.map((item) => item.itemId)),
   );
-  const [removeIds, setRemoveIds] = useState(() => new Set(diff.remove.map((item) => item.itemId)));
+  const [removeIds, setRemoveIds] = useState(() => new Set<string>());
   // 2回目以降のプレビューでは差分そのものが差し替わる。初期化子は初回マウントでしか
   // 走らないため、新しい差分が来たら選択状態を必ず作り直す（前回の選択を承認しない）。
   const [seededDiff, setSeededDiff] = useState(diff);
@@ -32,7 +33,7 @@ export function ReconcileListSheet({
     setSeededDiff(diff);
     setAddKeys(new Set(diff.add.map((item) => item.key)));
     setReplaceIds(new Set(diff.replace.map((item) => item.itemId)));
-    setRemoveIds(new Set(diff.remove.map((item) => item.itemId)));
+    setRemoveIds(new Set());
   }
   const toggle = (
     current: Set<string>,

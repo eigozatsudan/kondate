@@ -36,12 +36,83 @@ export type MenuTextSource = {
   ingredientId: string | null;
 };
 
+/** カタカナ（ァ-ヶ）を対応するひらがなへ折り畳む。 */
+function foldKatakanaToHiragana(value: string): string {
+  return value.replace(/[\u30a1-\u30f6]/gu, (ch) =>
+    String.fromCharCode(ch.charCodeAt(0) - 0x60),
+  );
+}
+
+/**
+ * 献立テキストと辞書 alias を同じ空間へ寄せる。
+ * 半角カナ等を先に NFKC で全角へ寄せてから、カタカナ→ひらがなへ折り畳む。
+ */
 export function normalizeFoodText(value: string): string {
-  return value
-    .normalize("NFKC")
+  return foldKatakanaToHiragana(value.normalize("NFKC"))
     .toLocaleLowerCase("ja-JP")
     .replace(/\p{Cf}/gu, "")
-    .replace(/[\s\u3000、。・,./（）()「」『』]/gu, "");
+    .replace(/[\s\u3000、。・,./（）()「」『』']/gu, "");
+}
+
+const HIRAGANA_CHAR = /[\u3041-\u3096]/u;
+
+/**
+ * アレルゲン alias が献立テキストに含まれるかを判定する。
+ * 素の includes だと「乳⊂豆乳」「もも⊂鶏もも」「かに⊂やわらかに」などの誤検知が起きるため、
+ * 短いひらがな alias はひらがな連続の途中一致を拒否し、既知の複合も除外する。
+ */
+export function foodTextContainsAlias(sourceText: string, alias: string): boolean {
+  const source = normalizeFoodText(sourceText);
+  const needle = normalizeFoodText(alias);
+  if (needle.length === 0 || !source.includes(needle)) {
+    return false;
+  }
+
+  // 豆乳の「乳」は大豆側。乳そのものが別に残るときだけ一致させる。
+  if (needle === "乳") {
+    const withoutSoyMilk = source.replaceAll("豆乳", "");
+    if (!withoutSoyMilk.includes("乳")) {
+      return false;
+    }
+  }
+
+  // 鶏もも・鳥ももの部位名はももアレルギーの対象外。
+  if (needle === "もも") {
+    const withoutChickenThigh = source.replaceAll("鶏もも", "").replaceAll("鳥もも", "");
+    if (!withoutChickenThigh.includes("もも")) {
+      return false;
+    }
+  }
+
+  const needleIsShortHiragana =
+    needle.length <= 2 && [...needle].every((ch) => HIRAGANA_CHAR.test(ch));
+  if (!needleIsShortHiragana) {
+    return true;
+  }
+
+  let from = 0;
+  while (from <= source.length) {
+    const idx = source.indexOf(needle, from);
+    if (idx === -1) {
+      return false;
+    }
+    const before = idx > 0 ? source[idx - 1]! : "";
+    const afterIdx = idx + needle.length;
+    const after = afterIdx < source.length ? source[afterIdx]! : "";
+    // 「のそばで」など位置表現。そば本体（ざるそば等）は末尾一致などで通す。
+    if (needle === "そば" && before === "の") {
+      from = idx + 1;
+      continue;
+    }
+    // 前後がともにひらがななら語中の偶然一致とみなす。
+    const interiorHiragana =
+      before !== "" && HIRAGANA_CHAR.test(before) && after !== "" && HIRAGANA_CHAR.test(after);
+    if (!interiorHiragana) {
+      return true;
+    }
+    from = idx + 1;
+  }
+  return false;
 }
 
 export function collectMenuTextSources(
@@ -175,16 +246,22 @@ export function evaluateAllergens(
       const aliases = context.allergenDictionary.aliases.filter(
         (alias) => alias.allergenId === allergenId,
       );
+      const catalogEntry = context.allergenDictionary.catalog.find(
+        (entry) => entry.id === allergenId,
+      );
+      const allergenDisplayName = catalogEntry?.displayName ?? "登録アレルギー";
+      // anonymousRef (member_1) や英語 ID を主婦向け本文に出さない（A-C2 / design L221）。
+      // 生成時コンテキストは表示名を持たないため、member_N → 「家族N」にだけ写像する。
+      const memberLabel = member.anonymousRef.replace(/^member_(\d+)$/u, "家族$1");
       for (const source of sources) {
-        const normalizedSource = normalizeFoodText(source.text);
         const matched = aliases.filter((alias) =>
-          normalizedSource.includes(normalizeFoodText(alias.normalizedAlias)),
+          foodTextContainsAlias(source.text, alias.normalizedAlias),
         );
         if (matched.some((alias) => !alias.requiresLabelConfirmation)) {
           issues.push({
             code: "direct_allergen_match",
             path: source.sourcePath,
-            message: `${member.anonymousRef} の登録アレルゲン ${allergenId} が残っています`,
+            message: `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`,
           });
           continue;
         }

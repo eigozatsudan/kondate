@@ -124,7 +124,9 @@ export function HistoryCard({ group }: HistoryCardProps) {
         <h3 id={dialogTitleId} className="text-base font-bold">
           この履歴を削除しますか？
         </h3>
-        <p>派生した案も含めてまとめて消えます。元に戻せません。</p>
+        <p>
+          派生した案も含めてまとめて消えます。元に戻せません。この献立を元にした買い物リストがある場合、そのリストの確認操作はできなくなります。新しいリストは履歴から作り直せます。
+        </p>
         {deleteError !== null && (
           <p role="alert" className="error-message">
             {deleteError}

@@ -1,7 +1,11 @@
 import { z } from "zod";
 import type { GeneratedMenu, MenuValidationIssue } from "../../../shared/contracts/generation.js";
 import type { EasePreference, PortionSize, SpiceLevel } from "../../../shared/contracts/domain.js";
-import { evaluateAllergens, normalizeFoodText } from "../../../shared/safety/allergens.js";
+import {
+  evaluateAllergens,
+  foodTextContainsAlias,
+  normalizeFoodText,
+} from "../../../shared/safety/allergens.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { evaluateFoodSafetyRules } from "../../../shared/safety/food-rules.js";
@@ -162,21 +166,25 @@ function scanPantryNameSnapshotIssues(
 ): readonly MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
   for (const [index, usage] of menu.pantryUsage.entries()) {
-    const normalized = normalizeFoodText(usage.pantryItemName);
-    if (normalized === "") continue;
+    if (normalizeFoodText(usage.pantryItemName) === "") continue;
     for (const member of safety.members) {
       for (const allergenId of member.allergenIds) {
         const aliases = safety.allergenDictionary.aliases.filter(
           (alias) => alias.allergenId === allergenId,
         );
         const matched = aliases.filter((alias) =>
-          normalized.includes(normalizeFoodText(alias.normalizedAlias)),
+          foodTextContainsAlias(usage.pantryItemName, alias.normalizedAlias),
         );
         if (matched.some((alias) => !alias.requiresLabelConfirmation)) {
+          const catalogEntry = safety.allergenDictionary.catalog.find(
+            (entry) => entry.id === allergenId,
+          );
+          const allergenDisplayName = catalogEntry?.displayName ?? "登録アレルギー";
+          const memberLabel = member.anonymousRef.replace(/^member_(\d+)$/u, "家族$1");
           issues.push({
             code: "direct_allergen_match",
             path: `pantryUsage.${String(index)}.pantryItemName`,
-            message: `${member.anonymousRef} の登録アレルゲン ${allergenId} が残っています`,
+            message: `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`,
           });
         }
       }

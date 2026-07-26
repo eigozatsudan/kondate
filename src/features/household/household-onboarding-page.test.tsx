@@ -496,7 +496,10 @@ it("任意性が明確な文言を表示し、旧「必須設定」表現を残�
   expect(await screen.findByText("家族設定（任意）", { exact: false })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "この家族の設定を完了する" })).toBeInTheDocument();
   expect(screen.queryByText("必須設定", { exact: false })).not.toBeInTheDocument();
-  expect(screen.queryByText("残りはあとで設定して完了")).not.toBeInTheDocument();
+  // C-C1: 離脱 CTA は必須（旧「残りはあとで…」文言は使わない）
+  expect(
+    screen.getByRole("button", { name: "あとで設定する（アイデアから始める）" }),
+  ).toBeInTheDocument();
 });
 
 it("draft が無く complete member が既にいる場合も任意性が明確な完了ボタン文言を使う", async () => {

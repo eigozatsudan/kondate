@@ -180,11 +180,22 @@ export function ShoppingListPage() {
           </p>
         )}
       </header>
-      {safetyGate.error && <p role="alert">{safetyGate.message}</p>}
+      {safetyGate.error && (
+        <section className="card stack" role="alert">
+          <p>{safetyGate.message}</p>
+          {/* D-C1: 献立削除などで確認不能になったリストの回復導線 */}
+          <p>
+            元の献立が削除されている場合、このリストは操作できません。履歴から別の献立で新しい買い物リストを作成してください。
+          </p>
+          <a className="secondary-button min-h-11" href="/history">
+            履歴を開く
+          </a>
+        </section>
+      )}
       {storedProvenanceWarnings.length > 0 && (
         <section className="card" aria-label="過去の原材料表示警告">
           <strong>現在の条件では確認できない過去の警告</strong>
-          <p>安全確認が完了するまで買い物操作はできません。</p>
+          <p>家族設定の再確認が終わるまで、買い物の操作はできません。</p>
           {storedProvenanceWarnings.map(({ owner, warning }) => (
             <p key={`${owner}:${warning.warningKey}`}>
               {warning.sourceDisplayName}・{warning.allergenDisplayName}・

@@ -444,12 +444,12 @@ function HouseholdDetailBody({
   const [shoppingDiff, setShoppingDiff] = useState<ShoppingDiff | null>(null);
   const [shoppingError, setShoppingError] = useState<string | null>(null);
   const activeList = shoppingList.data ?? null;
-  const shoppingBlocked =
-    !actionsEnabled ||
-    shoppingGate.blocked ||
-    shoppingList.isFetching ||
-    !shoppingList.isSuccess ||
-    menuId.length === 0;
+  // 使用中リストの操作（差分反映など）は safety gate で止める。
+  // ただし mode=new の新規作成は、削除済み献立で gate が恒久 blocked でも可能にする（D-C1）。
+  const shoppingListBusy =
+    shoppingList.isFetching || !shoppingList.isSuccess || menuId.length === 0;
+  const shoppingMutateBlocked = !actionsEnabled || shoppingGate.blocked || shoppingListBusy;
+  const canCreateShoppingList = actionsEnabled && !shoppingListBusy && !createList.isPending;
 
   const queryKey = useMemo(
     () => ["menu-result", userId ?? "missing", menuId] as const,
@@ -703,7 +703,7 @@ function HouseholdDetailBody({
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={shoppingBlocked || createList.isPending}
+          disabled={!canCreateShoppingList}
           onClick={() => {
             setShoppingError(null);
             setShoppingSheet("create");
@@ -715,7 +715,7 @@ function HouseholdDetailBody({
           <button
             type="button"
             className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={shoppingBlocked || reconcileList.isPending}
+            disabled={shoppingMutateBlocked || reconcileList.isPending}
             onClick={() => {
               const target = reconcileTarget.data;
               if (activeList === null || target === null) return;
@@ -807,9 +807,9 @@ function HouseholdDetailBody({
                 }
           }
           pending={createList.isPending}
-          safetyBlocked={shoppingBlocked}
+          safetyBlocked={!canCreateShoppingList}
           onSubmit={(input) => {
-            if (shoppingBlocked) return;
+            if (!canCreateShoppingList) return;
             const command = persistedShoppingCommand(
               "create",
               menuId,
@@ -840,10 +840,10 @@ function HouseholdDetailBody({
           <ReconcileListSheet
             diff={shoppingDiff}
             pending={reconcileList.isPending}
-            safetyBlocked={shoppingBlocked}
+            safetyBlocked={shoppingMutateBlocked}
             onApply={(approval) => {
               const target = reconcileTarget.data;
-              if (shoppingBlocked || target === null) return;
+              if (shoppingMutateBlocked || target === null) return;
               const listId = activeList.id;
               const command = persistedShoppingCommand(
                 "reconcile",

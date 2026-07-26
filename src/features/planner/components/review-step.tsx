@@ -262,7 +262,24 @@ export function ReviewStep({
           「戻る」で1つ前の質問へ、「変更」でその質問へ直接戻れます。直したあとは「確認に戻る」でこの画面に戻ります。
         </p>
       )}
-      <details className="wizard-details">
+      {/*
+        C-C2: 生成を止めるエラーの直しどころ（pantry 解除・医療メモ）が閉じた details 内に
+        隠れると操作不能に見える。ブロック中は open にして常に見えるようにする。
+      */}
+      <details
+        className="wizard-details"
+        open={
+          hasUnavailablePantrySelections ||
+          medicalBlocked ||
+          fieldErrors?.timeLimitMinutes != null ||
+          fieldErrors?.budgetPreference != null ||
+          fieldErrors?.avoidIngredients != null ||
+          fieldErrors?.memo != null ||
+          fieldErrors?.pantrySelections != null
+            ? true
+            : undefined
+        }
+      >
         <summary className="wizard-details-summary">追加条件</summary>
         {/* summary 直下に stack を置き、label/input が横に流れないよう縦積みにする */}
         <div className="stack wizard-details-body">
