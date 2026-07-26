@@ -420,6 +420,15 @@ function validateHouseholdMenu(
     boneless: "remove_bones",
     soft: "soften",
   } as const;
+  // 量・辛さ hard 照合: AI がよく使う言い回しを許容する（過広義は避けつつ表記ゆれを吸収）。
+  const portionSmallPattern =
+    /少なめ|少な目|少なめに|少なめの|小盛り|小盛|少量|量を控|控えめの量|ひかえめの量|半分程度|半分くらい/u;
+  const portionLargePattern =
+    /多め|多めに|多めの|大盛り|大盛|増量|多め盛り|しっかりめ|多め量|多めに盛/u;
+  const spiceNonePattern =
+    /辛味なし|辛みなし|香辛料なし|スパイスなし|味付けなし|辛くしない|辛くなく|辛くない|辛いものを使わない|唐辛子なし|ピリ辛にしない|辛味を控|辛みを控|無香辛料|香辛料を使わない/u;
+  const spiceMildPattern =
+    /薄味|薄めの味|味を薄|薄味に|控えめ|味控えめ|塩分控えめ|甘口|少し甘め|あっさり|あっさりめ|ピリ辛を避/u;
   const identityFoodText = generated.dishes
     .flatMap((dish) => [dish.name, dish.description, ...dish.ingredients.map(({ name }) => name)])
     .map(normalizeFoodText)
@@ -440,13 +449,12 @@ function validateHouseholdMenu(
       .join(" ");
     const portionMatches =
       preference.portionSize === "regular" ||
-      (preference.portionSize === "small" && /少なめ|小盛り|少量/u.test(adaptationText)) ||
-      (preference.portionSize === "large" && /多め|大盛り|増量/u.test(adaptationText));
+      (preference.portionSize === "small" && portionSmallPattern.test(adaptationText)) ||
+      (preference.portionSize === "large" && portionLargePattern.test(adaptationText));
     const spiceMatches =
       preference.spiceLevel === "regular" ||
-      (preference.spiceLevel === "none" &&
-        /辛味なし|香辛料なし|味付けなし|辛くしない/u.test(adaptationText)) ||
-      (preference.spiceLevel === "mild" && /薄味|控えめ|甘口/u.test(adaptationText));
+      (preference.spiceLevel === "none" && spiceNonePattern.test(adaptationText)) ||
+      (preference.spiceLevel === "mild" && spiceMildPattern.test(adaptationText));
     const actions = adaptations.flatMap((adaptation) => adaptation.safetyActions);
     const easeMatches = preference.easePreferences.every((ease) =>
       actions.some((action) => action.kind === easeAction[ease]),

@@ -498,6 +498,71 @@ it("A-I7 treats dislikes as soft gaps while keeping portion/spice/ease hard", ()
   ]);
 });
 
+it.each([
+  ["small", "none", "少な目に取り分け、辛みなしで味付けする"],
+  ["small", "none", "量を控え、香辛料を使わない"],
+  ["small", "mild", "小盛で、あっさり薄味にする"],
+  ["large", "none", "大盛に増量し、辛いものを使わない"],
+  ["large", "mild", "しっかりめの量で、塩分控えめの甘口にする"],
+] as const)(
+  "accepts expanded portion/spice wording hard matches: %s / %s / %s",
+  (portionSize, spiceLevel, wording) => {
+    const base = makeGenerationContext();
+    const baseMenu = makeGeneratedMenu();
+    const adaptation = baseMenu.adaptations[0]!;
+    const menu = makeGeneratedMenu({
+      adaptations: [
+        {
+          ...adaptation,
+          portionText: wording,
+          additionalSeasoning: wording,
+          servingCheck: wording,
+        },
+      ],
+    });
+    const context = makeGenerationContext({
+      memberPreferences: [
+        {
+          ...base.memberPreferences[0]!,
+          portionSize,
+          spiceLevel,
+          easePreferences: [],
+          dislikes: [],
+        },
+      ],
+    });
+    expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+  },
+);
+
+it("still hard-fails when portion/spice wording is unrelated", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "通常どおり",
+        additionalSeasoning: "いつもの味",
+        servingCheck: "盛り付けを確認",
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "small",
+        spiceLevel: "none",
+        easePreferences: [],
+        dislikes: [],
+      },
+    ],
+  });
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
+});
+
 it("does not count a negated timeline-only mention as a requested main ingredient", () => {
   const menu = makeGeneratedMenu({
     timeline: [
