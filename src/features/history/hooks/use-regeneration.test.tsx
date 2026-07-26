@@ -62,7 +62,7 @@ const validRevalidation: RevalidationResult = {
 const quota = {
   consumed: false,
   remaining: 3,
-  userDailyLimit: 5,
+  userDailyLimit: 3,
   limitKind: null,
   retryAt: null,
 } as const;

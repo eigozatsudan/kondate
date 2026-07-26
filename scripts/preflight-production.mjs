@@ -242,8 +242,8 @@ export function validateProductionEnv(env) {
   }
 
   // ロックされた整数
-  requirePositiveIntegerString(env, "USER_DAILY_AI_LIMIT", 5);
-  requirePositiveIntegerString(env, "USER_DAILY_EXTERNAL_CALL_LIMIT", 12);
+  requirePositiveIntegerString(env, "USER_DAILY_AI_LIMIT", 3);
+  requirePositiveIntegerString(env, "USER_DAILY_EXTERNAL_CALL_LIMIT", 6);
   requirePositiveIntegerString(env, "USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT", 4);
   requirePositiveIntegerString(env, "USER_SHORT_WINDOW_SECONDS", 600);
   requirePositiveIntegerString(env, "AUTH_CONTINUATION_TTL_SECONDS", 300);
@@ -253,7 +253,7 @@ export function validateProductionEnv(env) {
   requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", 180);
   requirePositiveIntegerString(env, "VITE_MAGIC_LINK_RESEND_SECONDS");
   const globalLimit = requirePositiveIntegerString(env, "GLOBAL_DAILY_AI_LIMIT");
-  if (globalLimit > 45) throw new Error("GLOBAL_DAILY_AI_LIMIT_invalid");
+  if (globalLimit > 20) throw new Error("GLOBAL_DAILY_AI_LIMIT_invalid");
 
   if (String(env.OPENROUTER_BASE_URL) !== "https://openrouter.ai/api/v1") {
     throw new Error("OPENROUTER_BASE_URL_invalid");

@@ -342,7 +342,7 @@ run_e2e_commands() {
     up -d --wait --force-recreate auth || return $?
   # アプリ全体で共有するAI日次枠はJST日付単位でDBに積み上がる。
   # 同一日の再実行と、1スイート内の mobile+desktop 二重実行の両方で
-  # GLOBAL_DAILY_AI_LIMIT=45 を跨がないよう、共有枠だけを初期化する
+  # GLOBAL_DAILY_AI_LIMIT=20 を跨がないよう、共有枠だけを初期化する
   # （上限値そのものは変更しない。ユーザ単位枠はテストごと新規ユーザで独立）。
   run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
@@ -351,7 +351,7 @@ run_e2e_commands() {
 
   # 呼び出し側が --project を指定していればそのまま1回実行する。
   # 未指定（full suite / file 指定のみ）では mobile → 枠リセット → desktop の
-  # 2段実行にし、1プロセス内の累積送信が 45 を超えて後半だけ落ちるのを防ぐ。
+  # 2段実行にし、1プロセス内の累積送信が 20 を超えて後半だけ落ちるのを防ぐ。
   # どちらか一方が失敗しても他方は最後まで走らせ、診断用の失敗一覧を揃える。
   if e2e_args_have_project "$@"; then
     run_playwright "$@" || return $?

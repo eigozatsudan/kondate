@@ -11,7 +11,7 @@ import {
   supabaseServerEnvSchema,
 } from "./env.js";
 
-// compose 現実に近い: exact mock base + mock/*:free（quota 5/12/45 は Task 3 まで据え置き）
+// compose 現実に近い: exact mock base + mock/*:free（quota は release 固定 3/6/20）
 const validServerEnv = {
   VITE_SUPABASE_URL: "http://127.0.0.1:8000",
   SUPABASE_URL: "http://kong:8000",
@@ -24,8 +24,8 @@ const validServerEnv = {
   OPENROUTER_MODELS: "mock/kondate-primary:free,mock/kondate-repair:free",
   OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-  USER_DAILY_AI_LIMIT: "5",
-  USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
+  USER_DAILY_AI_LIMIT: "3",
+  USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
   USER_SHORT_WINDOW_SECONDS: "600",
   OPENROUTER_TIMEOUT_MS: "20000",
@@ -56,7 +56,7 @@ describe("parseOpenRouterModels", () => {
       userDailyAttemptLimit: releaseQuota.userDailyExternalCallLimit,
       userShortWindowLimit: releaseQuota.userShortWindowExternalCallLimit,
       userShortWindowSeconds: releaseQuota.userShortWindowSeconds,
-      globalDailyLimit: 45,
+      globalDailyLimit: 20,
       timeoutMs: 20_000,
       functionTotalBudgetMs: 50_000,
       staleAfterSeconds: 180,
@@ -68,9 +68,11 @@ describe("parseOpenRouterModels", () => {
 
   it.each([
     ["USER_DAILY_AI_LIMIT", undefined],
+    ["USER_DAILY_AI_LIMIT", "5"],
     ["USER_DAILY_AI_LIMIT", "6"],
-    ["USER_DAILY_AI_LIMIT", "05"],
+    ["USER_DAILY_AI_LIMIT", "03"],
     ["USER_DAILY_EXTERNAL_CALL_LIMIT", undefined],
+    ["USER_DAILY_EXTERNAL_CALL_LIMIT", "12"],
     ["USER_DAILY_EXTERNAL_CALL_LIMIT", "13"],
     ["USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT", undefined],
     ["USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT", "5"],
@@ -119,7 +121,7 @@ describe("parseOpenRouterModels", () => {
     ).toThrow("server_configuration_invalid");
   });
 
-  it.each(["0", "46"])("rejects out-of-range global quota %s", (value) => {
+  it.each(["0", "21"])("rejects out-of-range global quota %s", (value) => {
     expect(() => parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
   });
 

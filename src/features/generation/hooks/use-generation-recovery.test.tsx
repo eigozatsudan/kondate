@@ -136,8 +136,8 @@ function makePending(idempotencyKey: string, ownerUserId: string = USER_ID): Pen
 
 const quota = {
   consumed: false,
-  remaining: 4,
-  userDailyLimit: 5,
+  remaining: 2,
+  userDailyLimit: 3,
   limitKind: null,
   retryAt: null,
 } as const;

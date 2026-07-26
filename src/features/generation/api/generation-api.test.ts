@@ -12,8 +12,8 @@ const IDEMPOTENCY_KEY = "10000000-0000-4000-8000-000000000001";
 const OTHER_KEY = "10000000-0000-4000-8000-000000000002";
 const quota = {
   consumed: false,
-  remaining: 4,
-  userDailyLimit: 5,
+  remaining: 2,
+  userDailyLimit: 3,
   limitKind: null,
   retryAt: null,
 } as const;

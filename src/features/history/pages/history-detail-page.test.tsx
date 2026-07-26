@@ -338,8 +338,8 @@ beforeEach(() => {
   revalidateMenuMock.mockResolvedValue(validRevalidation);
   getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
   getUsageTodayMock.mockResolvedValue({
-    success: { consumed: 2, limit: 5, remaining: 3 },
-    attempts: { sent: 0, limit: 12, remaining: 12 },
+    success: { consumed: 2, limit: 3, remaining: 1 },
+    attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
     globalAvailable: true,
     retryAt: null,

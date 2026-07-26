@@ -98,8 +98,8 @@ const menu = {
 
 it("locks the MVP quota tuple into the shared contract", () => {
   expect(releaseQuota).toEqual({
-    userDailySuccessLimit: 5,
-    userDailyExternalCallLimit: 12,
+    userDailySuccessLimit: 3,
+    userDailyExternalCallLimit: 6,
     userShortWindowExternalCallLimit: 4,
     userShortWindowSeconds: 600,
   });
@@ -187,8 +187,8 @@ describe("newMenuGenerationRequestSchema", () => {
 describe("generationStatusDataSchema", () => {
   const quota = {
     consumed: false,
-    remaining: 4,
-    userDailyLimit: 5,
+    remaining: 2,
+    userDailyLimit: 3,
     limitKind: null,
     retryAt: null,
   };
@@ -211,7 +211,7 @@ describe("generationStatusDataSchema", () => {
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         quota,
       }),
-    ).toMatchObject({ status: "not_started", quota: { remaining: 4 } });
+    ).toMatchObject({ status: "not_started", quota: { remaining: 2 } });
   });
 
   it("accepts terminal failed duplicate_output without menuId and without quota consumption", () => {

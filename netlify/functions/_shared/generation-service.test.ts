@@ -145,8 +145,8 @@ function record(
     request_id: requestId,
     idempotency_key: key,
     status,
-    remaining: status === "succeeded" ? 4 : 5,
-    user_daily_limit: 5 as const,
+    remaining: status === "succeeded" ? 2 : 3,
+    user_daily_limit: 3 as const,
     consumed: status === "succeeded",
     started_at: "2026-07-11T00:00:00.000Z",
     completed_at: status === "processing" ? null : "2026-07-11T00:00:01.000Z",
@@ -1409,16 +1409,16 @@ describe("runGeneration", () => {
       completed_menu_id: null,
       started_at: "2026-07-11T00:00:00.000Z",
       completed_at: "2026-07-11T00:00:01.000Z",
-      remaining: 4,
-      user_daily_limit: 5 as const,
+      remaining: 2,
+      user_daily_limit: 3 as const,
       consumed: false,
       replayed: false,
     });
     repository.status.mockResolvedValue({
       idempotency_key: key,
       status: "not_started",
-      remaining: 5,
-      user_daily_limit: 5 as const,
+      remaining: 3,
+      user_daily_limit: 3 as const,
       consumed: false,
     });
     const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
@@ -1429,8 +1429,8 @@ describe("runGeneration", () => {
       requestId: activeRequestId,
       quota: {
         consumed: false,
-        remaining: 4,
-        userDailyLimit: 5,
+        remaining: 2,
+        userDailyLimit: 3,
         limitKind: null,
         retryAt: "2026-07-11T00:03:00.000Z",
       },
@@ -1793,8 +1793,8 @@ describe("toGenerationStatus", () => {
       requestId,
       quota: {
         consumed: false,
-        remaining: 5,
-        userDailyLimit: 5,
+        remaining: 3,
+        userDailyLimit: 3,
         limitKind: null,
         retryAt: null,
       },
@@ -1822,8 +1822,8 @@ describe("toGenerationStatus", () => {
       requestId,
       quota: {
         consumed: false,
-        remaining: 5,
-        userDailyLimit: 5,
+        remaining: 3,
+        userDailyLimit: 3,
         limitKind: null,
         retryAt: null,
       },
@@ -1847,8 +1847,8 @@ describe("toGenerationStatus", () => {
 describe("generationResponse", () => {
   const quota = {
     consumed: false,
-    remaining: 5,
-    userDailyLimit: 5 as const,
+    remaining: 3,
+    userDailyLimit: 3 as const,
     limitKind: null,
     retryAt: null,
   };

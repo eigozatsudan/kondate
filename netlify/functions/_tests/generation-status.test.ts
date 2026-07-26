@@ -51,7 +51,7 @@ function record(
     retry_at: null,
     completed_menu_id: state === "succeeded" ? menuId : null,
     remaining: state === "succeeded" ? 4 : 5,
-    user_daily_limit: 5 as const,
+    user_daily_limit: 3 as const,
     consumed: state === "succeeded",
     terminal_details:
       state === "constraint_conflict" ? { conflictCodes: ["must_use_conflict"] } : null,

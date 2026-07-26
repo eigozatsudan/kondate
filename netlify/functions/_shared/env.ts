@@ -59,17 +59,17 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   OPENROUTER_MODELS: z.string(),
   OPENROUTER_BASE_URL: z.url().default("https://openrouter.ai/api/v1"),
   GENERATION_REQUEST_HMAC_KEY: generationRequestHmacKeySchema,
-  USER_DAILY_AI_LIMIT: releaseLockedInteger(releaseQuota.userDailySuccessLimit, "5"),
+  USER_DAILY_AI_LIMIT: releaseLockedInteger(releaseQuota.userDailySuccessLimit, "3"),
   USER_DAILY_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
     releaseQuota.userDailyExternalCallLimit,
-    "12",
+    "6",
   ),
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
     releaseQuota.userShortWindowExternalCallLimit,
     "4",
   ),
   USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
-  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(45),
+  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(20),
   // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
   OPENROUTER_TIMEOUT_MS: releaseLockedInteger(20_000, "20000"),
   FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(50_000, "50000"),

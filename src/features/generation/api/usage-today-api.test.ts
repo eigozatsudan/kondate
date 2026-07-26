@@ -23,8 +23,8 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
-            success: { consumed: 1, limit: 5, remaining: 4 },
-            attempts: { sent: 2, limit: 12, remaining: 10 },
+            success: { consumed: 1, limit: 3, remaining: 2 },
+            attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 1, limit: 4, remaining: 3, retryAt: null },
             globalAvailable: true,
             retryAt: null,
@@ -33,8 +33,8 @@ describe("getUsageToday", () => {
       ),
     );
     await expect(getUsageToday({ fetchImpl })).resolves.toMatchObject({
-      success: { remaining: 4, limit: 5 },
-      attempts: { limit: 12 },
+      success: { remaining: 2, limit: 3 },
+      attempts: { limit: 6 },
       shortWindow: { limit: 4 },
     });
     expect(fetchImpl).toHaveBeenCalledWith("/api/usage/today", {

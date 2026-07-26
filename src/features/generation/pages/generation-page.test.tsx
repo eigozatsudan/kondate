@@ -47,8 +47,8 @@ const KEY_A = "10000000-0000-4000-8000-000000000001";
 
 const quota = {
   consumed: false,
-  remaining: 4,
-  userDailyLimit: 5,
+  remaining: 2,
+  userDailyLimit: 3,
   limitKind: null,
   retryAt: null,
 } as const;
@@ -117,8 +117,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   currentUserIdRef.current = USER_ID;
   mockGetUsageToday.mockResolvedValue({
-    success: { consumed: 1, limit: 5, remaining: 4 },
-    attempts: { sent: 2, limit: 12, remaining: 10 },
+    success: { consumed: 1, limit: 3, remaining: 2 },
+    attempts: { sent: 2, limit: 6, remaining: 4 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
     globalAvailable: true,
     retryAt: null,
@@ -171,7 +171,7 @@ describe("GenerationPage", () => {
       expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
     });
     expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
-    expect(screen.getByText("AI通信試行：本日あと10回")).toBeVisible();
+    expect(screen.getByText("AI通信試行：本日あと4回")).toBeVisible();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
     // request-local の成功回数だけ表示するフォールバック経路ではないこと
     expect(mockGetUsageToday).toHaveBeenCalled();

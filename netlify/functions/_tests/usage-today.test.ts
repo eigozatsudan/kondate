@@ -4,7 +4,7 @@ const requireUserMock = vi.hoisted(() => vi.fn());
 const rpcMock = vi.hoisted(() => vi.fn());
 const getServerEnvMock = vi.hoisted(() =>
   vi.fn(() => ({
-    openRouter: { globalDailyLimit: 45 },
+    openRouter: { globalDailyLimit: 20 },
   })),
 );
 
@@ -26,7 +26,7 @@ describe("usage-today", () => {
     rpcMock.mockReset();
     getServerEnvMock.mockReset();
     getServerEnvMock.mockReturnValue({
-      openRouter: { globalDailyLimit: 45 },
+      openRouter: { globalDailyLimit: 20 },
     });
     requireUserMock.mockResolvedValue({
       userId: "10000000-0000-4000-8000-000000000001",
@@ -34,8 +34,8 @@ describe("usage-today", () => {
     });
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 0, limit: 5, remaining: 5 },
-        attempts: { sent: 0, limit: 12, remaining: 12 },
+        success: { consumed: 0, limit: 3, remaining: 3 },
+        attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         globalAvailable: true,
         retryAt: null,
@@ -72,8 +72,8 @@ describe("usage-today", () => {
     expect(body).toEqual({
       ok: true,
       data: {
-        success: { consumed: 0, limit: 5, remaining: 5 },
-        attempts: { sent: 0, limit: 12, remaining: 12 },
+        success: { consumed: 0, limit: 3, remaining: 3 },
+        attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         globalAvailable: true,
         retryAt: null,
@@ -81,7 +81,7 @@ describe("usage-today", () => {
     });
     expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {
       p_user_id: "10000000-0000-4000-8000-000000000001",
-      p_global_limit: 45,
+      p_global_limit: 20,
     });
   });
 
