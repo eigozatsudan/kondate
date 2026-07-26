@@ -753,7 +753,7 @@ it("keeps family CRUD controls and composes the account danger zone on the same 
   // Plan 6 の DangerZone は同一 main 内に合成される（ページ所有者は置換しない）
   expect(screen.getAllByRole("heading", { name: "家族設定" })).toHaveLength(1);
   expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
-  expect(screen.getByRole("region", { name: "DangerZone" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "危険な操作" })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "アカウントを削除" }));
   expect(screen.getByText(/家族設定、献立履歴、冷蔵庫の食材、買い物リスト/u)).toBeVisible();
   // アカウント削除と家族削除は別操作

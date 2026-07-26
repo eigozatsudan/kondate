@@ -1054,10 +1054,11 @@ describe("ReconcileListSheet", () => {
     expect(onApply).toHaveBeenCalledTimes(1);
     const approval = onApply.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(Object.keys(approval).sort()).toEqual(["addKeys", "removeItemIds", "replaceItemIds"]);
+    // D-C2: 削除候補は既定オフ。先頭の追加だけ外すと、数量変更のみ承認される。
     expect(approval).toEqual({
       addKeys: [],
       replaceItemIds: [ITEM_ID],
-      removeItemIds: [OTHER_ITEM_ID],
+      removeItemIds: [],
     });
   });
 

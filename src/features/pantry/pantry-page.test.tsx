@@ -150,7 +150,9 @@ it("shows entered expiry/open state and confirms before deletion", async () => {
       onDelete={onDelete}
     />,
   );
-  expect(screen.getByText("消費期限 2026-07-10")).toBeInTheDocument();
+  // D-I6: 期限切れは「（期限切れ）」接尾辞付き。日付そのものは JST キーのまま。
+  expect(screen.getByText(/消費期限\s*2026-07-10/u)).toBeInTheDocument();
+  expect(screen.getByText(/期限切れ/u)).toBeInTheDocument();
   expect(screen.getByText("開封済み")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "牛乳を削除" }));
   expect(onDelete).toHaveBeenCalledWith(expired.id, expired.updatedAt);

@@ -358,6 +358,8 @@ const allowedProtectedSelectors = new Set([
   ".field",
   ".field input, .field select, .field textarea",
   ".field textarea",
+  // `.field` 断片にヒットするため許可が必要。入力補助の muted ヒント（コントラストは --muted 契約）。
+  ".field-hint",
 ]);
 
 const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {

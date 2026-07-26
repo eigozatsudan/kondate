@@ -178,25 +178,28 @@ function renderWizard(
   draft: PlannerDraftInput = emptyDraft,
   eligibleMembers: readonly PlannerSafetyMember[] = [eligibleMember],
 ): ReturnType<typeof render> {
+  // audience step の「家族を追加する」Link など Router 依存 UI を包む
   return render(
     <Providers>
-      <PlannerWizard
-        draft={draft}
-        step={step}
-        eligibleMembers={eligibleMembers}
-        isSaving={false}
-        error={null}
-        fieldErrors={{}}
-        onDraftChange={vi.fn()}
-        onStepChange={vi.fn()}
-        onSubmit={vi.fn(() => Promise.resolve())}
-        pantryItems={[]}
-        pantryItemsStatus="loaded"
-        attempt={createPlannerAttempt()}
-        onAttemptChange={vi.fn()}
-        hasAcceptedOrDeclinedPrivacy={true}
-        onOpenPrivacyNotice={vi.fn()}
-      />
+      <MemoryRouter>
+        <PlannerWizard
+          draft={draft}
+          step={step}
+          eligibleMembers={eligibleMembers}
+          isSaving={false}
+          error={null}
+          fieldErrors={{}}
+          onDraftChange={vi.fn()}
+          onStepChange={vi.fn()}
+          onSubmit={vi.fn(() => Promise.resolve())}
+          pantryItems={[]}
+          pantryItemsStatus="loaded"
+          attempt={createPlannerAttempt()}
+          onAttemptChange={vi.fn()}
+          hasAcceptedOrDeclinedPrivacy={true}
+          onOpenPrivacyNotice={vi.fn()}
+        />
+      </MemoryRouter>
     </Providers>,
   );
 }
