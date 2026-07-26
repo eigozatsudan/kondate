@@ -1,7 +1,7 @@
 # 低価格有料 OpenRouter モデル導入 設計書
 
 - 日付: 2026-07-26
-- 状態: adversarial 指摘反映済み・再レビュー待ち
+- 状態: 実装 Plan 作成済み（`docs/superpowers/plans/2026-07-26-paid-openrouter-models.md`）
 - 対象: OpenRouter モデル許可規則、起動/デプロイ検証、利用上限、プライバシー説明、運用ゲート
 - 改訂: 2026-07-26 コード突合レビュー（structured AND 維持、mock 判定信号、privacy ロールアウト、quota 相互作用、文書ギャップ）
 
