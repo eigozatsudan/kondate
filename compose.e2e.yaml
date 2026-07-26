@@ -2,6 +2,12 @@ services:
   app:
     environment:
       KONDATE_E2E_FUNCTION_SERVER: "1"
+      # ホスト .env が本番相当の OpenRouter 実 API を指していても、E2E は決定論的な
+      # openrouter-mock に固定する（README のローカル既定と同じ）。実 API 向け手動確認は
+      # 通常の compose up（compose.e2e なし）で行う。
+      OPENROUTER_API_KEY: local-mock-key
+      OPENROUTER_BASE_URL: http://openrouter-mock:8787/api/v1
+      OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
     command: ["node", "tools/run-e2e-app.mjs"]
   auth:
     environment:
