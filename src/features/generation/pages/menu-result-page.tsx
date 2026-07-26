@@ -481,12 +481,11 @@ function HouseholdResultBody({
   const [shoppingDiff, setShoppingDiff] = useState<ShoppingDiff | null>(null);
   const [shoppingError, setShoppingError] = useState<string | null>(null);
   const activeList = shoppingList.data ?? null;
-  const shoppingBlocked =
-    !actionsEnabled ||
-    shoppingGate.blocked ||
-    shoppingList.isFetching ||
-    !shoppingList.isSuccess ||
-    menuId === null;
+  // D-C1: 新規作成は active list の safety gate と分離（履歴詳細と同契約）
+  const shoppingListBusy =
+    shoppingList.isFetching || !shoppingList.isSuccess || menuId === null;
+  const shoppingMutateBlocked = !actionsEnabled || shoppingGate.blocked || shoppingListBusy;
+  const canCreateShoppingList = actionsEnabled && !shoppingListBusy && !createList.isPending;
 
   const ownerId = userId ?? "missing";
   const reconcileTarget = useQuery({
@@ -744,7 +743,7 @@ function HouseholdResultBody({
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={shoppingBlocked || createList.isPending}
+          disabled={!canCreateShoppingList}
           onClick={() => {
             setShoppingError(null);
             setShoppingSheet("create");
@@ -756,7 +755,7 @@ function HouseholdResultBody({
           <button
             type="button"
             className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={shoppingBlocked || reconcileList.isPending}
+            disabled={shoppingMutateBlocked || reconcileList.isPending}
             onClick={() => {
               const target = reconcileTarget.data;
               if (activeList === null || menuId === null || target === null) return;
@@ -850,9 +849,9 @@ function HouseholdResultBody({
                 }
           }
           pending={createList.isPending}
-          safetyBlocked={shoppingBlocked}
+          safetyBlocked={!canCreateShoppingList}
           onSubmit={(input) => {
-            if (shoppingBlocked) return;
+            if (!canCreateShoppingList) return;
             const command = persistedShoppingCommand(
               "create",
               menuId,
@@ -884,10 +883,10 @@ function HouseholdResultBody({
           <ReconcileListSheet
             diff={shoppingDiff}
             pending={reconcileList.isPending}
-            safetyBlocked={shoppingBlocked}
+            safetyBlocked={shoppingMutateBlocked}
             onApply={(approval) => {
               const target = reconcileTarget.data;
-              if (shoppingBlocked || target === null) return;
+              if (shoppingMutateBlocked || target === null) return;
               const listId = activeList.id;
               const command = persistedShoppingCommand(
                 "reconcile",
