@@ -319,7 +319,8 @@ export function resolveAllergenMemberLabel(
   const fromMap = memberLabels?.[anonymousRef]?.trim();
   if (fromMap !== undefined && fromMap !== "") return fromMap;
   const mapped = anonymousRef.match(/^member_(\d+)$/u);
-  if (mapped !== null) return `家族${mapped[1]!}`;
+  const memberIndex = mapped?.[1];
+  if (memberIndex !== undefined) return `家族${memberIndex}`;
   return "ご家族";
 }
 

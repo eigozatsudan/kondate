@@ -249,7 +249,7 @@ describe("loadGenerationContext", () => {
     );
 
     expect(context.preferenceSnapshot).toMatchObject({
-      submission: expect.objectContaining({ memo }),
+      submission: expect.objectContaining({ memo }) as object,
     });
     // ランタイム safety は医療スコープ検査用に requestText を持つ
     expect(context.safety?.requestText).toContain(memo);

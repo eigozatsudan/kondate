@@ -39,14 +39,18 @@ export function GenerationPage() {
       {userId === undefined ? (
         <GenerationStatusPanel
           state={recovery.state}
-          onClear={recovery.clearGeneration}
+          onClear={() => {
+            recovery.clearGeneration();
+          }}
           {...(targetMode === undefined ? {} : { targetMode })}
         />
       ) : (
         <GenerationStatusPanel
           state={recovery.state}
           userId={userId}
-          onClear={recovery.clearGeneration}
+          onClear={() => {
+            recovery.clearGeneration();
+          }}
           {...(targetMode === undefined ? {} : { targetMode })}
         />
       )}

@@ -101,7 +101,9 @@ const readIdeaServingsFromMessages = (messages) => {
   const system = messages.find((message) => message?.role === "system");
   const systemContent = typeof system?.content === "string" ? system.content : "";
   // generation-prompt.ts の idea system 文と一致する判定（世帯向け system には無い）
-  if (!systemContent.includes("家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列")) {
+  if (
+    !systemContent.includes("家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列")
+  ) {
     return null;
   }
   const user = messages.find((message) => message?.role === "user");
@@ -246,20 +248,15 @@ async function handleRequest(request, response) {
   // idea-servings-N（1..20）は静的 scenarios に無い人数でも合成する。
   // ブラウザ手動操作は X-Kondate-Mock-Scenario を付けないため、default success も
   // idea プロンプトなら同じ変換を当てる（家族向け子行を落とす・人数一致）。
-  const ideaServingsMatch =
-    typeof key === "string" ? /^idea-servings-(\d{1,2})$/u.exec(key) : null;
-  const ideaServingsFromKey =
-    ideaServingsMatch !== null ? Number(ideaServingsMatch[1]) : null;
+  const ideaServingsMatch = typeof key === "string" ? /^idea-servings-(\d{1,2})$/u.exec(key) : null;
+  const ideaServingsFromKey = ideaServingsMatch !== null ? Number(ideaServingsMatch[1]) : null;
   const ideaServingsValid =
     ideaServingsFromKey !== null &&
     Number.isInteger(ideaServingsFromKey) &&
     ideaServingsFromKey >= 1 &&
     ideaServingsFromKey <= 20;
 
-  if (
-    typeof key !== "string" ||
-    (!Object.hasOwn(scenarios, key) && !ideaServingsValid)
-  ) {
+  if (typeof key !== "string" || (!Object.hasOwn(scenarios, key) && !ideaServingsValid)) {
     jsonResponse(response, 404, { error: "not_found" });
     return;
   }

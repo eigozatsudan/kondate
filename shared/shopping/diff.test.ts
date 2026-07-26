@@ -268,7 +268,10 @@ it.each(["manual-first", "plain-first"] as const)(
     expect(diff.replace).toEqual([
       expect.objectContaining({
         itemId: plainId,
-        next: expect.objectContaining({ key: "carrot-150", quantityText: "150g" }),
+        next: expect.objectContaining({
+          key: "carrot-150",
+          quantityText: "150g",
+        }) as object,
       }),
     ]);
     expect(diff.remove).toEqual([]);

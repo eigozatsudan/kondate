@@ -1275,7 +1275,7 @@ describe("runGeneration", () => {
           modelId: models[0],
         });
       });
-      repository.succeed.mockImplementation(async (...args: SucceedArgs) => {
+      repository.succeed.mockImplementation((...args: SucceedArgs) => {
         const options = args[1];
         expect(options.remainingMs).toBeGreaterThan(0);
         // finalizer 中に残予算を超える遅延を模擬（成功レコードは返さない）
@@ -1299,7 +1299,7 @@ describe("runGeneration", () => {
       expect(repository.succeed).toHaveBeenCalledTimes(1);
       expect(repository.succeed).toHaveBeenCalledWith(
         expect.objectContaining({ requestId }),
-        expect.objectContaining({ remainingMs: expect.any(Number) }),
+        expect.objectContaining({ remainingMs: expect.any(Number) as number }),
       );
       expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
     });
@@ -2289,7 +2289,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         changeReason: "simpler",
         changeReasonCustom: null,
       }),
-      expect.objectContaining({ remainingMs: expect.any(Number) }),
+      expect.objectContaining({ remainingMs: expect.any(Number) as number }),
     );
     // 空オブジェクトや履歴専用 marker ではないことを固定
     const succeedCalls = repository.succeed.mock.calls as unknown as Array<

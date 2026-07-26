@@ -112,7 +112,6 @@ export async function readResponseBodyWithByteCap(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value === undefined) continue;
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel();

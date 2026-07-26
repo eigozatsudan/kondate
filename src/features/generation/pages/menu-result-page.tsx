@@ -482,8 +482,7 @@ function HouseholdResultBody({
   const [shoppingError, setShoppingError] = useState<string | null>(null);
   const activeList = shoppingList.data ?? null;
   // D-C1: 新規作成は active list の safety gate と分離（履歴詳細と同契約）
-  const shoppingListBusy =
-    shoppingList.isFetching || !shoppingList.isSuccess || menuId === null;
+  const shoppingListBusy = shoppingList.isFetching || !shoppingList.isSuccess || menuId === null;
   const shoppingMutateBlocked = !actionsEnabled || shoppingGate.blocked || shoppingListBusy;
   const canCreateShoppingList = actionsEnabled && !shoppingListBusy && !createList.isPending;
 

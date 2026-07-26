@@ -1,6 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactElement } from "react";
+import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
@@ -11,10 +11,6 @@ import { createPlannerAttempt } from "../expired-pantry-checks";
 import { commonMainIngredients } from "../model/main-ingredient-options";
 import { buildPlannerSubmissionFieldErrors } from "../model/planner-wizard";
 import { PlannerWizard } from "./planner-wizard";
-
-function renderWithRouter(ui: ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>);
-}
 
 const emptyDraft: PlannerDraftInput = {
   mealType: null,
@@ -707,7 +703,7 @@ describe("PlannerWizard review step", () => {
   it("privacy未確認では説明ボタンを表示し、生成押下でダイアログへ誘導する", async () => {
     const user = userEvent.setup();
     const onOpenPrivacyNotice = vi.fn();
-    const onSubmit = vi.fn(async () => undefined);
+    const onSubmit = vi.fn(() => Promise.resolve());
     render(
       <Harness
         initialStep="review"

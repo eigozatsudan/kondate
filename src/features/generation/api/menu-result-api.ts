@@ -6,18 +6,16 @@ import { collectDislikePreferenceGaps } from "@shared/safety/preference-gaps";
 import { z } from "zod";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
-const preferenceSnapshotMembersSchema = z
-  .object({
-    memberPreferences: z
-      .array(
-        z.object({
-          anonymousMemberRef: z.string(),
-          dislikes: z.array(z.string()),
-        }),
-      )
-      .optional(),
-  })
-  .passthrough();
+const preferenceSnapshotMembersSchema = z.looseObject({
+  memberPreferences: z
+    .array(
+      z.object({
+        anonymousMemberRef: z.string(),
+        dislikes: z.array(z.string()),
+      }),
+    )
+    .optional(),
+});
 
 export type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
 

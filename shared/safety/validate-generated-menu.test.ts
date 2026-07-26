@@ -493,7 +493,7 @@ it("A-I7 treats dislikes as soft gaps while keeping portion/spice/ease hard", ()
     expect.objectContaining({
       kind: "dislike",
       dislikeToken: "ごはん",
-      message: expect.stringContaining("ごはん"),
+      message: expect.stringContaining("ごはん") as string,
     }),
   ]);
 });

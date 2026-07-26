@@ -296,10 +296,7 @@ export function underSixHardBeanAndNutContext(): GenerationContext {
 //
 export function makeMenuResultViewModel(
   overrides: Partial<
-    Pick<
-      MenuResultViewModel,
-      "targetMode" | "sourceSubmission" | "isFavorite" | "preferenceGaps"
-    >
+    Pick<MenuResultViewModel, "targetMode" | "sourceSubmission" | "isFavorite" | "preferenceGaps">
   > = {},
 ): MenuResultViewModel {
   const dish1Id = "50000000-0000-4000-8000-000000000001";

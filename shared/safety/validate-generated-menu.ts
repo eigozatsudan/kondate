@@ -488,10 +488,6 @@ function validateHouseholdMenu(
     /辛味なし|辛みなし|香辛料なし|スパイスなし|味付けなし|辛くしない|辛くなく|辛くない|辛いものを使わない|唐辛子なし|ピリ辛にしない|辛味を控|辛みを控|無香辛料|香辛料を使わない/u;
   const spiceMildPattern =
     /薄味|薄めの味|味を薄|薄味に|控えめ|味控えめ|塩分控えめ|甘口|少し甘め|あっさり|あっさりめ|ピリ辛を避/u;
-  const identityFoodText = generated.dishes
-    .flatMap((dish) => [dish.name, dish.description, ...dish.ingredients.map(({ name }) => name)])
-    .map(normalizeFoodText)
-    .join("\u0000");
   for (const preference of context.memberPreferences) {
     const adaptations = generated.adaptations.filter(
       (adaptation) => adaptation.anonymousMemberRef === preference.anonymousMemberRef,

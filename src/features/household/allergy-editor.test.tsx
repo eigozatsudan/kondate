@@ -111,9 +111,7 @@ it("places the selected allergy list above the filter searchbox", () => {
   );
   const selected = screen.getByRole("list", { name: "選択済みアレルギー" });
   const filter = screen.getByRole("searchbox", { name: "よくあるアレルギーを絞り込む" });
-  expect(
-    selected.compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+  expect(selected.compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it("finds a standard item by a reviewed alias", async () => {
