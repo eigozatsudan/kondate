@@ -58,6 +58,10 @@ export type PlannerWizardExtraProps = {
   usageRemaining?: number | null;
   /** short-window 残 0 時の再開時刻 ISO（未該当は null） */
   shortWindowRetryAt?: string | null;
+  /** 下書き autosave の短い状態表示（C-I9） */
+  autosaveState?: "idle" | "saving" | "saved" | "error";
+  /** autosave 失敗時の再試行（flush） */
+  onRetryAutosave?: () => void;
 };
 
 /**
@@ -128,6 +132,8 @@ export function PlannerWizard({
   onReset,
   usageRemaining = null,
   shortWindowRetryAt = null,
+  autosaveState = "idle",
+  onRetryAutosave,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLElement>(null);
@@ -176,6 +182,27 @@ export function PlannerWizard({
     />
   ) : null;
 
+  // 競合 chrome とは別に、debounce 保存の成否を短く出す（C-I9 / MVP §7.2）
+  const autosaveChrome =
+    autosaveState === "saving" ? (
+      <p role="status" className="type-small">
+        保存中…
+      </p>
+    ) : autosaveState === "saved" ? (
+      <p role="status" className="type-small">
+        保存しました
+      </p>
+    ) : autosaveState === "error" ? (
+      <div className="stack" role="alert">
+        <p className="error-message">下書きを保存できませんでした。</p>
+        {onRetryAutosave !== undefined && (
+          <button type="button" className="secondary-button min-h-11" onClick={onRetryAutosave}>
+            再試行
+          </button>
+        )}
+      </div>
+    ) : null;
+
   const resetChrome =
     onReset !== undefined ? (
       <div className="wizard-reset-row">
@@ -222,6 +249,7 @@ export function PlannerWizard({
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {autosaveChrome}
         {resetChrome}
         <MealStep
           value={draft.mealType}
@@ -250,6 +278,7 @@ export function PlannerWizard({
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {autosaveChrome}
         {resetChrome}
         <IngredientStep
           value={draft.mainIngredients}
@@ -276,6 +305,7 @@ export function PlannerWizard({
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {autosaveChrome}
         {resetChrome}
         <CuisineStep
           value={draft.cuisineGenre}
@@ -300,6 +330,7 @@ export function PlannerWizard({
     return (
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
+        {autosaveChrome}
         {resetChrome}
         <AudienceStep
           value={{
@@ -363,6 +394,7 @@ export function PlannerWizard({
   return (
     <main ref={containerRef} className="page-frame stack guided-planner-theme">
       {conflictChrome}
+      {autosaveChrome}
       {resetChrome}
       <ReviewStep
         value={draft}

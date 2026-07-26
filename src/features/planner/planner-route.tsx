@@ -20,6 +20,7 @@ import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
+import { saveGenerationTargetMode } from "@/features/generation/model/generation-target-mode";
 import { createPendingGeneration } from "@/features/generation/model/pending-generation";
 import { useGenerationRecovery } from "@/features/generation/hooks/use-generation-recovery";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
@@ -85,11 +86,11 @@ function sanitizeDraft(
 ): PlannerDraftInput {
   const eligibleIds = new Set(eligibleMemberIds);
   if (draft === null) {
-    const targetMemberIds = [...eligibleIds].slice(0, targetMemberLimit);
+    // 新規は対象未選択のまま。世帯+全員で埋めない（C-I4 / §8.3）
     return {
       ...emptyDraft,
-      targetMemberIds,
-      targetMode: targetMemberIds.length > 0 ? "household" : null,
+      targetMemberIds: [],
+      targetMode: null,
       servings: null,
     };
   }
@@ -203,6 +204,8 @@ export function PlannerRoutePage() {
         },
         userId,
       );
+      // GenerationStatusPanel の idea 緊急リンク抑制用（pending wire に mode が無い）
+      saveGenerationTargetMode(draft.targetMode === "idea" ? "idea" : "household");
       await recovery.startGeneration(pending);
       if (signal.aborted) return false;
       void navigate("/generation");
@@ -493,6 +496,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           ? usage.data.shortWindow.retryAt
           : null
       }
+      autosaveState={autosave.state}
+      onRetryAutosave={() => {
+        void autosave.flush().catch(() => {
+          // flush 失敗は state=error のまま。UI の再試行で再度呼べる
+        });
+      }}
       fieldErrors={fieldErrors}
       onDraftChange={setValue}
       onStepChange={setStep}

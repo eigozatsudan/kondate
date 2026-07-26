@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { memberSafetyText, type PlannerSafetyMember } from "./planner-safety-member";
 
 export function CurrentSafetySummary({ members }: { members: readonly PlannerSafetyMember[] }) {
@@ -11,10 +12,10 @@ export function CurrentSafetySummary({ members }: { members: readonly PlannerSaf
           {member.blockedReason !== null && <p role="alert">{member.blockedReason}</p>}
         </div>
       ))}
-      {/* ナビ先は設定画面。見た目は実体のあるボタン（secondary）にする */}
-      <a className="secondary-button min-h-11" href="/settings">
+      {/* SPA 内遷移で autosave flush のチャンスを残す（C-I2） */}
+      <Link className="secondary-button min-h-11" to="/settings">
         家族設定を変更
-      </a>
+      </Link>
       <p>
         AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
       </p>

@@ -1,8 +1,13 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router";
 import { makeValidatedMenu } from "@shared/testing/factories";
 import type { ValidatedMenu } from "@shared/contracts/generation";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
+
+function renderWithRouter(ui: React.ReactNode) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 const useQueryMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
@@ -55,7 +60,7 @@ it("下書きがない直接アクセスでは候補を取得せず献立画面�
       isError: false,
     });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
 
   expect(screen.getByRole("alert")).toHaveTextContent("献立条件の下書きがありません");
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
@@ -85,7 +90,7 @@ it("下書きなしで対象家族が0人の場合は緊急献立APIを呼ばず
       isError: false,
     });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
 
   // 2回目の useQuery 呼び出し（緊急献立候補クエリ）が enabled: false のまま、
   // 対象家族0人であることを理由に一切APIを呼ばないことを固定する。
@@ -132,7 +137,7 @@ it("idea下書きでは緊急献立APIを呼ばずモード説明を表示する
       isError: false,
     });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
 
   expect(useQueryMock).toHaveBeenCalledTimes(3);
   expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
@@ -206,7 +211,7 @@ it("対象未選択の下書きでは後から登録した有効な家族だけ�
     });
   getEmergencyMenusMock.mockResolvedValue({ candidates: [] });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
 
   const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
     enabled: boolean;
@@ -269,7 +274,7 @@ it("registeredは許可し、対象外食present/unconfirmedは未選択下書�
       isError: false,
     });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
   const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
     queryFn: () => Promise<unknown>;
   };
@@ -317,7 +322,7 @@ it("未選択下書きの有効家族は並び順を保って20人までに制�
       isError: false,
     });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
   const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
     queryFn: () => Promise<unknown>;
   };
@@ -377,7 +382,7 @@ it("household下書きは選択済みIDと現在有効な家族の積集合だ�
       isError: false,
     });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
   const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
     queryFn: () => Promise<unknown>;
   };
@@ -423,7 +428,7 @@ it("household下書きの選択家族が無効になっても別の家族を補�
       isError: false,
     });
 
-  render(<EmergencyMenuPage />);
+  renderWithRouter(<EmergencyMenuPage />);
 
   expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
   // C-I6: 名簿上は適格メンバーがいるが選択が全滅 → 未登録文言は出さない
@@ -434,7 +439,7 @@ it("household下書きの選択家族が無効になっても別の家族を補�
 });
 
 it("states that no candidate exists without suggesting weaker safety conditions", () => {
-  render(
+  renderWithRouter(
     <EmergencyMenuContent
       loading={false}
       error={null}
@@ -465,7 +470,7 @@ it.each<[boolean, string | null, EmergencyMenusData | null]>([
     },
   ],
 ])("always shows the planner return link", (loading, error, response) => {
-  render(<EmergencyMenuContent loading={loading} error={error} response={response} />);
+  renderWithRouter(<EmergencyMenuContent loading={loading} error={error} response={response} />);
 
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
 });
@@ -475,7 +480,7 @@ it.each([
   [false, "緊急献立を読み込めませんでした"],
 ] as const)("hides a prior candidate while refetching or after an error", (loading, error) => {
   const menu = makeValidatedMenu();
-  render(
+  renderWithRouter(
     <EmergencyMenuContent
       loading={loading}
       error={error}
@@ -560,7 +565,7 @@ it("renders complete human-labelled cooking instructions without raw identifiers
       },
     ],
   };
-  const { container } = render(
+  const { container } = renderWithRouter(
     <EmergencyMenuContent
       loading={false}
       error={null}

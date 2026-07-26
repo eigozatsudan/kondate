@@ -148,8 +148,13 @@ export function ReviewStep({
   // Plan 2: AI 送信前のクライアント医療境界。サーバー preflight と同一 detector を使う。
   const medicalBlocked =
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
-  // privacy 未確認だけでは disabled にしない（押下で案内を出す）。医療・pantry・保存中のみ止める。
-  const generateDisabled = disabled || hasUnavailablePantrySelections || medicalBlocked;
+  // privacy 未確認だけでは disabled にしない（押下で案内を出す）。
+  // 成功残 0 のときは主 CTA を止める（C-I12）。未取得 (null) では止めない。
+  const generateDisabled =
+    disabled ||
+    hasUnavailablePantrySelections ||
+    medicalBlocked ||
+    usageRemaining === 0;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };
@@ -434,10 +439,16 @@ export function ReviewStep({
         </p>
       )}
       {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・短時間枠の再開時刻を平易表示 */}
-      {usageRemaining !== null && <p role="status">本日あと{usageRemaining}回作成できます</p>}
+      {usageRemaining !== null && (
+        <p role="status">
+          {usageRemaining === 0
+            ? "本日の作成回数の上限に達しました。明日またお試しください。"
+            : `本日あと${String(usageRemaining)}回作成できます`}
+        </p>
+      )}
       {shortWindowRetryAt !== null && (
         <p role="status">
-          10分間の通信試行上限に達しました。
+          しばらく続けて作成を試したため、少し待つ必要があります。
           {new Intl.DateTimeFormat("ja-JP", {
             timeZone: "Asia/Tokyo",
             dateStyle: "short",

@@ -177,6 +177,27 @@ export function IngredientStep({
                   setLocalError("メイン食材は1件80文字までです。");
                 }
               }}
+              onKeyDown={(event) => {
+                // スマホ確定キー / Enter でも「追加」と同じ経路（C-I5）
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                if (disabled) return;
+                const result = tryAddIngredient(ingredient);
+                if (result === "too_long" || result === "at_limit") {
+                  return;
+                }
+                if (result === "duplicate_or_empty") {
+                  const trimmed = normalizeMainIngredient(ingredient);
+                  setLocalError(
+                    trimmed === ""
+                      ? "食材名を入力してから追加してください。"
+                      : "同じ食材はすでに追加されています。",
+                  );
+                  return;
+                }
+                setLocalError(null);
+                setIngredient("");
+              }}
             />
           </label>
           <button
@@ -184,9 +205,17 @@ export function IngredientStep({
             type="button"
             disabled={disabled}
             onClick={() => {
-              // 既存挙動: 空・重複はエラーなしで入力クリア。長さ超過・上限はエラーを出して入力を残す。
               const result = tryAddIngredient(ingredient);
               if (result === "too_long" || result === "at_limit") {
+                return;
+              }
+              if (result === "duplicate_or_empty") {
+                const trimmed = normalizeMainIngredient(ingredient);
+                setLocalError(
+                  trimmed === ""
+                    ? "食材名を入力してから追加してください。"
+                    : "同じ食材はすでに追加されています。",
+                );
                 return;
               }
               setLocalError(null);

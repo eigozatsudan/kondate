@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
 import { useAuth } from "@/features/auth/use-auth";
 import { listHouseholdMembers, type HouseholdMemberRow } from "@/features/household/household-api";
@@ -172,9 +173,9 @@ export function EmergencyMenuPage() {
   if (draftQuery.isSuccess && draftQuery.data === null) {
     return (
       <main className="page-frame stack emergency-menu-page">
-        <a className="emergency-back-link" href="/planner" aria-label="献立画面へ戻る">
+        <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
           ← 献立画面へ戻る
-        </a>
+        </Link>
         <h1>15分緊急献立</h1>
         <p role="alert">献立条件の下書きがありません。献立画面で条件を保存してください。</p>
       </main>
@@ -220,12 +221,12 @@ export function EmergencyMenuPage() {
               };
     return (
       <main className="page-frame stack emergency-menu-page">
-        <a className="emergency-back-link" href="/planner" aria-label="献立画面へ戻る">
+        <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
           ← 献立画面へ戻る
-        </a>
+        </Link>
         <h1>15分緊急献立</h1>
         <p role="alert">{emptyState.message}</p>
-        <a href={emptyState.href}>{emptyState.linkLabel}</a>
+        <Link to={emptyState.href}>{emptyState.linkLabel}</Link>
       </main>
     );
   }
@@ -250,9 +251,9 @@ export function EmergencyMenuContent({
   const visibleResponse = loading || error !== null ? null : response;
   return (
     <main className="page-frame stack emergency-menu-page">
-      <a className="emergency-back-link" href="/planner" aria-label="献立画面へ戻る">
+      <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
         ← 献立画面へ戻る
-      </a>
+      </Link>
       <div>
         <p className="eyebrow">AIを使わない</p>
         <h1>15分緊急献立</h1>
