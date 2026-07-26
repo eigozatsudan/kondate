@@ -162,6 +162,8 @@ export function ReviewStep({
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
   // privacy 未確認だけでは disabled にしない（押下で案内を出す）。
   // C-I12 residual: 成功残 0 / attempt 残 0 / global 不可で主 CTA を止める。
+  // I2: shortWindowRetryAt は route が remaining===0 のときだけ渡す active blocker。
+  // 端末時計での再有効化はせず、usage 再取得で retryAt が消えたときだけ有効に戻す。
   // null/未取得では誤って止めない。
   const generateDisabled =
     disabled ||
@@ -169,7 +171,8 @@ export function ReviewStep({
     medicalBlocked ||
     usageRemaining === 0 ||
     attemptsRemaining === 0 ||
-    globalAvailable === false;
+    globalAvailable === false ||
+    shortWindowRetryAt !== null;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };

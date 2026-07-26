@@ -186,7 +186,7 @@ function makeRepository() {
       };
       return Promise.resolve(current);
     }),
-    succeed: vi.fn(() => {
+    succeed: vi.fn<GenerationDependencies["repository"]["succeed"]>(() => {
       current = record("succeeded");
       return Promise.resolve(current);
     }),
@@ -1222,7 +1222,6 @@ describe("runGeneration", () => {
 
     it("aborts at succeedOrConflict entry when deadline elapses after the outer post-provider check", async () => {
       // A-I9 防御: outer abort 通過直後〜succeed 直前で予算超過しても succeed しない。
-      // repository.succeed 実行中（SQL 途中）の abort は再設計なしでは不可（report に記載）。
       const repository = makeRepository();
       let nowMs = 0;
       let postProviderClockReads = 0;
@@ -1259,6 +1258,50 @@ describe("runGeneration", () => {
       expect(repository.succeed).not.toHaveBeenCalled();
       expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    });
+
+    it("I1: mid-finalizer timeout does not return succeeded", async () => {
+      // 入口では残 deadline > 0 だが、succeed 実行中に予算を使い切る経路。
+      // repository は remainingMs を受け取り、DB 側 timeout として reject する。
+      const { GenerationFinalizeTimeoutError } = await import("./generation-repository.js");
+      type SucceedArgs = Parameters<GenerationDependencies["repository"]["succeed"]>;
+      const repository = makeRepository();
+      let nowMs = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
+        nowMs = 49_000;
+        return Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        });
+      });
+      repository.succeed.mockImplementation(async (...args: SucceedArgs) => {
+        const options = args[1];
+        expect(options.remainingMs).toBeGreaterThan(0);
+        // finalizer 中に残予算を超える遅延を模擬（成功レコードは返さない）
+        nowMs += options.remainingMs + 1;
+        throw new GenerationFinalizeTimeoutError();
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => nowMs,
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.succeed).toHaveBeenCalledTimes(1);
+      expect(repository.succeed).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId }),
+        expect.objectContaining({ remainingMs: expect.any(Number) }),
+      );
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
     });
   });
 
@@ -2246,10 +2289,11 @@ describe("runGeneration regeneration duplicate gating", () => {
         changeReason: "simpler",
         changeReasonCustom: null,
       }),
+      expect.objectContaining({ remainingMs: expect.any(Number) }),
     );
     // 空オブジェクトや履歴専用 marker ではないことを固定
     const succeedCalls = repository.succeed.mock.calls as unknown as Array<
-      [{ safetySnapshot: unknown }]
+      [{ safetySnapshot: unknown }, { remainingMs: number }]
     >;
     expect(succeedCalls[0]?.[0]?.safetySnapshot).toEqual(currentSafetySnapshot);
     expect(freshMenu.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(

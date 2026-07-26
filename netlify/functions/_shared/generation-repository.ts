@@ -53,8 +53,28 @@ export type GenerationSuccessInput =
       targetMembers: readonly [];
     });
 
+/** succeed に渡す残 deadline（ms）。DB statement_timeout と入口ゲートの正本。 */
+export type GenerationSucceedOptions = {
+  remainingMs: number;
+};
+
+/**
+ * finalize が statement_timeout / cancel で中断されたとき。
+ * succeedOrConflict はこれを generation_timeout へ写し、成功保存として扱わない。
+ */
+export class GenerationFinalizeTimeoutError extends Error {
+  readonly code = "generation_timeout" as const;
+  constructor() {
+    super("generation_timeout");
+    this.name = "GenerationFinalizeTimeoutError";
+  }
+}
+
 export type GenerationSuccessWriter = {
-  succeed: (input: GenerationSuccessInput) => Promise<QuotaRequestRecord>;
+  succeed: (
+    input: GenerationSuccessInput,
+    options: GenerationSucceedOptions,
+  ) => Promise<QuotaRequestRecord>;
 };
 
 // 型定義に使う const を実行時参照として保持し、tree-shake でも消えないようにする
@@ -103,6 +123,18 @@ function isPostgrestLikeError(error: unknown): error is PostgrestLikeError {
   return typeof error === "object" && error !== null;
 }
 
+function isStatementTimeoutError(error: unknown): boolean {
+  if (!isPostgrestLikeError(error)) return false;
+  // Postgres query_canceled と wrapper の明示 raise、PostgREST 経由の文言ゆれを拾う
+  if (error.code === "57014") return true;
+  const message = error.message ?? "";
+  return (
+    message === "generation_timeout" ||
+    message.includes("statement timeout") ||
+    message.includes("canceling statement due to statement timeout")
+  );
+}
+
 async function rpc<Name extends PublicFunctionName>(
   name: Name,
   parameters: PublicFunctions[Name]["Args"],
@@ -112,6 +144,11 @@ async function rpc<Name extends PublicFunctionName>(
     if (error !== null) throw error;
     return data;
   } catch (error: unknown) {
+    // finalizer の statement_timeout / cancel。成功保存として確定させない。
+    if (error instanceof GenerationFinalizeTimeoutError) throw error;
+    if (isStatementTimeoutError(error)) {
+      throw new GenerationFinalizeTimeoutError();
+    }
     // 同一冪等キーで異なるコマンド本文は非再試行の 409 へ固定する
     if (
       isPostgrestLikeError(error) &&
@@ -291,10 +328,17 @@ export function createGenerationRepository(user: AuthenticatedUser) {
         }),
       );
     },
-    async succeed(input: GenerationSuccessInput) {
+    async succeed(input: GenerationSuccessInput, options: GenerationSucceedOptions) {
+      // 残 deadline を同一 RPC セッションの statement_timeout に載せ、背景継続させない。
+      // remainingMs<=0 は入口ゲート漏れの防御として即 timeout（DB を叩かない）。
+      const timeoutMs = Math.floor(options.remainingMs);
+      if (timeoutMs <= 0) {
+        throw new GenerationFinalizeTimeoutError();
+      }
       // idea は null version / 空 target をそのまま渡し、サム値へ置換しない
       return requestPayloadSchema.parse(
-        await rpc("finalize_ai_generation_success", {
+        await rpc("finalize_ai_generation_success_deadline_bounded", {
+          p_timeout_ms: timeoutMs,
           p_request_id: input.requestId,
           p_menu: jsonValueSchema.parse(input.menu),
           p_preference_snapshot: jsonValueSchema.parse(input.preferenceSnapshot),

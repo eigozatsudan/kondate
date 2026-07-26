@@ -953,6 +953,25 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeEnabled();
   });
 
+  it("I2: shortWindow 残 0（retryAt あり）では成功・attempt 残があっても主 CTA を止める", () => {
+    // shortWindowRetryAt は planner-route が remaining===0 のときだけ渡す。
+    // 端末時計での再有効化はせず、usage 再取得で retryAt が消えたときだけ有効に戻る。
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={5}
+        globalAvailable={true}
+        shortWindowRetryAt="2026-07-25T05:10:00.000Z"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u),
+    ).toBeVisible();
+  });
+
   it("idea の review では緊急献立ボタンの代わりに切替案内を出す", () => {
     render(
       <Harness

@@ -35,6 +35,7 @@ import {
 import { resolveGenerationIntegrityContext } from "./generation-integrity-context.js";
 import {
   createGenerationRepository,
+  GenerationFinalizeTimeoutError,
   type AuthenticatedUser,
   type GenerationRepository,
   type QuotaRequestRecord,
@@ -750,15 +751,15 @@ export async function runGeneration(
   };
 
   // succeed は SQL が constraint_conflict を返す正規経路と、raise を 409 に写した防御経路の両方を扱う。
-  // A-I9: outer post-provider 検査と入口の二重ゲート。succeed 実行中（SQL 途中）の abort は
-  // 原子 finalize の再設計なしでは不可（入口で残り予算を再確認する防御に留める）。
+  // A-I9 / I1: 入口ゲートに加え、残 deadline を repository.succeed へ渡し
+  // SET LOCAL statement_timeout で finalize 自体を中断する（背景継続させない）。
   const succeedOrConflict = async (
     input: Parameters<GenerationRepository["succeed"]>[0],
   ): Promise<GenerationStatusData> => {
     const timedOut = await abortIfDeadlineExceeded();
     if (timedOut !== null) return timedOut;
     try {
-      await deps.repository.succeed(input);
+      await deps.repository.succeed(input, { remainingMs: remainingMs() });
       const status = await hydrate();
       // A-I8: SQL 正規の constraint_conflict / failed を常に succeeded とログしない。
       // hydrate 後の status を ops ログの errorCode にする。
@@ -771,6 +772,10 @@ export async function runGeneration(
       }
       return status;
     } catch (error) {
+      // finalizer 中の statement_timeout / cancel → 成功扱いにせず generation_timeout
+      if (error instanceof GenerationFinalizeTimeoutError) {
+        return await fail("generation_timeout", null);
+      }
       if (isCurrentSafetyChangedError(error)) {
         return await conflict([currentSafetyChangedConflict()]);
       }

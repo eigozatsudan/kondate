@@ -128,9 +128,42 @@ function spanCrossesSeparator(span: TextSpan, separatorOffsets: ReadonlySet<numb
 }
 
 /**
+ * compact 上の offset がトークン境界か（区切り直後・文字列端・先頭）。
+ * マルチワード食材（カシュー ナッツ）は境界に揃った連結を許可し、
+ * 中途半端な跨ぎ（いか|にんじん → かに）だけを拒否する。
+ */
+function isTokenBoundary(
+  offset: number,
+  compactLength: number,
+  separatorOffsets: ReadonlySet<number>,
+): boolean {
+  return offset === 0 || offset === compactLength || separatorOffsets.has(offset);
+}
+
+/**
+ * 区切りを跨ぐがトークン途中から始まる／途中で終わる一致（偶然の合成）か。
+ * 完全トークン列の連結（カシュー+ナッツ）は false。意図的1文字分割（か、に）は residual。
+ */
+function isAccidentalSeparatorCrossingMatch(
+  span: TextSpan,
+  compactLength: number,
+  separatorOffsets: ReadonlySet<number>,
+): boolean {
+  if (!spanCrossesSeparator(span, separatorOffsets)) {
+    return false;
+  }
+  return (
+    !isTokenBoundary(span.start, compactLength, separatorOffsets) ||
+    !isTokenBoundary(span.end, compactLength, separatorOffsets)
+  );
+}
+
+/**
  * アレルゲン alias が献立テキストに含まれるかを判定する。
  * 素の includes だと「乳⊂豆乳」「もも⊂鶏もも」「かに⊂やわらかに」などの誤検知が起きるため、
  * 区切りを跨がない確認済み文脈内の一致だけを除外し、日本語の複合食材は検出側へ倒す。
+ * I4: 正一致でもトークン途中の区切り跨ぎ（いか、にんじん→かに）は不一致とする。
+ * マルチワード正規化（カシュー ナッツ）はトークン境界揃えで維持する。
  */
 export function foodTextContainsAlias(sourceText: string, alias: string): boolean {
   const source = normalizeFoodTextForMatching(sourceText);
@@ -149,6 +182,7 @@ export function foodTextContainsAlias(sourceText: string, alias: string): boolea
   }
   return findTextSpans(source.compact, needle).some(
     (match) =>
+      !isAccidentalSeparatorCrossingMatch(match, source.compact.length, source.separatorOffsets) &&
       !excludedSpans.some((excluded) => excluded.start <= match.start && match.end <= excluded.end),
   );
 }

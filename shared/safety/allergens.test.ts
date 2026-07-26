@@ -77,6 +77,23 @@ describe("foodTextContainsAlias", () => {
   it("does not match もち in an onomatopoeic texture phrase", () => {
     expect(foodTextContainsAlias("もちもち食感のうどん", "もち")).toBe(false);
   });
+
+  it("I4: does not match alias that only appears by mid-token separator crossing", () => {
+    // compact 後に「いかにんじん」となりトークン途中で「かに」が合成されるのを拒否する
+    expect(foodTextContainsAlias("いか、にんじんを炒める", "かに")).toBe(false);
+  });
+
+  it("I4: still matches real crab dishes after separator fix", () => {
+    expect(foodTextContainsAlias("かに玉", "かに")).toBe(true);
+    expect(foodTextContainsAlias("茹でかに", "かに")).toBe(true);
+    expect(foodTextContainsAlias("かに、にんじんを炒める", "かに")).toBe(true);
+  });
+
+  it("I4: still matches multi-word nut names that intentionally contain spaces", () => {
+    // カシュー ナッツ → カシューナッツ は完全トークン列の連結として許可する
+    expect(foodTextContainsAlias("カシュー ナッツ", "カシューナッツ")).toBe(true);
+    expect(foodTextContainsAlias("マカダミア ナッツ", "マカダミアナッツ")).toBe(true);
+  });
 });
 
 const member = {

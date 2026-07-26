@@ -689,6 +689,27 @@ it("accepts real salmon after a particle in dish description", () => {
   expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
 });
 
+// I3: 酒・色名など非食材文脈は狭く拒否（先行ひらがな一律拒否は再導入しない）
+it.each([
+  ["鮭", "おさけに合う一品"],
+  ["さけ", "おさけに合う一品"],
+  ["鮭", "サーモンピンクの彩り"],
+  ["サーモン", "サーモンピンクの彩り"],
+] as const)("I3: does not count non-food salmon context from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: baseMenu.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: generated } : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["main_ingredient_missing"]);
+});
+
 it.each([
   ["鮭", "鯖"],
   ["鮭フレーク", "サーモン"],

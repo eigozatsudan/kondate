@@ -56,16 +56,33 @@ const reviewedMainIngredientNonFoodContext = /^(?:の)?(?:風|香り|ふれー�
 const reviewedKanaMainIngredientAliases = new Set(["さけ", "しゃけ"].map(normalizeFoodText));
 // 動詞連続（さける等）のみ除外する。先行ひらがなは「焼きさけ」「素材はさけ」まで落とすため使わない。
 const reviewedKanaWordContinuation = /^(?:る|ない|ます|ました|て|た|れば|よう)/u;
+// I3: 酒「おさけ」と色名「サーモンピンク」だけを狭く拒否する（一律左境界拒否はしない）
+const reviewedSakeBeveragePrefix = normalizeFoodText("お");
+const reviewedSalmonColorSuffix = /^(?:ぴんく|色)/u;
+const reviewedSakeCandidate = normalizeFoodText("さけ");
+const reviewedSalmonCandidate = normalizeFoodText("サーモン");
 
 function containsReviewedMainIngredientOccurrence(sourceText: string, candidate: string): boolean {
   let from = 0;
   while (from <= sourceText.length - candidate.length) {
     const start = sourceText.indexOf(candidate, from);
     if (start === -1) return false;
+    const prefix = sourceText.slice(0, start);
     const suffix = sourceText.slice(start + candidate.length);
     const embeddedKanaWord =
       reviewedKanaMainIngredientAliases.has(candidate) && reviewedKanaWordContinuation.test(suffix);
-    if (!reviewedMainIngredientNonFoodContext.test(suffix) && !embeddedKanaWord) {
+    // 「おさけ」= 酒。candidate さけ の直前が お のときだけ非食材扱い。
+    const sakeBeverage =
+      candidate === reviewedSakeCandidate && prefix.endsWith(reviewedSakeBeveragePrefix);
+    // 「サーモンピンク」等。candidate さーもん の直後が ぴんく / 色。
+    const salmonColorName =
+      candidate === reviewedSalmonCandidate && reviewedSalmonColorSuffix.test(suffix);
+    if (
+      !reviewedMainIngredientNonFoodContext.test(suffix) &&
+      !embeddedKanaWord &&
+      !sakeBeverage &&
+      !salmonColorName
+    ) {
       return true;
     }
     from = start + 1;

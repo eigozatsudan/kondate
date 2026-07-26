@@ -265,10 +265,10 @@ const successCases: readonly SuccessCase[] = [
   },
   {
     name: "succeed",
-    rpcName: "finalize_ai_generation_success",
-    args: succeedArgs,
+    rpcName: "finalize_ai_generation_success_deadline_bounded",
+    args: { p_timeout_ms: 2_000, ...succeedArgs },
     data: privateRecord,
-    invoke: (repository) => repository.succeed(succeedInput),
+    invoke: (repository) => repository.succeed(succeedInput, { remainingMs: 2_000 }),
     expected: expectedPublicRecord,
   },
   {
@@ -393,7 +393,7 @@ describe("createGenerationRepository", () => {
       const repository = createGenerationRepository(user);
 
       try {
-        await repository.succeed(succeedInput);
+        await repository.succeed(succeedInput, { remainingMs: 2_000 });
         throw new Error("Expected repository.succeed to reject");
       } catch (error: unknown) {
         expect(error).toBeInstanceOf(HttpError);
@@ -405,6 +405,32 @@ describe("createGenerationRepository", () => {
       }
     },
   );
+
+  it("I1: maps statement_timeout (57014) from succeed to GenerationFinalizeTimeoutError", async () => {
+    const { GenerationFinalizeTimeoutError } = await import("./generation-repository.js");
+    const databaseError = new PostgrestError({
+      message: "canceling statement due to statement timeout",
+      details: "private timeout detail",
+      hint: "private timeout hint",
+      code: "57014",
+    });
+    rpcMock.mockResolvedValueOnce({ data: null, error: databaseError });
+    const repository = createGenerationRepository(user);
+
+    await expect(repository.succeed(succeedInput, { remainingMs: 500 })).rejects.toBeInstanceOf(
+      GenerationFinalizeTimeoutError,
+    );
+  });
+
+  it("I1: rejects succeed immediately when remainingMs is exhausted", async () => {
+    const { GenerationFinalizeTimeoutError } = await import("./generation-repository.js");
+    const repository = createGenerationRepository(user);
+
+    await expect(repository.succeed(succeedInput, { remainingMs: 0 })).rejects.toBeInstanceOf(
+      GenerationFinalizeTimeoutError,
+    );
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
 
   it("sanitizes a rejected RPC promise", async () => {
     rpcMock.mockRejectedValueOnce(new Error("private rejection detail"));
