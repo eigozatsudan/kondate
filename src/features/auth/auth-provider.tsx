@@ -43,7 +43,11 @@ export function AuthProvider({
   const [loaded, setLoaded] = useState(false);
   const refreshSession = useCallback(async (): Promise<void> => {
     const { data, error } = await client.auth.getSession();
-    setSession(error === null ? data.session : null);
+    // B-I6: getSession の一時エラーで直前 session を捨てない。
+    // クリアは error === null かつ session === null、または SIGNED_OUT のみ。
+    if (error === null) {
+      setSession(data.session);
+    }
     setLoaded(true);
   }, [client]);
 

@@ -467,29 +467,31 @@ it("waits for the winning tab when an in-flight recovery consumes the claim", as
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
-it.each([new TypeError("network unavailable"), new ContinuationHttpError(503)])(
-  "returns an error when the owned claim fails without a competing winner",
-  async (claimError) => {
-    const storage = new MapStorage();
-    const claim = vi.fn().mockRejectedValue(claimError);
-    const api = continuationApiMock({ claim });
-    const gateway = createAuthGateway(
-      authClientMock() as unknown as BrowserSupabaseClient,
-      api,
-      storage,
-      gatewayDeps(),
-    );
-    const flow = await createAuthFlow("/onboarding", api, storage, {
-      ...fixedFlowDeps,
-      now: () => new Date(),
-    });
-    markAuthContinuationCallbackOwner(flow.id, storage);
+it.each([
+  new TypeError("network unavailable"),
+  new ContinuationHttpError(503),
+  new ContinuationHttpError(429),
+])("keeps the flow retryable when claim fails with network/429/5xx", async (claimError) => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockRejectedValue(claimError);
+  const api = continuationApiMock({ claim });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  markAuthContinuationCallbackOwner(flow.id, storage);
 
-    await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
-      kind: "error",
-      code: "unbound_callback",
-      returnTo: "/onboarding",
-    });
-    expect(readAuthFlow(flow.id, storage)).toEqual(flow);
-  },
-);
+  // B-I4: 一時失敗は terminal error にせず awaiting のまま secret を残す
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+});
