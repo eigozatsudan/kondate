@@ -290,6 +290,21 @@ export function MenuResult({
       <p className="mt-2 text-lg font-semibold">
         食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
       </p>
+      {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
+      {result.preferenceGaps.length > 0 && (
+        <section
+          className="mt-4 rounded-xl border border-amber-700 bg-amber-50 p-3 stack"
+          role="status"
+          aria-label="希望条件の注意"
+        >
+          <strong className="text-sm">苦手の希望について</strong>
+          <ul className="list-disc pl-5 text-sm">
+            {result.preferenceGaps.map((gap) => (
+              <li key={`${gap.anonymousMemberRef}:${gap.dislikeToken}`}>{gap.message}</li>
+            ))}
+          </ul>
+        </section>
+      )}
       <div role="status" aria-live="polite" className="sr-only">
         {liveMessage}
       </div>

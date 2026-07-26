@@ -4,6 +4,7 @@ import {
   type MenuLabelConfirmation,
   type MenuValidationIssue,
   type MenuValidationResult,
+  type PreferenceGapNote,
   generatedMenuSchema,
   validatedMenuSchema,
 } from "../contracts/generation.js";
@@ -18,6 +19,7 @@ import type {
 } from "./generation-context.js";
 import { createIdeaSafetyFingerprint } from "./idea-fingerprint.js";
 import { detectUnsupportedMedicalRequest } from "./medical-scope.js";
+import { collectDislikePreferenceGaps } from "./preference-gaps.js";
 
 type ConfirmationIdentity = Pick<
   GeneratedLabelConfirmation,
@@ -218,6 +220,7 @@ function finalizeValidated(
   generated: GeneratedMenu,
   labelConfirmations: readonly MenuLabelConfirmation[],
   safetyFingerprint: string,
+  preferenceGaps: readonly PreferenceGapNote[] = [],
 ): MenuValidationResult {
   const validated = validatedMenuSchema.safeParse({
     ...generated,
@@ -238,6 +241,7 @@ function finalizeValidated(
     menu: validated.data,
     labelConfirmations: validated.data.labelConfirmations,
     safetyFingerprint,
+    preferenceGaps,
   };
 }
 
@@ -447,16 +451,8 @@ function validateHouseholdMenu(
     const easeMatches = preference.easePreferences.every((ease) =>
       actions.some((action) => action.kind === easeAction[ease]),
     );
-    const dislikeUsed = preference.dislikes.some((dislike) =>
-      identityFoodText.includes(normalizeFoodText(dislike)),
-    );
-    if (
-      adaptations.length === 0 ||
-      !portionMatches ||
-      !spiceMatches ||
-      !easeMatches ||
-      dislikeUsed
-    ) {
+    // A-I7 方針: 量・辛さ・食べやすさは hard。苦手は soft gap（結果画面のみ表示）。
+    if (adaptations.length === 0 || !portionMatches || !spiceMatches || !easeMatches) {
       issues.push({
         code: "member_preference_mismatch",
         path: `memberPreferences.${preference.anonymousMemberRef}`,
@@ -489,6 +485,9 @@ function validateHouseholdMenu(
   }
   if (issues.length > 0) return { ok: false, issues };
 
+  // hard を通過したあとだけ soft gap を集める（失敗時は結果画面に出ない）
+  const preferenceGaps = collectDislikePreferenceGaps(generated, context.memberPreferences);
+
   const canonicalLabelConfirmations: readonly MenuLabelConfirmation[] =
     allergenResult.labelConfirmations.map((item) => ({
       ...item,
@@ -500,6 +499,7 @@ function validateHouseholdMenu(
     generated,
     canonicalLabelConfirmations,
     createCurrentSafetyFingerprint(context.safety),
+    preferenceGaps,
   );
 }
 

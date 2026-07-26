@@ -100,7 +100,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   );
   const query = useQuery({
     queryKey,
-    queryFn: () => getMenuResult(menuId ?? "invalid"),
+    queryFn: () => getMenuResult(menuId ?? "invalid", { includePreferenceGaps: true }),
     enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
     staleTime: 30_000,
   });

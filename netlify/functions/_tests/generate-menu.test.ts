@@ -433,6 +433,7 @@ describe("POST /api/generations/menu", () => {
       menu: makeValidatedMenu(),
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
+      preferenceGaps: []
     });
     vi.mocked(createGenerationDeps).mockReturnValue(deps);
     vi.mocked(runGeneration).mockImplementation(actualService.runGeneration);

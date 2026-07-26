@@ -508,12 +508,20 @@ export type MenuLabelConfirmation = z.infer<typeof menuLabelConfirmationSchema>;
 export type ValidatedMenu = z.infer<typeof validatedMenuSchema>;
 export type GeneratedMenu = z.infer<typeof generatedMenuSchema>;
 export type MenuValidationIssue = { code: string; path: string; message: string };
+/** A-I7: 苦手 soft gap。結果画面表示用。永続化しない。 */
+export type PreferenceGapNote = {
+  kind: "dislike";
+  anonymousMemberRef: string;
+  message: string;
+  dislikeToken: string;
+};
 export type MenuValidationResult =
   | {
       ok: true;
       menu: ValidatedMenu;
       labelConfirmations: readonly MenuLabelConfirmation[];
       safetyFingerprint: string;
+      preferenceGaps: readonly PreferenceGapNote[];
     }
   | { ok: false; issues: readonly MenuValidationIssue[] };
 

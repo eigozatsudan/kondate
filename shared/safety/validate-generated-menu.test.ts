@@ -464,9 +464,37 @@ it("requires exact member adaptations and enforces member preferences", () => {
     ],
   });
 
+  // adaptations 欠落は hard。苦手ごはんは soft のため codes には出ない。
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu({ adaptations: [] }), context), [
     "target_member_mismatch",
     "member_preference_mismatch",
+  ]);
+});
+
+it("A-I7 treats dislikes as soft gaps while keeping portion/spice/ease hard", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  // portion/spice/ease を満たす adaptation 本文と safetyActions を用意し、dislikes だけ unmet にする
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "regular",
+        spiceLevel: "regular",
+        easePreferences: [],
+        dislikes: ["ごはん"],
+      },
+    ],
+  });
+  const result = validateGeneratedMenu(baseMenu, context);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.preferenceGaps).toEqual([
+    expect.objectContaining({
+      kind: "dislike",
+      dislikeToken: "ごはん",
+      message: expect.stringContaining("ごはん"),
+    }),
   ]);
 });
 

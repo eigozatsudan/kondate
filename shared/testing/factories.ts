@@ -296,7 +296,10 @@ export function underSixHardBeanAndNutContext(): GenerationContext {
 //
 export function makeMenuResultViewModel(
   overrides: Partial<
-    Pick<MenuResultViewModel, "targetMode" | "sourceSubmission" | "isFavorite">
+    Pick<
+      MenuResultViewModel,
+      "targetMode" | "sourceSubmission" | "isFavorite" | "preferenceGaps"
+    >
   > = {},
 ): MenuResultViewModel {
   const dish1Id = "50000000-0000-4000-8000-000000000001";
@@ -421,6 +424,7 @@ export function makeMenuResultViewModel(
     sourceSubmission: null,
     // お気に入り未設定が大半のケースなので既定 false。hydrate テストだけ true を渡す。
     isFavorite: false,
+    preferenceGaps: [],
     menu,
     memberLabels: { member_1: "子ども", member_2: "大人" },
     labelConfirmations: [

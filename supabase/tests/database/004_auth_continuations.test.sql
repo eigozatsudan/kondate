@@ -2,7 +2,7 @@
 begin;
 -- 他のローカル実行やE2Eが残した有効なレコードに依存しないよう、テスト対象を初期化する。
 delete from private.auth_continuations;
-select plan(21);
+select plan(26);
 select has_table('private', 'auth_continuations', 'continuation ledger exists');
 select function_returns('public', 'claim_auth_continuation', array['uuid', 'bytea', 'bytea', 'text', 'timestamp with time zone'], 'setof record', 'claim has exact five-argument signature');
 select function_returns('public', 'cleanup_auth_continuations', array['timestamp with time zone'], 'bigint', 'cleanup keeps the one-argument signature');
@@ -53,6 +53,7 @@ select is(
   'aa',
   'first deposit ciphertext wins'
 );
+-- B-I2: 失敗 claim は continuation ごと消し、以降の成功 claim も不能にする
 select is(
   (select count(*)::integer from public.claim_auth_continuation(
     (select id from continuation_case), decode(repeat('ff', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'https://app.test', '2026-07-11T00:03:00Z'
@@ -61,18 +62,68 @@ select is(
   'claim rejects an incorrect state'
 );
 select is(
-  (select count(*)::integer from public.claim_auth_continuation(
-    (select id from continuation_case), decode(repeat('00', 32), 'hex'), decode(repeat('ff', 32), 'hex'), 'https://app.test', '2026-07-11T00:03:00Z'
-  )),
+  (select count(*)::integer from private.auth_continuations where id = (select id from continuation_case)),
   0,
-  'claim rejects incorrect credentials'
+  'failed claim erases the continuation row'
+);
+-- 成功経路用に別 continuation を用意する
+delete from continuation_case;
+insert into continuation_case
+select * from public.create_auth_continuation(
+  decode(repeat('10', 32), 'hex'), decode(repeat('11', 32), 'hex'),
+  'https://app.test', '/planner', '2026-07-11T00:00:00Z', 300
+);
+select is(
+  public.deposit_auth_continuation(
+    (select id from continuation_case), decode(repeat('10', 32), 'hex'), 'https://app.test', decode('aa', 'hex'), decode(repeat('02', 12), 'hex'), '2026-07-11T00:01:00Z'
+  ),
+  true,
+  'deposit for successful claim path'
 );
 select is(
   (select count(*)::integer from public.claim_auth_continuation(
-    (select id from continuation_case), decode(repeat('00', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'https://other.test', '2026-07-11T00:03:00Z'
+    (select id from continuation_case), decode(repeat('10', 32), 'hex'), decode(repeat('ff', 32), 'hex'), 'https://app.test', '2026-07-11T00:03:00Z'
   )),
   0,
-  'claim rejects an incorrect origin'
+  'claim rejects incorrect credentials and erases'
+);
+select is(
+  (select count(*)::integer from private.auth_continuations where id = (select id from continuation_case)),
+  0,
+  'incorrect credentials erase the continuation'
+);
+delete from continuation_case;
+insert into continuation_case
+select * from public.create_auth_continuation(
+  decode(repeat('20', 32), 'hex'), decode(repeat('21', 32), 'hex'),
+  'https://app.test', '/planner', '2026-07-11T00:00:00Z', 300
+);
+select is(
+  public.deposit_auth_continuation(
+    (select id from continuation_case), decode(repeat('20', 32), 'hex'), 'https://app.test', decode('aa', 'hex'), decode(repeat('02', 12), 'hex'), '2026-07-11T00:01:00Z'
+  ),
+  true,
+  'deposit for origin-mismatch claim path'
+);
+select is(
+  (select count(*)::integer from public.claim_auth_continuation(
+    (select id from continuation_case), decode(repeat('20', 32), 'hex'), decode(repeat('21', 32), 'hex'), 'https://other.test', '2026-07-11T00:03:00Z'
+  )),
+  0,
+  'claim rejects an incorrect origin and erases'
+);
+delete from continuation_case;
+insert into continuation_case
+select * from public.create_auth_continuation(
+  decode(repeat('00', 32), 'hex'), decode(repeat('01', 32), 'hex'),
+  'https://app.test', '/planner', '2026-07-11T00:00:00Z', 300
+);
+select is(
+  public.deposit_auth_continuation(
+    (select id from continuation_case), decode(repeat('00', 32), 'hex'), 'https://app.test', decode('aa', 'hex'), decode(repeat('02', 12), 'hex'), '2026-07-11T00:01:00Z'
+  ),
+  true,
+  'deposit for successful claim'
 );
 select ok(
   exists(

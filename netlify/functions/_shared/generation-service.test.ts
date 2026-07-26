@@ -240,6 +240,7 @@ beforeEach(() => {
     menu: makeValidatedMenu(),
     labelConfirmations: [],
     safetyFingerprint: "sha256:test",
+    preferenceGaps: []
   });
 });
 
@@ -838,6 +839,7 @@ describe("runGeneration", () => {
         menu: makeValidatedMenu(),
         labelConfirmations: [],
         safetyFingerprint: "sha256:test",
+        preferenceGaps: []
       });
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
@@ -1897,6 +1899,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu,
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
+      preferenceGaps: []
     });
     const repository = makeRepository();
     // 2 モデルあるため repair でも同一 model が選ばれ得る。両回とも duplicate になるよう modelId を分ける
@@ -2067,6 +2070,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu: nearDuplicateMenu,
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
+      preferenceGaps: []
     });
     const repository = makeRepository();
     const callOpenRouter = vi
@@ -2172,6 +2176,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu: freshMenu,
       labelConfirmations: freshMenu.labelConfirmations,
       safetyFingerprint: "sha256:test",
+      preferenceGaps: []
     });
     const repository = makeRepository();
     const result = await runGeneration(
@@ -2384,6 +2389,7 @@ describe("runGeneration idea child_friendly rejection", () => {
       }),
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
+      preferenceGaps: []
     });
     await runGeneration(
       makeDeps({
