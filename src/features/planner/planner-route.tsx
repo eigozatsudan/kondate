@@ -442,8 +442,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         void navigate("/emergency-menus");
       } catch {
         if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
-          // 生成 flush 失敗と同じ文言で、保存できなかったことだけを伝える。
-          setSubmissionError("献立条件を保存できなかったため、生成を開始しませんでした。");
+          // C-I14: 緊急導線の保存失敗は生成失敗と別文言（生成していないのに「生成」と言わない）。
+          setSubmissionError(
+            "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
+          );
           setIsOpeningEmergencyMenus(false);
         }
       }

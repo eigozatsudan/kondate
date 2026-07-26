@@ -187,16 +187,45 @@ export function EmergencyMenuPage() {
     error === null &&
     !hasEligibleHouseholdMembers
   ) {
+    // C-I6: 空理由を正直に分岐する。idea / 適格0 / 選択フィルタ / 真の0人を混同しない。
+    const targetMode = draftQuery.data.targetMode;
+    const householdMembers = householdQuery.data ?? [];
+    const emptyState =
+      targetMode === "idea"
+        ? {
+            message:
+              "アイデアモードでは緊急献立を表示できません。献立画面で「家族向け」に切り替えてください。",
+            href: "/planner",
+            linkLabel: "家族向けに切り替える",
+          }
+        : householdMembers.length === 0
+          ? {
+              message:
+                "対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。",
+              href: "/onboarding",
+              linkLabel: "家族設定へ（任意）",
+            }
+          : eligibleMemberIds.length === 0
+            ? {
+                message:
+                  "表示できる対象の家族がいません。アレルギー確認と家族設定の完了を確認してください。",
+                href: "/onboarding",
+                linkLabel: "家族設定を確認する",
+              }
+            : {
+                message:
+                  "選んだ家族が対象にできないため、緊急献立を表示できません。献立画面で対象を見直してください。",
+                href: "/planner",
+                linkLabel: "献立画面で対象を見直す",
+              };
     return (
       <main className="page-frame stack emergency-menu-page">
         <a className="emergency-back-link" href="/planner" aria-label="献立画面へ戻る">
           ← 献立画面へ戻る
         </a>
         <h1>15分緊急献立</h1>
-        <p role="alert">
-          対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。
-        </p>
-        <a href="/onboarding">家族設定へ（任意）</a>
+        <p role="alert">{emptyState.message}</p>
+        <a href={emptyState.href}>{emptyState.linkLabel}</a>
       </main>
     );
   }

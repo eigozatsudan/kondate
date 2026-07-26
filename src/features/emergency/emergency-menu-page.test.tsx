@@ -94,7 +94,7 @@ it("下書きなしで対象家族が0人の場合は緊急献立APIを呼ばず
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toBeInTheDocument();
 });
 
-it("idea下書きで対象家族が0人の場合も緊急献立APIを呼ばず家族不在の説明を表示する", () => {
+it("idea下書きでは緊急献立APIを呼ばずモード説明を表示する", () => {
   useQueryMock
     .mockReturnValueOnce({
       data: {
@@ -136,12 +136,15 @@ it("idea下書きで対象家族が0人の場合も緊急献立APIを呼ばず�
 
   expect(useQueryMock).toHaveBeenCalledTimes(3);
   expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
-  expect(
-    screen.getByText(
-      "対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。",
-    ),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "家族設定へ（任意）" })).toBeInTheDocument();
+  // C-I6: idea では「家族が登録されていない」と誤表示しない
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "アイデアモードでは緊急献立を表示できません。献立画面で「家族向け」に切り替えてください。",
+  );
+  expect(screen.queryByText(/家族が登録されていない/u)).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "家族向けに切り替える" })).toHaveAttribute(
+    "href",
+    "/planner",
+  );
 });
 
 it("対象未選択の下書きでは後から登録した有効な家族だけを初期対象にする", async () => {
@@ -423,7 +426,11 @@ it("household下書きの選択家族が無効になっても別の家族を補�
   render(<EmergencyMenuPage />);
 
   expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
-  expect(screen.getByRole("alert")).toHaveTextContent("対象の家族が登録されていない");
+  // C-I6: 名簿上は適格メンバーがいるが選択が全滅 → 未登録文言は出さない
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "選んだ家族が対象にできないため、緊急献立を表示できません",
+  );
+  expect(screen.queryByText(/家族が登録されていない/u)).not.toBeInTheDocument();
 });
 
 it("states that no candidate exists without suggesting weaker safety conditions", () => {

@@ -335,7 +335,7 @@ it("緊急献立は保存完了を待ってから /emergency-menus へ一度だ�
   expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionTwo);
 });
 
-it("緊急献立への移動前の保存失敗では遷移せず生成と同じ保存エラーを表示する", async () => {
+it("緊急献立への移動前の保存失敗では遷移せず緊急専用の保存エラーを表示する", async () => {
   getPlannerDraftMock.mockResolvedValue(revisionOne);
   savePlannerDraftMock.mockRejectedValueOnce(new Error("save failed"));
   const queryClient = new QueryClient({
@@ -348,8 +348,10 @@ it("緊急献立への移動前の保存失敗では遷移せず生成と同じ�
   await act(async () => Promise.resolve());
 
   expect(screen.getByTestId("current-path")).toHaveTextContent("/planner");
+  // C-I14: 生成失敗文言と区別し、緊急献立を開けなかったことを伝える
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "献立条件を保存できなかったため、生成を開始しませんでした。",
+    "条件を保存できなかったため、緊急献立を開けませんでした",
   );
+  expect(screen.queryByText(/生成を開始しませんでした/u)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeEnabled();
 });
