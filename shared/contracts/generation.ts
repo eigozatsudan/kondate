@@ -110,7 +110,7 @@ export const menuMemberAdaptationSchema = z
     additionalHeating: z.string().trim().min(1).max(300).nullable(),
     additionalSeasoning: z.string().trim().min(1).max(300).nullable(),
     servingCheck: z.string().trim().min(1).max(300),
-    safetyTags: z.array(safetyTagSchema),
+    safetyTags: z.array(safetyTagSchema).max(32),
     safetyActions: z.array(safetyActionSchema).max(20).default([]),
   })
   .strict();
@@ -159,7 +159,7 @@ const generatedMenuObjectSchema = z
     cuisineGenre: z.enum(cuisineGenres),
     servings: z.number().int().min(1).max(20),
     totalElapsedMinutes: z.number().int().min(1).max(180),
-    safetyTags: z.array(safetyTagSchema),
+    safetyTags: z.array(safetyTagSchema).max(32),
     dishes: z.array(dishSchema).min(1).max(5),
     timeline: z.array(menuTimelineStepSchema).min(1).max(60),
     adaptations: z.array(menuMemberAdaptationSchema).max(100),

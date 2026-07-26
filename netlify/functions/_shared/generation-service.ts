@@ -741,7 +741,15 @@ export async function runGeneration(
     try {
       await deps.repository.succeed(input);
       const status = await hydrate();
-      emitTerminalLog("info", "succeeded");
+      // A-I8: SQL 正規の constraint_conflict / failed を常に succeeded とログしない。
+      // hydrate 後の status を ops ログの errorCode にする。
+      if (status.status === "succeeded") {
+        emitTerminalLog("info", "succeeded");
+      } else if (status.status === "constraint_conflict") {
+        emitTerminalLog("warn", "constraint_conflict");
+      } else if (status.status === "failed") {
+        emitTerminalLog("error", status.error.code);
+      }
       return status;
     } catch (error) {
       if (isCurrentSafetyChangedError(error)) {
@@ -760,6 +768,11 @@ export async function runGeneration(
       Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
     );
   const canRepair = () => remainingMs() >= REQUIRED_SEND_BUDGET_MS;
+  // A-I9: provider 返却後も 50s 予算を守り、残 deadline が尽きたら succeed しない。
+  const abortIfDeadlineExceeded = async (): Promise<GenerationStatusData | null> => {
+    if (remainingMs() > 0) return null;
+    return await fail("generation_timeout", null);
+  };
 
   try {
     const execution = await deps.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);
@@ -876,6 +889,8 @@ export async function runGeneration(
       const output = composeCandidate(firstResult, execution, () => deps.uuid());
       if (output.kind === "conflict") return await conflict(output.conflicts);
       if (output.kind === "valid") {
+        const timedOut = await abortIfDeadlineExceeded();
+        if (timedOut !== null) return timedOut;
         return await succeedOrConflict(
           buildSuccessInput(requestId, output.checked.menu, context, execution),
         );
@@ -936,6 +951,8 @@ export async function runGeneration(
         null,
       );
     }
+    const repairedTimedOut = await abortIfDeadlineExceeded();
+    if (repairedTimedOut !== null) return repairedTimedOut;
     return await succeedOrConflict(
       buildSuccessInput(requestId, repairedOutput.checked.menu, context, execution),
     );

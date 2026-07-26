@@ -563,9 +563,11 @@ describe("runGeneration", () => {
         terminal_details: { conflictCodes: ["current_safety_changed"] },
       }),
     );
+    const logTerminalEvent = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
     const result = await runGeneration(
       makeDeps({
         repository,
+        logTerminalEvent,
         callOpenRouter: vi.fn(() =>
           Promise.resolve({
             mode: "full_menu" as const,
@@ -587,6 +589,15 @@ describe("runGeneration", () => {
     ]);
     expect(repository.conflict).not.toHaveBeenCalled();
     expect(repository.fail).not.toHaveBeenCalled();
+    // A-I8: hydrate 後 status でログ。常に succeeded と書かない
+    expect(logTerminalEvent).toHaveBeenCalledWith(
+      "warn",
+      expect.objectContaining({ errorCode: "constraint_conflict" }),
+    );
+    expect(logTerminalEvent).not.toHaveBeenCalledWith(
+      "info",
+      expect.objectContaining({ errorCode: "succeeded" }),
+    );
   });
 
   it("runs preflight before prompt and send", async () => {
@@ -1173,6 +1184,37 @@ describe("runGeneration", () => {
       expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
       expect(repository.markSent).toHaveBeenCalledTimes(1);
       expect(repository.failBeforeSend).toHaveBeenCalledWith(requestId, "generation_timeout");
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails with generation_timeout after provider when deadline is already exceeded", async () => {
+      // A-I9: pre-send は通るが provider 返却後に 50s を超え、succeed を呼ばない
+      const repository = makeRepository();
+      let nowMs = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
+        nowMs = 50_001;
+        return Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        });
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => nowMs,
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
     });
   });
