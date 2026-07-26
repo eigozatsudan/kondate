@@ -12,7 +12,7 @@ begin
   where n.nspname = 'private'
     and t.relname = 'auth_continuations'
     and c.contype = 'c'
-    and pg_get_constraintdef(c.oid) like '%return_to%';
+    and pg_get_constraintdef(c.oid) like '%return_to%'
   limit 1;
 
   if constraint_name is not null then

@@ -2,11 +2,23 @@
 begin;
 -- 他のローカル実行やE2Eが残した有効なレコードに依存しないよう、テスト対象を初期化する。
 delete from private.auth_continuations;
-select plan(26);
+select plan(28);
 select has_table('private', 'auth_continuations', 'continuation ledger exists');
 select function_returns('public', 'claim_auth_continuation', array['uuid', 'bytea', 'bytea', 'text', 'timestamp with time zone'], 'setof record', 'claim has exact five-argument signature');
 select function_returns('public', 'cleanup_auth_continuations', array['timestamp with time zone'], 'bigint', 'cleanup keeps the one-argument signature');
 select ok(not has_table_privilege('anon', 'private.auth_continuations', 'select'), 'anonymous users cannot read the ledger');
+select lives_ok($$
+  select * from public.create_auth_continuation(
+    decode(repeat('30', 32), 'hex'), decode(repeat('31', 32), 'hex'),
+    'https://app.test', '/', '2026-07-11T00:00:00Z', 300
+  )
+$$, 'root return path is accepted');
+select throws_ok($$
+  select * from public.create_auth_continuation(
+    decode(repeat('32', 32), 'hex'), decode(repeat('33', 32), 'hex'),
+    'https://app.test', '//host', '2026-07-11T00:00:00Z', 300
+  )
+$$, '23514', null, 'protocol-relative return path is rejected');
 create temporary table continuation_case as
 select * from public.create_auth_continuation(
     decode(repeat('00', 32), 'hex'), decode(repeat('01', 32), 'hex'),

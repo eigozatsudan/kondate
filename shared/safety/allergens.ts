@@ -52,12 +52,19 @@ export function normalizeFoodText(value: string): string {
     .replace(/[\s\u3000、。・,./（）()「」『』']/gu, "");
 }
 
-const HIRAGANA_CHAR = /[\u3041-\u3096]/u;
+const EXCLUDED_ALIAS_CONTEXTS = new Map<string, readonly string[]>([
+  ["乳", ["豆乳"]],
+  ["もも", ["鶏もも", "鳥もも"]],
+  ["かに", ["やわらかになるまで"]],
+  ["いか", ["食べやすいから"]],
+  ["そば", ["のそばで"]],
+  ["もち", ["もちもち食感"]],
+]);
 
 /**
  * アレルゲン alias が献立テキストに含まれるかを判定する。
  * 素の includes だと「乳⊂豆乳」「もも⊂鶏もも」「かに⊂やわらかに」などの誤検知が起きるため、
- * 短いひらがな alias はひらがな連続の途中一致を拒否し、既知の複合も除外する。
+ * 確認済みの非対象文脈だけを除外し、日本語の複合食材は検出側へ倒す。
  */
 export function foodTextContainsAlias(sourceText: string, alias: string): boolean {
   const source = normalizeFoodText(sourceText);
@@ -66,51 +73,11 @@ export function foodTextContainsAlias(sourceText: string, alias: string): boolea
     return false;
   }
 
-  // 豆乳の「乳」は大豆側。乳そのものが別に残るときだけ一致させる。
-  if (needle === "乳") {
-    const withoutSoyMilk = source.replaceAll("豆乳", "");
-    if (!withoutSoyMilk.includes("乳")) {
-      return false;
-    }
+  let foodText = source;
+  for (const context of EXCLUDED_ALIAS_CONTEXTS.get(needle) ?? []) {
+    foodText = foodText.replaceAll(context, "");
   }
-
-  // 鶏もも・鳥ももの部位名はももアレルギーの対象外。
-  if (needle === "もも") {
-    const withoutChickenThigh = source.replaceAll("鶏もも", "").replaceAll("鳥もも", "");
-    if (!withoutChickenThigh.includes("もも")) {
-      return false;
-    }
-  }
-
-  const needleIsShortHiragana =
-    needle.length <= 2 && [...needle].every((ch) => HIRAGANA_CHAR.test(ch));
-  if (!needleIsShortHiragana) {
-    return true;
-  }
-
-  let from = 0;
-  while (from <= source.length) {
-    const idx = source.indexOf(needle, from);
-    if (idx === -1) {
-      return false;
-    }
-    const before = idx > 0 ? source[idx - 1]! : "";
-    const afterIdx = idx + needle.length;
-    const after = afterIdx < source.length ? source[afterIdx]! : "";
-    // 「のそばで」など位置表現。そば本体（ざるそば等）は末尾一致などで通す。
-    if (needle === "そば" && before === "の") {
-      from = idx + 1;
-      continue;
-    }
-    // 前後がともにひらがななら語中の偶然一致とみなす。
-    const interiorHiragana =
-      before !== "" && HIRAGANA_CHAR.test(before) && after !== "" && HIRAGANA_CHAR.test(after);
-    if (!interiorHiragana) {
-      return true;
-    }
-    from = idx + 1;
-  }
-  return false;
+  return foodText.includes(needle);
 }
 
 export function collectMenuTextSources(

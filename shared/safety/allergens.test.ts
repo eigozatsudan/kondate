@@ -33,6 +33,15 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias("ざるソバ", "そば")).toBe(true);
   });
 
+  it.each([
+    ["あまえびフライ", "えび"],
+    ["やりいかそうめん", "いか"],
+    ["ざるそば", "そば"],
+    ["かにかま", "かに"],
+  ])("detects allergen compound %s for alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
   it("does not match 乳 inside 豆乳", () => {
     expect(foodTextContainsAlias("豆乳スープ", "乳")).toBe(false);
   });
@@ -51,6 +60,10 @@ describe("foodTextContainsAlias", () => {
 
   it("does not match そば as a location particle phrase", () => {
     expect(foodTextContainsAlias("コンロのそばで冷ます", "そば")).toBe(false);
+  });
+
+  it("does not match もち in an onomatopoeic texture phrase", () => {
+    expect(foodTextContainsAlias("もちもち食感のうどん", "もち")).toBe(false);
   });
 });
 
