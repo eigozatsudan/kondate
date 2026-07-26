@@ -26,6 +26,24 @@ it("shows the overall timeline before persistent dish tabs", () => {
   expect(container).toHaveTextContent("AIが作成した献立です");
 });
 
+it("shows dislike preference soft gaps when present", () => {
+  render(
+    <MenuResult
+      result={makeMenuResultViewModel({
+        preferenceGaps: [
+          {
+            kind: "dislike",
+            anonymousMemberRef: "member_1",
+            dislikeToken: "ごはん",
+            message: "苦手として登録した「ごはん」が献立に含まれています",
+          },
+        ],
+      })}
+    />,
+  );
+  expect(screen.getByText(/苦手として登録した「ごはん」/)).toBeInTheDocument();
+});
+
 it("switches dishes and exposes structured preparation and label checks", async () => {
   const result = makeMenuResultViewModel();
   const menu = result.menu;

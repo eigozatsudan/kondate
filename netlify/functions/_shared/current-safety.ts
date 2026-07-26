@@ -90,6 +90,19 @@ const additionalAliasValues: readonly (readonly [
   ["milk", "ハム", "processed", true],
   ["wheat", "コンソメ", "processed", true],
   ["soy", "みそ", "processed", true],
+  // A-C1: 高頻度表記ゆれ（玉子・ミルク・小麦麺類・魚カナ表記）
+  ["egg", "玉子", "direct", false],
+  ["milk", "ミルク", "direct", false],
+  ["milk", "みるく", "direct", false],
+  ["wheat", "うどん", "derived", false],
+  ["wheat", "パスタ", "derived", false],
+  ["wheat", "ラーメン", "derived", false],
+  ["wheat", "そばつゆ", "processed", true],
+  ["salmon", "サーモン", "direct", false],
+  ["salmon", "さーもん", "direct", false],
+  ["mackerel", "サバ", "direct", false],
+  ["walnut", "クルミ", "direct", false],
+  ["buckwheat", "ソバ", "direct", false],
 ];
 
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [
@@ -130,11 +143,11 @@ const memberSchema = z
     portion_size: z.enum(portionSizes).nullable(),
     spice_level: z.enum(spiceLevels).nullable(),
     ease_preferences: z.array(z.enum(easePreferences)),
-    allergy_status: z.enum(allergyStatuses).refine((value) => value !== "unconfirmed"),
+    // 未確認は RPC から返る。拒否すると revalidation / 緊急献立が 500 になり救済コードが死ぬ（A-I3）。
+    // 呼び出し側が allergy_unconfirmed / current_safety_unavailable で閉じて 500 にしない。
+    allergy_status: z.enum(allergyStatuses),
     required_safety_constraints: z.array(z.enum(requiredSafetyConstraints)),
-    unsupported_diet_status: z
-      .enum(unsupportedDietStatuses)
-      .refine((value) => value !== "unconfirmed"),
+    unsupported_diet_status: z.enum(unsupportedDietStatuses),
     unsupported_diet_kinds: z.array(z.enum(unsupportedDietKinds)),
     allergies: z.array(z.discriminatedUnion("kind", [standardAllergySchema, customAllergySchema])),
   })

@@ -40,7 +40,7 @@ export interface HouseholdOnboardingApi {
   addStandardAllergy?: (memberId: string, allergenId: string) => Promise<unknown>;
   addCustomAllergy: (memberId: string, name: string, aliases: string[]) => Promise<unknown>;
   removeAllergy?: (allergyId: string) => Promise<unknown>;
-  setProgress: (status: "in_progress" | "complete") => Promise<unknown>;
+  setProgress: (status: "in_progress" | "complete" | "skipped") => Promise<unknown>;
 }
 
 function createHouseholdApi(userId: string): HouseholdOnboardingApi {
@@ -95,6 +95,22 @@ export function HouseholdOnboardingForm({
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
   const [completeError, setCompleteError] = useState(false);
+  const [skipError, setSkipError] = useState(false);
+  const [skipPending, setSkipPending] = useState(false);
+
+  /** C-C1: 画面内から skipped へ抜け、アイデア導線へ進める */
+  const skipOnboarding = async (): Promise<void> => {
+    setSkipPending(true);
+    setSkipError(false);
+    try {
+      await api.setProgress("skipped");
+      onDone();
+    } catch {
+      setSkipError(true);
+    } finally {
+      setSkipPending(false);
+    }
+  };
   const membersQuery = useQuery({
     queryKey: householdKeys.members(userId),
     queryFn: api.listMembers,
@@ -238,9 +254,24 @@ export function HouseholdOnboardingForm({
             この家族の設定を完了する
           </button>
         )}
+        <button
+          className="text-button min-h-11"
+          type="button"
+          disabled={skipPending}
+          onClick={() => {
+            void skipOnboarding();
+          }}
+        >
+          あとで設定する（アイデアから始める）
+        </button>
         {completeError && (
           <p className="error-message" role="alert">
             設定を完了できませんでした。通信を確認して再試行してください。
+          </p>
+        )}
+        {skipError && (
+          <p className="error-message" role="alert">
+            スキップできませんでした。通信を確認して再試行してください。
           </p>
         )}
       </main>
@@ -450,6 +481,16 @@ export function HouseholdOnboardingForm({
       >
         この家族の設定を完了する
       </button>
+      <button
+        className="text-button min-h-11"
+        type="button"
+        disabled={skipPending}
+        onClick={() => {
+          void skipOnboarding();
+        }}
+      >
+        あとで設定する（アイデアから始める）
+      </button>
       {draft.allergy_status === "unconfirmed" && (
         <p className="error-message">
           アレルギーを確認するまで、このメンバーは献立生成に使えません。
@@ -463,6 +504,11 @@ export function HouseholdOnboardingForm({
       {completeError && (
         <p className="error-message" role="alert">
           設定を完了できませんでした。通信を確認して再試行してください。
+        </p>
+      )}
+      {skipError && (
+        <p className="error-message" role="alert">
+          スキップできませんでした。通信を確認して再試行してください。
         </p>
       )}
     </main>

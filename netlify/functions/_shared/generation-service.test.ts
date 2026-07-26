@@ -186,7 +186,7 @@ function makeRepository() {
       };
       return Promise.resolve(current);
     }),
-    succeed: vi.fn(() => {
+    succeed: vi.fn<GenerationDependencies["repository"]["succeed"]>(() => {
       current = record("succeeded");
       return Promise.resolve(current);
     }),
@@ -240,6 +240,7 @@ beforeEach(() => {
     menu: makeValidatedMenu(),
     labelConfirmations: [],
     safetyFingerprint: "sha256:test",
+    preferenceGaps: [],
   });
 });
 
@@ -563,9 +564,11 @@ describe("runGeneration", () => {
         terminal_details: { conflictCodes: ["current_safety_changed"] },
       }),
     );
+    const logTerminalEvent = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
     const result = await runGeneration(
       makeDeps({
         repository,
+        logTerminalEvent,
         callOpenRouter: vi.fn(() =>
           Promise.resolve({
             mode: "full_menu" as const,
@@ -587,6 +590,15 @@ describe("runGeneration", () => {
     ]);
     expect(repository.conflict).not.toHaveBeenCalled();
     expect(repository.fail).not.toHaveBeenCalled();
+    // A-I8: hydrate 後 status でログ。常に succeeded と書かない
+    expect(logTerminalEvent).toHaveBeenCalledWith(
+      "warn",
+      expect.objectContaining({ errorCode: "constraint_conflict" }),
+    );
+    expect(logTerminalEvent).not.toHaveBeenCalledWith(
+      "info",
+      expect.objectContaining({ errorCode: "succeeded" }),
+    );
   });
 
   it("runs preflight before prompt and send", async () => {
@@ -827,6 +839,7 @@ describe("runGeneration", () => {
         menu: makeValidatedMenu(),
         labelConfirmations: [],
         safetyFingerprint: "sha256:test",
+        preferenceGaps: [],
       });
     const callOpenRouter = vi
       .fn<GenerationDependencies["callOpenRouter"]>()
@@ -1174,6 +1187,121 @@ describe("runGeneration", () => {
       expect(repository.markSent).toHaveBeenCalledTimes(1);
       expect(repository.failBeforeSend).toHaveBeenCalledWith(requestId, "generation_timeout");
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails with generation_timeout after provider when deadline is already exceeded", async () => {
+      // A-I9: pre-send は通るが provider 返却後に 50s を超え、succeed を呼ばない
+      const repository = makeRepository();
+      let nowMs = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
+        nowMs = 50_001;
+        return Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        });
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => nowMs,
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    });
+
+    it("aborts at succeedOrConflict entry when deadline elapses after the outer post-provider check", async () => {
+      // A-I9 防御: outer abort 通過直後〜succeed 直前で予算超過しても succeed しない。
+      const repository = makeRepository();
+      let nowMs = 0;
+      let postProviderClockReads = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
+        // provider 返却後の clock 読み取りを数える
+        nowMs = 49_999;
+        postProviderClockReads = 0;
+        return Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        });
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => {
+            if (nowMs < 49_999) return nowMs;
+            // 1 回目: outer abortIfDeadlineExceeded（残り 1ms → 通過）
+            // 2 回目以降: succeedOrConflict 入口（超過 → fail）
+            postProviderClockReads += 1;
+            return postProviderClockReads === 1 ? 49_999 : 50_001;
+          },
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
+    });
+
+    it("I1: mid-finalizer timeout does not return succeeded", async () => {
+      // 入口では残 deadline > 0 だが、succeed 実行中に予算を使い切る経路。
+      // repository は remainingMs を受け取り、DB 側 timeout として reject する。
+      const { GenerationFinalizeTimeoutError } = await import("./generation-repository.js");
+      type SucceedArgs = Parameters<GenerationDependencies["repository"]["succeed"]>;
+      const repository = makeRepository();
+      let nowMs = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
+        nowMs = 49_000;
+        return Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        });
+      });
+      repository.succeed.mockImplementation((...args: SucceedArgs) => {
+        const options = args[1];
+        expect(options.remainingMs).toBeGreaterThan(0);
+        // finalizer 中に残予算を超える遅延を模擬（成功レコードは返さない）
+        nowMs += options.remainingMs + 1;
+        throw new GenerationFinalizeTimeoutError();
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 50_000,
+          monotonicNow: () => nowMs,
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.succeed).toHaveBeenCalledTimes(1);
+      expect(repository.succeed).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId }),
+        expect.objectContaining({ remainingMs: expect.any(Number) as number }),
+      );
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
     });
   });
 
@@ -1855,6 +1983,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu,
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
+      preferenceGaps: [],
     });
     const repository = makeRepository();
     // 2 モデルあるため repair でも同一 model が選ばれ得る。両回とも duplicate になるよう modelId を分ける
@@ -2025,6 +2154,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu: nearDuplicateMenu,
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
+      preferenceGaps: [],
     });
     const repository = makeRepository();
     const callOpenRouter = vi
@@ -2130,6 +2260,7 @@ describe("runGeneration regeneration duplicate gating", () => {
       menu: freshMenu,
       labelConfirmations: freshMenu.labelConfirmations,
       safetyFingerprint: "sha256:test",
+      preferenceGaps: [],
     });
     const repository = makeRepository();
     const result = await runGeneration(
@@ -2158,10 +2289,11 @@ describe("runGeneration regeneration duplicate gating", () => {
         changeReason: "simpler",
         changeReasonCustom: null,
       }),
+      expect.objectContaining({ remainingMs: expect.any(Number) as number }),
     );
     // 空オブジェクトや履歴専用 marker ではないことを固定
     const succeedCalls = repository.succeed.mock.calls as unknown as Array<
-      [{ safetySnapshot: unknown }]
+      [{ safetySnapshot: unknown }, { remainingMs: number }]
     >;
     expect(succeedCalls[0]?.[0]?.safetySnapshot).toEqual(currentSafetySnapshot);
     expect(freshMenu.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(
@@ -2342,6 +2474,7 @@ describe("runGeneration idea child_friendly rejection", () => {
       }),
       labelConfirmations: [],
       safetyFingerprint: "sha256:test",
+      preferenceGaps: [],
     });
     await runGeneration(
       makeDeps({

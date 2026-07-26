@@ -99,6 +99,25 @@ describe("aiGeneratedMenuPayloadSchema", () => {
     expect(aiGeneratedMenuPayloadSchema.safeParse(validPayload).success).toBe(true);
   });
 
+  it("rejects safetyTags longer than 32 (A-I12)", () => {
+    const tags = Array.from({ length: 33 }, () => "cut_small");
+    expect(
+      aiGeneratedMenuPayloadSchema.safeParse({ ...validPayload, safetyTags: tags }).success,
+    ).toBe(false);
+    expect(
+      aiGeneratedMenuPayloadSchema.safeParse({
+        ...validPayload,
+        adaptations: [{ ...validPayload.adaptations[0], safetyTags: tags }],
+      }).success,
+    ).toBe(false);
+    expect(
+      aiGeneratedMenuPayloadSchema.safeParse({
+        ...validPayload,
+        safetyTags: Array.from({ length: 32 }, () => "cut_small"),
+      }).success,
+    ).toBe(true);
+  });
+
   it.each([
     ["dishRef", { dishes: [{ ...validPayload.dishes[0], dishRef: internalUuid }] }],
     [

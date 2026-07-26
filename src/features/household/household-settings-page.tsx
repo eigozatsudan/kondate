@@ -702,10 +702,7 @@ export function HouseholdSettingsForm({
    * - それ以外: 確認ダイアログ経由の削除。対象が編集中なら編集を閉じる。
    */
   const performMemberDelete = useCallback(
-    async (
-      target: HouseholdMemberRow,
-      options: { asCancelDraft: boolean },
-    ): Promise<void> => {
+    async (target: HouseholdMemberRow, options: { asCancelDraft: boolean }): Promise<void> => {
       const targetId = target.id;
       if (
         savingRef.current ||

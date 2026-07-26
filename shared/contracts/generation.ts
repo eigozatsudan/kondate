@@ -110,7 +110,7 @@ export const menuMemberAdaptationSchema = z
     additionalHeating: z.string().trim().min(1).max(300).nullable(),
     additionalSeasoning: z.string().trim().min(1).max(300).nullable(),
     servingCheck: z.string().trim().min(1).max(300),
-    safetyTags: z.array(safetyTagSchema),
+    safetyTags: z.array(safetyTagSchema).max(32),
     safetyActions: z.array(safetyActionSchema).max(20).default([]),
   })
   .strict();
@@ -159,7 +159,7 @@ const generatedMenuObjectSchema = z
     cuisineGenre: z.enum(cuisineGenres),
     servings: z.number().int().min(1).max(20),
     totalElapsedMinutes: z.number().int().min(1).max(180),
-    safetyTags: z.array(safetyTagSchema),
+    safetyTags: z.array(safetyTagSchema).max(32),
     dishes: z.array(dishSchema).min(1).max(5),
     timeline: z.array(menuTimelineStepSchema).min(1).max(60),
     adaptations: z.array(menuMemberAdaptationSchema).max(100),
@@ -508,12 +508,20 @@ export type MenuLabelConfirmation = z.infer<typeof menuLabelConfirmationSchema>;
 export type ValidatedMenu = z.infer<typeof validatedMenuSchema>;
 export type GeneratedMenu = z.infer<typeof generatedMenuSchema>;
 export type MenuValidationIssue = { code: string; path: string; message: string };
+/** A-I7: 苦手 soft gap。結果画面表示用。永続化しない。 */
+export type PreferenceGapNote = {
+  kind: "dislike";
+  anonymousMemberRef: string;
+  message: string;
+  dislikeToken: string;
+};
 export type MenuValidationResult =
   | {
       ok: true;
       menu: ValidatedMenu;
       labelConfirmations: readonly MenuLabelConfirmation[];
       safetyFingerprint: string;
+      preferenceGaps: readonly PreferenceGapNote[];
     }
   | { ok: false; issues: readonly MenuValidationIssue[] };
 

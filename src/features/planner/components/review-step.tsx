@@ -81,6 +81,16 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   onOpenEmergencyMenus?: () => void;
   /** GET /api/usage/today の成功残数。未取得時は null（偽の残数を出さない） */
   usageRemaining?: number | null;
+  /**
+   * 日次 attempt 残（外部 AI 送信枠）。未取得は null。
+   * C-I12 residual: 0 のとき主 CTA を止める。null では止めない。
+   */
+  attemptsRemaining?: number | null;
+  /**
+   * アプリ全体の受付可否。未取得は null。
+   * C-I12 residual: false のとき主 CTA を止める。null では止めない。
+   */
+  globalAvailable?: boolean | null;
   /** short-window 残 0 のときの再開時刻 ISO。null なら短時間枠メッセージを出さない */
   shortWindowRetryAt?: string | null;
   /**
@@ -119,6 +129,8 @@ export function ReviewStep({
   safetyMembers = [],
   onOpenEmergencyMenus,
   usageRemaining = null,
+  attemptsRemaining = null,
+  globalAvailable = null,
   shortWindowRetryAt = null,
   onEditStep,
 }: ReviewStepProps) {
@@ -148,8 +160,19 @@ export function ReviewStep({
   // Plan 2: AI 送信前のクライアント医療境界。サーバー preflight と同一 detector を使う。
   const medicalBlocked =
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
-  // privacy 未確認だけでは disabled にしない（押下で案内を出す）。医療・pantry・保存中のみ止める。
-  const generateDisabled = disabled || hasUnavailablePantrySelections || medicalBlocked;
+  // privacy 未確認だけでは disabled にしない（押下で案内を出す）。
+  // C-I12 residual: 成功残 0 / attempt 残 0 / global 不可で主 CTA を止める。
+  // I2: shortWindowRetryAt は route が remaining===0 のときだけ渡す active blocker。
+  // 端末時計での再有効化はせず、usage 再取得で retryAt が消えたときだけ有効に戻す。
+  // null/未取得では誤って止めない。
+  const generateDisabled =
+    disabled ||
+    hasUnavailablePantrySelections ||
+    medicalBlocked ||
+    usageRemaining === 0 ||
+    attemptsRemaining === 0 ||
+    globalAvailable === false ||
+    shortWindowRetryAt !== null;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };
@@ -262,7 +285,24 @@ export function ReviewStep({
           「戻る」で1つ前の質問へ、「変更」でその質問へ直接戻れます。直したあとは「確認に戻る」でこの画面に戻ります。
         </p>
       )}
-      <details className="wizard-details">
+      {/*
+        C-C2: 生成を止めるエラーの直しどころ（pantry 解除・医療メモ）が閉じた details 内に
+        隠れると操作不能に見える。ブロック中は open にして常に見えるようにする。
+      */}
+      <details
+        className="wizard-details"
+        open={
+          hasUnavailablePantrySelections ||
+          medicalBlocked ||
+          fieldErrors?.timeLimitMinutes != null ||
+          fieldErrors?.budgetPreference != null ||
+          fieldErrors?.avoidIngredients != null ||
+          fieldErrors?.memo != null ||
+          fieldErrors?.pantrySelections != null
+            ? true
+            : undefined
+        }
+      >
         <summary className="wizard-details-summary">追加条件</summary>
         {/* summary 直下に stack を置き、label/input が横に流れないよう縦積みにする */}
         <div className="stack wizard-details-body">
@@ -416,11 +456,27 @@ export function ReviewStep({
           家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
         </p>
       )}
-      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・短時間枠の再開時刻を平易表示 */}
-      {usageRemaining !== null && <p role="status">本日あと{usageRemaining}回作成できます</p>}
+      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・attempt・global・短時間枠を平易表示 */}
+      {usageRemaining !== null && (
+        <p role="status">
+          {usageRemaining === 0
+            ? "本日の作成回数の上限に達しました。明日またお試しください。"
+            : `本日あと${String(usageRemaining)}回作成できます`}
+        </p>
+      )}
+      {attemptsRemaining !== null && (
+        <p role="status">
+          {attemptsRemaining === 0
+            ? "AIへの問い合わせ回数の上限に達しました。明日またお試しください。"
+            : `AIへの問い合わせは本日あと${String(attemptsRemaining)}回まで受け付けます`}
+        </p>
+      )}
+      {globalAvailable === false && (
+        <p role="status">ただいま混雑しているため、しばらくしてからお試しください。</p>
+      )}
       {shortWindowRetryAt !== null && (
         <p role="status">
-          10分間の通信試行上限に達しました。
+          しばらく続けて作成を試したため、少し待つ必要があります。
           {new Intl.DateTimeFormat("ja-JP", {
             timeZone: "Asia/Tokyo",
             dateStyle: "short",

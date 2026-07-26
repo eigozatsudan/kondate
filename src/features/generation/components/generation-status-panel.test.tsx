@@ -17,12 +17,14 @@ const USER_ID = "60000000-0000-4000-8000-000000000001";
 const NOW = new Date("2026-07-20T05:00:00.000Z");
 const KEY = "10000000-0000-4000-8000-000000000001";
 const REQUEST_ID = "50000000-0000-4000-8000-000000000001";
+// E-I1: サーバ jsonb の timestamptz は +00:00。クライアント toISOString の .000Z と文字列一致させない。
+const serverRetryAt = getNextJstMidnight(NOW).toISOString().replace(".000Z", "+00:00");
 const quota = {
   consumed: false,
   remaining: 4,
   userDailyLimit: 5,
   limitKind: "user",
-  retryAt: getNextJstMidnight(NOW).toISOString(),
+  retryAt: serverRetryAt,
 } as const;
 const failedData: Extract<GenerationStatusData, { status: "failed" }> = {
   status: "failed",
@@ -66,6 +68,12 @@ describe("GenerationStatusPanel", () => {
     );
   });
 
+  it("hides emergency recovery link for idea target mode", () => {
+    render(<GenerationStatusPanel state={failedState} targetMode="idea" />);
+    expect(screen.queryByRole("link", { name: "15分緊急献立を見る" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "作った献立を見る" })).toBeInTheDocument();
+  });
+
   it("shows how many generations remain today and the app-wide status", async () => {
     vi.useRealTimers();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -90,11 +98,7 @@ describe("GenerationStatusPanel", () => {
     };
     render(
       <QueryClientProvider client={queryClient}>
-        <GenerationStatusPanel
-          state={requestConflictState}
-          userId={USER_ID}
-          onClear={onClear}
-        />
+        <GenerationStatusPanel state={requestConflictState} userId={USER_ID} onClear={onClear} />
       </QueryClientProvider>,
     );
     expect(screen.getByRole("heading", { name: "同じ操作を続けられませんでした" })).toBeVisible();

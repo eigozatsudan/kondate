@@ -1,6 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
@@ -59,6 +60,8 @@ function Harness({
   pantryItems = [],
   pantryItemsStatus = "loaded",
   usageRemaining = null,
+  attemptsRemaining = null,
+  globalAvailable = null,
   shortWindowRetryAt = null,
 }: {
   initialStep?: PlannerStep;
@@ -81,39 +84,46 @@ function Harness({
   pantryItems?: readonly PantryItem[];
   pantryItemsStatus?: "loading" | "loaded";
   usageRemaining?: number | null;
+  attemptsRemaining?: number | null;
+  globalAvailable?: boolean | null;
   shortWindowRetryAt?: string | null;
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
   const [attempt, setAttempt] = useState(createPlannerAttempt());
+  // Link（家族設定）のため MemoryRouter で包む（C-I2）
   return (
-    <PlannerWizard
-      draft={draft}
-      step={step}
-      eligibleMembers={eligibleMembers}
-      isSaving={isSaving}
-      error={error}
-      fieldErrors={fieldErrors}
-      onDraftChange={setDraft}
-      onStepChange={setStep}
-      onSubmit={onSubmit}
-      pantryItems={pantryItems}
-      pantryItemsStatus={pantryItemsStatus}
-      attempt={attempt}
-      onAttemptChange={setAttempt}
-      hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
-      onOpenPrivacyNotice={onOpenPrivacyNotice}
-      hasDraftConflict={hasDraftConflict}
-      canResolveDraftConflict={canResolveDraftConflict}
-      draftConflictRefetchError={draftConflictRefetchError}
-      usageRemaining={usageRemaining}
-      shortWindowRetryAt={shortWindowRetryAt}
-      {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
-      {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
-      {...(onReset !== undefined ? { onReset } : {})}
-      {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
-      {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
-    />
+    <MemoryRouter>
+      <PlannerWizard
+        draft={draft}
+        step={step}
+        eligibleMembers={eligibleMembers}
+        isSaving={isSaving}
+        error={error}
+        fieldErrors={fieldErrors}
+        onDraftChange={setDraft}
+        onStepChange={setStep}
+        onSubmit={onSubmit}
+        pantryItems={pantryItems}
+        pantryItemsStatus={pantryItemsStatus}
+        attempt={attempt}
+        onAttemptChange={setAttempt}
+        hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
+        onOpenPrivacyNotice={onOpenPrivacyNotice}
+        hasDraftConflict={hasDraftConflict}
+        canResolveDraftConflict={canResolveDraftConflict}
+        draftConflictRefetchError={draftConflictRefetchError}
+        usageRemaining={usageRemaining}
+        attemptsRemaining={attemptsRemaining}
+        globalAvailable={globalAvailable}
+        shortWindowRetryAt={shortWindowRetryAt}
+        {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+        {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
+        {...(onReset !== undefined ? { onReset } : {})}
+        {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
+        {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
+      />
+    </MemoryRouter>
   );
 }
 
@@ -383,8 +393,9 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     expect(
       screen.getByText(/献立に使える家族がいないため、「家族に合わせて作る」は選べません/u),
     ).toBeVisible();
-    expect(screen.getByText("アレルギー確認が完了していません")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "現在の家族・安全条件" })).toBeInTheDocument();
+    // targetMode 未選択時は CurrentSafetySummary を出さず、blocked 理由だけを出す（C-I3）
+    expect(screen.getByText(/アレルギー確認が完了していません/u)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "現在の家族・安全条件" })).not.toBeInTheDocument();
   });
 
   it("idea人数は1〜6がbutton、7〜20はプルダウンで選ぶ", async () => {
@@ -692,7 +703,7 @@ describe("PlannerWizard review step", () => {
   it("privacy未確認では説明ボタンを表示し、生成押下でダイアログへ誘導する", async () => {
     const user = userEvent.setup();
     const onOpenPrivacyNotice = vi.fn();
-    const onSubmit = vi.fn(async () => undefined);
+    const onSubmit = vi.fn(() => Promise.resolve());
     render(
       <Harness
         initialStep="review"
@@ -880,8 +891,81 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByText("本日あと3回作成できます")).toBeVisible();
-    expect(screen.getByText(/10分間の通信試行上限に達しました/)).toBeVisible();
-    expect(screen.getByText(/以降に再試行してください/)).toBeVisible();
+    expect(
+      screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u),
+    ).toBeVisible();
+    expect(screen.getByText(/以降に再試行してください/u)).toBeVisible();
+  });
+
+  it("C-I12: 成功残 0 のとき主 CTA を止め上限メッセージを出す", () => {
+    render(<Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={0} />);
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText("本日の作成回数の上限に達しました。明日またお試しください。"),
+    ).toBeVisible();
+  });
+
+  it("C-I12 residual: attempts 残 0 のとき主 CTA を止め平易メッセージを出す", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={0}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText("AIへの問い合わせ回数の上限に達しました。明日またお試しください。"),
+    ).toBeVisible();
+  });
+
+  it("C-I12 residual: global 不可のとき主 CTA を止め平易メッセージを出す", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={5}
+        globalAvailable={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText("ただいま混雑しているため、しばらくしてからお試しください。"),
+    ).toBeVisible();
+  });
+
+  it("C-I12 residual: null の attempts/global では誤って主 CTA を止めない", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={null}
+        globalAvailable={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeEnabled();
+  });
+
+  it("I2: shortWindow 残 0（retryAt あり）では成功・attempt 残があっても主 CTA を止める", () => {
+    // shortWindowRetryAt は planner-route が remaining===0 のときだけ渡す。
+    // 端末時計での再有効化はせず、usage 再取得で retryAt が消えたときだけ有効に戻る。
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={5}
+        globalAvailable={true}
+        shortWindowRetryAt="2026-07-25T05:10:00.000Z"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u),
+    ).toBeVisible();
   });
 
   it("idea の review では緊急献立ボタンの代わりに切替案内を出す", () => {
@@ -1162,9 +1246,7 @@ describe("IngredientStep quick select", () => {
 
     const dialog = screen.getByRole("alertdialog", { name: "メイン食材を選んでください" });
     expect(dialog).toBeVisible();
-    expect(dialog).toHaveTextContent(
-      "献立の中心になる食材を1つ以上選んでから進んでください。",
-    );
+    expect(dialog).toHaveTextContent("献立の中心になる食材を1つ以上選んでから進んでください。");
     // ダイアログ中は step を進めない
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "3. ジャンル" })).not.toBeInTheDocument();

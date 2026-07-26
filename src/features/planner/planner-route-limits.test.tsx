@@ -71,14 +71,14 @@ vi.mock("./use-draft-autosave", () => ({
 
 import { PlannerPage } from "./planner-route";
 
-it("新規下書きの対象家族を適格な先頭20人までで初期化する", async () => {
+it("新規下書きは対象を自動埋めせず、household 選択後も上限20人まで手選択する", async () => {
   render(
     <MemoryRouter>
       <PlannerPage />
     </MemoryRouter>,
   );
 
-  // audience stepまで進み、household選択済みの対象家族数を確認する。
+  // audience step まで進む（適格家族は 21 人モック）
   await userEvent.click(await screen.findByRole("radio", { name: "夕食" }));
   await userEvent.click(screen.getByRole("button", { name: "次へ" }));
   await userEvent.type(screen.getByLabelText("メイン食材"), "鶏肉");
@@ -87,6 +87,20 @@ it("新規下書きの対象家族を適格な先頭20人までで初期化す�
   await userEvent.click(screen.getByRole("radio", { name: "和食" }));
   await userEvent.click(screen.getByRole("button", { name: "次へ" }));
 
-  expect(screen.getByRole("radio", { name: "家族に合わせて作る" })).toBeChecked();
+  // C-I4 / §8.3: 新規下書きは対象未選択。適格家族がいても household を自動埋めしない。
+  expect(screen.getByRole("radio", { name: "家族に合わせて作る" })).not.toBeChecked();
+  expect(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" })).not.toBeChecked();
+  expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+
+  await userEvent.click(screen.getByRole("radio", { name: "家族に合わせて作る" }));
+  // 一覧は全適格メンバーを出すが、初期選択は 0。上限 20 までしかチェックできない。
+  const checkboxes = screen.getAllByRole("checkbox");
+  expect(checkboxes).toHaveLength(21);
+  expect(screen.queryAllByRole("checkbox", { checked: true })).toHaveLength(0);
+
+  for (const checkbox of checkboxes.slice(0, 20)) {
+    await userEvent.click(checkbox);
+  }
   expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(20);
+  expect(checkboxes[20]).toBeDisabled();
 });

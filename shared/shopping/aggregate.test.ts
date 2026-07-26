@@ -26,6 +26,67 @@ const ingredient = (
 });
 
 describe("buildShoppingDraft", () => {
+  it("formats summed fractional quantities without floating-point noise (D-I1)", () => {
+    const draft = buildShoppingDraft({
+      menuId: "10000000-0000-4000-8000-000000000010",
+      menuVersion: 1,
+      ingredients: [
+        ingredient({
+          name: "みりん",
+          quantityValue: 0.1,
+          quantityText: "大さじ0.1",
+          unit: "大さじ",
+          storeSection: "seasonings",
+        }),
+        ingredient({
+          ingredientId: "10000000-0000-4000-8000-000000000003",
+          name: "みりん",
+          quantityValue: 0.2,
+          quantityText: "大さじ0.2",
+          unit: "大さじ",
+          storeSection: "seasonings",
+        }),
+      ],
+      pantry: [],
+      aliases: new Map(),
+      labels: [],
+    });
+    expect(draft.items).toHaveLength(1);
+    expect(draft.items[0]?.quantityValue).toBeCloseTo(0.3, 10);
+    expect(draft.items[0]?.quantityText).toBe("0.3大さじ");
+  });
+
+  it("merges fullwidth and halfwidth units after NFKC (D-I3)", () => {
+    const draft = buildShoppingDraft({
+      menuId: "10000000-0000-4000-8000-000000000010",
+      menuVersion: 1,
+      ingredients: [
+        ingredient({
+          name: "にんじん",
+          quantityValue: 100,
+          quantityText: "100g",
+          unit: "g",
+        }),
+        ingredient({
+          ingredientId: "10000000-0000-4000-8000-000000000003",
+          name: "にんじん",
+          quantityValue: 100,
+          quantityText: "100ｇ",
+          unit: "ｇ",
+        }),
+      ],
+      pantry: [{ name: "にんじん", quantity: 50, unit: "ｇ" }],
+      aliases: new Map(),
+      labels: [],
+    });
+    expect(draft.items).toHaveLength(1);
+    expect(draft.items[0]).toMatchObject({
+      quantityValue: 150,
+      quantityText: "150g",
+      unit: "g",
+    });
+  });
+
   it("combines only numeric same-name same-unit rows and subtracts known pantry", () => {
     const draft = buildShoppingDraft({
       menuId: "10000000-0000-4000-8000-000000000010",

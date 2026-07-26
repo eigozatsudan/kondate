@@ -87,6 +87,51 @@ function isExactLocalMockBaseUrl(value: string): boolean {
 /** 外部 Retry-After を UI/台帳へ載せる上限（秒）。それ以上は切り詰める。 */
 const maxRetryAfterSeconds = 86_400;
 
+/** OpenRouter 応答本文の上限（A-I11）。mock 受信上限 1MiB に揃える。 */
+export const OPENROUTER_MAX_BODY_BYTES = 1 * 1024 * 1024;
+
+/**
+ * 応答 body をストリーム読みしつつ固定バイト上限で打ち切る。
+ * 超過時は invalid_ai_response（修理適格の invalid 経路へ）。
+ */
+export async function readResponseBodyWithByteCap(
+  response: Response,
+  maxBytes: number = OPENROUTER_MAX_BODY_BYTES,
+): Promise<string> {
+  if (response.body === null) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
+      throw new OpenRouterCallError("invalid_ai_response");
+    }
+    return text;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new OpenRouterCallError("invalid_ai_response");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof OpenRouterCallError) throw error;
+    throw error;
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(merged);
+}
+
 function retryAt(response: Response, now: number): string | null {
   const retryAfter = response.headers.get("retry-after");
   if (!retryAfter) return null;
@@ -179,8 +224,9 @@ export async function sendMenuGeneration(
 
     let rawBody: string;
     try {
-      rawBody = await response.text();
-    } catch {
+      rawBody = await readResponseBodyWithByteCap(response, OPENROUTER_MAX_BODY_BYTES);
+    } catch (error) {
+      if (error instanceof OpenRouterCallError) throw error;
       if (controller.signal.aborted) {
         throw new OpenRouterCallError("generation_timeout");
       }

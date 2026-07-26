@@ -67,6 +67,22 @@ describe("auth continuation recovery", () => {
     resolveClaim?.({ kind: "deposited" });
     stop();
   });
+
+  it("polls at 5s so claim stays under the 20/60s IP limit (B-I1)", () => {
+    const intervals: number[] = [];
+    const setIntervalMock = ((handler: TimerHandler, ms?: number) => {
+      intervals.push(ms ?? 0);
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    }) as unknown as typeof window.setInterval;
+    const stop = startAuthContinuationRecovery({
+      gateway: { resumeFlow: vi.fn() },
+      storage: new MapStorage(),
+      onComplete: vi.fn(),
+      setInterval: setIntervalMock,
+    });
+    expect(intervals).toEqual([5_000]);
+    stop();
+  });
 });
 
 class MapStorage implements Storage {

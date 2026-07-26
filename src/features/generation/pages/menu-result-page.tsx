@@ -18,6 +18,7 @@ import {
 import {
   RegenerationSheet,
   type RegenerationReasonInput,
+  type RegenerationUsageView,
 } from "@/features/history/components/regeneration-sheet";
 import {
   useMenuRevalidation,
@@ -55,6 +56,20 @@ import { getMenuResult } from "../api/menu-result-api";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import { MenuResult, type MenuResultActions } from "../components/menu-result";
 import { useUsageToday } from "../hooks/use-usage-today";
+
+function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): RegenerationUsageView {
+  return {
+    successRemaining: usage.isSuccess ? usage.data.success.remaining : null,
+    attemptsRemaining: usage.isSuccess ? usage.data.attempts.remaining : null,
+    shortWindowRemaining: usage.isSuccess ? usage.data.shortWindow.remaining : null,
+    shortWindowRetryAt:
+      usage.isSuccess && usage.data.shortWindow.remaining === 0
+        ? usage.data.shortWindow.retryAt
+        : null,
+    loading: usage.isPending || usage.isFetching,
+    error: usage.isError,
+  };
+}
 import { clearPendingGeneration } from "../model/pending-generation";
 
 const DISCLAIMER =
@@ -85,7 +100,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   );
   const query = useQuery({
     queryKey,
-    queryFn: () => getMenuResult(menuId ?? "invalid"),
+    queryFn: () => getMenuResult(menuId ?? "invalid", { includePreferenceGaps: true }),
     enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
     staleTime: 30_000,
   });
@@ -153,7 +168,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const usage = useUsageToday(userId ?? "");
-  const remaining = usage.data?.success.remaining ?? 0;
+  const usageView = usageViewFromQuery(usage);
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId: menuId ?? "00000000-0000-4000-8000-000000000000",
@@ -381,7 +396,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
         >
           <RegenerationSheet
             targetMode="idea"
-            remaining={remaining}
+            usage={usageView}
             onSubmit={onSubmitReason}
             onCancel={() => {
               setSheetMode(null);
@@ -427,7 +442,7 @@ function HouseholdResultBody({
   const revalidation = injectedRevalidation ?? liveView;
 
   const usage = useUsageToday(userId ?? "");
-  const remaining = usage.data?.success.remaining ?? 0;
+  const usageView = usageViewFromQuery(usage);
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId: menuId ?? "00000000-0000-4000-8000-000000000000",
@@ -448,6 +463,13 @@ function HouseholdResultBody({
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
 
+  // D-M7: 安全再検査で操作が閉じたらシートも閉じる
+  useEffect(() => {
+    if (!actionsEnabled && sheetMode !== null) {
+      setSheetMode(null);
+    }
+  }, [actionsEnabled, sheetMode]);
+
   // 買い物リスト側の現行安全ゲート。献立側の再検証と両方が通るまで
   // create / reconcile のコマンドは組み立てない。
   const navigate = useNavigate();
@@ -459,12 +481,10 @@ function HouseholdResultBody({
   const [shoppingDiff, setShoppingDiff] = useState<ShoppingDiff | null>(null);
   const [shoppingError, setShoppingError] = useState<string | null>(null);
   const activeList = shoppingList.data ?? null;
-  const shoppingBlocked =
-    !actionsEnabled ||
-    shoppingGate.blocked ||
-    shoppingList.isFetching ||
-    !shoppingList.isSuccess ||
-    menuId === null;
+  // D-C1: 新規作成は active list の safety gate と分離（履歴詳細と同契約）
+  const shoppingListBusy = shoppingList.isFetching || !shoppingList.isSuccess || menuId === null;
+  const shoppingMutateBlocked = !actionsEnabled || shoppingGate.blocked || shoppingListBusy;
+  const canCreateShoppingList = actionsEnabled && !shoppingListBusy && !createList.isPending;
 
   const ownerId = userId ?? "missing";
   const reconcileTarget = useQuery({
@@ -722,7 +742,7 @@ function HouseholdResultBody({
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={shoppingBlocked || createList.isPending}
+          disabled={!canCreateShoppingList}
           onClick={() => {
             setShoppingError(null);
             setShoppingSheet("create");
@@ -734,7 +754,7 @@ function HouseholdResultBody({
           <button
             type="button"
             className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={shoppingBlocked || reconcileList.isPending}
+            disabled={shoppingMutateBlocked || reconcileList.isPending}
             onClick={() => {
               const target = reconcileTarget.data;
               if (activeList === null || menuId === null || target === null) return;
@@ -828,9 +848,9 @@ function HouseholdResultBody({
                 }
           }
           pending={createList.isPending}
-          safetyBlocked={shoppingBlocked}
+          safetyBlocked={!canCreateShoppingList}
           onSubmit={(input) => {
-            if (shoppingBlocked) return;
+            if (!canCreateShoppingList) return;
             const command = persistedShoppingCommand(
               "create",
               menuId,
@@ -862,10 +882,10 @@ function HouseholdResultBody({
           <ReconcileListSheet
             diff={shoppingDiff}
             pending={reconcileList.isPending}
-            safetyBlocked={shoppingBlocked}
+            safetyBlocked={shoppingMutateBlocked}
             onApply={(approval) => {
               const target = reconcileTarget.data;
-              if (shoppingBlocked || target === null) return;
+              if (shoppingMutateBlocked || target === null) return;
               const listId = activeList.id;
               const command = persistedShoppingCommand(
                 "reconcile",
@@ -896,7 +916,8 @@ function HouseholdResultBody({
         >
           <RegenerationSheet
             targetMode="household"
-            remaining={remaining}
+            usage={usageView}
+            actionsEnabled={actionsEnabled}
             onSubmit={onSubmitReason}
             onCancel={() => {
               setSheetMode(null);

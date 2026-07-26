@@ -10,6 +10,29 @@ type LoginLocationState = {
     "oauth_cancelled" | "auth_callback_failed" | "magic_link_expired" | "unbound_callback";
 };
 
+/** 期限切れ復帰用。秘密は載せず、直近に送った宛先メールだけを短寿命で覚える（B-I8）。 */
+const lastMagicEmailStorageKey = "kondate.auth.lastMagicEmail";
+
+function readLastMagicEmail(): string {
+  try {
+    return sessionStorage.getItem(lastMagicEmailStorageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberLastMagicEmail(email: string): void {
+  try {
+    if (email.trim() === "") {
+      sessionStorage.removeItem(lastMagicEmailStorageKey);
+      return;
+    }
+    sessionStorage.setItem(lastMagicEmailStorageKey, email.trim());
+  } catch {
+    // sessionStorage 拒否時は期限切れ復元を諦めるだけ
+  }
+}
+
 function readLoginLocationState(value: unknown): LoginLocationState {
   if (typeof value !== "object" || value === null || !("authError" in value)) return {};
   const authError = value.authError;
@@ -33,7 +56,13 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const params = new URLSearchParams(location.search);
   // 明示的な復帰先は従来どおり安全化し、指定がない初回ログインだけ使い方の案内へ導く。
   const returnTo = params.has("returnTo") ? sanitizeReturnPath(params.get("returnTo")) : "/welcome";
-  const [state, setState] = useState<MagicLinkState>({ status: "idle", email: "" });
+  const [state, setState] = useState<MagicLinkState>(() => {
+    // マジックリンク期限切れは送信済み文脈へ戻す（再入力を強いない）
+    if (locationState.authError === "magic_link_expired") {
+      return { status: "expired", email: readLastMagicEmail() };
+    }
+    return { status: "idle", email: "" };
+  });
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [googleError, setGoogleError] = useState(false);
   const [googlePending, setGooglePending] = useState(false);
@@ -86,6 +115,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     setState({ status: "sending", email });
     try {
       const sent = await activeGateway.sendMagicLink(email, returnTo);
+      rememberLastMagicEmail(sent.email);
       setState({ status: "sent", ...sent });
     } catch {
       setState({
@@ -120,23 +150,43 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     );
   }
 
-  if (state.status === "sent") {
+  // 送信済み・期限切れは同一文脈（宛先・再送・変更・Google）でやり直せる（B-I8 / L174 / L644）
+  if (state.status === "sent" || state.status === "expired") {
+    const emailLabel = state.email.trim() === "" ? "メール" : state.email;
+    const resendDisabled = state.status === "sent" && secondsLeft > 0;
     return (
       <main className="page-frame stack">
-        <h1>メールを確認してください</h1>
+        <h1>
+          {state.status === "expired" ? "リンクの期限が切れました" : "メールを確認してください"}
+        </h1>
         <section className="card stack" aria-live="polite">
-          <strong>{state.email} に送りました</strong>
+          {state.status === "expired" && (
+            <p className="error-message" role="alert">
+              {authErrorCopy ?? "このリンクは期限切れか、すでに使用されています。"}
+            </p>
+          )}
+          {state.email.trim() !== "" ? (
+            <strong>{state.email} に送りました</strong>
+          ) : (
+            <strong>ログイン用メールを再送できます</strong>
+          )}
           <p>迷惑メールフォルダも確認してください</p>
-          <p>リンクを開くと認証を確認します。</p>
+          <p>
+            {state.status === "expired"
+              ? "新しいログイン用メールを送って、もう一度お試しください。"
+              : "リンクを開くと認証を確認します。"}
+          </p>
           <button
             className="primary-button"
             type="button"
-            disabled={secondsLeft > 0}
+            disabled={resendDisabled || state.email.trim() === ""}
             onClick={() => void send()}
           >
-            {secondsLeft > 0
+            {resendDisabled
               ? `${String(secondsLeft)}秒後に再送できます`
-              : "ログイン用メールを再送"}
+              : state.email.trim() === ""
+                ? "メールアドレスを入力して再送"
+                : "ログイン用メールを再送"}
           </button>
           <button
             className="text-button"
@@ -160,6 +210,13 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
               Googleログインを開始できませんでした。もう一度お試しください。
             </p>
           )}
+          {state.email.trim() === "" && (
+            <p className="type-small">
+              宛先が分からないときは、下でメールアドレスを変更してください。
+            </p>
+          )}
+          {/* emailLabel は aria 用の文脈。表示は上の strong で足りる */}
+          <span className="sr-only">{emailLabel}</span>
         </section>
       </main>
     );

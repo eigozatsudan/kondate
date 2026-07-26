@@ -2,7 +2,9 @@ import { afterEach, expect, expectTypeOf, it, vi } from "vitest";
 import { menuResponseFormat } from "../../../shared/contracts/generation.js";
 import { parseServerEnv, type ServerEnv } from "./env.js";
 import {
+  OPENROUTER_MAX_BODY_BYTES,
   OpenRouterCallError,
+  readResponseBodyWithByteCap,
   sendMenuGeneration,
   type OpenRouterGenerationInput,
 } from "./openrouter.js";
@@ -240,6 +242,27 @@ it("rejects an unconfigured response model without repair metadata", async () =>
 
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
     new OpenRouterCallError("model_unavailable"),
+  );
+});
+
+it("rejects OpenRouter bodies larger than 1MiB as invalid_ai_response", async () => {
+  // A-I11: 固定上限超過は repair 適格の invalid に落とす
+  const oversized = "x".repeat(OPENROUTER_MAX_BODY_BYTES + 1);
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(new Response(oversized, { status: 200 }));
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toMatchObject({
+    code: "invalid_ai_response",
+  });
+});
+
+it("readResponseBodyWithByteCap accepts exactly max bytes and rejects max+1", async () => {
+  const exact = "a".repeat(64);
+  await expect(readResponseBodyWithByteCap(new Response(exact), 64)).resolves.toBe(exact);
+  await expect(readResponseBodyWithByteCap(new Response("a".repeat(65)), 64)).rejects.toMatchObject(
+    { code: "invalid_ai_response" },
   );
 });
 

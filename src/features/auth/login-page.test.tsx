@@ -60,6 +60,31 @@ it("shows visible error copy when the callback arrives unbound to a known flow",
   );
 });
 
+it("restores sent context when magic link expired and last email is known (B-I8)", () => {
+  sessionStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter
+      initialEntries={[{ pathname: "/login", state: { authError: "magic_link_expired" } }]}
+    >
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole("heading", { name: "リンクの期限が切れました" })).toBeInTheDocument();
+  expect(screen.getByText("user@example.com に送りました")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "ログイン用メールを再送" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "メールアドレスを変更" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Googleに切り替える" })).toBeInTheDocument();
+  sessionStorage.removeItem("kondate.auth.lastMagicEmail");
+});
+
 it("allows retrying Google after switching from a magic link and a failed start", async () => {
   const user = userEvent.setup();
   const gateway: AuthGateway = {
@@ -154,35 +179,39 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
 });
 
 it.each([
-  ["empty", "/login?returnTo="],
-  ["bare slash", "/login?returnTo=%2F"],
-  ["external URL", "/login?returnTo=https%3A%2F%2Fattacker.example"],
-  ["protocol-relative URL", "/login?returnTo=%2F%2Fattacker.example"],
-])("sanitizes an explicit %s returnTo for Google and magic link", async (_label, entry) => {
-  const user = userEvent.setup();
-  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
-  const sendMagicLink = vi.fn().mockResolvedValue({
-    flowId: "flow-1",
-    email: "user@example.com",
-    resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
-  });
-  const gateway: AuthGateway = {
-    signInWithGoogle,
-    sendMagicLink,
-    completeCallback: vi.fn(),
-    resumeFlow: vi.fn(),
-  };
+  ["empty", "/login?returnTo=", "/planner"],
+  // B-I5: 裸 "/" は RootEntry へ戻すために許可する
+  ["bare slash", "/login?returnTo=%2F", "/"],
+  ["external URL", "/login?returnTo=https%3A%2F%2Fattacker.example", "/planner"],
+  ["protocol-relative URL", "/login?returnTo=%2F%2Fattacker.example", "/planner"],
+])(
+  "sanitizes an explicit %s returnTo for Google and magic link",
+  async (_label, entry, expected) => {
+    const user = userEvent.setup();
+    const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+    const sendMagicLink = vi.fn().mockResolvedValue({
+      flowId: "flow-1",
+      email: "user@example.com",
+      resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const gateway: AuthGateway = {
+      signInWithGoogle,
+      sendMagicLink,
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+    };
 
-  render(
-    <MemoryRouter initialEntries={[entry]}>
-      <LoginPage gateway={gateway} />
-    </MemoryRouter>,
-  );
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
 
-  await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
-  expect(signInWithGoogle).toHaveBeenCalledWith("/planner");
+    await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
+    expect(signInWithGoogle).toHaveBeenCalledWith(expected);
 
-  await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
-  await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
-  expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/planner");
-});
+    await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
+    await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
+    expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", expected);
+  },
+);

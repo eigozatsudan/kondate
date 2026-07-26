@@ -25,6 +25,31 @@ const openedLabels = {
   unknown: "開けたかは未登録",
 } as const;
 
+/** JST の YYYY-MM-DD（期限注意表示用）。 */
+function jstDateKey(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+type ExpiryNotice = { className: string | undefined; suffix: string };
+
+/** D-I6: 期限切れは赤・7日以内はまもなく（注意表示）。 */
+function expiryNotice(expiresOn: string, now: Date = new Date()): ExpiryNotice {
+  const todayKey = jstDateKey(now);
+  if (expiresOn < todayKey) {
+    return { className: "font-semibold text-red-800", suffix: "（期限切れ）" };
+  }
+  const soonKey = jstDateKey(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
+  if (expiresOn <= soonKey) {
+    return { className: "font-semibold text-amber-800", suffix: "（まもなく）" };
+  }
+  return { className: undefined, suffix: "" };
+}
+
 export function PantryPage() {
   const auth = useAuth();
   const userId = auth.session?.user.id;
@@ -262,12 +287,17 @@ export function PantryPageContent({
                   ? "分量未入力"
                   : `${String(item.quantity)}${item.unit ?? ""}`}
               </p>
-              {item.expiresOn !== null && (
-                <p>
-                  {item.expirationType === null ? "期限" : expiryLabels[item.expirationType]}{" "}
-                  {item.expiresOn}
-                </p>
-              )}
+              {item.expiresOn !== null &&
+                (() => {
+                  const notice = expiryNotice(item.expiresOn);
+                  return (
+                    <p className={notice.className}>
+                      {item.expirationType === null ? "期限" : expiryLabels[item.expirationType]}{" "}
+                      {item.expiresOn}
+                      {notice.suffix}
+                    </p>
+                  );
+                })()}
               {item.openedState !== null && <p>{openedLabels[item.openedState]}</p>}
               <div className="pantry-actions">
                 <button

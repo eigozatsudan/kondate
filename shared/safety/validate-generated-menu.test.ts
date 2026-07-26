@@ -464,10 +464,103 @@ it("requires exact member adaptations and enforces member preferences", () => {
     ],
   });
 
+  // adaptations 欠落は hard。苦手ごはんは soft のため codes には出ない。
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu({ adaptations: [] }), context), [
     "target_member_mismatch",
     "member_preference_mismatch",
   ]);
+});
+
+it("A-I7 treats dislikes as soft gaps while keeping portion/spice/ease hard", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  // portion/spice/ease を満たす adaptation 本文と safetyActions を用意し、dislikes だけ unmet にする
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "regular",
+        spiceLevel: "regular",
+        easePreferences: [],
+        dislikes: ["ごはん"],
+      },
+    ],
+  });
+  const result = validateGeneratedMenu(baseMenu, context);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.preferenceGaps).toEqual([
+    expect.objectContaining({
+      kind: "dislike",
+      dislikeToken: "ごはん",
+      message: expect.stringContaining("ごはん") as string,
+    }),
+  ]);
+});
+
+it.each([
+  ["small", "none", "少な目に取り分け、辛みなしで味付けする"],
+  ["small", "none", "量を控え、香辛料を使わない"],
+  ["small", "mild", "小盛で、あっさり薄味にする"],
+  ["large", "none", "大盛に増量し、辛いものを使わない"],
+  ["large", "mild", "しっかりめの量で、塩分控えめの甘口にする"],
+] as const)(
+  "accepts expanded portion/spice wording hard matches: %s / %s / %s",
+  (portionSize, spiceLevel, wording) => {
+    const base = makeGenerationContext();
+    const baseMenu = makeGeneratedMenu();
+    const adaptation = baseMenu.adaptations[0]!;
+    const menu = makeGeneratedMenu({
+      adaptations: [
+        {
+          ...adaptation,
+          portionText: wording,
+          additionalSeasoning: wording,
+          servingCheck: wording,
+        },
+      ],
+    });
+    const context = makeGenerationContext({
+      memberPreferences: [
+        {
+          ...base.memberPreferences[0]!,
+          portionSize,
+          spiceLevel,
+          easePreferences: [],
+          dislikes: [],
+        },
+      ],
+    });
+    expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+  },
+);
+
+it("still hard-fails when portion/spice wording is unrelated", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "通常どおり",
+        additionalSeasoning: "いつもの味",
+        servingCheck: "盛り付けを確認",
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "small",
+        spiceLevel: "none",
+        easePreferences: [],
+        dislikes: [],
+      },
+    ],
+  });
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
 });
 
 it("does not count a negated timeline-only mention as a requested main ingredient", () => {
@@ -484,6 +577,151 @@ it("does not count a negated timeline-only mention as a requested main ingredien
   });
 
   expectIssueCodes(validateGeneratedMenu(menu, context), ["main_ingredient_missing"]);
+});
+
+it.each([
+  ["鮭", "サーモン"],
+  ["サーモン", "鮭"],
+  ["さけ", "サーモン"],
+  ["しゃけ", "鮭"],
+  ["鮭", "紅鮭"],
+  ["鮭", "鮭フレーク"],
+] as const)("accepts reviewed salmon synonyms from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expect(validateGeneratedMenu(menuWithIngredient(generated), context)).toMatchObject({ ok: true });
+});
+
+it("accepts a reviewed salmon synonym in a dish name", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: baseMenu.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, name: "サーモンのムニエル" } : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: ["鮭"] },
+  });
+
+  expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+});
+
+it.each([
+  ["鮭", "鮭風味"],
+  ["サーモン", "サーモン風調味料"],
+] as const)("does not count a flavor-only expression from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient(generated), context), [
+    "main_ingredient_missing",
+  ]);
+});
+
+it.each(["name", "description"] as const)(
+  "does not count a flavor-only salmon expression in dish %s",
+  (field) => {
+    const base = makeGenerationContext();
+    const baseMenu = makeGeneratedMenu();
+    const menu = makeGeneratedMenu({
+      dishes: baseMenu.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, [field]: "鮭の風味を再現したパスタ" } : dish,
+      ),
+    });
+    const context = makeGenerationContext({
+      submission: { ...base.submission, mainIngredients: ["鮭"] },
+    });
+
+    expectIssueCodes(validateGeneratedMenu(menu, context), ["main_ingredient_missing"]);
+  },
+);
+
+it.each([
+  ["鮭", "さけるチーズ"],
+  ["鮭", "サーモン風ソース"],
+] as const)("does not count an embedded salmon alias from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient(generated), context), [
+    "main_ingredient_missing",
+  ]);
+});
+
+// 先行ひらがなだけでは「さけ」を除外しない（焼きさけ＝実食材、さけるチーズ＝動詞連続のみ除外）
+it.each([
+  ["鮭", "焼きさけ"],
+  ["さけ", "焼きさけ"],
+] as const)(
+  "accepts grilled salmon kana compound from %s to %s without left-hiragana rejection",
+  (requested, generated) => {
+    const base = makeGenerationContext();
+    const context = makeGenerationContext({
+      submission: { ...base.submission, mainIngredients: [requested] },
+    });
+
+    expect(validateGeneratedMenu(menuWithIngredient(generated), context)).toMatchObject({
+      ok: true,
+    });
+  },
+);
+
+it("accepts real salmon after a particle in dish description", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: baseMenu.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: "素材はさけ" } : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: ["鮭"] },
+  });
+
+  expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+});
+
+// I3: 酒・色名など非食材文脈は狭く拒否（先行ひらがな一律拒否は再導入しない）
+it.each([
+  ["鮭", "おさけに合う一品"],
+  ["さけ", "おさけに合う一品"],
+  ["鮭", "サーモンピンクの彩り"],
+  ["サーモン", "サーモンピンクの彩り"],
+] as const)("I3: does not count non-food salmon context from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: baseMenu.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: generated } : dish,
+    ),
+  });
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["main_ingredient_missing"]);
+});
+
+it.each([
+  ["鮭", "鯖"],
+  ["鮭フレーク", "サーモン"],
+] as const)("does not widen salmon synonyms from %s to %s", (requested, generated) => {
+  const base = makeGenerationContext();
+  const context = makeGenerationContext({
+    submission: { ...base.submission, mainIngredients: [requested] },
+  });
+
+  expectIssueCodes(validateGeneratedMenu(menuWithIngredient(generated), context), [
+    "main_ingredient_missing",
+  ]);
 });
 
 it("T5-FR-02 rejects missing preferences for a target member", () => {

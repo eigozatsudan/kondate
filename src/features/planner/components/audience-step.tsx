@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Link } from "react-router";
 import type { TargetMode } from "@shared/contracts/planner";
 import { CurrentSafetySummary } from "../current-safety-summary";
 import { normalizeAudienceForModeChange } from "../model/planner-wizard";
@@ -98,7 +99,21 @@ export function AudienceStep({
       <h2 id="audience-step-title" tabIndex={-1} ref={headingRef}>
         4. 作る相手
       </h2>
-      {eligibleMembers.length > 0 && <CurrentSafetySummary members={eligibleMembers} />}
+      {/* idea では家族安全条件を見せない（安全確認済みと誤認させない・C-I3 / §3.1）
+          未選択で全員 blocked のときだけ理由一覧を出す（household 選択前の説明）。 */}
+      {value.targetMode === "household" && eligibleMembers.length > 0 && (
+        <CurrentSafetySummary members={eligibleMembers} />
+      )}
+      {value.targetMode === null &&
+        eligibleMembers.length > 0 &&
+        !hasEligibleMembers &&
+        eligibleMembers.map((member) =>
+          member.blockedReason !== null ? (
+            <p key={member.id} role="alert">
+              {member.displayName}: {member.blockedReason}
+            </p>
+          ) : null,
+        )}
       <div
         className="wizard-option-list"
         role="radiogroup"
@@ -148,9 +163,9 @@ export function AudienceStep({
           {eligibleMembers.length === 0
             ? "家族設定がまだないため、「家族に合わせて作る」は選べません。"
             : "献立に使える家族がいないため、「家族に合わせて作る」は選べません。アレルギー確認などが未完了の家族は下の一覧で理由を確認できます。"}{" "}
-          <a className="secondary-button min-h-11" href="/settings">
+          <Link className="secondary-button min-h-11" to="/settings">
             家族を追加する
-          </a>
+          </Link>
         </p>
       )}
       {value.targetMode === "household" && (

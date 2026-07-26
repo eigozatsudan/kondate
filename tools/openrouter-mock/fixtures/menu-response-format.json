@@ -43,7 +43,8 @@
                   "items": {
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9_]*$"
-                  }
+                  },
+                  "maxItems": 32
                 },
                 "dishes": {
                   "minItems": 1,
@@ -348,7 +349,8 @@
                         "items": {
                           "type": "string",
                           "pattern": "^[a-z][a-z0-9_]*$"
-                        }
+                        },
+                        "maxItems": 32
                       },
                       "safetyActions": {
                         "maxItems": 20,

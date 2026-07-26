@@ -1,6 +1,7 @@
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { HouseholdMemberRow } from "@/features/household/household-api";
 import {
@@ -110,10 +111,13 @@ async function renderVisibleEmergencyResponse() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000, retry: false } },
   });
+  // 献立画面へ戻る Link など Router 依存 UI を包む
   const view = render(
-    <QueryClientProvider client={queryClient}>
-      <EmergencyMenuPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   expect(await screen.findByRole("heading", { name: "旧候補" })).toBeVisible();
   return { queryClient, view };
@@ -279,9 +283,11 @@ it("実QueryClientのoffline paused家族queryを0人扱いせずloading表示�
   queryClient.setQueryData(plannerKeys.draft(userId), await getPlannerDraftMock());
   onlineManager.setOnline(false);
   const view = render(
-    <QueryClientProvider client={queryClient}>
-      <EmergencyMenuPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 
   try {
@@ -303,9 +309,11 @@ it("実QueryClientで家族APIが失敗したとき候補APIを呼ばずpage-lev
   });
 
   render(
-    <QueryClientProvider client={queryClient}>
-      <EmergencyMenuPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 
   expect(await screen.findByRole("alert")).toHaveTextContent("緊急献立を読み込めませんでした");
@@ -317,9 +325,11 @@ it("30秒のfresh cache中でも家族安全更新event後に家族を再取得�
     defaultOptions: { queries: { staleTime: 30_000, retry: false } },
   });
   render(
-    <QueryClientProvider client={queryClient}>
-      <EmergencyMenuPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 
   expect(await screen.findByRole("alert")).toHaveTextContent("対象の家族が登録されていない");
@@ -347,9 +357,11 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
     defaultOptions: { queries: { staleTime: 30_000, retry: false } },
   });
   const firstEmergency = render(
-    <QueryClientProvider client={queryClient}>
-      <EmergencyMenuPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("対象の家族が登録されていない");
   firstEmergency.unmount();
@@ -391,9 +403,11 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
   onboarding.unmount();
 
   render(
-    <QueryClientProvider client={queryClient}>
-      <EmergencyMenuPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   await waitFor(() => {
     expect(listHouseholdMembersMock).toHaveBeenCalledTimes(2);
@@ -415,9 +429,11 @@ it("既存revisionの更新に失敗しても同一家族の安全変更後に�
     defaultOptions: { queries: { staleTime: 30_000, retry: false } },
   });
   render(
-    <QueryClientProvider client={queryClient}>
-      <EmergencyMenuPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   await waitFor(() => {
     expect(getEmergencyMenusMock).toHaveBeenCalledTimes(1);

@@ -203,12 +203,18 @@ it("競合 refetch の失敗後は再取得できないことを alert で示し
   await act(async () => vi.advanceTimersByTimeAsync(600));
   await act(async () => Promise.resolve());
 
-  expect(screen.getByRole("alert")).toHaveTextContent("最新の下書きを取得できませんでした。");
+  // 保存失敗と競合 refetch 失敗の alert が同時に出得るため、文言で特定する
+  expect(screen.getByText("最新の下書きを取得できませんでした。")).toBeInTheDocument();
   expect(screen.getByLabelText("自由メモ")).toHaveValue("Aの入力");
   expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeDisabled();
 
-  fireEvent.click(screen.getByRole("button", { name: "再試行" }));
+  // 競合 chrome の「再試行」は autosave の再試行と併存し得る。競合文言の近くを使う。
+  const conflictRetry = screen
+    .getByText("最新の下書きを取得できませんでした。")
+    .parentElement?.querySelector("button");
+  expect(conflictRetry).toBeTruthy();
+  fireEvent.click(conflictRetry as HTMLButtonElement);
   await act(async () => Promise.resolve());
   expect(getPlannerDraftMock).toHaveBeenCalledTimes(2);
 
@@ -335,7 +341,7 @@ it("緊急献立は保存完了を待ってから /emergency-menus へ一度だ�
   expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionTwo);
 });
 
-it("緊急献立への移動前の保存失敗では遷移せず生成と同じ保存エラーを表示する", async () => {
+it("緊急献立への移動前の保存失敗では遷移せず緊急専用の保存エラーを表示する", async () => {
   getPlannerDraftMock.mockResolvedValue(revisionOne);
   savePlannerDraftMock.mockRejectedValueOnce(new Error("save failed"));
   const queryClient = new QueryClient({
@@ -348,8 +354,12 @@ it("緊急献立への移動前の保存失敗では遷移せず生成と同じ�
   await act(async () => Promise.resolve());
 
   expect(screen.getByTestId("current-path")).toHaveTextContent("/planner");
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "献立条件を保存できなかったため、生成を開始しませんでした。",
-  );
+  // C-I14: 生成失敗文言と区別し、緊急献立を開けなかったことを伝える（全文一致）
+  expect(
+    screen.getByText(
+      "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/生成を開始しませんでした/u)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeEnabled();
 });

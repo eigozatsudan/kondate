@@ -233,7 +233,10 @@ describe("MenuResultPage", () => {
     renderPage(`/menus/${VALID_MENU_ID}`);
 
     expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
-    expect(getMenuResultMock).toHaveBeenCalledWith(VALID_MENU_ID);
+    // A-I7: 結果画面では苦手 soft gap を含めて取得する
+    expect(getMenuResultMock).toHaveBeenCalledWith(VALID_MENU_ID, {
+      includePreferenceGaps: true,
+    });
     await waitFor(() => {
       expect(clearPendingGenerationMock).toHaveBeenCalledTimes(1);
     });
@@ -359,7 +362,8 @@ describe("MenuResultPage", () => {
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
   });
 
-  it("keeps the shopping affordance closed while the shopping safety gate stays closed", async () => {
+  it("allows create while the shopping safety gate stays closed, but keeps reconcile closed", async () => {
+    // D-C1: 新規作成は active リストの安全ゲートと独立。差分確認だけゲートに従う。
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
     shoppingApi.revalidateActiveShoppingList.mockResolvedValue(invalidShoppingSafety);
 
@@ -369,7 +373,7 @@ describe("MenuResultPage", () => {
     await waitFor(() => {
       expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
     });
-    expect(create).toBeDisabled();
+    expect(create).toBeEnabled();
     expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
   });
 

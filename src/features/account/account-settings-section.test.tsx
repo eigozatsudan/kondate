@@ -45,9 +45,10 @@ beforeEach(() => {
   requireAccessTokenMock.mockResolvedValue("access-token");
   getBrowserSupabaseClientMock.mockReturnValue({ auth: {} });
   // jsdom の location.replace は差し替え不能なことがあるため、defineProperty で固定する
+  // Location は class instance のため spread すると prototype を失う（misused-spread）
   Object.defineProperty(window, "location", {
     configurable: true,
-    value: { ...window.location, replace: locationReplaceMock },
+    value: { replace: locationReplaceMock },
   });
   // 実ストレージ掃除を再現しつつ deferred 制御できるようにする
   clearLocalAuthAndDraftsMock.mockImplementation(() => {

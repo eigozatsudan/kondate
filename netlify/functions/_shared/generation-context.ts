@@ -405,6 +405,8 @@ export async function loadGenerationContext(
       .map((row) => row.ingredient_name),
   }));
 
+  // ランタイム検査用 requestText は main/avoid/memo を含む（validate-generated-menu の医療スコープ）。
+  // A-I4: menus.safety_snapshot へは自由記述を永続化しない（memo は preference_snapshot 側のみ）。
   const householdSafety = {
     ...safety,
     requestText: [
@@ -425,7 +427,7 @@ export async function loadGenerationContext(
     expiredPantryChecks,
     idempotencyKey: request.idempotencyKey,
     preferenceSnapshot: { submission, memberPreferences },
-    safetySnapshot: householdSafety,
+    safetySnapshot: { ...householdSafety, requestText: "" },
   };
   return householdContext;
 }

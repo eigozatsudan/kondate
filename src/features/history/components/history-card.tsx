@@ -85,6 +85,13 @@ export function HistoryCard({ group }: HistoryCardProps) {
           {representative.targetMode === "idea" ? "アイデア" : "家族に合わせた献立"}
         </p>
         <p className="text-sm text-ink-muted">
+          {new Intl.DateTimeFormat("ja-JP", {
+            timeZone: "Asia/Tokyo",
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(new Date(representative.createdAt))}
+        </p>
+        <p className="text-sm text-ink-muted">
           {representative.targetMode === "idea"
             ? "開いても家族条件は確認しません"
             : "開くと現在の家族設定で再確認します"}
@@ -124,7 +131,9 @@ export function HistoryCard({ group }: HistoryCardProps) {
         <h3 id={dialogTitleId} className="text-base font-bold">
           この履歴を削除しますか？
         </h3>
-        <p>派生した案も含めてまとめて消えます。元に戻せません。</p>
+        <p>
+          派生した案も含めてまとめて消えます。元に戻せません。この献立を元にした買い物リストがある場合、そのリストの確認操作はできなくなります。新しいリストは履歴から作り直せます。
+        </p>
         {deleteError !== null && (
           <p role="alert" className="error-message">
             {deleteError}

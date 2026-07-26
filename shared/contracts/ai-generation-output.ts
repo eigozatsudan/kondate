@@ -90,7 +90,7 @@ const aiAdaptation = z
     additionalHeating: z.string().trim().min(1).max(300).nullable(),
     additionalSeasoning: z.string().trim().min(1).max(300).nullable(),
     servingCheck: z.string().trim().min(1).max(300),
-    safetyTags: z.array(safetyTag),
+    safetyTags: z.array(safetyTag).max(32),
     safetyActions: z.array(aiSafetyAction).max(20),
   })
   .strict();
@@ -126,7 +126,7 @@ export const aiGeneratedMenuPayloadSchema = z
     cuisineGenre: z.enum(cuisineGenres),
     servings: z.number().int().min(1).max(20),
     totalElapsedMinutes: z.number().int().min(1).max(180),
-    safetyTags: z.array(safetyTag),
+    safetyTags: z.array(safetyTag).max(32),
     dishes: z.array(aiDish).min(1).max(5),
     timeline: z.array(aiTimeline).min(1).max(60),
     adaptations: z.array(aiAdaptation).max(100),

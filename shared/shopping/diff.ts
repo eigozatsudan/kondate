@@ -50,16 +50,14 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
     if (bucket?.length === 0) nextBuckets.delete(key);
     return candidate;
   };
-  // 同じ正規化名の候補を numeric/ambiguous を問わず探す（protected row 専用のフォールバック）。
-  // 完全一致キーでは見つからない場合にだけ使う。one-to-one 消費を維持するため、
-  // 見つけた候補はバケットから取り除く。
   const takeCandidateByName = (normalizedName: string): ShoppingDraftItem | undefined => {
     for (const [key, bucket] of nextBuckets) {
-      const index = bucket.findIndex((entry) => entry.normalizedName === normalizedName);
-      if (index === -1) continue;
-      const [candidate] = bucket.splice(index, 1);
-      if (bucket.length === 0) nextBuckets.delete(key);
-      return candidate;
+      const candidateIndex = bucket.findIndex((entry) => entry.normalizedName === normalizedName);
+      if (candidateIndex !== -1) {
+        const [candidate] = bucket.splice(candidateIndex, 1);
+        if (bucket.length === 0) nextBuckets.delete(key);
+        return candidate;
+      }
     }
     return undefined;
   };
@@ -67,39 +65,51 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
   const replace: ShoppingDiff["replace"] = [];
   const remove: ShoppingDiff["remove"] = [];
   const protectedItemIds: string[] = [];
+  const protectedDerivedItems: ShoppingList["items"][number][] = [];
+  const plainItems: ShoppingList["items"][number][] = [];
+  const protectedFallbackItems: ShoppingList["items"][number][] = [];
 
   for (const item of current.items) {
     if (protectedItem(item)) {
       protectedItemIds.push(item.id);
-      if (item.isManual) continue; // a manual row never satisfies a derived requirement
-      // まず完全一致キーで候補を探す（同unit・同ambiguous形状なら安全な差分にできる）。
-      // 完全一致がなければ、同じ正規化名の候補を numeric/ambiguous を問わず探す
-      // （設計仕様: 同単位なら安全な差分、そうでなければ別項目で確認を求める）。
-      const candidate = takeCandidate(diffKey(item)) ?? takeCandidateByName(item.normalizedName);
-      if (
-        candidate !== undefined &&
-        item.quantityValue !== null &&
-        candidate.quantityValue !== null &&
-        item.unit !== null &&
-        candidate.unit === item.unit
-      ) {
-        const delta = candidate.quantityValue - item.quantityValue;
-        if (delta > 0)
-          add.push({
-            ...candidate,
-            key: `${candidate.key}_delta_${item.id}`,
-            quantityValue: delta,
-            quantityText: `${String(delta)}${candidate.unit}`,
-          });
-      } else if (candidate !== undefined) {
-        add.push({
-          ...candidate,
-          key: `${candidate.key}_review_${item.id}`,
-          pantryCheckRequired: true,
-        });
-      }
+      // 手動行は新版のderived requirementを満たさず、候補を一切消費しない。
+      if (!item.isManual) protectedDerivedItems.push(item);
       continue;
     }
+    plainItems.push(item);
+  }
+
+  // protected非手動行の完全一致をplain行より先に割り当て、入力順による結果変化を防ぐ。
+  for (const item of protectedDerivedItems) {
+    const exact = takeCandidate(diffKey(item));
+    if (
+      exact !== undefined &&
+      item.quantityValue !== null &&
+      exact.quantityValue !== null &&
+      item.unit !== null &&
+      exact.unit === item.unit
+    ) {
+      const delta = exact.quantityValue - item.quantityValue;
+      if (delta > 0)
+        add.push({
+          ...exact,
+          key: `${exact.key}_delta_${item.id}`,
+          quantityValue: delta,
+          quantityText: `${String(delta)}${exact.unit}`,
+        });
+    } else if (exact !== undefined) {
+      add.push({
+        ...exact,
+        key: `${exact.key}_review_${item.id}`,
+        pantryCheckRequired: true,
+      });
+    } else {
+      protectedFallbackItems.push(item);
+    }
+  }
+
+  // protected割当後にplain行を完全一致させ、不要になった旧行だけをremove候補にする。
+  for (const item of plainItems) {
     const candidate = takeCandidate(diffKey(item));
     if (candidate === undefined) {
       remove.push({
@@ -123,6 +133,17 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
       });
     }
   }
+  // 最後まで残った同名候補だけをprotected行の在庫確認付き追加へ割り当てる。
+  for (const item of protectedFallbackItems) {
+    const candidate = takeCandidateByName(item.normalizedName);
+    if (candidate !== undefined) {
+      add.push({
+        ...candidate,
+        key: `${candidate.key}_review_${item.id}`,
+        pantryCheckRequired: true,
+      });
+    }
+  }
   add.push(...[...nextBuckets.values()].flat());
   return { add, replace, remove, protectedItemIds, listLabelWarnings: next.listLabelWarnings };
 }
@@ -131,6 +152,13 @@ export function resolveApprovedDiff(
   diff: ShoppingDiff,
   approval: ShoppingDiffApproval,
 ): ResolvedShoppingDiff {
+  if (
+    new Set(approval.addKeys).size !== approval.addKeys.length ||
+    new Set(approval.replaceItemIds).size !== approval.replaceItemIds.length ||
+    new Set(approval.removeItemIds).size !== approval.removeItemIds.length
+  ) {
+    throw new Error("approved_diff_mismatch");
+  }
   const add = new Map(diff.add.map((item) => [item.key, item]));
   const replace = new Map(diff.replace.map((item) => [item.itemId, item.next]));
   const remove = new Set(diff.remove.map((item) => item.itemId));

@@ -64,11 +64,12 @@ describe("GET /api/emergency-menus", () => {
         new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
       );
 
+      // 早期 safety 除外は main_ingredient_no_match ではない汎用空メッセージ
       await expect(response.json()).resolves.toMatchObject({
         ok: true,
         data: {
           candidates: [],
-          message: "選択したメイン食材に合う固定候補がありません",
+          message: "条件に合う緊急献立がありません",
         },
       });
     },
@@ -221,7 +222,8 @@ describe("GET /api/emergency-menus", () => {
     },
   );
 
-  it("keeps the main-ingredient message when a standard allergen excludes every fixture", async () => {
+  it("uses the generic empty message when a standard allergen excludes every fixture", async () => {
+    // アレルゲン除外は emptyReason: no_matching_fixture / current_safety 系 → 汎用メッセージ
     const context = makeCurrentSafetyContext();
     const handler = createEmergencyMenusHandler({
       authenticate: () => Promise.resolve({ userId }),
@@ -252,7 +254,7 @@ describe("GET /api/emergency-menus", () => {
       ok: true,
       data: {
         candidates: [],
-        message: "選択したメイン食材に合う固定候補がありません",
+        message: "条件に合う緊急献立がありません",
       },
     });
   });

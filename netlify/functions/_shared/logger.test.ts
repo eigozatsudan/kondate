@@ -49,6 +49,7 @@ describe("createSafeLogger", () => {
       shoppingMutationsDeleted: 3,
       authContinuationsDeleted: 4,
       userFeedbackDeleted: 5,
+      draftSubmissionsDeleted: 6,
     });
     expect(JSON.parse(write.mock.calls[0]![0] as string)).toEqual({
       level: "info",
@@ -60,6 +61,7 @@ describe("createSafeLogger", () => {
       shopping_mutations_deleted: 3,
       auth_continuations_deleted: 4,
       user_feedback_deleted: 5,
+      draft_submissions_deleted: 6,
     });
   });
 

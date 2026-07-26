@@ -105,6 +105,17 @@ it("locks the MVP quota tuple into the shared contract", () => {
   });
 });
 
+it("rejects validated menu safetyTags longer than 32 (A-I12)", () => {
+  const tags = Array.from({ length: 33 }, () => "cut_small" as const);
+  expect(validatedMenuSchema.safeParse({ ...menu, safetyTags: tags }).success).toBe(false);
+  expect(
+    validatedMenuSchema.safeParse({
+      ...menu,
+      safetyTags: Array.from({ length: 32 }, () => "cut_small" as const),
+    }).success,
+  ).toBe(true);
+});
+
 describe("generationConflictCopy", () => {
   it("defines Japanese copy for every conflict code", () => {
     expect(Object.keys(generationConflictCopy)).toEqual(generationConflictCodes);

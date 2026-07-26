@@ -5,11 +5,13 @@ import { clearPendingGeneration } from "../model/pending-generation";
 
 // 本日分の成功回数上限に伴う retryAt は JST 日次リセット（翌0:00）に一致するため、
 // 生の日時ではなく「明日H:MM」の相対表現で示す。
+// サーバは timestamptz→jsonb で "+00:00" を出し、クライアント toISOString は ".000Z"。
+// 文字列一致ではなく epoch ms で比較する（E-I1）。
 function formatJstRetryTime(retryAt: string, now: Date): string {
   const retryDate = new Date(retryAt);
   const hour = String((retryDate.getUTCHours() + 9) % 24);
   const minute = String(retryDate.getUTCMinutes()).padStart(2, "0");
-  const isTomorrow = retryAt === getNextJstMidnight(now).toISOString();
+  const isTomorrow = retryDate.getTime() === getNextJstMidnight(now).getTime();
   return isTomorrow ? `明日${hour}:${minute}` : `${hour}:${minute}`;
 }
 
@@ -48,8 +50,16 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
  * 「条件を直してやり直す」は onClear（pending+machine）で idle→/planner。
  * 緊急献立・履歴は pending のみ消す（machine を idle にすると GenerationPage の
  * Navigate と <a href> が競合するため）。
+ * 緊急献立 CTA は household 対象時のみ（idea では誤導になる — C-I6）。
  */
-function RecoveryLinks({ onClear }: { onClear?: () => void }) {
+function RecoveryLinks({
+  onClear,
+  targetMode,
+}: {
+  onClear?: () => void;
+  targetMode?: "idea" | "household";
+}) {
+  const showEmergencyLink = targetMode !== "idea";
   return (
     <div className="gen-status-actions">
       {onClear !== undefined ? (
@@ -67,15 +77,17 @@ function RecoveryLinks({ onClear }: { onClear?: () => void }) {
           条件を直してやり直す
         </a>
       )}
-      <a
-        className="button-link"
-        href="/emergency-menus"
-        onClick={() => {
-          clearPendingGeneration();
-        }}
-      >
-        15分緊急献立を見る
-      </a>
+      {showEmergencyLink ? (
+        <a
+          className="button-link"
+          href="/emergency-menus"
+          onClick={() => {
+            clearPendingGeneration();
+          }}
+        >
+          15分緊急献立を見る
+        </a>
+      ) : null}
       <a
         className="button-link"
         href="/history"
@@ -93,11 +105,14 @@ export function GenerationStatusPanel({
   state,
   userId,
   onClear,
+  targetMode,
 }: {
   state: GenerationClientState;
   userId?: string;
   /** request_conflict から idle へ戻し、planner 再入力へ進ませる */
   onClear?: () => void;
+  /** idea では緊急献立 CTA を出さない（省略時は household 相当で表示） */
+  targetMode?: "idea" | "household";
 }) {
   if (state.phase === "checking") {
     return (
@@ -154,7 +169,10 @@ export function GenerationStatusPanel({
           <p>成功回数：本日あと{state.data.quota.remaining}回</p>
         )}
         {/* exactOptionalPropertyTypes: undefined を明示渡ししない */}
-        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
+        <RecoveryLinks
+          {...(onClear === undefined ? {} : { onClear })}
+          {...(targetMode === undefined ? {} : { targetMode })}
+        />
       </div>
     );
   }
@@ -174,11 +192,15 @@ export function GenerationStatusPanel({
             )}
           </>
         )}
-        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
+        <RecoveryLinks
+          {...(onClear === undefined ? {} : { onClear })}
+          {...(targetMode === undefined ? {} : { targetMode })}
+        />
       </div>
     );
   }
   if (state.phase === "request_conflict") {
+    const showEmergencyLink = targetMode !== "idea";
     return (
       <div className="gen-status-panel" data-phase="request_conflict">
         <h1>同じ操作を続けられませんでした</h1>
@@ -194,9 +216,11 @@ export function GenerationStatusPanel({
               最初からやり直す
             </a>
           )}
-          <a className="button-link" href="/emergency-menus">
-            15分緊急献立を見る
-          </a>
+          {showEmergencyLink ? (
+            <a className="button-link" href="/emergency-menus">
+              15分緊急献立を見る
+            </a>
+          ) : null}
         </div>
       </div>
     );

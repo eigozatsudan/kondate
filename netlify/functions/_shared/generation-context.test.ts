@@ -228,6 +228,36 @@ describe("loadGenerationContext", () => {
     });
   });
 
+  it("keeps free-form memo out of safetySnapshot while preferenceSnapshot retains it (A-I4)", async () => {
+    const memo = "家族の太郎は乳製品に注意";
+    arrangeLoader({
+      snapshotData: [
+        {
+          ...snapshot,
+          memo,
+          main_ingredients: ["鶏肉"],
+          avoid_ingredients: ["ピーナッツ"],
+        },
+      ],
+    });
+
+    const context = await loadGenerationContext(
+      { userId, accessToken: "access-token" },
+      requestId,
+      request,
+      now,
+    );
+
+    expect(context.preferenceSnapshot).toMatchObject({
+      submission: expect.objectContaining({ memo }) as object,
+    });
+    // ランタイム safety は医療スコープ検査用に requestText を持つ
+    expect(context.safety?.requestText).toContain(memo);
+    // menus.safety_snapshot へは自由記述を載せない
+    expect(context.safetySnapshot).toMatchObject({ requestText: "" });
+    expect(JSON.stringify(context.safetySnapshot)).not.toContain(memo);
+  });
+
   it.each([
     ["extra RPC key", [{ ...snapshot, raw_request: "secret" }]],
     ["unknown meal", [{ ...snapshot, meal_type: "snack" }]],

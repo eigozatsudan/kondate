@@ -24,6 +24,7 @@ const counts = {
   shoppingMutationsDeleted: 3,
   authContinuationsDeleted: 4,
   userFeedbackDeleted: 0,
+  draftSubmissionsDeleted: 0,
 };
 
 function mockHappyPath(): void {

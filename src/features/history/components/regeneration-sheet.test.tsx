@@ -2,7 +2,18 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { TargetMode } from "@shared/contracts/planner";
-import { RegenerationSheet } from "./regeneration-sheet";
+import { RegenerationSheet, type RegenerationUsageView } from "./regeneration-sheet";
+
+function usageView(remaining = 3): RegenerationUsageView {
+  return {
+    successRemaining: remaining,
+    attemptsRemaining: 12,
+    shortWindowRemaining: 4,
+    shortWindowRetryAt: null,
+    loading: false,
+    error: false,
+  };
+}
 
 function renderRegenerationSheet(targetMode: TargetMode = "household", remaining = 3) {
   const onSubmit = vi.fn(() => Promise.resolve());
@@ -10,7 +21,7 @@ function renderRegenerationSheet(targetMode: TargetMode = "household", remaining
   render(
     <RegenerationSheet
       targetMode={targetMode}
-      remaining={remaining}
+      usage={usageView(remaining)}
       onSubmit={onSubmit}
       onCancel={onCancel}
     />,
@@ -22,6 +33,27 @@ describe("RegenerationSheet", () => {
   it("explains conditional quota use before regeneration", () => {
     renderRegenerationSheet();
     expect(screen.getByText("別の献立が完成した場合に1回使用・現在残り3回")).toBeVisible();
+  });
+
+  it("does not claim remaining 0 while usage is loading", () => {
+    render(
+      <RegenerationSheet
+        targetMode="household"
+        usage={{
+          successRemaining: null,
+          attemptsRemaining: null,
+          shortWindowRemaining: null,
+          shortWindowRetryAt: null,
+          loading: true,
+          error: false,
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("本日の作成回数を確認しています…")).toBeVisible();
+    expect(screen.queryByText(/現在残り0回/u)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "別案を作る" })).toBeDisabled();
   });
 
   it("requires a reason before submit", async () => {
@@ -57,7 +89,12 @@ describe("RegenerationSheet", () => {
 
   it("hides child_friendly for idea menus", () => {
     render(
-      <RegenerationSheet targetMode="idea" remaining={3} onSubmit={vi.fn()} onCancel={vi.fn()} />,
+      <RegenerationSheet
+        targetMode="idea"
+        usage={usageView(3)}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
     // 他の定型理由は idea でも選べる

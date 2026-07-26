@@ -1,7 +1,11 @@
 import { z } from "zod";
 import type { GeneratedMenu, MenuValidationIssue } from "../../../shared/contracts/generation.js";
 import type { EasePreference, PortionSize, SpiceLevel } from "../../../shared/contracts/domain.js";
-import { evaluateAllergens, normalizeFoodText } from "../../../shared/safety/allergens.js";
+import {
+  evaluateAllergens,
+  foodTextContainsAlias,
+  normalizeFoodText,
+} from "../../../shared/safety/allergens.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { evaluateFoodSafetyRules } from "../../../shared/safety/food-rules.js";
@@ -155,28 +159,38 @@ function makeRevalidationGenerationContext(
 
 /**
  * 在庫名スナップショットも現行アレルギー辞書へ通す（材料・手順テキスト収集外の leaf）。
+ * A-C2 residual: memberDisplayLabel と同じ優先順（live → snapshot → 家族N）。
  */
 function scanPantryNameSnapshotIssues(
   menu: GeneratedMenu | StoredMenuAggregate["menu"],
   safety: CurrentSafetyContext,
+  stored: StoredMenuAggregate,
 ): readonly MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
   for (const [index, usage] of menu.pantryUsage.entries()) {
-    const normalized = normalizeFoodText(usage.pantryItemName);
-    if (normalized === "") continue;
+    if (normalizeFoodText(usage.pantryItemName) === "") continue;
     for (const member of safety.members) {
       for (const allergenId of member.allergenIds) {
         const aliases = safety.allergenDictionary.aliases.filter(
           (alias) => alias.allergenId === allergenId,
         );
         const matched = aliases.filter((alias) =>
-          normalized.includes(normalizeFoodText(alias.normalizedAlias)),
+          foodTextContainsAlias(usage.pantryItemName, alias.normalizedAlias),
         );
         if (matched.some((alias) => !alias.requiresLabelConfirmation)) {
+          const catalogEntry = safety.allergenDictionary.catalog.find(
+            (entry) => entry.id === allergenId,
+          );
+          const allergenDisplayName = catalogEntry?.displayName ?? "登録アレルギー";
+          const memberLabel = memberDisplayLabel(stored, member.anonymousRef);
+          const pantryName = usage.pantryItemName.trim();
           issues.push({
             code: "direct_allergen_match",
             path: `pantryUsage.${String(index)}.pantryItemName`,
-            message: `${member.anonymousRef} の登録アレルゲン ${allergenId} が残っています`,
+            message:
+              pantryName === ""
+                ? `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`
+                : `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が「${pantryName}」に残っています`,
           });
         }
       }
@@ -331,9 +345,18 @@ export async function validateStoredMenuCurrentSafety(input: {
   const generationContext = makeRevalidationGenerationContext(stored, safety);
   const candidate = toStoredRevalidationCandidate(stored.menu, generationContext);
 
-  const allergenResult = evaluateAllergens(candidate, safety);
+  // A-C2 residual: invalid allergen もラベル警告と同じ memberDisplayLabel を使う。
+  const allergenMemberLabels = Object.fromEntries(
+    safety.members.map((member) => [
+      member.anonymousRef,
+      memberDisplayLabel(stored, member.anonymousRef),
+    ]),
+  );
+  const allergenResult = evaluateAllergens(candidate, safety, {
+    memberLabels: allergenMemberLabels,
+  });
   const foodIssues = evaluateFoodSafetyRules(candidate, safety);
-  const pantryIssues = scanPantryNameSnapshotIssues(candidate, safety);
+  const pantryIssues = scanPantryNameSnapshotIssues(candidate, safety, stored);
   const issues: MenuValidationIssue[] = [...allergenResult.issues, ...foodIssues, ...pantryIssues];
 
   for (const member of safety.members) {
@@ -349,6 +372,13 @@ export async function validateStoredMenuCurrentSafety(input: {
         code: "unmapped_custom_allergy",
         path: member.anonymousRef,
         message: "自由登録アレルギーを固定候補へ対応付けできません",
+      });
+    }
+    if (member.unsupportedDietStatus === "unconfirmed") {
+      issues.push({
+        code: "unsupported_diet_unconfirmed",
+        path: member.anonymousRef,
+        message: "対象外条件の確認が必要です",
       });
     }
     if (member.unsupportedDietStatus === "present") {

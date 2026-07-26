@@ -15,6 +15,7 @@ export type SafeLogEvent = {
   shoppingMutationsDeleted?: number;
   authContinuationsDeleted?: number;
   userFeedbackDeleted?: number;
+  draftSubmissionsDeleted?: number;
 };
 
 type LogWriter = (serialized: string) => void;
@@ -56,6 +57,9 @@ export const createSafeLogger =
     }
     if (event.userFeedbackDeleted !== undefined) {
       record.user_feedback_deleted = event.userFeedbackDeleted;
+    }
+    if (event.draftSubmissionsDeleted !== undefined) {
+      record.draft_submissions_deleted = event.draftSubmissionsDeleted;
     }
     write(JSON.stringify(record));
   };

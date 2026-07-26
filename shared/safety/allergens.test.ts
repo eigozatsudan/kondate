@@ -1,6 +1,100 @@
 import { describe, expect, it } from "vitest";
-import { collectMenuTextSources, evaluateAllergens } from "./allergens.js";
+import {
+  collectMenuTextSources,
+  evaluateAllergens,
+  foodTextContainsAlias,
+  normalizeFoodText,
+} from "./allergens.js";
 import { makeCurrentSafetyContext, makeValidatedMenu } from "../testing/factories.js";
+
+describe("normalizeFoodText", () => {
+  it("folds katakana to hiragana", () => {
+    expect(normalizeFoodText("サーモン")).toBe(normalizeFoodText("さーもん"));
+    expect(normalizeFoodText("タマゴ")).toBe(normalizeFoodText("たまご"));
+    expect(normalizeFoodText("ざるソバ")).toBe(normalizeFoodText("ざるそば"));
+  });
+});
+
+describe("foodTextContainsAlias", () => {
+  it("detects 玉子 as egg alias form", () => {
+    expect(foodTextContainsAlias("玉子焼き", "玉子")).toBe(true);
+  });
+
+  it("detects ミルク for milk after normalization", () => {
+    expect(foodTextContainsAlias("ミルクティー", "ミルク")).toBe(true);
+  });
+
+  it("detects folded katakana dish names for fish aliases", () => {
+    expect(foodTextContainsAlias("サーモンのムニエル", "さーもん")).toBe(true);
+    expect(foodTextContainsAlias("サバの味噌煮", "さば")).toBe(true);
+  });
+
+  it("detects buckwheat after kana fold", () => {
+    expect(foodTextContainsAlias("ざるソバ", "そば")).toBe(true);
+  });
+
+  it.each(["十割のそばです", "きつねのそばです"])(
+    "detects buckwheat in an unknown food phrase %s",
+    (sourceText) => {
+      expect(foodTextContainsAlias(sourceText, "そば")).toBe(true);
+    },
+  );
+
+  it.each([
+    ["あまえびフライ", "えび"],
+    ["やりいかそうめん", "いか"],
+    ["ざるそば", "そば"],
+    ["かにかま", "かに"],
+    ["豆、乳を加える", "乳"],
+    ["鶏、ももを添える", "もも"],
+  ])("detects allergen compound %s for alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
+  it("does not match 乳 inside 豆乳", () => {
+    expect(foodTextContainsAlias("豆乳スープ", "乳")).toBe(false);
+  });
+
+  it("does not match もも inside 鶏もも肉", () => {
+    expect(foodTextContainsAlias("鶏もも肉のソテー", "もも")).toBe(false);
+  });
+
+  it("does not match かに mid-hiragana phrase", () => {
+    expect(foodTextContainsAlias("やわらかになるまで煮る", "かに")).toBe(false);
+    expect(foodTextContainsAlias("やわらかに煮る", "かに")).toBe(false);
+  });
+
+  it("does not match いか mid-hiragana phrase", () => {
+    expect(foodTextContainsAlias("食べやすいから小さく切る", "いか")).toBe(false);
+    expect(foodTextContainsAlias("食べやすいか確認する", "いか")).toBe(false);
+  });
+
+  it("does not match そば as a location particle phrase", () => {
+    expect(foodTextContainsAlias("コンロのそばで冷ます", "そば")).toBe(false);
+    expect(foodTextContainsAlias("火のそばで冷ます", "そば")).toBe(false);
+  });
+
+  it("does not match もち in an onomatopoeic texture phrase", () => {
+    expect(foodTextContainsAlias("もちもち食感のうどん", "もち")).toBe(false);
+  });
+
+  it("I4: does not match alias that only appears by mid-token separator crossing", () => {
+    // compact 後に「いかにんじん」となりトークン途中で「かに」が合成されるのを拒否する
+    expect(foodTextContainsAlias("いか、にんじんを炒める", "かに")).toBe(false);
+  });
+
+  it("I4: still matches real crab dishes after separator fix", () => {
+    expect(foodTextContainsAlias("かに玉", "かに")).toBe(true);
+    expect(foodTextContainsAlias("茹でかに", "かに")).toBe(true);
+    expect(foodTextContainsAlias("かに、にんじんを炒める", "かに")).toBe(true);
+  });
+
+  it("I4: still matches multi-word nut names that intentionally contain spaces", () => {
+    // カシュー ナッツ → カシューナッツ は完全トークン列の連結として許可する
+    expect(foodTextContainsAlias("カシュー ナッツ", "カシューナッツ")).toBe(true);
+    expect(foodTextContainsAlias("マカダミア ナッツ", "マカダミアナッツ")).toBe(true);
+  });
+});
 
 const member = {
   ...makeCurrentSafetyContext().members[0]!,
@@ -44,6 +138,36 @@ describe("evaluateAllergens", () => {
       ),
     });
     expect(evaluateAllergens(menu, context).issues[0]?.code).toBe("direct_allergen_match");
+  });
+
+  it("uses human-facing member/allergen labels and source text (A-C2 residual)", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "鶏卵" }] } : dish,
+      ),
+    });
+    const issue = evaluateAllergens(menu, context, {
+      memberLabels: { member_1: "太郎" },
+    }).issues[0];
+    expect(issue?.code).toBe("direct_allergen_match");
+    expect(issue?.message).toContain("太郎");
+    expect(issue?.message).toContain("卵");
+    expect(issue?.message).toContain("鶏卵");
+    expect(issue?.message).not.toMatch(/member_1|\begg\b/u);
+  });
+
+  it("falls back to 家族N without leaking internal IDs when no display name is given", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, ingredients: [{ ...dish.ingredients[0]!, name: "鶏卵" }] } : dish,
+      ),
+    });
+    const message = evaluateAllergens(menu, context).issues[0]?.message ?? "";
+    expect(message).toContain("家族1");
+    expect(message).toContain("卵");
+    expect(message).not.toMatch(/member_1|\begg\b/u);
   });
 
   it("retains canonical processed-food provenance", () => {

@@ -5,7 +5,12 @@ import type {
   SafetyAction,
   ValidatedMenu,
 } from "../contracts/generation.js";
-import { collectMenuTextSources, normalizeFoodText, type MenuTextSource } from "./allergens.js";
+import {
+  collectMenuTextSources,
+  foodTextContainsAlias,
+  normalizeFoodText,
+  type MenuTextSource,
+} from "./allergens.js";
 import type { CurrentSafetyContext } from "./context.js";
 
 export type FoodSafetyRule = {
@@ -155,11 +160,14 @@ function doesGenericIngredientMatch(ingredientText: string, normalizedTerm: stri
   }
 
   // 「白身魚切り身」のように魚種の後へ形態が続く名称だけを許し、加工食品への部分一致を避ける。
-  return genericFishCutForms.some(
-    (form) =>
-      ingredientText.includes(`${normalizedTerm}${form}`) ||
-      ingredientText.includes(`${normalizedTerm}の${form}`),
-  );
+  // 形態語も normalizeFoodText 空間へ寄せる（フィレ → ふぃれ）。
+  return genericFishCutForms.some((form) => {
+    const normalizedForm = normalizeFoodText(form);
+    return (
+      ingredientText.includes(`${normalizedTerm}${normalizedForm}`) ||
+      ingredientText.includes(`${normalizedTerm}の${normalizedForm}`)
+    );
+  });
 }
 
 function doesConcreteFishIngredientMatch(ingredientText: string, normalizedTerm: string): boolean {
@@ -171,11 +179,13 @@ function doesConcreteFishIngredientMatch(ingredientText: string, normalizedTerm:
   }
 
   // 魚種名の直後に食材形態が続く場合だけを許し、加工食品中の任意の部分一致を避ける。
-  return genericFishCutForms.some(
-    (form) =>
-      ingredientText === `${normalizedTerm}${form}` ||
-      ingredientText === `${normalizedTerm}の${form}`,
-  );
+  return genericFishCutForms.some((form) => {
+    const normalizedForm = normalizeFoodText(form);
+    return (
+      ingredientText === `${normalizedTerm}${normalizedForm}` ||
+      ingredientText === `${normalizedTerm}の${normalizedForm}`
+    );
+  });
 }
 
 function doesIngredientMatchTerm(
@@ -203,10 +213,8 @@ function findStructuredSourceTermExpressions(
   normalizedTerm: string,
   requiredSafetyTag: SafetyAction["kind"] | null,
 ): readonly string[] {
-  const normalizedText = text
-    .normalize("NFKC")
-    .toLocaleLowerCase("ja-JP")
-    .replace(/\p{Cf}/gu, "");
+  // alias 照合と同じ正規化空間（NFKC + かな折り畳み）で語を探す。
+  const normalizedText = normalizeFoodText(text);
   const expressions = new Set<string>();
   let index = normalizedText.indexOf(normalizedTerm);
   while (index >= 0) {
@@ -783,10 +791,20 @@ export function evaluateFoodSafetyRules(
               ),
             );
       if (missingEvidence) {
+        // A-C2: cut_small 等の内部 ID をそのまま出さない
+        const requiredLabels: Record<string, string> = {
+          cut_small: "小さく切る",
+          remove_bones: "骨を除く",
+          soften: "やわらかくする",
+          quarter_round_food: "丸い食材を4等分する",
+          heat_thoroughly: "中心まで加熱する",
+        };
+        const requiredLabel = requiredLabels[required] ?? "必要な安全工程";
+        const memberLabel = member.anonymousRef.replace(/^member_(\d+)$/u, "家族$1");
         issues.push({
           code: "required_safety_action",
           path: `members.${member.anonymousRef}.requiredSafetyConstraints`,
-          message: `${required} を満たす工程がありません`,
+          message: `「${memberLabel}」さん向けの「${requiredLabel}」工程がありません`,
         });
       }
     }
@@ -834,7 +852,8 @@ export function evaluateFoodSafetyRules(
       };
       const matchedSources = sources.filter((source) => {
         if (rule.ruleKind === "forbidden") {
-          return normalizedMatchTerms.some((term) => normalizeFoodText(source.text).includes(term));
+          // A-I2: 素の includes だと「もちもち」が餅ルールに誤爆する。語境界付き照合を使う。
+          return normalizedMatchTerms.some((term) => foodTextContainsAlias(source.text, term));
         }
 
         return sourceMatchTerms(source).length > 0;

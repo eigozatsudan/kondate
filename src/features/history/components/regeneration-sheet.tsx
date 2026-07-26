@@ -36,10 +36,22 @@ const regenerationReasonSchema = z
 
 export type RegenerationReasonInput = z.infer<typeof regenerationReasonSchema>;
 
+export type RegenerationUsageView = {
+  /** null = 未取得・失敗。0 を嘘で出さない（D-I14） */
+  successRemaining: number | null;
+  attemptsRemaining: number | null;
+  shortWindowRemaining: number | null;
+  shortWindowRetryAt: string | null;
+  loading: boolean;
+  error: boolean;
+};
+
 export type RegenerationSheetProps = {
   /** idea では child_friendly（年齢適合）を出さない。household は全理由を出す。 */
   targetMode: TargetMode;
-  remaining: number;
+  usage: RegenerationUsageView;
+  /** 安全再検証中など、送信不可のとき true */
+  actionsEnabled?: boolean;
   onSubmit: (value: RegenerationReasonInput) => Promise<void>;
   onCancel: () => void;
 };
@@ -56,7 +68,8 @@ type FormValues = {
  */
 export function RegenerationSheet({
   targetMode,
-  remaining,
+  usage,
+  actionsEnabled = true,
   onSubmit,
   onCancel,
 }: RegenerationSheetProps) {
@@ -101,8 +114,25 @@ export function RegenerationSheet({
       form.setError("changeReason", { message: "理由を選んでください" });
       return;
     }
-    await onSubmit(parsed.data);
+    try {
+      await onSubmit(parsed.data);
+    } catch (error) {
+      // D-M7: revalidation_required は unhandled rejection にせず利用者へ示す
+      const message =
+        error instanceof Error && error.message === "revalidation_required"
+          ? "家族条件の再確認が終わるまで別案は作れません。しばらくしてからもう一度お試しください。"
+          : "別案の作成を開始できませんでした。もう一度お試しください。";
+      form.setError("changeReason", { message });
+    }
   });
+
+  const successBlocked = usage.successRemaining === 0;
+  const submitDisabled =
+    form.formState.isSubmitting ||
+    !actionsEnabled ||
+    usage.loading ||
+    usage.error ||
+    successBlocked;
 
   return (
     <form onSubmit={(event) => void submit(event)} className="stack gap-4">
@@ -134,12 +164,42 @@ export function RegenerationSheet({
           )}
         </label>
       ) : null}
-      <p>別の献立が完成した場合に1回使用・現在残り{remaining}回</p>
+      {usage.loading ? (
+        <p role="status">本日の作成回数を確認しています…</p>
+      ) : usage.error ? (
+        <p role="alert" className="error-message">
+          本日の作成回数を確認できませんでした。通信を確認してください。
+        </p>
+      ) : (
+        <div className="stack gap-1">
+          <p>
+            {usage.successRemaining === null
+              ? "別の献立が完成した場合に1回使用します"
+              : `別の献立が完成した場合に1回使用・現在残り${String(usage.successRemaining)}回`}
+          </p>
+          {usage.attemptsRemaining !== null && (
+            <p className="type-small" role="status">
+              AIへの問い合わせは本日あと{String(usage.attemptsRemaining)}回まで受け付けます
+            </p>
+          )}
+          {usage.shortWindowRemaining === 0 && usage.shortWindowRetryAt !== null && (
+            <p className="type-small" role="status">
+              しばらく続けて作成を試したため、
+              {new Intl.DateTimeFormat("ja-JP", {
+                timeZone: "Asia/Tokyo",
+                dateStyle: "short",
+                timeStyle: "short",
+              }).format(new Date(usage.shortWindowRetryAt))}
+              以降に再試行してください
+            </p>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <button
           className="min-h-11 rounded-xl bg-terracotta-700 px-4 font-semibold text-white"
           type="submit"
-          disabled={form.formState.isSubmitting}
+          disabled={submitDisabled}
         >
           別案を作る
         </button>

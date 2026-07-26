@@ -2,7 +2,20 @@ import { pantryItemSchema } from "@shared/contracts/pantry";
 import { validatedMenuSchema } from "@shared/contracts/generation";
 import type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
 import { plannerSubmissionSchema, targetModeSchema } from "@shared/contracts/planner";
+import { collectDislikePreferenceGaps } from "@shared/safety/preference-gaps";
+import { z } from "zod";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+
+const preferenceSnapshotMembersSchema = z.looseObject({
+  memberPreferences: z
+    .array(
+      z.object({
+        anonymousMemberRef: z.string(),
+        dislikes: z.array(z.string()),
+      }),
+    )
+    .optional(),
+});
 
 export type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
 
@@ -131,7 +144,10 @@ async function loadLivePantryRows(
   return map;
 }
 
-export async function getMenuResult(menuId: string): Promise<MenuResultViewModel> {
+export async function getMenuResult(
+  menuId: string,
+  options: { includePreferenceGaps?: boolean } = {},
+): Promise<MenuResultViewModel> {
   const client = getBrowserSupabaseClient();
   const { data, error } = await buildMenuResultQuery(client, menuId);
 
@@ -327,6 +343,14 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
   const targetModeParsed = targetModeSchema.safeParse(data.target_mode);
   if (!targetModeParsed.success) throw new Error("menu_not_found");
 
+  // A-I7: 苦手 soft gap は生成結果画面でのみ算出・表示。履歴は includePreferenceGaps しない。
+  let preferenceGaps: MenuResultViewModel["preferenceGaps"] = [];
+  if (options.includePreferenceGaps === true && targetModeParsed.data === "household") {
+    const snap = preferenceSnapshotMembersSchema.safeParse(data.preference_snapshot);
+    const prefs = snap.success ? (snap.data.memberPreferences ?? []) : [];
+    preferenceGaps = collectDislikePreferenceGaps(menu, prefs);
+  }
+
   return {
     targetMode: targetModeParsed.data,
     sourceSubmission,
@@ -361,5 +385,6 @@ export async function getMenuResult(menuId: string): Promise<MenuResultViewModel
       };
     }),
     pantryPostCookTargets,
+    preferenceGaps,
   };
 }

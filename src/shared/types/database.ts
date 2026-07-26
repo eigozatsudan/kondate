@@ -66,6 +66,11 @@ type FinalizeGenerationSuccessArgs = Omit<
   p_food_rule_version: string | null;
 };
 
+// I1: finalize 前に SET LOCAL statement_timeout を張る薄い wrapper（生成型未収録のため overlay）
+type FinalizeGenerationSuccessDeadlineBoundedArgs = FinalizeGenerationSuccessArgs & {
+  p_timeout_ms: number;
+};
+
 type GeneratedSetOnboardingStatus = GeneratedFunctions["set_onboarding_status"];
 type GeneratedInsertUserFeedback = GeneratedFunctions["insert_user_feedback_rate_limited"];
 type GeneratedInsertUserFeedbackArgs = GeneratedInsertUserFeedback["Args"];
@@ -125,6 +130,10 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       };
       finalize_ai_generation_success: Omit<GeneratedFinalizeGenerationSuccess, "Args"> & {
         Args: FinalizeGenerationSuccessArgs;
+      };
+      finalize_ai_generation_success_deadline_bounded: {
+        Args: FinalizeGenerationSuccessDeadlineBoundedArgs;
+        Returns: GeneratedFinalizeGenerationSuccess["Returns"];
       };
       get_ai_generation_submission_snapshot: Omit<GeneratedSubmissionSnapshot, "Returns"> & {
         Returns: SubmissionSnapshotRow[];

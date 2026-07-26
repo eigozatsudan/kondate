@@ -4,6 +4,7 @@ import {
   type MenuLabelConfirmation,
   type MenuValidationIssue,
   type MenuValidationResult,
+  type PreferenceGapNote,
   generatedMenuSchema,
   validatedMenuSchema,
 } from "../contracts/generation.js";
@@ -18,6 +19,7 @@ import type {
 } from "./generation-context.js";
 import { createIdeaSafetyFingerprint } from "./idea-fingerprint.js";
 import { detectUnsupportedMedicalRequest } from "./medical-scope.js";
+import { collectDislikePreferenceGaps } from "./preference-gaps.js";
 
 type ConfirmationIdentity = Pick<
   GeneratedLabelConfirmation,
@@ -45,6 +47,65 @@ function sameSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean
 
 function memberPairKey(householdMemberId: string, anonymousRef: string): string {
   return `${householdMemberId}\u0000${anonymousRef}`;
+}
+
+const reviewedMainIngredientSynonymGroups: readonly ReadonlySet<string>[] = [
+  new Set(["鮭", "さけ", "しゃけ", "サーモン"].map(normalizeFoodText)),
+];
+const reviewedMainIngredientNonFoodContext = /^(?:の)?(?:風|香り|ふれーばー)/u;
+const reviewedKanaMainIngredientAliases = new Set(["さけ", "しゃけ"].map(normalizeFoodText));
+// 動詞連続（さける等）のみ除外する。先行ひらがなは「焼きさけ」「素材はさけ」まで落とすため使わない。
+const reviewedKanaWordContinuation = /^(?:る|ない|ます|ました|て|た|れば|よう)/u;
+// I3: 酒「おさけ」と色名「サーモンピンク」だけを狭く拒否する（一律左境界拒否はしない）
+const reviewedSakeBeveragePrefix = normalizeFoodText("お");
+const reviewedSalmonColorSuffix = /^(?:ぴんく|色)/u;
+const reviewedSakeCandidate = normalizeFoodText("さけ");
+const reviewedSalmonCandidate = normalizeFoodText("サーモン");
+
+function containsReviewedMainIngredientOccurrence(sourceText: string, candidate: string): boolean {
+  let from = 0;
+  while (from <= sourceText.length - candidate.length) {
+    const start = sourceText.indexOf(candidate, from);
+    if (start === -1) return false;
+    const prefix = sourceText.slice(0, start);
+    const suffix = sourceText.slice(start + candidate.length);
+    const embeddedKanaWord =
+      reviewedKanaMainIngredientAliases.has(candidate) && reviewedKanaWordContinuation.test(suffix);
+    // 「おさけ」= 酒。candidate さけ の直前が お のときだけ非食材扱い。
+    const sakeBeverage =
+      candidate === reviewedSakeCandidate && prefix.endsWith(reviewedSakeBeveragePrefix);
+    // 「サーモンピンク」等。candidate さーもん の直後が ぴんく / 色。
+    const salmonColorName =
+      candidate === reviewedSalmonCandidate && reviewedSalmonColorSuffix.test(suffix);
+    if (
+      !reviewedMainIngredientNonFoodContext.test(suffix) &&
+      !embeddedKanaWord &&
+      !sakeBeverage &&
+      !salmonColorName
+    ) {
+      return true;
+    }
+    from = start + 1;
+  }
+  return false;
+}
+
+function containsRequestedMainIngredient(
+  identityFoodTexts: readonly string[],
+  requested: string,
+): boolean {
+  const normalizedRequested = normalizeFoodText(requested);
+  const reviewedGroup = reviewedMainIngredientSynonymGroups.find((group) =>
+    group.has(normalizedRequested),
+  );
+  if (reviewedGroup === undefined) {
+    return identityFoodTexts.some((sourceText) => sourceText.includes(normalizedRequested));
+  }
+  return [...reviewedGroup].some((candidate) =>
+    identityFoodTexts.some((sourceText) =>
+      containsReviewedMainIngredientOccurrence(sourceText, candidate),
+    ),
+  );
 }
 
 /** 食事区分・ジャンル・時間・主食材・回避・在庫の共通検査（両 mode） */
@@ -93,12 +154,12 @@ function collectCommonMenuIssues(
     });
   }
 
-  const identityFoodText = generated.dishes
+  const identityFoodTexts = generated.dishes
     .flatMap((dish) => [dish.name, dish.description, ...dish.ingredients.map(({ name }) => name)])
-    .map(normalizeFoodText)
-    .join("\u0000");
+    .map(normalizeFoodText);
+  const identityFoodText = identityFoodTexts.join("\u0000");
   for (const requested of context.submission.mainIngredients) {
-    if (!identityFoodText.includes(normalizeFoodText(requested))) {
+    if (!containsRequestedMainIngredient(identityFoodTexts, requested)) {
       issues.push({
         code: "main_ingredient_missing",
         path: "dishes",
@@ -218,6 +279,7 @@ function finalizeValidated(
   generated: GeneratedMenu,
   labelConfirmations: readonly MenuLabelConfirmation[],
   safetyFingerprint: string,
+  preferenceGaps: readonly PreferenceGapNote[] = [],
 ): MenuValidationResult {
   const validated = validatedMenuSchema.safeParse({
     ...generated,
@@ -238,6 +300,7 @@ function finalizeValidated(
     menu: validated.data,
     labelConfirmations: validated.data.labelConfirmations,
     safetyFingerprint,
+    preferenceGaps,
   };
 }
 
@@ -416,10 +479,15 @@ function validateHouseholdMenu(
     boneless: "remove_bones",
     soft: "soften",
   } as const;
-  const identityFoodText = generated.dishes
-    .flatMap((dish) => [dish.name, dish.description, ...dish.ingredients.map(({ name }) => name)])
-    .map(normalizeFoodText)
-    .join("\u0000");
+  // 量・辛さ hard 照合: AI がよく使う言い回しを許容する（過広義は避けつつ表記ゆれを吸収）。
+  const portionSmallPattern =
+    /少なめ|少な目|少なめに|少なめの|小盛り|小盛|少量|量を控|控えめの量|ひかえめの量|半分程度|半分くらい/u;
+  const portionLargePattern =
+    /多め|多めに|多めの|大盛り|大盛|増量|多め盛り|しっかりめ|多め量|多めに盛/u;
+  const spiceNonePattern =
+    /辛味なし|辛みなし|香辛料なし|スパイスなし|味付けなし|辛くしない|辛くなく|辛くない|辛いものを使わない|唐辛子なし|ピリ辛にしない|辛味を控|辛みを控|無香辛料|香辛料を使わない/u;
+  const spiceMildPattern =
+    /薄味|薄めの味|味を薄|薄味に|控えめ|味控えめ|塩分控えめ|甘口|少し甘め|あっさり|あっさりめ|ピリ辛を避/u;
   for (const preference of context.memberPreferences) {
     const adaptations = generated.adaptations.filter(
       (adaptation) => adaptation.anonymousMemberRef === preference.anonymousMemberRef,
@@ -436,27 +504,18 @@ function validateHouseholdMenu(
       .join(" ");
     const portionMatches =
       preference.portionSize === "regular" ||
-      (preference.portionSize === "small" && /少なめ|小盛り|少量/u.test(adaptationText)) ||
-      (preference.portionSize === "large" && /多め|大盛り|増量/u.test(adaptationText));
+      (preference.portionSize === "small" && portionSmallPattern.test(adaptationText)) ||
+      (preference.portionSize === "large" && portionLargePattern.test(adaptationText));
     const spiceMatches =
       preference.spiceLevel === "regular" ||
-      (preference.spiceLevel === "none" &&
-        /辛味なし|香辛料なし|味付けなし|辛くしない/u.test(adaptationText)) ||
-      (preference.spiceLevel === "mild" && /薄味|控えめ|甘口/u.test(adaptationText));
+      (preference.spiceLevel === "none" && spiceNonePattern.test(adaptationText)) ||
+      (preference.spiceLevel === "mild" && spiceMildPattern.test(adaptationText));
     const actions = adaptations.flatMap((adaptation) => adaptation.safetyActions);
     const easeMatches = preference.easePreferences.every((ease) =>
       actions.some((action) => action.kind === easeAction[ease]),
     );
-    const dislikeUsed = preference.dislikes.some((dislike) =>
-      identityFoodText.includes(normalizeFoodText(dislike)),
-    );
-    if (
-      adaptations.length === 0 ||
-      !portionMatches ||
-      !spiceMatches ||
-      !easeMatches ||
-      dislikeUsed
-    ) {
+    // A-I7 方針: 量・辛さ・食べやすさは hard。苦手は soft gap（結果画面のみ表示）。
+    if (adaptations.length === 0 || !portionMatches || !spiceMatches || !easeMatches) {
       issues.push({
         code: "member_preference_mismatch",
         path: `memberPreferences.${preference.anonymousMemberRef}`,
@@ -465,7 +524,13 @@ function validateHouseholdMenu(
     }
   }
 
-  const allergenResult = evaluateAllergens(generated, context.safety);
+  // A-C2 residual: 生成経路は targetMembers の表示名スナップショットを issue 本文に使う。
+  const allergenMemberLabels = Object.fromEntries(
+    context.targetMembers.map((member) => [member.anonymousRef, member.displayNameSnapshot.trim()]),
+  );
+  const allergenResult = evaluateAllergens(generated, context.safety, {
+    memberLabels: allergenMemberLabels,
+  });
   issues.push(...allergenResult.issues, ...evaluateFoodSafetyRules(generated, context.safety));
   const emitted = new Set(generated.labelConfirmations.map(confirmationKey));
   const required = new Set(allergenResult.labelConfirmations.map(confirmationKey));
@@ -489,6 +554,9 @@ function validateHouseholdMenu(
   }
   if (issues.length > 0) return { ok: false, issues };
 
+  // hard を通過したあとだけ soft gap を集める（失敗時は結果画面に出ない）
+  const preferenceGaps = collectDislikePreferenceGaps(generated, context.memberPreferences);
+
   const canonicalLabelConfirmations: readonly MenuLabelConfirmation[] =
     allergenResult.labelConfirmations.map((item) => ({
       ...item,
@@ -500,6 +568,7 @@ function validateHouseholdMenu(
     generated,
     canonicalLabelConfirmations,
     createCurrentSafetyFingerprint(context.safety),
+    preferenceGaps,
   );
 }
 

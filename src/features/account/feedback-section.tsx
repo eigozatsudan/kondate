@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type SyntheticEvent } from "react";
 import {
   feedbackCategories,
   feedbackEnvelopeSchema,
@@ -35,7 +35,7 @@ export function FeedbackSection() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleSubmit(event: SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (pending) return;
     setPending(true);
@@ -79,10 +79,7 @@ export function FeedbackSection() {
       }
       if (!envelope.data.ok) {
         setErrorMessage(
-          mapError(
-            envelope.data.error.code,
-            envelope.data.error.message || "送信できませんでした",
-          ),
+          mapError(envelope.data.error.code, envelope.data.error.message || "送信できませんでした"),
         );
         return;
       }
@@ -172,7 +169,11 @@ export function FeedbackSection() {
               >
                 閉じる
               </button>
-              <button className="primary-button min-h-11 wizard-action" type="submit" disabled={pending}>
+              <button
+                className="primary-button min-h-11 wizard-action"
+                type="submit"
+                disabled={pending}
+              >
                 {pending ? "送信しています…" : "送信する"}
               </button>
             </div>

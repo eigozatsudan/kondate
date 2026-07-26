@@ -56,6 +56,35 @@ describe("AuthProvider", () => {
     expect(getSession).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the previous session when focus getSession returns an error", async () => {
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { session }, error: null })
+      .mockResolvedValueOnce({ data: { session: null }, error: { message: "network" } });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({
+          data: { subscription: createAuthSubscription() },
+        }),
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider client={client}>
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+    // B-I6: 一時エラーでは session を落とさない
+    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    expect(getSession).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts an injectable recovery boundary without creating an auth gateway", async () => {
     const client = {
       auth: {

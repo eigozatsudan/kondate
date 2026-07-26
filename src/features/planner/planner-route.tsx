@@ -20,6 +20,7 @@ import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
+import { saveGenerationTargetMode } from "@/features/generation/model/generation-target-mode";
 import { createPendingGeneration } from "@/features/generation/model/pending-generation";
 import { useGenerationRecovery } from "@/features/generation/hooks/use-generation-recovery";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
@@ -85,11 +86,11 @@ function sanitizeDraft(
 ): PlannerDraftInput {
   const eligibleIds = new Set(eligibleMemberIds);
   if (draft === null) {
-    const targetMemberIds = [...eligibleIds].slice(0, targetMemberLimit);
+    // 新規は対象未選択のまま。世帯+全員で埋めない（C-I4 / §8.3）
     return {
       ...emptyDraft,
-      targetMemberIds,
-      targetMode: targetMemberIds.length > 0 ? "household" : null,
+      targetMemberIds: [],
+      targetMode: null,
       servings: null,
     };
   }
@@ -203,6 +204,8 @@ export function PlannerRoutePage() {
         },
         userId,
       );
+      // GenerationStatusPanel の idea 緊急リンク抑制用（pending wire に mode が無い）
+      saveGenerationTargetMode(draft.targetMode === "idea" ? "idea" : "household");
       await recovery.startGeneration(pending);
       if (signal.aborted) return false;
       void navigate("/generation");
@@ -442,8 +445,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         void navigate("/emergency-menus");
       } catch {
         if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
-          // 生成 flush 失敗と同じ文言で、保存できなかったことだけを伝える。
-          setSubmissionError("献立条件を保存できなかったため、生成を開始しませんでした。");
+          // C-I14: 緊急導線の保存失敗は生成失敗と別文言（生成していないのに「生成」と言わない）。
+          setSubmissionError(
+            "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
+          );
           setIsOpeningEmergencyMenus(false);
         }
       }
@@ -486,11 +491,19 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         audienceStatusError ?? submissionError
       }
       usageRemaining={usage.isSuccess ? usage.data.success.remaining : null}
+      attemptsRemaining={usage.isSuccess ? usage.data.attempts.remaining : null}
+      globalAvailable={usage.isSuccess ? usage.data.globalAvailable : null}
       shortWindowRetryAt={
         usage.isSuccess && usage.data.shortWindow.remaining === 0
           ? usage.data.shortWindow.retryAt
           : null
       }
+      autosaveState={autosave.state}
+      onRetryAutosave={() => {
+        void autosave.flush().catch(() => {
+          // flush 失敗は state=error のまま。UI の再試行で再度呼べる
+        });
+      }}
       fieldErrors={fieldErrors}
       onDraftChange={setValue}
       onStepChange={setStep}

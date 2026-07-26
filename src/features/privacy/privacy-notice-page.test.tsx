@@ -24,7 +24,17 @@ vi.mock("./privacy-api", () => ({
   acceptCurrentPrivacyConsent: (client: unknown, userId: string) => acceptConsent(client, userId),
 }));
 
+import { MemoryRouter } from "react-router";
+import type { ComponentProps } from "react";
 import { PrivacyNoticeContent, PrivacyNoticePage } from "./privacy-notice-page";
+
+function renderPrivacyContent(props: ComponentProps<typeof PrivacyNoticeContent>) {
+  return render(
+    <MemoryRouter>
+      <PrivacyNoticeContent {...props} />
+    </MemoryRouter>,
+  );
+}
 
 beforeEach(() => {
   acceptConsent.mockReset();
@@ -33,7 +43,7 @@ beforeEach(() => {
 it("explains sent, unsent, and stored data before accepting", async () => {
   const user = userEvent.setup();
   const onAccept = vi.fn();
-  render(<PrivacyNoticeContent saving={false} onAccept={onAccept} onSkip={vi.fn()} />);
+  renderPrivacyContent({ saving: false, onAccept, onSkip: vi.fn() });
   expect(screen.getByRole("heading", { name: "AIへ送る情報" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "AIへ送らない情報" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "アプリに保存する情報" })).toBeInTheDocument();
@@ -134,11 +144,21 @@ it("今はAIを使わない を選んだ場合も同じ returnTo へ戻るが同
 });
 
 it("explains sent content across both target modes and no family data for idea mode", () => {
-  render(<PrivacyNoticeContent saving={false} onAccept={vi.fn()} onSkip={vi.fn()} />);
+  renderPrivacyContent({ saving: false, onAccept: vi.fn(), onSkip: vi.fn() });
   const sentSection = screen.getByRole("heading", { name: "AIへ送る情報" }).nextElementSibling;
   expect(sentSection?.textContent).toContain("家族の有無に関わらず共通で送る内容");
   expect(sentSection?.textContent).toContain("家族設定を使う場合だけ");
   expect(sentSection?.textContent).toContain(
     "家族設定を使わないアイデア献立では、家族に関する情報は一切送りません",
   );
+  // B-I7: 内部 ref / DB 用語を出さない
+  expect(sentSection?.textContent).not.toContain("member_1");
+  expect(document.body.textContent).not.toContain("データベースID");
+  expect(document.body.textContent).not.toContain("未検証のAI生回答");
+});
+
+it("offers emergency menus when skipping AI consent (B-I10)", () => {
+  renderPrivacyContent({ saving: false, onAccept: vi.fn(), onSkip: vi.fn() });
+  const link = screen.getByRole("link", { name: "AIなしの緊急献立を見る" });
+  expect(link).toHaveAttribute("href", "/emergency-menus");
 });

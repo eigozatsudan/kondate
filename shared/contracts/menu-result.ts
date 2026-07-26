@@ -1,4 +1,4 @@
-import type { ValidatedMenu } from "./generation.js";
+import type { PreferenceGapNote, ValidatedMenu } from "./generation.js";
 import type { PantryItem } from "./pantry.js";
 import type { PlannerSubmission, TargetMode } from "./planner.js";
 
@@ -59,4 +59,9 @@ export type MenuResultViewModel = {
   memberLabels: Readonly<Record<string, string>>;
   labelConfirmations: readonly MenuResultLabelConfirmation[];
   pantryPostCookTargets: readonly PantryPostCookTarget[];
+  /**
+   * A-I7: 苦手 soft gap。生成結果画面でのみ表示する（履歴詳細は空配列を渡す）。
+   * DB 専用列には載せない。preference_snapshot から都度算出する。
+   */
+  preferenceGaps: readonly PreferenceGapNote[];
 };

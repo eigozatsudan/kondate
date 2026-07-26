@@ -133,34 +133,6 @@ async function renderSettings(
   return { api, queryClient, updateMember, invalidateSafety };
 }
 
-/** 一覧から特定メンバーの編集を開く。 */
-async function openMemberEditor(buttonName: string | RegExp = /を編集$/u) {
-  await userEvent.click(await screen.findByRole("button", { name: buttonName }));
-  expect(await screen.findByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
-}
-
-/**
- * 編集領域が開いているあいだは「家族を追加」が出ない。
- * 一覧だけの状態にしてから追加ボタンを押す。
- */
-async function clickAddFamilyFromList() {
-  const editor = screen.queryByRole("region", { name: "家族情報を追加・編集" });
-  if (editor !== null) {
-    const cancel = screen.queryByRole("button", { name: "追加をやめる" });
-    if (cancel !== null) {
-      await userEvent.click(cancel);
-    } else {
-      await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
-    }
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("region", { name: "家族情報を追加・編集" }),
-      ).not.toBeInTheDocument();
-    });
-  }
-  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
-}
-
 async function waitForAllergies(queryClient: QueryClient, memberId = "member-1") {
   await waitFor(() => {
     expect(
@@ -194,9 +166,7 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
   expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
   expect(screen.getByText("大人", { selector: ".household-member-name" })).toBeVisible();
   expect(screen.getByText(/登録完了/u)).toBeVisible();
-  expect(screen.getAllByText("名前未設定", { selector: ".household-member-name" })).toHaveLength(
-    2,
-  );
+  expect(screen.getAllByText("名前未設定", { selector: ".household-member-name" })).toHaveLength(2);
   expect(screen.getAllByText(/3〜5歳/u)[0]).toBeVisible();
   expect(screen.getAllByText(/入力途中/u)).toHaveLength(2);
   // 一覧の各行に編集と削除が並ぶ
@@ -783,7 +753,7 @@ it("keeps family CRUD controls and composes the account danger zone on the same 
   // Plan 6 の DangerZone は同一 main 内に合成される（ページ所有者は置換しない）
   expect(screen.getAllByRole("heading", { name: "家族設定" })).toHaveLength(1);
   expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
-  expect(screen.getByRole("region", { name: "DangerZone" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "危険な操作" })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "アカウントを削除" }));
   expect(screen.getByText(/家族設定、献立履歴、冷蔵庫の食材、買い物リスト/u)).toBeVisible();
   // アカウント削除と家族削除は別操作
@@ -840,7 +810,10 @@ it("cancels a newly added draft without completing it", async () => {
   };
   const createDraft = vi.fn().mockResolvedValue(draft);
   const deleteMember = vi.fn().mockResolvedValue(undefined);
-  const { queryClient } = await renderSettings({ createDraft, deleteMember }, { startClosed: true });
+  const { queryClient } = await renderSettings(
+    { createDraft, deleteMember },
+    { startClosed: true },
+  );
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
   expect(await screen.findByRole("button", { name: "追加をやめる" })).toBeVisible();
@@ -2029,7 +2002,9 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
         resolveAdd = resolve;
       }),
   );
-  const { queryClient, updateMember, invalidateSafety } = await renderSettings({ addStandardAllergy });
+  const { queryClient, updateMember, invalidateSafety } = await renderSettings({
+    addStandardAllergy,
+  });
 
   await waitForAllergies(queryClient);
 

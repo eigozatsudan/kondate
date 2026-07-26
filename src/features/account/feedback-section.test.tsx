@@ -51,7 +51,7 @@ describe("FeedbackSection", () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ ok: true, data: { id: "feedback-1" } }),
+      json: () => Promise.resolve({ ok: true, data: { id: "feedback-1" } }),
     });
     render(<FeedbackSection />);
     await expandFeedback(user);
@@ -92,10 +92,11 @@ describe("FeedbackSection", () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue({
       ok: false,
-      json: async () => ({
-        ok: false,
-        error: { code: "feedback_rate_limited", message: "rate" },
-      }),
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: { code: "feedback_rate_limited", message: "rate" },
+        }),
     });
     render(<FeedbackSection />);
     await expandFeedback(user);

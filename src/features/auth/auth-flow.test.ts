@@ -38,10 +38,12 @@ describe("auth flow storage", () => {
     expect(sanitizeReturnPath("https://attacker.example")).toBe("/planner");
     expect(sanitizeReturnPath("//attacker.example")).toBe("/planner");
   });
-  it("normalizes the bare root path the継続API rejects", () => {
-    // Function側contractは returnTo に /^\/[^/]/ を要求するため、"/" を送ると400になる。
-    // "/" はrouter上 /planner へNavigateするだけなので、送信前に正規化する。
-    expect(sanitizeReturnPath("/")).toBe("/planner");
+  it("allows bare root for RootEntry and rejects path-collapse open redirects", () => {
+    // B-I5: "/" は RootEntry（welcome/planner 分岐）へ戻す
+    expect(sanitizeReturnPath("/")).toBe("/");
+    // B-I3: collapse 後に "//…" になる入力は拒否
+    expect(sanitizeReturnPath("/planner/..//evil.example")).toBe("/planner");
+    expect(sanitizeReturnPath("/x/..//evil.example")).toBe("/planner");
   });
 
   it("keeps the claim secret only in the initiating browser", async () => {

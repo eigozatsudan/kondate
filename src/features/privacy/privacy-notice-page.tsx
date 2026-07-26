@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { sanitizeReturnPath } from "@/features/auth/auth-flow";
@@ -98,6 +98,10 @@ export function PrivacyNoticeContent({
       <button className="text-button" type="button" onClick={onSkip}>
         今はAIを使わない
       </button>
+      {/* B-I10: シェル外のため緊急献立への操作導線を明示。同意は付けない */}
+      <Link className="secondary-button min-h-11" to="/emergency-menus">
+        AIなしの緊急献立を見る
+      </Link>
       <p>同意しなくても、AIを使わない緊急献立は利用できます。</p>
     </main>
   );

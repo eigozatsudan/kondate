@@ -35,6 +35,7 @@ import {
 import { resolveGenerationIntegrityContext } from "./generation-integrity-context.js";
 import {
   createGenerationRepository,
+  GenerationFinalizeTimeoutError,
   type AuthenticatedUser,
   type GenerationRepository,
   type QuotaRequestRecord,
@@ -734,23 +735,6 @@ export async function runGeneration(
     emitTerminalLog("warn", "constraint_conflict");
     return status;
   };
-  // succeed は SQL が constraint_conflict を返す正規経路と、raise を 409 に写した防御経路の両方を扱う
-  const succeedOrConflict = async (
-    input: Parameters<GenerationRepository["succeed"]>[0],
-  ): Promise<GenerationStatusData> => {
-    try {
-      await deps.repository.succeed(input);
-      const status = await hydrate();
-      emitTerminalLog("info", "succeeded");
-      return status;
-    } catch (error) {
-      if (isCurrentSafetyChangedError(error)) {
-        return await conflict([currentSafetyChangedConflict()]);
-      }
-      throw error;
-    }
-  };
-
   const deadlineAtMonotonicMs = deps.requestStartedAtMonotonicMs + deps.functionTotalBudgetMs;
   const remainingMs = () => deadlineAtMonotonicMs - deps.monotonicNow();
   const timeoutForAttempt = () =>
@@ -760,6 +744,44 @@ export async function runGeneration(
       Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
     );
   const canRepair = () => remainingMs() >= REQUIRED_SEND_BUDGET_MS;
+  // A-I9: provider 返却後も 50s 予算を守り、残 deadline が尽きたら succeed しない。
+  const abortIfDeadlineExceeded = async (): Promise<GenerationStatusData | null> => {
+    if (remainingMs() > 0) return null;
+    return await fail("generation_timeout", null);
+  };
+
+  // succeed は SQL が constraint_conflict を返す正規経路と、raise を 409 に写した防御経路の両方を扱う。
+  // A-I9 / I1: 入口ゲートに加え、残 deadline を repository.succeed へ渡し
+  // SET LOCAL statement_timeout で finalize 自体を中断する（背景継続させない）。
+  const succeedOrConflict = async (
+    input: Parameters<GenerationRepository["succeed"]>[0],
+  ): Promise<GenerationStatusData> => {
+    const timedOut = await abortIfDeadlineExceeded();
+    if (timedOut !== null) return timedOut;
+    try {
+      await deps.repository.succeed(input, { remainingMs: remainingMs() });
+      const status = await hydrate();
+      // A-I8: SQL 正規の constraint_conflict / failed を常に succeeded とログしない。
+      // hydrate 後の status を ops ログの errorCode にする。
+      if (status.status === "succeeded") {
+        emitTerminalLog("info", "succeeded");
+      } else if (status.status === "constraint_conflict") {
+        emitTerminalLog("warn", "constraint_conflict");
+      } else if (status.status === "failed") {
+        emitTerminalLog("error", status.error.code);
+      }
+      return status;
+    } catch (error) {
+      // finalizer 中の statement_timeout / cancel → 成功扱いにせず generation_timeout
+      if (error instanceof GenerationFinalizeTimeoutError) {
+        return await fail("generation_timeout", null);
+      }
+      if (isCurrentSafetyChangedError(error)) {
+        return await conflict([currentSafetyChangedConflict()]);
+      }
+      throw error;
+    }
+  };
 
   try {
     const execution = await deps.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);
@@ -876,6 +898,8 @@ export async function runGeneration(
       const output = composeCandidate(firstResult, execution, () => deps.uuid());
       if (output.kind === "conflict") return await conflict(output.conflicts);
       if (output.kind === "valid") {
+        const timedOut = await abortIfDeadlineExceeded();
+        if (timedOut !== null) return timedOut;
         return await succeedOrConflict(
           buildSuccessInput(requestId, output.checked.menu, context, execution),
         );
@@ -936,6 +960,8 @@ export async function runGeneration(
         null,
       );
     }
+    const repairedTimedOut = await abortIfDeadlineExceeded();
+    if (repairedTimedOut !== null) return repairedTimedOut;
     return await succeedOrConflict(
       buildSuccessInput(requestId, repairedOutput.checked.menu, context, execution),
     );

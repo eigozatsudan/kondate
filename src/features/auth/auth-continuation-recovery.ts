@@ -41,7 +41,8 @@ export function startAuthContinuationRecovery(input: {
       running = false;
     }
   };
-  const timer = (input.setInterval ?? window.setInterval)(() => void poll(), 2_000);
+  // B-I1: claim の IP 上限 20/60s を超えないよう 5s 間隔（最大 12 回/分）にする。
+  const timer = (input.setInterval ?? window.setInterval)(() => void poll(), 5_000);
   const wake = (): void => void poll();
   window.addEventListener("focus", wake);
   document.addEventListener("visibilitychange", wake);

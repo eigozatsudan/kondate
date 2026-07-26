@@ -7,7 +7,6 @@ import {
   ContinuationHttpError,
   createAuthFlow,
   listUnexpiredAuthFlows,
-  isAuthContinuationCallbackOwned,
   readAuthFlow,
   sanitizeReturnPath,
   createContinuationApi,
@@ -224,17 +223,19 @@ export function createAuthGateway(
           flowId: flow.id,
         };
       } catch (error) {
-        if (claimed) clearAuthFlow(flow.id, storage);
-        else if (
-          error instanceof ContinuationHttpError &&
-          error.status === 404 &&
-          isAuthContinuationCallbackOwned(
-            flow.id,
-            storage,
-            new Date(),
-            deps.getPublicEnv().authContinuationTtlMs,
-          )
-        ) {
+        // claim 成功後の exchange 失敗は secret を破棄して terminal。
+        if (claimed) {
+          clearAuthFlow(flow.id, storage);
+          return { kind: "error", code: "unbound_callback", returnTo: flow.returnTo };
+        }
+        // B-I4: 404（未 deposit / 競合待ち）・429・5xx・ネットワークはリトライ可能。
+        // フローと secret を残し、待機タブを /login へ落とさない。
+        if (error instanceof ContinuationHttpError) {
+          if (error.status === 404 || error.status === 429 || error.status >= 500) {
+            return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+          }
+        }
+        if (error instanceof TypeError) {
           return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
         }
         return { kind: "error", code: "unbound_callback", returnTo: flow.returnTo };
