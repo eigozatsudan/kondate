@@ -3,24 +3,24 @@
 
 do $$
 declare
-  constraint_name text;
+  return_to_check_count integer;
 begin
-  select c.conname into constraint_name
+  select count(*)::integer into return_to_check_count
   from pg_constraint c
   join pg_class t on t.oid = c.conrelid
   join pg_namespace n on n.oid = t.relnamespace
   where n.nspname = 'private'
     and t.relname = 'auth_continuations'
     and c.contype = 'c'
-    and pg_get_constraintdef(c.oid) like '%return_to%'
-  limit 1;
+    and pg_get_constraintdef(c.oid) like '%return_to%';
 
-  if constraint_name is not null then
-    execute format(
-      'alter table private.auth_continuations drop constraint %I',
-      constraint_name
-    );
+  if return_to_check_count <> 1 then
+    raise exception 'expected exactly one return_to check constraint, found %',
+      return_to_check_count;
   end if;
+
+  alter table private.auth_continuations
+    drop constraint auth_continuations_return_to_check;
 end
 $$;
 

@@ -41,43 +41,108 @@ function foldKatakanaToHiragana(value: string): string {
   return value.replace(/[\u30a1-\u30f6]/gu, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
 }
 
+const FOOD_TEXT_SEPARATOR = /[\s\u3000、。・,./（）()「」『』']/u;
+
+function normalizeFoodTextBase(value: string): string {
+  return foldKatakanaToHiragana(value.normalize("NFKC"))
+    .toLocaleLowerCase("ja-JP")
+    .replace(/\p{Cf}/gu, "");
+}
+
 /**
  * 献立テキストと辞書 alias を同じ空間へ寄せる。
  * 半角カナ等を先に NFKC で全角へ寄せてから、カタカナ→ひらがなへ折り畳む。
  */
 export function normalizeFoodText(value: string): string {
-  return foldKatakanaToHiragana(value.normalize("NFKC"))
-    .toLocaleLowerCase("ja-JP")
-    .replace(/\p{Cf}/gu, "")
-    .replace(/[\s\u3000、。・,./（）()「」『』']/gu, "");
+  return normalizeFoodTextBase(value).replace(/[\s\u3000、。・,./（）()「」『』']/gu, "");
 }
 
 const EXCLUDED_ALIAS_CONTEXTS = new Map<string, readonly string[]>([
   ["乳", ["豆乳"]],
   ["もも", ["鶏もも", "鳥もも"]],
-  ["かに", ["やわらかになるまで"]],
-  ["いか", ["食べやすいから"]],
+  ["かに", ["やわらかに"]],
+  ["いか", ["食べやすいか"]],
   ["そば", ["のそばで"]],
   ["もち", ["もちもち食感"]],
 ]);
 
+type TextSpan = {
+  start: number;
+  end: number;
+};
+
+type FoodTextForMatching = {
+  compact: string;
+  separatorOffsets: ReadonlySet<number>;
+};
+
+function normalizeFoodTextForMatching(value: string): FoodTextForMatching {
+  let compact = "";
+  let sawSeparator = false;
+  const separatorOffsets = new Set<number>();
+  for (const character of normalizeFoodTextBase(value)) {
+    if (FOOD_TEXT_SEPARATOR.test(character)) {
+      sawSeparator = true;
+      continue;
+    }
+    if (sawSeparator && compact.length > 0) {
+      separatorOffsets.add(compact.length);
+    }
+    compact += character;
+    sawSeparator = false;
+  }
+  return { compact, separatorOffsets };
+}
+
+function findTextSpans(source: string, needle: string): readonly TextSpan[] {
+  const spans: TextSpan[] = [];
+  let from = 0;
+  while (from <= source.length - needle.length) {
+    const start = source.indexOf(needle, from);
+    if (start === -1) {
+      break;
+    }
+    spans.push({ start, end: start + needle.length });
+    from = start + 1;
+  }
+  return spans;
+}
+
+function spanCrossesSeparator(span: TextSpan, separatorOffsets: ReadonlySet<number>): boolean {
+  for (const offset of separatorOffsets) {
+    if (offset > span.start && offset < span.end) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * アレルゲン alias が献立テキストに含まれるかを判定する。
  * 素の includes だと「乳⊂豆乳」「もも⊂鶏もも」「かに⊂やわらかに」などの誤検知が起きるため、
- * 確認済みの非対象文脈だけを除外し、日本語の複合食材は検出側へ倒す。
+ * 区切りを跨がない確認済み文脈内の一致だけを除外し、日本語の複合食材は検出側へ倒す。
  */
 export function foodTextContainsAlias(sourceText: string, alias: string): boolean {
-  const source = normalizeFoodText(sourceText);
+  const source = normalizeFoodTextForMatching(sourceText);
   const needle = normalizeFoodText(alias);
-  if (needle.length === 0 || !source.includes(needle)) {
+  if (needle.length === 0) {
     return false;
   }
 
-  let foodText = source;
+  const excludedSpans: TextSpan[] = [];
   for (const context of EXCLUDED_ALIAS_CONTEXTS.get(needle) ?? []) {
-    foodText = foodText.replaceAll(context, "");
+    for (const span of findTextSpans(source.compact, context)) {
+      if (!spanCrossesSeparator(span, source.separatorOffsets)) {
+        excludedSpans.push(span);
+      }
+    }
   }
-  return foodText.includes(needle);
+  return findTextSpans(source.compact, needle).some(
+    (match) =>
+      !excludedSpans.some(
+        (excluded) => excluded.start <= match.start && match.end <= excluded.end,
+      ),
+  );
 }
 
 export function collectMenuTextSources(

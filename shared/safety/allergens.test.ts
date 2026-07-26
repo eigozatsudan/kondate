@@ -38,6 +38,8 @@ describe("foodTextContainsAlias", () => {
     ["やりいかそうめん", "いか"],
     ["ざるそば", "そば"],
     ["かにかま", "かに"],
+    ["豆、乳を加える", "乳"],
+    ["鶏、ももを添える", "もも"],
   ])("detects allergen compound %s for alias %s", (sourceText, alias) => {
     expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
   });
@@ -52,10 +54,12 @@ describe("foodTextContainsAlias", () => {
 
   it("does not match かに mid-hiragana phrase", () => {
     expect(foodTextContainsAlias("やわらかになるまで煮る", "かに")).toBe(false);
+    expect(foodTextContainsAlias("やわらかに煮る", "かに")).toBe(false);
   });
 
   it("does not match いか mid-hiragana phrase", () => {
     expect(foodTextContainsAlias("食べやすいから小さく切る", "いか")).toBe(false);
+    expect(foodTextContainsAlias("食べやすいか確認する", "いか")).toBe(false);
   });
 
   it("does not match そば as a location particle phrase", () => {
