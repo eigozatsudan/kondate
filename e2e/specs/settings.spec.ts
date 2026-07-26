@@ -38,7 +38,7 @@ test("adds, edits, and deletes a household member without account deletion", asy
   // 一覧名と「編集中」見出しの両方に一致しうる getByText ではなく、編集ボタンの消滅で確認する
   await expect(page.getByRole("button", { name: "2人目の子どもを編集" })).toHaveCount(0);
   // 家族削除はアカウント削除と分離されていること（DangerZone のアカウント削除は残る）
-  await expect(page.getByRole("region", { name: "DangerZone" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "危険な操作" })).toBeVisible();
   await expect(page.getByRole("button", { name: "アカウントを削除" })).toBeVisible();
   await expect(page.getByRole("button", { name: "家族を追加" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(

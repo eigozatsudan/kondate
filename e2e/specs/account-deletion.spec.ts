@@ -33,7 +33,7 @@ test("deletes the account through settings and zeroes owned rows and auth user",
   await expect(page.getByRole("textbox", { name: "呼び名" })).toBeVisible();
   await expect(page.getByLabel("苦手食材を追加")).toBeVisible();
   await expect(page.getByRole("button", { name: "苦手食材を追加" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "DangerZone" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "危険な操作" })).toBeVisible();
 
   await deleteThroughSettings(page);
 

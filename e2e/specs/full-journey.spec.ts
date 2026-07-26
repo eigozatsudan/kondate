@@ -1,5 +1,9 @@
 import { clickWizardNext, expect, setMockScenario, test } from "../fixtures/acceptance";
-import { openFirstMemberEditor, requestWholeRegeneration } from "../fixtures/history";
+import {
+  openFirstMemberEditor,
+  requestWholeRegeneration,
+  selectHouseholdAudienceWithMember,
+} from "../fixtures/history";
 
 test.setTimeout(360_000);
 
@@ -40,8 +44,8 @@ test("household journey: welcome through shopping reconciliation", async ({
   await clickWizardNext(page);
 
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
-  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
-  await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
+  // C-I4: メンバー明示選択 + 成功 autosave 完了を待ってから次へ（未保存 draft で生成しない）
+  await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
 
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();

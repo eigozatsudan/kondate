@@ -23,7 +23,9 @@ test("isolated WebView deposits once and the original browser claims with its se
   const webView = await isolated.newPage();
   await webView.goto(magicLink);
   await expect(
-    webView.getByText("元のブラウザでログインを続けてください。この画面に認証情報は保存されません"),
+    webView.getByText(
+      "元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません",
+    ),
   ).toBeVisible();
   await page.bringToFront();
   await expect(page).toHaveURL(/\/planner$/u);
@@ -38,6 +40,12 @@ test("Google cancel and expired links return actionable login choices", async ({
     "/auth/callback?error=access_denied&error_code=otp_expired&flow=expired&returnTo=%2Fplanner",
   );
   await expect(page.getByText(/期限切れか、すでに使用/u)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+  // expired 状態の CTA（idle の「Googleで続ける」「ログイン用メールを送る」ではない）。
+  // 直前にメール未送信だと宛先が空で「メールアドレスを入力して再送」になる。
+  await expect(page.getByRole("button", { name: "Googleに切り替える" })).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: /ログイン用メールを再送|メールアドレスを入力して再送|秒後に再送/u,
+    }),
+  ).toBeVisible();
 });

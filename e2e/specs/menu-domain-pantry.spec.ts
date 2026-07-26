@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
-import { clickWizardNext, openFirstMemberEditor } from "../fixtures/history";
+import {
+  clickWizardNext,
+  openFirstMemberEditor,
+  selectHouseholdAudienceWithMember,
+} from "../fixtures/history";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -135,23 +139,8 @@ async function advanceToReviewWithHousehold(
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   // 下書きが実際にサーバーへ保存される前に他画面（/emergency-menus等）へ移動すると、
-  // 下書きが未確定のまま扱われてしまう。PlannerWizardは「保存済み」の可視表示を
-  // 持たないため、household選択の自動保存応答自体を同期点として待つ。
-  const audienceSaveResponse = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    const postData = response.request().postData();
-    if (
-      response.request().method() !== "POST" ||
-      !url.pathname.endsWith("/rest/v1/rpc/save_generation_draft") ||
-      postData === null
-    ) {
-      return false;
-    }
-    const body = JSON.parse(postData) as unknown;
-    return isRecord(body) && body.p_target_mode === "household";
-  });
-  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
-  expect((await audienceSaveResponse).ok()).toBe(true);
+  // 下書きが未確定のまま扱われてしまう。C-I4 後はメンバー明示選択 + 成功 autosave を待つ。
+  await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
 }

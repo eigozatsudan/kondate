@@ -33,6 +33,40 @@ export async function clickWizardNext(page: Page): Promise<void> {
   });
 }
 
+/**
+ * C-I4: 「家族に合わせて作る」はメンバーを自動選択しない。
+ * household + 0 members は save_generation_draft の DB CHECK で拒否されるため、
+ * eligible メンバーを明示チェックし、member_ids 非空の成功 POST を同期点にする。
+ * radio のみの失敗 POST は body で除外する。
+ */
+export async function selectHouseholdAudienceWithMember(
+  page: Page,
+  memberName: RegExp = /家族1/u,
+): Promise<void> {
+  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
+  const member = page.getByRole("checkbox", { name: memberName });
+  await expect(member).toBeVisible();
+  // メンバー確定後の成功保存だけを待つ（radio 単独の CHECK 失敗 POST は無視）
+  const audienceSaveResponse = page.waitForResponse((response) => {
+    if (response.request().method() !== "POST") return false;
+    if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
+      return false;
+    }
+    const postData = response.request().postData();
+    if (postData === null) return false;
+    try {
+      const body = JSON.parse(postData) as { p_target_member_ids?: unknown };
+      return Array.isArray(body.p_target_member_ids) && body.p_target_member_ids.length > 0;
+    } catch {
+      return false;
+    }
+  });
+  if (!(await member.isChecked())) {
+    await member.check();
+  }
+  expect((await audienceSaveResponse).ok()).toBe(true);
+}
+
 /** 登録済み一覧のみのとき編集フォームを開く（editorOpen 既定 false 対応） */
 export async function openFirstMemberEditor(page: Page): Promise<void> {
   const nameField = page.getByRole("textbox", { name: "呼び名" });
@@ -98,13 +132,7 @@ export async function seedGeneratedMenu(page: Page): Promise<string> {
   await page.getByRole("radio", { name: "和食" }).check();
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
-  const audienceSaveResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
-  );
-  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
-  expect((await audienceSaveResponse).ok()).toBe(true);
+  await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({

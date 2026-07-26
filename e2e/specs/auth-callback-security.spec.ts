@@ -142,6 +142,14 @@ test("matching state reaches callback once; unknown and mismatched state fail sa
   expect(new URL(page.url()).searchParams.has("code")).toBe(false);
   expect(new URL(page.url()).searchParams.has("state")).toBe(false);
 
+  // 成功後は authenticated のため Login が Navigate でエラー UI を隠す。
+  // unknown / mismatched 失敗コピーを見るため、再利用ケースと同じくセッションを捨てる。
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.context().clearCookies();
+
   // unknown state: 存在しない flow/state で callback
   await page.goto(
     "/auth/callback?flow=00000000-0000-4000-8000-000000000099&state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&code=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

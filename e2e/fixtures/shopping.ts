@@ -1,7 +1,11 @@
 import type { Page, Route } from "@playwright/test";
 import { z } from "zod";
 import { completeMinimumOnboarding, expect, test as authTest } from "./auth";
-import { clickWizardNext, openFirstMemberEditor } from "./history";
+import {
+  clickWizardNext,
+  openFirstMemberEditor,
+  selectHouseholdAudienceWithMember,
+} from "./history";
 import { localRestHeaders } from "./local-supabase";
 
 type ShoppingFixtures = { shoppingMenuId: string };
@@ -77,13 +81,8 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
   await page.getByRole("radio", { name: "和食" }).check();
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
-  const audienceSaveResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
-  );
-  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
-  expect((await audienceSaveResponse).ok()).toBe(true);
+  // C-I4: メンバーを明示選択しないと household 下書きが CHECK で失敗する
+  await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({ timeout: 15_000 });

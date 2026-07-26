@@ -1,6 +1,10 @@
 import { expect, test } from "../fixtures/auth";
 import { z } from "zod";
-import { clickWizardNext, openFirstMemberEditor } from "../fixtures/history";
+import {
+  clickWizardNext,
+  openFirstMemberEditor,
+  selectHouseholdAudienceWithMember,
+} from "../fixtures/history";
 import { localRestHeaders } from "../fixtures/local-supabase";
 import type { Page, Request, Route } from "@playwright/test";
 
@@ -121,17 +125,11 @@ async function completeMinimumPlanner(page: Page) {
   await clickWizardNext(page);
   await page.getByRole("radio", { name: "和食" }).check();
   await clickWizardNext(page);
-  // audienceは既定でeligible家族全員（家族1）がhouseholdモードで選択済み。
-  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
-  // draftRevisionがserver側で確定する前のPOSTを避けるため、最後の質問（audience）の
+  // C-I4: household はメンバー自動選択しない。明示チェック後の成功 autosave を待つ。
+  // draftRevisionがserver側で確定する前のPOSTを避けるため、メンバー確定後の
   // 自動保存応答を同期点として待つ（PlannerWizardは「保存済み」の可視表示を持たない）。
-  const audienceSaveResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
-  );
-  await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
-  expect((await audienceSaveResponse).ok()).toBe(true);
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({
@@ -653,9 +651,10 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     await page.goto("/emergency-menus");
     await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
     await expect(page.getByRole("heading", { name: "15分緊急献立" })).toBeVisible();
+    // C-I6: idea 下書き時はゼロメンバー文言ではなく idea モード専用の案内
     await expect(
       page.getByText(
-        "対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。",
+        "アイデアモードでは緊急献立を表示できません。献立画面で「家族向け」に切り替えてください。",
       ),
     ).toBeVisible();
 

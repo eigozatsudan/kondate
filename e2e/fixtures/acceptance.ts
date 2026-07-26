@@ -369,7 +369,7 @@ export async function deleteThroughSettings(page: Page): Promise<void> {
     page.getByRole("button", { name: /この家族の設定を完了|家族を追加/u }).first(),
   ).toBeVisible();
 
-  const danger = page.getByRole("region", { name: "DangerZone" });
+  const danger = page.getByRole("region", { name: "危険な操作" });
   await expect(danger).toBeVisible();
   // 折りたたみ → 展開 → 確認ダイアログ（2 段階）
   await danger.getByRole("button", { name: "アカウントを削除" }).click();

@@ -5,6 +5,7 @@ import {
   openFirstMemberEditor,
   seedGeneratedIdeaMenu,
   seedGeneratedMenu,
+  selectHouseholdAudienceWithMember,
   setMockScenario,
 } from "../fixtures/history";
 
@@ -124,10 +125,8 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
     expect((await ideaSave).ok()).toBe(true);
     await assertStepFits(page, { "2人": 1, 次へ: 1 });
   } else {
-    const householdSave = waitDraftSave(page);
-    await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
-    await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
-    expect((await householdSave).ok()).toBe(true);
+    // C-I4: メンバーは自動チェックされない。明示選択 + 成功 autosave を待つ。
+    await selectHouseholdAudienceWithMember(page);
     await assertStepFits(page, { 次へ: 1 });
   }
   await clickWizardNext(page);
