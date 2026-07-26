@@ -85,6 +85,13 @@ export function HistoryCard({ group }: HistoryCardProps) {
           {representative.targetMode === "idea" ? "アイデア" : "家族に合わせた献立"}
         </p>
         <p className="text-sm text-ink-muted">
+          {new Intl.DateTimeFormat("ja-JP", {
+            timeZone: "Asia/Tokyo",
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(new Date(representative.createdAt))}
+        </p>
+        <p className="text-sm text-ink-muted">
           {representative.targetMode === "idea"
             ? "開いても家族条件は確認しません"
             : "開くと現在の家族設定で再確認します"}

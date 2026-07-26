@@ -18,6 +18,7 @@ import {
 import {
   RegenerationSheet,
   type RegenerationReasonInput,
+  type RegenerationUsageView,
 } from "@/features/history/components/regeneration-sheet";
 import {
   useMenuRevalidation,
@@ -55,6 +56,20 @@ import { getMenuResult } from "../api/menu-result-api";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import { MenuResult, type MenuResultActions } from "../components/menu-result";
 import { useUsageToday } from "../hooks/use-usage-today";
+
+function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): RegenerationUsageView {
+  return {
+    successRemaining: usage.isSuccess ? usage.data.success.remaining : null,
+    attemptsRemaining: usage.isSuccess ? usage.data.attempts.remaining : null,
+    shortWindowRemaining: usage.isSuccess ? usage.data.shortWindow.remaining : null,
+    shortWindowRetryAt:
+      usage.isSuccess && usage.data.shortWindow.remaining === 0
+        ? usage.data.shortWindow.retryAt
+        : null,
+    loading: usage.isPending || usage.isFetching,
+    error: usage.isError,
+  };
+}
 import { clearPendingGeneration } from "../model/pending-generation";
 
 const DISCLAIMER =
@@ -153,7 +168,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const usage = useUsageToday(userId ?? "");
-  const remaining = usage.data?.success.remaining ?? 0;
+  const usageView = usageViewFromQuery(usage);
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId: menuId ?? "00000000-0000-4000-8000-000000000000",
@@ -381,7 +396,7 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
         >
           <RegenerationSheet
             targetMode="idea"
-            remaining={remaining}
+            usage={usageView}
             onSubmit={onSubmitReason}
             onCancel={() => {
               setSheetMode(null);
@@ -427,7 +442,7 @@ function HouseholdResultBody({
   const revalidation = injectedRevalidation ?? liveView;
 
   const usage = useUsageToday(userId ?? "");
-  const remaining = usage.data?.success.remaining ?? 0;
+  const usageView = usageViewFromQuery(usage);
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId: menuId ?? "00000000-0000-4000-8000-000000000000",
@@ -447,6 +462,13 @@ function HouseholdResultBody({
     revalidation.phase === "checked" &&
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
+
+  // D-M7: 安全再検査で操作が閉じたらシートも閉じる
+  useEffect(() => {
+    if (!actionsEnabled && sheetMode !== null) {
+      setSheetMode(null);
+    }
+  }, [actionsEnabled, sheetMode]);
 
   // 買い物リスト側の現行安全ゲート。献立側の再検証と両方が通るまで
   // create / reconcile のコマンドは組み立てない。
@@ -896,7 +918,8 @@ function HouseholdResultBody({
         >
           <RegenerationSheet
             targetMode="household"
-            remaining={remaining}
+            usage={usageView}
+            actionsEnabled={actionsEnabled}
             onSubmit={onSubmitReason}
             onCancel={() => {
               setSheetMode(null);

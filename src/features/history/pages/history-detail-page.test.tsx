@@ -587,7 +587,8 @@ describe("HistoryDetailPage safety gate", () => {
     await waitFor(() => {
       expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
     });
-    expect(create).toBeDisabled();
+    // D-C1: 新規リスト作成は gate blocked でも可能なまま。差分確認は隠す。
+    expect(create).toBeEnabled();
     expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
   });
 

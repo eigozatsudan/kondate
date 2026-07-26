@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { describe, expect, it, vi } from "vitest";
@@ -54,6 +54,12 @@ describe("AppShell section tinting", () => {
   it("marks nested menu routes as the planner section", () => {
     renderAppShellAt("/menus/abc");
     expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "planner");
+  });
+
+  it("marks planner nav active on /menus/:id (D-I19)", () => {
+    renderAppShellAt("/menus/abc");
+    const planner = screen.getByRole("link", { name: /献立/u });
+    expect(planner.className).toContain("nav-item-active");
   });
 
   it("falls back to other for routes without a section", () => {

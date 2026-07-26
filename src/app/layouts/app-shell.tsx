@@ -143,7 +143,17 @@ export function AppShell() {
           <NavLink
             key={item.to}
             to={item.to}
-            className={({ isActive }) => (isActive ? "nav-item nav-item-active" : "nav-item")}
+            className={({ isActive }) => {
+              // D-I19: /menus/:id や /generation は献立タブを active にする
+              const sectionActive =
+                item.to === "/planner" &&
+                (location.pathname === "/generation" || location.pathname.startsWith("/menus/"));
+              const historyChild =
+                item.to === "/history" && location.pathname.startsWith("/history/");
+              return isActive || sectionActive || historyChild
+                ? "nav-item nav-item-active"
+                : "nav-item";
+            }}
           >
             <NavIcon name={item.icon} />
             <span className="nav-item-label">{item.label}</span>

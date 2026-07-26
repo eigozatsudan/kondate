@@ -42,10 +42,30 @@ import {
 } from "@/features/shopping/hooks/use-shopping-list";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { isRevalidationActionable, type RevalidationResult } from "../api/revalidation-api";
-import { RegenerationSheet, type RegenerationReasonInput } from "../components/regeneration-sheet";
+import {
+  RegenerationSheet,
+  type RegenerationReasonInput,
+  type RegenerationUsageView,
+} from "../components/regeneration-sheet";
 import { useAcceptMenuVersion, useToggleFavorite } from "../hooks/use-history";
 import { useMenuRevalidation, type RevalidationPhaseName } from "../hooks/use-menu-revalidation";
 import { useRegeneration } from "../hooks/use-regeneration";
+
+function usageViewFromQuery(
+  usage: ReturnType<typeof useUsageToday>,
+): RegenerationUsageView {
+  return {
+    successRemaining: usage.isSuccess ? usage.data.success.remaining : null,
+    attemptsRemaining: usage.isSuccess ? usage.data.attempts.remaining : null,
+    shortWindowRemaining: usage.isSuccess ? usage.data.shortWindow.remaining : null,
+    shortWindowRetryAt:
+      usage.isSuccess && usage.data.shortWindow.remaining === 0
+        ? usage.data.shortWindow.retryAt
+        : null,
+    loading: usage.isPending || usage.isFetching,
+    error: usage.isError,
+  };
+}
 
 export type HistoryDetailRevalidationView = {
   phase: RevalidationPhaseName;
@@ -144,7 +164,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const usage = useUsageToday(userId ?? "");
-  const remaining = usage.data?.success.remaining ?? 0;
+  const usageView = usageViewFromQuery(usage);
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId,
@@ -371,7 +391,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         >
           <RegenerationSheet
             targetMode="idea"
-            remaining={remaining}
+            usage={usageView}
             onSubmit={onSubmitReason}
             onCancel={() => {
               setSheetMode(null);
@@ -415,7 +435,7 @@ function HouseholdDetailBody({
   const revalidation = injectedRevalidation ?? liveView;
 
   const usage = useUsageToday(userId ?? "");
-  const remaining = usage.data?.success.remaining ?? 0;
+  const usageView = usageViewFromQuery(usage);
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId,
@@ -434,6 +454,13 @@ function HouseholdDetailBody({
     revalidation.phase === "checked" &&
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
+
+  // D-M7: 安全再検査で操作が閉じたらシートも閉じる（開いたまま送信して unhandled reject しない）
+  useEffect(() => {
+    if (!actionsEnabled && sheetMode !== null) {
+      setSheetMode(null);
+    }
+  }, [actionsEnabled, sheetMode]);
 
   // 結果画面と同等: 買い物は献立再検証と買い物ゲートの両方が通るまで組み立てない
   const shoppingList = useShoppingList();
@@ -873,7 +900,8 @@ function HouseholdDetailBody({
         >
           <RegenerationSheet
             targetMode="household"
-            remaining={remaining}
+            usage={usageView}
+            actionsEnabled={actionsEnabled}
             onSubmit={onSubmitReason}
             onCancel={() => {
               setSheetMode(null);
