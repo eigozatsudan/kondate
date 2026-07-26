@@ -24,8 +24,13 @@ const claimResponseSchema = z
     code: z.string().min(1).max(2_048),
     returnTo: z
       .string()
-      .regex(/^\/[^/]/u)
-      .max(500),
+      .max(500)
+      .refine(
+        (value) =>
+          value === "/" ||
+          (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
+        { message: "invalid_return_to" },
+      ),
   })
   .strict();
 

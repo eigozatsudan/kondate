@@ -54,7 +54,6 @@ describe("foodTextContainsAlias", () => {
   });
 });
 
-
 const member = {
   ...makeCurrentSafetyContext().members[0]!,
   allergyStatus: "registered" as const,

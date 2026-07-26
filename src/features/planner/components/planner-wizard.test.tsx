@@ -889,7 +889,9 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByText("本日あと3回作成できます")).toBeVisible();
-    expect(screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u)).toBeVisible();
+    expect(
+      screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u),
+    ).toBeVisible();
     expect(screen.getByText(/以降に再試行してください/u)).toBeVisible();
   });
 
@@ -1171,9 +1173,7 @@ describe("IngredientStep quick select", () => {
 
     const dialog = screen.getByRole("alertdialog", { name: "メイン食材を選んでください" });
     expect(dialog).toBeVisible();
-    expect(dialog).toHaveTextContent(
-      "献立の中心になる食材を1つ以上選んでから進んでください。",
-    );
+    expect(dialog).toHaveTextContent("献立の中心になる食材を1つ以上選んでから進んでください。");
     // ダイアログ中は step を進めない
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "3. ジャンル" })).not.toBeInTheDocument();

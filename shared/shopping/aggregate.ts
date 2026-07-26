@@ -89,9 +89,7 @@ export function buildShoppingDraft(input: ShoppingDraftInput): ShoppingDraft {
     const sameName = input.pantry.filter(
       (candidate) => normalizeIngredientName(candidate.name, input.aliases) === item.normalizedName,
     );
-    const sameUnit = sameName.filter(
-      (candidate) => normalizeUnit(candidate.unit) === item.unit,
-    );
+    const sameUnit = sameName.filter((candidate) => normalizeUnit(candidate.unit) === item.unit);
     if (sameName.length === 0) {
       kept.push(item);
     } else if (sameUnit.length === 0 || sameUnit.some((candidate) => candidate.quantity === null)) {

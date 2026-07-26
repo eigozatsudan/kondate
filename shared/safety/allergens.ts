@@ -38,9 +38,7 @@ export type MenuTextSource = {
 
 /** カタカナ（ァ-ヶ）を対応するひらがなへ折り畳む。 */
 function foldKatakanaToHiragana(value: string): string {
-  return value.replace(/[\u30a1-\u30f6]/gu, (ch) =>
-    String.fromCharCode(ch.charCodeAt(0) - 0x60),
-  );
+  return value.replace(/[\u30a1-\u30f6]/gu, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
 }
 
 /**

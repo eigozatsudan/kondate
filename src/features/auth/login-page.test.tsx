@@ -184,31 +184,34 @@ it.each([
   ["bare slash", "/login?returnTo=%2F", "/"],
   ["external URL", "/login?returnTo=https%3A%2F%2Fattacker.example", "/planner"],
   ["protocol-relative URL", "/login?returnTo=%2F%2Fattacker.example", "/planner"],
-])("sanitizes an explicit %s returnTo for Google and magic link", async (_label, entry, expected) => {
-  const user = userEvent.setup();
-  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
-  const sendMagicLink = vi.fn().mockResolvedValue({
-    flowId: "flow-1",
-    email: "user@example.com",
-    resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
-  });
-  const gateway: AuthGateway = {
-    signInWithGoogle,
-    sendMagicLink,
-    completeCallback: vi.fn(),
-    resumeFlow: vi.fn(),
-  };
+])(
+  "sanitizes an explicit %s returnTo for Google and magic link",
+  async (_label, entry, expected) => {
+    const user = userEvent.setup();
+    const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+    const sendMagicLink = vi.fn().mockResolvedValue({
+      flowId: "flow-1",
+      email: "user@example.com",
+      resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const gateway: AuthGateway = {
+      signInWithGoogle,
+      sendMagicLink,
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+    };
 
-  render(
-    <MemoryRouter initialEntries={[entry]}>
-      <LoginPage gateway={gateway} />
-    </MemoryRouter>,
-  );
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
 
-  await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
-  expect(signInWithGoogle).toHaveBeenCalledWith(expected);
+    await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
+    expect(signInWithGoogle).toHaveBeenCalledWith(expected);
 
-  await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
-  await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
-  expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", expected);
-});
+    await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
+    await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
+    expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", expected);
+  },
+);

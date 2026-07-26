@@ -151,10 +151,7 @@ export function ReviewStep({
   // privacy 未確認だけでは disabled にしない（押下で案内を出す）。
   // 成功残 0 のときは主 CTA を止める（C-I12）。未取得 (null) では止めない。
   const generateDisabled =
-    disabled ||
-    hasUnavailablePantrySelections ||
-    medicalBlocked ||
-    usageRemaining === 0;
+    disabled || hasUnavailablePantrySelections || medicalBlocked || usageRemaining === 0;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };

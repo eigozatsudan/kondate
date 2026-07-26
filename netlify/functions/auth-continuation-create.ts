@@ -16,10 +16,16 @@ const createRequestSchema = z
   .object({
     state: credentialSchema,
     secret: credentialSchema,
+    // B-I5: 裸 "/" は RootEntry 復帰用に許可。B-I3: "//" 始まりは拒否。
     returnTo: z
       .string()
-      .regex(/^\/[^/]/u)
-      .max(500),
+      .max(500)
+      .refine(
+        (value) =>
+          value === "/" ||
+          (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
+        { message: "invalid_return_to" },
+      ),
   })
   .strict();
 const createResultSchema = z

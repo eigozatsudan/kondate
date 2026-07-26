@@ -7,10 +7,7 @@ import { useAuth } from "./use-auth";
 
 type LoginLocationState = {
   authError?:
-    | "oauth_cancelled"
-    | "auth_callback_failed"
-    | "magic_link_expired"
-    | "unbound_callback";
+    "oauth_cancelled" | "auth_callback_failed" | "magic_link_expired" | "unbound_callback";
 };
 
 /** 期限切れ復帰用。秘密は載せず、直近に送った宛先メールだけを短寿命で覚える（B-I8）。 */
@@ -214,7 +211,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
             </p>
           )}
           {state.email.trim() === "" && (
-            <p className="type-small">宛先が分からないときは、下でメールアドレスを変更してください。</p>
+            <p className="type-small">
+              宛先が分からないときは、下でメールアドレスを変更してください。
+            </p>
           )}
           {/* emailLabel は aria 用の文脈。表示は上の strong で足りる */}
           <span className="sr-only">{emailLabel}</span>

@@ -51,9 +51,7 @@ import { useAcceptMenuVersion, useToggleFavorite } from "../hooks/use-history";
 import { useMenuRevalidation, type RevalidationPhaseName } from "../hooks/use-menu-revalidation";
 import { useRegeneration } from "../hooks/use-regeneration";
 
-function usageViewFromQuery(
-  usage: ReturnType<typeof useUsageToday>,
-): RegenerationUsageView {
+function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): RegenerationUsageView {
   return {
     successRemaining: usage.isSuccess ? usage.data.success.remaining : null,
     attemptsRemaining: usage.isSuccess ? usage.data.attempts.remaining : null,
