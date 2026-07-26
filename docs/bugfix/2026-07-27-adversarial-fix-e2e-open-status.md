@@ -1,10 +1,10 @@
-# 敵対的レビュー修正ブランチ — E2E 未解消ステータス（main マージ前メモ）
+# 敵対的レビュー修正 — E2E 未解消ステータス（main 取込後フォロー用）
 
 - **作成日**: 2026-07-27
-- **用途**: 本ブランチを main にマージしたあと、別タスク／別プロンプトで E2E を追い切るための引き継ぎ資料
-- **worktree**: `/home/dev/projects/kondate/.worktrees/fix-adversarial-2026-07-26`
-- **branch**: `fix/adversarial-review-2026-07-26`
-- **記録時点 HEAD**: `4cea4dff679b34b60dd992a2dc076d0f56f57604`
+- **用途**: 別タスク／別プロンプトで E2E を追い切るための引き継ぎ資料
+- **merge**: `fix/adversarial-review-2026-07-26` → **main**（ローカル merge commit `a067cff`）
+- **記録時の fix HEAD**: `4cea4dff679b34b60dd992a2dc076d0f56f57604`（E2E 集計）／ docs 追加 `f3ed30f`
+- **旧 worktree（参考）**: `/home/dev/projects/kondate/.worktrees/fix-adversarial-2026-07-26`
 - **E2E ログ**: `/tmp/kondate-adversarial-fix-review/final-9b/07-e2e.log`  
   （Playwright 最終サマリー行はログ末尾に無く、一覧は runner 出力の `✓`/`✘` から集計。retry 後も fail のものを「失敗」とする）
 
@@ -182,39 +182,57 @@ Project: `[mobile-chromium]` のみ観測。各失敗は初回 + retry #1 の 2 
 
 ---
 
-## 8. 他実装プロンプトに貼る短文（コピー用）
-
-```text
-前提: branch fix/adversarial-review-2026-07-26（または main 取込後）で
-敵対的レビュー修正は unit/lint/typecheck/db-test/build まで PASS。
-E2E のみ未解消。詳細は docs/bugfix/2026-07-27-adversarial-fix-e2e-open-status.md。
-
-依頼: E2E の household / shopping / history-safety / settings CRUD 失敗を
-トレース起点で修正する。idea 系は多く PASS しているので、まず
-settings.spec.ts:8 と full-journey household の失敗点を特定すること。
-D-C1/D-C2（買い物 create と remove 既定）、A-C2 文言、preferenceGaps 付き
-getMenuResult、DangerZone「危険な操作」など仕様変更に E2E が追従していない
-可能性を優先確認。完了条件は ./scripts/run-e2e.sh 全緑 + AGENTS.md 9段階。
-```
-
----
-
-## 9. 関連ログ・成果物パス
+## 8. 関連ログ・成果物パス
 
 | 内容 | パス |
 |------|------|
 | E2E 実行ログ（本メモ集計元） | `/tmp/kondate-adversarial-fix-review/final-9b/07-e2e.log` |
 | 9 段階その他ログ | `/tmp/kondate-adversarial-fix-review/final-9b/0{1..9}-*.log` |
 | 最終レビュー指摘 | `/tmp/kondate-final-code-review-findings-00fe337.md` |
-| I1–I4 修正 report | `.superpowers/sdd/final-review-fix-4-important-report.md` |
-| progress | `.superpowers/sdd/progress.md` |
+| I1–I4 修正 report（fix worktree 側 gitignored の可能性） | `.superpowers/sdd/final-review-fix-4-important-report.md` |
 
 ---
 
-## 10. 明示的にやらないこと（このメモのスコープ外）
+## 9. 明示的にやらないこと（このメモのスコープ外）
 
 - 本メモ作成時点での E2E 修正実装
-- main への push / PR 作成（人間操作）
+- remote への `git push`（人間が必要なら別途）
 - 失敗 31 本の assertion 本文の完全再取得（ログに未出力）
 
-必要なら次セッションで **1 本だけ** `PWDEBUG` / `--trace on` 付き再実行から再開する。
+---
+
+## 10. 他実装プロンプトへそのまま貼る短文
+
+```text
+【E2E follow-up — 敵対的レビュー修正は main 取込済み】
+
+作業場所: /home/dev/projects/kondate（branch main、merge commit a067cff 以降）
+実装は SuperPowers（subagent-driven-development + TDD）を使うこと。
+Node/npm は docker compose run --rm --no-deps app 経由。コマンドは && で連結しない。
+
+既知:
+- 敵対的レビュー修正（安全照合・買い物差分・finalizer deadline・生成 CTA・claim 失敗消去等）は
+  format/lint/typecheck/vitest(2142)/db-test(793)/build まで PASS。
+- E2E のみ未解消: PASS 27 / FAIL 31（mobile-chromium、多くは retry 後も失敗）。
+- 詳細一覧: docs/bugfix/2026-07-27-adversarial-fix-e2e-open-status.md
+- ログ: /tmp/kondate-adversarial-fix-review/final-9b/07-e2e.log
+
+傾向:
+- idea 系は比較的緑（idea journey / idea history regen / idea a11y 等）。
+- household full-journey、settings CRUD、shopping（races 含む）、history-safety、
+  household wizard+result a11y、生成リカバリ数本が赤。
+
+依頼:
+1. まず単発で失敗の「最初のユーザー可視点」を特定する:
+   ./scripts/run-e2e.sh -- e2e/specs/settings.spec.ts:8
+   または full-journey household（e2e/specs/full-journey.spec.ts:11）
+   必要なら Playwright trace / screenshot。
+2. 仕様変更への E2E 未追従を優先確認:
+   - D-C1: 献立結果の買い物 create は shoppingGate から分離
+   - D-C2: reconcile の remove は既定オフ
+   - A-C2: 安全 issue 文言（危険な操作 / 表示名・材料文脈）
+   - getMenuResult の includePreferenceGaps: true
+3. クラス単位で修正→再実行し、最後に ./scripts/run-e2e.sh 全緑。
+4. 完了条件: E2E 全緑 + AGENTS.md の必須9段階を独立コマンドで順実行。
+5. git push / PR はしない。コミットは日本語 Conventional Commits。
+```
