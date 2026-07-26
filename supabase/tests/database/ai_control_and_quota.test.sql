@@ -1397,7 +1397,7 @@ select throws_ok($$
   select public.reserve_ai_repair_call(
     (select id from private.ai_generation_requests
       where idempotency_key = '20000000-0000-4000-8000-000000000001'),
-    46, '2026-07-10 15:00:05+00'
+    21, '2026-07-10 15:00:05+00'
   )
 $$, '22023', 'invalid_quota_configuration',
   'the database rejects a global limit above the release maximum before repair reservation');
