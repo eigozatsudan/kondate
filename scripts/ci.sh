@@ -25,6 +25,7 @@ docker compose run --rm --no-deps app node --test \
   scripts/assert-privacy-logs.test.mjs \
   scripts/verify-release-evidence.test.mjs \
   scripts/verify-openrouter-models.test.mjs \
+  scripts/benchmark-paid-openrouter-models.test.mjs \
   scripts/provision-maintenance-role.test.mjs \
   scripts/csp-headers.test.mjs \
   scripts/emit-deploy-headers.test.mjs \

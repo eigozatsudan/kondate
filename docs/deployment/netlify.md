@@ -32,11 +32,11 @@
 | `OPENROUTER_API_KEY` | プロバイダ鍵 |
 | `OPENROUTER_BASE_URL` | 正確に `https://openrouter.ai/api/v1` |
 | `OPENROUTER_MODELS` | 順序付き一意の有料 allowlist ID。`:free`・`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` 禁止。各 ID は `structured_outputs` AND `response_format` と prompt+completion ≤ $0.50/1M を満たすこと |
-| `USER_DAILY_AI_LIMIT` | `5` |
-| `USER_DAILY_EXTERNAL_CALL_LIMIT` | `12` |
+| `USER_DAILY_AI_LIMIT` | `3` |
+| `USER_DAILY_EXTERNAL_CALL_LIMIT` | `6` |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | `4` |
 | `USER_SHORT_WINDOW_SECONDS` | `600` |
-| `GLOBAL_DAILY_AI_LIMIT` | 1..45 |
+| `GLOBAL_DAILY_AI_LIMIT` | 1..20（既定 20） |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
 | `OPENROUTER_TIMEOUT_MS` | `20000` |
 | `FUNCTION_TOTAL_BUDGET_MS` | `50000` |
