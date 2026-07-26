@@ -60,7 +60,7 @@ const newMenuCommand: GenerationCommand = {
     idempotencyKey,
     draftId,
     draftRevision: 7,
-    privacyNoticeVersion: "2026-07-11.v1",
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };

@@ -333,7 +333,7 @@ beforeEach(() => {
     isError: false,
     isPending: false,
   };
-  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-11.v1" };
+  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-26.v1" };
   savePlannerDraftMock.mockResolvedValue(draft);
   setOnboardingStatusMock.mockResolvedValue(undefined);
   getProfileMock.mockReset();
@@ -839,7 +839,7 @@ describe("PlannerRoutePage", () => {
         idempotencyKey: attemptKey,
         draftId: draft.id,
         draftRevision: draft.revision,
-        privacyNoticeVersion: "2026-07-11.v1",
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [
           {
             pantryItemId: "74000000-0000-4000-8000-000000000001",

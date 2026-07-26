@@ -61,7 +61,7 @@ function makeCommand(idempotencyKey: string): GenerationCommand {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 3,
-      privacyNoticeVersion: "2026-07-11.v1",
+      privacyNoticeVersion: "2026-07-26.v1",
       expiredPantryConfirmations: [],
     },
   };

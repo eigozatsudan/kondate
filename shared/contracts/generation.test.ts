@@ -160,7 +160,7 @@ describe("newMenuGenerationRequestSchema", () => {
     idempotencyKey: "10000000-0000-4000-8000-000000000001",
     draftId: "20000000-0000-4000-8000-000000000001",
     draftRevision: 3,
-    privacyNoticeVersion: "2026-07-11.v1",
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [
       {
         pantryItemId: "30000000-0000-4000-8000-000000000001",
@@ -171,6 +171,16 @@ describe("newMenuGenerationRequestSchema", () => {
 
   it("accepts identifiers and transient expiry confirmations", () => {
     expect(newMenuGenerationRequestSchema.parse(valid)).toEqual(valid);
+  });
+
+  // 設計 §7: 旧 privacyNoticeVersion は互換パーサなしで Zod 拒否（未同意扱い）
+  it("rejects the previous privacyNoticeVersion without a compatibility parser", () => {
+    expect(
+      newMenuGenerationRequestSchema.safeParse({
+        ...valid,
+        privacyNoticeVersion: "2026-07-11.v1",
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects client-supplied identity and safety data", () => {

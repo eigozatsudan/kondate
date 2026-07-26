@@ -42,6 +42,6 @@ describe("domain contracts", () => {
       "swallowing_concern",
       "therapeutic_diet",
     ]);
-    expect(privacyNoticeVersion).toBe("2026-07-11.v1");
+    expect(privacyNoticeVersion).toBe("2026-07-26.v1");
   });
 });

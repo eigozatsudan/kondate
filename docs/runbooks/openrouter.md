@@ -19,6 +19,16 @@
 
 検証済みモデルが無い場合は AI を利用不可のままにし、緊急メニューを有効のままにする。
 
+## プライバシー説明 version のロールアウト
+
+`privacyNoticeVersion`（現行 `2026-07-26.v1`）はブラウザ契約と Function の Zod literal が同一である必要がある。
+
+- **同一デプロイ**: ブラウザバンドルと Functions を同じデプロイ単位で同時に差し替える。version だけ先行した Function 単体デプロイは禁止。
+- **旧同意は無効**: DB に残る旧 version の同意行はすべて「現行未同意」。次回 AI 生成前に新説明の再確認が必須（意図した再同意）。
+- **版ずれ時**: 旧バンドル + 新 Function（またはその逆）では body の `privacyNoticeVersion` が Zod 不一致となり **422 / バリデーション失敗**系。利用者にはページ再読み込み（新バンドル取得）を促す。
+- **auth-continuation（TTL 300s）**: 進行中 continuation に旧 version が載っている場合、復帰 POST は fail-closed。ログインし直し + 新説明確認が必要。自動マイグレーションはしない。
+- **互換パーサは追加しない**: 旧 version を受理する二重意味論は設けない。
+
 ## ローカル mock と実 API 切替
 
 ### ローカル既定（compose / generate-local-secrets）

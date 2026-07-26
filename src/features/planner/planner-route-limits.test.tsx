@@ -39,7 +39,7 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "privacy") {
       return {
-        data: { user_id: "72000000-0000-4000-8000-000000000001", notice_version: "2026-07-11.v1" },
+        data: { user_id: "72000000-0000-4000-8000-000000000001", notice_version: "2026-07-26.v1" },
         isError: false,
         isPending: false,
       };
