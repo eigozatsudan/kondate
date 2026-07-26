@@ -230,15 +230,22 @@ test("waits for the latest draft save before requesting emergency menus", async 
   });
 
   await advanceToReviewWithHousehold(page, "昼食");
-  // audienceで選ばれる対象家族は既定でeligible全員（sanitizeDraft）。
-  // 緊急用家族だけを残すため、audienceへ戻って他の家族（completedOnboardingPageが
-  // 作成した「家族1」）の選択を外す。
+  // C-I4: 全員自動選択はしない。緊急用家族のみを明示し、家族1 は外す。
+  // household+0 を一瞬でも確定しないよう、緊急用家族を先にチェックしてから家族1を外す。
   await page.getByRole("button", { name: "戻る" }).click();
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
-  const otherMemberCheckbox = page.getByRole("checkbox", { name: "家族1" });
-  if (await otherMemberCheckbox.isVisible()) await otherMemberCheckbox.uncheck();
-  const memberCheckbox = page.getByRole("checkbox", { name: "緊急用家族" });
-  await expect(memberCheckbox).toBeChecked();
+  const emergencyCheckbox = page.getByRole("checkbox", { name: "緊急用家族" });
+  const family1Checkbox = page.getByRole("checkbox", { name: "家族1" });
+  await expect(emergencyCheckbox).toBeVisible();
+  if (!(await emergencyCheckbox.isChecked())) {
+    await emergencyCheckbox.check();
+  }
+  if (await family1Checkbox.isVisible()) {
+    if (await family1Checkbox.isChecked()) {
+      await family1Checkbox.uncheck();
+    }
+  }
+  await expect(emergencyCheckbox).toBeChecked();
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await openReviewOptionalDetails(page);
