@@ -81,6 +81,16 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   onOpenEmergencyMenus?: () => void;
   /** GET /api/usage/today の成功残数。未取得時は null（偽の残数を出さない） */
   usageRemaining?: number | null;
+  /**
+   * 日次 attempt 残（外部 AI 送信枠）。未取得は null。
+   * C-I12 residual: 0 のとき主 CTA を止める。null では止めない。
+   */
+  attemptsRemaining?: number | null;
+  /**
+   * アプリ全体の受付可否。未取得は null。
+   * C-I12 residual: false のとき主 CTA を止める。null では止めない。
+   */
+  globalAvailable?: boolean | null;
   /** short-window 残 0 のときの再開時刻 ISO。null なら短時間枠メッセージを出さない */
   shortWindowRetryAt?: string | null;
   /**
@@ -119,6 +129,8 @@ export function ReviewStep({
   safetyMembers = [],
   onOpenEmergencyMenus,
   usageRemaining = null,
+  attemptsRemaining = null,
+  globalAvailable = null,
   shortWindowRetryAt = null,
   onEditStep,
 }: ReviewStepProps) {
@@ -149,9 +161,15 @@ export function ReviewStep({
   const medicalBlocked =
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
   // privacy 未確認だけでは disabled にしない（押下で案内を出す）。
-  // 成功残 0 のときは主 CTA を止める（C-I12）。未取得 (null) では止めない。
+  // C-I12 residual: 成功残 0 / attempt 残 0 / global 不可で主 CTA を止める。
+  // null/未取得では誤って止めない。
   const generateDisabled =
-    disabled || hasUnavailablePantrySelections || medicalBlocked || usageRemaining === 0;
+    disabled ||
+    hasUnavailablePantrySelections ||
+    medicalBlocked ||
+    usageRemaining === 0 ||
+    attemptsRemaining === 0 ||
+    globalAvailable === false;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };
@@ -435,13 +453,23 @@ export function ReviewStep({
           家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
         </p>
       )}
-      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・短時間枠の再開時刻を平易表示 */}
+      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・attempt・global・短時間枠を平易表示 */}
       {usageRemaining !== null && (
         <p role="status">
           {usageRemaining === 0
             ? "本日の作成回数の上限に達しました。明日またお試しください。"
             : `本日あと${String(usageRemaining)}回作成できます`}
         </p>
+      )}
+      {attemptsRemaining !== null && (
+        <p role="status">
+          {attemptsRemaining === 0
+            ? "AIへの問い合わせ回数の上限に達しました。明日またお試しください。"
+            : `AIへの問い合わせは本日あと${String(attemptsRemaining)}回まで受け付けます`}
+        </p>
+      )}
+      {globalAvailable === false && (
+        <p role="status">ただいま混雑しているため、しばらくしてからお試しください。</p>
       )}
       {shortWindowRetryAt !== null && (
         <p role="status">

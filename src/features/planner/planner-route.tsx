@@ -491,6 +491,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         audienceStatusError ?? submissionError
       }
       usageRemaining={usage.isSuccess ? usage.data.success.remaining : null}
+      attemptsRemaining={usage.isSuccess ? usage.data.attempts.remaining : null}
+      globalAvailable={usage.isSuccess ? usage.data.globalAvailable : null}
       shortWindowRetryAt={
         usage.isSuccess && usage.data.shortWindow.remaining === 0
           ? usage.data.shortWindow.retryAt

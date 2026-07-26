@@ -64,6 +64,8 @@ function Harness({
   pantryItems = [],
   pantryItemsStatus = "loaded",
   usageRemaining = null,
+  attemptsRemaining = null,
+  globalAvailable = null,
   shortWindowRetryAt = null,
 }: {
   initialStep?: PlannerStep;
@@ -86,6 +88,8 @@ function Harness({
   pantryItems?: readonly PantryItem[];
   pantryItemsStatus?: "loading" | "loaded";
   usageRemaining?: number | null;
+  attemptsRemaining?: number | null;
+  globalAvailable?: boolean | null;
   shortWindowRetryAt?: string | null;
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
@@ -114,6 +118,8 @@ function Harness({
         canResolveDraftConflict={canResolveDraftConflict}
         draftConflictRefetchError={draftConflictRefetchError}
         usageRemaining={usageRemaining}
+        attemptsRemaining={attemptsRemaining}
+        globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
         {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
@@ -893,6 +899,58 @@ describe("PlannerWizard review step", () => {
       screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u),
     ).toBeVisible();
     expect(screen.getByText(/以降に再試行してください/u)).toBeVisible();
+  });
+
+  it("C-I12: 成功残 0 のとき主 CTA を止め上限メッセージを出す", () => {
+    render(<Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={0} />);
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText("本日の作成回数の上限に達しました。明日またお試しください。"),
+    ).toBeVisible();
+  });
+
+  it("C-I12 residual: attempts 残 0 のとき主 CTA を止め平易メッセージを出す", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={0}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText("AIへの問い合わせ回数の上限に達しました。明日またお試しください。"),
+    ).toBeVisible();
+  });
+
+  it("C-I12 residual: global 不可のとき主 CTA を止め平易メッセージを出す", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={5}
+        globalAvailable={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText("ただいま混雑しているため、しばらくしてからお試しください。"),
+    ).toBeVisible();
+  });
+
+  it("C-I12 residual: null の attempts/global では誤って主 CTA を止めない", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        attemptsRemaining={null}
+        globalAvailable={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeEnabled();
   });
 
   it("idea の review では緊急献立ボタンの代わりに切替案内を出す", () => {

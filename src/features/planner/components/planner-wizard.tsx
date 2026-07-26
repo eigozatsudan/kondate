@@ -56,6 +56,10 @@ export type PlannerWizardExtraProps = {
   onReset?: () => void;
   /** 設計 §10.3: review の生成ボタン近くに出す成功残数（未取得は null） */
   usageRemaining?: number | null;
+  /** C-I12 residual: 日次 attempt 残（未取得は null） */
+  attemptsRemaining?: number | null;
+  /** C-I12 residual: アプリ全体の受付可否（未取得は null） */
+  globalAvailable?: boolean | null;
   /** short-window 残 0 時の再開時刻 ISO（未該当は null） */
   shortWindowRetryAt?: string | null;
   /** 下書き autosave の短い状態表示（C-I9） */
@@ -131,6 +135,8 @@ export function PlannerWizard({
   onIdeaAudienceConfirmed,
   onReset,
   usageRemaining = null,
+  attemptsRemaining = null,
+  globalAvailable = null,
   shortWindowRetryAt = null,
   autosaveState = "idle",
   onRetryAutosave,
@@ -425,6 +431,8 @@ export function PlannerWizard({
         safetyMembers={eligibleMembers}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
         usageRemaining={usageRemaining}
+        attemptsRemaining={attemptsRemaining}
+        globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}
         onSubmit={() => {
           void onSubmit();
