@@ -285,6 +285,25 @@ it("rejects OpenRouter bodies larger than 1MiB as invalid_ai_response", async ()
   });
 });
 
+it("keeps byte-cap classification when reader cancellation rejects", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(OPENROUTER_MAX_BODY_BYTES + 1));
+    },
+    cancel() {
+      return Promise.reject(new Error("cancel cleanup failed"));
+    },
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 })),
+  );
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("invalid_ai_response"),
+  );
+});
+
 it("readResponseBodyWithByteCap accepts exactly max bytes and rejects max+1", async () => {
   const exact = "a".repeat(64);
   await expect(readResponseBodyWithByteCap(new Response(exact), 64)).resolves.toBe(exact);
@@ -641,23 +660,19 @@ it("prioritizes an elapsed deadline over an adapter failure", async () => {
   expect(adapterSpy).toHaveBeenCalledOnce();
 });
 
-it("prioritizes Abort while byte-cap cancellation is pending", async () => {
+it("settles a permanently pending byte-cap cancellation on Abort and removes its listener", async () => {
   vi.useFakeTimers();
-  let releaseCancel: (() => void) | undefined;
+  const addEventListenerSpy = vi.spyOn(AbortSignal.prototype, "addEventListener");
+  const removeEventListenerSpy = vi.spyOn(AbortSignal.prototype, "removeEventListener");
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(new Uint8Array(OPENROUTER_MAX_BODY_BYTES + 1));
     },
     cancel() {
-      return new Promise<void>((resolve) => {
-        releaseCancel = resolve;
-      });
+      return new Promise<void>(() => {});
     },
   });
-  const fetchImpl = vi.fn<typeof fetch>().mockImplementation((_url, init) => {
-    init?.signal?.addEventListener("abort", () => releaseCancel?.());
-    return Promise.resolve(new Response(body, { status: 200 }));
-  });
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 }));
   vi.stubGlobal("fetch", fetchImpl);
 
   const pending = sendMenuGeneration({ messages: [], timeoutMs: 20_000 });
@@ -665,11 +680,20 @@ it("prioritizes Abort while byte-cap cancellation is pending", async () => {
     () => undefined,
     (reason: unknown) => reason,
   );
-  await vi.advanceTimersByTimeAsync(20_000);
+  const didNotSettle = new Promise<"did_not_settle">((resolve) => {
+    setTimeout(() => {
+      resolve("did_not_settle");
+    }, 20_001);
+  });
+  const outcome = Promise.race([capturedError, didNotSettle]);
+  await vi.advanceTimersByTimeAsync(20_001);
 
-  const error = await capturedError;
+  const error = await outcome;
   expect(error).toEqual(new OpenRouterCallError("generation_timeout"));
   expect(vi.getTimerCount()).toBe(0);
+  const abortRegistration = addEventListenerSpy.mock.calls.find(([type]) => type === "abort");
+  expect(abortRegistration).toBeDefined();
+  expect(removeEventListenerSpy).toHaveBeenCalledWith("abort", abortRegistration?.[1]);
 });
 
 it.each([

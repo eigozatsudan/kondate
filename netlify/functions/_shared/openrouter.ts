@@ -93,12 +93,49 @@ const maxRetryAfterSeconds = 86_400;
 export const OPENROUTER_MAX_BODY_BYTES = 1 * 1024 * 1024;
 
 /**
+ * byte cap後のcancelはbest-effort cleanupとして扱い、失敗でcap分類を失わない。
+ * 永続pendingでも送信Abortを優先して抜け、登録したlistenerを全経路で除去する。
+ */
+async function cancelBodyReaderWithAbort(
+  cancel: () => Promise<void>,
+  signal?: AbortSignal,
+): Promise<"cancel_settled" | "aborted"> {
+  const cancelSettled = Promise.resolve()
+    .then(cancel)
+    .then(
+      () => "cancel_settled" as const,
+      () => "cancel_settled" as const,
+    );
+  if (signal === undefined) return cancelSettled;
+  const signalIsAborted = (): boolean => signal.aborted;
+  if (signalIsAborted()) return "aborted";
+
+  let resolveAbort!: (value: "aborted") => void;
+  const aborted = new Promise<"aborted">((resolve) => {
+    resolveAbort = resolve;
+  });
+  const onAbort = (): void => {
+    resolveAbort("aborted");
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  // aborted確認とlistener登録の間に発火した場合も取りこぼさない。
+  if (signalIsAborted()) onAbort();
+  try {
+    const result = await Promise.race([cancelSettled, aborted]);
+    return result === "aborted" || signalIsAborted() ? "aborted" : "cancel_settled";
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
  * 応答 body をストリーム読みしつつ固定バイト上限で打ち切る。
  * 超過時は invalid_ai_response（修理適格の invalid 経路へ）。
  */
 export async function readResponseBodyWithByteCap(
   response: Response,
   maxBytes: number = OPENROUTER_MAX_BODY_BYTES,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (response.body === null) {
     const text = await response.text();
@@ -116,8 +153,10 @@ export async function readResponseBodyWithByteCap(
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel();
-        throw new OpenRouterCallError("invalid_ai_response");
+        const cancelResult = await cancelBodyReaderWithAbort(() => reader.cancel(), signal);
+        throw new OpenRouterCallError(
+          cancelResult === "aborted" ? "generation_timeout" : "invalid_ai_response",
+        );
       }
       chunks.push(value);
     }
@@ -241,7 +280,11 @@ export async function sendMenuGeneration(
 
     let rawBody: string;
     try {
-      rawBody = await readResponseBodyWithByteCap(response, OPENROUTER_MAX_BODY_BYTES);
+      rawBody = await readResponseBodyWithByteCap(
+        response,
+        OPENROUTER_MAX_BODY_BYTES,
+        controller.signal,
+      );
     } catch (error) {
       if (error instanceof OpenRouterCallError) throw error;
       if (controller.signal.aborted) {
