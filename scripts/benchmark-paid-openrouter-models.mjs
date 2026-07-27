@@ -25,17 +25,26 @@ export const modelsApiTimeoutMs = 5_000;
 export const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 export const officialModelsUrl = `${officialOpenRouterBaseUrl}/models?output_modalities=text`;
 
+/** R1 Stage 1 freeze — decision record docs/bugfix/artifacts/r1-stage1-decision-record-2026-07-27.md */
 export const candidateModelIds = Object.freeze([
-  "openai/gpt-4.1-nano",
+  "openai/gpt-oss-20b",
+  "inclusionai/ling-2.6-flash",
+  "mistralai/mistral-small-24b-instruct-2501",
   "meta-llama/llama-3.1-8b-instruct",
-  "openai/gpt-oss-120b",
+  "openai/gpt-4.1-nano",
 ]);
 
 export const paidOpenRouterModelConfigurations = Object.freeze([
-  Object.freeze(["openai/gpt-4.1-nano"]),
-  Object.freeze(["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]),
-  Object.freeze(["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]),
+  Object.freeze(["openai/gpt-oss-20b"]),
+  Object.freeze(["inclusionai/ling-2.6-flash"]),
+  Object.freeze(["mistralai/mistral-small-24b-instruct-2501"]),
+  Object.freeze(["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]),
+  Object.freeze(["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]),
+  Object.freeze(["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]),
 ]);
+
+/** 設計 §5.3.0c — configuration[1] 禁止集合 */
+export const cfgRepairSlowIds = Object.freeze(["openai/gpt-oss-120b"]);
 
 /**
  * @param {Response} response
@@ -368,10 +377,71 @@ export async function runPaidBenchmark({
   };
 }
 
-export async function main(env = process.env, deps = {}) {
+/**
+ * R1 CLI: --trial-count=N / --configurations-json='[[...]]'
+ * 未指定時は frozen 全構成・benchTrialCount（後方互換）。
+ * @param {string[]} argv process.argv.slice(2) 相当
+ * @returns {{ trialCount?: number, configurations?: string[][] }}
+ */
+export function parseBenchmarkCliArgs(argv) {
+  /** @type {{ trialCount?: number, configurations?: string[][] }} */
+  const out = {};
+  for (const arg of argv) {
+    if (arg.startsWith("--trial-count=")) {
+      const raw = arg.slice("--trial-count=".length);
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1 || n > benchTrialCount) {
+        throw new Error(
+          `--trial-count must be an integer from 1 to ${benchTrialCount} (got ${JSON.stringify(raw)})`,
+        );
+      }
+      out.trialCount = n;
+      continue;
+    }
+    if (arg.startsWith("--configurations-json=")) {
+      const raw = arg.slice("--configurations-json=".length);
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new Error("--configurations-json must be valid JSON");
+      }
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("--configurations-json must be a non-empty array of configurations");
+      }
+      const configurations = parsed.map((configuration, index) => {
+        if (!Array.isArray(configuration) || configuration.length < 1 || configuration.length > 2) {
+          throw new Error(`--configurations-json[${index}] must be an array of 1 or 2 model IDs`);
+        }
+        if (!configuration.every((id) => typeof id === "string" && id.length > 0)) {
+          throw new Error(
+            `--configurations-json[${index}] must contain non-empty string model IDs`,
+          );
+        }
+        if (new Set(configuration).size !== configuration.length) {
+          throw new Error(`--configurations-json[${index}] must not contain duplicate model IDs`);
+        }
+        return [...configuration];
+      });
+      out.configurations = configurations;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      throw new Error(
+        "Usage: node scripts/benchmark-paid-openrouter-models.mjs [--trial-count=N] [--configurations-json='[[\"model\"]]']",
+      );
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+  return out;
+}
+
+export async function main(env = process.env, deps = {}, argv = process.argv.slice(2)) {
+  const cli = parseBenchmarkCliArgs(argv);
   const result = await runPaidBenchmark({
     apiKey: env.OPENROUTER_API_KEY,
-    configurations: paidOpenRouterModelConfigurations,
+    configurations: cli.configurations ?? paidOpenRouterModelConfigurations,
+    trialCount: cli.trialCount ?? benchTrialCount,
     fetchImpl: deps.fetchImpl,
     createModelsSignal: deps.createModelsSignal,
     runUnit: deps.runUnit,

@@ -25,17 +25,46 @@
 承認済み exact 構成を production service harness の N=10 で通す。
 **実行すると有料課金が発生する。** API キー・生の課金ログ（PII 混入時）はコミットしない。
 
-候補 ID（設計固定）:
+候補 ID（R1 Stage 1 freeze・設計固定）:
 
-1. `openai/gpt-4.1-nano`
-2. `meta-llama/llama-3.1-8b-instruct`
-3. `openai/gpt-oss-120b`
+1. `openai/gpt-oss-20b`
+2. `inclusionai/ling-2.6-flash`
+3. `mistralai/mistral-small-24b-instruct-2501`
+4. `meta-llama/llama-3.1-8b-instruct`
+5. `openai/gpt-4.1-nano`
 
-独立して評価する exact な順序付き構成:
+独立して評価する exact な順序付き構成（評価順）:
 
-1. `["openai/gpt-4.1-nano"]`
-2. `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]`
-3. `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]`
+1. `["openai/gpt-oss-20b"]`
+2. `["inclusionai/ling-2.6-flash"]`
+3. `["mistralai/mistral-small-24b-instruct-2501"]`
+4. `["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]`
+5. `["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]`
+6. `["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]`
+
+Stage 1 カタログ snapshot / 意思決定記録:
+`docs/bugfix/artifacts/r1-models-snapshot-2026-07-27.json` /
+`docs/bugfix/artifacts/r1-stage1-decision-record-2026-07-27.md`
+
+eligible 部分集合・preflight（R1 CLI）:
+
+```bash
+# N=1 preflight（timeout/unavailable は N=10 から必須除外）
+docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
+  --trial-count=1 \
+  --configurations-json='[["openai/gpt-oss-20b"],["inclusionai/ling-2.6-flash"]]'
+
+# N=10（eligible JSON の配列順 = 評価順 = 推奨タイブレーク）
+docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
+  --trial-count=10 \
+  --configurations-json='[["openai/gpt-oss-20b"]]'
+```
+
+カタログ再 snapshot（Stage-1 Method B・有料キー）:
+
+```bash
+docker compose run --rm --no-deps app node scripts/snapshot-openrouter-models-catalog.mjs
+```
 
 ### 手順
 
@@ -66,7 +95,8 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 推奨 env 例（**この exact 順序付き構成自体が N=10 を合格した場合だけ、要素も順序も変えずに使用**）:
 
 ```bash
-OPENROUTER_MODELS=openai/gpt-4.1-nano,openai/gpt-oss-120b
+# 例示のみ。N=10 未合格のまま本番に使わない。合格 exact 構成に置換すること。
+OPENROUTER_MODELS=openai/gpt-oss-20b
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
 

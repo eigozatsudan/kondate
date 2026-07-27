@@ -107,14 +107,13 @@ API キーを設定すると、同じ UI から **本番と同じ OpenRouter 経
 3. 各 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$0.50 / 1M tokens** であること
 4. 実装完了ゲート前に `scripts/benchmark-paid-openrouter-models.mjs` で機械フィルタ → N=10 を通す（詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)）
 
-ゲート合格後の推奨例（実際の合格 ID に置換すること。最大 2 本を推奨）:
+ゲート合格後の推奨例（**N=10 を通った exact 構成に置換**すること。最大 2 本）:
 
 ```text
-mistralai/mistral-small-3.2-24b-instruct
-openai/gpt-oss-120b
+openai/gpt-oss-20b
 ```
 
-> 上記は設計候補のうち README 用の例であり、**ライブ N=10 ゲート未通過のまま本番 ship しない**こと。キー total limit 未解消も完了扱いしない。
+> 上記は R1 Stage 1 候補のうち README 用の例であり、**ライブ N=10 ゲート未通過のまま本番 ship しない**こと。キー total limit 未解消も完了扱いしない。詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)。
 
 #### 2. `.env` を上書きする
 
@@ -124,8 +123,8 @@ openai/gpt-oss-120b
 # 実 API（本番相当・有料 allowlist）
 OPENROUTER_API_KEY=sk-or-v1-xxxxxxxx
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-# 例（実際のゲート合格 ID に置換）
-OPENROUTER_MODELS=mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b
+# 例（実際のゲート合格 exact 構成に置換。未合格のまま使わない）
+OPENROUTER_MODELS=openai/gpt-oss-20b
 ```
 
 注意:

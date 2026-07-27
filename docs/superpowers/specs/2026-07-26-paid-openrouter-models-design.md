@@ -168,11 +168,16 @@ exact mock URL 以外では、`mock/` も `:free` も拒否する。
 
 ### 4.4 候補ショートリストと実装完了ゲート
 
-承認済み改訂で固定した評価対象:
+R1 Stage 1（2026-07-27）で固定した評価対象（snapshot + 意思決定記録:
+`docs/bugfix/artifacts/r1-stage1-decision-record-2026-07-27.md`）:
 
-1. `openai/gpt-4.1-nano`
-2. `meta-llama/llama-3.1-8b-instruct`
-3. `openai/gpt-oss-120b`
+1. `openai/gpt-oss-20b`
+2. `inclusionai/ling-2.6-flash`
+3. `mistralai/mistral-small-24b-instruct-2501`
+4. `meta-llama/llama-3.1-8b-instruct`
+5. `openai/gpt-4.1-nano`
+
+手続きの正本: `docs/superpowers/specs/2026-07-27-openrouter-candidate-configuration-reslist-design.md`
 
 #### 4.4.1 ベンチ前の機械フィルタ（必須順序）
 
@@ -255,11 +260,14 @@ harness は本番 DB / 本番 quota ledger へ書き込まない。`markSent` / 
 失敗の別、失敗コードを残す。**N=10 を通過した exact 構成だけ**を、その順序のまま
 `OPENROUTER_MODELS` へ提案する。
 
-最低限、次の構成を独立して評価する:
+最低限、次の構成を独立して評価する（評価順 = 推奨タイブレーク）:
 
-1. `["openai/gpt-4.1-nano"]`
-2. `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]`
-3. `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]`
+1. `["openai/gpt-oss-20b"]`
+2. `["inclusionai/ling-2.6-flash"]`
+3. `["mistralai/mistral-small-24b-instruct-2501"]`
+4. `["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]`
+5. `["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]`
+6. `["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]`
 
 単体 ID の合否を後から組み合わせたり、個別合格 ID から最大 2 本を選んだりしてはならない。
 合格した exact 構成だけが、その順序を維持した `OPENROUTER_MODELS` の提案候補になる。
@@ -463,7 +471,7 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
 4. **クォータ 3 / 6 / 20 を維持し、相互作用を仕様として受け入れる**。
    根拠: ユーザー選択の露出抑制。成功 3 = 毎回 repair 前提だと attempt 6 ちょうどでバッファがないこと、全体 20 が約 3〜4 ユーザー分であることは **既知の制約**であり、成功保証より課金・濫用抑制を優先する。時間予算は据え置き。
 
-5. **承認済み 3 ID から作る exact な順序付き 3 構成を、production service harness の N=10 単位で評価**する。
+5. **承認済み shortlist（R1: 5 ID）から作る exact な順序付き構成（R1: 6 本）を、production service harness の N=10 単位で評価**する。
    根拠: 本番は primary + repair の最大 2 送信であり、個別 ID の合否を後から組み合わせても
    実際に ship する `OPENROUTER_MODELS` の挙動を証明できないため。
 

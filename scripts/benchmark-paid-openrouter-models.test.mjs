@@ -10,13 +10,16 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   OPENROUTER_MAX_BODY_BYTES,
   benchTrialCount,
   candidateModelIds,
+  cfgRepairSlowIds,
   evaluateMechanicalFilter,
   filterCandidatesMechanically,
   loadPaidBenchmarkHarness,
@@ -25,6 +28,7 @@ import {
   runConfigurationGate,
   runPaidBenchmark,
   main,
+  parseBenchmarkCliArgs,
   usdPerMillion,
 } from "./benchmark-paid-openrouter-models.mjs";
 import { maxPromptPlusCompletionUsdPerMillion } from "./verify-openrouter-models.mjs";
@@ -131,17 +135,26 @@ function successfulUnit(configuration, outcome = "primary_success") {
   };
 }
 
-test("candidate shortlist and exact ordered configurations match the approved revision", () => {
+test("candidate shortlist and exact ordered configurations match the R1 Stage 1 freeze", () => {
   assert.deepEqual(
     [...candidateModelIds],
-    ["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct", "openai/gpt-oss-120b"],
+    [
+      "openai/gpt-oss-20b",
+      "inclusionai/ling-2.6-flash",
+      "mistralai/mistral-small-24b-instruct-2501",
+      "meta-llama/llama-3.1-8b-instruct",
+      "openai/gpt-4.1-nano",
+    ],
   );
   assert.deepEqual(
     paidOpenRouterModelConfigurations.map((configuration) => [...configuration]),
     [
-      ["openai/gpt-4.1-nano"],
-      ["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"],
-      ["openai/gpt-4.1-nano", "openai/gpt-oss-120b"],
+      ["openai/gpt-oss-20b"],
+      ["inclusionai/ling-2.6-flash"],
+      ["mistralai/mistral-small-24b-instruct-2501"],
+      ["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"],
+      ["openai/gpt-4.1-nano", "openai/gpt-oss-20b"],
+      ["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"],
     ],
   );
   assert.ok(Object.isFrozen(candidateModelIds));
@@ -149,6 +162,93 @@ test("candidate shortlist and exact ordered configurations match the approved re
   assert.ok(
     paidOpenRouterModelConfigurations.every((configuration) => Object.isFrozen(configuration)),
   );
+  // R1 KD-R1-11: shortlist set equals configuration member union
+  assert.deepEqual(
+    [...new Set(candidateModelIds)].sort(),
+    [
+      ...new Set(paidOpenRouterModelConfigurations.flatMap((configuration) => [...configuration])),
+    ].sort(),
+  );
+  // KD-R1-17: frozen IDs ⊆ committed survivor artifact
+  const artifactPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "../docs/bugfix/artifacts/r1-models-snapshot-2026-07-27.json",
+  );
+  const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
+  const survivorIds = new Set(artifact.survivors.map((row) => row.id));
+  for (const id of candidateModelIds) {
+    assert.ok(survivorIds.has(id), `shortlist id missing from survivor artifact: ${id}`);
+  }
+  // CFG-REPAIR-SLOW must not appear as configuration[1]
+  for (const configuration of paidOpenRouterModelConfigurations) {
+    if (configuration.length === 2) {
+      assert.equal(cfgRepairSlowIds.includes(configuration[1]), false);
+    }
+  }
+  // Round-4 identical arrays must not be in the mandatory set
+  const r4Identical = new Set([
+    JSON.stringify(["openai/gpt-4.1-nano"]),
+    JSON.stringify(["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]),
+    JSON.stringify(["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]),
+  ]);
+  for (const configuration of paidOpenRouterModelConfigurations) {
+    assert.equal(r4Identical.has(JSON.stringify([...configuration])), false);
+  }
+});
+
+test("parseBenchmarkCliArgs accepts trial count and configurations JSON", () => {
+  assert.deepEqual(parseBenchmarkCliArgs([]), {});
+  assert.deepEqual(parseBenchmarkCliArgs(["--trial-count=1"]), { trialCount: 1 });
+  assert.deepEqual(
+    parseBenchmarkCliArgs(['--configurations-json=[["a/b"],["a/b","c/d"]]', "--trial-count=3"]),
+    {
+      trialCount: 3,
+      configurations: [["a/b"], ["a/b", "c/d"]],
+    },
+  );
+  assert.throws(() => parseBenchmarkCliArgs(["--trial-count=0"]), /trial-count/);
+  assert.throws(() => parseBenchmarkCliArgs(["--trial-count=11"]), /trial-count/);
+  assert.throws(() => parseBenchmarkCliArgs(["--configurations-json=not-json"]), /valid JSON/);
+  assert.throws(() => parseBenchmarkCliArgs(['--configurations-json=[["a","a"]]']), /duplicate/);
+  assert.throws(() => parseBenchmarkCliArgs(["--unknown"]), /Unknown argument/);
+});
+
+test("main forwards CLI trialCount and configurations to runPaidBenchmark", async () => {
+  const seen = [];
+  const unit = {
+    ok: true,
+    configuration: ["vendor/a"],
+    sends: [],
+    outcome: "primary_success",
+    failureCodes: [],
+    totalElapsedMs: 1,
+  };
+  await main(
+    { OPENROUTER_API_KEY: "test-key" },
+    {
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "vendor/a",
+                supported_parameters: bothParams,
+                pricing: usablePricing,
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      runUnit: async (input) => {
+        seen.push(input);
+        return { ...unit, configuration: [...input.configuration] };
+      },
+      log: () => {},
+    },
+    ["--trial-count=1", '--configurations-json=[["vendor/a"]]'],
+  );
+  assert.equal(seen.length, 1);
+  assert.deepEqual([...seen[0].configuration], ["vendor/a"]);
 });
 
 test("gate constants lock N=10 and the price ceiling", () => {
