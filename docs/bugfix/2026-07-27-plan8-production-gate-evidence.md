@@ -1,6 +1,6 @@
 # Plan 8 有料 OpenRouter — live ゲート証跡（2026-07-27）
 
-**結論: ゲート不合格（PASS 0 構成）。response-format 改訂後の exact 3 構成、および R1 新 shortlist 6 構成の N=10 とも合格なし。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
+**結論: ゲート不合格（PASS 0 構成）。response-format 改訂、R1 shortlist、R2+R3 後 R1-replay のいずれの N=10 も合格なし。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
 
 ## Live gate evidence（第1ラウンド・履歴）
 
@@ -282,3 +282,61 @@ HEAD（実行時）: `222c1ec`
 - R1 shortlist 差し替えだけでは **N=10 合格 0**。次は設計どおり **R2（prompt/materialize）** または **R3（単価帯拡大）**、あるいは別 Stage 1 shortlist（timeout 帯をさらに避ける）の人間判断。
 
 本番 ship は引き続きブロック。個別 ID 結果の再結合による推奨合成は行わない。
+
+---
+
+## R1-replay ラウンド: R2+R3 後 shortlist の live N=10（2026-07-27）
+
+設計: R2+R3 Approved（P*=$1.00）+ R1 手続き再実行  
+HEAD: `befee81`（R1-replay freeze コミット）  
+snapshot: `docs/bugfix/artifacts/r1-models-snapshot-2026-07-27.json`（entryCount 340, mechanicalSurvivors 69 @ P*=1）  
+decision: `docs/bugfix/artifacts/r1-replay-decision-record-2026-07-27-post-r2r3.md`
+
+### 実行前提
+
+- Date: 2026-07-27T23:54:41Z – 23:56:07Z (UTC)
+- Command: frozen 全 6 構成 N=10
+- Base: official exact `https://openrouter.ai/api/v1`
+- hard_limit_usd: **$1** / est_pass_all ≈ $0.90 → covers=yes
+- Operator: R1-replay + N=10 継続承認
+
+### 構成単位結果
+
+| Exact configuration | 結果 | outcome | closed failure | totalMs | 備考 |
+|---|---|---|---|---:|---|
+| `["openai/gpt-4o-mini"]` | FAIL u1 | failure | `invalid_ai_response` | 6689 | 20s 内応答 |
+| `["microsoft/phi-4"]` | FAIL u1 | failure | `generation_timeout` | 20005 | |
+| `["mistralai/ministral-3b-2512"]` | FAIL u1 | failure | `invalid_ai_response` | 3008 | 速いが invalid |
+| `["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"]` | FAIL u1 | failure | `generation_timeout` | 29071 | primary 後 llama repair timeout |
+| `["openai/gpt-4.1-nano", "microsoft/phi-4"]` | FAIL u1 | failure | `constraint_conflict` | 1314 | nano 応答・conflict（repair なし） |
+| `["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"]` | FAIL u1 | failure | `generation_timeout` | 24074 | primary 後 llama repair timeout |
+
+### Per-send（unit 1）
+
+| Config | send | models | responseModel | excluded | elapsedMs |
+|---:|---:|---|---|---|---:|
+| 1 | 1 | `["openai/gpt-4o-mini"]` | `openai/gpt-4o-mini` | null | 6680 |
+| 2 | 1 | `["microsoft/phi-4"]` | null | null | 20005 |
+| 3 | 1 | `["mistralai/ministral-3b-2512"]` | `mistralai/ministral-3b-2512` | null | 3007 |
+| 4 | 1 | `["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"]` | `openai/gpt-4o-mini` | null | 9068 |
+| 4 | 2 | `["meta-llama/llama-3.1-8b-instruct"]` | null | `openai/gpt-4o-mini` | 20001 |
+| 5 | 1 | `["openai/gpt-4.1-nano", "microsoft/phi-4"]` | `openai/gpt-4.1-nano` | null | 1312 |
+| 6 | 1 | `["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"]` | `mistralai/ministral-3b-2512` | null | 4072 |
+| 6 | 2 | `["meta-llama/llama-3.1-8b-instruct"]` | null | `mistralai/ministral-3b-2512` | 20001 |
+
+### 最終判定
+
+- Exit: **1**
+- `passedConfigurations`: **[]**
+- `recommendedConfiguration`: **null**
+- 本番 `OPENROUTER_MODELS`: **n/a**
+- README 合格置換: **なし**
+- Production deploy: **NOT done**
+
+### 示唆
+
+- R3 後 **gpt-4o-mini / ministral は 20s 内応答**（timeout 一辺倒ではない）。
+- それでも **invalid_ai_response / constraint_conflict** が残る → R2 name 上書きだけでは意味経路は未解決。
+- llama repair は引き続き 20s timeout 傾向。
+- **本番 ship ブロック継続。**
+
