@@ -30,7 +30,7 @@
 | db-test (reset 後) | upgrade path テスト含む再実行が必要 |
 | E2E full | 共有枠リセット後 exit 0 実績あり |
 | build | PASS 実績あり |
-| Live N=10 有料ベンチ | **未通過（本番ゲート未完了）** — funded key + total credit hard limit 後に実施 |
+| Live N=10 有料ベンチ | **実施済み・不合格（2026-07-27, PASS 0 本, exit 1）** — 証跡は [2026-07-27-plan8-production-gate-evidence.md](2026-07-27-plan8-production-gate-evidence.md)。本番 ship 不可 |
 
 ## 設計ロック維持
 
@@ -39,7 +39,9 @@
 
 ## 本番 ship 条件（未達）
 
-1. upgrade-safe migration 適用可能な DB 状態
+1. upgrade-safe migration 適用可能な DB 状態（ローカル pgTAP は 2026-07-27 に PASS）
 2. funded key で remote verify + **修正版 live N=10** 合格
+   （2026-07-27 実施: funded key・total limit $1 設定済みで実行したが **PASS 0 本**。候補 ID
+   入れ替えまたは設計改訂を経て再実行が必要）
 3. 合格 ID 最大 2 本のみ本番 `OPENROUTER_MODELS`
 4. 3/6/20・公式 base・app 再作成を確認
