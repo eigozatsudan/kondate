@@ -718,6 +718,8 @@ begin
     v_global_reserved := 0;
   end if;
 
+  -- raw used は台帳のまま。remaining も raw 基準（超過でも 0＝枠復活しない）。
+  -- 公開 consumed/sent のみ least で新上限へ cap し usageTodayDataSchema を満たす。
   v_success_consumed := v_success_count + v_success_reserved;
   v_attempt_used := v_attempt_sent + v_attempt_reserved;
   v_success_remaining := greatest(3 - v_success_consumed, 0);
@@ -741,12 +743,12 @@ begin
 
   return jsonb_build_object(
     'success', jsonb_build_object(
-      'consumed', v_success_consumed,
+      'consumed', least(v_success_consumed, 3),
       'limit', 3,
       'remaining', v_success_remaining
     ),
     'attempts', jsonb_build_object(
-      'sent', v_attempt_used,
+      'sent', least(v_attempt_used, 6),
       'limit', 6,
       'remaining', v_attempt_remaining
     ),
