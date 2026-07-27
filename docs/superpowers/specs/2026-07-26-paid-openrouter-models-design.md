@@ -71,7 +71,7 @@
 | 単価上限 | prompt + completion の 1M 換算和 ≤ **$0.50**。request/cache 等は **判定に使わない**（§4.1.7） |
 | クォータ | 成功 **3**/日、attempt **6**/日、全体初期 **20**/日。短期 4/600s 据え置き。**相互作用は意図的**（§5 / §12-4） |
 | 時間予算 | 20s / 50s / 180s 据え置き |
-| 候補 ID | 下記 5 本。事前に Models API 機械フィルタ後、有料実測で primary/repair 確定 |
+| 候補 ID | 下記 3 本。Models API 機械フィルタ後、exact な順序付き構成を有料実測 |
 | mock 判定信号 | **`OPENROUTER_BASE_URL` の exact mock URL のみ**（`SERVER_SITE_ORIGIN` / isLocal と混同しない） |
 | コスト監視 | アプリは回数上限。OpenRouter キー hard $ limit を運用必須 |
 
@@ -168,13 +168,11 @@ exact mock URL 以外では、`mock/` も `:free` も拒否する。
 
 ### 4.4 候補ショートリストと実装完了ゲート
 
-ユーザー指定の評価対象（順序未確定）:
+承認済み改訂で固定した評価対象:
 
-1. `mistralai/mistral-small-3.2-24b-instruct`
-2. `openai/gpt-oss-120b`
-3. `google/gemma-3-27b-it`
-4. `qwen/qwen3-30b-a3b-instruct-2507`
-5. `meta-llama/llama-3.1-8b-instruct`
+1. `openai/gpt-4.1-nano`
+2. `meta-llama/llama-3.1-8b-instruct`
+3. `openai/gpt-oss-120b`
 
 #### 4.4.1 ベンチ前の機械フィルタ（必須順序）
 
@@ -188,16 +186,49 @@ exact mock URL 以外では、`mock/` も `:free` も拒否する。
 
 #### 4.4.2 レイテンシ/形状ゲート
 
-残存候補ごとに、実 `menuResponseFormat`・日本語家庭献立プロンプト・`require_parameters: true` で **N = 10 回**:
+§4.4.1 を通過した ID から、ship 候補となる **1～2 ID の exact な順序付き
+`OPENROUTER_MODELS` 構成**を作る。構成ごとに、実 `menuResponseFormat`・
+**本番 `buildGenerationMessages` が非 PII の固定入力から生成するプロンプト**・
+`require_parameters: true` で **N = 10 単位**を実行する。配列の要素と順序が異なる構成の結果を流用してはならない。
 
-- HTTP 200
-- クライアント計測で **10 回すべて 20s 未満**（p95 は N=10 でも解釈が曖昧なため使わない。「全試行 < 20s」を合格条件とする）
-- 応答が `outcome: "success"` かつ `menu.dishes` がオブジェクト配列で、アプリの materialize/validate が通る形状（最低限 dish に `dishRef`, `role`, `position`, `name`, `description`, `cookingTimeMinutes`, `ingredients`, `steps`）
+**1 単位 = production service harness を通した本番 1 生成フロー**とする。harness は
+`runGeneration` の単調時計、pre-send guard、repository の
+`markSent` / `reserveRepair` / finalize 遷移を含める。
 
-合格 ID から **最大 2 本**（primary + repair）を `OPENROUTER_MODELS` に載せることを推奨する。
-attempt 日次 6 の下では 3 本以上は attempt を圧迫しやすい（§5）。
+harness は本番 DB / 本番 quota ledger へ書き込まない。本番と同じ遷移意味論を実装した隔離
+in-memory repository を使い、**各単位の開始時に fresh ledger へ初期化**する。1 単位内では
+成功 3 / attempt 6 / global 20 の判定意味論を維持する一方、構成間・単位間で日次カウンタを累積させない。
 
-1 本も合格しない場合は実装を「完了」とせず、候補変更または別設計（時間予算改訂など）に戻る。
+- primary は当該 exact 構成を `models` として 1 回送る。valid なら finalize して成功、
+  constraint conflict は repair せず終端する。
+- deadline / Abort / elapsed timeout は `generation_timeout` を最優先し、repair しない。
+- timeout がない非 2xx / transport / body read / model mismatch は `model_unavailable` とし、repair しない。
+- HTTP 200 の byte cap / JSON / envelope / wire / adapter 不正、および materialize / validate の
+  invalid は repair 適格とする。
+- repair は最大 1 回。初回実応答モデルが既知なら exact 構成からその ID を除外し、未知なら exact 構成を再利用する。
+  除外後が空なら送信しない。repair の invalid / conflict / call error から 3 回目を送信しない。
+
+合格条件（すべて必須・緩和禁止）:
+
+- 各送信は `AbortController` 開始から body / JSON / envelope / model / wire / adapter 完了まで **20s 未満**。
+  19,999ms は境界内、20,000ms は失敗とする。
+- handler 入口から context / ledger / primary / repair / materialize / validate / finalize まで
+  **50s 未満**で終端する。
+- primary / repair の各送信前に **22s**（20s + finalize 2s）以上の残予算を要求する。
+- 応答モデルはその送信の `models` 配列に含まれ、内部 schema・materialize・validate を通過する。
+- **10 単位すべて成功**する。
+
+証跡には exact 構成順序、各送信の models / response model / excluded model / elapsed、
+primary 成功・repair 成功・失敗の別、閉じた failure code、総 elapsed、初回成功数だけを残す。
+合格した exact 構成だけを、その順序のまま `OPENROUTER_MODELS` へ提案する。
+
+最低限、次の構成を独立して評価する:
+
+1. `["openai/gpt-4.1-nano"]`
+2. `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]`
+3. `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]`
+
+1 構成も合格しない場合は実装を「完了」とせず、候補変更または別設計に戻る。
 
 > 注: 2026-07-26 時点の検証キーは total limit 403 のため、このゲートは **キーにクレジットを載せた後**に実行する。設計承認とゲート通過は分離する。
 
@@ -398,8 +429,9 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
 4. **クォータ 3 / 6 / 20 を維持し、相互作用を仕様として受け入れる**。
    根拠: ユーザー選択の露出抑制。成功 3 = 毎回 repair 前提だと attempt 6 ちょうどでバッファがないこと、全体 20 が約 3〜4 ユーザー分であることは **既知の制約**であり、成功保証より課金・濫用抑制を優先する。時間予算は据え置き。
 
-5. **候補 5 ID を評価対象とし、順序は機械フィルタ + 有料実測後に確定**する。
-   根拠: ユーザー指定リスト。未実測のまま primary をコード固定しない。
+5. **承認済み 3 ID から作る exact な順序付き 3 構成を、production service harness の N=10 単位で評価**する。
+   根拠: 本番は primary + repair の最大 2 送信であり、個別 ID の合否を後から組み合わせても
+   実際に ship する `OPENROUTER_MODELS` の挙動を証明できないため。
 
 6. **mock 例外の信号は `OPENROUTER_BASE_URL` exact mock のみ**とし、`parseOpenRouterModels(value, { openRouterBaseUrl })` に全鏡像を揃える。
    根拠: 現行パーサは base を知らず、isLocal は別概念。3 実装 + 契約の不一致を防ぐ。

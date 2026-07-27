@@ -24,10 +24,21 @@ export type GenerationWireMode = "full_menu" | "replacement_dish";
 export type OpenRouterGenerationInput = {
   messages: readonly OpenRouterMessage[];
   timeoutMs: number;
+  /** 省略時は本番 OPENROUTER_MODELS。ベンチは exact 構成を明示する。 */
+  models?: readonly string[];
   excludedModelIds?: readonly string[];
   /** 省略時は full_menu（Plan 3 互換） */
   mode?: GenerationWireMode;
 };
+
+export type OpenRouterGenerationRuntimeInput = Readonly<{
+  apiKey: string;
+  baseUrl: string;
+  models: readonly string[];
+  timeoutMs: number;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+}>;
 
 export type OpenRouterGenerationResult =
   | { mode: "full_menu"; output: AiGenerationResponse; modelId: string }
@@ -194,45 +205,48 @@ function retryAt(response: Response, now: number): string | null {
   return new Date(Math.min(parsed, maxTarget)).toISOString();
 }
 
-export async function sendMenuGeneration(
+async function sendMenuGenerationWithRuntime(
   input: OpenRouterGenerationInput,
+  runtime: OpenRouterGenerationRuntimeInput,
 ): Promise<OpenRouterGenerationResult> {
   const mode: GenerationWireMode = input.mode ?? "full_menu";
-  const config = getServerEnv().openRouter;
+  const configuredModels = input.models ?? runtime.models;
   // 有料 allowlist ガード: router 集合・空・重複は常に拒否。
   // real API base 上の :free と mock/ も拒否（mock 例外は exact mock base のみ）。
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   const rejectsRouterOrEmptyOrDup =
-    config.models.length === 0 ||
-    new Set(config.models).size !== config.models.length ||
-    config.models.some((model) => routers.has(model));
+    configuredModels.length === 0 ||
+    new Set(configuredModels).size !== configuredModels.length ||
+    configuredModels.some((model) => routers.has(model));
   const rejectsMockOrFreeOnRealApi =
-    !isExactLocalMockBaseUrl(config.baseUrl) &&
-    config.models.some((model) => model.endsWith(":free") || model.startsWith("mock/"));
+    !isExactLocalMockBaseUrl(runtime.baseUrl) &&
+    configuredModels.some((model) => model.endsWith(":free") || model.startsWith("mock/"));
   if (rejectsRouterOrEmptyOrDup || rejectsMockOrFreeOnRealApi) {
     throw new OpenRouterCallError("model_unavailable");
   }
 
   const excluded = new Set(input.excludedModelIds ?? []);
-  const models = config.models.filter((model) => !excluded.has(model));
+  const models = configuredModels.filter((model) => !excluded.has(model));
   if (models.length === 0) {
     throw new OpenRouterCallError("model_unavailable");
   }
   if (!Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0) {
     throw new OpenRouterCallError("generation_timeout");
   }
-  if (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0) {
+  if (!Number.isFinite(runtime.timeoutMs) || runtime.timeoutMs <= 0) {
     throw new OpenRouterCallError("generation_timeout");
   }
 
-  const timeoutMs = Math.min(config.timeoutMs, input.timeoutMs);
+  const timeoutMs = Math.min(runtime.timeoutMs, input.timeoutMs);
+  const fetchImpl = runtime.fetchImpl ?? fetch;
+  const monotonicNow = runtime.now ?? (() => performance.now());
   const controller = new AbortController();
-  const startedAt = performance.now();
+  const startedAt = monotonicNow();
   const timeout = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
   const assertWithinDeadline = (): void => {
-    if (controller.signal.aborted || performance.now() - startedAt >= timeoutMs) {
+    if (controller.signal.aborted || monotonicNow() - startedAt >= timeoutMs) {
       throw new OpenRouterCallError("generation_timeout");
     }
   };
@@ -247,12 +261,12 @@ export async function sendMenuGeneration(
 
     let response: Response;
     try {
-      response = await fetch(`${config.baseUrl}/chat/completions`, {
+      response = await fetchImpl(`${runtime.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${config.apiKey}`,
+          Authorization: `Bearer ${runtime.apiKey}`,
           "Content-Type": "application/json",
-          ...(testScenario && isExactLocalMockBaseUrl(config.baseUrl)
+          ...(testScenario && isExactLocalMockBaseUrl(runtime.baseUrl)
             ? { "X-Kondate-Mock-Scenario": testScenario }
             : {}),
         },
@@ -373,4 +387,26 @@ export async function sendMenuGeneration(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * production sender と同じ実装へ、ベンチ専用の認証・URL・fetch・単調時計を閉じ込める。
+ * 呼び出しごとの models は OpenRouterGenerationInput の exact 配列を正本にする。
+ */
+export function createOpenRouterGenerationSender(
+  runtime: OpenRouterGenerationRuntimeInput,
+): (input: OpenRouterGenerationInput) => Promise<OpenRouterGenerationResult> {
+  return async (input) => sendMenuGenerationWithRuntime(input, runtime);
+}
+
+export async function sendMenuGeneration(
+  input: OpenRouterGenerationInput,
+): Promise<OpenRouterGenerationResult> {
+  const config = getServerEnv().openRouter;
+  return sendMenuGenerationWithRuntime(input, {
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    models: config.models,
+    timeoutMs: config.timeoutMs,
+  });
 }

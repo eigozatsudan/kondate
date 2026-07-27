@@ -21,16 +21,21 @@
 
 ## 有料ベンチゲート（設計 §4.4）
 
-実装完了 / 本番 `OPENROUTER_MODELS` 確定の前に、候補ショートリストを機械フィルタ → N=10 で通す。
+実装完了 / 本番 `OPENROUTER_MODELS` 確定の前に、候補 ID の union を一度だけ機械フィルタし、
+承認済み exact 構成を production service harness の N=10 で通す。
 **実行すると有料課金が発生する。** API キー・生の課金ログ（PII 混入時）はコミットしない。
 
-候補（設計固定・順序はゲート後に primary/repair を確定）:
+候補 ID（設計固定）:
 
-1. `mistralai/mistral-small-3.2-24b-instruct`
-2. `openai/gpt-oss-120b`
-3. `google/gemma-3-27b-it`
-4. `qwen/qwen3-30b-a3b-instruct-2507`
-5. `meta-llama/llama-3.1-8b-instruct`
+1. `openai/gpt-4.1-nano`
+2. `meta-llama/llama-3.1-8b-instruct`
+3. `openai/gpt-oss-120b`
+
+独立して評価する exact な順序付き構成:
+
+1. `["openai/gpt-4.1-nano"]`
+2. `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]`
+3. `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]`
 
 ### 手順
 
@@ -42,17 +47,26 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 ```
 
 3. スクリプトは次の順で処理する:
-   - **§4.4.1 機械フィルタ**: ID 不在 / `structured_outputs` AND `response_format` 欠落 / 単価超過・pricing 欠落 → 除外し理由を print（chat を呼ばない）
-   - **§4.4.2 N=10**: 残存 ID ごとに実 `menuResponseFormat` + `provider.require_parameters: true` で 10 回
-   - 合格: 10/10 が HTTP 200・クライアント計測 **すべて 20s 未満**・`outcome: "success"` と dish 最低形状
-4. 合格 0 本なら **Plan 完了 / 本番 ship 不可**（候補変更または設計改訂へ戻る）。
-5. 合格 ID から **最大 2 本**（primary + repair）を `OPENROUTER_MODELS` に載せることを推奨する（attempt 日次 6 下で 3 本以上は圧迫しやすい）。
-6. ゲート証跡は終了コード・除外理由・合格 ID のみを残し、キーや生レスポンスは残さない。
+   - **§4.4.1 機械フィルタ**: 3 ID の union を一度だけ確認し、ID 不在 /
+     `structured_outputs` AND `response_format` 欠落 / 単価超過・pricing 欠落を除外する。
+     構成は member が1つでも落ちたら chat を呼ばない。
+   - **§4.4.2 N=10**: 各単位で fresh in-memory ledger を作り、本番 `runGeneration` と
+     `buildGenerationMessages` を通す。本番 DB / quota ledger へは書き込まない。
+   - primary / repair の各送信は **20s 未満**、各送信前の残予算は **22s 以上**、
+     context load から finalize までの単位全体は **50s 未満**。
+   - repair は最大1回。既知の初回応答モデルを exact 構成から除外し、未知なら同じ構成を再利用する。
+   - 合格は fresh な **10/10 単位成功**。構成ごとに初回成功数も記録する。
+4. 合格 0 構成ならスクリプトは **non-zero** で終了し、Plan 完了 / 本番 ship 不可とする。
+5. N=10 を通った exact 構成だけを、その順序のまま `OPENROUTER_MODELS` に提案する。
+   個別 ID の結果を組み合わせず、存在しない推奨構成を合成しない。
+6. ゲート証跡は exact 構成、per-send models / response model / excluded model / elapsed、
+   primary・repair・failure の別、閉じた failure code、total elapsed、初回成功数だけを残す。
+   API キー、prompt、生 AI 出力、provider error body、path/message は残さない。
 
 推奨 env 例（**実際の合格 ID に置換**）:
 
 ```bash
-OPENROUTER_MODELS=mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b
+OPENROUTER_MODELS=openai/gpt-4.1-nano,openai/gpt-oss-120b
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
 

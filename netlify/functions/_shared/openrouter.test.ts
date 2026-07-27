@@ -104,6 +104,7 @@ it("exposes only the constrained single-argument production input", () => {
   expectTypeOf<Parameters<typeof sendMenuGeneration>>().toEqualTypeOf<
     [OpenRouterGenerationInput]
   >();
+  expectTypeOf<OpenRouterGenerationInput>().toHaveProperty("models");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("model");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("apiKey");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("baseUrl");
@@ -140,6 +141,20 @@ it("uses models fallback, strict schema, and required parameters", async () => {
     stream: false,
   });
   expect(result).toEqual({ mode: "full_menu", output: conflictOutput, modelId: models[1] });
+});
+
+it("preserves an injected exact ordered model configuration in the request body", async () => {
+  const injectedModels = ["openai/gpt-4.1-nano", "openai/gpt-oss-120b"] as const;
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successfulResponse(injectedModels[1]));
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await sendMenuGeneration({
+    messages: [{ role: "user", content: "data" }],
+    timeoutMs: 1_000,
+    models: injectedModels,
+  });
+
+  expect((requestBody(fetchImpl) as { models: readonly string[] }).models).toEqual(injectedModels);
 });
 
 it("uses dish regeneration schema in replacement_dish mode and rejects full-menu bodies", async () => {
