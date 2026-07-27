@@ -21,8 +21,8 @@ const REQUEST_ID = "50000000-0000-4000-8000-000000000001";
 const serverRetryAt = getNextJstMidnight(NOW).toISOString().replace(".000Z", "+00:00");
 const quota = {
   consumed: false,
-  remaining: 4,
-  userDailyLimit: 5,
+  remaining: 2,
+  userDailyLimit: 3,
   limitKind: "user",
   retryAt: serverRetryAt,
 } as const;
@@ -40,8 +40,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   getUsageTodayMock.mockResolvedValue({
-    success: { consumed: 1, limit: 5, remaining: 4 },
-    attempts: { sent: 0, limit: 12, remaining: 12 },
+    success: { consumed: 1, limit: 3, remaining: 2 },
+    attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
     globalAvailable: true,
     retryAt: null,
@@ -56,7 +56,7 @@ describe("GenerationStatusPanel", () => {
   it("shows returned quota and Japan retry time after failure", () => {
     render(<GenerationStatusPanel state={failedState} />);
     expect(screen.getByText("成功回数には含まれません")).toBeVisible();
-    expect(screen.getByText("成功回数：本日あと4回")).toBeVisible();
+    expect(screen.getByText("成功回数：本日あと2回")).toBeVisible();
     expect(screen.getByText(/明日0:00/)).toBeVisible();
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
       "href",

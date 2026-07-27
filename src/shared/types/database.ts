@@ -11,6 +11,9 @@ type GeneratedFinalizeGenerationFailure = GeneratedFunctions["finalize_ai_genera
 type GeneratedFinalizeGenerationFailureArgs = GeneratedFinalizeGenerationFailure["Args"];
 type GeneratedFinalizeGenerationSuccess = GeneratedFunctions["finalize_ai_generation_success"];
 type GeneratedFinalizeGenerationSuccessArgs = GeneratedFinalizeGenerationSuccess["Args"];
+// Meta が収録した deadline_bounded も text/uuid の null を非 null と誤るため overlay 対象
+type GeneratedFinalizeGenerationSuccessDeadlineBounded =
+  GeneratedFunctions["finalize_ai_generation_success_deadline_bounded"];
 type GeneratedSubmissionSnapshot = GeneratedFunctions["get_ai_generation_submission_snapshot"];
 type GeneratedSubmissionSnapshotReturns = GeneratedSubmissionSnapshot["Returns"][number];
 
@@ -66,9 +69,10 @@ type FinalizeGenerationSuccessArgs = Omit<
   p_food_rule_version: string | null;
 };
 
-// I1: finalize 前に SET LOCAL statement_timeout を張る薄い wrapper（生成型未収録のため overlay）
+// I1: finalize 前に SET LOCAL statement_timeout を張る薄い wrapper。
+// 生成型 Args の null 欠落と同型の success Args を共有し、p_timeout_ms だけ足す。
 type FinalizeGenerationSuccessDeadlineBoundedArgs = FinalizeGenerationSuccessArgs & {
-  p_timeout_ms: number;
+  p_timeout_ms: GeneratedFinalizeGenerationSuccessDeadlineBounded["Args"]["p_timeout_ms"];
 };
 
 type GeneratedSetOnboardingStatus = GeneratedFunctions["set_onboarding_status"];
@@ -115,6 +119,7 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       | "reserve_ai_generation"
       | "finalize_ai_generation_failure"
       | "finalize_ai_generation_success"
+      | "finalize_ai_generation_success_deadline_bounded"
       | "get_ai_generation_submission_snapshot"
       | "set_onboarding_status"
       | "insert_user_feedback_rate_limited"
@@ -131,9 +136,12 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       finalize_ai_generation_success: Omit<GeneratedFinalizeGenerationSuccess, "Args"> & {
         Args: FinalizeGenerationSuccessArgs;
       };
-      finalize_ai_generation_success_deadline_bounded: {
+      // 生成型と交差させず Omit 後に差し替え、null 復元 Args を優先する
+      finalize_ai_generation_success_deadline_bounded: Omit<
+        GeneratedFinalizeGenerationSuccessDeadlineBounded,
+        "Args"
+      > & {
         Args: FinalizeGenerationSuccessDeadlineBoundedArgs;
-        Returns: GeneratedFinalizeGenerationSuccess["Returns"];
       };
       get_ai_generation_submission_snapshot: Omit<GeneratedSubmissionSnapshot, "Returns"> & {
         Returns: SubmissionSnapshotRow[];

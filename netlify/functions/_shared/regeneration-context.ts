@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import type {
   GeneratedMenu,
   GenerationCommand,
@@ -29,7 +30,17 @@ import type { AuthenticatedUser } from "./generation-repository.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import { HttpError } from "./http.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
+import { createUserScopedSupabase } from "./supabase-user.js";
 import { toStoredRevalidationCandidate, type StoredMenuAggregate } from "./stored-menu-loader.js";
+
+// loadGenerationContext と同趣旨。body の privacyNoticeVersion だけでは不十分で DB 行が必須（F1）
+const privacyConsentRowSchema = z
+  .object({
+    user_id: z.uuid(),
+    notice_version: z.literal(privacyNoticeVersion),
+    accepted_at: z.iso.datetime({ offset: true }),
+  })
+  .strict();
 
 type RegenerationCommand = Extract<
   GenerationCommand,
@@ -462,6 +473,21 @@ export async function loadRegenerationExecutionContext(
   requestId: string,
   deadlineAtMonotonicMs: number,
 ): Promise<GenerationExecutionContext> {
+  // 外部送信前に現行 privacy 同意を DB 確認する。ledger hit の replay は runGeneration が
+  // ここに来る前に返すため、true miss の送信経路だけが gate される（冪等 replay は壊さない）。
+  // 予約後でも markSent / OpenRouter より前。順序変更はしない。
+  const userClient = createUserScopedSupabase(user.accessToken);
+  const consentResult = await userClient
+    .from("privacy_consents")
+    .select("user_id,notice_version,accepted_at")
+    .eq("user_id", user.userId)
+    .eq("notice_version", privacyNoticeVersion)
+    .maybeSingle();
+  const consent = privacyConsentRowSchema.safeParse(consentResult.data);
+  if (consentResult.error !== null || !consent.success || consent.data.user_id !== user.userId) {
+    throw new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。");
+  }
+
   // request snapshot を正本とし、live source は owner+version 付きで再取得する
   const snapshot = await loadRegenerationSnapshot(requestId, user.userId);
   if (

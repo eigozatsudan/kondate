@@ -12,8 +12,8 @@ const IDEMPOTENCY_KEY = "10000000-0000-4000-8000-000000000001";
 const OTHER_KEY = "10000000-0000-4000-8000-000000000002";
 const quota = {
   consumed: false,
-  remaining: 4,
-  userDailyLimit: 5,
+  remaining: 2,
+  userDailyLimit: 3,
   limitKind: null,
   retryAt: null,
 } as const;
@@ -31,7 +31,7 @@ const newMenuCommand: GenerationCommand = {
     idempotencyKey: IDEMPOTENCY_KEY,
     draftId: "20000000-0000-4000-8000-000000000001",
     draftRevision: 3,
-    privacyNoticeVersion: "2026-07-11.v1",
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -43,6 +43,7 @@ const regenerateMenuCommand: GenerationCommand = {
     sourceMenuId: "60000000-0000-4000-8000-000000000001",
     changeReason: "simpler",
     changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };

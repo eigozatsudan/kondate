@@ -8,6 +8,8 @@ import {
   issueMessages,
   menuResponseFormat,
   newMenuGenerationRequestSchema,
+  regenerateDishRequestSchema,
+  regenerateMenuRequestSchema,
   releaseQuota,
   usageTodayDataSchema,
   validatedMenuSchema,
@@ -98,8 +100,8 @@ const menu = {
 
 it("locks the MVP quota tuple into the shared contract", () => {
   expect(releaseQuota).toEqual({
-    userDailySuccessLimit: 5,
-    userDailyExternalCallLimit: 12,
+    userDailySuccessLimit: 3,
+    userDailyExternalCallLimit: 6,
     userShortWindowExternalCallLimit: 4,
     userShortWindowSeconds: 600,
   });
@@ -160,7 +162,7 @@ describe("newMenuGenerationRequestSchema", () => {
     idempotencyKey: "10000000-0000-4000-8000-000000000001",
     draftId: "20000000-0000-4000-8000-000000000001",
     draftRevision: 3,
-    privacyNoticeVersion: "2026-07-11.v1",
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [
       {
         pantryItemId: "30000000-0000-4000-8000-000000000001",
@@ -171,6 +173,16 @@ describe("newMenuGenerationRequestSchema", () => {
 
   it("accepts identifiers and transient expiry confirmations", () => {
     expect(newMenuGenerationRequestSchema.parse(valid)).toEqual(valid);
+  });
+
+  // 設計 §7: 旧 privacyNoticeVersion は互換パーサなしで Zod 拒否（未同意扱い）
+  it("rejects the previous privacyNoticeVersion without a compatibility parser", () => {
+    expect(
+      newMenuGenerationRequestSchema.safeParse({
+        ...valid,
+        privacyNoticeVersion: "2026-07-11.v1",
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects client-supplied identity and safety data", () => {
@@ -184,11 +196,58 @@ describe("newMenuGenerationRequestSchema", () => {
   });
 });
 
+// F1: 再生成 wire も現行 privacy 同意 version を必須にし、旧版・欠落を互換受理しない
+describe("regeneration request privacyNoticeVersion", () => {
+  const menuValid = {
+    idempotencyKey: "10000000-0000-4000-8000-000000000001",
+    sourceMenuId: "60000000-0000-4000-8000-000000000001",
+    changeReason: "simpler" as const,
+    changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1" as const,
+    expiredPantryConfirmations: [],
+  };
+  const dishValid = {
+    ...menuValid,
+    dishId: "70000000-0000-4000-8000-000000000001",
+  };
+
+  it.each([
+    ["regenerate_menu", regenerateMenuRequestSchema, menuValid],
+    ["regenerate_dish", regenerateDishRequestSchema, dishValid],
+  ] as const)("requires current privacyNoticeVersion on %s", (_kind, schema, valid) => {
+    expect(schema.parse(valid)).toEqual(valid);
+  });
+
+  it.each([
+    ["regenerate_menu", regenerateMenuRequestSchema, menuValid],
+    ["regenerate_dish", regenerateDishRequestSchema, dishValid],
+  ] as const)(
+    "rejects missing privacyNoticeVersion on %s without compatibility",
+    (_kind, schema, valid) => {
+      const without = { ...valid };
+      delete (without as { privacyNoticeVersion?: string }).privacyNoticeVersion;
+      expect(schema.safeParse(without).success).toBe(false);
+    },
+  );
+
+  it.each([
+    ["regenerate_menu", regenerateMenuRequestSchema, menuValid],
+    ["regenerate_dish", regenerateDishRequestSchema, dishValid],
+  ] as const)("rejects the previous privacyNoticeVersion on %s", (_kind, schema, valid) => {
+    expect(
+      schema.safeParse({
+        ...valid,
+        privacyNoticeVersion: "2026-07-11.v1",
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("generationStatusDataSchema", () => {
   const quota = {
     consumed: false,
-    remaining: 4,
-    userDailyLimit: 5,
+    remaining: 2,
+    userDailyLimit: 3,
     limitKind: null,
     retryAt: null,
   };
@@ -211,7 +270,7 @@ describe("generationStatusDataSchema", () => {
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         quota,
       }),
-    ).toMatchObject({ status: "not_started", quota: { remaining: 4 } });
+    ).toMatchObject({ status: "not_started", quota: { remaining: 2 } });
   });
 
   it("accepts terminal failed duplicate_output without menuId and without quota consumption", () => {

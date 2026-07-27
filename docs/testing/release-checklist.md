@@ -29,7 +29,7 @@ Confirm versions on the release runner before Step A; record them only in the **
 | --- | --- |
 | [docs/deployment/supabase.md](../deployment/supabase.md) | Managed Supabase project, migrations, maintenance role |
 | [docs/deployment/netlify.md](../deployment/netlify.md) | Netlify site, Functions, scheduled maintenance, env |
-| [docs/runbooks/openrouter.md](../runbooks/openrouter.md) | Free-model-only OpenRouter ops |
+| [docs/runbooks/openrouter.md](../runbooks/openrouter.md) | Paid allowlist OpenRouter ops (mock exception exact base only) |
 | [docs/runbooks/account-deletion.md](../runbooks/account-deletion.md) | Account deletion operator path |
 
 ## Candidate SHA rule
@@ -156,7 +156,7 @@ test "$(git rev-list -n 1 v1.0.0)" = "$CANDIDATE_SHA"
 test -z "$(git status --porcelain)"
 ```
 
-Also required on the protected path (see plan completion gate): production preflight against one exact managed Supabase project (browser/server/maintenance aligned), live free-model verification per OpenRouter runbook, and migration apply from the unchanged tagged checkout. `PRODUCTION_ORIGIN` is immutable for the command block once read from metadata.
+Also required on the protected path (see plan completion gate): production preflight against one exact managed Supabase project (browser/server/maintenance aligned), live paid-allowlist model verification per OpenRouter runbook (structured AND + pricing cap), and migration apply from the unchanged tagged checkout. `PRODUCTION_ORIGIN` is immutable for the command block once read from metadata.
 
 If any gate, staging check, production metadata check, or smoke fails: fix in a **new** commit, discard the stale artifact and tag candidate, capture the new HEAD as `CANDIDATE_SHA`, and repeat from Step A.
 

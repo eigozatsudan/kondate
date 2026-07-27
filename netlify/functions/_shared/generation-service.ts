@@ -171,7 +171,7 @@ const failureCopy: Record<GenerationFailureCode, { message: string; retryable: b
   invalid_request: { message: "献立条件を確認してください。", retryable: false },
   generation_in_progress: { message: "別の献立を作成中です。", retryable: true },
   user_daily_limit: {
-    message: "今日は5回利用しました。明日0:00（日本時間）から利用できます",
+    message: "今日は3回利用しました。明日0:00（日本時間）から利用できます",
     retryable: false,
   },
   user_attempt_limit: {

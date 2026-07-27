@@ -124,7 +124,7 @@ function makeCommand(idempotencyKey: string): GenerationCommand {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 3,
-      privacyNoticeVersion: "2026-07-11.v1",
+      privacyNoticeVersion: "2026-07-26.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -136,8 +136,8 @@ function makePending(idempotencyKey: string, ownerUserId: string = USER_ID): Pen
 
 const quota = {
   consumed: false,
-  remaining: 4,
-  userDailyLimit: 5,
+  remaining: 2,
+  userDailyLimit: 3,
   limitKind: null,
   retryAt: null,
 } as const;

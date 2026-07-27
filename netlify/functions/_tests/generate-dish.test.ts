@@ -36,6 +36,7 @@ const requestBody = {
     dishId: "89000000-0000-4000-8000-000000000001",
     changeReason: "simpler" as const,
     changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -45,8 +46,8 @@ const terminalResult: GenerationStatusData = {
   requestId: "81000000-0000-4000-8000-000000000001",
   quota: {
     consumed: true,
-    remaining: 4,
-    userDailyLimit: 5,
+    remaining: 2,
+    userDailyLimit: 3,
     limitKind: null,
     retryAt: null,
   },

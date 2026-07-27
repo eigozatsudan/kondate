@@ -20,8 +20,8 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "usage-today") {
       return {
         data: {
-          success: { consumed: 0, limit: 5, remaining: 5 },
-          attempts: { sent: 0, limit: 12, remaining: 12 },
+          success: { consumed: 0, limit: 3, remaining: 3 },
+          attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
           globalAvailable: true,
           retryAt: null,
@@ -39,7 +39,7 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "privacy") {
       return {
-        data: { user_id: "72000000-0000-4000-8000-000000000001", notice_version: "2026-07-11.v1" },
+        data: { user_id: "72000000-0000-4000-8000-000000000001", notice_version: "2026-07-26.v1" },
         isError: false,
         isPending: false,
       };

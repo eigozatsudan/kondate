@@ -406,7 +406,15 @@ export type Database = {
         Args: { p_limit?: number; p_user_id: string }
         Returns: number
       }
+      cleanup_generation_draft_submission_versions: {
+        Args: { p_before: string; p_limit: number }
+        Returns: number
+      }
       cleanup_shopping_mutations: {
+        Args: { p_before: string; p_limit: number }
+        Returns: number
+      }
+      cleanup_user_feedback: {
         Args: { p_before: string; p_limit: number }
         Returns: number
       }
@@ -493,6 +501,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      upgrade_ai_daily_quota_checks_to_3_6: { Args: never; Returns: undefined }
       write_shopping_items: {
         Args: { p_items: Json; p_list_id: string; p_user_id: string }
         Returns: undefined
@@ -2215,6 +2224,25 @@ export type Database = {
           p_safety_snapshot: Json
           p_source_menu_id: string
           p_target_members: Json
+        }
+        Returns: Json
+      }
+      finalize_ai_generation_success_deadline_bounded: {
+        Args: {
+          p_allergen_version: string
+          p_change_reason: string
+          p_change_reason_custom: string
+          p_expired_checks: Json
+          p_food_rule_version: string
+          p_menu: Json
+          p_now?: string
+          p_preference_snapshot: Json
+          p_request_id: string
+          p_safety_fingerprint: string
+          p_safety_snapshot: Json
+          p_source_menu_id: string
+          p_target_members: Json
+          p_timeout_ms: number
         }
         Returns: Json
       }

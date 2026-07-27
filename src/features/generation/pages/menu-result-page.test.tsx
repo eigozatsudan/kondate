@@ -199,8 +199,8 @@ beforeEach(() => {
   shoppingApi.previewShoppingDiff.mockResolvedValue(shoppingDiff);
   revalidateMenuMock.mockResolvedValue(validRevalidation);
   getUsageTodayMock.mockResolvedValue({
-    success: { consumed: 1, limit: 5, remaining: 4 },
-    attempts: { sent: 0, limit: 12, remaining: 12 },
+    success: { consumed: 1, limit: 3, remaining: 2 },
+    attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
     globalAvailable: true,
     retryAt: null,

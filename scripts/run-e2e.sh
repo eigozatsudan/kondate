@@ -47,14 +47,20 @@ start_watchdog() {
   (
     timer_pid=
     stop_requested=0
+    # cancel_watchdog から TERM を受けたら sleep を即止めないと、
+    # wait が割り込まれない環境では grace 秒まるごとブロックし、
+    # 呼び出し側の短い timeout（2–3s）と衝突して restore 途中で落ちる。
     stop_watchdog() {
       stop_requested=1
+      if [ -n "$timer_pid" ]; then
+        kill -s KILL "$timer_pid" 2>/dev/null || true
+      fi
     }
     trap stop_watchdog HUP INT TERM
     sleep "$signal_grace_seconds" &
     timer_pid=$!
     if [ "$stop_requested" -eq 1 ]; then
-      kill -s TERM "$timer_pid" 2>/dev/null || true
+      kill -s KILL "$timer_pid" 2>/dev/null || true
     fi
     while :; do
       if wait "$timer_pid"; then
@@ -64,7 +70,7 @@ start_watchdog() {
         timer_status=$?
       fi
       if [ "$stop_requested" -eq 1 ]; then
-        kill -s TERM "$timer_pid" 2>/dev/null || true
+        kill -s KILL "$timer_pid" 2>/dev/null || true
       fi
       if kill -0 "$timer_pid" 2>/dev/null; then
         continue
@@ -84,6 +90,8 @@ cancel_watchdog() {
   if [ -z "$watchdog_pid" ]; then
     return
   fi
+  # stop_watchdog trap が sleep を即 KILL するので、ここでは TERM を送って
+  # サブシェルを抜けさせ、wait で回収するだけにする。
   kill -s TERM "$watchdog_pid" 2>/dev/null || true
   while kill -0 "$watchdog_pid" 2>/dev/null; do
     if wait "$watchdog_pid" 2>/dev/null; then
@@ -342,7 +350,7 @@ run_e2e_commands() {
     up -d --wait --force-recreate auth || return $?
   # アプリ全体で共有するAI日次枠はJST日付単位でDBに積み上がる。
   # 同一日の再実行と、1スイート内の mobile+desktop 二重実行の両方で
-  # GLOBAL_DAILY_AI_LIMIT=45 を跨がないよう、共有枠だけを初期化する
+  # GLOBAL_DAILY_AI_LIMIT=20 を跨がないよう、共有枠だけを初期化する
   # （上限値そのものは変更しない。ユーザ単位枠はテストごと新規ユーザで独立）。
   run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
@@ -351,7 +359,7 @@ run_e2e_commands() {
 
   # 呼び出し側が --project を指定していればそのまま1回実行する。
   # 未指定（full suite / file 指定のみ）では mobile → 枠リセット → desktop の
-  # 2段実行にし、1プロセス内の累積送信が 45 を超えて後半だけ落ちるのを防ぐ。
+  # 2段実行にし、1プロセス内の累積送信が 20 を超えて後半だけ落ちるのを防ぐ。
   # どちらか一方が失敗しても他方は最後まで走らせ、診断用の失敗一覧を揃える。
   if e2e_args_have_project "$@"; then
     run_playwright "$@" || return $?

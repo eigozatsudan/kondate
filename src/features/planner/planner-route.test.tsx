@@ -112,8 +112,8 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "usage-today") {
       return {
         data: {
-          success: { consumed: 0, limit: 5, remaining: 5 },
-          attempts: { sent: 0, limit: 12, remaining: 12 },
+          success: { consumed: 0, limit: 3, remaining: 3 },
+          attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
           globalAvailable: true,
           retryAt: null,
@@ -333,7 +333,7 @@ beforeEach(() => {
     isError: false,
     isPending: false,
   };
-  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-11.v1" };
+  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-26.v1" };
   savePlannerDraftMock.mockResolvedValue(draft);
   setOnboardingStatusMock.mockResolvedValue(undefined);
   getProfileMock.mockReset();
@@ -839,7 +839,7 @@ describe("PlannerRoutePage", () => {
         idempotencyKey: attemptKey,
         draftId: draft.id,
         draftRevision: draft.revision,
-        privacyNoticeVersion: "2026-07-11.v1",
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [
           {
             pantryItemId: "74000000-0000-4000-8000-000000000001",

@@ -16,8 +16,8 @@ const { createUserScopedSupabaseMock, getServerEnvMock, rpcMock, userClient } = 
     createUserScopedSupabaseMock: vi.fn(() => client),
     getServerEnvMock: vi.fn(() => ({
       openRouter: {
-        userDailyLimit: 5,
-        globalDailyLimit: 45,
+        userDailyLimit: 3,
+        globalDailyLimit: 20,
         staleAfterSeconds: 180,
       },
       generationIntegrity: {
@@ -60,7 +60,7 @@ const newMenuCommand: GenerationCommand = {
     idempotencyKey,
     draftId,
     draftRevision: 7,
-    privacyNoticeVersion: "2026-07-11.v1",
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -81,8 +81,8 @@ const publicRecord = {
   retry_at: null,
   processing_expires_at: "2026-07-19T12:03:00+09:00",
   completed_menu_id: null,
-  remaining: 4,
-  user_daily_limit: 5,
+  remaining: 2,
+  user_daily_limit: 3,
   consumed: false,
   terminal_details: null,
   actual_model_ids: ["model:free"],
@@ -118,8 +118,8 @@ const reserveArgs = {
     target_member_ids: ["50000000-0000-4000-8000-000000000001"],
     source_menu_version: null,
   },
-  p_user_limit: 5,
-  p_global_limit: 45,
+  p_user_limit: 3,
+  p_global_limit: 20,
   p_stale_after_seconds: 180,
 };
 const markSentArgs = {
@@ -127,7 +127,7 @@ const markSentArgs = {
 } satisfies Database["public"]["Functions"]["mark_ai_global_sent"]["Args"];
 const reserveRepairArgs = {
   p_request_id: requestId,
-  p_global_limit: 45,
+  p_global_limit: 20,
 } satisfies Database["public"]["Functions"]["reserve_ai_repair_call"]["Args"];
 const recordModelArgs = {
   p_request_id: requestId,
@@ -193,7 +193,7 @@ const succeedArgs = {
 const statusArgs = {
   p_user_id: user.userId,
   p_idempotency_key: idempotencyKey,
-  p_user_limit: 5,
+  p_user_limit: 3,
 } satisfies Database["public"]["Functions"]["get_ai_generation_status"]["Args"];
 
 type SuccessCase = {
@@ -286,8 +286,8 @@ beforeEach(() => {
   rpcMock.mockReset();
   getServerEnvMock.mockReturnValue({
     openRouter: {
-      userDailyLimit: 5,
-      globalDailyLimit: 45,
+      userDailyLimit: 3,
+      globalDailyLimit: 20,
       staleAfterSeconds: 180,
     },
     generationIntegrity: {
@@ -514,6 +514,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         sourceMenuId,
         changeReason: "simpler",
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [],
       },
     };
@@ -526,6 +527,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         dishId: "70000000-0000-4000-8000-000000000001",
         changeReason: "different_ingredient",
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [],
       },
     };
@@ -569,8 +571,8 @@ describe("createGenerationRepository regeneration reserve", () => {
         target_member_ids: ["50000000-0000-4000-8000-000000000001"],
         source_menu_version: 1,
       },
-      p_user_limit: 5,
-      p_global_limit: 45,
+      p_user_limit: 3,
+      p_global_limit: 20,
       p_stale_after_seconds: 180,
     });
     expect(rpcMock).toHaveBeenNthCalledWith(2, "reserve_ai_generation", {
@@ -591,8 +593,8 @@ describe("createGenerationRepository regeneration reserve", () => {
         target_member_ids: ["50000000-0000-4000-8000-000000000001"],
         source_menu_version: 1,
       },
-      p_user_limit: 5,
-      p_global_limit: 45,
+      p_user_limit: 3,
+      p_global_limit: 20,
       p_stale_after_seconds: 180,
     });
   });

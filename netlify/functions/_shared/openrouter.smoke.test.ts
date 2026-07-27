@@ -4,7 +4,8 @@ import { sendMenuGeneration } from "./openrouter.js";
 // --- OpenRouter実環境スモークテスト ---
 // RUN_OPENROUTER_SMOKE=1 を明示設定した場合だけ実行される。
 // 通常のテストゲートでは実行されず、実際のOpenRouterへのリクエストは発生しない。
-// オペレータが無料の構造化出力対応モデルを選んで手動実行するためのテスト。
+// オペレータが有料 allowlist 上の構造化出力対応モデルを選んで手動実行するためのテスト。
+// 注意: 実 API 呼び出しのためクレジット消費（実費）が発生する。
 describe.skipIf(process.env.RUN_OPENROUTER_SMOKE !== "1")("real OpenRouter", () => {
   it("returns one structurally valid response through one application HTTP request", async () => {
     if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is required");
@@ -26,7 +27,8 @@ describe.skipIf(process.env.RUN_OPENROUTER_SMOKE !== "1")("real OpenRouter", () 
       expect(result.mode).toBe("full_menu");
       if (result.mode !== "full_menu") throw new Error("expected full_menu");
       expect(["success", "constraint_conflict"]).toContain(result.output.outcome);
-      expect(result.modelId.endsWith(":free")).toBe(true);
+      // 有料 allowlist 上の ID が返る（:free 必須ではない）
+      expect(result.modelId.length).toBeGreaterThan(0);
       // 1アプリケーションリクエスト = 1 HTTP fetch のみ
       expect(fetchCount).toBe(1);
     } finally {

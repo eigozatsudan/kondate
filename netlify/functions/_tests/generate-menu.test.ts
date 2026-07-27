@@ -68,7 +68,7 @@ const requestBody = {
     idempotencyKey: "82000000-0000-4000-8000-000000000001",
     draftId: "84000000-0000-4000-8000-000000000001",
     draftRevision: 1,
-    privacyNoticeVersion: "2026-07-11.v1",
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -78,8 +78,8 @@ const terminalResult: GenerationStatusData = {
   requestId: "81000000-0000-4000-8000-000000000001",
   quota: {
     consumed: true,
-    remaining: 4,
-    userDailyLimit: 5,
+    remaining: 2,
+    userDailyLimit: 3,
     limitKind: null,
     retryAt: null,
   },
@@ -88,8 +88,8 @@ const terminalResult: GenerationStatusData = {
 };
 const quota = {
   consumed: false,
-  remaining: 5,
-  userDailyLimit: 5 as const,
+  remaining: 3,
+  userDailyLimit: 3 as const,
   limitKind: null,
   retryAt: null,
 };
@@ -333,8 +333,8 @@ describe("POST /api/generations/menu", () => {
       failure_code: null,
       retry_at: null,
       completed_menu_id: null,
-      remaining: 5,
-      user_daily_limit: 5,
+      remaining: 3,
+      user_daily_limit: 3,
       consumed: false,
       terminal_details: null,
       started_at: "2026-07-11T00:00:00.000Z",
@@ -378,7 +378,7 @@ describe("POST /api/generations/menu", () => {
           status: "succeeded",
           completed_menu_id: terminalResult.menuId,
           completed_at: terminalResult.completedAt,
-          remaining: 4,
+          remaining: 2,
           consumed: true,
         };
         return Promise.resolve(current);
@@ -395,7 +395,7 @@ describe("POST /api/generations/menu", () => {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           draftId: "84000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-11.v1",
+          privacyNoticeVersion: "2026-07-26.v1",
           expiredPantryConfirmations: [],
         },
       },
