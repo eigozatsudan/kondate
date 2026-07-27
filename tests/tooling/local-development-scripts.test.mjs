@@ -575,6 +575,9 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
       DOCKER_LOG_DIR: firstLogDir,
       DOCKER_READY_FILE: readyFile,
       E2E_WAIT_FOR_SIGNAL: "1",
+      // 既定 grace=5s のままだと CI 負荷下で cancel_watchdog 待ちが
+      // waitForCompletion(2s) を超え得る。本ケースは排他ロック挙動が対象。
+      KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
       PATH: `${bin}:${process.env.PATH}`,
       TMPDIR: firstTmpDir,
     },
@@ -841,6 +844,9 @@ test("E2E runner reaps a child that signals during launch", async (t) => {
           DOCKER_READY_FILE: readyFile,
           DOCKER_SIGNAL_PARENT_ON_START: "SIGTERM",
           E2E_WAIT_FOR_SIGNAL: "1",
+          // 起動直後 SIGTERM の reap が対象。既定 grace=5s は runE2E の
+          // timeout(3s) と衝突し、cleanup の auth/app 復元が欠落し得る。
+          KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
         }),
         (error) => error && typeof error === "object" && error.code === 143,
       );

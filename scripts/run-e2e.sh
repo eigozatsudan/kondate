@@ -47,14 +47,20 @@ start_watchdog() {
   (
     timer_pid=
     stop_requested=0
+    # cancel_watchdog から TERM を受けたら sleep を即止めないと、
+    # wait が割り込まれない環境では grace 秒まるごとブロックし、
+    # 呼び出し側の短い timeout（2–3s）と衝突して restore 途中で落ちる。
     stop_watchdog() {
       stop_requested=1
+      if [ -n "$timer_pid" ]; then
+        kill -s KILL "$timer_pid" 2>/dev/null || true
+      fi
     }
     trap stop_watchdog HUP INT TERM
     sleep "$signal_grace_seconds" &
     timer_pid=$!
     if [ "$stop_requested" -eq 1 ]; then
-      kill -s TERM "$timer_pid" 2>/dev/null || true
+      kill -s KILL "$timer_pid" 2>/dev/null || true
     fi
     while :; do
       if wait "$timer_pid"; then
@@ -64,7 +70,7 @@ start_watchdog() {
         timer_status=$?
       fi
       if [ "$stop_requested" -eq 1 ]; then
-        kill -s TERM "$timer_pid" 2>/dev/null || true
+        kill -s KILL "$timer_pid" 2>/dev/null || true
       fi
       if kill -0 "$timer_pid" 2>/dev/null; then
         continue
@@ -84,6 +90,8 @@ cancel_watchdog() {
   if [ -z "$watchdog_pid" ]; then
     return
   fi
+  # stop_watchdog trap が sleep を即 KILL するので、ここでは TERM を送って
+  # サブシェルを抜けさせ、wait で回収するだけにする。
   kill -s TERM "$watchdog_pid" 2>/dev/null || true
   while kill -0 "$watchdog_pid" 2>/dev/null; do
     if wait "$watchdog_pid" 2>/dev/null; then
