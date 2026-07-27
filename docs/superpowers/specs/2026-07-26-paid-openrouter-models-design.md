@@ -482,8 +482,9 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
    - 担当: 運営者
    - ゲート: §4.4 不合格なら実装完了不可
 
-2. **primary / repair の最終 1–2 ID**
-   - ベンチ後に env 例と README を更新
+2. **本番採用する最終 exact 順序付き構成**
+   - N=10 を通過した exact 構成を、要素・順序を変えずに env 例と README へ反映する。
+     個別 ID を再結合してはならない。
 
 3. **MVP 本文の改訂を PR1 に含める範囲**
    - 推奨: PR1 で MVP §11/§18 と本ファイルを整合。acceptance-matrix のテスト title 連動は **PR2**（§14）
@@ -521,7 +522,8 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
 ### PR5: 有料ベンチ証跡と本番 env 例
 
 - キーにクレジットを載せた後 §4.4 を実行。
-- README の推奨 `OPENROUTER_MODELS` を合格 ID に更新。
+- README の推奨 `OPENROUTER_MODELS` は、N=10 を通過した exact 順序付き構成を
+  要素・順序不変で反映する。個別 ID を再結合してはならない。
 - 依存: PR2。**ship の最終ゲート**。
 
 各 PR は review 可能とし、PR5 のゲート不合格なら本番有効化しない。
