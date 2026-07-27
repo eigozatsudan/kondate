@@ -46,6 +46,9 @@ export async function selectHouseholdAudienceWithMember(
   await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
   const member = page.getByRole("checkbox", { name: memberName });
   await expect(member).toBeVisible();
+  // 復元済みdraftなどで目的のメンバーが選択済みなら、新しい保存操作は発生しない。
+  // response waiterを作る前に完了し、存在しないPOSTを待ち続けない。
+  if (await member.isChecked()) return;
   // メンバー確定後の成功保存だけを待つ（radio 単独の CHECK 失敗 POST は無視）
   const audienceSaveResponse = page.waitForResponse((response) => {
     if (response.request().method() !== "POST") return false;
@@ -61,9 +64,7 @@ export async function selectHouseholdAudienceWithMember(
       return false;
     }
   });
-  if (!(await member.isChecked())) {
-    await member.check();
-  }
+  await member.check();
   expect((await audienceSaveResponse).ok()).toBe(true);
 }
 

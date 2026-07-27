@@ -1,7 +1,8 @@
 # E2E follow-up 完了記録（敵対的レビュー main 取込後）
 
 - **完了日**: 2026-07-27
-- **HEAD**: `752e24f`
+- **E2E全緑確認時の実装HEAD**: `752e24f`
+- **初回完了記録 commit**: `6641603`
 - **前提 merge**: `a067cff`（敵対的レビュー修正 → main）
 - **範囲**: E2E 追従 + E2E プロファイルの mock 強制（製品ロジックの仕様緩和なし）
 
@@ -23,12 +24,13 @@
 
 ---
 
-## コミット列（a067cff 以降の本フォロー）
+## 初回レビュー対象のE2Eフォロー5コミット（a067cff 以降）
 
 1. `90bdc91` — `test: E2EをC-I4 audienceとa11y文言に追従させる`
 2. `dd5dd53` — `fix: E2Eプロファイルでopenrouter-mockを強制する`
 3. `0033efc` — `test: pantry E2Eの緊急用家族選択をC-I4に合わせる`
 4. `752e24f` — `test: pantry E2Eの追加条件details開閉と長尺timeoutを直す`
+5. `6641603` — `docs: E2E follow-up 完了と9段階ゲート結果を記録する`
 
 ---
 

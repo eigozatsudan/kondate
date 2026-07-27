@@ -46,6 +46,8 @@ test("household journey: welcome through shopping reconciliation", async ({
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   // C-I4: メンバー明示選択 + 成功 autosave 完了を待ってから次へ（未保存 draft で生成しない）
   await selectHouseholdAudienceWithMember(page);
+  // 二度目は既に選択済みの境界を固定し、不要な保存応答待ちを作らないことを証明する。
+  await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
 
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();

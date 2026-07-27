@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Client } from "pg";
 import { z } from "zod";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 
 test.setTimeout(120_000);
 
@@ -162,16 +162,85 @@ test("matching state reaches callback once; unknown and mismatched state fail sa
   expect(new URL(page.url()).searchParams.has("code")).toBe(false);
   expect(new URL(page.url()).searchParams.has("state")).toBe(false);
 
-  // mismatched state: 有効そうな形だが state が flow と不一致
-  await page.goto(
-    `/auth/callback?flow=${flow}&state=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz&code=ccccccccccccccccccccccccccccccccccccccccccc`,
-  );
+  // mismatch 専用の未使用 continuation と、oauth-mock が発行する有効 code を使う。
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Googleで続ける" }).click();
+  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+  const mismatchProviderUrl = new URL(page.url());
+  const mismatchFlow = mismatchProviderUrl.searchParams.get("flow");
+  const originalMismatchState = mismatchProviderUrl.searchParams.get("state");
+  expect(mismatchFlow).toMatch(/^[0-9a-f-]{36}$/u);
+  expect(mismatchFlow).not.toBe(flow);
+  expect(originalMismatchState).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+
+  const mismatchedState = "z".repeat(43);
+  expect(mismatchedState).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+  expect(mismatchedState).not.toBe(originalMismatchState);
+  let resolveProviderCallback!: (response: {
+    location: string;
+    requestResourceType: string;
+    status: number;
+  }) => void;
+  const providerCallback = new Promise<{
+    location: string;
+    requestResourceType: string;
+    status: number;
+  }>((resolve) => {
+    resolveProviderCallback = resolve;
+  });
+  // provider page到達後の承認documentだけをrouteし、oauth-mock自身の302 Locationから
+  // fresh flowと有効codeを取得する。browser側requestはdeposit前に中断する。
+  const approvalMatcher = (url: URL) =>
+    url.origin === "http://127.0.0.1:8788" &&
+    url.pathname === "/authorize" &&
+    url.searchParams.get("action") === "approve";
+  const captureProviderCallback = async (route: Route): Promise<void> => {
+    const response = await route.fetch({ maxRedirects: 0 });
+    resolveProviderCallback({
+      location: response.headers()["location"] ?? "",
+      requestResourceType: route.request().resourceType(),
+      status: response.status(),
+    });
+    await route.abort("aborted");
+  };
+  await page.route(approvalMatcher, captureProviderCallback);
+  const abortedProviderNavigation = await page
+    .getByRole("link", { name: "Googleテスト利用者で続ける" })
+    .click()
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+  // locator click はdocument abort後もresolveする場合がある。rejectした場合だけ、
+  // 製品不具合を握りつぶさないよう意図したnavigation abortであることを固定する。
+  if (abortedProviderNavigation !== null) {
+    if (!(abortedProviderNavigation instanceof Error)) {
+      throw new Error("provider callback navigation failed with an unknown error");
+    }
+    expect(abortedProviderNavigation.message).toMatch(/net::ERR_ABORTED/u);
+  }
+
+  const providerCallbackResponse = await providerCallback;
+  await page.unroute(approvalMatcher, captureProviderCallback);
+  expect(providerCallbackResponse.requestResourceType).toBe("document");
+  expect(providerCallbackResponse.status).toBe(302);
+  const mismatchCallbackUrl = new URL(providerCallbackResponse.location);
+  expect(mismatchCallbackUrl.origin).toBe("http://127.0.0.1:5173");
+  expect(mismatchCallbackUrl.pathname).toBe("/auth/callback");
+  expect(mismatchCallbackUrl.searchParams.get("flow")).toBe(mismatchFlow);
+  expect(mismatchCallbackUrl.searchParams.get("state")).toBe(originalMismatchState);
+  expect(mismatchCallbackUrl.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+
+  mismatchCallbackUrl.searchParams.set("state", mismatchedState);
+  await page.goto(mismatchCallbackUrl.toString());
   await expect(
     page.getByText(
       /ログインを確認できませんでした|ログインの情報を確認できませんでした|最初からやり直してください/u,
     ),
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.has("code")).toBe(false);
+  expect(new URL(page.url()).searchParams.has("state")).toBe(false);
 });
 
 test("reused continuation code and state are rejected after a successful exchange", async ({
