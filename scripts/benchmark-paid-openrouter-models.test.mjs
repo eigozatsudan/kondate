@@ -1,4 +1,17 @@
 import assert from "node:assert/strict";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import test from "node:test";
 import {
   OPENROUTER_MAX_BODY_BYTES,
@@ -23,9 +36,72 @@ const usablePricing = {
 const bothParams = ["structured_outputs", "response_format"];
 
 test("loads the bundled production harness without network access", async () => {
-  const harness = await loadPaidBenchmarkHarness();
+  const [first, second] = await Promise.all([
+    loadPaidBenchmarkHarness(),
+    loadPaidBenchmarkHarness(),
+  ]);
 
-  assert.equal(typeof harness.runPaidBenchmarkUnit, "function");
+  assert.strictEqual(first, second);
+  assert.equal(typeof first.runPaidBenchmarkUnit, "function");
+});
+
+async function withIsolatedTmp(run) {
+  const sandbox = await mkdtemp(join(tmpdir(), "kondate-paid-openrouter-loader-test-"));
+  const previousTmpDir = process.env.TMPDIR;
+  process.env.TMPDIR = sandbox;
+  try {
+    await run(sandbox);
+  } finally {
+    if (previousTmpDir === undefined) {
+      delete process.env.TMPDIR;
+    } else {
+      process.env.TMPDIR = previousTmpDir;
+    }
+    await rm(sandbox, { recursive: true, force: true });
+  }
+}
+
+async function importFreshBenchmarkModule(label) {
+  const moduleUrl = new URL("./benchmark-paid-openrouter-models.mjs", import.meta.url);
+  moduleUrl.searchParams.set("loader-test", label);
+  return import(moduleUrl.href);
+}
+
+test("does not use, replace, or remove an adversarial legacy fixed-path symlink", async () => {
+  await withIsolatedTmp(async (sandbox) => {
+    const legacyDir = join(sandbox, "kondate-paid-openrouter-benchmark");
+    const legacyLeaf = join(legacyDir, "paid-openrouter-benchmark-harness.mjs");
+    const canary = join(sandbox, "legacy-canary.mjs");
+    const canaryBody = "export const untouched = true;\n";
+    await mkdir(legacyDir);
+    await writeFile(canary, canaryBody);
+    await symlink(canary, legacyLeaf);
+
+    const benchmark = await importFreshBenchmarkModule(`canary-${basename(sandbox)}`);
+    const harness = await benchmark.loadPaidBenchmarkHarness();
+
+    assert.equal(typeof harness.runPaidBenchmarkUnit, "function");
+    assert.equal(await readFile(canary, "utf8"), canaryBody);
+    assert.equal((await lstat(legacyLeaf)).isSymbolicLink(), true);
+    assert.equal(await readlink(legacyLeaf), canary);
+  });
+});
+
+test("independent concurrent loaders do not create a shared fixed leaf", async () => {
+  await withIsolatedTmp(async (sandbox) => {
+    const [firstModule, secondModule] = await Promise.all([
+      importFreshBenchmarkModule(`concurrent-a-${basename(sandbox)}`),
+      importFreshBenchmarkModule(`concurrent-b-${basename(sandbox)}`),
+    ]);
+    const [first, second] = await Promise.all([
+      firstModule.loadPaidBenchmarkHarness(),
+      secondModule.loadPaidBenchmarkHarness(),
+    ]);
+
+    assert.equal(typeof first.runPaidBenchmarkUnit, "function");
+    assert.equal(typeof second.runPaidBenchmarkUnit, "function");
+    assert.deepEqual(await readdir(sandbox), []);
+  });
 });
 
 function remoteEntry(id, overrides = {}) {

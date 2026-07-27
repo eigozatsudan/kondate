@@ -6,7 +6,7 @@
  */
 
 import * as esbuild from "esbuild";
-import { mkdir } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,20 +164,24 @@ let harnessModulePromise = null;
 export async function loadPaidBenchmarkHarness() {
   if (harnessModulePromise) return harnessModulePromise;
   harnessModulePromise = (async () => {
-    const outDir = join(tmpdir(), "kondate-paid-openrouter-benchmark");
-    await mkdir(outDir, { recursive: true });
+    const outDir = await mkdtemp(join(tmpdir(), "kondate-paid-openrouter-benchmark-"));
     const outfile = join(outDir, "paid-openrouter-benchmark-harness.mjs");
-    await esbuild.build({
-      entryPoints: [harnessEntry],
-      bundle: true,
-      platform: "node",
-      format: "esm",
-      target: "node24",
-      outfile,
-      packages: "bundle",
-      logLevel: "silent",
-    });
-    return import(outfile);
+    try {
+      await esbuild.build({
+        entryPoints: [harnessEntry],
+        bundle: true,
+        platform: "node",
+        format: "esm",
+        target: "node24",
+        outfile,
+        packages: "bundle",
+        logLevel: "silent",
+      });
+      return await import(outfile);
+    } finally {
+      // この実行が作成した一意なprivate directoryだけを削除し、共有pathへ触れない。
+      await rm(outDir, { recursive: true, force: true });
+    }
   })();
   return harnessModulePromise;
 }
