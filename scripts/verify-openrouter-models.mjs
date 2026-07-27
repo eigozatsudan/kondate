@@ -67,11 +67,25 @@ export function parseConfiguredModels(raw, context = {}) {
   return models;
 }
 
-/** OpenRouter token 単価（USD/token）を USD/1M tokens に変換。非有限・負は null。 */
-function usdPerMillion(tokenPrice) {
-  const n = Number(tokenPrice);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return n * 1e6;
+/**
+ * OpenRouter token 単価（USD/token）を USD/1M tokens に変換。
+ * 欠落・非数値・空文字・boolean・負値・非有限は fail-closed（null）。
+ * Number(null)===0 等の JS 強制変換で $0 扱いしない（設計 §4.1.7）。
+ */
+export function usdPerMillion(tokenPrice) {
+  if (typeof tokenPrice === "number") {
+    if (!Number.isFinite(tokenPrice) || tokenPrice < 0) return null;
+    return tokenPrice * 1e6;
+  }
+  if (typeof tokenPrice === "string") {
+    const trimmed = tokenPrice.trim();
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return n * 1e6;
+  }
+  // null / undefined / boolean / object などは非数値として拒否
+  return null;
 }
 
 /**

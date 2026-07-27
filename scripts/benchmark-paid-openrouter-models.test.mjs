@@ -10,6 +10,7 @@ import {
   meetsMinimumSuccessShape,
   runOneChatTrial,
   runPaidBenchmark,
+  usdPerMillion,
 } from "./benchmark-paid-openrouter-models.mjs";
 import { maxPromptPlusCompletionUsdPerMillion } from "./verify-openrouter-models.mjs";
 
@@ -108,6 +109,38 @@ test("mechanical filter rejects missing or over-cap pricing", () => {
   );
   assert.equal(over.ok, false);
   assert.match(over.reason, /exceeds/u);
+});
+
+// Number(null)===0 等で単価 $0 と誤認しない（設計 §4.1.7 fail-closed）
+test("usdPerMillion rejects null empty boolean and non-numeric strings", () => {
+  assert.equal(usdPerMillion(null), null);
+  assert.equal(usdPerMillion(undefined), null);
+  assert.equal(usdPerMillion(""), null);
+  assert.equal(usdPerMillion("  "), null);
+  assert.equal(usdPerMillion(false), null);
+  assert.equal(usdPerMillion(true), null);
+  assert.equal(usdPerMillion("NaN"), null);
+  assert.equal(usdPerMillion(Number.NaN), null);
+  assert.equal(usdPerMillion(-0.1), null);
+  // 1e-6 USD/token → 1 USD/1M（浮動小数の丸めを避ける代表値）
+  assert.equal(usdPerMillion("0.000001"), 1);
+  assert.equal(usdPerMillion(0.000001), 1);
+  assert.equal(usdPerMillion(0), 0);
+});
+
+test("mechanical filter rejects pricing fields that Number() would coerce to 0", () => {
+  for (const pricing of [
+    { prompt: null, completion: "0.0000001" },
+    { prompt: "", completion: "0.0000001" },
+    { prompt: false, completion: "0.0000001" },
+  ]) {
+    const result = evaluateMechanicalFilter(
+      "vendor/a",
+      new Map([["vendor/a", remoteEntry("vendor/a", { pricing })]]),
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /pricing/u);
+  }
 });
 
 test("mechanical filter accepts exact 0.5 USD per 1M boundary", () => {

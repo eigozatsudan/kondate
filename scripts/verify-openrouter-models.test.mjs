@@ -77,6 +77,32 @@ test("rejects missing usable pricing", () => {
   );
 });
 
+// Number(null)===0 / Number("")===0 等で $0 と誤認しない（設計 fail-closed）
+for (const [label, pricing] of [
+  ["null fields", { prompt: null, completion: null }],
+  ["empty strings", { prompt: "", completion: "" }],
+  ["booleans", { prompt: false, completion: false }],
+  ["whitespace string", { prompt: "  ", completion: "0.0000001" }],
+  ["NaN string", { prompt: "NaN", completion: "0.0000001" }],
+]) {
+  test(`rejects non-numeric pricing coerced by Number(): ${label}`, () => {
+    assert.throws(
+      () =>
+        verifyRemoteModels(
+          ["vendor/a"],
+          [
+            {
+              id: "vendor/a",
+              supported_parameters: ["structured_outputs", "response_format"],
+              pricing,
+            },
+          ],
+        ),
+      /missing usable pricing/u,
+    );
+  });
+}
+
 test("rejects prompt+completion above 0.5 USD per 1M tokens", () => {
   assert.throws(
     () =>
