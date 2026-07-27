@@ -1,8 +1,10 @@
 # Plan 8 有料 OpenRouter — live ゲート証跡（2026-07-27）
 
-**結論: ゲート不合格（PASS 0 本）。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
+**結論: ゲート不合格（PASS 0 構成）。response-format 改訂後の exact 3 構成 N=10 再評価でも合格なし。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
 
-## Live gate evidence
+## Live gate evidence（第1ラウンド・履歴）
+
+> 現行の post-revision ゲート結果は下記 **第4ラウンド** を正とする。本節は改訂前の個別 ID N=10 履歴。
 
 - Date: 2026-07-27T05:0x–05:2xZ (UTC) / 2026-07-27 14:0x–14:2x JST
 - Worktree: `.worktrees/plan8-paid-openrouter` / Branch: `plan8/paid-openrouter-models`
@@ -150,6 +152,75 @@ Gemini は複雑度上限で拒否する。いずれもモデル品質やレイ�
 
 ## 次アクション（人間の判断が必要）
 
-1. 上記選択肢 1 / 2 / 3（併用可）のどれを設計改訂として採るか
-2. 決定後に設計書 §4.4 / §4.4.2 を改訂し、再度 N=10 を実行する
-3. 合格 **最大 2 本** が出て初めて本番 env を提案する
+1. ~~上記選択肢 1 / 2 / 3（併用可）のどれを設計改訂として採るか~~ → 選択肢 1+2 相当を response-format 改訂として承認・実装済み（Tasks 6–8）
+2. ~~決定後に設計書 §4.4 / §4.4.2 を改訂し、再度 N=10 を実行する~~ → 第4ラウンドで exact 構成 N=10 再評価済み（合格 0）
+3. 合格 **最大 2 本**（exact 構成）が出て初めて本番 env を提案する — **未達のまま**。候補 ID / prompt / 別設計判断が必要
+
+---
+
+## 第4ラウンド: response-format 改訂後の exact 構成 N=10（Plan 8 Task 9, 2026-07-27）
+
+設計改訂（root object wire / production-service harness / exact 順序付き構成単位）を Tasks 6–8 まで実装したうえで、
+承認済み exact 3 構成を live N=10 で再評価した。
+
+### 実行前提（秘密は記録しない）
+
+- Date: 2026-07-27T11:34:29Z – 11:35:10Z (UTC) / 2026-07-27 20:34–20:35 JST
+- Worktree: `.worktrees/plan8-response-format-revision` / Branch: `plan8/response-format-revision`
+- HEAD (ベンチ実行時): `c5d4478f516a916a9437dee828a26b9db5e5f5ce`
+- Command: `docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs`
+- `OPENROUTER_BASE_URL`（プロセス）: ベンチは公式 exact `https://openrouter.ai/api/v1` を使用
+- Key: funded 実キー（値は非記録）。**total credit hard limit = $1**（operator 確認）
+- Operator: 外部ネットワーク / 有料実行を本セッションで承認
+- Quota locks: 3 / 6 / 20（変更なし）
+- 時間境界: per-send 20s / 送信前残 22s / 単位 50s / repair 最大 1（変更なし）
+
+### 評価対象（順序固定・再結合禁止）
+
+1. `["openai/gpt-4.1-nano"]`
+2. `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]`
+3. `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]`
+
+機械フィルタ段階の `EXCLUDE` 行はなし（3 構成とも member が survivor として chat 評価へ進行）。
+
+### 構成単位結果（§4.4.2 production harness, fresh unit, 失敗で打ち切り）
+
+| Exact configuration | 結果 | first-attempt successes | 初回失敗 unit | outcome | closed failure codes | totalElapsedMs |
+|---|---|---:|---|---|---|---:|
+| `["openai/gpt-4.1-nano"]` | FAIL (1/10 で終了) | 0 | 1 | `failure` | `invalid_ai_response` | 2936 |
+| `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]` | FAIL (1/10 で終了) | 0 | 1 | `failure` | `invalid_ai_response` | 13307 |
+| `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]` | FAIL (1/10 で終了) | 0 | 1 | `failure` | `generation_timeout` | 23440 |
+
+### Per-send 証跡（許可フィールドのみ）
+
+**Config 1** unit 1:
+
+| send | models | responseModel | excludedModel | elapsedMs |
+|---:|---|---|---|---:|
+| 1 | `["openai/gpt-4.1-nano"]` | `openai/gpt-4.1-nano` | null | 2928 |
+
+**Config 2** unit 1:
+
+| send | models | responseModel | excludedModel | elapsedMs |
+|---:|---|---|---|---:|
+| 1 (primary) | `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]` | `openai/gpt-4.1-nano` | null | 2521 |
+| 2 (repair) | `["meta-llama/llama-3.1-8b-instruct"]` | `meta-llama/llama-3.1-8b-instruct` | `openai/gpt-4.1-nano` | 10784 |
+
+**Config 3** unit 1:
+
+| send | models | responseModel | excludedModel | elapsedMs |
+|---:|---|---|---|---:|
+| 1 (primary) | `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]` | `openai/gpt-4.1-nano` | null | 3433 |
+| 2 (repair) | `["openai/gpt-oss-120b"]` | null | `openai/gpt-4.1-nano` | 20005 |
+
+### 最終判定
+
+- Final exit code: **1**
+- `passedConfigurations`: **[]**
+- `recommendedConfiguration`: **null**
+- Recommended production `OPENROUTER_MODELS`: **n/a（合格 0 構成のため提案しない）**
+- README / runbook の本番推奨更新: **なし**（PASS 条件未達）
+- Production deploy: **NOT done**
+- 記録していないもの: API キー、prompt、path/message、raw model output、provider body、無制限 error text
+
+response-format 改訂後も exact 3 構成は N=10 を通過しなかった。個別 ID 結果の再結合による推奨構成の合成は行わない。本番 ship は引き続きブロック。
