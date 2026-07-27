@@ -46,18 +46,21 @@ test("requires both structured output parameters from every configured model", (
   );
 });
 
-test("requires structured_outputs when only that flag is missing", () => {
-  assert.throws(() =>
-    verifyRemoteModels(
-      ["vendor/a"],
-      [
-        {
-          id: "vendor/a",
-          supported_parameters: ["structured_outputs"],
-          pricing: usablePricing,
-        },
-      ],
-    ),
+// fixture は structured_outputs のみ（response_format 欠落）。title を fixture に一致させる。
+test("requires response_format when only structured_outputs is present", () => {
+  assert.throws(
+    () =>
+      verifyRemoteModels(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs"],
+            pricing: usablePricing,
+          },
+        ],
+      ),
+    /does not support strict structured output/u,
   );
 });
 
@@ -118,6 +121,71 @@ test("rejects prompt+completion above 0.5 USD per 1M tokens", () => {
         ],
       ),
     /exceeds max prompt\+completion/u,
+  );
+});
+
+// F3: 合計上限ちょうど $0.50 / 1M は受理（> のみ拒否）
+test("accepts prompt+completion exactly 0.5 USD per 1M tokens", () => {
+  assert.doesNotThrow(() =>
+    verifyRemoteModels(
+      ["vendor/a"],
+      [
+        {
+          id: "vendor/a",
+          supported_parameters: ["structured_outputs", "response_format"],
+          // $0.30 + $0.20 = $0.50 / 1M（上限ちょうど）
+          pricing: { prompt: "0.0000003", completion: "0.0000002" },
+        },
+      ],
+    ),
+  );
+});
+
+// F3: 負の prompt/completion は数値・文字列とも拒否
+for (const [label, pricing] of [
+  ["numeric negative prompt", { prompt: -0.0000001, completion: "0.0000001" }],
+  ["numeric negative completion", { prompt: "0.0000001", completion: -0.0000001 }],
+  ["string negative prompt", { prompt: "-0.0000001", completion: "0.0000001" }],
+  ["string negative completion", { prompt: "0.0000001", completion: "-0.0000001" }],
+]) {
+  test(`rejects negative pricing: ${label}`, () => {
+    assert.throws(
+      () =>
+        verifyRemoteModels(
+          ["vendor/a"],
+          [
+            {
+              id: "vendor/a",
+              supported_parameters: ["structured_outputs", "response_format"],
+              pricing,
+            },
+          ],
+        ),
+      /missing usable pricing/u,
+    );
+  });
+}
+
+// F3: request / internal_reasoning / cache 系は判定に使わない
+// （prompt+completion が合格なら他フィールドが高額でも受理）
+test("ignores pricing.request, internal_reasoning, and cache fields when prompt+completion pass", () => {
+  assert.doesNotThrow(() =>
+    verifyRemoteModels(
+      ["vendor/a"],
+      [
+        {
+          id: "vendor/a",
+          supported_parameters: ["structured_outputs", "response_format"],
+          pricing: {
+            ...usablePricing,
+            request: "999",
+            internal_reasoning: "999",
+            input_cache_read: "999",
+            input_cache_write: "999",
+          },
+        },
+      ],
+    ),
   );
 });
 

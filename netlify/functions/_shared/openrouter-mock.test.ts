@@ -2,10 +2,22 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
-  aiGenerationResponseSchema,
+  aiGenerationWireResponseSchema,
   menuResponseFormat,
+  toAiGenerationResponse,
 } from "../../../shared/contracts/generation.js";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
+
+function toProviderWireFixture(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  if ("outcome" in value && value.outcome === "success") {
+    return { ...value, conflicts: null };
+  }
+  if ("outcome" in value && value.outcome === "constraint_conflict") {
+    return { ...value, menu: null };
+  }
+  return value;
+}
 
 it("keeps every required adversarial scenario fixed in source control", () => {
   // Plan 6 Task 6 追加分（senior-texture / medical / pantry omission 等）を含む exact inventory
@@ -71,7 +83,8 @@ describe("schema-valid fixed outputs", () => {
   ] as const;
 
   it.each(schemaValidScenarioNames)("parses %s at the provider boundary", (name) => {
-    expect(aiGenerationResponseSchema.safeParse(scenarios[name]).success).toBe(true);
+    const wire = aiGenerationWireResponseSchema.parse(toProviderWireFixture(scenarios[name]));
+    expect(toAiGenerationResponse(wire).outcome).toBe(scenarios[name].outcome);
   });
 
   it("unsupported-medical is a closed conflict outcome (not a success menu)", () => {

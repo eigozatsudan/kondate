@@ -71,7 +71,7 @@
 | 単価上限 | prompt + completion の 1M 換算和 ≤ **$0.50**。request/cache 等は **判定に使わない**（§4.1.7） |
 | クォータ | 成功 **3**/日、attempt **6**/日、全体初期 **20**/日。短期 4/600s 据え置き。**相互作用は意図的**（§5 / §12-4） |
 | 時間予算 | 20s / 50s / 180s 据え置き |
-| 候補 ID | 下記 5 本。事前に Models API 機械フィルタ後、有料実測で primary/repair 確定 |
+| 候補 ID | 下記 3 本。Models API 機械フィルタ後、exact な順序付き構成を有料実測 |
 | mock 判定信号 | **`OPENROUTER_BASE_URL` の exact mock URL のみ**（`SERVER_SITE_ORIGIN` / isLocal と混同しない） |
 | コスト監視 | アプリは回数上限。OpenRouter キー hard $ limit を運用必須 |
 
@@ -168,13 +168,11 @@ exact mock URL 以外では、`mock/` も `:free` も拒否する。
 
 ### 4.4 候補ショートリストと実装完了ゲート
 
-ユーザー指定の評価対象（順序未確定）:
+承認済み改訂で固定した評価対象:
 
-1. `mistralai/mistral-small-3.2-24b-instruct`
-2. `openai/gpt-oss-120b`
-3. `google/gemma-3-27b-it`
-4. `qwen/qwen3-30b-a3b-instruct-2507`
-5. `meta-llama/llama-3.1-8b-instruct`
+1. `openai/gpt-4.1-nano`
+2. `meta-llama/llama-3.1-8b-instruct`
+3. `openai/gpt-oss-120b`
 
 #### 4.4.1 ベンチ前の機械フィルタ（必須順序）
 
@@ -188,16 +186,83 @@ exact mock URL 以外では、`mock/` も `:free` も拒否する。
 
 #### 4.4.2 レイテンシ/形状ゲート
 
-残存候補ごとに、実 `menuResponseFormat`・日本語家庭献立プロンプト・`require_parameters: true` で **N = 10 回**:
+§4.4.1 を通過した ID から、ship 候補となる **1～2 ID の exact な順序付き
+`OPENROUTER_MODELS` 構成**を作る。構成ごとに、実 `menuResponseFormat`・
+**本番 `buildGenerationMessages` が非 PII の固定入力から生成するプロンプト**・
+`require_parameters: true` で **N = 10 単位**を実行する。配列の要素と順序が異なる構成の結果を流用してはならない。
 
-- HTTP 200
-- クライアント計測で **10 回すべて 20s 未満**（p95 は N=10 でも解釈が曖昧なため使わない。「全試行 < 20s」を合格条件とする）
-- 応答が `outcome: "success"` かつ `menu.dishes` がオブジェクト配列で、アプリの materialize/validate が通る形状（最低限 dish に `dishRef`, `role`, `position`, `name`, `description`, `cookingTimeMinutes`, `ingredients`, `steps`）
+**1 単位 = production service harness を通した本番 1 生成フロー**とする。harness は
+`runGeneration` 相当の単調時計、pre-send guard、repository の
+`markSent` / `reserveRepair` / finalize 遷移を含める:
 
-合格 ID から **最大 2 本**（primary + repair）を `OPENROUTER_MODELS` に載せることを推奨する。
-attempt 日次 6 の下では 3 本以上は attempt を圧迫しやすい（§5）。
+harness は本番 DB / 本番 quota ledger へ書き込まない。`markSent` / `reserveRepair` / finalize の
+本番と同じ遷移意味論を実装した隔離 in-memory/test repository を使い、**各単位の開始時に fresh ledger
+へ初期化**する。1 単位内では成功 3 / attempt 6 / global 20 の判定意味論を維持する一方、構成間・単位間で
+日次カウンタを累積させない。これにより quota 拒否をモデル品質 FAIL に混入させない。このベンチ上の隔離は
+証跡採取方法だけの規定であり、本番の 3 / 6 / 20 ロックは変更しない。
 
-1 本も合格しない場合は実装を「完了」とせず、候補変更または別設計（時間予算改訂など）に戻る。
+- primary は当該 exact 構成の配列を `models` として 1 回送る。`composeCandidate` が
+  `kind: "valid"` なら finalize し、単位成功とする。`kind: "conflict"` は
+  `constraint_conflict` で終端し、repair しない。
+- body / transport failure は次の優先順位で分類する。Abort/deadline が成立している場合、または最終の
+  単調時計 elapsed が `timeoutMs` 以上の場合は、他の検出済みエラーより
+  `OpenRouterCallError("generation_timeout")` を優先し、repair しない。byte cap 検出後の
+  `reader.cancel()` 待機中に Abort した競合も `generation_timeout` とする。
+- timeout が成立していない場合に限り、次の初回失敗を repair 適格とする:
+  - HTTP 200 応答の body が byte cap を超えた場合、および JSON / response envelope schema /
+    wire schema / wire→内部 adapter が不正な場合の
+    `OpenRouterCallError("invalid_ai_response")`
+  - materializer / validator の失敗を含む `composeCandidate(...).kind === "invalid"`
+- raw envelope から取得できた `model` が当該送信の `models` 配列外なら
+  `model_unavailable` とし、repair しない。この判定を response envelope schema 検査より先に行うため、
+  response envelope schema が不正でも取得済み `model` が送信外なら `invalid_ai_response` ではなく
+  `model_unavailable` とする。
+- timeout が成立していない場合に限り、非 2xx、fetch の transport 失敗、
+  Abort 以外の body stream 読取失敗、上記モデル不一致は `model_unavailable` とする。
+  `generation_timeout` / `model_unavailable` / `constraint_conflict` は repair しない。
+- repair 適格でも外部 repair 送信は最大 1 回とする。初回の実応答モデルが既知なら、
+  exact 構成からその ID を除外した順序付き配列を repair の `models` とする。
+  除外後にモデルが残らなければ repair を送らず単位失敗とする。初回の実応答モデルが不明なら、
+  本番どおり除外せず exact 構成を repair の `models` とする。repair 後の invalid / conflict /
+  call error は再 repair せず、単位失敗とする。
+
+合格条件（すべて必須・緩和禁止）:
+
+- 各送信の 20s 境界は、本番 `sendMenuGeneration` と同じく **`AbortController` を作成して
+  `setTimeout` を開始した時点から、body 読取、JSON / response envelope / model 検査、
+  wire parse、adapter を完了し、`finally` で timer を解除するまで**とする。timer 開始後の
+  response format 選択など、fetch 前の処理も含める。各送信は HTTP 200 かつこのクライアント計測で
+  20s 未満でなければならない。materialize / validate は 20s 境界に含めない。
+- Abort timer だけに依存しない。timer 開始時刻を単調時計で記録し、body / JSON / response envelope /
+  model / wire / adapter の処理完了直後かつ成功 return 前に最終 elapsed を検査する。
+  `elapsed >= timeoutMs` なら `OpenRouterCallError("generation_timeout")` として fail-closed にする。
+  同期 JSON/schema/adapter 処理中に Abort callback が発火できず、その後 `finally` が timer を解除する場合も
+  超過を合格させない。この契約は本番 `openrouter.ts` と production service harness の双方に実装する。
+  19,999ms は境界内、20,000ms は失敗とし、遅い JSON/schema/adapter と
+  byte cap 検出後の `reader.cancel()` 待機中 Abort の競合をテストする。
+- 50s 境界は handler の `requestStartedAt` から始め、context load、preflight、ledger、
+  primary / repair、materialize / validate、finalize までを含める。単位は
+  `FUNCTION_TOTAL_BUDGET_MS = 50,000` 内に終端しなければならない。
+- primary と repair の**各送信前**に、本番と同じ
+  `REQUIRED_SEND_BUDGET_MS = 22,000`（20s + `FINALIZE_RESERVE_MS = 2,000`）以上の残予算を要求する。
+- `envelope.model` は、その送信で実際に渡した `models` 配列に含まれなければならない。
+- 本番と同形の response schema + `aiGenerationResponseSchema`（wire 経由の場合はアダプタ適用後）
+- `materializeAiGeneratedMenu` + `validateGeneratedMenu` 成功
+- **10 単位すべて成功**
+
+単なる fetch 2 回の elapsed 合計では合格にしない。証跡には、評価した exact 構成の配列順序、
+単位内の各送信で渡した `models` 配列、各実応答モデル、除外モデル、初回成功 / repair 後成功 /
+失敗の別、失敗コードを残す。**N=10 を通過した exact 構成だけ**を、その順序のまま
+`OPENROUTER_MODELS` へ提案する。
+
+最低限、次の構成を独立して評価する:
+
+1. `["openai/gpt-4.1-nano"]`
+2. `["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"]`
+3. `["openai/gpt-4.1-nano", "openai/gpt-oss-120b"]`
+
+単体 ID の合否を後から組み合わせたり、個別合格 ID から最大 2 本を選んだりしてはならない。
+合格した exact 構成だけが、その順序を維持した `OPENROUTER_MODELS` の提案候補になる。
 
 > 注: 2026-07-26 時点の検証キーは total limit 403 のため、このゲートは **キーにクレジットを載せた後**に実行する。設計承認とゲート通過は分離する。
 
@@ -393,13 +458,14 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
    根拠: フォールバックが free の遅延・不正 JSON を再導入するため。
 
 3. **構造化検証は現行どおり AND を維持**する（`structured_outputs` **かつ** `response_format`）。
-   根拠: `openrouter-models-contract.mjs` / `verify-openrouter-models.mjs` の adversarial 固定値。OR への緩和は根拠なき簡略化であり行わない。候補 5 本も AND 不合格なら機械フィルタで落とす。
+   根拠: `openrouter-models-contract.mjs` / `verify-openrouter-models.mjs` の adversarial 固定値。OR への緩和は根拠なき簡略化であり行わない。候補 3 本も AND 不合格なら機械フィルタで落とす。
 
 4. **クォータ 3 / 6 / 20 を維持し、相互作用を仕様として受け入れる**。
    根拠: ユーザー選択の露出抑制。成功 3 = 毎回 repair 前提だと attempt 6 ちょうどでバッファがないこと、全体 20 が約 3〜4 ユーザー分であることは **既知の制約**であり、成功保証より課金・濫用抑制を優先する。時間予算は据え置き。
 
-5. **候補 5 ID を評価対象とし、順序は機械フィルタ + 有料実測後に確定**する。
-   根拠: ユーザー指定リスト。未実測のまま primary をコード固定しない。
+5. **承認済み 3 ID から作る exact な順序付き 3 構成を、production service harness の N=10 単位で評価**する。
+   根拠: 本番は primary + repair の最大 2 送信であり、個別 ID の合否を後から組み合わせても
+   実際に ship する `OPENROUTER_MODELS` の挙動を証明できないため。
 
 6. **mock 例外の信号は `OPENROUTER_BASE_URL` exact mock のみ**とし、`parseOpenRouterModels(value, { openRouterBaseUrl })` に全鏡像を揃える。
    根拠: 現行パーサは base を知らず、isLocal は別概念。3 実装 + 契約の不一致を防ぐ。
@@ -416,8 +482,9 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
    - 担当: 運営者
    - ゲート: §4.4 不合格なら実装完了不可
 
-2. **primary / repair の最終 1–2 ID**
-   - ベンチ後に env 例と README を更新
+2. **本番採用する最終 exact 順序付き構成**
+   - N=10 を通過した exact 構成を、要素・順序を変えずに env 例と README へ反映する。
+     個別 ID を再結合してはならない。
 
 3. **MVP 本文の改訂を PR1 に含める範囲**
    - 推奨: PR1 で MVP §11/§18 と本ファイルを整合。acceptance-matrix のテスト title 連動は **PR2**（§14）
@@ -455,7 +522,8 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
 ### PR5: 有料ベンチ証跡と本番 env 例
 
 - キーにクレジットを載せた後 §4.4 を実行。
-- README の推奨 `OPENROUTER_MODELS` を合格 ID に更新。
+- README の推奨 `OPENROUTER_MODELS` は、N=10 を通過した exact 順序付き構成を
+  要素・順序不変で反映する。個別 ID を再結合してはならない。
 - 依存: PR2。**ship の最終ゲート**。
 
 各 PR は review 可能とし、PR5 のゲート不合格なら本番有効化しない。

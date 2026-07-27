@@ -131,7 +131,22 @@ describe("strict chat completion protocol", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.model).toBe(primaryModel);
-    expect(JSON.parse(body.choices[0].message.content).outcome).toBe("success");
+    const content = JSON.parse(body.choices[0].message.content);
+    expect(content.outcome).toBe("success");
+    expect(Object.keys(content).sort()).toEqual(["conflicts", "menu", "outcome"]);
+    expect(content.conflicts).toBeNull();
+  });
+
+  it("returns constraint conflicts in the nullable root-object wire shape", async () => {
+    const origin = await startServer();
+    const response = await send(origin, { scenario: "constraint-conflict" });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const content = JSON.parse(body.choices[0].message.content);
+    expect(content.outcome).toBe("constraint_conflict");
+    expect(Object.keys(content).sort()).toEqual(["conflicts", "menu", "outcome"]);
+    expect(content.menu).toBeNull();
+    expect(content.conflicts).toHaveLength(1);
   });
 
   it.each([
@@ -313,7 +328,9 @@ describe("stateless repair sequence", () => {
       expect(primary.model).toBe(primaryModel);
       expect(primary.choices[0].message.content).toBe("{not-json");
       expect(repair.model).toBe(repairModel);
-      expect(JSON.parse(repair.choices[0].message.content).outcome).toBe("success");
+      const repairedContent = JSON.parse(repair.choices[0].message.content);
+      expect(repairedContent.outcome).toBe("success");
+      expect(repairedContent.conflicts).toBeNull();
     }
   });
 

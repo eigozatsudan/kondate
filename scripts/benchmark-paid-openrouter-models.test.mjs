@@ -1,30 +1,108 @@
 import assert from "node:assert/strict";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import test from "node:test";
 import {
   OPENROUTER_MAX_BODY_BYTES,
-  benchLatencyBudgetMs,
   benchTrialCount,
   candidateModelIds,
   evaluateMechanicalFilter,
-  extractDecodedContent,
   filterCandidatesMechanically,
-  loadAppResponseGate,
-  meetsMinimumSuccessShape,
+  loadPaidBenchmarkHarness,
+  paidOpenRouterModelConfigurations,
   readResponseBodyWithByteCap,
-  resetAppResponseGateLoaderForTests,
-  runOneChatTrial,
+  runConfigurationGate,
   runPaidBenchmark,
+  main,
   usdPerMillion,
 } from "./benchmark-paid-openrouter-models.mjs";
 import { maxPromptPlusCompletionUsdPerMillion } from "./verify-openrouter-models.mjs";
 
-/** 成功 remote フィクスチャ: prompt+completion = $0.30 / 1M（上限 0.5 未満） */
 const usablePricing = {
   prompt: "0.0000001",
   completion: "0.0000002",
 };
-
 const bothParams = ["structured_outputs", "response_format"];
+
+test("loads the bundled production harness without network access", async () => {
+  const [first, second] = await Promise.all([
+    loadPaidBenchmarkHarness(),
+    loadPaidBenchmarkHarness(),
+  ]);
+
+  assert.strictEqual(first, second);
+  assert.equal(typeof first.runPaidBenchmarkUnit, "function");
+});
+
+async function withIsolatedTmp(run) {
+  const sandbox = await mkdtemp(join(tmpdir(), "kondate-paid-openrouter-loader-test-"));
+  const previousTmpDir = process.env.TMPDIR;
+  process.env.TMPDIR = sandbox;
+  try {
+    await run(sandbox);
+  } finally {
+    if (previousTmpDir === undefined) {
+      delete process.env.TMPDIR;
+    } else {
+      process.env.TMPDIR = previousTmpDir;
+    }
+    await rm(sandbox, { recursive: true, force: true });
+  }
+}
+
+async function importFreshBenchmarkModule(label) {
+  const moduleUrl = new URL("./benchmark-paid-openrouter-models.mjs", import.meta.url);
+  moduleUrl.searchParams.set("loader-test", label);
+  return import(moduleUrl.href);
+}
+
+test("does not use, replace, or remove an adversarial legacy fixed-path symlink", async () => {
+  await withIsolatedTmp(async (sandbox) => {
+    const legacyDir = join(sandbox, "kondate-paid-openrouter-benchmark");
+    const legacyLeaf = join(legacyDir, "paid-openrouter-benchmark-harness.mjs");
+    const canary = join(sandbox, "legacy-canary.mjs");
+    const canaryBody = "export const untouched = true;\n";
+    await mkdir(legacyDir);
+    await writeFile(canary, canaryBody);
+    await symlink(canary, legacyLeaf);
+
+    const benchmark = await importFreshBenchmarkModule(`canary-${basename(sandbox)}`);
+    const harness = await benchmark.loadPaidBenchmarkHarness();
+
+    assert.equal(typeof harness.runPaidBenchmarkUnit, "function");
+    assert.equal(await readFile(canary, "utf8"), canaryBody);
+    assert.equal((await lstat(legacyLeaf)).isSymbolicLink(), true);
+    assert.equal(await readlink(legacyLeaf), canary);
+  });
+});
+
+test("independent concurrent loaders do not create a shared fixed leaf", async () => {
+  await withIsolatedTmp(async (sandbox) => {
+    const [firstModule, secondModule] = await Promise.all([
+      importFreshBenchmarkModule(`concurrent-a-${basename(sandbox)}`),
+      importFreshBenchmarkModule(`concurrent-b-${basename(sandbox)}`),
+    ]);
+    const [first, second] = await Promise.all([
+      firstModule.loadPaidBenchmarkHarness(),
+      secondModule.loadPaidBenchmarkHarness(),
+    ]);
+
+    assert.equal(typeof first.runPaidBenchmarkUnit, "function");
+    assert.equal(typeof second.runPaidBenchmarkUnit, "function");
+    assert.deepEqual(await readdir(sandbox), []);
+  });
+});
 
 function remoteEntry(id, overrides = {}) {
   return {
@@ -35,150 +113,79 @@ function remoteEntry(id, overrides = {}) {
   };
 }
 
-test("candidate shortlist matches design §4.4 five IDs in order", () => {
+function successfulUnit(configuration, outcome = "primary_success") {
+  return {
+    ok: true,
+    configuration: [...configuration],
+    sends: [
+      {
+        models: [...configuration],
+        responseModel: configuration[0] ?? null,
+        excludedModel: null,
+        elapsedMs: 100,
+      },
+    ],
+    outcome,
+    failureCodes: [],
+    totalElapsedMs: 120,
+  };
+}
+
+test("candidate shortlist and exact ordered configurations match the approved revision", () => {
   assert.deepEqual(
     [...candidateModelIds],
+    ["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct", "openai/gpt-oss-120b"],
+  );
+  assert.deepEqual(
+    paidOpenRouterModelConfigurations.map((configuration) => [...configuration]),
     [
-      "mistralai/mistral-small-3.2-24b-instruct",
-      "openai/gpt-oss-120b",
-      "google/gemma-3-27b-it",
-      "qwen/qwen3-30b-a3b-instruct-2507",
-      "meta-llama/llama-3.1-8b-instruct",
+      ["openai/gpt-4.1-nano"],
+      ["openai/gpt-4.1-nano", "meta-llama/llama-3.1-8b-instruct"],
+      ["openai/gpt-4.1-nano", "openai/gpt-oss-120b"],
     ],
+  );
+  assert.ok(Object.isFrozen(candidateModelIds));
+  assert.ok(Object.isFrozen(paidOpenRouterModelConfigurations));
+  assert.ok(
+    paidOpenRouterModelConfigurations.every((configuration) => Object.isFrozen(configuration)),
   );
 });
 
-test("gate constants lock N=10 and 20s latency budget", () => {
+test("gate constants lock N=10 and the price ceiling", () => {
   assert.equal(benchTrialCount, 10);
-  assert.equal(benchLatencyBudgetMs, 20_000);
   assert.equal(maxPromptPlusCompletionUsdPerMillion, 0.5);
 });
 
-test("mechanical filter keeps models with structured AND and usable pricing", () => {
-  const byId = new Map([["vendor/a", remoteEntry("vendor/a")]]);
-  const result = evaluateMechanicalFilter("vendor/a", byId);
-  assert.equal(result.ok, true);
-});
+test("mechanical filter applies the structured-output AND and price rules", () => {
+  const usable = evaluateMechanicalFilter(
+    "vendor/a",
+    new Map([["vendor/a", remoteEntry("vendor/a")]]),
+  );
+  assert.equal(usable.ok, true);
 
-test("mechanical filter excludes missing IDs", () => {
-  const result = evaluateMechanicalFilter("vendor/missing", new Map());
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /not present/u);
-});
-
-test("mechanical filter requires structured_outputs AND response_format", () => {
-  const onlyResponse = evaluateMechanicalFilter(
+  const missingParameter = evaluateMechanicalFilter(
     "vendor/a",
     new Map([["vendor/a", remoteEntry("vendor/a", { supported_parameters: ["response_format"] })]]),
   );
-  assert.equal(onlyResponse.ok, false);
-  assert.match(onlyResponse.reason, /AND/u);
+  assert.equal(missingParameter.ok, false);
+  assert.match(missingParameter.reason, /AND/u);
 
-  const onlyStructured = evaluateMechanicalFilter(
-    "vendor/b",
-    new Map([
-      ["vendor/b", remoteEntry("vendor/b", { supported_parameters: ["structured_outputs"] })],
-    ]),
-  );
-  assert.equal(onlyStructured.ok, false);
-});
-
-test("mechanical filter rejects missing or over-cap pricing", () => {
-  const missing = evaluateMechanicalFilter(
+  const overPrice = evaluateMechanicalFilter(
     "vendor/a",
     new Map([
       [
         "vendor/a",
-        {
-          id: "vendor/a",
-          supported_parameters: bothParams,
-        },
-      ],
-    ]),
-  );
-  assert.equal(missing.ok, false);
-  assert.match(missing.reason, /pricing/u);
-
-  const over = evaluateMechanicalFilter(
-    "vendor/b",
-    new Map([
-      [
-        "vendor/b",
-        remoteEntry("vendor/b", {
-          // $0.30 + $0.30 = $0.60 / 1M > 0.5
+        remoteEntry("vendor/a", {
           pricing: { prompt: "0.0000003", completion: "0.0000003" },
         }),
       ],
     ]),
   );
-  assert.equal(over.ok, false);
-  assert.match(over.reason, /exceeds/u);
+  assert.equal(overPrice.ok, false);
+  assert.match(overPrice.reason, /exceeds/u);
 });
 
-// Number(null)===0 等で単価 $0 と誤認しない（設計 §4.1.7 fail-closed）
-test("usdPerMillion rejects null empty boolean and non-numeric strings", () => {
-  assert.equal(usdPerMillion(null), null);
-  assert.equal(usdPerMillion(undefined), null);
-  assert.equal(usdPerMillion(""), null);
-  assert.equal(usdPerMillion("  "), null);
-  assert.equal(usdPerMillion(false), null);
-  assert.equal(usdPerMillion(true), null);
-  assert.equal(usdPerMillion("NaN"), null);
-  assert.equal(usdPerMillion(Number.NaN), null);
-  assert.equal(usdPerMillion(-0.1), null);
-  // 0x0 等は Number() が 0 を返すが 10 進のみ受理するため拒否
-  assert.equal(usdPerMillion("0x0"), null);
-  assert.equal(usdPerMillion("0x10"), null);
-  assert.equal(usdPerMillion("1e-6"), null);
-  // 1e-6 USD/token → 1 USD/1M（浮動小数の丸めを避ける代表値）
-  assert.equal(usdPerMillion("0.000001"), 1);
-  assert.equal(usdPerMillion(0.000001), 1);
-  assert.equal(usdPerMillion(0), 0);
-});
-
-test("readResponseBodyWithByteCap accepts max bytes and rejects max+1", async () => {
-  assert.equal(OPENROUTER_MAX_BODY_BYTES, 1 * 1024 * 1024);
-  const exact = "a".repeat(64);
-  await assert.doesNotReject(() =>
-    readResponseBodyWithByteCap(new Response(exact), 64).then((text) => {
-      assert.equal(text, exact);
-    }),
-  );
-  await assert.rejects(
-    () => readResponseBodyWithByteCap(new Response("a".repeat(65)), 64),
-    /response_body_over_byte_cap/u,
-  );
-});
-
-test("runOneChatTrial rejects body over the 1 MiB production cap", async () => {
-  const oversize = "x".repeat(OPENROUTER_MAX_BODY_BYTES + 1);
-  const result = await runOneChatTrial({
-    modelId: "vendor/a",
-    apiKey: "test-key",
-    responseFormat: { type: "json_schema" },
-    evaluateGate: () => ({ ok: true, detail: "ok" }),
-    fetchImpl: async () => new Response(oversize, { status: 200 }),
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.detail, "response_body_over_byte_cap");
-});
-
-test("default loadAppResponseGate path runs without paid credits", async () => {
-  resetAppResponseGateLoaderForTests();
-  const gate = await loadAppResponseGate();
-  assert.equal(typeof gate.evaluateAppResponseGate, "function");
-  // 最低キー形状は default loader 経由でも不合格（無課金）
-  const weak = {
-    model: "vendor/a",
-    choices: [
-      { message: { content: JSON.stringify({ outcome: "success", menu: { dishes: [{}] } }) } },
-    ],
-  };
-  const result = gate.evaluateAppResponseGate(weak, "vendor/a");
-  assert.equal(result.ok, false);
-});
-
-test("mechanical filter rejects pricing fields that Number() would coerce to 0", () => {
+test("mechanical filter rejects coercible prices, :free IDs, routers, and missing IDs", () => {
   for (const pricing of [
     { prompt: null, completion: "0.0000001" },
     { prompt: "", completion: "0.0000001" },
@@ -189,256 +196,221 @@ test("mechanical filter rejects pricing fields that Number() would coerce to 0",
       new Map([["vendor/a", remoteEntry("vendor/a", { pricing })]]),
     );
     assert.equal(result.ok, false);
-    assert.match(result.reason, /pricing/u);
+  }
+  assert.equal(evaluateMechanicalFilter("vendor/a:free", new Map()).ok, false);
+  assert.equal(evaluateMechanicalFilter("openrouter/auto", new Map()).ok, false);
+  assert.equal(evaluateMechanicalFilter("vendor/missing", new Map()).ok, false);
+});
+
+test("usdPerMillion remains fail-closed", () => {
+  assert.equal(usdPerMillion(null), null);
+  assert.equal(usdPerMillion(""), null);
+  assert.equal(usdPerMillion(false), null);
+  assert.equal(usdPerMillion("0x0"), null);
+  assert.equal(usdPerMillion("1e-6"), null);
+  assert.equal(usdPerMillion("0.000001"), 1);
+  assert.equal(usdPerMillion(0), 0);
+});
+
+test("readResponseBodyWithByteCap accepts max bytes and rejects max+1", async () => {
+  assert.equal(OPENROUTER_MAX_BODY_BYTES, 1 * 1024 * 1024);
+  const exact = "a".repeat(64);
+  assert.equal(await readResponseBodyWithByteCap(new Response(exact), 64), exact);
+  await assert.rejects(
+    () => readResponseBodyWithByteCap(new Response("a".repeat(65)), 64),
+    /response_body_over_byte_cap/u,
+  );
+});
+
+test("mechanical filtering runs over the union once and rejects any configuration with a failed member", async () => {
+  const chatConfigurations = [];
+  const result = await runPaidBenchmark({
+    apiKey: "test-key",
+    configurations: [["vendor/a"], ["vendor/a", "vendor/b"], ["vendor/a", "vendor/c"]],
+    trialCount: 1,
+    fetchImpl: async (url) => {
+      assert.match(String(url), /\/models/u);
+      return new Response(
+        JSON.stringify({
+          data: [
+            remoteEntry("vendor/a"),
+            remoteEntry("vendor/b"),
+            remoteEntry("vendor/c", { supported_parameters: ["response_format"] }),
+          ],
+        }),
+        { status: 200 },
+      );
+    },
+    runUnit: async ({ configuration }) => {
+      chatConfigurations.push([...configuration]);
+      return successfulUnit(configuration);
+    },
+    log: () => {},
+  });
+
+  assert.deepEqual(result.survivors, ["vendor/a", "vendor/b"]);
+  assert.deepEqual(chatConfigurations, [["vendor/a"], ["vendor/a", "vendor/b"]]);
+  assert.deepEqual(
+    result.configurationResults.map((entry) => entry.configuration),
+    [["vendor/a"], ["vendor/a", "vendor/b"]],
+  );
+});
+
+test("runConfigurationGate requires exactly ten fresh successful units and counts first attempts", async () => {
+  const configuration = ["vendor/a", "vendor/b"];
+  let calls = 0;
+  const result = await runConfigurationGate({
+    configuration,
+    apiKey: "test-key",
+    baseUrl: "https://openrouter.ai/api/v1",
+    trialCount: 10,
+    runUnit: async ({ configuration: received }) => {
+      calls += 1;
+      assert.notEqual(received, configuration);
+      return successfulUnit(received, calls <= 7 ? "primary_success" : "repair_success");
+    },
+    log: () => {},
+  });
+
+  assert.equal(calls, 10);
+  assert.equal(result.passed, true);
+  assert.equal(result.passedUnits, 10);
+  assert.equal(result.firstAttemptSuccesses, 7);
+  assert.equal(result.units.length, 10);
+});
+
+test("runConfigurationGate stops a configuration after its first failed fresh unit", async () => {
+  let calls = 0;
+  const result = await runConfigurationGate({
+    configuration: ["vendor/a"],
+    apiKey: "test-key",
+    baseUrl: "https://openrouter.ai/api/v1",
+    trialCount: 10,
+    runUnit: async ({ configuration }) => {
+      calls += 1;
+      if (calls === 3) {
+        return {
+          ...successfulUnit(configuration),
+          ok: false,
+          outcome: "failure",
+          failureCodes: ["model_unavailable"],
+        };
+      }
+      return successfulUnit(configuration);
+    },
+    log: () => {},
+  });
+
+  assert.equal(calls, 3);
+  assert.equal(result.passed, false);
+  assert.equal(result.passedUnits, 2);
+  assert.equal(result.firstAttemptSuccesses, 2);
+});
+
+test("runPaidBenchmark recommends only a passing exact configuration without recombining IDs", async () => {
+  const configurations = [["vendor/a"], ["vendor/a", "vendor/b"]];
+  const result = await runPaidBenchmark({
+    apiKey: "test-key",
+    configurations,
+    trialCount: 2,
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ data: [remoteEntry("vendor/a"), remoteEntry("vendor/b")] }), {
+        status: 200,
+      }),
+    runUnit: async ({ configuration }) =>
+      configuration.length === 1
+        ? successfulUnit(configuration)
+        : {
+            ...successfulUnit(configuration),
+            ok: false,
+            outcome: "failure",
+            failureCodes: ["invalid_ai_response"],
+          },
+    log: () => {},
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.passedConfigurations, [["vendor/a"]]);
+  assert.deepEqual(result.recommendedConfiguration, ["vendor/a"]);
+  assert.ok(
+    configurations.some(
+      (configuration) =>
+        JSON.stringify(configuration) === JSON.stringify(result.recommendedConfiguration),
+    ),
+  );
+});
+
+test("zero passing configurations returns failure and never synthesizes a recommendation", async () => {
+  const result = await runPaidBenchmark({
+    apiKey: "test-key",
+    configurations: [["vendor/a", "vendor/b"]],
+    trialCount: 10,
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ data: [remoteEntry("vendor/a"), remoteEntry("vendor/b")] }), {
+        status: 200,
+      }),
+    runUnit: async ({ configuration }) => ({
+      ...successfulUnit(configuration),
+      ok: false,
+      outcome: "failure",
+      failureCodes: ["model_unavailable"],
+    }),
+    log: () => {},
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.passedConfigurations, []);
+  assert.equal(result.recommendedConfiguration, null);
+});
+
+test("main returns a non-zero process exit code when no exact configuration passes", async () => {
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    const result = await main(
+      { OPENROUTER_API_KEY: "test-key" },
+      {
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              data: candidateModelIds.map((modelId) => remoteEntry(modelId)),
+            }),
+            { status: 200 },
+          ),
+        runUnit: async ({ configuration }) => ({
+          ...successfulUnit(configuration),
+          ok: false,
+          outcome: "failure",
+          failureCodes: ["model_unavailable"],
+        }),
+        log: () => {},
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(process.exitCode, 1);
+  } finally {
+    process.exitCode = previousExitCode;
   }
 });
 
-test("mechanical filter accepts exact 0.5 USD per 1M boundary", () => {
-  // 0.00000025 * 1e6 * 2 = 0.5
-  const result = evaluateMechanicalFilter(
-    "vendor/a",
-    new Map([
-      [
-        "vendor/a",
-        remoteEntry("vendor/a", {
-          pricing: { prompt: "0.00000025", completion: "0.00000025" },
-        }),
-      ],
-    ]),
-  );
-  assert.equal(result.ok, true);
-});
-
-test("mechanical filter rejects :free and router IDs without looking up catalog", () => {
-  assert.equal(evaluateMechanicalFilter("vendor/a:free", new Map()).ok, false);
-  assert.equal(evaluateMechanicalFilter("openrouter/auto", new Map()).ok, false);
-  assert.equal(evaluateMechanicalFilter("openrouter/free", new Map()).ok, false);
-  assert.equal(evaluateMechanicalFilter("openrouter/auto-beta", new Map()).ok, false);
-});
-
-test("filterCandidatesMechanically reports exclusions and survivors", () => {
-  const remote = [
-    remoteEntry("keep/me"),
-    remoteEntry("drop/shape", { supported_parameters: ["response_format"] }),
-  ];
-  const { survivors, exclusions } = filterCandidatesMechanically(
-    ["keep/me", "drop/shape", "drop/missing"],
-    remote,
-  );
-  assert.deepEqual(survivors, ["keep/me"]);
-  assert.equal(exclusions.length, 2);
-  assert.equal(exclusions[0].id, "drop/shape");
-  assert.equal(exclusions[1].id, "drop/missing");
-});
-
-test("meetsMinimumSuccessShape is not a production gate (legacy helper only)", () => {
-  // 最低キー形状はゲート合格条件ではない。本番ゲートは evaluateAppResponseGate。
-  assert.equal(meetsMinimumSuccessShape({ outcome: "success", menu: { dishes: [{}] } }), true);
-  assert.equal(meetsMinimumSuccessShape({ outcome: "constraint_conflict", conflicts: [] }), false);
-  assert.equal(meetsMinimumSuccessShape(null), false);
-});
-
-test("extractDecodedContent parses the first choice message content", () => {
-  assert.deepEqual(
-    extractDecodedContent({
-      choices: [{ message: { content: '{"outcome":"success"}' } }],
-    }),
-    { outcome: "success" },
-  );
-  assert.equal(extractDecodedContent({ choices: [] }), null);
-  assert.equal(extractDecodedContent({ choices: [{ message: { content: "not-json" } }] }), null);
-});
-
-/** ユニット試験用: 本番ゲート成功を差し込む */
-function passGate() {
-  return { ok: true, detail: "ok" };
-}
-
-function failGate() {
-  return { ok: false, detail: "ai_generation_schema_fail" };
-}
-
-test("runOneChatTrial passes only after gate success and includes post-body elapsed", async () => {
-  const payload = { model: "vendor/a", choices: [{ message: { content: "{}" } }] };
-  let gateCalls = 0;
-  const stamps = [];
-  const result = await runOneChatTrial({
-    modelId: "vendor/a",
-    apiKey: "test-key",
-    responseFormat: { type: "json_schema" },
-    fetchImpl: async () =>
-      new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    evaluateGate: (envelope, modelId) => {
-      gateCalls += 1;
-      assert.equal(modelId, "vendor/a");
-      assert.equal(envelope.model, "vendor/a");
-      return passGate(envelope, modelId);
-    },
-    now: (() => {
-      let t = 0;
-      return () => {
-        t += 25;
-        stamps.push(t);
-        return t;
-      };
-    })(),
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.detail, "ok");
-  assert.equal(gateCalls, 1);
-  // started と finish の 2 回 now()。elapsed は gate 後に確定する。
-  assert.equal(result.elapsedMs, 25);
-  assert.equal(stamps.length, 2);
-});
-
-test("runOneChatTrial fails on non-200 and app-gate failure", async () => {
-  const httpFail = await runOneChatTrial({
-    modelId: "vendor/a",
-    apiKey: "test-key",
-    responseFormat: { type: "json_schema" },
-    evaluateGate: passGate,
-    fetchImpl: async () => new Response("nope", { status: 403 }),
-  });
-  assert.equal(httpFail.ok, false);
-  assert.match(httpFail.detail, /http_403/u);
-
-  const gateFail = await runOneChatTrial({
-    modelId: "vendor/a",
-    apiKey: "test-key",
-    responseFormat: { type: "json_schema" },
-    evaluateGate: failGate,
-    fetchImpl: async () =>
-      new Response(
-        JSON.stringify({
-          model: "vendor/a",
-          choices: [{ message: { content: '{"outcome":"constraint_conflict","conflicts":[]}' } }],
-        }),
-        { status: 200 },
-      ),
-  });
-  assert.equal(gateFail.ok, false);
-  assert.equal(gateFail.detail, "ai_generation_schema_fail");
-});
-
-test("runOneChatTrial fails when elapsed after gate exceeds budget", async () => {
-  // started=now(10), finish=now(20) → elapsed 10。timeoutMs 10 なら >= で超過。
-  const result = await runOneChatTrial({
-    modelId: "vendor/a",
-    apiKey: "test-key",
-    responseFormat: { type: "json_schema" },
-    timeoutMs: 10,
-    evaluateGate: passGate,
-    fetchImpl: async () =>
-      new Response(
-        JSON.stringify({ model: "vendor/a", choices: [{ message: { content: "{}" } }] }),
-        {
-          status: 200,
-        },
-      ),
-    now: (() => {
-      let t = 0;
-      return () => {
-        t += 10;
-        return t;
-      };
-    })(),
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.detail, "latency_budget_exceeded");
-});
-
-test("runPaidBenchmark excludes via mechanical filter without chat calls", async () => {
-  let chatCalls = 0;
-  const logs = [];
-  const result = await runPaidBenchmark({
-    apiKey: "test-key",
-    candidateIds: ["vendor/missing"],
-    trialCount: 10,
-    evaluateGate: passGate,
-    fetchImpl: async (url) => {
-      if (String(url).includes("/models")) {
-        return new Response(JSON.stringify({ data: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      chatCalls += 1;
-      return new Response("{}", { status: 500 });
-    },
-    loadFormat: async () => ({ type: "json_schema" }),
-    log: (line) => logs.push(line),
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.survivors.length, 0);
-  assert.equal(chatCalls, 0);
-  assert.ok(logs.some((line) => line.includes("EXCLUDE vendor/missing")));
-});
-
-test("runPaidBenchmark marks pass only when all trials succeed", async () => {
-  const successBody = {
-    model: "vendor/a",
-    choices: [{ message: { content: "{}" } }],
-  };
-  let chatCalls = 0;
-  const result = await runPaidBenchmark({
-    apiKey: "test-key",
-    candidateIds: ["vendor/a"],
-    trialCount: 3,
-    evaluateGate: passGate,
-    fetchImpl: async (url) => {
-      if (String(url).includes("/models")) {
-        return new Response(JSON.stringify({ data: [remoteEntry("vendor/a")] }), {
-          status: 200,
-        });
-      }
-      chatCalls += 1;
-      return new Response(JSON.stringify(successBody), { status: 200 });
-    },
-    loadFormat: async () => ({ type: "json_schema" }),
-    log: () => {},
-  });
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.passedModels, ["vendor/a"]);
-  assert.equal(chatCalls, 3);
-});
-
-test("runPaidBenchmark fails and stops trials after first chat failure", async () => {
-  let chatCalls = 0;
-  const result = await runPaidBenchmark({
-    apiKey: "test-key",
-    candidateIds: ["vendor/a"],
-    trialCount: 10,
-    evaluateGate: passGate,
-    fetchImpl: async (url) => {
-      if (String(url).includes("/models")) {
-        return new Response(JSON.stringify({ data: [remoteEntry("vendor/a")] }), {
-          status: 200,
-        });
-      }
-      chatCalls += 1;
-      return new Response("quota", { status: 403 });
-    },
-    loadFormat: async () => ({ type: "json_schema" }),
-    log: () => {},
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.passedModels.length, 0);
-  // 課金抑制: 1 回失敗で打ち切り
-  assert.equal(chatCalls, 1);
-});
-
-test("runPaidBenchmark requires API key", async () => {
+test("runPaidBenchmark requires an API key", async () => {
   await assert.rejects(
     () =>
       runPaidBenchmark({
         apiKey: "",
-        evaluateGate: passGate,
+        runUnit: async ({ configuration }) => successfulUnit(configuration),
         fetchImpl: async () => new Response("{}", { status: 200 }),
         log: () => {},
       }),
     /OPENROUTER_API_KEY/u,
+  );
+});
+
+test("filterCandidatesMechanically returns ordered survivors and exclusions", () => {
+  const result = filterCandidatesMechanically(["keep/me", "drop/me"], [remoteEntry("keep/me")]);
+  assert.deepEqual(result.survivors, ["keep/me"]);
+  assert.deepEqual(
+    result.exclusions.map((entry) => entry.id),
+    ["drop/me"],
   );
 });

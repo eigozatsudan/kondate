@@ -8,6 +8,7 @@ import {
   releaseQuota,
   type GenerationCommand,
   type GenerationFailureCode,
+  type GenerationIntegrityContextV2,
   type GenerationStatusData,
   type MenuValidationResult,
   type ValidatedMenu,
@@ -121,6 +122,8 @@ export type GenerationDependencies = {
   user: AuthenticatedUser;
   repository: Omit<GenerationRepository, "userClient">;
   models: readonly string[];
+  /** repository miss時の権威integrity解決。productionはadmin読取、benchmarkは固定非PII値。 */
+  resolveIntegrityContext?: (command: GenerationCommand) => Promise<GenerationIntegrityContextV2>;
   loadExecutionContext(
     command: GenerationCommand,
     requestId: string,
@@ -438,6 +441,8 @@ function createBaseGenerationDeps(
     user,
     repository: createGenerationRepository(user),
     models: env.openRouter.models,
+    resolveIntegrityContext: (command) =>
+      resolveGenerationIntegrityContext(getSupabaseAdmin(), user.userId, command),
     loadExecutionContext: async (command, requestId, deadlineAtMonotonicMs) => {
       if (command.kind !== "new_menu") {
         throw new HttpError(
@@ -673,15 +678,16 @@ export async function runGeneration(
   command: GenerationCommand,
 ): Promise<GenerationStatusData> {
   const key = command.request.idempotencyKey;
+  const resolveIntegrity =
+    deps.resolveIntegrityContext ??
+    ((input: GenerationCommand) =>
+      resolveGenerationIntegrityContext(getSupabaseAdmin(), deps.user.userId, input));
   // ledger-first: hit は保存済み integrity だけで replay し、live draft/menu を読まない
   const lookup = await deps.repository.lookup(key);
   const reserved =
     lookup.kind === "hit"
       ? await deps.repository.replayExisting(command, lookup)
-      : await deps.repository.reserveNew(
-          command,
-          await resolveGenerationIntegrityContext(getSupabaseAdmin(), deps.user.userId, command),
-        );
+      : await deps.repository.reserveNew(command, await resolveIntegrity(command));
   const hydrate = async () => {
     try {
       return toGenerationStatus(await deps.repository.status(key), key);

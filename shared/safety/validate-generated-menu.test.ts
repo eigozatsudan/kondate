@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { GeneratedMenu } from "../contracts/generation.js";
+import { menuValidationIssueCodes, type GeneratedMenu } from "../contracts/generation.js";
 import { collectPlannerRequestText } from "../contracts/planner.js";
 import { currentFoodSafetyRulesV1 } from "./current-food-safety-rules.v1.js";
 import { validateGeneratedMenu } from "./validate-generated-menu.js";
@@ -1217,11 +1217,16 @@ it("rejects idea menus with adaptations or servings mismatch", () => {
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu({ servings: 2 }), context), [
     "target_member_mismatch",
   ]);
-  expectIssueCodes(
-    validateGeneratedMenu(
-      makeGeneratedMenu({ servings: 3, adaptations: [], labelConfirmations: [] }),
-      context,
-    ),
-    ["servings_mismatch"],
+  const servingsMismatch = validateGeneratedMenu(
+    makeGeneratedMenu({ servings: 3, adaptations: [], labelConfirmations: [] }),
+    context,
   );
+  expectIssueCodes(servingsMismatch, ["servings_mismatch"]);
+  if (servingsMismatch.ok) throw new Error("人数不一致の検証エラーを期待しました");
+  expect(servingsMismatch.issues).toContainEqual({
+    code: "servings_mismatch",
+    path: "servings",
+    message: "人数が指定と一致しません",
+  });
+  expect(menuValidationIssueCodes).toContain(servingsMismatch.issues[0]?.code);
 });

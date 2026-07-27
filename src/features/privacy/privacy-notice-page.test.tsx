@@ -162,3 +162,19 @@ it("offers emergency menus when skipping AI consent (B-I10)", () => {
   const link = screen.getByRole("link", { name: "AIなしの緊急献立を見る" });
   expect(link).toHaveAttribute("href", "/emergency-menus");
 });
+
+// F4: 有料を含み得る OpenRouter / 設定モデル提供者への送信を表示し、旧 free-only 文言を出さない
+it("explains OpenRouter, configured model providers, and possible paid services without free-only copy", () => {
+  renderPrivacyContent({ saving: false, onAccept: vi.fn(), onSkip: vi.fn() });
+  const providerSection = screen.getByRole("heading", {
+    name: "送信先について",
+  }).nextElementSibling;
+  expect(providerSection?.textContent).toContain("OpenRouter");
+  expect(providerSection?.textContent).toContain("設定されたAIモデルの提供者");
+  expect(providerSection?.textContent).toContain("有料");
+  // 旧 free-only 方針の文言を残さない
+  expect(document.body.textContent).not.toContain("無料モデルのみ");
+  expect(document.body.textContent).not.toContain("無料のAIだけ");
+  expect(document.body.textContent).not.toContain(":free");
+  expect(document.body.textContent).not.toContain("openrouter/auto");
+});

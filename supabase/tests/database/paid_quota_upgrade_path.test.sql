@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 -- Plan 8: 旧 5/12 CHECK 上の合法行を seed し、upgrade_ai_daily_quota_checks_to_3_6 が
--- 失敗せず・当日超過を clamp せず・安全な過去日だけ掃除することを検証する。
+-- 失敗せず・当日超過を clamp せず・過去日集計も非破壊で保持することを検証する。
 -- lock 後 recheck / 日跨ぎ active reservation 保持 / success4·attempt7 並行 cutover も固定する。
 
 begin;
@@ -181,22 +181,24 @@ select lives_ok(
 
 select is(
   (
-    select count(*)::integer
+    select success_count
     from private.ai_user_daily_usage
     where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+      and usage_day = private.ai_jst_day(now()) - 1
   ),
-  0,
-  'past-day success usage rows are deleted (not a same-day quota reset)'
+  5,
+  'past-day success_count=5 is preserved (non-destructive upgrade)'
 );
 
 select is(
   (
-    select count(*)::integer
+    select sent_count
     from private.ai_user_daily_external_attempts
     where user_id = 'a1000000-0000-4000-8000-000000000001'::uuid
+      and usage_day = private.ai_jst_day(now()) - 1
   ),
-  0,
-  'past-day attempt rows are deleted'
+  12,
+  'past-day sent_count=12 is preserved (non-destructive upgrade)'
 );
 
 select is(

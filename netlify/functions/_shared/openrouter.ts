@@ -1,7 +1,9 @@
 import { z } from "zod";
 import {
   aiGenerationResponseSchema,
+  aiGenerationWireResponseSchema,
   menuResponseFormat,
+  toAiGenerationResponse,
   type AiGenerationResponse,
 } from "../../../shared/contracts/generation.js";
 import {
@@ -26,6 +28,15 @@ export type OpenRouterGenerationInput = {
   /** 省略時は full_menu（Plan 3 互換） */
   mode?: GenerationWireMode;
 };
+
+export type OpenRouterGenerationRuntimeInput = Readonly<{
+  apiKey: string;
+  baseUrl: string;
+  models: readonly string[];
+  timeoutMs: number;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+}>;
 
 export type OpenRouterGenerationResult =
   | { mode: "full_menu"; output: AiGenerationResponse; modelId: string }
@@ -52,6 +63,11 @@ const responseSchema = z.object({
     .min(1),
 });
 const modelOnlySchema = z.object({ model: z.string().min(1) });
+const evidenceModelIdSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u);
 const httpDatePattern = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/u;
 
 /** 置換料理モードの JSON Schema response_format */
@@ -91,12 +107,49 @@ const maxRetryAfterSeconds = 86_400;
 export const OPENROUTER_MAX_BODY_BYTES = 1 * 1024 * 1024;
 
 /**
+ * byte cap後のcancelはbest-effort cleanupとして扱い、失敗でcap分類を失わない。
+ * 永続pendingでも送信Abortを優先して抜け、登録したlistenerを全経路で除去する。
+ */
+async function cancelBodyReaderWithAbort(
+  cancel: () => Promise<void>,
+  signal?: AbortSignal,
+): Promise<"cancel_settled" | "aborted"> {
+  const cancelSettled = Promise.resolve()
+    .then(cancel)
+    .then(
+      () => "cancel_settled" as const,
+      () => "cancel_settled" as const,
+    );
+  if (signal === undefined) return cancelSettled;
+  const signalIsAborted = (): boolean => signal.aborted;
+  if (signalIsAborted()) return "aborted";
+
+  let resolveAbort!: (value: "aborted") => void;
+  const aborted = new Promise<"aborted">((resolve) => {
+    resolveAbort = resolve;
+  });
+  const onAbort = (): void => {
+    resolveAbort("aborted");
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  // aborted確認とlistener登録の間に発火した場合も取りこぼさない。
+  if (signalIsAborted()) onAbort();
+  try {
+    const result = await Promise.race([cancelSettled, aborted]);
+    return result === "aborted" || signalIsAborted() ? "aborted" : "cancel_settled";
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
  * 応答 body をストリーム読みしつつ固定バイト上限で打ち切る。
  * 超過時は invalid_ai_response（修理適格の invalid 経路へ）。
  */
 export async function readResponseBodyWithByteCap(
   response: Response,
   maxBytes: number = OPENROUTER_MAX_BODY_BYTES,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (response.body === null) {
     const text = await response.text();
@@ -114,8 +167,10 @@ export async function readResponseBodyWithByteCap(
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel();
-        throw new OpenRouterCallError("invalid_ai_response");
+        const cancelResult = await cancelBodyReaderWithAbort(() => reader.cancel(), signal);
+        throw new OpenRouterCallError(
+          cancelResult === "aborted" ? "generation_timeout" : "invalid_ai_response",
+        );
       }
       chunks.push(value);
     }
@@ -153,57 +208,68 @@ function retryAt(response: Response, now: number): string | null {
   return new Date(Math.min(parsed, maxTarget)).toISOString();
 }
 
-export async function sendMenuGeneration(
+async function sendMenuGenerationWithRuntime(
   input: OpenRouterGenerationInput,
+  runtime: OpenRouterGenerationRuntimeInput,
 ): Promise<OpenRouterGenerationResult> {
   const mode: GenerationWireMode = input.mode ?? "full_menu";
-  const config = getServerEnv().openRouter;
+  const configuredModels = runtime.models;
   // 有料 allowlist ガード: router 集合・空・重複は常に拒否。
   // real API base 上の :free と mock/ も拒否（mock 例外は exact mock base のみ）。
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   const rejectsRouterOrEmptyOrDup =
-    config.models.length === 0 ||
-    new Set(config.models).size !== config.models.length ||
-    config.models.some((model) => routers.has(model));
+    configuredModels.length === 0 ||
+    new Set(configuredModels).size !== configuredModels.length ||
+    configuredModels.some((model) => routers.has(model));
   const rejectsMockOrFreeOnRealApi =
-    !isExactLocalMockBaseUrl(config.baseUrl) &&
-    config.models.some((model) => model.endsWith(":free") || model.startsWith("mock/"));
+    !isExactLocalMockBaseUrl(runtime.baseUrl) &&
+    configuredModels.some((model) => model.endsWith(":free") || model.startsWith("mock/"));
   if (rejectsRouterOrEmptyOrDup || rejectsMockOrFreeOnRealApi) {
     throw new OpenRouterCallError("model_unavailable");
   }
 
   const excluded = new Set(input.excludedModelIds ?? []);
-  const models = config.models.filter((model) => !excluded.has(model));
+  const models = configuredModels.filter((model) => !excluded.has(model));
   if (models.length === 0) {
     throw new OpenRouterCallError("model_unavailable");
   }
   if (!Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0) {
     throw new OpenRouterCallError("generation_timeout");
   }
-  if (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0) {
+  if (!Number.isFinite(runtime.timeoutMs) || runtime.timeoutMs <= 0) {
     throw new OpenRouterCallError("generation_timeout");
   }
 
-  const timeoutMs = Math.min(config.timeoutMs, input.timeoutMs);
-  // 並行安全: ALS 経由のリクエスト単位シナリオを優先し、無いときだけ env（単体テスト用）
-  const testScenario = readOpenRouterMockScenario() ?? process.env.OPENROUTER_MOCK_SCENARIO;
+  const timeoutMs = Math.min(runtime.timeoutMs, input.timeoutMs);
+  const fetchImpl = runtime.fetchImpl ?? fetch;
+  const monotonicNow = runtime.now ?? (() => performance.now());
   const controller = new AbortController();
+  const startedAt = monotonicNow();
   const timeout = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
-
-  const responseFormat =
-    mode === "replacement_dish" ? dishRegenerationResponseFormat : menuResponseFormat;
+  const assertWithinDeadline = (): void => {
+    if (controller.signal.aborted || monotonicNow() - startedAt >= timeoutMs) {
+      throw new OpenRouterCallError("generation_timeout");
+    }
+  };
 
   try {
+    // timer開始後にfetch側の準備を行い、同期処理も送信予算へ含める。
+    // 並行安全: ALS 経由のリクエスト単位シナリオを優先し、無いときだけ env（単体テスト用）
+    const testScenario = readOpenRouterMockScenario() ?? process.env.OPENROUTER_MOCK_SCENARIO;
+    const responseFormat =
+      mode === "replacement_dish" ? dishRegenerationResponseFormat : menuResponseFormat;
+    assertWithinDeadline();
+
     let response: Response;
     try {
-      response = await fetch(`${config.baseUrl}/chat/completions`, {
+      response = await fetchImpl(`${runtime.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${config.apiKey}`,
+          Authorization: `Bearer ${runtime.apiKey}`,
           "Content-Type": "application/json",
-          ...(testScenario && isExactLocalMockBaseUrl(config.baseUrl)
+          ...(testScenario && isExactLocalMockBaseUrl(runtime.baseUrl)
             ? { "X-Kondate-Mock-Scenario": testScenario }
             : {}),
         },
@@ -223,14 +289,19 @@ export async function sendMenuGeneration(
       }
       throw new OpenRouterCallError("model_unavailable");
     }
+    assertWithinDeadline();
 
-    if (!response.ok) {
+    if (response.status !== 200) {
       throw new OpenRouterCallError("model_unavailable", null, retryAt(response, Date.now()));
     }
 
     let rawBody: string;
     try {
-      rawBody = await readResponseBodyWithByteCap(response, OPENROUTER_MAX_BODY_BYTES);
+      rawBody = await readResponseBodyWithByteCap(
+        response,
+        OPENROUTER_MAX_BODY_BYTES,
+        controller.signal,
+      );
     } catch (error) {
       if (error instanceof OpenRouterCallError) throw error;
       if (controller.signal.aborted) {
@@ -238,6 +309,7 @@ export async function sendMenuGeneration(
       }
       throw new OpenRouterCallError("model_unavailable");
     }
+    assertWithinDeadline();
 
     let rawEnvelope: unknown;
     try {
@@ -245,16 +317,23 @@ export async function sendMenuGeneration(
     } catch {
       throw new OpenRouterCallError("invalid_ai_response");
     }
+    assertWithinDeadline();
 
     const knownModel = modelOnlySchema.safeParse(rawEnvelope);
     const modelId = knownModel.success ? knownModel.data.model : null;
     if (modelId !== null && !models.includes(modelId)) {
-      throw new OpenRouterCallError("model_unavailable");
+      const evidenceModelId = evidenceModelIdSchema.safeParse(modelId);
+      throw new OpenRouterCallError(
+        "model_unavailable",
+        evidenceModelId.success ? evidenceModelId.data : null,
+      );
     }
+    assertWithinDeadline();
     const envelope = responseSchema.safeParse(rawEnvelope);
     if (!envelope.success) {
       throw new OpenRouterCallError("invalid_ai_response", modelId);
     }
+    assertWithinDeadline();
 
     const firstChoice = envelope.data.choices[0];
     if (firstChoice === undefined) {
@@ -267,6 +346,7 @@ export async function sendMenuGeneration(
     } catch {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
+    assertWithinDeadline();
 
     if (mode === "replacement_dish") {
       // full_menu ボディを置換モードで拒否（mode 付きの閉じた結果）
@@ -278,21 +358,62 @@ export async function sendMenuGeneration(
       if (!dishOutput.success) {
         throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
       }
-      return {
+      assertWithinDeadline();
+      const result: OpenRouterGenerationResult = {
         mode: "replacement_dish",
         output: dishOutput.data,
         modelId: envelope.data.model,
       };
+      assertWithinDeadline();
+      return result;
     }
 
-    // full_menu: aiGenerationResponseSchema で閉じる。
-    // 置換形が同時に成立する曖昧ボディも full_menu として受理する（mode 優先）。
-    const output = aiGenerationResponseSchema.safeParse(decoded);
-    if (!output.success) {
+    // full_menu は provider wire を検査してから既存の内部 union へ閉じる。
+    const wire = aiGenerationWireResponseSchema.safeParse(decoded);
+    if (!wire.success) {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
-    return { mode: "full_menu", output: output.data, modelId: envelope.data.model };
+    assertWithinDeadline();
+    let output: AiGenerationResponse;
+    try {
+      output = toAiGenerationResponse(wire.data);
+    } catch {
+      throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
+    }
+    assertWithinDeadline();
+    const result: OpenRouterGenerationResult = {
+      mode: "full_menu",
+      output,
+      modelId: envelope.data.model,
+    };
+    assertWithinDeadline();
+    return result;
+  } catch (error) {
+    assertWithinDeadline();
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * production sender と同じ実装へ、ベンチ専用の認証・URL・fetch・単調時計を閉じ込める。
+ * exact models は公開call inputへ出さず、このfactory closureだけへ閉じ込める。
+ */
+export function createOpenRouterGenerationSender(
+  runtime: OpenRouterGenerationRuntimeInput,
+): (input: OpenRouterGenerationInput) => Promise<OpenRouterGenerationResult> {
+  return async (input) => sendMenuGenerationWithRuntime(input, runtime);
+}
+
+export async function sendMenuGeneration(
+  input: OpenRouterGenerationInput,
+): Promise<OpenRouterGenerationResult> {
+  const config = getServerEnv().openRouter;
+  return sendMenuGenerationWithRuntime(input, {
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    models: config.models,
+    timeoutMs: config.timeoutMs,
+  });
 }

@@ -209,6 +209,15 @@ function makeDeps(
     user: { userId: "85000000-0000-4000-8000-000000000001", accessToken: "token" },
     repository: overrides.repository ?? makeRepository(),
     models,
+    resolveIntegrityContext: vi.fn(() =>
+      Promise.resolve({
+        kind: "new_menu" as const,
+        targetMode: "household" as const,
+        servings: null,
+        targetMemberIds: ["90000000-0000-4000-8000-000000000001"] as const,
+        sourceMenuVersion: null,
+      }),
+    ),
     loadExecutionContext: vi.fn(() =>
       Promise.resolve(makeNewMenuExecutionContext({ generationContext: context })),
     ),
@@ -1394,6 +1403,24 @@ describe("runGeneration", () => {
     expect(repository.markSent).not.toHaveBeenCalled();
   });
 
+  it("uses the injected integrity resolver for a fresh miss reservation", async () => {
+    const repository = makeRepository();
+    const integrity = {
+      kind: "new_menu" as const,
+      targetMode: "idea" as const,
+      servings: 2,
+      targetMemberIds: [] as const,
+      sourceMenuVersion: null,
+    };
+    const resolveIntegrityContext = vi.fn(() => Promise.resolve(integrity));
+
+    await runGeneration(makeDeps({ repository, resolveIntegrityContext }), command);
+
+    expect(resolveIntegrityContext).toHaveBeenCalledWith(command);
+    expect(repository.reserveNew).toHaveBeenCalledWith(command, integrity);
+    expect(repository.replayExisting).not.toHaveBeenCalled();
+  });
+
   it("surfaces synthetic generation_in_progress without hydrating not_started", async () => {
     // 台帳に rejected key の行は無い。status(key) は not_started を返すが、
     // POST 応答は reserve 合成 payload の安定 code を優先する。
@@ -1644,6 +1671,25 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       status: vi.fn(),
     });
     loadGenerationContextMock.mockReset();
+  });
+
+  it("keeps the production integrity resolver wired to the current admin lookup", async () => {
+    const integrity = {
+      kind: "new_menu" as const,
+      targetMode: "household" as const,
+      servings: null,
+      targetMemberIds: ["90000000-0000-4000-8000-000000000001"] as const,
+      sourceMenuVersion: null,
+    };
+    vi.mocked(resolveGenerationIntegrityContext).mockResolvedValueOnce(integrity);
+
+    const deps = createGenerationDeps(user, timing);
+    const resolveIntegrityContext = deps.resolveIntegrityContext;
+    if (resolveIntegrityContext === undefined) {
+      throw new Error("production integrity resolver missing");
+    }
+    await expect(resolveIntegrityContext(command)).resolves.toEqual(integrity);
+    expect(resolveGenerationIntegrityContext).toHaveBeenCalledWith({}, user.userId, command);
   });
 
   it("returns a full new_menu GenerationExecutionContext with regeneration null", async () => {
@@ -2527,10 +2573,15 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
       const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
       // integrity 境界が既に拒否したあとの伝播だけを見る（payload 自体は組み立てない）
-      vi.mocked(resolveGenerationIntegrityContext).mockRejectedValueOnce(
-        new HttpError(422, "invalid_request", message),
+      const resolveIntegrityContext = vi.fn(() =>
+        Promise.reject(new HttpError(422, "invalid_request", message)),
       );
-      const deps = makeDeps({ repository, callOpenRouter, loadExecutionContext });
+      const deps = makeDeps({
+        repository,
+        callOpenRouter,
+        loadExecutionContext,
+        resolveIntegrityContext,
+      });
 
       await expect(runGeneration(deps, command)).rejects.toMatchObject({
         code: "invalid_request",

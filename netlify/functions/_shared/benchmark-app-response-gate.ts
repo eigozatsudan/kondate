@@ -6,8 +6,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
-  aiGenerationResponseSchema,
+  aiGenerationWireResponseSchema,
+  toAiGenerationResponse,
   type AiGenerationResponse,
+  type MenuValidationIssueCode,
 } from "../../../shared/contracts/generation.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
@@ -63,13 +65,18 @@ export function createBenchGenerationContext(): GenerationContext {
 }
 
 export type AppGateResult =
-  { ok: true; detail: "ok"; decoded: AiGenerationResponse } | { ok: false; detail: string };
+  | { ok: true; detail: "ok"; decoded: AiGenerationResponse }
+  | {
+      ok: false;
+      detail: string;
+      validationCodes?: readonly MenuValidationIssueCode[];
+    };
 
 /**
  * 本番相当の応答受理判定。
  * - envelope.model が要求 modelId と一致
  * - openrouter response envelope schema
- * - content の aiGenerationResponseSchema
+ * - content の wire schema と既存内部 union への adapter
  * - success 時のみ materializeAiGeneratedMenu + validateGeneratedMenu
  */
 export function evaluateAppResponseGate(
@@ -103,20 +110,30 @@ export function evaluateAppResponseGate(
     return { ok: false, detail: "content_json_fail" };
   }
 
-  const decoded = aiGenerationResponseSchema.safeParse(decodedUnknown);
-  if (!decoded.success) {
+  const wire = aiGenerationWireResponseSchema.safeParse(decodedUnknown);
+  if (!wire.success) {
+    return { ok: false, detail: "ai_generation_schema_fail" };
+  }
+  let decoded: AiGenerationResponse;
+  try {
+    decoded = toAiGenerationResponse(wire.data);
+  } catch {
     return { ok: false, detail: "ai_generation_schema_fail" };
   }
 
-  if (decoded.data.outcome !== "success") {
+  if (decoded.outcome !== "success") {
     return { ok: false, detail: "outcome_not_success" };
   }
 
   try {
-    const menu = materializeAiGeneratedMenu(decoded.data.menu, context, uuid);
+    const menu = materializeAiGeneratedMenu(decoded.menu, context, uuid);
     const validation = validateGeneratedMenu(menu, context);
     if (!validation.ok) {
-      return { ok: false, detail: "validate_generated_menu_fail" };
+      return {
+        ok: false,
+        detail: "validate_generated_menu_fail",
+        validationCodes: validation.issues.map((issue) => issue.code),
+      };
     }
   } catch (error) {
     if (error instanceof GenerationOutputError) {
@@ -125,7 +142,7 @@ export function evaluateAppResponseGate(
     return { ok: false, detail: "materialize_fail" };
   }
 
-  return { ok: true, detail: "ok", decoded: decoded.data };
+  return { ok: true, detail: "ok", decoded };
 }
 
 /** ベンチ合格フィクスチャ（tests / ゲート自己検証用）。完全な provider menu。 */
@@ -233,6 +250,7 @@ export function createBenchPassingEnvelope(modelId: string): unknown {
           content: JSON.stringify({
             outcome: "success",
             menu: createBenchPassingMenuPayload(),
+            conflicts: null,
           }),
         },
       },

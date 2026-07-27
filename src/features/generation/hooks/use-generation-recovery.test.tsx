@@ -722,6 +722,65 @@ describe("useGenerationRecovery", () => {
     expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
   });
 
+  // F6: 旧 privacy / 欠落 privacy の pending を直接配置しても recovery は POST/status せず削除する
+  it.each([
+    [
+      "missing privacyNoticeVersion",
+      {
+        commandVersion: "generation-command.v2" as const,
+        kind: "regenerate_menu" as const,
+        request: {
+          idempotencyKey: KEY_A,
+          sourceMenuId: "60000000-0000-4000-8000-000000000001",
+          changeReason: "simpler" as const,
+          changeReasonCustom: null,
+          expiredPantryConfirmations: [],
+        },
+        ownerUserId: USER_ID,
+        createdAt: FIXED_NOW.toISOString(),
+      },
+    ],
+    [
+      "previous privacyNoticeVersion",
+      {
+        commandVersion: "generation-command.v2" as const,
+        kind: "regenerate_menu" as const,
+        request: {
+          idempotencyKey: KEY_A,
+          sourceMenuId: "60000000-0000-4000-8000-000000000001",
+          changeReason: "simpler" as const,
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-11.v1",
+          expiredPantryConfirmations: [],
+        },
+        ownerUserId: USER_ID,
+        createdAt: FIXED_NOW.toISOString(),
+      },
+    ],
+  ] as const)(
+    "mount recovery clears %s pending without POST or status",
+    async (_label, rawPending) => {
+      storage.setItem("kondate:generation:v2", JSON.stringify(rawPending));
+      mockPost.mockClear();
+      mockStatus.mockClear();
+      mockDispatches.length = 0;
+
+      const recovery = renderHook(() => useGenerationRecovery(), {
+        wrapper: recoveryWrapper,
+      });
+
+      await waitFor(() => {
+        expect(storage.getItem("kondate:generation:v2")).toBeNull();
+      });
+      expect(mockPost).not.toHaveBeenCalled();
+      expect(mockStatus).not.toHaveBeenCalled();
+      expect(recovery.result.current.state.phase).toBe("idle");
+      expect(mockDispatches.filter((event) => event.type === "recover")).toHaveLength(0);
+      // pending 削除後は idle のまま。再同意は privacy 導線へ進む通常フローで行う
+      expect(navigateMock).not.toHaveBeenCalled();
+    },
+  );
+
   // Plan 3: 409 idempotency_payload_mismatch は offline 再POST ループに落とさない。
   it("maps POST idempotency_payload_mismatch to request_conflict without offline retry", async () => {
     mockPost.mockRejectedValueOnce(new Error("idempotency_payload_mismatch"));

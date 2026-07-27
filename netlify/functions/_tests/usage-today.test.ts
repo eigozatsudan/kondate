@@ -138,4 +138,39 @@ describe("usage-today", () => {
     );
     expect(response.status).toBe(500);
   });
+
+  // F5: 旧 5/12 上限を RPC が返しても schema で 500（fail-closed）
+  it("returns 500 when RPC still uses the retired 5/12 limits", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        success: { consumed: 1, limit: 5, remaining: 4 },
+        attempts: { sent: 2, limit: 12, remaining: 10 },
+        shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        globalAvailable: true,
+        retryAt: null,
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(500);
+  });
+
+  it("returns 500 when used + remaining do not balance the limit", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        success: { consumed: 1, limit: 3, remaining: 1 },
+        attempts: { sent: 2, limit: 6, remaining: 4 },
+        shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        globalAvailable: true,
+        retryAt: null,
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(500);
+  });
 });

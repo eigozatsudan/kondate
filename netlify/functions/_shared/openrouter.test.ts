@@ -1,7 +1,9 @@
 import { afterEach, expect, expectTypeOf, it, vi } from "vitest";
+import * as generationContracts from "../../../shared/contracts/generation.js";
 import { menuResponseFormat } from "../../../shared/contracts/generation.js";
 import { parseServerEnv, type ServerEnv } from "./env.js";
 import {
+  createOpenRouterGenerationSender,
   OPENROUTER_MAX_BODY_BYTES,
   OpenRouterCallError,
   readResponseBodyWithByteCap,
@@ -52,14 +54,33 @@ const conflictOutput = {
   ],
 } as const;
 
-function successfulResponse(model: string = models[0]): Response {
+function successfulResponse(model: string = models[0], status: number = 200): Response {
   return new Response(
     JSON.stringify({
       model,
-      choices: [{ message: { content: JSON.stringify(conflictOutput) } }],
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ ...conflictOutput, menu: null }),
+          },
+        },
+      ],
     }),
-    { status: 200 },
+    { status },
   );
+}
+
+function mockElapsed(elapsedMs: number): void {
+  vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(elapsedMs);
+}
+
+function mockDeadlineAtCall(deadlineCall: number): void {
+  let callCount = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => {
+    callCount += 1;
+    if (callCount === 1) return 0;
+    return callCount >= deadlineCall ? 20_000 : 19_999;
+  });
 }
 
 function requestBody(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): unknown {
@@ -84,6 +105,7 @@ it("exposes only the constrained single-argument production input", () => {
   expectTypeOf<Parameters<typeof sendMenuGeneration>>().toEqualTypeOf<
     [OpenRouterGenerationInput]
   >();
+  expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("models");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("model");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("apiKey");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("baseUrl");
@@ -120,6 +142,50 @@ it("uses models fallback, strict schema, and required parameters", async () => {
     stream: false,
   });
   expect(result).toEqual({ mode: "full_menu", output: conflictOutput, modelId: models[1] });
+});
+
+it.each([201, 206])(
+  "rejects HTTP %i even with a valid configured-model response body",
+  async (status) => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(successfulResponse(models[0], status));
+    vi.stubGlobal("fetch", fetchImpl);
+
+    await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+      new OpenRouterCallError("model_unavailable"),
+    );
+  },
+);
+
+it("rejects an empty HTTP 204 response as terminal model unavailability", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 })),
+  );
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+    new OpenRouterCallError("model_unavailable"),
+  );
+});
+
+it("preserves the benchmark factory exact ordered model configuration in the request body", async () => {
+  const injectedModels = ["openai/gpt-4.1-nano", "openai/gpt-oss-120b"] as const;
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successfulResponse(injectedModels[1]));
+  const sender = createOpenRouterGenerationSender({
+    apiKey: "benchmark-key",
+    baseUrl: "https://openrouter.ai/api/v1",
+    models: injectedModels,
+    timeoutMs: 20_000,
+    fetchImpl,
+  });
+
+  await sender({
+    messages: [{ role: "user", content: "data" }],
+    timeoutMs: 1_000,
+  });
+
+  expect((requestBody(fetchImpl) as { models: readonly string[] }).models).toEqual(injectedModels);
 });
 
 it("uses dish regeneration schema in replacement_dish mode and rejects full-menu bodies", async () => {
@@ -191,7 +257,13 @@ it("uses dish regeneration schema in replacement_dish mode and rejects full-menu
     new Response(
       JSON.stringify({
         model: models[0],
-        choices: [{ message: { content: JSON.stringify(conflictOutput) } }],
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ ...conflictOutput, menu: null }),
+            },
+          },
+        ],
       }),
       { status: 200 },
     ),
@@ -237,12 +309,23 @@ it.each([
   });
 });
 
-it("rejects an unconfigured response model without repair metadata", async () => {
+it("keeps a conservative response model ID as terminal evidence", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successfulResponse("other/model"));
   vi.stubGlobal("fetch", fetchImpl);
 
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
-    new OpenRouterCallError("model_unavailable"),
+    new OpenRouterCallError("model_unavailable", "other/model"),
+  );
+});
+
+it("drops an unsafe outside response model from terminal evidence", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(successfulResponse("other/model\nprovider detail"));
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+    new OpenRouterCallError("model_unavailable", null),
   );
 });
 
@@ -257,6 +340,25 @@ it("rejects OpenRouter bodies larger than 1MiB as invalid_ai_response", async ()
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toMatchObject({
     code: "invalid_ai_response",
   });
+});
+
+it("keeps byte-cap classification when reader cancellation rejects", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(OPENROUTER_MAX_BODY_BYTES + 1));
+    },
+    cancel() {
+      return Promise.reject(new Error("cancel cleanup failed"));
+    },
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 })),
+  );
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("invalid_ai_response"),
+  );
 });
 
 it("readResponseBodyWithByteCap accepts exactly max bytes and rejects max+1", async () => {
@@ -276,7 +378,7 @@ it("rejects a malformed envelope from an unconfigured model as terminal", async 
   vi.stubGlobal("fetch", fetchImpl);
 
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
-    new OpenRouterCallError("model_unavailable"),
+    new OpenRouterCallError("model_unavailable", "other/model"),
   );
 });
 
@@ -506,6 +608,149 @@ it("clears the timer after a successful response", async () => {
     modelId: models[0],
   });
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("accepts completion at 19,999ms", async () => {
+  mockElapsed(19_999);
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(successfulResponse()));
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).resolves.toMatchObject({
+    modelId: models[0],
+    output: conflictOutput,
+  });
+});
+
+it("includes fetch-side preparation in the deadline", async () => {
+  mockDeadlineAtCall(2);
+  const fetchImpl = vi.fn<typeof fetch>();
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+it("rejects completion at 20,000ms even before the timer callback can run", async () => {
+  // body・JSON・envelope・wire・adapter は境界内で終え、成功 return 直前だけ境界へ達する。
+  mockDeadlineAtCall(11);
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(successfulResponse()));
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+});
+
+it.each([
+  ["top-level JSON", new Response("not-json", { status: 200 }), 5],
+  ["envelope", new Response(JSON.stringify({ model: models[0], choices: [] }), { status: 200 }), 7],
+  [
+    "content JSON",
+    new Response(
+      JSON.stringify({
+        model: models[0],
+        choices: [{ message: { content: "not-json" } }],
+      }),
+      { status: 200 },
+    ),
+    8,
+  ],
+  ["outside model", successfulResponse("other/model"), 6],
+  [
+    "wire",
+    new Response(
+      JSON.stringify({
+        model: models[0],
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                outcome: "constraint_conflict",
+                menu: null,
+                conflicts: [],
+              }),
+            },
+          },
+        ],
+      }),
+      { status: 200 },
+    ),
+    9,
+  ],
+  [
+    "body",
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error("body connection lost"));
+        },
+      }),
+      { status: 200 },
+    ),
+    4,
+  ],
+] as const)(
+  "prioritizes an elapsed deadline over invalid %s",
+  async (_name, response, deadlineCall) => {
+    // 対象処理の直前までは19,999msに留め、競合errorを捕捉する時点で20,000msにする。
+    mockDeadlineAtCall(deadlineCall);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
+
+    await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+      new OpenRouterCallError("generation_timeout"),
+    );
+  },
+);
+
+it("prioritizes an elapsed deadline over an adapter failure", async () => {
+  mockDeadlineAtCall(10);
+  const adapterSpy = vi
+    .spyOn(generationContracts, "toAiGenerationResponse")
+    .mockImplementation(() => {
+      throw new Error("adapter failure");
+    });
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(successfulResponse()));
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+  expect(adapterSpy).toHaveBeenCalledOnce();
+});
+
+it("settles a permanently pending byte-cap cancellation on Abort and removes its listener", async () => {
+  vi.useFakeTimers();
+  const addEventListenerSpy = vi.spyOn(AbortSignal.prototype, "addEventListener");
+  const removeEventListenerSpy = vi.spyOn(AbortSignal.prototype, "removeEventListener");
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(OPENROUTER_MAX_BODY_BYTES + 1));
+    },
+    cancel() {
+      return new Promise<void>(() => {});
+    },
+  });
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 }));
+  vi.stubGlobal("fetch", fetchImpl);
+
+  const pending = sendMenuGeneration({ messages: [], timeoutMs: 20_000 });
+  const capturedError = pending.then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  const didNotSettle = new Promise<"did_not_settle">((resolve) => {
+    setTimeout(() => {
+      resolve("did_not_settle");
+    }, 20_001);
+  });
+  const outcome = Promise.race([capturedError, didNotSettle]);
+  await vi.advanceTimersByTimeAsync(20_001);
+
+  const error = await outcome;
+  expect(error).toEqual(new OpenRouterCallError("generation_timeout"));
+  expect(vi.getTimerCount()).toBe(0);
+  const abortRegistration = addEventListenerSpy.mock.calls.find(([type]) => type === "abort");
+  expect(abortRegistration).toBeDefined();
+  expect(removeEventListenerSpy).toHaveBeenCalledWith("abort", abortRegistration?.[1]);
 });
 
 it.each([
