@@ -370,7 +370,7 @@ docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/o
 docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/openrouter-mock.test.ts
 docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/benchmark-app-response-gate.test.ts
 docker compose run --rm --no-deps app node --test scripts/benchmark-paid-openrouter-models.test.mjs
-docker compose run --rm --no-deps app node --test tools/openrouter-mock/server.test.mjs
+docker compose run --rm --no-deps app npx vitest run tools/openrouter-mock/server.test.mjs
 docker compose run --rm --no-deps app npm run format:check
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run typecheck
