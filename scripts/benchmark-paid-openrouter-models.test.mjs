@@ -181,46 +181,11 @@ test("filterCandidatesMechanically reports exclusions and survivors", () => {
   assert.equal(exclusions[1].id, "drop/missing");
 });
 
-test("meetsMinimumSuccessShape accepts success menu with required dish fields", () => {
-  assert.equal(
-    meetsMinimumSuccessShape({
-      outcome: "success",
-      menu: {
-        dishes: [
-          {
-            dishRef: "dish_1",
-            role: "main",
-            position: 1,
-            name: "味噌汁",
-            description: "わかめ",
-            cookingTimeMinutes: 10,
-            ingredients: [{ name: "味噌" }],
-            steps: [{ instruction: "煮る" }],
-          },
-        ],
-      },
-    }),
-    true,
-  );
-});
-
-test("meetsMinimumSuccessShape rejects constraint_conflict and incomplete dishes", () => {
-  assert.equal(
-    meetsMinimumSuccessShape({
-      outcome: "constraint_conflict",
-      conflicts: [{ code: "x" }],
-    }),
-    false,
-  );
-  assert.equal(
-    meetsMinimumSuccessShape({
-      outcome: "success",
-      menu: { dishes: [{ dishRef: "dish_1", name: "only-name" }] },
-    }),
-    false,
-  );
+test("meetsMinimumSuccessShape is not a production gate (legacy helper only)", () => {
+  // 最低キー形状はゲート合格条件ではない。本番ゲートは evaluateAppResponseGate。
+  assert.equal(meetsMinimumSuccessShape({ outcome: "success", menu: { dishes: [{}] } }), true);
+  assert.equal(meetsMinimumSuccessShape({ outcome: "constraint_conflict", conflicts: [] }), false);
   assert.equal(meetsMinimumSuccessShape(null), false);
-  assert.equal(meetsMinimumSuccessShape({ outcome: "success", menu: { dishes: [] } }), false);
 });
 
 test("extractDecodedContent parses the first choice message content", () => {
@@ -234,32 +199,19 @@ test("extractDecodedContent parses the first choice message content", () => {
   assert.equal(extractDecodedContent({ choices: [{ message: { content: "not-json" } }] }), null);
 });
 
-test("runOneChatTrial passes on 200 + shape + under budget", async () => {
-  const payload = {
-    choices: [
-      {
-        message: {
-          content: JSON.stringify({
-            outcome: "success",
-            menu: {
-              dishes: [
-                {
-                  dishRef: "dish_1",
-                  role: "main",
-                  position: 1,
-                  name: "ご飯",
-                  description: "白飯",
-                  cookingTimeMinutes: 5,
-                  ingredients: [{ name: "米" }],
-                  steps: [{ instruction: "炊く" }],
-                },
-              ],
-            },
-          }),
-        },
-      },
-    ],
-  };
+/** ユニット試験用: 本番ゲート成功を差し込む */
+function passGate() {
+  return { ok: true, detail: "ok" };
+}
+
+function failGate() {
+  return { ok: false, detail: "ai_generation_schema_fail" };
+}
+
+test("runOneChatTrial passes only after gate success and includes post-body elapsed", async () => {
+  const payload = { model: "vendor/a", choices: [{ message: { content: "{}" } }] };
+  let gateCalls = 0;
+  const stamps = [];
   const result = await runOneChatTrial({
     modelId: "vendor/a",
     apiKey: "test-key",
@@ -269,6 +221,70 @@ test("runOneChatTrial passes on 200 + shape + under budget", async () => {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
+    evaluateGate: (envelope, modelId) => {
+      gateCalls += 1;
+      assert.equal(modelId, "vendor/a");
+      assert.equal(envelope.model, "vendor/a");
+      return passGate(envelope, modelId);
+    },
+    now: (() => {
+      let t = 0;
+      return () => {
+        t += 25;
+        stamps.push(t);
+        return t;
+      };
+    })(),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.detail, "ok");
+  assert.equal(gateCalls, 1);
+  // started と finish の 2 回 now()。elapsed は gate 後に確定する。
+  assert.equal(result.elapsedMs, 25);
+  assert.equal(stamps.length, 2);
+});
+
+test("runOneChatTrial fails on non-200 and app-gate failure", async () => {
+  const httpFail = await runOneChatTrial({
+    modelId: "vendor/a",
+    apiKey: "test-key",
+    responseFormat: { type: "json_schema" },
+    evaluateGate: passGate,
+    fetchImpl: async () => new Response("nope", { status: 403 }),
+  });
+  assert.equal(httpFail.ok, false);
+  assert.match(httpFail.detail, /http_403/u);
+
+  const gateFail = await runOneChatTrial({
+    modelId: "vendor/a",
+    apiKey: "test-key",
+    responseFormat: { type: "json_schema" },
+    evaluateGate: failGate,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          model: "vendor/a",
+          choices: [{ message: { content: '{"outcome":"constraint_conflict","conflicts":[]}' } }],
+        }),
+        { status: 200 },
+      ),
+  });
+  assert.equal(gateFail.ok, false);
+  assert.equal(gateFail.detail, "ai_generation_schema_fail");
+});
+
+test("runOneChatTrial fails when elapsed after gate exceeds budget", async () => {
+  // started=now(10), finish=now(20) → elapsed 10。timeoutMs 10 なら >= で超過。
+  const result = await runOneChatTrial({
+    modelId: "vendor/a",
+    apiKey: "test-key",
+    responseFormat: { type: "json_schema" },
+    timeoutMs: 10,
+    evaluateGate: passGate,
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ model: "vendor/a", choices: [{ message: { content: "{}" } }] }), {
+        status: 200,
+      }),
     now: (() => {
       let t = 0;
       return () => {
@@ -277,34 +293,8 @@ test("runOneChatTrial passes on 200 + shape + under budget", async () => {
       };
     })(),
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.detail, "ok");
-});
-
-test("runOneChatTrial fails on non-200 and shape fail", async () => {
-  const httpFail = await runOneChatTrial({
-    modelId: "vendor/a",
-    apiKey: "test-key",
-    responseFormat: { type: "json_schema" },
-    fetchImpl: async () => new Response("nope", { status: 403 }),
-  });
-  assert.equal(httpFail.ok, false);
-  assert.match(httpFail.detail, /http_403/u);
-
-  const shapeFail = await runOneChatTrial({
-    modelId: "vendor/a",
-    apiKey: "test-key",
-    responseFormat: { type: "json_schema" },
-    fetchImpl: async () =>
-      new Response(
-        JSON.stringify({
-          choices: [{ message: { content: '{"outcome":"constraint_conflict","conflicts":[]}' } }],
-        }),
-        { status: 200 },
-      ),
-  });
-  assert.equal(shapeFail.ok, false);
-  assert.equal(shapeFail.detail, "shape_fail");
+  assert.equal(result.ok, false);
+  assert.equal(result.detail, "latency_budget_exceeded");
 });
 
 test("runPaidBenchmark excludes via mechanical filter without chat calls", async () => {
@@ -314,6 +304,7 @@ test("runPaidBenchmark excludes via mechanical filter without chat calls", async
     apiKey: "test-key",
     candidateIds: ["vendor/missing"],
     trialCount: 10,
+    evaluateGate: passGate,
     fetchImpl: async (url) => {
       if (String(url).includes("/models")) {
         return new Response(JSON.stringify({ data: [] }), {
@@ -335,35 +326,15 @@ test("runPaidBenchmark excludes via mechanical filter without chat calls", async
 
 test("runPaidBenchmark marks pass only when all trials succeed", async () => {
   const successBody = {
-    choices: [
-      {
-        message: {
-          content: JSON.stringify({
-            outcome: "success",
-            menu: {
-              dishes: [
-                {
-                  dishRef: "dish_1",
-                  role: "main",
-                  position: 1,
-                  name: "卵焼き",
-                  description: "甘め",
-                  cookingTimeMinutes: 8,
-                  ingredients: [{ name: "卵" }],
-                  steps: [{ instruction: "焼く" }],
-                },
-              ],
-            },
-          }),
-        },
-      },
-    ],
+    model: "vendor/a",
+    choices: [{ message: { content: "{}" } }],
   };
   let chatCalls = 0;
   const result = await runPaidBenchmark({
     apiKey: "test-key",
     candidateIds: ["vendor/a"],
     trialCount: 3,
+    evaluateGate: passGate,
     fetchImpl: async (url) => {
       if (String(url).includes("/models")) {
         return new Response(JSON.stringify({ data: [remoteEntry("vendor/a")] }), {
@@ -387,6 +358,7 @@ test("runPaidBenchmark fails and stops trials after first chat failure", async (
     apiKey: "test-key",
     candidateIds: ["vendor/a"],
     trialCount: 10,
+    evaluateGate: passGate,
     fetchImpl: async (url) => {
       if (String(url).includes("/models")) {
         return new Response(JSON.stringify({ data: [remoteEntry("vendor/a")] }), {
@@ -410,6 +382,7 @@ test("runPaidBenchmark requires API key", async () => {
     () =>
       runPaidBenchmark({
         apiKey: "",
+        evaluateGate: passGate,
         fetchImpl: async () => new Response("{}", { status: 200 }),
         log: () => {},
       }),

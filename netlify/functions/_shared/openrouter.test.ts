@@ -422,6 +422,7 @@ it.each([
   ["router free", ["openrouter/free"]],
   ["router auto-beta", ["openrouter/auto-beta"]],
   ["free-on-real-api", ["vendor/a:free"]],
+  ["mock-on-real-api", ["mock/vendor-paid"]],
 ] as const)("rejects %s configured models before fetch", async (_case, configuredModels) => {
   getServerEnvMock.mockReturnValueOnce({
     ...config,

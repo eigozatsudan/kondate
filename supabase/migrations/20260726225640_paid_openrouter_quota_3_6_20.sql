@@ -1,74 +1,140 @@
 -- Plan 8 Task 3: AI 日次クォータを成功3 / attempt6 / global20 へ引き下げる。
 -- 短期窓 4/600s と締切 20s/50s/180s は不変。HMAC/integrity 引数は巻き戻さない。
+--
+-- CHECK 引き下げは upgrade-safe:
+-- - 過去日カウンタは削除（当日枠のリセットではない）
+-- - 当日の active reservation が新上限を超えるなら migration を中止（進行中生成を壊さない）
+-- - 当日・予約なしで旧合法の超過行（success 4–5 / attempt 7–12）は **clamp/0 化しない**
+--   （枠の復活＝quota reset になるため）。CHECK は NOT VALID で追加し既存超過行を保持。
+-- - 新規 INSERT/UPDATE と RPC の p_user_limit=3 / attempt 6 が以降の消費を抑止する。
 
 -- ---------------------------------------------------------------------------
--- 1. table CHECK（無名制約の conname を pg_constraint から解決して差し替え）
+-- 1. table CHECK（upgrade-safe データ準備 + 制約差し替え）
 -- ---------------------------------------------------------------------------
-do $quota_check$
+create or replace function private.upgrade_ai_daily_quota_checks_to_3_6()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $upgrade$
 declare
+  v_today date := private.ai_jst_day(pg_catalog.clock_timestamp());
   v_success_conname text;
   v_attempt_conname text;
+  v_has_over_success boolean;
+  v_has_over_attempt boolean;
 begin
+  -- 過去日: 履歴カウンタのみ削除（当日の reserved/success/sent は触らない）
+  delete from private.ai_user_daily_usage
+  where usage_day < v_today;
+  delete from private.ai_user_daily_external_attempts
+  where usage_day < v_today;
+
+  -- 当日 active reservation が新上限を超えるなら fail-closed（進行中を壊さない）
+  if exists (
+    select 1
+    from private.ai_user_daily_usage u
+    where u.usage_day = v_today
+      and u.reserved_count > 0
+      and u.reserved_count + u.success_count > 3
+  ) then
+    raise exception using
+      errcode = 'P0001',
+      message = 'quota_upgrade_blocked_active_success_reservation';
+  end if;
+
+  if exists (
+    select 1
+    from private.ai_user_daily_external_attempts a
+    where a.usage_day = v_today
+      and a.reserved_count > 0
+      and a.reserved_count + a.sent_count > 6
+  ) then
+    raise exception using
+      errcode = 'P0001',
+      message = 'quota_upgrade_blocked_active_attempt_reservation';
+  end if;
+
+  -- 旧 <=5 success CHECK を drop（pg_get_constraintdef の括弧差を吸収）
   select c.conname into v_success_conname
   from pg_catalog.pg_constraint c
   where c.conrelid = 'private.ai_user_daily_usage'::regclass
     and c.contype = 'c'
-    and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count + success_count <= 5%';
-  if v_success_conname is null then
-    -- 再適用や部分適用でも <= 3 なら済
-    select c.conname into v_success_conname
-    from pg_catalog.pg_constraint c
-    where c.conrelid = 'private.ai_user_daily_usage'::regclass
-      and c.contype = 'c'
-      and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count + success_count <= 3%';
-  else
+    and pg_catalog.pg_get_constraintdef(c.oid) ~ 'reserved_count.*success_count.*<=[[:space:]]*5'
+  limit 1;
+  if v_success_conname is not null then
     execute format(
       'alter table private.ai_user_daily_usage drop constraint %I',
       v_success_conname
     );
   end if;
 
-  if not exists (
-    select 1 from pg_catalog.pg_constraint c
-    where c.conrelid = 'private.ai_user_daily_usage'::regclass
-      and c.contype = 'c'
-      and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count + success_count <= 3%'
-  ) then
-    alter table private.ai_user_daily_usage
-      add constraint ai_user_daily_usage_reserved_success_le_3
-      check (reserved_count + success_count <= 3);
-  end if;
-
+  -- 旧 <=12 attempt CHECK を drop
   select c.conname into v_attempt_conname
   from pg_catalog.pg_constraint c
   where c.conrelid = 'private.ai_user_daily_external_attempts'::regclass
     and c.contype = 'c'
-    and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count + sent_count <= 12%';
-  if v_attempt_conname is null then
-    select c.conname into v_attempt_conname
-    from pg_catalog.pg_constraint c
-    where c.conrelid = 'private.ai_user_daily_external_attempts'::regclass
-      and c.contype = 'c'
-      and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count + sent_count <= 6%';
-  else
+    and pg_catalog.pg_get_constraintdef(c.oid) ~ 'reserved_count.*sent_count.*<=[[:space:]]*12'
+  limit 1;
+  if v_attempt_conname is not null then
     execute format(
       'alter table private.ai_user_daily_external_attempts drop constraint %I',
       v_attempt_conname
     );
   end if;
 
+  -- 既存超過行の有無（clamp せず保持 → NOT VALID）
+  select exists (
+    select 1 from private.ai_user_daily_usage
+    where reserved_count + success_count > 3
+  ) into v_has_over_success;
+
+  select exists (
+    select 1 from private.ai_user_daily_external_attempts
+    where reserved_count + sent_count > 6
+  ) into v_has_over_attempt;
+
+  if not exists (
+    select 1 from pg_catalog.pg_constraint c
+    where c.conrelid = 'private.ai_user_daily_usage'::regclass
+      and c.contype = 'c'
+      and pg_catalog.pg_get_constraintdef(c.oid) ~ 'reserved_count.*success_count.*<=[[:space:]]*3'
+  ) then
+    if v_has_over_success then
+      -- 旧合法の超過行を残す。新規行・更新は CHECK 対象。
+      alter table private.ai_user_daily_usage
+        add constraint ai_user_daily_usage_reserved_success_le_3
+        check (reserved_count + success_count <= 3) not valid;
+    else
+      alter table private.ai_user_daily_usage
+        add constraint ai_user_daily_usage_reserved_success_le_3
+        check (reserved_count + success_count <= 3);
+    end if;
+  end if;
+
   if not exists (
     select 1 from pg_catalog.pg_constraint c
     where c.conrelid = 'private.ai_user_daily_external_attempts'::regclass
       and c.contype = 'c'
-      and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count + sent_count <= 6%'
+      and pg_catalog.pg_get_constraintdef(c.oid) ~ 'reserved_count.*sent_count.*<=[[:space:]]*6'
   ) then
-    alter table private.ai_user_daily_external_attempts
-      add constraint ai_user_daily_external_attempts_reserved_sent_le_6
-      check (reserved_count + sent_count <= 6);
+    if v_has_over_attempt then
+      alter table private.ai_user_daily_external_attempts
+        add constraint ai_user_daily_external_attempts_reserved_sent_le_6
+        check (reserved_count + sent_count <= 6) not valid;
+    else
+      alter table private.ai_user_daily_external_attempts
+        add constraint ai_user_daily_external_attempts_reserved_sent_le_6
+        check (reserved_count + sent_count <= 6);
+    end if;
   end if;
 end
-$quota_check$;
+$upgrade$;
+
+revoke all on function private.upgrade_ai_daily_quota_checks_to_3_6()
+  from public, anon, authenticated;
+
+select private.upgrade_ai_daily_quota_checks_to_3_6();
 
 -- ---------------------------------------------------------------------------
 -- 2. reserve_ai_generation（権威: generation_command_v2。数値のみ 3/6/20）

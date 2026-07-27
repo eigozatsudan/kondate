@@ -60,8 +60,9 @@ export function parseConfiguredModels(raw, context = {}) {
       if (!id.startsWith("mock/") || !id.endsWith(":free")) {
         throw new Error("OPENROUTER_MODELS mock path accepts only mock/*:free IDs");
       }
-    } else if (id.endsWith(":free")) {
-      throw new Error("OPENROUTER_MODELS rejects :free models on non-mock base URL");
+    } else if (id.endsWith(":free") || id.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否
+      throw new Error("OPENROUTER_MODELS rejects mock/ or :free models on non-mock base URL");
     }
   }
   return models;

@@ -75,8 +75,11 @@ export function parseOpenRouterModels(value, context = {}) {
       if (!model.startsWith("mock/") || !model.endsWith(":free")) {
         throw new Error(`OPENROUTER_MODELS mock path accepts only mock/*:free: ${model}`);
       }
-    } else if (model.endsWith(":free")) {
-      throw new Error(`OPENROUTER_MODELS rejects :free model on non-mock base: ${model}`);
+    } else if (model.endsWith(":free") || model.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否
+      throw new Error(
+        `OPENROUTER_MODELS rejects mock/ or :free model on non-mock base: ${model}`,
+      );
     }
   }
   return models;

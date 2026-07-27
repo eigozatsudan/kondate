@@ -4,15 +4,48 @@
  * 設計 §4.4 の有料ベンチゲート:
  * 1. Models API で候補 5 ID を機械フィルタ（不在 / structured AND 欠落 / 単価超過）
  * 2. 残存 ID ごとに実 menuResponseFormat + require_parameters:true で N=10 回 chat
- * 3. 合格: 10/10 が HTTP 200・20s 未満・outcome success の最低形状
+ * 3. 合格: 10/10 が HTTP 200・クライアント計測 20s 未満（body/parse/materialize/validate 含む）
+ *    ・envelope.model === 要求 ID
+ *    ・本番と同形の response schema + aiGenerationResponseSchema
+ *    ・materializeAiGeneratedMenu + validateGeneratedMenu 成功
  *
- * 1 本も合格しない場合は non-zero で終了する（Plan 完了 / 本番 ship 不可）。
+ * 1 本も合格しない場合は non-zero で終了する（本番ゲート未完了 / 本番 ship 不可）。
  * キー total limit 未解消・クレジット無しのまま「合格」と主張しないこと。
  */
 
-import { readFile } from "node:fs/promises";
+import * as esbuild from "esbuild";
+import { mkdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { maxPromptPlusCompletionUsdPerMillion } from "./verify-openrouter-models.mjs";
+
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const appGateEntry = join(repoRoot, "netlify/functions/_shared/benchmark-app-response-gate.ts");
+
+/** esbuild で TS ゲートを 1 回だけバンドルして import する（Node の .ts 解決を避ける） */
+let appGateModulePromise = null;
+
+export async function loadAppResponseGate() {
+  if (appGateModulePromise) return appGateModulePromise;
+  appGateModulePromise = (async () => {
+    const outDir = join(tmpdir(), "kondate-bench-app-gate");
+    await mkdir(outDir, { recursive: true });
+    const outfile = join(outDir, "benchmark-app-response-gate.mjs");
+    await esbuild.build({
+      entryPoints: [appGateEntry],
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node24",
+      outfile,
+      packages: "bundle",
+      logLevel: "silent",
+    });
+    return import(outfile);
+  })();
+  return appGateModulePromise;
+}
 
 /** 設計 §4.4 候補ショートリスト（順序未確定・機械フィルタ + 実測で primary/repair を決める） */
 export const candidateModelIds = Object.freeze([
@@ -29,12 +62,23 @@ export const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 export const officialModelsUrl = `${officialOpenRouterBaseUrl}/models?output_modalities=text`;
 export const officialChatCompletionsUrl = `${officialOpenRouterBaseUrl}/chat/completions`;
 
-/** 日本語家庭献立プロンプト（PII・固有名・アレルギー自由文は載せない） */
-export const benchUserPrompt =
-  "匿名の大人1人向けの和食朝食を2品、JSON Schemaどおりに生成してください。所要15分以内を想定してください。";
+/**
+ * 日本語家庭献立プロンプト（PII・固有名・アレルギー自由文は載せない）。
+ * createBenchGenerationContext と整合: member_1、必須 pantry_1=ごはん、和食朝食 15 分。
+ */
+export const benchUserPrompt = [
+  "匿名の大人1人（anonymousMemberRef は member_1）向けの和食朝食を2品、",
+  "指定 JSON Schema の success.menu を完全に埋めて生成してください。",
+  "所要15分以内。必須の手元食材 pantry_1 は「ごはん」(must_use) として menu.pantryUsage と食材参照に含めてください。",
+  "adaptations は member_1 向けを1件以上含めてください。",
+].join("");
 
-export const benchSystemPrompt =
-  "指定された JSON Schema だけを返し、説明文や Markdown は付けないでください。outcome は success とし、menu.dishes を埋めてください。";
+export const benchSystemPrompt = [
+  "指定された JSON Schema だけを返し、説明文や Markdown は付けないでください。",
+  "outcome は success のみ。schemaVersion は 2026-07-11.v1。",
+  "dishRef/ingredientRef/stepRef/timelineRef/adaptationRef/pantryRef の形式を守り、",
+  "timeline・adaptations・pantryUsage・labelConfirmations を省略しないでください。",
+].join("");
 
 /** Models API 1 回あたりの締切（verify と揃えた 5 秒メタデータ予算） */
 export const modelsApiTimeoutMs = 5_000;
@@ -126,10 +170,8 @@ export function filterCandidatesMechanically(candidateIds, remoteModels) {
 }
 
 /**
- * 設計 §4.4.2 の最低形状:
- * outcome === "success" かつ menu.dishes がオブジェクト配列で、
- * 各 dish に dishRef, role, position, name, description, cookingTimeMinutes, ingredients, steps。
- * （アプリ materialize の完全 Zod までは要求しないが、ゲート最低条件を機械判定する）
+ * @deprecated 設計は materialize/validate 必須。互換のため残すがゲートでは使わない。
+ * 最低キー形状だけでは合格にしないこと。
  */
 export function meetsMinimumSuccessShape(decoded) {
   if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) {
@@ -139,29 +181,12 @@ export function meetsMinimumSuccessShape(decoded) {
   const menu = decoded.menu;
   if (menu === null || typeof menu !== "object" || Array.isArray(menu)) return false;
   if (!Array.isArray(menu.dishes) || menu.dishes.length === 0) return false;
-  const requiredDishKeys = [
-    "dishRef",
-    "role",
-    "position",
-    "name",
-    "description",
-    "cookingTimeMinutes",
-    "ingredients",
-    "steps",
-  ];
-  for (const dish of menu.dishes) {
-    if (dish === null || typeof dish !== "object" || Array.isArray(dish)) return false;
-    for (const key of requiredDishKeys) {
-      if (!(key in dish)) return false;
-    }
-    if (!Array.isArray(dish.ingredients) || !Array.isArray(dish.steps)) return false;
-  }
   return true;
 }
 
 /**
  * chat/completions エンベロープから message.content を JSON デコードする。
- * 失敗時は null。
+ * 失敗時は null。ゲート合否には evaluateAppResponseGate を使う。
  */
 export function extractDecodedContent(envelope) {
   if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
@@ -188,7 +213,7 @@ export async function loadMenuResponseFormat() {
 }
 
 /**
- * 1 回の chat 試行。クライアント計測の経過 ms と合否を返す。
+ * 1 回の chat 試行。クライアント計測は body 読取・JSON・model 一致・materialize/validate 後まで含む。
  * @returns {Promise<{ ok: boolean, elapsedMs: number, detail: string }>}
  */
 export async function runOneChatTrial({
@@ -198,10 +223,18 @@ export async function runOneChatTrial({
   fetchImpl = fetch,
   timeoutMs = benchLatencyBudgetMs,
   now = () => Date.now(),
+  evaluateGate,
 }) {
   const started = now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const finish = (ok, detail) => {
+    const elapsedMs = now() - started;
+    if (ok && elapsedMs >= timeoutMs) {
+      return { ok: false, elapsedMs, detail: "latency_budget_exceeded" };
+    }
+    return { ok, elapsedMs, detail };
+  };
   try {
     let response;
     try {
@@ -226,33 +259,29 @@ export async function runOneChatTrial({
         signal: controller.signal,
       });
     } catch (error) {
-      const elapsedMs = now() - started;
       if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-        return { ok: false, elapsedMs, detail: "timeout_or_abort" };
+        return finish(false, "timeout_or_abort");
       }
-      return { ok: false, elapsedMs, detail: "transport_error" };
-    }
-    const elapsedMs = now() - started;
-    if (elapsedMs >= timeoutMs) {
-      return { ok: false, elapsedMs, detail: "latency_budget_exceeded" };
+      return finish(false, "transport_error");
     }
     if (!response.ok) {
-      return { ok: false, elapsedMs, detail: `http_${response.status}` };
+      return finish(false, `http_${response.status}`);
     }
     let envelope;
     try {
       envelope = await response.json();
     } catch {
-      return { ok: false, elapsedMs, detail: "invalid_json_envelope" };
+      return finish(false, "invalid_json_envelope");
     }
-    const decoded = extractDecodedContent(envelope);
-    if (decoded === null) {
-      return { ok: false, elapsedMs, detail: "missing_or_invalid_content" };
+
+    const gate =
+      evaluateGate ??
+      (await loadAppResponseGate()).evaluateAppResponseGate;
+    const gateResult = gate(envelope, modelId);
+    if (!gateResult.ok) {
+      return finish(false, gateResult.detail);
     }
-    if (!meetsMinimumSuccessShape(decoded)) {
-      return { ok: false, elapsedMs, detail: "shape_fail" };
-    }
-    return { ok: true, elapsedMs, detail: "ok" };
+    return finish(true, "ok");
   } finally {
     clearTimeout(timer);
   }
@@ -270,6 +299,7 @@ export async function runModelGate({
   timeoutMs = benchLatencyBudgetMs,
   now = () => Date.now(),
   log = () => {},
+  evaluateGate,
 }) {
   const trials = [];
   for (let i = 0; i < trialCount; i += 1) {
@@ -280,6 +310,7 @@ export async function runModelGate({
       fetchImpl,
       timeoutMs,
       now,
+      evaluateGate,
     });
     trials.push(result);
     log(
@@ -303,6 +334,7 @@ export async function runPaidBenchmark({
   fetchImpl = fetch,
   createModelsSignal = () => AbortSignal.timeout(modelsApiTimeoutMs),
   loadFormat = loadMenuResponseFormat,
+  evaluateGate,
   log = (line) => {
     process.stdout.write(`${line}\n`);
   },
@@ -368,6 +400,7 @@ export async function runPaidBenchmark({
       trialCount,
       fetchImpl,
       log,
+      evaluateGate,
     });
     modelResults.push(result);
     if (result.passed) {
