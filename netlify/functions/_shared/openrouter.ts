@@ -291,7 +291,7 @@ async function sendMenuGenerationWithRuntime(
     }
     assertWithinDeadline();
 
-    if (!response.ok) {
+    if (response.status !== 200) {
       throw new OpenRouterCallError("model_unavailable", null, retryAt(response, Date.now()));
     }
 

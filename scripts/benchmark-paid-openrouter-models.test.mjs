@@ -6,6 +6,7 @@ import {
   candidateModelIds,
   evaluateMechanicalFilter,
   filterCandidatesMechanically,
+  loadPaidBenchmarkHarness,
   paidOpenRouterModelConfigurations,
   readResponseBodyWithByteCap,
   runConfigurationGate,
@@ -20,6 +21,12 @@ const usablePricing = {
   completion: "0.0000002",
 };
 const bothParams = ["structured_outputs", "response_format"];
+
+test("loads the bundled production harness without network access", async () => {
+  const harness = await loadPaidBenchmarkHarness();
+
+  assert.equal(typeof harness.runPaidBenchmarkUnit, "function");
+});
 
 function remoteEntry(id, overrides = {}) {
   return {

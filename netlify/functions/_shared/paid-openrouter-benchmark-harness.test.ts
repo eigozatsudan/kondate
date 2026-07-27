@@ -14,6 +14,13 @@ type FetchStep =
   | { kind: "output"; model: string; output: unknown; elapsedMs?: number }
   | { kind: "unknown_invalid"; elapsedMs?: number }
   | { kind: "http_error"; status: number; elapsedMs?: number }
+  | {
+      kind: "non_200_output";
+      status: 201 | 206;
+      model: string;
+      output: unknown;
+      elapsedMs?: number;
+    }
   | { kind: "transport_error"; elapsedMs?: number }
   | { kind: "body_error"; elapsedMs?: number };
 
@@ -58,7 +65,20 @@ function makeFetch(
     }
     if (step.kind === "http_error") {
       return Promise.resolve(
-        new Response("provider detail must not escape", { status: step.status }),
+        new Response(step.status === 204 ? null : "provider detail must not escape", {
+          status: step.status,
+        }),
+      );
+    }
+    if (step.kind === "non_200_output") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            model: step.model,
+            choices: [{ message: { content: JSON.stringify(wireOutput(step.output)) } }],
+          }),
+          { status: step.status },
+        ),
       );
     }
     if (step.kind === "unknown_invalid") {
@@ -184,6 +204,38 @@ describe("runPaidBenchmarkUnit", () => {
     {
       name: "non-2xx",
       steps: [{ kind: "http_error", status: 503 }],
+      expectedCode: "model_unavailable",
+      expectedResponseModel: null,
+    },
+    {
+      name: "HTTP 201 with valid configured-model body",
+      steps: [
+        {
+          kind: "non_200_output",
+          status: 201,
+          model: primaryModel,
+          output: validIdeaOutput(),
+        },
+      ],
+      expectedCode: "model_unavailable",
+      expectedResponseModel: null,
+    },
+    {
+      name: "HTTP 206 with valid configured-model body",
+      steps: [
+        {
+          kind: "non_200_output",
+          status: 206,
+          model: primaryModel,
+          output: validIdeaOutput(),
+        },
+      ],
+      expectedCode: "model_unavailable",
+      expectedResponseModel: null,
+    },
+    {
+      name: "empty HTTP 204",
+      steps: [{ kind: "http_error", status: 204 }],
       expectedCode: "model_unavailable",
       expectedResponseModel: null,
     },

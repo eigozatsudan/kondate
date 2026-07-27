@@ -54,7 +54,7 @@ const conflictOutput = {
   ],
 } as const;
 
-function successfulResponse(model: string = models[0]): Response {
+function successfulResponse(model: string = models[0], status: number = 200): Response {
   return new Response(
     JSON.stringify({
       model,
@@ -66,7 +66,7 @@ function successfulResponse(model: string = models[0]): Response {
         },
       ],
     }),
-    { status: 200 },
+    { status },
   );
 }
 
@@ -142,6 +142,31 @@ it("uses models fallback, strict schema, and required parameters", async () => {
     stream: false,
   });
   expect(result).toEqual({ mode: "full_menu", output: conflictOutput, modelId: models[1] });
+});
+
+it.each([201, 206])(
+  "rejects HTTP %i even with a valid configured-model response body",
+  async (status) => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(successfulResponse(models[0], status));
+    vi.stubGlobal("fetch", fetchImpl);
+
+    await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+      new OpenRouterCallError("model_unavailable"),
+    );
+  },
+);
+
+it("rejects an empty HTTP 204 response as terminal model unavailability", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 })),
+  );
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+    new OpenRouterCallError("model_unavailable"),
+  );
 });
 
 it("preserves the benchmark factory exact ordered model configuration in the request body", async () => {
