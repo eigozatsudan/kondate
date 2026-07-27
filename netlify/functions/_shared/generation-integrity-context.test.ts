@@ -40,6 +40,7 @@ const regenerateCommand: GenerationCommand = {
     sourceMenuId: menuId,
     changeReason: "simpler",
     changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };

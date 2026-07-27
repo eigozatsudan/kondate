@@ -610,6 +610,7 @@ export type NewMenuGenerationRequest = z.infer<typeof newMenuGenerationRequestSc
 // changeReason の wire 列挙は mode 非依存。idea + child_friendly は
 // snapshot の targetMode を見た server が markSent 前に invalid_request で拒否する
 // （UI も idea では child_friendly を出さない。schema だけでは mode を知らない）。
+// privacyNoticeVersion は新規献立と同様に必須。旧 version / 欠落は互換受理しない（F1）。
 const regenerationBase = {
   idempotencyKey: uuidSchema,
   sourceMenuId: uuidSchema,
@@ -621,6 +622,7 @@ const regenerationBase = {
     "custom",
   ]),
   changeReasonCustom: z.string().trim().min(1).max(200).nullable(),
+  privacyNoticeVersion: z.literal(privacyNoticeVersion),
   expiredPantryConfirmations: z.array(expiredPantryConfirmationSchema).max(50),
 };
 

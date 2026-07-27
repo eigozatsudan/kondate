@@ -8,6 +8,8 @@ import {
   issueMessages,
   menuResponseFormat,
   newMenuGenerationRequestSchema,
+  regenerateDishRequestSchema,
+  regenerateMenuRequestSchema,
   releaseQuota,
   usageTodayDataSchema,
   validatedMenuSchema,
@@ -189,6 +191,53 @@ describe("newMenuGenerationRequestSchema", () => {
         ...valid,
         userId: "40000000-0000-4000-8000-000000000001",
         allergens: ["egg"],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+// F1: 再生成 wire も現行 privacy 同意 version を必須にし、旧版・欠落を互換受理しない
+describe("regeneration request privacyNoticeVersion", () => {
+  const menuValid = {
+    idempotencyKey: "10000000-0000-4000-8000-000000000001",
+    sourceMenuId: "60000000-0000-4000-8000-000000000001",
+    changeReason: "simpler" as const,
+    changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1" as const,
+    expiredPantryConfirmations: [],
+  };
+  const dishValid = {
+    ...menuValid,
+    dishId: "70000000-0000-4000-8000-000000000001",
+  };
+
+  it.each([
+    ["regenerate_menu", regenerateMenuRequestSchema, menuValid],
+    ["regenerate_dish", regenerateDishRequestSchema, dishValid],
+  ] as const)("requires current privacyNoticeVersion on %s", (_kind, schema, valid) => {
+    expect(schema.parse(valid)).toEqual(valid);
+  });
+
+  it.each([
+    ["regenerate_menu", regenerateMenuRequestSchema, menuValid],
+    ["regenerate_dish", regenerateDishRequestSchema, dishValid],
+  ] as const)(
+    "rejects missing privacyNoticeVersion on %s without compatibility",
+    (_kind, schema, valid) => {
+      const without = { ...valid };
+      delete (without as { privacyNoticeVersion?: string }).privacyNoticeVersion;
+      expect(schema.safeParse(without).success).toBe(false);
+    },
+  );
+
+  it.each([
+    ["regenerate_menu", regenerateMenuRequestSchema, menuValid],
+    ["regenerate_dish", regenerateDishRequestSchema, dishValid],
+  ] as const)("rejects the previous privacyNoticeVersion on %s", (_kind, schema, valid) => {
+    expect(
+      schema.safeParse({
+        ...valid,
+        privacyNoticeVersion: "2026-07-11.v1",
       }).success,
     ).toBe(false);
   });

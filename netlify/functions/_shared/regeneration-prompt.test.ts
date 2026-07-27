@@ -111,6 +111,7 @@ describe("buildDishRegenerationPrompt", () => {
         idempotencyKey: "82000000-0000-4000-8000-000000000001",
         changeReason: "custom",
         changeReasonCustom: "もっとさっぱりした味にしたい",
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [],
       },
     };

@@ -105,7 +105,7 @@ const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
     idempotencyKey: key,
     draftId: "84000000-0000-4000-8000-000000000001",
     draftRevision: 1,
-    privacyNoticeVersion: "2026-07-26.v1",
+    privacyNoticeVersion: "2026-07-26.v1" as const,
     expiredPantryConfirmations: [],
   },
 };
@@ -1679,6 +1679,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     },
@@ -1691,6 +1692,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
         dishId: "89000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     },
@@ -1943,6 +1945,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2101,6 +2104,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         dishId: sourceMainId,
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2226,6 +2230,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         dishId: replaceDishId,
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2312,6 +2317,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2370,6 +2376,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         dishId: "89000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2427,6 +2434,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2612,6 +2620,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 sourceMenuId: menuId,
                 changeReason: "simpler",
                 changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
                 expiredPantryConfirmations: [],
               },
             }
@@ -2624,6 +2633,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 dishId: "86000000-0000-4000-8000-000000000001",
                 changeReason: "simpler",
                 changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
                 expiredPantryConfirmations: [],
               },
             };
@@ -2640,6 +2650,60 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
       expect(repository.markSent).not.toHaveBeenCalled();
       expect(repository.succeed).not.toHaveBeenCalled();
       expect(repository.fail).toHaveBeenCalledWith(requestId, "source_menu_changed", null);
+    },
+  );
+
+  // F1: current consent 欠落は markSent / OpenRouter を 0 回のまま fail-closed
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "pre-send %s consent_required fails without markSent or OpenRouter",
+    async (kind) => {
+      const repository = makeRepository();
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+      const loadExecutionContext = vi
+        .fn<GenerationDependencies["loadExecutionContext"]>()
+        .mockRejectedValue(
+          new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。"),
+        );
+      const regenCommand: GenerationCommand =
+        kind === "regenerate_menu"
+          ? {
+              commandVersion: "generation-command.v2",
+              kind: "regenerate_menu",
+              request: {
+                idempotencyKey: key,
+                sourceMenuId: menuId,
+                changeReason: "simpler",
+                changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
+                expiredPantryConfirmations: [],
+              },
+            }
+          : {
+              commandVersion: "generation-command.v2",
+              kind: "regenerate_dish",
+              request: {
+                idempotencyKey: key,
+                sourceMenuId: menuId,
+                dishId: "86000000-0000-4000-8000-000000000001",
+                changeReason: "simpler",
+                changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
+                expiredPantryConfirmations: [],
+              },
+            };
+      const status = await runGeneration(
+        makeDeps({ repository, callOpenRouter, loadExecutionContext }),
+        regenCommand,
+      );
+      expect(status).toMatchObject({
+        status: "failed",
+        error: { code: "consent_required" },
+        quota: { consumed: false },
+      });
+      expect(callOpenRouter).not.toHaveBeenCalled();
+      expect(repository.markSent).not.toHaveBeenCalled();
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "consent_required", null);
     },
   );
 });
