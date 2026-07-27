@@ -3,7 +3,13 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { main, validateProductionCsp, validateProductionEnv } from "./preflight-production.mjs";
+import {
+  main,
+  parseOpenRouterModels,
+  validateProductionCsp,
+  validateProductionEnv,
+} from "./preflight-production.mjs";
+import { rejectedModelLists } from "./openrouter-models-contract.mjs";
 import { buildDeployHeadersFile } from "./csp-headers.mjs";
 
 const projectRef = "abcdefghijklmnopqrst";
@@ -44,6 +50,26 @@ function completeEnv(overrides = {}) {
 
 test("accepts a complete synthetic production environment", () => {
   assert.deepEqual(validateProductionEnv(completeEnv()), { projectRef });
+});
+
+// 3 鏡像の第3: preflight も contract の空要素・危険 ID を拒否する
+for (const { raw, baseUrl } of rejectedModelLists) {
+  test(`preflight parseOpenRouterModels rejects unsafe list: ${raw || "empty"}`, () => {
+    assert.throws(
+      () => parseOpenRouterModels(raw, { openRouterBaseUrl: baseUrl }),
+      /OPENROUTER_MODELS/u,
+    );
+  });
+}
+
+test("preflight rejects empty model list elements like vendor/a,,vendor/b", () => {
+  assert.throws(
+    () =>
+      parseOpenRouterModels("vendor/a,,vendor/b", {
+        openRouterBaseUrl: "https://openrouter.ai/api/v1",
+      }),
+    /empty elements/u,
+  );
 });
 
 for (const key of Object.keys(completeEnv())) {

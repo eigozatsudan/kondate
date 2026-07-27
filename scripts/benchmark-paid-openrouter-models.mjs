@@ -424,7 +424,20 @@ export async function runPaidBenchmark({
   if (!modelsResponse.ok) {
     throw new Error(`OpenRouter Models API returned ${modelsResponse.status}`);
   }
-  const body = await modelsResponse.json();
+  // chat 経路と同じ 1 MiB 上限（response.json() 直読み禁止）
+  let body;
+  try {
+    const rawModelsBody = await readResponseBodyWithByteCap(
+      modelsResponse,
+      OPENROUTER_MAX_BODY_BYTES,
+    );
+    body = JSON.parse(rawModelsBody);
+  } catch (error) {
+    if (error instanceof Error && error.message === "response_body_over_byte_cap") {
+      throw new Error("OpenRouter Models API body exceeds byte cap");
+    }
+    throw new Error("OpenRouter Models API returned an invalid body");
+  }
   if (!body || !Array.isArray(body.data)) {
     throw new Error("OpenRouter Models API returned an invalid body");
   }
