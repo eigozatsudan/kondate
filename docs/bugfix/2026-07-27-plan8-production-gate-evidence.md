@@ -1,6 +1,6 @@
 # Plan 8 有料 OpenRouter — live ゲート証跡（2026-07-27）
 
-**結論: ゲート不合格（PASS 0 構成）。response-format 改訂後の exact 3 構成 N=10 再評価でも合格なし。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
+**結論: ゲート不合格（PASS 0 構成）。response-format 改訂後の exact 3 構成、および R1 新 shortlist 6 構成の N=10 とも合格なし。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
 
 ## Live gate evidence（第1ラウンド・履歴）
 

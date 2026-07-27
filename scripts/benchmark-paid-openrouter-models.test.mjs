@@ -135,26 +135,26 @@ function successfulUnit(configuration, outcome = "primary_success") {
   };
 }
 
-test("candidate shortlist and exact ordered configurations match the R1 Stage 1 freeze", () => {
+test("candidate shortlist and exact ordered configurations match the R1-replay freeze", () => {
   assert.deepEqual(
     [...candidateModelIds],
     [
-      "openai/gpt-oss-20b",
-      "inclusionai/ling-2.6-flash",
-      "mistralai/mistral-small-24b-instruct-2501",
-      "meta-llama/llama-3.1-8b-instruct",
+      "openai/gpt-4o-mini",
       "openai/gpt-4.1-nano",
+      "mistralai/ministral-3b-2512",
+      "meta-llama/llama-3.1-8b-instruct",
+      "microsoft/phi-4",
     ],
   );
   assert.deepEqual(
     paidOpenRouterModelConfigurations.map((configuration) => [...configuration]),
     [
-      ["openai/gpt-oss-20b"],
-      ["inclusionai/ling-2.6-flash"],
-      ["mistralai/mistral-small-24b-instruct-2501"],
-      ["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"],
-      ["openai/gpt-4.1-nano", "openai/gpt-oss-20b"],
-      ["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"],
+      ["openai/gpt-4o-mini"],
+      ["microsoft/phi-4"],
+      ["mistralai/ministral-3b-2512"],
+      ["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"],
+      ["openai/gpt-4.1-nano", "microsoft/phi-4"],
+      ["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"],
     ],
   );
   assert.ok(Object.isFrozen(candidateModelIds));

@@ -168,16 +168,17 @@ exact mock URL 以外では、`mock/` も `:free` も拒否する。
 
 ### 4.4 候補ショートリストと実装完了ゲート
 
-R1 Stage 1（2026-07-27）で固定した評価対象（snapshot + 意思決定記録:
-`docs/bugfix/artifacts/r1-stage1-decision-record-2026-07-27.md`）:
+R1-replay（R2+R3 後・2026-07-27）で固定した評価対象（snapshot + 意思決定記録:
+`docs/bugfix/artifacts/r1-replay-decision-record-2026-07-27-post-r2r3.md`）:
 
-1. `openai/gpt-oss-20b`
-2. `inclusionai/ling-2.6-flash`
-3. `mistralai/mistral-small-24b-instruct-2501`
+1. `openai/gpt-4o-mini`
+2. `openai/gpt-4.1-nano`
+3. `mistralai/ministral-3b-2512`
 4. `meta-llama/llama-3.1-8b-instruct`
-5. `openai/gpt-4.1-nano`
+5. `microsoft/phi-4`
 
-手続きの正本: `docs/superpowers/specs/2026-07-27-openrouter-candidate-configuration-reslist-design.md`
+手続きの正本: `docs/superpowers/specs/2026-07-27-openrouter-candidate-configuration-reslist-design.md` /
+`docs/superpowers/specs/2026-07-27-openrouter-r2-prompt-materialize-r3-price-cap-design.md`
 
 #### 4.4.1 ベンチ前の機械フィルタ（必須順序）
 
@@ -262,12 +263,12 @@ harness は本番 DB / 本番 quota ledger へ書き込まない。`markSent` / 
 
 最低限、次の構成を独立して評価する（評価順 = 推奨タイブレーク）:
 
-1. `["openai/gpt-oss-20b"]`
-2. `["inclusionai/ling-2.6-flash"]`
-3. `["mistralai/mistral-small-24b-instruct-2501"]`
-4. `["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]`
-5. `["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]`
-6. `["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]`
+1. `["openai/gpt-4o-mini"]`
+2. `["microsoft/phi-4"]`
+3. `["mistralai/ministral-3b-2512"]`
+4. `["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"]`
+5. `["openai/gpt-4.1-nano", "microsoft/phi-4"]`
+6. `["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"]`
 
 単体 ID の合否を後から組み合わせたり、個別合格 ID から最大 2 本を選んだりしてはならない。
 合格した exact 構成だけが、その順序を維持した `OPENROUTER_MODELS` の提案候補になる。

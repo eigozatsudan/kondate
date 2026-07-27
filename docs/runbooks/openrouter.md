@@ -25,26 +25,26 @@
 承認済み exact 構成を production service harness の N=10 で通す。
 **実行すると有料課金が発生する。** API キー・生の課金ログ（PII 混入時）はコミットしない。
 
-候補 ID（R1 Stage 1 freeze・設計固定）:
+候補 ID（R1-replay after R2+R3・設計固定）:
 
-1. `openai/gpt-oss-20b`
-2. `inclusionai/ling-2.6-flash`
-3. `mistralai/mistral-small-24b-instruct-2501`
+1. `openai/gpt-4o-mini`
+2. `openai/gpt-4.1-nano`
+3. `mistralai/ministral-3b-2512`
 4. `meta-llama/llama-3.1-8b-instruct`
-5. `openai/gpt-4.1-nano`
+5. `microsoft/phi-4`
 
 独立して評価する exact な順序付き構成（評価順）:
 
-1. `["openai/gpt-oss-20b"]`
-2. `["inclusionai/ling-2.6-flash"]`
-3. `["mistralai/mistral-small-24b-instruct-2501"]`
-4. `["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]`
-5. `["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]`
-6. `["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]`
+1. `["openai/gpt-4o-mini"]`
+2. `["microsoft/phi-4"]`
+3. `["mistralai/ministral-3b-2512"]`
+4. `["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"]`
+5. `["openai/gpt-4.1-nano", "microsoft/phi-4"]`
+6. `["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"]`
 
 Stage 1 カタログ snapshot / 意思決定記録:
 `docs/bugfix/artifacts/r1-models-snapshot-2026-07-27.json` /
-`docs/bugfix/artifacts/r1-stage1-decision-record-2026-07-27.md`
+`docs/bugfix/artifacts/r1-replay-decision-record-2026-07-27-post-r2r3.md`
 
 eligible 部分集合・preflight（R1 CLI）:
 
@@ -52,12 +52,12 @@ eligible 部分集合・preflight（R1 CLI）:
 # N=1 preflight（timeout/unavailable は N=10 から必須除外）
 docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
   --trial-count=1 \
-  --configurations-json='[["openai/gpt-oss-20b"],["inclusionai/ling-2.6-flash"]]'
+  --configurations-json='[["openai/gpt-4o-mini"],["openai/gpt-4.1-nano"]]'
 
 # N=10（eligible JSON の配列順 = 評価順 = 推奨タイブレーク）
 docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
   --trial-count=10 \
-  --configurations-json='[["openai/gpt-oss-20b"]]'
+  --configurations-json='[["openai/gpt-4o-mini"]]'
 ```
 
 カタログ再 snapshot（Stage-1 Method B・有料キー）:
@@ -96,7 +96,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 ```bash
 # 例示のみ。N=10 未合格のまま本番に使わない。合格 exact 構成に置換すること。
-OPENROUTER_MODELS=openai/gpt-oss-20b
+OPENROUTER_MODELS=openai/gpt-4o-mini
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
 

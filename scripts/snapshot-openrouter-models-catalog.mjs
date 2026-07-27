@@ -25,13 +25,16 @@ export const stage1ModelsTimeoutMs = 60_000;
 export const stage1ModelsMaxBodyBytes = 8 * 1024 * 1024;
 export const stage1ModelsUrl = `${officialOpenRouterBaseUrl}/models?output_modalities=text`;
 
-/** 設計 §5.3.0 closed EX-B */
+/** 設計 §5.3.0 closed EX-B（証跡の 20s abort を含む） */
 export const closedExBIds = Object.freeze([
   "deepseek/deepseek-v4-flash",
   "qwen/qwen3.5-flash-02-23",
   "z-ai/glm-4.7-flash",
   "mistralai/mistral-small-3.2-24b-instruct",
   "qwen/qwen3-30b-a3b-instruct-2507",
+  // R1 live N=10 unit1 generation_timeout（2026-07-27）
+  "openai/gpt-oss-20b",
+  "mistralai/mistral-small-24b-instruct-2501",
 ]);
 
 /** 設計 §5.3.0b closed EX-404 */

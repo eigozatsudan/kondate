@@ -1,18 +1,26 @@
 {
-  "snapshotDate": "2026-07-27T14:11:04.555Z",
+  "snapshotDate": "2026-07-27T23:52:30.265Z",
   "enumerationMethod": "B",
-  "entryCount": 342,
+  "entryCount": 340,
   "completenessProof": {
     "method": "B_single_response_stage1_budget",
     "timeoutMs": 60000,
     "maxBodyBytes": 8388608,
-    "entryCount": 342,
-    "totalCountField": 342
+    "entryCount": 340,
+    "totalCountField": 340
   },
-  "models_response_sha256": "ef87fffaece9d63d887d35cc26a85ddec911c9c304f277347f82d58c3c3adceb",
+  "models_response_sha256": "a08e471aa584d788c8a037f3c0f4683549c651a8c9da88e5847234c914e3d1eb",
   "officialBaseUrl": "https://openrouter.ai/api/v1",
   "modelsUrl": "https://openrouter.ai/api/v1/models?output_modalities=text",
   "survivors": [
+    {
+      "id": "kwaipilot/kat-coder-air-v2.5",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "tencent/hy3",
+      "promptPlusCompletionUsdPerMillion": 0.6599999999999999
+    },
     {
       "id": "nex-agi/nex-n2-mini",
       "promptPlusCompletionUsdPerMillion": 0.12499999999999999
@@ -20,6 +28,10 @@
     {
       "id": "ibm-granite/granite-4.1-8b",
       "promptPlusCompletionUsdPerMillion": 0.15
+    },
+    {
+      "id": "inclusionai/ling-2.6-1t",
+      "promptPlusCompletionUsdPerMillion": 0.7
     },
     {
       "id": "xiaomi/mimo-v2.5",
@@ -31,7 +43,15 @@
     },
     {
       "id": "google/gemma-4-26b-a4b-it",
-      "promptPlusCompletionUsdPerMillion": 0.47
+      "promptPlusCompletionUsdPerMillion": 0.56
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "promptPlusCompletionUsdPerMillion": 0.54
+    },
+    {
+      "id": "mistralai/mistral-small-2603",
+      "promptPlusCompletionUsdPerMillion": 0.75
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
@@ -42,8 +62,20 @@
       "promptPlusCompletionUsdPerMillion": 0.25
     },
     {
+      "id": "inception/mercury-2",
+      "promptPlusCompletionUsdPerMillion": 1
+    },
+    {
       "id": "bytedance-seed/seed-2.0-mini",
       "promptPlusCompletionUsdPerMillion": 0.49999999999999994
+    },
+    {
+      "id": "qwen/qwen3-coder-next",
+      "promptPlusCompletionUsdPerMillion": 0.9099999999999999
+    },
+    {
+      "id": "upstage/solar-pro-3",
+      "promptPlusCompletionUsdPerMillion": 0.75
     },
     {
       "id": "bytedance-seed/seed-1.6-flash",
@@ -66,12 +98,44 @@
       "promptPlusCompletionUsdPerMillion": 0.19999999999999998
     },
     {
+      "id": "deepseek/deepseek-v3.2",
+      "promptPlusCompletionUsdPerMillion": 0.6689999999999999
+    },
+    {
+      "id": "allenai/olmo-3-32b-think",
+      "promptPlusCompletionUsdPerMillion": 0.65
+    },
+    {
       "id": "mistralai/voxtral-small-24b-2507",
       "promptPlusCompletionUsdPerMillion": 0.39999999999999997
     },
     {
       "id": "openai/gpt-oss-safeguard-20b",
       "promptPlusCompletionUsdPerMillion": 0.375
+    },
+    {
+      "id": "qwen/qwen3-vl-32b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.52
+    },
+    {
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.572
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "deepseek/deepseek-v3.2-exp",
+      "promptPlusCompletionUsdPerMillion": 0.6799999999999999
+    },
+    {
+      "id": "thedrummer/cydonia-24b-v4.1",
+      "promptPlusCompletionUsdPerMillion": 0.8
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-thinking",
+      "promptPlusCompletionUsdPerMillion": 0.8775000000000001
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -86,8 +150,20 @@
       "promptPlusCompletionUsdPerMillion": 0.34
     },
     {
+      "id": "qwen/qwen3-235b-a22b-2507",
+      "promptPlusCompletionUsdPerMillion": 0.64
+    },
+    {
+      "id": "tencent/hunyuan-a13b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.7100000000000001
+    },
+    {
       "id": "google/gemma-3n-e4b-it",
       "promptPlusCompletionUsdPerMillion": 0.18
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b",
+      "promptPlusCompletionUsdPerMillion": 0.62
     },
     {
       "id": "qwen/qwen3-32b",
@@ -96,6 +172,10 @@
     {
       "id": "openai/gpt-4.1-nano",
       "promptPlusCompletionUsdPerMillion": 0.49999999999999994
+    },
+    {
+      "id": "meta-llama/llama-4-maverick",
+      "promptPlusCompletionUsdPerMillion": 0.9999999999999999
     },
     {
       "id": "meta-llama/llama-4-scout",
@@ -110,6 +190,14 @@
       "promptPlusCompletionUsdPerMillion": 0.19999999999999998
     },
     {
+      "id": "google/gemma-3-27b-it",
+      "promptPlusCompletionUsdPerMillion": 0.5299999999999999
+    },
+    {
+      "id": "mistralai/mistral-saba",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
+    },
+    {
       "id": "mistralai/mistral-small-24b-instruct-2501",
       "promptPlusCompletionUsdPerMillion": 0.13
     },
@@ -122,12 +210,36 @@
       "promptPlusCompletionUsdPerMillion": 0.1875
     },
     {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.53
+    },
+    {
+      "id": "thedrummer/unslopnemo-12b",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
+    },
+    {
       "id": "qwen/qwen-2.5-7b-instruct",
       "promptPlusCompletionUsdPerMillion": 0.13999999999999999
     },
     {
+      "id": "thedrummer/rocinante-12b",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "qwen/qwen-2.5-72b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.76
+    },
+    {
+      "id": "cohere/command-r-08-2024",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
       "id": "sao10k/l3-lunaris-8b",
       "promptPlusCompletionUsdPerMillion": 0.09
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
     },
     {
       "id": "meta-llama/llama-3.1-8b-instruct",
@@ -138,12 +250,20 @@
       "promptPlusCompletionUsdPerMillion": 0.049
     },
     {
+      "id": "openai/gpt-4o-mini",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "openai/gpt-4o-mini-2024-07-18",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
       "id": "gryphe/mythomax-l2-13b",
       "promptPlusCompletionUsdPerMillion": 0.12
     }
   ],
-  "mechanicalExclusionsCount": 303,
-  "mechanicalSurvivorsCount": 39,
+  "mechanicalExclusionsCount": 271,
+  "mechanicalSurvivorsCount": 69,
   "exIdRulesApplied": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -182,118 +302,98 @@
   "mechanicalExclusionReasons": {
     "missing structured_outputs AND/OR response_format (AND required)": 71,
     "rejects :free on real API path": 15,
-    "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)": 10,
-    "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)": 8,
-    "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)": 7,
-    "exceeds max prompt+completion USD per 1M tokens (30 > 0.5)": 6,
-    "exceeds max prompt+completion USD per 1M tokens (8 > 0.5)": 6,
-    "exceeds max prompt+completion USD per 1M tokens (5.5 > 0.5)": 5,
-    "exceeds max prompt+completion USD per 1M tokens (35 > 0.5)": 5,
-    "exceeds max prompt+completion USD per 1M tokens (3.5 > 0.5)": 5,
-    "exceeds max prompt+completion USD per 1M tokens (14 > 0.5)": 5,
-    "exceeds max prompt+completion USD per 1M tokens (15.75 > 0.5)": 5,
-    "exceeds max prompt+completion USD per 1M tokens (60 > 0.5)": 4,
-    "exceeds max prompt+completion USD per 1M tokens (2.8 > 0.5)": 4,
-    "exceeds max prompt+completion USD per 1M tokens (18 > 0.5)": 4,
-    "exceeds max prompt+completion USD per 1M tokens (2.25 > 0.5)": 4,
-    "exceeds max prompt+completion USD per 1M tokens (9 > 0.5)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)": 9,
+    "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)": 7,
+    "exceeds max prompt+completion USD per 1M tokens (30 > 1)": 6,
+    "exceeds max prompt+completion USD per 1M tokens (8 > 1)": 6,
+    "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)": 6,
+    "exceeds max prompt+completion USD per 1M tokens (5.5 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (35 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (14 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (15.75 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (60 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (2.8 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (18 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (2.25 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (9 > 1)": 3,
     "rejects router model ID": 3,
-    "exceeds max prompt+completion USD per 1M tokens (7 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (17.5 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (3 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (3.75 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (2.4 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (2 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (10 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (1.04 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (0.7999999999999999 > 0.5)": 3,
-    "exceeds max prompt+completion USD per 1M tokens (12 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.5 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.75 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (6 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (5.25 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.1400000000000001 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (210 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.305 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.25 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (4.68 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (2.5 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (3.1 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (20 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.2 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (90 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.3 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (1.4 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (40 > 0.5)": 2,
-    "exceeds max prompt+completion USD per 1M tokens (3.7 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.6599999999999999 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (3.2712000000000003 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (4.23 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.7 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.6 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.3499999999999999 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (5.9 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (10.5 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (180 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.0999999999999996 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.3125 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (7.28 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.3 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.7 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (23 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (3.3659999999999997 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (4.002 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.54 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.275 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.07 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.45 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.7550000000000001 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.34 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.82 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.73 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.0499999999999998 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.9099999999999999 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (3.42 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.15 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (189 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.6689999999999999 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.65 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.275 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.52 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (4.5 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.482 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.572 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (50 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.69 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (135 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.6799999999999999 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.8 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.8600000000000003 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.11 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (3.9 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.27 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.8775000000000001 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.2000000000000002 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.64 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.7100000000000001 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (100 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (2.6500000000000004 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.62 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.1375 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.9999999999999998 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.9999999999999999 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.3900000000000001 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (750 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.5299999999999999 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.35 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.7999999999999998 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (3.2 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.0003 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (75 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.53 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (0.76 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.7 > 0.5)": 1,
-    "exceeds max prompt+completion USD per 1M tokens (1.1 > 0.5)": 1
+    "exceeds max prompt+completion USD per 1M tokens (3 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (3.75 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (2.4 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (2 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (10 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (1.04 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (8.75 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (12 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.5 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.75 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (6 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (5.25 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.1400000000000001 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (210 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.305 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.25 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (4.68 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (2.5 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (3.1 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (20 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.2 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (90 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.3 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.4 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (40 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (3.7 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.0856000000000003 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (4.23 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.7 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.6 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.3499999999999999 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (5.9 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (10.5 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (180 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.0999999999999996 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.3125 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (7.28 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.3 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (23 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.3659999999999997 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (4.002 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.275 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.07 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.45 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (17.5 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.7550000000000001 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.34 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.82 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.73 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.0499999999999998 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.42 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.15 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (189 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.275 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (4.5 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.482 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (50 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.69 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (135 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.8600000000000003 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.11 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.9 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.27 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.2000000000000002 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (100 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.6500000000000004 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.1375 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.9999999999999998 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.3900000000000001 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (750 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.35 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.7999999999999998 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.2 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.0003 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (75 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.7 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (7 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.1 > 1)": 1
   }
 }

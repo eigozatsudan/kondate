@@ -25,22 +25,23 @@ export const modelsApiTimeoutMs = 5_000;
 export const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 export const officialModelsUrl = `${officialOpenRouterBaseUrl}/models?output_modalities=text`;
 
-/** R1 Stage 1 freeze — decision record docs/bugfix/artifacts/r1-stage1-decision-record-2026-07-27.md */
+/** R1-replay after R2+R3 — decision record docs/bugfix/artifacts/r1-replay-decision-record-2026-07-27-post-r2r3.md */
 export const candidateModelIds = Object.freeze([
-  "openai/gpt-oss-20b",
-  "inclusionai/ling-2.6-flash",
-  "mistralai/mistral-small-24b-instruct-2501",
-  "meta-llama/llama-3.1-8b-instruct",
+  "openai/gpt-4o-mini",
   "openai/gpt-4.1-nano",
+  "mistralai/ministral-3b-2512",
+  "meta-llama/llama-3.1-8b-instruct",
+  "microsoft/phi-4",
 ]);
 
 export const paidOpenRouterModelConfigurations = Object.freeze([
-  Object.freeze(["openai/gpt-oss-20b"]),
-  Object.freeze(["inclusionai/ling-2.6-flash"]),
-  Object.freeze(["mistralai/mistral-small-24b-instruct-2501"]),
-  Object.freeze(["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]),
-  Object.freeze(["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]),
-  Object.freeze(["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]),
+  Object.freeze(["openai/gpt-4o-mini"]),
+  Object.freeze(["microsoft/phi-4"]),
+  Object.freeze(["mistralai/ministral-3b-2512"]),
+  Object.freeze(["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"]),
+  // nano 単独は第4 identical のため禁止。primary として 2-ID のみ。
+  Object.freeze(["openai/gpt-4.1-nano", "microsoft/phi-4"]),
+  Object.freeze(["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"]),
 ]);
 
 /** 設計 §5.3.0c — configuration[1] 禁止集合 */

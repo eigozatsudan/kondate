@@ -1,13 +1,13 @@
 {
-  "snapshotDate": "2026-07-27T14:11:04.555Z",
+  "snapshotDate": "2026-07-27T23:52:30.265Z",
   "mechanicalExclusions": [
     {
       "id": "anthropic/claude-opus-5-fast",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 1)"
     },
     {
       "id": "anthropic/claude-opus-5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 1)"
     },
     {
       "id": "inclusionai/ling-3.0-flash:free",
@@ -23,11 +23,11 @@
     },
     {
       "id": "google/gemini-3.6-flash",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (9 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (9 > 1)"
     },
     {
       "id": "google/gemini-3.5-flash-lite",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 1)"
     },
     {
       "id": "meituan/longcat-2.0",
@@ -43,51 +43,47 @@
     },
     {
       "id": "moonshotai/kimi-k3",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 1)"
     },
     {
       "id": "meta/muse-spark-1.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 0.5)"
-    },
-    {
-      "id": "kwaipilot/kat-coder-air-v2.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 1)"
     },
     {
       "id": "kwaipilot/kat-coder-pro-v2.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.7 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.7 > 1)"
     },
     {
       "id": "openai/gpt-5.6-luna-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (7 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)"
     },
     {
       "id": "openai/gpt-5.6-luna",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (7 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)"
     },
     {
       "id": "openai/gpt-5.6-terra-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (17.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8.75 > 1)"
     },
     {
       "id": "openai/gpt-5.6-terra",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (17.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8.75 > 1)"
     },
     {
       "id": "openai/gpt-5.6-sol-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 1)"
     },
     {
       "id": "openai/gpt-5.6-sol",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 1)"
     },
     {
       "id": "x-ai/grok-4.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 1)"
     },
     {
       "id": "~x-ai/grok-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 1)"
     },
     {
       "id": "aion-labs/aion-3.0-mini",
@@ -96,10 +92,6 @@
     {
       "id": "aion-labs/aion-3.0",
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
-    },
-    {
-      "id": "tencent/hy3",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.6599999999999999 > 0.5)"
     },
     {
       "id": "poolside/laguna-xs-2.1",
@@ -111,7 +103,7 @@
     },
     {
       "id": "anthropic/claude-sonnet-5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12 > 1)"
     },
     {
       "id": "google/gemini-3.1-flash-lite-image",
@@ -123,11 +115,11 @@
     },
     {
       "id": "google/gemini-3.1-flash-image",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)"
     },
     {
       "id": "google/gemini-3-pro-image",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 1)"
     },
     {
       "id": "cohere/north-mini-code:free",
@@ -135,7 +127,7 @@
     },
     {
       "id": "z-ai/glm-5.2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.2712000000000003 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.0856000000000003 > 1)"
     },
     {
       "id": "openrouter/fusion",
@@ -143,15 +135,15 @@
     },
     {
       "id": "moonshotai/kimi-k2.7-code",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (4.23 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (4.23 > 1)"
     },
     {
       "id": "~anthropic/claude-fable-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 1)"
     },
     {
       "id": "anthropic/claude-fable-5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 1)"
     },
     {
       "id": "nex-agi/nex-n2-pro",
@@ -163,7 +155,7 @@
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b-a55b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.7 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.7 > 1)"
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
@@ -171,39 +163,39 @@
     },
     {
       "id": "qwen/qwen3.7-plus",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.6 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.6 > 1)"
     },
     {
       "id": "minimax/minimax-m3",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.5 > 1)"
     },
     {
       "id": "stepfun/step-3.7-flash",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3499999999999999 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3499999999999999 > 1)"
     },
     {
       "id": "anthropic/claude-opus-4.8-fast",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (60 > 1)"
     },
     {
       "id": "anthropic/claude-opus-4.8",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 1)"
     },
     {
       "id": "qwen/qwen3.7-max",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.9 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.9 > 1)"
     },
     {
       "id": "x-ai/grok-build-0.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3 > 1)"
     },
     {
       "id": "google/gemini-3.5-flash",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (10.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (10.5 > 1)"
     },
     {
       "id": "anthropic/claude-opus-4.7-fast",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (180 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (180 > 1)"
     },
     {
       "id": "perceptron/perceptron-mk1",
@@ -215,19 +207,19 @@
     },
     {
       "id": "google/gemini-3.1-flash-lite",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.75 > 1)"
     },
     {
       "id": "openai/gpt-chat-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 1)"
     },
     {
       "id": "x-ai/grok-4.3",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.75 > 1)"
     },
     {
       "id": "mistralai/mistral-medium-3-5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (9 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (9 > 1)"
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
@@ -243,67 +235,63 @@
     },
     {
       "id": "~anthropic/claude-haiku-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (6 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (6 > 1)"
     },
     {
       "id": "~openai/gpt-mini-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.25 > 1)"
     },
     {
       "id": "~google/gemini-pro-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 1)"
     },
     {
       "id": "~moonshotai/kimi-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 1)"
     },
     {
       "id": "~google/gemini-flash-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (9 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (9 > 1)"
     },
     {
       "id": "~anthropic/claude-sonnet-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12 > 1)"
     },
     {
       "id": "~openai/gpt-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 1)"
     },
     {
       "id": "qwen/qwen3.5-plus-20260420",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.0999999999999996 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.0999999999999996 > 1)"
     },
     {
       "id": "qwen/qwen3.6-flash",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3125 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3125 > 1)"
     },
     {
       "id": "qwen/qwen3.6-35b-a3b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1400000000000001 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1400000000000001 > 1)"
     },
     {
       "id": "qwen/qwen3.6-max-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (7.28 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (7.28 > 1)"
     },
     {
       "id": "qwen/qwen3.6-27b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.3 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.3 > 1)"
     },
     {
       "id": "openai/gpt-5.5-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (210 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (210 > 1)"
     },
     {
       "id": "openai/gpt-5.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (35 > 1)"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.305 > 0.5)"
-    },
-    {
-      "id": "inclusionai/ling-2.6-1t",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.7 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.305 > 1)"
     },
     {
       "id": "tencent/hy3-preview",
@@ -311,15 +299,15 @@
     },
     {
       "id": "xiaomi/mimo-v2.5-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.305 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.305 > 1)"
     },
     {
       "id": "openai/gpt-5.4-image-2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (23 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (23 > 1)"
     },
     {
       "id": "~anthropic/claude-opus-latest",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 1)"
     },
     {
       "id": "openrouter/pareto-code",
@@ -327,23 +315,19 @@
     },
     {
       "id": "moonshotai/kimi-k2.6",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.3659999999999997 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.3659999999999997 > 1)"
     },
     {
       "id": "anthropic/claude-opus-4.7",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 1)"
     },
     {
       "id": "z-ai/glm-5.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (4.002 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (4.002 > 1)"
     },
     {
       "id": "google/gemma-4-26b-a4b-it:free",
       "reason": "rejects :free on real API path"
-    },
-    {
-      "id": "google/gemma-4-31b-it",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.54 > 0.5)"
     },
     {
       "id": "google/gemma-4-31b-it:free",
@@ -351,7 +335,7 @@
     },
     {
       "id": "qwen/qwen3.6-plus",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.275 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.275 > 1)"
     },
     {
       "id": "z-ai/glm-5v-turbo",
@@ -359,15 +343,15 @@
     },
     {
       "id": "arcee-ai/trinity-large-thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.07 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.07 > 1)"
     },
     {
       "id": "x-ai/grok-4.20-multi-agent",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.75 > 1)"
     },
     {
       "id": "x-ai/grok-4.20",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.75 > 1)"
     },
     {
       "id": "google/lyria-3-pro-preview",
@@ -379,7 +363,7 @@
     },
     {
       "id": "kwaipilot/kat-coder-pro-v2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.5 > 1)"
     },
     {
       "id": "rekaai/reka-edge",
@@ -387,19 +371,15 @@
     },
     {
       "id": "minimax/minimax-m2.7",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.25 > 1)"
     },
     {
       "id": "openai/gpt-5.4-nano",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.45 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.45 > 1)"
     },
     {
       "id": "openai/gpt-5.4-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.25 > 0.5)"
-    },
-    {
-      "id": "mistralai/mistral-small-2603",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.25 > 1)"
     },
     {
       "id": "z-ai/glm-5-turbo",
@@ -411,51 +391,47 @@
     },
     {
       "id": "bytedance-seed/seed-2.0-lite",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 1)"
     },
     {
       "id": "openai/gpt-5.4-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (210 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (210 > 1)"
     },
     {
       "id": "openai/gpt-5.4",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (17.5 > 0.5)"
-    },
-    {
-      "id": "inception/mercury-2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (17.5 > 1)"
     },
     {
       "id": "openai/gpt-5.3-chat",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 1)"
     },
     {
       "id": "google/gemini-3.1-flash-lite-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.75 > 1)"
     },
     {
       "id": "google/gemini-3.1-flash-image-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)"
     },
     {
       "id": "qwen/qwen3.5-35b-a3b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1400000000000001 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1400000000000001 > 1)"
     },
     {
       "id": "qwen/qwen3.5-27b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.7550000000000001 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.7550000000000001 > 1)"
     },
     {
       "id": "qwen/qwen3.5-122b-a10b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.34 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.34 > 1)"
     },
     {
       "id": "google/gemini-3.1-pro-preview-customtools",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 1)"
     },
     {
       "id": "openai/gpt-5.3-codex",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 1)"
     },
     {
       "id": "aion-labs/aion-2.0",
@@ -463,39 +439,35 @@
     },
     {
       "id": "google/gemini-3.1-pro-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 1)"
     },
     {
       "id": "anthropic/claude-sonnet-4.6",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 1)"
     },
     {
       "id": "qwen/qwen3.5-plus-02-15",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.82 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.82 > 1)"
     },
     {
       "id": "qwen/qwen3.5-397b-a17b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.73 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.73 > 1)"
     },
     {
       "id": "minimax/minimax-m2.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.0499999999999998 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.0499999999999998 > 1)"
     },
     {
       "id": "z-ai/glm-5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)"
     },
     {
       "id": "qwen/qwen3-max-thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (4.68 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (4.68 > 1)"
     },
     {
       "id": "anthropic/claude-opus-4.6",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 0.5)"
-    },
-    {
-      "id": "qwen/qwen3-coder-next",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.9099999999999999 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 1)"
     },
     {
       "id": "openrouter/free",
@@ -507,11 +479,7 @@
     },
     {
       "id": "moonshotai/kimi-k2.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.42 > 0.5)"
-    },
-    {
-      "id": "upstage/solar-pro-3",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.42 > 1)"
     },
     {
       "id": "minimax/minimax-m2-her",
@@ -523,19 +491,19 @@
     },
     {
       "id": "openai/gpt-audio",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)"
     },
     {
       "id": "openai/gpt-audio-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3 > 1)"
     },
     {
       "id": "openai/gpt-5.2-codex",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 1)"
     },
     {
       "id": "bytedance-seed/seed-1.6",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 1)"
     },
     {
       "id": "minimax/minimax-m2.1",
@@ -543,11 +511,11 @@
     },
     {
       "id": "z-ai/glm-4.7",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.15 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.15 > 1)"
     },
     {
       "id": "google/gemini-3-flash-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)"
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -555,19 +523,19 @@
     },
     {
       "id": "openai/gpt-5.2-chat",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 1)"
     },
     {
       "id": "openai/gpt-5.2-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (189 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (189 > 1)"
     },
     {
       "id": "openai/gpt-5.2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (15.75 > 1)"
     },
     {
       "id": "mistralai/devstral-2512",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.4 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.4 > 1)"
     },
     {
       "id": "relace/relace-search",
@@ -583,7 +551,7 @@
     },
     {
       "id": "openai/gpt-5.1-codex-max",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "amazon/nova-2-lite-v1",
@@ -591,47 +559,39 @@
     },
     {
       "id": "mistralai/mistral-large-2512",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2 > 0.5)"
-    },
-    {
-      "id": "deepseek/deepseek-v3.2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.6689999999999999 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2 > 1)"
     },
     {
       "id": "anthropic/claude-opus-4.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 0.5)"
-    },
-    {
-      "id": "allenai/olmo-3-32b-think",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.65 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (30 > 1)"
     },
     {
       "id": "google/gemini-3-pro-image-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (14 > 1)"
     },
     {
       "id": "deepcogito/cogito-v2.1-671b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.5 > 1)"
     },
     {
       "id": "openai/gpt-5.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "openai/gpt-5.1-chat",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "openai/gpt-5.1-codex",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "openai/gpt-5.1-codex-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 1)"
     },
     {
       "id": "moonshotai/kimi-k2-thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.1 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.1 > 1)"
     },
     {
       "id": "amazon/nova-premier-v1",
@@ -647,11 +607,7 @@
     },
     {
       "id": "minimax/minimax-m2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.275 > 0.5)"
-    },
-    {
-      "id": "qwen/qwen3-vl-32b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.52 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.275 > 1)"
     },
     {
       "id": "ibm-granite/granite-4.0-h-micro",
@@ -659,63 +615,47 @@
     },
     {
       "id": "openai/gpt-5-image-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (4.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (4.5 > 1)"
     },
     {
       "id": "anthropic/claude-haiku-4.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (6 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (6 > 1)"
     },
     {
       "id": "qwen/qwen3-vl-8b-thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.482 > 0.5)"
-    },
-    {
-      "id": "qwen/qwen3-vl-8b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.572 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.482 > 1)"
     },
     {
       "id": "openai/gpt-5-image",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (20 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (20 > 1)"
     },
     {
       "id": "openai/o3-deep-research",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (50 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (50 > 1)"
     },
     {
       "id": "openai/o4-mini-deep-research",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (10 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (10 > 1)"
     },
     {
       "id": "google/gemini-2.5-flash-image",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 1)"
     },
     {
       "id": "qwen/qwen3-vl-30b-a3b-thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.69 > 0.5)"
-    },
-    {
-      "id": "qwen/qwen3-vl-30b-a3b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.69 > 1)"
     },
     {
       "id": "openai/gpt-5-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (135 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (135 > 1)"
     },
     {
       "id": "z-ai/glm-4.6",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.5 > 1)"
     },
     {
       "id": "anthropic/claude-sonnet-4.5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 0.5)"
-    },
-    {
-      "id": "deepseek/deepseek-v3.2-exp",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.6799999999999999 > 0.5)"
-    },
-    {
-      "id": "thedrummer/cydonia-24b-v4.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (18 > 1)"
     },
     {
       "id": "relace/relace-apply-3",
@@ -723,47 +663,43 @@
     },
     {
       "id": "qwen/qwen3-vl-235b-a22b-thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8600000000000003 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8600000000000003 > 1)"
     },
     {
       "id": "qwen/qwen3-vl-235b-a22b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.11 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.11 > 1)"
     },
     {
       "id": "qwen/qwen3-max",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (4.68 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (4.68 > 1)"
     },
     {
       "id": "qwen/qwen3-coder-plus",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.9 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.9 > 1)"
     },
     {
       "id": "openai/gpt-5-codex",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "deepseek/deepseek-v3.1-terminus",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.27 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.27 > 1)"
     },
     {
       "id": "qwen/qwen3-coder-flash",
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "qwen/qwen3-next-80b-a3b-thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.8775000000000001 > 0.5)"
-    },
-    {
       "id": "qwen/qwen3-next-80b-a3b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.2000000000000002 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.2000000000000002 > 1)"
     },
     {
       "id": "qwen/qwen-plus-2025-07-28",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.04 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.04 > 1)"
     },
     {
       "id": "qwen/qwen-plus-2025-07-28:thinking",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.04 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.04 > 1)"
     },
     {
       "id": "nvidia/nemotron-nano-9b-v2:free",
@@ -771,7 +707,7 @@
     },
     {
       "id": "moonshotai/kimi-k2-0905",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.1 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.1 > 1)"
     },
     {
       "id": "qwen/qwen3-30b-a3b-thinking-2507",
@@ -787,11 +723,11 @@
     },
     {
       "id": "deepseek/deepseek-chat-v3.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.2 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.2 > 1)"
     },
     {
       "id": "mistralai/mistral-medium-3.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.4 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.4 > 1)"
     },
     {
       "id": "z-ai/glm-4.5v",
@@ -802,16 +738,12 @@
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "openai/gpt-5-chat",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
-    },
-    {
       "id": "openai/gpt-5",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "openai/gpt-5-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.25 > 1)"
     },
     {
       "id": "openai/gpt-oss-20b:free",
@@ -819,11 +751,11 @@
     },
     {
       "id": "anthropic/claude-opus-4.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (90 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (90 > 1)"
     },
     {
       "id": "mistralai/codestral-2508",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.2 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.2 > 1)"
     },
     {
       "id": "z-ai/glm-4.5",
@@ -839,15 +771,11 @@
     },
     {
       "id": "qwen/qwen3-coder",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3 > 1)"
     },
     {
       "id": "bytedance/ui-tars-1.5-7b",
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
-    },
-    {
-      "id": "qwen/qwen3-235b-a22b-2507",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.64 > 0.5)"
     },
     {
       "id": "moonshotai/kimi-k2",
@@ -858,12 +786,8 @@
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "tencent/hunyuan-a13b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.7100000000000001 > 0.5)"
-    },
-    {
       "id": "morph/morph-v3-large",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 1)"
     },
     {
       "id": "morph/morph-v3-fast",
@@ -879,23 +803,23 @@
     },
     {
       "id": "google/gemini-2.5-flash",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.8 > 1)"
     },
     {
       "id": "google/gemini-2.5-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "openai/o3-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (100 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (100 > 1)"
     },
     {
       "id": "google/gemini-2.5-pro-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "deepseek/deepseek-r1-0528",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.6500000000000004 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.6500000000000004 > 1)"
     },
     {
       "id": "anthropic/claude-opus-4",
@@ -907,11 +831,11 @@
     },
     {
       "id": "mistralai/mistral-medium-3",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2.4 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2.4 > 1)"
     },
     {
       "id": "google/gemini-2.5-pro-preview-05-06",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)"
     },
     {
       "id": "arcee-ai/virtuoso-large",
@@ -922,16 +846,12 @@
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "qwen/qwen3-30b-a3b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.62 > 0.5)"
-    },
-    {
       "id": "qwen/qwen3-8b",
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
       "id": "qwen/qwen3-14b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1375 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1375 > 1)"
     },
     {
       "id": "qwen/qwen3-235b-a22b",
@@ -939,35 +859,31 @@
     },
     {
       "id": "openai/o4-mini-high",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 1)"
     },
     {
       "id": "openai/o3",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (10 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (10 > 1)"
     },
     {
       "id": "openai/o4-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 1)"
     },
     {
       "id": "openai/gpt-4.1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (10 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (10 > 1)"
     },
     {
       "id": "openai/gpt-4.1-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.9999999999999998 > 0.5)"
-    },
-    {
-      "id": "meta-llama/llama-4-maverick",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.9999999999999999 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.9999999999999998 > 1)"
     },
     {
       "id": "deepseek/deepseek-chat-v3-0324",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3900000000000001 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3900000000000001 > 1)"
     },
     {
       "id": "openai/o1-pro",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (750 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (750 > 1)"
     },
     {
       "id": "mistralai/mistral-small-3.1-24b-instruct",
@@ -975,23 +891,15 @@
     },
     {
       "id": "cohere/command-a",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)"
-    },
-    {
-      "id": "openai/gpt-4o-search-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)"
     },
     {
       "id": "rekaai/reka-flash-3",
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "google/gemma-3-27b-it",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.5299999999999999 > 0.5)"
-    },
-    {
       "id": "thedrummer/skyfall-36b-v2",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.35 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.35 > 1)"
     },
     {
       "id": "perplexity/sonar-reasoning-pro",
@@ -1006,12 +914,8 @@
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "mistralai/mistral-saba",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.7999999999999999 > 0.5)"
-    },
-    {
       "id": "openai/o3-mini-high",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 1)"
     },
     {
       "id": "aion-labs/aion-rp-llama-3.1-8b",
@@ -1019,15 +923,15 @@
     },
     {
       "id": "qwen/qwen2.5-vl-72b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.7999999999999998 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.7999999999999998 > 1)"
     },
     {
       "id": "qwen/qwen-plus",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.04 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.04 > 1)"
     },
     {
       "id": "openai/o3-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (5.5 > 1)"
     },
     {
       "id": "perplexity/sonar",
@@ -1039,7 +943,7 @@
     },
     {
       "id": "deepseek/deepseek-r1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.2 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.2 > 1)"
     },
     {
       "id": "minimax/minimax-01",
@@ -1047,19 +951,15 @@
     },
     {
       "id": "deepseek/deepseek-chat",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.0003 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.0003 > 1)"
     },
     {
       "id": "sao10k/l3.3-euryale-70b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.4 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.4 > 1)"
     },
     {
       "id": "openai/o1",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (75 > 0.5)"
-    },
-    {
-      "id": "meta-llama/llama-3.3-70b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.53 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (75 > 1)"
     },
     {
       "id": "amazon/nova-lite-v1",
@@ -1075,27 +975,19 @@
     },
     {
       "id": "openai/gpt-4o-2024-11-20",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)"
     },
     {
       "id": "mistralai/mistral-large-2407",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 1)"
     },
     {
       "id": "qwen/qwen-2.5-coder-32b-instruct",
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "thedrummer/unslopnemo-12b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.7999999999999999 > 0.5)"
-    },
-    {
       "id": "anthracite-org/magnum-v4-72b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 0.5)"
-    },
-    {
-      "id": "thedrummer/rocinante-12b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 1)"
     },
     {
       "id": "meta-llama/llama-3.2-1b-instruct",
@@ -1106,60 +998,40 @@
       "reason": "missing structured_outputs AND/OR response_format (AND required)"
     },
     {
-      "id": "qwen/qwen-2.5-72b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.76 > 0.5)"
-    },
-    {
-      "id": "cohere/command-r-08-2024",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
-    },
-    {
       "id": "cohere/command-r-plus-08-2024",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)"
     },
     {
       "id": "sao10k/l3.1-euryale-70b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.7 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.7 > 1)"
     },
     {
       "id": "nousresearch/hermes-3-llama-3.1-70b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.4 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.4 > 1)"
     },
     {
       "id": "nousresearch/hermes-3-llama-3.1-405b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2 > 1)"
     },
     {
       "id": "openai/gpt-4o-2024-08-06",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)"
-    },
-    {
-      "id": "meta-llama/llama-3.1-70b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.7999999999999999 > 0.5)"
-    },
-    {
-      "id": "openai/gpt-4o-mini",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
-    },
-    {
-      "id": "openai/gpt-4o-mini-2024-07-18",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (0.75 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)"
     },
     {
       "id": "google/gemma-2-27b-it",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.3 > 1)"
     },
     {
       "id": "openai/gpt-4o",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)"
     },
     {
       "id": "openai/gpt-4o-2024-05-13",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (20 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (20 > 1)"
     },
     {
       "id": "mistralai/mixtral-8x22b-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 1)"
     },
     {
       "id": "microsoft/wizardlm-2-8x22b",
@@ -1167,7 +1039,7 @@
     },
     {
       "id": "openai/gpt-4-turbo",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (40 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (40 > 1)"
     },
     {
       "id": "anthropic/claude-3-haiku",
@@ -1175,15 +1047,15 @@
     },
     {
       "id": "mistralai/mistral-large",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (8 > 1)"
     },
     {
       "id": "openai/gpt-3.5-turbo-0613",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3 > 1)"
     },
     {
       "id": "openai/gpt-4-turbo-preview",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (40 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (40 > 1)"
     },
     {
       "id": "openrouter/auto",
@@ -1191,30 +1063,38 @@
     },
     {
       "id": "openai/gpt-3.5-turbo-instruct",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)"
     },
     {
       "id": "openai/gpt-3.5-turbo-16k",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (7 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (7 > 1)"
     },
     {
       "id": "mancer/weaver",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.25 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.25 > 1)"
     },
     {
       "id": "undi95/remm-slerp-l2-13b",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (1.1 > 1)"
     },
     {
       "id": "openai/gpt-3.5-turbo",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (2 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (2 > 1)"
     },
     {
       "id": "openai/gpt-4",
-      "reason": "exceeds max prompt+completion USD per 1M tokens (90 > 0.5)"
+      "reason": "exceeds max prompt+completion USD per 1M tokens (90 > 1)"
     }
   ],
   "mechanicalSurvivors": [
+    {
+      "id": "kwaipilot/kat-coder-air-v2.5",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "tencent/hy3",
+      "promptPlusCompletionUsdPerMillion": 0.6599999999999999
+    },
     {
       "id": "nex-agi/nex-n2-mini",
       "promptPlusCompletionUsdPerMillion": 0.12499999999999999
@@ -1228,6 +1108,10 @@
       "promptPlusCompletionUsdPerMillion": 0.42000000000000004
     },
     {
+      "id": "inclusionai/ling-2.6-1t",
+      "promptPlusCompletionUsdPerMillion": 0.7
+    },
+    {
       "id": "xiaomi/mimo-v2.5",
       "promptPlusCompletionUsdPerMillion": 0.42000000000000004
     },
@@ -1237,7 +1121,15 @@
     },
     {
       "id": "google/gemma-4-26b-a4b-it",
-      "promptPlusCompletionUsdPerMillion": 0.47
+      "promptPlusCompletionUsdPerMillion": 0.56
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "promptPlusCompletionUsdPerMillion": 0.54
+    },
+    {
+      "id": "mistralai/mistral-small-2603",
+      "promptPlusCompletionUsdPerMillion": 0.75
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
@@ -1248,12 +1140,24 @@
       "promptPlusCompletionUsdPerMillion": 0.25
     },
     {
+      "id": "inception/mercury-2",
+      "promptPlusCompletionUsdPerMillion": 1
+    },
+    {
       "id": "bytedance-seed/seed-2.0-mini",
       "promptPlusCompletionUsdPerMillion": 0.49999999999999994
     },
     {
       "id": "qwen/qwen3.5-flash-02-23",
       "promptPlusCompletionUsdPerMillion": 0.325
+    },
+    {
+      "id": "qwen/qwen3-coder-next",
+      "promptPlusCompletionUsdPerMillion": 0.9099999999999999
+    },
+    {
+      "id": "upstage/solar-pro-3",
+      "promptPlusCompletionUsdPerMillion": 0.75
     },
     {
       "id": "z-ai/glm-4.7-flash",
@@ -1280,12 +1184,44 @@
       "promptPlusCompletionUsdPerMillion": 0.19999999999999998
     },
     {
+      "id": "deepseek/deepseek-v3.2",
+      "promptPlusCompletionUsdPerMillion": 0.6689999999999999
+    },
+    {
+      "id": "allenai/olmo-3-32b-think",
+      "promptPlusCompletionUsdPerMillion": 0.65
+    },
+    {
       "id": "mistralai/voxtral-small-24b-2507",
       "promptPlusCompletionUsdPerMillion": 0.39999999999999997
     },
     {
       "id": "openai/gpt-oss-safeguard-20b",
       "promptPlusCompletionUsdPerMillion": 0.375
+    },
+    {
+      "id": "qwen/qwen3-vl-32b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.52
+    },
+    {
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.572
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "deepseek/deepseek-v3.2-exp",
+      "promptPlusCompletionUsdPerMillion": 0.6799999999999999
+    },
+    {
+      "id": "thedrummer/cydonia-24b-v4.1",
+      "promptPlusCompletionUsdPerMillion": 0.8
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-thinking",
+      "promptPlusCompletionUsdPerMillion": 0.8775000000000001
     },
     {
       "id": "openai/gpt-5-nano",
@@ -1312,6 +1248,14 @@
       "promptPlusCompletionUsdPerMillion": 0.49999999999999994
     },
     {
+      "id": "qwen/qwen3-235b-a22b-2507",
+      "promptPlusCompletionUsdPerMillion": 0.64
+    },
+    {
+      "id": "tencent/hunyuan-a13b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.7100000000000001
+    },
+    {
       "id": "mistralai/mistral-small-3.2-24b-instruct",
       "promptPlusCompletionUsdPerMillion": 0.39999999999999997
     },
@@ -1320,12 +1264,20 @@
       "promptPlusCompletionUsdPerMillion": 0.18
     },
     {
+      "id": "qwen/qwen3-30b-a3b",
+      "promptPlusCompletionUsdPerMillion": 0.62
+    },
+    {
       "id": "qwen/qwen3-32b",
       "promptPlusCompletionUsdPerMillion": 0.36000000000000004
     },
     {
       "id": "openai/gpt-4.1-nano",
       "promptPlusCompletionUsdPerMillion": 0.49999999999999994
+    },
+    {
+      "id": "meta-llama/llama-4-maverick",
+      "promptPlusCompletionUsdPerMillion": 0.9999999999999999
     },
     {
       "id": "meta-llama/llama-4-scout",
@@ -1340,6 +1292,14 @@
       "promptPlusCompletionUsdPerMillion": 0.19999999999999998
     },
     {
+      "id": "google/gemma-3-27b-it",
+      "promptPlusCompletionUsdPerMillion": 0.5299999999999999
+    },
+    {
+      "id": "mistralai/mistral-saba",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
+    },
+    {
       "id": "mistralai/mistral-small-24b-instruct-2501",
       "promptPlusCompletionUsdPerMillion": 0.13
     },
@@ -1352,12 +1312,36 @@
       "promptPlusCompletionUsdPerMillion": 0.1875
     },
     {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.53
+    },
+    {
+      "id": "thedrummer/unslopnemo-12b",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
+    },
+    {
       "id": "qwen/qwen-2.5-7b-instruct",
       "promptPlusCompletionUsdPerMillion": 0.13999999999999999
     },
     {
+      "id": "thedrummer/rocinante-12b",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "qwen/qwen-2.5-72b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.76
+    },
+    {
+      "id": "cohere/command-r-08-2024",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
       "id": "sao10k/l3-lunaris-8b",
       "promptPlusCompletionUsdPerMillion": 0.09
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
     },
     {
       "id": "meta-llama/llama-3.1-8b-instruct",
@@ -1366,6 +1350,14 @@
     {
       "id": "mistralai/mistral-nemo",
       "promptPlusCompletionUsdPerMillion": 0.049
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "openai/gpt-4o-mini-2024-07-18",
+      "promptPlusCompletionUsdPerMillion": 0.75
     },
     {
       "id": "gryphe/mythomax-l2-13b",

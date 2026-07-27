@@ -110,10 +110,10 @@ API キーを設定すると、同じ UI から **本番と同じ OpenRouter 経
 ゲート合格後の推奨例（**N=10 を通った exact 構成に置換**すること。最大 2 本）:
 
 ```text
-openai/gpt-oss-20b
+openai/gpt-4o-mini
 ```
 
-> 上記は R1 Stage 1 候補のうち README 用の例であり、**ライブ N=10 ゲート未通過のまま本番 ship しない**こと。キー total limit 未解消も完了扱いしない。詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)。
+> 上記は R1-replay 候補のうち README 用の例であり、**ライブ N=10 ゲート未通過のまま本番 ship しない**こと。キー total limit 未解消も完了扱いしない。詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)。
 
 #### 2. `.env` を上書きする
 
@@ -124,7 +124,7 @@ openai/gpt-oss-20b
 OPENROUTER_API_KEY=sk-or-v1-xxxxxxxx
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 # 例（実際のゲート合格 exact 構成に置換。未合格のまま使わない）
-OPENROUTER_MODELS=openai/gpt-oss-20b
+OPENROUTER_MODELS=openai/gpt-4o-mini
 ```
 
 注意:
