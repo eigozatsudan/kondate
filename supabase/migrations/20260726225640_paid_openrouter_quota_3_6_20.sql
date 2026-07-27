@@ -1,10 +1,10 @@
 -- Plan 8 Task 3: AI 日次クォータを成功3 / attempt6 / global20 へ引き下げる。
 -- 短期窓 4/600s と締切 20s/50s/180s は不変。HMAC/integrity 引数は巻き戻さない。
 --
--- CHECK 引き下げは upgrade-safe:
--- - 過去日カウンタは削除（当日枠のリセットではない）
--- - 当日の active reservation が新上限を超えるなら migration を中止（進行中生成を壊さない）
--- - 当日・予約なしで旧合法の超過行（success 4–5 / attempt 7–12）は **clamp/0 化しない**
+-- CHECK 引き下げは upgrade-safe（非破壊）:
+-- - 過去日カウンタは保持する（証跡削除なし。当日枠のリセットではない）
+-- - active reservation が新上限を超えるなら migration を中止（進行中生成を壊さない）
+-- - 予約なしで旧合法の超過行（success 4–5 / attempt 7–12、過去日含む）は **clamp/0 化しない**
 --   （枠の復活＝quota reset になるため）。CHECK は NOT VALID で追加し既存超過行を保持。
 -- - 新規 INSERT/UPDATE と RPC の p_user_limit=3 / attempt 6 が以降の消費を抑止する。
 
@@ -18,7 +18,6 @@ security definer
 set search_path = ''
 as $upgrade$
 declare
-  v_today date := private.ai_jst_day(pg_catalog.clock_timestamp());
   v_success_conname text;
   v_attempt_conname text;
   v_has_over_success boolean;
@@ -32,28 +31,8 @@ begin
   lock table private.ai_user_daily_external_attempts
     in share row exclusive mode;
 
-  -- 過去日: 無条件 delete しない。JST 日跨ぎ中の processing が参照する行を保持する。
-  -- reserved=0 かつ live reference（user_quota_reserved / user_attempt_reserved）無しだけ purge。
-  delete from private.ai_user_daily_usage u
-  where u.usage_day < v_today
-    and u.reserved_count = 0
-    and not exists (
-      select 1
-      from private.ai_generation_requests r
-      where r.user_id = u.user_id
-        and r.user_usage_day = u.usage_day
-        and coalesce(r.user_quota_reserved, false)
-    );
-  delete from private.ai_user_daily_external_attempts a
-  where a.usage_day < v_today
-    and a.reserved_count = 0
-    and not exists (
-      select 1
-      from private.ai_generation_requests r
-      where r.user_id = a.user_id
-        and r.user_attempt_day = a.usage_day
-        and coalesce(r.user_attempt_reserved, false)
-    );
+  -- 過去日カウンタは削除しない（証跡保持・非破壊アップグレード）。
+  -- 制約切替に必須なのは active reservation 検査と NOT VALID CHECK のみ。
 
   -- lock 保持下で active 検査をやり直す（日を問わず。日跨ぎ past-day reserved も含む）
   if exists (
