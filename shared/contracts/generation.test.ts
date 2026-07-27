@@ -155,6 +155,84 @@ describe("usageTodayDataSchema", () => {
       ]);
     },
   );
+
+  // F5: 旧 5/12 上限・残数不整合・余剰 field を fail-closed で拒否
+  it("rejects the retired 5/12 daily limits", () => {
+    expect(
+      usageTodayDataSchema.safeParse({
+        success: { consumed: 1, limit: 5, remaining: 4 },
+        attempts: { sent: 2, limit: 12, remaining: 10 },
+        shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        globalAvailable: true,
+        retryAt: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects success or attempts when used + remaining does not equal limit", () => {
+    expect(
+      usageTodayDataSchema.safeParse({
+        success: { consumed: 1, limit: 3, remaining: 1 },
+        attempts: { sent: 2, limit: 6, remaining: 4 },
+        shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        globalAvailable: true,
+        retryAt: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      usageTodayDataSchema.safeParse({
+        success: { consumed: 1, limit: 3, remaining: 2 },
+        attempts: { sent: 2, limit: 6, remaining: 5 },
+        shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        globalAvailable: true,
+        retryAt: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects surplus fields on the usage-today payload", () => {
+    expect(
+      usageTodayDataSchema.safeParse({
+        ...availableUsageTodayFixture,
+        extra: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts the zero-remaining boundaries for success, attempts, and short window", () => {
+    expect(
+      usageTodayDataSchema.parse({
+        success: { consumed: 3, limit: 3, remaining: 0 },
+        attempts: { sent: 0, limit: 6, remaining: 6 },
+        shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        globalAvailable: true,
+        retryAt: "2026-07-11T15:00:00.000Z",
+      }),
+    ).toMatchObject({ success: { remaining: 0, limit: 3 } });
+    expect(
+      usageTodayDataSchema.parse({
+        success: { consumed: 0, limit: 3, remaining: 3 },
+        attempts: { sent: 6, limit: 6, remaining: 0 },
+        shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        globalAvailable: true,
+        retryAt: "2026-07-11T15:00:00.000Z",
+      }),
+    ).toMatchObject({ attempts: { remaining: 0, limit: 6 } });
+    expect(
+      usageTodayDataSchema.parse({
+        success: { consumed: 0, limit: 3, remaining: 3 },
+        attempts: { sent: 0, limit: 6, remaining: 6 },
+        shortWindow: {
+          sent: 4,
+          limit: 4,
+          remaining: 0,
+          retryAt: "2026-07-11T09:10:00+09:00",
+        },
+        globalAvailable: true,
+        retryAt: "2026-07-11T09:10:00+09:00",
+      }),
+    ).toMatchObject({ shortWindow: { remaining: 0, limit: 4 } });
+  });
 });
 
 describe("newMenuGenerationRequestSchema", () => {

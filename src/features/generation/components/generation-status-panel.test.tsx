@@ -86,6 +86,81 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
   });
 
+  // F5: attempt 残・short-window 残・global unavailable・0 境界の表示を固定する
+  it("shows attempt remaining, short-window remaining, and global unavailable copy", async () => {
+    vi.useRealTimers();
+    getUsageTodayMock.mockResolvedValue({
+      success: { consumed: 1, limit: 3, remaining: 2 },
+      attempts: { sent: 5, limit: 6, remaining: 1 },
+      shortWindow: {
+        sent: 3,
+        limit: 4,
+        remaining: 1,
+        retryAt: null,
+      },
+      globalAvailable: false,
+      retryAt: "2026-07-11T15:00:00.000Z",
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel state={failedState} userId={USER_ID} />
+      </QueryClientProvider>,
+    );
+    const region = await screen.findByRole("region", { name: "今日あと何回作れるか" });
+    expect(region).toBeVisible();
+    expect(screen.getByText("成功回数：本日あと2回")).toBeVisible();
+    expect(screen.getByText("AI通信試行：本日あと1回")).toBeVisible();
+    expect(screen.getByText("10分間の通信試行：あと1回")).toBeVisible();
+    expect(screen.getByText("アプリ全体：今日はここまで")).toBeVisible();
+  });
+
+  it("shows zero remaining for attempts when success still remains", async () => {
+    vi.useRealTimers();
+    getUsageTodayMock.mockResolvedValue({
+      success: { consumed: 1, limit: 3, remaining: 2 },
+      attempts: { sent: 6, limit: 6, remaining: 0 },
+      shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+      globalAvailable: true,
+      retryAt: "2026-07-11T15:00:00.000Z",
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel state={failedState} userId={USER_ID} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("AI通信試行：本日あと0回")).toBeVisible();
+    expect(screen.getByText("成功回数：本日あと2回")).toBeVisible();
+    expect(screen.getByText("10分間の通信試行：あと4回")).toBeVisible();
+    expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
+  });
+
+  it("shows zero remaining for short-window and success boundaries", async () => {
+    vi.useRealTimers();
+    getUsageTodayMock.mockResolvedValue({
+      success: { consumed: 3, limit: 3, remaining: 0 },
+      attempts: { sent: 2, limit: 6, remaining: 4 },
+      shortWindow: {
+        sent: 4,
+        limit: 4,
+        remaining: 0,
+        retryAt: "2026-07-11T09:10:00+09:00",
+      },
+      globalAvailable: true,
+      retryAt: "2026-07-11T09:10:00+09:00",
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel state={failedState} userId={USER_ID} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("成功回数：本日あと0回")).toBeVisible();
+    expect(screen.getByText("10分間の通信試行：あと0回")).toBeVisible();
+    expect(screen.getByText("AI通信試行：本日あと4回")).toBeVisible();
+  });
+
   it("shows request_conflict copy and fresh-start without success-count claim", async () => {
     vi.useRealTimers();
     const onClear = vi.fn();
