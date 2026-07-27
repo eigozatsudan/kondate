@@ -63,8 +63,7 @@ export function createBenchGenerationContext(): GenerationContext {
 }
 
 export type AppGateResult =
-  | { ok: true; detail: "ok"; decoded: AiGenerationResponse }
-  | { ok: false; detail: string };
+  { ok: true; detail: "ok"; decoded: AiGenerationResponse } | { ok: false; detail: string };
 
 /**
  * 本番相当の応答受理判定。

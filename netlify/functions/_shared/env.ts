@@ -142,10 +142,11 @@ export function parseOpenRouterModels(
   value: string,
   context: OpenRouterModelsParseContext,
 ): readonly string[] {
-  const models = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  // 設計: カンマ区切り・前後 trim・空要素なし（filter(Boolean) で空を落とさない）
+  const models = value.split(",").map((item) => item.trim());
+  if (models.some((model) => model.length === 0)) {
+    throw new Error("OPENROUTER_MODELS must not contain empty elements");
+  }
   if (models.length === 0) throw new Error("OPENROUTER_MODELS must not be empty");
   if (new Set(models).size !== models.length) {
     throw new Error("OPENROUTER_MODELS must not contain duplicates");
@@ -162,9 +163,7 @@ export function parseOpenRouterModels(
       }
     } else if (model.endsWith(":free") || model.startsWith("mock/")) {
       // 設計: exact mock 以外では mock/ も :free も拒否
-      throw new Error(
-        `OPENROUTER_MODELS rejects mock/ or :free model on non-mock base: ${model}`,
-      );
+      throw new Error(`OPENROUTER_MODELS rejects mock/ or :free model on non-mock base: ${model}`);
     }
   }
   return models;

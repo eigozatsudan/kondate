@@ -42,10 +42,13 @@ export function parseConfiguredModels(raw, context = {}) {
     typeof context.openRouterBaseUrl === "string" && context.openRouterBaseUrl.length > 0
       ? context.openRouterBaseUrl
       : officialOpenRouterBaseUrl;
+  // 設計: カンマ区切り・前後 trim・空要素なし（filter(Boolean) で空を落とさない）
   const models = String(raw)
     .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+    .map((value) => value.trim());
+  if (models.some((model) => model.length === 0)) {
+    throw new Error("OPENROUTER_MODELS must not contain empty elements");
+  }
   if (models.length === 0) throw new Error("OPENROUTER_MODELS must not be empty");
   if (new Set(models).size !== models.length) {
     throw new Error("OPENROUTER_MODELS must not contain duplicates");
@@ -81,6 +84,8 @@ export function usdPerMillion(tokenPrice) {
   if (typeof tokenPrice === "string") {
     const trimmed = tokenPrice.trim();
     if (trimmed === "") return null;
+    // 10 進表現のみ（0x0 等の Number 強制変換で $0 扱いしない）
+    if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
     const n = Number(trimmed);
     if (!Number.isFinite(n) || n < 0) return null;
     return n * 1e6;

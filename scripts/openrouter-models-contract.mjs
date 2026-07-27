@@ -7,7 +7,7 @@
  * - scripts/preflight-production.mjs の parseOpenRouterModels（本番 preflight・常に公式 base）
  *
  * Paid allowlist / mock-path rules:
- * 1. カンマ区切りで split し、各要素を trim したあと空要素を除く。
+ * 1. カンマ区切りで split し、各要素を trim する。空要素は拒否する（filter で落とさない）。
  * 2. 結果が空なら拒否する（OPENROUTER_MODELS must not be empty）。
  * 3. 重複 ID は拒否する（順序は保持する）。
  * 4. openrouter/auto・openrouter/free・openrouter/auto-beta は常に拒否する。
@@ -22,7 +22,7 @@
  * - pricing.prompt / pricing.completion が usable で、prompt+completion ≤ $0.50 / 1M tokens。
  */
 export const modelListRules = `
-- non-empty after comma-split + trim; duplicates rejected; order preserved
+- comma-split + trim; empty elements rejected (no filter(Boolean)); empty list rejected; duplicates rejected; order preserved
 - reject openrouter/auto, openrouter/free, openrouter/auto-beta always
 - exact mock base only: accept mock/*:free; non-mock base rejects any :free and any mock/ prefix
 - mock exception uses OPENROUTER_BASE_URL exact match only (not isLocal / SERVER_SITE_ORIGIN)
@@ -65,6 +65,14 @@ export const acceptedFreeModelLists = acceptedModelLists;
  */
 export const rejectedModelLists = [
   { raw: "", baseUrl: "https://openrouter.ai/api/v1" },
+  // 空要素は filter(Boolean) で落とさず拒否（設計: 空要素なし）
+  { raw: "vendor/a,,vendor/b", baseUrl: "https://openrouter.ai/api/v1" },
+  { raw: "vendor/a,", baseUrl: "https://openrouter.ai/api/v1" },
+  { raw: ",vendor/a", baseUrl: "https://openrouter.ai/api/v1" },
+  {
+    raw: "mock/first:free,,mock/second:free",
+    baseUrl: "http://openrouter-mock:8787/api/v1",
+  },
   { raw: "openrouter/auto", baseUrl: "https://openrouter.ai/api/v1" },
   { raw: "openrouter/free", baseUrl: "https://openrouter.ai/api/v1" },
   { raw: "openrouter/auto-beta", baseUrl: "https://openrouter.ai/api/v1" },

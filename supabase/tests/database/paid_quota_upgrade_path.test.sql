@@ -1,8 +1,10 @@
+\ir 000_helpers.sql
 -- Plan 8: 旧 5/12 CHECK 上の合法行を seed し、upgrade_ai_daily_quota_checks_to_3_6 が
--- 失敗せず・当日超過を clamp せず・過去日を掃除することを検証する。
+-- 失敗せず・当日超過を clamp せず・安全な過去日だけ掃除することを検証する。
+-- lock 後 recheck / 日跨ぎ active reservation 保持 / success4·attempt7 並行 cutover も固定する。
 
 begin;
-select plan(12);
+select plan(17);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -62,6 +64,14 @@ select tests.create_supabase_user(
   'a1000000-0000-4000-8000-000000000003'::uuid,
   'quota-upgrade-active@example.invalid'
 );
+select tests.create_supabase_user(
+  'a1000000-0000-4000-8000-000000000004'::uuid,
+  'quota-upgrade-midnight@example.invalid'
+);
+select tests.create_supabase_user(
+  'a1000000-0000-4000-8000-000000000005'::uuid,
+  'quota-upgrade-cutover47@example.invalid'
+);
 
 -- 過去日: 旧合法 success=5 / attempt=12
 insert into private.ai_user_daily_usage (user_id, usage_day, reserved_count, success_count)
@@ -104,6 +114,43 @@ values (
   private.ai_jst_day(now()),
   1,
   2
+);
+
+-- 過去日・active reservation（JST 日跨ぎ 23:59:59 相当）: reserved=1 success=0 を保持し live request が参照
+insert into private.ai_user_daily_usage (user_id, usage_day, reserved_count, success_count)
+values (
+  'a1000000-0000-4000-8000-000000000004'::uuid,
+  private.ai_jst_day(now()) - 1,
+  1,
+  0
+);
+insert into private.ai_user_daily_external_attempts (user_id, usage_day, reserved_count, sent_count)
+values (
+  'a1000000-0000-4000-8000-000000000004'::uuid,
+  private.ai_jst_day(now()) - 1,
+  1,
+  0
+);
+insert into private.ai_generation_requests (
+  id, user_id, idempotency_key, request_kind, status,
+  request_hmac_version, request_hmac,
+  user_usage_day, user_quota_reserved, user_attempt_reserved, user_attempt_day,
+  global_reserved_day, processing_expires_at, started_at
+) values (
+  'a2000000-0000-4000-8000-000000000004'::uuid,
+  'a1000000-0000-4000-8000-000000000004'::uuid,
+  'a3000000-0000-4000-8000-000000000004'::uuid,
+  'regenerate_menu',
+  'processing',
+  'generation-command.v2',
+  repeat('ab', 32),
+  private.ai_jst_day(now()) - 1,
+  true,
+  true,
+  private.ai_jst_day(now()) - 1,
+  private.ai_jst_day(now()) - 1,
+  now() + interval '180 seconds',
+  now() - interval '1 second'
 );
 
 select lives_ok(
@@ -161,6 +208,53 @@ select is(
   ),
   3,
   'in-limit active reservation row is kept intact'
+);
+
+select is(
+  (
+    select reserved_count
+    from private.ai_user_daily_usage
+    where user_id = 'a1000000-0000-4000-8000-000000000004'::uuid
+      and usage_day = private.ai_jst_day(now()) - 1
+  ),
+  1,
+  'past-day active success reservation survives cutover (no unconditional midnight purge)'
+);
+
+select is(
+  (
+    select reserved_count
+    from private.ai_user_daily_external_attempts
+    where user_id = 'a1000000-0000-4000-8000-000000000004'::uuid
+      and usage_day = private.ai_jst_day(now()) - 1
+  ),
+  1,
+  'past-day active attempt reservation survives cutover'
+);
+
+-- finalize 相当: reserved→success の同一合計更新が cutover 後も可能
+select lives_ok(
+  $$
+    update private.ai_user_daily_usage
+    set reserved_count = reserved_count - 1,
+        success_count = success_count + 1
+    where user_id = 'a1000000-0000-4000-8000-000000000004'::uuid
+      and usage_day = private.ai_jst_day(now()) - 1
+      and reserved_count > 0
+  $$,
+  'post-cutover finalize-shaped success update on past-day reservation succeeds'
+);
+
+select lives_ok(
+  $$
+    update private.ai_user_daily_external_attempts
+    set reserved_count = reserved_count - 1,
+        sent_count = sent_count + 1
+    where user_id = 'a1000000-0000-4000-8000-000000000004'::uuid
+      and usage_day = private.ai_jst_day(now()) - 1
+      and reserved_count > 0
+  $$,
+  'post-cutover finalize-shaped attempt update on past-day reservation succeeds'
 );
 
 select ok(
@@ -258,22 +352,100 @@ select throws_ok(
   'upgrade blocks when active reservation exceeds new success limit'
 );
 
+-- 並行 cutover: success total 4 / attempt total 7 が active（reserved>0）なら fail-closed
+do $cutover47$
+declare
+  r record;
+begin
+  for r in
+    select c.conname
+    from pg_catalog.pg_constraint c
+    where c.conrelid = 'private.ai_user_daily_usage'::regclass
+      and c.contype = 'c'
+      and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count%success_count%'
+  loop
+    execute format(
+      'alter table private.ai_user_daily_usage drop constraint %I',
+      r.conname
+    );
+  end loop;
+  for r in
+    select c.conname
+    from pg_catalog.pg_constraint c
+    where c.conrelid = 'private.ai_user_daily_external_attempts'::regclass
+      and c.contype = 'c'
+      and pg_catalog.pg_get_constraintdef(c.oid) like '%reserved_count%sent_count%'
+  loop
+    execute format(
+      'alter table private.ai_user_daily_external_attempts drop constraint %I',
+      r.conname
+    );
+  end loop;
+
+  alter table private.ai_user_daily_usage
+    add constraint ai_user_daily_usage_reserved_success_le_5_test3
+    check (reserved_count + success_count <= 5);
+  alter table private.ai_user_daily_external_attempts
+    add constraint ai_user_daily_external_attempts_reserved_sent_le_12_test3
+    check (reserved_count + sent_count <= 12);
+
+  delete from private.ai_generation_requests
+  where user_id = 'a1000000-0000-4000-8000-000000000005'::uuid;
+  delete from private.ai_user_daily_usage
+  where user_id = 'a1000000-0000-4000-8000-000000000005'::uuid;
+  delete from private.ai_user_daily_external_attempts
+  where user_id = 'a1000000-0000-4000-8000-000000000005'::uuid;
+
+  -- 旧合法 5/12 上で concurrent writer が作る境界: total success 4 / attempt 7 with reserved
+  insert into private.ai_user_daily_usage (user_id, usage_day, reserved_count, success_count)
+  values (
+    'a1000000-0000-4000-8000-000000000005'::uuid,
+    private.ai_jst_day(now()),
+    1,
+    3
+  );
+  insert into private.ai_user_daily_external_attempts (user_id, usage_day, reserved_count, sent_count)
+  values (
+    'a1000000-0000-4000-8000-000000000005'::uuid,
+    private.ai_jst_day(now()),
+    1,
+    6
+  );
+end
+$cutover47$;
+
+select throws_ok(
+  $$ select private.upgrade_ai_daily_quota_checks_to_3_6() $$,
+  'P0001',
+  'quota_upgrade_blocked_active_success_reservation',
+  'concurrent cutover with success total 4 active reservation is blocked under lock recheck'
+);
+
 -- 後続テスト汚染防止: 制約を 3/6 に戻し、seed 行を消す
 do $cleanup$
 declare
   r record;
 begin
+  delete from private.ai_generation_requests
+  where user_id in (
+    'a1000000-0000-4000-8000-000000000004'::uuid,
+    'a1000000-0000-4000-8000-000000000005'::uuid
+  );
   delete from private.ai_user_daily_usage
   where user_id in (
     'a1000000-0000-4000-8000-000000000001'::uuid,
     'a1000000-0000-4000-8000-000000000002'::uuid,
-    'a1000000-0000-4000-8000-000000000003'::uuid
+    'a1000000-0000-4000-8000-000000000003'::uuid,
+    'a1000000-0000-4000-8000-000000000004'::uuid,
+    'a1000000-0000-4000-8000-000000000005'::uuid
   );
   delete from private.ai_user_daily_external_attempts
   where user_id in (
     'a1000000-0000-4000-8000-000000000001'::uuid,
     'a1000000-0000-4000-8000-000000000002'::uuid,
-    'a1000000-0000-4000-8000-000000000003'::uuid
+    'a1000000-0000-4000-8000-000000000003'::uuid,
+    'a1000000-0000-4000-8000-000000000004'::uuid,
+    'a1000000-0000-4000-8000-000000000005'::uuid
   );
 
   for r in

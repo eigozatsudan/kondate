@@ -24,18 +24,42 @@ declare
   v_has_over_success boolean;
   v_has_over_attempt boolean;
 begin
-  -- 過去日: 履歴カウンタのみ削除（当日の reserved/success/sent は触らない）
-  delete from private.ai_user_daily_usage
-  where usage_day < v_today;
-  delete from private.ai_user_daily_external_attempts
-  where usage_day < v_today;
+  -- 旧 5/12 writer との check/ALTER TOCTOU を閉じる:
+  -- 2 テーブルを固定順で十分強く lock してから active 検査・制約差し替えを行う。
+  -- SHARE ROW EXCLUSIVE は ROW EXCLUSIVE（INSERT/UPDATE）と衝突し、reserve 経路を待機させる。
+  lock table private.ai_user_daily_usage
+    in share row exclusive mode;
+  lock table private.ai_user_daily_external_attempts
+    in share row exclusive mode;
 
-  -- 当日 active reservation が新上限を超えるなら fail-closed（進行中を壊さない）
+  -- 過去日: 無条件 delete しない。JST 日跨ぎ中の processing が参照する行を保持する。
+  -- reserved=0 かつ live reference（user_quota_reserved / user_attempt_reserved）無しだけ purge。
+  delete from private.ai_user_daily_usage u
+  where u.usage_day < v_today
+    and u.reserved_count = 0
+    and not exists (
+      select 1
+      from private.ai_generation_requests r
+      where r.user_id = u.user_id
+        and r.user_usage_day = u.usage_day
+        and coalesce(r.user_quota_reserved, false)
+    );
+  delete from private.ai_user_daily_external_attempts a
+  where a.usage_day < v_today
+    and a.reserved_count = 0
+    and not exists (
+      select 1
+      from private.ai_generation_requests r
+      where r.user_id = a.user_id
+        and r.user_attempt_day = a.usage_day
+        and coalesce(r.user_attempt_reserved, false)
+    );
+
+  -- lock 保持下で active 検査をやり直す（日を問わず。日跨ぎ past-day reserved も含む）
   if exists (
     select 1
     from private.ai_user_daily_usage u
-    where u.usage_day = v_today
-      and u.reserved_count > 0
+    where u.reserved_count > 0
       and u.reserved_count + u.success_count > 3
   ) then
     raise exception using
@@ -46,8 +70,7 @@ begin
   if exists (
     select 1
     from private.ai_user_daily_external_attempts a
-    where a.usage_day = v_today
-      and a.reserved_count > 0
+    where a.reserved_count > 0
       and a.reserved_count + a.sent_count > 6
   ) then
     raise exception using

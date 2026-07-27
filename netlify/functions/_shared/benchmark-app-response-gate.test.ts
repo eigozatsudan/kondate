@@ -111,4 +111,26 @@ describe("evaluateAppResponseGate", () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/^materialize_fail/u);
   });
+
+  it("rejects when validateGeneratedMenu alone fails after materialize", () => {
+    // materialize は通るが、validate が safety 上 fail するケース
+    // （必須 pantry 参照はあるが、未知の safety tag 等ではなく totalElapsed 超過など）
+    const menu = createBenchPassingMenuPayload();
+    // コンテキストの timeLimitMinutes=15 を超える所要時間 → validate 失敗
+    menu.totalElapsedMinutes = 120;
+    menu.dishes[0]!.cookingTimeMinutes = 120;
+    const envelope = {
+      model: "vendor/a",
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ outcome: "success", menu }),
+          },
+        },
+      ],
+    };
+    const result = evaluateAppResponseGate(envelope, "vendor/a", createBenchGenerationContext());
+    expect(result.ok).toBe(false);
+    expect(result.detail).toBe("validate_generated_menu_fail");
+  });
 });

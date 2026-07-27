@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  OPENROUTER_MAX_BODY_BYTES,
   benchLatencyBudgetMs,
   benchTrialCount,
   candidateModelIds,
   evaluateMechanicalFilter,
   extractDecodedContent,
   filterCandidatesMechanically,
+  loadAppResponseGate,
   meetsMinimumSuccessShape,
+  readResponseBodyWithByteCap,
+  resetAppResponseGateLoaderForTests,
   runOneChatTrial,
   runPaidBenchmark,
   usdPerMillion,
@@ -122,10 +126,56 @@ test("usdPerMillion rejects null empty boolean and non-numeric strings", () => {
   assert.equal(usdPerMillion("NaN"), null);
   assert.equal(usdPerMillion(Number.NaN), null);
   assert.equal(usdPerMillion(-0.1), null);
+  // 0x0 等は Number() が 0 を返すが 10 進のみ受理するため拒否
+  assert.equal(usdPerMillion("0x0"), null);
+  assert.equal(usdPerMillion("0x10"), null);
+  assert.equal(usdPerMillion("1e-6"), null);
   // 1e-6 USD/token → 1 USD/1M（浮動小数の丸めを避ける代表値）
   assert.equal(usdPerMillion("0.000001"), 1);
   assert.equal(usdPerMillion(0.000001), 1);
   assert.equal(usdPerMillion(0), 0);
+});
+
+test("readResponseBodyWithByteCap accepts max bytes and rejects max+1", async () => {
+  assert.equal(OPENROUTER_MAX_BODY_BYTES, 1 * 1024 * 1024);
+  const exact = "a".repeat(64);
+  await assert.doesNotReject(() =>
+    readResponseBodyWithByteCap(new Response(exact), 64).then((text) => {
+      assert.equal(text, exact);
+    }),
+  );
+  await assert.rejects(
+    () => readResponseBodyWithByteCap(new Response("a".repeat(65)), 64),
+    /response_body_over_byte_cap/u,
+  );
+});
+
+test("runOneChatTrial rejects body over the 1 MiB production cap", async () => {
+  const oversize = "x".repeat(OPENROUTER_MAX_BODY_BYTES + 1);
+  const result = await runOneChatTrial({
+    modelId: "vendor/a",
+    apiKey: "test-key",
+    responseFormat: { type: "json_schema" },
+    evaluateGate: () => ({ ok: true, detail: "ok" }),
+    fetchImpl: async () => new Response(oversize, { status: 200 }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.detail, "response_body_over_byte_cap");
+});
+
+test("default loadAppResponseGate path runs without paid credits", async () => {
+  resetAppResponseGateLoaderForTests();
+  const gate = await loadAppResponseGate();
+  assert.equal(typeof gate.evaluateAppResponseGate, "function");
+  // 最低キー形状は default loader 経由でも不合格（無課金）
+  const weak = {
+    model: "vendor/a",
+    choices: [
+      { message: { content: JSON.stringify({ outcome: "success", menu: { dishes: [{}] } }) } },
+    ],
+  };
+  const result = gate.evaluateAppResponseGate(weak, "vendor/a");
+  assert.equal(result.ok, false);
 });
 
 test("mechanical filter rejects pricing fields that Number() would coerce to 0", () => {
@@ -282,9 +332,12 @@ test("runOneChatTrial fails when elapsed after gate exceeds budget", async () =>
     timeoutMs: 10,
     evaluateGate: passGate,
     fetchImpl: async () =>
-      new Response(JSON.stringify({ model: "vendor/a", choices: [{ message: { content: "{}" } }] }), {
-        status: 200,
-      }),
+      new Response(
+        JSON.stringify({ model: "vendor/a", choices: [{ message: { content: "{}" } }] }),
+        {
+          status: 200,
+        },
+      ),
     now: (() => {
       let t = 0;
       return () => {

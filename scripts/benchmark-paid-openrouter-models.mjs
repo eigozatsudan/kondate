@@ -23,7 +23,57 @@ import { maxPromptPlusCompletionUsdPerMillion } from "./verify-openrouter-models
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const appGateEntry = join(repoRoot, "netlify/functions/_shared/benchmark-app-response-gate.ts");
 
-/** esbuild で TS ゲートを 1 回だけバンドルして import する（Node の .ts 解決を避ける） */
+/** 本番 openrouter.ts の OPENROUTER_MAX_BODY_BYTES と同一（1 MiB） */
+export const OPENROUTER_MAX_BODY_BYTES = 1 * 1024 * 1024;
+
+/**
+ * 本番 readResponseBodyWithByteCap と同一規則の受信上限。
+ * response.json() 直読みは上限をバイパスするため禁止。
+ * @param {Response} response
+ * @param {number} [maxBytes]
+ * @returns {Promise<string>}
+ */
+export async function readResponseBodyWithByteCap(response, maxBytes = OPENROUTER_MAX_BODY_BYTES) {
+  if (response.body === null) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
+      throw new Error("response_body_over_byte_cap");
+    }
+    return text;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error("response_body_over_byte_cap");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "response_body_over_byte_cap") {
+      throw error;
+    }
+    throw error;
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(merged);
+}
+
+/**
+ * esbuild で TS ゲートを 1 回だけバンドルして import する（Node の .ts 解決を避ける）。
+ * 初回 import/esbuild の所要は試行 elapsed に含めない（runOneChatTrial はゲート取得後に started を測る）。
+ */
 let appGateModulePromise = null;
 
 export async function loadAppResponseGate() {
@@ -45,6 +95,11 @@ export async function loadAppResponseGate() {
     return import(outfile);
   })();
   return appGateModulePromise;
+}
+
+/** テスト用: キャッシュされた default loader を捨てる */
+export function resetAppResponseGateLoaderForTests() {
+  appGateModulePromise = null;
 }
 
 /** 設計 §4.4 候補ショートリスト（順序未確定・機械フィルタ + 実測で primary/repair を決める） */
@@ -97,6 +152,8 @@ export function usdPerMillion(tokenPrice) {
   if (typeof tokenPrice === "string") {
     const trimmed = tokenPrice.trim();
     if (trimmed === "") return null;
+    // 10 進表現のみ（0x0 等の Number 強制変換で $0 扱いしない）
+    if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
     const n = Number(trimmed);
     if (!Number.isFinite(n) || n < 0) return null;
     return n * 1e6;
@@ -225,6 +282,9 @@ export async function runOneChatTrial({
   now = () => Date.now(),
   evaluateGate,
 }) {
+  // 初回 esbuild/import は試行時間へ混入させない（default loader を started 前に解決）
+  const gate = evaluateGate ?? (await loadAppResponseGate()).evaluateAppResponseGate;
+
   const started = now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -267,16 +327,18 @@ export async function runOneChatTrial({
     if (!response.ok) {
       return finish(false, `http_${response.status}`);
     }
+
     let envelope;
     try {
-      envelope = await response.json();
-    } catch {
+      const rawBody = await readResponseBodyWithByteCap(response, OPENROUTER_MAX_BODY_BYTES);
+      envelope = JSON.parse(rawBody);
+    } catch (error) {
+      if (error instanceof Error && error.message === "response_body_over_byte_cap") {
+        return finish(false, "response_body_over_byte_cap");
+      }
       return finish(false, "invalid_json_envelope");
     }
 
-    const gate =
-      evaluateGate ??
-      (await loadAppResponseGate()).evaluateAppResponseGate;
     const gateResult = gate(envelope, modelId);
     if (!gateResult.ok) {
       return finish(false, gateResult.detail);
