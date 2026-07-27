@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   aiGenerationResponseSchema,
   type AiGenerationResponse,
+  type MenuValidationIssueCode,
 } from "../../../shared/contracts/generation.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
@@ -63,7 +64,12 @@ export function createBenchGenerationContext(): GenerationContext {
 }
 
 export type AppGateResult =
-  { ok: true; detail: "ok"; decoded: AiGenerationResponse } | { ok: false; detail: string };
+  | { ok: true; detail: "ok"; decoded: AiGenerationResponse }
+  | {
+      ok: false;
+      detail: string;
+      validationCodes?: readonly MenuValidationIssueCode[];
+    };
 
 /**
  * 本番相当の応答受理判定。
@@ -116,7 +122,11 @@ export function evaluateAppResponseGate(
     const menu = materializeAiGeneratedMenu(decoded.data.menu, context, uuid);
     const validation = validateGeneratedMenu(menu, context);
     if (!validation.ok) {
-      return { ok: false, detail: "validate_generated_menu_fail" };
+      return {
+        ok: false,
+        detail: "validate_generated_menu_fail",
+        validationCodes: validation.issues.map((issue) => issue.code),
+      };
     }
   } catch (error) {
     if (error instanceof GenerationOutputError) {

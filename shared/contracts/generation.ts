@@ -507,7 +507,41 @@ export type GeneratedLabelConfirmation = z.infer<typeof generatedLabelConfirmati
 export type MenuLabelConfirmation = z.infer<typeof menuLabelConfirmationSchema>;
 export type ValidatedMenu = z.infer<typeof validatedMenuSchema>;
 export type GeneratedMenu = z.infer<typeof generatedMenuSchema>;
-export type MenuValidationIssue = { code: string; path: string; message: string };
+export const menuValidationIssueCodes = [
+  "invalid_menu_structure",
+  "meal_type_mismatch",
+  "genre_mismatch",
+  "time_limit_exceeded",
+  "required_dish_role_missing",
+  "main_ingredient_missing",
+  "avoid_ingredient_used",
+  "pantry_selection_mismatch",
+  "prefer_use_reason_missing",
+  "pantry_usage_link_mismatch",
+  "must_use_missing",
+  "unsupported_medical_request",
+  "target_member_mismatch",
+  "unexpected_label_confirmation",
+  "servings_mismatch",
+  "member_preference_mismatch",
+  "safety_context_incomplete",
+  "allergy_unconfirmed",
+  "allergen_missing",
+  "unmapped_custom_allergy",
+  "unsupported_diet_unconfirmed",
+  "unsupported_diet_present",
+  "missing_label_confirmation",
+  "direct_allergen_match",
+  "age_shape_rule",
+  "required_safety_action",
+  "safety_action_contradiction",
+] as const;
+export type MenuValidationIssueCode = (typeof menuValidationIssueCodes)[number];
+export type MenuValidationIssue = {
+  code: MenuValidationIssueCode;
+  path: string;
+  message: string;
+};
 /** A-I7: 苦手 soft gap。結果画面表示用。永続化しない。 */
 export type PreferenceGapNote = {
   kind: "dislike";

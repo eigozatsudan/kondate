@@ -6,6 +6,7 @@ import {
   generationIssueCodes,
   generationStatusDataSchema,
   issueMessages,
+  menuValidationIssueCodes,
   menuResponseFormat,
   newMenuGenerationRequestSchema,
   regenerateDishRequestSchema,
@@ -13,6 +14,7 @@ import {
   releaseQuota,
   usageTodayDataSchema,
   validatedMenuSchema,
+  type MenuValidationIssue,
 } from "./generation.js";
 import {
   availableUsageTodayFixture,
@@ -21,6 +23,21 @@ import {
 
 const dishId = "40000000-0000-4000-8000-000000000001";
 const stepId = "41000000-0000-4000-8000-000000000001";
+
+it("closes menu validation issue codes", () => {
+  const closedIssue: MenuValidationIssue = {
+    code: "servings_mismatch",
+    path: "servings",
+    message: "人数が一致しません",
+  };
+  expect(menuValidationIssueCodes).toContain(closedIssue.code);
+
+  type ArbitraryCodeIsRejected = "arbitrary_provider_code" extends MenuValidationIssue["code"]
+    ? false
+    : true;
+  const arbitraryCodeIsRejected: ArbitraryCodeIsRejected = true;
+  expect(arbitraryCodeIsRejected).toBe(true);
+});
 
 const menu = {
   schemaVersion: "2026-07-11.v1",

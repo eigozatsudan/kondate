@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { menuValidationIssueCodes } from "../../../shared/contracts/generation.js";
 import {
   GenerationOutputError,
   generationRepairCodes,
@@ -8,9 +9,21 @@ import {
 } from "./generation-repair.js";
 
 describe("generation repair boundary", () => {
+  it("covers every menu validation code with a repair code", () => {
+    expect(menuValidationIssueCodes.every((code) => generationRepairCodes.includes(code))).toBe(
+      true,
+    );
+  });
+
   it("owns a fixed path for every closed code", () => {
     expect(Object.keys(repairPathByCode)).toEqual(generationRepairCodes);
     expect(Object.values(repairPathByCode).every((path) => path.startsWith("menu"))).toBe(true);
+  });
+
+  it("maps servings mismatch to the stable menu path", () => {
+    expect(toRepairDiagnostics([{ code: "servings_mismatch", path: "servings" }])).toEqual([
+      { code: "servings_mismatch", path: "menu.servings" },
+    ]);
   });
 
   it("deduplicates stably, collapses unknown codes, and never copies raw paths", () => {

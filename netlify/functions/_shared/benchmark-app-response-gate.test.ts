@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeIdeaGenerationContext } from "../../../shared/testing/factories.js";
 import {
   createBenchGenerationContext,
   createBenchPassingEnvelope,
@@ -113,12 +114,12 @@ describe("evaluateAppResponseGate", () => {
   });
 
   it("rejects when validateGeneratedMenu alone fails after materialize", () => {
-    // materialize は通るが、validate が safety 上 fail するケース
-    // （必須 pantry 参照はあるが、未知の safety tag 等ではなく totalElapsed 超過など）
+    // materialize は通し、idea の凍結人数だけを不一致にして validator の証跡を検査する。
     const menu = createBenchPassingMenuPayload();
-    // コンテキストの timeLimitMinutes=15 を超える所要時間 → validate 失敗
-    menu.totalElapsedMinutes = 120;
-    menu.dishes[0]!.cookingTimeMinutes = 120;
+    menu.servings = 3;
+    menu.adaptations = [];
+    menu.pantryUsage = [];
+    menu.dishes[0]!.ingredients[0]!.pantryRef = null;
     const envelope = {
       model: "vendor/a",
       choices: [
@@ -129,8 +130,15 @@ describe("evaluateAppResponseGate", () => {
         },
       ],
     };
-    const result = evaluateAppResponseGate(envelope, "vendor/a", createBenchGenerationContext());
-    expect(result.ok).toBe(false);
-    expect(result.detail).toBe("validate_generated_menu_fail");
+    const result = evaluateAppResponseGate(envelope, "vendor/a", makeIdeaGenerationContext());
+    expect(result).toEqual({
+      ok: false,
+      detail: "validate_generated_menu_fail",
+      validationCodes: ["servings_mismatch"],
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("人数が指定と一致しません");
+    expect(serialized).not.toContain('"path":');
+    expect(serialized).not.toContain('"message":');
   });
 });
