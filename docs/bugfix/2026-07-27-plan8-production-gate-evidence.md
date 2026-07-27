@@ -224,3 +224,61 @@ Gemini は複雑度上限で拒否する。いずれもモデル品質やレイ�
 - 記録していないもの: API キー、prompt、path/message、raw model output、provider body、無制限 error text
 
 response-format 改訂後も exact 3 構成は N=10 を通過しなかった。個別 ID 結果の再結合による推奨構成の合成は行わない。本番 ship は引き続きブロック。
+
+---
+
+## R1 ラウンド: 新 shortlist / exact 6 構成の live N=10（2026-07-27）
+
+設計: `docs/superpowers/specs/2026-07-27-openrouter-candidate-configuration-reslist-design.md`（Approved）  
+Stage 1: `docs/bugfix/artifacts/r1-stage1-decision-record-2026-07-27.md`  
+HEAD（実行時）: `222c1ec`
+
+### 実行前提
+
+- Date: 2026-07-27T14:15:13Z – 14:17:08Z (UTC)
+- Command: `docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs`（frozen 全 6 構成・trialCount=10）
+- Base: official exact `https://openrouter.ai/api/v1`（ベンチ固定）
+- Key: funded 実キー（値非記録）
+- hard_limit_usd: **$1**（operator 確認）。est_pass_all ≈ $0.90（C=6 混在・U_hi=$0.01）→ covers=yes
+- Operator: 有料 N=10 実行承認
+- preflight: 本実行ではスキップ（直接 N=10）
+
+### 構成単位結果（失敗で打ち切り）
+
+| Exact configuration | 結果 | first-attempt | outcome | closed failure | totalElapsedMs |
+|---|---|---:|---|---|---:|
+| `["openai/gpt-oss-20b"]` | FAIL unit1 | 0 | failure | `generation_timeout` | 20011 |
+| `["inclusionai/ling-2.6-flash"]` | FAIL unit1 | 0 | failure | `invalid_ai_response` | 9010 |
+| `["mistralai/mistral-small-24b-instruct-2501"]` | FAIL unit1 | 0 | failure | `generation_timeout` | 20001 |
+| `["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]` | FAIL unit1 | 0 | failure | `generation_timeout` | 20001 |
+| `["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]` | FAIL unit1 | 0 | failure | `generation_timeout` | 20002 |
+| `["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]` | FAIL unit1 | 0 | failure | `generation_timeout` | 20001 |
+
+### Per-send（許可フィールドのみ・各構成 unit 1）
+
+| Config | models | responseModel | excludedModel | elapsedMs |
+|---|---|---|---|---:|
+| 1 | `["openai/gpt-oss-20b"]` | null | null | 20007 |
+| 2 | `["inclusionai/ling-2.6-flash"]` | `inclusionai/ling-2.6-flash` | null | 9004 |
+| 3 | `["mistralai/mistral-small-24b-instruct-2501"]` | null | null | 20001 |
+| 4 | `["openai/gpt-oss-20b", "mistralai/mistral-small-24b-instruct-2501"]` | null | null | 20000 |
+| 5 | `["openai/gpt-4.1-nano", "openai/gpt-oss-20b"]` | null | null | 20001 |
+| 6 | `["inclusionai/ling-2.6-flash", "meta-llama/llama-3.1-8b-instruct"]` | null | null | 20001 |
+
+### 最終判定
+
+- Final exit code: **1**
+- `passedConfigurations`: **[]**
+- `recommendedConfiguration`: **null**
+- Recommended production `OPENROUTER_MODELS`: **n/a**
+- README / runbook 本番推奨の合格置換: **なし**
+- Production deploy: **NOT done**
+- 記録していないもの: API キー、prompt、raw model output、provider body
+
+### 示唆（設計判断用・ゲート緩和ではない）
+
+- 6 本中 **5 本が unit1 で `generation_timeout`**（20s 境界）。class B 相当の再発が主。
+- 唯一 20s 内に応答した `inclusionai/ling-2.6-flash` は **`invalid_ai_response`**（J/意味検証側）。
+- R1 shortlist 差し替えだけでは **N=10 合格 0**。次は設計どおり **R2（prompt/materialize）** または **R3（単価帯拡大）**、あるいは別 Stage 1 shortlist（timeout 帯をさらに避ける）の人間判断。
+
+本番 ship は引き続きブロック。個別 ID 結果の再結合による推奨合成は行わない。
