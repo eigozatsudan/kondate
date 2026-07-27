@@ -25,8 +25,8 @@ const IDEMPOTENCY_KEY = "10000000-0000-4000-8000-000000000001";
 const STARTED_AT = "2026-07-11T00:00:00.000Z";
 const quota = {
   consumed: false,
-  remaining: 4,
-  userDailyLimit: 5,
+  remaining: 2,
+  userDailyLimit: 3,
   limitKind: null,
   retryAt: null,
 } as const;
@@ -44,6 +44,7 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
     sourceMenuId: "60000000-0000-4000-8000-000000000001",
     changeReason: "simpler" as const,
     changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1" as const,
     expiredPantryConfirmations: [],
   };
   if (kind === "new_menu") {
@@ -54,7 +55,7 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
         idempotencyKey: IDEMPOTENCY_KEY,
         draftId: "20000000-0000-4000-8000-000000000001",
         draftRevision: 3,
-        privacyNoticeVersion: "2026-07-11.v1",
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [],
       },
     };
@@ -199,6 +200,43 @@ describe("pending generation storage", () => {
     expect(readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)).toBeNull();
     expect(storage.removeItem).toHaveBeenCalledWith(KEY);
   });
+
+  // F1: 旧 privacy 欠落 / 旧 version の再生成 pending は互換受理せず clear する
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "clears %s pending missing privacyNoticeVersion without recovery",
+    (kind) => {
+      const valid = makeCommand(kind);
+      const withoutPrivacy = {
+        ...valid,
+        request: Object.fromEntries(
+          Object.entries(valid.request).filter(([key]) => key !== "privacyNoticeVersion"),
+        ),
+        ownerUserId: USER_ID,
+        createdAt: STARTED_AT,
+        requestId: null,
+      };
+      const storage = memoryStorage(JSON.stringify(withoutPrivacy));
+      expect(readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)).toBeNull();
+      expect(storage.removeItem).toHaveBeenCalledWith(KEY);
+    },
+  );
+
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "clears %s pending with previous privacyNoticeVersion without recovery",
+    (kind) => {
+      const valid = makeCommand(kind);
+      const oldVersion = {
+        ...valid,
+        request: { ...valid.request, privacyNoticeVersion: "2026-07-11.v1" },
+        ownerUserId: USER_ID,
+        createdAt: STARTED_AT,
+        requestId: null,
+      };
+      const storage = memoryStorage(JSON.stringify(oldVersion));
+      expect(readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)).toBeNull();
+      expect(storage.removeItem).toHaveBeenCalledWith(KEY);
+    },
+  );
 
   it("fails closed when getItem throws", () => {
     const storage = {

@@ -15,8 +15,8 @@ export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.
 
 /** 利用状況の共有 fixture（usage-today 各層で再定義しない） */
 export const availableUsageTodayFixture = {
-  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 4 },
-  attempts: { sent: 2, limit: releaseQuota.userDailyExternalCallLimit, remaining: 10 },
+  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
+  attempts: { sent: 2, limit: releaseQuota.userDailyExternalCallLimit, remaining: 4 },
   shortWindow: {
     sent: 2,
     limit: releaseQuota.userShortWindowExternalCallLimit,
@@ -28,8 +28,8 @@ export const availableUsageTodayFixture = {
 } as const;
 
 export const shortWindowBlockedUsageTodayFixture = {
-  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 4 },
-  attempts: { sent: 4, limit: releaseQuota.userDailyExternalCallLimit, remaining: 8 },
+  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
+  attempts: { sent: 4, limit: releaseQuota.userDailyExternalCallLimit, remaining: 2 },
   shortWindow: {
     sent: 4,
     limit: releaseQuota.userShortWindowExternalCallLimit,

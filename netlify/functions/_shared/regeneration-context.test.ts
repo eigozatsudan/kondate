@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const snapshotRpc = vi.hoisted(() =>
-  vi.fn((...rpcArgs: unknown[]) => {
+  vi.fn((...rpcArgs: unknown[]): Promise<{ data: unknown; error: unknown }> => {
     const name = rpcArgs[0] as string;
     const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
     if (name !== "get_ai_generation_regeneration_snapshot") {
@@ -27,8 +27,41 @@ const snapshotRpc = vi.hoisted(() =>
     });
   }),
 );
+// F1: loadRegenerationExecutionContext が current privacy consent を DB 確認する
+const privacyConsentQuery = vi.hoisted(() =>
+  vi.fn((): Promise<{ data: unknown; error: unknown }> =>
+    Promise.resolve({
+      data: {
+        user_id: "85000000-0000-4000-8000-000000000001",
+        notice_version: "2026-07-26.v1",
+        accepted_at: "2026-07-11T00:00:00.000Z",
+      },
+      error: null,
+    }),
+  ),
+);
+const createUserScopedSupabaseMock = vi.hoisted(() =>
+  vi.fn(() => {
+    const builder = {
+      select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      maybeSingle: privacyConsentQuery,
+    };
+    return {
+      from: vi.fn((table: string) => {
+        if (table !== "privacy_consents") {
+          throw new Error(`unexpected table ${table}`);
+        }
+        return builder;
+      }),
+    };
+  }),
+);
 vi.mock("./supabase-admin.js", () => ({
   getSupabaseAdmin: vi.fn(() => ({ rpc: snapshotRpc })),
+}));
+vi.mock("./supabase-user.js", () => ({
+  createUserScopedSupabase: createUserScopedSupabaseMock,
 }));
 
 import { createDishSignature, createMenuSignature } from "../../../shared/safety/deduplicate.js";
@@ -158,6 +191,20 @@ const dishCommand: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
     idempotencyKey: "82000000-0000-4000-8000-000000000001",
     changeReason: "simpler",
     changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1",
+    expiredPantryConfirmations: [],
+  },
+};
+
+const menuCommand: Extract<GenerationCommand, { kind: "regenerate_menu" }> = {
+  commandVersion: "generation-command.v2",
+  kind: "regenerate_menu",
+  request: {
+    sourceMenuId: "52000000-0000-4000-8000-000000000001",
+    idempotencyKey: "82000000-0000-4000-8000-000000000002",
+    changeReason: "simpler",
+    changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-26.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -169,6 +216,16 @@ function dishSig(name: string, role: string, ingredients: string[]) {
 describe("loadRegenerationExecutionContext", () => {
   beforeEach(() => {
     snapshotRpc.mockClear();
+    createUserScopedSupabaseMock.mockClear();
+    privacyConsentQuery.mockReset();
+    privacyConsentQuery.mockResolvedValue({
+      data: {
+        user_id: user.userId,
+        notice_version: "2026-07-26.v1",
+        accepted_at: "2026-07-11T00:00:00.000Z",
+      },
+      error: null,
+    });
     snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
       const name = rpcArgs[0] as string;
       const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
@@ -194,6 +251,144 @@ describe("loadRegenerationExecutionContext", () => {
       });
     });
   });
+
+  // F1: body の literal ではなく DB の current consent を必須にする
+  it.each([
+    ["no consent row", null],
+    [
+      "old notice version only",
+      {
+        user_id: "85000000-0000-4000-8000-000000000001",
+        notice_version: "2026-07-11.v1",
+        accepted_at: "2026-07-11T00:00:00.000Z",
+      },
+    ],
+    [
+      "foreign user's current consent",
+      {
+        user_id: "85000000-0000-4000-8000-000000000099",
+        notice_version: "2026-07-26.v1",
+        accepted_at: "2026-07-11T00:00:00.000Z",
+      },
+    ],
+  ] as const)("rejects regenerate_dish with consent_required when %s", async (_case, consent) => {
+    privacyConsentQuery.mockResolvedValue({ data: consent, error: null });
+    const deps = makeLoaderDeps(makeStoredMenu());
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({
+      code: "consent_required",
+      status: 422,
+      message: "最新の利用説明への同意が必要です。",
+    });
+    expect(deps.loadSource).not.toHaveBeenCalled();
+    expect(deps.buildCurrentContext).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no consent row", null],
+    [
+      "old notice version only",
+      {
+        user_id: "85000000-0000-4000-8000-000000000001",
+        notice_version: "2026-07-11.v1",
+        accepted_at: "2026-07-11T00:00:00.000Z",
+      },
+    ],
+    [
+      "foreign user's current consent",
+      {
+        user_id: "85000000-0000-4000-8000-000000000099",
+        notice_version: "2026-07-26.v1",
+        accepted_at: "2026-07-11T00:00:00.000Z",
+      },
+    ],
+  ] as const)("rejects regenerate_menu with consent_required when %s", async (_case, consent) => {
+    privacyConsentQuery.mockResolvedValue({ data: consent, error: null });
+    // メニュー全体再生成用 snapshot。hoisted 既定は dish 向けのため上書きする
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_menu",
+            source_menu_id: "52000000-0000-4000-8000-000000000001",
+            source_menu_version: 1,
+            replace_dish_id: null as string | null,
+            target_mode: "household",
+            servings: 2,
+            target_member_ids: ["55000000-0000-4000-8000-000000000001"],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+    const deps = makeLoaderDeps(makeStoredMenu());
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        menuCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({
+      code: "consent_required",
+      status: 422,
+      message: "最新の利用説明への同意が必要です。",
+    });
+    expect(deps.loadSource).not.toHaveBeenCalled();
+    expect(deps.buildCurrentContext).not.toHaveBeenCalled();
+  });
+
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "proceeds for %s when the authenticated user has current consent",
+    async (kind) => {
+      const command = kind === "regenerate_menu" ? menuCommand : dishCommand;
+      if (kind === "regenerate_menu") {
+        snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+          const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+          return Promise.resolve({
+            data: [
+              {
+                request_id: args.p_request_id,
+                user_id: args.p_user_id,
+                kind: "regenerate_menu",
+                source_menu_id: "52000000-0000-4000-8000-000000000001",
+                source_menu_version: 1,
+                replace_dish_id: null as string | null,
+                target_mode: "household",
+                servings: 2,
+                target_member_ids: ["55000000-0000-4000-8000-000000000001"],
+                created_at: "2026-07-11T00:00:00.000Z",
+              },
+            ],
+            error: null,
+          });
+        });
+      }
+      const deps = makeLoaderDeps(makeStoredMenu());
+      const context = await loadRegenerationExecutionContext(
+        deps,
+        user,
+        command,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      );
+      expect(context.kind).toBe(kind);
+      expect(createUserScopedSupabaseMock).toHaveBeenCalledWith(user.accessToken);
+      expect(deps.loadSource).toHaveBeenCalled();
+    },
+  );
 
   it("loads current safety and excludes every dish in the root group", async () => {
     const teriyakiSignature = dishSig("照り焼き", "main", ["鶏肉"]);
@@ -304,6 +499,7 @@ describe("loadRegenerationExecutionContext", () => {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           changeReason: "simpler",
           changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-26.v1",
           expiredPantryConfirmations: [],
         },
       },
@@ -732,6 +928,7 @@ describe("isRegenerationDuplicate material equivalence", () => {
           sourceMenuId: sourceMenu.menuId,
           changeReason: "simpler",
           changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-26.v1",
           expiredPantryConfirmations: [],
         },
       },
@@ -1148,6 +1345,7 @@ describe("buildDishRegenerationPrompt label source refs", () => {
           idempotencyKey: "82000000-0000-4000-8000-000000000099",
           changeReason: "simpler",
           changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-26.v1",
           expiredPantryConfirmations: [],
         },
       },

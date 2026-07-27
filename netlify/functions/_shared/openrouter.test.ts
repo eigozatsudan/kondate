@@ -18,7 +18,8 @@ vi.mock("./env.js", async (importOriginal) => {
   return { ...actual, getServerEnv: getServerEnvMock };
 });
 
-const models = ["first/model:free", "second/model:free"] as const;
+// 正常系: 公式 base + 有料 ID（有料 allowlist）。mock path は別ケースで検証する。
+const models = ["first/model", "second/model"] as const;
 const config = parseServerEnv({
   VITE_SUPABASE_URL: "http://127.0.0.1:8000",
   SUPABASE_URL: "http://kong:8000",
@@ -29,10 +30,10 @@ const config = parseServerEnv({
   SUPABASE_PUBLISHABLE_KEY: "publishable-test",
   OPENROUTER_API_KEY: "secret",
   OPENROUTER_MODELS: models.join(","),
-  OPENROUTER_BASE_URL: "http://mock.invalid/v1",
+  OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-  USER_DAILY_AI_LIMIT: "5",
-  USER_DAILY_EXTERNAL_CALL_LIMIT: "12",
+  USER_DAILY_AI_LIMIT: "3",
+  USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
   USER_SHORT_WINDOW_SECONDS: "600",
   OPENROUTER_TIMEOUT_MS: "20000",
@@ -101,7 +102,7 @@ it("uses models fallback, strict schema, and required parameters", async () => {
   });
 
   expect(fetchImpl).toHaveBeenCalledWith(
-    "http://mock.invalid/v1/chat/completions",
+    "https://openrouter.ai/api/v1/chat/completions",
     expect.objectContaining({
       method: "POST",
       headers: {
@@ -237,7 +238,7 @@ it.each([
 });
 
 it("rejects an unconfigured response model without repair metadata", async () => {
-  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successfulResponse("other/model:free"));
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successfulResponse("other/model"));
   vi.stubGlobal("fetch", fetchImpl);
 
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
@@ -270,7 +271,7 @@ it("rejects a malformed envelope from an unconfigured model as terminal", async 
   const fetchImpl = vi
     .fn<typeof fetch>()
     .mockResolvedValue(
-      new Response(JSON.stringify({ model: "other/model:free", choices: [] }), { status: 200 }),
+      new Response(JSON.stringify({ model: "other/model", choices: [] }), { status: 200 }),
     );
   vi.stubGlobal("fetch", fetchImpl);
 
@@ -398,7 +399,7 @@ it("ignores unknown exclusions without changing configured order", async () => {
     sendMenuGeneration({
       messages: [],
       timeoutMs: 1_000,
-      excludedModelIds: ["unknown/model:free"],
+      excludedModelIds: ["unknown/model"],
     }),
   ).rejects.toMatchObject({ code: "model_unavailable" });
   expect(requestBody(fetchImpl)).toMatchObject({ models });
@@ -417,8 +418,11 @@ it("rejects all configured models being excluded before fetch", async () => {
 it.each([
   ["empty", []],
   ["duplicate", [models[0], models[0]]],
-  ["non-free", ["paid/model"]],
   ["automatic", ["openrouter/auto"]],
+  ["router free", ["openrouter/free"]],
+  ["router auto-beta", ["openrouter/auto-beta"]],
+  ["free-on-real-api", ["vendor/a:free"]],
+  ["mock-on-real-api", ["mock/vendor-paid"]],
 ] as const)("rejects %s configured models before fetch", async (_case, configuredModels) => {
   getServerEnvMock.mockReturnValueOnce({
     ...config,

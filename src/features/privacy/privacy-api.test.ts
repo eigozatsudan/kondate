@@ -3,7 +3,7 @@ import { acceptCurrentPrivacyConsent } from "./privacy-api";
 
 const consent = {
   user_id: "user-1",
-  notice_version: "2026-07-11.v1",
+  notice_version: "2026-07-26.v1",
   accepted_at: "2026-07-12T00:00:00.000Z",
   created_at: "2026-07-12T00:00:00.000Z",
 };

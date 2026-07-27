@@ -529,8 +529,8 @@ const uuidSchema = z.uuid();
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 
 export const releaseQuota = {
-  userDailySuccessLimit: 5,
-  userDailyExternalCallLimit: 12,
+  userDailySuccessLimit: 3,
+  userDailyExternalCallLimit: 6,
   userShortWindowExternalCallLimit: 4,
   userShortWindowSeconds: 600,
 } as const;
@@ -610,6 +610,7 @@ export type NewMenuGenerationRequest = z.infer<typeof newMenuGenerationRequestSc
 // changeReason の wire 列挙は mode 非依存。idea + child_friendly は
 // snapshot の targetMode を見た server が markSent 前に invalid_request で拒否する
 // （UI も idea では child_friendly を出さない。schema だけでは mode を知らない）。
+// privacyNoticeVersion は新規献立と同様に必須。旧 version / 欠落は互換受理しない（F1）。
 const regenerationBase = {
   idempotencyKey: uuidSchema,
   sourceMenuId: uuidSchema,
@@ -621,6 +622,7 @@ const regenerationBase = {
     "custom",
   ]),
   changeReasonCustom: z.string().trim().min(1).max(200).nullable(),
+  privacyNoticeVersion: z.literal(privacyNoticeVersion),
   expiredPantryConfirmations: z.array(expiredPantryConfirmationSchema).max(50),
 };
 
@@ -903,7 +905,7 @@ const nonConflictIssueMessages = {
   draft_not_found: "保存した献立条件が見つかりませんでした。",
   invalid_request: "献立条件を確認してください。",
   generation_in_progress: "別の献立を作成中です。",
-  user_daily_limit: "今日は5回利用しました。明日0:00（日本時間）から利用できます",
+  user_daily_limit: "今日は3回利用しました。明日0:00（日本時間）から利用できます",
   user_attempt_limit:
     "本日のAIへの送信上限に達しました。献立の成功回数とは別の上限です。明日0:00（日本時間）から利用できます",
   user_short_window_limit: "10分間の通信試行上限に達しました。しばらくしてから再度お試しください",

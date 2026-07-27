@@ -96,8 +96,12 @@ honestly instead of forcing `complete` when a follow-up is still owed.
 - One canonical local origin `http://127.0.0.1:5173`; browser Supabase
   `http://127.0.0.1:8000`; Function-side Compose URL `http://kong:8000`. Production
   accepts only the exact managed `https://<20-char-project-ref>.supabase.co`.
-- OpenRouter is called only from Netlify Functions, only `:free` model IDs, never
-  `openrouter/auto`.
+- OpenRouter is called only from Netlify Functions. Production `OPENROUTER_MODELS`
+  is a **paid allowlist** (no `:free` on real-API paths; never `openrouter/auto` or
+  equivalent routers). Mock `mock/*:free` is allowed only when
+  `OPENROUTER_BASE_URL` is the exact local mock URL. Models must support both
+  `structured_outputs` and `response_format`, with prompt+completion ≤ $0.50/1M.
+  Free-only was abolished by Plan 8 (`2026-07-26-paid-openrouter-models`).
 - Never log or persist names, emails, allergies, free-form conditions, prompts, or
   raw AI output. Only Zod-validated structures are stored.
 - Current household safety constraints always override historical snapshots.
@@ -106,8 +110,8 @@ honestly instead of forcing `complete` when a follow-up is still owed.
   are authenticated read-only (not user-owned, still not open-write); AI control
   tables live in a non-exposed `private` schema.
 - Release-locked quota anchors (verify exact current values in the roadmap's
-  Locked Environment Contract before relying on them): 5 successful generations
-  per JST day, 12 external AI sends/day and 4 per 600s per user, 45/day
+  Locked Environment Contract — Plan 8 改訂後の値): 3 successful generations
+  per JST day, 6 external AI sends/day and 4 per 600s per user, 20/day
   application-wide default, 20s per OpenRouter attempt / 50s total Function
   budget, 300s auth-continuation TTL, 30-day retention for terminal
   generation/shopping-replay rows.

@@ -94,7 +94,7 @@ select public.reserve_ai_generation(
   'generation-command.v2',
   repeat('1', 64),
   '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
-  5, 45, 180,
+  3, 20, 180,
   '2026-07-22 00:00:00+00'
 );
 
@@ -133,7 +133,7 @@ select is(
           'generation-command.v2',
           repeat('2', 64),
           '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
-          5, 45, 180,
+          3, 20, 180,
           '2026-07-22 00:00:01+00'
         )->>'failure_code'
       $sql$
@@ -160,7 +160,7 @@ select is(
           'generation-command.v2',
           repeat('3', 64),
           '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-          5, 45, 180,
+          3, 20, 180,
           '2026-07-22 00:00:02+00'
         )->>'failure_code'
       $sql$
@@ -188,7 +188,7 @@ select is(
           'generation-command.v2',
           repeat('4', 64),
           '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-          5, 45, 180,
+          3, 20, 180,
           '2026-07-22 00:00:03+00'
         )->>'failure_code'
       $sql$
@@ -241,7 +241,7 @@ select is(
           'generation-command.v2',
           repeat('5', 64),
           '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb,
-          5, 45, 180,
+          3, 20, 180,
           '2026-07-22 00:00:04+00'
         )->>'status'
       $sql$
@@ -272,7 +272,7 @@ select is(
           'generation-command.v2',
           repeat('1', 64),
           '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
-          5, 45, 180,
+          3, 20, 180,
           '2026-07-22 00:00:05+00'
         ) as payload
       $sql$
@@ -373,7 +373,7 @@ select is(
       'generation-command.v2',
       repeat('a', 64),
       '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      5, 45, 180,
+      3, 20, 180,
       '2026-07-22 00:11:00+00'
     )->>'status'
   ),
@@ -497,7 +497,7 @@ select is(
       'generation-command.v2',
       repeat('b', 64),
       '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      5, 45, 180,
+      3, 20, 180,
       '2026-07-22 00:12:00+00'
     )->>'status'
   ),
@@ -606,7 +606,7 @@ select is(
       'generation-command.v2',
       repeat('c', 64),
       '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      5, 45, 180,
+      3, 20, 180,
       '2026-07-22 00:13:00+00'
     )->>'status'
   ),
@@ -719,7 +719,7 @@ select is(
       'generation-command.v2',
       repeat('d', 64),
       '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      5, 45, 180,
+      3, 20, 180,
       '2026-07-22 00:14:00+00'
     )->>'status'
   ),
@@ -872,7 +872,7 @@ select public.reserve_ai_generation(
   'new_menu', 'c3000000-0000-4000-8000-000000000103', 1, null, null, null,
   'generation-command.v2', repeat('d', 64),
   '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb,
-  5, 45, 180, '2026-07-22 00:21:00+00'
+  3, 20, 180, '2026-07-22 00:21:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests
@@ -885,7 +885,7 @@ select public.reserve_ai_generation(
   'new_menu', 'c3000000-0000-4000-8000-000000000104', 1, null, null, null,
   'generation-command.v2', repeat('e', 64),
   '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb,
-  5, 45, 180, '2026-07-22 00:22:00+00'
+  3, 20, 180, '2026-07-22 00:22:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests

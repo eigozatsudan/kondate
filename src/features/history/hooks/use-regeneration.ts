@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router";
-import type { ChangeReason } from "@shared/contracts/domain";
+import { privacyNoticeVersion, type ChangeReason } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
 import { saveGenerationTargetMode } from "@/features/generation/model/generation-target-mode";
 import {
@@ -77,6 +77,8 @@ export function useRegeneration(input: UseRegenerationInput) {
             sourceMenuId: menuId,
             changeReason: reason.changeReason,
             changeReasonCustom,
+            // 再生成も現行 privacy 説明への同意版を wire に載せる（server が DB と照合）
+            privacyNoticeVersion,
             // 元献立の期限確認は引き継がない。今回新たに集めた分だけを載せる。
             expiredPantryConfirmations: [],
           },
@@ -112,6 +114,8 @@ export function useRegeneration(input: UseRegenerationInput) {
             dishId,
             changeReason: reason.changeReason,
             changeReasonCustom,
+            // 再生成も現行 privacy 説明への同意版を wire に載せる（server が DB と照合）
+            privacyNoticeVersion,
             expiredPantryConfirmations: [],
           },
         },

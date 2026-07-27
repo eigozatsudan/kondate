@@ -105,7 +105,7 @@ const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
     idempotencyKey: key,
     draftId: "84000000-0000-4000-8000-000000000001",
     draftRevision: 1,
-    privacyNoticeVersion: "2026-07-11.v1",
+    privacyNoticeVersion: "2026-07-26.v1" as const,
     expiredPantryConfirmations: [],
   },
 };
@@ -145,8 +145,8 @@ function record(
     request_id: requestId,
     idempotency_key: key,
     status,
-    remaining: status === "succeeded" ? 4 : 5,
-    user_daily_limit: 5 as const,
+    remaining: status === "succeeded" ? 2 : 3,
+    user_daily_limit: 3 as const,
     consumed: status === "succeeded",
     started_at: "2026-07-11T00:00:00.000Z",
     completed_at: status === "processing" ? null : "2026-07-11T00:00:01.000Z",
@@ -1409,16 +1409,16 @@ describe("runGeneration", () => {
       completed_menu_id: null,
       started_at: "2026-07-11T00:00:00.000Z",
       completed_at: "2026-07-11T00:00:01.000Z",
-      remaining: 4,
-      user_daily_limit: 5 as const,
+      remaining: 2,
+      user_daily_limit: 3 as const,
       consumed: false,
       replayed: false,
     });
     repository.status.mockResolvedValue({
       idempotency_key: key,
       status: "not_started",
-      remaining: 5,
-      user_daily_limit: 5 as const,
+      remaining: 3,
+      user_daily_limit: 3 as const,
       consumed: false,
     });
     const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
@@ -1429,8 +1429,8 @@ describe("runGeneration", () => {
       requestId: activeRequestId,
       quota: {
         consumed: false,
-        remaining: 4,
-        userDailyLimit: 5,
+        remaining: 2,
+        userDailyLimit: 3,
         limitKind: null,
         retryAt: "2026-07-11T00:03:00.000Z",
       },
@@ -1679,6 +1679,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     },
@@ -1691,6 +1692,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
         dishId: "89000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     },
@@ -1793,8 +1795,8 @@ describe("toGenerationStatus", () => {
       requestId,
       quota: {
         consumed: false,
-        remaining: 5,
-        userDailyLimit: 5,
+        remaining: 3,
+        userDailyLimit: 3,
         limitKind: null,
         retryAt: null,
       },
@@ -1822,8 +1824,8 @@ describe("toGenerationStatus", () => {
       requestId,
       quota: {
         consumed: false,
-        remaining: 5,
-        userDailyLimit: 5,
+        remaining: 3,
+        userDailyLimit: 3,
         limitKind: null,
         retryAt: null,
       },
@@ -1847,8 +1849,8 @@ describe("toGenerationStatus", () => {
 describe("generationResponse", () => {
   const quota = {
     consumed: false,
-    remaining: 5,
-    userDailyLimit: 5 as const,
+    remaining: 3,
+    userDailyLimit: 3 as const,
     limitKind: null,
     retryAt: null,
   };
@@ -1943,6 +1945,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2101,6 +2104,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         dishId: sourceMainId,
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2226,6 +2230,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         dishId: replaceDishId,
         changeReason: "simpler" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2312,6 +2317,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2370,6 +2376,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         dishId: "89000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2427,6 +2434,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2612,6 +2620,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 sourceMenuId: menuId,
                 changeReason: "simpler",
                 changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
                 expiredPantryConfirmations: [],
               },
             }
@@ -2624,6 +2633,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 dishId: "86000000-0000-4000-8000-000000000001",
                 changeReason: "simpler",
                 changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
                 expiredPantryConfirmations: [],
               },
             };
@@ -2640,6 +2650,60 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
       expect(repository.markSent).not.toHaveBeenCalled();
       expect(repository.succeed).not.toHaveBeenCalled();
       expect(repository.fail).toHaveBeenCalledWith(requestId, "source_menu_changed", null);
+    },
+  );
+
+  // F1: current consent 欠落は markSent / OpenRouter を 0 回のまま fail-closed
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "pre-send %s consent_required fails without markSent or OpenRouter",
+    async (kind) => {
+      const repository = makeRepository();
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+      const loadExecutionContext = vi
+        .fn<GenerationDependencies["loadExecutionContext"]>()
+        .mockRejectedValue(
+          new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。"),
+        );
+      const regenCommand: GenerationCommand =
+        kind === "regenerate_menu"
+          ? {
+              commandVersion: "generation-command.v2",
+              kind: "regenerate_menu",
+              request: {
+                idempotencyKey: key,
+                sourceMenuId: menuId,
+                changeReason: "simpler",
+                changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
+                expiredPantryConfirmations: [],
+              },
+            }
+          : {
+              commandVersion: "generation-command.v2",
+              kind: "regenerate_dish",
+              request: {
+                idempotencyKey: key,
+                sourceMenuId: menuId,
+                dishId: "86000000-0000-4000-8000-000000000001",
+                changeReason: "simpler",
+                changeReasonCustom: null,
+                privacyNoticeVersion: "2026-07-26.v1" as const,
+                expiredPantryConfirmations: [],
+              },
+            };
+      const status = await runGeneration(
+        makeDeps({ repository, callOpenRouter, loadExecutionContext }),
+        regenCommand,
+      );
+      expect(status).toMatchObject({
+        status: "failed",
+        error: { code: "consent_required" },
+        quota: { consumed: false },
+      });
+      expect(callOpenRouter).not.toHaveBeenCalled();
+      expect(repository.markSent).not.toHaveBeenCalled();
+      expect(repository.succeed).not.toHaveBeenCalled();
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "consent_required", null);
     },
   );
 });

@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { acceptedFreeModelLists, rejectedFreeModelLists } from "./openrouter-models-contract.mjs";
+import { acceptedModelLists, rejectedModelLists } from "./openrouter-models-contract.mjs";
 import {
   main,
   modelsApiTimeoutMs,
@@ -13,26 +13,33 @@ import {
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-for (const { raw, models } of acceptedFreeModelLists) {
-  test(`accepts ordered unique free model IDs: ${raw}`, () => {
-    assert.deepEqual(parseConfiguredModels(raw), models);
+/** 成功 remote フィクスチャ用: prompt+completion = $0.30 / 1M（上限 0.5 未満） */
+const usablePricing = {
+  prompt: "0.0000001",
+  completion: "0.0000002",
+};
+
+for (const { raw, models, baseUrl } of acceptedModelLists) {
+  test(`accepts ordered unique model IDs: ${raw}`, () => {
+    assert.deepEqual(parseConfiguredModels(raw, { openRouterBaseUrl: baseUrl }), models);
   });
 }
 
-for (const value of rejectedFreeModelLists) {
-  test(`rejects unsafe model configuration: ${value || "empty"}`, () => {
-    assert.throws(() => parseConfiguredModels(value));
+for (const { raw, baseUrl } of rejectedModelLists) {
+  test(`rejects unsafe model configuration: ${raw || "empty"}`, () => {
+    assert.throws(() => parseConfiguredModels(raw, { openRouterBaseUrl: baseUrl }));
   });
 }
 
 test("requires both structured output parameters from every configured model", () => {
   assert.throws(() =>
     verifyRemoteModels(
-      ["vendor/a:free"],
+      ["vendor/a"],
       [
         {
-          id: "vendor/a:free",
+          id: "vendor/a",
           supported_parameters: ["response_format"],
+          pricing: usablePricing,
         },
       ],
     ),
@@ -42,25 +49,87 @@ test("requires both structured output parameters from every configured model", (
 test("requires structured_outputs when only that flag is missing", () => {
   assert.throws(() =>
     verifyRemoteModels(
-      ["vendor/a:free"],
+      ["vendor/a"],
       [
         {
-          id: "vendor/a:free",
+          id: "vendor/a",
           supported_parameters: ["structured_outputs"],
+          pricing: usablePricing,
         },
       ],
     ),
   );
 });
 
-test("accepts a model that exposes both structured output parameters", () => {
+test("rejects missing usable pricing", () => {
+  assert.throws(
+    () =>
+      verifyRemoteModels(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+          },
+        ],
+      ),
+    /missing usable pricing/u,
+  );
+});
+
+// Number(null)===0 / Number("")===0 等で $0 と誤認しない（設計 fail-closed）
+for (const [label, pricing] of [
+  ["null fields", { prompt: null, completion: null }],
+  ["empty strings", { prompt: "", completion: "" }],
+  ["booleans", { prompt: false, completion: false }],
+  ["whitespace string", { prompt: "  ", completion: "0.0000001" }],
+  ["NaN string", { prompt: "NaN", completion: "0.0000001" }],
+]) {
+  test(`rejects non-numeric pricing coerced by Number(): ${label}`, () => {
+    assert.throws(
+      () =>
+        verifyRemoteModels(
+          ["vendor/a"],
+          [
+            {
+              id: "vendor/a",
+              supported_parameters: ["structured_outputs", "response_format"],
+              pricing,
+            },
+          ],
+        ),
+      /missing usable pricing/u,
+    );
+  });
+}
+
+test("rejects prompt+completion above 0.5 USD per 1M tokens", () => {
+  assert.throws(
+    () =>
+      verifyRemoteModels(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+            // $0.30 + $0.30 = $0.60 / 1M > 0.5
+            pricing: { prompt: "0.0000003", completion: "0.0000003" },
+          },
+        ],
+      ),
+    /exceeds max prompt\+completion/u,
+  );
+});
+
+test("accepts a model that exposes both structured output parameters and usable pricing", () => {
   assert.doesNotThrow(() =>
     verifyRemoteModels(
-      ["vendor/a:free"],
+      ["vendor/a"],
       [
         {
-          id: "vendor/a:free",
+          id: "vendor/a",
           supported_parameters: ["structured_outputs", "response_format"],
+          pricing: usablePricing,
         },
       ],
     ),
@@ -68,7 +137,7 @@ test("accepts a model that exposes both structured output parameters", () => {
 });
 
 test("rejects a configured model missing from the remote catalog", () => {
-  assert.throws(() => verifyRemoteModels(["vendor/missing:free"], []));
+  assert.throws(() => verifyRemoteModels(["vendor/missing"], []));
 });
 
 test("bounds the live Models API request and closes transport failures", async () => {
@@ -78,7 +147,15 @@ test("bounds the live Models API request and closes transport failures", async (
     throw new Error("sensitive transport detail");
   };
   await assert.rejects(
-    main({ OPENROUTER_MODELS: "vendor/a:free" }, fetchImpl, () => signal, ["--remote"]),
+    main(
+      {
+        OPENROUTER_MODELS: "vendor/a",
+        OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+      },
+      fetchImpl,
+      () => signal,
+      ["--remote"],
+    ),
     /openrouter_models_unavailable/u,
   );
 });
@@ -90,7 +167,10 @@ test("uses a five-second Models API timeout budget", () => {
 test("skips the remote call without --remote", async () => {
   let called = false;
   await main(
-    { OPENROUTER_MODELS: "vendor/a:free" },
+    {
+      OPENROUTER_MODELS: "vendor/a",
+      OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+    },
     async () => {
       called = true;
       return new Response("{}", { status: 200 });
@@ -101,12 +181,29 @@ test("skips the remote call without --remote", async () => {
   assert.equal(called, false);
 });
 
+test("skips remote fetch on exact local mock base even with --remote", async () => {
+  let called = false;
+  await main(
+    {
+      OPENROUTER_MODELS: "mock/kondate-primary:free,mock/kondate-repair:free",
+      OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
+    },
+    async () => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    },
+    () => AbortSignal.timeout(1),
+    ["--remote"],
+  );
+  assert.equal(called, false);
+});
+
 test("rejects non-official production OPENROUTER_BASE_URL before remote fetch", async () => {
   let called = false;
   await assert.rejects(
     main(
       {
-        OPENROUTER_MODELS: "vendor/a:free",
+        OPENROUTER_MODELS: "vendor/a",
         CONTEXT: "production",
         OPENROUTER_BASE_URL: "https://openrouter.example/api/v1",
       },
@@ -136,7 +233,7 @@ for (const unsafe of [
     await assert.rejects(
       main(
         {
-          OPENROUTER_MODELS: "vendor/a:free",
+          OPENROUTER_MODELS: "vendor/a",
           CONTEXT: "production",
           OPENROUTER_BASE_URL: unsafe,
         },
@@ -153,7 +250,7 @@ test("accepts exact production OPENROUTER_BASE_URL without requiring --remote", 
   await assert.doesNotReject(() =>
     main(
       {
-        OPENROUTER_MODELS: "vendor/a:free",
+        OPENROUTER_MODELS: "vendor/a",
         CONTEXT: "production",
         OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
       },

@@ -31,18 +31,56 @@ export function validateProductionCsp(supabaseUrl) {
   return true;
 }
 
-export function parseOpenRouterModels(value) {
+/**
+ * 本番 preflight 用 OPENROUTER_MODELS パーサ。
+ * 正本: scripts/openrouter-models-contract.mjs。
+ * 鏡像: env.ts / verify-openrouter-models.mjs。
+ * preflight は常に公式 base 前提（mock 例外は到達不能）。
+ */
+export function parseOpenRouterModels(value, context = {}) {
+  const openRouterBaseUrl =
+    typeof context.openRouterBaseUrl === "string" && context.openRouterBaseUrl.length > 0
+      ? context.openRouterBaseUrl
+      : "https://openrouter.ai/api/v1";
+  // 設計: カンマ区切り・前後 trim・空要素なし（filter(Boolean) で空を落とさない）
   const models = String(value)
     .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+    .map((item) => item.trim());
+  if (models.some((model) => model.length === 0)) {
+    throw new Error("OPENROUTER_MODELS must not contain empty elements");
+  }
   if (models.length === 0) throw new Error("OPENROUTER_MODELS must not be empty");
   if (new Set(models).size !== models.length) {
     throw new Error("OPENROUTER_MODELS must not contain duplicates");
   }
+  // preflight は本番のみ。exact mock 判定は規則同一だが到達しない経路として残す
+  let mockPath = false;
+  try {
+    const parsed = new URL(openRouterBaseUrl);
+    mockPath =
+      parsed.protocol === "http:" &&
+      parsed.hostname === "openrouter-mock" &&
+      parsed.port === "8787" &&
+      parsed.pathname === "/api/v1" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.search === "" &&
+      parsed.hash === "";
+  } catch {
+    mockPath = false;
+  }
+  const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   for (const model of models) {
-    if (model === "openrouter/auto" || !model.endsWith(":free")) {
-      throw new Error(`OPENROUTER_MODELS contains a non-free model: ${model}`);
+    if (routers.has(model)) {
+      throw new Error(`OPENROUTER_MODELS rejects router model ID: ${model}`);
+    }
+    if (mockPath) {
+      if (!model.startsWith("mock/") || !model.endsWith(":free")) {
+        throw new Error(`OPENROUTER_MODELS mock path accepts only mock/*:free: ${model}`);
+      }
+    } else if (model.endsWith(":free") || model.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否
+      throw new Error(`OPENROUTER_MODELS rejects mock/ or :free model on non-mock base: ${model}`);
     }
   }
   return models;
@@ -208,8 +246,8 @@ export function validateProductionEnv(env) {
   }
 
   // ロックされた整数
-  requirePositiveIntegerString(env, "USER_DAILY_AI_LIMIT", 5);
-  requirePositiveIntegerString(env, "USER_DAILY_EXTERNAL_CALL_LIMIT", 12);
+  requirePositiveIntegerString(env, "USER_DAILY_AI_LIMIT", 3);
+  requirePositiveIntegerString(env, "USER_DAILY_EXTERNAL_CALL_LIMIT", 6);
   requirePositiveIntegerString(env, "USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT", 4);
   requirePositiveIntegerString(env, "USER_SHORT_WINDOW_SECONDS", 600);
   requirePositiveIntegerString(env, "AUTH_CONTINUATION_TTL_SECONDS", 300);
@@ -219,12 +257,15 @@ export function validateProductionEnv(env) {
   requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", 180);
   requirePositiveIntegerString(env, "VITE_MAGIC_LINK_RESEND_SECONDS");
   const globalLimit = requirePositiveIntegerString(env, "GLOBAL_DAILY_AI_LIMIT");
-  if (globalLimit > 45) throw new Error("GLOBAL_DAILY_AI_LIMIT_invalid");
+  if (globalLimit > 20) throw new Error("GLOBAL_DAILY_AI_LIMIT_invalid");
 
   if (String(env.OPENROUTER_BASE_URL) !== "https://openrouter.ai/api/v1") {
     throw new Error("OPENROUTER_BASE_URL_invalid");
   }
-  parseOpenRouterModels(String(env.OPENROUTER_MODELS));
+  // 本番 preflight は常に公式 base（mock 例外は到達不能）
+  parseOpenRouterModels(String(env.OPENROUTER_MODELS), {
+    openRouterBaseUrl: "https://openrouter.ai/api/v1",
+  });
 
   decodeExact32Base64(
     String(env.AUTH_CONTINUATION_ENCRYPTION_KEY),

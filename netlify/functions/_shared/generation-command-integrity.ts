@@ -26,6 +26,7 @@ const sortedMemberIds = (values: readonly string[]): readonly string[] =>
 /**
  * 冪等性比較の唯一の正規表現。key 順は固定し、kind に存在しない値は null とする。
  * リクエスト JSON やプロンプト本文は台帳に載せない。
+ * privacyNoticeVersion は new_menu / 再生成とも request から載せる（F1: 再生成でも必須）。
  */
 export function canonicalizeGenerationCommandV2(
   command: GenerationCommandV2,
@@ -43,7 +44,7 @@ export function canonicalizeGenerationCommandV2(
     dishId: command.kind === "regenerate_dish" ? command.request.dishId : null,
     changeReason: isNewMenu ? null : command.request.changeReason,
     changeReasonCustom: isNewMenu ? null : command.request.changeReasonCustom,
-    privacyNoticeVersion: isNewMenu ? command.request.privacyNoticeVersion : null,
+    privacyNoticeVersion: command.request.privacyNoticeVersion,
     expiredPantryConfirmations: sortedChecks(command.request.expiredPantryConfirmations),
     targetMode: integrity.targetMode,
     servings: integrity.servings,

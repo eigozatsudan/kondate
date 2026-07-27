@@ -31,8 +31,8 @@ it("accepts nullable draft references for regeneration reservations", () => {
       target_member_ids: ["70000000-0000-4000-8000-000000000001"],
       source_menu_version: 1,
     },
-    p_user_limit: 5,
-    p_global_limit: 45,
+    p_user_limit: 3,
+    p_global_limit: 20,
   } satisfies ReserveGenerationArgs;
 
   expectTypeOf(args).toExtend<ReserveGenerationArgs>();

@@ -17,8 +17,8 @@
 - All user-facing copy is Japanese. Internal identifiers, code comments, commits, and test names are English.
 - Mobile-first layout must work at 320 CSS pixels without horizontal scrolling; interactive targets are at least 44 by 44 CSS pixels.
 - Use the approved visual direction: warm off-white background, terracotta primary action, subdued green pantry accents, the Plan 7 five-step guided planner wizard (meal → ingredients → cuisine → audience → review) with optional household setup, and tabbed dish results with an overall timeline first. Plan 7 supersedes the earlier single-screen / three-step planner home wording for product UI.
-- OpenRouter is called only from Netlify Functions. `OPENROUTER_MODELS` must contain only explicit model IDs ending in `:free`; paid fallback and `openrouter/auto` are rejected.
-- Release-locked user limits are exactly 5 successful generations per Japan calendar day, 12 actual OpenRouter sends per user/Japan day, and 4 sends per fixed 600-second window; application-wide actual sends default to 45 per Japan day. Preflight rejects any 5/12/4/600 drift. Sent attempts are never refunded.
+- OpenRouter is called only from Netlify Functions. **Plan 8 (`2026-07-26-paid-openrouter-models`) 以降、モデル・クォータの正本は当該設計／本 Plan。歴史的 free-only 記述は上書き済みとする。** `OPENROUTER_MODELS` is a paid allowlist of explicit model IDs (no `:free` on real-API paths; `openrouter/auto` and equivalent routers rejected; mock `mock/*:free` only when `OPENROUTER_BASE_URL` is the exact local mock URL). Structured outputs require both `structured_outputs` and `response_format`; prompt+completion pricing sum ≤ $0.50/1M.
+- Release-locked user limits are exactly 3 successful generations per Japan calendar day, 6 actual OpenRouter sends per user/Japan day, and 4 sends per fixed 600-second window; application-wide actual sends default to 20 per Japan day. Preflight rejects any 3/6/4/600 drift. Sent attempts are never refunded.
 - Every OpenRouter attempt is bounded to 20 seconds and the complete synchronous Function to 50 seconds. Before each `markSent`, at least the full 20-second provider budget plus a 2-second finalization reserve must remain; otherwise no HTTP is sent and every unsent reservation is released. Timeout, connection loss, or an unknown first result never starts repair; repair is allowed once only when the remaining monotonic deadline leaves room for the second attempt and finalization.
 - Terminal failed/constraint/timeout generation ledger metadata and private shopping-mutation replay rows are retained for 30 days; auth continuations expire after 300 seconds. All are cascade-deleted immediately with the Auth user and are cleaned in bounded categories through the dedicated maintenance executor without retaining prompts, raw output, or unbounded free text.
 - Never log names, emails, allergies, free-form conditions, prompts, or raw AI responses. Log only request ID, error code, duration, and actual model ID.
@@ -311,12 +311,12 @@ Server configuration uses these exact names and release defaults:
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
 | `OPENROUTER_API_KEY` | Server-only secret |
 | `OPENROUTER_BASE_URL` | Production must equal `https://openrouter.ai/api/v1` exactly |
-| `OPENROUTER_MODELS` | Ordered, unique, explicit `:free` IDs; never `openrouter/auto` |
-| `USER_DAILY_AI_LIMIT` | Release-locked `5` successful generations per JST day |
-| `USER_DAILY_EXTERNAL_CALL_LIMIT` | Release-locked `12` actual external sends per user/JST day |
+| `OPENROUTER_MODELS` | Ordered, unique paid allowlist IDs; reject `:free` on real API, routers (`openrouter/auto` etc.), structured-parameter gaps, and prompt+completion sum > $0.50/1M; mock `mock/*:free` only with exact mock base URL |
+| `USER_DAILY_AI_LIMIT` | Release-locked `3` successful generations per JST day |
+| `USER_DAILY_EXTERNAL_CALL_LIMIT` | Release-locked `6` actual external sends per user/JST day |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | Release-locked `4` actual external sends |
 | `USER_SHORT_WINDOW_SECONDS` | Release-locked `600` |
-| `GLOBAL_DAILY_AI_LIMIT` | Default `45` actual external sends per JST day; operator may lower this positive-integer safety valve |
+| `GLOBAL_DAILY_AI_LIMIT` | Default `20` actual external sends per JST day; operator may lower this positive-integer safety valve |
 | `OPENROUTER_TIMEOUT_MS` | `20000` per attempt |
 | `FUNCTION_TOTAL_BUDGET_MS` | `50000` total synchronous budget |
 | Terminal generation / shopping-mutation retention | Release-locked **30 days**, enforced in maintenance SQL (`interval '30 days'`), **not** an environment variable |
@@ -400,9 +400,9 @@ Plan 6 creates `docs/testing/acceptance-matrix.md` with exactly 22 rows matching
 | 14 | Plan 4 | Grouping/selection and event/Realtime/focus/visibility/online/60-second current-safety revalidation; pantry/preference drift is non-blocking |
 | 15 | Plan 5 | Replay-before-state recovery, human per-operation approval, immutable pending provenance/current projection, removed/protected delta, cross-device all-source revalidation, locked item safety fingerprint, quantity/unit/section editing, pantry matching, undo, no duplicate source |
 | 16 | Plans 1–7 then Plan 6 | Owner/RLS/grant matrix, continuation isolation, cross-user negative tests |
-| 17 | Plans 3, 5, 6 | Concurrent 5-success/12-daily/4-per-600s/45-global gates and bounded 30-day generation/shopping-replay retention |
-| 18 | Plans 2, 3 | No-paid-fallback and complete deterministic breakfast/lunch/dinner emergency menus |
-| 19 | Plans 3, 6 | Structural plus live production `:free`/capability verification |
+| 17 | Plans 3, 5, 6, 8 | Concurrent 3-success/6-daily/4-per-600s/20-global gates and bounded 30-day generation/shopping-replay retention |
+| 18 | Plans 2, 3, 8 | No out-of-allowlist auto-switch (no free↔paid auto fallback) and complete deterministic breakfast/lunch/dinner emergency menus |
+| 19 | Plans 3, 6, 8 | Structural plus live production paid-allowlist/capability verification (structured AND, unit-price, reject `:free`/auto) |
 | 20 | Plan 3 | Failure/constraint/timeout/current-safety-change rollback and attempt accounting |
 | 21 | Plan 6 | axe, keyboard, live-region, 44px, and 320/375/430px Playwright checks |
 | 22 | Plan 6 | Pinned-SHA CI, public/private type and offline Netlify gates, unexpired external Google evidence, and authoritative staging plus production deploy-ID/SHA/origin readback matching tag/candidate |

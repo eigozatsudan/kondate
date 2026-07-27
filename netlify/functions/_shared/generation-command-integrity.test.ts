@@ -62,7 +62,7 @@ const commands: readonly {
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         draftId: "20000000-0000-4000-8000-000000000001",
         draftRevision: 3,
-        privacyNoticeVersion: "2026-07-11.v1",
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [...checks],
       },
     },
@@ -77,6 +77,7 @@ const commands: readonly {
         sourceMenuId: "40000000-0000-4000-8000-000000000001",
         changeReason: "custom",
         changeReasonCustom: "野菜を増やす",
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [...checks],
       },
     },
@@ -92,6 +93,7 @@ const commands: readonly {
         dishId: "50000000-0000-4000-8000-000000000001",
         changeReason: "simpler",
         changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: [...checks],
       },
     },
@@ -150,7 +152,7 @@ describe("generation command integrity v2", () => {
         dishId: null,
         changeReason: null,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-11.v1",
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: sorted,
         targetMode: "household",
         servings: null,
@@ -167,7 +169,7 @@ describe("generation command integrity v2", () => {
         dishId: null,
         changeReason: "custom",
         changeReasonCustom: "野菜を増やす",
-        privacyNoticeVersion: null,
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: sorted,
         targetMode: "household",
         servings: 4,
@@ -184,7 +186,7 @@ describe("generation command integrity v2", () => {
         dishId: "50000000-0000-4000-8000-000000000001",
         changeReason: "simpler",
         changeReasonCustom: null,
-        privacyNoticeVersion: null,
+        privacyNoticeVersion: "2026-07-26.v1",
         expiredPantryConfirmations: sorted,
         targetMode: "idea",
         servings: 2,
@@ -193,6 +195,32 @@ describe("generation command integrity v2", () => {
       },
     ]);
   });
+
+  // F1: 再生成でも privacy version を canonical に載せ、version 差を HMAC mismatch にする
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "includes privacyNoticeVersion for %s and mismatches when version changes",
+    (kind) => {
+      const entry = commands.find((item) => item.command.kind === kind);
+      if (entry === undefined || entry.command.kind === "new_menu") {
+        throw new Error("fixture mismatch");
+      }
+      const canonical = JSON.parse(
+        canonicalizeGenerationCommandV2(entry.command, entry.integrity),
+      ) as { privacyNoticeVersion: string | null };
+      expect(canonical.privacyNoticeVersion).toBe("2026-07-26.v1");
+      const baseHmac = generationRequestHmac(entry.command, entry.integrity, key);
+      // schema 上は現行 literal のみ許可だが、canonical 入力を差し替えて payload 依存を検証する
+      const tamperedRequest = {
+        ...entry.command.request,
+        privacyNoticeVersion: "2026-07-11.v1",
+      };
+      const tampered = {
+        ...entry.command,
+        request: tamperedRequest,
+      } as typeof entry.command;
+      expect(generationRequestHmac(tampered, entry.integrity, key)).not.toBe(baseHmac);
+    },
+  );
 
   it("changes HMAC for mode, servings, members, source version, and command leaves", () => {
     const [newEntry, menuEntry, dishEntry] = commands;
@@ -253,7 +281,7 @@ describe("generation command integrity v2", () => {
           idempotencyKey: "10000000-0000-4000-8000-000000000001",
           draftId: "20000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-11.v1",
+          privacyNoticeVersion: "2026-07-26.v1",
           expiredPantryConfirmations: [],
         },
       }).success,
@@ -265,7 +293,7 @@ describe("generation command integrity v2", () => {
           idempotencyKey: "10000000-0000-4000-8000-000000000001",
           draftId: "20000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-11.v1",
+          privacyNoticeVersion: "2026-07-26.v1",
           expiredPantryConfirmations: [],
         },
       }).success,

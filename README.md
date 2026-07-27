@@ -98,35 +98,41 @@ http://127.0.0.1:5173
 既定のローカル構成は **openrouter-mock** です。決定論的なモック応答で E2E・単体が安定します。
 API キーを設定すると、同じ UI から **本番と同じ OpenRouter 経路**で「献立を作る」を試せます。
 
-#### 1. 鍵とモデルを用意する
+**本番 / 実 API 経路は有料 allowlist のみ**です（Plan 8）。`:free` や `openrouter/auto` 等のルーターは起動・デプロイ検証で拒否されます。実 API 呼び出しは **有料課金**が発生します。
 
-1. [OpenRouter](https://openrouter.ai/) で API キーを発行する
-2. **`:free` で終わるモデル ID だけ**を使う（有料モデルと `openrouter/auto` は起動時に拒否される）
-3. 候補は Models API で確認する（構造化出力 `structured_outputs` + `response_format` 対応が必要）
+#### 1. 鍵と有料モデルを用意する
 
-例（利用可能な free モデルは時期で変わるため、必ず最新を確認すること）:
+1. [OpenRouter](https://openrouter.ai/) で API キーを発行し、**クレジットとキー hard limit** を設定する
+2. **有料**の明示モデル ID だけを使う（`:free` 不可。`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` も不可）
+3. 各 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$0.50 / 1M tokens** であること
+4. 実装完了ゲート前に `scripts/benchmark-paid-openrouter-models.mjs` で機械フィルタ → N=10 を通す（詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)）
+
+ゲート合格後の推奨例（実際の合格 ID に置換すること。最大 2 本を推奨）:
 
 ```text
-google/gemma-3-27b-it:free
-mistralai/mistral-small-3.2-24b-instruct:free
+mistralai/mistral-small-3.2-24b-instruct
+openai/gpt-oss-120b
 ```
+
+> 上記は設計候補のうち README 用の例であり、**ライブ N=10 ゲート未通過のまま本番 ship しない**こと。キー total limit 未解消も完了扱いしない。
 
 #### 2. `.env` を上書きする
 
 リポジトリ直下の `.env`（`generate-local-secrets.sh` が作る）を編集します。**コミットしないでください。**
 
 ```bash
-# 実 API（本番相当）
+# 実 API（本番相当・有料 allowlist）
 OPENROUTER_API_KEY=sk-or-v1-xxxxxxxx
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODELS=google/gemma-3-27b-it:free,mistralai/mistral-small-3.2-24b-instruct:free
+# 例（実際のゲート合格 ID に置換）
+OPENROUTER_MODELS=mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b
 ```
 
 注意:
 
 - `VITE_OPENROUTER_API_KEY` は使わない（ブラウザへ漏れるため禁止）
 - `OPENROUTER_BASE_URL` は末尾スラッシュなしで `https://openrouter.ai/api/v1` と完全一致させる
-- `OPENROUTER_MODELS` はカンマ区切り・重複なし・すべて `:free` 終わり
+- `OPENROUTER_MODELS` はカンマ区切り・重複なし・**有料** ID のみ（公式 base 上で `:free` は拒否）
 - 既定 mock に戻すときは次のいずれかにする:
 
 ```bash
@@ -135,7 +141,7 @@ OPENROUTER_BASE_URL=http://openrouter-mock:8787/api/v1
 OPENROUTER_MODELS=mock/kondate-primary:free,mock/kondate-repair:free
 ```
 
-または `./scripts/generate-local-secrets.sh --force` のあと必要な鍵だけ復元する（OpenRouter 3 変数は mock 既定に戻る）。
+または `./scripts/generate-local-secrets.sh --force` のあと必要な鍵だけ復元する（OpenRouter 3 変数は mock 既定に戻る）。mock 例外は **exact** `http://openrouter-mock:8787/api/v1` のときだけ `mock/*:free` を受理する。
 
 #### 3. app を作り直して反映する
 
@@ -145,12 +151,14 @@ OPENROUTER_MODELS=mock/kondate-primary:free,mock/kondate-repair:free
 docker compose up -d --wait --force-recreate app
 ```
 
-#### 4. モデル設定を確認する（任意・推奨）
+#### 4. モデル設定と有料ベンチを確認する（任意・推奨）
 
 ```bash
 docker compose run --rm --no-deps app npm run verify:openrouter:config
 # 実 Models API まで見る場合（ネットワーク必須）
 docker compose run --rm --no-deps app npm run verify:openrouter:models
+# 有料課金あり。機械フィルタ + 各候補 N=10（キーとクレジット必須）
+docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs
 ```
 
 #### 5. ブラウザで試す
@@ -166,14 +174,14 @@ docker compose run --rm --no-deps app npm run verify:openrouter:models
 
 | 項目                                       | 値    |
 | ------------------------------------------ | ----- |
-| 成功生成 / 利用者 / JST 日                 | 5     |
-| 外部 AI 送信 / 利用者 / JST 日             | 12    |
+| 成功生成 / 利用者 / JST 日                 | 3     |
+| 外部 AI 送信 / 利用者 / JST 日             | 6     |
 | 外部送信 / 600 秒窓                        | 4     |
-| 外部 AI 送信 / アプリ全体 / JST 日（既定） | 45    |
+| 外部 AI 送信 / アプリ全体 / JST 日（既定） | 20    |
 | 1 試行タイムアウト                         | 20 秒 |
 | Function 総予算                            | 50 秒 |
 
-free モデルは提供状況・レート制限が変わります。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費します）。
+有料モデルでも提供状況・単価・構造化対応は変わり得ます。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費し、課金も発生します）。
 
 主な検証コマンド:
 
