@@ -48,7 +48,8 @@ export type PaidBenchmarkUnitResult = Readonly<{
 export type PaidBenchmarkRepositoryTransition = Readonly<{
   kind:
     | "lookup"
-    | "reserve"
+    | "reserve_new"
+    | "replay_existing"
     | "mark_sent"
     | "reserve_repair"
     | "record_model"
@@ -56,9 +57,12 @@ export type PaidBenchmarkRepositoryTransition = Readonly<{
     | "finalize_conflict"
     | "finalize_success"
     | "status";
-  attemptsReserved: number;
-  sends: number;
-  successes: number;
+  userSuccessReserved: number;
+  userSuccessConsumed: number;
+  attemptReserved: number;
+  attemptSent: number;
+  globalReserved: number;
+  globalSent: number;
 }>;
 
 type RepositoryObserver = (transition: PaidBenchmarkRepositoryTransition) => void;
@@ -128,12 +132,28 @@ function makeProcessingRecord(): QuotaRequestRecord {
 
 function createInMemoryRepository(observer?: RepositoryObserver): BenchmarkRepository {
   let record = makeProcessingRecord();
-  let attemptsReserved = 1;
-  let sends = 0;
-  let successes = 0;
+  let userSuccessReserved = 0;
+  let userSuccessConsumed = 0;
+  let attemptReserved = 0;
+  let attemptSent = 0;
+  let globalReserved = 0;
+  let globalSent = 0;
   const actualModelIds: string[] = [];
   const report = (kind: PaidBenchmarkRepositoryTransition["kind"]): void => {
-    observer?.({ kind, attemptsReserved, sends, successes });
+    observer?.({
+      kind,
+      userSuccessReserved,
+      userSuccessConsumed,
+      attemptReserved,
+      attemptSent,
+      globalReserved,
+      globalSent,
+    });
+  };
+  const releaseReservations = (): void => {
+    userSuccessReserved = 0;
+    attemptReserved = 0;
+    globalReserved = 0;
   };
   const terminalRecord = (
     status: "failed" | "constraint_conflict" | "succeeded",
@@ -142,7 +162,7 @@ function createInMemoryRepository(observer?: RepositoryObserver): BenchmarkRepos
     status,
     failure_code: status === "failed" ? record.failure_code : null,
     completed_menu_id: status === "succeeded" ? benchmarkMenuId : null,
-    remaining: Math.max(0, 3 - successes),
+    remaining: Math.max(0, 3 - userSuccessConsumed),
     consumed: status === "succeeded",
     actual_model_ids: [...actualModelIds],
     completed_at: benchmarkCompletedAt,
@@ -151,31 +171,65 @@ function createInMemoryRepository(observer?: RepositoryObserver): BenchmarkRepos
   const repository: BenchmarkRepository = {
     lookup() {
       report("lookup");
-      // hit を返すことで、production runGeneration のDB integrity解決を通らず、
-      // 固定した非PIIコンテキストだけで隔離ベンチを成立させる。
-      return Promise.resolve({
-        kind: "hit",
-        requestId: benchmarkRequestId,
-        requestHmacVersion: generationCommandVersionV2,
-        integrity: {
-          kind: "new_menu",
-          targetMode: "idea",
-          servings: 2,
-          targetMemberIds: [],
-          sourceMenuVersion: null,
-        },
-      });
+      return Promise.resolve({ kind: "miss" });
     },
     replayExisting() {
-      report("reserve");
-      return Promise.resolve(record);
+      report("replay_existing");
+      return Promise.reject(new Error("benchmark_replay_forbidden"));
     },
     reserveNew() {
-      report("reserve");
+      if (userSuccessReserved + userSuccessConsumed >= 3) {
+        record = {
+          ...record,
+          status: "failed",
+          failure_code: "user_daily_limit",
+          completed_at: benchmarkCompletedAt,
+        };
+        report("reserve_new");
+        return Promise.resolve(record);
+      }
+      if (attemptReserved + attemptSent >= 6) {
+        record = {
+          ...record,
+          status: "failed",
+          failure_code: "user_attempt_limit",
+          completed_at: benchmarkCompletedAt,
+        };
+        report("reserve_new");
+        return Promise.resolve(record);
+      }
+      if (globalReserved + globalSent >= 20) {
+        record = {
+          ...record,
+          status: "failed",
+          failure_code: "global_daily_limit",
+          completed_at: benchmarkCompletedAt,
+        };
+        report("reserve_new");
+        return Promise.resolve(record);
+      }
+      userSuccessReserved += 1;
+      attemptReserved += 1;
+      globalReserved += 1;
+      report("reserve_new");
       return Promise.resolve(record);
     },
     markSent() {
-      sends += 1;
+      if (attemptReserved < 1 || globalReserved < 1) {
+        record = {
+          ...record,
+          status: "failed",
+          failure_code: "internal_error",
+          completed_at: benchmarkCompletedAt,
+        };
+        releaseReservations();
+        report("mark_sent");
+        return Promise.resolve({ ...record, sent: false, code: "internal_error" });
+      }
+      attemptReserved -= 1;
+      attemptSent += 1;
+      globalReserved -= 1;
+      globalSent += 1;
       report("mark_sent");
       return Promise.resolve({ ...record, sent: true, code: null });
     },
@@ -185,15 +239,17 @@ function createInMemoryRepository(observer?: RepositoryObserver): BenchmarkRepos
         failure_code: code,
         retry_at: retryAt,
       };
+      releaseReservations();
       record = terminalRecord("failed");
       report("finalize_failure");
       return Promise.resolve(record);
     },
     reserveRepair() {
-      if (attemptsReserved >= 6 || sends >= 20) {
+      if (attemptReserved + attemptSent >= 6 || globalReserved + globalSent >= 20) {
         return Promise.resolve({ reserved: false, retry_at: null });
       }
-      attemptsReserved += 1;
+      attemptReserved += 1;
+      globalReserved += 1;
       report("reserve_repair");
       return Promise.resolve({ reserved: true, retry_at: null });
     },
@@ -208,6 +264,7 @@ function createInMemoryRepository(observer?: RepositoryObserver): BenchmarkRepos
         failure_code: code,
         retry_at: retryAt,
       };
+      releaseReservations();
       record = terminalRecord("failed");
       report("finalize_failure");
       return Promise.resolve(record);
@@ -221,11 +278,18 @@ function createInMemoryRepository(observer?: RepositoryObserver): BenchmarkRepos
         ...terminalRecord("constraint_conflict"),
         terminal_details: { conflictCodes },
       };
+      releaseReservations();
       report("finalize_conflict");
       return Promise.resolve(record);
     },
     succeed() {
-      successes += 1;
+      if (userSuccessReserved !== 1 || userSuccessConsumed >= 3) {
+        return Promise.reject(new Error("benchmark_success_reservation_invalid"));
+      }
+      userSuccessReserved = 0;
+      userSuccessConsumed += 1;
+      attemptReserved = 0;
+      globalReserved = 0;
       record = terminalRecord("succeeded");
       report("finalize_success");
       return Promise.resolve(record);
@@ -294,7 +358,7 @@ export async function runPaidBenchmarkUnit(input: {
     const startedAt = monotonicNow();
     let responseModel: string | null = null;
     try {
-      const result = await sender({ ...callInput, models: configuration });
+      const result = await sender(callInput);
       responseModel = result.modelId;
       return result;
     } catch (error) {
@@ -314,6 +378,14 @@ export async function runPaidBenchmarkUnit(input: {
     user: { userId: benchmarkUserId, accessToken: "benchmark-no-db-access" },
     repository: createInMemoryRepository(input.onRepositoryTransition),
     models: configuration,
+    resolveIntegrityContext: () =>
+      Promise.resolve({
+        kind: "new_menu",
+        targetMode: "idea",
+        servings: 2,
+        targetMemberIds: [],
+        sourceMenuVersion: null,
+      }),
     loadExecutionContext: () => Promise.resolve(execution),
     validatePreflight: validateGenerationPreflight,
     buildMessages: buildGenerationMessages,
@@ -329,7 +401,10 @@ export async function runPaidBenchmarkUnit(input: {
   };
 
   const status = await runGeneration(deps, benchmarkCommand);
-  const ok = status.status === "succeeded";
+  // finalize/status読取後の値を一度だけ確定し、50秒境界到達を成功へ戻さない。
+  const totalElapsedMs = Math.max(0, Math.trunc(monotonicNow() - requestStartedAtMonotonicMs));
+  const totalDeadlineExceeded = totalElapsedMs >= benchmarkTotalBudgetMs;
+  const ok = status.status === "succeeded" && !totalDeadlineExceeded;
   const outcome =
     ok && sends.length === 1
       ? ("primary_success" as const)
@@ -341,7 +416,9 @@ export async function runPaidBenchmarkUnit(input: {
     configuration,
     sends: Object.freeze([...sends]),
     outcome,
-    failureCodes: Object.freeze([...failureCodesFromStatus(status)]),
-    totalElapsedMs: Math.max(0, Math.trunc(monotonicNow() - requestStartedAtMonotonicMs)),
+    failureCodes: Object.freeze([
+      ...(totalDeadlineExceeded ? ["generation_timeout"] : failureCodesFromStatus(status)),
+    ]),
+    totalElapsedMs,
   };
 }

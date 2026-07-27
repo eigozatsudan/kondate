@@ -13,7 +13,9 @@ const configuration = [primaryModel, repairModel] as const;
 type FetchStep =
   | { kind: "output"; model: string; output: unknown; elapsedMs?: number }
   | { kind: "unknown_invalid"; elapsedMs?: number }
-  | { kind: "http_error"; status: number; elapsedMs?: number };
+  | { kind: "http_error"; status: number; elapsedMs?: number }
+  | { kind: "transport_error"; elapsedMs?: number }
+  | { kind: "body_error"; elapsedMs?: number };
 
 function wireOutput(output: unknown): unknown {
   if (typeof output !== "object" || output === null || !("outcome" in output)) {
@@ -43,6 +45,17 @@ function makeFetch(
     index += 1;
     if (step === undefined) throw new Error("unexpected benchmark send");
     advance(step.elapsedMs ?? 0);
+    if (step.kind === "transport_error") {
+      return Promise.reject(new Error("transport detail must not escape"));
+    }
+    if (step.kind === "body_error") {
+      const bodyStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("body detail must not escape"));
+        },
+      });
+      return Promise.resolve(new Response(bodyStream, { status: 200 }));
+    }
     if (step.kind === "http_error") {
       return Promise.resolve(
         new Response("provider detail must not escape", { status: step.status }),
@@ -166,22 +179,44 @@ describe("runPaidBenchmarkUnit", () => {
         { kind: "output", model: primaryModel, output: validIdeaOutput(), elapsedMs: 20_000 },
       ],
       expectedCode: "generation_timeout",
+      expectedResponseModel: null,
     },
     {
-      name: "model unavailable",
+      name: "non-2xx",
       steps: [{ kind: "http_error", status: 503 }],
       expectedCode: "model_unavailable",
+      expectedResponseModel: null,
+    },
+    {
+      name: "transport failure",
+      steps: [{ kind: "transport_error" }],
+      expectedCode: "model_unavailable",
+      expectedResponseModel: null,
+    },
+    {
+      name: "body read failure",
+      steps: [{ kind: "body_error" }],
+      expectedCode: "model_unavailable",
+      expectedResponseModel: null,
+    },
+    {
+      name: "response model mismatch",
+      steps: [{ kind: "output", model: "outside/model", output: validIdeaOutput() }],
+      expectedCode: "model_unavailable",
+      expectedResponseModel: "outside/model",
     },
     {
       name: "constraint conflict",
       steps: [{ kind: "output", model: primaryModel, output: conflictOutput() }],
       expectedCode: "constraint_conflict",
+      expectedResponseModel: primaryModel,
     },
   ] satisfies readonly {
     name: string;
     steps: readonly FetchStep[];
     expectedCode: string;
-  }[])("does not repair $name", async ({ steps, expectedCode }) => {
+    expectedResponseModel?: string | null;
+  }[])("does not repair $name", async ({ steps, expectedCode, expectedResponseModel }) => {
     let nowMs = 0;
     const requests: Array<{ models: string[]; messages: unknown[] }> = [];
     const result = await runPaidBenchmarkUnit({
@@ -197,6 +232,7 @@ describe("runPaidBenchmarkUnit", () => {
     expect(result.ok).toBe(false);
     expect(result.failureCodes).toEqual([expectedCode]);
     expect(requests).toHaveLength(1);
+    expect(result.sends[0]?.responseModel).toBe(expectedResponseModel);
   });
 
   it.each([
@@ -250,7 +286,7 @@ describe("runPaidBenchmarkUnit", () => {
     for (const transitions of transitionRuns) {
       expect(transitions.map((transition) => transition.kind)).toEqual([
         "lookup",
-        "reserve",
+        "reserve_new",
         "mark_sent",
         "record_model",
         "reserve_repair",
@@ -260,14 +296,73 @@ describe("runPaidBenchmarkUnit", () => {
         "status",
       ]);
       expect(transitions.filter((transition) => transition.kind === "mark_sent")).toHaveLength(2);
+      expect(transitions.some((transition) => transition.kind === "replay_existing")).toBe(false);
+      expect(transitions[1]).toMatchObject({
+        kind: "reserve_new",
+        userSuccessReserved: 1,
+        userSuccessConsumed: 0,
+        attemptReserved: 1,
+        attemptSent: 0,
+        globalReserved: 1,
+        globalSent: 0,
+      });
+      expect(transitions[2]).toMatchObject({
+        kind: "mark_sent",
+        userSuccessReserved: 1,
+        attemptReserved: 0,
+        attemptSent: 1,
+        globalReserved: 0,
+        globalSent: 1,
+      });
+      expect(transitions[4]).toMatchObject({
+        kind: "reserve_repair",
+        userSuccessReserved: 1,
+        attemptReserved: 1,
+        attemptSent: 1,
+        globalReserved: 1,
+        globalSent: 1,
+      });
       expect(transitions.at(-2)).toMatchObject({
         kind: "finalize_success",
-        attemptsReserved: 2,
-        sends: 2,
-        successes: 1,
+        userSuccessReserved: 0,
+        userSuccessConsumed: 1,
+        attemptReserved: 0,
+        attemptSent: 2,
+        globalReserved: 0,
+        globalSent: 2,
       });
     }
   });
+
+  it.each([
+    {
+      name: "failure",
+      step: { kind: "http_error", status: 503 } as const,
+      terminalKind: "finalize_failure" as const,
+    },
+    {
+      name: "conflict",
+      step: { kind: "output", model: primaryModel, output: conflictOutput() } as const,
+      terminalKind: "finalize_conflict" as const,
+    },
+  ])(
+    "releases outstanding quota reservations on $name finalize",
+    async ({ step, terminalKind }) => {
+      const transitions: PaidBenchmarkRepositoryTransition[] = [];
+      await runWithSteps([step], {
+        onRepositoryTransition: (transition) => transitions.push(transition),
+      });
+
+      expect(transitions.find((transition) => transition.kind === terminalKind)).toMatchObject({
+        userSuccessReserved: 0,
+        userSuccessConsumed: 0,
+        attemptReserved: 0,
+        attemptSent: 1,
+        globalReserved: 0,
+        globalSent: 1,
+      });
+    },
+  );
 
   it("enforces the 22s pre-send boundary through runGeneration", async () => {
     let calls = 0;
@@ -292,7 +387,62 @@ describe("runPaidBenchmarkUnit", () => {
     expect(allowed.requests).toHaveLength(1);
   });
 
-  it("fails closed at the 50s total boundary", async () => {
+  it("enforces the independent 22s pre-repair boundary", async () => {
+    for (const [elapsedMs, expectedOk, expectedRequests] of [
+      [28_000, true, 2],
+      [28_001, false, 1],
+    ] as const) {
+      let nowMs = 0;
+      const { result, requests } = await runWithSteps(
+        [
+          { kind: "output", model: primaryModel, output: invalidIdeaOutput() },
+          ...(expectedOk
+            ? [{ kind: "output" as const, model: repairModel, output: validIdeaOutput() }]
+            : []),
+        ],
+        {
+          now: () => nowMs,
+          onRepositoryTransition: (transition) => {
+            if (transition.kind === "reserve_repair") nowMs = elapsedMs;
+          },
+        },
+      );
+      expect(result.ok).toBe(expectedOk);
+      expect(result.failureCodes).toEqual(expectedOk ? [] : ["generation_timeout"]);
+      expect(requests).toHaveLength(expectedRequests);
+    }
+  });
+
+  it.each([
+    ["primary", 49_999, true],
+    ["primary", 50_000, false],
+    ["repair", 49_999, true],
+    ["repair", 50_000, false],
+  ] as const)("fails closed after %s finalize at %dms", async (path, elapsedMs, expectedOk) => {
+    let nowMs = 0;
+    const steps: FetchStep[] =
+      path === "primary"
+        ? [{ kind: "output", model: primaryModel, output: validIdeaOutput() }]
+        : [
+            { kind: "output", model: primaryModel, output: invalidIdeaOutput() },
+            { kind: "output", model: repairModel, output: validIdeaOutput() },
+          ];
+    const { result } = await runWithSteps(steps, {
+      now: () => nowMs,
+      onRepositoryTransition: (transition) => {
+        if (transition.kind === "finalize_success") nowMs = elapsedMs;
+      },
+    });
+
+    expect(result.ok).toBe(expectedOk);
+    expect(result.outcome).toBe(
+      expectedOk ? (path === "primary" ? "primary_success" : "repair_success") : "failure",
+    );
+    expect(result.failureCodes).toEqual(expectedOk ? [] : ["generation_timeout"]);
+    expect(result.totalElapsedMs).toBe(elapsedMs);
+  });
+
+  it("fails before any send when the total deadline is already exhausted", async () => {
     let calls = 0;
     const now = () => {
       calls += 1;

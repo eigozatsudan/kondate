@@ -24,8 +24,6 @@ export type GenerationWireMode = "full_menu" | "replacement_dish";
 export type OpenRouterGenerationInput = {
   messages: readonly OpenRouterMessage[];
   timeoutMs: number;
-  /** 省略時は本番 OPENROUTER_MODELS。ベンチは exact 構成を明示する。 */
-  models?: readonly string[];
   excludedModelIds?: readonly string[];
   /** 省略時は full_menu（Plan 3 互換） */
   mode?: GenerationWireMode;
@@ -65,6 +63,11 @@ const responseSchema = z.object({
     .min(1),
 });
 const modelOnlySchema = z.object({ model: z.string().min(1) });
+const evidenceModelIdSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u);
 const httpDatePattern = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/u;
 
 /** 置換料理モードの JSON Schema response_format */
@@ -210,7 +213,7 @@ async function sendMenuGenerationWithRuntime(
   runtime: OpenRouterGenerationRuntimeInput,
 ): Promise<OpenRouterGenerationResult> {
   const mode: GenerationWireMode = input.mode ?? "full_menu";
-  const configuredModels = input.models ?? runtime.models;
+  const configuredModels = runtime.models;
   // 有料 allowlist ガード: router 集合・空・重複は常に拒否。
   // real API base 上の :free と mock/ も拒否（mock 例外は exact mock base のみ）。
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
@@ -319,7 +322,11 @@ async function sendMenuGenerationWithRuntime(
     const knownModel = modelOnlySchema.safeParse(rawEnvelope);
     const modelId = knownModel.success ? knownModel.data.model : null;
     if (modelId !== null && !models.includes(modelId)) {
-      throw new OpenRouterCallError("model_unavailable");
+      const evidenceModelId = evidenceModelIdSchema.safeParse(modelId);
+      throw new OpenRouterCallError(
+        "model_unavailable",
+        evidenceModelId.success ? evidenceModelId.data : null,
+      );
     }
     assertWithinDeadline();
     const envelope = responseSchema.safeParse(rawEnvelope);
@@ -391,7 +398,7 @@ async function sendMenuGenerationWithRuntime(
 
 /**
  * production sender と同じ実装へ、ベンチ専用の認証・URL・fetch・単調時計を閉じ込める。
- * 呼び出しごとの models は OpenRouterGenerationInput の exact 配列を正本にする。
+ * exact models は公開call inputへ出さず、このfactory closureだけへ閉じ込める。
  */
 export function createOpenRouterGenerationSender(
   runtime: OpenRouterGenerationRuntimeInput,

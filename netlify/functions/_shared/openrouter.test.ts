@@ -3,6 +3,7 @@ import * as generationContracts from "../../../shared/contracts/generation.js";
 import { menuResponseFormat } from "../../../shared/contracts/generation.js";
 import { parseServerEnv, type ServerEnv } from "./env.js";
 import {
+  createOpenRouterGenerationSender,
   OPENROUTER_MAX_BODY_BYTES,
   OpenRouterCallError,
   readResponseBodyWithByteCap,
@@ -104,7 +105,7 @@ it("exposes only the constrained single-argument production input", () => {
   expectTypeOf<Parameters<typeof sendMenuGeneration>>().toEqualTypeOf<
     [OpenRouterGenerationInput]
   >();
-  expectTypeOf<OpenRouterGenerationInput>().toHaveProperty("models");
+  expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("models");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("model");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("apiKey");
   expectTypeOf<OpenRouterGenerationInput>().not.toHaveProperty("baseUrl");
@@ -143,15 +144,20 @@ it("uses models fallback, strict schema, and required parameters", async () => {
   expect(result).toEqual({ mode: "full_menu", output: conflictOutput, modelId: models[1] });
 });
 
-it("preserves an injected exact ordered model configuration in the request body", async () => {
+it("preserves the benchmark factory exact ordered model configuration in the request body", async () => {
   const injectedModels = ["openai/gpt-4.1-nano", "openai/gpt-oss-120b"] as const;
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successfulResponse(injectedModels[1]));
-  vi.stubGlobal("fetch", fetchImpl);
+  const sender = createOpenRouterGenerationSender({
+    apiKey: "benchmark-key",
+    baseUrl: "https://openrouter.ai/api/v1",
+    models: injectedModels,
+    timeoutMs: 20_000,
+    fetchImpl,
+  });
 
-  await sendMenuGeneration({
+  await sender({
     messages: [{ role: "user", content: "data" }],
     timeoutMs: 1_000,
-    models: injectedModels,
   });
 
   expect((requestBody(fetchImpl) as { models: readonly string[] }).models).toEqual(injectedModels);
@@ -278,12 +284,23 @@ it.each([
   });
 });
 
-it("rejects an unconfigured response model without repair metadata", async () => {
+it("keeps a conservative response model ID as terminal evidence", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successfulResponse("other/model"));
   vi.stubGlobal("fetch", fetchImpl);
 
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
-    new OpenRouterCallError("model_unavailable"),
+    new OpenRouterCallError("model_unavailable", "other/model"),
+  );
+});
+
+it("drops an unsafe outside response model from terminal evidence", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(successfulResponse("other/model\nprovider detail"));
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+    new OpenRouterCallError("model_unavailable", null),
   );
 });
 
@@ -336,7 +353,7 @@ it("rejects a malformed envelope from an unconfigured model as terminal", async 
   vi.stubGlobal("fetch", fetchImpl);
 
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
-    new OpenRouterCallError("model_unavailable"),
+    new OpenRouterCallError("model_unavailable", "other/model"),
   );
 });
 
