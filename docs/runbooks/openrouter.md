@@ -63,7 +63,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
    primary・repair・failure の別、閉じた failure code、total elapsed、初回成功数だけを残す。
    API キー、prompt、生 AI 出力、provider error body、path/message は残さない。
 
-推奨 env 例（**実際の合格 ID に置換**）:
+推奨 env 例（**この exact 順序付き構成自体が N=10 を合格した場合だけ、要素も順序も変えずに使用**）:
 
 ```bash
 OPENROUTER_MODELS=openai/gpt-4.1-nano,openai/gpt-oss-120b
@@ -96,7 +96,8 @@ Task 2 以降は **起動検証・preflight が失敗**する。使わない。
 
 ### 実 API を試すとき
 
-1. 有料 allowlist ID を `OPENROUTER_MODELS` に設定する（ゲート合格 ID 推奨。最大 2 本）。
+1. N=10 を合格した exact 順序付き構成だけを、要素も順序も変えずに `OPENROUTER_MODELS` へ設定する。
+   個別 ID の合格結果を再結合したり、未評価の構成を作ったりしてはならない。
 2. `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`
 3. 有効な `OPENROUTER_API_KEY` とクレジットを用意する（**実費が発生する**）。
 4. `.env` 更新後は `docker compose up -d --force-recreate --no-deps app` で反映する。
