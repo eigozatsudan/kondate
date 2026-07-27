@@ -1,4 +1,5 @@
 import { afterEach, expect, expectTypeOf, it, vi } from "vitest";
+import * as generationContracts from "../../../shared/contracts/generation.js";
 import { menuResponseFormat } from "../../../shared/contracts/generation.js";
 import { parseServerEnv, type ServerEnv } from "./env.js";
 import {
@@ -56,10 +57,29 @@ function successfulResponse(model: string = models[0]): Response {
   return new Response(
     JSON.stringify({
       model,
-      choices: [{ message: { content: JSON.stringify(conflictOutput) } }],
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ ...conflictOutput, menu: null }),
+          },
+        },
+      ],
     }),
     { status: 200 },
   );
+}
+
+function mockElapsed(elapsedMs: number): void {
+  vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(elapsedMs);
+}
+
+function mockDeadlineAtCall(deadlineCall: number): void {
+  let callCount = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => {
+    callCount += 1;
+    if (callCount === 1) return 0;
+    return callCount >= deadlineCall ? 20_000 : 19_999;
+  });
 }
 
 function requestBody(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): unknown {
@@ -191,7 +211,13 @@ it("uses dish regeneration schema in replacement_dish mode and rejects full-menu
     new Response(
       JSON.stringify({
         model: models[0],
-        choices: [{ message: { content: JSON.stringify(conflictOutput) } }],
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ ...conflictOutput, menu: null }),
+            },
+          },
+        ],
       }),
       { status: 200 },
     ),
@@ -505,6 +531,144 @@ it("clears the timer after a successful response", async () => {
   await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).resolves.toMatchObject({
     modelId: models[0],
   });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("accepts completion at 19,999ms", async () => {
+  mockElapsed(19_999);
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(successfulResponse()));
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).resolves.toMatchObject({
+    modelId: models[0],
+    output: conflictOutput,
+  });
+});
+
+it("includes fetch-side preparation in the deadline", async () => {
+  mockDeadlineAtCall(2);
+  const fetchImpl = vi.fn<typeof fetch>();
+  vi.stubGlobal("fetch", fetchImpl);
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+it("rejects completion at 20,000ms even before the timer callback can run", async () => {
+  // body・JSON・envelope・wire・adapter は境界内で終え、成功 return 直前だけ境界へ達する。
+  mockDeadlineAtCall(11);
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(successfulResponse()));
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+});
+
+it.each([
+  ["top-level JSON", new Response("not-json", { status: 200 }), 5],
+  ["envelope", new Response(JSON.stringify({ model: models[0], choices: [] }), { status: 200 }), 7],
+  [
+    "content JSON",
+    new Response(
+      JSON.stringify({
+        model: models[0],
+        choices: [{ message: { content: "not-json" } }],
+      }),
+      { status: 200 },
+    ),
+    8,
+  ],
+  ["outside model", successfulResponse("other/model"), 6],
+  [
+    "wire",
+    new Response(
+      JSON.stringify({
+        model: models[0],
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                outcome: "constraint_conflict",
+                menu: null,
+                conflicts: [],
+              }),
+            },
+          },
+        ],
+      }),
+      { status: 200 },
+    ),
+    9,
+  ],
+  [
+    "body",
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error("body connection lost"));
+        },
+      }),
+      { status: 200 },
+    ),
+    4,
+  ],
+] as const)(
+  "prioritizes an elapsed deadline over invalid %s",
+  async (_name, response, deadlineCall) => {
+    // 対象処理の直前までは19,999msに留め、競合errorを捕捉する時点で20,000msにする。
+    mockDeadlineAtCall(deadlineCall);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
+
+    await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+      new OpenRouterCallError("generation_timeout"),
+    );
+  },
+);
+
+it("prioritizes an elapsed deadline over an adapter failure", async () => {
+  mockDeadlineAtCall(10);
+  const adapterSpy = vi
+    .spyOn(generationContracts, "toAiGenerationResponse")
+    .mockImplementation(() => {
+      throw new Error("adapter failure");
+    });
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(successfulResponse()));
+
+  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+  expect(adapterSpy).toHaveBeenCalledOnce();
+});
+
+it("prioritizes Abort while byte-cap cancellation is pending", async () => {
+  vi.useFakeTimers();
+  let releaseCancel: (() => void) | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(OPENROUTER_MAX_BODY_BYTES + 1));
+    },
+    cancel() {
+      return new Promise<void>((resolve) => {
+        releaseCancel = resolve;
+      });
+    },
+  });
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementation((_url, init) => {
+    init?.signal?.addEventListener("abort", () => releaseCancel?.());
+    return Promise.resolve(new Response(body, { status: 200 }));
+  });
+  vi.stubGlobal("fetch", fetchImpl);
+
+  const pending = sendMenuGeneration({ messages: [], timeoutMs: 20_000 });
+  const capturedError = pending.then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  await vi.advanceTimersByTimeAsync(20_000);
+
+  const error = await capturedError;
+  expect(error).toEqual(new OpenRouterCallError("generation_timeout"));
   expect(vi.getTimerCount()).toBe(0);
 });
 

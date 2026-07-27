@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   aiGenerationResponseSchema,
+  aiGenerationWireResponseSchema,
   generationConflictCodes,
   generationConflictCopy,
   generationIssueCodes,
@@ -12,6 +13,7 @@ import {
   regenerateDishRequestSchema,
   regenerateMenuRequestSchema,
   releaseQuota,
+  toAiGenerationResponse,
   usageTodayDataSchema,
   validatedMenuSchema,
   type MenuValidationIssue,
@@ -410,9 +412,66 @@ describe("aiGenerationResponseSchema", () => {
   it("publishes strict JSON Schema for OpenRouter", () => {
     expect(menuResponseFormat.type).toBe("json_schema");
     expect(menuResponseFormat.json_schema.strict).toBe(true);
+    expect(menuResponseFormat.json_schema.schema).toMatchObject({ type: "object" });
+    expect(menuResponseFormat.json_schema.schema).not.toHaveProperty("$schema");
+    expect(menuResponseFormat.json_schema.schema).not.toHaveProperty("oneOf");
     expect(JSON.stringify(menuResponseFormat.json_schema.schema)).toContain(
       '"additionalProperties":false',
     );
+  });
+});
+
+describe("aiGenerationWireResponseSchema", () => {
+  const conflicts = [
+    {
+      code: "must_use_conflict" as const,
+      message: "必須食材と安全条件を同時に満たせません。",
+      conditionRefs: ["pantry_1"],
+    },
+  ];
+
+  it("converts a valid conflict to the unchanged internal union", () => {
+    expect(
+      toAiGenerationResponse({
+        outcome: "constraint_conflict",
+        menu: null,
+        conflicts,
+      }),
+    ).toEqual({ outcome: "constraint_conflict", conflicts });
+  });
+
+  it.each([
+    {
+      name: "success with a null menu",
+      value: { outcome: "success", menu: null, conflicts: null },
+    },
+    {
+      name: "success with non-empty conflicts",
+      value: { outcome: "success", menu: null, conflicts },
+    },
+    {
+      name: "conflict with empty conflicts",
+      value: { outcome: "constraint_conflict", menu: null, conflicts: [] },
+    },
+    {
+      name: "conflict with null conflicts",
+      value: { outcome: "constraint_conflict", menu: null, conflicts: null },
+    },
+    {
+      name: "conflict with a non-null menu",
+      value: { outcome: "constraint_conflict", menu: {}, conflicts },
+    },
+    {
+      name: "an unknown root field",
+      value: {
+        outcome: "constraint_conflict",
+        menu: null,
+        conflicts,
+        prompt: "leak",
+      },
+    },
+  ])("rejects $name", ({ value }) => {
+    expect(aiGenerationWireResponseSchema.safeParse(value).success).toBe(false);
   });
 });
 

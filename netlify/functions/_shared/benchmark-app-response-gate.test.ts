@@ -14,8 +14,75 @@ describe("evaluateAppResponseGate", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.detail).toBe("ok");
-      expect(result.decoded.outcome).toBe("success");
+      const expectedMenu = createBenchPassingMenuPayload();
+      expectedMenu.pantryUsage[0]!.unit = "g";
+      expect(result.decoded).toEqual({
+        outcome: "success",
+        menu: expectedMenu,
+      });
     }
+  });
+
+  it("accepts an empty conflicts array on the success wire branch", () => {
+    const modelId = "vendor/paid-a";
+    const envelope = {
+      model: modelId,
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              outcome: "success",
+              menu: createBenchPassingMenuPayload(),
+              conflicts: [],
+            }),
+          },
+        },
+      ],
+    };
+
+    expect(evaluateAppResponseGate(envelope, modelId).ok).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "success with non-empty conflicts",
+      wire: {
+        outcome: "success",
+        menu: createBenchPassingMenuPayload(),
+        conflicts: [
+          {
+            code: "must_use_conflict",
+            message: "必須食材と安全条件を同時に満たせません。",
+            conditionRefs: ["pantry_1"],
+          },
+        ],
+      },
+    },
+    {
+      name: "conflict with a non-null valid menu",
+      wire: {
+        outcome: "constraint_conflict",
+        menu: createBenchPassingMenuPayload(),
+        conflicts: [
+          {
+            code: "must_use_conflict",
+            message: "必須食材と安全条件を同時に満たせません。",
+            conditionRefs: ["pantry_1"],
+          },
+        ],
+      },
+    },
+  ])("rejects $name as a branch mismatch", ({ wire }) => {
+    const modelId = "vendor/paid-a";
+    const envelope = {
+      model: modelId,
+      choices: [{ message: { content: JSON.stringify(wire) } }],
+    };
+
+    expect(evaluateAppResponseGate(envelope, modelId)).toEqual({
+      ok: false,
+      detail: "ai_generation_schema_fail",
+    });
   });
 
   it("rejects missing envelope.model", () => {
@@ -60,6 +127,7 @@ describe("evaluateAppResponseGate", () => {
                   },
                 ],
               },
+              conflicts: null,
             }),
           },
         },
@@ -78,6 +146,7 @@ describe("evaluateAppResponseGate", () => {
           message: {
             content: JSON.stringify({
               outcome: "constraint_conflict",
+              menu: null,
               conflicts: [
                 {
                   code: "must_use_conflict",
@@ -103,7 +172,7 @@ describe("evaluateAppResponseGate", () => {
       choices: [
         {
           message: {
-            content: JSON.stringify({ outcome: "success", menu }),
+            content: JSON.stringify({ outcome: "success", menu, conflicts: null }),
           },
         },
       ],
@@ -125,7 +194,7 @@ describe("evaluateAppResponseGate", () => {
       choices: [
         {
           message: {
-            content: JSON.stringify({ outcome: "success", menu }),
+            content: JSON.stringify({ outcome: "success", menu, conflicts: null }),
           },
         },
       ],

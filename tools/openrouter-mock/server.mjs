@@ -92,6 +92,18 @@ const applyIdeaMenuShape = (fixture, servings) => {
   };
 };
 
+/** full_menu fixture を provider の nullable 3-field wire 表現へ閉じる。 */
+const toMenuGenerationWireResponse = (fixture) => {
+  if (!isPlainObject(fixture)) return fixture;
+  if (fixture.outcome === "success") {
+    return { ...fixture, conflicts: null };
+  }
+  if (fixture.outcome === "constraint_conflict") {
+    return { ...fixture, menu: null };
+  }
+  return fixture;
+};
+
 /**
  * idea の system 指示と user の kondate_input_data から人数を読む。
  * household プロンプト（members 非空・idea 指示なし）では null。
@@ -272,6 +284,9 @@ async function handleRequest(request, response) {
     if (ideaServings !== null) {
       fixture = applyIdeaMenuShape(fixture, ideaServings);
     }
+  }
+  if (!dishMode) {
+    fixture = toMenuGenerationWireResponse(fixture);
   }
   const content = typeof fixture === "string" ? fixture : JSON.stringify(fixture);
   jsonResponse(response, 200, {

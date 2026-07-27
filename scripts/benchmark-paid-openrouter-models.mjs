@@ -6,7 +6,7 @@
  * 2. 残存 ID ごとに実 menuResponseFormat + require_parameters:true で N=10 回 chat
  * 3. 合格: 10/10 が HTTP 200・クライアント計測 20s 未満（body/parse/materialize/validate 含む）
  *    ・envelope.model === 要求 ID
- *    ・本番と同形の response schema + aiGenerationResponseSchema
+ *    ・本番と同形の response schema + provider wire schema → 既存内部 union adapter
  *    ・materializeAiGeneratedMenu + validateGeneratedMenu 成功
  *
  * 1 本も合格しない場合は non-zero で終了する（本番ゲート未完了 / 本番 ship 不可）。
@@ -271,7 +271,7 @@ export async function loadMenuResponseFormat() {
 
 /**
  * 1 回の chat 試行。クライアント計測は body 読取・JSON・model 一致・materialize/validate 後まで含む。
- * @returns {Promise<{ ok: boolean, elapsedMs: number, detail: string }>}
+ * @returns {Promise<{ ok: boolean, elapsedMs: number, detail: string, validationCodes?: readonly string[] }>}
  */
 export async function runOneChatTrial({
   modelId,
@@ -288,12 +288,14 @@ export async function runOneChatTrial({
   const started = now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const finish = (ok, detail) => {
+  const finish = (ok, detail, validationCodes) => {
     const elapsedMs = now() - started;
     if (ok && elapsedMs >= timeoutMs) {
       return { ok: false, elapsedMs, detail: "latency_budget_exceeded" };
     }
-    return { ok, elapsedMs, detail };
+    return validationCodes === undefined
+      ? { ok, elapsedMs, detail }
+      : { ok, elapsedMs, detail, validationCodes };
   };
   try {
     let response;
@@ -341,7 +343,7 @@ export async function runOneChatTrial({
 
     const gateResult = gate(envelope, modelId);
     if (!gateResult.ok) {
-      return finish(false, gateResult.detail);
+      return finish(false, gateResult.detail, gateResult.validationCodes);
     }
     return finish(true, "ok");
   } finally {

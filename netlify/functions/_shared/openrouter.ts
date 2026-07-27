@@ -1,7 +1,9 @@
 import { z } from "zod";
 import {
   aiGenerationResponseSchema,
+  aiGenerationWireResponseSchema,
   menuResponseFormat,
+  toAiGenerationResponse,
   type AiGenerationResponse,
 } from "../../../shared/contracts/generation.js";
 import {
@@ -185,17 +187,25 @@ export async function sendMenuGeneration(
   }
 
   const timeoutMs = Math.min(config.timeoutMs, input.timeoutMs);
-  // 並行安全: ALS 経由のリクエスト単位シナリオを優先し、無いときだけ env（単体テスト用）
-  const testScenario = readOpenRouterMockScenario() ?? process.env.OPENROUTER_MOCK_SCENARIO;
   const controller = new AbortController();
+  const startedAt = performance.now();
   const timeout = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
-
-  const responseFormat =
-    mode === "replacement_dish" ? dishRegenerationResponseFormat : menuResponseFormat;
+  const assertWithinDeadline = (): void => {
+    if (controller.signal.aborted || performance.now() - startedAt >= timeoutMs) {
+      throw new OpenRouterCallError("generation_timeout");
+    }
+  };
 
   try {
+    // timer開始後にfetch側の準備を行い、同期処理も送信予算へ含める。
+    // 並行安全: ALS 経由のリクエスト単位シナリオを優先し、無いときだけ env（単体テスト用）
+    const testScenario = readOpenRouterMockScenario() ?? process.env.OPENROUTER_MOCK_SCENARIO;
+    const responseFormat =
+      mode === "replacement_dish" ? dishRegenerationResponseFormat : menuResponseFormat;
+    assertWithinDeadline();
+
     let response: Response;
     try {
       response = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -223,6 +233,7 @@ export async function sendMenuGeneration(
       }
       throw new OpenRouterCallError("model_unavailable");
     }
+    assertWithinDeadline();
 
     if (!response.ok) {
       throw new OpenRouterCallError("model_unavailable", null, retryAt(response, Date.now()));
@@ -238,6 +249,7 @@ export async function sendMenuGeneration(
       }
       throw new OpenRouterCallError("model_unavailable");
     }
+    assertWithinDeadline();
 
     let rawEnvelope: unknown;
     try {
@@ -245,16 +257,19 @@ export async function sendMenuGeneration(
     } catch {
       throw new OpenRouterCallError("invalid_ai_response");
     }
+    assertWithinDeadline();
 
     const knownModel = modelOnlySchema.safeParse(rawEnvelope);
     const modelId = knownModel.success ? knownModel.data.model : null;
     if (modelId !== null && !models.includes(modelId)) {
       throw new OpenRouterCallError("model_unavailable");
     }
+    assertWithinDeadline();
     const envelope = responseSchema.safeParse(rawEnvelope);
     if (!envelope.success) {
       throw new OpenRouterCallError("invalid_ai_response", modelId);
     }
+    assertWithinDeadline();
 
     const firstChoice = envelope.data.choices[0];
     if (firstChoice === undefined) {
@@ -267,6 +282,7 @@ export async function sendMenuGeneration(
     } catch {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
+    assertWithinDeadline();
 
     if (mode === "replacement_dish") {
       // full_menu ボディを置換モードで拒否（mode 付きの閉じた結果）
@@ -278,20 +294,39 @@ export async function sendMenuGeneration(
       if (!dishOutput.success) {
         throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
       }
-      return {
+      assertWithinDeadline();
+      const result: OpenRouterGenerationResult = {
         mode: "replacement_dish",
         output: dishOutput.data,
         modelId: envelope.data.model,
       };
+      assertWithinDeadline();
+      return result;
     }
 
-    // full_menu: aiGenerationResponseSchema で閉じる。
-    // 置換形が同時に成立する曖昧ボディも full_menu として受理する（mode 優先）。
-    const output = aiGenerationResponseSchema.safeParse(decoded);
-    if (!output.success) {
+    // full_menu は provider wire を検査してから既存の内部 union へ閉じる。
+    const wire = aiGenerationWireResponseSchema.safeParse(decoded);
+    if (!wire.success) {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
-    return { mode: "full_menu", output: output.data, modelId: envelope.data.model };
+    assertWithinDeadline();
+    let output: AiGenerationResponse;
+    try {
+      output = toAiGenerationResponse(wire.data);
+    } catch {
+      throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
+    }
+    assertWithinDeadline();
+    const result: OpenRouterGenerationResult = {
+      mode: "full_menu",
+      output,
+      modelId: envelope.data.model,
+    };
+    assertWithinDeadline();
+    return result;
+  } catch (error) {
+    assertWithinDeadline();
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

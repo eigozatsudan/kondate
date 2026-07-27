@@ -988,9 +988,40 @@ export const aiGenerationResponseSchema = z.discriminatedUnion("outcome", [
 ]);
 export type AiGenerationResponse = z.infer<typeof aiGenerationResponseSchema>;
 
-const aiGenerationJsonSchema = z.toJSONSchema(aiGenerationResponseSchema, {
+/** provider へ送る root-object wire 表現。内部 union は変更せず境界だけを strict 互換にする。 */
+export const aiGenerationWireResponseSchema = z
+  .object({
+    outcome: z.enum(["success", "constraint_conflict"]),
+    menu: aiGeneratedMenuPayloadSchema.nullable(),
+    conflicts: z.array(generationConflictSchema).max(12).nullable(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.outcome === "success"
+        ? value.menu !== null && (value.conflicts === null || value.conflicts.length === 0)
+        : value.conflicts !== null && value.conflicts.length >= 1 && value.menu === null,
+    { message: "outcome_branch_mismatch" },
+  );
+export type AiGenerationWireResponse = z.infer<typeof aiGenerationWireResponseSchema>;
+
+/** wire の分岐整合を再検査し、既存の内部 discriminated union へ閉じる。 */
+export function toAiGenerationResponse(wire: AiGenerationWireResponse): AiGenerationResponse {
+  const parsed = aiGenerationWireResponseSchema.parse(wire);
+  if (parsed.outcome === "success") {
+    if (parsed.menu === null) throw new Error("outcome_branch_mismatch");
+    return { outcome: "success", menu: parsed.menu };
+  }
+  if (parsed.menu !== null || parsed.conflicts === null || parsed.conflicts.length === 0) {
+    throw new Error("outcome_branch_mismatch");
+  }
+  return { outcome: "constraint_conflict", conflicts: parsed.conflicts };
+}
+
+const aiGenerationJsonSchema = z.toJSONSchema(aiGenerationWireResponseSchema, {
   target: "draft-2020-12",
 });
+delete aiGenerationJsonSchema.$schema;
 
 export const menuResponseFormat = {
   type: "json_schema",

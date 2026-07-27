@@ -171,7 +171,15 @@ test("default loadAppResponseGate path runs without paid credits", async () => {
   const weak = {
     model: "vendor/a",
     choices: [
-      { message: { content: JSON.stringify({ outcome: "success", menu: { dishes: [{}] } }) } },
+      {
+        message: {
+          content: JSON.stringify({
+            outcome: "success",
+            menu: { dishes: [{}] },
+            conflicts: null,
+          }),
+        },
+      },
     ],
   };
   const result = gate.evaluateAppResponseGate(weak, "vendor/a");
@@ -314,13 +322,48 @@ test("runOneChatTrial fails on non-200 and app-gate failure", async () => {
       new Response(
         JSON.stringify({
           model: "vendor/a",
-          choices: [{ message: { content: '{"outcome":"constraint_conflict","conflicts":[]}' } }],
+          choices: [
+            {
+              message: {
+                content: '{"outcome":"constraint_conflict","menu":null,"conflicts":[]}',
+              },
+            },
+          ],
         }),
         { status: 200 },
       ),
   });
   assert.equal(gateFail.ok, false);
   assert.equal(gateFail.detail, "ai_generation_schema_fail");
+});
+
+test("runOneChatTrial preserves code-only validation evidence", async () => {
+  const validationCodes = ["servings_mismatch"];
+  const result = await runOneChatTrial({
+    modelId: "vendor/a",
+    apiKey: "test-key",
+    responseFormat: { type: "json_schema" },
+    evaluateGate: () => ({
+      ok: false,
+      detail: "validate_generated_menu_fail",
+      validationCodes,
+    }),
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          model: "vendor/a",
+          choices: [{ message: { content: "{}" } }],
+        }),
+        { status: 200 },
+      ),
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    elapsedMs: result.elapsedMs,
+    detail: "validate_generated_menu_fail",
+    validationCodes,
+  });
 });
 
 test("runOneChatTrial fails when elapsed after gate exceeds budget", async () => {

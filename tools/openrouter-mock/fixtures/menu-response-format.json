@@ -4,16 +4,15 @@
     "name": "kondate_menu_generation",
     "strict": true,
     "schema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "outcome": {
-              "type": "string",
-              "const": "success"
-            },
-            "menu": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["success", "constraint_conflict"]
+        },
+        "menu": {
+          "anyOf": [
+            {
               "type": "object",
               "properties": {
                 "schemaVersion": {
@@ -39,12 +38,12 @@
                   "maximum": 180
                 },
                 "safetyTags": {
+                  "maxItems": 32,
                   "type": "array",
                   "items": {
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9_]*$"
-                  },
-                  "maxItems": 32
+                  }
                 },
                 "dishes": {
                   "minItems": 1,
@@ -345,12 +344,12 @@
                         "maxLength": 300
                       },
                       "safetyTags": {
+                        "maxItems": 32,
                         "type": "array",
                         "items": {
                           "type": "string",
                           "pattern": "^[a-z][a-z0-9_]*$"
-                        },
-                        "maxItems": 32
+                        }
                       },
                       "safetyActions": {
                         "maxItems": 20,
@@ -577,20 +576,15 @@
                 "labelConfirmations"
               ],
               "additionalProperties": false
-            }
-          },
-          "required": ["outcome", "menu"],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "outcome": {
-              "type": "string",
-              "const": "constraint_conflict"
             },
-            "conflicts": {
-              "minItems": 1,
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "conflicts": {
+          "anyOf": [
+            {
               "maxItems": 12,
               "type": "array",
               "items": {
@@ -624,12 +618,15 @@
                 "required": ["code", "message", "conditionRefs"],
                 "additionalProperties": false
               }
+            },
+            {
+              "type": "null"
             }
-          },
-          "required": ["outcome", "conflicts"],
-          "additionalProperties": false
+          ]
         }
-      ]
+      },
+      "required": ["outcome", "menu", "conflicts"],
+      "additionalProperties": false
     }
   }
 }
