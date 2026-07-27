@@ -4,7 +4,7 @@
 
 - 本番 / 公式 `OPENROUTER_BASE_URL`（`https://openrouter.ai/api/v1`）では **有料 allowlist のみ**。`:free` モデルは起動・デプロイ検証で拒否される。
 - `openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` は常に拒否する。
-- 各設定 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$0.50 / 1M tokens** であること。
+- 各設定 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$1.00 / 1M tokens** であること。
 - mock 例外は **`OPENROUTER_BASE_URL` が exact** `http://openrouter-mock:8787/api/v1` のときだけ `mock/*:free` を受理する。
   - `isLocal` / `SERVER_SITE_ORIGIN` だけでは mock 例外にならない。
 
@@ -12,7 +12,7 @@
 
 1. Models API を固定 5 秒メタデータ期限で問い合わせ、候補 ID と単価を確認する。
 2. 各モデルが `structured_outputs` と `response_format` を公開していることを要求する（片方だけでは不足）。
-3. prompt+completion が $0.50/1M 以下であることを確認する。
+3. prompt+completion が $1.00/1M 以下であることを確認する。
 4. 固定 adversarial corpus をステージングで実行する。
 5. モデル順を明示し、`OPENROUTER_MODELS` だけを更新して再デプロイする。
 6. `:free`・router ID・単価超過が混入していないことを確認する。

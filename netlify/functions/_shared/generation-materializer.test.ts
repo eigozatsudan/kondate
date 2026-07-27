@@ -314,9 +314,9 @@ describe("materializeAiGeneratedMenu", () => {
     );
   });
 
-  it("uses the canonical food-name normalizer for pantry-backed label sources", () => {
+  it("R2: overwrites pantry-backed ingredient name with trusted pantry name", () => {
     const payload = makePayload();
-    payload.dishes[0]!.ingredients[0]!.name = "ご は ん";
+    payload.dishes[0]!.ingredients[0]!.name = "パン";
     payload.labelConfirmations = [
       {
         sourceType: "ingredient",
@@ -328,44 +328,35 @@ describe("materializeAiGeneratedMenu", () => {
         confirmationStatus: "pending",
       },
     ];
-    expect(() => materializeAiGeneratedMenu(payload, makeContext(), uuidFactory())).not.toThrow();
-
-    payload.dishes[0]!.ingredients[0]!.name = "パン";
-    expectOutputError(
-      () => materializeAiGeneratedMenu(payload, makeContext(), uuidFactory()),
-      "pantry_name_mismatch",
-    );
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.name).toBe("ごはん");
+    expect(menu.labelConfirmations[0]!.sourceText).toBe("ごはん");
   });
 
-  it("checks every pantry-backed ingredient even when labels omit the mismatch", () => {
+  it("R2: does not fail pantry_name_mismatch when provider name differs but pantryRef is valid", () => {
     const withoutLabels = makePayload();
     withoutLabels.dishes[0]!.ingredients[0]!.name = "パン";
-    expectOutputError(
-      () => materializeAiGeneratedMenu(withoutLabels, makeContext(), uuidFactory()),
-      "pantry_name_mismatch",
-    );
+    const menu = materializeAiGeneratedMenu(withoutLabels, makeContext(), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.name).toBe("ごはん");
 
     const mixed = makePayload();
     mixed.dishes[0]!.ingredients.push({
       ...mixed.dishes[0]!.ingredients[0]!,
       ingredientRef: "ingredient_3",
       position: 2,
-      name: "パン",
+      name: "白ごはん別名",
     });
-    mixed.labelConfirmations = [
-      {
-        sourceType: "ingredient",
-        sourceRef: "ingredient_1",
-        sourcePath: "dishes.0.ingredients.0.name",
-        allergenId: "wheat",
-        anonymousMemberRef: "member_1",
-        dictionaryVersion: "jp-caa-2026-04.v1",
-        confirmationStatus: "pending",
-      },
-    ];
+    const menu2 = materializeAiGeneratedMenu(mixed, makeContext(), uuidFactory());
+    expect(menu2.dishes[0]!.ingredients.map((i) => i.name)).toEqual(["ごはん", "ごはん"]);
+  });
+
+  it("R2: keeps pantry_unit_mismatch when provider unit differs (no unit overwrite)", () => {
+    const payload = makePayload();
+    payload.pantryUsage[0]!.unit = "kg";
+    payload.pantryUsage[0]!.plannedQuantity = 0.3;
     expectOutputError(
-      () => materializeAiGeneratedMenu(mixed, makeContext(), uuidFactory()),
-      "pantry_name_mismatch",
+      () => materializeAiGeneratedMenu(payload, makeContext(300), uuidFactory()),
+      "pantry_unit_mismatch",
     );
   });
 

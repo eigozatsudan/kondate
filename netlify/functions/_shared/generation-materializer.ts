@@ -60,27 +60,6 @@ export function materializeAiGeneratedMenu(
   const menu = parsed.data;
   if (containsUuid(menu)) outputError("uuid_in_provider_output");
 
-  const dishes = uniqueMap(menu.dishes, (dish) => dish.dishRef);
-  const ingredients = uniqueMap(
-    menu.dishes.flatMap((dish) => dish.ingredients),
-    (ingredient) => ingredient.ingredientRef,
-  );
-  const steps = uniqueMap(
-    menu.dishes.flatMap((dish) => dish.steps),
-    (step) => step.stepRef,
-  );
-  uniqueMap(menu.timeline, (timeline) => timeline.timelineRef);
-  uniqueMap(menu.adaptations, (adaptation) => adaptation.adaptationRef);
-
-  const ingredientDishRef = new Map(
-    menu.dishes.flatMap((dish) =>
-      dish.ingredients.map((ingredient) => [ingredient.ingredientRef, dish.dishRef] as const),
-    ),
-  );
-  const stepDishRef = new Map(
-    menu.dishes.flatMap((dish) => dish.steps.map((step) => [step.stepRef, dish.dishRef] as const)),
-  );
-
   const pantryById = new Map(context.pantryItems.map((item) => [item.id, item] as const));
   const pantryByRef = new Map<
     string,
@@ -95,6 +74,43 @@ export function materializeAiGeneratedMenu(
       return [`pantry_${String(index + 1)}`, { selection, item }] as const;
     }),
   );
+
+  // R2: pantryRef が正当な ingredient は name のみ trusted 上書き（unit は上書きしない）。
+  // 以降の materialize / sourceByKey / label 経路はすべて working 値を使う。
+  const workingDishes = menu.dishes.map((dish) => ({
+    ...dish,
+    ingredients: dish.ingredients.map((ingredient) => {
+      if (ingredient.pantryRef === null) return ingredient;
+      const trusted = pantryByRef.get(ingredient.pantryRef);
+      if (trusted === undefined) return ingredient;
+      return { ...ingredient, name: trusted.item.name };
+    }),
+  }));
+  const workingMenu = { ...menu, dishes: workingDishes };
+
+  const dishes = uniqueMap(workingMenu.dishes, (dish) => dish.dishRef);
+  const ingredients = uniqueMap(
+    workingMenu.dishes.flatMap((dish) => dish.ingredients),
+    (ingredient) => ingredient.ingredientRef,
+  );
+  const steps = uniqueMap(
+    workingMenu.dishes.flatMap((dish) => dish.steps),
+    (step) => step.stepRef,
+  );
+  uniqueMap(workingMenu.timeline, (timeline) => timeline.timelineRef);
+  uniqueMap(workingMenu.adaptations, (adaptation) => adaptation.adaptationRef);
+
+  const ingredientDishRef = new Map(
+    workingMenu.dishes.flatMap((dish) =>
+      dish.ingredients.map((ingredient) => [ingredient.ingredientRef, dish.dishRef] as const),
+    ),
+  );
+  const stepDishRef = new Map(
+    workingMenu.dishes.flatMap((dish) =>
+      dish.steps.map((step) => [step.stepRef, dish.dishRef] as const),
+    ),
+  );
+
   const usageByRef = new Map<string, (typeof menu.pantryUsage)[number]>();
   for (const usage of menu.pantryUsage) {
     if (usageByRef.has(usage.pantryRef)) outputError("pantry_usage_duplicate");
@@ -110,14 +126,16 @@ export function materializeAiGeneratedMenu(
   }
 
   const menuId = uuid();
-  const dishIdByRef = new Map(menu.dishes.map((dish) => [dish.dishRef, uuid()] as const));
+  const dishIdByRef = new Map(workingMenu.dishes.map((dish) => [dish.dishRef, uuid()] as const));
   const ingredientIdByRef = new Map(
-    menu.dishes.flatMap((dish) =>
+    workingMenu.dishes.flatMap((dish) =>
       dish.ingredients.map((ingredient) => [ingredient.ingredientRef, uuid()] as const),
     ),
   );
   const stepIdByRef = new Map(
-    menu.dishes.flatMap((dish) => dish.steps.map((step) => [step.stepRef, uuid()] as const)),
+    workingMenu.dishes.flatMap((dish) =>
+      dish.steps.map((step) => [step.stepRef, uuid()] as const),
+    ),
   );
   const timelineIdByRef = new Map(
     menu.timeline.map((timeline) => [timeline.timelineRef, uuid()] as const),
@@ -130,7 +148,8 @@ export function materializeAiGeneratedMenu(
   );
 
   const targetMemberRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
-  const materializedDishes = menu.dishes.map((dish) => ({
+  // workingMenu.dishes を正本にする（R2 name 上書き後）
+  const materializedDishes = workingMenu.dishes.map((dish) => ({
     id: required(dishIdByRef, dish.dishRef),
     role: dish.role,
     position: dish.position,
@@ -141,6 +160,7 @@ export function materializeAiGeneratedMenu(
       if (ingredient.pantryRef !== null && !usageByRef.has(ingredient.pantryRef)) {
         outputError("dangling_ref");
       }
+      // pantryRef 正当時は name を trusted 済み。不正 ref は pantryByRef 不在で mismatch。
       if (ingredient.pantryRef !== null) {
         const trusted = pantryByRef.get(ingredient.pantryRef);
         if (
@@ -280,7 +300,7 @@ export function materializeAiGeneratedMenu(
     sourceTypes.add(type);
     sourceTypesByRef.set(ref, sourceTypes);
   };
-  menu.dishes.forEach((dish, dishIndex) => {
+  workingMenu.dishes.forEach((dish, dishIndex) => {
     addSource("dish", dish.dishRef, required(dishIdByRef, dish.dishRef), [
       [`dishes.${String(dishIndex)}.name`, dish.name],
       [`dishes.${String(dishIndex)}.description`, dish.description],
@@ -305,12 +325,12 @@ export function materializeAiGeneratedMenu(
       ]);
     });
   });
-  menu.timeline.forEach((timeline, index) => {
+  workingMenu.timeline.forEach((timeline, index) => {
     addSource("timeline", timeline.timelineRef, required(timelineIdByRef, timeline.timelineRef), [
       [`timeline.${String(index)}.instruction`, timeline.instruction],
     ]);
   });
-  menu.adaptations.forEach((adaptation, index) => {
+  workingMenu.adaptations.forEach((adaptation, index) => {
     const base = `adaptations.${String(index)}`;
     const paths: [string, string][] = [
       [`${base}.portionText`, adaptation.portionText],
@@ -336,7 +356,7 @@ export function materializeAiGeneratedMenu(
     );
   });
 
-  const labels = menu.labelConfirmations.map((label) => {
+  const labels = workingMenu.labelConfirmations.map((label) => {
     if (!targetMemberRefs.has(label.anonymousMemberRef)) outputError("unknown_member_ref");
     const expectedPrefix = {
       dish: "dish_",
@@ -354,6 +374,7 @@ export function materializeAiGeneratedMenu(
     if (source === undefined) outputError("label_source_invalid");
     const sourceText = source.paths.get(label.sourcePath);
     if (sourceText === undefined) outputError("label_source_invalid");
+    // ingredient.name は working 上で trusted 済み。不正 ref のみ mismatch。
     if (label.sourceType === "ingredient") {
       const ingredient = required(ingredients, label.sourceRef);
       if (ingredient.pantryRef !== null) {

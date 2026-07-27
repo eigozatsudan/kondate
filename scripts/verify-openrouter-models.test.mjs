@@ -13,7 +13,7 @@ import {
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-/** 成功 remote フィクスチャ用: prompt+completion = $0.30 / 1M（上限 0.5 未満） */
+/** 成功 remote フィクスチャ用: prompt+completion = $0.30 / 1M（上限 1.0 未満） */
 const usablePricing = {
   prompt: "0.0000001",
   completion: "0.0000002",
@@ -106,7 +106,7 @@ for (const [label, pricing] of [
   });
 }
 
-test("rejects prompt+completion above 0.5 USD per 1M tokens", () => {
+test("rejects prompt+completion above 1 USD per 1M tokens", () => {
   assert.throws(
     () =>
       verifyRemoteModels(
@@ -115,8 +115,8 @@ test("rejects prompt+completion above 0.5 USD per 1M tokens", () => {
           {
             id: "vendor/a",
             supported_parameters: ["structured_outputs", "response_format"],
-            // $0.30 + $0.30 = $0.60 / 1M > 0.5
-            pricing: { prompt: "0.0000003", completion: "0.0000003" },
+            // $0.60 + $0.60 = $1.20 / 1M > 1
+            pricing: { prompt: "0.0000006", completion: "0.0000006" },
           },
         ],
       ),
@@ -124,8 +124,8 @@ test("rejects prompt+completion above 0.5 USD per 1M tokens", () => {
   );
 });
 
-// F3: 合計上限ちょうど $0.50 / 1M は受理（> のみ拒否）
-test("accepts prompt+completion exactly 0.5 USD per 1M tokens", () => {
+// F3: 合計上限ちょうど $1.00 / 1M は受理（> のみ拒否）
+test("accepts prompt+completion exactly 1 USD per 1M tokens", () => {
   assert.doesNotThrow(() =>
     verifyRemoteModels(
       ["vendor/a"],
@@ -133,8 +133,8 @@ test("accepts prompt+completion exactly 0.5 USD per 1M tokens", () => {
         {
           id: "vendor/a",
           supported_parameters: ["structured_outputs", "response_format"],
-          // $0.30 + $0.20 = $0.50 / 1M（上限ちょうど）
-          pricing: { prompt: "0.0000003", completion: "0.0000002" },
+          // $0.50 + $0.50 = $1.00 / 1M（上限ちょうど）
+          pricing: { prompt: "0.0000005", completion: "0.0000005" },
         },
       ],
     ),

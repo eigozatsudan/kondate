@@ -68,7 +68,7 @@
 | 方針 | 有料 allowlist 置換（方式 A） |
 | free | 本番・実 API 経路から排除。mock 専用例外のみ（§4.2） |
 | 構造化 | **`structured_outputs` AND `response_format` の両方必須**（現行維持・緩和しない） |
-| 単価上限 | prompt + completion の 1M 換算和 ≤ **$0.50**。request/cache 等は **判定に使わない**（§4.1.7） |
+| 単価上限 | prompt + completion の 1M 換算和 ≤ **$1.00**（R3 改訂）。request/cache 等は **判定に使わない**（§4.1.7） |
 | クォータ | 成功 **3**/日、attempt **6**/日、全体初期 **20**/日。短期 4/600s 据え置き。**相互作用は意図的**（§5 / §12-4） |
 | 時間予算 | 20s / 50s / 180s 据え置き |
 | 候補 ID | 下記 3 本。Models API 機械フィルタ後、exact な順序付き構成を有料実測 |
@@ -92,8 +92,8 @@
 6. デプロイ時（および `--remote` 検証時）OpenRouter Models API で ID が存在し、`supported_parameters` に
    **`structured_outputs` と `response_format` の両方が含まれる**。
    片方だけの ID は **拒否**する（現行 `verifyRemoteModels` と同一。本設計はこれを緩めない）。
-7. 同 API の `pricing.prompt` と `pricing.completion` を数値化し、1 トークン単価 × 1e6 した値の **和**が **$0.50 以下**。
-   - **ちょうど $0.50 は可**（`sum <= 0.5`）。
+7. 同 API の `pricing.prompt` と `pricing.completion` を数値化し、1 トークン単価 × 1e6 した値の **和**が **$1.00 以下**。
+   - **ちょうど $1.00 は可**（`sum <= 1`）。
    - `pricing` 欠落、非数値、負値は fail-closed（拒否）。
    - `pricing.request` / `internal_reasoning` / cache 系フィールドは **本ゲートでは読まない・加算しない**（運用でキー hard limit が最終防壁。request 課金型を許可リストに載せる場合は別設計改訂）。
 
@@ -481,7 +481,7 @@ Netlify はフロントと Functions を同一デプロイで差し替える想�
 7. **プライバシー version を上げ、旧同意は無効化し、デプロイは同一単位・互換なし**とする。
    根拠: 送信先説明の変更。literal 埋め込みと continuation TTL 300s の不整合は fail-closed で受容する。
 
-8. **単価ゲートは prompt+completion のみ、≤ $0.50（境界含む）。request/cache は無視**する。
+8. **単価ゲートは prompt+completion のみ、≤ $1.00（境界含む・R3）。request/cache は無視**する。
    根拠: 低価格帯の誤設定防止と実装の単純さ。最終防壁はキー hard limit。
 
 ## 13. Open Questions

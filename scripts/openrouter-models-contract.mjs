@@ -19,7 +19,7 @@
  * Remote verification (verifyRemoteModels / --remote のみ、公式 base 経路):
  * - OpenRouter Models API に各設定 ID が存在する。
  * - 各モデルの supported_parameters に structured_outputs と response_format の両方が含まれる（AND）。
- * - pricing.prompt / pricing.completion が usable で、prompt+completion ≤ $0.50 / 1M tokens。
+ * - pricing.prompt / pricing.completion が usable で、prompt+completion ≤ $1.00 / 1M tokens。
  */
 export const modelListRules = `
 - comma-split + trim; empty elements rejected (no filter(Boolean)); empty list rejected; duplicates rejected; order preserved

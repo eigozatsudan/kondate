@@ -253,7 +253,7 @@ test("main forwards CLI trialCount and configurations to runPaidBenchmark", asyn
 
 test("gate constants lock N=10 and the price ceiling", () => {
   assert.equal(benchTrialCount, 10);
-  assert.equal(maxPromptPlusCompletionUsdPerMillion, 0.5);
+  assert.equal(maxPromptPlusCompletionUsdPerMillion, 1);
 });
 
 test("mechanical filter applies the structured-output AND and price rules", () => {
@@ -276,7 +276,8 @@ test("mechanical filter applies the structured-output AND and price rules", () =
       [
         "vendor/a",
         remoteEntry("vendor/a", {
-          pricing: { prompt: "0.0000003", completion: "0.0000003" },
+          // $0.60 + $0.60 = $1.20 / 1M > P*=1
+          pricing: { prompt: "0.0000006", completion: "0.0000006" },
         }),
       ],
     ]),

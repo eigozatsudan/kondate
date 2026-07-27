@@ -380,7 +380,7 @@ AI生成レシピだけでアレルギー安全を保証しない。加工品の
 
 運営者は環境変数 `OPENROUTER_MODELS` に、優先順の**有料**モデルIDをカンマ区切りで指定する。各IDは明示的なモデルIDであり、`:free` で終わってはならない。`openrouter/auto`・`openrouter/free`・`openrouter/auto-beta` 等のルーターIDは拒否する。空・重複はローカル起動時と本番ビルド時に拒否する。**唯一の例外**は、`OPENROUTER_BASE_URL` が exact local mock URL（`http://openrouter-mock:8787/api/v1`）のときだけ許す `mock/*:free` である。`SERVER_SITE_ORIGIN` / ローカル origin だけでは mock 例外にならない。
 
-本番デプロイ検証では OpenRouter Models API を参照し、各IDが存在し、`supported_parameters` に **`structured_outputs` と `response_format` の両方**が含まれ（片方だけのIDは拒否）、`pricing.prompt` と `pricing.completion` を1Mトークン換算した和が **$0.50 以下**（ちょうど $0.50 は可）であることを確認する。request/cache 系単価は本ゲートでは加算しない。欠落・非数値・負値は fail-closed で拒否する。
+本番デプロイ検証では OpenRouter Models API を参照し、各IDが存在し、`supported_parameters` に **`structured_outputs` と `response_format` の両方**が含まれ（片方だけのIDは拒否）、`pricing.prompt` と `pricing.completion` を1Mトークン換算した和が **$1.00 以下**（ちょうど $1.00 は可・R3 改訂）であることを確認する。request/cache 系単価は本ゲートでは加算しない。欠落・非数値・負値は fail-closed で拒否する。
 
 OpenRouter の `models` パラメータで許可リスト内のモデル間フォールバックを行い、provider 設定で要求パラメータ対応を必須にする。許可モデルがすべて利用できない場合も、free への自動切替や許可リスト外モデルの自動追加は行わない（**最初から有料 allowlist のみ**。無料が使えないときの有料自動切替という旧方針は廃止済み）。
 
@@ -669,7 +669,7 @@ MVP完成は、次をすべて満たした状態とする。
 
 ## 18. 運用上の前提
 
-本番 OpenRouter は **有料 allowlist のみ**とする（旧 free-only 方針は Plan 8 で廃止）。運営者はデプロイ時に、structured AND（`structured_outputs` と `response_format` の両方）と単価上限（prompt+completion ≤ $0.50/1M）を満たす有料モデルIDを `OPENROUTER_MODELS` に明示する。モデル停止・単価上昇で規則を満たさなくなったIDは env から外し再デプロイする。free や許可リスト外モデルを自動追加する処理は実装しない。OpenRouter ワークスペース/キーには total credit hard limit を運用必須とする。
+本番 OpenRouter は **有料 allowlist のみ**とする（旧 free-only 方針は Plan 8 で廃止）。運営者はデプロイ時に、structured AND（`structured_outputs` と `response_format` の両方）と単価上限（prompt+completion ≤ $1.00/1M（R3））を満たす有料モデルIDを `OPENROUTER_MODELS` に明示する。モデル停止・単価上昇で規則を満たさなくなったIDは env から外し再デプロイする。free や許可リスト外モデルを自動追加する処理は実装しない。OpenRouter ワークスペース/キーには total credit hard limit を運用必須とする。
 
 標準29アレルゲン、同義語・派生原材料・加工品、幼児と高齢者を含む食品形状ルールは版管理し、公的情報の変更時とリリース前にレビューする。ルール更新後は履歴を新バージョンで再検査できるようにし、古い検証結果を安全確認済みとして扱わない。
 
