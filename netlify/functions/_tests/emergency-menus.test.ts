@@ -1,9 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
+import type { EmergencyMenusData } from "../../../shared/emergency/contracts.js";
+import { emergencyFixtureMetadataV1 } from "../../../shared/emergency/fixtures.v1.js";
 import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
 import { createEmergencyMenusHandler } from "../emergency-menus.js";
 
+type SuccessEnvelope = { ok: true; data: EmergencyMenusData };
+
 const userId = "80000000-0000-4000-8000-000000000001";
 const memberId = "81000000-0000-4000-8000-000000000001";
+
+/** 当該 fixture version の metadata 全 standardAllergenIds 和集合（Stage S 全滅用） */
+function allFixtureAllergenUnion(): string[] {
+  return [
+    ...new Set(
+      Object.values(emergencyFixtureMetadataV1).flatMap((meta) => meta.standardAllergenIds),
+    ),
+  ];
+}
 
 describe("GET /api/emergency-menus", () => {
   it("returns an authenticated explicit no-candidate response without quota use", async () => {
@@ -32,6 +45,9 @@ describe("GET /api/emergency-menus", () => {
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
       data: {
+        path: "household",
+        matchMode: null,
+        emptyReason: "current_safety_unavailable",
         candidates: [],
         message: "条件に合う緊急献立がありません",
         consumesAiQuota: false,
@@ -40,7 +56,7 @@ describe("GET /api/emergency-menus", () => {
   });
 
   it.each([{ unsupportedDietStatus: "present" as const }, { hasUnmappedCustomAllergy: true }])(
-    "keeps the main-ingredient message for an early safety exclusion",
+    "returns generic empty for early safety exclusion even when mains are set",
     async (memberPatch) => {
       const context = makeCurrentSafetyContext();
       const handler = createEmergencyMenusHandler({
@@ -64,10 +80,13 @@ describe("GET /api/emergency-menus", () => {
         new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
       );
 
-      // 早期 safety 除外は main_ingredient_no_match ではない汎用空メッセージ
+      // 早期 safety 除外は current_safety_unavailable → 汎用空メッセージ
       await expect(response.json()).resolves.toMatchObject({
         ok: true,
         data: {
+          path: "household",
+          matchMode: null,
+          emptyReason: "current_safety_unavailable",
           candidates: [],
           message: "条件に合う緊急献立がありません",
         },
@@ -149,24 +168,37 @@ describe("GET /api/emergency-menus", () => {
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
       data: {
+        path: "household",
+        matchMode: "main_ingredient",
+        emptyReason: null,
         candidates: [expect.any(Object)],
+        message: "AIを使わない15分緊急献立です",
         consumesAiQuota: false,
       },
     });
 
+    // 豚肉は Stage M 不一致 → safety_only で非空候補 + サーバ用 safety_only 文言
     const unrelated = await handler(
       new Request(
         `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E8%B1%9A%E8%82%89`,
       ),
     );
     expect(unrelated.status).toBe(200);
-    await expect(unrelated.json()).resolves.toMatchObject({
+    const unrelatedBody = (await unrelated.json()) as SuccessEnvelope;
+    expect(unrelatedBody).toMatchObject({
       ok: true,
       data: {
-        candidates: [],
-        message: "選択したメイン食材に合う固定候補がありません",
+        path: "household",
+        matchMode: "safety_only",
+        emptyReason: null,
+        message: "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています",
+        consumesAiQuota: false,
       },
     });
+    expect(unrelatedBody.data.candidates.length).toBeGreaterThan(0);
+    expect(unrelatedBody.data.message).not.toContain(
+      "選択したメイン食材に合う固定候補がありません",
+    );
   });
 
   it("rejects normalized duplicate main ingredients before authentication or database reads", async () => {
@@ -211,20 +243,27 @@ describe("GET /api/emergency-menus", () => {
         new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
       );
 
+      // forward 一致しない敵対的トークン → safety_only フォールバック（空にしない）
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({
+      const body = (await response.json()) as SuccessEnvelope;
+      expect(body).toMatchObject({
         ok: true,
         data: {
-          candidates: [],
-          message: "選択したメイン食材に合う固定候補がありません",
+          path: "household",
+          matchMode: "safety_only",
+          emptyReason: null,
+          message: "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています",
         },
       });
+      expect(body.data.candidates.length).toBeGreaterThan(0);
     },
   );
 
-  it("uses the generic empty message when a standard allergen excludes every fixture", async () => {
-    // アレルゲン除外は emptyReason: no_matching_fixture / current_safety 系 → 汎用メッセージ
+  it("uses the generic empty message when the full allergen union excludes every fixture", async () => {
+    // chicken 単独では複数 fixture が残るため、metadata 全 allergen 和集合で Stage S を空にする
     const context = makeCurrentSafetyContext();
+    const union = allFixtureAllergenUnion();
+    expect(union.length).toBeGreaterThan(0);
     const handler = createEmergencyMenusHandler({
       authenticate: () => Promise.resolve({ userId }),
       loadContext: () =>
@@ -234,7 +273,7 @@ describe("GET /api/emergency-menus", () => {
               {
                 ...context.members[0]!,
                 allergyStatus: "registered",
-                allergenIds: ["chicken"],
+                allergenIds: union,
               },
             ],
           }),
@@ -253,9 +292,69 @@ describe("GET /api/emergency-menus", () => {
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
       data: {
+        path: "household",
+        matchMode: null,
+        emptyReason: "no_matching_fixture",
         candidates: [],
         message: "条件に合う緊急献立がありません",
       },
     });
+  });
+
+  it("returns matchMode safety_only and new message when mains miss", async () => {
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext: () =>
+        Promise.resolve({
+          context: makeCurrentSafetyContext(),
+          memberLabels: Object.freeze({ member_1: "家族1" }),
+        }),
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const query = new URLSearchParams({
+      meal: "dinner",
+      targetMemberIds: memberId,
+      mainIngredients: "存在しないメイン食材XYZ",
+    });
+    const res = await handler(
+      new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as SuccessEnvelope;
+    expect(body).toMatchObject({
+      ok: true,
+      data: {
+        path: "household",
+        matchMode: "safety_only",
+        emptyReason: null,
+        consumesAiQuota: false,
+        message: "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています",
+      },
+    });
+    expect(body.data.candidates.length).toBeGreaterThan(0);
+    expect(body.data.message).not.toContain("選択したメイン食材に合う固定候補がありません");
+  });
+
+  it("rejects targetMode=idea until idea path ships", async () => {
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const res = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&targetMode=idea`,
+      ),
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_request",
+        message: "検索条件を確認してください",
+      },
+    });
+    expect(loadContext).not.toHaveBeenCalled();
   });
 });

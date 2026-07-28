@@ -40,11 +40,13 @@ function uuidListSchema(maxItems: number) {
     });
 }
 
+// targetMode は optional。idea は Task 6 まで 400 で拒否（enum には載せて fieldErrors キーを固定）
 const querySchema = z.object({
   meal: z.enum(mealTypes),
   mainIngredients: emergencyMainIngredientsSchema,
   targetMemberIds: uuidListSchema(20),
   pantryItemIds: uuidListSchema(50).optional().default([]),
+  targetMode: z.enum(["household", "idea"]).optional(),
 });
 
 export type EmergencyHandlerDeps = {
@@ -63,6 +65,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
         mainIngredients: url.searchParams.getAll("mainIngredients"),
         targetMemberIds: url.searchParams.get("targetMemberIds"),
         pantryItemIds: url.searchParams.get("pantryItemIds") ?? undefined,
+        targetMode: url.searchParams.get("targetMode") ?? undefined,
       });
       if (!parsed.success) {
         return json(400, {
@@ -71,6 +74,17 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
             code: "invalid_request",
             message: "検索条件を確認してください",
             details: { fields: z.flattenError(parsed.error).fieldErrors },
+          },
+        });
+      }
+      // Task 6 まで idea 経路は未実装。auth/DB 前に fieldErrors.targetMode で拒否する
+      if (parsed.data.targetMode === "idea") {
+        return json(400, {
+          ok: false,
+          error: {
+            code: "invalid_request",
+            message: "検索条件を確認してください",
+            details: { fields: { targetMode: ["検索条件を確認してください"] } },
           },
         });
       }
@@ -93,18 +107,25 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
           memberLabels: loaded.memberLabels,
         }),
       );
+      // household 専用のサーバ message 行列（UI banner の safety_only 文言は Task 5 で別）
+      const path = "household" as const;
+      const message =
+        candidates.length === 0
+          ? "条件に合う緊急献立がありません"
+          : filtered.matchMode === "safety_only"
+            ? "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています"
+            : "AIを使わない15分緊急献立です";
+
       return json<EmergencyMenusData>(200, {
         ok: true,
         data: {
           fixtureVersion: emergencyFixtureVersion,
           candidates,
-          message:
-            candidates.length === 0
-              ? filtered.emptyReason === "main_ingredient_no_match"
-                ? "選択したメイン食材に合う固定候補がありません"
-                : "条件に合う緊急献立がありません"
-              : "AIを使わない15分緊急献立です",
+          message,
           consumesAiQuota: false,
+          path,
+          matchMode: filtered.matchMode,
+          emptyReason: filtered.emptyReason,
         },
       });
     } catch (error) {
