@@ -162,6 +162,68 @@ describe("HistoryPage", () => {
     });
   });
 
+  it("filters to favorites only with a session switch", async () => {
+    const user = userEvent.setup();
+    const nonFavorite: HistoryGroup = {
+      derivationGroupId: "group-2",
+      versionCount: 1,
+      representative: {
+        id: "menu-3",
+        title: "通常の献立",
+        createdAt: "2026-07-10T10:00:00Z",
+        selectedAt: null,
+        isFavorite: false,
+        targetMode: "idea",
+      },
+    };
+    renderHistoryPage({ groups: [sampleGroup, nonFavorite] });
+
+    expect(screen.getByText("採用した献立")).toBeVisible();
+    expect(screen.getByText("通常の献立")).toBeVisible();
+
+    const filter = screen.getByRole("switch", { name: "お気に入りだけを表示" });
+    expect(filter.className).toMatch(/min-h-11/);
+    expect(filter).toHaveAttribute("aria-checked", "false");
+    await user.click(filter);
+
+    expect(filter).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("採用した献立")).toBeVisible();
+    expect(screen.queryByText("通常の献立")).not.toBeInTheDocument();
+  });
+
+  it("shows favorites-empty and restores all when toggled off", async () => {
+    const user = userEvent.setup();
+    const nonFavorite: HistoryGroup = {
+      derivationGroupId: "group-2",
+      versionCount: 1,
+      representative: {
+        id: "menu-3",
+        title: "通常の献立",
+        createdAt: "2026-07-10T10:00:00Z",
+        selectedAt: null,
+        isFavorite: false,
+        targetMode: "idea",
+      },
+    };
+    renderHistoryPage({ groups: [nonFavorite] });
+
+    await user.click(screen.getByRole("switch", { name: "お気に入りだけを表示" }));
+    expect(screen.getByText("お気に入りがありません")).toBeVisible();
+    expect(screen.queryByText("通常の献立")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "すべての献立を表示" }));
+    expect(screen.getByText("通常の献立")).toBeVisible();
+    expect(screen.getByRole("switch", { name: "お気に入りだけを表示" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("hides the favorites switch when there are no groups", () => {
+    renderHistoryPage({ groups: [] });
+    expect(screen.queryByRole("switch", { name: "お気に入りだけを表示" })).not.toBeInTheDocument();
+  });
+
   it("keeps the delete confirmation closed on initial render", async () => {
     api.listHistoryGroups.mockResolvedValue([sampleGroup]);
     renderConnectedHistoryPage();
