@@ -216,10 +216,11 @@ export function createAuthGateway(
         const { error } = await result;
         if (error !== null) throw new Error("provider exchange failed");
         clearClaimedAuthFlow(flow.id, storage);
+        // F-AUTH-002: claim 成功の returnTo も再 sanitize（create 経路の防御を二重化）
         return {
           kind: "complete",
           continuation: "same_browser",
-          returnTo: claimedCode.returnTo,
+          returnTo: sanitizeReturnPath(claimedCode.returnTo),
           flowId: flow.id,
         };
       } catch (error) {
