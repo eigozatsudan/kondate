@@ -1,0 +1,736 @@
+{
+  "snapshotDate": "2026-07-28",
+  "note": "Chinese-vendor models quality review near luna price band",
+  "reviews": [
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "deepseek/deepseek-v4-pro",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20006,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "deepseek/deepseek-v4-pro",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20002,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "minimax/minimax-m2.7",
+      "trial": 1,
+      "ok": true,
+      "outcome": "primary_success",
+      "failureCodes": [],
+      "elapsedMs": 14899,
+      "score": {
+        "total": 21,
+        "max": 21,
+        "failFlags": [],
+        "checks": {
+          "servings_match": true,
+          "meal_type": true,
+          "genre": true,
+          "time_budget": true,
+          "dish_count_2": true,
+          "roles_breakfast": true,
+          "adaptations_empty": true,
+          "pantry_usage_empty": true,
+          "no_pantry_links": true,
+          "main_ingredient_present": true,
+          "all_dishes_have_ingredients": true,
+          "all_dishes_have_steps": true,
+          "quantity_text_present": true,
+          "quantity_not_absurd": true,
+          "steps_actionable_length": true,
+          "timeline_nonempty": true,
+          "timeline_within_total": true,
+          "has_cooking_verbs": true,
+          "no_raw_chicken_hint": true,
+          "no_pro_equipment": true,
+          "not_only_ready_meal_without_main": true
+        }
+      },
+      "menuCompact": {
+        "totalElapsedMinutes": 15,
+        "dishes": [
+          {
+            "role": "main",
+            "name": "鶏もも肉の生姜焼き",
+            "ingredientCount": 6,
+            "stepCount": 3
+          },
+          {
+            "role": "side",
+            "name": "味噌汁",
+            "ingredientCount": 4,
+            "stepCount": 2
+          }
+        ]
+      }
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "minimax/minimax-m2.7",
+      "trial": 2,
+      "ok": true,
+      "outcome": "primary_success",
+      "failureCodes": [],
+      "elapsedMs": 17674,
+      "score": {
+        "total": 21,
+        "max": 21,
+        "failFlags": [],
+        "checks": {
+          "servings_match": true,
+          "meal_type": true,
+          "genre": true,
+          "time_budget": true,
+          "dish_count_2": true,
+          "roles_breakfast": true,
+          "adaptations_empty": true,
+          "pantry_usage_empty": true,
+          "no_pantry_links": true,
+          "main_ingredient_present": true,
+          "all_dishes_have_ingredients": true,
+          "all_dishes_have_steps": true,
+          "quantity_text_present": true,
+          "quantity_not_absurd": true,
+          "steps_actionable_length": true,
+          "timeline_nonempty": true,
+          "timeline_within_total": true,
+          "has_cooking_verbs": true,
+          "no_raw_chicken_hint": true,
+          "no_pro_equipment": true,
+          "not_only_ready_meal_without_main": true
+        }
+      },
+      "menuCompact": {
+        "totalElapsedMinutes": 14,
+        "dishes": [
+          {
+            "role": "main",
+            "name": "鶏もも肉の照り焼き",
+            "ingredientCount": 6,
+            "stepCount": 5
+          },
+          {
+            "role": "side",
+            "name": "卵焼き",
+            "ingredientCount": 4,
+            "stepCount": 5
+          }
+        ]
+      }
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "qwen/qwen3.7-plus",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20001,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "qwen/qwen3.7-plus",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20001,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "z-ai/glm-4.7",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20000,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "z-ai/glm-4.7",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20002,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "z-ai/glm-5.2",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20001,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "z-ai/glm-5.2",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20002,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "moonshotai/kimi-k2.6",
+      "trial": 1,
+      "ok": true,
+      "outcome": "primary_success",
+      "failureCodes": [],
+      "elapsedMs": 8980,
+      "score": {
+        "total": 21,
+        "max": 21,
+        "failFlags": [],
+        "checks": {
+          "servings_match": true,
+          "meal_type": true,
+          "genre": true,
+          "time_budget": true,
+          "dish_count_2": true,
+          "roles_breakfast": true,
+          "adaptations_empty": true,
+          "pantry_usage_empty": true,
+          "no_pantry_links": true,
+          "main_ingredient_present": true,
+          "all_dishes_have_ingredients": true,
+          "all_dishes_have_steps": true,
+          "quantity_text_present": true,
+          "quantity_not_absurd": true,
+          "steps_actionable_length": true,
+          "timeline_nonempty": true,
+          "timeline_within_total": true,
+          "has_cooking_verbs": true,
+          "no_raw_chicken_hint": true,
+          "no_pro_equipment": true,
+          "not_only_ready_meal_without_main": true
+        }
+      },
+      "menuCompact": {
+        "totalElapsedMinutes": 10,
+        "dishes": [
+          {
+            "role": "main",
+            "name": "鶏の照り焼き",
+            "ingredientCount": 6,
+            "stepCount": 4
+          },
+          {
+            "role": "side",
+            "name": "わかめ味噌汁",
+            "ingredientCount": 3,
+            "stepCount": 3
+          }
+        ]
+      }
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "moonshotai/kimi-k2.6",
+      "trial": 2,
+      "ok": false,
+      "outcome": "materialize_fail",
+      "failureCodes": [
+        "dangling_ref"
+      ],
+      "elapsedMs": 15576,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "openai/gpt-5.6-luna",
+      "trial": 1,
+      "ok": true,
+      "outcome": "primary_success",
+      "failureCodes": [],
+      "elapsedMs": 8395,
+      "score": {
+        "total": 21,
+        "max": 21,
+        "failFlags": [],
+        "checks": {
+          "servings_match": true,
+          "meal_type": true,
+          "genre": true,
+          "time_budget": true,
+          "dish_count_2": true,
+          "roles_breakfast": true,
+          "adaptations_empty": true,
+          "pantry_usage_empty": true,
+          "no_pantry_links": true,
+          "main_ingredient_present": true,
+          "all_dishes_have_ingredients": true,
+          "all_dishes_have_steps": true,
+          "quantity_text_present": true,
+          "quantity_not_absurd": true,
+          "steps_actionable_length": true,
+          "timeline_nonempty": true,
+          "timeline_within_total": true,
+          "has_cooking_verbs": true,
+          "no_raw_chicken_hint": true,
+          "no_pro_equipment": true,
+          "not_only_ready_meal_without_main": true
+        }
+      },
+      "menuCompact": {
+        "totalElapsedMinutes": 15,
+        "dishes": [
+          {
+            "role": "main",
+            "name": "鶏もも肉の照り焼き",
+            "ingredientCount": 5,
+            "stepCount": 3
+          },
+          {
+            "role": "side",
+            "name": "小松菜のおひたし",
+            "ingredientCount": 3,
+            "stepCount": 3
+          }
+        ]
+      }
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "modelId": "openai/gpt-5.6-luna",
+      "trial": 2,
+      "ok": true,
+      "outcome": "primary_success",
+      "failureCodes": [],
+      "elapsedMs": 7823,
+      "score": {
+        "total": 21,
+        "max": 21,
+        "failFlags": [],
+        "checks": {
+          "servings_match": true,
+          "meal_type": true,
+          "genre": true,
+          "time_budget": true,
+          "dish_count_2": true,
+          "roles_breakfast": true,
+          "adaptations_empty": true,
+          "pantry_usage_empty": true,
+          "no_pantry_links": true,
+          "main_ingredient_present": true,
+          "all_dishes_have_ingredients": true,
+          "all_dishes_have_steps": true,
+          "quantity_text_present": true,
+          "quantity_not_absurd": true,
+          "steps_actionable_length": true,
+          "timeline_nonempty": true,
+          "timeline_within_total": true,
+          "has_cooking_verbs": true,
+          "no_raw_chicken_hint": true,
+          "no_pro_equipment": true,
+          "not_only_ready_meal_without_main": true
+        }
+      },
+      "menuCompact": {
+        "totalElapsedMinutes": 15,
+        "dishes": [
+          {
+            "role": "main",
+            "name": "鶏もも肉の照り焼き",
+            "ingredientCount": 5,
+            "stepCount": 3
+          },
+          {
+            "role": "side",
+            "name": "ほうれん草のおひたし",
+            "ingredientCount": 3,
+            "stepCount": 2
+          }
+        ]
+      }
+    },
+    {
+      "source": "/tmp/cn-quality-review.log",
+      "models": [
+        {
+          "modelId": "deepseek/deepseek-v4-pro",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "minimax/minimax-m2.7",
+          "trials": 2,
+          "successCount": 2,
+          "avgScore": 21,
+          "failureCodes": [],
+          "cookabilityFails": []
+        },
+        {
+          "modelId": "qwen/qwen3.7-plus",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "z-ai/glm-4.7",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "z-ai/glm-5.2",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "moonshotai/kimi-k2.6",
+          "trials": 2,
+          "successCount": 1,
+          "avgScore": 21,
+          "failureCodes": [
+            "dangling_ref"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "openai/gpt-5.6-luna",
+          "trials": 2,
+          "successCount": 2,
+          "avgScore": 21,
+          "failureCodes": [],
+          "cookabilityFails": []
+        }
+      ]
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "deepseek/deepseek-chat",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20006,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "deepseek/deepseek-chat",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20002,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "moonshotai/kimi-k2-0905",
+      "trial": 1,
+      "ok": false,
+      "outcome": "invalid_ai_response",
+      "failureCodes": [
+        "invalid_ai_response"
+      ],
+      "elapsedMs": 995,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "moonshotai/kimi-k2-0905",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20001,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "z-ai/glm-4.6",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20002,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "z-ai/glm-4.6",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20002,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "qwen/qwen-plus",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20001,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "qwen/qwen-plus",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20001,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "minimax/minimax-m3",
+      "trial": 1,
+      "ok": true,
+      "outcome": "primary_success",
+      "failureCodes": [],
+      "elapsedMs": 18591,
+      "score": {
+        "total": 21,
+        "max": 21,
+        "failFlags": [],
+        "checks": {
+          "servings_match": true,
+          "meal_type": true,
+          "genre": true,
+          "time_budget": true,
+          "dish_count_2": true,
+          "roles_breakfast": true,
+          "adaptations_empty": true,
+          "pantry_usage_empty": true,
+          "no_pantry_links": true,
+          "main_ingredient_present": true,
+          "all_dishes_have_ingredients": true,
+          "all_dishes_have_steps": true,
+          "quantity_text_present": true,
+          "quantity_not_absurd": true,
+          "steps_actionable_length": true,
+          "timeline_nonempty": true,
+          "timeline_within_total": true,
+          "has_cooking_verbs": true,
+          "no_raw_chicken_hint": true,
+          "no_pro_equipment": true,
+          "not_only_ready_meal_without_main": true
+        }
+      },
+      "menuCompact": {
+        "totalElapsedMinutes": 15,
+        "dishes": [
+          {
+            "role": "main",
+            "name": "鶏もも肉の照り焼き",
+            "ingredientCount": 5,
+            "stepCount": 4
+          },
+          {
+            "role": "side",
+            "name": "キャベツの千切り",
+            "ingredientCount": 1,
+            "stepCount": 1
+          }
+        ]
+      }
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "modelId": "minimax/minimax-m3",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "elapsedMs": 20002,
+      "score": null,
+      "menuCompact": null
+    },
+    {
+      "source": "/tmp/cn-quality-round2.log",
+      "models": [
+        {
+          "modelId": "deepseek/deepseek-chat",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "moonshotai/kimi-k2-0905",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "invalid_ai_response",
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "z-ai/glm-4.6",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "qwen/qwen-plus",
+          "trials": 2,
+          "successCount": 0,
+          "avgScore": null,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        },
+        {
+          "modelId": "minimax/minimax-m3",
+          "trials": 2,
+          "successCount": 1,
+          "avgScore": 21,
+          "failureCodes": [
+            "generation_timeout"
+          ],
+          "cookabilityFails": [
+            "not_ok"
+          ]
+        }
+      ]
+    }
+  ],
+  "n10": {
+    "ok": false,
+    "passedConfigurations": [],
+    "recommendedConfiguration": null,
+    "firstAttemptSuccesses": [
+      {
+        "configuration": [
+          "minimax/minimax-m2.7"
+        ],
+        "count": 1
+      },
+      {
+        "configuration": [
+          "moonshotai/kimi-k2.6"
+        ],
+        "count": 0
+      },
+      {
+        "configuration": [
+          "moonshotai/kimi-k2-0905"
+        ],
+        "count": 0
+      }
+    ]
+  }
+}
