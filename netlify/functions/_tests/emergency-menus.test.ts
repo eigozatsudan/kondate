@@ -484,6 +484,96 @@ describe("GET /api/emergency-menus", () => {
     expect(body.data.emptyReason).toBeNull();
   });
 
+  it("idea path returns safety_only wire message when mains miss", async () => {
+    // design §4 idea・非空・safety_only（household 文言「安全条件に合う…」を使わない）
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const query = new URLSearchParams({
+      meal: "dinner",
+      targetMode: "idea",
+      mainIngredients: "存在しないメイン食材XYZ",
+    });
+    const res = await handler(
+      new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+    );
+    expect(res.status).toBe(200);
+    expect(loadContext).not.toHaveBeenCalled();
+    const body = (await res.json()) as SuccessEnvelope;
+    expect(body).toMatchObject({
+      ok: true,
+      data: {
+        path: "idea",
+        matchMode: "safety_only",
+        emptyReason: null,
+        consumesAiQuota: false,
+        message: "メイン食材は一致しませんでした。アレルギー条件は適用していません",
+      },
+    });
+    expect(body.data.candidates.length).toBeGreaterThan(0);
+    expect(body.data.message).not.toContain("安全条件に合う");
+  });
+
+  it("idea path returns generic empty message when filter yields no_matching_fixture", async () => {
+    // idea 成人・アレルギーなしの Stage S は現行 catalog では mealType ごと ≥1 が設計上保証されるため、
+    // no_matching_fixture 空経路は spy で handler の §4 empty 行列だけを固定検証する。
+    const spy = vi.spyOn(emergencyFilter, "filterEmergencyMenus").mockReturnValue({
+      menus: [],
+      emptyReason: "no_matching_fixture",
+      matchMode: null,
+    });
+    try {
+      const loadContext = vi.fn();
+      const handler = createEmergencyMenusHandler({
+        authenticate: () => Promise.resolve({ userId }),
+        loadContext,
+        loadPantryNames: () => Promise.resolve([]),
+      });
+      const res = await handler(
+        new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMode=idea`),
+      );
+      expect(res.status).toBe(200);
+      expect(loadContext).not.toHaveBeenCalled();
+      await expect(res.json()).resolves.toMatchObject({
+        ok: true,
+        data: {
+          path: "idea",
+          matchMode: null,
+          emptyReason: "no_matching_fixture",
+          candidates: [],
+          message: "条件に合う緊急献立がありません",
+          consumesAiQuota: false,
+        },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("rejects targetMode=household without targetMemberIds", async () => {
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const res = await handler(
+      new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMode=household`),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      ok: false;
+      error: { code: string; details: { fields: Record<string, string[]> } };
+    };
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.details.fields.targetMemberIds?.length).toBeGreaterThan(0);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
   it("idea path loads pantry names without loadContext", async () => {
     const loadContext = vi.fn();
     const pantryItemIds = ["82000000-0000-4000-8000-000000000099"];
