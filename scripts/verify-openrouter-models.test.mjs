@@ -106,7 +106,7 @@ for (const [label, pricing] of [
   });
 }
 
-test("rejects prompt+completion above 1 USD per 1M tokens", () => {
+test("rejects prompt+completion above 4 USD per 1M tokens", () => {
   assert.throws(
     () =>
       verifyRemoteModels(
@@ -115,8 +115,8 @@ test("rejects prompt+completion above 1 USD per 1M tokens", () => {
           {
             id: "vendor/a",
             supported_parameters: ["structured_outputs", "response_format"],
-            // $0.60 + $0.60 = $1.20 / 1M > 1
-            pricing: { prompt: "0.0000006", completion: "0.0000006" },
+            // $2.10 + $2.10 = $4.20 / 1M > 4
+            pricing: { prompt: "0.0000021", completion: "0.0000021" },
           },
         ],
       ),
@@ -124,8 +124,8 @@ test("rejects prompt+completion above 1 USD per 1M tokens", () => {
   );
 });
 
-// F3: 合計上限ちょうど $1.00 / 1M は受理（> のみ拒否）
-test("accepts prompt+completion exactly 1 USD per 1M tokens", () => {
+// F3: 合計上限ちょうど $4.00 / 1M は受理（> のみ拒否）
+test("accepts prompt+completion exactly 4 USD per 1M tokens", () => {
   assert.doesNotThrow(() =>
     verifyRemoteModels(
       ["vendor/a"],
@@ -133,8 +133,8 @@ test("accepts prompt+completion exactly 1 USD per 1M tokens", () => {
         {
           id: "vendor/a",
           supported_parameters: ["structured_outputs", "response_format"],
-          // $0.50 + $0.50 = $1.00 / 1M（上限ちょうど）
-          pricing: { prompt: "0.0000005", completion: "0.0000005" },
+          // $2.00 + $2.00 = $4.00 / 1M（上限ちょうど）
+          pricing: { prompt: "0.000002", completion: "0.000002" },
         },
       ],
     ),

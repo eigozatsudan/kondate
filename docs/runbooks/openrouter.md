@@ -4,7 +4,7 @@
 
 - 本番 / 公式 `OPENROUTER_BASE_URL`（`https://openrouter.ai/api/v1`）では **有料 allowlist のみ**。`:free` モデルは起動・デプロイ検証で拒否される。
 - `openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` は常に拒否する。
-- 各設定 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$1.00 / 1M tokens** であること。
+- 各設定 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$4.00 / 1M tokens** であること。
 - mock 例外は **`OPENROUTER_BASE_URL` が exact** `http://openrouter-mock:8787/api/v1` のときだけ `mock/*:free` を受理する。
   - `isLocal` / `SERVER_SITE_ORIGIN` だけでは mock 例外にならない。
 
@@ -12,7 +12,7 @@
 
 1. Models API を固定 5 秒メタデータ期限で問い合わせ、候補 ID と単価を確認する。
 2. 各モデルが `structured_outputs` と `response_format` を公開していることを要求する（片方だけでは不足）。
-3. prompt+completion が $1.00/1M 以下であることを確認する。
+3. prompt+completion が $4.00/1M 以下であることを確認する。
 4. 固定 adversarial corpus をステージングで実行する。
 5. モデル順を明示し、`OPENROUTER_MODELS` だけを更新して再デプロイする。
 6. `:free`・router ID・単価超過が混入していないことを確認する。
@@ -25,39 +25,30 @@
 承認済み exact 構成を production service harness の N=10 で通す。
 **実行すると有料課金が発生する。** API キー・生の課金ログ（PII 混入時）はコミットしない。
 
-候補 ID（上位モデル検証・設計固定）:
+候補 ID（N=10 合格 freeze・2026-07-28）:
 
-1. `openai/gpt-4o-mini`
-2. `meta-llama/llama-3.3-70b-instruct`
-3. `deepseek/deepseek-v3.2`
-4. `qwen/qwen-2.5-72b-instruct`
-5. `openai/gpt-4.1-nano`
+1. `x-ai/grok-4.3`
 
 独立して評価する exact な順序付き構成（評価順）:
 
-1. `["openai/gpt-4o-mini"]`
-2. `["meta-llama/llama-3.3-70b-instruct"]`
-3. `["deepseek/deepseek-v3.2"]`
-4. `["qwen/qwen-2.5-72b-instruct"]`
-5. `["openai/gpt-4o-mini", "openai/gpt-4.1-nano"]`
-6. `["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"]`
+1. `["x-ai/grok-4.3"]`（N=10 PASS・freeze）
 
 Stage 1 カタログ snapshot / 意思決定記録:
-`docs/bugfix/artifacts/r1-models-snapshot-2026-07-27.json` /
-`docs/bugfix/artifacts/r1-higher-tier-decision-record-2026-07-28.md`
+`docs/bugfix/artifacts/r1-models-snapshot-2026-07-28.json` /
+`docs/bugfix/artifacts/r1-user6-p4-decision-record-2026-07-28.md`
 
 eligible 部分集合・preflight（R1 CLI）:
 
 ```bash
-# N=1 preflight（timeout/unavailable は N=10 から必須除外）
+# N=1 preflight
 docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
   --trial-count=1 \
-  --configurations-json='[["openai/gpt-4o-mini"],["openai/gpt-4.1-nano"]]'
+  --configurations-json='[["x-ai/grok-4.3"]]'
 
 # N=10（eligible JSON の配列順 = 評価順 = 推奨タイブレーク）
 docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
   --trial-count=10 \
-  --configurations-json='[["openai/gpt-4o-mini"]]'
+  --configurations-json='[["x-ai/grok-4.3"]]'
 ```
 
 カタログ再 snapshot（Stage-1 Method B・有料キー）:
@@ -96,7 +87,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 ```bash
 # 例示のみ。N=10 未合格のまま本番に使わない。合格 exact 構成に置換すること。
-OPENROUTER_MODELS=openai/gpt-4o-mini
+OPENROUTER_MODELS=x-ai/grok-4.3
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
 

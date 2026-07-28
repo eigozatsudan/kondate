@@ -26,23 +26,14 @@ export const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 export const officialModelsUrl = `${officialOpenRouterBaseUrl}/models?output_modalities=text`;
 
 /** 上位モデル検証 shortlist — decision: docs/bugfix/artifacts/r1-higher-tier-decision-record-2026-07-28.md */
-export const candidateModelIds = Object.freeze([
-  "openai/gpt-4o-mini",
-  "meta-llama/llama-3.3-70b-instruct",
-  "deepseek/deepseek-v3.2",
-  "qwen/qwen-2.5-72b-instruct",
-  "openai/gpt-4.1-nano",
-]);
+/** P*=$4 後・2026-07-28 live N=10 合格構成の union */
+export const candidateModelIds = Object.freeze(["x-ai/grok-4.3"]);
 
-export const paidOpenRouterModelConfigurations = Object.freeze([
-  Object.freeze(["openai/gpt-4o-mini"]),
-  Object.freeze(["meta-llama/llama-3.3-70b-instruct"]),
-  Object.freeze(["deepseek/deepseek-v3.2"]),
-  Object.freeze(["qwen/qwen-2.5-72b-instruct"]),
-  // nano 単独は第4 identical のため禁止。高速 repair スロット。
-  Object.freeze(["openai/gpt-4o-mini", "openai/gpt-4.1-nano"]),
-  Object.freeze(["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"]),
-]);
+/**
+ * exact 順序付き構成。N=10 PASS のみを freeze。
+ * recommended: `["x-ai/grok-4.3"]`（10/10 primary_success, 2026-07-28）
+ */
+export const paidOpenRouterModelConfigurations = Object.freeze([Object.freeze(["x-ai/grok-4.3"])]);
 
 /** 設計 §5.3.0c — configuration[1] 禁止集合 */
 export const cfgRepairSlowIds = Object.freeze(["openai/gpt-oss-120b"]);

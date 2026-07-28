@@ -100,7 +100,7 @@ honestly instead of forcing `complete` when a follow-up is still owed.
   is a **paid allowlist** (no `:free` on real-API paths; never `openrouter/auto` or
   equivalent routers). Mock `mock/*:free` is allowed only when
   `OPENROUTER_BASE_URL` is the exact local mock URL. Models must support both
-  `structured_outputs` and `response_format`, with prompt+completion ≤ $1.00/1M.
+  `structured_outputs` and `response_format`, with prompt+completion ≤ $4.00/1M.
   Free-only was abolished by Plan 8 (`2026-07-26-paid-openrouter-models`).
 - Never log or persist names, emails, allergies, free-form conditions, prompts, or
   raw AI output. Only Zod-validated structures are stored.

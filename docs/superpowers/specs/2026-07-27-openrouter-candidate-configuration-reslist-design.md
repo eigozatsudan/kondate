@@ -117,7 +117,7 @@ closeout は「同じ 3 構成を根拠なく繰り返して課金する」こ�
 
 - クォータ: 成功 3 / attempt 6 / global 20（JST 日）および短期 4/600s
 - 時間: per-send 20s、送信前残 22s、単位 50s、repair 最大 1、stale 180s
-- 単価: prompt+completion ≤ **$1.00 / 1M**（境界 inclusive、R3 改訂。request/cache 非加算）
+- 単価: prompt+completion ≤ **$4.00 / 1M**（境界 inclusive、R3 改訂 P*。request/cache 非加算）
 - 構造化: `structured_outputs` **AND** `response_format`
 - base URL: 公式 exact `https://openrouter.ai/api/v1`
 - 禁止: `:free`（実 API）、router ID
@@ -235,7 +235,7 @@ Stage 1 用の小さな列挙スクリプトを `scripts/` に追加してよい
 3. router 集合（少なくとも `openrouter/auto` / `openrouter/free` / `openrouter/auto-beta`）
 4. Models API に不在
 5. `supported_parameters` に `structured_outputs` または `response_format` 欠落（**AND**）
-6. `pricing.prompt` / `pricing.completion` 欠落・非数値・負、または和 > $1.00/1M（**ちょうど 1.00 は可**・R3）
+6. `pricing.prompt` / `pricing.completion` 欠落・非数値・負、または和 > $4.00/1M（**ちょうど 4.00 は可**・R3 P*）
 
 除外理由は証跡に残す（ID + reason のみ。生 body 全体の無制限貼付はしない）。
 

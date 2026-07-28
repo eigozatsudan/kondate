@@ -1,7 +1,9 @@
 # 指定 6 モデルの機械フィルタ + closed subcode 診断（2026-07-28）
 
-**本番 gate ではない。** freeze / ship 判定に使わない。  
-P\*（prompt+completion 上限）= **$1.00 / 1M**（R3 承認値）。  
+**初回診断（P\*=$1）。** その後ユーザー指示 A で **P\*=$4** に再改訂し N=10 を実施  
+→ 結果は `docs/bugfix/2026-07-28-pstar4-user6-n10-gate.md`（**grok-4.3 10/10 PASS**）。
+
+P\*（この文書の診断時点）= **$1.00 / 1M**。  
 診断スクリプト: `scripts/diagnose-paid-models-closed.mjs`  
 （EXCLUDE モデルでも 1 回だけ production harness を試行し、closed code のみ記録）
 

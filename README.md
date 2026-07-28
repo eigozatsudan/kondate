@@ -104,7 +104,7 @@ API キーを設定すると、同じ UI から **本番と同じ OpenRouter 経
 
 1. [OpenRouter](https://openrouter.ai/) で API キーを発行し、**クレジットとキー hard limit** を設定する
 2. **有料**の明示モデル ID だけを使う（`:free` 不可。`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` も不可）
-3. 各 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$1.00 / 1M tokens** であること
+3. 各 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$4.00 / 1M tokens** であること
 4. 実装完了ゲート前に `scripts/benchmark-paid-openrouter-models.mjs` で機械フィルタ → N=10 を通す（詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)）
 
 ゲート合格後の推奨例（**N=10 を通った exact 構成に置換**すること。最大 2 本）:

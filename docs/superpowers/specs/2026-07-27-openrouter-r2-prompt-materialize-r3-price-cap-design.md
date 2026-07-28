@@ -1,7 +1,7 @@
 # 改訂案 R2 + R3: prompt/materialize 整合と単価上限見直し
 
 - 日付: 2026-07-27
-- 状態: **Approved**（2026-07-27。P*=$1.00。人間指示「P*=$1 で承認。実装に進んで」）
+- 状態: **Approved**（2026-07-27。初回 P*=$1.00。**2026-07-28 追記: P*=$4.00** — ユーザー指示「A」= 指定6モデル検証のための単価上限再改訂）
 - 敵対レビュー: `docs/reviews/2026-07-27-r2-r3-design-adversarial-primary.md`
 - テーマ: closeout / R1 失敗後の **P1 残課題 1+2 を同時に設計**する
   - **R2**: 本番 prompt と materialize/validate の整合
@@ -109,7 +109,7 @@ response-format 改訂と R1 shortlist 差し替え後も、live exact 構成 N=
 | **KD-R2-3** | `pantryRef === null` は従来どおり provider name/unit。不正 ref / dangling は fail | 在庫外・捏造 ref を救わない |
 | **KD-R2-4** | priority / plannedQuantity / dishRefs / 数量 thousandths 等の **構造整合は緩めない**。unit 不一致は従来どおり `pantry_unit_mismatch` | 安全・買い物数量の誤成功防止 |
 | **KD-R2-5** | prompt 変更は `buildBaseGenerationMessages` の両経路（members 有無）に同一契約文を入れる。ベンチは本番と同一関数を使うため自動で乗る | R1 harness 契約 |
-| **KD-R3-1** | 新上限 **`P* = $1.00` / 1M tokens**（prompt+completion 和、境界 inclusive）。Open Question で人間が変更可 | $0.50 では R1 で timeout 支配。$1 は 2 倍で運用説明が容易。より上げる場合は承認時に置換 |
+| **KD-R3-1** | 新上限 **`P*` / 1M tokens**（prompt+completion 和、境界 inclusive）。Open Question で人間が変更可。**現行値 $4.00**（2026-07-28。初回承認は $1.00） | $0.50 では R1 で timeout 支配。指定上位モデル（grok-4.3 等）の機械通過に $4 が必要 |
 | **KD-R3-2** | `P*` は **単一 export**（現行 `maxPromptPlusCompletionUsdPerMillion`）を正本とし、設計・verify・bench・docs を同時更新 | 鏡像 drift 防止 |
 | **KD-R3-3** | R3 単独では shortlist を決めない。上限変更後 **R1 手続きをフル再実行**してから N=10 | 旧 6 構成の再 N=10 は closeout 非推奨と同型 |
 | **KD-R23-1** | 実装順は **R2 → R3 → R1-replay（snapshot+freeze）→ N=10**。R2 のみ / R3 のみの部分 ship は可だが、**本番 env 確定は N=10 合格後のみ** | 意味と候補帯の両方を直してからゲート |
@@ -241,8 +241,8 @@ name 上書き後、`pantry_name_mismatch` は **稀になる想定**。残る i
 **検証コマンド（PR-R3-1 必須）:**
 
 ```bash
-# 正本が P* であること（例: 1）
-docker compose run --rm --no-deps app node -e "import { maxPromptPlusCompletionUsdPerMillion } from './scripts/verify-openrouter-models.mjs'; if (maxPromptPlusCompletionUsdPerMillion !== 1) process.exit(1)"
+# 正本が P* であること（現行: 4）
+docker compose run --rm --no-deps app node -e "import { maxPromptPlusCompletionUsdPerMillion } from './scripts/verify-openrouter-models.mjs'; if (maxPromptPlusCompletionUsdPerMillion !== 4) process.exit(1)"
 docker compose run --rm --no-deps app node --test scripts/verify-openrouter-models.test.mjs scripts/benchmark-paid-openrouter-models.test.mjs
 ```
 
@@ -355,6 +355,16 @@ N=10 前の hard-limit ゲートは R1 **KD-R1-13** のまま: `hard_limit_usd �
 | 項目 | 内容 |
 |------|------|
 | 承認日 | 2026-07-27 |
-| P* | **$1.00** / 1M tokens（prompt+completion 和・inclusive） |
+| P*（初回） | **$1.00** / 1M tokens（prompt+completion 和・inclusive） |
 | 承認範囲 | R2（name のみ trusted 上書き + prompt 契約）+ R3（単価上限）+ 後続 R1-replay/N=10 手続き |
 | 承認者指示 | 「P*=$1 で承認。実装に進んで」 |
+
+### 15.1 追記承認（2026-07-28）— P* = $4.00
+
+| 項目 | 内容 |
+|------|------|
+| 承認日 | 2026-07-28 |
+| P*（現行） | **$4.00** / 1M tokens（prompt+completion 和・inclusive） |
+| 根拠 | 指定6モデル診断で gpt-5.4-nano($1.45) / minimax-m3($1.50) / gemini-3.5-flash-lite($2.80) / grok-4.3($3.75) が P*=$1 で機械 EXCLUDE。ユーザー選択「A」= P* 再改訂 → 再 snapshot → N=10 |
+| 正本 | `scripts/verify-openrouter-models.mjs` の `maxPromptPlusCompletionUsdPerMillion = 4` |
+| 不変 | structured_outputs AND response_format、20s/50s/22s、N=10-only ship、router/free 禁止 |

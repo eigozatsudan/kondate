@@ -430,3 +430,24 @@ system に structural 契約を追加（共通定数 `GENERATION_SYSTEM_PROMPT_C
 
 本番 ship は引き続きブロック。
 
+---
+
+## ラウンド: P*=$4 + 指定6モデル N=10（2026-07-28）— **初 PASS**
+
+- 設計: R3 P* を **$1 → $4**（ユーザー指示「A」）+ idea 品数 `invalid_menu_structure` 切り分け + prompt 品数契約
+- snapshot: `docs/bugfix/artifacts/r1-models-snapshot-2026-07-28.json`（mechanical 155 / postEx 138）
+- 決定記録: `docs/bugfix/artifacts/r1-user6-p4-decision-record-2026-07-28.md`
+- 詳細証跡: `docs/bugfix/2026-07-28-pstar4-user6-n10-gate.md`
+
+| Exact configuration | Result | firstAttempt |
+|---|---|---:|
+| `["x-ai/grok-4.3"]` | **PASS 10/10** | 10 |
+| `["openai/gpt-5.4-nano"]` | FAIL u1 `model_unavailable` | 0 |
+| `["google/gemini-3.5-flash-lite"]` | FAIL u1 `model_unavailable` | 0 |
+| `["minimax/minimax-m3"]` | FAIL u1 `constraint_conflict` | 0 |
+| `["deepseek/deepseek-v4-flash"]` | FAIL u1 `generation_timeout` | 0 |
+
+**recommendedConfiguration = `["x-ai/grok-4.3"]`。**  
+freeze: `paidOpenRouterModelConfigurations = [["x-ai/grok-4.3"]]`。  
+本番提案: `OPENROUTER_MODELS=x-ai/grok-4.3`。
+

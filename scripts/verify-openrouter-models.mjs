@@ -5,8 +5,8 @@ const officialModelsUrl = "https://openrouter.ai/api/v1/models?output_modalities
 
 export const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 export const exactLocalMockOpenRouterBaseUrl = "http://openrouter-mock:8787/api/v1";
-/** R3: prompt+completion 上限 USD/1M（inclusive）。親設計 P* = $1.00 */
-export const maxPromptPlusCompletionUsdPerMillion = 1;
+/** R3 改訂: prompt+completion 上限 USD/1M（inclusive）。P* = $4.00（2026-07-28 ユーザー承認 A） */
+export const maxPromptPlusCompletionUsdPerMillion = 4;
 
 /** Models API 1回あたりの締切（5秒）。本番メタデータ取得の上限を固定する。 */
 export const modelsApiTimeoutMs = 5_000;

@@ -136,27 +136,11 @@ function successfulUnit(configuration, outcome = "primary_success") {
   };
 }
 
-test("candidate shortlist and exact ordered configurations match the higher-tier freeze", () => {
-  assert.deepEqual(
-    [...candidateModelIds],
-    [
-      "openai/gpt-4o-mini",
-      "meta-llama/llama-3.3-70b-instruct",
-      "deepseek/deepseek-v3.2",
-      "qwen/qwen-2.5-72b-instruct",
-      "openai/gpt-4.1-nano",
-    ],
-  );
+test("candidate shortlist and exact ordered configurations match the grok-4.3 N=10 freeze", () => {
+  assert.deepEqual([...candidateModelIds], ["x-ai/grok-4.3"]);
   assert.deepEqual(
     paidOpenRouterModelConfigurations.map((configuration) => [...configuration]),
-    [
-      ["openai/gpt-4o-mini"],
-      ["meta-llama/llama-3.3-70b-instruct"],
-      ["deepseek/deepseek-v3.2"],
-      ["qwen/qwen-2.5-72b-instruct"],
-      ["openai/gpt-4o-mini", "openai/gpt-4.1-nano"],
-      ["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"],
-    ],
+    [["x-ai/grok-4.3"]],
   );
   assert.ok(Object.isFrozen(candidateModelIds));
   assert.ok(Object.isFrozen(paidOpenRouterModelConfigurations));
@@ -170,10 +154,10 @@ test("candidate shortlist and exact ordered configurations match the higher-tier
       ...new Set(paidOpenRouterModelConfigurations.flatMap((configuration) => [...configuration])),
     ].sort(),
   );
-  // KD-R1-17: frozen IDs ⊆ committed survivor artifact
+  // KD-R1-17: frozen IDs ⊆ committed survivor artifact（P*=$4 snapshot）
   const artifactPath = join(
     dirname(fileURLToPath(import.meta.url)),
-    "../docs/bugfix/artifacts/r1-models-snapshot-2026-07-27.json",
+    "../docs/bugfix/artifacts/r1-models-snapshot-2026-07-28.json",
   );
   const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
   const survivorIds = new Set(artifact.survivors.map((row) => row.id));
@@ -254,7 +238,7 @@ test("main forwards CLI trialCount and configurations to runPaidBenchmark", asyn
 
 test("gate constants lock N=10 and the price ceiling", () => {
   assert.equal(benchTrialCount, 10);
-  assert.equal(maxPromptPlusCompletionUsdPerMillion, 1);
+  assert.equal(maxPromptPlusCompletionUsdPerMillion, 4);
 });
 
 test("mechanical filter applies the structured-output AND and price rules", () => {
@@ -277,8 +261,8 @@ test("mechanical filter applies the structured-output AND and price rules", () =
       [
         "vendor/a",
         remoteEntry("vendor/a", {
-          // $0.60 + $0.60 = $1.20 / 1M > P*=1
-          pricing: { prompt: "0.0000006", completion: "0.0000006" },
+          // $2.10 + $2.10 = $4.20 / 1M > P*=4
+          pricing: { prompt: "0.0000021", completion: "0.0000021" },
         }),
       ],
     ]),
