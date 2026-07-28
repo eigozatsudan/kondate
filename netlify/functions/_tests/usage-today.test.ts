@@ -7,6 +7,8 @@ const getServerEnvMock = vi.hoisted(() =>
   vi.fn(() => ({
     openRouter: { globalDailyLimit: 20 },
     quotaIdentityHmacKey: Buffer.alloc(32, 1),
+    // ServerEnv.aiQuotaDisabled と同じキーを初期戻りに含め、mockReturnValue の型を揃える
+    aiQuotaDisabled: false,
   })),
 );
 
