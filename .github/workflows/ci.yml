@@ -19,7 +19,8 @@ jobs:
     env:
       CI: "true"
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # v7 は runs.using: node24。v4 は node20 宣言のまま Node 24 強制で警告になる。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Generate ephemeral local secrets
