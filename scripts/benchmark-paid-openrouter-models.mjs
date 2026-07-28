@@ -214,6 +214,7 @@ export async function loadPaidBenchmarkHarness() {
  *     sends: readonly object[];
  *     outcome: "primary_success" | "repair_success" | "failure";
  *     failureCodes: readonly string[];
+ *     diagnosticCodes?: readonly string[];
  *     totalElapsedMs: number;
  *   }>;
  *   log?: (line: string) => void;
@@ -251,6 +252,8 @@ export async function runConfigurationGate({
         ok: unit.ok,
         outcome: unit.outcome,
         failureCodes: unit.failureCodes,
+        // closed materialize/validate codes only（raw 出力なし）
+        diagnosticCodes: unit.diagnosticCodes ?? [],
         sends: unit.sends,
         totalElapsedMs: unit.totalElapsedMs,
       }),

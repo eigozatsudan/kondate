@@ -189,6 +189,10 @@ describe("runPaidBenchmarkUnit", () => {
       outcome: "failure",
       failureCodes: ["invalid_ai_response"],
     });
+    // compose 失敗時は closed subcode が diagnosticCodes に載る（raw なし）
+    expect(result.diagnosticCodes.length).toBeGreaterThan(0);
+    expect(result.diagnosticCodes.every((code) => typeof code === "string")).toBe(true);
+    expect(JSON.stringify(result.diagnosticCodes)).not.toMatch(/prompt|message|raw/iu);
     expect(requests).toHaveLength(1);
   });
 
@@ -509,7 +513,15 @@ describe("runPaidBenchmarkUnit", () => {
   it("returns code-only evidence without prompts, paths, messages, raw output, or provider bodies", async () => {
     const { result } = await runWithSteps([{ kind: "http_error", status: 503 }]);
     expect(Object.keys(result).sort()).toEqual(
-      ["configuration", "failureCodes", "ok", "outcome", "sends", "totalElapsedMs"].sort(),
+      [
+        "configuration",
+        "diagnosticCodes",
+        "failureCodes",
+        "ok",
+        "outcome",
+        "sends",
+        "totalElapsedMs",
+      ].sort(),
     );
     expect(Object.keys(result.sends[0] ?? {}).sort()).toEqual(
       ["elapsedMs", "excludedModel", "models", "responseModel"].sort(),

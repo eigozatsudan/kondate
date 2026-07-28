@@ -131,6 +131,7 @@ function successfulUnit(configuration, outcome = "primary_success") {
     ],
     outcome,
     failureCodes: [],
+    diagnosticCodes: [],
     totalElapsedMs: 120,
   };
 }

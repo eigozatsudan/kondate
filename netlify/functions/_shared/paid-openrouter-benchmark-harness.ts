@@ -7,6 +7,7 @@ import {
   createIdeaSafetyFingerprint,
   ideaSafetySnapshot,
 } from "../../../shared/safety/idea-fingerprint.js";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { buildGenerationMessages } from "./generation-prompt.js";
 import {
   ATTEMPT_TIMEOUT_MS,
@@ -16,6 +17,8 @@ import {
 } from "./generation-service.js";
 import type { QuotaRequestRecord } from "./generation-repository.js";
 import { validateGenerationPreflight } from "./generation-context.js";
+import { materializeAiGeneratedMenu } from "./generation-materializer.js";
+import { GenerationOutputError, toRepairDiagnostics } from "./generation-repair.js";
 import {
   createOpenRouterGenerationSender,
   OpenRouterCallError,
@@ -41,9 +44,51 @@ export type PaidBenchmarkUnitResult = Readonly<{
     elapsedMs: number;
   }>[];
   outcome: "primary_success" | "repair_success" | "failure";
+  /** 台帳終端コード（例: invalid_ai_response） */
   failureCodes: readonly string[];
+  /**
+   * materialize/validate の closed repair code（例: pantry_unit_mismatch）。
+   * wire 失敗のみのときは空。raw 出力・自由文 path は載せない。
+   */
+  diagnosticCodes: readonly string[];
   totalElapsedMs: number;
 }>;
+
+/**
+ * OpenRouter 受理後の compose を閉じた code だけに写像する（証跡用・本番台帳非永続）。
+ * message / raw menu は返さない。
+ */
+export function diagnoseClosedComposeCodes(
+  result: OpenRouterGenerationResult,
+  generationContext: GenerationExecutionContext["generationContext"],
+  uuid: () => string,
+): readonly string[] {
+  if (result.mode === "replacement_dish") {
+    return Object.freeze(["invalid_provider_menu"]);
+  }
+  if (result.output.outcome === "constraint_conflict") {
+    const codes = new Set<string>(["constraint_conflict"]);
+    for (const conflict of result.output.conflicts ?? []) {
+      if (typeof conflict?.code === "string" && conflict.code.length > 0) {
+        codes.add(conflict.code);
+      }
+    }
+    return Object.freeze([...codes]);
+  }
+  try {
+    const checked = validateGeneratedMenu(
+      materializeAiGeneratedMenu(result.output.menu, generationContext, uuid),
+      generationContext,
+    );
+    if (checked.ok) return Object.freeze([]);
+    return Object.freeze(toRepairDiagnostics(checked.issues).map((issue) => issue.code));
+  } catch (error) {
+    if (error instanceof GenerationOutputError) {
+      return Object.freeze(error.issues.map((issue) => issue.code));
+    }
+    return Object.freeze(["invalid_provider_menu"]);
+  }
+}
 
 export type PaidBenchmarkRepositoryTransition = Readonly<{
   kind:
@@ -350,6 +395,8 @@ export async function runPaidBenchmarkUnit(input: {
     now: monotonicNow,
   });
   const sends: Array<PaidBenchmarkUnitResult["sends"][number]> = [];
+  const diagnosticCodeSet = new Set<string>();
+  const uuidForDiagnostics = createUuidFactory();
   const callOpenRouter: GenerationDependencies["callOpenRouter"] = async (
     callInput,
   ): Promise<OpenRouterGenerationResult> => {
@@ -360,9 +407,23 @@ export async function runPaidBenchmarkUnit(input: {
     try {
       const result = await sender(callInput);
       responseModel = result.modelId;
+      // 証跡用: wire 受理後の materialize/validate closed codes（raw は保持しない）
+      for (const code of diagnoseClosedComposeCodes(
+        result,
+        generationContext,
+        uuidForDiagnostics,
+      )) {
+        diagnosticCodeSet.add(code);
+      }
       return result;
     } catch (error) {
-      if (error instanceof OpenRouterCallError) responseModel = error.modelId;
+      if (error instanceof OpenRouterCallError) {
+        responseModel = error.modelId;
+        // wire/envelope 失敗は top-level code のみ（subcode なし）
+        if (error.code === "invalid_ai_response") {
+          diagnosticCodeSet.add("wire_or_envelope_invalid");
+        }
+      }
       throw error;
     } finally {
       sends.push({
@@ -419,6 +480,7 @@ export async function runPaidBenchmarkUnit(input: {
     failureCodes: Object.freeze([
       ...(totalDeadlineExceeded ? ["generation_timeout"] : failureCodesFromStatus(status)),
     ]),
+    diagnosticCodes: Object.freeze([...diagnosticCodeSet]),
     totalElapsedMs,
   };
 }

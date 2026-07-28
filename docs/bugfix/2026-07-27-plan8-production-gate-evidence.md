@@ -390,3 +390,43 @@ system に structural 契約を追加（共通定数 `GENERATION_SYSTEM_PROMPT_C
 - 上位 70B/72B 級は **単独で 20s に間に合わない**ケースが多い（P* 内でも latency 不足）。
 - 4o-mini は速いが **invalid / constraint_conflict** が残る → prompt だけでは足りない。closed subcode 診断や schema/fixture 側の深掘りが次の本筋。
 
+---
+
+## Closed subcode 診断（2026-07-28）
+
+### 実装
+
+`paid-openrouter-benchmark-harness` が OpenRouter 受理後に materialize/validate を回し、**closed repair/conflict code だけ**を `diagnosticCodes` に載せる（raw 出力・自由文 path なし）。
+
+ログ例（許可フィールド）: `failureCodes` + `diagnosticCodes` + sends の models/responseModel/elapsed。
+
+### 診断実行（N=1・有料・課金小）
+
+- Date: 2026-07-28T00:15:06Z – 00:15:44Z
+- trialCount=1
+- hard_limit 既存 $1 枠内
+
+| Exact configuration | failureCodes | diagnosticCodes | totalMs |
+|---|---|---|---:|
+| `["openai/gpt-4o-mini"]` | `invalid_ai_response` | `invalid_provider_menu` | 8072 |
+| `["openai/gpt-4o-mini", "openai/gpt-4.1-nano"]` | `constraint_conflict` | `invalid_provider_menu`, `constraint_conflict`, `mandatory_safety_conflict` | 8055 |
+| `["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"]` | `constraint_conflict` | `invalid_provider_menu`, `constraint_conflict`, `mandatory_safety_conflict` | 17551 |
+| `["mistralai/ministral-3b-2512"]` | `invalid_ai_response` | `invalid_provider_menu` | 3150 |
+
+### 解釈（gate 緩和ではない）
+
+1. **単独 invalid の中身はほぼ `invalid_provider_menu`**  
+   → materialize 前段（JSON/schema 形状）または materialize が `invalid_provider_menu` を投げる経路。  
+   **pantry_name_mismatch / unit_mismatch は今回の診断セットでは出ていない**（R2 name 上書き後、別クラスの失敗が主）。
+
+2. **2-ID 経路は `constraint_conflict` + `mandatory_safety_conflict`**  
+   → モデルが success ではなく safety conflict を返している。prompt の「通常は success」指示だけでは足りない可能性。  
+   primary で既に invalid_provider_menu も混在（repair 前の compose 失敗診断が残る）。
+
+3. **次の本筋**  
+   - schema/fixture と idea ベンチ固定入力（鶏もも肉・2人）での **mock 再現**で `invalid_provider_menu` を潰す  
+   - conflict を安易に返させない repair/prompt 方針の再検討  
+   - 必要なら wire adapter 前の閉じた schema エラーコード細分化（自由文なし）
+
+本番 ship は引き続きブロック。
+
