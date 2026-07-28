@@ -114,3 +114,39 @@ package: `.superpowers/sdd/review-package-prod-path-dca058f-219d953.md`
 | modelListRules $0.5 | — | Important 散文 → 修正 |
 
 **結論:** Critical C-1 を修正したうえで、本番経路コードは **出荷可能な品質（残は運用 Nits）**。
+
+---
+
+## 二次再レビュー（C-1 修正後・2026-07-28）
+
+**package:** `.superpowers/sdd/review-package-c1-fix-219d953-2f784cb.md`  
+**対象 commit:** `2f784cb`（mock dual-contract + modelListRules + probe）
+
+| レビュー | 判定 | C-1 |
+|----------|------|-----|
+| 二次（deep） | **APPROVE** | **CLOSED** |
+| 新鮮一次相当 | **APPROVE** | **CLOSED** |
+
+### 再確認したこと
+
+| チェック | 結果 |
+|----------|------|
+| 本番 body keys == mock expectedBodyKeys | **PASS**（5 keys・exact set） |
+| mock が temperature を extra として 400 | **PASS**（テストあり） |
+| require_parameters / stream / free models / response_format | **PASS**（緩めず維持） |
+| 本番・e2e 経路が temperature を再送信しない | **PASS**（repo 走査） |
+| modelListRules ≤ $4.00 | **PASS** |
+| probe の temperature 削除 | **PASS** |
+
+### 残 Minor のみ
+
+1. Plan 3 歴史文書が temperature 必須を記載（docs 債務）
+2. probe の `max_tokens: 32` は本番に無い（診断の意図的差分。mock には当たらない）
+
+### 検証
+
+```
+vitest tools/openrouter-mock/server.test.mjs + openrouter.test.ts → 107 pass
+```
+
+**最終判定（本番経路 + C-1 修正）: APPROVE**（残は運用・docs nits）。
