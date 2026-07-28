@@ -6,7 +6,7 @@ import {
   selectHouseholdAudienceWithMember,
 } from "../fixtures/history";
 import { localRestHeaders } from "../fixtures/local-supabase";
-import type { Page, Request, Route } from "@playwright/test";
+import type { Locator, Page, Request, Route } from "@playwright/test";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
 // 切断復旧、タブ再開、結果画面（/menus/:menuId）の詳細表示、320px幅でのレイアウトを検証する。
@@ -137,6 +137,32 @@ async function completeMinimumPlanner(page: Page) {
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({
     timeout: 10_000,
   });
+}
+
+async function expectContainedHorizontally(parent: Locator, child: Locator): Promise<void> {
+  const [parentBox, childBox] = await Promise.all([parent.boundingBox(), child.boundingBox()]);
+  expect(parentBox).not.toBeNull();
+  expect(childBox).not.toBeNull();
+  if (parentBox === null || childBox === null) return;
+
+  const tolerance = 1;
+  expect(childBox.x).toBeGreaterThanOrEqual(parentBox.x - tolerance);
+  expect(childBox.x + childBox.width).toBeLessThanOrEqual(
+    parentBox.x + parentBox.width + tolerance,
+  );
+}
+
+async function expectSameHorizontalBounds(first: Locator, second: Locator): Promise<void> {
+  const [firstBox, secondBox] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+  expect(firstBox).not.toBeNull();
+  expect(secondBox).not.toBeNull();
+  if (firstBox === null || secondBox === null) return;
+
+  const tolerance = 1;
+  expect(Math.abs(firstBox.x - secondBox.x)).toBeLessThanOrEqual(tolerance);
+  expect(Math.abs(firstBox.x + firstBox.width - secondBox.x - secondBox.width)).toBeLessThanOrEqual(
+    tolerance,
+  );
 }
 
 test("resends the same key after the first POST is lost before acceptance", async ({
@@ -277,7 +303,7 @@ test("recovers a completed result after a tab is closed before its POST response
   });
 });
 
-test("shows timeline, tabs, ingredients, steps, adaptations, empty pantry state, labels, and disclaimer at 320px", async ({
+test("shows result details and keeps major regions within their parent", async ({
   completedOnboardingPage: page,
 }) => {
   await page.setViewportSize({ width: 320, height: 720 });
@@ -318,8 +344,48 @@ test("shows timeline, tabs, ingredients, steps, adaptations, empty pantry state,
       "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
     ),
   ).toBeVisible();
-  // 横スクロールが発生しないことを確認
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  for (const width of [320, 390, 916]) {
+    await page.setViewportSize({ width, height: 844 });
+
+    // ページ全体のoverflowを隠すだけでは検出できないため、主要領域自身と
+    // レイアウト祖先の左右境界を実測する。タブ列内部の横スクロールは除外する。
+    const html = page.locator("html");
+    const body = page.locator("body");
+    const appSection = page.locator(".app-section");
+    const root = page.locator("#root");
+    const pageContainer = page.locator("main");
+    const pageDisclaimer = page.getByText(
+      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+    );
+    const resultRoot = page.getByRole("heading", { name: "献立ができました" }).locator("..");
+    const timeline = page.getByRole("heading", { name: "全体の段取り" }).locator("..");
+    const tablist = page.getByRole("tablist", { name: "料理" });
+    const tabpanel = page.getByRole("tabpanel");
+    await expectContainedHorizontally(html, body);
+    await expectContainedHorizontally(body, root);
+    await expectContainedHorizontally(root, appSection);
+    await expectContainedHorizontally(appSection, pageContainer);
+    await expectContainedHorizontally(pageContainer, resultRoot);
+    await expectSameHorizontalBounds(pageDisclaimer, resultRoot);
+    await expectContainedHorizontally(resultRoot, timeline);
+    await expectContainedHorizontally(resultRoot, tablist);
+    await expectContainedHorizontally(resultRoot, tabpanel);
+
+    const overflowingContent = await resultRoot.evaluate((resultElement) => {
+      const rootRect = resultElement.getBoundingClientRect();
+      return [...resultElement.querySelectorAll("*")]
+        .filter((element) => !element.closest('[role="tablist"]'))
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.left < rootRect.left - 1 || rect.right > rootRect.right + 1;
+        })
+        .map((element) => element.tagName);
+    });
+    expect(overflowingContent).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  }
 });
 
 // --- idea結果境界E2E（Task 6/7） ---
