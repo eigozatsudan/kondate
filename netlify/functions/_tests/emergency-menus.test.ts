@@ -348,13 +348,49 @@ describe("GET /api/emergency-menus", () => {
       ),
     );
     expect(res.status).toBe(400);
+    // idea 拒否は Zod ではなく明示分岐だが、fieldErrors.targetMode を載せてキーを固定する
     await expect(res.json()).resolves.toMatchObject({
       ok: false,
       error: {
         code: "invalid_request",
         message: "検索条件を確認してください",
+        details: {
+          fields: {
+            targetMode: ["検索条件を確認してください"],
+          },
+        },
       },
     });
     expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it("returns matchMode none when mains are empty and candidates exist", async () => {
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext: () =>
+        Promise.resolve({
+          context: makeCurrentSafetyContext(),
+          memberLabels: Object.freeze({ member_1: "家族1" }),
+        }),
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const response = await handler(
+      new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as SuccessEnvelope;
+    expect(body).toMatchObject({
+      ok: true,
+      data: {
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        fixtureVersion: "2026-07-28.v1",
+      },
+    });
+    expect(body.data.candidates.length).toBeGreaterThan(0);
+    expect(body.data.fixtureVersion).toBe("2026-07-28.v1");
   });
 });
