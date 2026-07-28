@@ -26,6 +26,7 @@ const { createUserScopedSupabaseMock, getServerEnvMock, rpcMock, userClient } = 
         requestHmacKey: Buffer.alloc(32, 7),
       },
       quotaIdentityHmacKey: Buffer.alloc(32, 9),
+      aiQuotaDisabled: false,
     })),
     rpcMock: vi.fn<RpcMock>(),
     userClient: client,
@@ -304,6 +305,7 @@ beforeEach(() => {
       requestHmacKey: hmacKey,
     },
     quotaIdentityHmacKey: identityHmacKey,
+    aiQuotaDisabled: false,
   });
 });
 

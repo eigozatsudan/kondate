@@ -56,4 +56,5 @@ test("deletes the account through settings and zeroes owned rows and auth user",
   await expect(page.getByRole("status")).toContainText("アカウントを削除しました", {
     timeout: 10_000,
   });
+  await expect(page.getByRole("status")).toContainText("利用回数の記録だけは残ることがあります");
 });

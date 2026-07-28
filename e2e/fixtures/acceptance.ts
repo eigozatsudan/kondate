@@ -373,9 +373,11 @@ export async function deleteThroughSettings(page: Page): Promise<void> {
   await expect(danger).toBeVisible();
   // 折りたたみ → 展開 → 確認ダイアログ（2 段階）
   await danger.getByRole("button", { name: "アカウントを削除" }).click();
+  await expect(danger.getByText(/復元できない識別子と日々の利用回数/u)).toBeVisible();
   await danger.getByRole("button", { name: "削除の確認へ進む" }).click();
   const dialog = page.getByRole("dialog", { name: "アカウントを削除しますか？" });
   await expect(dialog).toBeVisible({ timeout: 10_000 });
+  await expect(dialog.getByText(/復元できない識別子と日々の利用回数/u)).toBeVisible();
   await dialog.getByLabel(/確認のため/u).fill("削除する");
   await dialog.getByRole("button", { name: "完全に削除する" }).click();
   // E2E-M2: 製品の hard-nav 契約は login?accountDeleted=1（returnTo ではない）

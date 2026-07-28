@@ -160,6 +160,7 @@ const FORBIDDEN_VITE_ALIASES = [
   "VITE_OPENROUTER_API_KEY",
   "VITE_GENERATION_REQUEST_HMAC_KEY",
   "VITE_QUOTA_IDENTITY_HMAC_KEY",
+  "VITE_AI_QUOTA_DISABLED",
   "VITE_SUPABASE_MAINTENANCE_DB_URL",
   // Vite は VITE_ をブラウザへ公開し得るため、continuation 暗号鍵 alias も拒否する
   "VITE_AUTH_CONTINUATION_ENCRYPTION_KEY",
@@ -303,6 +304,17 @@ export function validateProductionEnv(env) {
     String(env.SERVER_SITE_ORIGIN) !== site.origin
   ) {
     throw new Error("SERVER_SITE_ORIGIN_invalid");
+  }
+
+  // 本番で個人枠無効は禁止（ローカル isLocal 専用）。true は fail-closed。
+  const aiQuotaDisabled = env.AI_QUOTA_DISABLED;
+  if (aiQuotaDisabled !== undefined && aiQuotaDisabled !== null && aiQuotaDisabled !== "") {
+    if (String(aiQuotaDisabled) === "true") {
+      throw new Error("AI_QUOTA_DISABLED_production");
+    }
+    if (String(aiQuotaDisabled) !== "false") {
+      throw new Error("AI_QUOTA_DISABLED_invalid");
+    }
   }
 
   parseProductionMaintenanceUrl(String(env.SUPABASE_MAINTENANCE_DB_URL), serverRef);

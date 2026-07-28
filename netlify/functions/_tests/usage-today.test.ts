@@ -34,6 +34,7 @@ describe("usage-today", () => {
     getServerEnvMock.mockReturnValue({
       openRouter: { globalDailyLimit: 20 },
       quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
     });
     requireUserWithEmailMock.mockResolvedValue({
       userId: "10000000-0000-4000-8000-000000000001",
@@ -94,10 +95,46 @@ describe("usage-today", () => {
     });
   });
 
+  it("projects full personal remaining when aiQuotaDisabled is true", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 20 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: true,
+    });
+    rpcMock.mockResolvedValue({
+      data: {
+        success: { consumed: 2, limit: 3, remaining: 1 },
+        attempts: { sent: 4, limit: 6, remaining: 2 },
+        shortWindow: {
+          sent: 4,
+          limit: 4,
+          remaining: 0,
+          retryAt: "2026-07-28T12:00:00.000Z",
+        },
+        globalAvailable: false,
+        retryAt: "2026-07-29T00:00:00.000Z",
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: true; data: unknown };
+    expect(body.data).toEqual({
+      success: { consumed: 0, limit: 3, remaining: 3 },
+      attempts: { sent: 0, limit: 6, remaining: 6 },
+      shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+      globalAvailable: false,
+      retryAt: "2026-07-29T00:00:00.000Z",
+    });
+  });
+
   it("forwards GLOBAL_DAILY_AI_LIMIT to the usage RPC for globalAvailable", async () => {
     getServerEnvMock.mockReturnValue({
       openRouter: { globalDailyLimit: 30 },
       quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
     });
     await usageToday(new Request("http://127.0.0.1/api/usage/today", { method: "GET" }));
     expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {

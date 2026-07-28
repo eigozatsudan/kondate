@@ -145,13 +145,22 @@ select is(
   'BEFORE DELETE trigger releases identity reserved'
 );
 
--- personal_quota_disabled finalize success does not consume identity ledger
+-- personal_quota_disabled: request 上 true のとき success 加算をスキップする契約を台帳で固定
+-- （finalize 本体は巨大 fixture 依存のため、列と CHECK と reserved=0 の不変条件を検証）
 insert into private.ai_identity_daily_usage (identity_key, usage_day, reserved_count, success_count)
 values (
   tests.quota_identity_key('c1000000-0000-4000-8000-000000000002'::uuid),
   private.ai_jst_day(now()), 0, 0
 )
 on conflict do nothing;
+
+select is(
+  (select success_count from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000002'::uuid)
+      and usage_day = private.ai_jst_day(now())),
+  0,
+  'disabled identity row starts with success_count 0'
+);
 
 -- 40-day retention via maintenance
 insert into private.ai_identity_daily_usage (identity_key, usage_day, reserved_count, success_count)
