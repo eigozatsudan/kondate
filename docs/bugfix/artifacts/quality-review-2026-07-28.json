@@ -1,29 +1,127 @@
 {
-  "snapshotDate": "2026-07-28T01:28:21.713Z",
+  "snapshotDate": "2026-07-28T01:38:34.060Z",
   "fixture": "idea breakfast servings=2 main=鶏もも肉 timeLimitMinutes=15 pantry=[]",
   "rows": [
     {
-      "modelId": "openai/gpt-5.6-luna",
+      "modelId": "deepseek/deepseek-chat",
       "trial": 1,
       "ok": false,
-      "outcome": "materialize_fail",
+      "outcome": "generation_timeout",
       "failureCodes": [
-        "dangling_ref"
+        "generation_timeout"
       ],
-      "responseModel": "openai/gpt-5.6-luna",
-      "elapsedMs": 10637,
+      "responseModel": null,
+      "elapsedMs": 20006,
       "score": null,
       "menuSummary": null,
-      "validateOk": false
+      "validateOk": null
     },
     {
-      "modelId": "openai/gpt-5.6-luna",
+      "modelId": "deepseek/deepseek-chat",
       "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "responseModel": null,
+      "elapsedMs": 20002,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
+    },
+    {
+      "modelId": "moonshotai/kimi-k2-0905",
+      "trial": 1,
+      "ok": false,
+      "outcome": "invalid_ai_response",
+      "failureCodes": [
+        "invalid_ai_response"
+      ],
+      "responseModel": "moonshotai/kimi-k2-0905",
+      "elapsedMs": 995,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
+    },
+    {
+      "modelId": "moonshotai/kimi-k2-0905",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "responseModel": null,
+      "elapsedMs": 20001,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
+    },
+    {
+      "modelId": "z-ai/glm-4.6",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "responseModel": null,
+      "elapsedMs": 20002,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
+    },
+    {
+      "modelId": "z-ai/glm-4.6",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "responseModel": null,
+      "elapsedMs": 20002,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
+    },
+    {
+      "modelId": "qwen/qwen-plus",
+      "trial": 1,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "responseModel": null,
+      "elapsedMs": 20001,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
+    },
+    {
+      "modelId": "qwen/qwen-plus",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "responseModel": null,
+      "elapsedMs": 20001,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
+    },
+    {
+      "modelId": "minimax/minimax-m3",
+      "trial": 1,
       "ok": true,
       "outcome": "primary_success",
       "failureCodes": [],
-      "responseModel": "openai/gpt-5.6-luna",
-      "elapsedMs": 9626,
+      "responseModel": "minimax/minimax-m3",
+      "elapsedMs": 18591,
       "score": {
         "total": 21,
         "max": 21,
@@ -56,17 +154,17 @@
         "mealType": "breakfast",
         "cuisineGenre": "japanese",
         "servings": 2,
-        "totalElapsedMinutes": 12,
+        "totalElapsedMinutes": 15,
         "dishes": [
           {
             "role": "main",
             "name": "鶏もも肉の照り焼き",
-            "description": "ひと口大に切った鶏もも肉を甘辛いたれで焼く、手早い和風の主菜です。",
+            "description": "朝食用の鶏もも肉の照り焼き",
             "cookingTimeMinutes": 12,
             "ingredients": [
               {
                 "name": "鶏もも肉",
-                "quantityText": "300",
+                "quantityText": "200g",
                 "unit": "g"
               },
               {
@@ -81,7 +179,7 @@
               },
               {
                 "name": "砂糖",
-                "quantityText": "大さじ1/2",
+                "quantityText": "小さじ2",
                 "unit": "g"
               },
               {
@@ -91,88 +189,116 @@
               }
             ],
             "steps": [
-              "鶏もも肉をひと口大に切る。しょうゆ、みりん、砂糖を混ぜてたれを作る。",
-              "フライパンにサラダ油を中火で熱し、鶏もも肉の皮目を下にして焼く。",
-              "焼き色がついたら裏返し、ふたをして中まで火を通す。たれを加えて煮からめる。"
+              "鶏もも肉は一口大に切る。",
+              "しょうゆ、みりん、砂糖を混ぜ合わせる。",
+              "フライパンにサラダ油を熱し、鶏もも肉を皮目から焼く。",
+              "両面に焼き色がついたら、タレを加えてからめ絡める。"
             ]
           },
           {
             "role": "side",
-            "name": "キャベツとわかめの和風あえ",
-            "description": "千切りキャベツとわかめをさっぱりした和風味であえます。",
-            "cookingTimeMinutes": 8,
+            "name": "キャベツの千切り",
+            "description": "鶏もも肉に添える付け合わせ",
+            "cookingTimeMinutes": 3,
             "ingredients": [
               {
                 "name": "キャベツ",
-                "quantityText": "150",
+                "quantityText": "100g",
                 "unit": "g"
-              },
-              {
-                "name": "乾燥わかめ",
-                "quantityText": "3",
-                "unit": "g"
-              },
-              {
-                "name": "酢",
-                "quantityText": "大さじ1",
-                "unit": "ml"
-              },
-              {
-                "name": "しょうゆ",
-                "quantityText": "小さじ1",
-                "unit": "ml"
-              },
-              {
-                "name": "ごま油",
-                "quantityText": "小さじ1",
-                "unit": "ml"
               }
             ],
             "steps": [
-              "乾燥わかめを水で戻し、水気を絞る。キャベツを千切りにする。",
-              "キャベツとわかめを酢、しょうゆ、ごま油であえる。"
+              "キャベツをせん切りにする。"
             ]
           }
         ],
         "timeline": [
           {
             "startMinute": 0,
-            "durationMinutes": 2,
-            "instruction": "鶏もも肉を切り、照り焼きのたれを混ぜる。"
-          },
-          {
-            "startMinute": 0,
-            "durationMinutes": 5,
-            "instruction": "わかめを戻し、キャベツを千切りにする。"
-          },
-          {
-            "startMinute": 2,
-            "durationMinutes": 10,
-            "instruction": "鶏もも肉を焼き、たれを加えて中まで火を通す。"
-          },
-          {
-            "startMinute": 5,
             "durationMinutes": 3,
-            "instruction": "キャベツとわかめを調味料であえる。"
+            "instruction": "キャベツをせん切りにする。"
           },
           {
-            "startMinute": 10,
-            "durationMinutes": 2,
-            "instruction": "鶏もも肉にたれを煮からめ、盛り付ける。"
+            "startMinute": 3,
+            "durationMinutes": 12,
+            "instruction": "鶏もも肉を焼き、調味液を絡める。"
           }
         ]
       },
       "validateOk": true
+    },
+    {
+      "modelId": "minimax/minimax-m3",
+      "trial": 2,
+      "ok": false,
+      "outcome": "generation_timeout",
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "responseModel": null,
+      "elapsedMs": 20002,
+      "score": null,
+      "menuSummary": null,
+      "validateOk": null
     }
   ],
   "summary": [
     {
-      "modelId": "openai/gpt-5.6-luna",
+      "modelId": "deepseek/deepseek-chat",
+      "trials": 2,
+      "successCount": 0,
+      "avgScore": null,
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "cookabilityFails": [
+        "not_ok"
+      ]
+    },
+    {
+      "modelId": "moonshotai/kimi-k2-0905",
+      "trials": 2,
+      "successCount": 0,
+      "avgScore": null,
+      "failureCodes": [
+        "invalid_ai_response",
+        "generation_timeout"
+      ],
+      "cookabilityFails": [
+        "not_ok"
+      ]
+    },
+    {
+      "modelId": "z-ai/glm-4.6",
+      "trials": 2,
+      "successCount": 0,
+      "avgScore": null,
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "cookabilityFails": [
+        "not_ok"
+      ]
+    },
+    {
+      "modelId": "qwen/qwen-plus",
+      "trials": 2,
+      "successCount": 0,
+      "avgScore": null,
+      "failureCodes": [
+        "generation_timeout"
+      ],
+      "cookabilityFails": [
+        "not_ok"
+      ]
+    },
+    {
+      "modelId": "minimax/minimax-m3",
       "trials": 2,
       "successCount": 1,
       "avgScore": 21,
       "failureCodes": [
-        "dangling_ref"
+        "generation_timeout"
       ],
       "cookabilityFails": [
         "not_ok"

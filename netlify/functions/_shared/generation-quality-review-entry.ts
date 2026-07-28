@@ -302,7 +302,7 @@ export async function reviewGenerationQuality(input: {
         outcome: "constraint_conflict",
         failureCodes: [
           "constraint_conflict",
-          ...(result.output.conflicts ?? []).map((c) => c.code).filter(Boolean),
+          ...result.output.conflicts.map((c) => c.code).filter(Boolean),
         ],
         responseModel,
         elapsedMs,
