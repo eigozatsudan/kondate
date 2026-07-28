@@ -495,6 +495,7 @@ describe("toStoredRevalidationCandidate", () => {
           allergyStatus: "registered",
           allergenIds: ["wheat"],
           hasUnmappedCustomAllergy: false,
+          customAllergies: [],
           requiredSafetyConstraints: [],
           unsupportedDietStatus: "none",
           unsupportedDietKinds: [],

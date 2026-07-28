@@ -37,6 +37,7 @@ export function buildIdeaPersonalSafetyContext(): {
           allergyStatus: "none",
           allergenIds: [],
           hasUnmappedCustomAllergy: false,
+          customAllergies: [],
           requiredSafetyConstraints: [],
           unsupportedDietStatus: "none",
           unsupportedDietKinds: [],

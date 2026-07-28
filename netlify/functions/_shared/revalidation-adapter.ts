@@ -367,7 +367,13 @@ export async function validateStoredMenuCurrentSafety(input: {
         message: "アレルギー確認が必要です",
       });
     }
-    if (member.hasUnmappedCustomAllergy) {
+    // AGS-I2: 評価可能なカスタムは evaluateAllergens 側。空のときだけ unmapped。
+    if (
+      member.hasUnmappedCustomAllergy &&
+      member.customAllergies.every(
+        (entry) => entry.name.trim() === "" && entry.aliases.every((alias) => alias.trim() === ""),
+      )
+    ) {
       issues.push({
         code: "unmapped_custom_allergy",
         path: member.anonymousRef,

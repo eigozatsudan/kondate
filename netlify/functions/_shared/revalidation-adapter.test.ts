@@ -138,6 +138,7 @@ function cleanSafety() {
         allergyStatus: "none",
         allergenIds: [],
         hasUnmappedCustomAllergy: false,
+        customAllergies: [],
         requiredSafetyConstraints: [],
         unsupportedDietStatus: "none",
         unsupportedDietKinds: [],

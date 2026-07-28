@@ -1086,6 +1086,64 @@ describe("validateGenerationPreflight", () => {
     });
   });
 
+  it("AGS-I1: does not treat 豆乳 as milk or 鶏もも as peach in preflight", () => {
+    const base = makeGenerationContext();
+    const soyPantryId = "74000000-0000-4000-8000-000000000099";
+    const context = {
+      ...base,
+      submission: {
+        ...base.submission,
+        mainIngredients: ["鶏もも肉"],
+        pantrySelections: [{ pantryItemId: soyPantryId, priority: "prefer_use" as const }],
+      },
+      pantryItems: [
+        {
+          id: soyPantryId,
+          userId,
+          name: "豆乳",
+          quantity: 1,
+          unit: "本",
+          expiresOn: null,
+          expirationType: null,
+          openedState: null,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        },
+      ],
+      safety: {
+        ...base.safety,
+        members: base.safety.members.map((member) => ({
+          ...member,
+          allergyStatus: "registered" as const,
+          allergenIds: ["milk", "peach"],
+        })),
+        allergenDictionary: {
+          ...base.safety.allergenDictionary,
+          aliases: [
+            {
+              allergenId: "milk",
+              alias: "乳",
+              normalizedAlias: "乳",
+              aliasKind: "direct" as const,
+              requiresLabelConfirmation: false,
+              dictionaryVersion: base.safety.dictionaryVersion,
+            },
+            {
+              allergenId: "peach",
+              alias: "もも",
+              normalizedAlias: "もも",
+              aliasKind: "direct" as const,
+              requiresLabelConfirmation: false,
+              dictionaryVersion: base.safety.dictionaryVersion,
+            },
+          ],
+        },
+      },
+    };
+
+    expect(validateGenerationPreflight(context, now)).toEqual({ ok: true });
+  });
+
   it("keeps conflict refs within the canonical schema bound", () => {
     const base = makeGenerationContext();
     const pantryItems = Array.from({ length: 25 }, (_, index) => ({

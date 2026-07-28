@@ -166,6 +166,7 @@ export function makeCurrentSafetyContext(
         allergyStatus: "none",
         allergenIds: [],
         hasUnmappedCustomAllergy: false,
+        customAllergies: [],
         requiredSafetyConstraints: [],
         unsupportedDietStatus: "none",
         unsupportedDietKinds: [],

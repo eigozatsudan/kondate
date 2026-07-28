@@ -13,6 +13,10 @@ export function createCurrentSafetyFingerprint(context: CurrentSafetyContext): s
         allergyStatus: member.allergyStatus,
         allergenIds: [...member.allergenIds].sort(),
         hasUnmappedCustomAllergy: member.hasUnmappedCustomAllergy,
+        customAllergies: member.customAllergies.map((entry) => ({
+          name: entry.name,
+          aliases: [...entry.aliases].sort(),
+        })),
         requiredSafetyConstraints: [...member.requiredSafetyConstraints].sort(),
         unsupportedDietStatus: member.unsupportedDietStatus,
         unsupportedDietKinds: [...member.unsupportedDietKinds].sort(),

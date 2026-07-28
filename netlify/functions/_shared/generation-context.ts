@@ -12,7 +12,7 @@ import {
   targetModes,
 } from "../../../shared/contracts/planner.js";
 import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
-import { normalizeFoodText } from "../../../shared/safety/allergens.js";
+import { foodTextContainsAlias, normalizeFoodText } from "../../../shared/safety/allergens.js";
 import type {
   GenerationContext,
   HouseholdGenerationContext,
@@ -372,10 +372,23 @@ export async function loadGenerationContext(
 
   const safety = await loadCurrentSafetyContext(admin, user.userId, submission.targetMemberIds);
   for (const member of safety.members) {
-    if (member.allergyStatus === "registered" && member.allergenIds.length === 0) {
+    // 標準アレルゲン未選択かつ評価可能なカスタムも無いときだけ allergen_missing
+    if (
+      member.allergyStatus === "registered" &&
+      member.allergenIds.length === 0 &&
+      member.customAllergies.length === 0
+    ) {
       throwGenerationFailure("allergen_missing");
     }
-    if (member.hasUnmappedCustomAllergy) throwGenerationFailure("unmapped_custom_allergy");
+    // AGS-I2: 評価可能なカスタムは preflight/validate で照合。空のときだけ unmapped。
+    if (
+      member.hasUnmappedCustomAllergy &&
+      member.customAllergies.every(
+        (entry) => entry.name.trim() === "" && entry.aliases.every((alias) => alias.trim() === ""),
+      )
+    ) {
+      throwGenerationFailure("unmapped_custom_allergy");
+    }
   }
   const targetMembers = orderedMembers.map((member, index) => ({
     householdMemberId: member.id,
@@ -432,9 +445,12 @@ export async function loadGenerationContext(
   return householdContext;
 }
 
+/**
+ * プリフライトのアレルゲン照合は post-validate と同じ foodTextContainsAlias を使う。
+ * 素の includes だと「乳⊂豆乳」「もも⊂鶏もも」が誤検知され、生成が永久に始まらない（AGS-I1）。
+ */
 function containsAlias(text: string, aliases: readonly { normalizedAlias: string }[]): boolean {
-  const normalized = normalizeFoodText(text);
-  return aliases.some((alias) => normalized.includes(normalizeFoodText(alias.normalizedAlias)));
+  return aliases.some((alias) => foodTextContainsAlias(text, alias.normalizedAlias));
 }
 
 export function validateGenerationPreflight(
@@ -475,10 +491,23 @@ export function validateGenerationPreflight(
     }
     for (const member of context.safety.members) {
       if (member.allergyStatus === "unconfirmed") issues.add("allergy_unconfirmed");
-      if (member.allergyStatus === "registered" && member.allergenIds.length === 0) {
+      if (
+        member.allergyStatus === "registered" &&
+        member.allergenIds.length === 0 &&
+        member.customAllergies.length === 0
+      ) {
         issues.add("allergen_missing");
       }
-      if (member.hasUnmappedCustomAllergy) issues.add("unmapped_custom_allergy");
+      // AGS-I2: 評価可能なカスタムは unmapped にしない
+      if (
+        member.hasUnmappedCustomAllergy &&
+        member.customAllergies.every(
+          (entry) =>
+            entry.name.trim() === "" && entry.aliases.every((alias) => alias.trim() === ""),
+        )
+      ) {
+        issues.add("unmapped_custom_allergy");
+      }
       if (member.unsupportedDietStatus === "unconfirmed") {
         issues.add("unsupported_diet_unconfirmed");
       }
@@ -505,6 +534,32 @@ export function validateGenerationPreflight(
         ) {
           issues.add("allergen_pantry_conflict");
         }
+      }
+      // カスタム名/別名と主材料・在庫の競合
+      const customNeedles = member.customAllergies.flatMap((entry) => [
+        entry.name,
+        ...entry.aliases,
+      ]);
+      if (
+        customNeedles.some((needle) =>
+          context.submission.mainIngredients.some((ingredient) =>
+            foodTextContainsAlias(ingredient, needle),
+          ),
+        )
+      ) {
+        issues.add("allergy_conflict");
+      }
+      if (
+        customNeedles.some((needle) =>
+          context.pantryItems.some((item) =>
+            context.submission.pantrySelections.some(
+              (selection) =>
+                selection.pantryItemId === item.id && foodTextContainsAlias(item.name, needle),
+            ),
+          ),
+        )
+      ) {
+        issues.add("allergen_pantry_conflict");
       }
     }
   } else {

@@ -189,6 +189,7 @@ function makeAdversarialGenerationContext(
         allergyStatus: "registered",
         allergenIds: registeredAllergenIds,
         hasUnmappedCustomAllergy: false,
+        customAllergies: [],
         requiredSafetyConstraints: [],
         unsupportedDietStatus: "none",
         unsupportedDietKinds: [],
@@ -616,6 +617,7 @@ describe("family canary matrix across idea and household generation boundaries",
           // カスタムアレルギー有無フラグ + snapshot 側に固有 canary を載せる
           // （requiredSafetyConstraints は closed union のため free-text canary を置けない）
           hasUnmappedCustomAllergy: true,
+          customAllergies: [],
           requiredSafetyConstraints: ["cut_small"],
         },
       ],
@@ -738,6 +740,7 @@ describe("family canary matrix across idea and household generation boundaries",
         allergyStatus: "registered" as const,
         allergenIds: [canaries.standardAllergy],
         hasUnmappedCustomAllergy: true,
+        customAllergies: [],
       })),
     });
 

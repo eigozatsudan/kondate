@@ -361,6 +361,8 @@ describe("current safety snapshot RPC boundary", () => {
     expect(result.context.members[1]).toMatchObject({
       allergenIds: ["egg"],
       hasUnmappedCustomAllergy: true,
+      // AGS-I2: 確認済みカスタムは name/aliases を評価用に載せる
+      customAllergies: [{ name: "独自食材", aliases: ["別名A", "別名B"] }],
     });
     expect(result.memberLabels).toEqual({ member_1: "大人", member_2: "子ども" });
     expect(Object.isFrozen(result.memberLabels)).toBe(true);

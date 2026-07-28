@@ -442,14 +442,25 @@ function validateHouseholdMenu(
         message: "アレルギー確認が必要です",
       });
     }
-    if (member.allergyStatus === "registered" && member.allergenIds.length === 0) {
+    if (
+      member.allergyStatus === "registered" &&
+      member.allergenIds.length === 0 &&
+      member.customAllergies.length === 0
+    ) {
       issues.push({
         code: "allergen_missing",
         path: member.anonymousRef,
         message: "登録アレルゲンを選んでください",
       });
     }
-    if (member.hasUnmappedCustomAllergy) {
+    // AGS-I2: 確認済みカスタムは evaluateAllergens で hard match 済み。
+    // name/aliases が空で評価不能なときだけ unmapped として拒否する。
+    if (
+      member.hasUnmappedCustomAllergy &&
+      member.customAllergies.every(
+        (entry) => entry.name.trim() === "" && entry.aliases.every((alias) => alias.trim() === ""),
+      )
+    ) {
       issues.push({
         code: "unmapped_custom_allergy",
         path: member.anonymousRef,
