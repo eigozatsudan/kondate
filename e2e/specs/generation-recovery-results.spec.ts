@@ -551,10 +551,11 @@ test("offers only in-range servings so an out-of-range draft cannot be composed"
   await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
 });
 
-// --- 5-route smoke matrix（Task 6 Step 13） ---
+// --- 5-route smoke matrix（Task 6 Step 13 / Task 9 idea 許可） ---
 // skippedかつ家族0人の利用者が/pantry, /history, /shopping, /settings,
 // /emergency-menusを直接開いた場合、onboarding redirectなし・page errorなし・
-// 理解可能なempty state・家族安全requestが0件であることを固定する。
+// 理解可能なempty state・禁止 side-effect が0件であることを固定する。
+// idea 下書き時の GET /api/emergency-menus?targetMode=idea は許可する。
 
 test.describe("5-route smoke matrix for a skipped user with zero household members", () => {
   test("visits pantry, history, shopping, settings, and emergency-menus without onboarding redirect or family-safety activity", async ({
@@ -572,7 +573,8 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     });
     const routeNames = ["pantry", "history", "shopping", "settings", "emergency-menus"] as const;
     type RouteName = (typeof routeNames)[number];
-    const familySafetyRequests: Record<RouteName, string[]> = {
+    // 禁止 side-effect のみ route 別に記録（idea emergency API は許可のため含めない）
+    const disallowedSafetySideEffectRequests: Record<RouteName, string[]> = {
       pantry: [],
       history: [],
       shopping: [],
@@ -581,17 +583,38 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     };
     let activeRoute: RouteName | null = null;
     page.on("request", (request) => {
+      if (activeRoute === null) return;
       const url = new URL(request.url());
-      // household_membersのreadは/settingsが登録済み家族を表示するための正当な
-      // 画面読込であり、献立の家族安全再検証ではない。ここではStep 13が禁止する
-      // safety action（再検証・再生成・shopping・緊急献立）だけをroute別に記録する。
-      if (
-        url.pathname === "/api/emergency-menus" ||
-        url.pathname.startsWith("/api/shopping-lists/") ||
-        url.pathname === "/api/generations/dish" ||
-        /^\/api\/menus\/[^/]+\/revalidate$/u.test(url.pathname)
-      ) {
-        if (activeRoute !== null) familySafetyRequests[activeRoute].push(url.pathname);
+      const path = url.pathname;
+
+      // 許可: GET /api/emergency-menus?targetMode=idea
+      // 禁止（idea 訪問中 activeRoute==="emergency-menus" でも 0 件）:
+      //   - household emergency API（targetMode≠idea）
+      //   - shopping / generation / revalidate
+      //   - get_current_safety_snapshot RPC
+      //   - PostgREST household_members / member_allergies（settings 以外）
+      const isEmergencyMenus = path === "/api/emergency-menus";
+      const isIdeaEmergency = isEmergencyMenus && url.searchParams.get("targetMode") === "idea";
+
+      const isSafetyRpc =
+        path.endsWith("/rest/v1/rpc/get_current_safety_snapshot") ||
+        path.includes("/rpc/get_current_safety_snapshot");
+      const isHouseholdMembersRead =
+        path.includes("/rest/v1/household_members") || path.endsWith("/household_members");
+      const isMemberAllergiesRead =
+        path.includes("/rest/v1/member_allergies") || path.endsWith("/member_allergies");
+
+      const isDisallowedSideEffect =
+        (isEmergencyMenus && !isIdeaEmergency) ||
+        path.startsWith("/api/shopping-lists/") ||
+        path === "/api/generations/dish" ||
+        /^\/api\/menus\/[^/]+\/revalidate$/u.test(path) ||
+        isSafetyRpc ||
+        // emergency-menus 訪問中の家族表読込は禁止（settings は activeRoute が settings のときだけ許容）
+        (activeRoute === "emergency-menus" && (isHouseholdMembersRead || isMemberAllergiesRead));
+
+      if (isDisallowedSideEffect) {
+        disallowedSafetySideEffectRequests[activeRoute].push(path + url.search);
       }
     });
 
@@ -620,6 +643,7 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
 
     // /emergency-menusは下書きなしとidea下書きの両方を検証する。
     // まず下書きなし（このユーザーはまだplanner下書きを保存していない）。
+    // draft-none では emergency API も呼ばず empty のまま。
     activeRoute = "emergency-menus";
     await page.goto("/emergency-menus");
     await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
@@ -629,7 +653,7 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     ).toBeVisible();
     // idea下書き（家族条件を持たない）を作ってから再訪する。/planner自身の
     // household_members取得は家族安全actionではないため、route listenerを
-    // 外さずに記録対象外として扱う。
+    // 外さずに記録対象外として扱う（activeRoute = null）。
     activeRoute = null;
     await page.goto("/planner");
     await page.getByRole("radio", { name: "夕食" }).check();
@@ -653,16 +677,24 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     await page.goto("/emergency-menus");
     await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
     await expect(page.getByRole("heading", { name: "15分緊急献立" })).toBeVisible();
-    // C-I6: idea 下書き時はゼロメンバー文言ではなく idea モード専用の案内
+    // idea 許可: 旧ブロック文言は出さず、idea 開示 intro または候補 chrome を示す
     await expect(
       page.getByText(
         "アイデアモードでは緊急献立を表示できません。献立画面で「家族向け」に切り替えてください。",
       ),
+    ).toHaveCount(0);
+    // intro は loading 中も role=status で出る。候補が載れば「候補 1」も見える。
+    await expect(
+      page.getByText(
+        "個人向けの固定候補です。家族のアレルギー・年齢条件は適用していません。AI利用回数は消費しません。調理前に原材料表示と家庭内の混入を確認してください。",
+      ),
     ).toBeVisible();
+    // 豆腐 main で idea 夕食 fixture が載る設計 coverage。候補 chrome も非空であること。
+    await expect(page.getByText("候補 1", { exact: true })).toBeVisible();
 
     expect(pageErrors).toHaveLength(0);
     for (const routeName of routeNames) {
-      expect(familySafetyRequests[routeName]).toEqual([]);
+      expect(disallowedSafetySideEffectRequests[routeName]).toEqual([]);
     }
   });
 });

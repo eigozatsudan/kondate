@@ -646,7 +646,11 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 });
 
-test("keeps an incompatible current allergy as an explicit no-candidate result", async ({
+// 鶏アレルギーのみでは catalog 上夕食に ≥1 候補が残る（設計 coverage）。
+// 旧テストは「条件に合う緊急献立がありません」empty を期待していたが、
+// fixture 拡充後は非鶏候補へフォールバックするため success chrome を固定する。
+// 注意: page title「15分緊急献立」の「分」単独マッチは false green のため使わない。
+test("keeps chicken-allergic household on non-chicken emergency candidates without relaxing copy", async ({
   completedOnboardingPage: page,
 }) => {
   await page.setViewportSize({ width: 320, height: 780 });
@@ -666,9 +670,15 @@ test("keeps an incompatible current allergy as an explicit no-candidate result",
   await advanceToReviewWithHousehold(page, "夕食");
   // wizardからは緊急献立起動buttonが削除されているため、直接/emergency-menusを開く。
   await page.goto("/emergency-menus");
-  await expect(page.getByText("条件に合う緊急献立がありません")).toBeVisible();
-  await expect(page.getByText("条件を緩めず、候補を表示していません。")).toBeVisible();
-  await expect(page.getByText(/条件を緩め/u)).toHaveCount(1);
+  // 鶏のみでは empty にならない（main 食材が鶏肉でも safety_only で非鶏候補が載る）
+  await expect(page.getByText("条件に合う緊急献立がありません")).toHaveCount(0);
+  await expect(
+    page.getByText("いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません"),
+  ).toHaveCount(0);
+  // 非空 chrome のみ（page 実装: <p class="emergency-candidate-number">候補 {n}</p>）
+  // 「/分/」や title の「15分」は 0 候補でも見えるため false green — exact「候補 1」を使う
+  await expect(page.getByText("候補 1", { exact: true })).toBeVisible();
+  await expect(page.locator("article.emergency-candidate").first()).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
