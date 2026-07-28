@@ -50,9 +50,101 @@ it("完全な緊急献立レスポンスを検証する", () => {
     ],
     message: "AIを使わない15分緊急献立です",
     consumesAiQuota: false,
+    path: "household",
+    matchMode: "none",
+    emptyReason: null,
   };
 
   expect(emergencyMenusDataSchema.parse(response)).toEqual(response);
+});
+
+it("rejects missing path/matchMode/emptyReason on strict schema", () => {
+  const base = {
+    fixtureVersion: "2026-07-28.v1",
+    candidates: [],
+    message: "条件に合う緊急献立がありません",
+    consumesAiQuota: false as const,
+    // intentionally omit path / matchMode / emptyReason
+  };
+  expect(() => emergencyMenusDataSchema.parse(base)).toThrow();
+});
+
+it("rejects idea path with current_safety_unavailable", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "idea",
+      matchMode: null,
+      emptyReason: "current_safety_unavailable",
+    }),
+  ).toThrow();
+});
+
+it("accepts empty household with no_matching_fixture", () => {
+  expect(
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "household",
+      matchMode: null,
+      emptyReason: "no_matching_fixture",
+    }).emptyReason,
+  ).toBe("no_matching_fixture");
+});
+
+// superRefine 不変条件（欠落フィールド以外）
+it("rejects non-empty candidates when emptyReason is set", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [
+        {
+          menu: makeValidatedMenu(),
+          memberLabels: {},
+          allergenLabels: {},
+          labelWarnings: [],
+        },
+      ],
+      message: "AIを使わない15分緊急献立です",
+      consumesAiQuota: false,
+      path: "household",
+      matchMode: "none",
+      emptyReason: "no_matching_fixture",
+    }),
+  ).toThrow();
+});
+
+it("rejects empty candidates when matchMode is non-null", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "household",
+      matchMode: "none",
+      emptyReason: "no_matching_fixture",
+    }),
+  ).toThrow();
+});
+
+it("rejects idea empty with emptyReason null", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "idea",
+      matchMode: null,
+      emptyReason: null,
+    }),
+  ).toThrow();
 });
 
 it("サーバー専用モジュールへ依存しない", async () => {

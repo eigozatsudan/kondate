@@ -95,14 +95,55 @@ export const emergencyMenuCandidateSchema = z
     }
   });
 
+export const emergencyMatchModes = ["none", "main_ingredient", "safety_only"] as const;
+export const emergencyEmptyReasons = [
+  "current_safety_unavailable",
+  "no_matching_fixture",
+] as const;
+export const emergencyPaths = ["household", "idea"] as const;
+
+export type EmergencyMatchMode = (typeof emergencyMatchModes)[number];
+export type EmergencyEmptyReason = (typeof emergencyEmptyReasons)[number];
+export type EmergencyPath = (typeof emergencyPaths)[number];
+
 export const emergencyMenusDataSchema = z
   .object({
     fixtureVersion: z.string().trim().min(1),
     candidates: z.array(emergencyMenuCandidateSchema),
     message: z.string().trim().min(1),
     consumesAiQuota: z.literal(false),
+    path: z.enum(emergencyPaths),
+    matchMode: z.enum(emergencyMatchModes).nullable(),
+    emptyReason: z.enum(emergencyEmptyReasons).nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const nonEmpty = value.candidates.length > 0;
+    if (nonEmpty) {
+      if (value.emptyReason !== null || value.matchMode === null) {
+        context.addIssue({
+          code: "custom",
+          message: "非空候補では emptyReason=null かつ matchMode 必須",
+        });
+      }
+    } else if (value.emptyReason === null || value.matchMode !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "空候補では emptyReason 必須かつ matchMode=null",
+      });
+    }
+    if (
+      value.path === "idea" &&
+      value.emptyReason !== null &&
+      value.emptyReason !== "no_matching_fixture"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["emptyReason"],
+        message: "idea の emptyReason は no_matching_fixture のみ",
+      });
+    }
+  });
 
 export type EmergencyLabelWarning = z.infer<typeof emergencyLabelWarningSchema>;
 export type EmergencyMenuCandidate = z.infer<typeof emergencyMenuCandidateSchema>;
