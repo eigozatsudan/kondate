@@ -22,9 +22,11 @@ import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import {
   createPantryItem,
   deletePantryItem,
+  listPantryItems,
   pantryKeys,
   updatePantryItem,
 } from "@/features/pantry/pantry-api";
+import { listExpiredPantryForRegeneration } from "../model/expired-pantry-for-regen";
 import { createPlannerDraftFromMenu } from "@/features/planner/model/draft-from-menu";
 import { getPlannerDraft, plannerKeys, savePlannerDraft } from "@/features/planner/planner-api";
 import {
@@ -167,6 +169,16 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
   const navigate = useNavigate();
   const usage = useUsageToday(userId ?? "");
   const usageView = usageViewFromQuery(usage);
+  const pantryQuery = useQuery({
+    queryKey: pantryKeys.list(userId ?? "missing"),
+    queryFn: () => listPantryItems(getBrowserSupabaseClient(), userId ?? ""),
+    enabled: userId !== undefined,
+  });
+  const expiredPantryItems = useMemo(
+    () =>
+      listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
+    [pantryQuery.data, result.sourceSubmission],
+  );
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId,
@@ -388,6 +400,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         <RegenerationSheet
           targetMode="idea"
           usage={usageView}
+          expiredPantryItems={expiredPantryItems}
           onSubmit={onSubmitReason}
           onCancel={() => {
             setSheetMode(null);
@@ -431,6 +444,16 @@ function HouseholdDetailBody({
 
   const usage = useUsageToday(userId ?? "");
   const usageView = usageViewFromQuery(usage);
+  const pantryQuery = useQuery({
+    queryKey: pantryKeys.list(userId ?? "missing"),
+    queryFn: () => listPantryItems(getBrowserSupabaseClient(), userId ?? ""),
+    enabled: userId !== undefined,
+  });
+  const expiredPantryItems = useMemo(
+    () =>
+      listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
+    [pantryQuery.data, result.sourceSubmission],
+  );
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId,
@@ -896,6 +919,7 @@ function HouseholdDetailBody({
           targetMode="household"
           usage={usageView}
           actionsEnabled={actionsEnabled}
+          expiredPantryItems={expiredPantryItems}
           onSubmit={onSubmitReason}
           onCancel={() => {
             setSheetMode(null);

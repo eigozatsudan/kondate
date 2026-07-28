@@ -22,10 +22,9 @@ import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
 
 /**
- * HIST-I1: 再生成経路では期限切れ在庫の確認 UI が無い。
- * - クライアントが確認を送った分はそのまま検証
- * - 未確認の期限切れは選択から外し、空の checks で validate を通す
- * （期限切れを黙って使うことも、UI 無しで永久 422 することも避ける）
+ * HIST-I1 / design §269: 全体・1品再生成でも期限経過食材は未確認へ戻し、
+ * 当日の一回限り確認（expiredPantryConfirmations）を必須とする。
+ * 未確認の期限切れを黙って落とさない（strip 禁止）— 確認が無ければ validate が 422。
  */
 export function applyRegenerationPantryExpiryPolicy(
   submission: PlannerSubmission,
@@ -37,26 +36,19 @@ export function applyRegenerationPantryExpiryPolicy(
   expiredPantryChecks: readonly ExpiredPantryConfirmation[];
 } {
   const today = getJstDateKey(now);
-  const confirmedIds = new Set(expiredPantryConfirmations.map((check) => check.pantryItemId));
   const expiredSelectedIds = submission.pantrySelections
     .filter((selection) => {
       const item = pantryItems.find((candidate) => candidate.id === selection.pantryItemId);
       return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
     })
     .map((selection) => selection.pantryItemId);
-  const unconfirmedExpired = new Set(expiredSelectedIds.filter((id) => !confirmedIds.has(id)));
-  const liveSelections = submission.pantrySelections.filter(
-    (selection) => !unconfirmedExpired.has(selection.pantryItemId),
-  );
-  const liveSubmission = { ...submission, pantrySelections: liveSelections };
-  const remainingExpired = expiredSelectedIds.filter((id) => confirmedIds.has(id));
   const expiredPantryChecks = validateTransientChecks(
-    expiredPantryConfirmations.filter((check) => remainingExpired.includes(check.pantryItemId)),
-    liveSelections.map((item) => item.pantryItemId),
-    remainingExpired,
+    expiredPantryConfirmations,
+    submission.pantrySelections.map((item) => item.pantryItemId),
+    expiredSelectedIds,
     now,
   );
-  return { submission: liveSubmission, expiredPantryChecks };
+  return { submission, expiredPantryChecks };
 }
 
 /**

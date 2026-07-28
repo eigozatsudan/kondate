@@ -1,8 +1,10 @@
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { changeReasons } from "@shared/contracts/domain";
+import type { ExpiredPantryConfirmation } from "@shared/contracts/generation";
 import type { TargetMode } from "@shared/contracts/planner";
+import type { ExpiredPantryForRegen } from "../model/expired-pantry-for-regen";
 
 const allReasons = [
   ["simpler", "もっと簡単に"],
@@ -35,7 +37,9 @@ const regenerationReasonSchema = z
     }
   });
 
-export type RegenerationReasonInput = z.infer<typeof regenerationReasonSchema>;
+export type RegenerationReasonInput = z.infer<typeof regenerationReasonSchema> & {
+  expiredPantryConfirmations: readonly ExpiredPantryConfirmation[];
+};
 
 export type RegenerationUsageView = {
   /** null = 未取得・失敗。0 を嘘で出さない（D-I14） */
@@ -53,6 +57,11 @@ export type RegenerationSheetProps = {
   usage: RegenerationUsageView;
   /** 安全再検証中など、送信不可のとき true */
   actionsEnabled?: boolean;
+  /**
+   * design §269: 元条件で選んでいた期限経過在庫。再生成前に実物確認チェックが必要。
+   * 空なら確認 UI を出さない。
+   */
+  expiredPantryItems?: readonly ExpiredPantryForRegen[];
   onSubmit: (value: RegenerationReasonInput) => Promise<void>;
   onCancel: () => void;
 };
@@ -76,6 +85,7 @@ export function RegenerationSheet({
   targetMode,
   usage,
   actionsEnabled = true,
+  expiredPantryItems = [],
   onSubmit,
   onCancel,
 }: RegenerationSheetProps) {
@@ -88,6 +98,11 @@ export function RegenerationSheet({
     },
   });
   const selectedReason = form.watch("changeReason");
+  // design §269: 期限経過在庫は再生成のたびに未確認へ戻し、チェックで今回確認する
+  const [confirmedExpiredIds, setConfirmedExpiredIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [expiredConfirmError, setExpiredConfirmError] = useState<string | null>(null);
   // idea は年齢適合を保証しないため「子どもが食べやすく」を選択肢から外す
   const reasons =
     targetMode === "idea" ? allReasons.filter(([value]) => value !== "child_friendly") : allReasons;
@@ -136,8 +151,22 @@ export function RegenerationSheet({
       form.setError("changeReason", { message: "理由を選んでください" });
       return;
     }
+    if (
+      expiredPantryItems.length > 0 &&
+      expiredPantryItems.some((item) => !confirmedExpiredIds.has(item.pantryItemId))
+    ) {
+      setExpiredConfirmError("期限を過ぎた食材は、実物の状態を確認してチェックしてください。");
+      return;
+    }
+    setExpiredConfirmError(null);
+    const expiredPantryConfirmations: readonly ExpiredPantryConfirmation[] = expiredPantryItems.map(
+      (item) => ({
+        pantryItemId: item.pantryItemId,
+        checkedAt: new Date().toISOString(),
+      }),
+    );
     try {
-      await onSubmit(parsed.data);
+      await onSubmit({ ...parsed.data, expiredPantryConfirmations });
     } catch (error) {
       // D-M7: revalidation_required は unhandled rejection にせず利用者へ示す
       const message =
@@ -149,12 +178,16 @@ export function RegenerationSheet({
   });
 
   const successBlocked = usage.successRemaining === 0;
+  const expiredUnconfirmed =
+    expiredPantryItems.length > 0 &&
+    expiredPantryItems.some((item) => !confirmedExpiredIds.has(item.pantryItemId));
   const submitDisabled =
     form.formState.isSubmitting ||
     !actionsEnabled ||
     usage.loading ||
     usage.error ||
-    successBlocked;
+    successBlocked ||
+    expiredUnconfirmed;
 
   return (
     <dialog
@@ -198,6 +231,37 @@ export function RegenerationSheet({
               </span>
             )}
           </label>
+        ) : null}
+        {expiredPantryItems.length > 0 ? (
+          <fieldset className="stack gap-2">
+            <legend className="font-semibold">期限を過ぎた食材の確認</legend>
+            <p className="type-small">
+              入力した期限を過ぎています。実物の状態を確認できた食材だけチェックしてください（可食性の保証ではありません）。
+            </p>
+            {expiredPantryItems.map((item) => (
+              <label key={item.pantryItemId} className="flex min-h-11 items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={confirmedExpiredIds.has(item.pantryItemId)}
+                  onChange={(event) => {
+                    setConfirmedExpiredIds((current) => {
+                      const next = new Set(current);
+                      if (event.target.checked) next.add(item.pantryItemId);
+                      else next.delete(item.pantryItemId);
+                      return next;
+                    });
+                    setExpiredConfirmError(null);
+                  }}
+                />
+                <span>{item.name}</span>
+              </label>
+            ))}
+            {expiredConfirmError !== null ? (
+              <span role="alert" className="error-message">
+                {expiredConfirmError}
+              </span>
+            ) : null}
+          </fieldset>
         ) : null}
         {usage.loading ? (
           <p role="status">本日の作成回数を確認しています…</p>

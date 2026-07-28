@@ -90,6 +90,7 @@ describe("RegenerationSheet", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       changeReason: "simpler",
       changeReasonCustom: null,
+      expiredPantryConfirmations: [],
     });
   });
 
@@ -104,7 +105,36 @@ describe("RegenerationSheet", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       changeReason: "custom",
       changeReasonCustom: "辛さを抑えて",
+      expiredPantryConfirmations: [],
     });
+  });
+
+  it("HIST-I1 / §269: requires confirm checkboxes for expired pantry before submit", async () => {
+    const onSubmit = vi.fn(() => Promise.resolve());
+    render(
+      <RegenerationSheet
+        targetMode="household"
+        usage={usageView(3)}
+        expiredPantryItems={[{ pantryItemId: "p1", name: "牛乳" }]}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("期限を過ぎた食材の確認")).toBeVisible();
+    expect(screen.getByRole("button", { name: "別案を作る" })).toBeDisabled();
+    await userEvent.click(screen.getByLabelText("もっと簡単に"));
+    expect(screen.getByRole("button", { name: "別案を作る" })).toBeDisabled();
+    await userEvent.click(screen.getByLabelText("牛乳"));
+    expect(screen.getByRole("button", { name: "別案を作る" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "別案を作る" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changeReason: "simpler",
+        expiredPantryConfirmations: [
+          expect.objectContaining({ pantryItemId: "p1", checkedAt: expect.any(String) }),
+        ],
+      }),
+    );
   });
 
   it("hides child_friendly for idea menus", () => {

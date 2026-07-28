@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router";
 import { privacyNoticeVersion, type ChangeReason } from "@shared/contracts/domain";
+import type { ExpiredPantryConfirmation } from "@shared/contracts/generation";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   createPendingGeneration,
@@ -13,6 +14,8 @@ import type { RevalidationPhaseName } from "./use-menu-revalidation";
 export type RegenerationReasonInput = {
   changeReason: ChangeReason;
   changeReasonCustom: string | null;
+  /** design §269: 再生成では元の期限確認を引き継がず、今回集めた確認だけを載せる */
+  expiredPantryConfirmations?: readonly ExpiredPantryConfirmation[];
 };
 
 /**
@@ -78,8 +81,8 @@ export function useRegeneration(input: UseRegenerationInput) {
             changeReasonCustom,
             // 再生成も現行 privacy 説明への同意版を wire に載せる（server が DB と照合）
             privacyNoticeVersion,
-            // 元献立の期限確認は引き継がない。今回新たに集めた分だけを載せる。
-            expiredPantryConfirmations: [],
+            // design §269: 元献立の期限確認は引き継がない。シートで集めた今回分だけ。
+            expiredPantryConfirmations: [...(reason.expiredPantryConfirmations ?? [])],
           },
         },
         userId,
@@ -114,7 +117,7 @@ export function useRegeneration(input: UseRegenerationInput) {
             changeReasonCustom,
             // 再生成も現行 privacy 説明への同意版を wire に載せる（server が DB と照合）
             privacyNoticeVersion,
-            expiredPantryConfirmations: [],
+            expiredPantryConfirmations: [...(reason.expiredPantryConfirmations ?? [])],
           },
         },
         userId,
