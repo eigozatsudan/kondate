@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(10);
+select plan(11);
 
 select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',
@@ -40,6 +40,19 @@ select throws_ok(
   '23514',
   'custom_allergy_matches_standard',
   'a direct alias cannot be stored as a custom allergy'
+);
+-- F-SAF-001: カタカナ「タマゴ」も標準卵 alias と同一正規化になること
+select throws_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      'タマゴ',
+      array[]::text[]
+    )
+  $sql$,
+  '23514',
+  'custom_allergy_matches_standard',
+  'katakana タマゴ must match standard egg alias after kana fold'
 );
 select throws_ok(
   $sql$
