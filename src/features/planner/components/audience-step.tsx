@@ -44,8 +44,25 @@ export function AudienceStep({
 }: AudienceStepProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const servingsSelectRef = useRef<HTMLSelectElement>(null);
+  const targetModeGroupRef = useRef<HTMLDivElement>(null);
+  const membersGroupRef = useRef<HTMLDivElement>(null);
+  // GP-I3: 親が fieldErrors を載せて step を戻したときは見出しではなく無効フィールドへ
   useEffect(() => {
+    if (fieldErrors?.targetMode) {
+      targetModeGroupRef.current?.querySelector<HTMLElement>("input,button,[tabindex]")?.focus();
+      return;
+    }
+    if (fieldErrors?.targetMemberIds) {
+      membersGroupRef.current?.querySelector<HTMLElement>("input,button,[tabindex]")?.focus();
+      return;
+    }
+    if (fieldErrors?.servings) {
+      servingsSelectRef.current?.focus();
+      return;
+    }
     headingRef.current?.focus();
+    // マウント時のみ。fieldErrors の後続更新で連打 focus しない
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount focus only
   }, []);
   // Plan 2: blockedReason があるメンバーは「利用可能」ではない（allergy/食事制限未完了など）。
   const selectableMembers = eligibleMembers.filter((member) => member.blockedReason === null);
@@ -115,6 +132,7 @@ export function AudienceStep({
           ) : null,
         )}
       <div
+        ref={targetModeGroupRef}
         className="wizard-option-list"
         role="radiogroup"
         aria-describedby={fieldErrors?.targetMode != null ? targetModeErrorId : undefined}
@@ -170,6 +188,7 @@ export function AudienceStep({
       )}
       {value.targetMode === "household" && (
         <div
+          ref={membersGroupRef}
           className="stack"
           aria-describedby={fieldErrors?.targetMemberIds != null ? membersErrorId : undefined}
         >
