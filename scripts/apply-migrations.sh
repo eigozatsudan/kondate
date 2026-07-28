@@ -6,6 +6,8 @@
 set -euo pipefail
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
+echo "migrate: starting against ${DATABASE_URL%%@*}@***" >&2
+
 # 履歴テーブルが無ければ作成する（初回実行時向け）。
 psql "$DATABASE_URL" --set ON_ERROR_STOP=1 <<'SQL'
 create schema if not exists supabase_migrations;
@@ -28,12 +30,20 @@ for file in /workspace/supabase/migrations/*.sql; do
   if [[ "$applied" == "1" ]]; then
     continue
   fi
+  echo "migrate: applying ${filename}" >&2
   # マイグレーション本体と履歴INSERTを1トランザクションにまとめ、
   # 途中失敗時に部分適用のまま残らないようにする。
-  {
+  if ! {
     echo "begin;"
     cat "$file"
     printf "\ninsert into supabase_migrations.schema_migrations(version, name) values ('%s', '%s');\n" "$version" "$name"
     echo "commit;"
-  } | psql "$DATABASE_URL" --set ON_ERROR_STOP=1
+  } | psql "$DATABASE_URL" --set ON_ERROR_STOP=1; then
+    status=$?
+    echo "migrate: FAILED on ${filename} (psql exit ${status})" >&2
+    exit "$status"
+  fi
+  echo "migrate: applied ${filename}" >&2
 done
+
+echo "migrate: all pending migrations applied" >&2

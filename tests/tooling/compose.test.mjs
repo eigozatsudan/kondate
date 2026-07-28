@@ -129,6 +129,20 @@ test("serializes project migrations after GoTrue migrations", async () => {
   assert.match(dependsOn, /^ {6}auth:\n {8}condition: service_healthy$/mu);
 });
 
+test("defers catalog consumers until project migrations finish", async () => {
+  // rest/meta/realtime/storage/pooler が migrate と並走すると DDL 競合で exit 3 になり得る
+  const override = await readFile("infra/supabase.override.yaml", "utf8");
+  for (const service of ["rest", "meta", "realtime", "storage", "supavisor"]) {
+    const body = extractComposeServiceBody(override, service);
+    assert.ok(body, `${service} override is missing`);
+    assert.match(
+      body,
+      /^ {4}depends_on:\n(?: {6}.+\n)+ {6}migrate:\n {8}condition: service_completed_successfully/mu,
+      `${service} must wait for migrate completion`,
+    );
+  }
+});
+
 test("derives the Compose project name from the checkout directory", async () => {
   const [compose, tooling] = await Promise.all([
     readFile("compose.yaml", "utf8"),

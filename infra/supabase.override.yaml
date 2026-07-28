@@ -6,10 +6,46 @@ services:
     ports: !override
       - "127.0.0.1:8000:8000"
       - "127.0.0.1:8443:8443"
+  # migrate（親 compose）完了前に catalog/REST/Storage が触ると、
+  # コールドスタートの DDL と競合して psql ON_ERROR_STOP が exit 3 になることがある。
+  # auth だけは GoTrue が auth schema を先に用意する必要があるため migrate の前に立てる。
+  rest:
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+  meta:
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+  realtime:
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+  storage:
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
   supavisor:
     ports: !override
       - "127.0.0.1:5432:5432"
       - "127.0.0.1:6543:6543"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # Supavisor image が起動時に 100000 へ引き上げるため、Docker 側の上限も一致させる。
     ulimits:
       nofile:
