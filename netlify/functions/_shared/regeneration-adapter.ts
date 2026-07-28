@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { ExpiredPantryConfirmation } from "../../../shared/contracts/generation.js";
+import type { PantryItem } from "../../../shared/contracts/pantry.js";
 import {
   plannerSubmissionSchema,
   type PlannerSubmission,
@@ -18,6 +20,44 @@ import { buildStoredGenerationContext } from "./revalidation-adapter.js";
 import { loadStoredMenu, type StoredMenuAggregate } from "./stored-menu-loader.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
+
+/**
+ * HIST-I1: 再生成経路では期限切れ在庫の確認 UI が無い。
+ * - クライアントが確認を送った分はそのまま検証
+ * - 未確認の期限切れは選択から外し、空の checks で validate を通す
+ * （期限切れを黙って使うことも、UI 無しで永久 422 することも避ける）
+ */
+export function applyRegenerationPantryExpiryPolicy(
+  submission: PlannerSubmission,
+  pantryItems: readonly PantryItem[],
+  expiredPantryConfirmations: readonly ExpiredPantryConfirmation[],
+  now: Date,
+): {
+  submission: PlannerSubmission;
+  expiredPantryChecks: readonly ExpiredPantryConfirmation[];
+} {
+  const today = getJstDateKey(now);
+  const confirmedIds = new Set(expiredPantryConfirmations.map((check) => check.pantryItemId));
+  const expiredSelectedIds = submission.pantrySelections
+    .filter((selection) => {
+      const item = pantryItems.find((candidate) => candidate.id === selection.pantryItemId);
+      return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
+    })
+    .map((selection) => selection.pantryItemId);
+  const unconfirmedExpired = new Set(expiredSelectedIds.filter((id) => !confirmedIds.has(id)));
+  const liveSelections = submission.pantrySelections.filter(
+    (selection) => !unconfirmedExpired.has(selection.pantryItemId),
+  );
+  const liveSubmission = { ...submission, pantrySelections: liveSelections };
+  const remainingExpired = expiredSelectedIds.filter((id) => confirmedIds.has(id));
+  const expiredPantryChecks = validateTransientChecks(
+    expiredPantryConfirmations.filter((check) => remainingExpired.includes(check.pantryItemId)),
+    liveSelections.map((item) => item.pantryItemId),
+    remainingExpired,
+    now,
+  );
+  return { submission: liveSubmission, expiredPantryChecks };
+}
 
 /**
  * 永続 preference_snapshot は { submission, memberPreferences } 形。
@@ -163,19 +203,16 @@ export function createRegenerationLoaderDeps(
       // idea branch: current household safety と buildStoredGenerationContext を呼ばない
       // submission.targetMode は上で authority と一致済み
       const pantryItems = await loadPantryForSubmission(input.user, submission, []);
-      const today = getJstDateKey(input.now);
-      const expiredSelectedIds = submission.pantrySelections
-        .filter((selection) => {
-          const item = pantryItems.find((candidate) => candidate.id === selection.pantryItemId);
-          return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
-        })
-        .map((selection) => selection.pantryItemId);
-      const expiredPantryChecks = validateTransientChecks(
-        input.expiredPantryConfirmations,
-        submission.pantrySelections.map((item) => item.pantryItemId),
-        expiredSelectedIds,
-        input.now,
-      );
+      // HIST-I1: 再生成 UI に期限確認ダイアログが無い。期限切れ在庫は選択から外して続行する
+      // （期限切れを使って生成する／永久に 422 するより安全な既定）。
+      const { submission: liveSubmission, expiredPantryChecks } =
+        applyRegenerationPantryExpiryPolicy(
+          submission,
+          pantryItems,
+          input.expiredPantryConfirmations,
+          input.now,
+        );
+      submission = liveSubmission;
       const ideaContext: IdeaGenerationContext = {
         targetMode: "idea",
         submission: submission as Extract<PlannerSubmission, { targetMode: "idea" }>,
@@ -230,19 +267,14 @@ export function createRegenerationLoaderDeps(
     }
 
     const pantryItems = await loadPantryForSubmission(input.user, submission, base.pantryItems);
-    const today = getJstDateKey(input.now);
-    const expiredSelectedIds = submission.pantrySelections
-      .filter((selection) => {
-        const item = pantryItems.find((candidate) => candidate.id === selection.pantryItemId);
-        return item !== undefined && item.expiresOn !== null && item.expiresOn < today;
-      })
-      .map((selection) => selection.pantryItemId);
-    const expiredPantryChecks = validateTransientChecks(
+    // HIST-I1: 再生成 UI に期限確認が無いため、期限切れ選択を落として続行する
+    const { submission: liveSubmission, expiredPantryChecks } = applyRegenerationPantryExpiryPolicy(
+      submission,
+      pantryItems,
       input.expiredPantryConfirmations,
-      submission.pantrySelections.map((item) => item.pantryItemId),
-      expiredSelectedIds,
       input.now,
     );
+    submission = liveSubmission;
 
     // buildStoredGenerationContext は household 専用の non-null safety を返す
     const householdContext: HouseholdGenerationContext = {

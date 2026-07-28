@@ -54,12 +54,29 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
           });
           return;
         }
-        stopWaiting = startAuthContinuationCompletionWait({
+        // AUTH-01: 他タブ完了待ちに加え、コールバック所有者タブ自身が claim を再試行する。
+        // deposit 後の 429/5xx/network で waiting に入った単独タブが TTL まで固まるのを防ぐ。
+        // 間隔は recovery と同じ 5s（claim IP 上限 20/60s を超えない）。
+        let claimRetryFinished = false;
+        // DOM setInterval は number を返す（Node Timeout 型との混同を避ける）
+        let claimRetryTimer: number | undefined;
+        const stopClaimRetry = (): void => {
+          claimRetryFinished = true;
+          if (claimRetryTimer !== undefined) {
+            window.clearInterval(claimRetryTimer);
+            claimRetryTimer = undefined;
+          }
+        };
+        const stopCompletionWait = startAuthContinuationCompletionWait({
           flowId: next.flowId,
           startedAt,
           ttlMs: ttlMs ?? getPublicEnv().authContinuationTtlMs,
-          onComplete: (completion) => void navigate(completion.returnTo, { replace: true }),
+          onComplete: (completion) => {
+            stopClaimRetry();
+            void navigate(completion.returnTo, { replace: true });
+          },
           onExpire: () => {
+            stopClaimRetry();
             clearAuthFlow(next.flowId);
             void navigate("/login", {
               replace: true,
@@ -67,6 +84,36 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
             });
           },
         });
+        claimRetryTimer = window.setInterval(() => {
+          if (claimRetryFinished) return;
+          void activeGateway.resumeFlow(next.flowId).then((retry) => {
+            if (claimRetryFinished) return;
+            if (retry.kind === "complete") {
+              stopClaimRetry();
+              stopCompletionWait();
+              publishAuthContinuationCompletion({
+                flowId: retry.flowId,
+                returnTo: retry.returnTo,
+              });
+              void navigate(retry.returnTo, { replace: true });
+            } else if (retry.kind === "error" || retry.kind === "expired") {
+              stopClaimRetry();
+              stopCompletionWait();
+              clearAuthFlow(next.flowId);
+              void navigate("/login", {
+                replace: true,
+                state: {
+                  authError: retry.kind === "expired" ? "magic_link_expired" : retry.code,
+                },
+              });
+            }
+            // awaiting_completion / deposited は継続待ち
+          });
+        }, 5_000);
+        stopWaiting = () => {
+          stopClaimRetry();
+          stopCompletionWait();
+        };
       } else if (next.kind === "expired") {
         if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
         void navigate("/login", {

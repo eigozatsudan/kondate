@@ -151,7 +151,12 @@ it("uses completion published before the losing callback starts waiting", async 
       flowId: "flow-1",
       returnTo: "/onboarding",
     }),
-    resumeFlow: vi.fn(),
+    // AUTH-01: awaiting 中は resumeFlow を 5s 間隔で叩くため Promise を返す
+    resumeFlow: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
   };
   const router = createMemoryRouter(
     [
@@ -180,7 +185,11 @@ it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", a
       flowId: "flow-1",
       returnTo: "/onboarding",
     }),
-    resumeFlow: vi.fn(),
+    resumeFlow: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
   };
   const router = createMemoryRouter(
     [
@@ -203,6 +212,53 @@ it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", a
   vi.useRealTimers();
 });
 
+it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_completion", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  try {
+    const resumeFlow = vi.fn().mockResolvedValue({
+      kind: "complete",
+      continuation: "same_browser",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    });
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId: "flow-1",
+        returnTo: "/onboarding",
+      }),
+      resumeFlow,
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/auth/callback",
+          element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
+        },
+        { path: "/onboarding", element: <h1>家族の初回設定</h1> },
+      ],
+      { initialEntries: ["/auth/callback?flow=flow-1"] },
+    );
+    render(<RouterProvider router={router} />);
+    await act(async () => Promise.resolve());
+    // 5s claim retry 間隔
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(resumeFlow).toHaveBeenCalledWith("flow-1");
+    expect(router.state.location.pathname).toBe("/onboarding");
+    expect(publishAuthContinuationCompletion).toHaveBeenCalledWith({
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("handles the original callback result after StrictMode remounts the effect", async () => {
   let resolveCallback: ((result: AuthCallbackResult) => void) | undefined;
   const callbackResult = new Promise<AuthCallbackResult>((resolve) => {
@@ -212,7 +268,11 @@ it("handles the original callback result after StrictMode remounts the effect", 
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn().mockReturnValue(callbackResult),
-    resumeFlow: vi.fn(),
+    resumeFlow: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
   };
   const router = createMemoryRouter(
     [

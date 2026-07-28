@@ -152,11 +152,17 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
             ? allergyNames.join("・")
             : member.allergy_status === "unconfirmed"
               ? "アレルギー未確認"
-              : "登録アレルギーあり",
+              : // GP-I2 / MVP §7.1: 件数・有無だけの「登録アレルギーあり」は禁止
+                "名前を表示できないアレルギー項目があります",
+      // カタログ解決不能な registered は選択不可（表示名だけの有無要約を出さない）
+      blockedReason:
+        blockedReason ??
+        (member.allergy_status === "registered" && allergyNames.length === 0
+          ? "アレルギー名を確認できないため、この家族では献立を作れません"
+          : null),
       safetyLabels: member.required_safety_constraints.map(
         (constraint) => safetyLabels[constraint] ?? "安全上の個別対応",
       ),
-      blockedReason,
     };
   });
   return {
@@ -314,6 +320,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
   // 緊急献立への遷移中に対象が消えたら navigate を中止し、無言で /emergency-menus へ落ちない。
+  // GP-I1 / guided §10: 選択家族が削除・未完了・利用不可になったら対象ステップへ戻す。
   useEffect(() => {
     if (!initialized || safetyQuery.data === undefined) return;
     if (value.targetMode === "idea") return;
@@ -324,6 +331,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       emergencyOperationIdRef.current += 1;
       setIsOpeningEmergencyMenus(false);
       setSubmissionError("作る相手の条件が変わったため、緊急献立への移動を中止しました。");
+    } else {
+      setSubmissionError(
+        "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
+      );
     }
     setValue({
       ...value,
@@ -331,6 +342,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       targetMode: nextIds.length > 0 ? "household" : null,
       servings: null,
     });
+    setStep("audience");
   }, [initialized, isOpeningEmergencyMenus, safetyQuery.data, value]);
 
   const save = useCallback(

@@ -151,6 +151,7 @@ export function HouseholdOnboardingForm({
       );
     },
   });
+  // HO-I1: 開始失敗を無言にせず、skip/complete と同型の role=alert を出す
 
   const save = (patch: HouseholdDraftPatch) => {
     if (draft === null) return Promise.resolve();
@@ -219,10 +220,20 @@ export function HouseholdOnboardingForm({
   }
   if (membersQuery.isError) {
     return (
-      <main className="page-frame">
+      <main className="page-frame stack">
         <p className="error-message" role="alert">
-          家族設定を読み込めませんでした。通信を確認して再読み込みしてください。
+          家族設定を読み込めませんでした。通信を確認して再試行してください。
         </p>
+        {/* HO-M1: 全リロード以外の復旧導線 */}
+        <button
+          className="secondary-button min-h-11"
+          type="button"
+          onClick={() => {
+            void membersQuery.refetch();
+          }}
+        >
+          再試行
+        </button>
       </main>
     );
   }
@@ -233,6 +244,11 @@ export function HouseholdOnboardingForm({
         <h1>家族の初回設定</h1>
         <p>年齢のめやす、アレルギー、食べない食事の3項目から始めます。</p>
         {completeMembers.length > 0 && <p>{completeMembers.length}人の設定が完了しています。</p>}
+        {startMutation.isError ? (
+          <p className="error-message" role="alert">
+            家族設定を開始できませんでした。通信を確認して再試行してください。
+          </p>
+        ) : null}
         <button
           className="primary-button"
           type="button"
