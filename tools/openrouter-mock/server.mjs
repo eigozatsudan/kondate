@@ -6,14 +6,8 @@ import { scenarios } from "./fixtures/scenarios.mjs";
 const primaryModel = "mock/kondate-primary:free";
 const repairModel = "mock/kondate-repair:free";
 const maximumBodyBytes = 1_000_000;
-const expectedBodyKeys = [
-  "messages",
-  "models",
-  "provider",
-  "response_format",
-  "stream",
-  "temperature",
-];
+// 本番 openrouter.ts と同一キー集合（temperature は送らない — luna 等 require_parameters 404 回避）
+const expectedBodyKeys = ["messages", "models", "provider", "response_format", "stream"];
 const menuResponseFormat = JSON.parse(
   await readFile(new URL("./fixtures/menu-response-format.json", import.meta.url), "utf8"),
 );
@@ -44,7 +38,7 @@ const isDishRegenerationFormat = (responseFormat) =>
 
 const isValidBody = (body) => {
   if (!isPlainObject(body) || !hasExactKeys(body, expectedBodyKeys)) return false;
-  const { models, messages, provider, response_format: responseFormat, temperature, stream } = body;
+  const { models, messages, provider, response_format: responseFormat, stream } = body;
   const modelSequenceValid =
     Array.isArray(models) &&
     ((models.length === 2 && models[0] === primaryModel && models[1] === repairModel) ||
@@ -61,7 +55,6 @@ const isValidBody = (body) => {
     isPlainObject(provider) &&
     hasExactKeys(provider, ["require_parameters"]) &&
     provider.require_parameters === true &&
-    temperature === 0.2 &&
     stream === false &&
     responseFormatValid
   );

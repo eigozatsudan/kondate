@@ -29,7 +29,6 @@ const validRequest = ({ models = [primaryModel, repairModel] } = {}) => ({
   messages: [{ role: "user", content: messageSentinel }],
   response_format: structuredClone(menuResponseFormat),
   provider: { require_parameters: true },
-  temperature: 0.2,
   stream: false,
 });
 
@@ -178,7 +177,8 @@ describe("strict chat completion protocol", () => {
       { ...validRequest(), messages: [{ role: "user", content: "x", name: "x" }] },
     ],
     ["wrong response format type", { ...validRequest(), response_format: null }],
-    ["wrong temperature type", { ...validRequest(), temperature: "0.2" }],
+    // 本番は temperature を送らない。余分キーは fail-closed で拒否する。
+    ["extra temperature field", { ...validRequest(), temperature: 0.2 }],
     ["wrong stream type", { ...validRequest(), stream: "false" }],
     ["non-free model", validRequest({ models: ["mock/paid"] })],
     ["duplicate models", validRequest({ models: [repairModel, repairModel] })],

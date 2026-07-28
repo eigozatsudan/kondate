@@ -129,7 +129,7 @@ async function probeProdLike(apiKey, id) {
         ],
         response_format: menuResponseFormat,
         provider: { require_parameters: true },
-        temperature: 0.2,
+        // 本番 openrouter.ts と同型（temperature 非送信）
         stream: false,
         max_tokens: 32,
       }),

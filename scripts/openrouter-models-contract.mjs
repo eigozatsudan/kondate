@@ -26,7 +26,7 @@ export const modelListRules = `
 - reject openrouter/auto, openrouter/free, openrouter/auto-beta always
 - exact mock base only: accept mock/*:free; non-mock base rejects any :free and any mock/ prefix
 - mock exception uses OPENROUTER_BASE_URL exact match only (not isLocal / SERVER_SITE_ORIGIN)
-- remote: id exists; structured_outputs AND response_format; usable pricing; prompt+completion ≤ 0.5 USD/1M
+- remote: id exists; structured_outputs AND response_format; usable pricing; prompt+completion ≤ 4.00 USD/1M
 `.trim();
 
 /** 後方互換の別名（free 必須ではない — 有料 allowlist + mock 例外） */
