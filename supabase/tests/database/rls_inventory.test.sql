@@ -260,7 +260,7 @@ select is_empty(
   ('public.get_ai_generation_regeneration_snapshot(p_request_id uuid, p_user_id uuid)', 'service_role', 'EXECUTE'),
   ('public.get_ai_generation_status(p_user_id uuid, p_idempotency_key uuid, p_user_limit integer, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.get_ai_generation_submission_snapshot(p_request_id uuid, p_user_id uuid)', 'service_role', 'EXECUTE'),
-  ('public.get_ai_usage_today(p_user_id uuid, p_now timestamp with time zone, p_global_limit integer)', 'service_role', 'EXECUTE'),
+  ('public.get_ai_usage_today(p_user_id uuid, tests.quota_identity_key(p_user_id uuid), p_now timestamp with time zone, p_global_limit integer)', 'service_role', 'EXECUTE'),
   ('public.get_current_safety_snapshot(p_user_id uuid, p_target_member_ids uuid[])', 'service_role', 'EXECUTE'),
   ('public.get_shopping_mutation_replay(p_user_id uuid, p_idempotency_key uuid, p_request_hash text)', 'service_role', 'EXECUTE'),
   ('public.insert_user_feedback_rate_limited(p_user_id uuid, p_category text, p_body text, p_client_path text, p_limit integer, p_window_seconds integer)', 'service_role', 'EXECUTE'),

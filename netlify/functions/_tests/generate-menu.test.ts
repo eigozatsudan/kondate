@@ -11,7 +11,7 @@ import {
   makeGenerationContext,
   makeValidatedMenu,
 } from "../../../shared/testing/factories.js";
-import { requireUser } from "../_shared/auth.js";
+import { requireUserWithEmail } from "../_shared/auth.js";
 import { materializeAiGeneratedMenu } from "../_shared/generation-materializer.js";
 import type { QuotaRequestRecord } from "../_shared/generation-repository.js";
 import {
@@ -38,7 +38,7 @@ vi.mock("../_shared/generation-integrity-context.js", () => ({
 vi.mock("../_shared/supabase-admin.js", () => ({
   getSupabaseAdmin: vi.fn(() => ({})),
 }));
-vi.mock("../_shared/auth.js", () => ({ requireUser: vi.fn() }));
+vi.mock("../_shared/auth.js", () => ({ requireUserWithEmail: vi.fn() }));
 vi.mock("../../../shared/safety/validate-generated-menu.js", () => ({
   validateGeneratedMenu: vi.fn(),
 }));
@@ -60,6 +60,7 @@ vi.mock("../_shared/generation-service.js", async (importOriginal) => {
 const user = {
   userId: "85000000-0000-4000-8000-000000000001",
   accessToken: "token",
+  email: "owner@example.com",
 };
 const requestBody = {
   commandVersion: "generation-command.v2" as const,
@@ -164,7 +165,7 @@ function postRequest(body: unknown = requestBody, headers?: Record<string, strin
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(requireUser).mockResolvedValue(user);
+  vi.mocked(requireUserWithEmail).mockResolvedValue(user);
   vi.mocked(createGenerationDeps).mockReturnValue({} as GenerationDependencies);
   vi.mocked(runGeneration).mockResolvedValue(terminalResult);
   vi.mocked(readLocalMockScenario).mockReturnValue(undefined);
@@ -179,13 +180,13 @@ describe("POST /api/generations/menu", () => {
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("POST");
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(requireUser).not.toHaveBeenCalled();
+    expect(requireUserWithEmail).not.toHaveBeenCalled();
     expect(createGenerationDeps).not.toHaveBeenCalled();
     expect(runGeneration).not.toHaveBeenCalled();
   });
 
   it("rejects a request without a verified access token", async () => {
-    vi.mocked(requireUser).mockRejectedValue(
+    vi.mocked(requireUserWithEmail).mockRejectedValue(
       new HttpError(401, "auth_required", "ログインが必要です"),
     );
 
@@ -261,7 +262,7 @@ describe("POST /api/generations/menu", () => {
       order.push("time");
       return 1234.5;
     });
-    vi.mocked(requireUser).mockImplementation(() => {
+    vi.mocked(requireUserWithEmail).mockImplementation(() => {
       order.push("auth");
       return Promise.resolve(user);
     });

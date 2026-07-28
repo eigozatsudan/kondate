@@ -32,6 +32,7 @@ function completeEnv(overrides = {}) {
     SERVER_SITE_ORIGIN: "https://kondate.example.com",
     AUTH_CONTINUATION_ENCRYPTION_KEY: encKey,
     GENERATION_REQUEST_HMAC_KEY: hmacKey,
+    QUOTA_IDENTITY_HMAC_KEY: hmacKey,
     OPENROUTER_API_KEY: "openrouter-key",
     OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
     OPENROUTER_MODELS: "mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b",
@@ -86,6 +87,7 @@ test("rejects VITE_ aliases of server secrets even when empty", () => {
     "VITE_SUPABASE_SERVICE_ROLE_KEY",
     "VITE_OPENROUTER_API_KEY",
     "VITE_GENERATION_REQUEST_HMAC_KEY",
+    "VITE_QUOTA_IDENTITY_HMAC_KEY",
     "VITE_SUPABASE_MAINTENANCE_DB_URL",
     "VITE_AUTH_CONTINUATION_ENCRYPTION_KEY",
   ]) {

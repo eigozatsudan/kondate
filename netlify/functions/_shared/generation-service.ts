@@ -37,7 +37,7 @@ import { resolveGenerationIntegrityContext } from "./generation-integrity-contex
 import {
   createGenerationRepository,
   GenerationFinalizeTimeoutError,
-  type AuthenticatedUser,
+  type AuthenticatedUserWithEmail,
   type GenerationRepository,
   type QuotaRequestRecord,
 } from "./generation-repository.js";
@@ -119,7 +119,7 @@ export type GenerationExecutionContext =
     });
 
 export type GenerationDependencies = {
-  user: AuthenticatedUser;
+  user: AuthenticatedUserWithEmail;
   repository: Omit<GenerationRepository, "userClient">;
   models: readonly string[];
   /** repository miss時の権威integrity解決。productionはadmin読取、benchmarkは固定非PII値。 */
@@ -433,7 +433,7 @@ export function generationResponse(result: GenerationStatusData): Response {
  * 再生成スタブは createGenerationDeps ラッパーが置き換える。
  */
 function createBaseGenerationDeps(
-  user: AuthenticatedUser,
+  user: AuthenticatedUserWithEmail,
   timing: { requestStartedAtMonotonicMs: number },
 ): GenerationDependencies {
   const env = getServerEnv();
@@ -492,7 +492,7 @@ export type GenerationDepsOptions = {
  * 公開ファクトリ。new_menu は base のまま、再生成だけ loadRegenerationExecutionContext へ分岐する。
  */
 export function createGenerationDeps(
-  user: AuthenticatedUser,
+  user: AuthenticatedUserWithEmail,
   timing: GenerationDepsOptions,
 ): GenerationDependencies {
   const base = createBaseGenerationDeps(user, timing);

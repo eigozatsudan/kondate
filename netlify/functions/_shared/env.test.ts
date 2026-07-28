@@ -24,6 +24,8 @@ const validServerEnv = {
   OPENROUTER_MODELS: "mock/kondate-primary:free,mock/kondate-repair:free",
   OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  // GENERATION と別鍵（同長でも別値）であることをローカル fixture で示す
+  QUOTA_IDENTITY_HMAC_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
   USER_DAILY_AI_LIMIT: "3",
   USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
@@ -63,6 +65,29 @@ describe("parseOpenRouterModels", () => {
     });
     expect(parsed.generationIntegrity.requestHmacKey).toEqual(
       Buffer.from(validServerEnv.GENERATION_REQUEST_HMAC_KEY, "base64"),
+    );
+    expect(parsed.quotaIdentityHmacKey).toEqual(
+      Buffer.from(validServerEnv.QUOTA_IDENTITY_HMAC_KEY, "base64"),
+    );
+    expect(parsed.isLocal).toBe(true);
+    expect(parsed.aiQuotaDisabled).toBe(false);
+  });
+
+  it("rejects a browser-prefixed QUOTA_IDENTITY_HMAC_KEY alias", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        VITE_QUOTA_IDENTITY_HMAC_KEY: validServerEnv.QUOTA_IDENTITY_HMAC_KEY,
+      }),
+    ).toThrow("server_configuration_invalid");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["31-byte key", Buffer.alloc(31, 1).toString("base64")],
+  ] as const)("rejects an invalid QUOTA_IDENTITY_HMAC_KEY (%s)", (_label, value) => {
+    expect(() => parseServerEnv({ ...validServerEnv, QUOTA_IDENTITY_HMAC_KEY: value })).toThrow(
+      "server_configuration_invalid",
     );
   });
 

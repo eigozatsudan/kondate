@@ -446,7 +446,7 @@ export async function runPaidBenchmarkUnit(input: {
   };
 
   const deps: GenerationDependencies = {
-    user: { userId: benchmarkUserId, accessToken: "benchmark-no-db-access" },
+    user: { userId: benchmarkUserId, accessToken: "benchmark-no-db-access" , email: "owner@example.com" },
     repository: createInMemoryRepository(input.onRepositoryTransition),
     models: configuration,
     resolveIntegrityContext: () =>

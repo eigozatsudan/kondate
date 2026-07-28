@@ -93,6 +93,7 @@ const httpMockServerConfig = parseServerEnv({
   OPENROUTER_MODELS: httpModels.join(","),
   OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  QUOTA_IDENTITY_HMAC_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
   USER_DAILY_AI_LIMIT: "3",
   USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
@@ -511,7 +512,7 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
       scenario === "malformed-json" ? "success" : scenario,
     );
     return {
-      user: { userId: "93000000-0000-4000-8000-000000000001", accessToken: "token" },
+      user: { userId: "93000000-0000-4000-8000-000000000001", accessToken: "token" , email: "owner@example.com" },
       repository,
       models: [...httpModels],
       loadExecutionContext: vi.fn(() =>

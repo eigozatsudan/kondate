@@ -102,8 +102,7 @@ select public.reserve_ai_generation(
   null, null, null,
   'generation-command.v2',
   repeat('1', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
-  3, 20, 180,
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
   '2026-07-22 00:00:00+00'
 );
 
@@ -112,12 +111,12 @@ create temporary table race_baseline as
 select
   (select count(*) from private.ai_generation_requests
     where user_id = 'c1000000-0000-4000-8000-000000000101') as requests,
-  (select coalesce(sum(reserved_count),0) from private.ai_user_daily_usage
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as user_reserved,
-  (select coalesce(sum(reserved_count),0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_reserved,
+  (select coalesce(sum(reserved_count),0) from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as user_reserved,
+  (select coalesce(sum(reserved_count),0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_reserved,
   (select count(*) from private.generation_regeneration_snapshots
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as snapshots;
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as snapshots;
 
 -- dblink 用接続文字列（別バックエンド session）
 create temporary table race_dblink_conn as
@@ -141,8 +140,7 @@ select is(
           null, null, null,
           'generation-command.v2',
           repeat('2', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
-          3, 20, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:01+00'
         )->>'failure_code'
       $sql$
@@ -168,8 +166,7 @@ select is(
           null, 'simpler',
           'generation-command.v2',
           repeat('3', 64),
-          '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-          3, 20, 180,
+          '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:02+00'
         )->>'failure_code'
       $sql$
@@ -196,8 +193,7 @@ select is(
           'simpler',
           'generation-command.v2',
           repeat('4', 64),
-          '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-          3, 20, 180,
+          '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:03+00'
         )->>'failure_code'
       $sql$
@@ -212,13 +208,13 @@ select is(
     select jsonb_build_object(
       'requests', (select count(*) from private.ai_generation_requests
         where user_id = 'c1000000-0000-4000-8000-000000000101'),
-      'user_reserved', (select coalesce(sum(reserved_count),0) from private.ai_user_daily_usage
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'user_reserved', (select coalesce(sum(reserved_count),0) from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_reserved', (select coalesce(sum(reserved_count),0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'snapshots', (select count(*) from private.generation_regeneration_snapshots
-        where user_id = 'c1000000-0000-4000-8000-000000000101')
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
     )
   ),
   (
@@ -249,8 +245,7 @@ select is(
           null, null, null,
           'generation-command.v2',
           repeat('5', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb,
-          3, 20, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:04+00'
         )->>'status'
       $sql$
@@ -280,8 +275,7 @@ select is(
           null, null, null,
           'generation-command.v2',
           repeat('1', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb,
-          3, 20, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:05+00'
         ) as payload
       $sql$
@@ -305,13 +299,13 @@ select is(
     select jsonb_build_object(
       'requests', (select count(*) from private.ai_generation_requests
         where user_id = 'c1000000-0000-4000-8000-000000000101'),
-      'user_reserved', (select coalesce(sum(reserved_count),0) from private.ai_user_daily_usage
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'user_reserved', (select coalesce(sum(reserved_count),0) from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_reserved', (select coalesce(sum(reserved_count),0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'snapshots', (select count(*) from private.generation_regeneration_snapshots
-        where user_id = 'c1000000-0000-4000-8000-000000000101')
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
     )
   ),
   (
@@ -359,16 +353,16 @@ select public.finalize_ai_generation_failure(
 -- ---- PRE-SEND regenerate_menu: 予約後 source 削除 → fail(source_menu_changed) ----
 create temporary table source_race_pre_menu as
 select
-  (select coalesce(sum(reserved_count), 0) from private.ai_user_daily_usage
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as user_reserved,
-  (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as user_success,
-  (select coalesce(sum(reserved_count), 0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_reserved,
-  (select coalesce(sum(sent_count), 0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_sent,
+  (select coalesce(sum(reserved_count), 0) from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as user_reserved,
+  (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as user_success,
+  (select coalesce(sum(reserved_count), 0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_reserved,
+  (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
 
 select is(
   (
@@ -381,8 +375,7 @@ select is(
       null, 'simpler',
       'generation-command.v2',
       repeat('a', 64),
-      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      3, 20, 180,
+      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
       '2026-07-22 00:11:00+00'
     )->>'status'
   ),
@@ -428,18 +421,18 @@ select is(
 select is(
   (
     select jsonb_build_object(
-      'user_reserved', (select coalesce(sum(reserved_count), 0) from private.ai_user_daily_usage
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
-      'user_success', (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'user_reserved', (select coalesce(sum(reserved_count), 0) from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
+      'user_success', (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_reserved', (select coalesce(sum(reserved_count), 0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_sent', (select coalesce(sum(sent_count), 0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus', (select count(*) from public.menus
-        where user_id = 'c1000000-0000-4000-8000-000000000101')
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
     )
   ),
   (
@@ -483,16 +476,16 @@ insert into public.dishes (
 -- ---- POST-SEND regenerate_menu: mark 後 source version 変更 → finalize_success ----
 create temporary table source_race_post_menu as
 select
-  (select coalesce(sum(reserved_count), 0) from private.ai_user_daily_usage
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as user_reserved,
-  (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as user_success,
-  (select coalesce(sum(reserved_count), 0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_reserved,
-  (select coalesce(sum(sent_count), 0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_sent,
+  (select coalesce(sum(reserved_count), 0) from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as user_reserved,
+  (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as user_success,
+  (select coalesce(sum(reserved_count), 0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_reserved,
+  (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
 
 select is(
   (
@@ -505,8 +498,7 @@ select is(
       null, 'simpler',
       'generation-command.v2',
       repeat('b', 64),
-      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      3, 20, 180,
+      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
       '2026-07-22 00:12:00+00'
     )->>'status'
   ),
@@ -565,14 +557,14 @@ select is(
 select is(
   (
     select jsonb_build_object(
-      'user_success', (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'user_success', (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_sent', (select coalesce(sum(sent_count), 0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus_delta', (
         (select count(*) from public.menus
-          where user_id = 'c1000000-0000-4000-8000-000000000101')
+          where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
         - (select menus from source_race_post_menu)
       )
     )
@@ -593,14 +585,14 @@ where id = 'c4000000-0000-4000-8000-000000000101';
 -- ---- PRE-SEND regenerate_dish: 予約後 source 削除 ----
 create temporary table source_race_pre_dish as
 select
-  (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as user_success,
-  (select coalesce(sum(reserved_count), 0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_reserved,
-  (select coalesce(sum(sent_count), 0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_sent,
+  (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as user_success,
+  (select coalesce(sum(reserved_count), 0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_reserved,
+  (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
 
 select is(
   (
@@ -614,8 +606,7 @@ select is(
       'simpler',
       'generation-command.v2',
       repeat('c', 64),
-      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      3, 20, 180,
+      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
       '2026-07-22 00:13:00+00'
     )->>'status'
   ),
@@ -656,16 +647,16 @@ select is(
 select is(
   (
     select jsonb_build_object(
-      'user_success', (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'user_success', (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_reserved', (select coalesce(sum(reserved_count), 0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_sent', (select coalesce(sum(sent_count), 0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus', (select count(*) from public.menus
-        where user_id = 'c1000000-0000-4000-8000-000000000101')
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
     )
   ),
   (
@@ -708,12 +699,12 @@ insert into public.dishes (
 -- ---- POST-SEND regenerate_dish: mark 後 source 削除 → finalize_success ----
 create temporary table source_race_post_dish as
 select
-  (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as user_success,
-  (select coalesce(sum(sent_count), 0) from private.ai_user_daily_external_attempts
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as attempt_sent,
+  (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as user_success,
+  (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
+    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
 
 select is(
   (
@@ -727,8 +718,7 @@ select is(
       'simpler',
       'generation-command.v2',
       repeat('d', 64),
-      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb,
-      3, 20, 180,
+      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
       '2026-07-22 00:14:00+00'
     )->>'status'
   ),
@@ -761,14 +751,14 @@ select is(
     select jsonb_build_object(
       'status', payload->>'status',
       'failure_code', payload->>'failure_code',
-      'user_success', (select coalesce(sum(success_count), 0) from private.ai_user_daily_usage
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+      'user_success', (select coalesce(sum(success_count), 0) from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'attempt_sent', (select coalesce(sum(sent_count), 0)
-        from private.ai_user_daily_external_attempts
-        where user_id = 'c1000000-0000-4000-8000-000000000101'),
+        from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus_delta', (
         (select count(*) from public.menus
-          where user_id = 'c1000000-0000-4000-8000-000000000101')
+          where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
         - (select menus from source_race_post_dish)
       )
     )
@@ -880,8 +870,7 @@ select public.reserve_ai_generation(
   'c1000000-0000-4000-8000-000000000103', 'c9000000-0000-4000-8000-000000000021',
   'new_menu', 'c3000000-0000-4000-8000-000000000103', 1, null, null, null,
   'generation-command.v2', repeat('d', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb,
-  3, 20, 180, '2026-07-22 00:21:00+00'
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180, '2026-07-22 00:21:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests
@@ -893,8 +882,7 @@ select public.reserve_ai_generation(
   'c1000000-0000-4000-8000-000000000104', 'c9000000-0000-4000-8000-000000000022',
   'new_menu', 'c3000000-0000-4000-8000-000000000104', 1, null, null, null,
   'generation-command.v2', repeat('e', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb,
-  3, 20, 180, '2026-07-22 00:22:00+00'
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180, '2026-07-22 00:22:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests
@@ -935,12 +923,12 @@ begin
     and idempotency_key = 'c9000000-0000-4000-8000-000000000021';
 
   select sent_count into strict v_sent_before
-  from private.ai_user_daily_external_attempts
-  where user_id = v_owner and usage_day = date '2026-07-22';
+  from private.ai_identity_daily_external_attempts
+  where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22';
   select success_count, reserved_count
     into strict v_success_before, v_reserved_before
-  from private.ai_user_daily_usage
-  where user_id = v_owner and usage_day = date '2026-07-22';
+  from private.ai_identity_daily_usage
+  where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22';
 
   -- 別 backend session（dblink autocommit）が allergy を commit してから finalize する。
   -- 同一 backend 内の直列 insert ではなく、commit 済み他 session の fingerprint 変化を証明する。
@@ -1026,18 +1014,18 @@ begin
      is not false then
     raise exception 'allergy-first: success reservation was not released';
   end if;
-  if (select success_count from private.ai_user_daily_usage
-        where user_id = v_owner and usage_day = date '2026-07-22')
+  if (select success_count from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22')
      is distinct from v_success_before then
     raise exception 'allergy-first: success quota was consumed';
   end if;
-  if (select reserved_count from private.ai_user_daily_usage
-        where user_id = v_owner and usage_day = date '2026-07-22')
+  if (select reserved_count from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22')
      is distinct from (v_reserved_before - 1) then
     raise exception 'allergy-first: success reservation was not released from usage';
   end if;
-  if (select sent_count from private.ai_user_daily_external_attempts
-        where user_id = v_owner and usage_day = date '2026-07-22')
+  if (select sent_count from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22')
      is distinct from v_sent_before then
     raise exception 'allergy-first: sent attempt was refunded';
   end if;
@@ -1095,11 +1083,11 @@ begin
     and idempotency_key = 'c9000000-0000-4000-8000-000000000022';
 
   select sent_count into strict v_sent_before
-  from private.ai_user_daily_external_attempts
-  where user_id = v_owner and usage_day = date '2026-07-22';
+  from private.ai_identity_daily_external_attempts
+  where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22';
   select success_count into strict v_success_before
-  from private.ai_user_daily_usage
-  where user_id = v_owner and usage_day = date '2026-07-22';
+  from private.ai_identity_daily_usage
+  where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22';
 
   -- finalize が household_members FOR UPDATE を取る（この DO トランザクションが保持）
   v_result := public.finalize_ai_generation_success(
@@ -1157,13 +1145,13 @@ begin
   if v_stored_fingerprint is distinct from v_fingerprint then
     raise exception 'finalize-first: stored fingerprint does not match locked fingerprint';
   end if;
-  if (select success_count from private.ai_user_daily_usage
-        where user_id = v_owner and usage_day = date '2026-07-22')
+  if (select success_count from private.ai_identity_daily_usage
+        where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22')
      is distinct from (v_success_before + 1) then
     raise exception 'finalize-first: success was not consumed';
   end if;
-  if (select sent_count from private.ai_user_daily_external_attempts
-        where user_id = v_owner and usage_day = date '2026-07-22')
+  if (select sent_count from private.ai_identity_daily_external_attempts
+        where identity_key = tests.quota_identity_key(v_owner) and usage_day = date '2026-07-22')
      is distinct from v_sent_before then
     raise exception 'finalize-first: sent attempt accounting drifted';
   end if;

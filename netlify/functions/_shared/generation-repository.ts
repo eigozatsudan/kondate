@@ -12,7 +12,6 @@ import {
 import type { GenerationTargetMember } from "../../../shared/safety/generation-context.js";
 import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
 import type { Database } from "../../../src/shared/types/database.js";
-import type { requireUser } from "./auth.js";
 import { getServerEnv } from "./env.js";
 import {
   generationRequestHmac,
@@ -23,6 +22,7 @@ import {
   toIntegrityContextPayload,
 } from "./generation-integrity-context.js";
 import { HttpError } from "./http.js";
+import { computeQuotaIdentityKey } from "./quota-identity.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase, type UserSupabaseClient } from "./supabase-user.js";
 
@@ -80,7 +80,16 @@ export type GenerationSuccessWriter = {
 // 型定義に使う const を実行時参照として保持し、tree-shake でも消えないようにする
 export { ideaSafetySnapshot };
 
-export type AuthenticatedUser = Awaited<ReturnType<typeof requireUser>>;
+/** 認証済みユーザー（再生成・再検証など userId/token のみで足りる経路） */
+export type AuthenticatedUser = {
+  userId: string;
+  accessToken: string;
+};
+
+/** identity 日次枠を使う生成経路（email 必須） */
+export type AuthenticatedUserWithEmail = AuthenticatedUser & {
+  email: string;
+};
 
 const requestPayloadSchema = z
   .object({
@@ -200,9 +209,13 @@ export type GenerationReservationRepository = {
   ) => Promise<QuotaRequestRecord>;
 };
 
-export function createGenerationRepository(user: AuthenticatedUser) {
+export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
   const env = getServerEnv();
   const userClient = createUserScopedSupabase(user.accessToken);
+  // identity_key はサーバのみ計算。クライアント入力を信頼しない
+  const identityKey = computeQuotaIdentityKey(env.quotaIdentityHmacKey, user.email);
+  // Task 6 で env.aiQuotaDisabled を配線する。SQL 側 p_quota_disabled は用意済み。
+  const quotaDisabled = false;
 
   const buildReserveArgs = (
     command: GenerationCommandV2,
@@ -222,8 +235,10 @@ export function createGenerationRepository(user: AuthenticatedUser) {
       p_request_hmac_version: generationRequestHmacVersion,
       p_request_hmac: hmac,
       p_integrity_context: toIntegrityContextPayload(integrity),
+      p_identity_key: identityKey,
       p_user_limit: env.openRouter.userDailyLimit,
       p_global_limit: env.openRouter.globalDailyLimit,
+      p_quota_disabled: quotaDisabled,
       p_stale_after_seconds: env.openRouter.staleAfterSeconds,
     };
   };
@@ -299,6 +314,7 @@ export function createGenerationRepository(user: AuthenticatedUser) {
         await rpc("reserve_ai_repair_call", {
           p_request_id: requestId,
           p_global_limit: env.openRouter.globalDailyLimit,
+          p_quota_disabled: quotaDisabled,
         }),
       );
     },
@@ -360,6 +376,7 @@ export function createGenerationRepository(user: AuthenticatedUser) {
           p_user_id: user.userId,
           p_idempotency_key: idempotencyKey,
           p_user_limit: env.openRouter.userDailyLimit,
+          p_identity_key: identityKey,
         }),
       );
     },
