@@ -484,7 +484,7 @@ async function assertIdeaResultBoundary(page: Page, servings: number): Promise<v
   // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成は利用できる
   await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeVisible();
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "使った食材の在庫を更新" })).toBeVisible();
   await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
   // 買い物だけは idea では非表示のまま

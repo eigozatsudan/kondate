@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { PantryItem, PantryItemInput } from "@shared/contracts/pantry";
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
@@ -58,6 +58,8 @@ export function MenuResult({
   onSelectedDishChange,
   onRegenerateSelectedDish,
   regenerateSelectedDishDisabled = false,
+  postCookOpen = false,
+  onPostCookClose,
 }: {
   result: MenuResultViewModel;
   actions?: MenuResultActions;
@@ -85,6 +87,12 @@ export function MenuResult({
   onRegenerateSelectedDish?: () => void;
   /** 再検証中など、一品再生成を一時的に止めたいとき */
   regenerateSelectedDishDisabled?: boolean;
+  /**
+   * 使った食材の在庫更新ダイアログを開く。
+   * ページ操作バーから制御する（インライン section にスクロールしない）。
+   */
+  postCookOpen?: boolean;
+  onPostCookClose?: () => void;
 }) {
   // 省略時は result.targetMode を正とする（既定 "household" による idea 誤表示を防ぐ）。
   const mode = modeProp ?? result.targetMode;
@@ -106,10 +114,27 @@ export function MenuResult({
     () => new Set(),
   );
   const [busy, setBusy] = useState(false);
+  const postCookDialogRef = useRef<HTMLDialogElement>(null);
+  const postCookTitleId = useId();
 
   useEffect(() => {
     if (selected !== null) onSelectedDishChange?.(selected.id);
   }, [onSelectedDishChange, selected]);
+
+  // 親が postCookOpen を true にしたら modal を開く。閉じる操作は親の onPostCookClose に委ねる。
+  // dialog 本体に .stack（display:grid）を付けない（UA の display:none 上書き防止）。
+  useEffect(() => {
+    const dialog = postCookDialogRef.current;
+    if (!postCookOpen || !dialog) return;
+    if (!dialog.open) {
+      dialog.showModal();
+    }
+    return () => {
+      if (dialog.open) {
+        dialog.close();
+      }
+    };
+  }, [postCookOpen]);
 
   const sourceIds = useMemo(() => {
     if (selected === null) return new Set<string>();
@@ -326,7 +351,8 @@ export function MenuResult({
       <div role="status" aria-live="polite" className="sr-only">
         {liveMessage}
       </div>
-      {conflictMessage !== null && (
+      {/* 在庫更新ダイアログを開いている間は dialog 内だけに出し、二重表示しない */}
+      {conflictMessage !== null && !postCookOpen && (
         <p role="alert" className="mt-3 rounded-xl border border-amber-700 bg-amber-50 p-3">
           {conflictMessage}
         </p>
@@ -593,133 +619,170 @@ export function MenuResult({
         )}
       </section>
 
-      {/* 調理後の冷蔵庫は家族安全と分離し、所有者/version 検査だけで更新できる。
-          idea でも actions 付きなら表示する。read-only idea（actions なし）では出さない。 */}
-      {result.pantryPostCookTargets.length > 0 &&
+      {/* 使った食材の在庫更新は家族安全と分離し、所有者/version 検査だけで更新できる。
+          idea でも actions 付きなら操作可。read-only idea（actions なし）では出さない。
+          インライン section ではなく native dialog で、操作バーから開く。 */}
+      {postCookOpen &&
+        result.pantryPostCookTargets.length > 0 &&
         (mode === "household" || actions !== undefined) && (
-          <section
-            aria-labelledby="post-cook-heading"
-            className="mt-6 rounded-2xl bg-white p-4 shadow-sm"
+          <dialog
+            ref={postCookDialogRef}
+            aria-labelledby={postCookTitleId}
+            onCancel={(event) => {
+              // Escape / 背面クリックの native close を止め、親の close に委ねる
+              event.preventDefault();
+              if (busy) return;
+              setDeletePendingId(null);
+              setRemainderTargetId(null);
+              setRemainderQty("");
+              setRemainderUnit("");
+              onPostCookClose?.();
+            }}
+            className="m-auto max-h-[min(90vh,40rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border bg-white p-5 shadow-lg"
           >
-            <h2 id="post-cook-heading" className="text-xl font-bold" tabIndex={-1}>
-              調理後の冷蔵庫
-            </h2>
-            <ul className="mt-3 space-y-4">
-              {result.pantryPostCookTargets.map((target) => {
-                const isDeleted = deletedSelectionIds.has(target.selectionId);
-                const live = target.currentPantryRow;
-                return (
-                  <li key={target.selectionId} className="rounded-xl border p-3">
-                    <strong>{target.pantryItemName}</strong>
-                    {isDeleted || live === null || target.pantryItemId === null ? (
-                      <p className="mt-1">冷蔵庫から削除済み</p>
-                    ) : (
-                      <>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-                            disabled={busy}
-                            onClick={() => {
-                              setDeletePendingId(target.selectionId);
-                              setRemainderTargetId(null);
-                            }}
-                          >
-                            使い切った
-                          </button>
-                          <button
-                            type="button"
-                            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-                            disabled={busy}
-                            onClick={() => {
-                              setRemainderTargetId(target.selectionId);
-                              setDeletePendingId(null);
-                            }}
-                          >
-                            まだある
-                          </button>
-                        </div>
-                        {deletePendingId === target.selectionId && (
-                          <div className="mt-3 rounded-lg bg-canvas p-3">
-                            <p>この食材を冷蔵庫から削除しますか？</p>
-                            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="stack gap-4">
+              <h2 id={postCookTitleId} className="text-xl font-bold">
+                使った食材の在庫を更新
+              </h2>
+              <p className="text-sm text-ink-muted">
+                作り終わったら、使った食材を「使い切った」か「まだある」で記録します。AIが自動では減らしません。
+              </p>
+              {conflictMessage !== null && (
+                <p role="alert" className="rounded-xl border border-amber-700 bg-amber-50 p-3">
+                  {conflictMessage}
+                </p>
+              )}
+              <ul className="space-y-4">
+                {result.pantryPostCookTargets.map((target) => {
+                  const isDeleted = deletedSelectionIds.has(target.selectionId);
+                  const live = target.currentPantryRow;
+                  return (
+                    <li key={target.selectionId} className="rounded-xl border p-3">
+                      <strong>{target.pantryItemName}</strong>
+                      {isDeleted || live === null || target.pantryItemId === null ? (
+                        <p className="mt-1">冷蔵庫から削除済み</p>
+                      ) : (
+                        <>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+                              disabled={busy}
+                              onClick={() => {
+                                setDeletePendingId(target.selectionId);
+                                setRemainderTargetId(null);
+                              }}
+                            >
+                              使い切った
+                            </button>
+                            <button
+                              type="button"
+                              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+                              disabled={busy}
+                              onClick={() => {
+                                setRemainderTargetId(target.selectionId);
+                                setDeletePendingId(null);
+                              }}
+                            >
+                              まだある
+                            </button>
+                          </div>
+                          {deletePendingId === target.selectionId && (
+                            <div className="mt-3 rounded-lg bg-canvas p-3">
+                              <p>この食材を冷蔵庫から削除しますか？</p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    void handleDeleteConfirm(target);
+                                  }}
+                                >
+                                  削除する
+                                </button>
+                                <button
+                                  type="button"
+                                  className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    setDeletePendingId(null);
+                                  }}
+                                >
+                                  やめる
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {remainderTargetId === target.selectionId && (
+                            <div className="mt-3 space-y-2 rounded-lg bg-canvas p-3">
+                              <label className="block">
+                                残りの分量（任意）
+                                <input
+                                  className="mt-1 min-h-11 w-full rounded border px-2"
+                                  inputMode="decimal"
+                                  value={remainderQty}
+                                  onChange={(event) => {
+                                    setRemainderQty(event.target.value);
+                                  }}
+                                />
+                              </label>
+                              <label className="block">
+                                単位
+                                <input
+                                  className="mt-1 min-h-11 w-full rounded border px-2"
+                                  value={remainderUnit}
+                                  onChange={(event) => {
+                                    setRemainderUnit(event.target.value);
+                                  }}
+                                />
+                              </label>
                               <button
                                 type="button"
                                 className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
                                 disabled={busy}
                                 onClick={() => {
-                                  void handleDeleteConfirm(target);
+                                  void handleUpdateRemainder(target);
                                 }}
                               >
-                                削除する
-                              </button>
-                              <button
-                                type="button"
-                                className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
-                                disabled={busy}
-                                onClick={() => {
-                                  setDeletePendingId(null);
-                                }}
-                              >
-                                やめる
+                                分量を保存
                               </button>
                             </div>
-                          </div>
-                        )}
-                        {remainderTargetId === target.selectionId && (
-                          <div className="mt-3 space-y-2 rounded-lg bg-canvas p-3">
-                            <label className="block">
-                              残りの分量（任意）
-                              <input
-                                className="mt-1 min-h-11 w-full rounded border px-2"
-                                inputMode="decimal"
-                                value={remainderQty}
-                                onChange={(event) => {
-                                  setRemainderQty(event.target.value);
-                                }}
-                              />
-                            </label>
-                            <label className="block">
-                              単位
-                              <input
-                                className="mt-1 min-h-11 w-full rounded border px-2"
-                                value={remainderUnit}
-                                onChange={(event) => {
-                                  setRemainderUnit(event.target.value);
-                                }}
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
-                              disabled={busy}
-                              onClick={() => {
-                                void handleUpdateRemainder(target);
-                              }}
-                            >
-                              分量を保存
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                    {undo?.selectionId === target.selectionId && (
-                      <button
-                        type="button"
-                        className="mt-2 min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
-                        disabled={busy}
-                        onClick={() => {
-                          void handleUndo();
-                        }}
-                      >
-                        元に戻す
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
+                          )}
+                        </>
+                      )}
+                      {undo?.selectionId === target.selectionId && (
+                        <button
+                          type="button"
+                          className="mt-2 min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+                          disabled={busy}
+                          onClick={() => {
+                            void handleUndo();
+                          }}
+                        >
+                          元に戻す
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              <button
+                type="button"
+                className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+                disabled={busy}
+                onClick={() => {
+                  setDeletePendingId(null);
+                  setRemainderTargetId(null);
+                  setRemainderQty("");
+                  setRemainderUnit("");
+                  onPostCookClose?.();
+                }}
+              >
+                閉じる
+              </button>
+            </div>
+          </dialog>
         )}
     </div>
   );

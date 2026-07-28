@@ -75,12 +75,8 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
-  // used pantry が無い idea fixture では CTA は disabled（反映対象なし）
-  await expect(page.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeDisabled();
-  await expect(
-    page.getByText("今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。"),
-  ).toBeVisible();
+  // used pantry が無い idea fixture では在庫更新 CTA 自体を出さない
+  await expect(page.getByRole("button", { name: "使った食材の在庫を更新" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
 
   // 一品再生成シート: idea では child_friendly が無い

@@ -176,6 +176,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
   const accept = useAcceptMenuVersion();
   const favorite = useToggleFavorite();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
+  const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   // DB hydrate: query の isFavorite を初期値にし、同一 route での再取得も useEffect で同期する
   const [isFavorite, setIsFavorite] = useState(result.isFavorite);
@@ -191,6 +192,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
+  const canUpdatePostCook = result.pantryPostCookTargets.length > 0;
   const queryKey = useMemo(
     () => ["menu-result", userId ?? "missing", menuId] as const,
     [menuId, userId],
@@ -256,6 +258,10 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         <MenuResult
           result={result}
           mode="idea"
+          postCookOpen={postCookOpen}
+          onPostCookClose={() => {
+            setPostCookOpen(false);
+          }}
           onSelectedDishChange={setSelectedDishId}
           onRegenerateSelectedDish={() => {
             setSheetMode("dish");
@@ -267,17 +273,16 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
           result={result}
           mode="idea"
           actions={actions}
+          postCookOpen={postCookOpen}
+          onPostCookClose={() => {
+            setPostCookOpen(false);
+          }}
           onSelectedDishChange={setSelectedDishId}
           onRegenerateSelectedDish={() => {
             setSheetMode("dish");
           }}
           regenerateSelectedDishDisabled={dishIdForRegen === null}
         />
-      )}
-      {result.pantryPostCookTargets.length === 0 && (
-        <p className="mt-2 text-sm text-ink-muted" role="note">
-          今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。
-        </p>
       )}
       {acceptFeedback !== null && (
         <p className="mt-2" role="status">
@@ -305,23 +310,17 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
         >
           献立をまるごと別案にする
         </button>
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={result.pantryPostCookTargets.length === 0}
-          onClick={() => {
-            const heading = document.getElementById("post-cook-heading");
-            if (heading instanceof HTMLElement) {
-              // jsdom 等では scrollIntoView が未実装のことがある
-              if (typeof heading.scrollIntoView === "function") {
-                heading.scrollIntoView({ behavior: "smooth", block: "start" });
-              }
-              heading.focus({ preventScroll: true });
-            }
-          }}
-        >
-          調理後の冷蔵庫を開く
-        </button>
+        {canUpdatePostCook && (
+          <button
+            type="button"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+            onClick={() => {
+              setPostCookOpen(true);
+            }}
+          >
+            使った食材の在庫を更新
+          </button>
+        )}
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
@@ -440,6 +439,7 @@ function HouseholdDetailBody({
   });
   const accept = useAcceptMenuVersion();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
+  const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   const [acceptFeedback, setAcceptFeedback] = useState<string | null>(null);
   const [acceptError, setAcceptError] = useState<string | null>(null);
@@ -450,13 +450,17 @@ function HouseholdDetailBody({
     revalidation.phase === "checked" &&
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
+  const canUpdatePostCook = result.pantryPostCookTargets.length > 0;
 
-  // D-M7: 安全再検査で操作が閉じたらシートも閉じる（開いたまま送信して unhandled reject しない）
+  // D-M7: 安全再検査で操作が閉じたらシート・在庫ダイアログも閉じる（開いたまま送信して unhandled reject しない）
   useEffect(() => {
     if (!actionsEnabled && sheetMode !== null) {
       setSheetMode(null);
     }
-  }, [actionsEnabled, sheetMode]);
+    if (!actionsEnabled && postCookOpen) {
+      setPostCookOpen(false);
+    }
+  }, [actionsEnabled, postCookOpen, sheetMode]);
 
   // 結果画面と同等: 買い物は献立再検証と買い物ゲートの両方が通るまで組み立てない
   const shoppingList = useShoppingList();
@@ -674,6 +678,10 @@ function HouseholdDetailBody({
               mode="household"
               currentLabelWarnings={revalidation.result.currentLabelWarnings}
               currentSafetyFingerprint={revalidation.result.safetyFingerprint}
+              postCookOpen={postCookOpen}
+              onPostCookClose={() => {
+                setPostCookOpen(false);
+              }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
                 setSheetMode("dish");
@@ -687,17 +695,16 @@ function HouseholdDetailBody({
               actions={actions}
               currentLabelWarnings={revalidation.result.currentLabelWarnings}
               currentSafetyFingerprint={revalidation.result.safetyFingerprint}
+              postCookOpen={postCookOpen}
+              onPostCookClose={() => {
+                setPostCookOpen(false);
+              }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
                 setSheetMode("dish");
               }}
               regenerateSelectedDishDisabled={dishIdForRegen === null}
             />
-          )}
-          {result.pantryPostCookTargets.length === 0 && (
-            <p className="mt-2 text-sm text-ink-muted" role="note">
-              今回は冷蔵庫の食材を使っていないため、調理後の反映はありません。
-            </p>
           )}
           {acceptFeedback !== null && (
             <p className="mt-2" role="status">
@@ -756,23 +763,18 @@ function HouseholdDetailBody({
             買い物リストとの差分を確認
           </button>
         )}
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={!actionsEnabled || result.pantryPostCookTargets.length === 0}
-          onClick={() => {
-            const heading = document.getElementById("post-cook-heading");
-            if (heading instanceof HTMLElement) {
-              // jsdom 等では scrollIntoView が未実装のことがある
-              if (typeof heading.scrollIntoView === "function") {
-                heading.scrollIntoView({ behavior: "smooth", block: "start" });
-              }
-              heading.focus({ preventScroll: true });
-            }
-          }}
-        >
-          調理後の冷蔵庫を開く
-        </button>
+        {canUpdatePostCook && (
+          <button
+            type="button"
+            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+            disabled={!actionsEnabled}
+            onClick={() => {
+              setPostCookOpen(true);
+            }}
+          >
+            使った食材の在庫を更新
+          </button>
+        )}
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"

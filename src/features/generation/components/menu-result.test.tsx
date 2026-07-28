@@ -1,9 +1,21 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { beforeAll, expect, it, vi } from "vitest";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
 import { MenuResult, type MenuResultActions } from "./menu-result";
+
+beforeAll(() => {
+  // jsdom は HTMLDialogElement の showModal/close を持たないため polyfill する
+  if (typeof HTMLDialogElement !== "undefined") {
+    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    };
+  }
+});
 
 function makeActions(overrides: Partial<MenuResultActions> = {}): MenuResultActions {
   return {
@@ -16,6 +28,23 @@ function makeActions(overrides: Partial<MenuResultActions> = {}): MenuResultActi
     onRefetchResult: vi.fn(() => Promise.resolve()),
     ...overrides,
   };
+}
+
+/** 在庫更新ダイアログを開いた状態で MenuResult を描画する */
+function renderPostCookOpen(
+  result = makeMenuResultViewModel(),
+  actions: MenuResultActions | undefined = makeActions(),
+  mode?: "household" | "idea",
+) {
+  return render(
+    <MenuResult
+      result={result}
+      actions={actions}
+      {...(mode !== undefined ? { mode } : {})}
+      postCookOpen
+      onPostCookClose={vi.fn()}
+    />,
+  );
 }
 
 it("shows the overall timeline before persistent dish tabs", () => {
@@ -243,8 +272,14 @@ it("shows the label-confirm action and calls the confirm handler", async () => {
   );
 });
 
-it("renders 44px post-cook controls and deleted state without mutation buttons", () => {
+it("keeps post-cook controls closed until the dialog is opened", () => {
   render(<MenuResult result={makeMenuResultViewModel()} actions={makeActions()} />);
+  expect(screen.queryByRole("dialog", { name: "使った食材の在庫を更新" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();
+});
+
+it("renders 44px post-cook controls and deleted state without mutation buttons", () => {
+  renderPostCookOpen();
   const usedUp = screen.getByRole("button", { name: "使い切った" });
   const stillHave = screen.getByRole("button", { name: "まだある" });
   expect(usedUp).toHaveClass("min-h-11", "min-w-11");
@@ -255,7 +290,7 @@ it("renders 44px post-cook controls and deleted state without mutation buttons",
 it("cancels destructive pantry delete without writing", async () => {
   const onDeletePantry = vi.fn(() => Promise.resolve());
   const actions = makeActions({ onDeletePantry });
-  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  renderPostCookOpen(makeMenuResultViewModel(), actions);
   await userEvent.click(screen.getByRole("button", { name: "使い切った" }));
   expect(screen.getByText("この食材を冷蔵庫から削除しますか？")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "やめる" }));
@@ -268,7 +303,7 @@ it("confirms pantry delete and supports undo recreation without aggregate reatta
   const onRefetchResult = vi.fn(() => Promise.resolve());
   const onCreatePantry = vi.fn(() => Promise.resolve());
   const actions = makeActions({ onDeletePantry, onRefetchResult, onCreatePantry });
-  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  renderPostCookOpen(makeMenuResultViewModel(), actions);
   await userEvent.click(screen.getByRole("button", { name: "使い切った" }));
   await userEvent.click(screen.getByRole("button", { name: "削除する" }));
   expect(onDeletePantry).toHaveBeenCalledTimes(1);
@@ -284,7 +319,7 @@ it("confirms pantry delete and supports undo recreation without aggregate reatta
 it("saves blank remainder as null quantity/unit", async () => {
   const onUpdatePantry = vi.fn(() => Promise.resolve());
   const actions = makeActions({ onUpdatePantry });
-  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  renderPostCookOpen(makeMenuResultViewModel(), actions);
   await userEvent.click(screen.getByRole("button", { name: "まだある" }));
   await userEvent.click(screen.getByRole("button", { name: "分量を保存" }));
   expect(onUpdatePantry).toHaveBeenCalledWith(
@@ -297,7 +332,7 @@ it("keeps remainder inputs on version conflict without silent retry", async () =
   const onUpdatePantry = vi.fn(() => Promise.reject(new PantryVersionConflictError()));
   const onRefetchResult = vi.fn(() => Promise.resolve());
   const actions = makeActions({ onUpdatePantry, onRefetchResult });
-  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  renderPostCookOpen(makeMenuResultViewModel(), actions);
   await userEvent.click(screen.getByRole("button", { name: "まだある" }));
   await userEvent.type(screen.getByLabelText("残りの分量（任意）"), "50");
   await userEvent.type(screen.getByLabelText("単位"), "ml");
@@ -328,8 +363,8 @@ it("hides adaptation and label confirmation for idea mode without actions", () =
   expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
   // AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、本文では出さない
   expect(screen.queryByText("AIが作成した献立です。")).toBeNull();
-  // actions なしの idea は調理後冷蔵庫操作も出さない（read-only 境界）
-  expect(screen.queryByRole("heading", { name: "調理後の冷蔵庫" })).toBeNull();
+  // actions なしの idea は在庫更新ダイアログも出さない（read-only 境界）
+  expect(screen.queryByRole("dialog", { name: "使った食材の在庫を更新" })).toBeNull();
   expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();
   // 献立本文（料理・材料・作り方）は idea でも表示する
   expect(screen.getByRole("heading", { name: "献立ができました" })).toBeVisible();
@@ -338,20 +373,20 @@ it("hides adaptation and label confirmation for idea mode without actions", () =
 
 it("shows post-cook pantry controls for idea mode when pantry actions are provided", () => {
   const result = makeMenuResultViewModel({ targetMode: "idea" });
-  render(<MenuResult result={result} mode="idea" actions={makeActions()} />);
+  renderPostCookOpen(result, makeActions(), "idea");
   expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
   expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
-  // 調理後の冷蔵庫は家族 fingerprint を要求しないため idea でも操作できる
-  expect(screen.getByRole("heading", { name: "調理後の冷蔵庫" })).toBeVisible();
+  // 在庫更新は家族 fingerprint を要求しないため idea でも操作できる
+  expect(screen.getByRole("dialog", { name: "使った食材の在庫を更新" })).toBeVisible();
   expect(screen.getByRole("button", { name: "使い切った" })).toBeVisible();
 });
 
 it("keeps household mode sections visible when mode is household", () => {
   const result = makeMenuResultViewModel({ targetMode: "household" });
-  render(<MenuResult result={result} mode="household" actions={makeActions()} />);
+  renderPostCookOpen(result, makeActions(), "household");
   expect(screen.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
   expect(screen.getByRole("region", { name: "原材料表示の確認" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "調理後の冷蔵庫" })).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "使った食材の在庫を更新" })).toBeVisible();
 });
 
 it("defaults mode from result.targetMode when the prop is omitted", () => {

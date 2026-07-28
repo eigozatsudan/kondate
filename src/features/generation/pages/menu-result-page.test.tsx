@@ -317,7 +317,7 @@ describe("MenuResultPage", () => {
     revalidateMenuMock.mockReturnValue(new Promise(() => undefined));
     renderPage(`/menus/${VALID_MENU_ID}`);
     // 献立本体の取得が終わったあとも再検証が終わるまで操作を閉じる
-    expect(await screen.findByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
     expect(screen.getByText("現在の家族設定で確認しています")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
     // 本文が閉じている間もラベル確認の免責文は常時表示する
@@ -359,7 +359,7 @@ describe("MenuResultPage", () => {
     expect(
       await screen.findByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
     ).toBeEnabled();
-    expect(screen.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
 
     await userEvent.click(
       screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
@@ -367,7 +367,7 @@ describe("MenuResultPage", () => {
 
     // invalidate 完了を待たず、同一ターン相当で checking に戻る
     expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
-    expect(screen.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
   });
 
@@ -538,7 +538,7 @@ describe("MenuResultPage", () => {
       expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
       expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
       // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
-      expect(screen.getByRole("button", { name: "調理後の冷蔵庫を開く" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "これに決めた" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
