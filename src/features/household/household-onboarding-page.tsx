@@ -97,6 +97,8 @@ export function HouseholdOnboardingForm({
   const [completeError, setCompleteError] = useState(false);
   const [skipError, setSkipError] = useState(false);
   const [skipPending, setSkipPending] = useState(false);
+  // HP-I1: AllergyEditor 失敗を利用者に見せる（設定画面と同型）
+  const [allergyError, setAllergyError] = useState<string | null>(null);
 
   /** C-C1: 画面内から skipped へ抜け、アイデア導線へ進める */
   const skipOnboarding = async (): Promise<void> => {
@@ -214,6 +216,18 @@ export function HouseholdOnboardingForm({
     completedRequired === 3 &&
     (draft.allergy_status !== "registered" || allergies.length > 0) &&
     (draft.unsupported_diet_status !== "present" || draft.unsupported_diet_kinds.length > 0);
+
+  // HP-I2: 3/3 表示なのに完了不可のとき、理由を明示する（袋小路の無言 disable を防ぐ）
+  const completeBlockedReason = useMemo(() => {
+    if (draft === null || completedRequired < 3 || canComplete) return null;
+    if (draft.allergy_status === "registered" && allergies.length === 0) {
+      return "アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。";
+    }
+    if (draft.unsupported_diet_status === "present" && draft.unsupported_diet_kinds.length === 0) {
+      return "「食べない食事がある」ときは、該当する項目を1つ以上選んでください。";
+    }
+    return null;
+  }, [allergies.length, canComplete, completedRequired, draft]);
 
   if (membersQuery.isPending) {
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
@@ -353,6 +367,25 @@ export function HouseholdOnboardingForm({
           </select>
         </label>
 
+        {draft.allergy_status === "registered" && allergiesQuery.isError && (
+          <div className="stack" role="alert">
+            <p className="error-message">アレルギー一覧を読み込めませんでした。</p>
+            <button
+              className="secondary-button min-h-11"
+              type="button"
+              onClick={() => {
+                void allergiesQuery.refetch();
+              }}
+            >
+              再試行
+            </button>
+          </div>
+        )}
+        {draft.allergy_status === "registered" && allergyError !== null && (
+          <p className="error-message" role="alert">
+            {allergyError}
+          </p>
+        )}
         {draft.allergy_status === "registered" && api.listCatalog !== undefined && (
           <AllergyEditor
             memberId={draft.id}
@@ -360,22 +393,30 @@ export function HouseholdOnboardingForm({
             aliases={aliasesQuery.data ?? []}
             allergies={allergies}
             addStandard={async (memberId, allergenId) => {
+              setAllergyError(null);
               await api.addStandardAllergy?.(memberId, allergenId);
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies(userId, memberId),
               });
             }}
             addCustom={async (memberId, name, aliases) => {
+              setAllergyError(null);
               await api.addCustomAllergy(memberId, name, aliases);
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies(userId, memberId),
               });
             }}
             remove={async (allergyId) => {
+              setAllergyError(null);
               await api.removeAllergy?.(allergyId);
               await queryClient.invalidateQueries({
                 queryKey: householdKeys.allergies(userId, draft.id),
               });
+            }}
+            onError={(error) => {
+              setAllergyError(
+                error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+              );
             }}
           />
         )}
@@ -473,6 +514,11 @@ export function HouseholdOnboardingForm({
         )}
       </section>
 
+      {completeBlockedReason !== null && (
+        <p className="error-message" role="alert">
+          {completeBlockedReason}
+        </p>
+      )}
       <button
         className="primary-button"
         type="button"
