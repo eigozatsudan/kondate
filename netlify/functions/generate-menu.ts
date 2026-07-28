@@ -5,7 +5,7 @@ import {
   newMenuGenerationRequestSchema,
   regenerateMenuRequestSchema,
 } from "../../shared/contracts/generation.js";
-import { requireUser } from "./_shared/auth.js";
+import { requireUserWithEmail } from "./_shared/auth.js";
 import {
   createGenerationDeps,
   generationResponse,
@@ -36,7 +36,7 @@ export default async function generateMenu(request: Request): Promise<Response> 
   const requestStartedAtMonotonicMs = performance.now();
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
   try {
-    const user = await requireUser(request);
+    const user = await requireUserWithEmail(request);
     const command = await parseJson(request, menuEndpointBodySchema);
     const localTestScenario = readLocalMockScenario(request);
     return generationResponse(

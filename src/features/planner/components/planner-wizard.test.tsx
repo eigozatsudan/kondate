@@ -942,7 +942,7 @@ describe("PlannerWizard review step", () => {
         shortWindowRetryAt="2026-07-25T05:10:00.000Z"
       />,
     );
-    expect(screen.getByText("本日あと3回作成できます")).toBeVisible();
+    expect(screen.getByText("無料版は本日あと3回作成できます")).toBeVisible();
     const limit = screen.getByRole("alert");
     expect(limit).toHaveTextContent("いまは新しい献立を作れません");
     expect(limit).toHaveTextContent(/少し待つ必要があります/u);

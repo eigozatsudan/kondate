@@ -1,6 +1,6 @@
 import type { Config, Context } from "@netlify/functions";
 import { z } from "zod";
-import { requireUser } from "./_shared/auth.js";
+import { requireUserWithEmail } from "./_shared/auth.js";
 import { createGenerationRepository } from "./_shared/generation-repository.js";
 import { generationResponse, toGenerationStatus } from "./_shared/generation-service.js";
 import { handleError, HttpError, methodNotAllowed } from "./_shared/http.js";
@@ -13,7 +13,7 @@ export default async function generationStatus(
 ): Promise<Response> {
   if (request.method !== "GET") return methodNotAllowed(["GET"]);
   try {
-    const user = await requireUser(request);
+    const user = await requireUserWithEmail(request);
     const parsedIdempotencyKey = idempotencyKeySchema.safeParse(context?.params.idempotencyKey);
     if (!parsedIdempotencyKey.success) {
       throw new HttpError(400, "invalid_request", "入力内容を確認してください");

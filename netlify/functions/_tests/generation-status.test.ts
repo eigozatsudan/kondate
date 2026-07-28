@@ -4,12 +4,12 @@ import {
   generationFailureCodes,
   type GenerationFailureCode,
 } from "../../../shared/contracts/generation.js";
-import { requireUser } from "../_shared/auth.js";
+import { requireUserWithEmail } from "../_shared/auth.js";
 import { createGenerationRepository } from "../_shared/generation-repository.js";
 import { HttpError } from "../_shared/http.js";
 import handler from "../generation-status.js";
 
-vi.mock("../_shared/auth.js", () => ({ requireUser: vi.fn() }));
+vi.mock("../_shared/auth.js", () => ({ requireUserWithEmail: vi.fn() }));
 vi.mock("../_shared/generation-repository.js", () => ({
   createGenerationRepository: vi.fn(),
 }));
@@ -17,6 +17,7 @@ vi.mock("../_shared/generation-repository.js", () => ({
 const user = {
   userId: "85000000-0000-4000-8000-000000000001",
   accessToken: "token",
+  email: "owner@example.com",
 };
 const key = "82000000-0000-4000-8000-000000000001";
 const requestId = "81000000-0000-4000-8000-000000000001";
@@ -64,7 +65,7 @@ function record(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(requireUser).mockResolvedValue(user);
+  vi.mocked(requireUserWithEmail).mockResolvedValue(user);
   vi.mocked(createGenerationRepository).mockReturnValue({ status } as never);
   status.mockResolvedValue(record("not_started"));
 });
@@ -76,12 +77,12 @@ describe("GET /api/generations/:idempotencyKey/status", () => {
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET");
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(requireUser).not.toHaveBeenCalled();
+    expect(requireUserWithEmail).not.toHaveBeenCalled();
     expect(createGenerationRepository).not.toHaveBeenCalled();
   });
 
   it("rejects a request without a verified access token", async () => {
-    vi.mocked(requireUser).mockRejectedValue(
+    vi.mocked(requireUserWithEmail).mockRejectedValue(
       new HttpError(401, "auth_required", "ログインが必要です"),
     );
 

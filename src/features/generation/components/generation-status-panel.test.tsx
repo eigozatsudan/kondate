@@ -56,7 +56,7 @@ describe("GenerationStatusPanel", () => {
   it("shows returned quota and Japan retry time after failure", () => {
     render(<GenerationStatusPanel state={failedState} />);
     expect(screen.getByText("成功回数には含まれません")).toBeVisible();
-    expect(screen.getByText("成功回数：本日あと2回")).toBeVisible();
+    expect(screen.getByText("無料版は成功回数：本日あと2回")).toBeVisible();
     expect(screen.getByText(/明日0:00/)).toBeVisible();
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
       "href",
@@ -125,9 +125,9 @@ describe("GenerationStatusPanel", () => {
     );
     const region = await screen.findByRole("region", { name: "今日あと何回作れるか" });
     expect(region).toBeVisible();
-    expect(screen.getByText("成功回数：本日あと2回")).toBeVisible();
-    expect(screen.getByText("AI通信試行：本日あと1回")).toBeVisible();
-    expect(screen.getByText("10分間の通信試行：あと1回")).toBeVisible();
+    expect(screen.getByText("無料版は成功回数：本日あと2回")).toBeVisible();
+    expect(screen.getByText("無料版はAI通信試行：本日あと1回")).toBeVisible();
+    expect(screen.getByText("無料版は10分間の通信試行：あと1回")).toBeVisible();
     expect(screen.getByText("アプリ全体：今日はここまで")).toBeVisible();
   });
 
@@ -146,9 +146,9 @@ describe("GenerationStatusPanel", () => {
         <GenerationStatusPanel state={failedState} userId={USER_ID} />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("AI通信試行：本日あと0回")).toBeVisible();
-    expect(screen.getByText("成功回数：本日あと2回")).toBeVisible();
-    expect(screen.getByText("10分間の通信試行：あと4回")).toBeVisible();
+    expect(await screen.findByText("無料版はAI通信試行：本日あと0回")).toBeVisible();
+    expect(screen.getByText("無料版は成功回数：本日あと2回")).toBeVisible();
+    expect(screen.getByText("無料版は10分間の通信試行：あと4回")).toBeVisible();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
   });
 
@@ -172,9 +172,9 @@ describe("GenerationStatusPanel", () => {
         <GenerationStatusPanel state={failedState} userId={USER_ID} />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("成功回数：本日あと0回")).toBeVisible();
-    expect(screen.getByText("10分間の通信試行：あと0回")).toBeVisible();
-    expect(screen.getByText("AI通信試行：本日あと4回")).toBeVisible();
+    expect(await screen.findByText("無料版は成功回数：本日あと0回")).toBeVisible();
+    expect(screen.getByText("無料版は10分間の通信試行：あと0回")).toBeVisible();
+    expect(screen.getByText("無料版はAI通信試行：本日あと4回")).toBeVisible();
   });
 
   it("shows request_conflict copy and fresh-start without success-count claim", async () => {

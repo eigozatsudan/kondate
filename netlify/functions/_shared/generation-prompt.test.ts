@@ -26,7 +26,7 @@ function asNewMenuExecution(
         idempotencyKey: "56000000-0000-4000-8000-000000000001",
         draftId: "84000000-0000-4000-8000-000000000001",
         draftRevision: 1,
-        privacyNoticeVersion: "2026-07-26.v1",
+        privacyNoticeVersion: "2026-07-28.v1",
         expiredPantryConfirmations: [],
       },
     },
@@ -163,7 +163,13 @@ describe("buildGenerationMessages", () => {
       .replace("<kondate_input_data>\n", "")
       .replace("\n</kondate_input_data>", "");
     const payload = JSON.parse(serialized) as Record<string, unknown>;
-    expectExactKeys(payload, ["preferences", "members", "pantry", "validationVersions"]);
+    expectExactKeys(payload, [
+      "preferences",
+      "members",
+      "pantry",
+      "validationVersions",
+      "seasonContext",
+    ]);
     expectExactKeys(payload.preferences as object, [
       "mealType",
       "mainIngredients",
@@ -230,6 +236,20 @@ describe("buildGenerationMessages", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeIdeaGenerationContext()));
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
+  });
+
+  it("includes JST seasonContext from server clock in payload and system", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()), {
+      // 2026-07-15 12:00 JST
+      now: new Date("2026-07-15T03:00:00.000Z"),
+    });
+    const system = messages.find((message) => message.role === "system")?.content ?? "";
+    expect(system).toContain("seasonContext");
+    expect(system).toContain("季節のために制約を破らないでください");
+    const user = messages.find((message) => message.role === "user")?.content ?? "";
+    expect(user).toContain('"season":"summer"');
+    expect(user).toContain('"month":7');
+    expect(user).toContain('"labelJa":"夏"');
   });
 
   it("rejects a missing member-preference pairing", () => {

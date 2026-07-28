@@ -63,3 +63,14 @@ begin
   perform set_config('request.jwt.claims', '{}', true);
 end;
 $function$;
+
+-- テスト用: user uuid から決定的な identity_key（64 hex）を作る
+create or replace function tests.quota_identity_key(p_user_id uuid)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = pg_catalog
+as $function$
+  select lpad(replace(p_user_id::text, '-', ''), 64, '0');
+$function$;

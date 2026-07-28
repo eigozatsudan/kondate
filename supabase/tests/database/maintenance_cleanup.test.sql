@@ -191,8 +191,8 @@ begin
   delete from private.shopping_mutations;
   delete from private.generation_regeneration_snapshots;
   delete from private.ai_generation_requests;
-  delete from private.ai_user_daily_usage;
-  delete from private.ai_user_daily_external_attempts;
+  delete from private.ai_identity_daily_usage;
+  delete from private.ai_identity_daily_external_attempts;
   delete from private.ai_global_daily_usage;
 
   insert into auth.users (id, instance_id, aud, role, email)
@@ -207,17 +207,17 @@ begin
 
   -- 終端台帳: ちょうど 30 日 / より古い / 29 日 / menu 参照
   insert into private.ai_generation_requests (
-    id, user_id, idempotency_key, request_kind, status,
+    id, user_id, identity_key, personal_quota_disabled, idempotency_key, request_kind, status,
     request_hmac_version, request_hmac, user_usage_day,
     failure_code, started_at, completed_at
   ) values
-    (v_old_req, v_user, 'f2100000-0000-4000-8000-000000000001', 'regenerate_menu', 'failed',
+    (v_old_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000001', 'regenerate_menu', 'failed',
      'generation-command.v2', repeat('1', 64), date '2026-06-01',
      'generation_timeout', v_older, v_older),
-    (v_exact_req, v_user, 'f2100000-0000-4000-8000-000000000002', 'regenerate_menu', 'failed',
+    (v_exact_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000002', 'regenerate_menu', 'failed',
      'generation-command.v2', repeat('2', 64), date '2026-06-24',
      'generation_timeout', v_exact, v_exact),
-    (v_new_req, v_user, 'f2100000-0000-4000-8000-000000000003', 'regenerate_menu', 'failed',
+    (v_new_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000003', 'regenerate_menu', 'failed',
      'generation-command.v2', repeat('3', 64), date '2026-06-25',
      'generation_timeout', v_newer, v_newer);
 
@@ -233,11 +233,11 @@ begin
   );
 
   insert into private.ai_generation_requests (
-    id, user_id, idempotency_key, request_kind, status,
+    id, user_id, identity_key, personal_quota_disabled, idempotency_key, request_kind, status,
     request_hmac_version, request_hmac, user_usage_day,
     completed_menu_id, started_at, completed_at
   ) values (
-    v_menu_req, v_user, 'f2100000-0000-4000-8000-000000000004', 'regenerate_menu', 'succeeded',
+    v_menu_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000004', 'regenerate_menu', 'succeeded',
     'generation-command.v2', repeat('4', 64), date '2026-06-01',
     v_menu, v_older, v_older
   );
@@ -310,15 +310,15 @@ begin
     (v_user_c, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      'maint-stale-c@example.test');
 
-  insert into private.ai_user_daily_usage (user_id, usage_day, reserved_count, success_count) values
-    (v_user_a, date '2026-07-24', 1, 0),
-    (v_user_b, date '2026-07-24', 1, 0),
-    (v_user_c, date '2026-07-24', 1, 0);
-  insert into private.ai_user_daily_external_attempts (
-    user_id, usage_day, reserved_count, sent_count
+  insert into private.ai_identity_daily_usage (identity_key, usage_day, reserved_count, success_count) values
+    (tests.quota_identity_key(v_user_a), date '2026-07-24', 1, 0),
+    (tests.quota_identity_key(v_user_b), date '2026-07-24', 1, 0),
+    (tests.quota_identity_key(v_user_c), date '2026-07-24', 1, 0);
+  insert into private.ai_identity_daily_external_attempts (
+    identity_key, usage_day, reserved_count, sent_count
   ) values
-    (v_user_a, date '2026-07-24', 1, 0),
-    (v_user_b, date '2026-07-24', 0, 1);
+    (tests.quota_identity_key(v_user_a), date '2026-07-24', 1, 0),
+    (tests.quota_identity_key(v_user_b), date '2026-07-24', 0, 1);
   -- reserved は未送信 + live のみ。送信済みは mark 時に reserved→sent 済み
   insert into private.ai_global_daily_usage (usage_day, reserved_count, sent_count)
   values (date '2026-07-24', 2, 1)
@@ -328,27 +328,24 @@ begin
         updated_at = now();
 
   insert into private.ai_generation_requests (
-    id, user_id, idempotency_key, request_kind, status,
+    id, user_id, identity_key, personal_quota_disabled, idempotency_key, request_kind, status,
     request_hmac_version, request_hmac, user_usage_day,
     user_quota_reserved, user_attempt_reserved, user_attempt_day,
     global_reserved_day, global_sent_calls,
     started_at, processing_expires_at
   ) values
     -- 未送信: success / attempt / global 予約を解放する
-    ('f2000000-0000-4000-8000-000000000005', v_user_a,
-     'f2100000-0000-4000-8000-000000000005', 'regenerate_menu', 'processing',
+    ('f2000000-0000-4000-8000-000000000005', v_user_a, tests.quota_identity_key(v_user_a), false, 'f2100000-0000-4000-8000-000000000005', 'regenerate_menu', 'processing',
      'generation-command.v2', repeat('5', 64), date '2026-07-24',
      true, true, date '2026-07-24', date '2026-07-24', 0,
      v_now - interval '10 minutes', v_now - interval '1 second'),
     -- 送信済み: global_reserved_day は null。attempt も解放済み。success のみ解放
-    ('f2000000-0000-4000-8000-000000000006', v_user_b,
-     'f2100000-0000-4000-8000-000000000006', 'regenerate_menu', 'processing',
+    ('f2000000-0000-4000-8000-000000000006', v_user_b, tests.quota_identity_key(v_user_b), false, 'f2100000-0000-4000-8000-000000000006', 'regenerate_menu', 'processing',
      'generation-command.v2', repeat('6', 64), date '2026-07-24',
      true, false, null, null, 1,
      v_now - interval '10 minutes', v_now - interval '1 second'),
     -- 期限内 live: 触らない
-    ('f2000000-0000-4000-8000-000000000007', v_user_c,
-     'f2100000-0000-4000-8000-000000000007', 'regenerate_menu', 'processing',
+    ('f2000000-0000-4000-8000-000000000007', v_user_c, tests.quota_identity_key(v_user_c), false, 'f2100000-0000-4000-8000-000000000007', 'regenerate_menu', 'processing',
      'generation-command.v2', repeat('7', 64), date '2026-07-24',
      true, false, null, date '2026-07-24', 0,
      v_now - interval '1 minute', v_now + interval '5 minutes');
@@ -438,11 +435,11 @@ select ok(
     where id = 'f2000000-0000-4000-8000-000000000006') = 'failed'
   and (select status from private.ai_generation_requests
     where id = 'f2000000-0000-4000-8000-000000000007') = 'processing'
-  and (select reserved_count from private.ai_user_daily_usage
-    where user_id = 'f1000000-0000-4000-8000-0000000000a1'
+  and (select reserved_count from private.ai_identity_daily_usage
+    where identity_key = tests.quota_identity_key('f1000000-0000-4000-8000-0000000000a1')
       and usage_day = date '2026-07-24') = 0
-  and (select reserved_count from private.ai_user_daily_external_attempts
-    where user_id = 'f1000000-0000-4000-8000-0000000000a1'
+  and (select reserved_count from private.ai_identity_daily_external_attempts
+    where identity_key = tests.quota_identity_key('f1000000-0000-4000-8000-0000000000a1')
       and usage_day = date '2026-07-24') = 0
   and (select reserved_count from private.ai_global_daily_usage
     where usage_day = date '2026-07-24') = 1
@@ -484,12 +481,14 @@ begin
   );
   for v_i in 1..5 loop
     insert into private.ai_generation_requests (
-      id, user_id, idempotency_key, request_kind, status,
+      id, user_id, identity_key, personal_quota_disabled, idempotency_key, request_kind, status,
       request_hmac_version, request_hmac, user_usage_day,
       failure_code, started_at, completed_at
     ) values (
       ('f2200000-0000-4000-8000-00000000000' || v_i::text)::uuid,
       v_user,
+      tests.quota_identity_key(v_user),
+      false,
       ('f2300000-0000-4000-8000-00000000000' || v_i::text)::uuid,
       'regenerate_menu', 'failed', 'generation-command.v2',
       repeat(v_i::text, 64), date '2026-06-01',

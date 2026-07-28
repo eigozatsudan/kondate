@@ -1,5 +1,12 @@
 # Supabase 本番デプロイ手順
 
+## QUOTA_IDENTITY_HMAC_KEY のローテーション
+
+`QUOTA_IDENTITY_HMAC_KEY` を回すと、メールから導いた `identity_key` がすべて変わる。
+**日次の成功・attempt 枠は事実上リセット**される（旧 identity 行は unlinkable のまま残るが、新鍵では参照されない）。
+ローテ前に影響を運用で共有し、`GENERATION_REQUEST_HMAC_KEY` と**別鍵**のまま維持する。
+ブラウザ・ログ・チケットへ鍵や identity_key を載せない。
+
 Managed Supabase プロジェクトの作成から、マイグレーション適用、least-privilege メンテナンス LOGIN の用意、スキーマ検証までの正本。
 **パスワード・接続 URL・サービスロールキーをコマンド履歴・チケット・ログに残さない。**
 

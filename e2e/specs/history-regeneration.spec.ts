@@ -93,9 +93,13 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   // 採用
   await page.getByRole("button", { name: "これに決めた" }).click();
 
-  // 履歴: idea badge
+  // 履歴: idea badge + お気に入りだけ表示
   await page.goto("/history");
   await expect(page.getByText("アイデア")).toBeVisible({ timeout: 15_000 });
+  const favoritesOnly = page.getByRole("switch", { name: "お気に入りだけを表示" });
+  await expect(favoritesOnly).toBeVisible();
+  await favoritesOnly.click();
+  await expect(page.getByText("アイデア")).toBeVisible();
 
   // 詳細: 短い注意喚起 + child_friendly 不在
   await page.goto(`/history/${sourceMenuId}`);

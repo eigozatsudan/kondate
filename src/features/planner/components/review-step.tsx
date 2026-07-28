@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
 import { collectPlannerRequestText, type PlannerDraftInput } from "@shared/contracts/planner";
+import { formatFreeTierQuotaCopy } from "@shared/copy/free-tier";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
+import { getJstSeasonContext, type SeasonContext } from "@shared/season/jst-season";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import { CurrentSafetySummary } from "../current-safety-summary";
 import { cuisineGenreLabel, mealLabel } from "../model/planner-labels";
@@ -99,6 +101,11 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
    * review 自身への遷移は呼ばない。
    */
   onEditStep?: (step: Exclude<PlannerStep, "review">) => void;
+  /**
+   * 季節表示（端末時計 best-effort）。未指定時は getJstSeasonContext(new Date())。
+   * 生成の権威ある季節はサーバー側プロンプトのみ。
+   */
+  seasonContext?: SeasonContext;
 };
 
 /** privacy 未確認のまま生成を押したときのダイアログ本文 */
@@ -133,6 +140,7 @@ export function ReviewStep({
   globalAvailable = null,
   shortWindowRetryAt = null,
   onEditStep,
+  seasonContext = getJstSeasonContext(new Date()),
 }: ReviewStepProps) {
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
   // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
@@ -449,31 +457,41 @@ export function ReviewStep({
         </div>
       )}
       {summaryError != null && <p role="alert">{summaryError}</p>}
-      {/* 設計 §5.3: idea 注意は主操作直前。summary / 追加条件 / privacy より下に置く */}
-      {value.targetMode === "idea" && (
-        <p role="note">
-          家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
-        </p>
-      )}
+      {/* 季節は端末時計の best-effort。生成の権威はサーバープロンプト。
+          idea 注意文の直前配置契約を壊さないよう、usage / 主 CTA より上に置く。 */}
+      <p role="status">
+        いまは{seasonContext.labelJa}（{String(seasonContext.month)}月）の食材を優先して提案します
+      </p>
       {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・attempt・global・短時間枠を平易表示。
-          同時に複数の制限へ達しても理由を隠さず、1つの警告へまとめて重複表示を避ける。 */}
+          同時に複数の制限へ達しても理由を隠さず、1つの警告へまとめて重複表示を避ける。
+          個人枠の制限説明には「無料版は」を付ける（global 混雑文は付けない）。 */}
       {usageRemaining !== null && usageRemaining !== 0 ? (
-        <p role="status">本日あと{String(usageRemaining)}回作成できます</p>
+        <p role="status">
+          {formatFreeTierQuotaCopy(`本日あと${String(usageRemaining)}回作成できます`)}
+        </p>
       ) : null}
       {attemptsRemaining !== null && attemptsRemaining !== 0 ? (
-        <p role="status">AIへの問い合わせは本日あと{String(attemptsRemaining)}回まで受け付けます</p>
+        <p role="status">
+          {formatFreeTierQuotaCopy(
+            `AIへの問い合わせは本日あと${String(attemptsRemaining)}回まで受け付けます`,
+          )}
+        </p>
       ) : null}
       {hasActiveUsageBlocker && (
         <div className="usage-limit-banner" role="alert">
           <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
           {usageRemaining === 0 && (
             <p className="usage-limit-banner-body">
-              本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。
+              {formatFreeTierQuotaCopy(
+                "本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。",
+              )}
             </p>
           )}
           {attemptsRemaining === 0 && (
             <p className="usage-limit-banner-body">
-              AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。
+              {formatFreeTierQuotaCopy(
+                "AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。",
+              )}
             </p>
           )}
           {globalAvailable === false && (
@@ -483,16 +501,25 @@ export function ReviewStep({
           )}
           {shortWindowRetryAt !== null && (
             <p className="usage-limit-banner-body">
-              短い時間に何度も作成を試したため、少し待つ必要があります。
-              {new Intl.DateTimeFormat("ja-JP", {
-                timeZone: "Asia/Tokyo",
-                dateStyle: "short",
-                timeStyle: "short",
-              }).format(new Date(shortWindowRetryAt))}
-              以降に再試行してください。
+              {formatFreeTierQuotaCopy(
+                `短い時間に何度も作成を試したため、少し待つ必要があります。${new Intl.DateTimeFormat(
+                  "ja-JP",
+                  {
+                    timeZone: "Asia/Tokyo",
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  },
+                ).format(new Date(shortWindowRetryAt))}以降に再試行してください。`,
+              )}
             </p>
           )}
         </div>
+      )}
+      {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。 */}
+      {value.targetMode === "idea" && (
+        <p role="note">
+          家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
+        </p>
       )}
       <div className="wizard-actions">
         {onBack !== undefined && (

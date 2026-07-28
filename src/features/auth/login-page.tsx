@@ -101,7 +101,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const statusNotice = useMemo(() => {
     const query = new URLSearchParams(location.search);
     if (query.get("accountDeleted") === "1") {
-      return "アカウントを削除しました。ご利用ありがとうございました。";
+      return "アカウントを削除しました。不正利用防止のため、利用回数の記録だけは残ることがあります。ご利用ありがとうございました。";
     }
     if (query.get("signedOut") === "1") {
       return "ログアウトしました。";

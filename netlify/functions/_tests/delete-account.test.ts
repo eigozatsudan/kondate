@@ -3,6 +3,7 @@ import { HttpError } from "../_shared/http.js";
 
 const requireUserMock = vi.hoisted(() => vi.fn());
 const adminDeleteUserMock = vi.hoisted(() => vi.fn());
+const rpcMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../_shared/auth.js", () => ({
   requireUser: requireUserMock,
@@ -15,6 +16,7 @@ vi.mock("../_shared/supabase-admin.js", () => ({
         deleteUser: adminDeleteUserMock,
       },
     },
+    rpc: rpcMock,
   }),
 }));
 
@@ -46,16 +48,21 @@ function makeDeleteRequest(
 describe("createDeleteAccountHandler", () => {
   const deleteUser = vi.fn();
   const authenticate = vi.fn();
+  const releaseProcessingReservations = vi.fn();
   const logSink: string[] = [];
 
   beforeEach(() => {
     deleteUser.mockReset();
     authenticate.mockReset();
+    releaseProcessingReservations.mockReset();
     requireUserMock.mockReset();
     adminDeleteUserMock.mockReset();
+    rpcMock.mockReset();
     logSink.length = 0;
     authenticate.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
+    releaseProcessingReservations.mockResolvedValue({ error: null });
     deleteUser.mockResolvedValue({ error: null });
+    rpcMock.mockResolvedValue({ data: 0, error: null });
     const capture = (...args: unknown[]) => {
       logSink.push(args.map((value) => String(value)).join(" "));
     };
@@ -71,7 +78,11 @@ describe("createDeleteAccountHandler", () => {
   });
 
   function handler() {
-    return createDeleteAccountHandler({ authenticate, deleteUser });
+    return createDeleteAccountHandler({
+      authenticate,
+      releaseProcessingReservations,
+      deleteUser,
+    });
   }
 
   function loggedText(): string {
@@ -118,10 +129,22 @@ describe("createDeleteAccountHandler", () => {
       makeDeleteRequest({ confirmation: "削除する", user_id: OTHER_USER_ID }),
     );
     expect(response.status).toBe(200);
+    expect(releaseProcessingReservations).toHaveBeenCalledWith(USER_ID);
     expect(deleteUser).toHaveBeenCalledTimes(1);
     expect(deleteUser).toHaveBeenCalledWith(USER_ID);
     expect(deleteUser.mock.calls[0]).toHaveLength(1);
     expect(deleteUser).not.toHaveBeenCalledWith(OTHER_USER_ID);
+  });
+
+  it("returns 503 account_delete_failed when release RPC fails before deleteUser", async () => {
+    releaseProcessingReservations.mockResolvedValue({ error: { message: "release failed" } });
+    const response = await handler()(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "account_delete_failed" },
+    });
+    expect(deleteUser).not.toHaveBeenCalled();
   });
 
   it("returns 503 account_delete_failed when the Admin API reports an error", async () => {
@@ -135,18 +158,25 @@ describe("createDeleteAccountHandler", () => {
         message: "削除できませんでした。時間をおいてもう一度お試しください",
       },
     });
+    expect(releaseProcessingReservations).toHaveBeenCalledWith(USER_ID);
   });
 
-  it("calls deleteUser once with the authenticated user id and returns deleted:true", async () => {
+  it("calls release then deleteUser with the authenticated user id and returns deleted:true", async () => {
     const response = await handler()(makeDeleteRequest({ confirmation: "削除する" }));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
       data: { deleted: true },
     });
+    expect(releaseProcessingReservations).toHaveBeenCalledTimes(1);
+    expect(releaseProcessingReservations).toHaveBeenCalledWith(USER_ID);
     expect(deleteUser).toHaveBeenCalledTimes(1);
     expect(deleteUser).toHaveBeenCalledWith(USER_ID);
     expect(deleteUser.mock.calls[0]).toHaveLength(1);
+    // release が delete より先
+    expect(releaseProcessingReservations.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteUser.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("never logs the user id, email, or access token", async () => {
@@ -170,13 +200,18 @@ describe("production deleteUser adapter", () => {
   beforeEach(() => {
     requireUserMock.mockReset();
     adminDeleteUserMock.mockReset();
+    rpcMock.mockReset();
     requireUserMock.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
     adminDeleteUserMock.mockResolvedValue({ data: { user: null }, error: null });
+    rpcMock.mockResolvedValue({ data: 0, error: null });
   });
 
-  it("passes (authenticatedUser.userId, false) for hard deletion", async () => {
+  it("passes (authenticatedUser.userId, false) for hard deletion after release RPC", async () => {
     const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
     expect(response.status).toBe(200);
+    expect(rpcMock).toHaveBeenCalledWith("release_identity_and_global_for_user_processing", {
+      p_user_id: USER_ID,
+    });
     expect(adminDeleteUserMock).toHaveBeenCalledTimes(1);
     expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
   });

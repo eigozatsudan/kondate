@@ -61,7 +61,7 @@ function makeCommand(idempotencyKey: string): GenerationCommand {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 3,
-      privacyNoticeVersion: "2026-07-26.v1",
+      privacyNoticeVersion: "2026-07-28.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -171,7 +171,7 @@ describe("GenerationPage", () => {
       expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
     });
     expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
-    expect(screen.getByText("AI通信試行：本日あと4回")).toBeVisible();
+    expect(screen.getByText("無料版はAI通信試行：本日あと4回")).toBeVisible();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
     // request-local の成功回数だけ表示するフォールバック経路ではないこと
     expect(mockGetUsageToday).toHaveBeenCalled();

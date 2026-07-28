@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationStatusData } from "../../../shared/contracts/generation.js";
-import { requireUser } from "../_shared/auth.js";
+import { requireUserWithEmail } from "../_shared/auth.js";
 import {
   createGenerationDeps,
   runGeneration,
@@ -10,7 +10,7 @@ import { HttpError } from "../_shared/http.js";
 import { readLocalMockScenario } from "../_shared/local-mock-scenario.js";
 import handler from "../generate-dish.js";
 
-vi.mock("../_shared/auth.js", () => ({ requireUser: vi.fn() }));
+vi.mock("../_shared/auth.js", () => ({ requireUserWithEmail: vi.fn() }));
 vi.mock("../_shared/local-mock-scenario.js", () => ({
   readLocalMockScenario: vi.fn(() => undefined),
 }));
@@ -26,6 +26,7 @@ vi.mock("../_shared/generation-service.js", async (importOriginal) => {
 const user = {
   userId: "85000000-0000-4000-8000-000000000001",
   accessToken: "token",
+  email: "owner@example.com",
 };
 const requestBody = {
   commandVersion: "generation-command.v2" as const,
@@ -36,7 +37,7 @@ const requestBody = {
     dishId: "89000000-0000-4000-8000-000000000001",
     changeReason: "simpler" as const,
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-26.v1",
+    privacyNoticeVersion: "2026-07-28.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -65,7 +66,7 @@ function postRequest(body: unknown = requestBody): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(requireUser).mockResolvedValue(user);
+  vi.mocked(requireUserWithEmail).mockResolvedValue(user);
   vi.mocked(createGenerationDeps).mockReturnValue({} as GenerationDependencies);
   vi.mocked(runGeneration).mockResolvedValue(terminalResult);
   vi.mocked(readLocalMockScenario).mockReturnValue(undefined);
@@ -77,7 +78,7 @@ describe("POST /api/generations/dish", () => {
       new Request("http://127.0.0.1:5173/api/generations/dish", { method: "GET" }),
     );
     expect(response.status).toBe(405);
-    expect(requireUser).not.toHaveBeenCalled();
+    expect(requireUserWithEmail).not.toHaveBeenCalled();
     expect(runGeneration).not.toHaveBeenCalled();
   });
 
@@ -87,7 +88,7 @@ describe("POST /api/generations/dish", () => {
       order.push("time");
       return 1234.5;
     });
-    vi.mocked(requireUser).mockImplementation(() => {
+    vi.mocked(requireUserWithEmail).mockImplementation(() => {
       order.push("auth");
       return Promise.resolve(user);
     });
@@ -118,7 +119,7 @@ describe("POST /api/generations/dish", () => {
   });
 
   it("maps auth failures", async () => {
-    vi.mocked(requireUser).mockRejectedValue(
+    vi.mocked(requireUserWithEmail).mockRejectedValue(
       new HttpError(401, "auth_required", "ログインが必要です"),
     );
     const response = await handler(postRequest());

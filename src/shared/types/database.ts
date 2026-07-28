@@ -38,12 +38,42 @@ type SaveDraftArgs = Omit<GeneratedSaveDraftArgs, NullableDraftArgs> & {
 type NullableReserveGenerationArgs =
   "p_draft_id" | "p_draft_revision" | "p_source_menu_id" | "p_replace_dish_id" | "p_change_reason";
 
+// identity 日次枠: typegen 前後どちらでも p_identity_key / p_quota_disabled を要求する
 type ReserveGenerationArgs = Omit<GeneratedReserveGenerationArgs, NullableReserveGenerationArgs> & {
   p_draft_id: GeneratedReserveGenerationArgs["p_draft_id"] | null;
   p_draft_revision: GeneratedReserveGenerationArgs["p_draft_revision"] | null;
   p_source_menu_id: GeneratedReserveGenerationArgs["p_source_menu_id"] | null;
   p_replace_dish_id: GeneratedReserveGenerationArgs["p_replace_dish_id"] | null;
   p_change_reason: GeneratedReserveGenerationArgs["p_change_reason"] | null;
+  p_identity_key: string;
+  p_quota_disabled?: boolean;
+};
+
+type GetAiUsageTodayArgs = {
+  p_user_id: string;
+  p_identity_key: string;
+  p_now?: string;
+  p_global_limit?: number;
+};
+
+type GetAiGenerationStatusArgs = {
+  p_user_id: string;
+  p_idempotency_key: string;
+  p_user_limit: number;
+  p_identity_key: string;
+  p_now?: string;
+};
+
+type ReserveAiRepairCallArgs = {
+  p_request_id: string;
+  p_global_limit: number;
+  p_quota_disabled?: boolean;
+  p_now?: string;
+};
+
+type ReleaseIdentityProcessingArgs = {
+  p_user_id: string;
+  p_now?: string;
 };
 
 type FinalizeGenerationFailureArgs = Omit<GeneratedFinalizeGenerationFailureArgs, "p_retry_at"> & {
@@ -117,6 +147,9 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       GeneratedFunctions,
       | "save_generation_draft"
       | "reserve_ai_generation"
+      | "reserve_ai_repair_call"
+      | "get_ai_usage_today"
+      | "get_ai_generation_status"
       | "finalize_ai_generation_failure"
       | "finalize_ai_generation_success"
       | "finalize_ai_generation_success_deadline_bounded"
@@ -129,6 +162,22 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       };
       reserve_ai_generation: Omit<GeneratedReserveGeneration, "Args"> & {
         Args: ReserveGenerationArgs;
+      };
+      reserve_ai_repair_call: {
+        Args: ReserveAiRepairCallArgs;
+        Returns: unknown;
+      };
+      get_ai_usage_today: {
+        Args: GetAiUsageTodayArgs;
+        Returns: unknown;
+      };
+      get_ai_generation_status: {
+        Args: GetAiGenerationStatusArgs;
+        Returns: unknown;
+      };
+      release_identity_and_global_for_user_processing: {
+        Args: ReleaseIdentityProcessingArgs;
+        Returns: number;
       };
       finalize_ai_generation_failure: Omit<GeneratedFinalizeGenerationFailure, "Args"> & {
         Args: FinalizeGenerationFailureArgs;

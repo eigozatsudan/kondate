@@ -10,6 +10,8 @@ type RpcMock = (name: string, parameters: unknown) => Promise<RpcResult>;
 
 const hmacKey = Buffer.alloc(32, 7);
 
+const identityHmacKey = Buffer.alloc(32, 9);
+
 const { createUserScopedSupabaseMock, getServerEnvMock, rpcMock, userClient } = vi.hoisted(() => {
   const client = { from: vi.fn() };
   return {
@@ -23,6 +25,8 @@ const { createUserScopedSupabaseMock, getServerEnvMock, rpcMock, userClient } = 
       generationIntegrity: {
         requestHmacKey: Buffer.alloc(32, 7),
       },
+      quotaIdentityHmacKey: Buffer.alloc(32, 9),
+      aiQuotaDisabled: false,
     })),
     rpcMock: vi.fn<RpcMock>(),
     userClient: client,
@@ -42,11 +46,14 @@ import {
   generationRequestHmacVersion,
 } from "./generation-command-integrity.js";
 import { createGenerationRepository, type GenerationRepository } from "./generation-repository.js";
+import { computeQuotaIdentityKey } from "./quota-identity.js";
 
 const user = {
   userId: "10000000-0000-4000-8000-000000000001",
   accessToken: "access-token",
+  email: "owner@example.com",
 };
+const expectedIdentityKey = computeQuotaIdentityKey(identityHmacKey, user.email);
 const requestId = "20000000-0000-4000-8000-000000000001";
 const idempotencyKey = "30000000-0000-4000-8000-000000000001";
 const draftId = "40000000-0000-4000-8000-000000000001";
@@ -60,7 +67,7 @@ const newMenuCommand: GenerationCommand = {
     idempotencyKey,
     draftId,
     draftRevision: 7,
-    privacyNoticeVersion: "2026-07-26.v1",
+    privacyNoticeVersion: "2026-07-28.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -118,8 +125,10 @@ const reserveArgs = {
     target_member_ids: ["50000000-0000-4000-8000-000000000001"],
     source_menu_version: null,
   },
+  p_identity_key: expectedIdentityKey,
   p_user_limit: 3,
   p_global_limit: 20,
+  p_quota_disabled: false,
   p_stale_after_seconds: 180,
 };
 const markSentArgs = {
@@ -128,7 +137,8 @@ const markSentArgs = {
 const reserveRepairArgs = {
   p_request_id: requestId,
   p_global_limit: 20,
-} satisfies Database["public"]["Functions"]["reserve_ai_repair_call"]["Args"];
+  p_quota_disabled: false,
+};
 const recordModelArgs = {
   p_request_id: requestId,
   p_model_id: "model:free",
@@ -194,7 +204,8 @@ const statusArgs = {
   p_user_id: user.userId,
   p_idempotency_key: idempotencyKey,
   p_user_limit: 3,
-} satisfies Database["public"]["Functions"]["get_ai_generation_status"]["Args"];
+  p_identity_key: expectedIdentityKey,
+};
 
 type SuccessCase = {
   name: string;
@@ -293,6 +304,8 @@ beforeEach(() => {
     generationIntegrity: {
       requestHmacKey: hmacKey,
     },
+    quotaIdentityHmacKey: identityHmacKey,
+    aiQuotaDisabled: false,
   });
 });
 
@@ -514,7 +527,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         sourceMenuId,
         changeReason: "simpler",
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1",
+        privacyNoticeVersion: "2026-07-28.v1",
         expiredPantryConfirmations: [],
       },
     };
@@ -527,7 +540,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         dishId: "70000000-0000-4000-8000-000000000001",
         changeReason: "different_ingredient",
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1",
+        privacyNoticeVersion: "2026-07-28.v1",
         expiredPantryConfirmations: [],
       },
     };
@@ -571,8 +584,10 @@ describe("createGenerationRepository regeneration reserve", () => {
         target_member_ids: ["50000000-0000-4000-8000-000000000001"],
         source_menu_version: 1,
       },
+      p_identity_key: expectedIdentityKey,
       p_user_limit: 3,
       p_global_limit: 20,
+      p_quota_disabled: false,
       p_stale_after_seconds: 180,
     });
     expect(rpcMock).toHaveBeenNthCalledWith(2, "reserve_ai_generation", {
@@ -593,8 +608,10 @@ describe("createGenerationRepository regeneration reserve", () => {
         target_member_ids: ["50000000-0000-4000-8000-000000000001"],
         source_menu_version: 1,
       },
+      p_identity_key: expectedIdentityKey,
       p_user_limit: 3,
       p_global_limit: 20,
+      p_quota_disabled: false,
       p_stale_after_seconds: 180,
     });
   });

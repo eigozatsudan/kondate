@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const requireUserMock = vi.hoisted(() => vi.fn());
+const requireUserWithEmailMock = vi.hoisted(() => vi.fn());
 const rpcMock = vi.hoisted(() => vi.fn());
+const identityKey = "a".repeat(64);
 const getServerEnvMock = vi.hoisted(() =>
   vi.fn(() => ({
     openRouter: { globalDailyLimit: 20 },
+    quotaIdentityHmacKey: Buffer.alloc(32, 1),
   })),
 );
 
 vi.mock("../_shared/auth.js", () => ({
-  requireUser: requireUserMock,
+  requireUserWithEmail: requireUserWithEmailMock,
 }));
 vi.mock("../_shared/supabase-admin.js", () => ({
   getSupabaseAdmin: () => ({ rpc: rpcMock }),
@@ -17,20 +19,27 @@ vi.mock("../_shared/supabase-admin.js", () => ({
 vi.mock("../_shared/env.js", () => ({
   getServerEnv: getServerEnvMock,
 }));
+vi.mock("../_shared/quota-identity.js", () => ({
+  computeQuotaIdentityKey: () => identityKey,
+  normalizeQuotaEmail: (email: string) => email.trim().toLowerCase(),
+}));
 
 import usageToday from "../usage-today.js";
 
 describe("usage-today", () => {
   beforeEach(() => {
-    requireUserMock.mockReset();
+    requireUserWithEmailMock.mockReset();
     rpcMock.mockReset();
     getServerEnvMock.mockReset();
     getServerEnvMock.mockReturnValue({
       openRouter: { globalDailyLimit: 20 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
     });
-    requireUserMock.mockResolvedValue({
+    requireUserWithEmailMock.mockResolvedValue({
       userId: "10000000-0000-4000-8000-000000000001",
       accessToken: "token",
+      email: "owner@example.com",
     });
     rpcMock.mockResolvedValue({
       data: {
@@ -54,7 +63,7 @@ describe("usage-today", () => {
   });
 
   it("requires a bearer-authenticated user before repository access", async () => {
-    requireUserMock.mockRejectedValue(new Error("unauthorized"));
+    requireUserWithEmailMock.mockRejectedValue(new Error("unauthorized"));
     const response = await usageToday(
       new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
     );
@@ -81,17 +90,56 @@ describe("usage-today", () => {
     });
     expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {
       p_user_id: "10000000-0000-4000-8000-000000000001",
+      p_identity_key: identityKey,
       p_global_limit: 20,
+    });
+  });
+
+  it("projects full personal remaining when aiQuotaDisabled is true", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 20 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: true,
+    });
+    rpcMock.mockResolvedValue({
+      data: {
+        success: { consumed: 2, limit: 3, remaining: 1 },
+        attempts: { sent: 4, limit: 6, remaining: 2 },
+        shortWindow: {
+          sent: 4,
+          limit: 4,
+          remaining: 0,
+          retryAt: "2026-07-28T12:00:00.000Z",
+        },
+        globalAvailable: false,
+        retryAt: "2026-07-29T00:00:00.000Z",
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: true; data: unknown };
+    expect(body.data).toEqual({
+      success: { consumed: 0, limit: 3, remaining: 3 },
+      attempts: { sent: 0, limit: 6, remaining: 6 },
+      shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+      globalAvailable: false,
+      retryAt: "2026-07-29T00:00:00.000Z",
     });
   });
 
   it("forwards GLOBAL_DAILY_AI_LIMIT to the usage RPC for globalAvailable", async () => {
     getServerEnvMock.mockReturnValue({
       openRouter: { globalDailyLimit: 30 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
     });
     await usageToday(new Request("http://127.0.0.1/api/usage/today", { method: "GET" }));
     expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {
       p_user_id: "10000000-0000-4000-8000-000000000001",
+      p_identity_key: identityKey,
       p_global_limit: 30,
     });
   });

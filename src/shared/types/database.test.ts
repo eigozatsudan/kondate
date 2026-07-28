@@ -32,6 +32,8 @@ it("accepts nullable draft references for regeneration reservations", () => {
       source_menu_version: 1,
     },
     p_user_limit: 3,
+    p_identity_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    p_quota_disabled: false,
     p_global_limit: 20,
   } satisfies ReserveGenerationArgs;
 
@@ -203,9 +205,11 @@ it("set_onboarding_statusのonboarding_statusをOnboardingStatusのリテラル�
 });
 
 it("preserves every other reservation argument and return contract", () => {
-  expectTypeOf<Omit<ReserveGeneration["Args"], NullableReserveGenerationArg>>().toEqualTypeOf<
-    Omit<GeneratedReserveGeneration["Args"], NullableReserveGenerationArg>
-  >();
+  // p_identity_key / p_quota_disabled は overlay で足す（typegen 前でも呼び出し側契約を固定）
+  type OverlayOnly = "p_identity_key" | "p_quota_disabled";
+  expectTypeOf<
+    Omit<ReserveGeneration["Args"], NullableReserveGenerationArg | OverlayOnly>
+  >().toEqualTypeOf<Omit<GeneratedReserveGeneration["Args"], NullableReserveGenerationArg>>();
   expectTypeOf<ReserveGeneration["Returns"]>().toEqualTypeOf<
     GeneratedReserveGeneration["Returns"]
   >();

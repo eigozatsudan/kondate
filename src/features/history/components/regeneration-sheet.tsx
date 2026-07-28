@@ -4,6 +4,7 @@ import { z } from "zod";
 import { changeReasons } from "@shared/contracts/domain";
 import type { ExpiredPantryConfirmation } from "@shared/contracts/generation";
 import type { TargetMode } from "@shared/contracts/planner";
+import { formatFreeTierQuotaCopy } from "@shared/copy/free-tier";
 import type { ExpiredPantryForRegen } from "../model/expired-pantry-for-regen";
 
 const allReasons = [
@@ -276,24 +277,28 @@ export function RegenerationSheet({
         ) : (
           <div className="stack gap-1">
             <p>
-              {usage.successRemaining === null
-                ? "別の献立が完成した場合に1回使用します"
-                : `別の献立が完成した場合に1回使用・現在残り${String(usage.successRemaining)}回`}
+              {formatFreeTierQuotaCopy(
+                usage.successRemaining === null
+                  ? "別の献立が完成した場合に1回使用します"
+                  : `別の献立が完成した場合に1回使用・現在残り${String(usage.successRemaining)}回`,
+              )}
             </p>
             {usage.attemptsRemaining !== null && (
               <p className="type-small" role="status">
-                AIへの問い合わせは本日あと{String(usage.attemptsRemaining)}回まで受け付けます
+                {formatFreeTierQuotaCopy(
+                  `AIへの問い合わせは本日あと${String(usage.attemptsRemaining)}回まで受け付けます`,
+                )}
               </p>
             )}
             {usage.shortWindowRemaining === 0 && usage.shortWindowRetryAt !== null && (
               <p className="type-small" role="status">
-                しばらく続けて作成を試したため、
-                {new Intl.DateTimeFormat("ja-JP", {
-                  timeZone: "Asia/Tokyo",
-                  dateStyle: "short",
-                  timeStyle: "short",
-                }).format(new Date(usage.shortWindowRetryAt))}
-                以降に再試行してください
+                {formatFreeTierQuotaCopy(
+                  `しばらく続けて作成を試したため、${new Intl.DateTimeFormat("ja-JP", {
+                    timeZone: "Asia/Tokyo",
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  }).format(new Date(usage.shortWindowRetryAt))}以降に再試行してください`,
+                )}
               </p>
             )}
           </div>

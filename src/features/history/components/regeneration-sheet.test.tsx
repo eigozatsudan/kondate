@@ -52,7 +52,7 @@ describe("RegenerationSheet", () => {
 
   it("explains conditional quota use before regeneration", () => {
     renderRegenerationSheet();
-    expect(screen.getByText("別の献立が完成した場合に1回使用・現在残り3回")).toBeVisible();
+    expect(screen.getByText("無料版は別の献立が完成した場合に1回使用・現在残り3回")).toBeVisible();
   });
 
   it("does not claim remaining 0 while usage is loading", () => {
@@ -131,7 +131,10 @@ describe("RegenerationSheet", () => {
       expect.objectContaining({
         changeReason: "simpler",
         expiredPantryConfirmations: [
-          expect.objectContaining({ pantryItemId: "p1", checkedAt: expect.any(String) }),
+          expect.objectContaining({
+            pantryItemId: "p1",
+            checkedAt: expect.any(String) as string,
+          }),
         ],
       }),
     );

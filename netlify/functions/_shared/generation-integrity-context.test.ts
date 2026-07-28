@@ -27,7 +27,7 @@ const newMenuCommand: GenerationCommand = {
     idempotencyKey: "60000000-0000-4000-8000-000000000001",
     draftId,
     draftRevision: 2,
-    privacyNoticeVersion: "2026-07-26.v1",
+    privacyNoticeVersion: "2026-07-28.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -40,7 +40,7 @@ const regenerateCommand: GenerationCommand = {
     sourceMenuId: menuId,
     changeReason: "simpler",
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-26.v1",
+    privacyNoticeVersion: "2026-07-28.v1",
     expiredPantryConfirmations: [],
   },
 };

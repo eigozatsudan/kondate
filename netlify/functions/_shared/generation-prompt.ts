@@ -2,6 +2,7 @@ import {
   dishRegenerationPromptSchema,
   wholeRegenerationPromptSchema,
 } from "../../../shared/contracts/regeneration.js";
+import { getJstSeasonContext, type SeasonContext } from "../../../shared/season/jst-season.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import type { OpenRouterMessage } from "./openrouter.js";
@@ -40,6 +41,8 @@ export type GenerationPromptDto = {
     priority: "must_use" | "prefer_use";
   }[];
   validationVersions: { allergenDictionary: string | null; foodSafetyRules: string | null };
+  /** サーバー時計由来。クライアント入力は採用しない */
+  seasonContext: SeasonContext;
 };
 
 /**
@@ -78,7 +81,11 @@ export const GENERATION_SYSTEM_PROMPT_CORE =
   // outcome
   "通常はoutcome=successの献立を返す。" +
   "アレルギー・安全制約を満たせない場合のみoutcome=constraint_conflictを使い、" +
-  "材料の都合や好みの曖昧さだけでconstraint_conflictにしない。";
+  "材料の都合や好みの曖昧さだけでconstraint_conflictにしない。" +
+  // 季節（制約より下位。CORE 末尾に置き優先を下げない）
+  "入力のseasonContextは日本の現在月・季節です。" +
+  "制約（アレルギー・安全・must_use・品数・時間）を満たす範囲で旬の食材や季節感を優先してください。" +
+  "季節のために制約を破らないでください。";
 
 /** idea 経路のみ: adaptations / labelConfirmations を空に固定 */
 export const GENERATION_SYSTEM_PROMPT_IDEA_EXTRA =
@@ -125,8 +132,17 @@ function pantryPayload(context: GenerationContext): GenerationPromptDto["pantry"
   });
 }
 
+export type BuildGenerationMessagesOptions = {
+  /** 未指定時は new Date()。テスト固定用 */
+  now?: Date;
+};
+
 /** Plan 3 本体: 新規献立の base プロンプトのみを構築する */
-function buildBaseGenerationMessages(context: GenerationContext): readonly OpenRouterMessage[] {
+function buildBaseGenerationMessages(
+  context: GenerationContext,
+  options: BuildGenerationMessagesOptions = {},
+): readonly OpenRouterMessage[] {
+  const seasonContext = getJstSeasonContext(options.now ?? new Date());
   if (context.targetMode === "idea") {
     // idea: members / allergies / ageBands / adaptations 要求を一切載せない
     const preferences = {
@@ -144,6 +160,7 @@ function buildBaseGenerationMessages(context: GenerationContext): readonly OpenR
       members: [],
       pantry: pantryPayload(context),
       validationVersions: { allergenDictionary: null, foodSafetyRules: null },
+      seasonContext,
     };
     const serialized = serializePromptPayload(payload);
     return [
@@ -232,6 +249,7 @@ function buildBaseGenerationMessages(context: GenerationContext): readonly OpenR
       allergenDictionary: context.safety.dictionaryVersion,
       foodSafetyRules: context.safety.foodRuleVersion,
     },
+    seasonContext,
   };
   const serialized = serializePromptPayload(payload);
   return [
@@ -249,11 +267,13 @@ function buildBaseGenerationMessages(context: GenerationContext): readonly OpenR
 /**
  * 実行コンテキスト全体からメッセージを構築する。
  * 再生成時は base + regeneration_constraints を付与する。
+ * seasonContext はサーバー時計のみ（クライアント注入不可）。
  */
 export function buildGenerationMessages(
   context: GenerationExecutionContext,
+  options: BuildGenerationMessagesOptions = {},
 ): readonly OpenRouterMessage[] {
-  const base = buildBaseGenerationMessages(context.generationContext);
+  const base = buildBaseGenerationMessages(context.generationContext, options);
   if (context.kind === "new_menu") return base;
   const artifacts = requireRegenerationArtifacts(context.regeneration.artifacts);
   const regeneration =

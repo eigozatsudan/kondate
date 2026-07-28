@@ -160,7 +160,7 @@ const benchmarkCommand: Extract<GenerationCommand, { kind: "new_menu" }> = {
     idempotencyKey: benchmarkIdempotencyKey,
     draftId: benchmarkDraftId,
     draftRevision: 1,
-    privacyNoticeVersion: "2026-07-26.v1",
+    privacyNoticeVersion: "2026-07-28.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -446,7 +446,11 @@ export async function runPaidBenchmarkUnit(input: {
   };
 
   const deps: GenerationDependencies = {
-    user: { userId: benchmarkUserId, accessToken: "benchmark-no-db-access" },
+    user: {
+      userId: benchmarkUserId,
+      accessToken: "benchmark-no-db-access",
+      email: "owner@example.com",
+    },
     repository: createInMemoryRepository(input.onRepositoryTransition),
     models: configuration,
     resolveIntegrityContext: () =>

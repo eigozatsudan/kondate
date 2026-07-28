@@ -93,6 +93,7 @@ const httpMockServerConfig = parseServerEnv({
   OPENROUTER_MODELS: httpModels.join(","),
   OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  QUOTA_IDENTITY_HMAC_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
   USER_DAILY_AI_LIMIT: "3",
   USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
@@ -384,7 +385,7 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
       idempotencyKey: key,
       draftId: "92000000-0000-4000-8000-000000000001",
       draftRevision: 1,
-      privacyNoticeVersion: "2026-07-26.v1",
+      privacyNoticeVersion: "2026-07-28.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -511,7 +512,11 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
       scenario === "malformed-json" ? "success" : scenario,
     );
     return {
-      user: { userId: "93000000-0000-4000-8000-000000000001", accessToken: "token" },
+      user: {
+        userId: "93000000-0000-4000-8000-000000000001",
+        accessToken: "token",
+        email: "owner@example.com",
+      },
       repository,
       models: [...httpModels],
       loadExecutionContext: vi.fn(() =>
@@ -707,7 +712,7 @@ describe("family canary matrix across idea and household generation boundaries",
           ? {
               data: {
                 user_id: canaryUserId,
-                notice_version: "2026-07-26.v1",
+                notice_version: "2026-07-28.v1",
                 accepted_at: "2026-07-11T02:00:00.000Z",
               },
               error: null,
@@ -751,7 +756,7 @@ describe("family canary matrix across idea and household generation boundaries",
         idempotencyKey: "56000000-0000-4000-8000-000000000099",
         draftId: canaryDraftId,
         draftRevision: 1,
-        privacyNoticeVersion: "2026-07-26.v1",
+        privacyNoticeVersion: "2026-07-28.v1",
         expiredPantryConfirmations: [],
       },
       new Date("2026-07-11T03:00:00.000Z"),
@@ -769,7 +774,7 @@ describe("family canary matrix across idea and household generation boundaries",
           idempotencyKey: "56000000-0000-4000-8000-000000000001",
           draftId: "84000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-26.v1" as const,
+          privacyNoticeVersion: "2026-07-28.v1" as const,
           expiredPantryConfirmations: [] as {
             pantryItemId: string;
             checkedAt: string;

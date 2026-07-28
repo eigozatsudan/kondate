@@ -38,20 +38,25 @@ const releaseLockedInteger = <const Value extends number, const Text extends str
 ) => z.union([z.literal(value), z.literal(text)]).transform(() => value);
 const globalDailyLimit = (max: number) => z.coerce.number().int().min(1).max(max).default(max);
 
-const generationRequestHmacKeySchema = z
-  .string()
-  .min(1)
-  .transform((value, context) => {
-    try {
-      return parseGenerationRequestHmacKey(value);
-    } catch {
-      context.addIssue({
-        code: "custom",
-        message: "GENERATION_REQUEST_HMAC_KEY must be canonical base64 for exactly 32 bytes",
-      });
-      return z.NEVER;
-    }
-  });
+// GENERATION_REQUEST_HMAC_KEY / QUOTA_IDENTITY_HMAC_KEY 共通: canonical base64 of 32 bytes
+const hmacKey32Schema = (envName: string) =>
+  z
+    .string()
+    .min(1)
+    .transform((value, context) => {
+      try {
+        return parseGenerationRequestHmacKey(value);
+      } catch {
+        context.addIssue({
+          code: "custom",
+          message: `${envName} must be canonical base64 for exactly 32 bytes`,
+        });
+        return z.NEVER;
+      }
+    });
+
+const generationRequestHmacKeySchema = hmacKey32Schema("GENERATION_REQUEST_HMAC_KEY");
+const quotaIdentityHmacKeySchema = hmacKey32Schema("QUOTA_IDENTITY_HMAC_KEY");
 
 const rawServerEnvSchema = continuationServerEnvSchema.extend({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
@@ -59,6 +64,8 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   OPENROUTER_MODELS: z.string(),
   OPENROUTER_BASE_URL: z.url().default("https://openrouter.ai/api/v1"),
   GENERATION_REQUEST_HMAC_KEY: generationRequestHmacKeySchema,
+  // identity 日次枠用。GENERATION_REQUEST_HMAC_KEY と共用しない
+  QUOTA_IDENTITY_HMAC_KEY: quotaIdentityHmacKeySchema,
   USER_DAILY_AI_LIMIT: releaseLockedInteger(releaseQuota.userDailySuccessLimit, "3"),
   USER_DAILY_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
     releaseQuota.userDailyExternalCallLimit,
@@ -77,7 +84,17 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
 });
 
 type ParsedServerEnv = z.infer<typeof rawServerEnvSchema>;
-export type ServerEnv = Omit<ParsedServerEnv, "GENERATION_REQUEST_HMAC_KEY"> & {
+export type ServerEnv = Omit<
+  ParsedServerEnv,
+  "GENERATION_REQUEST_HMAC_KEY" | "QUOTA_IDENTITY_HMAC_KEY"
+> & {
+  /** SERVER_SITE_ORIGIN がローカル canonical origin と一致するか */
+  isLocal: boolean;
+  /**
+   * 個人枠（identity 日次・短時間）無効化。
+   * true のときのみ isLocal かつ AI_QUOTA_DISABLED=true。本番でフラグ true は parse throw。
+   */
+  aiQuotaDisabled: boolean;
   supabase: {
     url: string;
     publishableKey: string;
@@ -99,6 +116,8 @@ export type ServerEnv = Omit<ParsedServerEnv, "GENERATION_REQUEST_HMAC_KEY"> & {
   generationIntegrity: {
     requestHmacKey: Uint8Array;
   };
+  /** identity 日次枠 HMAC 鍵（メールは保存しない） */
+  quotaIdentityHmacKey: Uint8Array;
 };
 
 export function parseManagedSupabaseProjectRef(value: string): string | null {
@@ -179,6 +198,24 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (source.VITE_GENERATION_REQUEST_HMAC_KEY !== undefined) {
     throw new Error("server_configuration_invalid");
   }
+  if (source.VITE_QUOTA_IDENTITY_HMAC_KEY !== undefined) {
+    throw new Error("server_configuration_invalid");
+  }
+  if (source.VITE_AI_QUOTA_DISABLED !== undefined) {
+    throw new Error("server_configuration_invalid");
+  }
+  // 未設定 / "false" / "true" のみ。1 や yes は設定ミスとして落とす。
+  const rawQuotaDisabled = source.AI_QUOTA_DISABLED;
+  let aiQuotaDisabledFlag = false;
+  if (rawQuotaDisabled !== undefined && rawQuotaDisabled !== null && rawQuotaDisabled !== "") {
+    if (rawQuotaDisabled === "true") {
+      aiQuotaDisabledFlag = true;
+    } else if (rawQuotaDisabled === "false") {
+      aiQuotaDisabledFlag = false;
+    } else {
+      throw new Error("server_configuration_invalid");
+    }
+  }
   const result = rawServerEnvSchema.safeParse(source);
   if (!result.success) throw new Error("server_configuration_invalid");
 
@@ -192,6 +229,10 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     throw new Error("server_configuration_invalid");
   }
   const isLocal = site.origin === localSiteOrigin;
+  // 本番で true は黙殺せず起動失敗（設計 Feature 4）
+  if (aiQuotaDisabledFlag && !isLocal) {
+    throw new Error("server_configuration_invalid");
+  }
   const browserProjectRef = parseManagedSupabaseProjectRef(result.data.VITE_SUPABASE_URL);
   const serverProjectRef = parseManagedSupabaseProjectRef(result.data.SUPABASE_URL);
   if (
@@ -214,9 +255,12 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (!isLocal && result.data.OPENROUTER_BASE_URL !== officialOpenRouterBaseUrl) {
     throw new Error("server_configuration_invalid");
   }
-  const { GENERATION_REQUEST_HMAC_KEY, ...publicEnv } = result.data;
+  const { GENERATION_REQUEST_HMAC_KEY, QUOTA_IDENTITY_HMAC_KEY, ...publicEnv } = result.data;
   return {
     ...publicEnv,
+    isLocal,
+    // 個人枠無効は isLocal ∧ AI_QUOTA_DISABLED=true のみ
+    aiQuotaDisabled: aiQuotaDisabledFlag && isLocal,
     supabase: {
       url: result.data.SUPABASE_URL,
       publishableKey: result.data.SUPABASE_PUBLISHABLE_KEY,
@@ -240,6 +284,7 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     generationIntegrity: {
       requestHmacKey: GENERATION_REQUEST_HMAC_KEY,
     },
+    quotaIdentityHmacKey: QUOTA_IDENTITY_HMAC_KEY,
   };
 }
 

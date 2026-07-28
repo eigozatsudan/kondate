@@ -24,6 +24,8 @@ const validServerEnv = {
   OPENROUTER_MODELS: "mock/kondate-primary:free,mock/kondate-repair:free",
   OPENROUTER_BASE_URL: "http://openrouter-mock:8787/api/v1",
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  // GENERATION と別鍵（同長でも別値）であることをローカル fixture で示す
+  QUOTA_IDENTITY_HMAC_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
   USER_DAILY_AI_LIMIT: "3",
   USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
@@ -63,6 +65,66 @@ describe("parseOpenRouterModels", () => {
     });
     expect(parsed.generationIntegrity.requestHmacKey).toEqual(
       Buffer.from(validServerEnv.GENERATION_REQUEST_HMAC_KEY, "base64"),
+    );
+    expect(parsed.quotaIdentityHmacKey).toEqual(
+      Buffer.from(validServerEnv.QUOTA_IDENTITY_HMAC_KEY, "base64"),
+    );
+    expect(parsed.isLocal).toBe(true);
+    expect(parsed.aiQuotaDisabled).toBe(false);
+  });
+
+  it("rejects a browser-prefixed QUOTA_IDENTITY_HMAC_KEY alias", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        VITE_QUOTA_IDENTITY_HMAC_KEY: validServerEnv.QUOTA_IDENTITY_HMAC_KEY,
+      }),
+    ).toThrow("server_configuration_invalid");
+  });
+
+  it("enables aiQuotaDisabled only for local + AI_QUOTA_DISABLED=true", () => {
+    expect(parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "true" }).aiQuotaDisabled).toBe(
+      true,
+    );
+    expect(parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "false" }).aiQuotaDisabled).toBe(
+      false,
+    );
+  });
+
+  it("rejects invalid AI_QUOTA_DISABLED values", () => {
+    expect(() => parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "1" })).toThrow(
+      "server_configuration_invalid",
+    );
+    expect(() => parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "yes" })).toThrow(
+      "server_configuration_invalid",
+    );
+  });
+
+  it("rejects VITE_AI_QUOTA_DISABLED", () => {
+    expect(() => parseServerEnv({ ...validServerEnv, VITE_AI_QUOTA_DISABLED: "true" })).toThrow(
+      "server_configuration_invalid",
+    );
+  });
+
+  it("rejects AI_QUOTA_DISABLED=true on non-local origin", () => {
+    const production = {
+      ...validServerEnv,
+      SERVER_SITE_ORIGIN: "https://app.example.com",
+      VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+      SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+      OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+      OPENROUTER_MODELS: "vendor/model-a",
+      AI_QUOTA_DISABLED: "true",
+    };
+    expect(() => parseServerEnv(production)).toThrow("server_configuration_invalid");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["31-byte key", Buffer.alloc(31, 1).toString("base64")],
+  ] as const)("rejects an invalid QUOTA_IDENTITY_HMAC_KEY (%s)", (_label, value) => {
+    expect(() => parseServerEnv({ ...validServerEnv, QUOTA_IDENTITY_HMAC_KEY: value })).toThrow(
+      "server_configuration_invalid",
     );
   });
 
