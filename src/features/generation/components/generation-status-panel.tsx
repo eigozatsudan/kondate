@@ -50,16 +50,16 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
  * 「条件を直してやり直す」は onClear（pending+machine）で idle→/planner。
  * 緊急献立・履歴は pending のみ消す（machine を idle にすると GenerationPage の
  * Navigate と <a href> が競合するため）。
- * 緊急献立 CTA は household 対象時のみ（idea では誤導になる — C-I6）。
+ * 緊急献立 CTA は household / idea とも常時表示（2026-07-28 設計: idea 個人固定候補パス）。
  */
 function RecoveryLinks({
   onClear,
-  targetMode,
 }: {
   onClear?: () => void;
+  /** 呼び出し互換のため受け取るが、リンク表示には使わない */
   targetMode?: "idea" | "household";
 }) {
-  const showEmergencyLink = targetMode !== "idea";
+  // C-I6 改訂: idea でも個人向け緊急献立へ誘導する（両 RecoveryLinks サイト共通）。
   return (
     <div className="gen-status-actions">
       {onClear !== undefined ? (
@@ -77,17 +77,15 @@ function RecoveryLinks({
           条件を直してやり直す
         </a>
       )}
-      {showEmergencyLink ? (
-        <a
-          className="button-link"
-          href="/emergency-menus"
-          onClick={() => {
-            clearPendingGeneration();
-          }}
-        >
-          15分緊急献立を見る
-        </a>
-      ) : null}
+      <a
+        className="button-link"
+        href="/emergency-menus"
+        onClick={() => {
+          clearPendingGeneration();
+        }}
+      >
+        15分緊急献立を見る
+      </a>
       <a
         className="button-link"
         href="/history"
@@ -111,7 +109,7 @@ export function GenerationStatusPanel({
   userId?: string;
   /** request_conflict から idle へ戻し、planner 再入力へ進ませる */
   onClear?: () => void;
-  /** idea では緊急献立 CTA を出さない（省略時は household 相当で表示） */
+  /** household / idea とも緊急献立リンクを出す（省略時も表示） */
   targetMode?: "idea" | "household";
 }) {
   if (state.phase === "checking") {
@@ -200,7 +198,7 @@ export function GenerationStatusPanel({
     );
   }
   if (state.phase === "request_conflict") {
-    const showEmergencyLink = targetMode !== "idea";
+    // RecoveryLinks と同様、idea でも個人向け緊急献立リンクを出す（2 箇所目）。
     return (
       <div className="gen-status-panel" data-phase="request_conflict">
         <h1>同じ操作を続けられませんでした</h1>
@@ -216,11 +214,9 @@ export function GenerationStatusPanel({
               最初からやり直す
             </a>
           )}
-          {showEmergencyLink ? (
-            <a className="button-link" href="/emergency-menus">
-              15分緊急献立を見る
-            </a>
-          ) : null}
+          <a className="button-link" href="/emergency-menus">
+            15分緊急献立を見る
+          </a>
         </div>
       </div>
     );

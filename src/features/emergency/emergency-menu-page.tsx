@@ -23,6 +23,18 @@ const roleLabels = {
 
 const emergencyTargetMemberLimit = 20;
 
+/** 設計 §5 path 条件付き intro（exact plain JP） */
+const householdIntroText =
+  "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。";
+const ideaIntroText =
+  "個人向けの固定候補です。家族のアレルギー・年齢条件は適用していません。AI利用回数は消費しません。調理前に原材料表示と家庭内の混入を確認してください。";
+
+/** 設計 §5 path 条件付き safety_only バナー（exact plain JP） */
+const householdSafetyOnlyBannerText =
+  "メイン食材は一致しませんでした。安全条件に合う候補を表示しています。";
+const ideaSafetyOnlyBannerText =
+  "メイン食材は一致しませんでした。アレルギー条件は適用していません。";
+
 function isEmergencyEligibleMember(member: HouseholdMemberRow): boolean {
   return (
     member.status === "complete" &&
@@ -46,11 +58,33 @@ export function EmergencyMenuPage() {
       return "initial";
     }
   });
+
+  const draftQuery = useQuery({
+    queryKey: plannerKeys.draft(userId ?? "missing"),
+    enabled: draftQueryEnabled,
+    queryFn: () => getPlannerDraft(getBrowserSupabaseClient(), userId ?? ""),
+  });
+
+  // 設計 §5 enablement: draft 由来で household / idea を分岐する。
+  const draft = draftQuery.data;
+  const draftReady =
+    draftQuery.isSuccess && draft !== null && draft !== undefined && !draftQuery.isFetching;
+  const isIdea = draft?.targetMode === "idea";
+  const isHouseholdPath = draft !== null && draft !== undefined && draft.targetMode !== "idea";
+  // loading 中も draft から chrome を決める。response.path だけに頼らない。
+  const expectedPath: "household" | "idea" = isIdea ? "idea" : "household";
+
+  const householdQueryEnabled =
+    userId !== undefined && draftQuery.isSuccess && !draftQuery.isFetching && isHouseholdPath;
+  // Realtime / 60s poll も household 経路のみ（idea では購読しない）
+  const safetyRealtimeEnabled = householdQueryEnabled;
+
   // 別端末・他タブでの家族/アレルギー変更を、history revalidation と同様に
   // owner-scoped Realtime + focus/visible/online + 60s poll で拾う。
   // revision を query key に載せ、signal 直後は旧候補を閉じて再取得完了まで fail closed。
+  // idea 下書きでは household 安全信号を購読しない（safetyRealtimeEnabled で gate）。
   useEffect(() => {
-    if (userId === undefined) return;
+    if (userId === undefined || !safetyRealtimeEnabled) return;
     const refreshRevision = () => {
       householdSafetyEventVersion.current += 1;
       setHouseholdSafetyRevision((current) => {
@@ -103,23 +137,10 @@ export function EmergencyMenuPage() {
       document.removeEventListener("visibilitychange", handleVisible);
       void client.removeChannel(channel);
     };
-  }, [userId]);
-  const draftQuery = useQuery({
-    queryKey: plannerKeys.draft(userId ?? "missing"),
-    enabled: draftQueryEnabled,
-    queryFn: () => getPlannerDraft(getBrowserSupabaseClient(), userId ?? ""),
-  });
-  const shouldLoadHouseholdTargets =
-    draftQuery.data !== null &&
-    draftQuery.data !== undefined &&
-    draftQuery.data.targetMode !== "idea";
+  }, [userId, safetyRealtimeEnabled]);
+
   const shouldResolveUnselectedTargets =
     draftQuery.data?.targetMode === null && draftQuery.data.targetMemberIds.length === 0;
-  const householdQueryEnabled =
-    userId !== undefined &&
-    draftQuery.isSuccess &&
-    !draftQuery.isFetching &&
-    shouldLoadHouseholdTargets;
   const householdQuery = useQuery({
     // 家族設定のauthority key配下に安全revisionを加え、家族更新のinvalidationと
     // 同画面・別画面の安全更新eventのどちらでもfresh cacheを再利用しない。
@@ -132,29 +153,43 @@ export function EmergencyMenuPage() {
   const eligibleMemberIds = (householdQuery.data ?? [])
     .filter(isEmergencyEligibleMember)
     .map((member) => member.id);
-  const targetMemberIds = shouldResolveUnselectedTargets
-    ? eligibleMemberIds.slice(0, emergencyTargetMemberLimit)
-    : draftQuery.data?.targetMode === "household"
-      ? draftQuery.data.targetMemberIds
-          .filter((memberId) => eligibleMemberIds.includes(memberId))
-          .slice(0, emergencyTargetMemberLimit)
-      : [];
+  // idea は対象メンバーなし。household のみ eligible と draft 選択の積集合。
+  const targetMemberIds = isIdea
+    ? []
+    : shouldResolveUnselectedTargets
+      ? eligibleMemberIds.slice(0, emergencyTargetMemberLimit)
+      : draft?.targetMode === "household"
+        ? draft.targetMemberIds
+            .filter((memberId) => eligibleMemberIds.includes(memberId))
+            .slice(0, emergencyTargetMemberLimit)
+        : [];
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
-  // Train A: household のみ実送。idea アームは Task 8 / Train B で分岐する。
-  const request = {
-    mealType: draftQuery.data?.mealType ?? "dinner",
-    mainIngredients: draftQuery.data?.mainIngredients ?? [],
-    targetMode: "household" as const,
-    targetMemberIds,
-    pantryItemIds: draftQuery.data?.pantrySelections.map((item) => item.pantryItemId) ?? [],
-  } as const;
+
+  const mealType = draft?.mealType ?? "dinner";
+  const mainIngredients = draft?.mainIngredients ?? [];
+  const pantryItemIds = draft?.pantrySelections.map((item) => item.pantryItemId) ?? [];
+  // 設計 §5: idea は targetMemberIds 空・targetMode idea。eligible 0 でも候補 query を起動する。
+  const request = isIdea
+    ? {
+        mealType,
+        mainIngredients,
+        targetMode: "idea" as const,
+        targetMemberIds: [] as const,
+        pantryItemIds,
+      }
+    : {
+        mealType,
+        mainIngredients,
+        targetMode: "household" as const,
+        targetMemberIds,
+        pantryItemIds,
+      };
+
   const candidateQueryEnabled =
     userId !== undefined &&
-    draftQuery.isSuccess &&
-    draftQuery.data !== null &&
-    !draftQuery.isFetching &&
-    (!shouldLoadHouseholdTargets || householdQuery.isSuccess) &&
-    hasEligibleHouseholdMembers;
+    draftReady &&
+    (isIdea || (householdQueryEnabled && householdQuery.isSuccess && targetMemberIds.length > 0));
+
   const query = useQuery({
     queryKey: emergencyMenuKeys.candidates({
       userId: userId ?? "missing",
@@ -164,14 +199,17 @@ export function EmergencyMenuPage() {
     enabled: candidateQueryEnabled,
     queryFn: () => getEmergencyMenus(request),
   });
+
+  // loading / error は candidateQueryEnabled の後に定義する（設計 §5 順序）。
   const loading =
     (draftQueryEnabled && (draftQuery.isPending || draftQuery.isFetching)) ||
     (householdQueryEnabled && (householdQuery.isPending || householdQuery.isFetching)) ||
     (candidateQueryEnabled && (query.isPending || query.isFetching));
   const error =
-    draftQuery.isError || (shouldLoadHouseholdTargets && householdQuery.isError) || query.isError
+    draftQuery.isError || (householdQueryEnabled && householdQuery.isError) || query.isError
       ? "緊急献立を読み込めませんでした"
       : null;
+
   if (draftQuery.isSuccess && draftQuery.data === null) {
     return (
       <main className="page-frame stack emergency-menu-page">
@@ -183,44 +221,42 @@ export function EmergencyMenuPage() {
       </main>
     );
   }
-  if (
-    draftQuery.isSuccess &&
-    draftQuery.data !== null &&
+
+  // pre-API empty: candidate query が disabled のときだけ。idea は落とさない。
+  // draft/household ロード中は出さない（loading 中に empty フラッシュしない）。
+  const showPreApiEmpty =
+    draftReady &&
+    !isIdea &&
     !loading &&
     error === null &&
-    !hasEligibleHouseholdMembers
-  ) {
-    // C-I6: 空理由を正直に分岐する。idea / 適格0 / 選択フィルタ / 真の0人を混同しない。
-    const targetMode = draftQuery.data.targetMode;
+    !candidateQueryEnabled &&
+    !hasEligibleHouseholdMembers;
+
+  if (showPreApiEmpty) {
+    // C-I6: 空理由を正直に分岐する。適格0 / 選択フィルタ / 真の0人を混同しない。
+    // idea ブロック文言は設計 §5 により削除（個人候補 API へ進む）。
     const householdMembers = householdQuery.data ?? [];
     const emptyState =
-      targetMode === "idea"
+      householdMembers.length === 0
         ? {
             message:
-              "アイデアモードでは緊急献立を表示できません。献立画面で「家族向け」に切り替えてください。",
-            href: "/planner",
-            linkLabel: "家族向けに切り替える",
+              "対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。",
+            href: "/onboarding",
+            linkLabel: "家族設定へ（任意）",
           }
-        : householdMembers.length === 0
+        : eligibleMemberIds.length === 0
           ? {
               message:
-                "対象の家族が登録されていないため、緊急献立を表示できません。家族設定は任意です。",
+                "表示できる対象の家族がいません。アレルギー確認と家族設定の完了を確認してください。",
               href: "/onboarding",
-              linkLabel: "家族設定へ（任意）",
+              linkLabel: "家族設定を確認する",
             }
-          : eligibleMemberIds.length === 0
-            ? {
-                message:
-                  "表示できる対象の家族がいません。アレルギー確認と家族設定の完了を確認してください。",
-                href: "/onboarding",
-                linkLabel: "家族設定を確認する",
-              }
-            : {
-                message:
-                  "選んだ家族が対象にできないため、緊急献立を表示できません。献立画面で対象を見直してください。",
-                href: "/planner",
-                linkLabel: "献立画面で対象を見直す",
-              };
+          : {
+              message:
+                "選んだ家族が対象にできないため、緊急献立を表示できません。献立画面で対象を見直してください。",
+              href: "/planner",
+              linkLabel: "献立画面で対象を見直す",
+            };
     return (
       <main className="page-frame stack emergency-menu-page">
         <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
@@ -232,10 +268,12 @@ export function EmergencyMenuPage() {
       </main>
     );
   }
+
   return (
     <EmergencyMenuContent
       loading={loading}
       error={error}
+      expectedPath={expectedPath}
       response={loading || error !== null ? null : (query.data ?? null)}
     />
   );
@@ -250,7 +288,6 @@ function postApiEmptyBody(response: EmergencyMenusData): string {
     return "いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません";
   }
   if (response.emptyReason === "no_matching_fixture" && response.path === "idea") {
-    // idea 行は Task 8 で chrome と合わせて本格配線。schema が idea 応答を許すため body だけ先に揃える。
     return "固定候補を表示できませんでした";
   }
   // 不変条件上ここに来ないが fail closed で非緩和を示す
@@ -260,19 +297,28 @@ function postApiEmptyBody(response: EmergencyMenusData): string {
 export function EmergencyMenuContent({
   loading,
   error,
+  expectedPath,
   response,
 }: {
   loading: boolean;
   error: string | null;
+  /** draft 由来。loading 中 intro/empty chrome の正本 */
+  expectedPath: "household" | "idea";
   response: EmergencyMenusData | null;
 }) {
+  // 旧 path の candidates は loading 中 visibleResponse=null で消す（fail closed）。
   const visibleResponse = loading || error !== null ? null : response;
+  // wire path があれば優先（サーバ真実）。無ければ draft 推定。
+  const chromePath = visibleResponse?.path ?? expectedPath;
   // 設計 §5: matchMode のみがトリガ。server message（「固定」付き等）をパースして文言を選ばない。
   const showSafetyOnlyBanner =
     visibleResponse !== null &&
     visibleResponse.candidates.length > 0 &&
-    visibleResponse.matchMode === "safety_only" &&
-    visibleResponse.path === "household";
+    visibleResponse.matchMode === "safety_only";
+  const safetyOnlyBannerText =
+    chromePath === "idea" ? ideaSafetyOnlyBannerText : householdSafetyOnlyBannerText;
+  const introText = chromePath === "idea" ? ideaIntroText : householdIntroText;
+
   return (
     <main className="page-frame stack emergency-menu-page">
       <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
@@ -282,14 +328,14 @@ export function EmergencyMenuContent({
         <p className="eyebrow">AIを使わない</p>
         <h1>15分緊急献立</h1>
       </div>
-      <p>
-        現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。
-      </p>
+      {/*
+        path 条件付き intro。idea は role 付きで開示必須。
+        household は既存どおり plain p（role を付けない）— バナーの role=status と衝突させない。
+      */}
+      {chromePath === "idea" ? <p role="status">{introText}</p> : <p>{introText}</p>}
       {loading && <p>候補を確認中…</p>}
       {error !== null && <p role="alert">{error}</p>}
-      {showSafetyOnlyBanner && (
-        <p role="status">メイン食材は一致しませんでした。安全条件に合う候補を表示しています。</p>
-      )}
+      {showSafetyOnlyBanner && <p role="status">{safetyOnlyBannerText}</p>}
       {visibleResponse?.candidates.length === 0 && (
         <section className="card">
           <h2>{visibleResponse.message}</h2>

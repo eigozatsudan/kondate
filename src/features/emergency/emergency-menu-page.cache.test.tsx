@@ -236,25 +236,33 @@ it.each(["household_members", "member_allergies"])(
 
 it("表示中かつonlineなら60秒で旧候補を閉じて再取得する", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  const mountedAt = Date.now();
+  // safetyRealtimeEnabled は draft 確定後に立つため、interval 開始は mount 直後とは限らない。
+  // 60_000ms の setInterval コールバックを直接発火し、poll 契約を固定する。
+  const setIntervalSpy = vi.spyOn(window, "setInterval");
   const { view } = await renderVisibleEmergencyResponse();
+  await waitFor(() => {
+    expect(realtime.handlers.length).toBeGreaterThanOrEqual(2);
+  });
+  const pollCall = setIntervalSpy.mock.calls.find((call) => call[1] === 60_000);
+  expect(pollCall).toBeDefined();
+  expect(typeof pollCall?.[0]).toBe("function");
+
   const callsBefore = listHouseholdMembersMock.mock.calls.length;
   const nextHousehold = deferredPromise<HouseholdMemberRow[]>();
   listHouseholdMembersMock.mockReturnValueOnce(nextHousehold.promise);
 
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(59_999 - (Date.now() - mountedAt));
-  });
-  expect(listHouseholdMembersMock).toHaveBeenCalledTimes(callsBefore);
-
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1);
+  act(() => {
+    // setInterval の第1引数は TimerHandler。60s poll は関数で登録している。
+    if (typeof pollCall?.[0] === "function") {
+      pollCall[0]();
+    }
   });
   expect(listHouseholdMembersMock).toHaveBeenCalledTimes(callsBefore + 1);
   expect(screen.getByText("候補を確認中…")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "旧候補" })).not.toBeInTheDocument();
 
   nextHousehold.resolve([eligibleMember]);
+  setIntervalSpy.mockRestore();
   view.unmount();
 });
 

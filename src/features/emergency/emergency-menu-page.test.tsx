@@ -11,6 +11,7 @@ function renderWithRouter(ui: React.ReactNode) {
 
 const useQueryMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
+const channelMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({ useQuery: useQueryMock }));
 vi.mock("@/features/auth/use-auth", () => ({
@@ -23,7 +24,10 @@ vi.mock("@/shared/lib/supabase", () => ({
       subscribe: () => channel,
     };
     return {
-      channel: () => channel,
+      channel: (...args: unknown[]) => {
+        channelMock(...args);
+        return channel;
+      },
       removeChannel: vi.fn(),
     };
   },
@@ -99,14 +103,15 @@ it("下書きなしで対象家族が0人の場合は緊急献立APIを呼ばず
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toBeInTheDocument();
 });
 
-it("idea下書きでは緊急献立APIを呼ばずモード説明を表示する", () => {
+it("enables idea candidate query without household members", async () => {
+  // 設計 §5: idea は家族 0 でも candidate query を起動し、targetMode idea で API を呼ぶ。
   useQueryMock
     .mockReturnValueOnce({
       data: {
         id: "draft-1",
         userId: "72000000-0000-4000-8000-000000000001",
         mealType: "dinner",
-        mainIngredients: [],
+        mainIngredients: ["豚肉"],
         cuisineGenre: null,
         targetMode: "idea",
         targetMemberIds: [],
@@ -140,16 +145,176 @@ it("idea下書きでは緊急献立APIを呼ばずモード説明を表示する
   renderWithRouter(<EmergencyMenuPage />);
 
   expect(useQueryMock).toHaveBeenCalledTimes(3);
-  expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
-  // C-I6: idea では「家族が登録されていない」と誤表示しない
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "アイデアモードでは緊急献立を表示できません。献立画面で「家族向け」に切り替えてください。",
+  // household query は idea では disabled
+  expect(useQueryMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
+  const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
+    enabled: boolean;
+    queryFn: () => Promise<unknown>;
+  };
+  expect(candidateQuery.enabled).toBe(true);
+  await candidateQuery.queryFn();
+  expect(getEmergencyMenusMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      targetMode: "idea",
+      targetMemberIds: [],
+      mainIngredients: ["豚肉"],
+    }),
   );
+  // 旧 idea ブロック文言は出さない
+  expect(screen.queryByText(/アイデアモードでは緊急献立を表示できません/u)).not.toBeInTheDocument();
   expect(screen.queryByText(/家族が登録されていない/u)).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "家族向けに切り替える" })).toHaveAttribute(
-    "href",
-    "/planner",
+});
+
+it("does not request idea path when draft is household", async () => {
+  const eligibleId = "72000000-0000-4000-8000-000000000010";
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-household",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        cuisineGenre: "japanese",
+        targetMode: "household",
+        targetMemberIds: [eligibleId],
+        servings: null,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+        revision: 1,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: [
+        {
+          id: eligibleId,
+          status: "complete",
+          allergy_status: "none",
+          unsupported_diet_status: "none",
+        },
+      ],
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+  const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
+    queryFn: () => Promise<unknown>;
+  };
+  await candidateQuery.queryFn();
+  expect(getEmergencyMenusMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      targetMode: "household",
+      targetMemberIds: [eligibleId],
+    }),
   );
+  expect(getEmergencyMenusMock).not.toHaveBeenCalledWith(
+    expect.objectContaining({ targetMode: "idea" }),
+  );
+});
+
+it("does not fallback to idea when eligible members empty", () => {
+  // household 下書きで適格 0 のとき pre-API empty のまま。idea に黙って降格しない。
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-1",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        mainIngredients: [],
+        cuisineGenre: null,
+        targetMode: "household",
+        targetMemberIds: ["72000000-0000-4000-8000-000000000099"],
+        servings: null,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+        revision: 1,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: [],
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "対象の家族が登録されていないため、緊急献立を表示できません",
+  );
+  expect(screen.queryByText(/個人向けの固定候補です/u)).not.toBeInTheDocument();
+});
+
+it("does not subscribe household Realtime or safety poll when draft is idea", () => {
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-idea",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        mainIngredients: [],
+        cuisineGenre: null,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+        revision: 1,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+  expect(channelMock).not.toHaveBeenCalled();
 });
 
 it("対象未選択の下書きでは後から登録した有効な家族だけを初期対象にする", async () => {
@@ -451,6 +616,7 @@ it("shows household safety_only banner only when matchMode is safety_only", () =
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
@@ -477,12 +643,149 @@ it("shows household safety_only banner only when matchMode is safety_only", () =
   ).toBeNull();
 });
 
+it("shows idea safety_only banner without family-safety wording", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="idea"
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "メイン食材は一致しませんでした。アレルギー条件は適用していません",
+        consumesAiQuota: false,
+        path: "idea",
+        matchMode: "safety_only",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(
+    screen.getByText("メイン食材は一致しませんでした。アレルギー条件は適用していません。"),
+  ).toBeVisible();
+  expect(screen.queryByText(/安全条件に合う/u)).toBeNull();
+});
+
+it("does not show household safety_only banner text on idea path", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="idea"
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "メイン食材は一致しませんでした。アレルギー条件は適用していません",
+        consumesAiQuota: false,
+        path: "idea",
+        matchMode: "safety_only",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(
+    screen.queryByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+  ).toBeNull();
+});
+
+it("shows idea intro and hides household intro", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="idea"
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "idea",
+        matchMode: "none",
+        emptyReason: null,
+      }}
+    />,
+  );
+  const ideaIntro =
+    "個人向けの固定候補です。家族のアレルギー・年齢条件は適用していません。AI利用回数は消費しません。調理前に原材料表示と家庭内の混入を確認してください。";
+  expect(screen.getByRole("status")).toHaveTextContent(ideaIntro);
+  expect(
+    screen.queryByText(
+      "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",
+    ),
+  ).toBeNull();
+});
+
+it("shows idea intro during loading before response arrives", () => {
+  renderWithRouter(
+    <EmergencyMenuContent loading={true} error={null} expectedPath="idea" response={null} />,
+  );
+  const ideaIntro =
+    "個人向けの固定候補です。家族のアレルギー・年齢条件は適用していません。AI利用回数は消費しません。調理前に原材料表示と家庭内の混入を確認してください。";
+  expect(screen.getByRole("status")).toHaveTextContent(ideaIntro);
+  expect(
+    screen.queryByText(
+      "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",
+    ),
+  ).toBeNull();
+  expect(screen.queryByText(/候補 \d/u)).not.toBeInTheDocument();
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
+});
+
+it("clears idea candidates and chrome when draft switches to household before refetch completes", () => {
+  // 設計 §5 cache fail-closed: loading 中は旧 idea candidates 非表示。expectedPath が
+  // household に切り替わったら household intro、idea intro 不在。
+  const menu = makeValidatedMenu();
+  const ideaResponse: EmergencyMenusData = {
+    fixtureVersion: "2026-07-28.v1",
+    candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+    message: "AIを使わない15分緊急献立です",
+    consumesAiQuota: false,
+    path: "idea",
+    matchMode: "none",
+    emptyReason: null,
+  };
+  const { rerender } = renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="idea"
+      response={ideaResponse}
+    />,
+  );
+  expect(screen.getByText("候補 1")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(/個人向けの固定候補です/u);
+
+  rerender(
+    <MemoryRouter>
+      <EmergencyMenuContent
+        loading={true}
+        error={null}
+        expectedPath="household"
+        response={ideaResponse}
+      />
+    </MemoryRouter>,
+  );
+  expect(screen.queryByText("候補 1")).not.toBeInTheDocument();
+  expect(screen.queryByText(menu.dishes[0]!.name, { exact: false })).not.toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText(/個人向けの固定候補です/u)).not.toBeInTheDocument();
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
+});
+
 it("does not show safety_only banner when matchMode is none", () => {
   const menu = makeValidatedMenu();
   renderWithRouter(
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
@@ -506,6 +809,7 @@ it("does not show safety_only banner when matchMode is main_ingredient", () => {
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
@@ -529,6 +833,7 @@ it("shows differentiated post-API empty copy for current_safety_unavailable", ()
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [],
@@ -553,6 +858,7 @@ it("shows differentiated post-API empty copy for household no_matching_fixture",
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [],
@@ -570,11 +876,12 @@ it("shows differentiated post-API empty copy for household no_matching_fixture",
   expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
 });
 
-it("shows differentiated post-API empty copy for idea no_matching_fixture", () => {
+it("shows idea post-API empty copy for no_matching_fixture", () => {
   renderWithRouter(
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="idea"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [],
@@ -586,7 +893,7 @@ it("shows differentiated post-API empty copy for idea no_matching_fixture", () =
       }}
     />,
   );
-  // 設計 §5 idea 行（exact plain JP）。schema が idea 応答を許すため body だけ先に揃える。
+  // 設計 §5 idea 行（exact plain JP）
   expect(screen.getByText("固定候補を表示できませんでした")).toBeVisible();
   expect(
     screen.queryByText(
@@ -601,6 +908,7 @@ it("states that no candidate exists without suggesting weaker safety conditions"
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [],
@@ -636,7 +944,14 @@ it.each<[boolean, string | null, EmergencyMenusData | null]>([
     },
   ],
 ])("always shows the planner return link", (loading, error, response) => {
-  renderWithRouter(<EmergencyMenuContent loading={loading} error={error} response={response} />);
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={loading}
+      error={error}
+      expectedPath="household"
+      response={response}
+    />,
+  );
 
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
 });
@@ -650,6 +965,7 @@ it.each([
     <EmergencyMenuContent
       loading={loading}
       error={error}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
@@ -738,6 +1054,7 @@ it("renders complete human-labelled cooking instructions without raw identifiers
     <EmergencyMenuContent
       loading={false}
       error={null}
+      expectedPath="household"
       response={{
         fixtureVersion: "2026-07-28.v1",
         candidates: [

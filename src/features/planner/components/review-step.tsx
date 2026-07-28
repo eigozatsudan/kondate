@@ -73,10 +73,10 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   /** 家族モードの安全要約表示用。idea でも免責文を見せるため渡す。 */
   safetyMembers?: readonly PlannerSafetyMember[];
   /**
-   * 設計 §5.1: AI を使わない緊急献立への導線。
+   * 設計 §5.1 / 緊急献立対応力改善 §5: AI を使わない緊急献立への導線。
    * route が flush→navigate を所有するため、ここはクリック通知だけを受け取る。
    * 未指定ならボタン自体を出さない（meal 等の step では渡さない）。
-   * idea モードでは CTA を出さず案内文のみ（緊急献立は家族対象を要する）。
+   * household / idea とも同一 secondary CTA（idea は個人固定候補パス）。
    */
   onOpenEmergencyMenus?: () => void;
   /** GET /api/usage/today の成功残数。未取得時は null（偽の残数を出さない） */
@@ -577,21 +577,18 @@ export function ReviewStep({
           </div>
         </div>
       )}
-      {value.targetMode === "household" && onOpenEmergencyMenus !== undefined && (
-        <button
-          className="wizard-action secondary-button"
-          type="button"
-          disabled={disabled}
-          onClick={onOpenEmergencyMenus}
-        >
-          AIを使わない緊急献立を見る
-        </button>
-      )}
-      {value.targetMode === "idea" && onOpenEmergencyMenus !== undefined && (
-        <p role="note">
-          家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます。
-        </p>
-      )}
+      {/* household / idea とも同一 CTA。旧 idea 切替案内「家族向けの緊急献立は…」は削除。 */}
+      {(value.targetMode === "household" || value.targetMode === "idea") &&
+        onOpenEmergencyMenus !== undefined && (
+          <button
+            className="wizard-action secondary-button"
+            type="button"
+            disabled={disabled}
+            onClick={onOpenEmergencyMenus}
+          >
+            AIを使わない緊急献立を見る
+          </button>
+        )}
     </section>
   );
 }

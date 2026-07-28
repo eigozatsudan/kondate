@@ -968,7 +968,8 @@ describe("PlannerWizard review step", () => {
     ).toBeVisible();
   });
 
-  it("idea の review では緊急献立ボタンの代わりに切替案内を出す", () => {
+  it("idea の review では個人向け緊急献立 CTA を出す", () => {
+    // 設計 §5 / Task 8: idea でも household と同じ secondary CTA。旧切替案内は出さない。
     render(
       <Harness
         initialStep="review"
@@ -981,14 +982,12 @@ describe("PlannerWizard review step", () => {
         onOpenEmergencyMenus={vi.fn()}
       />,
     );
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "AIを使わない緊急献立を見る" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
+      screen.queryByText(
         /家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます/,
       ),
-    ).toBeVisible();
+    ).not.toBeInTheDocument();
   });
 
   it("meal など review 以外の step では緊急献立ボタンを出さない", () => {
