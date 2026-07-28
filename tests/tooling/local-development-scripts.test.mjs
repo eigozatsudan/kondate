@@ -682,6 +682,9 @@ test("E2E runner restores the base stack after every forwarded signal", async (t
           DOCKER_LOG_DIR: logDir,
           DOCKER_READY_FILE: readyFile,
           E2E_WAIT_FOR_SIGNAL: "1",
+          // 既定 grace=5s だと cleanup 中の cancel_watchdog 待ちが
+          // waitForCompletion(2s) を超え得る。signal 転送と restore が対象。
+          KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
           PATH: `${bin}:${process.env.PATH}`,
         },
         stdio: "ignore",
@@ -735,6 +738,9 @@ test("E2E runner force-kills a child that ignores two forwarded signals", async 
           DOCKER_LOG_DIR: logDir,
           DOCKER_READY_FILE: readyFile,
           E2E_WAIT_FOR_SIGNAL: "1",
+          // 2回目 signal の force-kill が対象。既定 grace=5s は CI 負荷下で
+          // cleanup の watchdog 再武装と合わせ waitForCompletion(2s) を超え得る。
+          KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
           PATH: `${bin}:${process.env.PATH}`,
         },
         stdio: "ignore",
@@ -876,6 +882,9 @@ test("E2E runner bounds repeated signals while restoring the base stack", async 
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: readyFile,
       E2E_CLEANUP_WAIT_FOR_SIGNAL: "1",
+      // restore 中の 2 回目 signal が対象。既定 grace=5s は
+      // waitForCompletion(2s) と衝突し得る。
+      KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
       PATH: `${bin}:${process.env.PATH}`,
     },
     stdio: "ignore",
