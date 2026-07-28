@@ -214,8 +214,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
   const userClient = createUserScopedSupabase(user.accessToken);
   // identity_key はサーバのみ計算。クライアント入力を信頼しない
   const identityKey = computeQuotaIdentityKey(env.quotaIdentityHmacKey, user.email);
-  // Task 6 で env.aiQuotaDisabled を配線する。SQL 側 p_quota_disabled は用意済み。
-  const quotaDisabled = false;
+  const quotaDisabled = env.aiQuotaDisabled;
 
   const buildReserveArgs = (
     command: GenerationCommandV2,

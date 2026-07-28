@@ -24,6 +24,31 @@ export default async function usageToday(request: Request): Promise<Response> {
       p_global_limit: env.openRouter.globalDailyLimit,
     });
     if (error !== null) throw error;
+    // ローカル個人枠無効時は wire 形を保ったまま個人枠をフル残にする（global は実値）。
+    if (env.aiQuotaDisabled) {
+      const parsed = usageTodayDataSchema.parse(data);
+      const projected = usageTodayDataSchema.parse({
+        success: {
+          consumed: 0,
+          limit: parsed.success.limit,
+          remaining: parsed.success.limit,
+        },
+        attempts: {
+          sent: 0,
+          limit: parsed.attempts.limit,
+          remaining: parsed.attempts.limit,
+        },
+        shortWindow: {
+          sent: 0,
+          limit: parsed.shortWindow.limit,
+          remaining: parsed.shortWindow.limit,
+          retryAt: null,
+        },
+        globalAvailable: parsed.globalAvailable,
+        retryAt: parsed.globalAvailable ? null : parsed.retryAt,
+      });
+      return json(200, { ok: true, data: projected });
+    }
     const parsed = usageTodayDataSchema.parse(data);
     return json(200, { ok: true, data: parsed });
   } catch (error) {

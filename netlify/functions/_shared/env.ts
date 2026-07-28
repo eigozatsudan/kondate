@@ -91,8 +91,8 @@ export type ServerEnv = Omit<
   /** SERVER_SITE_ORIGIN がローカル canonical origin と一致するか */
   isLocal: boolean;
   /**
-   * 個人枠（identity 日次・短時間）無効化。Task 6 で reserve へ配線する。
-   * 現状 parse 時は常に false（AI_QUOTA_DISABLED の完全ゲートは Task 6）。
+   * 個人枠（identity 日次・短時間）無効化。
+   * true のときのみ isLocal かつ AI_QUOTA_DISABLED=true。本番でフラグ true は parse throw。
    */
   aiQuotaDisabled: boolean;
   supabase: {
@@ -201,6 +201,21 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (source.VITE_QUOTA_IDENTITY_HMAC_KEY !== undefined) {
     throw new Error("server_configuration_invalid");
   }
+  if (source.VITE_AI_QUOTA_DISABLED !== undefined) {
+    throw new Error("server_configuration_invalid");
+  }
+  // 未設定 / "false" / "true" のみ。1 や yes は設定ミスとして落とす。
+  const rawQuotaDisabled = source.AI_QUOTA_DISABLED;
+  let aiQuotaDisabledFlag = false;
+  if (rawQuotaDisabled !== undefined && rawQuotaDisabled !== null && rawQuotaDisabled !== "") {
+    if (rawQuotaDisabled === "true") {
+      aiQuotaDisabledFlag = true;
+    } else if (rawQuotaDisabled === "false") {
+      aiQuotaDisabledFlag = false;
+    } else {
+      throw new Error("server_configuration_invalid");
+    }
+  }
   const result = rawServerEnvSchema.safeParse(source);
   if (!result.success) throw new Error("server_configuration_invalid");
 
@@ -214,6 +229,10 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     throw new Error("server_configuration_invalid");
   }
   const isLocal = site.origin === localSiteOrigin;
+  // 本番で true は黙殺せず起動失敗（設計 Feature 4）
+  if (aiQuotaDisabledFlag && !isLocal) {
+    throw new Error("server_configuration_invalid");
+  }
   const browserProjectRef = parseManagedSupabaseProjectRef(result.data.VITE_SUPABASE_URL);
   const serverProjectRef = parseManagedSupabaseProjectRef(result.data.SUPABASE_URL);
   if (
@@ -240,8 +259,8 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   return {
     ...publicEnv,
     isLocal,
-    // Task 6 で AI_QUOTA_DISABLED 完全ゲートを配線する。ここはフックのみ。
-    aiQuotaDisabled: false,
+    // 個人枠無効は isLocal ∧ AI_QUOTA_DISABLED=true のみ
+    aiQuotaDisabled: aiQuotaDisabledFlag && isLocal,
     supabase: {
       url: result.data.SUPABASE_URL,
       publishableKey: result.data.SUPABASE_PUBLISHABLE_KEY,

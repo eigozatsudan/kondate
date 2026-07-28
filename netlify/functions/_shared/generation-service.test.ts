@@ -105,7 +105,7 @@ const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
     idempotencyKey: key,
     draftId: "84000000-0000-4000-8000-000000000001",
     draftRevision: 1,
-    privacyNoticeVersion: "2026-07-26.v1" as const,
+    privacyNoticeVersion: "2026-07-28.v1" as const,
     expiredPantryConfirmations: [],
   },
 };
@@ -1726,7 +1726,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     },
@@ -1739,7 +1739,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
         dishId: "89000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     },
@@ -1992,7 +1992,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "simpler" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2151,7 +2151,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         dishId: sourceMainId,
         changeReason: "simpler" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2277,7 +2277,7 @@ describe("runGeneration regeneration duplicate gating", () => {
         dishId: replaceDishId,
         changeReason: "simpler" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2364,7 +2364,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2423,7 +2423,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         dishId: "89000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2481,7 +2481,7 @@ describe("runGeneration idea child_friendly rejection", () => {
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
         changeReason: "child_friendly" as const,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1" as const,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -2672,7 +2672,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 sourceMenuId: menuId,
                 changeReason: "simpler",
                 changeReasonCustom: null,
-                privacyNoticeVersion: "2026-07-26.v1" as const,
+                privacyNoticeVersion: "2026-07-28.v1" as const,
                 expiredPantryConfirmations: [],
               },
             }
@@ -2685,7 +2685,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 dishId: "86000000-0000-4000-8000-000000000001",
                 changeReason: "simpler",
                 changeReasonCustom: null,
-                privacyNoticeVersion: "2026-07-26.v1" as const,
+                privacyNoticeVersion: "2026-07-28.v1" as const,
                 expiredPantryConfirmations: [],
               },
             };
@@ -2726,7 +2726,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 sourceMenuId: menuId,
                 changeReason: "simpler",
                 changeReasonCustom: null,
-                privacyNoticeVersion: "2026-07-26.v1" as const,
+                privacyNoticeVersion: "2026-07-28.v1" as const,
                 expiredPantryConfirmations: [],
               },
             }
@@ -2739,7 +2739,7 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
                 dishId: "86000000-0000-4000-8000-000000000001",
                 changeReason: "simpler",
                 changeReasonCustom: null,
-                privacyNoticeVersion: "2026-07-26.v1" as const,
+                privacyNoticeVersion: "2026-07-28.v1" as const,
                 expiredPantryConfirmations: [],
               },
             };

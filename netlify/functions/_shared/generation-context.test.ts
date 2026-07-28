@@ -43,7 +43,7 @@ const request: NewMenuGenerationRequest = {
   idempotencyKey: "75000000-0000-4000-8000-000000000001",
   draftId,
   draftRevision: 2,
-  privacyNoticeVersion: "2026-07-26.v1",
+  privacyNoticeVersion: "2026-07-28.v1",
   expiredPantryConfirmations: [],
 };
 
@@ -173,7 +173,7 @@ function arrangeLoader(
     privacy_consents: {
       data:
         overrides.consent === undefined
-          ? { user_id: userId, notice_version: "2026-07-26.v1", accepted_at: now.toISOString() }
+          ? { user_id: userId, notice_version: "2026-07-28.v1", accepted_at: now.toISOString() }
           : overrides.consent,
       error: null,
     },
@@ -297,7 +297,7 @@ describe("loadGenerationContext", () => {
     arrangeLoader({
       consent: {
         user_id: "70000000-0000-4000-8000-000000000002",
-        notice_version: "2026-07-26.v1",
+        notice_version: "2026-07-28.v1",
         accepted_at: now.toISOString(),
       },
     });

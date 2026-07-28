@@ -66,7 +66,7 @@ const newMenuCommand: GenerationCommand = {
     idempotencyKey,
     draftId,
     draftRevision: 7,
-    privacyNoticeVersion: "2026-07-26.v1",
+    privacyNoticeVersion: "2026-07-28.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -525,7 +525,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         sourceMenuId,
         changeReason: "simpler",
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1",
+        privacyNoticeVersion: "2026-07-28.v1",
         expiredPantryConfirmations: [],
       },
     };
@@ -538,7 +538,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         dishId: "70000000-0000-4000-8000-000000000001",
         changeReason: "different_ingredient",
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-26.v1",
+        privacyNoticeVersion: "2026-07-28.v1",
         expiredPantryConfirmations: [],
       },
     };

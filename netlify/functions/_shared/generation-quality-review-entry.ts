@@ -256,7 +256,7 @@ export async function reviewGenerationQuality(input: {
         idempotencyKey: benchmarkIdempotencyKey,
         draftId: benchmarkDraftId,
         draftRevision: 1,
-        privacyNoticeVersion: "2026-07-26.v1",
+        privacyNoticeVersion: "2026-07-28.v1",
         expiredPantryConfirmations: [],
       },
     },

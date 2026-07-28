@@ -68,4 +68,4 @@ export const unsupportedDietKinds = [
 export type UnsupportedDietKind = (typeof unsupportedDietKinds)[number];
 
 // Plan 8: 有料モデル提供者送信を含む説明へ更新。旧版同意は未同意扱い（互換パーサなし）
-export const privacyNoticeVersion = "2026-07-26.v1" as const;
+export const privacyNoticeVersion = "2026-07-28.v1" as const;

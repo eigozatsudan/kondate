@@ -58,7 +58,7 @@ it("saves only the privacy consent and navigates to the sanitized returnTo, with
   const user = userEvent.setup();
   acceptConsent.mockResolvedValue({
     user_id: "user-1",
-    notice_version: "2026-07-26.v1",
+    notice_version: "2026-07-28.v1",
     accepted_at: "2026-07-12T00:00:00.000Z",
     created_at: "2026-07-12T00:00:00.000Z",
   });
@@ -90,7 +90,7 @@ it("review resume 付きの returnTo（review確定直前の遷移）を確認�
   const user = userEvent.setup();
   acceptConsent.mockResolvedValue({
     user_id: "user-1",
-    notice_version: "2026-07-26.v1",
+    notice_version: "2026-07-28.v1",
     accepted_at: "2026-07-12T00:00:00.000Z",
     created_at: "2026-07-12T00:00:00.000Z",
   });

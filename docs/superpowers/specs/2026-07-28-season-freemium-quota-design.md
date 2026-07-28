@@ -329,7 +329,7 @@ create table private.ai_identity_daily_external_attempts (
 | 設定説明 | 同上と矛盾しない |
 | 削除後ログイン status | 削除完了 + 上記保持の短文 |
 | プライバシー notice | 濫用防止の identity 日次回数を「アプリに保存する情報」に追加。生メールは保存しない |
-| `privacyNoticeVersion` | `2026-07-26.v1` → **`2026-07-28.v1`**（再同意が必要） |
+| `privacyNoticeVersion` | `2026-07-28.v1` → **`2026-07-28.v1`**（再同意が必要） |
 | `docs/runbooks/account-deletion.md` | identity 残存と pre-delete release を記載 |
 
 E2E: 既存 `queryOwnedCounts` は `user_id` 列あり表のみなので identity は自動除外（ゼロ期待は維持）。**追加**: pgTAP または Function 統合で「delete → reserved 解放 → 同一 identity で success 枠継続」を必須自動検証。

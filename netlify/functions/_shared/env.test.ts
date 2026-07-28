@@ -82,6 +82,43 @@ describe("parseOpenRouterModels", () => {
     ).toThrow("server_configuration_invalid");
   });
 
+  it("enables aiQuotaDisabled only for local + AI_QUOTA_DISABLED=true", () => {
+    expect(parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "true" }).aiQuotaDisabled).toBe(
+      true,
+    );
+    expect(parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "false" }).aiQuotaDisabled).toBe(
+      false,
+    );
+  });
+
+  it("rejects invalid AI_QUOTA_DISABLED values", () => {
+    expect(() => parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "1" })).toThrow(
+      "server_configuration_invalid",
+    );
+    expect(() => parseServerEnv({ ...validServerEnv, AI_QUOTA_DISABLED: "yes" })).toThrow(
+      "server_configuration_invalid",
+    );
+  });
+
+  it("rejects VITE_AI_QUOTA_DISABLED", () => {
+    expect(() =>
+      parseServerEnv({ ...validServerEnv, VITE_AI_QUOTA_DISABLED: "true" }),
+    ).toThrow("server_configuration_invalid");
+  });
+
+  it("rejects AI_QUOTA_DISABLED=true on non-local origin", () => {
+    const production = {
+      ...validServerEnv,
+      SERVER_SITE_ORIGIN: "https://app.example.com",
+      VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+      SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+      OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+      OPENROUTER_MODELS: "vendor/model-a",
+      AI_QUOTA_DISABLED: "true",
+    };
+    expect(() => parseServerEnv(production)).toThrow("server_configuration_invalid");
+  });
+
   it.each([
     ["missing", undefined],
     ["31-byte key", Buffer.alloc(31, 1).toString("base64")],

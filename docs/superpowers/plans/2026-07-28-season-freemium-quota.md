@@ -356,10 +356,10 @@ export function getJstSeasonContext(now: Date): SeasonContext {
 - `shared/contracts/domain.ts` → `privacyNoticeVersion = "2026-07-28.v1"`
 - `src/features/privacy/privacy-copy.ts` — abuse-prevention identity retention
 - `delete-account-dialog.tsx`, `account-settings-section.tsx`, login post-delete message
-- Update all tests hardcoding `2026-07-26.v1`
+- Update all tests hardcoding `2026-07-28.v1`
 - `docs/runbooks/account-deletion.md` if present
 
-- [ ] **Step 1:** Grep `2026-07-26.v1` and update; fail tests then fix copy per design 3.5 matrix
+- [ ] **Step 1:** Grep `2026-07-28.v1` and update; fail tests then fix copy per design 3.5 matrix
 - [ ] **Commit** `feat: 削除とプライバシーにidentity保持説明を追加`
 
 ---
