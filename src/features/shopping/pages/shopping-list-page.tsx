@@ -45,6 +45,9 @@ export function ShoppingListPage() {
   const manualFirstField = useRef<HTMLInputElement>(null);
   const editFirstField = useRef<HTMLInputElement>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  // SP-I7: hooks は early return より前に置く
+  const mutationInFlight = useRef(false);
+  const [itemMutationPending, setItemMutationPending] = useState(false);
   if (query.isPending)
     return (
       <main className="page-frame">
@@ -80,7 +83,8 @@ export function ShoppingListPage() {
       </main>
     );
   const list = query.data;
-  const safetyBlocked = safetyGate.blocked || query.isFetching;
+  // SP-I7: 項目 mutation 中も操作を止める（isFetching だけでは連打を防げない）
+  const safetyBlocked = safetyGate.blocked || query.isFetching || itemMutationPending;
   const currentListWarnings = safetyGate.currentLabelWarnings.filter(
     (warning) => warning.itemId === null,
   );
@@ -97,8 +101,12 @@ export function ShoppingListPage() {
         ),
       ]
     : [];
+  // SP-I7: 項目操作を直列化し、連打による version conflict / 見た目ロールバックを防ぐ
   const mutate = async (value: LocalShoppingItemMutation) => {
     if (safetyBlocked || safetyGate.safetyFingerprint === null) return;
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
+    setItemMutationPending(true);
     try {
       setMutationError(null);
       await mutateShoppingItem(
@@ -129,6 +137,9 @@ export function ShoppingListPage() {
       } else {
         setMutationError("買い物項目を更新できませんでした");
       }
+    } finally {
+      mutationInFlight.current = false;
+      setItemMutationPending(false);
     }
     await query.refetch();
   };

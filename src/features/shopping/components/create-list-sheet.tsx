@@ -4,6 +4,11 @@ export type CreateListSheetProps = {
   activeList: { id: string; version: number; itemCount: number } | null;
   pending: boolean;
   safetyBlocked: boolean;
+  /**
+   * SP-I10: 現行リストが安全確認不能（削除献立ソース等）のとき true。
+   * append 既定で壊れたリストに再トラップしないよう new を強制する。
+   */
+  forceNewMode?: boolean;
   onSubmit: (input: {
     mode: "new" | "append";
     activeListId: string | null;
@@ -16,21 +21,32 @@ export function CreateListSheet({
   activeList,
   pending,
   safetyBlocked,
+  forceNewMode = false,
   onSubmit,
   onCancel,
 }: CreateListSheetProps) {
-  const [mode, setMode] = useState<"new" | "append">(activeList === null ? "new" : "append");
+  // 確認不能な active リストがあるときは append 既定を避ける（SP-I10）
+  const [mode, setMode] = useState<"new" | "append">(
+    activeList === null || forceNewMode ? "new" : "append",
+  );
+  const effectiveMode = forceNewMode ? "new" : mode;
   return (
     <section className="card stack" aria-labelledby="create-list-title">
       <h2 id="create-list-title">買い物リストを作る</h2>
       {activeList !== null && (
         <fieldset>
           <legend>作り方</legend>
+          {forceNewMode && (
+            <p className="type-small" role="status">
+              今のリストは家族設定で確認できないため、新しいリストを作ります。
+            </p>
+          )}
           <label className="control-label">
             <input
               type="radio"
               name="create-list-mode"
-              checked={mode === "append"}
+              checked={effectiveMode === "append"}
+              disabled={forceNewMode}
               onChange={() => {
                 setMode("append");
               }}
@@ -41,7 +57,7 @@ export function CreateListSheet({
             <input
               type="radio"
               name="create-list-mode"
-              checked={mode === "new"}
+              checked={effectiveMode === "new"}
               onChange={() => {
                 setMode("new");
               }}
@@ -56,7 +72,7 @@ export function CreateListSheet({
         disabled={pending || safetyBlocked}
         onClick={() => {
           onSubmit({
-            mode,
+            mode: effectiveMode,
             activeListId: activeList?.id ?? null,
             expectedListVersion: activeList?.version ?? null,
           });

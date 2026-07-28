@@ -94,11 +94,15 @@ export async function fetchActiveShoppingList(): Promise<ShoppingList | null> {
     id,status,version,
     shopping_items(id,list_id,display_name,normalized_name,store_section,quantity_value,
       quantity_text,unit,pantry_check_required,is_checked,is_manual,is_manually_edited,
-      is_removed_by_user,shopping_label_confirmations(*)),
+      is_removed_by_user,created_at,shopping_label_confirmations(*)),
     shopping_label_confirmations(*)
   `,
     )
     .eq("status", "active")
+    // SP-I9: 店舗区画 → 作成順 → id で安定ソートし、チェック後の行ジャンプを防ぐ
+    .order("store_section", { referencedTable: "shopping_items", ascending: true })
+    .order("created_at", { referencedTable: "shopping_items", ascending: true })
+    .order("id", { referencedTable: "shopping_items", ascending: true })
     .maybeSingle();
   if (error !== null) throw new Error("買い物リストを読み込めませんでした");
   if (data === null) return null;
