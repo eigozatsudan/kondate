@@ -24,10 +24,12 @@ const emergencyResponseSchema = z.discriminatedUnion("ok", [
     .strict(),
 ]);
 
+// Train A は household のみ実送。idea アームは Train B で discriminated union に拡張する。
 const emergencyMenuRequestSchema = z
   .object({
     mealType: z.enum(mealTypes),
     mainIngredients: emergencyMainIngredientsSchema,
+    targetMode: z.literal("household"),
     targetMemberIds: z
       .array(z.uuid())
       .min(1)
@@ -45,6 +47,7 @@ export const emergencyMenuKeys = {
   candidates: (input: {
     userId: string;
     mealType: MealType;
+    targetMode: "household" | "idea";
     mainIngredients: readonly string[];
     targetMemberIds: readonly string[];
     pantryItemIds: readonly string[];
@@ -54,6 +57,7 @@ export const emergencyMenuKeys = {
       "emergency-menus",
       input.userId,
       input.mealType,
+      input.targetMode,
       [...input.mainIngredients],
       [...input.targetMemberIds],
       [...input.pantryItemIds],
@@ -70,6 +74,7 @@ export function parseEmergencyMenusResponse(value: unknown): EmergencyMenusData 
 export async function getEmergencyMenus(input: {
   mealType: MealType;
   mainIngredients: readonly string[];
+  targetMode: "household";
   targetMemberIds: readonly string[];
   pantryItemIds: readonly string[];
 }): Promise<EmergencyMenusData> {
@@ -77,6 +82,8 @@ export async function getEmergencyMenus(input: {
   const token = await requireAccessToken(getBrowserSupabaseClient());
   const query = new URLSearchParams({
     meal: validatedInput.mealType,
+    // Train A ship lock: 常に household を明示送信する（サーバ側 optional でも UI は省略しない）
+    targetMode: validatedInput.targetMode,
     targetMemberIds: validatedInput.targetMemberIds.join(","),
   });
   for (const mainIngredient of validatedInput.mainIngredients) {

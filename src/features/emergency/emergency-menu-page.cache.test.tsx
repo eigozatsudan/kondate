@@ -88,10 +88,13 @@ function deferredPromise<T>() {
 
 function emergencyResponse(message: string) {
   return {
-    fixtureVersion: "2026-07-11.v1",
+    fixtureVersion: "2026-07-28.v1",
     candidates: [],
     message,
-    consumesAiQuota: false,
+    consumesAiQuota: false as const,
+    path: "household" as const,
+    matchMode: null,
+    emptyReason: "no_matching_fixture" as const,
   } as const;
 }
 
@@ -149,10 +152,13 @@ beforeEach(() => {
   });
   listHouseholdMembersMock.mockResolvedValueOnce([]).mockResolvedValue([eligibleMember]);
   getEmergencyMenusMock.mockResolvedValue({
-    fixtureVersion: "2026-07-11.v1",
+    fixtureVersion: "2026-07-28.v1",
     candidates: [],
     message: "条件に合う緊急献立がありません",
     consumesAiQuota: false,
+    path: "household",
+    matchMode: null,
+    emptyReason: "no_matching_fixture",
   });
 });
 
@@ -346,7 +352,10 @@ it("30秒のfresh cache中でも家族安全更新event後に家族を再取得�
   });
   await waitFor(() => {
     expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMemberIds: [eligibleMember.id] }),
+      expect.objectContaining({
+        targetMode: "household",
+        targetMemberIds: [eligibleMember.id],
+      }),
     );
   });
 });
@@ -414,7 +423,10 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
   });
   await waitFor(() => {
     expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMemberIds: [eligibleMember.id] }),
+      expect.objectContaining({
+        targetMode: "household",
+        targetMemberIds: [eligibleMember.id],
+      }),
     );
   });
   setItem.mockRestore();
@@ -452,7 +464,10 @@ it("既存revisionの更新に失敗しても同一家族の安全変更後に�
     expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(1);
   });
   expect(getEmergencyMenusMock).toHaveBeenLastCalledWith(
-    expect.objectContaining({ targetMemberIds: [eligibleMember.id] }),
+    expect.objectContaining({
+      targetMode: "household",
+      targetMemberIds: [eligibleMember.id],
+    }),
   );
   expect(queryClient.getQueryState(inactiveCandidateKey)?.isInvalidated).toBe(true);
   expect(

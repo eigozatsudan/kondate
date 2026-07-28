@@ -96,10 +96,7 @@ export const emergencyMenuCandidateSchema = z
   });
 
 export const emergencyMatchModes = ["none", "main_ingredient", "safety_only"] as const;
-export const emergencyEmptyReasons = [
-  "current_safety_unavailable",
-  "no_matching_fixture",
-] as const;
+export const emergencyEmptyReasons = ["current_safety_unavailable", "no_matching_fixture"] as const;
 export const emergencyPaths = ["household", "idea"] as const;
 
 export type EmergencyMatchMode = (typeof emergencyMatchModes)[number];

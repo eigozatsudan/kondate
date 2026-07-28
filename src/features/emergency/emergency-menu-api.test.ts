@@ -11,6 +11,19 @@ const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 vi.mock("@/features/auth/session", () => ({ requireAccessToken: requireAccessTokenMock }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 
+/** 空候補の最小 household wire（schema 不変条件: emptyReason 必須・matchMode=null） */
+function emptyHouseholdData(message = "条件に合う緊急献立がありません") {
+  return {
+    fixtureVersion: "2026-07-28.v1",
+    candidates: [] as const,
+    message,
+    consumesAiQuota: false as const,
+    path: "household" as const,
+    matchMode: null,
+    emptyReason: "no_matching_fixture" as const,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   requireAccessTokenMock.mockResolvedValue("token");
@@ -32,6 +45,7 @@ it.each([
     getEmergencyMenus({
       mealType: "dinner",
       mainIngredients: [],
+      targetMode: "household",
       targetMemberIds,
       pantryItemIds: [],
     }),
@@ -55,6 +69,7 @@ it.each([
     getEmergencyMenus({
       mealType: "dinner",
       mainIngredients: [],
+      targetMode: "household",
       targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
       pantryItemIds,
     }),
@@ -73,12 +88,7 @@ it("冷蔵庫食材IDは上限50件まで通信に使える", async () => {
     new Response(
       JSON.stringify({
         ok: true,
-        data: {
-          fixtureVersion: "2026-07-11.v1",
-          candidates: [],
-          message: "条件に合う緊急献立がありません",
-          consumesAiQuota: false,
-        },
+        data: emptyHouseholdData(),
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     ),
@@ -87,6 +97,7 @@ it("冷蔵庫食材IDは上限50件まで通信に使える", async () => {
   await getEmergencyMenus({
     mealType: "dinner",
     mainIngredients: [],
+    targetMode: "household",
     targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
     pantryItemIds,
   });
@@ -100,12 +111,7 @@ it("冷蔵庫食材が空なら空のクエリ値を送らずサーバーの省�
     new Response(
       JSON.stringify({
         ok: true,
-        data: {
-          fixtureVersion: "2026-07-11.v1",
-          candidates: [],
-          message: "条件に合う緊急献立がありません",
-          consumesAiQuota: false,
-        },
+        data: emptyHouseholdData(),
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     ),
@@ -114,6 +120,7 @@ it("冷蔵庫食材が空なら空のクエリ値を送らずサーバーの省�
   await getEmergencyMenus({
     mealType: "dinner",
     mainIngredients: [],
+    targetMode: "household",
     targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
     pantryItemIds: [],
   });
@@ -124,11 +131,39 @@ it("冷蔵庫食材が空なら空のクエリ値を送らずサーバーの省�
   expect(new URL(requestedUrl, "http://localhost").searchParams.has("pantryItemIds")).toBe(false);
 });
 
+it("always sends targetMode=household on the query string", async () => {
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: emptyHouseholdData(),
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await getEmergencyMenus({
+    mealType: "dinner",
+    mainIngredients: [],
+    targetMode: "household",
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+    pantryItemIds: [],
+  });
+
+  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
+  if (typeof requestedUrl !== "string")
+    throw new Error("緊急献立のリクエストURLを確認できませんでした");
+  expect(new URL(requestedUrl, "http://localhost").searchParams.get("targetMode")).toBe(
+    "household",
+  );
+});
+
 it("keys candidates by every ordered request dimension and the household safety revision", () => {
   expect(
     emergencyMenuKeys.candidates({
       userId: "user-1",
       mealType: "dinner",
+      targetMode: "household",
       mainIngredients: ["鶏肉"],
       targetMemberIds: ["member-b", "member-a"],
       pantryItemIds: ["pantry-2", "pantry-1"],
@@ -138,6 +173,7 @@ it("keys candidates by every ordered request dimension and the household safety 
     "emergency-menus",
     "user-1",
     "dinner",
+    "household",
     ["鶏肉"],
     ["member-b", "member-a"],
     ["pantry-2", "pantry-1"],
@@ -150,12 +186,7 @@ it("main ingredients are normalized, sent as repeated query values, and included
     new Response(
       JSON.stringify({
         ok: true,
-        data: {
-          fixtureVersion: "2026-07-11.v1",
-          candidates: [],
-          message: "選択したメイン食材に合う固定候補がありません",
-          consumesAiQuota: false,
-        },
+        data: emptyHouseholdData("条件に合う緊急献立がありません"),
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     ),
@@ -164,6 +195,7 @@ it("main ingredients are normalized, sent as repeated query values, and included
   await getEmergencyMenus({
     mealType: "dinner",
     mainIngredients: ["　鶏肉　", "ｷｬﾍﾞﾂ"],
+    targetMode: "household",
     targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
     pantryItemIds: [],
   });
@@ -188,6 +220,7 @@ it.each([
       getEmergencyMenus({
         mealType: "dinner",
         mainIngredients,
+        targetMode: "household",
         targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
         pantryItemIds: [],
       }),
@@ -203,7 +236,7 @@ it("accepts only complete server-provided human display labels", () => {
   const complete = {
     ok: true,
     data: {
-      fixtureVersion: "2026-07-11.v1",
+      fixtureVersion: "2026-07-28.v1",
       candidates: [
         {
           menu,
@@ -214,6 +247,9 @@ it("accepts only complete server-provided human display labels", () => {
       ],
       message: "AIを使わない15分緊急献立です",
       consumesAiQuota: false,
+      path: "household" as const,
+      matchMode: "none" as const,
+      emptyReason: null,
     },
   };
   expect(parseEmergencyMenusResponse(complete).candidates).toHaveLength(1);
@@ -309,7 +345,7 @@ it("rejects warnings whose canonical source/member correspondence is swapped", (
     parseEmergencyMenusResponse({
       ok: true,
       data: {
-        fixtureVersion: "2026-07-11.v1",
+        fixtureVersion: "2026-07-28.v1",
         candidates: [
           {
             menu: { ...menu, labelConfirmations: confirmations },
@@ -320,6 +356,9 @@ it("rejects warnings whose canonical source/member correspondence is swapped", (
         ],
         message: "確認してください",
         consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
       },
     }),
   ).toThrow();

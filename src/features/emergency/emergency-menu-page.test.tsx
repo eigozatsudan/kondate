@@ -221,7 +221,11 @@ it("対象未選択の下書きでは後から登録した有効な家族だけ�
   expect(candidateQuery.enabled).toBe(true);
   await candidateQuery.queryFn();
   expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-    expect.objectContaining({ mainIngredients: ["鶏肉"], targetMemberIds: [eligibleId] }),
+    expect.objectContaining({
+      mainIngredients: ["鶏肉"],
+      targetMode: "household",
+      targetMemberIds: [eligibleId],
+    }),
   );
   expect(candidateQuery.queryKey).toEqual(expect.arrayContaining([["鶏肉"]]));
 });
@@ -281,7 +285,7 @@ it("registeredは許可し、対象外食present/unconfirmedは未選択下書�
   await candidateQuery.queryFn();
 
   expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-    expect.objectContaining({ targetMemberIds: [registeredId] }),
+    expect.objectContaining({ targetMode: "household", targetMemberIds: [registeredId] }),
   );
 });
 
@@ -329,7 +333,10 @@ it("未選択下書きの有効家族は並び順を保って20人までに制�
   await candidateQuery.queryFn();
 
   expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-    expect.objectContaining({ targetMemberIds: eligibleIds.slice(0, 20) }),
+    expect.objectContaining({
+      targetMode: "household",
+      targetMemberIds: eligibleIds.slice(0, 20),
+    }),
   );
 });
 
@@ -389,7 +396,7 @@ it("household下書きは選択済みIDと現在有効な家族の積集合だ�
   await candidateQuery.queryFn();
 
   expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-    expect.objectContaining({ targetMemberIds: [validSelectedId] }),
+    expect.objectContaining({ targetMode: "household", targetMemberIds: [validSelectedId] }),
   );
 });
 
@@ -438,21 +445,127 @@ it("household下書きの選択家族が無効になっても別の家族を補�
   expect(screen.queryByText(/家族が登録されていない/u)).not.toBeInTheDocument();
 });
 
+it("shows household safety_only banner only when matchMode is safety_only", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        // §4 server message は「固定」付き。UI バナーは §5 を matchMode から選び message をパースしない
+        message: "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: "safety_only",
+        emptyReason: null,
+      }}
+    />,
+  );
+  const banner = screen.getByRole("status");
+  expect(
+    screen.getByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+  ).toBeVisible();
+  expect(banner).toBeVisible();
+  expect(banner).toHaveTextContent(
+    "メイン食材は一致しませんでした。安全条件に合う候補を表示しています。",
+  );
+  // §4 server message をそのまま chrome に出さない（「固定」付きの message は DOM 非表示）
+  expect(
+    screen.queryByText("メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています"),
+  ).toBeNull();
+});
+
+it("does not show safety_only banner when matchMode is none", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(
+    screen.queryByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+  ).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("shows differentiated post-API empty copy for current_safety_unavailable", () => {
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [],
+        message: "条件に合う緊急献立がありません",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: null,
+        emptyReason: "current_safety_unavailable",
+      }}
+    />,
+  );
+  expect(
+    screen.getByText(
+      "アレルギー確認未了または対応できない食事条件のため、候補を表示していません。条件は緩めていません",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
+});
+
+it("shows differentiated post-API empty copy for household no_matching_fixture", () => {
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [],
+        message: "条件に合う緊急献立がありません",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: null,
+        emptyReason: "no_matching_fixture",
+      }}
+    />,
+  );
+  expect(
+    screen.getByText("いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません"),
+  ).toBeVisible();
+  expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
+});
+
 it("states that no candidate exists without suggesting weaker safety conditions", () => {
   renderWithRouter(
     <EmergencyMenuContent
       loading={false}
       error={null}
       response={{
-        fixtureVersion: "2026-07-11.v1",
+        fixtureVersion: "2026-07-28.v1",
         candidates: [],
         message: "条件に合う緊急献立がありません",
         consumesAiQuota: false,
+        path: "household",
+        matchMode: null,
+        emptyReason: "no_matching_fixture",
       }}
     />,
   );
   expect(screen.getByText("条件に合う緊急献立がありません")).toBeInTheDocument();
-  expect(screen.getByText("条件を緩めず、候補を表示していません。")).toBeInTheDocument();
+  expect(
+    screen.getByText("いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません"),
+  ).toBeInTheDocument();
   expect(screen.queryByText(/安全確認済み/u)).not.toBeInTheDocument();
 });
 
@@ -463,10 +576,13 @@ it.each<[boolean, string | null, EmergencyMenusData | null]>([
     false,
     null,
     {
-      fixtureVersion: "2026-07-11.v1",
+      fixtureVersion: "2026-07-28.v1",
       candidates: [],
-      message: "選択したメイン食材に合う固定候補がありません",
+      message: "条件に合う緊急献立がありません",
       consumesAiQuota: false,
+      path: "household",
+      matchMode: null,
+      emptyReason: "no_matching_fixture",
     },
   ],
 ])("always shows the planner return link", (loading, error, response) => {
@@ -485,10 +601,13 @@ it.each([
       loading={loading}
       error={error}
       response={{
-        fixtureVersion: "2026-07-11.v1",
+        fixtureVersion: "2026-07-28.v1",
         candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
         message: "古い候補",
         consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
       }}
     />,
   );
@@ -570,7 +689,7 @@ it("renders complete human-labelled cooking instructions without raw identifiers
       loading={false}
       error={null}
       response={{
-        fixtureVersion: "2026-07-11.v1",
+        fixtureVersion: "2026-07-28.v1",
         candidates: [
           {
             menu,
@@ -594,6 +713,9 @@ it("renders complete human-labelled cooking instructions without raw identifiers
         ],
         message: "AIを使わない15分緊急献立です",
         consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
       }}
     />,
   );

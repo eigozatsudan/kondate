@@ -140,9 +140,11 @@ export function EmergencyMenuPage() {
           .slice(0, emergencyTargetMemberLimit)
       : [];
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
+  // Train A: household のみ実送。idea アームは Task 8 / Train B で分岐する。
   const request = {
     mealType: draftQuery.data?.mealType ?? "dinner",
     mainIngredients: draftQuery.data?.mainIngredients ?? [],
+    targetMode: "household" as const,
     targetMemberIds,
     pantryItemIds: draftQuery.data?.pantrySelections.map((item) => item.pantryItemId) ?? [],
   } as const;
@@ -239,6 +241,22 @@ export function EmergencyMenuPage() {
   );
 }
 
+/** 設計 §5 post-API empty body（exact plain JP）。message は heading のみに使い body は emptyReason で分岐する。 */
+function postApiEmptyBody(response: EmergencyMenusData): string {
+  if (response.emptyReason === "current_safety_unavailable" && response.path === "household") {
+    return "アレルギー確認未了または対応できない食事条件のため、候補を表示していません。条件は緩めていません";
+  }
+  if (response.emptyReason === "no_matching_fixture" && response.path === "household") {
+    return "いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません";
+  }
+  if (response.emptyReason === "no_matching_fixture" && response.path === "idea") {
+    // idea 行は Task 8 で chrome と合わせて本格配線。schema が idea 応答を許すため body だけ先に揃える。
+    return "固定候補を表示できませんでした";
+  }
+  // 不変条件上ここに来ないが fail closed で非緩和を示す
+  return "条件は緩めていません";
+}
+
 export function EmergencyMenuContent({
   loading,
   error,
@@ -249,6 +267,12 @@ export function EmergencyMenuContent({
   response: EmergencyMenusData | null;
 }) {
   const visibleResponse = loading || error !== null ? null : response;
+  // 設計 §5: matchMode のみがトリガ。server message（「固定」付き等）をパースして文言を選ばない。
+  const showSafetyOnlyBanner =
+    visibleResponse !== null &&
+    visibleResponse.candidates.length > 0 &&
+    visibleResponse.matchMode === "safety_only" &&
+    visibleResponse.path === "household";
   return (
     <main className="page-frame stack emergency-menu-page">
       <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
@@ -263,10 +287,13 @@ export function EmergencyMenuContent({
       </p>
       {loading && <p>候補を確認中…</p>}
       {error !== null && <p role="alert">{error}</p>}
+      {showSafetyOnlyBanner && (
+        <p role="status">メイン食材は一致しませんでした。安全条件に合う候補を表示しています。</p>
+      )}
       {visibleResponse?.candidates.length === 0 && (
         <section className="card">
           <h2>{visibleResponse.message}</h2>
-          <p>条件を緩めず、候補を表示していません。</p>
+          <p>{postApiEmptyBody(visibleResponse)}</p>
         </section>
       )}
       {visibleResponse?.candidates.map(({ menu, memberLabels, labelWarnings }, candidateIndex) => {
