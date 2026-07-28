@@ -5,8 +5,8 @@
 | 文書 | `docs/superpowers/specs/2026-07-28-emergency-menu-capability-design.md` |
 | 作者 | （実装担当） |
 | 日付 | 2026-07-28 |
-| 状態 | Draft（レビュー指摘反映済み・**人間サインオフ待ち**: Plan 7 改訂と idea 個人 API の製品例外） |
-| 人間サインオフ | **未記録** — 実装開始前に「Spec amendments」節と idea API の draft 非束縛方針への合意をヘッダへ日付付きで追記する |
+| 状態 | Approved（敵対的レビュー open 0 + 人間サインオフ済み） |
+| 人間サインオフ | **2026-07-28** — Spec amendments（Plan 7 §4.2 / §209 supersede）および idea API の draft 非束縛方針を承認。実装開始可 |
 | 関連 | MVP §9.3 / §676、Plan 7（本設計が §4.2 / §209 の一部を supersede）、`shared/emergency/*` |
 
 ---
