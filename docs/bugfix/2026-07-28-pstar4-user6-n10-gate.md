@@ -32,16 +32,35 @@
 
 詳細: `docs/bugfix/artifacts/r1-user6-p4-decision-record-2026-07-28.md`
 
-## 本番提案
+## 本番提案（初回・この文書時点）
 
 ```bash
 OPENROUTER_MODELS=x-ai/grok-4.3
 ```
 
-（単一 ID exact 構成。repair 第2 ID は本 round では freeze しない。）
+## 続報（同日・安い帯探索後）
+
+strict-accept 安価 shortlist の N=10 で追加 PASS:
+
+| 構成 | USD/1M | 結果 |
+|------|-------:|------|
+| `["inception/mercury-2"]` | 1.00 | **10/10**・推奨 |
+| `["openai/gpt-4.1-mini"]` | 2.00 | **10/10** |
+| `["inception/mercury-2","openai/gpt-4.1-nano"]` | 1.00+0.50 | **10/10** |
+| `["x-ai/grok-4.3"]` | 3.75 | 10/10（既存） |
+
+詳細: `docs/bugfix/2026-07-28-cheap-strict-accept-n10.md`
+
+現行推奨:
+
+```bash
+OPENROUTER_MODELS=inception/mercury-2
+# または repair 付き
+OPENROUTER_MODELS=inception/mercury-2,openai/gpt-4.1-nano
+```
 
 ## Ship 状態
 
-- **exact 構成 N=10 合格あり** → 初めて recommendedConfiguration が非 null
+- **exact 構成 N=10 合格が複数**（mercury-2 が最安推奨）
 - デプロイは運用者が hard limit・env を確認のうえ実施（本エージェントは push/deploy しない）
 - qwen3.7-flash は SO AND 不足のまま別設計が必要

@@ -448,6 +448,21 @@ system に structural 契約を追加（共通定数 `GENERATION_SYSTEM_PROMPT_C
 | `["deepseek/deepseek-v4-flash"]` | FAIL u1 `generation_timeout` | 0 |
 
 **recommendedConfiguration = `["x-ai/grok-4.3"]`。**  
-freeze: `paidOpenRouterModelConfigurations = [["x-ai/grok-4.3"]]`。  
-本番提案: `OPENROUTER_MODELS=x-ai/grok-4.3`。
+freeze（直後）: `[["x-ai/grok-4.3"]]`。  
+本番提案（直後）: `OPENROUTER_MODELS=x-ai/grok-4.3`。
+
+### 続報: 安い strict-accept shortlist N=10（同日）
+
+詳細: `docs/bugfix/2026-07-28-cheap-strict-accept-n10.md`
+
+| Exact configuration | Result |
+|---|---|
+| `["inception/mercury-2"]` | **PASS 10/10**（~4s, $1/1M） |
+| `["openai/gpt-4.1-mini"]` | **PASS 10/10**（~8–11s, $2/1M） |
+| `["inception/mercury-2","openai/gpt-4.1-nano"]` | **PASS 10/10** |
+| `["x-ai/grok-4.3"]` | PASS 10/10（既存） |
+
+**現行 recommended = `["inception/mercury-2"]`。**  
+freeze: mercury-2 / gpt-4.1-mini / mercury+nano / grok-4.3。  
+本番提案: `OPENROUTER_MODELS=inception/mercury-2`。
 
