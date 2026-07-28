@@ -21,6 +21,11 @@ begin
     create role generation_pgtap_dblink_test with login password 'generation_pgtap_dblink_test_only'
       nosuperuser nocreatedb nocreaterole noinherit;
   end if;
+  -- RLS-C1: shopping_pgtap は本番 migration から撤去済み。allergy 並行 insert 用にテストのみ再作成。
+  if not exists (select 1 from pg_roles where rolname = 'shopping_pgtap_dblink_test') then
+    create role shopping_pgtap_dblink_test with login password 'shopping_pgtap_dblink_test_only'
+      nosuperuser nocreatedb nocreaterole noinherit bypassrls;
+  end if;
 end;
 $block$;
 revoke all on schema public from generation_pgtap_dblink_test;
@@ -29,6 +34,10 @@ grant usage on schema public to generation_pgtap_dblink_test;
 grant execute on function public.reserve_ai_generation(
   uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, jsonb, integer, integer, integer, timestamptz
 ) to generation_pgtap_dblink_test;
+revoke all on schema public from shopping_pgtap_dblink_test;
+grant usage on schema public to shopping_pgtap_dblink_test;
+grant select, insert, update on public.household_members, public.member_allergies
+  to shopping_pgtap_dblink_test;
 
 insert into auth.users (id, instance_id, aud, role, email) values
   ('c1000000-0000-4000-8000-000000000101', '00000000-0000-0000-0000-000000000000',

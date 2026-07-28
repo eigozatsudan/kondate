@@ -89,7 +89,8 @@ const additionalAliasValues: readonly (readonly [
   ["egg", "ハム", "processed", true],
   ["milk", "ハム", "processed", true],
   ["wheat", "コンソメ", "processed", true],
-  ["soy", "みそ", "processed", true],
+  // AGS-C1: みそ/味噌は家庭調理の主原料として hard match（ラベル確認不要）
+  ["soy", "みそ", "derived", false],
   // A-C1: 高頻度表記ゆれ（玉子・ミルク・小麦麺類・魚カナ表記）
   ["egg", "玉子", "direct", false],
   ["milk", "ミルク", "direct", false],
@@ -103,6 +104,21 @@ const additionalAliasValues: readonly (readonly [
   ["mackerel", "サバ", "direct", false],
   ["walnut", "クルミ", "direct", false],
   ["buckwheat", "ソバ", "direct", false],
+  // AGS-C1: 高頻度の大豆・小麦・乳・落花生表記（fail-open 残差）
+  ["soy", "味噌", "derived", false],
+  ["soy", "納豆", "derived", false],
+  ["soy", "油揚げ", "derived", false],
+  ["soy", "厚揚げ", "derived", false],
+  ["soy", "きなこ", "derived", false],
+  ["soy", "枝豆", "derived", false],
+  ["wheat", "パン粉", "derived", false],
+  ["wheat", "そうめん", "derived", false],
+  ["wheat", "素麺", "derived", false],
+  ["wheat", "薄力粉", "derived", false],
+  ["wheat", "強力粉", "derived", false],
+  ["milk", "ヨーグルト", "derived", false],
+  ["milk", "生クリーム", "derived", false],
+  ["peanut", "ピーナツ", "direct", false],
 ];
 
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [
@@ -368,19 +384,29 @@ function mapContext(snapshot: AvailableSnapshot): CurrentSafetyContext {
     dictionaryVersion: snapshot.dictionary_version,
     foodRuleVersion: snapshot.food_rule_version,
     requestText: "",
-    members: snapshot.members.map((member, index) => ({
-      householdMemberId: member.id,
-      anonymousRef: `member_${String(index + 1)}`,
-      ageBand: member.age_band,
-      allergyStatus: member.allergy_status,
-      allergenIds: member.allergies.flatMap((allergy) =>
-        allergy.kind === "standard" ? [allergy.allergen_id] : [],
-      ),
-      hasUnmappedCustomAllergy: member.allergies.some((allergy) => allergy.kind === "custom"),
-      requiredSafetyConstraints: [...member.required_safety_constraints],
-      unsupportedDietStatus: member.unsupported_diet_status,
-      unsupportedDietKinds: [...member.unsupported_diet_kinds],
-    })),
+    members: snapshot.members.map((member, index) => {
+      const customAllergies = member.allergies.flatMap((allergy) =>
+        allergy.kind === "custom"
+          ? [{ name: allergy.name, aliases: [...allergy.aliases] as readonly string[] }]
+          : [],
+      );
+      return {
+        householdMemberId: member.id,
+        anonymousRef: `member_${String(index + 1)}`,
+        ageBand: member.age_band,
+        allergyStatus: member.allergy_status,
+        allergenIds: member.allergies.flatMap((allergy) =>
+          allergy.kind === "standard" ? [allergy.allergen_id] : [],
+        ),
+        // 緊急献立 fixture は標準 ID のみ照合できるため、カスタム有りは引き続き unmapped 扱い。
+        // AI 生成は customAllergies を evaluateAllergens で検査する（AGS-I2）。
+        hasUnmappedCustomAllergy: customAllergies.length > 0,
+        customAllergies,
+        requiredSafetyConstraints: [...member.required_safety_constraints],
+        unsupportedDietStatus: member.unsupported_diet_status,
+        unsupportedDietKinds: [...member.unsupported_diet_kinds],
+      };
+    }),
     allergenDictionary: {
       version: snapshot.dictionary_version,
       catalog: snapshot.catalog.map((row) => ({

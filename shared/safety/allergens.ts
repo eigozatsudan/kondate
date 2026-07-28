@@ -60,7 +60,7 @@ export function normalizeFoodText(value: string): string {
 const EXCLUDED_ALIAS_CONTEXTS = new Map<string, readonly string[]>([
   ["乳", ["豆乳"]],
   ["もも", ["鶏もも", "鳥もも"]],
-  ["かに", ["やわらかに"]],
+  ["かに", ["やわらかに", "いかに"]],
   ["いか", ["食べやすいか"]],
   [
     "そば",
@@ -336,6 +336,7 @@ export function evaluateAllergens(
   const issues: MenuValidationIssue[] = [];
   const confirmations = new Map<string, GeneratedLabelConfirmation>();
   for (const member of context.members) {
+    const memberLabel = resolveAllergenMemberLabel(member.anonymousRef, options?.memberLabels);
     for (const allergenId of member.allergenIds) {
       const aliases = context.allergenDictionary.aliases.filter(
         (alias) => alias.allergenId === allergenId,
@@ -346,7 +347,6 @@ export function evaluateAllergens(
       const allergenDisplayName = catalogEntry?.displayName ?? "登録アレルギー";
       // anonymousRef (member_1) や英語 ID を主婦向け本文に出さない（A-C2 / design L221）。
       // 表示名があれば優先し、無ければ member_N → 「家族N」（生成経路は targetMembers から渡す）。
-      const memberLabel = resolveAllergenMemberLabel(member.anonymousRef, options?.memberLabels);
       for (const source of sources) {
         const matched = aliases.filter((alias) =>
           foodTextContainsAlias(source.text, alias.normalizedAlias),
@@ -386,6 +386,24 @@ export function evaluateAllergens(
           ].join("\u0000");
           confirmations.set(key, confirmation);
         }
+      }
+    }
+    // AGS-I2: 確認済み自由登録語は辞書外でも hard match する（プロンプトには載せない）。
+    for (const custom of member.customAllergies) {
+      const needles = [custom.name, ...custom.aliases].filter((value) => value.trim() !== "");
+      if (needles.length === 0) continue;
+      for (const source of sources) {
+        if (!needles.some((needle) => foodTextContainsAlias(source.text, needle))) continue;
+        const sourceSnippet = source.text.trim();
+        const withSource =
+          sourceSnippet === ""
+            ? `「${memberLabel}」さんの登録アレルギー「${custom.name}」が献立に残っています`
+            : `「${memberLabel}」さんの登録アレルギー「${custom.name}」が「${sourceSnippet}」に残っています`;
+        issues.push({
+          code: "direct_allergen_match",
+          path: source.sourcePath,
+          message: withSource,
+        });
       }
     }
   }

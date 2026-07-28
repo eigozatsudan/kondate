@@ -64,6 +64,25 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias("やわらかに煮る", "かに")).toBe(false);
   });
 
+  it("AGS-I3: does not match かに inside いかに", () => {
+    expect(foodTextContainsAlias("いかに火を通すか", "かに")).toBe(false);
+    expect(foodTextContainsAlias("いかに加熱するか確認する", "かに")).toBe(false);
+  });
+
+  it.each([
+    ["味噌汁", "味噌"],
+    ["納豆ごはん", "納豆"],
+    ["とんかつ用のパン粉", "パン粉"],
+    ["そうめん", "そうめん"],
+    ["素麺つゆ", "素麺"],
+    ["薄力粉で衣をつける", "薄力粉"],
+    ["ヨーグルト和え", "ヨーグルト"],
+    ["生クリーム煮", "生クリーム"],
+    ["ピーナツあられ", "ピーナツ"],
+  ])("AGS-C1 residual: detects high-frequency form %s via alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
   it("does not match いか mid-hiragana phrase", () => {
     expect(foodTextContainsAlias("食べやすいから小さく切る", "いか")).toBe(false);
     expect(foodTextContainsAlias("食べやすいか確認する", "いか")).toBe(false);

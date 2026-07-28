@@ -13,6 +13,21 @@
 -- =============================================================================
 select plan(5);
 
+-- RLS-C1: 本番 migration から撤去した dblink 用ロールをテスト DB でのみ再作成する。
+-- BYPASSRLS + 固定パスワードは race 検証専用。本番 migration チェーンには載せない。
+do $block$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'shopping_pgtap_dblink_test') then
+    create role shopping_pgtap_dblink_test with login password 'shopping_pgtap_dblink_test_only'
+      nosuperuser nocreatedb nocreaterole noinherit bypassrls;
+  end if;
+end;
+$block$;
+revoke all on schema public from shopping_pgtap_dblink_test;
+grant usage on schema public to shopping_pgtap_dblink_test;
+grant select, insert, update on public.household_members, public.member_allergies
+  to shopping_pgtap_dblink_test;
+
 -- 前回実行が途中で失敗した場合に残った行を先に削除する（commit方式のため
 -- rollbackに頼れない。auth.usersのcascade deleteでhousehold_members/
 -- member_alleriesも含めて安全に削除できる）。
