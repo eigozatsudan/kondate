@@ -158,6 +158,62 @@ it("always sends targetMode=household on the query string", async () => {
   );
 });
 
+/** 空候補の最小 idea wire（schema: emptyReason=no_matching_fixture・matchMode=null） */
+function emptyIdeaData(message = "条件に合う緊急献立がありません") {
+  return {
+    fixtureVersion: "2026-07-28.v1",
+    candidates: [] as const,
+    message,
+    consumesAiQuota: false as const,
+    path: "idea" as const,
+    matchMode: null,
+    emptyReason: "no_matching_fixture" as const,
+  };
+}
+
+it("sends targetMode=idea and omits targetMemberIds on the query string", async () => {
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: emptyIdeaData(),
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await getEmergencyMenus({
+    mealType: "dinner",
+    mainIngredients: [],
+    targetMode: "idea",
+    targetMemberIds: [],
+    pantryItemIds: [],
+  });
+
+  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
+  if (typeof requestedUrl !== "string")
+    throw new Error("緊急献立のリクエストURLを確認できませんでした");
+  const params = new URL(requestedUrl, "http://localhost").searchParams;
+  expect(params.get("targetMode")).toBe("idea");
+  // idea では targetMemberIds キー自体を載せない（サーバ: キー未送出のみ許可）
+  expect(params.has("targetMemberIds")).toBe(false);
+});
+
+it("rejects idea requests with non-empty targetMemberIds at the client schema", async () => {
+  await expect(
+    getEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: [],
+      targetMode: "idea",
+      targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+      pantryItemIds: [],
+    }),
+  ).rejects.toThrow();
+
+  expect(requireAccessTokenMock).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("keys candidates by every ordered request dimension and the household safety revision", () => {
   expect(
     emergencyMenuKeys.candidates({
