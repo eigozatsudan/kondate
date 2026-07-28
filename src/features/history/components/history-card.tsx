@@ -123,43 +123,51 @@ export function HistoryCard({ group }: HistoryCardProps) {
           お気に入りを更新できませんでした
         </p>
       )}
+      {/*
+        dialog 本体に .stack（display:grid）を付けない。
+        作者スタイルの display は UA の dialog:not([open]){display:none} を
+        上書きするため、閉じた確認ダイアログが初期表示から見えて操作を妨げる。
+        余白レイアウトは内側ラッパーへ寄せる（DeleteAccountDialog と同じ方針）。
+      */}
       <dialog
         ref={dialogRef}
-        className="card stack m-auto max-w-[min(100%,24rem)] rounded-xl p-4"
+        className="card m-auto max-w-[min(100%,24rem)] rounded-xl p-4"
         aria-labelledby={dialogTitleId}
       >
-        <h3 id={dialogTitleId} className="text-base font-bold">
-          この履歴を削除しますか？
-        </h3>
-        <p>
-          派生した案も含めてまとめて消えます。元に戻せません。この献立を元にした買い物リストがある場合、そのリストの確認操作はできなくなります。新しいリストは履歴から作り直せます。
-        </p>
-        {deleteError !== null && (
-          <p role="alert" className="error-message">
-            {deleteError}
+        <div className="stack">
+          <h3 id={dialogTitleId} className="text-base font-bold">
+            この履歴を削除しますか？
+          </h3>
+          <p>
+            派生した案も含めてまとめて消えます。元に戻せません。この献立を元にした買い物リストがある場合、そのリストの確認操作はできなくなります。新しいリストは履歴から作り直せます。
           </p>
-        )}
-        <div className="history-card-actions">
-          <button
-            type="button"
-            className="primary-button min-h-11"
-            disabled={deletePending}
-            onClick={confirmDelete}
-          >
-            {deletePending
-              ? "削除しています"
-              : deleteError !== null
-                ? "もう一度削除する"
-                : "削除する"}
-          </button>
-          <button
-            type="button"
-            className="secondary-button min-h-11"
-            disabled={deletePending}
-            onClick={closeDeleteDialog}
-          >
-            やめる
-          </button>
+          {deleteError !== null && (
+            <p role="alert" className="error-message">
+              {deleteError}
+            </p>
+          )}
+          <div className="history-card-actions">
+            <button
+              type="button"
+              className="primary-button min-h-11"
+              disabled={deletePending}
+              onClick={confirmDelete}
+            >
+              {deletePending
+                ? "削除しています"
+                : deleteError !== null
+                  ? "もう一度削除する"
+                  : "削除する"}
+            </button>
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled={deletePending}
+              onClick={closeDeleteDialog}
+            >
+              やめる
+            </button>
+          </div>
         </div>
       </dialog>
     </article>

@@ -162,6 +162,20 @@ describe("HistoryPage", () => {
     });
   });
 
+  it("keeps the delete confirmation closed on initial render", async () => {
+    api.listHistoryGroups.mockResolvedValue([sampleGroup]);
+    renderConnectedHistoryPage();
+
+    await screen.findByText("採用した献立");
+    // 閉じた dialog は a11y ツリーに出ない（.stack の display 上書き回帰を防ぐ）
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const dialogEl = document.querySelector("dialog");
+    expect(dialogEl).not.toBeNull();
+    expect(dialogEl?.hasAttribute("open")).toBe(false);
+    // display を変えるユーティリティを dialog 本体に載せない
+    expect(dialogEl?.className.split(/\s+/u)).not.toContain("stack");
+  });
+
   it("confirms delete in a native dialog and retries after failure", async () => {
     const user = userEvent.setup();
     api.listHistoryGroups.mockResolvedValue([sampleGroup]);

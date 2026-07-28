@@ -886,6 +886,18 @@ textarea:focus-visible {
   gap: 16px;
 }
 
+/*
+ * ネイティブ <dialog> の閉じた状態を作者スタイルから守る。
+ * .stack や Tailwind の display ユーティリティを dialog に付けると、
+ * カスケード上 author > UA となり UA の dialog:not([open]){display:none}
+ * が無効化され、確認ダイアログが初期表示からインラインで見えてしまう
+ * （履歴カード削除確認で実害あり）。open 時は本ルールが当たらないので
+ * showModal() の表示は従来どおり。
+ */
+dialog:not([open]) {
+  display: none;
+}
+
 .eyebrow {
   color: var(--primary-strong);
   font-weight: 700;
