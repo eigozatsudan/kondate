@@ -54,9 +54,16 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
         autoComplete="off"
         className="mt-2 min-h-11 w-full rounded-xl border px-3"
       />
-      <p role="alert" className="mt-2 min-h-6">
-        {props.errorMessage}
-      </p>
+      {/* ACCT-M1: 空の role=alert は常時マウントしない（読み上げが無言で鳴る） */}
+      {props.errorMessage !== null &&
+      props.errorMessage !== undefined &&
+      props.errorMessage !== "" ? (
+        <p role="alert" className="mt-2 min-h-6">
+          {props.errorMessage}
+        </p>
+      ) : (
+        <p className="mt-2 min-h-6" aria-hidden="true" />
+      )}
       <div className="mt-5 grid grid-cols-2 gap-3">
         <button type="button" className="min-h-11 rounded-xl border" onClick={props.onCancel}>
           やめる

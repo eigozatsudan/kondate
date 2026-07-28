@@ -17,6 +17,10 @@ function sectionForPath(pathname: string): string {
   if (pathname === "/history" || pathname.startsWith("/history/")) return "history";
   if (pathname === "/shopping") return "shopping";
   if (pathname === "/settings") return "settings";
+  // SHELL-M1: 緊急献立は planner 系統の chrome（生成失敗からの主要導線）
+  if (pathname === "/emergency-menus" || pathname.startsWith("/emergency-menus/")) {
+    return "planner";
+  }
   return "other";
 }
 

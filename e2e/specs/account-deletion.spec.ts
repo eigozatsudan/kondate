@@ -51,9 +51,8 @@ test("deletes the account through settings and zeroes owned rows and auth user",
   });
   expect(rejected.status()).toBe(401);
 
-  // 成功ナビは login?accountDeleted=1 + status 案内（RequireSession 経由の returnTo ではない）
-  // 環境により navigate が失われる場合があるため、成功確定後に login を再訪して UI を固定する
-  await page.goto("/login?accountDeleted=1");
+  // 成功ナビは deleteThroughSettings が login?accountDeleted=1 を既に検証済み。
+  // status 案内は hard-nav 後の実 URL 上で確認する（force goto しない）。
   await expect(page.getByRole("status")).toContainText("アカウントを削除しました", {
     timeout: 10_000,
   });

@@ -378,7 +378,8 @@ export async function deleteThroughSettings(page: Page): Promise<void> {
   await expect(dialog).toBeVisible({ timeout: 10_000 });
   await dialog.getByLabel(/確認のため/u).fill("削除する");
   await dialog.getByRole("button", { name: "完全に削除する" }).click();
-  await expect(page).toHaveURL(/\/login/u, { timeout: 30_000 });
+  // E2E-M2: 製品の hard-nav 契約は login?accountDeleted=1（returnTo ではない）
+  await expect(page).toHaveURL(/\/login\?accountDeleted=1(?:&|$)/u, { timeout: 30_000 });
 }
 
 export const test = authTest.extend<{ acceptancePage: Page }>({

@@ -29,10 +29,20 @@ export function WelcomeRoutePage() {
   }
   if (profileQuery.isError) {
     return (
-      <main className="page-frame">
+      <main className="page-frame stack">
         <p className="error-message" role="alert">
-          初回設定の状態を確認できませんでした。通信を確認して再読み込みしてください。
+          初回設定の状態を確認できませんでした。通信を確認して再試行してください。
         </p>
+        {/* WELCOME-M1: RootEntry と同様の再試行導線 */}
+        <button
+          className="secondary-button min-h-11"
+          type="button"
+          onClick={() => {
+            void profileQuery.refetch();
+          }}
+        >
+          再試行
+        </button>
       </main>
     );
   }

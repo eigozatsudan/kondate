@@ -1,5 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { PantryItem, PantryItemInput } from "@shared/contracts/pantry";
+import {
+  pantryItemInputSchema,
+  type PantryItem,
+  type PantryItemInput,
+} from "@shared/contracts/pantry";
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
 
@@ -284,17 +288,26 @@ export function MenuResult({
       quantity = parsed;
       unit = trimmedUnit;
     }
+    // PANTRY-M1: フォームと同じ pantryItemInputSchema で scale/上限を先に弾く
+    const inputParsed = pantryItemInputSchema.safeParse({
+      name: row.name,
+      quantity,
+      unit,
+      expiresOn: row.expiresOn,
+      expirationType: row.expirationType,
+      openedState: row.openedState,
+    });
+    if (!inputParsed.success) {
+      const first = inputParsed.error.issues[0]?.message;
+      setLiveMessage(
+        first !== undefined && first.trim() !== "" ? first : "分量の入力内容を確認してください",
+      );
+      return;
+    }
     setBusy(true);
     setConflictMessage(null);
     try {
-      await actions.onUpdatePantry(row, {
-        name: row.name,
-        quantity,
-        unit,
-        expiresOn: row.expiresOn,
-        expirationType: row.expirationType,
-        openedState: row.openedState,
-      });
+      await actions.onUpdatePantry(row, inputParsed.data);
       setRemainderTargetId(null);
       setRemainderQty("");
       setRemainderUnit("");
@@ -599,22 +612,36 @@ export function MenuResult({
           <p className="mt-2">今回選んだ冷蔵庫食材はありません。</p>
         ) : (
           <ul className="mt-2 space-y-3">
-            {menu.pantryUsage.map((item) => (
-              <li key={item.selectionId} className="rounded-xl border p-3">
-                <strong>{item.pantryItemName}</strong>
-                {item.usageStatus === "used" ? (
-                  <p>
-                    使用予定 {amount(item.plannedQuantity, item.unit, "分量を確認")}／在庫{" "}
-                    {amount(item.inventoryQuantity, item.unit, "在庫量を確認")}
-                    {item.shortageQuantity !== null &&
-                      item.shortageQuantity > 0 &&
-                      `／不足 ${amount(item.shortageQuantity, item.unit, "")}`}
-                  </p>
-                ) : (
-                  <p>使わなかった理由: {item.unusedReason}</p>
-                )}
-              </li>
-            ))}
+            {menu.pantryUsage.map((item) => {
+              // PANTRY-I1 / design §10.3: 使用料理（使用先）を dishIds から組み立てる
+              const dishNames =
+                item.usageStatus === "used"
+                  ? item.dishIds
+                      .map((dishId) => menu.dishes.find((dish) => dish.id === dishId)?.name)
+                      .filter((name): name is string => name !== undefined && name.trim() !== "")
+                  : [];
+              return (
+                <li key={item.selectionId} className="rounded-xl border p-3">
+                  <strong>{item.pantryItemName}</strong>
+                  {item.usageStatus === "used" ? (
+                    <>
+                      <p>
+                        使用予定 {amount(item.plannedQuantity, item.unit, "分量を確認")}／在庫{" "}
+                        {amount(item.inventoryQuantity, item.unit, "在庫量を確認")}
+                        {item.shortageQuantity !== null &&
+                          item.shortageQuantity > 0 &&
+                          `／不足 ${amount(item.shortageQuantity, item.unit, "")}`}
+                      </p>
+                      {dishNames.length > 0 ? (
+                        <p className="type-small">使用先: {dishNames.join("・")}</p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p>使わなかった理由: {item.unusedReason}</p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

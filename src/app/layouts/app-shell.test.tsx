@@ -29,6 +29,7 @@ function renderAppShellAt(path: string) {
           { path: "/shopping", element: <h1>買い物</h1> },
           { path: "/settings", element: <h1>設定</h1> },
           { path: "/emergency-menus", element: <h1>緊急献立</h1> },
+          { path: "/unknown-section", element: <h1>その他</h1> },
         ],
       },
     ],
@@ -62,8 +63,13 @@ describe("AppShell section tinting", () => {
     expect(planner.className).toContain("nav-item-active");
   });
 
-  it("falls back to other for routes without a section", () => {
+  it("maps emergency-menus to planner chrome (SHELL-M1 recovery path)", () => {
     renderAppShellAt("/emergency-menus");
+    expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "planner");
+  });
+
+  it("falls back to other for routes without a section", () => {
+    renderAppShellAt("/unknown-section");
     expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "other");
   });
 });
