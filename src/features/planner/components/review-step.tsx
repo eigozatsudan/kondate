@@ -165,14 +165,13 @@ export function ReviewStep({
   // I2: shortWindowRetryAt は route が remaining===0 のときだけ渡す active blocker。
   // 端末時計での再有効化はせず、usage 再取得で retryAt が消えたときだけ有効に戻す。
   // null/未取得では誤って止めない。
-  const generateDisabled =
-    disabled ||
-    hasUnavailablePantrySelections ||
-    medicalBlocked ||
+  const hasActiveUsageBlocker =
     usageRemaining === 0 ||
     attemptsRemaining === 0 ||
     globalAvailable === false ||
     shortWindowRetryAt !== null;
+  const generateDisabled =
+    disabled || hasUnavailablePantrySelections || medicalBlocked || hasActiveUsageBlocker;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };
@@ -457,47 +456,42 @@ export function ReviewStep({
         </p>
       )}
       {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・attempt・global・短時間枠を平易表示。
-          上限到達時は role=alert + 強調枠で、残数の情報文（status）とトーンを分ける。 */}
-      {usageRemaining === 0 ? (
-        <div className="usage-limit-banner" role="alert">
-          <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
-          <p className="usage-limit-banner-body">
-            本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。
-          </p>
-        </div>
-      ) : usageRemaining !== null ? (
+          同時に複数の制限へ達しても理由を隠さず、1つの警告へまとめて重複表示を避ける。 */}
+      {usageRemaining !== null && usageRemaining !== 0 ? (
         <p role="status">本日あと{String(usageRemaining)}回作成できます</p>
       ) : null}
-      {attemptsRemaining === 0 ? (
-        <div className="usage-limit-banner" role="alert">
-          <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
-          <p className="usage-limit-banner-body">
-            AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。
-          </p>
-        </div>
-      ) : attemptsRemaining !== null ? (
+      {attemptsRemaining !== null && attemptsRemaining !== 0 ? (
         <p role="status">AIへの問い合わせは本日あと{String(attemptsRemaining)}回まで受け付けます</p>
       ) : null}
-      {globalAvailable === false && (
+      {hasActiveUsageBlocker && (
         <div className="usage-limit-banner" role="alert">
           <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
-          <p className="usage-limit-banner-body">
-            ただいま混雑しています。しばらくしてからお試しください。
-          </p>
-        </div>
-      )}
-      {shortWindowRetryAt !== null && (
-        <div className="usage-limit-banner" role="alert">
-          <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
-          <p className="usage-limit-banner-body">
-            短い時間に何度も作成を試したため、少し待つ必要があります。
-            {new Intl.DateTimeFormat("ja-JP", {
-              timeZone: "Asia/Tokyo",
-              dateStyle: "short",
-              timeStyle: "short",
-            }).format(new Date(shortWindowRetryAt))}
-            以降に再試行してください。
-          </p>
+          {usageRemaining === 0 && (
+            <p className="usage-limit-banner-body">
+              本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。
+            </p>
+          )}
+          {attemptsRemaining === 0 && (
+            <p className="usage-limit-banner-body">
+              AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。
+            </p>
+          )}
+          {globalAvailable === false && (
+            <p className="usage-limit-banner-body">
+              ただいま混雑しています。しばらくしてからお試しください。
+            </p>
+          )}
+          {shortWindowRetryAt !== null && (
+            <p className="usage-limit-banner-body">
+              短い時間に何度も作成を試したため、少し待つ必要があります。
+              {new Intl.DateTimeFormat("ja-JP", {
+                timeZone: "Asia/Tokyo",
+                dateStyle: "short",
+                timeStyle: "short",
+              }).format(new Date(shortWindowRetryAt))}
+              以降に再試行してください。
+            </p>
+          )}
         </div>
       )}
       <div className="wizard-actions">

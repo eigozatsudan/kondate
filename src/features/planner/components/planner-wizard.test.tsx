@@ -958,6 +958,27 @@ describe("PlannerWizard review step", () => {
     expect(limit).toHaveClass("usage-limit-banner");
   });
 
+  it("成功残と attempts 残が同時に 0 のとき両方の理由を 1 つの警告にまとめる", () => {
+    const { container } = render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={0}
+        attemptsRemaining={0}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    const limits = container.querySelectorAll('.usage-limit-banner[role="alert"]');
+    expect(limits).toHaveLength(1);
+    expect(limits[0]).toHaveTextContent("いまは新しい献立を作れません");
+    expect(limits[0]).toHaveTextContent(
+      "本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。",
+    );
+    expect(limits[0]).toHaveTextContent(
+      "AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。",
+    );
+  });
+
   it("C-I12 residual: attempts 残 0 のとき主 CTA を止め平易メッセージを出す", () => {
     render(
       <Harness
