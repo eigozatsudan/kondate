@@ -629,7 +629,8 @@ it("shows household safety_only banner only when matchMode is safety_only", () =
       }}
     />,
   );
-  const banner = screen.getByRole("status");
+  // banner は role=note（idea intro の role=status と二重 status にしない）
+  const banner = screen.getByRole("note");
   expect(
     screen.getByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
   ).toBeVisible();
@@ -716,6 +717,90 @@ it("shows idea intro and hides household intro", () => {
       "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",
     ),
   ).toBeNull();
+});
+
+it("does not show household adaptation heading on idea path", () => {
+  // idea 候補カードは「家族向けの取り分け」を出さず中立見出しにする
+  const base = makeValidatedMenu();
+  const dish = base.dishes[0]!;
+  const step = dish.steps[0]!;
+  const menu: ValidatedMenu = {
+    ...base,
+    adaptations: [
+      {
+        id: "59000000-0000-4000-8000-000000000099",
+        dishId: dish.id,
+        anonymousMemberRef: "member_1",
+        portionText: "適量",
+        branchBeforeRecipeStepId: step.id,
+        additionalCutting: "一口大",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "配膳前に確認",
+        safetyTags: [],
+        safetyActions: [],
+      },
+    ],
+  };
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="idea"
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [
+          {
+            menu,
+            memberLabels: { member_1: "あなた" },
+            allergenLabels: {},
+            labelWarnings: [],
+          },
+        ],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "idea",
+        matchMode: "none",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(screen.queryByText("家族向けの取り分け")).toBeNull();
+  expect(screen.getByText("取り分け・切り方の目安")).toBeVisible();
+});
+
+it("does not show household intro while draft fetch is still pending", () => {
+  // draftReady 前は expectedPath=null。世帯 intro を一瞬でも出さない。
+  useQueryMock
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isPending: true,
+      isFetching: true,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  expect(
+    screen.queryByText(
+      "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",
+    ),
+  ).toBeNull();
+  expect(screen.queryByText(/個人向けの固定候補です/u)).toBeNull();
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
 });
 
 it("shows idea intro during loading before response arrives", () => {

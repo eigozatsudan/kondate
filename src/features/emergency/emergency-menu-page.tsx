@@ -71,8 +71,13 @@ export function EmergencyMenuPage() {
     draftQuery.isSuccess && draft !== null && draft !== undefined && !draftQuery.isFetching;
   const isIdea = draft?.targetMode === "idea";
   const isHouseholdPath = draft !== null && draft !== undefined && draft.targetMode !== "idea";
-  // loading 中も draft から chrome を決める。response.path だけに頼らない。
-  const expectedPath: "household" | "idea" = isIdea ? "idea" : "household";
+  // draftReady 前は path を決めず intro を抑止する（未解決時に世帯 intro を出さない）。
+  // 解決後は loading 中も draft から chrome を決める。response.path だけに頼らない。
+  const expectedPath: "household" | "idea" | null = !draftReady
+    ? null
+    : isIdea
+      ? "idea"
+      : "household";
 
   const householdQueryEnabled =
     userId !== undefined && draftQuery.isSuccess && !draftQuery.isFetching && isHouseholdPath;
@@ -290,8 +295,8 @@ function postApiEmptyBody(response: EmergencyMenusData): string {
   if (response.emptyReason === "no_matching_fixture" && response.path === "idea") {
     return "固定候補を表示できませんでした";
   }
-  // 不変条件上ここに来ないが fail closed で非緩和を示す
-  return "条件は緩めていません";
+  // 不変条件上ここに来ないが fail closed。汎用 empty + 非緩和を明示する。
+  return "条件に合う緊急献立がありません。条件は緩めていません";
 }
 
 export function EmergencyMenuContent({
@@ -302,14 +307,17 @@ export function EmergencyMenuContent({
 }: {
   loading: boolean;
   error: string | null;
-  /** draft 由来。loading 中 intro/empty chrome の正本 */
-  expectedPath: "household" | "idea";
+  /**
+   * draft 由来。loading 中 intro/empty chrome の正本。
+   * null = draft 未解決。path 条件付き intro を出さない（世帯 intro の誤フラッシュ防止）。
+   */
+  expectedPath: "household" | "idea" | null;
   response: EmergencyMenusData | null;
 }) {
   // 旧 path の candidates は loading 中 visibleResponse=null で消す（fail closed）。
   const visibleResponse = loading || error !== null ? null : response;
-  // wire path があれば優先（サーバ真実）。無ければ draft 推定。
-  const chromePath = visibleResponse?.path ?? expectedPath;
+  // wire path があれば優先（サーバ真実）。無ければ draft 推定。draft 未解決は null。
+  const chromePath: "household" | "idea" | null = visibleResponse?.path ?? expectedPath;
   // 設計 §5: matchMode のみがトリガ。server message（「固定」付き等）をパースして文言を選ばない。
   const showSafetyOnlyBanner =
     visibleResponse !== null &&
@@ -317,7 +325,11 @@ export function EmergencyMenuContent({
     visibleResponse.matchMode === "safety_only";
   const safetyOnlyBannerText =
     chromePath === "idea" ? ideaSafetyOnlyBannerText : householdSafetyOnlyBannerText;
-  const introText = chromePath === "idea" ? ideaIntroText : householdIntroText;
+  // draft 未解決中は path 固有 intro を抑止（中立 loading のみ）。
+  const introText =
+    chromePath === "idea" ? ideaIntroText : chromePath === "household" ? householdIntroText : null;
+  // idea は「家族向け」見出しを使わず中立にする（個人パスと混同させない）
+  const adaptationHeading = chromePath === "idea" ? "取り分け・切り方の目安" : "家族向けの取り分け";
 
   return (
     <main className="page-frame stack emergency-menu-page">
@@ -329,13 +341,15 @@ export function EmergencyMenuContent({
         <h1>15分緊急献立</h1>
       </div>
       {/*
-        path 条件付き intro。idea は role 付きで開示必須。
-        household は既存どおり plain p（role を付けない）— バナーの role=status と衝突させない。
+        path 条件付き intro。idea は role=status で開示必須。
+        household は plain p。banner は role=note（intro の status と二重 status にしない）。
+        draft 未解決（introText null）では path 固有 intro を出さない。
       */}
-      {chromePath === "idea" ? <p role="status">{introText}</p> : <p>{introText}</p>}
+      {introText !== null &&
+        (chromePath === "idea" ? <p role="status">{introText}</p> : <p>{introText}</p>)}
       {loading && <p>候補を確認中…</p>}
       {error !== null && <p role="alert">{error}</p>}
-      {showSafetyOnlyBanner && <p role="status">{safetyOnlyBannerText}</p>}
+      {showSafetyOnlyBanner && <p role="note">{safetyOnlyBannerText}</p>}
       {visibleResponse?.candidates.length === 0 && (
         <section className="card">
           <h2>{visibleResponse.message}</h2>
@@ -409,7 +423,7 @@ export function EmergencyMenuContent({
                     </ol>
                     {adaptations.length > 0 && (
                       <section>
-                        <h4>家族向けの取り分け</h4>
+                        <h4>{adaptationHeading}</h4>
                         {adaptations.map((adaptation) => (
                           <dl key={adaptation.id}>
                             <dt>

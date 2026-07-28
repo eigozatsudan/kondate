@@ -3,14 +3,16 @@ import {
   currentAllergenCatalogV1,
   currentAllergenCatalogVersion,
 } from "../safety/current-allergen-catalog.v1.js";
-import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
+import {
+  currentFoodSafetyRulesV1,
+  hardBeanAndReviewedNutRule,
+} from "../safety/current-food-safety-rules.v1.js";
 
 /** idea 合成メンバー専用。fixture / DB のどの id とも重複しない reserved band */
 const IDEA_SYNTHETIC_MEMBER_ID = "83000000-0000-4000-8000-000000000001";
 
-// makeCurrentSafetyContext / currentFoodSafetyRulesV1 と同じ版。
-// 誤ると validateGeneratedMenu の版検査で Stage S が全滅する。
-const IDEA_FOOD_RULE_VERSION = "jp-caa-child-shape-2026-07.v1" as const;
+// currentFoodSafetyRulesV1 の版と同期。ハードコード文字列だと版 bump 時に Stage S 全滅する。
+const IDEA_FOOD_RULE_VERSION = hardBeanAndReviewedNutRule.ruleVersion;
 
 /**
  * idea 個人パス用の固定 CurrentSafetyContext。

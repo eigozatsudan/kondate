@@ -52,14 +52,8 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
  * Navigate と <a href> が競合するため）。
  * 緊急献立 CTA は household / idea とも常時表示（2026-07-28 設計: idea 個人固定候補パス）。
  */
-function RecoveryLinks({
-  onClear,
-}: {
-  onClear?: () => void;
-  /** 呼び出し互換のため受け取るが、リンク表示には使わない */
-  targetMode?: "idea" | "household";
-}) {
-  // C-I6 改訂: idea でも個人向け緊急献立へ誘導する（両 RecoveryLinks サイト共通）。
+function RecoveryLinks({ onClear }: { onClear?: () => void }) {
+  // idea / household とも個人向け緊急献立へ誘導する（targetMode で gate しない）。
   return (
     <div className="gen-status-actions">
       {onClear !== undefined ? (
@@ -103,14 +97,11 @@ export function GenerationStatusPanel({
   state,
   userId,
   onClear,
-  targetMode,
 }: {
   state: GenerationClientState;
   userId?: string;
   /** request_conflict から idle へ戻し、planner 再入力へ進ませる */
   onClear?: () => void;
-  /** household / idea とも緊急献立リンクを出す（省略時も表示） */
-  targetMode?: "idea" | "household";
 }) {
   if (state.phase === "checking") {
     return (
@@ -167,10 +158,7 @@ export function GenerationStatusPanel({
           <p>成功回数：本日あと{state.data.quota.remaining}回</p>
         )}
         {/* exactOptionalPropertyTypes: undefined を明示渡ししない */}
-        <RecoveryLinks
-          {...(onClear === undefined ? {} : { onClear })}
-          {...(targetMode === undefined ? {} : { targetMode })}
-        />
+        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }
@@ -190,10 +178,7 @@ export function GenerationStatusPanel({
             )}
           </>
         )}
-        <RecoveryLinks
-          {...(onClear === undefined ? {} : { onClear })}
-          {...(targetMode === undefined ? {} : { targetMode })}
-        />
+        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }
