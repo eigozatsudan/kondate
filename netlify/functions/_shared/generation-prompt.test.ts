@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { makeGenerationContext } from "../../../shared/testing/factories.js";
+import {
+  makeGenerationContext,
+  makeIdeaGenerationContext,
+} from "../../../shared/testing/factories.js";
 import {
   GENERATION_SYSTEM_PROMPT_CORE,
   GENERATION_SYSTEM_PROMPT_IDEA_EXTRA,
@@ -215,14 +218,16 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain("dish_1");
     expect(system).toContain("outcome=success");
     expect(system).toContain("constraint_conflict");
+    // 品数・役割は materialize の確定品数と揃える（invalid_menu_structure 本筋）
+    expect(system).toContain("ちょうど2品");
+    expect(system).toContain("ちょうど3品");
+    expect(system).toContain("mainまたはstaple");
+    expect(system).toContain("totalElapsedMinutes");
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_CORE.slice(0, 40));
   });
 
   it("idea path keeps empty adaptations/labels instruction", () => {
-    const base = makeGenerationContext();
-    const messages = buildGenerationMessages(
-      asNewMenuExecution({ ...base, targetMode: "idea" as const }),
-    );
+    const messages = buildGenerationMessages(asNewMenuExecution(makeIdeaGenerationContext()));
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
   });

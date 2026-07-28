@@ -133,9 +133,7 @@ export function materializeAiGeneratedMenu(
     ),
   );
   const stepIdByRef = new Map(
-    workingMenu.dishes.flatMap((dish) =>
-      dish.steps.map((step) => [step.stepRef, uuid()] as const),
-    ),
+    workingMenu.dishes.flatMap((dish) => dish.steps.map((step) => [step.stepRef, uuid()] as const)),
   );
   const timelineIdByRef = new Map(
     menu.timeline.map((timeline) => [timeline.timelineRef, uuid()] as const),
@@ -399,6 +397,16 @@ export function materializeAiGeneratedMenu(
     };
   });
 
+  // AI payload は dishes 1–5 を許すが、内部 generatedMenuSchema は食事区分ごとの
+  // 確定品数（朝/昼=2、夕=3）と timeline 整合などを superRefine する。
+  // ここで opaque な invalid_provider_menu に潰すと repair/診断が評価不能になるため、
+  // 内部構造失敗は invalid_menu_structure として閉じる（payload 自体の Zod 失敗は
+  // 上記 invalid_provider_menu のまま）。
+  const expectedDishCount = menu.mealType === "dinner" ? 3 : 2;
+  if (workingMenu.dishes.length !== expectedDishCount) {
+    outputError("invalid_menu_structure");
+  }
+
   const result = generatedMenuSchema.safeParse({
     schemaVersion: menu.schemaVersion,
     menuId,
@@ -413,6 +421,6 @@ export function materializeAiGeneratedMenu(
     pantryUsage: materializedPantryUsage,
     labelConfirmations: labels,
   });
-  if (!result.success) outputError("invalid_provider_menu");
+  if (!result.success) outputError("invalid_menu_structure");
   return result.data;
 }

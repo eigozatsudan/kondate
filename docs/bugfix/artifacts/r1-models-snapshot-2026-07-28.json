@@ -1,0 +1,400 @@
+{
+  "snapshotDate": "2026-07-28T00:19:09.764Z",
+  "enumerationMethod": "B",
+  "entryCount": 341,
+  "completenessProof": {
+    "method": "B_single_response_stage1_budget",
+    "timeoutMs": 60000,
+    "maxBodyBytes": 8388608,
+    "entryCount": 341,
+    "totalCountField": 341
+  },
+  "models_response_sha256": "79949ec32fa32ea0673a60fb3e85338cf5808fa7028900fc69ee2d664634eca4",
+  "officialBaseUrl": "https://openrouter.ai/api/v1",
+  "modelsUrl": "https://openrouter.ai/api/v1/models?output_modalities=text",
+  "survivors": [
+    {
+      "id": "kwaipilot/kat-coder-air-v2.5",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "tencent/hy3",
+      "promptPlusCompletionUsdPerMillion": 0.6599999999999999
+    },
+    {
+      "id": "nex-agi/nex-n2-mini",
+      "promptPlusCompletionUsdPerMillion": 0.12499999999999999
+    },
+    {
+      "id": "ibm-granite/granite-4.1-8b",
+      "promptPlusCompletionUsdPerMillion": 0.15
+    },
+    {
+      "id": "inclusionai/ling-2.6-1t",
+      "promptPlusCompletionUsdPerMillion": 0.7
+    },
+    {
+      "id": "xiaomi/mimo-v2.5",
+      "promptPlusCompletionUsdPerMillion": 0.42000000000000004
+    },
+    {
+      "id": "inclusionai/ling-2.6-flash",
+      "promptPlusCompletionUsdPerMillion": 0.04
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it",
+      "promptPlusCompletionUsdPerMillion": 0.56
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "promptPlusCompletionUsdPerMillion": 0.54
+    },
+    {
+      "id": "mistralai/mistral-small-2603",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "nvidia/nemotron-3-super-120b-a12b",
+      "promptPlusCompletionUsdPerMillion": 0.485
+    },
+    {
+      "id": "qwen/qwen3.5-9b",
+      "promptPlusCompletionUsdPerMillion": 0.25
+    },
+    {
+      "id": "inception/mercury-2",
+      "promptPlusCompletionUsdPerMillion": 1
+    },
+    {
+      "id": "bytedance-seed/seed-2.0-mini",
+      "promptPlusCompletionUsdPerMillion": 0.49999999999999994
+    },
+    {
+      "id": "qwen/qwen3-coder-next",
+      "promptPlusCompletionUsdPerMillion": 0.9099999999999999
+    },
+    {
+      "id": "upstage/solar-pro-3",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "bytedance-seed/seed-1.6-flash",
+      "promptPlusCompletionUsdPerMillion": 0.375
+    },
+    {
+      "id": "nvidia/nemotron-3-nano-30b-a3b",
+      "promptPlusCompletionUsdPerMillion": 0.24999999999999997
+    },
+    {
+      "id": "mistralai/ministral-14b-2512",
+      "promptPlusCompletionUsdPerMillion": 0.39999999999999997
+    },
+    {
+      "id": "mistralai/ministral-8b-2512",
+      "promptPlusCompletionUsdPerMillion": 0.3
+    },
+    {
+      "id": "mistralai/ministral-3b-2512",
+      "promptPlusCompletionUsdPerMillion": 0.19999999999999998
+    },
+    {
+      "id": "deepseek/deepseek-v3.2",
+      "promptPlusCompletionUsdPerMillion": 0.6689999999999999
+    },
+    {
+      "id": "allenai/olmo-3-32b-think",
+      "promptPlusCompletionUsdPerMillion": 0.65
+    },
+    {
+      "id": "mistralai/voxtral-small-24b-2507",
+      "promptPlusCompletionUsdPerMillion": 0.39999999999999997
+    },
+    {
+      "id": "openai/gpt-oss-safeguard-20b",
+      "promptPlusCompletionUsdPerMillion": 0.375
+    },
+    {
+      "id": "qwen/qwen3-vl-32b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.52
+    },
+    {
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.572
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "deepseek/deepseek-v3.2-exp",
+      "promptPlusCompletionUsdPerMillion": 0.6799999999999999
+    },
+    {
+      "id": "thedrummer/cydonia-24b-v4.1",
+      "promptPlusCompletionUsdPerMillion": 0.8
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-thinking",
+      "promptPlusCompletionUsdPerMillion": 0.8775000000000001
+    },
+    {
+      "id": "openai/gpt-oss-120b",
+      "promptPlusCompletionUsdPerMillion": 0.207
+    },
+    {
+      "id": "qwen/qwen3-coder-30b-a3b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.34
+    },
+    {
+      "id": "qwen/qwen3-235b-a22b-2507",
+      "promptPlusCompletionUsdPerMillion": 0.64
+    },
+    {
+      "id": "tencent/hunyuan-a13b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.7100000000000001
+    },
+    {
+      "id": "google/gemma-3n-e4b-it",
+      "promptPlusCompletionUsdPerMillion": 0.18
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b",
+      "promptPlusCompletionUsdPerMillion": 0.62
+    },
+    {
+      "id": "qwen/qwen3-32b",
+      "promptPlusCompletionUsdPerMillion": 0.36000000000000004
+    },
+    {
+      "id": "openai/gpt-4.1-nano",
+      "promptPlusCompletionUsdPerMillion": 0.49999999999999994
+    },
+    {
+      "id": "meta-llama/llama-4-maverick",
+      "promptPlusCompletionUsdPerMillion": 0.9999999999999999
+    },
+    {
+      "id": "meta-llama/llama-4-scout",
+      "promptPlusCompletionUsdPerMillion": 0.39999999999999997
+    },
+    {
+      "id": "google/gemma-3-4b-it",
+      "promptPlusCompletionUsdPerMillion": 0.15
+    },
+    {
+      "id": "google/gemma-3-12b-it",
+      "promptPlusCompletionUsdPerMillion": 0.19999999999999998
+    },
+    {
+      "id": "google/gemma-3-27b-it",
+      "promptPlusCompletionUsdPerMillion": 0.5299999999999999
+    },
+    {
+      "id": "mistralai/mistral-saba",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
+    },
+    {
+      "id": "microsoft/phi-4",
+      "promptPlusCompletionUsdPerMillion": 0.21000000000000002
+    },
+    {
+      "id": "cohere/command-r7b-12-2024",
+      "promptPlusCompletionUsdPerMillion": 0.1875
+    },
+    {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.53
+    },
+    {
+      "id": "thedrummer/unslopnemo-12b",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
+    },
+    {
+      "id": "qwen/qwen-2.5-7b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.13999999999999999
+    },
+    {
+      "id": "thedrummer/rocinante-12b",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "qwen/qwen-2.5-72b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.76
+    },
+    {
+      "id": "cohere/command-r-08-2024",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "sao10k/l3-lunaris-8b",
+      "promptPlusCompletionUsdPerMillion": 0.09
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.7999999999999999
+    },
+    {
+      "id": "meta-llama/llama-3.1-8b-instruct",
+      "promptPlusCompletionUsdPerMillion": 0.13
+    },
+    {
+      "id": "mistralai/mistral-nemo",
+      "promptPlusCompletionUsdPerMillion": 0.049
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "openai/gpt-4o-mini-2024-07-18",
+      "promptPlusCompletionUsdPerMillion": 0.75
+    },
+    {
+      "id": "gryphe/mythomax-l2-13b",
+      "promptPlusCompletionUsdPerMillion": 0.12
+    }
+  ],
+  "mechanicalExclusionsCount": 272,
+  "mechanicalSurvivorsCount": 69,
+  "exIdRulesApplied": [
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "rule": "EX-B"
+    },
+    {
+      "id": "qwen/qwen3.5-flash-02-23",
+      "rule": "EX-B"
+    },
+    {
+      "id": "z-ai/glm-4.7-flash",
+      "rule": "EX-B"
+    },
+    {
+      "id": "openai/gpt-5-nano",
+      "rule": "EX-404"
+    },
+    {
+      "id": "openai/gpt-oss-20b",
+      "rule": "EX-B"
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b-instruct-2507",
+      "rule": "EX-B"
+    },
+    {
+      "id": "google/gemini-2.5-flash-lite",
+      "rule": "EX-GEM"
+    },
+    {
+      "id": "mistralai/mistral-small-3.2-24b-instruct",
+      "rule": "EX-B"
+    },
+    {
+      "id": "mistralai/mistral-small-24b-instruct-2501",
+      "rule": "EX-B"
+    }
+  ],
+  "exConfigRulesApplied": {
+    "CFG_REPAIR_SLOW": [
+      "openai/gpt-oss-120b"
+    ]
+  },
+  "mechanicalExclusionReasons": {
+    "missing structured_outputs AND/OR response_format (AND required)": 72,
+    "rejects :free on real API path": 15,
+    "exceeds max prompt+completion USD per 1M tokens (11.25 > 1)": 9,
+    "exceeds max prompt+completion USD per 1M tokens (3.5 > 1)": 7,
+    "exceeds max prompt+completion USD per 1M tokens (30 > 1)": 6,
+    "exceeds max prompt+completion USD per 1M tokens (8 > 1)": 6,
+    "exceeds max prompt+completion USD per 1M tokens (12.5 > 1)": 6,
+    "exceeds max prompt+completion USD per 1M tokens (5.5 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (35 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (14 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (15.75 > 1)": 5,
+    "exceeds max prompt+completion USD per 1M tokens (60 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (2.8 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (18 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (2.25 > 1)": 4,
+    "exceeds max prompt+completion USD per 1M tokens (9 > 1)": 3,
+    "rejects router model ID": 3,
+    "exceeds max prompt+completion USD per 1M tokens (3 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (3.75 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (2.4 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (2 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (10 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (1.04 > 1)": 3,
+    "exceeds max prompt+completion USD per 1M tokens (8.75 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (12 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.5 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.75 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (6 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (5.25 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (210 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.305 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.25 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (4.68 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (2.5 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (3.1 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (20 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.2 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (90 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.3 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (1.4 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (40 > 1)": 2,
+    "exceeds max prompt+completion USD per 1M tokens (3.7 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.0566 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (4.23 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (4.199999999999999 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.6 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.3499999999999999 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (5.9 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (10.5 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (180 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.0999999999999996 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.3125 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.1400000000000001 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (7.28 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.3 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (23 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.3659999999999997 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (4.002 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.275 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.07 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.45 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (17.5 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.15 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.7550000000000001 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.34 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.82 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.73 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.0499999999999998 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.42 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.15 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (189 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.275 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (4.5 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.482 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (50 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.69 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (135 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.8600000000000003 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.11 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.9 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.27 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.2000000000000002 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (100 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (2.6500000000000004 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.1375 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.9999999999999998 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.3900000000000001 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (750 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.35 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.7999999999999998 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (3.2 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.0003 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (75 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.7 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (7 > 1)": 1,
+    "exceeds max prompt+completion USD per 1M tokens (1.1 > 1)": 1
+  }
+}

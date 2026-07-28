@@ -63,6 +63,14 @@ export const GENERATION_SYSTEM_PROMPT_CORE =
   // structural / refs
   "すべてのdishRef/ingredientRef/stepRef/timelineRef/adaptationRefは一意にし、" +
   "dish_1・ingredient_1・step_1 のように種別ごとの連番形式を使う。" +
+  // 品数・役割（設計 §7.3 / materialize の確定品数と一致）
+  "dishesの品数はmealTypeに厳密に合わせる:" +
+  "breakfastとlunchはちょうど2品、dinnerはちょうど3品。" +
+  "breakfast/lunchは(mainまたはstaple)とsideを両方含める。" +
+  "dinnerはmain・side・soupをすべて含める。" +
+  "timelineの各要素はstartMinute+durationMinutesがtotalElapsedMinutesを超えない。" +
+  "totalElapsedMinutesはpreferences.timeLimitMinutesがあるときそれを超えない。" +
+  "preferences.mainIngredientsの各要素を料理名または材料名に含める。" +
   "pantryUsageには使ったpantryRefを漏れなく載せ、priorityは入力どおり、" +
   "usageStatus=usedのdishRefsは実際にそのpantryRefをingredientsに持つdishだけを列挙する。" +
   "priority=must_useのpantryは必ずusageStatus=usedにする。" +

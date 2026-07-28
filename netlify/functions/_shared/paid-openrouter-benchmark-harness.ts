@@ -68,8 +68,8 @@ export function diagnoseClosedComposeCodes(
   }
   if (result.output.outcome === "constraint_conflict") {
     const codes = new Set<string>(["constraint_conflict"]);
-    for (const conflict of result.output.conflicts ?? []) {
-      if (typeof conflict?.code === "string" && conflict.code.length > 0) {
+    for (const conflict of result.output.conflicts) {
+      if (typeof conflict.code === "string" && conflict.code.length > 0) {
         codes.add(conflict.code);
       }
     }

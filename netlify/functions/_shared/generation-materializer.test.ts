@@ -408,6 +408,17 @@ describe("materializeAiGeneratedMenu", () => {
     );
   });
 
+  it("rejects meal-type dish count mismatch as invalid_menu_structure", () => {
+    const payload = makePayload();
+    // breakfast は確定 2 品。1 品は AI schema 上は合法でも内部構造として拒否する。
+    payload.dishes = [payload.dishes[0]!];
+    payload.timeline = payload.timeline.filter((entry) => entry.dishRef === "dish_1");
+    expectOutputError(
+      () => materializeAiGeneratedMenu(payload, makeContext(), uuidFactory()),
+      "invalid_menu_structure",
+    );
+  });
+
   it("resolves every safety action ref to the fresh internal graph", () => {
     const payload = makePayload();
     payload.adaptations[0]!.safetyActions = [
