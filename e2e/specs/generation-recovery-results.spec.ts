@@ -475,18 +475,19 @@ async function assertIdeaResultBoundary(page: Page, servings: number): Promise<v
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
-  // notice: idea結果は短い喚起を常時表示し、必須文言はダイアログで確認できる。
+  // notice: idea 必須2文は常時表示。AI/ラベル長文はダイアログで確認。
   await expectIdeaResultSurface(page);
   await openAndAssertIdeaSafetyDetails(page);
   await page.getByRole("button", { name: "閉じる" }).click();
   // 人数表示。menu.servings === N であることを本文の「N人分」表示で確認する。
   await expect(page.getByText(`${String(servings)}人分`, { exact: false })).toBeVisible();
-  // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成は利用できる
+  // 許可操作: 採用・お気に入り・whole/dish 再生成は利用できる
   await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeVisible();
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "使った食材の在庫を更新" })).toBeVisible();
   await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
+  // idea-servings モックは pantry 未使用。未使用時は在庫更新 CTA を出さない（1d78167）。
+  await expect(page.getByRole("button", { name: "使った食材の在庫を更新" })).toHaveCount(0);
   // 買い物だけは idea では非表示のまま
   await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "買い物リストとの差分を確認" })).toHaveCount(0);
