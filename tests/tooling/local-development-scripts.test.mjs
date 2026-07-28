@@ -421,6 +421,17 @@ async function waitForAdditionalChild(parentPid, excludedPid) {
   assert.fail(`timed out waiting for watchdog child of ${parentPid}`);
 }
 
+// watchdog サブシェルが sleep を fork する前に children を読むと空になる。
+// CI でファイルを並列実行するとスケジューリングのレースが開きやすい。
+async function waitForProcessChild(parentPid) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const [childPid] = await readProcessChildren(parentPid);
+    if (Number.isSafeInteger(childPid)) return childPid;
+    await delay(5);
+  }
+  assert.fail(`timed out waiting for child of ${parentPid}`);
+}
+
 async function waitForProcessExit(pid) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     if (!isProcessAlive(pid)) return;
@@ -818,8 +829,7 @@ test("E2E runner watchdog kills a child that ignores one forwarded signal", asyn
       fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
       process.kill(child.pid, fixture.signal);
       watchdogPid = await waitForAdditionalChild(child.pid, fakeDockerPid);
-      [timerPid] = await readProcessChildren(watchdogPid);
-      assert.equal(Number.isSafeInteger(timerPid), true);
+      timerPid = await waitForProcessChild(watchdogPid);
 
       assert.deepEqual(await waitForCompletion(completion), {
         code: fixture.status,
@@ -950,8 +960,7 @@ test("E2E runner bounds one signal while a base restoration is stuck", async (t)
   fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
   process.kill(child.pid, "SIGTERM");
   watchdogPid = await waitForAdditionalChild(child.pid, fakeDockerPid);
-  [timerPid] = await readProcessChildren(watchdogPid);
-  assert.equal(Number.isSafeInteger(timerPid), true);
+  timerPid = await waitForProcessChild(watchdogPid);
   await delay(20);
   assert.equal(isProcessAlive(fakeDockerPid), true);
 
@@ -1181,8 +1190,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an E2E signal", a
   await waitForFile(cleanupReadyFile);
   restorePid = Number((await readFile(cleanupReadyFile, "utf8")).trim());
   watchdogPid = await waitForAdditionalChild(child.pid, restorePid);
-  [timerPid] = await readProcessChildren(watchdogPid);
-  assert.equal(Number.isSafeInteger(timerPid), true);
+  timerPid = await waitForProcessChild(watchdogPid);
 
   assert.deepEqual(await waitForCompletion(completion, 500), { code: 143, signal: null });
   for (const pid of [e2ePid, restorePid, watchdogPid, timerPid])
@@ -1237,8 +1245,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an rm signal", as
   await waitForFile(cleanupReadyFile);
   restorePid = Number((await readFile(cleanupReadyFile, "utf8")).trim());
   watchdogPid = await waitForAdditionalChild(child.pid, restorePid);
-  [timerPid] = await readProcessChildren(watchdogPid);
-  assert.equal(Number.isSafeInteger(timerPid), true);
+  timerPid = await waitForProcessChild(watchdogPid);
 
   assert.deepEqual(await waitForCompletion(completion, 500), { code: 143, signal: null });
   assert.equal(await readFile(removalMarker, "utf8"), "removed\n");
