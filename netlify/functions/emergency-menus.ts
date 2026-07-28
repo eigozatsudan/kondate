@@ -17,6 +17,7 @@ import {
   type EmergencyCurrentSafety,
 } from "./_shared/current-safety.js";
 import { handleError, json, methodNotAllowed } from "./_shared/http.js";
+import { safeLog } from "./_shared/logger.js";
 import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
 const uuidSchema = z.uuid();
@@ -192,6 +193,8 @@ export type EmergencyHandlerDeps = {
 export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
   return async (request: Request): Promise<Response> => {
     if (request.method !== "GET") return methodNotAllowed(["GET"]);
+    const startedAt = Date.now();
+    const requestId = crypto.randomUUID();
     try {
       const url = new URL(request.url);
       // ★ critical: URLSearchParams.get は欠落時 null。Zod .optional() は undefined のみ受理。
@@ -219,6 +222,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       const resolvedResult = resolveEmergencyQuery(rawParsed.data);
       if (!resolvedResult.ok) return resolvedResult.response;
       const resolved = resolvedResult.value;
+      const mainIngredientCount = resolved.mainIngredients.length;
 
       const { userId } = await deps.authenticate(request);
       // pantry は path 共通: 所有者 pantry のみ（家族表を読まない）
@@ -235,7 +239,19 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
           memberLabels: idea.memberLabels,
         });
         if (filtered.emptyReason === "current_safety_unavailable") {
-          // 到達しない想定のバグ。偽の 200 empty にしない。
+          // 到達しない想定のバグ。偽の 200 empty にしない。運用検知用に非PII だけ記録。
+          safeLog({
+            level: "error",
+            requestId,
+            code: "idea_emergency_current_safety_unavailable",
+            durationMs: Date.now() - startedAt,
+            path: "idea",
+            matchMode: null,
+            emptyReason: "current_safety_unavailable",
+            candidateCount: 0,
+            mealType: resolved.meal,
+            mainIngredientCount,
+          });
           throw new Error("idea_emergency_current_safety_unavailable");
         }
         const candidates = filtered.menus.map((menu) =>
@@ -252,6 +268,20 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
             : filtered.matchMode === "safety_only"
               ? "メイン食材は一致しませんでした。アレルギー条件は適用していません"
               : "AIを使わない15分緊急献立です。アレルギー条件は適用していません";
+
+        // 成功/空とも 1 回。食材名・アレルギー本文は載せない。
+        safeLog({
+          level: "info",
+          requestId,
+          code: "emergency_menus",
+          durationMs: Date.now() - startedAt,
+          path: "idea",
+          matchMode: filtered.matchMode,
+          emptyReason: filtered.emptyReason,
+          candidateCount: candidates.length,
+          mealType: resolved.meal,
+          mainIngredientCount,
+        });
 
         return json<EmergencyMenusData>(200, {
           ok: true,
@@ -290,6 +320,19 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
           : filtered.matchMode === "safety_only"
             ? "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています"
             : "AIを使わない15分緊急献立です";
+
+      safeLog({
+        level: "info",
+        requestId,
+        code: "emergency_menus",
+        durationMs: Date.now() - startedAt,
+        path: "household",
+        matchMode: filtered.matchMode,
+        emptyReason: filtered.emptyReason,
+        candidateCount: candidates.length,
+        mealType: resolved.meal,
+        mainIngredientCount,
+      });
 
       return json<EmergencyMenusData>(200, {
         ok: true,

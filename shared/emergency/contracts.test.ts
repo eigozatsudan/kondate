@@ -6,8 +6,14 @@ import { expect, it } from "vitest";
 import { makeValidatedMenu } from "../testing/factories.js";
 import { emergencyMenusDataSchema } from "./contracts.js";
 
+// contracts.ts 自身の境界: サーバ/DB/Node 専用モジュールを import 禁止
 const forbiddenServerModulePattern =
-  /filter-emergency-menus|validate-generated-menu|fingerprint|node:|netlify|supabase/u;
+  /filter-emergency-menus|idea-context|fixtures\.v1|validate-generated-menu|fingerprint|node:|netlify|supabase/u;
+
+// browser feature が emergency サーバ専用モジュールを import していないこと
+// （@/shared/lib/supabase 等の正当なブラウザ import は対象外）
+const forbiddenEmergencyServerModulePattern =
+  /filter-emergency-menus|idea-context|fixtures\.v1|validate-generated-menu/u;
 
 function moduleSpecifiersFromSource(source: string): string[] {
   const sourceFile = ts.createSourceFile(
@@ -151,6 +157,28 @@ it("サーバー専用モジュールへ依存しない", async () => {
   const source = await readFile(new URL("./contracts.ts", import.meta.url), "utf8");
   for (const specifier of moduleSpecifiersFromSource(source)) {
     expect(specifier).not.toMatch(forbiddenServerModulePattern);
+  }
+});
+
+it("browser emergency feature は contracts 以外の emergency サーバ専用モジュールを import しない", async () => {
+  // src/features/emergency は filter / idea-context / fixtures を import しない
+  const { readdir } = await import("node:fs/promises");
+  const featureDir = new URL("../../src/features/emergency/", import.meta.url);
+  const entries = await readdir(featureDir);
+  const sources = entries.filter(
+    (name) =>
+      (name.endsWith(".ts") || name.endsWith(".tsx")) &&
+      !name.endsWith(".test.ts") &&
+      !name.endsWith(".test.tsx"),
+  );
+  expect(sources.length).toBeGreaterThan(0);
+  for (const name of sources) {
+    const source = await readFile(new URL(name, featureDir), "utf8");
+    for (const specifier of moduleSpecifiersFromSource(source)) {
+      expect(specifier, `${name} imports ${specifier}`).not.toMatch(
+        forbiddenEmergencyServerModulePattern,
+      );
+    }
   }
 });
 

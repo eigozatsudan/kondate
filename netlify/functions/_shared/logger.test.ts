@@ -89,6 +89,70 @@ describe("createSafeLogger", () => {
     expect(line).not.toContain("secret-prompt");
     expect(line).not.toContain("egg");
   });
+
+  it("serializes emergency non-PII audit fields including null matchMode/emptyReason", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "emg-1",
+      code: "emergency_menus",
+      durationMs: 42,
+      path: "household",
+      matchMode: "safety_only",
+      emptyReason: null,
+      candidateCount: 2,
+      mealType: "dinner",
+      mainIngredientCount: 1,
+    });
+    expect(JSON.parse(write.mock.calls[0]![0] as string)).toEqual({
+      level: "info",
+      request_id: "emg-1",
+      code: "emergency_menus",
+      duration_ms: 42,
+      path: "household",
+      match_mode: "safety_only",
+      empty_reason: null,
+      candidate_count: 2,
+      meal_type: "dinner",
+      main_ingredient_count: 1,
+    });
+  });
+
+  it("does not serialize free-text ingredient or allergy keys on emergency events", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "emg-2",
+      code: "emergency_menus",
+      durationMs: 1,
+      path: "idea",
+      matchMode: null,
+      emptyReason: "no_matching_fixture",
+      candidateCount: 0,
+      mealType: "lunch",
+      mainIngredientCount: 3,
+      mainIngredients: ["鶏肉"],
+      allergyNames: ["卵"],
+    } as Parameters<ReturnType<typeof createSafeLogger>>[0] & {
+      mainIngredients: string[];
+      allergyNames: string[];
+    });
+    const line = write.mock.calls[0]![0] as string;
+    expect(JSON.parse(line)).toEqual({
+      level: "info",
+      request_id: "emg-2",
+      code: "emergency_menus",
+      duration_ms: 1,
+      path: "idea",
+      match_mode: null,
+      empty_reason: "no_matching_fixture",
+      candidate_count: 0,
+      meal_type: "lunch",
+      main_ingredient_count: 3,
+    });
+    expect(line).not.toContain("鶏肉");
+    expect(line).not.toContain("卵");
+  });
 });
 
 describe("logGenerationEvent", () => {

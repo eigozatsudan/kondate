@@ -285,6 +285,7 @@ test("waits for the latest draft save before requesting emergency menus", async 
   if (emergencyRequest === undefined) throw new Error("緊急献立のリクエストを確認できませんでした");
   const requestUrl = new URL(emergencyRequest);
   expect(requestUrl.searchParams.get("meal")).toBe("lunch");
+  expect(requestUrl.searchParams.get("targetMode")).toBe("household");
   expect(requestUrl.searchParams.get("targetMemberIds")?.split(",")).toEqual([selectedMemberId]);
   expect(requestUrl.searchParams.get("pantryItemIds")?.split(",")).toEqual([selectedPantryItemId]);
 });
@@ -678,7 +679,15 @@ test("keeps chicken-allergic household on non-chicken emergency candidates witho
   // 非空 chrome のみ（page 実装: <p class="emergency-candidate-number">候補 {n}</p>）
   // 「/分/」や title の「15分」は 0 候補でも見えるため false green — exact「候補 1」を使う
   await expect(page.getByText("候補 1", { exact: true })).toBeVisible();
-  await expect(page.locator("article.emergency-candidate").first()).toBeVisible();
+  const firstCandidate = page.locator("article.emergency-candidate").first();
+  await expect(firstCandidate).toBeVisible();
+  // Stage S が鶏を除外したこと: 先頭候補に鶏肉タンパク表記がない
+  await expect(firstCandidate.getByText("鶏肉", { exact: false })).toHaveCount(0);
+  await expect(firstCandidate.getByText("鶏ひき肉", { exact: false })).toHaveCount(0);
+  // main=鶏肉 が Stage M で落ち、safety_only 開示バナーが必須（設計 §5 household exact）
+  await expect(
+    page.getByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+  ).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,

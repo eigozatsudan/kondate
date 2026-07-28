@@ -673,6 +673,14 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     );
     await page.getByRole("button", { name: "2人" }).click();
     expect((await servingsSaveResponse).ok()).toBe(true);
+    // idea 経路の emergency API を明示捕捉（targetMode=idea 固定）
+    const ideaEmergencyUrls: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/emergency-menus") {
+        ideaEmergencyUrls.push(request.url());
+      }
+    });
     activeRoute = "emergency-menus";
     await page.goto("/emergency-menus");
     await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
@@ -683,7 +691,7 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
         "アイデアモードでは緊急献立を表示できません。献立画面で「家族向け」に切り替えてください。",
       ),
     ).toHaveCount(0);
-    // intro は loading 中も role=status で出る。候補が載れば「候補 1」も見える。
+    // intro は draftReady 後 role=status で出る。候補が載れば「候補 1」も見える。
     await expect(
       page.getByText(
         "個人向けの固定候補です。家族のアレルギー・年齢条件は適用していません。AI利用回数は消費しません。調理前に原材料表示と家庭内の混入を確認してください。",
@@ -691,6 +699,18 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     ).toBeVisible();
     // 豆腐 main で idea 夕食 fixture が載る設計 coverage。候補 chrome も非空であること。
     await expect(page.getByText("候補 1", { exact: true })).toBeVisible();
+    await expect.poll(() => ideaEmergencyUrls.length).toBeGreaterThan(0);
+    const firstIdeaEmergency = ideaEmergencyUrls.at(0);
+    if (firstIdeaEmergency === undefined) {
+      throw new Error("idea emergency request was not captured");
+    }
+    const ideaRequestUrl = new URL(firstIdeaEmergency);
+    expect(ideaRequestUrl.searchParams.get("targetMode")).toBe("idea");
+    // 豆腐 main が Stage M に乗れば banner なし。miss 時のみ idea safety_only exact。
+    // いずれにせよ household の「安全条件に合う」文言は idea 表示中に出さない。
+    await expect(
+      page.getByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+    ).toHaveCount(0);
 
     expect(pageErrors).toHaveLength(0);
     for (const routeName of routeNames) {
