@@ -371,6 +371,65 @@ it("keeps a removed row and proposes its larger known delta or unknown review it
   });
 });
 
+it("does not treat milli-rounded float noise as a quantity replace (SP-I2)", () => {
+  const itemId = "10000000-0000-4000-8000-000000000030";
+  const current = makeShoppingList([
+    makeItem({
+      id: itemId,
+      quantityValue: 0.3,
+      quantityText: "0.3大さじ",
+      unit: "大さじ",
+      storeSection: "seasonings",
+      displayName: "みりん",
+      normalizedName: "みりん",
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    displayName: "みりん",
+    normalizedName: "みりん",
+    storeSection: "seasonings",
+    quantityValue: 0.1 + 0.2,
+    quantityText: "0.3大さじ",
+    unit: "大さじ",
+    labelWarnings: [],
+  };
+  const diff = computeShoppingDiff(current, next);
+  expect(diff.replace).toEqual([]);
+  expect(diff.add).toEqual([]);
+  expect(diff.remove).toEqual([]);
+});
+
+it("proposes replace when only label warnings change (SP-I8)", () => {
+  const itemId = "10000000-0000-4000-8000-000000000031";
+  const warning = makeShoppingWarning({ allergenId: "wheat", sourceId: crypto.randomUUID() });
+  const current = makeShoppingList([
+    makeItem({
+      id: itemId,
+      quantityValue: 1,
+      quantityText: "1本",
+      unit: "本",
+      labelWarnings: [],
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 1,
+    quantityText: "1本",
+    unit: "本",
+    labelWarnings: [warning],
+  };
+  const diff = computeShoppingDiff(current, next);
+  expect(diff.replace).toHaveLength(1);
+  expect(diff.replace[0]?.itemId).toBe(itemId);
+  expect(diff.replace[0]?.next.labelWarnings).toHaveLength(1);
+});
+
 function makeItem(
   overrides: Partial<ShoppingList["items"][number]> = {},
 ): ShoppingList["items"][number] {

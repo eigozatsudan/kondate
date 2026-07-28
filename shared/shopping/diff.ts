@@ -4,6 +4,7 @@ import type {
   ShoppingDraftItem,
   ShoppingList,
 } from "../contracts/shopping.js";
+import { formatQuantityValue, quantityValuesEqual, roundQuantityValue } from "./normalize.js";
 
 export type ShoppingDiffApproval = {
   addKeys: readonly string[];
@@ -89,13 +90,14 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
       item.unit !== null &&
       exact.unit === item.unit
     ) {
-      const delta = exact.quantityValue - item.quantityValue;
+      // SP-I2/SP-I3: 差分数量も milli 丸め + formatQuantityValue で表示を安定させる。
+      const delta = roundQuantityValue(exact.quantityValue - item.quantityValue);
       if (delta > 0)
         add.push({
           ...exact,
           key: `${exact.key}_delta_${item.id}`,
           quantityValue: delta,
-          quantityText: `${String(delta)}${exact.unit}`,
+          quantityText: `${formatQuantityValue(delta)}${exact.unit}`,
         });
     } else if (exact !== undefined) {
       add.push({
@@ -108,6 +110,11 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
     }
   }
 
+  const labelWarningKey = (warnings: readonly { allergenId: string; sourceId: string }[]) =>
+    JSON.stringify(
+      [...warnings].map((w) => `${w.allergenId}:${w.sourceId}`).sort((a, b) => a.localeCompare(b)),
+    );
+
   // protected割当後にplain行を完全一致させ、不要になった旧行だけをremove候補にする。
   for (const item of plainItems) {
     const candidate = takeCandidate(diffKey(item));
@@ -118,9 +125,14 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
         quantityText: item.quantityText,
       });
     } else if (
-      candidate.quantityValue !== item.quantityValue ||
+      // SP-I2: 生 float の !== ではなく丸め後比較。
+      !quantityValuesEqual(candidate.quantityValue, item.quantityValue) ||
       candidate.quantityText !== item.quantityText ||
-      candidate.storeSection !== item.storeSection
+      candidate.storeSection !== item.storeSection ||
+      // SP-I8: 加工品ラベル警告の差分も replace 対象にする（§9.2）。
+      labelWarningKey(candidate.labelWarnings) !== labelWarningKey(item.labelWarnings) ||
+      candidate.displayName !== item.displayName ||
+      candidate.pantryCheckRequired !== item.pantryCheckRequired
     ) {
       replace.push({
         itemId: item.id,

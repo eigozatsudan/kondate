@@ -52,8 +52,54 @@ describe("buildShoppingDraft", () => {
       labels: [],
     });
     expect(draft.items).toHaveLength(1);
-    expect(draft.items[0]?.quantityValue).toBeCloseTo(0.3, 10);
+    // SP-I2: milli 丸め後は厳密 0.3（0.30000000000000004 ではない）
+    expect(draft.items[0]?.quantityValue).toBe(0.3);
     expect(draft.items[0]?.quantityText).toBe("0.3大さじ");
+  });
+
+  it("does not subtract past-JST-expiry pantry stock (SP-I1)", () => {
+    const draft = buildShoppingDraft({
+      menuId: "10000000-0000-4000-8000-000000000010",
+      menuVersion: 1,
+      ingredients: [ingredient({ quantityValue: 2, quantityText: "2本" })],
+      pantry: [
+        {
+          name: "にんじん",
+          quantity: 2,
+          unit: "本",
+          expiresOn: "2020-01-01",
+        },
+      ],
+      aliases: new Map(),
+      labels: [],
+      now: new Date("2026-07-28T03:00:00.000Z"), // JST 2026-07-28
+    });
+    expect(draft.items).toHaveLength(1);
+    expect(draft.items[0]).toMatchObject({
+      quantityValue: 2,
+      quantityText: "2本",
+      pantryCheckRequired: true,
+    });
+  });
+
+  it("still subtracts non-expired pantry stock", () => {
+    const draft = buildShoppingDraft({
+      menuId: "10000000-0000-4000-8000-000000000010",
+      menuVersion: 1,
+      ingredients: [ingredient({ quantityValue: 2, quantityText: "2本" })],
+      pantry: [
+        {
+          name: "にんじん",
+          quantity: 2,
+          unit: "本",
+          expiresOn: "2099-12-31",
+        },
+      ],
+      aliases: new Map(),
+      labels: [],
+      now: new Date("2026-07-28T03:00:00.000Z"),
+    });
+    expect(draft.items).toHaveLength(0);
   });
 
   it("merges fullwidth and halfwidth units after NFKC (D-I3)", () => {

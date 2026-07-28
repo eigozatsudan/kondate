@@ -4,9 +4,24 @@ import type {
   ShoppingLabelSnapshot,
   ShoppingSourceIngredient,
 } from "../contracts/shopping.js";
-import { formatQuantityValue, normalizeIngredientName, normalizeUnit } from "./normalize.js";
+import { getJstDateKey } from "../time/jst.js";
+import {
+  formatQuantityValue,
+  normalizeIngredientName,
+  normalizeUnit,
+  roundQuantityValue,
+} from "./normalize.js";
 
-type PantryAmount = { name: string; quantity: number | null; unit: string | null };
+/**
+ * 買い物下書き用の在庫量。
+ * expiresOn は JST 日付キー（YYYY-MM-DD）。期限切れ在庫は自動差し引き対象外（SP-I1）。
+ */
+type PantryAmount = {
+  name: string;
+  quantity: number | null;
+  unit: string | null;
+  expiresOn?: string | null;
+};
 export type ShoppingDraftInput = {
   menuId: string;
   menuVersion: number;
@@ -14,7 +29,15 @@ export type ShoppingDraftInput = {
   pantry: readonly PantryAmount[];
   aliases: ReadonlyMap<string, string>;
   labels: readonly ShoppingLabelSnapshot[];
+  /** 期限判定の基準時刻。省略時は new Date()。 */
+  now?: Date;
 };
+
+/** 期限切れ（expiresOn < 当日 JST）の在庫は差し引きに使わない。 */
+function isUsablePantryStock(item: PantryAmount, todayJst: string): boolean {
+  if (item.expiresOn === null || item.expiresOn === undefined) return true;
+  return item.expiresOn >= todayJst;
+}
 
 function itemKey(
   normalizedName: string,
@@ -31,6 +54,16 @@ function itemKey(
 }
 
 export function buildShoppingDraft(input: ShoppingDraftInput): ShoppingDraft {
+  const todayJst = getJstDateKey(input.now ?? new Date());
+  const usablePantry = input.pantry.filter((item) => isUsablePantryStock(item, todayJst));
+  // 期限切れ在庫でも同名があれば「確認必須」フラグだけ立てる（差し引きはしない）。
+  const expiredSameName = (normalizedName: string) =>
+    input.pantry.some(
+      (item) =>
+        !isUsablePantryStock(item, todayJst) &&
+        normalizeIngredientName(item.name, input.aliases) === normalizedName,
+    );
+
   const numeric = new Map<string, ShoppingDraftItem>();
   const ambiguous: ShoppingDraftItem[] = [];
   for (const source of input.ingredients) {
@@ -50,9 +83,10 @@ export function buildShoppingDraft(input: ShoppingDraftInput): ShoppingDraft {
         quantityValue: null,
         quantityText: source.quantityText,
         unit,
-        pantryCheckRequired: input.pantry.some(
-          (item) => normalizeIngredientName(item.name, input.aliases) === normalizedName,
-        ),
+        pantryCheckRequired:
+          usablePantry.some(
+            (item) => normalizeIngredientName(item.name, input.aliases) === normalizedName,
+          ) || expiredSameName(normalizedName),
         sourceIngredients: [source],
         labelWarnings: warnings,
       });
@@ -61,7 +95,8 @@ export function buildShoppingDraft(input: ShoppingDraftInput): ShoppingDraft {
     const groupKey = JSON.stringify([normalizedName, unit]);
     const previous = numeric.get(groupKey);
     const sources = [...(previous?.sourceIngredients ?? []), source];
-    const quantityValue = (previous?.quantityValue ?? 0) + source.quantityValue;
+    // SP-I2: 合算直後に milli 丸めし、DB round-trip と diff の厳密比較が一致するようにする。
+    const quantityValue = roundQuantityValue((previous?.quantityValue ?? 0) + source.quantityValue);
     numeric.set(groupKey, {
       key: itemKey(
         normalizedName,
@@ -86,12 +121,13 @@ export function buildShoppingDraft(input: ShoppingDraftInput): ShoppingDraft {
       kept.push(item);
       continue;
     }
-    const sameName = input.pantry.filter(
+    const sameName = usablePantry.filter(
       (candidate) => normalizeIngredientName(candidate.name, input.aliases) === item.normalizedName,
     );
     const sameUnit = sameName.filter((candidate) => normalizeUnit(candidate.unit) === item.unit);
+    const needsExpiryCheck = expiredSameName(item.normalizedName);
     if (sameName.length === 0) {
-      kept.push(item);
+      kept.push(needsExpiryCheck ? { ...item, pantryCheckRequired: true } : item);
     } else if (sameUnit.length === 0 || sameUnit.some((candidate) => candidate.quantity === null)) {
       kept.push({ ...item, pantryCheckRequired: true });
     } else {
@@ -99,12 +135,15 @@ export function buildShoppingDraft(input: ShoppingDraftInput): ShoppingDraft {
         (sum, candidate) => sum + (candidate.quantity ?? 0),
         0,
       );
-      const remaining = Math.max(0, item.quantityValue - pantryQuantity);
+      const remaining = roundQuantityValue(Math.max(0, item.quantityValue - pantryQuantity));
+      // 有効在庫で足りた行は落とす。期限切れ在庫は usablePantry に含まれないので
+      // 期限切れだけで「足りた」扱いにならない（SP-I1）。
       if (remaining > 0) {
         kept.push({
           ...item,
           quantityValue: remaining,
           quantityText: `${formatQuantityValue(remaining)}${item.unit}`,
+          pantryCheckRequired: item.pantryCheckRequired || needsExpiryCheck,
         });
       }
     }

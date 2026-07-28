@@ -48,7 +48,13 @@ export type ShoppingMenuAggregate = {
   ingredients: ShoppingSourceIngredient[];
   labels: ShoppingLabelSnapshot[];
 };
-export type ShoppingPantryAmount = { name: string; quantity: number | null; unit: string | null };
+export type ShoppingPantryAmount = {
+  name: string;
+  quantity: number | null;
+  unit: string | null;
+  /** JST 日付キー。期限切れ在庫は買い物差し引き対象外（SP-I1）。 */
+  expiresOn?: string | null;
+};
 
 // 設計書 Task4: 買い物リスト単位の再検証で使う、所有者スコープの source 行。
 // menuId は献立が削除されると null になる（shopping_list_sources.menu_id は
@@ -258,12 +264,16 @@ async function loadActiveShoppingList(
     id,status,version,
     shopping_items(id,list_id,display_name,normalized_name,store_section,quantity_value,
       quantity_text,unit,pantry_check_required,is_checked,is_manual,is_manually_edited,
-      is_removed_by_user,shopping_label_confirmations(*)),
+      is_removed_by_user,created_at,shopping_label_confirmations(*)),
     shopping_label_confirmations(*)
   `,
     )
     .eq("user_id", userId)
-    .eq("status", "active");
+    .eq("status", "active")
+    // SP-I9: 安定順序
+    .order("store_section", { referencedTable: "shopping_items", ascending: true })
+    .order("created_at", { referencedTable: "shopping_items", ascending: true })
+    .order("id", { referencedTable: "shopping_items", ascending: true });
   if (listId !== undefined) query = query.eq("id", listId);
   const { data, error } = await query.maybeSingle();
   if (error !== null) throw dbFailure("買い物リストを読み込めませんでした");
@@ -477,12 +487,18 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
         menuId,
       }),
     async loadPantry() {
+      // SP-I1: expires_on を読み、aggregate 側で期限切れ在庫を差し引き対象外にする。
       const { data, error } = await userClient
         .from("pantry_items")
-        .select("name,quantity,unit")
+        .select("name,quantity,unit,expires_on")
         .eq("user_id", user.userId);
       if (error !== null) throw dbFailure("冷蔵庫の内容を読み込めませんでした");
-      return data;
+      return data.map((row) => ({
+        name: row.name,
+        quantity: row.quantity,
+        unit: row.unit,
+        expiresOn: row.expires_on,
+      }));
     },
     loadActiveList: (listId) => loadActiveShoppingList(userClient, user.userId, listId),
     async getSafetyFingerprint(menuId) {
