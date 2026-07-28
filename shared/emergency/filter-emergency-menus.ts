@@ -4,7 +4,12 @@ import type { CurrentSafetyContext, CurrentSafetyMember } from "../safety/contex
 import type { GenerationContext } from "../safety/generation-context.js";
 import { collectMenuTextSources, normalizeFoodText } from "../safety/allergens.js";
 import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
-import { emergencyMenuCandidateSchema, type EmergencyMenuCandidate } from "./contracts.js";
+import type {
+  EmergencyEmptyReason,
+  EmergencyMatchMode,
+  EmergencyMenuCandidate,
+} from "./contracts.js";
+import { emergencyMenuCandidateSchema } from "./contracts.js";
 import { emergencyFixtureMetadataV1, emergencyMenuFixturesV1 } from "./fixtures.v1.js";
 
 export type {
@@ -15,8 +20,8 @@ export type {
 
 export type EmergencyFilterResult = {
   menus: readonly ValidatedMenu[];
-  emptyReason:
-    "current_safety_unavailable" | "main_ingredient_no_match" | "no_matching_fixture" | null;
+  emptyReason: EmergencyEmptyReason | null;
+  matchMode: EmergencyMatchMode | null;
 };
 
 export function buildEmergencyMenuCandidate(input: {
@@ -93,6 +98,8 @@ function emergencyGenerationContext(
   context: CurrentSafetyContext,
   memberLabels: Readonly<Record<string, string>>,
 ): GenerationContext {
+  // idea 経路でも常に targetMode: "household" を渡す。validateIdeaMenu は adaptations を
+  // 拒否し fixture が全滅するため禁止。wire の path: "idea" が製品上の真実。
   return {
     targetMode: "household",
     submission: {
@@ -147,6 +154,8 @@ export function filterEmergencyMenus(input: {
   memberLabels?: Readonly<Record<string, string>>;
 }): EmergencyFilterResult {
   const mainIngredients = (input.mainIngredients ?? []).map(normalizeMainIngredientForMatch);
+
+  // 1) Stage S 前ゲート
   if (
     input.context.members.length === 0 ||
     input.context.members.some(
@@ -160,10 +169,13 @@ export function filterEmergencyMenus(input: {
       menus: [],
       // 安全条件未充足が原因。メイン食材の有無で理由をすり替えない。
       emptyReason: "current_safety_unavailable",
+      matchMode: null,
     };
   }
 
   const pantry = input.pantryNames.map(normalizeFoodText).filter((name) => name !== "");
+
+  // 2) Stage S（validation は常に HouseholdGenerationContext — targetMode: "household"）
   const safetyCompatibleMenus = emergencyMenuFixturesV1
     .filter((menu) => menu.mealType === input.mealType)
     .flatMap((menu) => {
@@ -187,37 +199,53 @@ export function filterEmergencyMenus(input: {
       );
       return validated.ok ? [validated.menu] : [];
     });
-  const menus = safetyCompatibleMenus
-    .filter((menu) => {
-      if (mainIngredients.length === 0) return true;
-      // 自由文の手順や説明ではなく、料理名と材料名だけをメイン食材との対応根拠にする。
+
+  // 3) Stage M
+  let selected: readonly ValidatedMenu[];
+  let matchMode: EmergencyMatchMode | null;
+  let emptyReason: EmergencyEmptyReason | null;
+
+  if (mainIngredients.length === 0) {
+    selected = safetyCompatibleMenus;
+    matchMode = safetyCompatibleMenus.length > 0 ? "none" : null;
+    emptyReason = safetyCompatibleMenus.length > 0 ? null : "no_matching_fixture";
+  } else {
+    // 自由文の手順や説明ではなく、料理名と材料名だけをメイン食材との対応根拠にする。
+    // 候補がユーザー指定を含む方向だけを見る。
+    // 逆方向（"塩鮭".includes("塩")）は調味料・短い総称語で過剰マッチするため使わない。
+    const mainMatched = safetyCompatibleMenus.filter((menu) => {
       const candidateNames = menu.dishes.flatMap((dish) => [
         normalizeMainIngredientForMatch(dish.name),
         ...dish.ingredients.map((ingredient) => normalizeMainIngredientForMatch(ingredient.name)),
       ]);
-      // 候補がユーザー指定を含む方向だけを見る。
-      // 逆方向（"塩鮭".includes("塩")）は調味料・短い総称語で過剰マッチするため使わない。
       return mainIngredients.every((mainIngredient) =>
         candidateNames.some((candidateName) => candidateName.includes(mainIngredient)),
       );
-    })
-    .sort((left, right) => {
-      const score = (menu: ValidatedMenu) =>
-        collectMenuTextSources(menu).filter((source) =>
-          pantry.some((name) => normalizeFoodText(source.text).includes(name)),
-        ).length;
-      return score(right) - score(left) || left.menuId.localeCompare(right.menuId);
     });
-  return {
-    menus,
-    emptyReason:
-      menus.length > 0
-        ? null
-        : // 安全条件で候補が0のときはメイン食材不足と誤表示しない
-          safetyCompatibleMenus.length === 0
-          ? "no_matching_fixture"
-          : mainIngredients.length > 0
-            ? "main_ingredient_no_match"
-            : "no_matching_fixture",
-  };
+    if (mainMatched.length > 0) {
+      selected = mainMatched;
+      matchMode = "main_ingredient";
+      emptyReason = null;
+    } else if (safetyCompatibleMenus.length > 0) {
+      // メイン不一致でも Stage S 通過候補を safety_only で返す（空にしない）
+      selected = safetyCompatibleMenus;
+      matchMode = "safety_only";
+      emptyReason = null;
+    } else {
+      selected = [];
+      matchMode = null;
+      emptyReason = "no_matching_fixture";
+    }
+  }
+
+  // 4) pantry sort（既存）
+  const menus = [...selected].sort((left, right) => {
+    const score = (menu: ValidatedMenu) =>
+      collectMenuTextSources(menu).filter((source) =>
+        pantry.some((name) => normalizeFoodText(source.text).includes(name)),
+      ).length;
+    return score(right) - score(left) || left.menuId.localeCompare(right.menuId);
+  });
+
+  return { menus, emptyReason, matchMode };
 }

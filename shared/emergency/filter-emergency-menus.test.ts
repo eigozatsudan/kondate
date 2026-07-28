@@ -253,7 +253,11 @@ describe("reviewed emergency menus", () => {
         ],
       }),
     });
-    expect(result).toEqual({ menus: [], emptyReason: "current_safety_unavailable" });
+    expect(result).toEqual({
+      menus: [],
+      emptyReason: "current_safety_unavailable",
+      matchMode: null,
+    });
   });
 
   it("assigns every requested member an ordered adaptation before one full-context validation", () => {
@@ -318,8 +322,11 @@ describe("reviewed emergency menus", () => {
         ],
       }),
     });
-    expect(result.menus).toEqual([]);
-    expect(result.emptyReason).toBe("no_matching_fixture");
+    expect(result).toEqual({
+      menus: [],
+      emptyReason: "no_matching_fixture",
+      matchMode: null,
+    });
   });
 
   it("keeps only reviewed menus whose dish or ingredient names match every main ingredient", () => {
@@ -330,14 +337,43 @@ describe("reviewed emergency menus", () => {
       context: makeCurrentSafetyContext(),
     });
     expect(matching.menus).toHaveLength(1);
+    expect(matching.matchMode).toBe("main_ingredient");
+    expect(matching.emptyReason).toBeNull();
+  });
 
-    const unrelated = filterEmergencyMenus({
+  it("falls back to safety_only when main ingredients do not match", () => {
+    const result = filterEmergencyMenus({
       mealType: "dinner",
-      mainIngredients: ["豚肉"],
+      mainIngredients: ["存在しないメイン食材XYZ"],
       pantryNames: [],
-      context: makeCurrentSafetyContext(),
+      context: adultContext([]),
     });
-    expect(unrelated).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    expect(result.emptyReason).toBeNull();
+    expect(result.matchMode).toBe("safety_only");
+    expect(result.menus.length).toBeGreaterThan(0);
+  });
+
+  it("returns main_ingredient when all mains match dish or ingredient names", () => {
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["鶏肉"],
+      pantryNames: [],
+      context: adultContext([]),
+    });
+    expect(result.matchMode).toBe("main_ingredient");
+    expect(result.emptyReason).toBeNull();
+    expect(result.menus.length).toBeGreaterThan(0);
+  });
+
+  it("returns none when main ingredients empty", () => {
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: [],
+      pantryNames: [],
+      context: adultContext([]),
+    });
+    expect(result.matchMode).toBe("none");
+    expect(result.emptyReason).toBeNull();
   });
 
   it("matches main ingredients only as substrings of dish/ingredient names (not reverse)", () => {
@@ -349,14 +385,18 @@ describe("reviewed emergency menus", () => {
       context: makeCurrentSafetyContext(),
     });
     expect(normalized.menus).toHaveLength(1);
+    expect(normalized.matchMode).toBe("main_ingredient");
 
+    // 手順文だけに現れる語は料理名・材料名に無いため Stage M 不一致 → safety_only
     const instructionOnly = filterEmergencyMenus({
       mealType: "dinner",
       mainIngredients: ["湯"],
       pantryNames: [],
       context: makeCurrentSafetyContext(),
     });
-    expect(instructionOnly).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    expect(instructionOnly.emptyReason).toBeNull();
+    expect(instructionOnly.matchMode).toBe("safety_only");
+    expect(instructionOnly.menus.length).toBeGreaterThan(0);
 
     // 逆方向 includes（"塩鮭".includes("塩")）は調味料などで過剰マッチするため採用しない
     const shortToken = filterEmergencyMenus({
@@ -365,7 +405,9 @@ describe("reviewed emergency menus", () => {
       pantryNames: [],
       context: makeCurrentSafetyContext(),
     });
-    expect(shortToken).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    expect(shortToken.emptyReason).toBeNull();
+    expect(shortToken.matchMode).toBe("safety_only");
+    expect(shortToken.menus.length).toBeGreaterThan(0);
   });
 
   it.each(["鶏 肉", "鶏。肉", "\u200B"])(
@@ -378,7 +420,10 @@ describe("reviewed emergency menus", () => {
         context: makeCurrentSafetyContext(),
       });
 
-      expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+      // NFKC+trim 後も forward 一致しない → safety_only フォールバック（空にしない）
+      expect(result.emptyReason).toBeNull();
+      expect(result.matchMode).toBe("safety_only");
+      expect(result.menus.length).toBeGreaterThan(0);
     },
   );
 
@@ -404,10 +449,12 @@ describe("reviewed emergency menus", () => {
       }),
     });
 
-    // メイン食材があっても、安全条件で候補が0なら no_matching_fixture（Stage M に到達しない）
-    // Task 3 までは matchMode を assert しない
-    expect(result.menus).toEqual([]);
-    expect(result.emptyReason).toBe("no_matching_fixture");
+    // メイン食材があっても、安全条件で候補が0なら no_matching_fixture
+    expect(result).toEqual({
+      menus: [],
+      emptyReason: "no_matching_fixture",
+      matchMode: null,
+    });
   });
 
   it.each([{ unsupportedDietStatus: "present" as const }, { hasUnmappedCustomAllergy: true }])(
@@ -423,7 +470,11 @@ describe("reviewed emergency menus", () => {
         }),
       });
 
-      expect(result).toEqual({ menus: [], emptyReason: "current_safety_unavailable" });
+      expect(result).toEqual({
+        menus: [],
+        emptyReason: "current_safety_unavailable",
+        matchMode: null,
+      });
     },
   );
 
@@ -463,6 +514,7 @@ describe("reviewed emergency menus", () => {
         0,
       );
       expect(result.emptyReason).toBeNull();
+      expect(result.matchMode).toBe("none");
     }
   });
 
@@ -481,6 +533,7 @@ describe("reviewed emergency menus", () => {
       });
       expect(result.menus, mealType).toEqual([]);
       expect(result.emptyReason, mealType).toBe("no_matching_fixture");
+      expect(result.matchMode, mealType).toBeNull();
     }
   });
 
