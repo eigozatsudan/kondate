@@ -43,30 +43,29 @@ begin
       exists(select 1 from public.member_allergies allergy
         where allergy.user_id=p_user_id and allergy.member_id=member.id
           and allergy.allergen_id is null) as has_unmapped_custom_allergy,
-      -- カスタムは name 昇順、aliases は各行内で昇順。空配列は常に JSON []。
+      -- カスタムは name 昇順、aliases は各行内で昇順。空は []。
+      -- to_json 直列化でスペース無しにし、TS JSON.stringify と同型にする。
       coalesce(
         (
-          select pg_catalog.json_agg(entry order by entry->>'name')
-          from (
-            select pg_catalog.json_build_object(
-              'name', allergy.custom_name,
-              'aliases', coalesce(
-                (
-                  select pg_catalog.json_agg(alias_value order by alias_value)
-                  from pg_catalog.unnest(coalesce(allergy.custom_aliases, array[]::text[]))
-                    as aliases(alias_value)
-                ),
-                '[]'::json
-              )
-            ) as entry
-            from public.member_allergies allergy
-            where allergy.user_id=p_user_id
-              and allergy.member_id=member.id
-              and allergy.allergen_id is null
-              and allergy.custom_name is not null
-          ) custom_rows
+          select '[' || pg_catalog.string_agg(
+            '{"name":' || pg_catalog.to_json(allergy.custom_name)::text ||
+            ',"aliases":' || coalesce(
+              (
+                select pg_catalog.to_json(pg_catalog.array_agg(alias_value order by alias_value))::text
+                from pg_catalog.unnest(coalesce(allergy.custom_aliases, array[]::text[]))
+                  as aliases(alias_value)
+              ),
+              '[]'
+            ) || '}',
+            ',' order by allergy.custom_name
+          ) || ']'
+          from public.member_allergies allergy
+          where allergy.user_id=p_user_id
+            and allergy.member_id=member.id
+            and allergy.allergen_id is null
+            and allergy.custom_name is not null
         ),
-        '[]'::json
+        '[]'
       ) as custom_allergies,
       array(select value from pg_catalog.unnest(member.required_safety_constraints)
         as constraints_(value) order by value) as required_constraints,

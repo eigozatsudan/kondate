@@ -1093,9 +1093,13 @@ begin
     '{}'::jsonb
   );
   v_version := v_version + 1;
+  -- SP-I5: 手動行も soft-delete（is_removed_by_user）し undo 可能にする
   if (v_response->>'version')::integer <> v_version
-    or exists(select 1 from public.shopping_items where id = v_manual_id) then
-    raise exception 'owner matrix: remove on manual item must delete and advance version to %',
+    or not exists(
+      select 1 from public.shopping_items
+      where id = v_manual_id and is_removed_by_user and is_manual
+    ) then
+    raise exception 'owner matrix: remove on manual item must soft-remove and advance version to %',
       v_version;
   end if;
 

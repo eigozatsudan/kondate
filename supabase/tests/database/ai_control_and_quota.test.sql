@@ -282,7 +282,8 @@ select is(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69',
+  -- F-SAF-002: customAllergies を payload に含めた後の固定 digest（TS createCurrentSafetyFingerprint 同型）
+  'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48',
   'fingerprint matches the canonical TypeScript-compatible SHA-256'
 );
 select is(
@@ -293,7 +294,7 @@ select is(
       '15100000-0000-4000-8000-000000000001'
     ]::uuid[]
   ),
-  'fca553a2d6bcaeabbe6b5725a9330d358564e542dd1e333c0316a1c43564f3b4',
+  '01d64b58225b249030b109da68ebf62fb0895ce9fb543c3d1a99b3ea01729d6a',
   'anonymous references follow input ordinality before UUID encoding order'
 );
 
@@ -390,7 +391,7 @@ select is(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69',
+  'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48',
   'member and allergy insertion order does not change the fingerprint'
 );
 
@@ -401,7 +402,7 @@ select lives_ok($$
       '15100000-0000-4000-8000-000000000001',
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[],
-    'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69'
+    'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48'
   )
 $$, 'the locking helper accepts the exact current fingerprint');
 select throws_ok($$
@@ -426,7 +427,7 @@ select isnt(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69',
+  'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48',
   'an allergy mutation changes the fingerprint'
 );
 select throws_ok($$
@@ -436,7 +437,7 @@ select throws_ok($$
       '15100000-0000-4000-8000-000000000001',
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[],
-    'afde2ad162c9a24e82e5c6dc95ab60f458fcf317e39f5dee10d91963c05e5a69'
+    'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48'
   )
 $$, 'P0001', 'current_safety_changed',
   'the locking helper rejects a stale expected fingerprint');
