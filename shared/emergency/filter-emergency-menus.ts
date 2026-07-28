@@ -93,7 +93,13 @@ function remapFixtureForMembers(
   });
 }
 
-function emergencyGenerationContext(
+/**
+ * 緊急 fixture 検証用の GenerationContext。
+ * idea 経路でも常に targetMode: "household" を渡すこと（本番 filter が保証）。
+ * validateIdeaMenu は adaptations を拒否し fixture が全滅するため禁止。
+ * wire の path: "idea" が製品上の真実であり、この builder の targetMode とは一致しない。
+ */
+export function emergencyGenerationContext(
   menu: ValidatedMenu,
   context: CurrentSafetyContext,
   memberLabels: Readonly<Record<string, string>>,

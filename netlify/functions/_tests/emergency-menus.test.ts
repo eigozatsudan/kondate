@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EmergencyMenusData } from "../../../shared/emergency/contracts.js";
 import { emergencyFixtureMetadataV1 } from "../../../shared/emergency/fixtures.v1.js";
+import * as emergencyFilter from "../../../shared/emergency/filter-emergency-menus.js";
 import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
 import { createEmergencyMenusHandler } from "../emergency-menus.js";
 
@@ -19,6 +20,10 @@ function allFixtureAllergenUnion(): string[] {
 }
 
 describe("GET /api/emergency-menus", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("returns an authenticated explicit no-candidate response without quota use", async () => {
     const context = makeCurrentSafetyContext();
     const handler = createEmergencyMenusHandler({
@@ -335,7 +340,7 @@ describe("GET /api/emergency-menus", () => {
     expect(body.data.message).not.toContain("選択したメイン食材に合う固定候補がありません");
   });
 
-  it("rejects targetMode=idea until idea path ships", async () => {
+  it("rejects idea with targetMemberIds", async () => {
     const loadContext = vi.fn();
     const handler = createEmergencyMenusHandler({
       authenticate: () => Promise.resolve({ userId }),
@@ -348,20 +353,209 @@ describe("GET /api/emergency-menus", () => {
       ),
     );
     expect(res.status).toBe(400);
-    // idea 拒否は Zod ではなく明示分岐だが、fieldErrors.targetMode を載せてキーを固定する
-    await expect(res.json()).resolves.toMatchObject({
-      ok: false,
-      error: {
-        code: "invalid_request",
-        message: "検索条件を確認してください",
-        details: {
-          fields: {
-            targetMode: ["検索条件を確認してください"],
-          },
-        },
-      },
-    });
+    const body = (await res.json()) as {
+      ok: false;
+      error: { code: string; details: { fields: Record<string, string[]> } };
+    };
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.details.fields.targetMemberIds?.length).toBeGreaterThan(0);
     expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects idea with empty-string targetMemberIds", async () => {
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    // キーあり空文字は omit と区別して 400
+    const emptyValue = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMode=idea&targetMemberIds=`,
+      ),
+    );
+    expect(emptyValue.status).toBe(400);
+    const emptyBody = (await emptyValue.json()) as {
+      ok: false;
+      error: { code: string; details: { fields: Record<string, string[]> } };
+    };
+    expect(emptyBody.error.code).toBe("invalid_request");
+    expect(emptyBody.error.details.fields.targetMemberIds?.length).toBeGreaterThan(0);
+
+    const commaOnly = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMode=idea&targetMemberIds=,`,
+      ),
+    );
+    expect(commaOnly.status).toBe(400);
+    const commaBody = (await commaOnly.json()) as {
+      ok: false;
+      error: { code: string; details: { fields: Record<string, string[]> } };
+    };
+    expect(commaBody.error.code).toBe("invalid_request");
+    expect(commaBody.error.details.fields.targetMemberIds?.length).toBeGreaterThan(0);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it("treats omitted targetMode + members as household", async () => {
+    const loadContext = vi.fn().mockResolvedValue({
+      context: makeCurrentSafetyContext(),
+      memberLabels: Object.freeze({ member_1: "家族1" }),
+    });
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const res = await handler(
+      new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`),
+    );
+    expect(res.status).toBe(200);
+    expect(loadContext).toHaveBeenCalledOnce();
+    await expect(res.json()).resolves.toMatchObject({
+      ok: true,
+      data: { path: "household" },
+    });
+  });
+
+  it("rejects omitted targetMode without members", async () => {
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const res = await handler(new Request(`http://localhost/api/emergency-menus?meal=dinner`));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      ok: false;
+      error: { code: string; details: { fields: Record<string, string[]> } };
+    };
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.details.fields.targetMemberIds?.length).toBeGreaterThan(0);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown targetMode", async () => {
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const res = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMode=personal&targetMemberIds=${memberId}`,
+      ),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      ok: false;
+      error: { code: string; details: { fields: Record<string, string[]> } };
+    };
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.details.fields.targetMode?.length).toBeGreaterThan(0);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it("idea path does not call loadContext", async () => {
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const res = await handler(
+      new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMode=idea`),
+    );
+    expect(res.status).toBe(200);
+    expect(loadContext).not.toHaveBeenCalled();
+    const body = (await res.json()) as SuccessEnvelope;
+    expect(body.data.path).toBe("idea");
+    expect(body.data.candidates.length).toBeGreaterThan(0);
+    expect(body.data.message).toContain("アレルギー条件は適用していません");
+    expect(body.data.message).toBe(
+      "AIを使わない15分緊急献立です。アレルギー条件は適用していません",
+    );
+    expect(body.data.consumesAiQuota).toBe(false);
+    expect(body.data.matchMode).toBe("none");
+    expect(body.data.emptyReason).toBeNull();
+  });
+
+  it("idea path loads pantry names without loadContext", async () => {
+    const loadContext = vi.fn();
+    const pantryItemIds = ["82000000-0000-4000-8000-000000000099"];
+    const loadPantryNames = vi.fn().mockResolvedValue(["玉ねぎ"]);
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames,
+    });
+    const res = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMode=idea&pantryItemIds=${pantryItemIds.join(",")}`,
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(loadContext).not.toHaveBeenCalled();
+    expect(loadPantryNames).toHaveBeenCalledWith(userId, pantryItemIds);
+    const body = (await res.json()) as SuccessEnvelope;
+    expect(body.data.path).toBe("idea");
+    expect(body.data.candidates.length).toBeGreaterThan(0);
+  });
+
+  it("household path calls loadContext once", async () => {
+    const loadContext = vi.fn().mockResolvedValue({
+      context: makeCurrentSafetyContext(),
+      memberLabels: Object.freeze({ member_1: "家族1" }),
+    });
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext,
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const res = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMode=household&targetMemberIds=${memberId}`,
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(loadContext).toHaveBeenCalledOnce();
+    expect(loadContext).toHaveBeenCalledWith(userId, [memberId]);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: true,
+      data: { path: "household" },
+    });
+  });
+
+  it("returns 500 when idea filter yields current_safety_unavailable", async () => {
+    const spy = vi.spyOn(emergencyFilter, "filterEmergencyMenus").mockReturnValue({
+      menus: [],
+      emptyReason: "current_safety_unavailable",
+      matchMode: null,
+    });
+    try {
+      const handler = createEmergencyMenusHandler({
+        authenticate: () => Promise.resolve({ userId }),
+        loadContext: vi.fn(),
+        loadPantryNames: () => Promise.resolve([]),
+      });
+      const res = await handler(
+        new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMode=idea`),
+      );
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as { ok: false; error: { code: string } };
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("request_failed");
+      // idea では current_safety_unavailable を 200 empty で返さない
+      expect(body).not.toMatchObject({
+        data: { emptyReason: "current_safety_unavailable" },
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("returns matchMode none when mains are empty and candidates exist", async () => {
