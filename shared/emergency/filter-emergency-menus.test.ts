@@ -522,6 +522,10 @@ describe("reviewed emergency menus", () => {
       byNormalizedName.set(normalizeFoodText(alias.alias), alias.allergenId);
     }
 
+    // 大豆の displayName は「大豆」のみ。豆腐は exact-hit に乗らないが、
+    // fixture では大豆由来として standardAllergenIds に soy を必ず載せる。
+    const normalizedTofu = normalizeFoodText("豆腐");
+
     for (const menu of emergencyMenuFixturesV1) {
       const meta = emergencyFixtureMetadataV1[menu.menuId]!;
       for (const id of meta.standardAllergenIds) {
@@ -532,6 +536,11 @@ describe("reviewed emergency menus", () => {
           const hit = byNormalizedName.get(normalizeFoodText(ingredient.name));
           if (hit !== undefined) {
             expect(meta.standardAllergenIds, ingredient.name).toContain(hit);
+          }
+          // 豆腐（部分一致または normalize 一致）は soy 申告を必須にする
+          const normalizedName = normalizeFoodText(ingredient.name);
+          if (ingredient.name.includes("豆腐") || normalizedName.includes(normalizedTofu)) {
+            expect(meta.standardAllergenIds, `${menu.menuId}/${ingredient.name}`).toContain("soy");
           }
         }
       }
