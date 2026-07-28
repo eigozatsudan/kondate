@@ -76,10 +76,13 @@ vi.mock("@/features/shopping/api/shopping-api", async (importOriginal) => {
   return { ...original, ...shoppingApi };
 });
 // 冷蔵庫 CRUD は Supabase client 境界を mock し、actions 到達だけを固定する。
+// HR-I1: listPantryItems も success に固定し、再生成 CTA が pending/error で塞がらないようにする。
+const listPantryItemsMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])));
 vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
   return {
     ...original,
+    listPantryItems: listPantryItemsMock,
     deletePantryItem: deletePantryItemMock,
     updatePantryItem: updatePantryItemMock,
     createPantryItem: createPantryItemMock,
@@ -346,6 +349,7 @@ beforeEach(() => {
   channelHandlers.allergies = [];
   revalidateMenuMock.mockResolvedValue(validRevalidation);
   getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+  listPantryItemsMock.mockResolvedValue([]);
   getUsageTodayMock.mockResolvedValue({
     success: { consumed: 2, limit: 3, remaining: 1 },
     attempts: { sent: 0, limit: 6, remaining: 6 },

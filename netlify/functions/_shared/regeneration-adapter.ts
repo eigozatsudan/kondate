@@ -195,8 +195,8 @@ export function createRegenerationLoaderDeps(
       // idea branch: current household safety と buildStoredGenerationContext を呼ばない
       // submission.targetMode は上で authority と一致済み
       const pantryItems = await loadPantryForSubmission(input.user, submission, []);
-      // HIST-I1: 再生成 UI に期限確認ダイアログが無い。期限切れ在庫は選択から外して続行する
-      // （期限切れを使って生成する／永久に 422 するより安全な既定）。
+      // §269 / HR-I1: 期限切れ在庫は選択から外さず、当日の expiredPantryConfirmations 必須。
+      // 未確認なら fail-closed（422）。UI は RegenerationSheet で再確認する。
       const { submission: liveSubmission, expiredPantryChecks } =
         applyRegenerationPantryExpiryPolicy(
           submission,
@@ -259,7 +259,7 @@ export function createRegenerationLoaderDeps(
     }
 
     const pantryItems = await loadPantryForSubmission(input.user, submission, base.pantryItems);
-    // HIST-I1: 再生成 UI に期限確認が無いため、期限切れ選択を落として続行する
+    // §269: 期限切れ在庫は選択から外さず、当日確認必須。未確認は fail-closed。
     const { submission: liveSubmission, expiredPantryChecks } = applyRegenerationPantryExpiryPolicy(
       submission,
       pantryItems,

@@ -179,6 +179,13 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
       listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
     [pantryQuery.data, result.sourceSubmission],
   );
+  // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない（空配列 fail-open を防ぐ）
+  const pantryGateReady = pantryQuery.isSuccess;
+  const pantryGateMessage = pantryQuery.isError
+    ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
+    : pantryQuery.isPending
+      ? "冷蔵庫を確認しています…"
+      : null;
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId,
@@ -276,9 +283,10 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
           }}
           onSelectedDishChange={setSelectedDishId}
           onRegenerateSelectedDish={() => {
+            if (!pantryGateReady) return;
             setSheetMode("dish");
           }}
-          regenerateSelectedDishDisabled={dishIdForRegen === null}
+          regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
         />
       ) : (
         <MenuResult
@@ -291,9 +299,10 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
           }}
           onSelectedDishChange={setSelectedDishId}
           onRegenerateSelectedDish={() => {
+            if (!pantryGateReady) return;
             setSheetMode("dish");
           }}
-          regenerateSelectedDishDisabled={dishIdForRegen === null}
+          regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
         />
       )}
       {acceptFeedback !== null && (
@@ -311,12 +320,19 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
           {favoriteError}
         </p>
       )}
+      {pantryGateMessage !== null && (
+        <p className="mt-2" role="status">
+          {pantryGateMessage}
+        </p>
+      )}
 
       <div className="mt-6 flex flex-wrap gap-2">
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+          disabled={!pantryGateReady}
           onClick={() => {
+            if (!pantryGateReady) return;
             setSheetMode("whole");
           }}
         >
@@ -454,6 +470,13 @@ function HouseholdDetailBody({
       listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
     [pantryQuery.data, result.sourceSubmission],
   );
+  // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない
+  const pantryGateReady = pantryQuery.isSuccess;
+  const pantryGateMessage = pantryQuery.isError
+    ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
+    : pantryQuery.isPending
+      ? "冷蔵庫を確認しています…"
+      : null;
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId,
@@ -624,6 +647,21 @@ function HouseholdDetailBody({
     return null;
   }, [revalidation]);
 
+  // HR-I2: changedDetails を日本語で明示（§9.1）。
+  const changedDetailLines = useMemo(() => {
+    if (revalidation.result?.status !== "changed") return [];
+    const labelByCode = {
+      pantry_item_removed: "冷蔵庫の食材が削除されています",
+      pantry_quantity_changed: "在庫量が変わっています",
+      preference_changed: "好みの設定が変わっています",
+    } as const;
+    const labels = new Set<string>();
+    for (const code of revalidation.result.changedDetails) {
+      labels.add(labelByCode[code]);
+    }
+    return [...labels];
+  }, [revalidation.result]);
+
   const onSubmitReason = async (value: RegenerationReasonInput) => {
     if (sheetMode === "dish") {
       if (dishIdForRegen === null) return;
@@ -692,9 +730,16 @@ function HouseholdDetailBody({
 
       {actionsEnabled && revalidation.result !== undefined && (
         <>
-          <p className="mt-4" role="status">
-            {statusCopy}
-          </p>
+          <div className="mt-4 sticky top-0 z-10 bg-white/95 py-2" role="status">
+            <p>{statusCopy}</p>
+            {changedDetailLines.length > 0 && (
+              <ul className="mt-1 list-disc pl-5 type-small">
+                {changedDetailLines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
           {actions === undefined ? (
             <MenuResult
               result={result}
@@ -707,9 +752,10 @@ function HouseholdDetailBody({
               }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
+                if (!pantryGateReady) return;
                 setSheetMode("dish");
               }}
-              regenerateSelectedDishDisabled={dishIdForRegen === null}
+              regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
             />
           ) : (
             <MenuResult
@@ -724,9 +770,10 @@ function HouseholdDetailBody({
               }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
+                if (!pantryGateReady) return;
                 setSheetMode("dish");
               }}
-              regenerateSelectedDishDisabled={dishIdForRegen === null}
+              regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
             />
           )}
           {acceptFeedback !== null && (
@@ -739,6 +786,11 @@ function HouseholdDetailBody({
               {acceptError}
             </p>
           )}
+          {pantryGateMessage !== null && (
+            <p className="mt-2" role="status">
+              {pantryGateMessage}
+            </p>
+          )}
         </>
       )}
 
@@ -746,8 +798,9 @@ function HouseholdDetailBody({
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={!actionsEnabled}
+          disabled={!actionsEnabled || !pantryGateReady}
           onClick={() => {
+            if (!pantryGateReady) return;
             setSheetMode("whole");
           }}
         >
@@ -856,6 +909,7 @@ function HouseholdDetailBody({
           }
           pending={createList.isPending}
           safetyBlocked={!canCreateShoppingList}
+          forceNewMode={shoppingGate.blocked}
           onSubmit={(input) => {
             if (!canCreateShoppingList) return;
             const command = persistedShoppingCommand(

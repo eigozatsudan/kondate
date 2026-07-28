@@ -225,6 +225,10 @@ export function RegenerationSheet({
               className="mt-2 min-h-24 w-full rounded-xl border p-3"
               {...form.register("changeReasonCustom")}
             />
+            {/* HR-I4: 自由記述に個人名を入れない注意（設計 §3） */}
+            <p className="type-small mt-1">
+              個人名や連絡先は書かないでください。献立の変えたい点だけ書いてください。
+            </p>
             {form.formState.errors.changeReasonCustom?.message !== undefined && (
               <span role="alert" className="error-message">
                 {form.formState.errors.changeReasonCustom.message}
