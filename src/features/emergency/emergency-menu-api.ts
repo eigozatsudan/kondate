@@ -24,27 +24,45 @@ const emergencyResponseSchema = z.discriminatedUnion("ok", [
     .strict(),
 ]);
 
-const emergencyMenuRequestSchema = z
-  .object({
-    mealType: z.enum(mealTypes),
-    mainIngredients: emergencyMainIngredientsSchema,
-    targetMemberIds: z
-      .array(z.uuid())
-      .min(1)
-      .max(20)
-      .refine((ids) => new Set(ids).size === ids.length),
-    pantryItemIds: z
-      .array(z.uuid())
-      .max(50)
-      .refine((ids) => new Set(ids).size === ids.length),
-  })
-  .strict();
+// household / idea を targetMode で判別。idea は targetMemberIds を空 tuple のみ許可。
+const emergencyMenuRequestSchema = z.discriminatedUnion("targetMode", [
+  z
+    .object({
+      mealType: z.enum(mealTypes),
+      mainIngredients: emergencyMainIngredientsSchema,
+      targetMode: z.literal("household"),
+      targetMemberIds: z
+        .array(z.uuid())
+        .min(1)
+        .max(20)
+        .refine((ids) => new Set(ids).size === ids.length),
+      pantryItemIds: z
+        .array(z.uuid())
+        .max(50)
+        .refine((ids) => new Set(ids).size === ids.length),
+    })
+    .strict(),
+  z
+    .object({
+      mealType: z.enum(mealTypes),
+      mainIngredients: emergencyMainIngredientsSchema,
+      targetMode: z.literal("idea"),
+      // 長さ 0 のみ。非空はクライアント schema で拒否し query に載せない
+      targetMemberIds: z.tuple([]),
+      pantryItemIds: z
+        .array(z.uuid())
+        .max(50)
+        .refine((ids) => new Set(ids).size === ids.length),
+    })
+    .strict(),
+]);
 
 export const emergencyMenuKeys = {
   all: ["emergency-menus"] as const,
   candidates: (input: {
     userId: string;
     mealType: MealType;
+    targetMode: "household" | "idea";
     mainIngredients: readonly string[];
     targetMemberIds: readonly string[];
     pantryItemIds: readonly string[];
@@ -54,6 +72,7 @@ export const emergencyMenuKeys = {
       "emergency-menus",
       input.userId,
       input.mealType,
+      input.targetMode,
       [...input.mainIngredients],
       [...input.targetMemberIds],
       [...input.pantryItemIds],
@@ -70,15 +89,21 @@ export function parseEmergencyMenusResponse(value: unknown): EmergencyMenusData 
 export async function getEmergencyMenus(input: {
   mealType: MealType;
   mainIngredients: readonly string[];
+  targetMode: "household" | "idea";
   targetMemberIds: readonly string[];
   pantryItemIds: readonly string[];
 }): Promise<EmergencyMenusData> {
   const validatedInput = emergencyMenuRequestSchema.parse(input);
   const token = await requireAccessToken(getBrowserSupabaseClient());
+  // targetMode は household / idea とも常に明示送信（サーバ optional でも省略しない）
   const query = new URLSearchParams({
     meal: validatedInput.mealType,
-    targetMemberIds: validatedInput.targetMemberIds.join(","),
+    targetMode: validatedInput.targetMode,
   });
+  // idea では targetMemberIds キー自体を省略（サーバ: キー未送出のみ許可）
+  if (validatedInput.targetMode === "household") {
+    query.set("targetMemberIds", validatedInput.targetMemberIds.join(","));
+  }
   for (const mainIngredient of validatedInput.mainIngredients) {
     query.append("mainIngredients", mainIngredient);
   }

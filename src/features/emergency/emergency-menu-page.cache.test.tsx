@@ -88,10 +88,13 @@ function deferredPromise<T>() {
 
 function emergencyResponse(message: string) {
   return {
-    fixtureVersion: "2026-07-11.v1",
+    fixtureVersion: "2026-07-28.v1",
     candidates: [],
     message,
-    consumesAiQuota: false,
+    consumesAiQuota: false as const,
+    path: "household" as const,
+    matchMode: null,
+    emptyReason: "no_matching_fixture" as const,
   } as const;
 }
 
@@ -149,10 +152,13 @@ beforeEach(() => {
   });
   listHouseholdMembersMock.mockResolvedValueOnce([]).mockResolvedValue([eligibleMember]);
   getEmergencyMenusMock.mockResolvedValue({
-    fixtureVersion: "2026-07-11.v1",
+    fixtureVersion: "2026-07-28.v1",
     candidates: [],
     message: "条件に合う緊急献立がありません",
     consumesAiQuota: false,
+    path: "household",
+    matchMode: null,
+    emptyReason: "no_matching_fixture",
   });
 });
 
@@ -230,25 +236,33 @@ it.each(["household_members", "member_allergies"])(
 
 it("表示中かつonlineなら60秒で旧候補を閉じて再取得する", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  const mountedAt = Date.now();
+  // safetyRealtimeEnabled は draft 確定後に立つため、interval 開始は mount 直後とは限らない。
+  // 60_000ms の setInterval コールバックを直接発火し、poll 契約を固定する。
+  const setIntervalSpy = vi.spyOn(window, "setInterval");
   const { view } = await renderVisibleEmergencyResponse();
+  await waitFor(() => {
+    expect(realtime.handlers.length).toBeGreaterThanOrEqual(2);
+  });
+  const pollCall = setIntervalSpy.mock.calls.find((call) => call[1] === 60_000);
+  expect(pollCall).toBeDefined();
+  expect(typeof pollCall?.[0]).toBe("function");
+
   const callsBefore = listHouseholdMembersMock.mock.calls.length;
   const nextHousehold = deferredPromise<HouseholdMemberRow[]>();
   listHouseholdMembersMock.mockReturnValueOnce(nextHousehold.promise);
 
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(59_999 - (Date.now() - mountedAt));
-  });
-  expect(listHouseholdMembersMock).toHaveBeenCalledTimes(callsBefore);
-
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1);
+  act(() => {
+    // setInterval の第1引数は TimerHandler。60s poll は関数で登録している。
+    if (typeof pollCall?.[0] === "function") {
+      pollCall[0]();
+    }
   });
   expect(listHouseholdMembersMock).toHaveBeenCalledTimes(callsBefore + 1);
   expect(screen.getByText("候補を確認中…")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "旧候補" })).not.toBeInTheDocument();
 
   nextHousehold.resolve([eligibleMember]);
+  setIntervalSpy.mockRestore();
   view.unmount();
 });
 
@@ -346,7 +360,10 @@ it("30秒のfresh cache中でも家族安全更新event後に家族を再取得�
   });
   await waitFor(() => {
     expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMemberIds: [eligibleMember.id] }),
+      expect.objectContaining({
+        targetMode: "household",
+        targetMemberIds: [eligibleMember.id],
+      }),
     );
   });
 });
@@ -414,7 +431,10 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
   });
   await waitFor(() => {
     expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMemberIds: [eligibleMember.id] }),
+      expect.objectContaining({
+        targetMode: "household",
+        targetMemberIds: [eligibleMember.id],
+      }),
     );
   });
   setItem.mockRestore();
@@ -452,7 +472,10 @@ it("既存revisionの更新に失敗しても同一家族の安全変更後に�
     expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(1);
   });
   expect(getEmergencyMenusMock).toHaveBeenLastCalledWith(
-    expect.objectContaining({ targetMemberIds: [eligibleMember.id] }),
+    expect.objectContaining({
+      targetMode: "household",
+      targetMemberIds: [eligibleMember.id],
+    }),
   );
   expect(queryClient.getQueryState(inactiveCandidateKey)?.isInvalidated).toBe(true);
   expect(

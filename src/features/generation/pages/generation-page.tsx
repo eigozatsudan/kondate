@@ -3,7 +3,6 @@ import { Navigate, useSearchParams } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { GenerationStatusPanel } from "../components/generation-status-panel";
 import { useGenerationRecovery } from "../hooks/use-generation-recovery";
-import { readGenerationTargetMode } from "../model/generation-target-mode";
 
 // 献立生成の作成状況を表示する画面。直接の入口ではなく、planner からの生成開始や
 // 中断からの復旧（マウント時・オンライン復帰時・認証復帰時）で表示される。
@@ -18,6 +17,7 @@ import { readGenerationTargetMode } from "../model/generation-target-mode";
 //
 // 終端画面の AI 通信試行残数は request-local quota ではなく useUsageToday が正。
 // session の userId をパネルへ渡さないと本番経路で残数領域が描画されない。
+// 緊急献立 RecoveryLinks は idea/household とも常時表示のため targetMode を渡さない。
 export function GenerationPage() {
   const recovery = useGenerationRecovery();
   const auth = useAuth();
@@ -26,8 +26,6 @@ export function GenerationPage() {
   // マウント時の query だけを正とする（replace で消しても案内は残す）
   const [showResumedNotice] = useState(() => searchParams.get("resumed") === "1");
   const [checked, setChecked] = useState(false);
-  // pending wire に targetMode が無いため session 補助から読む（C-I6 RecoveryLinks）
-  const [targetMode] = useState(() => readGenerationTargetMode());
   useEffect(() => {
     setChecked(true);
   }, []);
@@ -53,7 +51,6 @@ export function GenerationPage() {
           onClear={() => {
             recovery.clearGeneration();
           }}
-          {...(targetMode === undefined ? {} : { targetMode })}
         />
       ) : (
         <GenerationStatusPanel
@@ -62,7 +59,6 @@ export function GenerationPage() {
           onClear={() => {
             recovery.clearGeneration();
           }}
-          {...(targetMode === undefined ? {} : { targetMode })}
         />
       )}
     </main>

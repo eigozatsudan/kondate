@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { AgeBand, RequiredSafetyConstraint } from "../contracts/domain.js";
+import { normalizeFoodText } from "../safety/allergens.js";
+import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.js";
 import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
 import { validateGeneratedMenu } from "../safety/validate-generated-menu.js";
 import { makeCurrentSafetyContext, makeGenerationContext } from "../testing/factories.js";
-import { emergencyFixtureMetadataV1, emergencyMenuFixturesV1 } from "./fixtures.v1.js";
+import {
+  emergencyFixtureMetadataV1,
+  emergencyFixtureVersion,
+  emergencyMenuFixturesV1,
+} from "./fixtures.v1.js";
 import { filterEmergencyMenus } from "./filter-emergency-menus.js";
 
 // shared から src を import しない（tsconfig 境界）。
@@ -22,11 +28,10 @@ function requiredSafetyConstraintsForAgeBand(
 
 describe("reviewed emergency menus", () => {
   it("provides complete reviewed fixtures for every meal", () => {
-    expect(emergencyMenuFixturesV1.map((menu) => menu.mealType).toSorted()).toEqual([
-      "breakfast",
-      "dinner",
-      "lunch",
-    ]);
+    const mealTypes = emergencyMenuFixturesV1.map((menu) => menu.mealType);
+    expect(new Set(mealTypes)).toEqual(new Set(["breakfast", "lunch", "dinner"]));
+    expect(emergencyMenuFixturesV1.length).toBeGreaterThanOrEqual(9);
+    expect(emergencyMenuFixturesV1.length).toBeLessThanOrEqual(12);
     for (const menu of emergencyMenuFixturesV1) {
       expect(emergencyFixtureMetadataV1[menu.menuId]).toBeDefined();
       expect(menu.totalElapsedMinutes).toBeLessThanOrEqual(15);
@@ -248,7 +253,11 @@ describe("reviewed emergency menus", () => {
         ],
       }),
     });
-    expect(result).toEqual({ menus: [], emptyReason: "current_safety_unavailable" });
+    expect(result).toEqual({
+      menus: [],
+      emptyReason: "current_safety_unavailable",
+      matchMode: null,
+    });
   });
 
   it("assigns every requested member an ordered adaptation before one full-context validation", () => {
@@ -273,21 +282,30 @@ describe("reviewed emergency menus", () => {
       }),
     });
 
-    expect(result.menus).toHaveLength(1);
-    const memberRefs = result.menus[0]?.adaptations.map((item) => item.anonymousMemberRef) ?? [];
+    // カタログ拡充後は breakfast が複数ある。adaptation 写像は先頭候補で十分検証できる
+    expect(result.menus.length).toBeGreaterThan(0);
+    const menu = result.menus[0]!;
+    const memberRefs = menu.adaptations.map((item) => item.anonymousMemberRef);
     // 料理ごとの adaptation 行があるため、各メンバーが少なくとも1行持つことだけを見る
     expect(new Set(memberRefs)).toEqual(new Set(["member_1", "member_2"]));
     expect(
-      result.menus[0]?.adaptations.flatMap((item) =>
+      menu.adaptations.flatMap((item) =>
         item.safetyActions.map((action) => action.anonymousMemberRef),
       ),
     ).toEqual(expect.arrayContaining(["member_1", "member_2"]));
   });
 
-  it("returns no candidate when one member is incompatible with the remapped fixture", () => {
+  it("returns no candidate when one member blocks every dinner fixture via allergen union", () => {
     const base = makeCurrentSafetyContext();
     const firstMember = base.members[0]!;
-    // dinner fixture は standardAllergenIds に chicken を持つ。ease 写像に依存せず拒否する。
+    // 複数 dinner があるため、dinner 全 metadata の allergen 和集合で Stage S を空にする
+    const dinnerUnion = [
+      ...new Set(
+        emergencyMenuFixturesV1
+          .filter((menu) => menu.mealType === "dinner")
+          .flatMap((menu) => emergencyFixtureMetadataV1[menu.menuId]!.standardAllergenIds),
+      ),
+    ];
     const result = filterEmergencyMenus({
       mealType: "dinner",
       pantryNames: [],
@@ -299,13 +317,16 @@ describe("reviewed emergency menus", () => {
             householdMemberId: "55000000-0000-4000-8000-000000000002",
             anonymousRef: "member_2",
             allergyStatus: "registered",
-            allergenIds: ["chicken"],
+            allergenIds: dinnerUnion,
           },
         ],
       }),
     });
-
-    expect(result).toEqual({ menus: [], emptyReason: "no_matching_fixture" });
+    expect(result).toEqual({
+      menus: [],
+      emptyReason: "no_matching_fixture",
+      matchMode: null,
+    });
   });
 
   it("keeps only reviewed menus whose dish or ingredient names match every main ingredient", () => {
@@ -316,14 +337,43 @@ describe("reviewed emergency menus", () => {
       context: makeCurrentSafetyContext(),
     });
     expect(matching.menus).toHaveLength(1);
+    expect(matching.matchMode).toBe("main_ingredient");
+    expect(matching.emptyReason).toBeNull();
+  });
 
-    const unrelated = filterEmergencyMenus({
+  it("falls back to safety_only when main ingredients do not match", () => {
+    const result = filterEmergencyMenus({
       mealType: "dinner",
-      mainIngredients: ["豚肉"],
+      mainIngredients: ["存在しないメイン食材XYZ"],
       pantryNames: [],
-      context: makeCurrentSafetyContext(),
+      context: adultContext([]),
     });
-    expect(unrelated).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    expect(result.emptyReason).toBeNull();
+    expect(result.matchMode).toBe("safety_only");
+    expect(result.menus.length).toBeGreaterThan(0);
+  });
+
+  it("returns main_ingredient when all mains match dish or ingredient names", () => {
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["鶏肉"],
+      pantryNames: [],
+      context: adultContext([]),
+    });
+    expect(result.matchMode).toBe("main_ingredient");
+    expect(result.emptyReason).toBeNull();
+    expect(result.menus.length).toBeGreaterThan(0);
+  });
+
+  it("returns none when main ingredients empty", () => {
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: [],
+      pantryNames: [],
+      context: adultContext([]),
+    });
+    expect(result.matchMode).toBe("none");
+    expect(result.emptyReason).toBeNull();
   });
 
   it("matches main ingredients only as substrings of dish/ingredient names (not reverse)", () => {
@@ -335,14 +385,18 @@ describe("reviewed emergency menus", () => {
       context: makeCurrentSafetyContext(),
     });
     expect(normalized.menus).toHaveLength(1);
+    expect(normalized.matchMode).toBe("main_ingredient");
 
+    // 手順文だけに現れる語は料理名・材料名に無いため Stage M 不一致 → safety_only
     const instructionOnly = filterEmergencyMenus({
       mealType: "dinner",
       mainIngredients: ["湯"],
       pantryNames: [],
       context: makeCurrentSafetyContext(),
     });
-    expect(instructionOnly).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    expect(instructionOnly.emptyReason).toBeNull();
+    expect(instructionOnly.matchMode).toBe("safety_only");
+    expect(instructionOnly.menus.length).toBeGreaterThan(0);
 
     // 逆方向 includes（"塩鮭".includes("塩")）は調味料などで過剰マッチするため採用しない
     const shortToken = filterEmergencyMenus({
@@ -351,7 +405,9 @@ describe("reviewed emergency menus", () => {
       pantryNames: [],
       context: makeCurrentSafetyContext(),
     });
-    expect(shortToken).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+    expect(shortToken.emptyReason).toBeNull();
+    expect(shortToken.matchMode).toBe("safety_only");
+    expect(shortToken.menus.length).toBeGreaterThan(0);
   });
 
   it.each(["鶏 肉", "鶏。肉", "\u200B"])(
@@ -364,12 +420,20 @@ describe("reviewed emergency menus", () => {
         context: makeCurrentSafetyContext(),
       });
 
-      expect(result).toEqual({ menus: [], emptyReason: "main_ingredient_no_match" });
+      // NFKC+trim 後も forward 一致しない → safety_only フォールバック（空にしない）
+      expect(result.emptyReason).toBeNull();
+      expect(result.matchMode).toBe("safety_only");
+      expect(result.menus.length).toBeGreaterThan(0);
     },
   );
 
   it("prefers safety exclusion over main-ingredient when every fixture is unsafe", () => {
     const context = makeCurrentSafetyContext();
+    const union = [
+      ...new Set(
+        Object.values(emergencyFixtureMetadataV1).flatMap((meta) => meta.standardAllergenIds),
+      ),
+    ];
     const result = filterEmergencyMenus({
       mealType: "dinner",
       mainIngredients: ["鶏肉"],
@@ -379,14 +443,18 @@ describe("reviewed emergency menus", () => {
           {
             ...context.members[0]!,
             allergyStatus: "registered",
-            allergenIds: ["chicken"],
+            allergenIds: union,
           },
         ],
       }),
     });
 
     // メイン食材があっても、安全条件で候補が0なら no_matching_fixture
-    expect(result).toEqual({ menus: [], emptyReason: "no_matching_fixture" });
+    expect(result).toEqual({
+      menus: [],
+      emptyReason: "no_matching_fixture",
+      matchMode: null,
+    });
   });
 
   it.each([{ unsupportedDietStatus: "present" as const }, { hasUnmappedCustomAllergy: true }])(
@@ -402,7 +470,149 @@ describe("reviewed emergency menus", () => {
         }),
       });
 
-      expect(result).toEqual({ menus: [], emptyReason: "current_safety_unavailable" });
+      expect(result).toEqual({
+        menus: [],
+        emptyReason: "current_safety_unavailable",
+        matchMode: null,
+      });
     },
   );
+
+  const adultContext = (allergenIds: readonly string[]) =>
+    makeCurrentSafetyContext({
+      members: [
+        {
+          ...makeCurrentSafetyContext().members[0]!,
+          ageBand: "adult",
+          allergenIds: [...allergenIds],
+          allergyStatus: allergenIds.length === 0 ? "none" : "registered",
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none",
+          hasUnmappedCustomAllergy: false,
+        },
+      ],
+      foodSafetyRules: currentFoodSafetyRulesV1,
+    });
+
+  const matrix: readonly { name: string; allergens: readonly string[] }[] = [
+    { name: "none", allergens: [] },
+    { name: "chicken", allergens: ["chicken"] },
+    { name: "salmon", allergens: ["salmon"] },
+    { name: "egg", allergens: ["egg"] },
+    { name: "chicken+salmon", allergens: ["chicken", "salmon"] },
+    { name: "chicken+egg", allergens: ["chicken", "egg"] },
+  ];
+
+  it.each(matrix)("coverage matrix $name yields ≥1 per mealType", ({ allergens }) => {
+    for (const mealType of ["breakfast", "lunch", "dinner"] as const) {
+      const result = filterEmergencyMenus({
+        mealType,
+        pantryNames: [],
+        context: adultContext(allergens),
+      });
+      expect(result.menus.length, `${mealType}/${allergens.join("+") || "none"}`).toBeGreaterThan(
+        0,
+      );
+      expect(result.emptyReason).toBeNull();
+      expect(result.matchMode).toBe("none");
+    }
+  });
+
+  it("union of all metadata standardAllergenIds yields no_matching_fixture per mealType", () => {
+    const union = [
+      ...new Set(
+        Object.values(emergencyFixtureMetadataV1).flatMap((meta) => meta.standardAllergenIds),
+      ),
+    ];
+    expect(union.length).toBeGreaterThan(0);
+    for (const mealType of ["breakfast", "lunch", "dinner"] as const) {
+      const result = filterEmergencyMenus({
+        mealType,
+        pantryNames: [],
+        context: adultContext(union),
+      });
+      expect(result.menus, mealType).toEqual([]);
+      expect(result.emptyReason, mealType).toBe("no_matching_fixture");
+      expect(result.matchMode, mealType).toBeNull();
+    }
+  });
+
+  it("fixtureVersion is 2026-07-28.v1 and menu schemaVersion stays 2026-07-11.v1", () => {
+    expect(emergencyFixtureVersion).toBe("2026-07-28.v1");
+    for (const menu of emergencyMenuFixturesV1) {
+      expect(menu.schemaVersion).toBe("2026-07-11.v1");
+    }
+    expect(emergencyMenuFixturesV1.length).toBeGreaterThanOrEqual(9);
+    expect(emergencyMenuFixturesV1.length).toBeLessThanOrEqual(12);
+  });
+
+  it("all fixture UUIDs are unique and avoid idea synthetic member id", () => {
+    const ideaMember = "83000000-0000-4000-8000-000000000001";
+    const ids: string[] = [];
+    for (const menu of emergencyMenuFixturesV1) {
+      ids.push(menu.menuId);
+      for (const dish of menu.dishes) {
+        ids.push(dish.id, ...dish.ingredients.map((i) => i.id), ...dish.steps.map((s) => s.id));
+      }
+      ids.push(...menu.timeline.map((t) => t.id), ...menu.adaptations.map((a) => a.id));
+    }
+    expect(ids).not.toContain(ideaMember);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("metadata standardAllergenIds cover catalog displayName and alias exact hits; ids ⊆ catalog", () => {
+    const catalogIds = new Set(currentAllergenCatalogV1.map((e) => e.id));
+    // displayName と alias の両方を exact normalize 対象にする（複合語は人手レビュー）
+    const byNormalizedName = new Map<string, string>();
+    for (const entry of currentAllergenCatalogV1) {
+      byNormalizedName.set(normalizeFoodText(entry.displayName), entry.id);
+    }
+    // factory と同型: catalog displayName を alias としても載せる実装が多い。
+    // 追加 alias が dictionary に存在する場合は makeCurrentSafetyContext().allergenDictionary.aliases も走査する。
+    const dictionaryAliases = makeCurrentSafetyContext().allergenDictionary.aliases;
+    for (const alias of dictionaryAliases) {
+      byNormalizedName.set(normalizeFoodText(alias.normalizedAlias), alias.allergenId);
+      byNormalizedName.set(normalizeFoodText(alias.alias), alias.allergenId);
+    }
+
+    // 大豆の displayName は「大豆」のみ。豆腐は exact-hit に乗らないが、
+    // fixture では大豆由来として standardAllergenIds に soy を必ず載せる。
+    const normalizedTofu = normalizeFoodText("豆腐");
+    // 加工・別名で catalog exact-hit に乗らない fixture 実食材 → allergen id の人手 map
+    const fixtureProcessedIngredientAllergens: ReadonlyArray<readonly [string, string]> = [
+      ["鶏ひき肉", "chicken"],
+      ["鮭", "salmon"],
+    ];
+
+    for (const menu of emergencyMenuFixturesV1) {
+      const meta = emergencyFixtureMetadataV1[menu.menuId]!;
+      for (const id of meta.standardAllergenIds) {
+        expect(catalogIds.has(id), `unknown catalog id ${id} on ${menu.menuId}`).toBe(true);
+      }
+      for (const dish of menu.dishes) {
+        for (const ingredient of dish.ingredients) {
+          const hit = byNormalizedName.get(normalizeFoodText(ingredient.name));
+          if (hit !== undefined) {
+            expect(meta.standardAllergenIds, ingredient.name).toContain(hit);
+          }
+          // 豆腐（部分一致または normalize 一致）は soy 申告を必須にする
+          const normalizedName = normalizeFoodText(ingredient.name);
+          if (ingredient.name.includes("豆腐") || normalizedName.includes(normalizedTofu)) {
+            expect(meta.standardAllergenIds, `${menu.menuId}/${ingredient.name}`).toContain("soy");
+          }
+          for (const [processedName, allergenId] of fixtureProcessedIngredientAllergens) {
+            if (
+              ingredient.name === processedName ||
+              normalizeFoodText(ingredient.name) === normalizeFoodText(processedName)
+            ) {
+              expect(
+                meta.standardAllergenIds,
+                `${menu.menuId}/${ingredient.name} must declare ${allergenId}`,
+              ).toContain(allergenId);
+            }
+          }
+        }
+      }
+    }
+  });
 });

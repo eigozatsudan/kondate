@@ -2,6 +2,9 @@
  * 運用ログの閉じた形。
  * 氏名・メール・アレルギー・プロンプト・生 AI 応答は決して出さない。
  * 許可フィールドのみを snake_case JSON で書き出す。
+ *
+ * 緊急献立フィールド（path / matchMode / emptyReason / candidateCount / mealType /
+ * mainIngredientCount）は非PII の列挙・件数のみ。食材名・アレルギー本文は載せない。
  */
 export type SafeLogEvent = {
   level: "info" | "warn" | "error";
@@ -16,6 +19,18 @@ export type SafeLogEvent = {
   authContinuationsDeleted?: number;
   userFeedbackDeleted?: number;
   draftSubmissionsDeleted?: number;
+  /** 緊急献立: household | idea */
+  path?: "household" | "idea";
+  /** 緊急献立: Stage M 結果。空応答は null */
+  matchMode?: "none" | "main_ingredient" | "safety_only" | null;
+  /** 緊急献立: 空理由。非空は null */
+  emptyReason?: "current_safety_unavailable" | "no_matching_fixture" | null;
+  /** 緊急献立: 返却候補件数（食材名・本文は出さない） */
+  candidateCount?: number;
+  /** 緊急献立: breakfast | lunch | dinner */
+  mealType?: "breakfast" | "lunch" | "dinner";
+  /** 緊急献立: メイン食材の件数のみ（名称は出さない） */
+  mainIngredientCount?: number;
 };
 
 type LogWriter = (serialized: string) => void;
@@ -36,7 +51,8 @@ type SafeSink = Record<"info" | "warn" | "error", (line: string) => void>;
 export const createSafeLogger =
   (write: LogWriter = console.log) =>
   (event: SafeLogEvent): void => {
-    const record: Record<string, string | number> = {
+    // null は緊急献立の matchMode / emptyReason 用（省略と区別するため明示シリアライズ）
+    const record: Record<string, string | number | null> = {
       level: event.level,
       request_id: event.requestId,
       code: event.code,
@@ -60,6 +76,17 @@ export const createSafeLogger =
     }
     if (event.draftSubmissionsDeleted !== undefined) {
       record.draft_submissions_deleted = event.draftSubmissionsDeleted;
+    }
+    // 緊急献立: 列挙・件数のみ。null も明示的に出す（省略すると集計が欠ける）
+    if (event.path !== undefined) record.path = event.path;
+    if (event.matchMode !== undefined) record.match_mode = event.matchMode;
+    if (event.emptyReason !== undefined) record.empty_reason = event.emptyReason;
+    if (event.candidateCount !== undefined) {
+      record.candidate_count = Math.max(0, Math.trunc(event.candidateCount));
+    }
+    if (event.mealType !== undefined) record.meal_type = event.mealType;
+    if (event.mainIngredientCount !== undefined) {
+      record.main_ingredient_count = Math.max(0, Math.trunc(event.mainIngredientCount));
     }
     write(JSON.stringify(record));
   };

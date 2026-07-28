@@ -68,10 +68,26 @@ describe("GenerationStatusPanel", () => {
     );
   });
 
-  it("hides emergency recovery link for idea target mode", () => {
-    render(<GenerationStatusPanel state={failedState} targetMode="idea" />);
-    expect(screen.queryByRole("link", { name: "15分緊急献立を見る" })).not.toBeInTheDocument();
+  it("shows emergency recovery link on failed recovery regardless of path", () => {
+    // 2026-07-28 設計: idea 個人固定候補パスのため RecoveryLinks でも緊急献立を常時出す
+    render(<GenerationStatusPanel state={failedState} />);
+    expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
+      "href",
+      "/emergency-menus",
+    );
     expect(screen.getByRole("link", { name: "作った献立を見る" })).toBeInTheDocument();
+  });
+
+  it("shows emergency recovery link on request_conflict regardless of path", () => {
+    // panel 内 2 箇所目（request_conflict 専用）も緊急献立リンクを出す
+    const requestConflictState: GenerationClientState = {
+      phase: "request_conflict",
+      code: "idempotency_payload_mismatch",
+      message: "前回と異なる内容で再送できません。もう一度操作してください",
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={requestConflictState} />);
+    expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toBeInTheDocument();
   });
 
   it("shows how many generations remain today and the app-wide status", async () => {

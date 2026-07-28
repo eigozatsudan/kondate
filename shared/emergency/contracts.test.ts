@@ -6,8 +6,14 @@ import { expect, it } from "vitest";
 import { makeValidatedMenu } from "../testing/factories.js";
 import { emergencyMenusDataSchema } from "./contracts.js";
 
+// contracts.ts 自身の境界: サーバ/DB/Node 専用モジュールを import 禁止
 const forbiddenServerModulePattern =
-  /filter-emergency-menus|validate-generated-menu|fingerprint|node:|netlify|supabase/u;
+  /filter-emergency-menus|idea-context|fixtures\.v1|validate-generated-menu|fingerprint|node:|netlify|supabase/u;
+
+// browser feature が emergency サーバ専用モジュールを import していないこと
+// （@/shared/lib/supabase 等の正当なブラウザ import は対象外）
+const forbiddenEmergencyServerModulePattern =
+  /filter-emergency-menus|idea-context|fixtures\.v1|validate-generated-menu/u;
 
 function moduleSpecifiersFromSource(source: string): string[] {
   const sourceFile = ts.createSourceFile(
@@ -50,15 +56,129 @@ it("完全な緊急献立レスポンスを検証する", () => {
     ],
     message: "AIを使わない15分緊急献立です",
     consumesAiQuota: false,
+    path: "household",
+    matchMode: "none",
+    emptyReason: null,
   };
 
   expect(emergencyMenusDataSchema.parse(response)).toEqual(response);
+});
+
+it("rejects missing path/matchMode/emptyReason on strict schema", () => {
+  const base = {
+    fixtureVersion: "2026-07-28.v1",
+    candidates: [],
+    message: "条件に合う緊急献立がありません",
+    consumesAiQuota: false as const,
+    // intentionally omit path / matchMode / emptyReason
+  };
+  expect(() => emergencyMenusDataSchema.parse(base)).toThrow();
+});
+
+it("rejects idea path with current_safety_unavailable", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "idea",
+      matchMode: null,
+      emptyReason: "current_safety_unavailable",
+    }),
+  ).toThrow();
+});
+
+it("accepts empty household with no_matching_fixture", () => {
+  expect(
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "household",
+      matchMode: null,
+      emptyReason: "no_matching_fixture",
+    }).emptyReason,
+  ).toBe("no_matching_fixture");
+});
+
+// superRefine 不変条件（欠落フィールド以外）
+it("rejects non-empty candidates when emptyReason is set", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [
+        {
+          menu: makeValidatedMenu(),
+          memberLabels: {},
+          allergenLabels: {},
+          labelWarnings: [],
+        },
+      ],
+      message: "AIを使わない15分緊急献立です",
+      consumesAiQuota: false,
+      path: "household",
+      matchMode: "none",
+      emptyReason: "no_matching_fixture",
+    }),
+  ).toThrow();
+});
+
+it("rejects empty candidates when matchMode is non-null", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "household",
+      matchMode: "none",
+      emptyReason: "no_matching_fixture",
+    }),
+  ).toThrow();
+});
+
+it("rejects idea empty with emptyReason null", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "条件に合う緊急献立がありません",
+      consumesAiQuota: false,
+      path: "idea",
+      matchMode: null,
+      emptyReason: null,
+    }),
+  ).toThrow();
 });
 
 it("サーバー専用モジュールへ依存しない", async () => {
   const source = await readFile(new URL("./contracts.ts", import.meta.url), "utf8");
   for (const specifier of moduleSpecifiersFromSource(source)) {
     expect(specifier).not.toMatch(forbiddenServerModulePattern);
+  }
+});
+
+it("browser emergency feature は contracts 以外の emergency サーバ専用モジュールを import しない", async () => {
+  // src/features/emergency は filter / idea-context / fixtures を import しない
+  const { readdir } = await import("node:fs/promises");
+  const featureDir = new URL("../../src/features/emergency/", import.meta.url);
+  const entries = await readdir(featureDir);
+  const sources = entries.filter(
+    (name) =>
+      (name.endsWith(".ts") || name.endsWith(".tsx")) &&
+      !name.endsWith(".test.ts") &&
+      !name.endsWith(".test.tsx"),
+  );
+  expect(sources.length).toBeGreaterThan(0);
+  for (const name of sources) {
+    const source = await readFile(new URL(name, featureDir), "utf8");
+    for (const specifier of moduleSpecifiersFromSource(source)) {
+      expect(specifier, `${name} imports ${specifier}`).not.toMatch(
+        forbiddenEmergencyServerModulePattern,
+      );
+    }
   }
 });
 
