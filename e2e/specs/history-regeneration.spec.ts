@@ -1,5 +1,6 @@
 import {
   expect,
+  expectIdeaResultSurface,
   readRemainingQuota,
   requestDishRegeneration,
   requestWholeRegeneration,
@@ -69,8 +70,8 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await expect(page).toHaveURL(/\/planner/u);
   const sourceMenuId = await seedGeneratedIdeaMenu(page, 1);
 
-  // 結果画面: notice + 許可操作、買い物なし
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible();
+  // 結果画面: 短い注意喚起 + 許可操作、買い物なし
+  await expectIdeaResultSurface(page);
   await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
@@ -100,9 +101,9 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await page.goto("/history");
   await expect(page.getByText("アイデア")).toBeVisible({ timeout: 15_000 });
 
-  // 詳細: notice + child_friendly 不在
+  // 詳細: 短い注意喚起 + child_friendly 不在
   await page.goto(`/history/${sourceMenuId}`);
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 15_000 });
+  await expectIdeaResultSurface(page, { timeout: 15_000 });
   await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
   await page.getByRole("button", { name: "やめる" }).click();
@@ -113,7 +114,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await expect(page).toHaveURL(new RegExp(`/menus/(?!${sourceMenuId})[0-9a-f-]{36}`, "iu"), {
     timeout: 60_000,
   });
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });
+  await expectIdeaResultSurface(page, { timeout: 30_000 });
   await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
   // 置換後の主菜名が表示される（dish-replacement 系 fixture）。tab と h2 の両方に出るため heading で一意化。
   await expect(page.getByRole("heading", { name: "鶏肉のさっぱり煮" })).toBeVisible({
@@ -138,7 +139,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   await expect(page).toHaveURL(new RegExp(`/menus/(?!${sourceMenuId})[0-9a-f-]{36}`, "iu"), {
     timeout: 60_000,
   });
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });
+  await expectIdeaResultSurface(page, { timeout: 30_000 });
   await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
 
   const newMenuId = /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1];

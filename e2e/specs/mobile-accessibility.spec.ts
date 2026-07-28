@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures/auth";
 import {
   clickWizardNext,
+  expectIdeaResultSurface,
   openFirstMemberEditor,
   seedGeneratedIdeaMenu,
   seedGeneratedMenu,
@@ -176,9 +177,9 @@ for (const width of [320, 375, 430]) {
       needsPrivacyHop: true,
       mockScenario: "idea-servings-2",
     });
-    await expect(page.getByText("家族条件を使用していません")).toBeVisible();
+    await expectIdeaResultSurface(page);
     await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, { これに決めた: 1 });
+    await assertMajorActionHeights(page, { これに決めた: 1, 注意事項を見る: 1 });
   });
 
   // Global Constraints require 375/430 coverage beyond wizard: shell routes + both history modes.
@@ -225,7 +226,7 @@ for (const width of [320, 375, 430]) {
     await setMockScenario(page, "idea-servings-2");
     const ideaId = await seedGeneratedIdeaMenu(page, 2);
     await page.goto(`/history/${ideaId}`);
-    await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });
+    await expectIdeaResultSurface(page, { timeout: 30_000 });
     await assertNoHorizontalScroll(page);
   });
 }

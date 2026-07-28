@@ -1,8 +1,20 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TargetMode } from "@shared/contracts/planner";
 import { RegenerationSheet, type RegenerationUsageView } from "./regeneration-sheet";
+
+beforeEach(() => {
+  // jsdom 向け native dialog ポリフィル（DeleteAccountDialog と同じ）
+  if (typeof HTMLDialogElement !== "undefined") {
+    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    };
+  }
+});
 
 function usageView(remaining = 3): RegenerationUsageView {
   return {
@@ -30,6 +42,14 @@ function renderRegenerationSheet(targetMode: TargetMode = "household", remaining
 }
 
 describe("RegenerationSheet", () => {
+  it("opens as a native dialog titled どのように変えますか？", () => {
+    renderRegenerationSheet();
+    const dialog = screen.getByRole("dialog", { name: "どのように変えますか？" });
+    expect(dialog).toBeVisible();
+    // display を変えるユーティリティを dialog 本体に載せない（閉じた状態の UA 規則を壊さない）
+    expect(dialog.className.split(/\s+/u)).not.toContain("stack");
+  });
+
   it("explains conditional quota use before regeneration", () => {
     renderRegenerationSheet();
     expect(screen.getByText("別の献立が完成した場合に1回使用・現在残り3回")).toBeVisible();
@@ -107,5 +127,16 @@ describe("RegenerationSheet", () => {
   it("keeps child_friendly available for household menus", () => {
     renderRegenerationSheet("household");
     expect(screen.getByRole("radio", { name: "子どもが食べやすく" })).toBeInTheDocument();
+  });
+
+  it("calls onCancel from やめる and from the dialog cancel event", async () => {
+    const { onCancel } = renderRegenerationSheet();
+    const dialog = screen.getByRole("dialog", { name: "どのように変えますか？" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "やめる" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    // Escape 相当の cancel イベント（送信中でなければ親へ委譲）
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    expect(onCancel).toHaveBeenCalledTimes(2);
   });
 });

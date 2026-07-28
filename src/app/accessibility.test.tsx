@@ -609,7 +609,8 @@ describe("generation and result accessibility", () => {
     getMenuResultMock.mockResolvedValue(result);
     const { container } = renderMenuResultRoute();
 
-    expect(await screen.findByText("家族条件を使用していません")).toBeVisible();
+    expect(await screen.findByText("ご確認ください")).toBeVisible();
+    expect(screen.getByRole("button", { name: "注意事項を見る" })).toBeVisible();
     await expectAccessible(container);
     expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
     expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();

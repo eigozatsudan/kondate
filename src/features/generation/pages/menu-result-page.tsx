@@ -9,7 +9,10 @@ import {
   type ReconcileShoppingListRequest,
   type ShoppingDiff,
 } from "@shared/contracts/shopping";
-import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
+import {
+  IdeaMenuSafetyNotice,
+  MENU_LABEL_DISCLAIMER,
+} from "@/features/generation/components/idea-menu-safety-notice";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   isRevalidationActionable,
@@ -71,9 +74,6 @@ function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): Regenerati
   };
 }
 import { clearPendingGeneration } from "../model/pending-generation";
-
-const DISCLAIMER =
-  "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。";
 
 export type MenuResultPageRevalidationView = {
   phase: RevalidationPhaseName;
@@ -249,15 +249,10 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
   };
 
   // 操作バー・注意書きを含めて1つの main で包む（MenuResult は本文 fragment のみ）。
+  // idea の必須注意は 1 枠に集約（免責・家族未使用・AI 作成を別枠で重ねない）。
   return (
     <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
-      <p className="rounded-xl border border-amber-700 p-3 font-semibold break-words">
-        {DISCLAIMER}
-      </p>
-      <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
-        <p>家族条件を使用していません</p>
-        <p>年齢・アレルギーへの適合は確認されていません</p>
-      </InlineNotice>
+      <IdeaMenuSafetyNotice />
       {actions === undefined ? (
         <MenuResult
           result={result}
@@ -394,19 +389,14 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
       )}
 
       {sheetMode !== null && (
-        <section
-          className="mt-6 rounded-2xl border bg-white p-4 shadow-sm"
-          aria-label="再生成の理由"
-        >
-          <RegenerationSheet
-            targetMode="idea"
-            usage={usageView}
-            onSubmit={onSubmitReason}
-            onCancel={() => {
-              setSheetMode(null);
-            }}
-          />
-        </section>
+        <RegenerationSheet
+          targetMode="idea"
+          usage={usageView}
+          onSubmit={onSubmitReason}
+          onCancel={() => {
+            setSheetMode(null);
+          }}
+        />
       )}
     </main>
   );
@@ -648,7 +638,7 @@ function HouseholdResultBody({
   return (
     <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold break-words">
-        {DISCLAIMER}
+        {MENU_LABEL_DISCLAIMER}
       </p>
 
       {revalidation.phase === "checking" && (
@@ -914,20 +904,15 @@ function HouseholdResultBody({
         )}
 
       {sheetMode !== null && (
-        <section
-          className="mt-6 rounded-2xl border bg-white p-4 shadow-sm"
-          aria-label="再生成の理由"
-        >
-          <RegenerationSheet
-            targetMode="household"
-            usage={usageView}
-            actionsEnabled={actionsEnabled}
-            onSubmit={onSubmitReason}
-            onCancel={() => {
-              setSheetMode(null);
-            }}
-          />
-        </section>
+        <RegenerationSheet
+          targetMode="household"
+          usage={usageView}
+          actionsEnabled={actionsEnabled}
+          onSubmit={onSubmitReason}
+          onCancel={() => {
+            setSheetMode(null);
+          }}
+        />
       )}
     </main>
   );

@@ -333,6 +333,15 @@ function fireSafetySignal(
 beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
+  // jsdom 向け native dialog ポリフィル（再生成理由ダイアログ用）
+  if (typeof HTMLDialogElement !== "undefined") {
+    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    };
+  }
   channelHandlers.members = [];
   channelHandlers.allergies = [];
   revalidateMenuMock.mockResolvedValue(validRevalidation);
@@ -690,8 +699,19 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
 
     renderHistoryDetail();
 
-    expect(await screen.findByText("家族条件を使用していません")).toBeVisible();
-    expect(screen.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
+    // idea 注意は短い喚起 + ダイアログに必須文言
+    expect(await screen.findByText("ご確認ください")).toBeVisible();
+    expect(screen.getByRole("button", { name: "注意事項を見る" })).toBeVisible();
+    expect(screen.getAllByRole("note")).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "注意事項を見る" }));
+    const dialog = screen.getByRole("dialog", { name: "この献立はアイデアとして作成しました" });
+    expect(dialog).toBeVisible();
+    expect(dialog).toHaveTextContent("家族条件を使用していません");
+    expect(dialog).toHaveTextContent("年齢・アレルギーへの適合は確認されていません");
+    expect(dialog).toHaveTextContent("AIが作成した献立です。");
+    expect(dialog).toHaveTextContent(
+      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+    );
     // idea では家族 revalidation と買い物 hooks/API を mount しない
     expect(revalidateMenuMock).not.toHaveBeenCalled();
     expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
@@ -716,16 +736,17 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
 
     renderHistoryDetail();
 
-    expect(await screen.findByText("家族条件を使用していません")).toBeVisible();
+    expect(await screen.findByText("ご確認ください")).toBeVisible();
     const themedRoot = document.querySelector(".guided-planner-theme");
     expect(themedRoot).not.toBeNull();
     expect(themedRoot?.textContent).not.toMatch(/確認済み|安全に配慮|アレルギー対応済み/u);
   });
 
-  it("hides child_friendly in idea regeneration sheet", async () => {
+  it("hides child_friendly in idea regeneration dialog", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
     renderHistoryDetail();
     await userEvent.click(await screen.findByRole("button", { name: "献立をまるごと別案にする" }));
+    expect(screen.getByRole("dialog", { name: "どのように変えますか？" })).toBeVisible();
     expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
   });
 

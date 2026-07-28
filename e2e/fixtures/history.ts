@@ -202,10 +202,38 @@ async function openMenuResultForRegeneration(
       timeout: 30_000,
     });
   } else {
-    await expect(page.getByText("家族条件を使用していません")).toBeVisible({
-      timeout: 30_000,
-    });
+    await expectIdeaResultSurface(page, { timeout: 30_000 });
   }
+}
+
+/**
+ * idea 結果・履歴詳細の短い注意喚起（画面上の InlineNotice）が出ていることを待つ。
+ * 必須文言はダイアログ内のため、ロード完了判定にはこちらを使う。
+ */
+export async function expectIdeaResultSurface(
+  page: Page,
+  options: { timeout?: number } = {},
+): Promise<void> {
+  const timeout = options.timeout ?? 30_000;
+  await expect(page.getByText("ご確認ください")).toBeVisible({ timeout });
+  await expect(page.getByRole("button", { name: "注意事項を見る" })).toBeVisible({ timeout });
+}
+
+/**
+ * idea 必須注意ダイアログを開き、設計固定の必須文言が表示されることを確認する。
+ */
+export async function openAndAssertIdeaSafetyDetails(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "注意事項を見る" }).click();
+  const dialog = page.getByRole("dialog", { name: "この献立はアイデアとして作成しました" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("家族条件を使用していません")).toBeVisible();
+  await expect(dialog.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
+  await expect(dialog.getByText(/AIが作成した献立です/u)).toBeVisible();
+  await expect(
+    dialog.getByText(
+      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+    ),
+  ).toBeVisible();
 }
 
 /**
@@ -349,9 +377,7 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
   });
   await page.getByRole("button", { name: "献立を作る" }).click();
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 60_000 });
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible({
-    timeout: 30_000,
-  });
+  await expectIdeaResultSurface(page, { timeout: 30_000 });
   const menuId = /\/menus\/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/iu.exec(
     new URL(page.url()).pathname,
   )?.[1];

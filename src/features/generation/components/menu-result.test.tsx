@@ -23,6 +23,7 @@ it("shows the overall timeline before persistent dish tabs", () => {
   const timeline = screen.getByRole("heading", { name: "全体の段取り" });
   const tabs = screen.getByRole("tablist", { name: "料理" });
   expect(timeline.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // household 既定では本文先頭に AI 作成バナーを出す
   expect(container).toHaveTextContent("AIが作成した献立です");
 });
 
@@ -325,6 +326,8 @@ it("hides adaptation and label confirmation for idea mode without actions", () =
   expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
   expect(screen.queryByText("加工品は原材料表示を確認してください")).toBeNull();
   expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
+  // AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、本文では出さない
+  expect(screen.queryByText("AIが作成した献立です。")).toBeNull();
   // actions なしの idea は調理後冷蔵庫操作も出さない（read-only 境界）
   expect(screen.queryByRole("heading", { name: "調理後の冷蔵庫" })).toBeNull();
   expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();

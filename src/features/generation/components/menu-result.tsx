@@ -292,13 +292,19 @@ export function MenuResult({
   // ここに main を置くと操作バー等を包めず、ネスト landmark 違反にもなる。
   // 横 padding はページ枠が持つ。本文で再付与すると狭い幅で二重余白になり、
   // 子の min-content がはみ出しやすくなるため付けない。
+  // idea の AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、
+  // 本文側では household だけ AI 作成バナーを出す（二重表示防止）。
   return (
     <div className="mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words pb-4 pt-2 text-ink [overflow-wrap:anywhere]">
-      <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm break-words">
-        <strong>AIが作成した献立です。</strong>{" "}
-        内容、加熱状態、家庭内での混入を調理前に確認してください。
-      </p>
-      <h1 className="mt-5 text-2xl font-bold break-words">献立ができました</h1>
+      {mode !== "idea" ? (
+        <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm break-words">
+          <strong>AIが作成した献立です。</strong>{" "}
+          内容、加熱状態、家庭内での混入を調理前に確認してください。
+        </p>
+      ) : null}
+      <h1 className={`${mode === "idea" ? "mt-0" : "mt-5"} text-2xl font-bold break-words`}>
+        献立ができました
+      </h1>
       <p className="mt-2 text-lg font-semibold break-words">
         食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
       </p>

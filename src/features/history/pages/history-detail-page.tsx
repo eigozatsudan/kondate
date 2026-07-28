@@ -10,7 +10,10 @@ import {
   type ReconcileShoppingListRequest,
   type ShoppingDiff,
 } from "@shared/contracts/shopping";
-import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
+import {
+  IdeaMenuSafetyNotice,
+  MENU_LABEL_DISCLAIMER,
+} from "@/features/generation/components/idea-menu-safety-notice";
 import { useAuth } from "@/features/auth/use-auth";
 import { confirmLabelConfirmation } from "@/features/generation/api/confirm-label-api";
 import { getMenuResult } from "@/features/generation/api/menu-result-api";
@@ -79,9 +82,6 @@ type HistoryDetailPageProps = {
   /** テスト注入用の revalidateMenu 置換は useMenuRevalidation モック側で行う。 */
 };
 
-const DISCLAIMER =
-  "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。";
-
 /**
  * 履歴詳細。menu aggregate（権威あるtargetMode）を取得した後にmode別
  * child componentへ分岐する。household child は現行安全再検証・採用・再生成・
@@ -110,7 +110,9 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
   if (menuQuery.isPending) {
     return (
       <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
-        <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+        <p className="rounded-xl border border-amber-700 p-3 font-semibold">
+          {MENU_LABEL_DISCLAIMER}
+        </p>
         <p role="status" className="mt-4">
           献立を読み込んでいます
         </p>
@@ -121,7 +123,9 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
   if (menuQuery.isError) {
     return (
       <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
-        <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+        <p className="rounded-xl border border-amber-700 p-3 font-semibold">
+          {MENU_LABEL_DISCLAIMER}
+        </p>
         <div className="mt-4 stack gap-2">
           <h1>献立を表示できません</h1>
           <Link
@@ -244,13 +248,10 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
     }
   };
 
+  // idea の必須注意は 1 枠に集約（免責・家族未使用・AI 作成を別枠で重ねない）。
   return (
     <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
-      <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
-      <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
-        <p>家族条件を使用していません</p>
-        <p>年齢・アレルギーへの適合は確認されていません</p>
-      </InlineNotice>
+      <IdeaMenuSafetyNotice />
       {actions === undefined ? (
         <MenuResult
           result={result}
@@ -385,19 +386,14 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
       )}
 
       {sheetMode !== null && (
-        <section
-          className="mt-6 rounded-2xl border bg-white p-4 shadow-sm"
-          aria-label="再生成の理由"
-        >
-          <RegenerationSheet
-            targetMode="idea"
-            usage={usageView}
-            onSubmit={onSubmitReason}
-            onCancel={() => {
-              setSheetMode(null);
-            }}
-          />
-        </section>
+        <RegenerationSheet
+          targetMode="idea"
+          usage={usageView}
+          onSubmit={onSubmitReason}
+          onCancel={() => {
+            setSheetMode(null);
+          }}
+        />
       )}
     </main>
   );
@@ -631,7 +627,9 @@ function HouseholdDetailBody({
 
   return (
     <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
-      <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+      <p className="rounded-xl border border-amber-700 p-3 font-semibold">
+        {MENU_LABEL_DISCLAIMER}
+      </p>
 
       {revalidation.phase === "checking" && (
         <p role="status" className="mt-4">
@@ -892,20 +890,15 @@ function HouseholdDetailBody({
         )}
 
       {sheetMode !== null && (
-        <section
-          className="mt-6 rounded-2xl border bg-white p-4 shadow-sm"
-          aria-label="再生成の理由"
-        >
-          <RegenerationSheet
-            targetMode="household"
-            usage={usageView}
-            actionsEnabled={actionsEnabled}
-            onSubmit={onSubmitReason}
-            onCancel={() => {
-              setSheetMode(null);
-            }}
-          />
-        </section>
+        <RegenerationSheet
+          targetMode="household"
+          usage={usageView}
+          actionsEnabled={actionsEnabled}
+          onSubmit={onSubmitReason}
+          onCancel={() => {
+            setSheetMode(null);
+          }}
+        />
       )}
     </main>
   );

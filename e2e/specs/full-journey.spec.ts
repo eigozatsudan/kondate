@@ -1,5 +1,6 @@
 import { clickWizardNext, expect, setMockScenario, test } from "../fixtures/acceptance";
 import {
+  expectIdeaResultSurface,
   openFirstMemberEditor,
   requestWholeRegeneration,
   selectHouseholdAudienceWithMember,
@@ -186,7 +187,7 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await expect(generate).toBeEnabled({ timeout: 15_000 });
   await generate.click();
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 30_000 });
+  await expectIdeaResultSurface(page, { timeout: 30_000 });
   await expect(page.getByText(/現在の家族設定で確認しました/u)).toHaveCount(0);
 
   const menuId = /\/menus\/([0-9a-f-]{36})/iu.exec(page.url())?.[1];
@@ -204,7 +205,7 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await expect(page).toHaveURL(new RegExp(`/menus/(?!${menuId})[0-9a-f-]{36}`, "iu"), {
     timeout: 90_000,
   });
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible({ timeout: 60_000 });
+  await expectIdeaResultSurface(page, { timeout: 60_000 });
 
   const fav = page.getByRole("button", { name: /お気に入り/u });
   await expect(fav).toBeVisible();

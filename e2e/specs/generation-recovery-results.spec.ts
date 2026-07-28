@@ -2,6 +2,8 @@ import { expect, test } from "../fixtures/auth";
 import { z } from "zod";
 import {
   clickWizardNext,
+  expectIdeaResultSurface,
+  openAndAssertIdeaSafetyDetails,
   openFirstMemberEditor,
   selectHouseholdAudienceWithMember,
 } from "../fixtures/history";
@@ -163,6 +165,45 @@ async function expectSameHorizontalBounds(first: Locator, second: Locator): Prom
   expect(Math.abs(firstBox.x + firstBox.width - secondBox.x - secondBox.width)).toBeLessThanOrEqual(
     tolerance,
   );
+}
+
+async function expectNoHorizontalClipping(element: Locator): Promise<void> {
+  const widths = await element.evaluate((target) => ({
+    clientWidth: target.clientWidth,
+    scrollWidth: target.scrollWidth,
+  }));
+  expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth + 1);
+}
+
+async function expectScrollableTablistContent(tablist: Locator): Promise<void> {
+  const tablistLayout = await tablist.evaluate((element) => ({
+    overflowX: getComputedStyle(element).overflowX,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(["auto", "scroll"]).toContain(tablistLayout.overflowX);
+
+  const tabs = tablist.getByRole("tab");
+  const tabCount = await tabs.count();
+  for (let index = 0; index < tabCount; index += 1) {
+    const tab = tabs.nth(index);
+    await expectNoHorizontalClipping(tab);
+    const tabContentBounds = await tab.evaluate((element) => {
+      const list = element.closest('[role="tablist"]');
+      if (!(list instanceof HTMLElement)) return null;
+      const listRect = list.getBoundingClientRect();
+      const tabRect = element.getBoundingClientRect();
+      const left = tabRect.left - listRect.left + list.scrollLeft;
+      return {
+        left,
+        right: left + tabRect.width,
+        scrollWidth: list.scrollWidth,
+      };
+    });
+    expect(tabContentBounds).not.toBeNull();
+    if (tabContentBounds === null) continue;
+    expect(tabContentBounds.left).toBeGreaterThanOrEqual(-1);
+    expect(tabContentBounds.right).toBeLessThanOrEqual(tabContentBounds.scrollWidth + 1);
+  }
 }
 
 test("resends the same key after the first POST is lost before acceptance", async ({
@@ -370,6 +411,20 @@ test("shows result details and keeps major regions within their parent", async (
     await expectContainedHorizontally(resultRoot, timeline);
     await expectContainedHorizontally(resultRoot, tablist);
     await expectContainedHorizontally(resultRoot, tabpanel);
+    for (const clippingBoundary of [
+      html,
+      body,
+      root,
+      appSection,
+      pageContainer,
+      pageDisclaimer,
+      resultRoot,
+      timeline,
+      tabpanel,
+    ]) {
+      await expectNoHorizontalClipping(clippingBoundary);
+    }
+    await expectScrollableTablistContent(tablist);
 
     const overflowingContent = await resultRoot.evaluate((resultElement) => {
       const rootRect = resultElement.getBoundingClientRect();
@@ -382,10 +437,33 @@ test("shows result details and keeps major regions within their parent", async (
         .map((element) => element.tagName);
     });
     expect(overflowingContent).toEqual([]);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
+      ),
+    ).toBe(true);
   }
+
+  // 既存修正がbaseに含まれるため、hiddenで切れた非tab領域を一時注入し、
+  // 本テストのscrollWidth検査がクリップを実際に検出できることを確認する。
+  await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.id = "horizontal-clipping-negative-control";
+    probe.style.width = "100px";
+    probe.style.overflowX = "hidden";
+    const oversizedContent = document.createElement("div");
+    oversizedContent.style.width = "200px";
+    oversizedContent.style.height = "10px";
+    oversizedContent.style.whiteSpace = "nowrap";
+    oversizedContent.textContent = "W".repeat(200);
+    probe.append(oversizedContent);
+    document.body.append(probe);
+  });
+  const negativeControl = page.locator("#horizontal-clipping-negative-control");
+  await expect(expectNoHorizontalClipping(negativeControl)).rejects.toThrow();
+  await negativeControl.evaluate((element) => {
+    element.remove();
+  });
 });
 
 // --- idea結果境界E2E（Task 6/7） ---
@@ -397,10 +475,10 @@ async function assertIdeaResultBoundary(page: Page, servings: number): Promise<v
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
-  // notice: idea結果には常時「家族条件を使用していません」「年齢・アレルギーへの
-  // 適合は確認されていません」の2文が表示される。
-  await expect(page.getByText("家族条件を使用していません")).toBeVisible();
-  await expect(page.getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
+  // notice: idea結果は短い喚起を常時表示し、必須文言はダイアログで確認できる。
+  await expectIdeaResultSurface(page);
+  await openAndAssertIdeaSafetyDetails(page);
+  await page.getByRole("button", { name: "閉じる" }).click();
   // 人数表示。menu.servings === N であることを本文の「N人分」表示で確認する。
   await expect(page.getByText(`${String(servings)}人分`, { exact: false })).toBeVisible();
   // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成は利用できる
