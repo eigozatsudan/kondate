@@ -199,6 +199,29 @@ it("sends targetMode=idea and omits targetMemberIds on the query string", async 
   expect(params.has("targetMemberIds")).toBe(false);
 });
 
+it("rejects when response path does not match request targetMode", async () => {
+  // idea 要求に household path が返ると家族絞り込み chrome の誤表示になるため fail-closed
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: emptyHouseholdData(),
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await expect(
+    getEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: [],
+      targetMode: "idea",
+      targetMemberIds: [],
+      pantryItemIds: [],
+    }),
+  ).rejects.toThrow(/応答経路/u);
+});
+
 it("rejects idea requests with non-empty targetMemberIds at the client schema", async () => {
   await expect(
     getEmergencyMenus({

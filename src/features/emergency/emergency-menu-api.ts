@@ -114,5 +114,11 @@ export async function getEmergencyMenus(input: {
     headers: { authorization: `Bearer ${token}` },
   });
   const body: unknown = await response.json();
-  return parseEmergencyMenusResponse(body);
+  const data = parseEmergencyMenusResponse(body);
+  // wire path と request targetMode の不一致は fail-closed。
+  // household chrome（家族絞り込み）を idea 候補の上に出さない防御。
+  if (data.path !== validatedInput.targetMode) {
+    throw new Error("緊急献立の応答経路が要求と一致しません");
+  }
+  return data;
 }

@@ -1,22 +1,14 @@
-import type { TargetMode } from "@shared/contracts/planner";
-
-/** 生成画面の RecoveryLinks 用。pending wire に targetMode が無いための短寿命補助。 */
+/**
+ * 旧 GenerationStatusPanel 向け sessionStorage 補助。
+ * 緊急リンクは draft/menu の targetMode を直接見るようになり未使用。
+ * キー掃除と import 互換のため残す（書き込みはしない）。
+ */
 const storageKey = "kondate:generation:targetMode";
 
-export function saveGenerationTargetMode(mode: TargetMode): void {
+export function clearGenerationTargetMode(): void {
   try {
-    sessionStorage.setItem(storageKey, mode);
+    sessionStorage.removeItem(storageKey);
   } catch {
-    // sessionStorage 拒否時は panel が mode 無しで緊急リンクを出す（fail-open UI）
-  }
-}
-
-export function readGenerationTargetMode(): TargetMode | undefined {
-  try {
-    const value = sessionStorage.getItem(storageKey);
-    if (value === "idea" || value === "household") return value;
-    return undefined;
-  } catch {
-    return undefined;
+    // sessionStorage 拒否時は無視
   }
 }

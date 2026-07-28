@@ -168,16 +168,32 @@ exact mock URL 以外では、`mock/` も `:free` も拒否する。
 
 ### 4.4 候補ショートリストと実装完了ゲート
 
-上位モデル検証（prompt 改訂後・2026-07-28）で固定した評価対象（意思決定記録:
-`docs/bugfix/artifacts/r1-higher-tier-decision-record-2026-07-28.md`）:
+**現行 N=10 PASS freeze（2026-07-28 luna 有効化後・runbook と同一）:**
 
-1. `openai/gpt-4o-mini`
-2. `meta-llama/llama-3.3-70b-instruct`
-3. `deepseek/deepseek-v3.2`
-4. `qwen/qwen-2.5-72b-instruct`
-5. `openai/gpt-4.1-nano`
+1. `openai/gpt-5.6-luna`（推奨・品質寄り）
+2. `openai/gpt-4.1-mini`
+3. `inception/mercury-2`（安価）
+4. `openai/gpt-4.1-nano`（repair スロット）
+5. `x-ai/grok-4.3`
 
-手続きの正本: R1/R2/R3 設計 + 本 shortlist
+独立評価する exact 構成（配列順 = 評価順）:
+
+1. `["openai/gpt-5.6-luna"]`
+2. `["openai/gpt-4.1-mini"]`
+3. `["inception/mercury-2"]`
+4. `["inception/mercury-2","openai/gpt-4.1-nano"]`
+5. `["x-ai/grok-4.3"]`
+
+正本: `docs/runbooks/openrouter.md` と
+`scripts/benchmark-paid-openrouter-models.mjs` の `paidOpenRouterModelConfigurations`。
+
+**歴史的メモ（N=10 不合格・現行 freeze ではない）:** prompt 改訂直後の上位モデル検証
+（`docs/bugfix/artifacts/r1-higher-tier-decision-record-2026-07-28.md`）は
+`gpt-4o-mini` / `llama-3.3-70b-instruct` / `deepseek-v3.2` /
+`qwen-2.5-72b-instruct` / `gpt-4.1-nano` を評価したが **N=10 は不合格**。
+再ベンチや本番提案の既定リストに戻してはならない。
+
+手続きの正本: R1/R2/R3 設計 + 上記 **現行 freeze**
 
 #### 4.4.1 ベンチ前の機械フィルタ（必須順序）
 
@@ -260,14 +276,16 @@ harness は本番 DB / 本番 quota ledger へ書き込まない。`markSent` / 
 失敗の別、失敗コードを残す。**N=10 を通過した exact 構成だけ**を、その順序のまま
 `OPENROUTER_MODELS` へ提案する。
 
-最低限、次の構成を独立して評価する（評価順 = 推奨タイブレーク）:
+最低限、次の構成を独立して評価する（評価順 = 推奨タイブレーク）。
+**現行 N=10 PASS freeze（2026-07-28 以降）:**
 
-1. `["openai/gpt-4o-mini"]`
-2. `["meta-llama/llama-3.3-70b-instruct"]`
-3. `["deepseek/deepseek-v3.2"]`
-4. `["qwen/qwen-2.5-72b-instruct"]`
-5. `["openai/gpt-4o-mini", "openai/gpt-4.1-nano"]`
-6. `["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"]`
+1. `["openai/gpt-5.6-luna"]`
+2. `["openai/gpt-4.1-mini"]`
+3. `["inception/mercury-2"]`
+4. `["inception/mercury-2","openai/gpt-4.1-nano"]`
+5. `["x-ai/grok-4.3"]`
+
+（歴史: 上位モデル短リストの dual 構成は N=10 不合格。現行 freeze に戻さない。）
 
 単体 ID の合否を後から組み合わせたり、個別合格 ID から最大 2 本を選んだりしてはならない。
 合格した exact 構成だけが、その順序を維持した `OPENROUTER_MODELS` の提案候補になる。

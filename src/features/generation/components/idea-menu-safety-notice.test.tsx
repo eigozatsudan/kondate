@@ -20,20 +20,26 @@ beforeEach(() => {
 });
 
 describe("IdeaMenuSafetyNotice", () => {
-  it("shows a compact attention notice with icon and open control", () => {
+  it("shows locked mandatory phrases always-visible with details control", () => {
     const { container } = render(<IdeaMenuSafetyNotice />);
     expect(screen.getByText("ご確認ください")).toBeVisible();
-    expect(
-      screen.getByText(
-        "この献立はアイデアとして作成しました。家族条件は使っておらず、調理前に内容の確認が必要です。",
-      ),
-    ).toBeVisible();
+    // 設計 §5.4: 必須2文は常時表示（dialog 内コピーと区別し dialog 外ノードを見る）
+    const alwaysVisibleFamily = screen
+      .getAllByText("家族条件を使用していません")
+      .find((node) => !node.closest("dialog"));
+    expect(alwaysVisibleFamily).toBeDefined();
+    expect(alwaysVisibleFamily).toBeVisible();
+    const alwaysVisibleAge = screen
+      .getAllByText("年齢・アレルギーへの適合は確認されていません")
+      .find((node) => !node.closest("dialog"));
+    expect(alwaysVisibleAge).toBeDefined();
+    expect(alwaysVisibleAge).toBeVisible();
     expect(screen.getByRole("button", { name: IDEA_SAFETY_DETAILS_BUTTON_LABEL })).toBeVisible();
     // アイコンは装飾（aria-hidden）として存在する
     expect(container.querySelector('[aria-hidden="true"] svg')).not.toBeNull();
-    // 必須文言は閉じた dialog 内にあり、a11y 上の dialog としても見えない
+    // AI/ラベル長文は閉じた dialog 側。a11y 上の dialog としても見えない
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("家族条件を使用していません")).not.toBeVisible();
+    expect(screen.getByText(MENU_LABEL_DISCLAIMER)).not.toBeVisible();
   });
 
   it("opens a dialog with every locked mandatory phrase", async () => {

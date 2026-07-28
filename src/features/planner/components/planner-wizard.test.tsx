@@ -893,9 +893,14 @@ describe("PlannerWizard review step", () => {
     expect(alert).toHaveTextContent("保存できませんでした");
     expect(alert).toHaveClass("autosave-toast--error");
     expect(within(alert).getByRole("button", { name: "再試行" })).toHaveClass("min-h-11");
+    // 失敗は自動消去しない（再試行が消えて未保存のまま進めるのを防ぐ）
     act(() => {
       vi.advanceTimersByTime(3_000);
     });
+    expect(screen.getByRole("alert")).toHaveTextContent("保存できませんでした");
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: "再試行" })).toBeVisible();
+    // idle に戻ったら消える
+    rerender(<Harness autosaveState="idle" onRetryAutosave={onRetryAutosave} />);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     vi.useRealTimers();
   });

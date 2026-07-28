@@ -305,7 +305,6 @@ const pendingGenerationMock = vi.hoisted(() => ({
   createPendingGeneration: vi.fn(),
   savePendingGeneration: vi.fn(),
   readPendingGeneration: vi.fn(),
-  saveGenerationTargetMode: vi.fn(),
 }));
 vi.mock("@/features/generation/model/pending-generation", async (importOriginal) => {
   const original =
@@ -315,14 +314,6 @@ vi.mock("@/features/generation/model/pending-generation", async (importOriginal)
     createPendingGeneration: pendingGenerationMock.createPendingGeneration,
     savePendingGeneration: pendingGenerationMock.savePendingGeneration,
     readPendingGeneration: pendingGenerationMock.readPendingGeneration,
-  };
-});
-vi.mock("@/features/generation/model/generation-target-mode", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("@/features/generation/model/generation-target-mode")>();
-  return {
-    ...original,
-    saveGenerationTargetMode: pendingGenerationMock.saveGenerationTargetMode,
   };
 });
 
@@ -370,7 +361,6 @@ beforeEach(() => {
   pendingGenerationMock.createPendingGeneration.mockReset();
   pendingGenerationMock.savePendingGeneration.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReset();
-  pendingGenerationMock.saveGenerationTargetMode.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   pendingGenerationMock.createPendingGeneration.mockImplementation((command, ownerUserId) => ({
     ownerUserId,
@@ -876,7 +866,6 @@ describe("PlannerRoutePage", () => {
         ],
       },
     });
-    expect(pendingGenerationMock.saveGenerationTargetMode).toHaveBeenCalledWith("household");
     // POST 完了を待たず、保存直後に遷移する（再生成経路と同型）
     expect(navigateMock).toHaveBeenCalledWith("/generation");
   });

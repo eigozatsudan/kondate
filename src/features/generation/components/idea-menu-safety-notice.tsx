@@ -10,8 +10,8 @@ export const IDEA_SAFETY_DETAILS_BUTTON_LABEL = "注意事項を見る";
 
 /**
  * idea 結果・履歴詳細の上部注意。
- * 画面上はアイコン付きの短い注意喚起だけを出し、設計固定の必須文言は
- * ダイアログでまとめて読む。冗長な三重枠を避けつつ、原文は残す。
+ * 設計 §5.4 / Plan 7 Step 11: 固定必須文言は常時表示。
+ * AI 詳細とラベル免責の長文はダイアログで追加確認できる。
  */
 export function IdeaMenuSafetyNotice() {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -58,9 +58,11 @@ export function IdeaMenuSafetyNotice() {
                 <path d="M12 17h.01" />
               </svg>
             </span>
-            <p className="min-w-0 text-ink">
-              この献立はアイデアとして作成しました。家族条件は使っておらず、調理前に内容の確認が必要です。
-            </p>
+            {/* 設計固定の必須2文は常時表示（ダイアログ内だけに閉じない） */}
+            <div className="stack min-w-0 gap-1 text-ink">
+              <p>家族条件を使用していません</p>
+              <p>年齢・アレルギーへの適合は確認されていません</p>
+            </div>
           </div>
           <button
             type="button"

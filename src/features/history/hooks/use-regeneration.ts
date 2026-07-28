@@ -2,7 +2,6 @@ import { useCallback } from "react";
 import { useNavigate } from "react-router";
 import { privacyNoticeVersion, type ChangeReason } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
-import { saveGenerationTargetMode } from "@/features/generation/model/generation-target-mode";
 import {
   createPendingGeneration,
   readPendingGeneration,
@@ -85,12 +84,11 @@ export function useRegeneration(input: UseRegenerationInput) {
         },
         userId,
       );
-      saveGenerationTargetMode(targetMode);
       savePendingGeneration(pending);
       void navigate("/generation");
       return Promise.resolve();
     },
-    [canRegenerate, menuId, navigate, targetMode, userId],
+    [canRegenerate, menuId, navigate, userId],
   );
 
   const startDish = useCallback(
@@ -121,12 +119,11 @@ export function useRegeneration(input: UseRegenerationInput) {
         },
         userId,
       );
-      saveGenerationTargetMode(targetMode);
       savePendingGeneration(pending);
       void navigate("/generation");
       return Promise.resolve();
     },
-    [canRegenerate, menuId, navigate, targetMode, userId],
+    [canRegenerate, menuId, navigate, userId],
   );
 
   return { canRegenerate, startWhole, startDish };

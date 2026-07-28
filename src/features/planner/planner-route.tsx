@@ -20,7 +20,6 @@ import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
-import { saveGenerationTargetMode } from "@/features/generation/model/generation-target-mode";
 import {
   createPendingGeneration,
   readPendingGeneration,
@@ -219,8 +218,6 @@ export function PlannerRoutePage() {
         },
         userId,
       );
-      // GenerationStatusPanel の idea 緊急リンク抑制用（pending wire に mode が無い）
-      saveGenerationTargetMode(draft.targetMode === "idea" ? "idea" : "household");
       savePendingGeneration(pending);
       if (signal.aborted) return false;
       void navigate("/generation");

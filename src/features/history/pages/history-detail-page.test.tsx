@@ -701,10 +701,18 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
 
     renderHistoryDetail();
 
-    // idea 注意は短い喚起 + ダイアログに必須文言
+    // idea 注意: 設計 §5.4 必須2文は常時表示。AI/ラベル長文はダイアログ
     expect(await screen.findByText("ご確認ください")).toBeVisible();
     expect(screen.getByRole("button", { name: "注意事項を見る" })).toBeVisible();
     expect(screen.getAllByRole("note")).toHaveLength(1);
+    expect(
+      screen.getAllByText("家族条件を使用していません").find((node) => !node.closest("dialog")),
+    ).toBeVisible();
+    expect(
+      screen
+        .getAllByText("年齢・アレルギーへの適合は確認されていません")
+        .find((node) => !node.closest("dialog")),
+    ).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "注意事項を見る" }));
     const dialog = screen.getByRole("dialog", { name: "この献立はアイデアとして作成しました" });
     expect(dialog).toBeVisible();

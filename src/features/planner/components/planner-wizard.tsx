@@ -157,8 +157,9 @@ export function PlannerWizard({
       return undefined;
     }
     setAutosaveToastOpen(true);
-    // 保存中は完了まで出し続ける。saved / error は約 3 秒で自動消去。
-    if (autosaveState === "saving") return undefined;
+    // 保存中・失敗は完了/回復まで出し続ける（error を消すと再試行が消えて未保存のまま進める）。
+    // saved だけ約 3 秒で自動消去。
+    if (autosaveState === "saving" || autosaveState === "error") return undefined;
     const timer = window.setTimeout(() => {
       setAutosaveToastOpen(false);
     }, 3_000);

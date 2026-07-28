@@ -133,6 +133,12 @@ export function HistoryCard({ group }: HistoryCardProps) {
         ref={dialogRef}
         className="card m-auto max-w-[min(100%,24rem)] rounded-xl p-4"
         aria-labelledby={dialogTitleId}
+        onCancel={(event) => {
+          // 削除中の Escape で閉じると、失敗時のエラーが閉じた dialog に載る。
+          event.preventDefault();
+          if (deletePending) return;
+          closeDeleteDialog();
+        }}
       >
         <div className="stack">
           <h3 id={dialogTitleId} className="text-base font-bold">

@@ -66,9 +66,11 @@ export function EmergencyMenuPage() {
   });
 
   // 設計 §5 enablement: draft 由来で household / idea を分岐する。
+  // draftResolved = キャッシュ済み下書きがある。背景 refetch（isFetching）では落とさない。
+  // 初回未解決のみ chrome を抑止し、window-focus 再取得で候補を消さない。
   const draft = draftQuery.data;
-  const draftReady =
-    draftQuery.isSuccess && draft !== null && draft !== undefined && !draftQuery.isFetching;
+  const draftResolved = draftQuery.isSuccess && draft !== null && draft !== undefined;
+  const draftReady = draftResolved;
   const isIdea = draft?.targetMode === "idea";
   const isHouseholdPath = draft !== null && draft !== undefined && draft.targetMode !== "idea";
   // draftReady 前は path を決めず intro を抑止する（未解決時に世帯 intro を出さない）。
@@ -79,8 +81,8 @@ export function EmergencyMenuPage() {
       ? "idea"
       : "household";
 
-  const householdQueryEnabled =
-    userId !== undefined && draftQuery.isSuccess && !draftQuery.isFetching && isHouseholdPath;
+  // 初回 draft 未解決の isFetching では household を起動しない。キャッシュがある背景 refetch は許可。
+  const householdQueryEnabled = userId !== undefined && draftResolved && isHouseholdPath;
   // Realtime / 60s poll も household 経路のみ（idea では購読しない）
   const safetyRealtimeEnabled = householdQueryEnabled;
 
@@ -206,8 +208,12 @@ export function EmergencyMenuPage() {
   });
 
   // loading / error は candidateQueryEnabled の後に定義する（設計 §5 順序）。
+  // draft は「データ無しの初回取得」だけ loading。キャッシュ済みの背景 refetch では
+  // intro/candidates を消さない（window-focus での空白フラッシュ防止）。
+  const draftInitialLoading =
+    draftQueryEnabled && (draftQuery.isPending || (draftQuery.isFetching && !draftResolved));
   const loading =
-    (draftQueryEnabled && (draftQuery.isPending || draftQuery.isFetching)) ||
+    draftInitialLoading ||
     (householdQueryEnabled && (householdQuery.isPending || householdQuery.isFetching)) ||
     (candidateQueryEnabled && (query.isPending || query.isFetching));
   const error =
@@ -314,9 +320,16 @@ export function EmergencyMenuContent({
   expectedPath: "household" | "idea" | null;
   response: EmergencyMenusData | null;
 }) {
-  // 旧 path の candidates は loading 中 visibleResponse=null で消す（fail closed）。
-  const visibleResponse = loading || error !== null ? null : response;
-  // wire path があれば優先（サーバ真実）。無ければ draft 推定。draft 未解決は null。
+  // wire path と draft 推定が食い違うときは fail-closed（誤った家族絞り込み chrome を出さない）。
+  const pathMismatch =
+    !loading &&
+    error === null &&
+    response !== null &&
+    expectedPath !== null &&
+    response.path !== expectedPath;
+  // 旧 path の candidates は loading 中 / path 不一致で visibleResponse=null にする。
+  const visibleResponse = loading || error !== null || pathMismatch ? null : response;
+  // 一致時のみ wire path を採用。draft 未解決は null。
   const chromePath: "household" | "idea" | null = visibleResponse?.path ?? expectedPath;
   // 設計 §5: matchMode のみがトリガ。server message（「固定」付き等）をパースして文言を選ばない。
   const showSafetyOnlyBanner =
@@ -325,11 +338,16 @@ export function EmergencyMenuContent({
     visibleResponse.matchMode === "safety_only";
   const safetyOnlyBannerText =
     chromePath === "idea" ? ideaSafetyOnlyBannerText : householdSafetyOnlyBannerText;
-  // draft 未解決中は path 固有 intro を抑止（中立 loading のみ）。
+  // draft 未解決中は path 固有 intro を抑止（中立 loading のみ）。path 不一致時も抑止。
   const introText =
-    chromePath === "idea" ? ideaIntroText : chromePath === "household" ? householdIntroText : null;
+    pathMismatch || chromePath === null
+      ? null
+      : chromePath === "idea"
+        ? ideaIntroText
+        : householdIntroText;
   // idea は「家族向け」見出しを使わず中立にする（個人パスと混同させない）
   const adaptationHeading = chromePath === "idea" ? "取り分け・切り方の目安" : "家族向けの取り分け";
+  const displayError = error ?? (pathMismatch ? "緊急献立を読み込めませんでした" : null);
 
   return (
     <main className="page-frame stack emergency-menu-page">
@@ -348,7 +366,7 @@ export function EmergencyMenuContent({
       {introText !== null &&
         (chromePath === "idea" ? <p role="status">{introText}</p> : <p>{introText}</p>)}
       {loading && <p>候補を確認中…</p>}
-      {error !== null && <p role="alert">{error}</p>}
+      {displayError !== null && <p role="alert">{displayError}</p>}
       {showSafetyOnlyBanner && <p role="note">{safetyOnlyBannerText}</p>}
       {visibleResponse?.candidates.length === 0 && (
         <section className="card">

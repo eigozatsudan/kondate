@@ -803,6 +803,73 @@ it("does not show household intro while draft fetch is still pending", () => {
   expect(screen.getByText("候補を確認中…")).toBeVisible();
 });
 
+it("keeps idea chrome while draft is background-refetching with cached data", () => {
+  // isFetching でもキャッシュ draft があれば chrome を消さない（window-focus 空白防止）
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        mealType: "dinner",
+        mainIngredients: [],
+        targetMode: "idea",
+        targetMemberIds: [],
+        pantrySelections: [],
+      },
+      isSuccess: true,
+      isPending: false,
+      isFetching: true,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isPending: true,
+      isFetching: true,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  expect(screen.getByText(/個人向けの固定候補です/u)).toBeVisible();
+  expect(
+    screen.queryByText(
+      "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",
+    ),
+  ).toBeNull();
+});
+
+it("fails closed when response path disagrees with expectedPath", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="idea"
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("緊急献立を読み込めませんでした");
+  expect(
+    screen.queryByText(
+      "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",
+    ),
+  ).toBeNull();
+  expect(screen.queryByText(menu.dishes.map((dish) => dish.name).join("・"))).toBeNull();
+});
+
 it("shows idea intro during loading before response arrives", () => {
   renderWithRouter(
     <EmergencyMenuContent loading={true} error={null} expectedPath="idea" response={null} />,

@@ -11,6 +11,7 @@ import { validateGeneratedMenu } from "../../../shared/safety/validate-generated
 import { buildGenerationMessages } from "./generation-prompt.js";
 import {
   ATTEMPT_TIMEOUT_MS,
+  projectProviderConflicts,
   runGeneration,
   type GenerationDependencies,
   type GenerationExecutionContext,
@@ -67,13 +68,22 @@ export function diagnoseClosedComposeCodes(
     return Object.freeze(["invalid_provider_menu"]);
   }
   if (result.output.outcome === "constraint_conflict") {
-    const codes = new Set<string>(["constraint_conflict"]);
-    for (const conflict of result.output.conflicts) {
-      if (typeof conflict.code === "string" && conflict.code.length > 0) {
+    // 本番 compose と同じ projectProviderConflicts を通す。
+    // wire 上の conflict code だけでは invalid_provider_menu になるケースを
+    // constraint_conflict と誤証跡しない（idea 空 ref・未知 code 等）。
+    try {
+      const projected = projectProviderConflicts(result.output.conflicts, generationContext);
+      const codes = new Set<string>(["constraint_conflict"]);
+      for (const conflict of projected) {
         codes.add(conflict.code);
       }
+      return Object.freeze([...codes]);
+    } catch (error) {
+      if (error instanceof GenerationOutputError) {
+        return Object.freeze(error.issues.map((issue) => issue.code));
+      }
+      return Object.freeze(["invalid_provider_menu"]);
     }
-    return Object.freeze([...codes]);
   }
   try {
     const checked = validateGeneratedMenu(

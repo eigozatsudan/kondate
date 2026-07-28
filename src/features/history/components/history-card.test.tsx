@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,5 +115,29 @@ describe("HistoryCard mode badge", () => {
     const card = screen.getByRole("article");
     // 「確認済み」「安全」等、家族安全確認済みと誤解させる語をidea cardへ出さない
     expect(card.textContent).not.toMatch(/確認済み|安全に配慮|アレルギー対応済み/u);
+  });
+});
+
+describe("HistoryCard delete dialog", () => {
+  it("blocks Escape close while delete is pending", async () => {
+    let resolveDelete: (() => void) | undefined;
+    api.deleteMenuGroup.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    renderCard(householdGroup());
+    await user.click(screen.getByRole("button", { name: "この履歴を削除" }));
+    const dialog = screen.getByRole("dialog", { name: "この履歴を削除しますか？" });
+    expect(dialog).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "削除する" }));
+    expect(screen.getByRole("button", { name: "削除しています" })).toBeDisabled();
+    // Escape 相当の cancel。pending 中は閉じない
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    expect(screen.getByRole("dialog", { name: "この履歴を削除しますか？" })).toBeVisible();
+    resolveDelete?.();
+    await screen.findByRole("heading", { name: "家族の献立" });
   });
 });
