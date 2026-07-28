@@ -101,9 +101,9 @@ describe("parseOpenRouterModels", () => {
   });
 
   it("rejects VITE_AI_QUOTA_DISABLED", () => {
-    expect(() =>
-      parseServerEnv({ ...validServerEnv, VITE_AI_QUOTA_DISABLED: "true" }),
-    ).toThrow("server_configuration_invalid");
+    expect(() => parseServerEnv({ ...validServerEnv, VITE_AI_QUOTA_DISABLED: "true" })).toThrow(
+      "server_configuration_invalid",
+    );
   });
 
   it("rejects AI_QUOTA_DISABLED=true on non-local origin", () => {

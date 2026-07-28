@@ -199,16 +199,16 @@ export function PlannerRoutePage() {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
   const startGeneration = useCallback(
-    async (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
-      if (userId === undefined) return false;
+    (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
+      if (userId === undefined) return Promise.resolve(false);
       // 進行中 pending を上書きすると作成 ID が失われる（C2）。既存は再開のみ。
       // false を返し startNewAttempt を抑止する。true だと未消費 attempt
       // （期限確認など）が回転して捨てられる。
       if (readPendingGeneration(userId, new Date()) !== null) {
-        if (signal.aborted) return false;
+        if (signal.aborted) return Promise.resolve(false);
         // 新規条件は送っていないことを /generation で明示する
         void navigate("/generation?resumed=1");
-        return false;
+        return Promise.resolve(false);
       }
       const pending = createPendingGeneration(
         {
@@ -225,9 +225,9 @@ export function PlannerRoutePage() {
         userId,
       );
       savePendingGeneration(pending);
-      if (signal.aborted) return false;
+      if (signal.aborted) return Promise.resolve(false);
       void navigate("/generation");
-      return true;
+      return Promise.resolve(true);
     },
     [navigate, userId],
   );
@@ -468,7 +468,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }
         void navigate("/emergency-menus");
         // 遷移後もフラグを落とす。route が残る経路で isSaving が固着し wizard が死ぬのを防ぐ。
-        if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
+        // navigate 後も同 operation なら落とす（mounted 判定は上の early-return で十分）。
+        if (operationId === emergencyOperationIdRef.current) {
           setIsOpeningEmergencyMenus(false);
         }
       } catch {

@@ -362,10 +362,12 @@ beforeEach(() => {
   pendingGenerationMock.savePendingGeneration.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
-  pendingGenerationMock.createPendingGeneration.mockImplementation((command, ownerUserId) => ({
-    ownerUserId,
-    ...command,
-  }));
+  pendingGenerationMock.createPendingGeneration.mockImplementation(
+    (command: unknown, ownerUserId: string) => ({
+      ownerUserId,
+      ...(command as object),
+    }),
+  );
 });
 
 describe("idea audience 確定時の onboarding skipped 契約", () => {
@@ -891,7 +893,7 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
     // resume は return false → startNewAttempt しない（期限確認を捨てない）
-    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey ?? "");
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   });
 
@@ -912,7 +914,7 @@ describe("PlannerRoutePage", () => {
       );
     });
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
-    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey ?? "");
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   });
 });

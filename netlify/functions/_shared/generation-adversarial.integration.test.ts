@@ -512,7 +512,11 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
       scenario === "malformed-json" ? "success" : scenario,
     );
     return {
-      user: { userId: "93000000-0000-4000-8000-000000000001", accessToken: "token" , email: "owner@example.com" },
+      user: {
+        userId: "93000000-0000-4000-8000-000000000001",
+        accessToken: "token",
+        email: "owner@example.com",
+      },
       repository,
       models: [...httpModels],
       loadExecutionContext: vi.fn(() =>

@@ -34,16 +34,10 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
   const data = usage.data;
   return (
     <section aria-label="今日あと何回作れるか">
+      <p>{formatFreeTierQuotaCopy(`成功回数：本日あと${String(data.success.remaining)}回`)}</p>
+      <p>{formatFreeTierQuotaCopy(`AI通信試行：本日あと${String(data.attempts.remaining)}回`)}</p>
       <p>
-        {formatFreeTierQuotaCopy(`成功回数：本日あと${String(data.success.remaining)}回`)}
-      </p>
-      <p>
-        {formatFreeTierQuotaCopy(`AI通信試行：本日あと${String(data.attempts.remaining)}回`)}
-      </p>
-      <p>
-        {formatFreeTierQuotaCopy(
-          `10分間の通信試行：あと${String(data.shortWindow.remaining)}回`,
-        )}
+        {formatFreeTierQuotaCopy(`10分間の通信試行：あと${String(data.shortWindow.remaining)}回`)}
       </p>
       <p>アプリ全体：{data.globalAvailable ? "作成できます" : "今日はここまで"}</p>
       {data.shortWindow.retryAt === null ? null : (
@@ -165,9 +159,7 @@ export function GenerationStatusPanel({
           <TerminalGenerationUsage userId={userId} />
         ) : (
           <p>
-            {formatFreeTierQuotaCopy(
-              `成功回数：本日あと${String(state.data.quota.remaining)}回`,
-            )}
+            {formatFreeTierQuotaCopy(`成功回数：本日あと${String(state.data.quota.remaining)}回`)}
           </p>
         )}
         {/* exactOptionalPropertyTypes: undefined を明示渡ししない */}
@@ -194,9 +186,7 @@ export function GenerationStatusPanel({
         ) : (
           <>
             <p>
-              {formatFreeTierQuotaCopy(
-                `成功回数：本日あと${String(state.data.quota.remaining)}回`,
-              )}
+              {formatFreeTierQuotaCopy(`成功回数：本日あと${String(state.data.quota.remaining)}回`)}
             </p>
             {state.data.quota.retryAt !== null && (
               <p>再開: {formatJstRetryTime(state.data.quota.retryAt, new Date())}</p>

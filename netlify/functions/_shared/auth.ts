@@ -53,7 +53,7 @@ export async function requireUserWithEmail(
     throw closedServiceUnavailable();
   }
   // z.email() は正規化後に適用（空白のみ・不正形式を拒否）
-  if (!z.string().email().safeParse(normalized).success) {
+  if (!z.email().safeParse(normalized).success) {
     throw closedServiceUnavailable();
   }
   return { userId, accessToken, email: normalized };

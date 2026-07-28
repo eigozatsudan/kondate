@@ -55,9 +55,7 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
         className="mt-2 min-h-11 w-full rounded-xl border px-3"
       />
       {/* ACCT-M1: 空の role=alert は常時マウントしない（読み上げが無言で鳴る） */}
-      {props.errorMessage !== null &&
-      props.errorMessage !== undefined &&
-      props.errorMessage !== "" ? (
+      {props.errorMessage !== null && props.errorMessage !== "" ? (
         <p role="alert" className="mt-2 min-h-6">
           {props.errorMessage}
         </p>

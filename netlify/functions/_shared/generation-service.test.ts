@@ -206,7 +206,11 @@ function makeDeps(
     { role: "user", content: "prompt" },
   ];
   return {
-    user: { userId: "85000000-0000-4000-8000-000000000001", accessToken: "token", email: 'owner@example.com' },
+    user: {
+      userId: "85000000-0000-4000-8000-000000000001",
+      accessToken: "token",
+      email: "owner@example.com",
+    },
     repository: overrides.repository ?? makeRepository(),
     models,
     resolveIntegrityContext: vi.fn(() =>

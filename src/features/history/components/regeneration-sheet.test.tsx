@@ -131,7 +131,10 @@ describe("RegenerationSheet", () => {
       expect.objectContaining({
         changeReason: "simpler",
         expiredPantryConfirmations: [
-          expect.objectContaining({ pantryItemId: "p1", checkedAt: expect.any(String) }),
+          expect.objectContaining({
+            pantryItemId: "p1",
+            checkedAt: expect.any(String) as string,
+          }),
         ],
       }),
     );
