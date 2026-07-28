@@ -15,6 +15,7 @@ test-results/
 .superpowers/
 *.tsbuildinfo
 .worktrees/
+tmp/
 
 # Local Netlify folder
 .netlify
