@@ -277,9 +277,8 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await expect(page).toHaveURL(/\/planner$/u);
 
   releaseSave?.();
-  // wizardからは緊急献立起動buttonが削除されている（brief step 5〜9の範囲外）ため、
-  // 直接/emergency-menusを開いて同じ下書き条件から緊急献立が呼ばれることを確認する。
-  await page.goto("/emergency-menus");
+  // E2E-I1: 製品の review CTA「AIを使わない緊急献立を見る」経由で flush→navigate する。
+  await page.getByRole("button", { name: "AIを使わない緊急献立を見る" }).click();
   await expect.poll(() => emergencyRequests.length).toBe(1);
   const emergencyRequest = emergencyRequests.at(0);
   if (emergencyRequest === undefined) throw new Error("緊急献立のリクエストを確認できませんでした");
@@ -310,7 +309,7 @@ async function expectCompleteCandidate(
     safetyActions: readonly string[];
   },
 ): Promise<void> {
-  // wizardからは緊急献立起動buttonが削除されているため、直接/emergency-menusを開く。
+  // 下書き済み状態で緊急献立ページの候補表示を直接検証する（CTA flush は別テスト）。
   await page.goto("/emergency-menus");
   const candidate = page.locator("article.emergency-candidate").filter({
     has: page.getByRole("heading", { name: input.heading }),
@@ -669,7 +668,7 @@ test("keeps chicken-allergic household on non-chicken emergency candidates witho
   // 追加済み標準品は候補ボタンを非表示（disabled ではなく消える）
   await expect(page.getByRole("button", { name: "鶏肉を追加" })).toHaveCount(0);
   await advanceToReviewWithHousehold(page, "夕食");
-  // wizardからは緊急献立起動buttonが削除されているため、直接/emergency-menusを開く。
+  // アレルギー条件での候補フィルタ結果を緊急献立ページで直接確認する。
   await page.goto("/emergency-menus");
   // 鶏のみでは empty にならない（main 食材が鶏肉でも safety_only で非鶏候補が載る）
   await expect(page.getByText("条件に合う緊急献立がありません")).toHaveCount(0);
