@@ -74,13 +74,16 @@ describe("maintenance-db integration", () => {
       [userId, `${marker}@example.test`],
     );
     const older = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    // identity 日次 quota 以降: identity_key は NOT NULL（^[a-f0-9]{64}$）
     await admin.query(
       `insert into private.ai_generation_requests (
-         id, user_id, idempotency_key, request_kind, status,
+         id, user_id, identity_key, personal_quota_disabled,
+         idempotency_key, request_kind, status,
          request_hmac_version, request_hmac, user_usage_day,
          failure_code, started_at, completed_at
        ) values (
          'f9100000-0000-4000-8000-000000000001', $1,
+         repeat('a', 64), false,
          'f9200000-0000-4000-8000-000000000001', 'regenerate_menu', 'failed',
          'generation-command.v2', repeat('9', 64), current_date,
          'generation_timeout', $2::timestamptz, $2::timestamptz
@@ -129,11 +132,13 @@ describe("maintenance-db integration", () => {
     );
     await admin.query(
       `insert into private.ai_generation_requests (
-         id, user_id, idempotency_key, request_kind, status,
+         id, user_id, identity_key, personal_quota_disabled,
+         idempotency_key, request_kind, status,
          request_hmac_version, request_hmac, user_usage_day,
          failure_code, started_at, completed_at
        ) values (
          'f9100000-0000-4000-8000-000000000002', $1,
+         repeat('b', 64), false,
          'f9200000-0000-4000-8000-000000000002', 'regenerate_menu', 'failed',
          'generation-command.v2', repeat('8', 64), current_date,
          'generation_timeout', $2::timestamptz, $2::timestamptz

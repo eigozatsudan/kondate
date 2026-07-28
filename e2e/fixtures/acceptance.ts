@@ -299,13 +299,15 @@ async function seedMissingOwnedFamiliesViaPg(userId: string): Promise<void> {
     // private.generation_regeneration_snapshots（ai_generation_requests が親）
     const requestId = randomUUID();
     const idempotencyKey = randomUUID();
+    // identity 日次 quota 以降: identity_key は NOT NULL（^[a-f0-9]{64}$）
     await client.query(
       `insert into private.ai_generation_requests (
-         id, user_id, idempotency_key, request_kind, status,
+         id, user_id, identity_key, personal_quota_disabled,
+         idempotency_key, request_kind, status,
          request_hmac_version, request_hmac, user_usage_day,
          failure_code, started_at, completed_at
        )
-       select $1::uuid, $2::uuid, $3::uuid, 'regenerate_menu', 'failed',
+       select $1::uuid, $2::uuid, repeat('c', 64), false, $3::uuid, 'regenerate_menu', 'failed',
               'generation-command.v2', repeat('c', 64), (now() at time zone 'Asia/Tokyo')::date,
               'generation_timeout', now(), now()
         where not exists (

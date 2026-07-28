@@ -111,13 +111,17 @@ begin
     'account-deletion-cascade@example.test'
   );
 
+  -- identity 日次 quota 以降: identity_key は NOT NULL（^[a-f0-9]{64}$）
   insert into private.ai_generation_requests (
-    id, user_id, idempotency_key, request_kind, status,
+    id, user_id, identity_key, personal_quota_disabled,
+    idempotency_key, request_kind, status,
     request_hmac_version, request_hmac, user_usage_day,
     failure_code, started_at, completed_at
   ) values (
     v_request_id,
     v_user_id,
+    tests.quota_identity_key(v_user_id),
+    false,
     'e2000000-0000-4000-8000-000000000002',
     'regenerate_menu',
     'failed',
