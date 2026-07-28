@@ -589,7 +589,9 @@ it("shows differentiated post-API empty copy for idea no_matching_fixture", () =
   // 設計 §5 idea 行（exact plain JP）。schema が idea 応答を許すため body だけ先に揃える。
   expect(screen.getByText("固定候補を表示できませんでした")).toBeVisible();
   expect(
-    screen.queryByText("いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません"),
+    screen.queryByText(
+      "いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません",
+    ),
   ).toBeNull();
   expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
 });
