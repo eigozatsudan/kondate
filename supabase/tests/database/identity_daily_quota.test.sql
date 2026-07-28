@@ -2,7 +2,7 @@
 -- Feature 3–4: identity 日次枠・delete 予約解放・personal_quota_disabled finalize
 
 begin;
-select plan(13);
+select plan(14);
 
 create extension if not exists pgtap with schema extensions;
 

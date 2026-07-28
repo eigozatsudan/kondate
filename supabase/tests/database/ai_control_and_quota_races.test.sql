@@ -32,8 +32,11 @@ revoke all on schema public from generation_pgtap_dblink_test;
 grant usage on schema public to generation_pgtap_dblink_test;
 -- service_role 相当の reserve は SECURITY DEFINER のため EXECUTE だけ付与する
 grant execute on function public.reserve_ai_generation(
-  uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, jsonb, integer, integer, integer, timestamptz
+  uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, jsonb, text, integer, integer, boolean, integer, timestamptz
 ) to generation_pgtap_dblink_test;
+-- dblink セッションから identity_key ヘルパを使うため tests スキーマを許可
+grant usage on schema tests to generation_pgtap_dblink_test;
+grant execute on function tests.quota_identity_key(uuid) to generation_pgtap_dblink_test;
 revoke all on schema public from shopping_pgtap_dblink_test;
 grant usage on schema public to shopping_pgtap_dblink_test;
 grant select, insert, update on public.household_members, public.member_allergies
@@ -102,7 +105,7 @@ select public.reserve_ai_generation(
   null, null, null,
   'generation-command.v2',
   repeat('1', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
   '2026-07-22 00:00:00+00'
 );
 
@@ -116,7 +119,7 @@ select
   (select coalesce(sum(reserved_count),0) from private.ai_identity_daily_external_attempts
     where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_reserved,
   (select count(*) from private.generation_regeneration_snapshots
-    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as snapshots;
+    where user_id = 'c1000000-0000-4000-8000-000000000101') as snapshots;
 
 -- dblink 用接続文字列（別バックエンド session）
 create temporary table race_dblink_conn as
@@ -140,7 +143,7 @@ select is(
           null, null, null,
           'generation-command.v2',
           repeat('2', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:01+00'
         )->>'failure_code'
       $sql$
@@ -166,7 +169,7 @@ select is(
           null, 'simpler',
           'generation-command.v2',
           repeat('3', 64),
-          '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+          '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:02+00'
         )->>'failure_code'
       $sql$
@@ -193,7 +196,7 @@ select is(
           'simpler',
           'generation-command.v2',
           repeat('4', 64),
-          '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+          '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:03+00'
         )->>'failure_code'
       $sql$
@@ -214,7 +217,7 @@ select is(
         from private.ai_identity_daily_external_attempts
         where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'snapshots', (select count(*) from private.generation_regeneration_snapshots
-        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
+    where user_id = 'c1000000-0000-4000-8000-000000000101')
     )
   ),
   (
@@ -245,7 +248,7 @@ select is(
           null, null, null,
           'generation-command.v2',
           repeat('5', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000102'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:04+00'
         )->>'status'
       $sql$
@@ -275,7 +278,7 @@ select is(
           null, null, null,
           'generation-command.v2',
           repeat('1', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
           '2026-07-22 00:00:05+00'
         ) as payload
       $sql$
@@ -305,7 +308,7 @@ select is(
         from private.ai_identity_daily_external_attempts
         where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'snapshots', (select count(*) from private.generation_regeneration_snapshots
-        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
+    where user_id = 'c1000000-0000-4000-8000-000000000101')
     )
   ),
   (
@@ -362,7 +365,7 @@ select
   (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
     where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
+    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
 
 select is(
   (
@@ -375,7 +378,7 @@ select is(
       null, 'simpler',
       'generation-command.v2',
       repeat('a', 64),
-      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
       '2026-07-22 00:11:00+00'
     )->>'status'
   ),
@@ -432,7 +435,7 @@ select is(
         from private.ai_identity_daily_external_attempts
         where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus', (select count(*) from public.menus
-        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
+        where user_id = 'c1000000-0000-4000-8000-000000000101')
     )
   ),
   (
@@ -485,7 +488,7 @@ select
   (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
     where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
+    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
 
 select is(
   (
@@ -498,7 +501,7 @@ select is(
       null, 'simpler',
       'generation-command.v2',
       repeat('b', 64),
-      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
       '2026-07-22 00:12:00+00'
     )->>'status'
   ),
@@ -564,7 +567,7 @@ select is(
         where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus_delta', (
         (select count(*) from public.menus
-          where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
+          where user_id = 'c1000000-0000-4000-8000-000000000101')
         - (select menus from source_race_post_menu)
       )
     )
@@ -592,7 +595,7 @@ select
   (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
     where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
+    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
 
 select is(
   (
@@ -606,7 +609,7 @@ select is(
       'simpler',
       'generation-command.v2',
       repeat('c', 64),
-      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
       '2026-07-22 00:13:00+00'
     )->>'status'
   ),
@@ -656,7 +659,7 @@ select is(
         from private.ai_identity_daily_external_attempts
         where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus', (select count(*) from public.menus
-        where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
+        where user_id = 'c1000000-0000-4000-8000-000000000101')
     )
   ),
   (
@@ -704,7 +707,7 @@ select
   (select coalesce(sum(sent_count), 0) from private.ai_identity_daily_external_attempts
     where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as attempt_sent,
   (select count(*) from public.menus
-    where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')) as menus;
+    where user_id = 'c1000000-0000-4000-8000-000000000101') as menus;
 
 select is(
   (
@@ -718,7 +721,7 @@ select is(
       'simpler',
       'generation-command.v2',
       repeat('d', 64),
-      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
       '2026-07-22 00:14:00+00'
     )->>'status'
   ),
@@ -758,7 +761,7 @@ select is(
         where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101')),
       'menus_delta', (
         (select count(*) from public.menus
-          where identity_key = tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'))
+          where user_id = 'c1000000-0000-4000-8000-000000000101')
         - (select menus from source_race_post_dish)
       )
     )
@@ -870,7 +873,7 @@ select public.reserve_ai_generation(
   'c1000000-0000-4000-8000-000000000103', 'c9000000-0000-4000-8000-000000000021',
   'new_menu', 'c3000000-0000-4000-8000-000000000103', 1, null, null, null,
   'generation-command.v2', repeat('d', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180, '2026-07-22 00:21:00+00'
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000103'::uuid), 3, 20, false, 180, '2026-07-22 00:21:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests
@@ -882,7 +885,7 @@ select public.reserve_ai_generation(
   'c1000000-0000-4000-8000-000000000104', 'c9000000-0000-4000-8000-000000000022',
   'new_menu', 'c3000000-0000-4000-8000-000000000104', 1, null, null, null,
   'generation-command.v2', repeat('e', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 20, false, 180, '2026-07-22 00:22:00+00'
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000104'::uuid), 3, 20, false, 180, '2026-07-22 00:22:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests
