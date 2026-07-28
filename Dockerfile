@@ -17,9 +17,14 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
 FROM development AS e2e
 USER root
-RUN npx playwright install-deps chromium
+# GHA 等 LOCAL_UID≠1000 では app-entrypoint が HOME=/home/kondate にする。
+# 既定の $HOME/.cache/ms-playwright に入れると実行時に見つからないため、
+# UID 非依存の固定パスへ入れ、任意 uid から読めるようにする。
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npx playwright install-deps chromium \
+  && npx playwright install chromium \
+  && chmod -R a+rX /ms-playwright
 USER node
-RUN npx playwright install chromium
 
 FROM dependencies AS build
 COPY . .

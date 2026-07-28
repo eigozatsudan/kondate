@@ -332,6 +332,17 @@ test("runs e2e through the same privilege-dropping entrypoint", async () => {
   assert.match(e2e, /^ {6}LOCAL_GID: "\$\{LOCAL_GID:-1000\}"$/mu);
 });
 
+test("e2e image installs Playwright browsers to a HOME-independent path", async () => {
+  // LOCAL_UID≠1000（GHA runner 等）では entrypoint が HOME=/home/kondate にする。
+  // node のホームへ入れたブラウザは実行時に解決できないため、固定パス必須。
+  const dockerfile = await readFile("Dockerfile", "utf8");
+  const e2eStage = dockerfile.match(/^FROM development AS e2e\n([\s\S]*?)(?=^FROM )/mu)?.[1];
+  assert.ok(e2eStage, "e2e stage is missing");
+  assert.match(e2eStage, /^ENV PLAYWRIGHT_BROWSERS_PATH=\/ms-playwright$/mu);
+  assert.match(e2eStage, /npx playwright install chromium/u);
+  assert.match(e2eStage, /chmod -R a\+rX \/ms-playwright/u);
+});
+
 test("uses the isolated E2E Function server without changing the public origin", async () => {
   const [compose, composeE2e, viteConfig, runner] = await Promise.all([
     readFile("compose.yaml", "utf8"),
