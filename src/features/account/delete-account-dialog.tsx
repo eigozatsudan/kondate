@@ -32,6 +32,8 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
       aria-labelledby="delete-account-title"
       onCancel={(event) => {
         event.preventDefault();
+        // APE-I3: 削除中のキャンセルは失敗フィードバックを落とすため無視する
+        if (props.pending) return;
         props.onCancel();
       }}
       className="w-[calc(100%-2rem)] max-w-md rounded-2xl p-5"
@@ -55,9 +57,7 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
         className="mt-2 min-h-11 w-full rounded-xl border px-3"
       />
       {/* ACCT-M1: 空の role=alert は常時マウントしない（読み上げが無言で鳴る） */}
-      {props.errorMessage !== null &&
-      props.errorMessage !== undefined &&
-      props.errorMessage !== "" ? (
+      {props.errorMessage !== null && props.errorMessage !== "" ? (
         <p role="alert" className="mt-2 min-h-6">
           {props.errorMessage}
         </p>
@@ -65,7 +65,12 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
         <p className="mt-2 min-h-6" aria-hidden="true" />
       )}
       <div className="mt-5 grid grid-cols-2 gap-3">
-        <button type="button" className="min-h-11 rounded-xl border" onClick={props.onCancel}>
+        <button
+          type="button"
+          className="min-h-11 rounded-xl border disabled:opacity-50"
+          disabled={props.pending}
+          onClick={props.onCancel}
+        >
           やめる
         </button>
         <button

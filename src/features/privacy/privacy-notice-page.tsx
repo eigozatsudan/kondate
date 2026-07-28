@@ -86,7 +86,11 @@ export function PrivacyNoticeContent({
         />
         説明を確認しました
       </label>
-      {error !== undefined && <p className="error-message">{error}</p>}
+      {error !== undefined && (
+        <p className="error-message" role="alert">
+          {error}
+        </p>
+      )}
       <button
         className="primary-button"
         type="button"
@@ -95,11 +99,19 @@ export function PrivacyNoticeContent({
       >
         {saving ? "保存中…" : "確認して進む"}
       </button>
-      <button className="text-button" type="button" onClick={onSkip}>
+      {/* APE-I1: 同意保存中は skip を止め、遅延 accept で同意が残る競合を防ぐ */}
+      <button className="text-button" type="button" disabled={saving} onClick={onSkip}>
         今はAIを使わない
       </button>
       {/* B-I10: シェル外のため緊急献立への操作導線を明示。同意は付けない */}
-      <Link className="secondary-button min-h-11" to="/emergency-menus">
+      <Link
+        className={`secondary-button min-h-11${saving ? " pointer-events-none opacity-50" : ""}`}
+        to="/emergency-menus"
+        aria-disabled={saving}
+        onClick={(event) => {
+          if (saving) event.preventDefault();
+        }}
+      >
         AIなしの緊急献立を見る
       </Link>
       <p>同意しなくても、AIを使わない緊急献立は利用できます。</p>
