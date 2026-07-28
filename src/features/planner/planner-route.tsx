@@ -21,8 +21,11 @@ import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import { saveGenerationTargetMode } from "@/features/generation/model/generation-target-mode";
-import { createPendingGeneration } from "@/features/generation/model/pending-generation";
-import { useGenerationRecovery } from "@/features/generation/hooks/use-generation-recovery";
+import {
+  createPendingGeneration,
+  readPendingGeneration,
+  savePendingGeneration,
+} from "@/features/generation/model/pending-generation";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { getCurrentPrivacyConsent, hasCurrentPrivacyConsent } from "@/features/privacy/privacy-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
@@ -180,16 +183,28 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
   );
 }
 
-// ルーターが実際にマウントする献立ページ。復旧付き生成フックを結線し、
-// 「献立を作る」操作から保留中の生成コマンドを保存してPOSTし、作成状況画面へ遷移する。
+// ルーターが実際にマウントする献立ページ。
+// 「献立を作る」では pending を保存してすぐ /generation へ移る。
+// POST は GenerationPage の useGenerationRecovery が recover して行う
+// （再生成 useRegeneration と同型。planner で await startGeneration すると
+//  POST 完了まで画面が切り替わらず、成功時に pending が消えて /generation が
+//  idle→planner へ落ちるレースも起きる）。
 // PlannerPage 自体はテスト向けに startGeneration を注入可能な薄いラッパーのまま変更しない。
 export function PlannerRoutePage() {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
-  const recovery = useGenerationRecovery();
   const startGeneration = useCallback(
     async (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
       if (userId === undefined) return false;
+      // 進行中 pending を上書きすると作成 ID が失われる（C2）。既存は再開のみ。
+      // false を返し startNewAttempt を抑止する。true だと未消費 attempt
+      // （期限確認など）が回転して捨てられる。
+      if (readPendingGeneration(userId, new Date()) !== null) {
+        if (signal.aborted) return false;
+        // 新規条件は送っていないことを /generation で明示する
+        void navigate("/generation?resumed=1");
+        return false;
+      }
       const pending = createPendingGeneration(
         {
           commandVersion: "generation-command.v2",
@@ -206,12 +221,12 @@ export function PlannerRoutePage() {
       );
       // GenerationStatusPanel の idea 緊急リンク抑制用（pending wire に mode が無い）
       saveGenerationTargetMode(draft.targetMode === "idea" ? "idea" : "household");
-      await recovery.startGeneration(pending);
+      savePendingGeneration(pending);
       if (signal.aborted) return false;
       void navigate("/generation");
       return true;
     },
-    [navigate, recovery, userId],
+    [navigate, userId],
   );
   return <PlannerPage startGeneration={startGeneration} />;
 }

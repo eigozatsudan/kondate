@@ -301,10 +301,30 @@ vi.mock("./components/planner-wizard", () => ({
   },
 }));
 
-const generationRecoveryMock = vi.hoisted(() => ({ startGeneration: vi.fn() }));
-vi.mock("@/features/generation/hooks/use-generation-recovery", () => ({
-  useGenerationRecovery: () => generationRecoveryMock,
+const pendingGenerationMock = vi.hoisted(() => ({
+  createPendingGeneration: vi.fn(),
+  savePendingGeneration: vi.fn(),
+  readPendingGeneration: vi.fn(),
+  saveGenerationTargetMode: vi.fn(),
 }));
+vi.mock("@/features/generation/model/pending-generation", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/generation/model/pending-generation")>();
+  return {
+    ...original,
+    createPendingGeneration: pendingGenerationMock.createPendingGeneration,
+    savePendingGeneration: pendingGenerationMock.savePendingGeneration,
+    readPendingGeneration: pendingGenerationMock.readPendingGeneration,
+  };
+});
+vi.mock("@/features/generation/model/generation-target-mode", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/generation/model/generation-target-mode")>();
+  return {
+    ...original,
+    saveGenerationTargetMode: pendingGenerationMock.saveGenerationTargetMode,
+  };
+});
 
 import { PlannerPage, PlannerRoutePage } from "./planner-route";
 
@@ -347,8 +367,15 @@ beforeEach(() => {
       return options.queryFn();
     },
   );
-  generationRecoveryMock.startGeneration.mockReset();
-  generationRecoveryMock.startGeneration.mockResolvedValue(undefined);
+  pendingGenerationMock.createPendingGeneration.mockReset();
+  pendingGenerationMock.savePendingGeneration.mockReset();
+  pendingGenerationMock.readPendingGeneration.mockReset();
+  pendingGenerationMock.saveGenerationTargetMode.mockReset();
+  pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+  pendingGenerationMock.createPendingGeneration.mockImplementation((command, ownerUserId) => ({
+    ownerUserId,
+    ...command,
+  }));
 });
 
 describe("idea audience 確定時の onboarding skipped 契約", () => {
@@ -392,7 +419,8 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     });
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
     expect(invalidateQueriesMock).toHaveBeenCalled();
-    expect(generationRecoveryMock.startGeneration).not.toHaveBeenCalled();
+    // audience 確定だけでは生成 pending を書かない
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 
   it("writes skipped when profile is in_progress", async () => {
@@ -815,7 +843,7 @@ it("privacy notice への遷移操作は review resume 付きの returnTo を組
 });
 
 describe("PlannerRoutePage", () => {
-  it("献立を作る操作から復旧フックへ new_menu の保留コマンドを渡し完了後に作成状況画面へ移動する", async () => {
+  it("献立を作る操作で pending を保存し POST を待たずに作成状況画面へ移動する", async () => {
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
@@ -824,9 +852,9 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(generationRecoveryMock.startGeneration).toHaveBeenCalledTimes(1);
+      expect(pendingGenerationMock.savePendingGeneration).toHaveBeenCalledTimes(1);
     });
-    const pending = generationRecoveryMock.startGeneration.mock.calls[0]?.[0] as {
+    const pending = pendingGenerationMock.savePendingGeneration.mock.calls[0]?.[0] as {
       ownerUserId: string;
       kind: string;
       request: Record<string, unknown>;
@@ -848,21 +876,54 @@ describe("PlannerRoutePage", () => {
         ],
       },
     });
-    await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation");
-    });
+    expect(pendingGenerationMock.saveGenerationTargetMode).toHaveBeenCalledWith("household");
+    // POST 完了を待たず、保存直後に遷移する（再生成経路と同型）
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 
-  it("復旧フックの startGeneration が拒否したら作成状況画面へ移動しない", async () => {
-    generationRecoveryMock.startGeneration.mockRejectedValueOnce(new Error("生成操作が進行中です"));
+  it("既存 pending があるときは上書きせず再開し attempt を回転しない", async () => {
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      commandVersion: "generation-command.v2",
+      kind: "new_menu",
+      request: { idempotencyKey: "existing" },
+    });
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    expect(screen.getByLabelText("check count")).toHaveTextContent("1");
 
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(generationRecoveryMock.startGeneration).toHaveBeenCalledTimes(1);
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
+    // resume は return false → startNewAttempt しない（期限確認を捨てない）
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey ?? "");
+    expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+  });
+
+  it("pending 保存が失敗したら作成状況へ遷移せず attempt を保つ", async () => {
+    pendingGenerationMock.savePendingGeneration.mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "献立条件を保存できなかったため、生成を開始しませんでした。",
+      );
     });
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey ?? "");
+    expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   });
 });

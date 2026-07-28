@@ -404,7 +404,7 @@ describe("useRegeneration", () => {
     if (after === null) throw new Error("pending required");
     expect(after.request.idempotencyKey).toBe(existing.request.idempotencyKey);
     expect(after.kind).toBe("new_menu");
-    expect(navigateMock).toHaveBeenCalledWith("/generation");
+    expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
     expect(postMock).not.toHaveBeenCalled();
   });
 
@@ -444,6 +444,6 @@ describe("useRegeneration", () => {
     expect(after).not.toBeNull();
     if (after === null) throw new Error("pending required");
     expect(after.request.idempotencyKey).toBe(existing.request.idempotencyKey);
-    expect(navigateMock).toHaveBeenCalledWith("/generation");
+    expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
   });
 });

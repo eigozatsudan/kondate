@@ -250,8 +250,10 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
 
   // 操作バー・注意書きを含めて1つの main で包む（MenuResult は本文 fragment のみ）。
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
-      <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
+      <p className="rounded-xl border border-amber-700 p-3 font-semibold break-words">
+        {DISCLAIMER}
+      </p>
       <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
         <p>家族条件を使用していません</p>
         <p>年齢・アレルギーへの適合は確認されていません</p>
@@ -642,8 +644,10 @@ function HouseholdResultBody({
 
   // 再検証ステータス・買い物操作を含めて1つの main で包む。
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
-      <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
+    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
+      <p className="rounded-xl border border-amber-700 p-3 font-semibold break-words">
+        {DISCLAIMER}
+      </p>
 
       {revalidation.phase === "checking" && (
         <p role="status" className="mt-4">

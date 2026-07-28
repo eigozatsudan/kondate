@@ -63,6 +63,8 @@ function Harness({
   attemptsRemaining = null,
   globalAvailable = null,
   shortWindowRetryAt = null,
+  autosaveState = "idle" as const,
+  onRetryAutosave,
 }: {
   initialStep?: PlannerStep;
   initialDraft?: PlannerDraftInput;
@@ -87,6 +89,8 @@ function Harness({
   attemptsRemaining?: number | null;
   globalAvailable?: boolean | null;
   shortWindowRetryAt?: string | null;
+  autosaveState?: "idle" | "saving" | "saved" | "error";
+  onRetryAutosave?: () => void;
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
@@ -117,11 +121,13 @@ function Harness({
         attemptsRemaining={attemptsRemaining}
         globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}
+        autosaveState={autosaveState}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
         {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
         {...(onReset !== undefined ? { onReset } : {})}
         {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
         {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
+        {...(onRetryAutosave !== undefined ? { onRetryAutosave } : {})}
       />
     </MemoryRouter>
   );
@@ -853,6 +859,47 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByText("献立条件を保存できませんでした。")).toBeInTheDocument();
   });
 
+  it("autosave は右上トーストで出し idle では非表示、失敗時は再試行を載せる", () => {
+    vi.useFakeTimers();
+    const onRetryAutosave = vi.fn();
+    const { rerender } = render(<Harness autosaveState="idle" />);
+    // 浮遊トーストは idle では DOM に出さず、本文を押し下げない
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(document.querySelector(".autosave-toast")).toBeNull();
+
+    rerender(<Harness autosaveState="saved" />);
+    const saved = screen.getByRole("status");
+    expect(saved).toHaveTextContent("保存しました");
+    expect(saved).toHaveClass("autosave-toast", "autosave-toast--saved");
+
+    // 約 3 秒で自動消去（親が saved のままでも消える）
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    rerender(<Harness autosaveState="saving" />);
+    expect(screen.getByRole("status")).toHaveTextContent("保存中…");
+    expect(screen.getByRole("status")).toHaveClass("autosave-toast--saving");
+    // 保存中はタイマーで消さない
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("保存中…");
+
+    rerender(<Harness autosaveState="error" onRetryAutosave={onRetryAutosave} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("保存できませんでした");
+    expect(alert).toHaveClass("autosave-toast--error");
+    expect(within(alert).getByRole("button", { name: "再試行" })).toHaveClass("min-h-11");
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
   it("review では緊急献立導線を出し、保存中は無効化する", async () => {
     const user = userEvent.setup();
     const onOpenEmergencyMenus = vi.fn();
@@ -891,18 +938,19 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByText("本日あと3回作成できます")).toBeVisible();
-    expect(
-      screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u),
-    ).toBeVisible();
-    expect(screen.getByText(/以降に再試行してください/u)).toBeVisible();
+    const limit = screen.getByRole("alert");
+    expect(limit).toHaveTextContent("いまは新しい献立を作れません");
+    expect(limit).toHaveTextContent(/少し待つ必要があります/u);
+    expect(limit).toHaveClass("usage-limit-banner");
   });
 
   it("C-I12: 成功残 0 のとき主 CTA を止め上限メッセージを出す", () => {
     render(<Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={0} />);
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-    expect(
-      screen.getByText("本日の作成回数の上限に達しました。明日またお試しください。"),
-    ).toBeVisible();
+    const limit = screen.getByRole("alert");
+    expect(limit).toHaveTextContent("いまは新しい献立を作れません");
+    expect(limit).toHaveTextContent("本日の作成回数の上限に達しています");
+    expect(limit).toHaveClass("usage-limit-banner");
   });
 
   it("C-I12 residual: attempts 残 0 のとき主 CTA を止め平易メッセージを出す", () => {
@@ -915,9 +963,9 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-    expect(
-      screen.getByText("AIへの問い合わせ回数の上限に達しました。明日またお試しください。"),
-    ).toBeVisible();
+    const limit = screen.getByRole("alert");
+    expect(limit).toHaveTextContent("いまは新しい献立を作れません");
+    expect(limit).toHaveTextContent("AIへの問い合わせ回数が上限です");
   });
 
   it("C-I12 residual: global 不可のとき主 CTA を止め平易メッセージを出す", () => {
@@ -931,9 +979,9 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-    expect(
-      screen.getByText("ただいま混雑しているため、しばらくしてからお試しください。"),
-    ).toBeVisible();
+    const limit = screen.getByRole("alert");
+    expect(limit).toHaveTextContent("いまは新しい献立を作れません");
+    expect(limit).toHaveTextContent("ただいま混雑しています");
   });
 
   it("C-I12 residual: null の attempts/global では誤って主 CTA を止めない", () => {
@@ -963,9 +1011,9 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-    expect(
-      screen.getByText(/しばらく続けて作成を試したため、少し待つ必要があります/u),
-    ).toBeVisible();
+    const limit = screen.getByRole("alert");
+    expect(limit).toHaveTextContent("いまは新しい献立を作れません");
+    expect(limit).toHaveTextContent(/少し待つ必要があります/u);
   });
 
   it("idea の review では緊急献立ボタンの代わりに切替案内を出す", () => {

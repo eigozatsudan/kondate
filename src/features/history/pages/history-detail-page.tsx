@@ -245,7 +245,7 @@ function IdeaDetailBody({ result, menuId, userId }: IdeaDetailBodyProps) {
   };
 
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
       <InlineNotice tone="notice" title="この献立はアイデアとして作成しました">
         <p>家族条件を使用していません</p>
@@ -628,7 +628,7 @@ function HouseholdDetailBody({
   };
 
   return (
-    <main className="guided-planner-theme mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
+    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">{DISCLAIMER}</p>
 
       {revalidation.phase === "checking" && (

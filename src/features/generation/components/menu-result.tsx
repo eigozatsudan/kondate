@@ -280,14 +280,16 @@ export function MenuResult({
 
   // main はページ枠（MenuResultPage / HistoryDetailPage）が1つだけ持つ。
   // ここに main を置くと操作バー等を包めず、ネスト landmark 違反にもなる。
+  // 横 padding はページ枠が持つ。本文で再付与すると狭い幅で二重余白になり、
+  // 子の min-content がはみ出しやすくなるため付けない。
   return (
-    <div className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
-      <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm">
+    <div className="mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words pb-4 pt-2 text-ink [overflow-wrap:anywhere]">
+      <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm break-words">
         <strong>AIが作成した献立です。</strong>{" "}
         内容、加熱状態、家庭内での混入を調理前に確認してください。
       </p>
-      <h1 className="mt-5 text-2xl font-bold">献立ができました</h1>
-      <p className="mt-2 text-lg font-semibold">
+      <h1 className="mt-5 text-2xl font-bold break-words">献立ができました</h1>
+      <p className="mt-2 text-lg font-semibold break-words">
         食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
       </p>
       {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
@@ -316,7 +318,7 @@ export function MenuResult({
 
       <section
         aria-labelledby="timeline-heading"
-        className="cook-timeline-panel mt-6 rounded-2xl bg-white p-4 shadow-sm"
+        className="cook-timeline-panel mt-6 min-w-0 max-w-full rounded-2xl bg-white p-4 shadow-sm"
       >
         <h2 id="timeline-heading" className="text-xl font-bold">
           全体の段取り
@@ -390,7 +392,7 @@ export function MenuResult({
       <div
         role="tablist"
         aria-label="料理"
-        className="sticky top-0 z-10 mt-6 flex gap-2 overflow-x-auto bg-canvas py-2"
+        className="sticky top-0 z-10 mt-6 flex min-w-0 max-w-full gap-2 overflow-x-auto bg-canvas py-2"
       >
         {menu.dishes.map((dish) => (
           <button
@@ -419,16 +421,16 @@ export function MenuResult({
         id={`panel-${selected.id}`}
         role="tabpanel"
         aria-labelledby={`tab-${selected.id}`}
-        className="rounded-2xl bg-white p-4 shadow-sm"
+        className="min-w-0 max-w-full rounded-2xl bg-white p-4 shadow-sm"
       >
-        <h2 className="text-xl font-bold">{selected.name}</h2>
-        <p>{selected.description}</p>
+        <h2 className="text-xl font-bold break-words">{selected.name}</h2>
+        <p className="break-words [overflow-wrap:anywhere]">{selected.description}</p>
         <h3 className="mt-5 text-lg font-bold">材料</h3>
         <ul className="divide-y">
           {selected.ingredients.map((item) => (
             <li
               key={item.id}
-              className="grid min-h-11 grid-cols-[minmax(0,1fr)_minmax(0,45%)] items-center gap-3 py-2"
+              className="grid min-h-11 min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,45%)] items-center gap-3 py-2"
             >
               <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                 {item.name}
@@ -447,9 +449,11 @@ export function MenuResult({
         <h3 className="mt-5 text-lg font-bold">作り方</h3>
         <ol className="mt-2 space-y-3">
           {selected.steps.map((step) => (
-            <li key={step.id} className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2">
+            <li key={step.id} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-2">
               <span className="font-bold">{step.position}</span>
-              <span>{step.instruction}</span>
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                {step.instruction}
+              </span>
             </li>
           ))}
         </ol>

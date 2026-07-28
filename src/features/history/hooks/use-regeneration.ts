@@ -63,7 +63,7 @@ export function useRegeneration(input: UseRegenerationInput) {
       // 終端（failed 等）の pending は RecoveryLinks の onClear と結果/履歴詳細の
       // clearPendingGeneration で消す前提。残っていれば /generation で再開表示する。
       if (readPendingGeneration(userId, new Date()) !== null) {
-        void navigate("/generation");
+        void navigate("/generation?resumed=1");
         return Promise.resolve();
       }
       const changeReasonCustom =
@@ -99,7 +99,7 @@ export function useRegeneration(input: UseRegenerationInput) {
         return Promise.reject(new Error("revalidation_required"));
       }
       if (readPendingGeneration(userId, new Date()) !== null) {
-        void navigate("/generation");
+        void navigate("/generation?resumed=1");
         return Promise.resolve();
       }
       const changeReasonCustom =

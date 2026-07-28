@@ -165,12 +165,15 @@ it("leaves the label disclaimer to the page shell and keeps a 320px no-overflow 
   // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
   // 横方向の最大幅・はみ出し抑止・長文折返しの具体的classで固定する。
   // main はページ枠が所有する。本文ルートは横方向のはみ出し抑止 class を持つ。
+  // 横 padding はページ枠側（二重余白で 320px が詰まるのを避ける）。
   expect(container.firstElementChild).toHaveClass(
     "w-full",
+    "min-w-0",
     "max-w-full",
     "overflow-x-hidden",
     "break-words",
   );
+  expect(container.firstElementChild?.className.split(/\s+/u)).not.toContain("px-4");
 });
 
 it("wraps unbroken ingredient names and amounts inside a 320px material row", () => {

@@ -456,34 +456,49 @@ export function ReviewStep({
           家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
         </p>
       )}
-      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・attempt・global・短時間枠を平易表示 */}
-      {usageRemaining !== null && (
-        <p role="status">
-          {usageRemaining === 0
-            ? "本日の作成回数の上限に達しました。明日またお試しください。"
-            : `本日あと${String(usageRemaining)}回作成できます`}
-        </p>
-      )}
-      {attemptsRemaining !== null && (
-        <p role="status">
-          {attemptsRemaining === 0
-            ? "AIへの問い合わせ回数の上限に達しました。明日またお試しください。"
-            : `AIへの問い合わせは本日あと${String(attemptsRemaining)}回まで受け付けます`}
-        </p>
-      )}
+      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・attempt・global・短時間枠を平易表示。
+          上限到達時は role=alert + 強調枠で、残数の情報文（status）とトーンを分ける。 */}
+      {usageRemaining === 0 ? (
+        <div className="usage-limit-banner" role="alert">
+          <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
+          <p className="usage-limit-banner-body">
+            本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。
+          </p>
+        </div>
+      ) : usageRemaining !== null ? (
+        <p role="status">本日あと{String(usageRemaining)}回作成できます</p>
+      ) : null}
+      {attemptsRemaining === 0 ? (
+        <div className="usage-limit-banner" role="alert">
+          <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
+          <p className="usage-limit-banner-body">
+            AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。
+          </p>
+        </div>
+      ) : attemptsRemaining !== null ? (
+        <p role="status">AIへの問い合わせは本日あと{String(attemptsRemaining)}回まで受け付けます</p>
+      ) : null}
       {globalAvailable === false && (
-        <p role="status">ただいま混雑しているため、しばらくしてからお試しください。</p>
+        <div className="usage-limit-banner" role="alert">
+          <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
+          <p className="usage-limit-banner-body">
+            ただいま混雑しています。しばらくしてからお試しください。
+          </p>
+        </div>
       )}
       {shortWindowRetryAt !== null && (
-        <p role="status">
-          しばらく続けて作成を試したため、少し待つ必要があります。
-          {new Intl.DateTimeFormat("ja-JP", {
-            timeZone: "Asia/Tokyo",
-            dateStyle: "short",
-            timeStyle: "short",
-          }).format(new Date(shortWindowRetryAt))}
-          以降に再試行してください
-        </p>
+        <div className="usage-limit-banner" role="alert">
+          <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
+          <p className="usage-limit-banner-body">
+            短い時間に何度も作成を試したため、少し待つ必要があります。
+            {new Intl.DateTimeFormat("ja-JP", {
+              timeZone: "Asia/Tokyo",
+              dateStyle: "short",
+              timeStyle: "short",
+            }).format(new Date(shortWindowRetryAt))}
+            以降に再試行してください。
+          </p>
+        </div>
       )}
       <div className="wizard-actions">
         {onBack !== undefined && (

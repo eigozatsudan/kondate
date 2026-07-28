@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PantryItem } from "@shared/contracts/pantry";
@@ -148,6 +148,24 @@ export function PlannerWizard({
   const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);
   // 確認画面の「変更」から飛んだとき true。次へ／戻るで確認へ直行する。
   const [returnToReviewAfterEdit, setReturnToReviewAfterEdit] = useState(false);
+  // 浮遊トーストの表示。親の autosaveState が "saved" のままでも 3 秒で消す。
+  const [autosaveToastOpen, setAutosaveToastOpen] = useState(false);
+
+  useEffect(() => {
+    if (autosaveState === "idle") {
+      setAutosaveToastOpen(false);
+      return undefined;
+    }
+    setAutosaveToastOpen(true);
+    // 保存中は完了まで出し続ける。saved / error は約 3 秒で自動消去。
+    if (autosaveState === "saving") return undefined;
+    const timer = window.setTimeout(() => {
+      setAutosaveToastOpen(false);
+    }, 3_000);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [autosaveState]);
 
   const goToStep = (next: (typeof plannerSteps)[number]): void => {
     onStepChange(next);
@@ -188,26 +206,75 @@ export function PlannerWizard({
     />
   ) : null;
 
-  // 競合 chrome とは別に、debounce 保存の成否を短く出す（C-I9 / MVP §7.2）
+  // 競合 chrome とは別に、debounce 保存の成否を右上の浮遊トーストで出す（C-I9 / MVP §7.2）。
+  // fixed 配置なので本文レイアウトを動かさない。idle / 自動消去後は非表示。
   const autosaveChrome =
-    autosaveState === "saving" ? (
-      <p role="status" className="type-small">
-        保存中…
-      </p>
-    ) : autosaveState === "saved" ? (
-      <p role="status" className="type-small">
-        保存しました
-      </p>
-    ) : autosaveState === "error" ? (
-      <div className="stack" role="alert">
-        <p className="error-message">下書きを保存できませんでした。</p>
+    !autosaveToastOpen || autosaveState === "idle" ? null : autosaveState === "error" ? (
+      <div className="autosave-toast autosave-toast--error" role="alert">
+        <svg
+          className="autosave-toast-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v5" />
+          <path d="M12 16h.01" />
+        </svg>
+        <span className="autosave-toast-label">保存できませんでした</span>
         {onRetryAutosave !== undefined && (
-          <button type="button" className="secondary-button min-h-11" onClick={onRetryAutosave}>
+          <button type="button" className="autosave-toast-retry min-h-11" onClick={onRetryAutosave}>
             再試行
           </button>
         )}
       </div>
-    ) : null;
+    ) : (
+      <div
+        className={
+          autosaveState === "saving"
+            ? "autosave-toast autosave-toast--saving"
+            : "autosave-toast autosave-toast--saved"
+        }
+        role="status"
+        aria-live="polite"
+      >
+        {autosaveState === "saving" ? (
+          <svg
+            className="autosave-toast-icon autosave-toast-icon--spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M12 3a9 9 0 1 0 9 9" />
+          </svg>
+        ) : (
+          <svg
+            className="autosave-toast-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        )}
+        <span className="autosave-toast-label">
+          {autosaveState === "saving" ? "保存中…" : "保存しました"}
+        </span>
+      </div>
+    );
 
   const resetChrome =
     onReset !== undefined ? (

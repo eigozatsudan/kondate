@@ -94,13 +94,13 @@ function failedStatus(idempotencyKey: string): Extract<GenerationStatusData, { s
   };
 }
 
-function renderGenerationPage() {
+function renderGenerationPage(initialEntry = "/generation") {
   const router = createMemoryRouter(
     [
       { path: "/generation", element: <GenerationPage /> },
       { path: "/planner", element: <h1>プランナー</h1> },
     ],
-    { initialEntries: ["/generation"] },
+    { initialEntries: [initialEntry] },
   );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -175,5 +175,21 @@ describe("GenerationPage", () => {
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
     // request-local の成功回数だけ表示するフォールバック経路ではないこと
     expect(mockGetUsageToday).toHaveBeenCalled();
+  });
+
+  it("shows a resume notice when opened with resumed=1", async () => {
+    const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
+    savePendingGeneration(pending);
+    mockStatus.mockResolvedValue(processingStatus(KEY_A));
+
+    renderGenerationPage("/generation?resumed=1");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
+    });
+    const notice = screen.getByText("進行中の作成を再開しています");
+    expect(notice).toBeVisible();
+    expect(notice.closest(".generation-resume-notice")).not.toBeNull();
+    expect(screen.getByText(/いま入力した条件では新しく作り直していません/u)).toBeVisible();
   });
 });

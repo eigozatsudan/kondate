@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router";
+import { Navigate, useSearchParams } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { GenerationStatusPanel } from "../components/generation-status-panel";
 import { useGenerationRecovery } from "../hooks/use-generation-recovery";
@@ -22,6 +22,9 @@ export function GenerationPage() {
   const recovery = useGenerationRecovery();
   const auth = useAuth();
   const userId = auth.session?.user.id;
+  const [searchParams] = useSearchParams();
+  // マウント時の query だけを正とする（replace で消しても案内は残す）
+  const [showResumedNotice] = useState(() => searchParams.get("resumed") === "1");
   const [checked, setChecked] = useState(false);
   // pending wire に targetMode が無いため session 補助から読む（C-I6 RecoveryLinks）
   const [targetMode] = useState(() => readGenerationTargetMode());
@@ -36,6 +39,14 @@ export function GenerationPage() {
   }
   return (
     <main className="page-frame stack">
+      {showResumedNotice ? (
+        <section className="generation-resume-notice" role="status" aria-live="polite">
+          <strong className="generation-resume-notice-title">進行中の作成を再開しています</strong>
+          <p className="generation-resume-notice-body">
+            すでに作成中の献立があるため、いま入力した条件では新しく作り直していません。途中の作成状況をそのまま続けます。
+          </p>
+        </section>
+      ) : null}
       {userId === undefined ? (
         <GenerationStatusPanel
           state={recovery.state}
