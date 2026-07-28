@@ -25,23 +25,23 @@ export const modelsApiTimeoutMs = 5_000;
 export const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 export const officialModelsUrl = `${officialOpenRouterBaseUrl}/models?output_modalities=text`;
 
-/** R1-replay after R2+R3 — decision record docs/bugfix/artifacts/r1-replay-decision-record-2026-07-27-post-r2r3.md */
+/** 上位モデル検証 shortlist — decision: docs/bugfix/artifacts/r1-higher-tier-decision-record-2026-07-28.md */
 export const candidateModelIds = Object.freeze([
   "openai/gpt-4o-mini",
+  "meta-llama/llama-3.3-70b-instruct",
+  "deepseek/deepseek-v3.2",
+  "qwen/qwen-2.5-72b-instruct",
   "openai/gpt-4.1-nano",
-  "mistralai/ministral-3b-2512",
-  "meta-llama/llama-3.1-8b-instruct",
-  "microsoft/phi-4",
 ]);
 
 export const paidOpenRouterModelConfigurations = Object.freeze([
   Object.freeze(["openai/gpt-4o-mini"]),
-  Object.freeze(["microsoft/phi-4"]),
-  Object.freeze(["mistralai/ministral-3b-2512"]),
-  Object.freeze(["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"]),
-  // nano 単独は第4 identical のため禁止。primary として 2-ID のみ。
-  Object.freeze(["openai/gpt-4.1-nano", "microsoft/phi-4"]),
-  Object.freeze(["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"]),
+  Object.freeze(["meta-llama/llama-3.3-70b-instruct"]),
+  Object.freeze(["deepseek/deepseek-v3.2"]),
+  Object.freeze(["qwen/qwen-2.5-72b-instruct"]),
+  // nano 単独は第4 identical のため禁止。高速 repair スロット。
+  Object.freeze(["openai/gpt-4o-mini", "openai/gpt-4.1-nano"]),
+  Object.freeze(["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"]),
 ]);
 
 /** 設計 §5.3.0c — configuration[1] 禁止集合 */

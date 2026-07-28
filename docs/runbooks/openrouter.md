@@ -25,26 +25,26 @@
 承認済み exact 構成を production service harness の N=10 で通す。
 **実行すると有料課金が発生する。** API キー・生の課金ログ（PII 混入時）はコミットしない。
 
-候補 ID（R1-replay after R2+R3・設計固定）:
+候補 ID（上位モデル検証・設計固定）:
 
 1. `openai/gpt-4o-mini`
-2. `openai/gpt-4.1-nano`
-3. `mistralai/ministral-3b-2512`
-4. `meta-llama/llama-3.1-8b-instruct`
-5. `microsoft/phi-4`
+2. `meta-llama/llama-3.3-70b-instruct`
+3. `deepseek/deepseek-v3.2`
+4. `qwen/qwen-2.5-72b-instruct`
+5. `openai/gpt-4.1-nano`
 
 独立して評価する exact な順序付き構成（評価順）:
 
 1. `["openai/gpt-4o-mini"]`
-2. `["microsoft/phi-4"]`
-3. `["mistralai/ministral-3b-2512"]`
-4. `["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"]`
-5. `["openai/gpt-4.1-nano", "microsoft/phi-4"]`
-6. `["mistralai/ministral-3b-2512", "meta-llama/llama-3.1-8b-instruct"]`
+2. `["meta-llama/llama-3.3-70b-instruct"]`
+3. `["deepseek/deepseek-v3.2"]`
+4. `["qwen/qwen-2.5-72b-instruct"]`
+5. `["openai/gpt-4o-mini", "openai/gpt-4.1-nano"]`
+6. `["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"]`
 
 Stage 1 カタログ snapshot / 意思決定記録:
 `docs/bugfix/artifacts/r1-models-snapshot-2026-07-27.json` /
-`docs/bugfix/artifacts/r1-replay-decision-record-2026-07-27-post-r2r3.md`
+`docs/bugfix/artifacts/r1-higher-tier-decision-record-2026-07-28.md`
 
 eligible 部分集合・preflight（R1 CLI）:
 

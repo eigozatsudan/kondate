@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { makeGenerationContext } from "../../../shared/testing/factories.js";
-import { buildGenerationMessages } from "./generation-prompt.js";
+import {
+  GENERATION_SYSTEM_PROMPT_CORE,
+  GENERATION_SYSTEM_PROMPT_IDEA_EXTRA,
+  buildGenerationMessages,
+} from "./generation-prompt.js";
 
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
@@ -201,6 +205,26 @@ describe("buildGenerationMessages", () => {
       members: [{ ref: "member_1", dislikes: [freeText] }],
     });
     expect(serialized).toContain(uuidText);
+  });
+
+  it("includes structural pantry and outcome contracts in the system prompt", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()));
+    const system = messages.find((message) => message.role === "system")?.content ?? "";
+    expect(system).toContain("pantryUsage");
+    expect(system).toContain("must_use");
+    expect(system).toContain("dish_1");
+    expect(system).toContain("outcome=success");
+    expect(system).toContain("constraint_conflict");
+    expect(system).toContain(GENERATION_SYSTEM_PROMPT_CORE.slice(0, 40));
+  });
+
+  it("idea path keeps empty adaptations/labels instruction", () => {
+    const base = makeGenerationContext();
+    const messages = buildGenerationMessages(
+      asNewMenuExecution({ ...base, targetMode: "idea" as const }),
+    );
+    const system = messages.find((message) => message.role === "system")?.content ?? "";
+    expect(system).toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
   });
 
   it("rejects a missing member-preference pairing", () => {

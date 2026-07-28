@@ -1,6 +1,6 @@
 # Plan 8 有料 OpenRouter — live ゲート証跡（2026-07-27）
 
-**結論: ゲート不合格（PASS 0 構成）。response-format 改訂、R1 shortlist、R2+R3 後 R1-replay のいずれの N=10 も合格なし。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
+**結論: ゲート不合格（PASS 0 構成）。response-format / R1 / R2+R3 / 上位モデル+prompt改訂 のいずれの N=10 も合格なし。本番 `OPENROUTER_MODELS` を確定できない。本番適用は行わない。**
 
 ## Live gate evidence（第1ラウンド・履歴）
 
@@ -339,4 +339,54 @@ decision: `docs/bugfix/artifacts/r1-replay-decision-record-2026-07-27-post-r2r3.
 - それでも **invalid_ai_response / constraint_conflict** が残る → R2 name 上書きだけでは意味経路は未解決。
 - llama repair は引き続き 20s timeout 傾向。
 - **本番 ship ブロック継続。**
+
+---
+
+## 上位モデル + prompt 改訂ラウンド（2026-07-28）
+
+### Prompt 変更概要
+
+system に structural 契約を追加（共通定数 `GENERATION_SYSTEM_PROMPT_CORE`）:
+
+- ref 連番一意（dish_1 / ingredient_1 / …）
+- pantryUsage 漏れ・must_use・dishRefs 整合
+- plannedQuantity の単位換算禁止
+- 通常は `outcome=success`；安全上不可のときのみ `constraint_conflict`
+
+### shortlist
+
+1. `openai/gpt-4o-mini` (0.75)
+2. `meta-llama/llama-3.3-70b-instruct` (0.53)
+3. `deepseek/deepseek-v3.2` (0.669)
+4. `qwen/qwen-2.5-72b-instruct` (0.76)
+5. `openai/gpt-4.1-nano` (0.50, repair only)
+
+### 実行
+
+- Date: 2026-07-27T23:59:42Z – 2026-07-28T00:01:15Z
+- hard_limit $1 / covers=yes
+- Exit: **1**
+
+### 結果
+
+| Exact configuration | failure | totalMs | 備考 |
+|---|---|---:|---|
+| `["openai/gpt-4o-mini"]` | `invalid_ai_response` | 8905 | 20s 内 |
+| `["meta-llama/llama-3.3-70b-instruct"]` | `generation_timeout` | 20006 | |
+| `["deepseek/deepseek-v3.2"]` | `generation_timeout` | 20001 | |
+| `["qwen/qwen-2.5-72b-instruct"]` | `generation_timeout` | 20001 | |
+| `["openai/gpt-4o-mini", "openai/gpt-4.1-nano"]` | `constraint_conflict` | 13372 | primary+repair とも応答 |
+| `["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4.1-nano"]` | `invalid_ai_response` | 9241 | primary ~8s + nano repair ~1.3s |
+
+### 最終
+
+- passedConfigurations: **[]**
+- recommended: **null**
+- 本番 env 更新: **なし**
+- ship: **ブロック継続**
+
+### 示唆
+
+- 上位 70B/72B 級は **単独で 20s に間に合わない**ケースが多い（P* 内でも latency 不足）。
+- 4o-mini は速いが **invalid / constraint_conflict** が残る → prompt だけでは足りない。closed subcode 診断や schema/fixture 側の深掘りが次の本筋。
 
