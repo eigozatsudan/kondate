@@ -458,6 +458,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           return;
         }
         void navigate("/emergency-menus");
+        // 遷移後もフラグを落とす。route が残る経路で isSaving が固着し wizard が死ぬのを防ぐ。
+        if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
+          setIsOpeningEmergencyMenus(false);
+        }
       } catch {
         if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
           // C-I14: 緊急導線の保存失敗は生成失敗と別文言（生成していないのに「生成」と言わない）。

@@ -24,9 +24,13 @@ export { expect };
 export async function clickWizardNext(page: Page): Promise<void> {
   const next = page.getByRole("button", { name: "次へ" });
   await expect(next).toBeVisible();
+  // save_generation_draft の HTTP 成功直後でも、React が isSaving を落とす前に
+  // 押すと disabled のまま throw する（menu-domain-pantry 長尺で再現）。
+  // ネットワーク同期後に enabled を待ってから DOM click する。
+  await expect(next).toBeEnabled({ timeout: 15_000 });
   await next.evaluate((el: HTMLElement) => {
     el.scrollIntoView({ block: "center", inline: "nearest" });
-    // disabled なら何もしない（完了条件未達のまま進まない）
+    // enabled 待ち後でも別保存が割り込んだ場合は失敗させる（黙って no-op にしない）
     if (el instanceof HTMLButtonElement && el.disabled) {
       throw new Error("wizard next button is disabled");
     }
