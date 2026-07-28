@@ -153,6 +153,22 @@ it("shows a plain empty state when the selected dish has no adaptation", async (
   expect(screen.getByText("この料理の取り分け案はありません。")).toBeVisible();
 });
 
+it("places dish-only regeneration inside the selected dish tabpanel", async () => {
+  const onRegenerateSelectedDish = vi.fn();
+  const result = makeMenuResultViewModel();
+  const firstDish = result.menu.dishes[0];
+  if (firstDish === undefined) throw new Error("fixture must contain a dish");
+  render(<MenuResult result={result} onRegenerateSelectedDish={onRegenerateSelectedDish} />);
+
+  const panel = screen.getByRole("tabpanel");
+  const button = within(panel).getByRole("button", { name: "この一品だけ別案にする" });
+  expect(button).toBeVisible();
+  // 操作バー相当の外には出さない（タブパネル内だけ）
+  expect(screen.getAllByRole("button", { name: "この一品だけ別案にする" })).toHaveLength(1);
+  await userEvent.click(button);
+  expect(onRegenerateSelectedDish).toHaveBeenCalledTimes(1);
+});
+
 it("leaves the label disclaimer to the page shell and keeps a 320px no-overflow class contract", () => {
   const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
   // ラベル確認の免責文はゲートで本文が閉じている間も出し続ける必要があるため、

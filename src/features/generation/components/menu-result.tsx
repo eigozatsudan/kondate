@@ -56,6 +56,8 @@ export function MenuResult({
   currentLabelWarnings,
   currentSafetyFingerprint,
   onSelectedDishChange,
+  onRegenerateSelectedDish,
+  regenerateSelectedDishDisabled = false,
 }: {
   result: MenuResultViewModel;
   actions?: MenuResultActions;
@@ -75,6 +77,14 @@ export function MenuResult({
   /** 確認 POST に載せる現行 fingerprint。再検証結果を正とする。 */
   currentSafetyFingerprint?: string;
   onSelectedDishChange?: (dishId: string) => void;
+  /**
+   * 選択中の一品だけ再生成する操作。
+   * 渡されたときだけ料理タブパネル内にボタンを出す
+   * （操作バーでは対象料理が直感で分かりにくいため）。
+   */
+  onRegenerateSelectedDish?: () => void;
+  /** 再検証中など、一品再生成を一時的に止めたいとき */
+  regenerateSelectedDishDisabled?: boolean;
 }) {
   // 省略時は result.targetMode を正とする（既定 "household" による idea 誤表示を防ぐ）。
   const mode = modeProp ?? result.targetMode;
@@ -425,6 +435,22 @@ export function MenuResult({
       >
         <h2 className="text-xl font-bold break-words">{selected.name}</h2>
         <p className="break-words [overflow-wrap:anywhere]">{selected.description}</p>
+        {onRegenerateSelectedDish !== undefined && (
+          <div className="mt-4">
+            {/*
+              料理パネル内に置くことで「この一品」の指示対象が文脈で伝わる。
+              ラベル文言は e2e / 既存 getByRole 契約のため変更しない。
+            */}
+            <button
+              type="button"
+              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+              disabled={regenerateSelectedDishDisabled}
+              onClick={onRegenerateSelectedDish}
+            >
+              この一品だけ別案にする
+            </button>
+          </div>
+        )}
         <h3 className="mt-5 text-lg font-bold">材料</h3>
         <ul className="divide-y">
           {selected.ingredients.map((item) => (

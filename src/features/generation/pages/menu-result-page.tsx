@@ -259,13 +259,25 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
         <p>年齢・アレルギーへの適合は確認されていません</p>
       </InlineNotice>
       {actions === undefined ? (
-        <MenuResult result={result} mode="idea" onSelectedDishChange={setSelectedDishId} />
+        <MenuResult
+          result={result}
+          mode="idea"
+          onSelectedDishChange={setSelectedDishId}
+          onRegenerateSelectedDish={() => {
+            setSheetMode("dish");
+          }}
+          regenerateSelectedDishDisabled={dishIdForRegen === null}
+        />
       ) : (
         <MenuResult
           result={result}
           mode="idea"
           actions={actions}
           onSelectedDishChange={setSelectedDishId}
+          onRegenerateSelectedDish={() => {
+            setSheetMode("dish");
+          }}
+          regenerateSelectedDishDisabled={dishIdForRegen === null}
         />
       )}
       {result.pantryPostCookTargets.length === 0 && (
@@ -298,16 +310,6 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
           }}
         >
           献立をまるごと別案にする
-        </button>
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={dishIdForRegen === null}
-          onClick={() => {
-            setSheetMode("dish");
-          }}
-        >
-          この一品だけ別案にする
         </button>
         <button
           type="button"
@@ -693,6 +695,10 @@ function HouseholdResultBody({
               currentLabelWarnings={revalidation.result.currentLabelWarnings}
               currentSafetyFingerprint={revalidation.result.safetyFingerprint}
               onSelectedDishChange={setSelectedDishId}
+              onRegenerateSelectedDish={() => {
+                setSheetMode("dish");
+              }}
+              regenerateSelectedDishDisabled={dishIdForRegen === null}
             />
           ) : (
             <MenuResult
@@ -702,6 +708,10 @@ function HouseholdResultBody({
               currentLabelWarnings={revalidation.result.currentLabelWarnings}
               currentSafetyFingerprint={revalidation.result.safetyFingerprint}
               onSelectedDishChange={setSelectedDishId}
+              onRegenerateSelectedDish={() => {
+                setSheetMode("dish");
+              }}
+              regenerateSelectedDishDisabled={dishIdForRegen === null}
             />
           )}
           {result.pantryPostCookTargets.length === 0 && (
@@ -732,16 +742,6 @@ function HouseholdResultBody({
           }}
         >
           献立をまるごと別案にする
-        </button>
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={!actionsEnabled || dishIdForRegen === null}
-          onClick={() => {
-            setSheetMode("dish");
-          }}
-        >
-          この一品だけ別案にする
         </button>
         <button
           type="button"
