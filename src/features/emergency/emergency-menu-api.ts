@@ -80,9 +80,16 @@ export const emergencyMenuKeys = {
     ] as const,
 };
 
-export function parseEmergencyMenusResponse(value: unknown): EmergencyMenusData {
+export function parseEmergencyMenusResponse(
+  value: unknown,
+  expectedPath?: "household" | "idea",
+): EmergencyMenusData {
   const envelope = emergencyResponseSchema.parse(value);
   if (!envelope.ok) throw new Error(envelope.error.message);
+  // expectedPath 指定時は wire path と不一致なら fail-closed（将来 caller の足場）。
+  if (expectedPath !== undefined && envelope.data.path !== expectedPath) {
+    throw new Error("緊急献立の応答経路が要求と一致しません");
+  }
   return envelope.data;
 }
 
@@ -114,11 +121,6 @@ export async function getEmergencyMenus(input: {
     headers: { authorization: `Bearer ${token}` },
   });
   const body: unknown = await response.json();
-  const data = parseEmergencyMenusResponse(body);
-  // wire path と request targetMode の不一致は fail-closed。
-  // household chrome（家族絞り込み）を idea 候補の上に出さない防御。
-  if (data.path !== validatedInput.targetMode) {
-    throw new Error("緊急献立の応答経路が要求と一致しません");
-  }
-  return data;
+  // path 相関は parse 側に寄せる（household chrome の誤表示を防ぐ防御）。
+  return parseEmergencyMenusResponse(body, validatedInput.targetMode);
 }

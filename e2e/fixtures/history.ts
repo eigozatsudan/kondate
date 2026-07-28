@@ -207,8 +207,8 @@ async function openMenuResultForRegeneration(
 }
 
 /**
- * idea 結果・履歴詳細の短い注意喚起（画面上の InlineNotice）が出ていることを待つ。
- * 必須文言はダイアログ内のため、ロード完了判定にはこちらを使う。
+ * idea 結果・履歴詳細の注意喚起（InlineNotice）が出ていることを待つ。
+ * 設計 §5.4 の必須2文は常時表示。AI/ラベル長文はダイアログ側。
  */
 export async function expectIdeaResultSurface(
   page: Page,
@@ -216,11 +216,17 @@ export async function expectIdeaResultSurface(
 ): Promise<void> {
   const timeout = options.timeout ?? 30_000;
   await expect(page.getByText("ご確認ください")).toBeVisible({ timeout });
+  // dialog 外の常時表示（§5.4）。最初の可視ノードで足りる
+  await expect(page.getByText("家族条件を使用していません").first()).toBeVisible({ timeout });
+  await expect(page.getByText("年齢・アレルギーへの適合は確認されていません").first()).toBeVisible({
+    timeout,
+  });
   await expect(page.getByRole("button", { name: "注意事項を見る" })).toBeVisible({ timeout });
 }
 
 /**
- * idea 必須注意ダイアログを開き、設計固定の必須文言が表示されることを確認する。
+ * idea 詳細ダイアログを開き、AI/ラベル長文を含む固定文言を確認する。
+ * 必須2文は常時表示側にもあるが、dialog 内コピーも合わせて検証する。
  */
 export async function openAndAssertIdeaSafetyDetails(page: Page): Promise<void> {
   await page.getByRole("button", { name: "注意事項を見る" }).click();

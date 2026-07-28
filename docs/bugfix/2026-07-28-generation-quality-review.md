@@ -87,40 +87,44 @@ N=10 合格でも品質推奨には向かない。
 
 repair 枠向き。単独 primary は品質・安定とも不足。
 
-## コスト vs 品質の整理
+## コスト vs 品質の整理（本レビュー当時 + 後続 supersession）
 
 | 優先 | 推奨 | 理由 |
 |------|------|------|
-| **品質優先（作れないを減らす）** | `openai/gpt-4.1-mini` | 材料・手順が揃い、2 回とも実用レベル |
-| **コスト優先（当面）** | `inception/mercury-2` | 半額・高速。下振れ時の炊飯など要注意 |
-| **品質+余裕** | mercury + 将来の上位（schema 可） | luna は現状 **経路不可** |
-| **非推奨（品質）** | `x-ai/grok-4.3` 単独 | 検証通過しても中身が薄い |
-| **比較不能** | `openai/gpt-5.6-luna` | strict schema 404 |
+| **現行推奨（後続）** | `openai/gpt-5.6-luna` | temperature 非送信で経路可。N=10 PASS・runbook head |
+| **品質優先（本レビュー当時比較）** | `openai/gpt-4.1-mini` | 材料・手順が揃い、2 回とも実用レベル（N=10 PASS spare） |
+| **コスト優先** | `inception/mercury-2` | 半額・高速。N=10 PASS spare |
+| **非推奨（品質）** | `x-ai/grok-4.3` 単独 | 検証通過しても中身が薄い（N=10 は PASS だが品質 spare） |
 
-## 本番 env の提案（品質寄り）
+## 本番 env の提案（現行 freeze / runbook 準拠）
 
 ```bash
-# 品質寄り（+コスト中）
+# 推奨（品質寄り・N=10 PASS）
+OPENROUTER_MODELS=openai/gpt-5.6-luna
+
+# spare: 品質寄り
 OPENROUTER_MODELS=openai/gpt-4.1-mini
 
-# コスト寄り（現状 freeze 推奨だったもの）
+# spare: コスト寄り
 OPENROUTER_MODELS=inception/mercury-2
 
-# 品質 primary + 安い repair（repair は品質保証ではない）
-OPENROUTER_MODELS=openai/gpt-4.1-mini,openai/gpt-4.1-nano
+# spare: 唯一の N=10 合格 dual（repair 付き）
+OPENROUTER_MODELS=inception/mercury-2,openai/gpt-4.1-nano
 ```
+
+正本: `docs/runbooks/openrouter.md` と
+`scripts/benchmark-paid-openrouter-models.mjs` の `paidOpenRouterModelConfigurations`。
 
 ## 次に品質を上げるなら（コード）
 
-1. **時間整合の強化**: 炊飯・浸水など長時間工程を `totalElapsedMinutes` / timeline と照合する validate  
-2. **単位の一貫性**: `大さじ` vs `ml` の粗検出  
-3. **「照り焼きなのにタレ材料が無い」** など role vs 材料の軽い整合（過検知に注意）  
-4. luna 級を使いたい場合は **P\* と schema 経路の別設計**（現状 404 は P\* では解けない）
+1. **時間整合の強化**: 炊飯・浸水など長時間工程を `totalElapsedMinutes` / timeline と照合する validate
+2. **単位の一貫性**: `大さじ` vs `ml` の粗検出
+3. **「照り焼きなのにタレ材料が無い」** など role vs 材料の軽い整合（過検知に注意）
 
 ## 再実行
 
 ```bash
 docker compose run --rm --no-deps app node scripts/review-generation-quality.mjs \
-  --models=inception/mercury-2,openai/gpt-4.1-mini,x-ai/grok-4.3 \
+  --models=openai/gpt-5.6-luna,inception/mercury-2,openai/gpt-4.1-mini,x-ai/grok-4.3 \
   --trials=2
 ```
