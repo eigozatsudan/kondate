@@ -25,19 +25,21 @@
 承認済み exact 構成を production service harness の N=10 で通す。
 **実行すると有料課金が発生する。** API キー・生の課金ログ（PII 混入時）はコミットしない。
 
-候補 ID（N=10 合格 freeze・2026-07-28 安い帯探索後）:
+候補 ID（N=10 合格 freeze・2026-07-28 luna 有効化後）:
 
-1. `inception/mercury-2`（推奨）
+1. `openai/gpt-5.6-luna`（推奨・品質寄り）
 2. `openai/gpt-4.1-mini`
-3. `openai/gpt-4.1-nano`（repair スロット）
-4. `x-ai/grok-4.3`
+3. `inception/mercury-2`（安価）
+4. `openai/gpt-4.1-nano`（repair スロット）
+5. `x-ai/grok-4.3`
 
 独立して評価する exact な順序付き構成（評価順）:
 
-1. `["inception/mercury-2"]`（N=10 PASS・推奨）
+1. `["openai/gpt-5.6-luna"]`（N=10 PASS・推奨）
 2. `["openai/gpt-4.1-mini"]`（N=10 PASS）
-3. `["inception/mercury-2","openai/gpt-4.1-nano"]`（N=10 PASS）
-4. `["x-ai/grok-4.3"]`（N=10 PASS）
+3. `["inception/mercury-2"]`（N=10 PASS）
+4. `["inception/mercury-2","openai/gpt-4.1-nano"]`（N=10 PASS）
+5. `["x-ai/grok-4.3"]`（N=10 PASS）
 
 Stage 1 カタログ snapshot / 意思決定記録:
 `docs/bugfix/artifacts/r1-models-snapshot-2026-07-28.json` /
@@ -49,12 +51,12 @@ eligible 部分集合・preflight（R1 CLI）:
 # N=1 preflight
 docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
   --trial-count=1 \
-  --configurations-json='[["inception/mercury-2"]]'
+  --configurations-json='[["openai/gpt-5.6-luna"]]'
 
 # N=10（eligible JSON の配列順 = 評価順 = 推奨タイブレーク）
 docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-models.mjs \
   --trial-count=10 \
-  --configurations-json='[["inception/mercury-2"]]'
+  --configurations-json='[["openai/gpt-5.6-luna"]]'
 ```
 
 カタログ再 snapshot（Stage-1 Method B・有料キー）:
@@ -93,7 +95,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 ```bash
 # 例示のみ。N=10 未合格のまま本番に使わない。合格 exact 構成に置換すること。
-OPENROUTER_MODELS=inception/mercury-2
+OPENROUTER_MODELS=openai/gpt-5.6-luna
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
 

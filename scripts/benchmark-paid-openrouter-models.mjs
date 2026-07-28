@@ -26,23 +26,27 @@ export const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 export const officialModelsUrl = `${officialOpenRouterBaseUrl}/models?output_modalities=text`;
 
 /**
- * P*=$4 後・strict-accept 安い帯 N=10 合格構成の union。
+ * P*=$4 後・N=10 合格構成の union。
  * 証跡: docs/bugfix/2026-07-28-cheap-strict-accept-n10.md
+ *       docs/bugfix/2026-07-28-gpt56-luna-enablement.md
  */
 export const candidateModelIds = Object.freeze([
-  "inception/mercury-2",
+  "openai/gpt-5.6-luna",
   "openai/gpt-4.1-mini",
+  "inception/mercury-2",
   "openai/gpt-4.1-nano",
   "x-ai/grok-4.3",
 ]);
 
 /**
  * exact 順序付き構成。N=10 PASS のみを freeze。
- * recommended: `["inception/mercury-2"]`（$1/1M・~4s・10/10）
+ * recommended: `["openai/gpt-5.6-luna"]`（temperature 非送信修正後・10/10）
+ * 予備: gpt-4.1-mini（品質/コスト中）、mercury-2（安価）、grok-4.3
  */
 export const paidOpenRouterModelConfigurations = Object.freeze([
-  Object.freeze(["inception/mercury-2"]),
+  Object.freeze(["openai/gpt-5.6-luna"]),
   Object.freeze(["openai/gpt-4.1-mini"]),
+  Object.freeze(["inception/mercury-2"]),
   Object.freeze(["inception/mercury-2", "openai/gpt-4.1-nano"]),
   Object.freeze(["x-ai/grok-4.3"]),
 ]);

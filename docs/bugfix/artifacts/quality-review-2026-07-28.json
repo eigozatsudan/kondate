@@ -1,690 +1,29 @@
 {
-  "snapshotDate": "2026-07-28T01:18:41.295Z",
+  "snapshotDate": "2026-07-28T01:28:21.713Z",
   "fixture": "idea breakfast servings=2 main=鶏もも肉 timeLimitMinutes=15 pantry=[]",
   "rows": [
     {
-      "modelId": "inception/mercury-2",
-      "trial": 1,
-      "ok": true,
-      "outcome": "primary_success",
-      "failureCodes": [],
-      "responseModel": "inception/mercury-2",
-      "elapsedMs": 4974,
-      "score": {
-        "total": 21,
-        "max": 21,
-        "failFlags": [],
-        "checks": {
-          "servings_match": true,
-          "meal_type": true,
-          "genre": true,
-          "time_budget": true,
-          "dish_count_2": true,
-          "roles_breakfast": true,
-          "adaptations_empty": true,
-          "pantry_usage_empty": true,
-          "no_pantry_links": true,
-          "main_ingredient_present": true,
-          "all_dishes_have_ingredients": true,
-          "all_dishes_have_steps": true,
-          "quantity_text_present": true,
-          "quantity_not_absurd": true,
-          "steps_actionable_length": true,
-          "timeline_nonempty": true,
-          "timeline_within_total": true,
-          "has_cooking_verbs": true,
-          "no_raw_chicken_hint": true,
-          "no_pro_equipment": true,
-          "not_only_ready_meal_without_main": true
-        }
-      },
-      "menuSummary": {
-        "mealType": "breakfast",
-        "cuisineGenre": "japanese",
-        "servings": 2,
-        "totalElapsedMinutes": 10,
-        "dishes": [
-          {
-            "role": "main",
-            "name": "鶏もも肉の照り焼き",
-            "description": "甘辛いタレで焼いた鶏もも肉",
-            "cookingTimeMinutes": 10,
-            "ingredients": [
-              {
-                "name": "鶏もも肉",
-                "quantityText": "200g",
-                "unit": "g"
-              },
-              {
-                "name": "醤油",
-                "quantityText": "15ml",
-                "unit": "ml"
-              },
-              {
-                "name": "みりん",
-                "quantityText": "15ml",
-                "unit": "ml"
-              },
-              {
-                "name": "砂糖",
-                "quantityText": "5g",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "鶏もも肉に塩胡椒で下味をつけ、フライパンで両面を焼く。",
-              "醤油、みりん、砂糖を混ぜたタレを加え、照りが出るまで煮詰める。"
-            ]
-          },
-          {
-            "role": "side",
-            "name": "ほうれん草の胡麻和え",
-            "description": "さっと茹でたほうれん草を胡麻で和えるシンプルな副菜",
-            "cookingTimeMinutes": 5,
-            "ingredients": [
-              {
-                "name": "ほうれん草",
-                "quantityText": "100g",
-                "unit": "g"
-              },
-              {
-                "name": "すりごま",
-                "quantityText": "10g",
-                "unit": "g"
-              },
-              {
-                "name": "醤油",
-                "quantityText": "5ml",
-                "unit": "ml"
-              },
-              {
-                "name": "砂糖",
-                "quantityText": "2g",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "ほうれん草をさっと茹でて水気を絞り、食べやすい長さに切る。",
-              "すりごま、醤油、砂糖を混ぜた和えダレを加え、全体を和える。"
-            ]
-          }
-        ],
-        "timeline": [
-          {
-            "startMinute": 0,
-            "durationMinutes": 5,
-            "instruction": "鶏もも肉の照り焼き:ステップ1"
-          },
-          {
-            "startMinute": 5,
-            "durationMinutes": 5,
-            "instruction": "鶏もも肉の照り焼き:ステップ2"
-          },
-          {
-            "startMinute": 0,
-            "durationMinutes": 3,
-            "instruction": "ほうれん草の胡麻和え:ステップ1"
-          },
-          {
-            "startMinute": 3,
-            "durationMinutes": 2,
-            "instruction": "ほうれん草の胡麻和え:ステップ2"
-          }
-        ]
-      },
-      "validateOk": true
-    },
-    {
-      "modelId": "inception/mercury-2",
-      "trial": 2,
-      "ok": true,
-      "outcome": "primary_success",
-      "failureCodes": [],
-      "responseModel": "inception/mercury-2",
-      "elapsedMs": 2888,
-      "score": {
-        "total": 21,
-        "max": 21,
-        "failFlags": [],
-        "checks": {
-          "servings_match": true,
-          "meal_type": true,
-          "genre": true,
-          "time_budget": true,
-          "dish_count_2": true,
-          "roles_breakfast": true,
-          "adaptations_empty": true,
-          "pantry_usage_empty": true,
-          "no_pantry_links": true,
-          "main_ingredient_present": true,
-          "all_dishes_have_ingredients": true,
-          "all_dishes_have_steps": true,
-          "quantity_text_present": true,
-          "quantity_not_absurd": true,
-          "steps_actionable_length": true,
-          "timeline_nonempty": true,
-          "timeline_within_total": true,
-          "has_cooking_verbs": true,
-          "no_raw_chicken_hint": true,
-          "no_pro_equipment": true,
-          "not_only_ready_meal_without_main": true
-        }
-      },
-      "menuSummary": {
-        "mealType": "breakfast",
-        "cuisineGenre": "japanese",
-        "servings": 2,
-        "totalElapsedMinutes": 13,
-        "dishes": [
-          {
-            "role": "main",
-            "name": "鶏もも肉と卵の炒め物",
-            "description": "鶏もも肉と卵を手早く炒めたシンプルなメインディッシュ。",
-            "cookingTimeMinutes": 8,
-            "ingredients": [
-              {
-                "name": "鶏もも肉",
-                "quantityText": "100g",
-                "unit": "g"
-              },
-              {
-                "name": "卵",
-                "quantityText": "1個",
-                "unit": "個"
-              },
-              {
-                "name": "油",
-                "quantityText": "5ml",
-                "unit": "ml"
-              }
-            ],
-            "steps": [
-              "フライパンに油を熱し、鶏もも肉を炒め、続いて卵を加えて全体を混ぜる。"
-            ]
-          },
-          {
-            "role": "side",
-            "name": "ごはん",
-            "description": "炊いたごはん。",
-            "cookingTimeMinutes": 5,
-            "ingredients": [
-              {
-                "name": "ごはん",
-                "quantityText": "200g",
-                "unit": "g"
-              },
-              {
-                "name": "水",
-                "quantityText": "200ml",
-                "unit": "ml"
-              }
-            ],
-            "steps": [
-              "鍋にごはんと水を入れ、沸騰したら弱火で炊く。"
-            ]
-          }
-        ],
-        "timeline": [
-          {
-            "startMinute": 0,
-            "durationMinutes": 8,
-            "instruction": "鶏もも肉と卵の炒め物を調理する。"
-          },
-          {
-            "startMinute": 8,
-            "durationMinutes": 5,
-            "instruction": "ごはんを炊く。"
-          }
-        ]
-      },
-      "validateOk": true
-    },
-    {
-      "modelId": "openai/gpt-4.1-mini",
-      "trial": 1,
-      "ok": true,
-      "outcome": "primary_success",
-      "failureCodes": [],
-      "responseModel": "openai/gpt-4.1-mini",
-      "elapsedMs": 11714,
-      "score": {
-        "total": 21,
-        "max": 21,
-        "failFlags": [],
-        "checks": {
-          "servings_match": true,
-          "meal_type": true,
-          "genre": true,
-          "time_budget": true,
-          "dish_count_2": true,
-          "roles_breakfast": true,
-          "adaptations_empty": true,
-          "pantry_usage_empty": true,
-          "no_pantry_links": true,
-          "main_ingredient_present": true,
-          "all_dishes_have_ingredients": true,
-          "all_dishes_have_steps": true,
-          "quantity_text_present": true,
-          "quantity_not_absurd": true,
-          "steps_actionable_length": true,
-          "timeline_nonempty": true,
-          "timeline_within_total": true,
-          "has_cooking_verbs": true,
-          "no_raw_chicken_hint": true,
-          "no_pro_equipment": true,
-          "not_only_ready_meal_without_main": true
-        }
-      },
-      "menuSummary": {
-        "mealType": "breakfast",
-        "cuisineGenre": "japanese",
-        "servings": 2,
-        "totalElapsedMinutes": 15,
-        "dishes": [
-          {
-            "role": "main",
-            "name": "鶏もも肉の照り焼き",
-            "description": "鶏もも肉を使った甘辛い照り焼き。",
-            "cookingTimeMinutes": 12,
-            "ingredients": [
-              {
-                "name": "鶏もも肉",
-                "quantityText": "200g",
-                "unit": "g"
-              },
-              {
-                "name": "醤油",
-                "quantityText": "大さじ1",
-                "unit": "ml"
-              },
-              {
-                "name": "みりん",
-                "quantityText": "大さじ1",
-                "unit": "ml"
-              },
-              {
-                "name": "砂糖",
-                "quantityText": "小さじ1",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "鶏もも肉を一口大に切る。",
-              "フライパンで鶏肉を焼き、火が通ったら醤油、みりん、砂糖を加えて照り焼きソースを絡める。"
-            ]
-          },
-          {
-            "role": "side",
-            "name": "ほうれん草のおひたし",
-            "description": "さっと茹でたほうれん草の和え物。",
-            "cookingTimeMinutes": 5,
-            "ingredients": [
-              {
-                "name": "ほうれん草",
-                "quantityText": "100g",
-                "unit": "g"
-              },
-              {
-                "name": "醤油",
-                "quantityText": "小さじ1",
-                "unit": "ml"
-              }
-            ],
-            "steps": [
-              "ほうれん草をさっと茹でて水気を切る。",
-              "醤油をかけて和える。"
-            ]
-          }
-        ],
-        "timeline": [
-          {
-            "startMinute": 0,
-            "durationMinutes": 7,
-            "instruction": "鶏もも肉を切って焼き始める。"
-          },
-          {
-            "startMinute": 7,
-            "durationMinutes": 5,
-            "instruction": "照り焼きソースを絡める。"
-          },
-          {
-            "startMinute": 0,
-            "durationMinutes": 5,
-            "instruction": "ほうれん草を茹でる。"
-          },
-          {
-            "startMinute": 5,
-            "durationMinutes": 2,
-            "instruction": "醤油で和える。"
-          }
-        ]
-      },
-      "validateOk": true
-    },
-    {
-      "modelId": "openai/gpt-4.1-mini",
-      "trial": 2,
-      "ok": true,
-      "outcome": "primary_success",
-      "failureCodes": [],
-      "responseModel": "openai/gpt-4.1-mini",
-      "elapsedMs": 11236,
-      "score": {
-        "total": 21,
-        "max": 21,
-        "failFlags": [],
-        "checks": {
-          "servings_match": true,
-          "meal_type": true,
-          "genre": true,
-          "time_budget": true,
-          "dish_count_2": true,
-          "roles_breakfast": true,
-          "adaptations_empty": true,
-          "pantry_usage_empty": true,
-          "no_pantry_links": true,
-          "main_ingredient_present": true,
-          "all_dishes_have_ingredients": true,
-          "all_dishes_have_steps": true,
-          "quantity_text_present": true,
-          "quantity_not_absurd": true,
-          "steps_actionable_length": true,
-          "timeline_nonempty": true,
-          "timeline_within_total": true,
-          "has_cooking_verbs": true,
-          "no_raw_chicken_hint": true,
-          "no_pro_equipment": true,
-          "not_only_ready_meal_without_main": true
-        }
-      },
-      "menuSummary": {
-        "mealType": "breakfast",
-        "cuisineGenre": "japanese",
-        "servings": 2,
-        "totalElapsedMinutes": 15,
-        "dishes": [
-          {
-            "role": "main",
-            "name": "鶏もも肉の照り焼き",
-            "description": "鶏もも肉を使った甘辛い照り焼き。",
-            "cookingTimeMinutes": 12,
-            "ingredients": [
-              {
-                "name": "鶏もも肉",
-                "quantityText": "200g",
-                "unit": "g"
-              },
-              {
-                "name": "しょうゆ",
-                "quantityText": "大さじ1",
-                "unit": "ml"
-              },
-              {
-                "name": "みりん",
-                "quantityText": "大さじ1",
-                "unit": "ml"
-              },
-              {
-                "name": "砂糖",
-                "quantityText": "小さじ1",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "鶏もも肉を一口大に切る。",
-              "フライパンで鶏肉を焼き、火が通ったら調味料を加えて照り焼きにする。"
-            ]
-          },
-          {
-            "role": "side",
-            "name": "ほうれん草のおひたし",
-            "description": "さっと茹でたほうれん草の和風おひたし。",
-            "cookingTimeMinutes": 8,
-            "ingredients": [
-              {
-                "name": "ほうれん草",
-                "quantityText": "100g",
-                "unit": "g"
-              },
-              {
-                "name": "しょうゆ",
-                "quantityText": "小さじ1",
-                "unit": "ml"
-              }
-            ],
-            "steps": [
-              "ほうれん草をさっと茹でて水気を切る。",
-              "しょうゆをかけて和える。"
-            ]
-          }
-        ],
-        "timeline": [
-          {
-            "startMinute": 0,
-            "durationMinutes": 5,
-            "instruction": "鶏もも肉を一口大に切る。"
-          },
-          {
-            "startMinute": 5,
-            "durationMinutes": 7,
-            "instruction": "鶏もも肉を焼き、調味料で照り焼きにする。"
-          },
-          {
-            "startMinute": 0,
-            "durationMinutes": 4,
-            "instruction": "ほうれん草をさっと茹でる。"
-          },
-          {
-            "startMinute": 4,
-            "durationMinutes": 4,
-            "instruction": "しょうゆをかけて和える。"
-          }
-        ]
-      },
-      "validateOk": true
-    },
-    {
-      "modelId": "x-ai/grok-4.3",
-      "trial": 1,
-      "ok": true,
-      "outcome": "primary_success",
-      "failureCodes": [],
-      "responseModel": "x-ai/grok-4.3",
-      "elapsedMs": 9669,
-      "score": {
-        "total": 21,
-        "max": 21,
-        "failFlags": [],
-        "checks": {
-          "servings_match": true,
-          "meal_type": true,
-          "genre": true,
-          "time_budget": true,
-          "dish_count_2": true,
-          "roles_breakfast": true,
-          "adaptations_empty": true,
-          "pantry_usage_empty": true,
-          "no_pantry_links": true,
-          "main_ingredient_present": true,
-          "all_dishes_have_ingredients": true,
-          "all_dishes_have_steps": true,
-          "quantity_text_present": true,
-          "quantity_not_absurd": true,
-          "steps_actionable_length": true,
-          "timeline_nonempty": true,
-          "timeline_within_total": true,
-          "has_cooking_verbs": true,
-          "no_raw_chicken_hint": true,
-          "no_pro_equipment": true,
-          "not_only_ready_meal_without_main": true
-        }
-      },
-      "menuSummary": {
-        "mealType": "breakfast",
-        "cuisineGenre": "japanese",
-        "servings": 2,
-        "totalElapsedMinutes": 15,
-        "dishes": [
-          {
-            "role": "main",
-            "name": "鶏もも肉の照り焼き",
-            "description": "鶏もも肉を使った簡単照り焼き",
-            "cookingTimeMinutes": 10,
-            "ingredients": [
-              {
-                "name": "鶏もも肉",
-                "quantityText": "200",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "鶏もも肉を焼く"
-            ]
-          },
-          {
-            "role": "side",
-            "name": "味噌汁",
-            "description": "簡単味噌汁",
-            "cookingTimeMinutes": 5,
-            "ingredients": [
-              {
-                "name": "味噌",
-                "quantityText": "20",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "味噌を溶かす"
-            ]
-          }
-        ],
-        "timeline": [
-          {
-            "startMinute": 0,
-            "durationMinutes": 10,
-            "instruction": "主菜を調理"
-          },
-          {
-            "startMinute": 10,
-            "durationMinutes": 5,
-            "instruction": "副菜を調理"
-          }
-        ]
-      },
-      "validateOk": true
-    },
-    {
-      "modelId": "x-ai/grok-4.3",
-      "trial": 2,
-      "ok": true,
-      "outcome": "primary_success",
-      "failureCodes": [],
-      "responseModel": "x-ai/grok-4.3",
-      "elapsedMs": 10756,
-      "score": {
-        "total": 21,
-        "max": 21,
-        "failFlags": [],
-        "checks": {
-          "servings_match": true,
-          "meal_type": true,
-          "genre": true,
-          "time_budget": true,
-          "dish_count_2": true,
-          "roles_breakfast": true,
-          "adaptations_empty": true,
-          "pantry_usage_empty": true,
-          "no_pantry_links": true,
-          "main_ingredient_present": true,
-          "all_dishes_have_ingredients": true,
-          "all_dishes_have_steps": true,
-          "quantity_text_present": true,
-          "quantity_not_absurd": true,
-          "steps_actionable_length": true,
-          "timeline_nonempty": true,
-          "timeline_within_total": true,
-          "has_cooking_verbs": true,
-          "no_raw_chicken_hint": true,
-          "no_pro_equipment": true,
-          "not_only_ready_meal_without_main": true
-        }
-      },
-      "menuSummary": {
-        "mealType": "breakfast",
-        "cuisineGenre": "japanese",
-        "servings": 2,
-        "totalElapsedMinutes": 15,
-        "dishes": [
-          {
-            "role": "main",
-            "name": "鶏もも肉の照り焼き",
-            "description": "鶏もも肉を使った簡単照り焼き",
-            "cookingTimeMinutes": 10,
-            "ingredients": [
-              {
-                "name": "鶏もも肉",
-                "quantityText": "200",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "鶏もも肉を焼く"
-            ]
-          },
-          {
-            "role": "side",
-            "name": "味噌汁",
-            "description": "簡単な味噌汁",
-            "cookingTimeMinutes": 5,
-            "ingredients": [
-              {
-                "name": "味噌",
-                "quantityText": "20",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "味噌を溶かす"
-            ]
-          }
-        ],
-        "timeline": [
-          {
-            "startMinute": 0,
-            "durationMinutes": 10,
-            "instruction": "mainを調理"
-          },
-          {
-            "startMinute": 10,
-            "durationMinutes": 5,
-            "instruction": "sideを調理"
-          }
-        ]
-      },
-      "validateOk": true
-    },
-    {
-      "modelId": "openai/gpt-4.1-nano",
+      "modelId": "openai/gpt-5.6-luna",
       "trial": 1,
       "ok": false,
       "outcome": "materialize_fail",
       "failureCodes": [
-        "invalid_menu_structure"
+        "dangling_ref"
       ],
-      "responseModel": "openai/gpt-4.1-nano",
-      "elapsedMs": 4643,
+      "responseModel": "openai/gpt-5.6-luna",
+      "elapsedMs": 10637,
       "score": null,
       "menuSummary": null,
       "validateOk": false
     },
     {
-      "modelId": "openai/gpt-4.1-nano",
+      "modelId": "openai/gpt-5.6-luna",
       "trial": 2,
       "ok": true,
       "outcome": "primary_success",
       "failureCodes": [],
-      "responseModel": "openai/gpt-4.1-nano",
-      "elapsedMs": 6841,
+      "responseModel": "openai/gpt-5.6-luna",
+      "elapsedMs": 9626,
       "score": {
         "total": 21,
         "max": 21,
@@ -717,142 +56,123 @@
         "mealType": "breakfast",
         "cuisineGenre": "japanese",
         "servings": 2,
-        "totalElapsedMinutes": 15,
+        "totalElapsedMinutes": 12,
         "dishes": [
           {
             "role": "main",
             "name": "鶏もも肉の照り焼き",
-            "description": "鶏もも肉を照り焼きにした和風の一品です。",
-            "cookingTimeMinutes": 10,
+            "description": "ひと口大に切った鶏もも肉を甘辛いたれで焼く、手早い和風の主菜です。",
+            "cookingTimeMinutes": 12,
             "ingredients": [
               {
                 "name": "鶏もも肉",
-                "quantityText": "200g",
-                "unit": "g"
-              }
-            ],
-            "steps": [
-              "鶏もも肉を適当な大きさに切る。",
-              "フライパンで鶏肉を焼き、照り焼きソースを絡める。"
-            ]
-          },
-          {
-            "role": "side",
-            "name": "味噌汁",
-            "description": "味噌と豆腐のシンプルな味噌汁です。",
-            "cookingTimeMinutes": 5,
-            "ingredients": [
-              {
-                "name": "味噌",
-                "quantityText": "10g",
+                "quantityText": "300",
                 "unit": "g"
               },
               {
-                "name": "豆腐",
-                "quantityText": "100g",
+                "name": "しょうゆ",
+                "quantityText": "大さじ1",
+                "unit": "ml"
+              },
+              {
+                "name": "みりん",
+                "quantityText": "大さじ1",
+                "unit": "ml"
+              },
+              {
+                "name": "砂糖",
+                "quantityText": "大さじ1/2",
                 "unit": "g"
               },
               {
-                "name": "だし汁",
-                "quantityText": "200ml",
+                "name": "サラダ油",
+                "quantityText": "小さじ1",
                 "unit": "ml"
               }
             ],
             "steps": [
-              "だし汁を温める。",
-              "豆腐を適当な大きさに切り、だし汁に入れる。",
-              "味噌を溶かし入れ、温める。"
+              "鶏もも肉をひと口大に切る。しょうゆ、みりん、砂糖を混ぜてたれを作る。",
+              "フライパンにサラダ油を中火で熱し、鶏もも肉の皮目を下にして焼く。",
+              "焼き色がついたら裏返し、ふたをして中まで火を通す。たれを加えて煮からめる。"
+            ]
+          },
+          {
+            "role": "side",
+            "name": "キャベツとわかめの和風あえ",
+            "description": "千切りキャベツとわかめをさっぱりした和風味であえます。",
+            "cookingTimeMinutes": 8,
+            "ingredients": [
+              {
+                "name": "キャベツ",
+                "quantityText": "150",
+                "unit": "g"
+              },
+              {
+                "name": "乾燥わかめ",
+                "quantityText": "3",
+                "unit": "g"
+              },
+              {
+                "name": "酢",
+                "quantityText": "大さじ1",
+                "unit": "ml"
+              },
+              {
+                "name": "しょうゆ",
+                "quantityText": "小さじ1",
+                "unit": "ml"
+              },
+              {
+                "name": "ごま油",
+                "quantityText": "小さじ1",
+                "unit": "ml"
+              }
+            ],
+            "steps": [
+              "乾燥わかめを水で戻し、水気を絞る。キャベツを千切りにする。",
+              "キャベツとわかめを酢、しょうゆ、ごま油であえる。"
             ]
           }
         ],
         "timeline": [
           {
             "startMinute": 0,
+            "durationMinutes": 2,
+            "instruction": "鶏もも肉を切り、照り焼きのたれを混ぜる。"
+          },
+          {
+            "startMinute": 0,
+            "durationMinutes": 5,
+            "instruction": "わかめを戻し、キャベツを千切りにする。"
+          },
+          {
+            "startMinute": 2,
             "durationMinutes": 10,
-            "instruction": "鶏もも肉を焼き始める。"
+            "instruction": "鶏もも肉を焼き、たれを加えて中まで火を通す。"
+          },
+          {
+            "startMinute": 5,
+            "durationMinutes": 3,
+            "instruction": "キャベツとわかめを調味料であえる。"
           },
           {
             "startMinute": 10,
-            "durationMinutes": 5,
-            "instruction": "味噌汁を作る。"
+            "durationMinutes": 2,
+            "instruction": "鶏もも肉にたれを煮からめ、盛り付ける。"
           }
         ]
       },
       "validateOk": true
-    },
-    {
-      "modelId": "openai/gpt-5.6-luna",
-      "trial": 1,
-      "ok": false,
-      "outcome": "model_unavailable",
-      "failureCodes": [
-        "model_unavailable"
-      ],
-      "responseModel": null,
-      "elapsedMs": 242,
-      "score": null,
-      "menuSummary": null,
-      "validateOk": null
-    },
-    {
-      "modelId": "openai/gpt-5.6-luna",
-      "trial": 2,
-      "ok": false,
-      "outcome": "model_unavailable",
-      "failureCodes": [
-        "model_unavailable"
-      ],
-      "responseModel": null,
-      "elapsedMs": 481,
-      "score": null,
-      "menuSummary": null,
-      "validateOk": null
     }
   ],
   "summary": [
     {
-      "modelId": "inception/mercury-2",
-      "trials": 2,
-      "successCount": 2,
-      "avgScore": 21,
-      "failureCodes": [],
-      "cookabilityFails": []
-    },
-    {
-      "modelId": "openai/gpt-4.1-mini",
-      "trials": 2,
-      "successCount": 2,
-      "avgScore": 21,
-      "failureCodes": [],
-      "cookabilityFails": []
-    },
-    {
-      "modelId": "x-ai/grok-4.3",
-      "trials": 2,
-      "successCount": 2,
-      "avgScore": 21,
-      "failureCodes": [],
-      "cookabilityFails": []
-    },
-    {
-      "modelId": "openai/gpt-4.1-nano",
+      "modelId": "openai/gpt-5.6-luna",
       "trials": 2,
       "successCount": 1,
       "avgScore": 21,
       "failureCodes": [
-        "invalid_menu_structure"
-      ],
-      "cookabilityFails": [
-        "not_ok"
-      ]
-    },
-    {
-      "modelId": "openai/gpt-5.6-luna",
-      "trials": 2,
-      "successCount": 0,
-      "avgScore": null,
-      "failureCodes": [
-        "model_unavailable"
+        "dangling_ref"
       ],
       "cookabilityFails": [
         "not_ok"

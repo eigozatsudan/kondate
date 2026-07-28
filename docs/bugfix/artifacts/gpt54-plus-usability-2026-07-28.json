@@ -1,0 +1,169 @@
+{
+  "priceCap": 4,
+  "rows": [
+    {
+      "id": "openai/gpt-5.4",
+      "usdPer1M": 17.5,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (17.5 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.4-image-2",
+      "usdPer1M": 23,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (23 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.4-mini",
+      "usdPer1M": 5.25,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (5.25 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.4-nano",
+      "usdPer1M": 1.45,
+      "withinPstar": true,
+      "SO": true,
+      "RF": true,
+      "mechanical": "KEEP",
+      "mechanicalReason": null,
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.4-pro",
+      "usdPer1M": 210,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (210 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.5",
+      "usdPer1M": 35,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (35 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.5-pro",
+      "usdPer1M": 210,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (210 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.6-luna",
+      "usdPer1M": 3.5,
+      "withinPstar": true,
+      "SO": true,
+      "RF": true,
+      "mechanical": "KEEP",
+      "mechanicalReason": null,
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.6-luna-pro",
+      "usdPer1M": 3.5,
+      "withinPstar": true,
+      "SO": true,
+      "RF": true,
+      "mechanical": "KEEP",
+      "mechanicalReason": null,
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.6-sol",
+      "usdPer1M": 35,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (35 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.6-sol-pro",
+      "usdPer1M": 35,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (35 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.6-terra",
+      "usdPer1M": 8.75,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (8.75 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    },
+    {
+      "id": "openai/gpt-5.6-terra-pro",
+      "usdPer1M": 8.75,
+      "withinPstar": false,
+      "SO": true,
+      "RF": true,
+      "mechanical": "EXCLUDE",
+      "mechanicalReason": "exceeds max prompt+completion USD per 1M tokens (8.75 > 4)",
+      "prodPath": "UNUSABLE",
+      "httpStatus": 404,
+      "errorMessageClosed": "No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-sel"
+    }
+  ],
+  "summary": {
+    "total": 13,
+    "mechanicalKeep": 3,
+    "prodUsable": 0,
+    "prodUsableWithinPstar": 0,
+    "usableIds": [],
+    "usableWithinPstarIds": []
+  }
+}

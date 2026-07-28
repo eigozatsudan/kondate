@@ -273,12 +273,16 @@ async function sendMenuGenerationWithRuntime(
             ? { "X-Kondate-Mock-Scenario": testScenario }
             : {}),
         },
+        // temperature は送らない。
+        // Models API の supported_parameters に temperature が無いモデル（例: openai/gpt-5.6-luna）では、
+        // provider.require_parameters: true と temperature の併用が 404
+        // 「No endpoints found that can handle the requested parameters」になる。
+        // require_parameters と strict response_format は維持し、決定性は schema / prompt 側で担保する。
         body: JSON.stringify({
           models,
           messages: input.messages,
           response_format: responseFormat,
           provider: { require_parameters: true },
-          temperature: 0.2,
           stream: false,
         }),
         signal: controller.signal,

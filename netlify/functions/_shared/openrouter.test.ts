@@ -138,9 +138,10 @@ it("uses models fallback, strict schema, and required parameters", async () => {
     messages: [{ role: "user", content: "data" }],
     provider: { require_parameters: true },
     response_format: menuResponseFormat,
-    temperature: 0.2,
     stream: false,
   });
+  // temperature 非対応モデル（gpt-5.6-luna 等）で require_parameters が 404 になるため送らない
+  expect(requestBody(fetchImpl)).not.toHaveProperty("temperature");
   expect(result).toEqual({ mode: "full_menu", output: conflictOutput, modelId: models[1] });
 });
 

@@ -136,16 +136,23 @@ function successfulUnit(configuration, outcome = "primary_success") {
   };
 }
 
-test("candidate shortlist and exact ordered configurations match the cheap N=10 freeze", () => {
+test("candidate shortlist and exact ordered configurations match the N=10 freeze", () => {
   assert.deepEqual(
     [...candidateModelIds],
-    ["inception/mercury-2", "openai/gpt-4.1-mini", "openai/gpt-4.1-nano", "x-ai/grok-4.3"],
+    [
+      "openai/gpt-5.6-luna",
+      "openai/gpt-4.1-mini",
+      "inception/mercury-2",
+      "openai/gpt-4.1-nano",
+      "x-ai/grok-4.3",
+    ],
   );
   assert.deepEqual(
     paidOpenRouterModelConfigurations.map((configuration) => [...configuration]),
     [
-      ["inception/mercury-2"],
+      ["openai/gpt-5.6-luna"],
       ["openai/gpt-4.1-mini"],
+      ["inception/mercury-2"],
       ["inception/mercury-2", "openai/gpt-4.1-nano"],
       ["x-ai/grok-4.3"],
     ],
