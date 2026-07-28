@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import type { CurrentSafetyContext } from "./context.js";
 
+/**
+ * 現行安全 fingerprint。
+ * SQL private.current_safety_fingerprint と **同一の JSON 形状** で sha256 する。
+ * F-SAF-002: custom アレルギーの name/aliases を載せ、生成中の差し替え TOCTOU を検出する。
+ * 自由文そのものはログに出さず、ハッシュ入力のみ。
+ */
 export function createCurrentSafetyFingerprint(context: CurrentSafetyContext): string {
   const payload = {
     dictionaryVersion: context.dictionaryVersion,
@@ -12,10 +18,14 @@ export function createCurrentSafetyFingerprint(context: CurrentSafetyContext): s
         ageBand: member.ageBand,
         allergyStatus: member.allergyStatus,
         allergenIds: [...member.allergenIds].sort(),
-        // SQL private.current_safety_fingerprint と同型にする（custom 名は載せない）。
-        // カスタム有無は hasUnmappedCustomAllergy のみ。customAllergies を足すと
-        // finalize の lock_and_assert が必ず drift する。
         hasUnmappedCustomAllergy: member.hasUnmappedCustomAllergy,
+        // name 昇順・aliases 昇順で安定化（SQL string_agg order と同型）
+        customAllergies: [...member.customAllergies]
+          .map((entry) => ({
+            name: entry.name,
+            aliases: [...entry.aliases].sort((a, b) => a.localeCompare(b)),
+          }))
+          .sort((left, right) => left.name.localeCompare(right.name)),
         requiredSafetyConstraints: [...member.requiredSafetyConstraints].sort(),
         unsupportedDietStatus: member.unsupportedDietStatus,
         unsupportedDietKinds: [...member.unsupportedDietKinds].sort(),

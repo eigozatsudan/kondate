@@ -22,3 +22,28 @@ it("sorts arrays and members and changes when current safety changes", () => {
   expect(createCurrentSafetyFingerprint(first)).toBe(createCurrentSafetyFingerprint(reordered));
   expect(createCurrentSafetyFingerprint(first)).not.toBe(createCurrentSafetyFingerprint(changed));
 });
+
+it("changes when custom allergy text changes while hasUnmapped stays true (F-SAF-002)", () => {
+  const base = makeCurrentSafetyContext().members[0]!;
+  const withShrimp = makeCurrentSafetyContext({
+    members: [
+      {
+        ...base,
+        hasUnmappedCustomAllergy: true,
+        customAllergies: [{ name: "えび粉", aliases: [] }],
+      },
+    ],
+  });
+  const withEgg = makeCurrentSafetyContext({
+    members: [
+      {
+        ...base,
+        hasUnmappedCustomAllergy: true,
+        customAllergies: [{ name: "卵", aliases: [] }],
+      },
+    ],
+  });
+  expect(createCurrentSafetyFingerprint(withShrimp)).not.toBe(
+    createCurrentSafetyFingerprint(withEgg),
+  );
+});
