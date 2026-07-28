@@ -500,6 +500,30 @@ it("does not show safety_only banner when matchMode is none", () => {
   expect(screen.queryByRole("status")).toBeNull();
 });
 
+it("does not show safety_only banner when matchMode is main_ingredient", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: "main_ingredient",
+        emptyReason: null,
+      }}
+    />,
+  );
+  // メイン食材一致の成功応答では §5 safety_only バナーを出さない
+  expect(
+    screen.queryByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+  ).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
 it("shows differentiated post-API empty copy for current_safety_unavailable", () => {
   renderWithRouter(
     <EmergencyMenuContent
@@ -543,6 +567,30 @@ it("shows differentiated post-API empty copy for household no_matching_fixture",
   expect(
     screen.getByText("いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません"),
   ).toBeVisible();
+  expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
+});
+
+it("shows differentiated post-API empty copy for idea no_matching_fixture", () => {
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [],
+        message: "条件に合う緊急献立がありません",
+        consumesAiQuota: false,
+        path: "idea",
+        matchMode: null,
+        emptyReason: "no_matching_fixture",
+      }}
+    />,
+  );
+  // 設計 §5 idea 行（exact plain JP）。schema が idea 応答を許すため body だけ先に揃える。
+  expect(screen.getByText("固定候補を表示できませんでした")).toBeVisible();
+  expect(
+    screen.queryByText("いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません"),
+  ).toBeNull();
   expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
 });
 
