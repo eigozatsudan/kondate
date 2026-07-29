@@ -80,8 +80,9 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
      構成は member が1つでも落ちたら chat を呼ばない。
    - **§4.4.2 N=10**: 各単位で fresh in-memory ledger を作り、本番 `runGeneration` と
      `buildGenerationMessages` を通す。本番 DB / quota ledger へは書き込まない。
-   - primary / repair の各送信は **60s 未満**、各送信前の残予算は **62s 以上**、
-     context load から finalize までの単位全体は **150s 未満**。
+   - primary / repair の各送信は **24s 未満**、各送信前の残予算は **26s 以上**、
+     context load から finalize までの単位全体は **55s 未満**
+     （Netlify 同期 Function 60s 硬上限の内側。正本: `shared/contracts/function-budget.ts`）。
    - repair は最大1回。既知の初回応答モデルを exact 構成から除外し、未知なら同じ構成を再利用する。
    - 合格は fresh な **10/10 単位成功**。構成ごとに初回成功数も記録する。
 4. 合格 0 構成ならスクリプトは **non-zero** で終了し、Plan 完了 / 本番 ship 不可とする。
@@ -147,8 +148,8 @@ docker compose up -d --force-recreate --no-deps app
 | 外部送信 / 利用者 / JST 日 | 6 |
 | 外部送信 / アプリ全体 / JST 日（既定） | 20 |
 | 外部送信 / 固定 600 秒窓 | 4 |
-| 試行タイムアウト | 20 秒 |
-| Function 総予算 | 50 秒 |
+| 試行タイムアウト | 24 秒 |
+| Function 総予算 | 55 秒 |
 
 3 / 6 / 20 / 4 / 600 をレビューなしに運用で変えない。
 

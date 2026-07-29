@@ -1,10 +1,15 @@
 import type { Config } from "@netlify/functions";
 import { flyerWeeklyIssueMessages } from "../../shared/contracts/flyer-weekly.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
+import { FLYER_MAX_RAW_BYTES } from "./_shared/flyer-image.js";
 import { runFlyerWeekly } from "./_shared/flyer-weekly-service.js";
 import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.js";
 
-const MAX_MULTIPART_BYTES = 5 * 1024 * 1024;
+/**
+ * Netlify Functions の buffered payload は 6MB。バイナリは Base64 化で約 +30% となり
+ * 実効およそ 4.5MB。画像 raw 上限（4MiB）+ multipart 枠（256KiB）を超えさせない。
+ */
+export const MAX_MULTIPART_BYTES = FLYER_MAX_RAW_BYTES + 256 * 1024;
 
 /**
  * POST /api/flyer-weekly
@@ -62,5 +67,7 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
 export const config: Config = {
   path: "/api/flyer-weekly",
   method: "POST",
+  // sharp デコード + vision。Credit-based Pro 以上で有効。他プランは既定 1024MB のまま。
+  memory: 2048,
   rateLimit: { windowLimit: 20, windowSize: 180, aggregateBy: ["ip"] },
 };

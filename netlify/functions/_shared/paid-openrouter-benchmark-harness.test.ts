@@ -420,12 +420,12 @@ describe("runPaidBenchmarkUnit", () => {
     },
   );
 
-  it("enforces the 62s pre-send boundary through runGeneration", async () => {
-    // 総予算 150s − REQUIRED_SEND 62s = 88s。88_001 で残 < 62s → 送信前中止
+  it("enforces the 26s pre-send boundary through runGeneration", async () => {
+    // 総予算 55s − REQUIRED_SEND 26s = 29s。29_001 で残 < 26s → 送信前中止
     let calls = 0;
     const now = () => {
       calls += 1;
-      return calls === 1 ? 0 : 88_001;
+      return calls === 1 ? 0 : 29_001;
     };
     const blocked = await runWithSteps([], { now });
     expect(blocked.result.failureCodes).toEqual(["generation_timeout"]);
@@ -434,7 +434,7 @@ describe("runPaidBenchmarkUnit", () => {
     calls = 0;
     const boundaryNow = () => {
       calls += 1;
-      return calls === 1 ? 0 : 88_000;
+      return calls === 1 ? 0 : 29_000;
     };
     const allowed = await runWithSteps(
       [{ kind: "output", model: primaryModel, output: validIdeaOutput() }],
@@ -444,10 +444,10 @@ describe("runPaidBenchmarkUnit", () => {
     expect(allowed.requests).toHaveLength(1);
   });
 
-  it("enforces the independent 62s pre-repair boundary", async () => {
+  it("enforces the independent 26s pre-repair boundary", async () => {
     for (const [elapsedMs, expectedOk, expectedRequests] of [
-      [88_000, true, 2],
-      [88_001, false, 1],
+      [29_000, true, 2],
+      [29_001, false, 1],
     ] as const) {
       let nowMs = 0;
       const { result, requests } = await runWithSteps(
@@ -471,10 +471,10 @@ describe("runPaidBenchmarkUnit", () => {
   });
 
   it.each([
-    ["primary", 149_999, true],
-    ["primary", 150_000, false],
-    ["repair", 149_999, true],
-    ["repair", 150_000, false],
+    ["primary", 54_999, true],
+    ["primary", 55_000, false],
+    ["repair", 54_999, true],
+    ["repair", 55_000, false],
   ] as const)("fails closed after %s finalize at %dms", async (path, elapsedMs, expectedOk) => {
     let nowMs = 0;
     const steps: FetchStep[] =
@@ -503,11 +503,11 @@ describe("runPaidBenchmarkUnit", () => {
     let calls = 0;
     const now = () => {
       calls += 1;
-      return calls === 1 ? 0 : 150_000;
+      return calls === 1 ? 0 : 55_000;
     };
     const { result, requests } = await runWithSteps([], { now });
     expect(result.failureCodes).toEqual(["generation_timeout"]);
-    expect(result.totalElapsedMs).toBeGreaterThanOrEqual(150_000);
+    expect(result.totalElapsedMs).toBeGreaterThanOrEqual(55_000);
     expect(requests).toHaveLength(0);
   });
 

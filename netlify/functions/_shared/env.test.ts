@@ -31,8 +31,8 @@ const validServerEnv = {
   USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
   USER_SHORT_WINDOW_SECONDS: "600",
-  OPENROUTER_TIMEOUT_MS: "60000",
-  FUNCTION_TOTAL_BUDGET_MS: "150000",
+  OPENROUTER_TIMEOUT_MS: "24000",
+  FUNCTION_TOTAL_BUDGET_MS: "55000",
   AI_PROCESSING_STALE_SECONDS: "180",
 };
 
@@ -61,8 +61,8 @@ describe("parseOpenRouterModels", () => {
       userShortWindowSeconds: releaseQuota.userShortWindowSeconds,
       // 未設定時の schema default は製品 max 200（compose ローカル既定 20 は env で明示）
       globalDailyLimit: 200,
-      timeoutMs: 60_000,
-      functionTotalBudgetMs: 150_000,
+      timeoutMs: 24_000,
+      functionTotalBudgetMs: 55_000,
       staleAfterSeconds: 180,
     });
     // 二重正本ドリフト防止: generation-service 定数と env ロックを同一値に保つ
@@ -291,10 +291,10 @@ describe("parseOpenRouterModels", () => {
   });
 
   it.each([
-    ["OPENROUTER_TIMEOUT_MS", 60_000, "timeoutMs", 60_000],
-    ["OPENROUTER_TIMEOUT_MS", "60000", "timeoutMs", 60_000],
-    ["FUNCTION_TOTAL_BUDGET_MS", 150_000, "functionTotalBudgetMs", 150_000],
-    ["FUNCTION_TOTAL_BUDGET_MS", "150000", "functionTotalBudgetMs", 150_000],
+    ["OPENROUTER_TIMEOUT_MS", 24_000, "timeoutMs", 24_000],
+    ["OPENROUTER_TIMEOUT_MS", "24000", "timeoutMs", 24_000],
+    ["FUNCTION_TOTAL_BUDGET_MS", 55_000, "functionTotalBudgetMs", 55_000],
+    ["FUNCTION_TOTAL_BUDGET_MS", "55000", "functionTotalBudgetMs", 55_000],
     ["AI_PROCESSING_STALE_SECONDS", 180, "staleAfterSeconds", 180],
     ["AI_PROCESSING_STALE_SECONDS", "180", "staleAfterSeconds", 180],
   ] as const)("accepts exact deadline lock %s=%s", (key, value, openRouterKey, expected) => {
@@ -304,21 +304,21 @@ describe("parseOpenRouterModels", () => {
 
   it.each([
     ["OPENROUTER_TIMEOUT_MS", undefined],
-    ["OPENROUTER_TIMEOUT_MS", "59999"],
-    ["OPENROUTER_TIMEOUT_MS", "60001"],
+    ["OPENROUTER_TIMEOUT_MS", "23999"],
+    ["OPENROUTER_TIMEOUT_MS", "24001"],
     ["OPENROUTER_TIMEOUT_MS", "20000"],
     ["OPENROUTER_TIMEOUT_MS", "0"],
     ["OPENROUTER_TIMEOUT_MS", "-1"],
-    ["OPENROUTER_TIMEOUT_MS", "60000.5"],
+    ["OPENROUTER_TIMEOUT_MS", "24000.5"],
     ["OPENROUTER_TIMEOUT_MS", ""],
-    ["OPENROUTER_TIMEOUT_MS", "060000"],
+    ["OPENROUTER_TIMEOUT_MS", "024000"],
     ["FUNCTION_TOTAL_BUDGET_MS", undefined],
-    ["FUNCTION_TOTAL_BUDGET_MS", "50000"],
-    ["FUNCTION_TOTAL_BUDGET_MS", "149999"],
-    ["FUNCTION_TOTAL_BUDGET_MS", "150001"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "54000"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "54999"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "55001"],
     ["FUNCTION_TOTAL_BUDGET_MS", "0"],
     ["FUNCTION_TOTAL_BUDGET_MS", "-1"],
-    ["FUNCTION_TOTAL_BUDGET_MS", "150000.1"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "55000.1"],
     ["FUNCTION_TOTAL_BUDGET_MS", ""],
     ["AI_PROCESSING_STALE_SECONDS", undefined],
     ["AI_PROCESSING_STALE_SECONDS", "179"],

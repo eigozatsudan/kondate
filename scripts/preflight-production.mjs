@@ -255,8 +255,9 @@ export function validateProductionEnv(env) {
   requirePositiveIntegerString(env, "USER_SHORT_WINDOW_SECONDS", 600);
   requirePositiveIntegerString(env, "AUTH_CONTINUATION_TTL_SECONDS", 300);
   requirePositiveIntegerString(env, "VITE_AUTH_CONTINUATION_TTL_MS", 300_000);
-  requirePositiveIntegerString(env, "OPENROUTER_TIMEOUT_MS", 60_000);
-  requirePositiveIntegerString(env, "FUNCTION_TOTAL_BUDGET_MS", 150_000);
+  // Netlify 同期 60s 硬上限に合わせたリリース固定（shared/contracts/function-budget.ts）
+  requirePositiveIntegerString(env, "OPENROUTER_TIMEOUT_MS", 24_000);
+  requirePositiveIntegerString(env, "FUNCTION_TOTAL_BUDGET_MS", 55_000);
   requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", 180);
   requirePositiveIntegerString(env, "VITE_MAGIC_LINK_RESEND_SECONDS");
   const globalLimit = requirePositiveIntegerString(env, "GLOBAL_DAILY_AI_LIMIT");
@@ -356,14 +357,15 @@ export function validateBillingStripeEnv(env) {
     }
   }
 
-  const stripeKeys = [
+  // env.ts の hasAnyStripeKey と同型: STRIPE_API_VERSION 単独は「鍵あり」とみなさない
+  // （compose / .env.example のピンだけ置いた kill 中を壊れさせない）
+  const stripeSecretKeys = [
     "STRIPE_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET",
     "STRIPE_PRICE_PLUS_MONTHLY",
     "STRIPE_PRICE_PLUS_YEARLY",
-    "STRIPE_API_VERSION",
   ];
-  const anyStripe = stripeKeys.some(
+  const anyStripe = stripeSecretKeys.some(
     (key) => Object.hasOwn(env, key) && env[key] !== undefined && env[key] !== "",
   );
   const mockPresent =

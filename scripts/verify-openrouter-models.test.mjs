@@ -336,9 +336,9 @@ const obsoleteSyncDeadlineName = ["GENERATION", "SYNC", "DEADLINE", "MS"].join("
 
 test("compose locks deadline controls and retires the obsolete sync-deadline env name", () => {
   const compose = readFileSync(join(repoRoot, "compose.yaml"), "utf8");
-  assert.match(compose, /^\s{6}FUNCTION_TOTAL_BUDGET_MS: "150000"$/mu);
+  assert.match(compose, /^\s{6}FUNCTION_TOTAL_BUDGET_MS: "55000"$/mu);
   assert.match(compose, /^\s{6}AI_PROCESSING_STALE_SECONDS: "180"$/mu);
-  assert.match(compose, /^\s{6}OPENROUTER_TIMEOUT_MS: "60000"$/mu);
+  assert.match(compose, /^\s{6}OPENROUTER_TIMEOUT_MS: "24000"$/mu);
   assert.equal(compose.includes(obsoleteSyncDeadlineName), false);
 });
 

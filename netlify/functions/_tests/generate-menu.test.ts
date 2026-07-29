@@ -425,9 +425,9 @@ describe("POST /api/generations/menu", () => {
       callOpenRouter,
       now: () => new Date("2026-07-11T00:00:00.000Z"),
       monotonicNow: () => 0,
-      openRouterTimeoutMs: 60_000,
+      openRouterTimeoutMs: 24_000,
       requestStartedAtMonotonicMs: 0,
-      functionTotalBudgetMs: 150_000,
+      functionTotalBudgetMs: 55_000,
       uuid: () => "86000000-0000-4000-8000-000000000001",
     };
     vi.mocked(materializeAiGeneratedMenu).mockReturnValue(makeGeneratedMenu());

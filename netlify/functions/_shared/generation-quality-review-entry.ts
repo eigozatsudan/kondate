@@ -265,7 +265,7 @@ export async function reviewGenerationQuality(input: {
     generationContext,
     expectedSafetyFingerprint: "idea",
     startedAtMonotonicMs: started,
-    deadlineAtMonotonicMs: started + 150_000,
+    deadlineAtMonotonicMs: started + 55_000,
     regeneration: null,
   });
 

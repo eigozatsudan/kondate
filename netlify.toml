@@ -6,14 +6,23 @@
 [build.environment]
   NODE_VERSION = "24"
 
+# sharp は native addon。esbuild に潰さず node_modules として同梱する（linux x64 バイナリ必須）。
+[functions]
+  external_node_modules = ["sharp"]
+
+# チラシ: 画像デコード負荷。memory は Credit-based Pro+ で有効。
+[functions."flyer-weekly"]
+  external_node_modules = ["sharp"]
+  memory = "2048"
+
 [context.production]
-  command = "npm run verify:openrouter:models && npm run build && node scripts/emit-deploy-headers.mjs"
+  command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs"
 
 [context.deploy-preview]
-  command = "npm run build && node scripts/emit-deploy-headers.mjs"
+  command = "npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs"
 
 [context.branch-deploy]
-  command = "npm run build && node scripts/emit-deploy-headers.mjs"
+  command = "npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs"
 
 [[redirects]]
   from = "/api/emergency-menus"

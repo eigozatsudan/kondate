@@ -1,6 +1,10 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
+import {
+  FUNCTION_TOTAL_BUDGET_MS,
+  OPENROUTER_TIMEOUT_MS,
+} from "../../../shared/contracts/function-budget.js";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import { parseGenerationRequestHmacKey } from "./generation-command-integrity.js";
 
@@ -87,9 +91,9 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   // アプリ全体安全弁。製品 max は 200（本番運用既定は別途 80 推奨）。ローカル compose 既定 20 は維持可
   GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(200),
   // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
-  // 60s/試行・150s/Function: 遅い有料モデル（luna 系等）が 20s 内に終わらないため延長
-  OPENROUTER_TIMEOUT_MS: releaseLockedInteger(60_000, "60000"),
-  FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(150_000, "150000"),
+  // Netlify 同期 60s 硬上限: 試行 24s（primary+repair）/ 総 55s（platform headroom 5s）
+  OPENROUTER_TIMEOUT_MS: releaseLockedInteger(OPENROUTER_TIMEOUT_MS, "24000"),
+  FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(FUNCTION_TOTAL_BUDGET_MS, "55000"),
   AI_PROCESSING_STALE_SECONDS: releaseLockedInteger(180, "180"),
 });
 

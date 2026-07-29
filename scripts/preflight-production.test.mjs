@@ -43,8 +43,8 @@ function completeEnv(overrides = {}) {
     USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
     USER_SHORT_WINDOW_SECONDS: "600",
     AUTH_CONTINUATION_TTL_SECONDS: "300",
-    OPENROUTER_TIMEOUT_MS: "60000",
-    FUNCTION_TOTAL_BUDGET_MS: "150000",
+    OPENROUTER_TIMEOUT_MS: "24000",
+    FUNCTION_TOTAL_BUDGET_MS: "55000",
     AI_PROCESSING_STALE_SECONDS: "180",
     ...overrides,
   };
@@ -251,6 +251,25 @@ test("billing disabled with no Stripe keys is accepted", () => {
     projectRef,
   });
   validateBillingStripeEnv(completeEnv());
+});
+
+test("billing disabled with only STRIPE_API_VERSION pin does not require full keys", () => {
+  // env.ts と同型: API version 単独は鍵セット要求を起動しない
+  assert.deepEqual(
+    validateProductionEnv(
+      completeEnv({
+        BILLING_ENABLED: "false",
+        STRIPE_API_VERSION: "2025-02-24.acacia",
+      }),
+    ),
+    { projectRef },
+  );
+  validateBillingStripeEnv(
+    completeEnv({
+      BILLING_ENABLED: "false",
+      STRIPE_API_VERSION: "2025-02-24.acacia",
+    }),
+  );
 });
 
 test("billing enabled requires full Stripe set and API version pin", () => {

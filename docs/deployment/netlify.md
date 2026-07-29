@@ -40,7 +40,7 @@
 | `USER_SHORT_WINDOW_SECONDS` | `600` |
 | `GLOBAL_DAILY_AI_LIMIT` | 1..**200**（製品 max。ローカル既定 20、本番運用推奨 80） |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
-| `OPENROUTER_TIMEOUT_MS` | `45000`（Netlify 同期 60s 内に収める試行上限） |
+| `OPENROUTER_TIMEOUT_MS` | `24000`（primary+repair が 55s 総予算内に収まる試行上限） |
 | `FUNCTION_TOTAL_BUDGET_MS` | `55000`（プラットフォーム 60s 硬上限の内側。headroom 5s） |
 | `AI_PROCESSING_STALE_SECONDS` | `180` |
 | `BILLING_ENABLED` | `"true"` / `"false"` のみ。未設定は false。Checkout/Portal と品質・チラシ製品面の kill |
@@ -69,10 +69,11 @@ Netlify の同期 Function 実行上限は公式どおり **60 秒固定・非�
 | --- | --- | --- |
 | プラットフォーム硬上限 | 60s | Netlify 同期 Function |
 | `FUNCTION_TOTAL_BUDGET_MS` | **55s** | 切断前 headroom 5s（応答返却・finalize） |
-| `OPENROUTER_TIMEOUT_MS` | **45s** | 1 試行 + finalize 予約 2s が 55s 内に収まる |
+| `OPENROUTER_TIMEOUT_MS` | **24s** | primary + 最大 1 repair（各 24s）+ finalize 2s ≤ 55s |
+| pre-send / pre-repair ゲート | **26s** 残（24+2） | 旧 62s ゲートを 24s 試行に再計算 |
 | `AI_PROCESSING_STALE_SECONDS` | 180 | 切断残骸の掃除猶予（予算より長いのは意図的） |
 
-ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しないが、**同じ 45s/55s env ロック**を使う。
+ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しないが、**同じ 24s/55s env ロック**を使う。
 
 `GENERATION_REQUEST_HMAC_KEY` と `SUPABASE_MAINTENANCE_DB_URL` は:
 

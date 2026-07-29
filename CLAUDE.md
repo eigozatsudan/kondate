@@ -112,9 +112,10 @@ honestly instead of forcing `complete` when a follow-up is still owed.
 - Release-locked quota anchors (verify exact current values in the roadmap's
   Locked Environment Contract — Plan 8 改訂後の値): 3 successful generations
   per JST day, 6 external AI sends/day and 4 per 600s per user, 20/day
-  application-wide default, 60s per OpenRouter attempt / 150s total Function
-  budget, 300s auth-continuation TTL, 30-day retention for terminal
-  generation/shopping-replay rows.
+  application-wide default, 24s per OpenRouter attempt / 55s total Function
+  budget (Netlify sync 60s wall; see `shared/contracts/function-budget.ts`), 300s
+  auth-continuation TTL, 30-day retention for terminal generation/shopping-replay
+  rows.
 - Ownership boundaries are fixed: `shared/contracts` ← browser + Functions;
   `shared/safety` ← Functions + emergency-menu service; `src/features` ← browser
   only; `netlify/functions` ← server only. Do not cross these.

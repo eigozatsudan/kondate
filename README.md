@@ -186,7 +186,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 | 項目                               | 値（全プラン共通の安全弁）                                                                                                                                                 |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 外部 AI 送信 / アプリ全体 / JST 日 | ローカル既定 **20**、本番運用推奨 **80**、上限 **200**（`GLOBAL_DAILY_AI_LIMIT`）                                                                                          |
-| 1 試行タイムアウト                 | 60 秒（`OPENROUTER_TIMEOUT_MS`）                                                                                                                                           |
+| 1 試行タイムアウト                 | 24 秒（`OPENROUTER_TIMEOUT_MS`。primary + 最大 1 repair が 55s 総予算内に収まる）                                                                                          |
 | Function 総予算                    | 55 秒（`FUNCTION_TOTAL_BUDGET_MS`。Netlify 同期 60s 硬上限の内側。正本: `shared/contracts/function-budget.ts` / [docs/deployment/netlify.md](docs/deployment/netlify.md)） |
 
 有料モデルでも提供状況・単価・構造化対応は変わり得ます。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **OpenRouter mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費し、課金も発生します）。
@@ -248,7 +248,7 @@ Stripe ──Webhook──► process_billing_stripe_event（単一 SECURITY DEF
 | `STRIPE_API_VERSION`        | `2025-02-24.acacia`   | **固定**。他値は起動拒否                                                              |
 | `STRIPE_MOCK_BASE_URL`      | 未設定                | **ローカル exact mock のみ**（`http://stripe-mock:8790`）。**本番に置いたら起動失敗** |
 | `OPENROUTER_PLUS_MODELS`    | mock 時は mock モデル | Plus 品質モード用の有料 allowlist（本番は `:free` 禁止）                              |
-| `OPENROUTER_FLYER_MODELS`   | 未設定（任意）        | チラシ vision 専用 allowlist。空なら `OPENROUTER_PLUS_MODELS` にフォールバック     |
+| `OPENROUTER_FLYER_MODELS`   | 未設定（任意）        | チラシ vision 専用 allowlist。空なら `OPENROUTER_PLUS_MODELS` にフォールバック        |
 
 `.env.example` にも同趣旨のコメントがあります。`./scripts/generate-local-secrets.sh` 後の `.env` を編集して使います（**コミット禁止**）。
 
@@ -339,17 +339,17 @@ Customer Portal（Dashboard）の最低確認:
 
 **2. Netlify 環境変数（Billing）**
 
-| 変数                     | 本番                                                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `BILLING_ENABLED`        | 初回 ship 前は `false` のままデプロイ → Webhook 鍵だけ入れて投影を温め → reconcile 後に `true` が安全 |
-| `STRIPE_SECRET_KEY`      | `sk_live_…`                                                                                           |
-| `STRIPE_WEBHOOK_SECRET`  | 本番 endpoint の `whsec_…`                                                                            |
-| `STRIPE_PRICE_PLUS_*`    | Live Price ID                                                                                         |
-| `STRIPE_API_VERSION`     | **`2025-02-24.acacia` のみ**                                                                          |
-| `STRIPE_MOCK_BASE_URL`   | **設定しない**（設定すると起動失敗）                                                                  |
-| `OPENROUTER_PLUS_MODELS` | 検証済み有料 allowlist（品質モード用）                                                                |
+| 変数                      | 本番                                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `BILLING_ENABLED`         | 初回 ship 前は `false` のままデプロイ → Webhook 鍵だけ入れて投影を温め → reconcile 後に `true` が安全 |
+| `STRIPE_SECRET_KEY`       | `sk_live_…`                                                                                           |
+| `STRIPE_WEBHOOK_SECRET`   | 本番 endpoint の `whsec_…`                                                                            |
+| `STRIPE_PRICE_PLUS_*`     | Live Price ID                                                                                         |
+| `STRIPE_API_VERSION`      | **`2025-02-24.acacia` のみ**                                                                          |
+| `STRIPE_MOCK_BASE_URL`    | **設定しない**（設定すると起動失敗）                                                                  |
+| `OPENROUTER_PLUS_MODELS`  | 検証済み有料 allowlist（品質モード用）                                                                |
 | `OPENROUTER_FLYER_MODELS` | 任意。チラシ vision。未設定なら Plus リスト                                                           |
-| `GLOBAL_DAILY_AI_LIMIT`  | 運用推奨 **80**（最大 200）                                                                           |
+| `GLOBAL_DAILY_AI_LIMIT`   | 運用推奨 **80**（最大 200）                                                                           |
 
 **絶対に置かないもの**
 

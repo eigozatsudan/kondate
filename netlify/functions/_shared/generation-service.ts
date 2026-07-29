@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
+  FINALIZE_RESERVE_MS as SHARED_FINALIZE_RESERVE_MS,
+  OPENROUTER_TIMEOUT_MS,
+} from "../../../shared/contracts/function-budget.js";
+import {
   generationConflictCodes,
   generationConflictCopy,
   generationConflictSchema,
@@ -61,9 +65,9 @@ import {
 } from "./regeneration-context.js";
 
 /** 1 回の OpenRouter 試行上限（ms）。OPENROUTER_TIMEOUT_MS リリースロックと一致させる */
-export const ATTEMPT_TIMEOUT_MS = 60_000;
+export const ATTEMPT_TIMEOUT_MS = OPENROUTER_TIMEOUT_MS;
 /** 最終化用に確保する残り予算（ms） */
-export const FINALIZE_RESERVE_MS = 2_000;
+export const FINALIZE_RESERVE_MS = SHARED_FINALIZE_RESERVE_MS;
 /** markSent 前に必要な最小残り予算（試行上限 + finalize 予約） */
 export const REQUIRED_SEND_BUDGET_MS = ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS;
 
@@ -137,7 +141,7 @@ export type GenerationDependencies = {
     input: Parameters<typeof sendMenuGeneration>[0],
   ): Promise<OpenRouterGenerationResult>;
   now(): Date;
-  /** 単調時計。認証・予約も同じ 150s 総予算を消費する */
+  /** 単調時計。認証・予約も同じ 55s 総予算を消費する */
   monotonicNow(): number;
   openRouterTimeoutMs: number;
   requestStartedAtMonotonicMs: number;
@@ -814,7 +818,7 @@ export async function runGeneration(
       excludedModelIds: readonly string[] = [],
       messages: readonly OpenRouterMessage[] = originalMessages,
     ): Promise<OpenRouterGenerationResult | "terminal"> => {
-      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 60s+2s を再確認する。
+      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 24s+2s を再確認する。
       // canRepair/外側ゲート通過後に時間が進んでも、部分 timeout で markSent しない。
       if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
@@ -900,7 +904,7 @@ export async function runGeneration(
       firstWasDuplicate = output.duplicate === true;
     }
 
-    // repair は canRepair（60s+2s 残）のときだけ。timeout 経路はここへ来ない
+    // repair は canRepair（24s+2s 残）のときだけ。timeout 経路はここへ来ない
     // 重複も 1 回だけ repair を通し、再重複なら duplicate_output（成功消費なし）
     if (!canRepair()) {
       return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);
