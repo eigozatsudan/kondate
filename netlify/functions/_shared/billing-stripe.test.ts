@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 const stripeCtor = vi.hoisted(() =>
-  vi.fn(function StripeMock(this: { mocked: boolean }, _key: string, _options?: unknown) {
+  vi.fn(function StripeMock(this: { mocked: boolean }, ..._args: unknown[]) {
+    void _args;
     this.mocked = true;
   }),
 );

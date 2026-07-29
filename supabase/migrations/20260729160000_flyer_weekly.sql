@@ -216,6 +216,10 @@ begin
     pg_catalog.hashtextextended(p_user_id::text || ':flyer:' || p_idempotency_key, 0)
   );
 
+  -- generation の cleanup_stale_ai_generations 対称: 期限切れ processing を先に解放し
+  -- reserved ピン留めと恒久 generation_in_progress を防ぐ（maintenance 待ちにしない）
+  perform public.cleanup_stale_flyer_weekly_batch(p_now, 50);
+
   -- 冪等 hit
   select * into v_request from private.flyer_weekly_requests
   where user_id = p_user_id and idempotency_key = p_idempotency_key;

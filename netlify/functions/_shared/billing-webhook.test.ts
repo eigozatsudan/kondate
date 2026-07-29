@@ -471,11 +471,15 @@ describe("handleBillingWebhook", () => {
       }
       return Promise.resolve(older);
     });
-    list.mockResolvedValue({
-      object: "list",
-      data: [older, newer],
-      has_more: false,
-      url: "",
+    // status 別 list に対応（active だけに両方が載る）
+    list.mockImplementation((params: { status?: string }) => {
+      const data = params.status === "active" || params.status === undefined ? [older, newer] : [];
+      return Promise.resolve({
+        object: "list",
+        data,
+        has_more: false,
+        url: "",
+      });
     });
     cancel.mockResolvedValue(
       makeSubscription({ id: "sub_newer", status: "canceled", created: 2000 }),
@@ -504,6 +508,43 @@ describe("handleBillingWebhook", () => {
     expect(processPayload.status).toBe("active");
   });
 
+  it("keeps newer active over older incomplete dual-sub (never cancel paid for incomplete)", async () => {
+    const olderIncomplete = makeSubscription({
+      id: "sub_incomplete_old",
+      created: 1000,
+      status: "incomplete",
+    });
+    const newerActive = makeSubscription({
+      id: "sub_active_new",
+      created: 2000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", newerActive, { id: "evt_dual_incomplete" }),
+    );
+    retrieve.mockResolvedValue(newerActive);
+    list.mockImplementation((params: { status?: string }) => {
+      const all = [olderIncomplete, newerActive];
+      const data =
+        params.status === undefined ? all : all.filter((sub) => sub.status === params.status);
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+    cancel.mockResolvedValue(
+      makeSubscription({ id: "sub_incomplete_old", status: "canceled", created: 1000 }),
+    );
+
+    await handleBillingWebhook(signedRequest(), deps());
+    expect(cancel).toHaveBeenCalledWith("sub_incomplete_old");
+    expect(cancel).not.toHaveBeenCalledWith("sub_active_new");
+    expect(rpc).toHaveBeenCalledWith(
+      "mark_billing_subscription_dual_cancel_keep",
+      expect.objectContaining({
+        p_keep_stripe_subscription_id: "sub_active_new",
+      }),
+    );
+  });
+
   it("returns 500 when dual-sub mark_keep RPC fails", async () => {
     const older = makeSubscription({
       id: "sub_older",
@@ -519,11 +560,9 @@ describe("handleBillingWebhook", () => {
     constructEvent.mockReturnValue(
       makeEvent("customer.subscription.created", newer, { id: "evt_dual_mark_fail" }),
     );
-    list.mockResolvedValue({
-      object: "list",
-      data: [older, newer],
-      has_more: false,
-      url: "",
+    list.mockImplementation((params: { status?: string }) => {
+      const data = params.status === "active" || params.status === undefined ? [older, newer] : [];
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
     });
     cancel.mockResolvedValue(newer);
     rpc.mockImplementation((name: string) => {

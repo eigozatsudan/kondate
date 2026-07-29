@@ -238,19 +238,23 @@ export async function runBillingCheckout(
 
     const customerId = await ensureStripeCustomer(deps, user.userId);
 
-    // Stripe 側の live sub がある場合は Portal 誘導（409）。list 失敗は 503 fail-closed。
-    let listed: Stripe.ApiList<Stripe.Subscription>;
+    // Stripe 側の live sub がある場合は Portal 誘導（409）。
+    // status 別 list（limit 1）で terminal 履歴に埋もれた live を見落とさない。
+    // list 失敗は 503 fail-closed。
     try {
-      listed = await deps.stripe.subscriptions.list({
-        customer: customerId,
-        status: "all",
-        limit: 10,
-      });
-    } catch {
+      for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+        const listed = await deps.stripe.subscriptions.list({
+          customer: customerId,
+          status,
+          limit: 1,
+        });
+        if (listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
+          throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
+        }
+      }
+    } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
-    }
-    if (listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
-      throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
 
     const usedTrial = await hasUsedTrial(deps, user.email);

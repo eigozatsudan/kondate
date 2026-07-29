@@ -95,6 +95,20 @@ describe("computePlusEntitled", () => {
     ).toEqual({ plusEntitled: false, pastDueGrace: false });
   });
 
+  it("returns false at exact +72h grace boundary (SQL exclusive end parity)", () => {
+    const pastDueSince = new Date(now.getTime() - PAST_DUE_GRACE_HOURS * 3600_000).toISOString();
+    expect(
+      computePlusEntitled(
+        {
+          status: "past_due",
+          past_due_since: pastDueSince,
+          current_period_end: "2026-08-01T00:00:00.000Z",
+        },
+        now,
+      ),
+    ).toEqual({ plusEntitled: false, pastDueGrace: false });
+  });
+
   it("returns true for canceled while still in period", () => {
     expect(
       computePlusEntitled(

@@ -103,7 +103,18 @@ function periodUnixFromSubscription(sub: Stripe.Subscription): {
   return { start: null, end: null };
 }
 
+/** Checkout 進行中の incomplete も live 候補に含む（list / dual 対象の母集団）。 */
 const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
+
+/**
+ * dual-sub keep 優先: entitled（trialing/active/past_due）を incomplete より常に優先。
+ * 古い incomplete Checkout 残骸を keep し、後からできた active を cancel しない（設計: 先に entitled）。
+ */
+function dualSubKeepRank(status: string): number {
+  if (status === "trialing" || status === "active" || status === "past_due") return 0;
+  if (status === "incomplete") return 1;
+  return 2;
+}
 
 function unixToIsoZ(seconds: number | null | undefined): string | null {
   if (seconds === null || seconds === undefined) return null;
@@ -215,7 +226,7 @@ export type DualSubscriptionCleanup = {
 };
 
 /**
- * 二重 live subscription: 新しい方を Stripe cancel、DB は古い方 keep。
+ * 二重 live subscription: keep は entitled 優先・同順位なら created が古い方、他を Stripe cancel。
  * 呼び出し側は discarded に含まれるイベント subscription を通常 projection してはならない。
  */
 export async function cancelDualLiveSubscriptions(
@@ -229,12 +240,19 @@ export async function cancelDualLiveSubscriptions(
   userId: string,
   stripeCustomerId: string,
 ): Promise<DualSubscriptionCleanup> {
-  const listed = await deps.stripe.subscriptions.list({
-    customer: stripeCustomerId,
-    status: "all",
-    limit: 20,
-  });
-  const live = listed.data.filter((sub) => LIVE_SUB_STATUSES.has(sub.status));
+  // status 別 list で terminal 履歴に埋もれた live を落とさない（単一 page status=all は不十分）
+  const byId = new Map<string, Stripe.Subscription>();
+  for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+    const listed = await deps.stripe.subscriptions.list({
+      customer: stripeCustomerId,
+      status,
+      limit: 100,
+    });
+    for (const sub of listed.data) {
+      byId.set(sub.id, sub);
+    }
+  }
+  const live = [...byId.values()].filter((sub) => LIVE_SUB_STATUSES.has(sub.status));
   if (live.length <= 1) {
     return {
       keepSubscriptionId: live[0]?.id ?? null,
@@ -242,23 +260,28 @@ export async function cancelDualLiveSubscriptions(
     };
   }
 
-  const sorted = [...live].sort((a, b) => a.created - b.created);
+  // entitled 優先 → created 昇順（先に entitled になった方を keep）
+  const sorted = [...live].sort((a, b) => {
+    const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
+    if (rankDiff !== 0) return rankDiff;
+    return a.created - b.created;
+  });
   const keep = sorted[0];
   if (keep === undefined) {
     return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
   }
 
   const discardedSubscriptionIds: string[] = [];
-  for (const newer of sorted.slice(1)) {
-    await deps.stripe.subscriptions.cancel(newer.id);
-    discardedSubscriptionIds.push(newer.id);
+  for (const other of sorted.slice(1)) {
+    await deps.stripe.subscriptions.cancel(other.id);
+    discardedSubscriptionIds.push(other.id);
     deps.log({
       level: "warn",
       requestId: deps.requestId,
       code: "billing_dual_subscription_canceled",
       durationMs: Date.now() - deps.startedAt,
       stripeCustomerId,
-      stripeSubscriptionId: newer.id,
+      stripeSubscriptionId: other.id,
     });
   }
 
@@ -598,14 +621,11 @@ async function handleInvoiceEvent(
     return json(200, { ok: true, data: { outcome } });
   }
 
+  // invoice.paid は Subscription オブジェクトの status と整合させる（past_due を勝手に active 化しない）。
+  // past_due_since クリアは paid 確定かつ status が active/trialing のときだけ（A6: past_due+NULL=非 entitled）。
   const isPaid = event.type === "invoice.paid";
-  const status = isPaid
-    ? projection.status === "past_due"
-      ? "active"
-      : projection.status
-    : projection.status === "past_due"
-      ? "past_due"
-      : projection.status;
+  const status = projection.status;
+  const clearPastDueSince = isPaid && (status === "active" || status === "trialing");
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
@@ -619,7 +639,7 @@ async function handleInvoiceEvent(
     current_period_start: projection.current_period_start,
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
-    clear_past_due_since: isPaid,
+    clear_past_due_since: clearPastDueSince,
     retrieved_subscription: {
       status,
       stripe_price_id: projection.stripe_price_id,

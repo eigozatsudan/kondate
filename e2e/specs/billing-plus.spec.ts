@@ -175,6 +175,7 @@ test("Free hard-limit CTA copy is available from settings Plus section", async (
 }) => {
   // 生成を 3 回回して hard limit にするのは flaky なため、
   // Free 向け Plus CTA 文面（Plus なら 1 日最大 10 回）が設定のプラン節に出ることを固定する。
+  // L10-1 review 面 CTA は planner-wizard unit（shows Plus hard-limit CTA…）が正本。
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/settings");
   await expect(page.getByText(/1 日最大 10 回まで/u)).toBeVisible({ timeout: 15_000 });
@@ -184,4 +185,17 @@ test("Free hard-limit CTA copy is available from settings Plus section", async (
       .or(page.getByRole("button", { name: "Plus をはじめる" }))
       .first(),
   ).toBeVisible();
+});
+
+test("Plus usage mock projects success limit 10 on settings plan section", async ({
+  completedOnboardingPage: page,
+}) => {
+  // webhook 実注入の E2E 代替: entitlement + usage mock 後に Plus 枠（limit 10）が載ることを固定。
+  // 実 webhook 投影は Function unit / pgTAP が正本。
+  await mockEntitlement(page, plusActiveEntitlement);
+  await mockUsageTodayPlus(page);
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "プラン" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("こんだて日和 Plus")).toBeVisible();
+  await expect(page.getByText(/1 日最大 10 回まで/u)).toBeVisible();
 });

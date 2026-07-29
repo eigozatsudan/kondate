@@ -124,6 +124,45 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toBeInTheDocument();
   });
 
+  it("does not prefix Plus daily-limit failure with 無料版は (L16)", async () => {
+    vi.useRealTimers();
+    getUsageTodayMock.mockResolvedValue({
+      plan: "plus" as const,
+      plusEntitled: true,
+      success: { consumed: 10, limit: 10, remaining: 0 },
+      attempts: { sent: 0, limit: 20, remaining: 20 },
+      shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+      quality: {
+        day: { consumed: 0, limit: 3, remaining: 3 },
+        month: { consumed: 0, limit: 20, remaining: 20 },
+        available: true,
+      },
+      flyerWeekly: {
+        successConsumed: 0,
+        successLimit: 2,
+        successRemaining: 2,
+        triesConsumed: 0,
+        triesLimit: 6,
+        triesRemaining: 6,
+        weekStartJst: "2026-07-27",
+      },
+      globalAvailable: true,
+      retryAt: null,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel state={failedState} userId={USER_ID} />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(
+        "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/無料版は本日の作成上限/u)).not.toBeInTheDocument();
+  });
+
   it("shows success remaining only via usage today without dual attempt lines", async () => {
     vi.useRealTimers();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

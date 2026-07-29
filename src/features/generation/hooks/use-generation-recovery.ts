@@ -3,7 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
-import { issueMessages } from "@shared/contracts/generation";
+import {
+  generationFailureCodes,
+  issueMessages,
+  type GenerationFailureCode,
+  type GenerationStatusData,
+} from "@shared/contracts/generation";
 import { getGenerationStatus, postGeneration } from "../api/generation-api";
 import {
   generationReducer,
@@ -18,6 +23,45 @@ import {
   type PendingGeneration,
 } from "../model/pending-generation";
 import { jstDayKey, usageTodayQueryKey } from "./use-usage-today";
+
+/** POST の ok:false で offline 再試行に落とさない端末コード（品質 gate / 枠）。 */
+const TERMINAL_POST_FAILURE_CODES = new Set<string>([
+  "quality_mode_requires_plus",
+  "quality_daily_limit",
+  "quality_monthly_limit",
+  "idempotency_payload_mismatch",
+]);
+
+const generationFailureCodeSet = new Set<string>(generationFailureCodes);
+
+function isGenerationFailureCode(code: string): code is GenerationFailureCode {
+  return generationFailureCodeSet.has(code);
+}
+
+/** ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。 */
+function syntheticFailedStatus(
+  idempotencyKey: string,
+  code: GenerationFailureCode,
+): Extract<GenerationStatusData, { status: "failed" }> {
+  return {
+    status: "failed",
+    idempotencyKey,
+    requestId: "00000000-0000-4000-8000-000000000099",
+    error: {
+      code,
+      message: issueMessages[code],
+      retryable: false,
+    },
+    completedAt: new Date().toISOString(),
+    quota: {
+      consumed: false,
+      remaining: 0,
+      userDailyLimit: 3,
+      limitKind: null,
+      retryAt: null,
+    },
+  };
+}
 
 export type GenerationRecoveryController = {
   state: GenerationClientState;
@@ -150,6 +194,18 @@ export function useGenerationRecovery(
               code: "idempotency_payload_mismatch",
               message: issueMessages.idempotency_payload_mismatch,
             });
+            return;
+          }
+          // L10-4: quality_mode_requires_plus 等は 403 ok:false。offline「通信確認」に落とさない。
+          if (
+            error instanceof Error &&
+            TERMINAL_POST_FAILURE_CODES.has(error.message) &&
+            isGenerationFailureCode(error.message)
+          ) {
+            clearPendingGeneration();
+            const failed = syntheticFailedStatus(pending.request.idempotencyKey, error.message);
+            token.phase = "failed";
+            dispatch({ type: "status", data: failed });
             return;
           }
           token.phase = "offline";

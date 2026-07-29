@@ -63,7 +63,8 @@ export function computePlusEntitled(
     }
     const since = new Date(row.past_due_since).getTime();
     const graceMs = PAST_DUE_GRACE_HOURS * 3600_000;
-    if (now.getTime() <= since + graceMs) {
+    // SQL 正本: now < past_due_since + 72h（終端排他）。境界ちょうどは非 entitled。
+    if (now.getTime() < since + graceMs) {
       return { plusEntitled: true, pastDueGrace: true };
     }
     return { plusEntitled: false, pastDueGrace: false };

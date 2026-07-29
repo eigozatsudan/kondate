@@ -2,7 +2,7 @@
 -- Task 7: flyer weekly S1 no try mutation + release symmetry
 
 begin;
-select plan(10);
+select plan(12);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -150,6 +150,54 @@ select is(
   ),
   0,
   'A11: no request row created on S1 full'
+);
+
+-- 4. stale processing は reserve 入口で self-heal（恒久 generation_in_progress を禁止）
+-- S1 の success_count=2 を戻し、期限切れ processing + reserved 1 を seed
+update private.ai_identity_flyer_weekly
+set success_count = 0, reserved_count = 1, updated_at = now()
+where identity_key = tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid)
+  and week_start = private.ai_jst_week_start(now());
+
+insert into private.flyer_weekly_requests (
+  id, user_id, identity_key, idempotency_key, status, week_start,
+  flyer_success_reserved, flyer_try_reserved, flyer_try_sent,
+  user_attempt_reserved, processing_expires_at, started_at
+) values (
+  'b2000000-0000-4000-8000-000000000099'::uuid,
+  'b1000000-0000-4000-8000-000000000001'::uuid,
+  tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid),
+  'idem-flyer-stale-seed',
+  'processing',
+  private.ai_jst_week_start(now()),
+  true, false, false,
+  false,
+  now() - interval '1 second',
+  now() - interval '5 minutes'
+);
+
+select is(
+  (
+    select public.reserve_flyer_weekly(
+      'b1000000-0000-4000-8000-000000000001'::uuid,
+      tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid),
+      'idem-flyer-after-stale',
+      20, 8, 20, false, now()
+    ) ->> 'status'
+  ),
+  'processing',
+  'stale processing is cleaned on reserve entry; new reserve can proceed'
+);
+
+select is(
+  (
+    select reserved_count
+    from private.ai_identity_flyer_weekly
+    where identity_key = tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid)
+      and week_start = private.ai_jst_week_start(now())
+  ),
+  1,
+  'after stale release + new reserve, flyer success reserved_count is 1 (not pinned orphan)'
 );
 
 select * from finish();

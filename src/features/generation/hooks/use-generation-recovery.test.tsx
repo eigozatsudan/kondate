@@ -808,4 +808,25 @@ describe("useGenerationRecovery", () => {
     expect(mockPost).not.toHaveBeenCalled();
     expect(mockStatus).not.toHaveBeenCalled();
   });
+
+  // L10-4: Free 品質モード 403 は offline ではなく failed + issueMessages
+  it("maps POST quality_mode_requires_plus to failed terminal without offline", async () => {
+    mockPost.mockRejectedValueOnce(new Error("quality_mode_requires_plus"));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("failed");
+    if (recovery.result.current.state.phase !== "failed") {
+      throw new Error("expected failed");
+    }
+    expect(recovery.result.current.state.data.error.code).toBe("quality_mode_requires_plus");
+    expect(recovery.result.current.state.data.error.message).toContain("Plus");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    mockPost.mockClear();
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("failed");
+    expect(mockPost).not.toHaveBeenCalled();
+  });
 });

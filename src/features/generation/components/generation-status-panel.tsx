@@ -123,6 +123,53 @@ function NotConsumedNotice({ consumed }: { consumed: boolean }) {
   return <p>献立は完成していないので、作成回数は減っていません</p>;
 }
 
+const QUOTA_FAILURE_CODES = new Set([
+  "user_daily_limit",
+  "user_attempt_limit",
+  "user_short_window_limit",
+]);
+
+/**
+ * 失敗本文の L16 接頭。userId ありは usage.plan を正（Plus に「無料版は」を付けない）。
+ * usage 未取得・失敗時は接頭なしのサーバ文面のまま（誤った Free 接頭を避ける）。
+ * userId 無し経路は QueryClient を要求しない（hooks 分割）。
+ */
+function FailedQuotaMessage({
+  code,
+  message,
+  userId,
+}: {
+  code: string;
+  message: string;
+  userId?: string;
+}) {
+  if (!QUOTA_FAILURE_CODES.has(code)) {
+    return <p>{message}</p>;
+  }
+  if (userId === undefined) {
+    return <p>{formatPlanQuotaCopy(message, "free")}</p>;
+  }
+  return <FailedQuotaMessageWithUsage code={code} message={message} userId={userId} />;
+}
+
+function FailedQuotaMessageWithUsage({
+  message,
+  userId,
+}: {
+  code: string;
+  message: string;
+  userId: string;
+}) {
+  const usage = useUsageToday(userId);
+  if (usage.isPending) {
+    return <p role="status">{message}</p>;
+  }
+  if (!usage.isSuccess) {
+    return <p>{message}</p>;
+  }
+  return <p>{formatPlanQuotaCopy(message, usage.data.plan)}</p>;
+}
+
 /** 終端の利用残数 + retryAt（request-local または usage）。retryAt はパネル直下に必ず1回。 */
 function TerminalQuotaBlock({
   userId,
@@ -227,22 +274,17 @@ export function GenerationStatusPanel({
     );
   }
   if (state.phase === "failed") {
-    const quotaFailureCodes = new Set([
-      "user_daily_limit",
-      "user_attempt_limit",
-      "user_short_window_limit",
-    ]);
-    // 失敗面は usage が無いとき free 接頭を維持（userId 経路は TerminalGenerationUsage が plan を使う）。
-    const failureMessage = quotaFailureCodes.has(state.data.error.code)
-      ? formatPlanQuotaCopy(state.data.error.message, "free")
-      : state.data.error.message;
     const hardLimitFailure =
       state.data.error.code === "user_daily_limit" ||
       state.data.error.code === "user_attempt_limit";
     return (
       <div className="gen-status-panel" data-phase="failed">
         <h1>献立を作成できませんでした</h1>
-        <p>{failureMessage}</p>
+        <FailedQuotaMessage
+          code={state.data.error.code}
+          message={state.data.error.message}
+          {...(userId === undefined ? {} : { userId })}
+        />
         <NotConsumedNotice consumed={state.data.quota.consumed} />
         <TerminalQuotaBlock
           {...(userId === undefined ? {} : { userId })}
