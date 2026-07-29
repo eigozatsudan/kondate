@@ -206,9 +206,9 @@ it("set_onboarding_statusのonboarding_statusをOnboardingStatusのリテラル�
 
 it("preserves every other reservation argument and return contract", () => {
   // identity 日次枠の p_identity_key / p_quota_disabled は typegen 済み。nullable 復元以外は生成型と一致
-  expectTypeOf<
-    Omit<ReserveGeneration["Args"], NullableReserveGenerationArg>
-  >().toEqualTypeOf<Omit<GeneratedReserveGeneration["Args"], NullableReserveGenerationArg>>();
+  expectTypeOf<Omit<ReserveGeneration["Args"], NullableReserveGenerationArg>>().toEqualTypeOf<
+    Omit<GeneratedReserveGeneration["Args"], NullableReserveGenerationArg>
+  >();
   expectTypeOf<ReserveGeneration["Returns"]>().toEqualTypeOf<
     GeneratedReserveGeneration["Returns"]
   >();
