@@ -311,7 +311,10 @@ export async function cancelDualLiveSubscriptions(
 
 /**
  * 初回 trialing|active 後に trial_history を server identity_key で焼成（A7）。
- * email 欠落は fail-closed（焼かない + log）。
+ *
+ * Plus 投影後に焼成を落とすと、cancel 後の再 Checkout で 7 日 trial を再付与できる
+ * 金銭経路の穴になる。identity 解決失敗・RPC 失敗は throw → 500 で Stripe 再送させ、
+ * process が duplicate_processed になっても再試行で焼成を完了させる（fail-closed）。
  */
 export async function maybeInsertTrialHistory(
   deps: {
@@ -337,7 +340,7 @@ export async function maybeInsertTrialHistory(
       code: "billing_trial_identity_unavailable",
       durationMs: Date.now() - deps.startedAt,
     });
-    return;
+    throw new Error("billing_trial_identity_unavailable");
   }
   const email = userData.user.email;
   if (email === null || email === undefined || email.length === 0) {
@@ -347,12 +350,22 @@ export async function maybeInsertTrialHistory(
       code: "billing_trial_identity_unavailable",
       durationMs: Date.now() - deps.startedAt,
     });
-    return;
+    throw new Error("billing_trial_identity_unavailable");
   }
   const identityKey = computeQuotaIdentityKey(deps.env.quotaIdentityHmacKey, email);
-  await deps.admin.rpc("insert_billing_trial_history", {
+  const { error: insertError } = await deps.admin.rpc("insert_billing_trial_history", {
     p_identity_key: identityKey,
   });
+  // PostgREST は { error } を throw しない。未検査だと HTTP 200 のまま trial 未焼成になる。
+  if (insertError !== null) {
+    deps.log({
+      level: "error",
+      requestId: deps.requestId,
+      code: "billing_trial_history_insert_failed",
+      durationMs: Date.now() - deps.startedAt,
+    });
+    throw new Error(insertError.message ?? "insert_billing_trial_history_failed");
+  }
 }
 
 async function handleSubscriptionEvent(
@@ -659,6 +672,16 @@ async function handleInvoiceEvent(
     billingStatus: status,
     stripeSubscriptionId: projection.stripe_subscription_id,
   });
+
+  // subscription.* が欠落・遅延しても invoice 経路だけで Plus が投影され得るため、
+  // 初回 trialing|active の trial 焼成はイベント種別を問わず共有する（A7）。
+  await maybeInsertTrialHistory(
+    { admin: deps.admin, env: deps.env, log, requestId, startedAt },
+    userId,
+    status,
+    outcome,
+  );
+
   return json(200, { ok: true, data: { outcome } });
 }
 

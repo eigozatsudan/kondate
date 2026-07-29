@@ -389,6 +389,79 @@ describe("handleBillingWebhook", () => {
     );
   });
 
+  it("returns 500 when trial_history insert fails after applied so Stripe retries (A7 fail-closed)", async () => {
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", makeSubscription({ status: "trialing" }), {
+        id: "evt_trial_insert_fail",
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "trialing" }));
+    rpc.mockImplementation((name: string) => {
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({ data: { ok: true, outcome: "applied" }, error: null });
+      }
+      if (name === "insert_billing_trial_history") {
+        return Promise.resolve({
+          data: null,
+          error: { message: "insert failed", code: "57014" },
+        });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "request_failed" },
+    });
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "billing_trial_history_insert_failed" }),
+    );
+  });
+
+  it("returns 500 when trial identity is unavailable after applied so Stripe retries", async () => {
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", makeSubscription({ status: "active" }), {
+        id: "evt_trial_identity_fail",
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "active" }));
+    getUserById.mockResolvedValue({
+      data: { user: null },
+      error: { message: "not found" },
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(false);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "billing_trial_identity_unavailable" }),
+    );
+  });
+
+  it("inserts billing_trial_history on invoice.paid when status is active (A7 invoice path)", async () => {
+    const invoice = {
+      id: "in_1",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(makeEvent("invoice.paid", invoice, { id: "evt_invoice_trial" }));
+    retrieve.mockResolvedValue(makeSubscription({ status: "active" }));
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(getUserById).toHaveBeenCalledWith(USER_ID);
+    const trialCall = rpc.mock.calls.find(([n]) => n === "insert_billing_trial_history");
+    expect(trialCall).toBeDefined();
+    const args = trialCall![1] as { p_identity_key: string };
+    expect(args.p_identity_key).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
   it("rejects invalid signature with 400 before body parse", async () => {
     constructEvent.mockImplementation(() => {
       throw new Error("Invalid signature");
