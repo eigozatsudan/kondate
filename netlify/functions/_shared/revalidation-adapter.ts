@@ -228,6 +228,7 @@ async function loadCurrentMemberPreferences(
       portionSize: string | null;
       spiceLevel: string | null;
       easePreferences: readonly string[];
+      dislikes: readonly string[];
     }
   >
 > {
@@ -237,6 +238,7 @@ async function loadCurrentMemberPreferences(
       portionSize: string | null;
       spiceLevel: string | null;
       easePreferences: readonly string[];
+      dislikes: readonly string[];
     }
   >();
   if (memberIds.length === 0) return map;
@@ -252,7 +254,27 @@ async function loadCurrentMemberPreferences(
       portionSize: parsed.data.portion_size,
       spiceLevel: parsed.data.spice_level,
       easePreferences: parsed.data.ease_preferences,
+      dislikes: [],
     });
+  }
+  // 嫌いなもの（dislikes）も好み drift として比較する
+  const { data: dislikeRows, error: dislikeError } = await ownerClient
+    .from("member_dislikes")
+    .select("member_id,name")
+    .in("member_id", [...memberIds]);
+  if (dislikeError === null && Array.isArray(dislikeRows)) {
+    for (const row of dislikeRows) {
+      const record = row as { member_id?: unknown; name?: unknown };
+      if (typeof record.member_id !== "string" || typeof record.name !== "string") {
+        continue;
+      }
+      const current = map.get(record.member_id);
+      if (current === undefined) continue;
+      map.set(record.member_id, {
+        ...current,
+        dislikes: [...current.dislikes, record.name],
+      });
+    }
   }
   return map;
 }
@@ -266,6 +288,7 @@ function detectChangedDetails(
       portionSize: string | null;
       spiceLevel: string | null;
       easePreferences: readonly string[];
+      dislikes: readonly string[];
     }
   >,
 ): readonly ChangedDetail[] {
@@ -304,10 +327,13 @@ function detectChangedDetails(
     if (historical === undefined) continue;
     const easeLeft = [...(historical.easePreferences ?? [])].sort().join("\u0000");
     const easeRight = [...live.easePreferences].sort().join("\u0000");
+    const dislikeLeft = [...(historical.dislikes ?? [])].sort().join("\u0000");
+    const dislikeRight = [...live.dislikes].sort().join("\u0000");
     if (
       (historical.portionSize ?? null) !== live.portionSize ||
       (historical.spiceLevel ?? null) !== live.spiceLevel ||
-      easeLeft !== easeRight
+      easeLeft !== easeRight ||
+      dislikeLeft !== dislikeRight
     ) {
       details.add("preference_changed");
     }
@@ -612,7 +638,7 @@ export async function buildStoredGenerationContext(input: {
         portionSize: asPortion(live?.portionSize),
         spiceLevel: asSpice(live?.spiceLevel),
         easePreferences: asEase(live?.easePreferences),
-        dislikes: [],
+        dislikes: live === undefined ? [] : [...live.dislikes],
       };
     }),
     targetMembers: surviving.map((member) => ({

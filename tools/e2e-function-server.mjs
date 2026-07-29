@@ -29,6 +29,8 @@ export const functionModulePaths = [
   "/netlify/functions/billing-entitlement.ts",
   // paid-plan-stripe Task7: チラシ週間献立
   "/netlify/functions/flyer-weekly.ts",
+  // フィードバック送信（E2E / ローカル Function server と Netlify 経路の差を無くす）
+  "/netlify/functions/submit-feedback.ts",
 ];
 
 function escapeRegex(value) {

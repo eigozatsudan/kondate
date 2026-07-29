@@ -399,7 +399,16 @@ export async function reconcileShoppingList(
   if (list.version !== command.expectedListVersion) {
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
   }
-  const resolved = resolveApprovedDiff(computeShoppingDiff(list, draft), command.approval);
+  let resolved;
+  try {
+    resolved = resolveApprovedDiff(computeShoppingDiff(list, draft), command.approval);
+  } catch (error: unknown) {
+    // クライアント承認キーとサーバ再計算 diff の不一致は 4xx として閉じる（500 にしない）。
+    if (error instanceof Error && error.message === "approved_diff_mismatch") {
+      throw new HttpError(409, "approved_diff_mismatch", "買い物リストの差分が一致しません");
+    }
+    throw error;
+  }
   return deps.applyReconciliation({
     ...command,
     requestHash,
