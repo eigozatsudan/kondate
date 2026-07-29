@@ -4,17 +4,17 @@
 |------|-----|
 | 文書 | `docs/superpowers/specs/2026-07-29-quota-copy-simplification-design.md` |
 | 日付 | 2026-07-29 |
-| 状態 | **Draft — ユーザーレビュー待ち** |
-| 関連 | MVP `2026-07-11-kondate-mvp-design.md` §10.3 / §11.2、無料版文言 `2026-07-28-season-freemium-quota-design.md` Feature 2 |
+| 状態 | **Draft — 敵対的レビュー指摘反映済み・ユーザー承認待ち** |
+| 関連 | MVP `2026-07-11-kondate-mvp-design.md` §10.3 / §11.2 / §14、無料版文言 `2026-07-28-season-freemium-quota-design.md` Feature 2 |
 | 先行議論 | 確認画面の「作成あと3回」「問い合わせあと6回」並記がユーザーに不明瞭 |
-| 敵対的レビュー | 本セッション実施（ADV-1〜11）。本設計に Must 反映済み |
+| レビュー | 方針 ADV（セッション）; 設計書敵対的 `docs/reviews/2026-07-29-quota-copy-simplification-design-adversarial.md`（D-C1〜 / 再生成 **案 A**） |
 
 ---
 
 ## Overview
 
 エンドユーザー向けの**利用回数・上限・失敗**の日本語を簡素化する。  
-内部の成功枠（3）・外部 attempt 枠（6）・短時間枠（4/10分）・global（20）の**数値・判定・API 形は変更しない**。変えるのは**見せ方と `issueMessages` / 同文言のサーバー failure copy**。
+内部の成功枠（3）・外部 attempt 枠（6）・短時間枠（4/10分）・global（20）の**数値・判定・API 形は変更しない**。変えるのは**見せ方と `issueMessages` / Function `failureCopy.message`**。
 
 目標体験:
 
@@ -22,6 +22,7 @@
 2. 仕組み（成功と通信の二枠、失敗も attempt に入る等）は**教えない**。
 3. ブロック時は**行動**（いつ再挑戦できるか）だけ伝える。
 4. 作成回数を使い切ったのか、受付を止めているのかは**トーンだけ分け**、内部用語は出さない。
+5. 確認と再生成で、個人枠の受付不能は**同じように事前に止め**、押してから attempt 上限で落ちる非対称を作らない（**案 A**）。
 
 ---
 
@@ -44,26 +45,31 @@
 - 「AI通信試行」「10分間の通信試行」
 - 「成功回数には含まれません」
 
+再生成シートは success のみ disabled で、**attempts=0 でも送信可**（確認画面と非対称）。
+
 ### 既存指摘との関係
 
 | 過去 ID | 内容 | 本設計の扱い |
 |---------|------|----------------|
-| C-I12 / I-G2 | 確認が成功残だけだと attempt／短期が弱い | **意図は維持**: 受付不能を事前に隠さない（CTA 無効 + バナー）。**手段は破棄**: 常時 dual 残数 |
+| C-I12 / I-G2 | 確認が成功残だけだと attempt／短期が弱い | **意図は維持**: 受付不能を事前に隠さない（CTA 無効 + 平易文）。**手段は破棄**: 常時 dual 残数 |
 | I-X1 / C-I13 | 「AI通信試行」等は主婦向けでない | **主根拠の一つ**として採用 |
-| §10.3 | 成功残に加え attempt 受付可否・短期再開を平易表示 | **解釈を改訂**（下記 Locked）。残 M 回の第二数字は出さない |
-| §11.2 | 成功3は常に保証されない（attempt 6 との相互作用） | ロジック維持。表示は保証口調を弱める（ADV-1） |
+| §10.3 / §14 | attempt 残・「別上限」説明・dual 消費表示 | **本設計が利用者向け表示の正**（下記 Supersede）。枠ロジックは §11.2 維持 |
+| §11.2 | 成功3は常に保証されない | ロジック維持。表示は保証口調を弱める（完全非保証にはしない → R1） |
 
 ### 人間と合意済みのロック（再導出禁止）
 
 | # | 決定 |
 |---|------|
-| L1 | 確認画面の**常時**表示は success 残の**1行のみ**。attempt 残の常時行は出さない |
-| L2 | attempts 逼迫時（例: 残り1）の**事前警告は出さない**。押してから失敗・上限で知る |
+| L1 | **常時**表示は success 残の**1行のみ**。attempt 残の常時行は出さない（確認・再生成・終端） |
+| L2 | attempts **逼迫**（例: 残り1かつ >0）の**事前警告は出さない**。`attemptsRemaining === 0` は blocker（事前 disable + 文）。L2 の範囲は「>0 のときの追加警告を出さない」こと |
 | L3 | **`issueMessages`（API が返す日本語）まで直す**。UI だけの差し替えにしない |
 | L4 | 作成 0 と attempt 0 は **CTA 無効は同じ**だが、**ユーザー向けトーンは分ける**（「作成上限」≠「受付停止」）。仕組み語は使わない |
 | L5 | 数値・DB・予約ロジック・`GET /api/usage/today` の shape は変更しない |
 | L6 | `formatFreeTierQuotaCopy`（文頭「無料版は」）は個人枠の制限説明に継続適用。global 混雑文には付けない |
 | L7 | 有料課金 UI・枠数値の変更・attempt 枠の廃止は非スコープ |
+| L8 | **再生成は案 A**: 確認と揃え、`attemptsRemaining === 0` および short-window ブロック時は **submit disabled + 数字なしの1文**。常時 attempt 残行は出さない |
+| L9 | 利用者向け再開時刻表記は **`明日0:00（日本時間）`** に統一（「0時」は使わない） |
+| L10 | allowlist の正本は**本設計**。freemium 設計 §2.1 は同一実装列車で `superseded by` 追記する（二又禁止） |
 
 ---
 
@@ -72,49 +78,82 @@
 ### Goals
 
 - 確認・再生成・生成終端で、**第二の残数行**（問い合わせ／AI通信試行）を出さない。
-- 主残数の口調を「作成できます」から**受け付け**系へ寄せ、3回保証に読めないようにする。
+- 主残数の口調を「作成できます」から**受け付け**系へ寄せ、保証口調を弱める（**完全な非保証表現ではない**。attempt 先食いの体感差は R1）。
 - ブロック時バナーと `issueMessages` の quota 系を、低リテラシー向けの固定文言に揃える。
-- 失敗で success を消費していないとき、「作成回数は減っていません」を**二重表示せず1か所**で示す。
-- `issueMessages` と Function 側 `failureCopy` の**文言単一ソース**を維持または確立する（ドリフト禁止）。
+- 失敗で success を消費していないとき、「作成回数は減っていません」を**二重表示せず1か所**（UI）で示す。
+- `failureCopy[code].message` は **`issueMessages[code]` を参照**し、文字列のコピー＆ペースト二重定義を禁止する。
+- 確認と再生成で個人 attempt / 短時間ブロックの事前扱いを揃える（L8）。
 
 ### Non-Goals
 
 - 成功3 / attempt6 / 短時間4 / global20 の値変更や窓アルゴリズム変更。
-- attempts 残が少ないときの事前ソフト警告（L2 で明示却下）。
+- attempts 残が少ないとき（>0）の事前ソフト警告（L2）。
 - 枠の仕組みを教えるヘルプ画面・ツールチップ。
 - 英語 UI、課金プラン比較。
 - `usage/today` レスポンスのフィールド削除（クライアントが内部判定に使い続ける）。
+- 再生成の success 説明文を「受け付け」口調へ統一すること（完成時のみ減る説明は据え置き。L 意図: D-I9）。
 
 ### 成功受け入れ表
 
 | シナリオ | 期待 |
 |----------|------|
 | 確認 step、success 3 / attempts 6 | 「無料版は本日あと3回まで献立の作成を受け付けます」**のみ**。問い合わせ6行は**無い** |
-| 確認 step、success 3 / attempts 1 | 同上（事前の逼迫警告なし）。主 CTA は attempts>0 なら有効のまま（既存判定） |
-| 確認 step、attempts 0（success>0） | バナー: 受付停止トーン。問い合わせ残0の数字説明は無い |
-| 確認 step、success 0 | バナー: 作成上限トーン |
-| 再生成シート | 完成時1回使用＋残り success のみ。attempt 常時行なし |
-| 生成失敗 `user_attempt_limit` | API `message` が新文言。画面に「別の上限」「送信」教育なし |
-| 生成失敗・`quota.consumed=false` | 「作成回数は減っていません」系が**1回**（メッセージ本文と別行の二重なし） |
-| 終端 `TerminalGenerationUsage` | success 残1行＋必要時の再開/混雑のみ。AI通信試行・10分残の数字行なし |
-| unit / 既存テスト | 旧「AIへの問い合わせ」「AI通信試行」「成功回数には含まれません」期待を更新して緑 |
+| 確認 step、success 3 / attempts 1 | 同上（事前の逼迫警告なし）。主 CTA は attempts>0 なら有効のまま |
+| 確認 step、attempts 0（success>0） | 常時 success 行**なし**。バナー: 受付停止トーン（`今日は…`）。CTA 無効。数字の第二行なし |
+| 確認 step、success 0 | 常時 success 行なし。バナー: 作成上限トーン。CTA 無効 |
+| 確認 step、shortWindow のみ（success>0, attempts>0） | 常時 success 行**あり**。待ち＋時刻。CTA 無効 |
+| 確認 step、global のみ | 常時 success 行**あり**。混雑＋明日0:00。CTA 無効。「無料版は」なし |
+| 再生成、通常 | 完成時1回使用＋残り success のみ。attempt 常時行なし |
+| 再生成、attempts 0 | submit **disabled** + 受付停止トーン1文（数字なし・無料版接頭） |
+| 再生成、shortWindow ブロック | submit **disabled** + 待ち＋時刻（既存平易文） |
+| 生成失敗 `user_attempt_limit` | API `message` が新文言。「別の上限」「送信」「通信試行」なし |
+| 生成失敗・`quota.consumed=false` | UI に「献立は完成していないので、作成回数は減っていません」**1回のみ**（message 本文に未減を埋め込まない） |
+| constraint_conflict・未消費 | 同上の未減1行 |
+| short window 失敗 | message は平易短文。**`retryAt` があれば UI が必ず時刻を出す** |
+| 終端 `TerminalGenerationUsage` | success 残1行＋必要時の再開/混雑のみ。AI通信試行・10分**残数**行なし |
+| `formatFreeTierQuotaCopy(attempts0 body)` | **「無料版は本日は」を生成しない**（body は `今日は…`） |
+| unit | 旧文言期待を更新。`issueMessages` 全 failure code の message が `failureCopy` と一致。禁止部分文字列（下記） |
 
 ---
 
-## Spec supersede（MVP §10.3）
+## Spec supersede（本設計が利用者向け表示の正）
 
-次の解釈を本設計が正とする（実装・レビューはこちらを優先）:
+実装・レビューは本表を優先する。枠の**数値・判定・保持**は MVP §11.2 および release 固定値のまま。
 
-| 旧（運用上の読み） | 新（本設計） |
-|--------------------|--------------|
-| 成功残 N と attempt 残 M を常時併記 | **成功残 N のみ常時**。attempt は残数表示しない |
-| 「受付可否を平易に」＝残回数の説明 | **今作れるか / 無効か / いつ再挑戦か**を平易に |
-| 失敗時に success と attempt の消費を対で説明 | success 未消費だけ「作成回数は減っていません」。attempt 消費は説明しない |
-| 短期枠を「10分間の通信試行：あとK回」 | 残 K は出さない。`retryAt` があるときだけ待ち文 |
+### §10.3（操作上の配慮）
 
-§11.2 の枠定義・「成功3保証なし」は**変更しない**。表示が保証に読めないよう L1 の受け付け口調で緩和する（ADV-1 の残差は Residual 参照）。
+| 旧（MVP 本文の要求） | 新（本設計） |
+|----------------------|--------------|
+| 生成ボタン近くに成功残に加え attempt 受付可否等を平易表示 | **成功残 N のみ常時**。attempt は残数表示せず、0 のとき disable + 受付停止文 |
+| 失敗時は成功に含まれないことと **attempt が別上限に含まれることを区別表示**し、成功残・**attempt 残**・再試行時刻を**必ず**表示 | 未消費時のみ「作成回数は減っていません」。**attempt 消費・attempt 残は表示しない**。再試行時刻は `retryAt` があるとき UI で表示 |
+| 短期枠の残回数表示 | 残 K は出さない。`retryAt` があるときだけ待ち文 |
 
-無料版 allowlist（`2026-07-28-season-freemium-quota-design.md` §2.1）は本設計の表で**差し替え**する。実装 PR で freemium 設計の表を追記改訂するか、本設計を正と注記する。
+### 生成状態表示（MVP の failed 表示要求）
+
+| 旧 | 新 |
+|----|-----|
+| `failed` で成功残・**外部 attempt 残**・再試行時刻を表示 | 成功残（受け付け口調）・再試行時刻（あれば）。**attempt 残は出さない** |
+
+### §14（エラー処理と表示）— 利用者向け message の正
+
+| 種別 | 旧 MVP 文言の扱い | 本設計の正（issueMessages / 同等 UI） |
+|------|-------------------|----------------------------------------|
+| 個人成功上限 | 「今日は3回利用しました…」は**破棄**（回数リテラル禁止） | `本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。` |
+| 利用者 attempt 日次上限 | 「AIへの送信」「別の上限」は**破棄** | `今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。` |
+| 短期 rate limit | 具体的再開時刻を要求 | message は待ち促し。**時刻は UI が `retryAt` で必ず表示**（確認バナーは文中に日時可） |
+| 全体上限 | 「成功回数には含まれません」入りは**破棄** | `ただいま混雑しています。明日0:00（日本時間）以降にお試しください。`（未減は UI 行） |
+| モデル混雑・停止 | 「送信回数には含まれます」＋ attempt 残は**破棄** | `AIが混み合っています。` + 未減 UI 行 + 再開情報（あれば） |
+| 不正 AI / timeout / internal | 旧「成功回数には含まれません」埋め込みは**破棄** | 短文 + 未減 UI 行 |
+| 緊急献立への導線 | 維持 | 既存 RecoveryLinks 等を維持（本設計で削除しない） |
+
+### 無料版 allowlist
+
+`2026-07-28-season-freemium-quota-design.md` §2.1 の旧表は**本設計 §「無料版 allowlist」が正**。  
+実装列車で freemium 設計に次を追記する（L10）:
+
+```text
+§2.1 allowlist 本文は 2026-07-29-quota-copy-simplification-design に superseded。
+```
 
 ---
 
@@ -123,12 +162,17 @@
 ### 表示原則
 
 ```text
-[通常]  主数字 = success.remaining のみ
-[事前]  attempts 逼迫の追加文は出さない（L2）
+[通常]  主数字 = success.remaining のみ（受け付け口調）
+[事前]  attemptsRemaining > 0 の逼迫警告は出さない（L2）
 [ブロック] success==0 / attempts==0 / shortWindow / global で CTA 無効
-           理由文はトーン分け（L4）。残 M 回は出さない
-[失敗後] issueMessages の平易文 +（未消費なら）作成回数は減っていない 1 行
-         usage 再取得の主数字は success のみ（終端パネル）
+           （確認・再生成とも。再生成に global が無い場合は usage 供給範囲に従う）
+[常時行 hide] usageRemaining===0 または attemptsRemaining===0 のときだけ
+              常時 success 残行を出さない（short/global のみでは消さない）
+[複数 body]  同時に複数理由が立っても body は出してよい（隠さない）。
+              ただし success0 と attempts0 が同時なら success0 文のみ出す
+[失敗後] issueMessages 平易文 +（未消費なら）作成回数未減 1 行
+         retryAt があれば時刻行 Must
+         usage 主数字は success のみ
 ```
 
 ### 画面別
@@ -137,51 +181,86 @@
 
 | 条件 | 表示 |
 |------|------|
-| `usageRemaining !== null && usageRemaining !== 0` | `無料版は本日あと{n}回まで献立の作成を受け付けます` |
-| `attemptsRemaining !== null && attemptsRemaining !== 0` | **行ごと削除**（常時 attempt 行なし） |
-| `usageRemaining === 0` | バナー body: `無料版は本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。` |
-| `attemptsRemaining === 0` | バナー body: `無料版は本日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。` |
-| `globalAvailable === false` | 既存どおり混雑文。「無料版は」なし |
-| `shortWindowRetryAt !== null` | 既存の待ち＋時刻文を維持（「通信試行」語は使わない。現行 review 文が既に平易なら維持） |
+| 常時 success 行 | `usageRemaining !== null && usageRemaining !== 0` **かつ** `usageRemaining !== 0` の blocker 理由が success0/attempts0 でないこと。すなわち **`usageRemaining > 0 && attemptsRemaining !== 0`**（attempts 未取得 `null` は既存どおり誤停止しない: 常時行は success のみ見てよいが、attempts===0 のときは出さない） |
+| 常時文 | `無料版は` + `本日あと{n}回まで献立の作成を受け付けます` |
+| attempt 常時行 | **削除** |
+| success0 body | `無料版は` + `本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。` |
+| attempts0 body | `無料版は` + `今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。`（**「本日は」禁止** → 「無料版は本日は」を避ける） |
+| success0 ∧ attempts0 | **success0 body のみ**（attempts0 body は出さない） |
+| global false | `ただいま混雑しています。明日0:00（日本時間）以降にお試しください。`（「無料版は」なし。「しばらく」は使わない） |
+| shortWindow | 現行の待ち＋**JST 日時**文を維持（通信試行語なし） |
 
-バナー title「いまは新しい献立を作れません」は維持。  
-`hasActiveUsageBlocker` 判定（success0 / attempts0 / global / short）は**ロジック維持**。
+バナー title「いまは新しい献立を作れません」は維持（接頭なし）。  
+`hasActiveUsageBlocker` 判定ロジックは維持。
 
-#### 2. `regeneration-sheet`
+**常時 success 行の実装条件（確定）:**
 
-| 条件 | 表示 |
-|------|------|
-| success 残あり | 既存: `別の献立が完成した場合に1回使用・現在残り{n}回`（無料版接頭） |
-| success 不明 | 既存: `別の献立が完成した場合に1回使用します` |
-| attempts 常時行 | **削除** |
-| short window ブロック | 既存の待ち文を維持（平易） |
-| attempts 0 で submit | 既存の disabled 条件を維持。必要なら受付停止トーンの1文をバナー相当で追加（数字なし） |
+```text
+showSuccessRemaining =
+  usageRemaining !== null
+  && usageRemaining > 0
+  && attemptsRemaining !== 0   // null は「未取得」で行は出してよい。0 のときだけ隠す
+```
+
+#### 2. `regeneration-sheet`（案 A）
+
+| 条件 | 表示・操作 |
+|------|------------|
+| success 残あり | 据え置き: `別の献立が完成した場合に1回使用・現在残り{n}回`（無料版接頭）。受け付け口調へは**変えない** |
+| success 不明 | 据え置き: `別の献立が完成した場合に1回使用します` |
+| attempt 常時行 | **削除** |
+| successRemaining === 0 | submit disabled（既存）+ 作成上限トーン1文（確認と同趣旨・無料版接頭可） |
+| attemptsRemaining === 0 | submit **disabled（新規 Must）** + 受付停止トーン1文（確認の attempts0 と同文・無料版接頭） |
+| shortWindow ブロック | submit **disabled（新規 Must）** + 待ち＋時刻（既存平易文） |
+| success0 ∧ attempts0 | success0 文のみ（確認と同じ優先） |
+
+`submitDisabled` に含める（確定）:
+
+```text
+successRemaining === 0
+|| attemptsRemaining === 0
+|| (shortWindowRemaining === 0 && shortWindowRetryAt !== null)
+// 既存: submitting / !actionsEnabled / loading / error / expiredUnconfirmed
+```
+
+`attemptsRemaining === null`（未取得）では attempt 理由で止めない（確認の null 方針と揃える）。  
+loading / error 時は既存どおり送信不可。
 
 #### 3. `generation-status-panel` / `TerminalGenerationUsage`
 
 | 削除 | 残す・置換 |
 |------|------------|
 | `AI通信試行：本日あと{m}回` | なし |
-| `10分間の通信試行：あと{k}回` | なし。`shortWindow.retryAt` があるときだけ待ち文 |
+| `10分間の通信試行：あと{k}回` | なし。`shortWindow.retryAt` または `quota.retryAt` があるときだけ待ち・再開文 |
 | `成功回数：本日あと{n}回` | `無料版は本日あと{n}回まで献立の作成を受け付けます` |
 | 読込失敗「最新のAI通信試行残数を…」 | `本日の作成回数を確認できません。再読み込みしてください` |
 | `!quota.consumed` の「成功回数には含まれません」 | `献立は完成していないので、作成回数は減っていません` |
 
-`アプリ全体：作成できます / 今日はここまで` は global の平易表示として維持（無料版接頭なし）。必要なら「混み合い」語彙への微修正は可だが必須ではない。
+`アプリ全体：作成できます / 今日はここまで` は維持（無料版接頭なし）。  
+request-local フォールバックも success 残は受け付け口調に揃える。
 
-request-local フォールバック（userId なし）も success 残1行に同じ口調で揃える。
+**Must:** `user_short_window_limit` 等で `retryAt` が response にあるとき、message に時刻が無くても **UI が時刻行を描画**する。
 
 #### 4. 契約メッセージ `issueMessages` + Function `failureCopy`
 
-**正本:** `shared/contracts/generation.ts` の `issueMessages`（および非 conflict 定義）。  
-**サーバー:** `netlify/functions/_shared/generation-service.ts` の `failureCopy` は **同一文字列**であること。実装時は正本 import を優先し、二重定義を解消できるなら解消する（挙動同一が必須）。
+**正本:** `shared/contracts/generation.ts` の `issueMessages`。
+
+**サーバー Must:**
+
+```text
+failureCopy[code].message === issueMessages[code]
+// message 文字列を service に再定義しない。issueMessages を import して参照する。
+// retryable フラグは service ローカルでよい。
+```
+
+単体テスト: 全 `GenerationFailureCode` について上記一致を assert。
 
 変更対象（本文固定）:
 
 | code | 新 message（確定） |
 |------|-------------------|
 | `user_daily_limit` | `本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。` |
-| `user_attempt_limit` | `本日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。` |
+| `user_attempt_limit` | `今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。` |
 | `user_short_window_limit` | `短い時間に何度も作成を試したため、少し待つ必要があります。しばらくしてから再度お試しください。` |
 | `global_daily_limit` | `ただいま混雑しています。明日0:00（日本時間）以降にお試しください。` |
 | `model_unavailable` | `AIが混み合っています。` |
@@ -194,67 +273,76 @@ request-local フォールバック（userId なし）も success 残1行に同�
 
 - 成功回数 / 別の上限 / AIへの送信 / 通信試行 / 問い合わせ / attempt
 - 「成功回数には含まれません」（UI の `!quota.consumed` 行に集約）
+- 回数リテラル（「3回利用」等）
 
-`user_daily_limit` の旧文「今日は3回利用しました」は、将来枠が変わっても嘘にならないよう**回数リテラルを本文に埋め込まない**（残数は usage UI 側）。
+その他の `issueMessages`（同意・アレルギー等）は対象外（維持）。
 
-その他の `issueMessages`（同意・アレルギー等）は本設計の対象外（文言維持）。
-
-#### 5. 無料版 allowlist 更新
+#### 5. 無料版 allowlist（正本・本設計）
 
 `formatFreeTierQuotaCopy` を掛ける対象（葉）:
 
-| 箇所 | body |
-|------|------|
-| review-step 常時 | `本日あと{n}回まで献立の作成を受け付けます` |
-| review-step success0 | `本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。` |
-| review-step attempts0 | `本日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。` |
-| review-step short-window | 現行平易文（日時動的） |
-| Terminal / status success 残 | 常時と同じ受け付け文 |
+| 箇所 | body（接頭前） |
+|------|----------------|
+| review / Terminal 常時 | `本日あと{n}回まで献立の作成を受け付けます` |
+| success0（確認・再生成） | `本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。` |
+| attempts0（確認・再生成） | `今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。` |
+| short-window（日時動的） | 現行平易文 |
 | regeneration 完成時1回 | 現行2文 |
-| failure_code ラップ | `user_daily_limit` / `user_attempt_limit` / `user_short_window_limit` のみ（global・model 混雑は**ラップしない**） |
+| failure_code ラップ | `user_daily_limit` / `user_attempt_limit` / `user_short_window_limit` のみ |
 
-**allowlist から外す（表示自体削除）:**
+**表示削除（allowlist からも外す）:**
 
 - `AIへの問い合わせは本日あと{n}回まで受け付けます`
 - `AI通信試行：本日あと{n}回`
-- `10分間の通信試行：あと{n}回`（残数行）
+- `10分間の通信試行：あと{n}回`
 
-**denylist 更新:**
+**denylist（ラップしない）:**
 
-- `成功回数には含まれません` → 新文 `献立は完成していないので、作成回数は減っていません` も**ラップしない**
-- 読込失敗の新文もラップしない
+- `献立は完成していないので、作成回数は減っていません`
+- 読込失敗・確認中の状態文
+- global 混雑文
+- `アプリ全体：…`
 
-### データフロー（変更なし）
+### データフロー（判定は変更なし・表示のみ）
 
 ```text
 GET /api/usage/today
-  → success.remaining / attempts.remaining / shortWindow / globalAvailable
-  → クライアントは判定・CTA に attempts を使う
-  → 常時ラベルには success のみ出す
+  → success / attempts / shortWindow / global
+  → CTA・disabled に attempts を使う（確認・再生成）
+  → 常時ラベルには success のみ
 
-POST generate / status failed
-  → failure_code + message（issueMessages 由来）
-  → パネルは message 表示 + !consumed なら作成回数未減の1行
-  → TerminalGenerationUsage は usage/today 再取得（success 主表示）
+POST generate | regenerate / status failed
+  → failure_code + message（issueMessages）
+  → パネル: message + !consumed なら未減1行 + retryAt なら時刻
+  → TerminalGenerationUsage: usage/today（success 主表示）
 ```
 
 ### エラー・境界
 
 | ケース | 扱い |
 |--------|------|
-| usage 未取得 | 既存: 確認中 / 確認失敗文。attempt 専用エラー語にしない |
-| success>0 かつ attempts=0 | 常時「あとn回受け付け」行は success 残があるので**出る**が、blocker で CTA 無効＋受付停止バナー。**一見矛盾**し得る → 下記 UI 規則で解消 |
-| 同上の矛盾解消（Must） | **blocker 活性中は常時の success 残行を出さない**。バナーだけにする。押して知る L2 と両立: 逼迫（残1）ではまだ常時行のみ、attempts=0 になって初めてバナーのみ |
-| 失敗メッセージと UI 未減行 | message に未減を書かない。UI が `!consumed` のときだけ1行 |
-| 旧クライアントキャッシュ | SPA 再デプロイ前提。API message は新文言のみ |
+| usage 未取得 | 既存: 確認中 / 失敗文。attempt 専用エラー語にしない |
+| success>0 ∧ attempts=0 | 常時 success 行なし + 受付停止バナー + CTA 無効 |
+| short/global のみ | 常時 success 行あり + 各 body + CTA 無効 |
+| 失敗 message と未減行 | message に未減を書かない。UI が `!consumed` のときだけ |
+| short window message | 時刻なし。UI が `retryAt` を Must 表示 |
+| 旧クライアント | SPA 再デプロイ前提 |
 
 ### テスト
 
-- `shared/contracts/generation.test.ts`: 必要なら新文言の exact / 禁止部分文字列（「別の上限」「通信試行」等）
-- `generation-service` / generate-menu / generation-status テストの message fixture
-- `review-step` / `planner-wizard` / `regeneration-sheet` / `generation-status-panel` / `generation-page` の可視テキスト
-- freemium `free-tier` はヘルパ自体変更なし。呼び出し元期待のみ
-- E2E が旧文言を掴んでいれば更新（acceptance は文言非固定なら触らない）
+**契約ガード（Must）:**
+
+- 全 `GenerationFailureCode` で `failureCopy[code].message === issueMessages[code]`
+- `issueMessages` の全 value および本設計が列挙する UI 固定文について、次の部分文字列を**含まない**（ユーザー向け）:
+  - `成功回数` / `別の上限` / `AIへの送信` / `通信試行` / `問い合わせ` / `attempt`
+- 接頭後に `無料版は本日は` が**現れない**（attempts0 body が `今日は`）
+
+**UI / Function fixture:**
+
+- `review-step` / `planner-wizard` / `regeneration-sheet`（disabled 条件含む） / `generation-status-panel` / `generation-page`
+- `generation-service` / generate-menu / generation-status の message 期待
+- freemium ヘルパ自体は変更なし。呼び出し元・allowlist コメント更新
+- E2E が旧文言を掴んでいれば更新
 
 ---
 
@@ -262,45 +350,70 @@ POST generate / status failed
 
 | ID | リスク | 緩和 | 受容理由 |
 |----|--------|------|----------|
-| R1 | success 残表示中に attempt を先に使い切り、体感「あと3回」が実現しない | 受け付け口調；attempts=0 でバナー切替；L2 で事前警告はしない | ユーザー決定。§11.2 の意図的相互作用 |
-| R2 | 受付停止と作成上限の違いが一部ユーザーに伝わらない | トーン文を分ける（L4） | 仕組み説明よりマシ |
-| R3 | サポートが「どちらの枠か」を画面から読み取れない | failure_code は API/ログに残る | ユーザー画面を優先 |
-| R4 | C-I12 再燃（「attempt が見えない」） | blocker・失敗・issueMessages で受付不能は隠さない | dual number 回帰はしない |
+| R1 | success 残表示中に attempt を先に使い切り、体感「あとN回」が実現しない | 受け付け口調；attempts=0 で事前停止；逼迫（>0）は警告しない | ユーザー決定（L2）+ §11.2 |
+| R2 | 受付停止と作成上限の違いが一部ユーザーに伝わらない | L4 トーン分離 | 仕組み説明よりマシ |
+| R3 | サポートが画面から枠種別を読み取れない | failure_code は API/ログ | ユーザー画面優先 |
+| R4 | C-I12 再燃（attempt 残が見えない） | disable + 平易 blocker / 失敗文。dual number に戻さない | 意図的 |
+| R5 | 複数バナー body が並ぶと重い | success0∧attempts0 は1本化。他は併記許容 | 理由を隠さない方を優先 |
+| R6 | 「受け付けます」がなお保証に聞こえる | Goals で完全非保証を主張しない | R1 と一体 |
 
 ---
 
 ## PR / 実装分割（案）
 
-単一列車でよい規模。分割するなら:
+同一リリース必須（L3 / L10）:
 
-1. **契約**: `issueMessages` + `failureCopy` 単一化とテスト  
-2. **UI**: review / regen / status panel + 無料版 allowlist コメント・テスト  
-
-どちらも同一リリースに入れる（L3: API 文言と UI の分断禁止）。
+1. **契約**: `issueMessages` 改訂 + `failureCopy` 参照化 + 一致・禁止文字列テスト  
+2. **UI**: review / regen（案 A disabled）/ status panel  
+3. **文書**: freemium §2.1 に superseded 追記  
 
 ---
 
 ## 敵対的レビュー反映チェック
 
+### 方針 ADV（セッション）
+
 | ADV | 反映 |
 |-----|------|
-| ADV-1 過大表示 | 受け付け口調 + R1 受容 + attempts=0 時は常時行を隠す |
-| ADV-2 同一文言統合の危険 | L4 トーン分離、表で固定 |
-| ADV-3 C-I12 | Spec supersede 節 |
-| ADV-4 issueMessages | L3・表で全 quota/失敗系を改訂 |
-| ADV-5 TerminalUsage | 第二数字削除を Must |
-| ADV-6 再生成 | 常時 attempt 行削除 |
-| ADV-7 無限再試行誤解 | 未減は1行のみ。attempt 消費は言わない。R1 |
-| ADV-8 無料版冗長 | バナー title は接頭なし維持 |
-| ADV-9 閾値 | L2 により事前閾値ロジック自体を置かない |
-| ADV-10 テスト | 受け入れ表・テスト節 |
-| ADV-11 global | 混雑語彙・無料版非接頭を維持 |
+| ADV-1 過大表示 | 受け付け口調 + R1/R6。完全非保証は Goals で主張しない |
+| ADV-2 同一文言統合 | L4。success0∧attempts0 は success0 のみ |
+| ADV-3 C-I12 | Supersede + 事前 disable 維持 |
+| ADV-4 issueMessages | L3・表 |
+| ADV-5 TerminalUsage | 第二数字削除 |
+| ADV-6 再生成 | L8 案 A |
+| ADV-7 無限再試行 | 未減1行のみ |
+| ADV-8 無料版冗長 | title 接頭なし；attempts0 は「今日は」 |
+| ADV-9 閾値 | L2 で >0 警告なし |
+| ADV-10 テスト | 禁止文字列・一致テスト Must |
+| ADV-11 global | 混雑 + 0:00。接頭なし |
+
+### 設計書レビュー（D-*）
+
+| ID | 反映 |
+|----|------|
+| D-C1 | Supersede を §10.3 失敗・状態・§14 まで拡張 |
+| D-C2 | attempts0 body を `今日は…` に変更 |
+| D-C3 | **案 A** を L8 で固定 |
+| D-I1 | 常時行 hide を success0/attempts0 に限定 |
+| D-I2 | 複数 body 許容 + success0∧attempts0 は1本 |
+| D-I3 | global 事前も明日0:00 に揃え |
+| D-I4 | retryAt UI Must |
+| D-I5 | Goals を R1 整合に修正 |
+| D-I6 | L10 freemium superseded 必須 |
+| D-I7 | failureCopy 参照 Must + 全 code テスト |
+| D-I8 | L9 で 0:00 統一 |
+| D-I9 | 再生成 success 文は据え置きと明記 |
+| D-I10 | 禁止部分文字列を列挙 |
+| D-M1 | 状態・レビュー欄を更新 |
+| D-M2 | 受け入れ表を拡充 |
+| D-M6 | L2 スコープを >0 のみと明記 |
 
 ---
 
-## Self-review（設計時点）
+## Self-review（改訂後）
 
-1. **Placeholder:** なし（文言は表で固定）。short-window の review 本文は「現行維持」とし、実装時に「通信試行」が残っていれば同じ PR で平易文へ揃える。  
-2. **Internal consistency:** L2（事前警告なし）と ADV-1 緩和は「口調＋attempts=0 で常時行オフ」で整合。  
-3. **Scope:** コピーと表示条件のみ。quota ロジック非対象。  
-4. **Ambiguity:** `failureCopy` と `issueMessages` は同一必須と明記。blocker 中は success 常時行を出さないと明記。
+1. **Placeholder:** なし。文言・disabled 条件は固定。  
+2. **Internal consistency:** L2（逼迫は警告しない）と L8（0 は事前停止）は両立。常時行 hide は D-I1 どおり狭い。  
+3. **Scope:** 表示と message。quota ロジック非対象。  
+4. **Ambiguity:** 案 A / failureCopy 参照 / freemium 正本 / 0:00 / hide 条件を Locked 化済み。  
+5. **親仕様:** Supersede 表が §14 まで及ぶ。§11.2 数値は触らない。
