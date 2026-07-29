@@ -238,6 +238,8 @@ it.each(["success", "failure"] as const)(
     expect(screen.getByRole("button", { name: "えんどう豆たんぱくを削除" })).toBeEnabled();
     expect(onError).toHaveBeenCalledTimes(outcome === "failure" ? 1 : 0);
   },
+  // 全 suite 並行時は userEvent 連鎖が既定 5s を超えやすい（単独 ~0.4s / 全 suite 失敗例 ~6s）
+  15_000,
 );
 
 it("ignores a rapid second allergy mutation click", () => {
