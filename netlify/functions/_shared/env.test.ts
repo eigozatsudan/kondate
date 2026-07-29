@@ -204,8 +204,71 @@ describe("parseOpenRouterModels", () => {
     ).toBe(1);
   });
 
-  it("defaults billingEnabled to false in Task3", () => {
-    expect(parseServerEnv(validServerEnv).billingEnabled).toBe(false);
+  it("defaults BILLING_ENABLED to false and keeps webhook keys optional when false", () => {
+    const env = parseServerEnv(validServerEnv);
+    expect(env.billingEnabled).toBe(false);
+    expect(env.stripe).toBeUndefined();
+  });
+
+  it("rejects VITE_STRIPE_SECRET_KEY in server env source", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        VITE_STRIPE_SECRET_KEY: "sk_test_x",
+      }),
+    ).toThrow(/server_configuration_invalid/);
+  });
+
+  it("requires Stripe secrets when BILLING_ENABLED=true", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        BILLING_ENABLED: "true",
+      }),
+    ).toThrow();
+  });
+
+  it("allows BILLING_ENABLED=false with webhook secrets present (A3)", () => {
+    const env = parseServerEnv({
+      ...validServerEnv,
+      BILLING_ENABLED: "false",
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_WEBHOOK_SECRET: "whsec_xxx",
+      STRIPE_PRICE_PLUS_MONTHLY: "price_m",
+      STRIPE_PRICE_PLUS_YEARLY: "price_y",
+      STRIPE_API_VERSION: "2025-02-24.acacia",
+    });
+    expect(env.billingEnabled).toBe(false);
+    expect(env.stripe?.webhookSecret).toBeTruthy();
+    expect(env.stripe?.apiVersion).toBe("2025-02-24.acacia");
+  });
+
+  it("rejects STRIPE_API_VERSION other than the locked pin when stripe keys present", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        BILLING_ENABLED: "false",
+        STRIPE_SECRET_KEY: "sk_test_xxx",
+        STRIPE_WEBHOOK_SECRET: "whsec_xxx",
+        STRIPE_PRICE_PLUS_MONTHLY: "price_m",
+        STRIPE_PRICE_PLUS_YEARLY: "price_y",
+        STRIPE_API_VERSION: "2024-01-01.acacia",
+      }),
+    ).toThrow(/server_configuration_invalid/);
+  });
+
+  it("accepts BILLING_ENABLED=true with full Stripe secrets", () => {
+    const env = parseServerEnv({
+      ...validServerEnv,
+      BILLING_ENABLED: "true",
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_WEBHOOK_SECRET: "whsec_xxx",
+      STRIPE_PRICE_PLUS_MONTHLY: "price_m",
+      STRIPE_PRICE_PLUS_YEARLY: "price_y",
+      STRIPE_API_VERSION: "2025-02-24.acacia",
+    });
+    expect(env.billingEnabled).toBe(true);
+    expect(env.stripe?.pricePlusMonthly).toBe("price_m");
   });
 
   it.each([

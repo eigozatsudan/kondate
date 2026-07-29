@@ -31,6 +31,17 @@ export type SafeLogEvent = {
   mealType?: "breakfast" | "lunch" | "dinner";
   /** 緊急献立: メイン食材の件数のみ（名称は出さない） */
   mainIngredientCount?: number;
+  // --- billing（M4）。email / receipt / name 等 PII は禁止 ---
+  plan?: "free" | "plus";
+  billingStatus?: string;
+  priceInterval?: "month" | "year";
+  qualityMode?: boolean;
+  flyer?: boolean;
+  /** opaque Stripe id のみ（cus_… / sub_…） */
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  /** unmapped 等の集計カウンタ（本文は出さない） */
+  alertMetric?: number;
 };
 
 type LogWriter = (serialized: string) => void;
@@ -87,6 +98,21 @@ export const createSafeLogger =
     if (event.mealType !== undefined) record.meal_type = event.mealType;
     if (event.mainIngredientCount !== undefined) {
       record.main_ingredient_count = Math.max(0, Math.trunc(event.mainIngredientCount));
+    }
+    // billing: 非 PII の列挙・opaque id のみ
+    if (event.plan !== undefined) record.plan = event.plan;
+    if (event.billingStatus !== undefined) record.billing_status = event.billingStatus;
+    if (event.priceInterval !== undefined) record.price_interval = event.priceInterval;
+    if (event.qualityMode !== undefined) record.quality_mode = event.qualityMode ? 1 : 0;
+    if (event.flyer !== undefined) record.flyer = event.flyer ? 1 : 0;
+    if (event.stripeCustomerId !== undefined) {
+      record.stripe_customer_id = event.stripeCustomerId;
+    }
+    if (event.stripeSubscriptionId !== undefined) {
+      record.stripe_subscription_id = event.stripeSubscriptionId;
+    }
+    if (event.alertMetric !== undefined) {
+      record.alert_metric = Math.max(0, Math.trunc(event.alertMetric));
     }
     write(JSON.stringify(record));
   };

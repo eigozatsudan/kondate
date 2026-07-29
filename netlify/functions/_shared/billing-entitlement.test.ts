@@ -4,6 +4,8 @@ import {
   computePlusEntitled,
   limitsForPlan,
   PAST_DUE_GRACE_HOURS,
+  productSurfacesOpen,
+  toEntitlementData,
   type Entitlement,
 } from "./billing-entitlement.js";
 
@@ -176,5 +178,23 @@ describe("limitsForPlan", () => {
       attemptsPerDay: 20,
       shortWindowLimit: 8,
     });
+  });
+});
+
+describe("toEntitlementData / productSurfacesOpen (A3)", () => {
+  it("closes product surfaces and forces free quota when billing disabled", () => {
+    expect(productSurfacesOpen(false)).toBe(false);
+    const data = toEntitlementData(baseEntitlement, false);
+    expect(data.productSurfacesOpen).toBe(false);
+    expect(data.quotaPlan).toBe("free");
+    expect(data.dbPlusEntitled).toBe(true);
+    expect(data.plusEntitled).toBe(true);
+  });
+
+  it("opens product surfaces and uses plus quota when enabled and entitled", () => {
+    expect(productSurfacesOpen(true)).toBe(true);
+    const data = toEntitlementData(baseEntitlement, true);
+    expect(data.productSurfacesOpen).toBe(true);
+    expect(data.quotaPlan).toBe("plus");
   });
 });

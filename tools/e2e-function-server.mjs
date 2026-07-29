@@ -5,7 +5,7 @@ import { createServer as createViteServer } from "vite";
 // Plan 4 履歴・再生成ジャーニーと Plan 5 買い物リストジャーニーが必要とする
 // Function を含む閉じた一覧。
 // Vite proxy が /api を 5174 へ転送するため、ここに無い path は E2E で 404 になる。
-const functionModulePaths = [
+export const functionModulePaths = [
   "/netlify/functions/auth-continuation-create.ts",
   "/netlify/functions/auth-continuation-deposit.ts",
   "/netlify/functions/auth-continuation-claim.ts",
@@ -22,6 +22,11 @@ const functionModulePaths = [
   "/netlify/functions/shopping-list-revalidate.ts",
   // Plan 6 アカウント削除 E2E（設定 DangerZone → DELETE /api/account）
   "/netlify/functions/delete-account.ts",
+  // paid-plan-stripe Task4: billing Checkout / Portal / Webhook / Entitlement
+  "/netlify/functions/billing-checkout.ts",
+  "/netlify/functions/billing-portal.ts",
+  "/netlify/functions/billing-webhook.ts",
+  "/netlify/functions/billing-entitlement.ts",
 ];
 
 function escapeRegex(value) {

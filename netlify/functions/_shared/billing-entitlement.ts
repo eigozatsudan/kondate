@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { EntitlementData } from "../../../shared/contracts/billing.js";
 import { planQuota, type PlanCode } from "../../../shared/contracts/plan-quota.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 
@@ -77,6 +78,37 @@ export function computePlusEntitled(
 export function applyQuotaPlan(entitlement: Entitlement, billingEnabled: boolean): PlanCode {
   if (!billingEnabled) return "free";
   return entitlement.plusEntitled ? "plus" : "free";
+}
+
+/**
+ * Checkout/Portal/品質/チラシの製品面が開いているか。
+ * A3: BILLING_ENABLED のみで判定（DB の plus 投影とは独立）。
+ */
+export function productSurfacesOpen(billingEnabled: boolean): boolean {
+  return billingEnabled;
+}
+
+/**
+ * GET /api/billing/entitlement 用: DB 投影 + kill 分割面を合成する。
+ * productSurfacesOpen / quotaPlan は env.billingEnabled 由来。
+ */
+export function toEntitlementData(
+  entitlement: Entitlement,
+  billingEnabled: boolean,
+): EntitlementData {
+  const quotaPlan = applyQuotaPlan(entitlement, billingEnabled);
+  return {
+    plan: entitlement.plan,
+    status: entitlement.status,
+    plusEntitled: entitlement.plusEntitled,
+    pastDueGrace: entitlement.pastDueGrace,
+    currentPeriodEnd: entitlement.currentPeriodEnd,
+    cancelAtPeriodEnd: entitlement.cancelAtPeriodEnd,
+    trialEnd: entitlement.trialEnd,
+    dbPlusEntitled: entitlement.dbPlusEntitled,
+    productSurfacesOpen: productSurfacesOpen(billingEnabled),
+    quotaPlan,
+  };
 }
 
 export function limitsForPlan(plan: PlanCode) {

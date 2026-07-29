@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
-import { createE2eFunctionServer, startE2eFunctionServer } from "./e2e-function-server.mjs";
+import {
+  createE2eFunctionServer,
+  functionModulePaths,
+  startE2eFunctionServer,
+} from "./e2e-function-server.mjs";
 
 const routes = new Map([
   [
@@ -128,6 +132,34 @@ const routes = new Map([
       config: { path: "/api/account" },
       default: async (request) =>
         Response.json({ method: request.method, body: await request.text() }),
+    },
+  ],
+  [
+    "/netlify/functions/billing-checkout.ts",
+    {
+      config: { path: "/api/billing/checkout", method: "POST" },
+      default: async () => Response.json({ ok: true, route: "checkout" }),
+    },
+  ],
+  [
+    "/netlify/functions/billing-portal.ts",
+    {
+      config: { path: "/api/billing/portal", method: "POST" },
+      default: async () => Response.json({ ok: true, route: "portal" }),
+    },
+  ],
+  [
+    "/netlify/functions/billing-webhook.ts",
+    {
+      config: { path: "/api/billing/webhook", method: "POST" },
+      default: async () => Response.json({ ok: true, route: "webhook" }),
+    },
+  ],
+  [
+    "/netlify/functions/billing-entitlement.ts",
+    {
+      config: { path: "/api/billing/entitlement", method: "GET" },
+      default: async () => Response.json({ ok: true, route: "entitlement" }),
     },
   ],
 ]);
@@ -258,6 +290,46 @@ test("returns 404 when config has no matching method and logs no secret on handl
   } finally {
     server.close();
   }
+});
+
+test("registers billing function modules for e2e proxy", () => {
+  for (const path of [
+    "/netlify/functions/billing-checkout.ts",
+    "/netlify/functions/billing-portal.ts",
+    "/netlify/functions/billing-webhook.ts",
+    "/netlify/functions/billing-entitlement.ts",
+  ]) {
+    assert.ok(
+      functionModulePaths.includes(path),
+      `expected functionModulePaths to include ${path}`,
+    );
+  }
+});
+
+test("routes billing endpoints from allowlisted modules", async () => {
+  await withServer(
+    async (path) => routes.get(path),
+    async (origin) => {
+      assert.deepEqual(
+        await (
+          await fetch(`${origin}/api/billing/checkout`, { method: "POST", body: "{}" })
+        ).json(),
+        { ok: true, route: "checkout" },
+      );
+      assert.deepEqual(
+        await (await fetch(`${origin}/api/billing/portal`, { method: "POST", body: "{}" })).json(),
+        { ok: true, route: "portal" },
+      );
+      assert.deepEqual(
+        await (await fetch(`${origin}/api/billing/webhook`, { method: "POST", body: "{}" })).json(),
+        { ok: true, route: "webhook" },
+      );
+      assert.deepEqual(await (await fetch(`${origin}/api/billing/entitlement`)).json(), {
+        ok: true,
+        route: "entitlement",
+      });
+    },
+  );
 });
 
 test("closes the HTTP server and Vite middleware server exactly once", async () => {

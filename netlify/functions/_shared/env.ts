@@ -1,7 +1,11 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
+import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import { parseGenerationRequestHmacKey } from "./generation-command-integrity.js";
+
+/** ローカル exact Stripe mock。isLocal 以外で設定されていたら throw。 */
+const localStripeMockBaseUrl = "http://stripe-mock:8790";
 
 const localServerSupabaseUrl = "http://kong:8000";
 const localBrowserSupabaseUrl = "http://127.0.0.1:8000";
@@ -121,10 +125,23 @@ export type ServerEnv = Omit<
   /** identity 日次枠 HMAC 鍵（メールは保存しない） */
   quotaIdentityHmacKey: Uint8Array;
   /**
-   * Stripe 課金面の有効化。Task3 では未配線で常に false（枠は Free 強制）。
-   * Task4 で BILLING_ENABLED と Stripe 鍵を結合する。
+   * Stripe 課金面の有効化（Checkout/Portal/品質・チラシ製品面）。
+   * false でも Webhook は鍵があれば稼働継続し、枠は Free 強制（A3）。
    */
   billingEnabled: boolean;
+  /**
+   * Stripe 鍵一式。BILLING_ENABLED=true 時は必須。
+   * false でも鍵があれば設定（Webhook 用 A3）。鍵なしは undefined。
+   */
+  stripe?: {
+    secretKey: string;
+    webhookSecret: string;
+    pricePlusMonthly: string;
+    pricePlusYearly: string;
+    apiVersion: typeof STRIPE_API_VERSION;
+    /** exact ローカル mock のみ。本番設定は parse throw。 */
+    mockBaseUrl?: string;
+  };
 };
 
 export function parseManagedSupabaseProjectRef(value: string): string | null {
@@ -197,6 +214,93 @@ export function parseOpenRouterModels(
 
 const officialOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 
+function parseBillingEnabledFlag(source: Record<string, unknown>): boolean {
+  const raw = source.BILLING_ENABLED;
+  if (raw === undefined || raw === null || raw === "") return false;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new Error("server_configuration_invalid");
+}
+
+function hasAnyStripeKey(source: Record<string, unknown>): boolean {
+  return (
+    source.STRIPE_SECRET_KEY !== undefined ||
+    source.STRIPE_WEBHOOK_SECRET !== undefined ||
+    source.STRIPE_PRICE_PLUS_MONTHLY !== undefined ||
+    source.STRIPE_PRICE_PLUS_YEARLY !== undefined ||
+    source.STRIPE_API_VERSION !== undefined ||
+    source.STRIPE_MOCK_BASE_URL !== undefined
+  );
+}
+
+/**
+ * Stripe 鍵一式を閉じた形に正規化する。
+ * BILLING_ENABLED=true 時は全必須。false でも鍵があれば Webhook 用に受理（A3）。
+ */
+function parseStripeConfig(
+  source: Record<string, unknown>,
+  options: { billingEnabled: boolean; isLocal: boolean },
+): ServerEnv["stripe"] {
+  const anyKey = hasAnyStripeKey(source);
+  if (!options.billingEnabled && !anyKey) {
+    return undefined;
+  }
+
+  const secretKey = source.STRIPE_SECRET_KEY;
+  const webhookSecret = source.STRIPE_WEBHOOK_SECRET;
+  const priceMonthly = source.STRIPE_PRICE_PLUS_MONTHLY;
+  const priceYearly = source.STRIPE_PRICE_PLUS_YEARLY;
+  const apiVersion = source.STRIPE_API_VERSION;
+  const mockBaseUrl = source.STRIPE_MOCK_BASE_URL;
+
+  // 鍵が不要（kill かつ未設定）なら stripe なし
+  if (!options.billingEnabled && !anyKey) {
+    return undefined;
+  }
+
+  // BILLING_ENABLED=true、または A3 で鍵を載せた kill 中は完全一式を要求
+  if (typeof secretKey !== "string" || secretKey.length === 0) {
+    throw new Error("server_configuration_invalid");
+  }
+  if (typeof webhookSecret !== "string" || webhookSecret.length === 0) {
+    throw new Error("server_configuration_invalid");
+  }
+  if (typeof priceMonthly !== "string" || priceMonthly.length === 0) {
+    throw new Error("server_configuration_invalid");
+  }
+  if (typeof priceYearly !== "string" || priceYearly.length === 0) {
+    throw new Error("server_configuration_invalid");
+  }
+
+  // ADV-13: 鍵があるときは API version ピン必須（未設定・不一致は throw）
+  if (apiVersion !== STRIPE_API_VERSION) {
+    throw new Error("server_configuration_invalid");
+  }
+
+  let resolvedMock: string | undefined;
+  if (mockBaseUrl !== undefined && mockBaseUrl !== null && mockBaseUrl !== "") {
+    if (typeof mockBaseUrl !== "string") {
+      throw new Error("server_configuration_invalid");
+    }
+    if (!options.isLocal) {
+      throw new Error("server_configuration_invalid");
+    }
+    if (mockBaseUrl !== localStripeMockBaseUrl) {
+      throw new Error("server_configuration_invalid");
+    }
+    resolvedMock = mockBaseUrl;
+  }
+
+  return {
+    secretKey,
+    webhookSecret,
+    pricePlusMonthly: priceMonthly,
+    pricePlusYearly: priceYearly,
+    apiVersion: STRIPE_API_VERSION,
+    ...(resolvedMock === undefined ? {} : { mockBaseUrl: resolvedMock }),
+  };
+}
+
 export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (source.VITE_AUTH_CONTINUATION_ENCRYPTION_KEY !== undefined) {
     throw new Error("server_configuration_invalid");
@@ -211,6 +315,12 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (source.VITE_AI_QUOTA_DISABLED !== undefined) {
     throw new Error("server_configuration_invalid");
   }
+  // Stripe / Billing の VITE_ は存在自体を拒否
+  for (const key of Object.keys(source)) {
+    if (key.startsWith("VITE_STRIPE_") || key.startsWith("VITE_BILLING_")) {
+      throw new Error("server_configuration_invalid");
+    }
+  }
   // 未設定 / "false" / "true" のみ。1 や yes は設定ミスとして落とす。
   const rawQuotaDisabled = source.AI_QUOTA_DISABLED;
   let aiQuotaDisabledFlag = false;
@@ -223,6 +333,7 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       throw new Error("server_configuration_invalid");
     }
   }
+  const billingEnabled = parseBillingEnabledFlag(source);
   const result = rawServerEnvSchema.safeParse(source);
   if (!result.success) throw new Error("server_configuration_invalid");
 
@@ -262,6 +373,7 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   if (!isLocal && result.data.OPENROUTER_BASE_URL !== officialOpenRouterBaseUrl) {
     throw new Error("server_configuration_invalid");
   }
+  const stripe = parseStripeConfig(source, { billingEnabled, isLocal });
   const { GENERATION_REQUEST_HMAC_KEY, QUOTA_IDENTITY_HMAC_KEY, ...publicEnv } = result.data;
   return {
     ...publicEnv,
@@ -292,8 +404,8 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       requestHmacKey: GENERATION_REQUEST_HMAC_KEY,
     },
     quotaIdentityHmacKey: QUOTA_IDENTITY_HMAC_KEY,
-    // Task3: BILLING_ENABLED 未配線。常に false（Task4 で Stripe 鍵と結合）
-    billingEnabled: false,
+    billingEnabled,
+    ...(stripe === undefined ? {} : { stripe }),
   };
 }
 

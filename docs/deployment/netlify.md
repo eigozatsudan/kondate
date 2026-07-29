@@ -41,6 +41,20 @@
 | `OPENROUTER_TIMEOUT_MS` | `60000` |
 | `FUNCTION_TOTAL_BUDGET_MS` | `150000` |
 | `AI_PROCESSING_STALE_SECONDS` | `180` |
+| `BILLING_ENABLED` | `"true"` / `"false"` のみ。未設定は false。Checkout/Portal と品質・チラシ製品面の kill |
+| `STRIPE_SECRET_KEY` | server only。`sk_test_` / `sk_live_`。`BILLING_ENABLED=true` 時必須。Webhook は false でも鍵があれば稼働 |
+| `STRIPE_WEBHOOK_SECRET` | server only。`whsec_...` |
+| `STRIPE_PRICE_PLUS_MONTHLY` | server only。Price ID |
+| `STRIPE_PRICE_PLUS_YEARLY` | server only。Price ID |
+| `STRIPE_API_VERSION` | **`2025-02-24.acacia` 固定**（変更は設計改訂） |
+| `STRIPE_MOCK_BASE_URL` | ローカル exact mock のみ。本番に設定したら起動失敗 |
+
+**本番で存在してはならない（Billing）**
+
+- あらゆる `VITE_STRIPE_*` / `VITE_BILLING_*`
+- ブラウザ向け Price ID / `sk_` / `whsec_`
+
+課金 reconcile と Portal Dashboard チェックリストは `docs/runbooks/billing-reconcile.md`。
 
 ### 同期 Function のプラットフォーム上限（必須確認）
 
