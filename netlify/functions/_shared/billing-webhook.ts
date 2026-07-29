@@ -311,7 +311,14 @@ export async function cancelDualLiveSubscriptions(
 
 /**
  * 初回 trialing|active 後に trial_history を server identity_key で焼成（A7）。
- * email 欠落は fail-closed（焼かない + log）。
+ *
+ * Plus 投影後に焼成を落とすと、cancel 後の再 Checkout で 7 日 trial を再付与できる
+ * 金銭経路の穴になる。identity 解決失敗・RPC 失敗は throw → 500 で Stripe 再送させ、
+ * process が duplicate_processed になっても再試行で焼成を完了させる（fail-closed）。
+ *
+ * outcome は問わない（stale_ignored / same_second_skip も含む）。ignore-older で
+ * canceled が先に applied され、遅延 trialing が stale でも、event が trialing|active なら
+ * trial があった証拠として焼成する。insert は ON CONFLICT DO NOTHING で冪等。
  */
 export async function maybeInsertTrialHistory(
   deps: {
@@ -323,11 +330,9 @@ export async function maybeInsertTrialHistory(
   },
   userId: string,
   status: string,
-  outcome: ProcessBillingOutcome,
+  _outcome: ProcessBillingOutcome,
 ): Promise<void> {
   if (status !== "trialing" && status !== "active") return;
-  // applied または既に投影済み相当（duplicate は trial を再焼かないが冪等 insert も可）
-  if (outcome !== "applied" && outcome !== "duplicate_processed") return;
 
   const { data: userData, error: userError } = await deps.admin.auth.admin.getUserById(userId);
   if (userError !== null || userData.user === null) {
@@ -337,7 +342,7 @@ export async function maybeInsertTrialHistory(
       code: "billing_trial_identity_unavailable",
       durationMs: Date.now() - deps.startedAt,
     });
-    return;
+    throw new Error("billing_trial_identity_unavailable");
   }
   const email = userData.user.email;
   if (email === null || email === undefined || email.length === 0) {
@@ -347,12 +352,22 @@ export async function maybeInsertTrialHistory(
       code: "billing_trial_identity_unavailable",
       durationMs: Date.now() - deps.startedAt,
     });
-    return;
+    throw new Error("billing_trial_identity_unavailable");
   }
   const identityKey = computeQuotaIdentityKey(deps.env.quotaIdentityHmacKey, email);
-  await deps.admin.rpc("insert_billing_trial_history", {
+  const { error: insertError } = await deps.admin.rpc("insert_billing_trial_history", {
     p_identity_key: identityKey,
   });
+  // PostgREST は { error } を throw しない。未検査だと HTTP 200 のまま trial 未焼成になる。
+  if (insertError !== null) {
+    deps.log({
+      level: "error",
+      requestId: deps.requestId,
+      code: "billing_trial_history_insert_failed",
+      durationMs: Date.now() - deps.startedAt,
+    });
+    throw new Error(insertError.message ?? "insert_billing_trial_history_failed");
+  }
 }
 
 async function handleSubscriptionEvent(
@@ -495,8 +510,10 @@ async function handleSubscriptionEvent(
     });
   }
 
-  const statusForTrial =
-    event.type === "customer.subscription.deleted" ? "canceled" : projection.status;
+  // trial 焼成の status は **イベントオブジェクトの frozen status** を使う。
+  // live retrieve（projection）だと、applied 後 burn 500 → cancel → 同一 event 再送で
+  // retrieve=canceled となり burn が永久スキップされ、同一 identity の再 trial が開く。
+  const statusForTrial = event.type === "customer.subscription.deleted" ? "canceled" : sub.status;
   await maybeInsertTrialHistory(
     { admin: deps.admin, env: deps.env, log, requestId, startedAt },
     userId,
@@ -659,6 +676,25 @@ async function handleInvoiceEvent(
     billingStatus: status,
     stripeSubscriptionId: projection.stripe_subscription_id,
   });
+
+  // subscription.* が欠落・遅延しても invoice 経路だけで Plus が投影され得るため、
+  // 初回 trialing|active の trial 焼成はイベント種別を問わず共有する（A7）。
+  // invoice.paid の duplicate 再送時は live retrieve が canceled でも焼成を再試行する
+  //（初回 applied 後 burn 失敗 → cancel で永久スキップされるのを防ぐ）。
+  const statusForTrial =
+    event.type === "invoice.paid" &&
+    outcome === "duplicate_processed" &&
+    status !== "trialing" &&
+    status !== "active"
+      ? "active"
+      : status;
+  await maybeInsertTrialHistory(
+    { admin: deps.admin, env: deps.env, log, requestId, startedAt },
+    userId,
+    statusForTrial,
+    outcome,
+  );
+
   return json(200, { ok: true, data: { outcome } });
 }
 
