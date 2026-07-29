@@ -32,14 +32,16 @@
 | `OPENROUTER_API_KEY` | プロバイダ鍵 |
 | `OPENROUTER_BASE_URL` | 正確に `https://openrouter.ai/api/v1` |
 | `OPENROUTER_MODELS` | 順序付き一意の有料 allowlist ID。`:free`・`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` 禁止。各 ID は `structured_outputs` AND `response_format` と prompt+completion ≤ $4.00/1M を満たすこと |
+| `OPENROUTER_PLUS_MODELS` | Plus 品質モード用 allowlist。同じ有料・構造化・$4 ルール。`BILLING_ENABLED=true` 時は 1 本以上必須 |
+| `OPENROUTER_FLYER_MODELS` | **任意**。チラシ vision 専用。未設定・空なら `OPENROUTER_PLUS_MODELS`。vision + 上記同じゲート |
 | `USER_DAILY_AI_LIMIT` | `3` |
 | `USER_DAILY_EXTERNAL_CALL_LIMIT` | `6` |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | `4` |
 | `USER_SHORT_WINDOW_SECONDS` | `600` |
 | `GLOBAL_DAILY_AI_LIMIT` | 1..**200**（製品 max。ローカル既定 20、本番運用推奨 80） |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
-| `OPENROUTER_TIMEOUT_MS` | `60000` |
-| `FUNCTION_TOTAL_BUDGET_MS` | `150000` |
+| `OPENROUTER_TIMEOUT_MS` | `45000`（Netlify 同期 60s 内に収める試行上限） |
+| `FUNCTION_TOTAL_BUDGET_MS` | `55000`（プラットフォーム 60s 硬上限の内側。headroom 5s） |
 | `AI_PROCESSING_STALE_SECONDS` | `180` |
 | `BILLING_ENABLED` | `"true"` / `"false"` のみ。未設定は false。Checkout/Portal と品質・チラシ製品面の kill |
 | `STRIPE_SECRET_KEY` | server only。`sk_test_` / `sk_live_`。`BILLING_ENABLED=true` 時必須。Webhook は false でも鍵があれば稼働 |
@@ -56,20 +58,21 @@
 
 課金 reconcile と Portal Dashboard チェックリストは `docs/runbooks/billing-reconcile.md`。
 
-### 同期 Function のプラットフォーム上限（必須確認）
+### 同期 Function のプラットフォーム上限（ロック済み再整合）
 
-アプリ側の総予算は設計ロックどおり **150 秒**（試行 60 秒）だが、Netlify の同期 Function 実行上限は
-公式ドキュメント上 **60 秒固定・非設定**（Background は 15 分だが本プロダクトは同期のみ・背景継続禁止）。
+Netlify の同期 Function 実行上限は公式どおり **60 秒固定・非設定**（Background は 15 分だが本プロダクトは同期のみ・背景継続禁止）。
+`netlify.toml` / `export const config` で 60 秒超へ引き上げる手段は無い。
 
-- `netlify.toml` / `export const config` に timeout を書いて 150 秒へ引き上げる手段は無い。
-- 60 秒プラットフォーム上限の下では、一次 OpenRouter 試行だけで枠を使い切る可能性があり、
-  repair や finalize 前にプラットフォームが切断すると DB は `processing` のまま
-  `AI_PROCESSING_STALE_SECONDS`（180）まで残る。
-- **本番 ship 前に** 次のどちらかを満たすこと（未達なら 150s 予算の本番投入は不可）:
-  1. Netlify アカウントで同期上限 ≥150s が契約・確認済みである、または
-  2. 設計を改訂してアプリ予算とプラットフォーム上限を再整合する（本ドキュメント単独ではロックを緩めない）。
+アプリ予算はプラットフォーム内側に再ロックする（正本: `shared/contracts/function-budget.ts`）:
 
-ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しない。
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| プラットフォーム硬上限 | 60s | Netlify 同期 Function |
+| `FUNCTION_TOTAL_BUDGET_MS` | **55s** | 切断前 headroom 5s（応答返却・finalize） |
+| `OPENROUTER_TIMEOUT_MS` | **45s** | 1 試行 + finalize 予約 2s が 55s 内に収まる |
+| `AI_PROCESSING_STALE_SECONDS` | 180 | 切断残骸の掃除猶予（予算より長いのは意図的） |
+
+ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しないが、**同じ 45s/55s env ロック**を使う。
 
 `GENERATION_REQUEST_HMAC_KEY` と `SUPABASE_MAINTENANCE_DB_URL` は:
 
@@ -84,9 +87,11 @@
 | 項目 | 方針 |
 | --- | --- |
 | 依存 | `package.json` に `sharp` を **exact pin**（`npm install sharp --save-exact`） |
-| Bundling | Netlify Functions の esbuild が sharp を **external にしない**こと。platform は **linux x64**（Netlify ランタイム）で解決できるバイナリを同梱する |
-| 代替 | sharp が解決不能でも pure JS デコードへ silent に落とさない。デプロイ検証で失敗させ設計改訂する |
-| ローカル | `import sharp from "sharp"` が Node 上で成功すること（Task7 unit） |
+| Bundling | `netlify.toml` の `[functions] external_node_modules = ["sharp"]` で esbuild に潰さず **node_modules として同梱**。lockfile に `@img/sharp-linux-x64` が必須（Netlify ランタイム） |
+| memory | `flyer-weekly` に `memory = 2048`（Credit-based Pro+ で有効。他プランは既定 1024MB） |
+| ペイロード | multipart Content-Length 上限 = 画像 raw 4MiB + 256KiB（Netlify 実効 ~4.5MB 内） |
+| 検証 | `npm run verify:sharp:netlify`（exact pin / linux-x64 lock / import+decode）。production・preview・branch の build command と `prebuild` で fail-closed |
+| 代替 | sharp が解決不能でも pure JS デコードへ silent に落とさない |
 
 `OPENROUTER_FLYER_MODELS` は任意。未設定時は `OPENROUTER_PLUS_MODELS` を vision 送信に使う。
 

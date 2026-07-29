@@ -138,14 +138,16 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-local-mock-key}
       OPENROUTER_MODELS: ${OPENROUTER_MODELS:-mock/kondate-primary:free,mock/kondate-repair:free}
       OPENROUTER_PLUS_MODELS: ${OPENROUTER_PLUS_MODELS:-mock/kondate-primary:free,mock/kondate-repair:free}
+      # 任意。未設定時は Function が OPENROUTER_PLUS_MODELS にフォールバック。
+      OPENROUTER_FLYER_MODELS: ${OPENROUTER_FLYER_MODELS:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-http://openrouter-mock:8787/api/v1}
       USER_DAILY_AI_LIMIT: "3"
       USER_DAILY_EXTERNAL_CALL_LIMIT: "6"
       USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4"
       USER_SHORT_WINDOW_SECONDS: "600"
       GLOBAL_DAILY_AI_LIMIT: "20"
-      OPENROUTER_TIMEOUT_MS: "60000"
-      FUNCTION_TOTAL_BUDGET_MS: "150000"
+      OPENROUTER_TIMEOUT_MS: "45000"
+      FUNCTION_TOTAL_BUDGET_MS: "55000"
       AI_PROCESSING_STALE_SECONDS: "180"
       # ローカル個人枠スキップ。true は SERVER_SITE_ORIGIN が 127.0.0.1:5173 のときのみ有効（非 local は parse throw）。
       AI_QUOTA_DISABLED: ${AI_QUOTA_DISABLED:-false}
