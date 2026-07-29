@@ -538,13 +538,8 @@ export function ReviewStep({
           ) : null}
         </div>
       )}
-      {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。 */}
-      {value.targetMode === "idea" && (
-        <p role="note">
-          家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
-        </p>
-      )}
-      {/* Q4: Plus 品質モード。Free でも見えるがサーバが quality_mode_requires_plus で拒否。 */}
+      {/* Q4: Plus 品質モード。Free でも見えるがサーバが quality_mode_requires_plus で拒否。
+          idea 注意（§5.3）より前に置き、注意が wizard-actions の直前 sibling を保つ。 */}
       <label className="stack quality-mode-toggle">
         <span className="row quality-mode-toggle-row">
           <input
@@ -562,6 +557,12 @@ export function ReviewStep({
           Plus のくわしい AI で、より丁寧な献立を作ります（1 日の回数に限りがあります）
         </span>
       </label>
+      {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。 */}
+      {value.targetMode === "idea" && (
+        <p role="note">
+          家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
+        </p>
+      )}
       <div className="wizard-actions">
         {onBack !== undefined && (
           <button

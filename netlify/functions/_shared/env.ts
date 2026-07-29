@@ -230,14 +230,20 @@ function parseBillingEnabledFlag(source: Record<string, unknown>): boolean {
   throw new Error("server_configuration_invalid");
 }
 
+/** 空文字は「未設定」とみなす（compose の ${VAR:-} 空展開で kill 中が壊れないようにする）。 */
+function isPresentEnvString(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0;
+}
+
 function hasAnyStripeKey(source: Record<string, unknown>): boolean {
+  // STRIPE_API_VERSION 単独（compose 既定ピン）は「鍵あり」とみなさない。
+  // secret / price / mock のいずれかが非空のときだけフル一式を要求する。
   return (
-    source.STRIPE_SECRET_KEY !== undefined ||
-    source.STRIPE_WEBHOOK_SECRET !== undefined ||
-    source.STRIPE_PRICE_PLUS_MONTHLY !== undefined ||
-    source.STRIPE_PRICE_PLUS_YEARLY !== undefined ||
-    source.STRIPE_API_VERSION !== undefined ||
-    source.STRIPE_MOCK_BASE_URL !== undefined
+    isPresentEnvString(source.STRIPE_SECRET_KEY) ||
+    isPresentEnvString(source.STRIPE_WEBHOOK_SECRET) ||
+    isPresentEnvString(source.STRIPE_PRICE_PLUS_MONTHLY) ||
+    isPresentEnvString(source.STRIPE_PRICE_PLUS_YEARLY) ||
+    isPresentEnvString(source.STRIPE_MOCK_BASE_URL)
   );
 }
 

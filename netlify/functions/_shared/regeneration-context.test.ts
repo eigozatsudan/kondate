@@ -33,7 +33,7 @@ const privacyConsentQuery = vi.hoisted(() =>
     Promise.resolve({
       data: {
         user_id: "85000000-0000-4000-8000-000000000001",
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
       error: null,
@@ -192,7 +192,7 @@ const dishCommand: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
     idempotencyKey: "82000000-0000-4000-8000-000000000001",
     changeReason: "simpler",
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -206,7 +206,7 @@ const menuCommand: Extract<GenerationCommand, { kind: "regenerate_menu" }> = {
     idempotencyKey: "82000000-0000-4000-8000-000000000002",
     changeReason: "simpler",
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -223,7 +223,7 @@ describe("loadRegenerationExecutionContext", () => {
     privacyConsentQuery.mockResolvedValue({
       data: {
         user_id: user.userId,
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
       error: null,
@@ -269,7 +269,7 @@ describe("loadRegenerationExecutionContext", () => {
       "foreign user's current consent",
       {
         user_id: "85000000-0000-4000-8000-000000000099",
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
     ],
@@ -307,7 +307,7 @@ describe("loadRegenerationExecutionContext", () => {
       "foreign user's current consent",
       {
         user_id: "85000000-0000-4000-8000-000000000099",
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
     ],
@@ -502,7 +502,7 @@ describe("loadRegenerationExecutionContext", () => {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           changeReason: "simpler",
           changeReasonCustom: null,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },
@@ -932,7 +932,7 @@ describe("isRegenerationDuplicate material equivalence", () => {
           sourceMenuId: sourceMenu.menuId,
           changeReason: "simpler",
           changeReasonCustom: null,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },
@@ -1350,7 +1350,7 @@ describe("buildDishRegenerationPrompt label source refs", () => {
           idempotencyKey: "82000000-0000-4000-8000-000000000099",
           changeReason: "simpler",
           changeReasonCustom: null,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },

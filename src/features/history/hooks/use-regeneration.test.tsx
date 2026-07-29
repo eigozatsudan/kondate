@@ -152,7 +152,7 @@ describe("useRegeneration", () => {
     expect(command.request.sourceMenuId).toBe(MENU_ID);
     expect(command.request.changeReason).toBe("simpler");
     expect(command.request.changeReasonCustom).toBeNull();
-    expect(command.request.privacyNoticeVersion).toBe("2026-07-28.v1");
+    expect(command.request.privacyNoticeVersion).toBe("2026-07-29.v1");
     expect(command.request.expiredPantryConfirmations).toEqual([]);
     expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
@@ -185,7 +185,7 @@ describe("useRegeneration", () => {
     expect(generationEndpointFor(command)).toBe("/api/generations/dish");
     if (command.kind !== "regenerate_dish") throw new Error("expected regenerate_dish");
     expect(command.request.dishId).toBe(DISH_ID);
-    expect(command.request.privacyNoticeVersion).toBe("2026-07-28.v1");
+    expect(command.request.privacyNoticeVersion).toBe("2026-07-29.v1");
     expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 
@@ -204,7 +204,7 @@ describe("useRegeneration", () => {
                 sourceMenuId: MENU_ID,
                 changeReason: "simpler",
                 changeReasonCustom: null,
-                privacyNoticeVersion: "2026-07-28.v1",
+                privacyNoticeVersion: "2026-07-29.v1",
                 expiredPantryConfirmations: [],
               },
             }
@@ -218,7 +218,7 @@ describe("useRegeneration", () => {
                 dishId: DISH_ID,
                 changeReason: "different_flavor",
                 changeReasonCustom: null,
-                privacyNoticeVersion: "2026-07-28.v1",
+                privacyNoticeVersion: "2026-07-29.v1",
                 expiredPantryConfirmations: [],
               },
             };
@@ -336,7 +336,7 @@ describe("useRegeneration", () => {
       sourceMenuId: MENU_ID,
       changeReason: "simpler",
       changeReasonCustom: null,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     });
     expect(navigateMock).toHaveBeenCalledWith("/generation");
@@ -382,7 +382,7 @@ describe("useRegeneration", () => {
           idempotencyKey: "10000000-0000-4000-8000-000000000099",
           draftId: "20000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },
@@ -421,7 +421,7 @@ describe("useRegeneration", () => {
           idempotencyKey: "10000000-0000-4000-8000-000000000088",
           draftId: "20000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },

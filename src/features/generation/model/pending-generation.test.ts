@@ -44,7 +44,7 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
     sourceMenuId: "60000000-0000-4000-8000-000000000001",
     changeReason: "simpler" as const,
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1" as const,
+    privacyNoticeVersion: "2026-07-29.v1" as const,
     expiredPantryConfirmations: [],
   };
   if (kind === "new_menu") {
@@ -56,7 +56,7 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
         idempotencyKey: IDEMPOTENCY_KEY,
         draftId: "20000000-0000-4000-8000-000000000001",
         draftRevision: 3,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [],
       },
     };

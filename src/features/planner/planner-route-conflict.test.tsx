@@ -93,7 +93,7 @@ function renderRetainedDraft(queryClient: QueryClient) {
   queryClient.setQueryData(pantryKeys.list(userId), []);
   queryClient.setQueryData(privacyKeys.current(userId), {
     user_id: userId,
-    notice_version: "2026-07-28.v1",
+    notice_version: "2026-07-29.v1",
   });
   return render(
     <MemoryRouter initialEntries={["/planner"]}>

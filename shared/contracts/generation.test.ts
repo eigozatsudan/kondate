@@ -402,7 +402,7 @@ describe("usageTodayDataSchema", () => {
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         draftId: "20000000-0000-4000-8000-000000000001",
         draftRevision: 1,
-        privacyNoticeVersion: "2026-07-28.v1" as const,
+        privacyNoticeVersion: "2026-07-29.v1" as const,
         expiredPantryConfirmations: [],
       },
     };
@@ -450,7 +450,7 @@ describe("newMenuGenerationRequestSchema", () => {
     idempotencyKey: "10000000-0000-4000-8000-000000000001",
     draftId: "20000000-0000-4000-8000-000000000001",
     draftRevision: 3,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [
       {
         pantryItemId: "30000000-0000-4000-8000-000000000001",
@@ -491,7 +491,7 @@ describe("regeneration request privacyNoticeVersion", () => {
     sourceMenuId: "60000000-0000-4000-8000-000000000001",
     changeReason: "simpler" as const,
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1" as const,
+    privacyNoticeVersion: "2026-07-29.v1" as const,
     expiredPantryConfirmations: [],
   };
   const dishValid = {

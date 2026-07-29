@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "../_shared/http.js";
+import type { SafeLogEvent } from "../_shared/logger.js";
 
 const requireUserMock = vi.hoisted(() => vi.fn());
 const adminDeleteUserMock = vi.hoisted(() => vi.fn());
 const rpcMock = vi.hoisted(() => vi.fn());
+const getServerEnvMock = vi.hoisted(() => vi.fn());
+const createStripeClientMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../_shared/auth.js", () => ({
   requireUser: requireUserMock,
@@ -20,13 +23,29 @@ vi.mock("../_shared/supabase-admin.js", () => ({
   }),
 }));
 
-const { createDeleteAccountHandler, default: productionHandler } =
-  await import("../delete-account.js");
+vi.mock("../_shared/env.js", () => ({
+  getServerEnv: getServerEnvMock,
+}));
+
+vi.mock("../_shared/billing-stripe.js", () => ({
+  createStripeClient: createStripeClientMock,
+}));
+
+const {
+  createDeleteAccountHandler,
+  cancelAllLiveSubscriptionsForUser,
+  default: productionHandler,
+} = await import("../delete-account.js");
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
 const OTHER_USER_ID = "20000000-0000-4000-8000-000000000099";
 const ACCESS_TOKEN = "access-token-secret-value";
 const EMAIL = "owner@example.com";
+const CUSTOMER_ID = "cus_test_delete_1";
+const SUB_ACTIVE = "sub_active_1";
+const SUB_TRIALING = "sub_trialing_1";
+const SUB_PAST_DUE = "sub_past_due_1";
+const SUB_CANCELED = "sub_canceled_1";
 
 function makeDeleteRequest(
   body: unknown,
@@ -49,18 +68,24 @@ describe("createDeleteAccountHandler", () => {
   const deleteUser = vi.fn();
   const authenticate = vi.fn();
   const releaseProcessingReservations = vi.fn();
+  const releaseFlyerProcessingReservations = vi.fn();
+  const cancelBillingSubscriptions = vi.fn();
   const logSink: string[] = [];
 
   beforeEach(() => {
     deleteUser.mockReset();
     authenticate.mockReset();
     releaseProcessingReservations.mockReset();
+    releaseFlyerProcessingReservations.mockReset();
+    cancelBillingSubscriptions.mockReset();
     requireUserMock.mockReset();
     adminDeleteUserMock.mockReset();
     rpcMock.mockReset();
     logSink.length = 0;
     authenticate.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
     releaseProcessingReservations.mockResolvedValue({ error: null });
+    releaseFlyerProcessingReservations.mockResolvedValue({ error: null });
+    cancelBillingSubscriptions.mockResolvedValue(undefined);
     deleteUser.mockResolvedValue({ error: null });
     rpcMock.mockResolvedValue({ data: 0, error: null });
     const capture = (...args: unknown[]) => {
@@ -81,6 +106,8 @@ describe("createDeleteAccountHandler", () => {
     return createDeleteAccountHandler({
       authenticate,
       releaseProcessingReservations,
+      releaseFlyerProcessingReservations,
+      cancelBillingSubscriptions,
       deleteUser,
     });
   }
@@ -145,6 +172,7 @@ describe("createDeleteAccountHandler", () => {
       error: { code: "account_delete_failed" },
     });
     expect(deleteUser).not.toHaveBeenCalled();
+    expect(cancelBillingSubscriptions).not.toHaveBeenCalled();
   });
 
   it("returns 503 account_delete_failed when the Admin API reports an error", async () => {
@@ -179,6 +207,23 @@ describe("createDeleteAccountHandler", () => {
     );
   });
 
+  it("calls release_identity_and_global_for_user_processing before auth delete", async () => {
+    await handler()(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(releaseProcessingReservations).toHaveBeenCalledWith(USER_ID);
+    expect(releaseProcessingReservations.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteUser.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("calls cancelBillingSubscriptions before auth delete even when release flyer runs", async () => {
+    await handler()(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(releaseFlyerProcessingReservations).toHaveBeenCalledWith(USER_ID);
+    expect(cancelBillingSubscriptions).toHaveBeenCalledWith(USER_ID);
+    expect(cancelBillingSubscriptions.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteUser.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("never logs the user id, email, or access token", async () => {
     authenticate.mockResolvedValue({
       userId: USER_ID,
@@ -196,14 +241,168 @@ describe("createDeleteAccountHandler", () => {
   });
 });
 
+describe("cancelAllLiveSubscriptionsForUser", () => {
+  const listMock = vi.fn();
+  const cancelMock = vi.fn();
+  const rpc = vi.fn();
+  const events: SafeLogEvent[] = [];
+
+  beforeEach(() => {
+    listMock.mockReset();
+    cancelMock.mockReset();
+    rpc.mockReset();
+    events.length = 0;
+  });
+
+  const stripe = {
+    subscriptions: {
+      list: listMock,
+      cancel: cancelMock,
+    },
+  };
+
+  const log = (event: SafeLogEvent) => {
+    events.push(event);
+  };
+
+  it("skips Stripe when no billing customer and still allows auth delete path", async () => {
+    rpc.mockResolvedValue({ data: {}, error: null });
+    await cancelAllLiveSubscriptionsForUser({
+      userId: USER_ID,
+      admin: { rpc },
+      stripe: stripe as never,
+      log,
+      requestId: "req-1",
+      startedAt: Date.now(),
+    });
+    expect(rpc).toHaveBeenCalledWith("get_billing_customer_by_user", { p_user_id: USER_ID });
+    expect(listMock).not.toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
+  });
+
+  it("lists subscriptions by customer and cancels a single live sub", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listMock.mockResolvedValue({
+      data: [{ id: SUB_ACTIVE, status: "active" }],
+    });
+    cancelMock.mockResolvedValue({ id: SUB_ACTIVE, status: "canceled" });
+
+    await cancelAllLiveSubscriptionsForUser({
+      userId: USER_ID,
+      admin: { rpc },
+      stripe: stripe as never,
+      log,
+      requestId: "req-2",
+      startedAt: Date.now(),
+    });
+
+    expect(listMock).toHaveBeenCalledWith({
+      customer: CUSTOMER_ID,
+      status: "all",
+      limit: 100,
+    });
+    expect(cancelMock).toHaveBeenCalledTimes(1);
+    expect(cancelMock).toHaveBeenCalledWith(SUB_ACTIVE);
+  });
+
+  it("cancels every live subscription when customer has multiple", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listMock.mockResolvedValue({
+      data: [
+        { id: SUB_ACTIVE, status: "active" },
+        { id: SUB_TRIALING, status: "trialing" },
+        { id: SUB_PAST_DUE, status: "past_due" },
+        { id: SUB_CANCELED, status: "canceled" },
+      ],
+    });
+    cancelMock.mockResolvedValue({});
+
+    await cancelAllLiveSubscriptionsForUser({
+      userId: USER_ID,
+      admin: { rpc },
+      stripe: stripe as never,
+      log,
+      requestId: "req-3",
+      startedAt: Date.now(),
+    });
+
+    // DB の 1 行ではなく list 結果の live 全件
+    expect(cancelMock).toHaveBeenCalledTimes(3);
+    expect(cancelMock).toHaveBeenCalledWith(SUB_ACTIVE);
+    expect(cancelMock).toHaveBeenCalledWith(SUB_TRIALING);
+    expect(cancelMock).toHaveBeenCalledWith(SUB_PAST_DUE);
+    expect(cancelMock).not.toHaveBeenCalledWith(SUB_CANCELED);
+  });
+
+  it("continues canceling remaining and logs billing_cancel_failed when one cancel fails", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listMock.mockResolvedValue({
+      data: [
+        { id: SUB_ACTIVE, status: "active" },
+        { id: SUB_TRIALING, status: "trialing" },
+      ],
+    });
+    cancelMock
+      .mockRejectedValueOnce(new Error("stripe cancel boom"))
+      .mockResolvedValueOnce({ id: SUB_TRIALING, status: "canceled" });
+
+    await cancelAllLiveSubscriptionsForUser({
+      userId: USER_ID,
+      admin: { rpc },
+      stripe: stripe as never,
+      log,
+      requestId: "req-4",
+      startedAt: Date.now(),
+    });
+
+    expect(cancelMock).toHaveBeenCalledTimes(2);
+    expect(cancelMock).toHaveBeenCalledWith(SUB_ACTIVE);
+    expect(cancelMock).toHaveBeenCalledWith(SUB_TRIALING);
+    expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
+    const failed = events.find((e) => e.code === "billing_cancel_failed");
+    expect(failed?.stripeCustomerId).toBe(CUSTOMER_ID);
+    expect(failed?.stripeSubscriptionId).toBe(SUB_ACTIVE);
+    // email を載せない
+    expect(JSON.stringify(events)).not.toContain(EMAIL);
+  });
+
+  it("skips Stripe entirely when stripe client is null", async () => {
+    await cancelAllLiveSubscriptionsForUser({
+      userId: USER_ID,
+      admin: { rpc },
+      stripe: null,
+      log,
+      requestId: "req-5",
+      startedAt: Date.now(),
+    });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("production deleteUser adapter", () => {
   beforeEach(() => {
     requireUserMock.mockReset();
     adminDeleteUserMock.mockReset();
     rpcMock.mockReset();
+    getServerEnvMock.mockReset();
+    createStripeClientMock.mockReset();
     requireUserMock.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
     adminDeleteUserMock.mockResolvedValue({ data: { user: null }, error: null });
-    rpcMock.mockResolvedValue({ data: 0, error: null });
+    // release_identity → 0; get_billing_customer → empty
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "get_billing_customer_by_user") {
+        return Promise.resolve({ data: {}, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    getServerEnvMock.mockReturnValue({
+      billingEnabled: false,
+      stripe: undefined,
+    });
   });
 
   it("passes (authenticatedUser.userId, false) for hard deletion after release RPC", async () => {
@@ -213,6 +412,120 @@ describe("production deleteUser adapter", () => {
       p_user_id: USER_ID,
     });
     expect(adminDeleteUserMock).toHaveBeenCalledTimes(1);
+    expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
+  });
+
+  it("skips Stripe when no billing customer and still deletes auth user", async () => {
+    const listMock = vi.fn();
+    createStripeClientMock.mockReturnValue({
+      subscriptions: { list: listMock, cancel: vi.fn() },
+    });
+    getServerEnvMock.mockReturnValue({
+      billingEnabled: true,
+      stripe: {
+        secretKey: "sk_test_x",
+        webhookSecret: "whsec_x",
+        pricePlusMonthly: "price_m",
+        pricePlusYearly: "price_y",
+        apiVersion: "2025-02-24.acacia",
+      },
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "get_billing_customer_by_user") {
+        return Promise.resolve({ data: {}, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(200);
+    expect(listMock).not.toHaveBeenCalled();
+    expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
+  });
+
+  it("lists and cancels live sub then auth-deletes", async () => {
+    const listMock = vi.fn().mockResolvedValue({
+      data: [{ id: SUB_ACTIVE, status: "active" }],
+    });
+    const cancelMock = vi.fn().mockResolvedValue({ id: SUB_ACTIVE, status: "canceled" });
+    createStripeClientMock.mockReturnValue({
+      subscriptions: { list: listMock, cancel: cancelMock },
+    });
+    getServerEnvMock.mockReturnValue({
+      billingEnabled: true,
+      stripe: {
+        secretKey: "sk_test_x",
+        webhookSecret: "whsec_x",
+        pricePlusMonthly: "price_m",
+        pricePlusYearly: "price_y",
+        apiVersion: "2025-02-24.acacia",
+      },
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "get_billing_customer_by_user") {
+        return Promise.resolve({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(200);
+    expect(listMock).toHaveBeenCalledWith({
+      customer: CUSTOMER_ID,
+      status: "all",
+      limit: 100,
+    });
+    expect(cancelMock).toHaveBeenCalledWith(SUB_ACTIVE);
+    expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
+    // cancel が delete より先
+    expect(cancelMock.mock.invocationCallOrder[0]).toBeLessThan(
+      adminDeleteUserMock.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("continues auth-delete when one cancel fails among multiple live subs", async () => {
+    const listMock = vi.fn().mockResolvedValue({
+      data: [
+        { id: SUB_ACTIVE, status: "active" },
+        { id: SUB_TRIALING, status: "trialing" },
+      ],
+    });
+    const cancelMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("first cancel fails"))
+      .mockResolvedValueOnce({});
+    createStripeClientMock.mockReturnValue({
+      subscriptions: { list: listMock, cancel: cancelMock },
+    });
+    getServerEnvMock.mockReturnValue({
+      billingEnabled: true,
+      stripe: {
+        secretKey: "sk_test_x",
+        webhookSecret: "whsec_x",
+        pricePlusMonthly: "price_m",
+        pricePlusYearly: "price_y",
+        apiVersion: "2025-02-24.acacia",
+      },
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "get_billing_customer_by_user") {
+        return Promise.resolve({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(200);
+    expect(cancelMock).toHaveBeenCalledTimes(2);
     expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
   });
 });

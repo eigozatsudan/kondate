@@ -320,11 +320,96 @@ export function validateProductionEnv(env) {
 
   parseProductionMaintenanceUrl(String(env.SUPABASE_MAINTENANCE_DB_URL), serverRef);
 
+  // Billing / Stripe（BILLING_ENABLED 整合 + API version ピン）
+  validateBillingStripeEnv(env);
+
   // production CSP の connect-src が browser managed origin と一致すること。
   // 不一致だと本番だけ API が CSP ブロックされるため、preflight で fail-closed する。
   validateProductionCsp(browserUrl);
 
   return { projectRef: serverRef };
+}
+
+/**
+ * BILLING_ENABLED と Stripe 鍵の整合を検証する。
+ * - 未設定 / "false": 鍵は任意（Webhook 用に載せてもよいが、載せたなら完全一式 + API version ピン）
+ * - "true": 全 Stripe 鍵必須 + STRIPE_API_VERSION=2025-02-24.acacia
+ * - VITE_STRIPE_* / VITE_BILLING_* は存在自体を拒否
+ * - STRIPE_MOCK_BASE_URL は本番 preflight では拒否
+ */
+export function validateBillingStripeEnv(env) {
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("VITE_STRIPE_") || key.startsWith("VITE_BILLING_")) {
+      throw new Error(key);
+    }
+  }
+
+  const rawBilling = env.BILLING_ENABLED;
+  let billingEnabled = false;
+  if (rawBilling !== undefined && rawBilling !== null && rawBilling !== "") {
+    if (String(rawBilling) === "true") {
+      billingEnabled = true;
+    } else if (String(rawBilling) === "false") {
+      billingEnabled = false;
+    } else {
+      throw new Error("BILLING_ENABLED_invalid");
+    }
+  }
+
+  const stripeKeys = [
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "STRIPE_PRICE_PLUS_MONTHLY",
+    "STRIPE_PRICE_PLUS_YEARLY",
+    "STRIPE_API_VERSION",
+  ];
+  const anyStripe = stripeKeys.some(
+    (key) => Object.hasOwn(env, key) && env[key] !== undefined && env[key] !== "",
+  );
+  const mockPresent =
+    Object.hasOwn(env, "STRIPE_MOCK_BASE_URL") &&
+    env.STRIPE_MOCK_BASE_URL !== undefined &&
+    env.STRIPE_MOCK_BASE_URL !== null &&
+    env.STRIPE_MOCK_BASE_URL !== "";
+
+  // 本番 preflight では mock URL を拒否（ローカル only）
+  if (mockPresent) {
+    throw new Error("STRIPE_MOCK_BASE_URL");
+  }
+
+  // 鍵不要（kill かつ未設定）なら完了
+  if (!billingEnabled && !anyStripe) {
+    return;
+  }
+
+  // BILLING_ENABLED=true、または鍵を載せた kill 中は完全一式 + API version ピン
+  for (const key of [
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "STRIPE_PRICE_PLUS_MONTHLY",
+    "STRIPE_PRICE_PLUS_YEARLY",
+  ]) {
+    const value = env[key];
+    if (typeof value !== "string" || value.length === 0) {
+      throw new Error(key);
+    }
+  }
+
+  if (String(env.STRIPE_API_VERSION) !== "2025-02-24.acacia") {
+    throw new Error("STRIPE_API_VERSION_invalid");
+  }
+
+  // OPENROUTER_PLUS_MODELS: BILLING_ENABLED=true のとき 1 件以上（env.ts と同型）
+  if (billingEnabled) {
+    const plus = env.OPENROUTER_PLUS_MODELS;
+    if (typeof plus !== "string" || plus.trim().length === 0) {
+      throw new Error("OPENROUTER_PLUS_MODELS");
+    }
+    const models = plus.split(",").map((item) => item.trim());
+    if (models.some((m) => m.length === 0) || models.length === 0) {
+      throw new Error("OPENROUTER_PLUS_MODELS");
+    }
+  }
 }
 
 export function main(env = process.env, write = console.error) {

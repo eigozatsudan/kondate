@@ -149,6 +149,14 @@ services:
       AI_PROCESSING_STALE_SECONDS: "180"
       # ローカル個人枠スキップ。true は SERVER_SITE_ORIGIN が 127.0.0.1:5173 のときのみ有効（非 local は parse throw）。
       AI_QUOTA_DISABLED: ${AI_QUOTA_DISABLED:-false}
+      # Billing / Stripe（local 既定は kill。鍵を載せると Webhook のみ A3 で稼働可）
+      BILLING_ENABLED: ${BILLING_ENABLED:-false}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PLUS_MONTHLY: ${STRIPE_PRICE_PLUS_MONTHLY:-}
+      STRIPE_PRICE_PLUS_YEARLY: ${STRIPE_PRICE_PLUS_YEARLY:-}
+      STRIPE_API_VERSION: ${STRIPE_API_VERSION:-2025-02-24.acacia}
+      STRIPE_MOCK_BASE_URL: ${STRIPE_MOCK_BASE_URL:-}
       # entrypoint が setpriv で落とす先。Compose の user 補間とは別に process.env へ渡す。
       LOCAL_UID: "${LOCAL_UID:-1000}"
       LOCAL_GID: "${LOCAL_GID:-1000}"

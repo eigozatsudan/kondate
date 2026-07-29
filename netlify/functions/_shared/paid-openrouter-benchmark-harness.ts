@@ -165,7 +165,7 @@ const benchmarkCommand: Extract<GenerationCommand, { kind: "new_menu" }> = {
     idempotencyKey: benchmarkIdempotencyKey,
     draftId: benchmarkDraftId,
     draftRevision: 1,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };

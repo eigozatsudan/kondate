@@ -89,6 +89,21 @@ vi.mock("react-router", async (importOriginal) => {
     useNavigate: () => navigateMock,
     // Router 未 wrap の unit でも resume query を読めるようにする
     useSearchParams: () => [new URLSearchParams(), vi.fn()],
+    // FlyerWeeklyPanel の Free CTA が Link を使うため、Router 無しでも描画できるよう差し替え
+    Link: ({
+      to,
+      children,
+      ...rest
+    }: {
+      to: string;
+      children?: React.ReactNode;
+      className?: string;
+      style?: React.CSSProperties;
+    }) => (
+      <a href={typeof to === "string" ? to : "#"} {...rest}>
+        {children}
+      </a>
+    ),
   };
 });
 vi.mock("@/features/household/household-api", async (importOriginal) => {
@@ -361,7 +376,7 @@ beforeEach(() => {
     isError: false,
     isPending: false,
   };
-  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-28.v1" };
+  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-29.v1" };
   savePlannerDraftMock.mockResolvedValue(draft);
   setOnboardingStatusMock.mockResolvedValue(undefined);
   getProfileMock.mockReset();
@@ -879,7 +894,7 @@ describe("PlannerRoutePage", () => {
         idempotencyKey: attemptKey,
         draftId: draft.id,
         draftRevision: draft.revision,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [
           {
             pantryItemId: "74000000-0000-4000-8000-000000000001",

@@ -167,7 +167,7 @@ describe("projectMenuForSurvivingTargets / dish-regen AI strip", () => {
         idempotencyKey: "82000000-0000-4000-8000-000000000001",
         changeReason: "simpler",
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [],
       },
     };

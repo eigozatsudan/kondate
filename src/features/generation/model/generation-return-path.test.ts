@@ -16,7 +16,7 @@ function newMenuCommand(): GenerationCommand {
       idempotencyKey: "10000000-0000-4000-8000-000000000001",
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 1,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -32,7 +32,7 @@ function regenerateMenuCommand(): GenerationCommand {
       sourceMenuId: SOURCE_MENU_ID,
       changeReason: "different_flavor",
       changeReasonCustom: null,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -49,7 +49,7 @@ function regenerateDishCommand(): GenerationCommand {
       dishId: DISH_ID,
       changeReason: "different_flavor",
       changeReasonCustom: null,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };

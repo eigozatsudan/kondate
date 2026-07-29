@@ -69,7 +69,7 @@ function makeCommand(idempotencyKey: string): GenerationCommand {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 3,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -86,7 +86,7 @@ function makeRegenerateDishCommand(idempotencyKey: string): GenerationCommand {
       dishId: DISH_ID,
       changeReason: "different_flavor",
       changeReasonCustom: null,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };

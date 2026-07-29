@@ -210,6 +210,22 @@ describe("parseOpenRouterModels", () => {
     expect(env.stripe).toBeUndefined();
   });
 
+  it("treats empty Stripe env strings as absent when BILLING_ENABLED is false", () => {
+    // compose の ${STRIPE_SECRET_KEY:-} 空展開で kill 中が壊れないこと
+    const env = parseServerEnv({
+      ...validServerEnv,
+      BILLING_ENABLED: "false",
+      STRIPE_SECRET_KEY: "",
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_PRICE_PLUS_MONTHLY: "",
+      STRIPE_PRICE_PLUS_YEARLY: "",
+      STRIPE_API_VERSION: "",
+      STRIPE_MOCK_BASE_URL: "",
+    });
+    expect(env.billingEnabled).toBe(false);
+    expect(env.stripe).toBeUndefined();
+  });
+
   it("rejects VITE_STRIPE_SECRET_KEY in server env source", () => {
     expect(() =>
       parseServerEnv({
