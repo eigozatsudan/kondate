@@ -66,6 +66,15 @@ const rpcUsagePayload = {
     day: { consumed: 0, limit: 3, remaining: 3 },
     month: { consumed: 0, limit: 20, remaining: 20 },
   },
+  flyerWeekly: {
+    successConsumed: 0,
+    successLimit: 2,
+    successRemaining: 2,
+    triesConsumed: 0,
+    triesLimit: 6,
+    triesRemaining: 6,
+    weekStartJst: "2026-07-27",
+  },
   globalAvailable: true,
   retryAt: null,
 };
@@ -128,6 +137,7 @@ describe("usage-today", () => {
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQualityProjected,
+        flyerWeekly: rpcUsagePayload.flyerWeekly,
         globalAvailable: true,
         retryAt: null,
       },
@@ -178,16 +188,27 @@ describe("usage-today", () => {
     );
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: true; data: unknown };
-    expect(body.data).toEqual({
+    expect(body.data).toMatchObject({
       plan: "free",
       plusEntitled: false,
       success: { consumed: 0, limit: 3, remaining: 3 },
       attempts: { sent: 0, limit: 6, remaining: 6 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
       quality: freeQualityProjected,
+      flyerWeekly: {
+        successConsumed: 0,
+        successLimit: 2,
+        successRemaining: 2,
+        triesConsumed: 0,
+        triesLimit: 6,
+        triesRemaining: 6,
+      },
       globalAvailable: false,
       retryAt: "2026-07-29T00:00:00.000Z",
     });
+    expect(
+      (body.data as { flyerWeekly: { weekStartJst: string } }).flyerWeekly.weekStartJst,
+    ).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
   });
 
   it("forwards GLOBAL_DAILY_AI_LIMIT to the usage RPC for globalAvailable", async () => {

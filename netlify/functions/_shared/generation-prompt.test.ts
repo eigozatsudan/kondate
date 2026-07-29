@@ -139,7 +139,7 @@ describe("buildGenerationMessages", () => {
 
     expect(messages).toHaveLength(2);
     expect(messages[0]?.role).toBe("system");
-    const userMessage = messages[1]?.content ?? "";
+    const userMessage = typeof messages[1]?.content === "string" ? messages[1].content : "";
     expect(userMessage.match(/<kondate_input_data>/gu)).toHaveLength(1);
     expect(userMessage.match(/<\/kondate_input_data>/gu)).toHaveLength(1);
     expect(userMessage).not.toContain(userIdCanary);
@@ -352,7 +352,8 @@ describe("buildGenerationMessages", () => {
 
   it("keeps two members in canonical submission order", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeTwoMemberContext()));
-    const serialized = (messages[1]?.content ?? "")
+    const content = typeof messages[1]?.content === "string" ? messages[1].content : "";
+    const serialized = content
       .replace("<kondate_input_data>\n", "")
       .replace("\n</kondate_input_data>", "");
     const payload = JSON.parse(serialized) as { members: readonly { ref: string }[] };

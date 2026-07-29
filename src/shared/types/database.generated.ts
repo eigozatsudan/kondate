@@ -203,6 +203,54 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_identity_flyer_weekly: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          success_count: number
+          updated_at: string
+          week_start: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          week_start: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
+      ai_identity_flyer_weekly_tries: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          sent_count: number
+          updated_at: string
+          week_start: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          week_start: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
       ai_identity_quality_daily: {
         Row: {
           identity_key: string
@@ -440,6 +488,90 @@ export type Database = {
         }
         Relationships: []
       }
+      flyer_weekly_requests: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          duration_ms: number | null
+          failure_code: string | null
+          flyer_success_reserved: boolean
+          flyer_try_reserved: boolean
+          flyer_try_sent: boolean
+          global_reserved_day: string | null
+          global_sent_calls: number
+          id: string
+          idempotency_key: string
+          identity_key: string
+          personal_quota_disabled: boolean
+          processing_expires_at: string | null
+          quota_attempt_limit: number | null
+          quota_short_limit: number | null
+          result_payload: Json | null
+          retry_at: string | null
+          started_at: string
+          status: string
+          updated_at: string
+          user_attempt_day: string | null
+          user_attempt_reserved: boolean
+          user_id: string
+          week_start: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          failure_code?: string | null
+          flyer_success_reserved?: boolean
+          flyer_try_reserved?: boolean
+          flyer_try_sent?: boolean
+          global_reserved_day?: string | null
+          global_sent_calls?: number
+          id?: string
+          idempotency_key: string
+          identity_key: string
+          personal_quota_disabled?: boolean
+          processing_expires_at?: string | null
+          quota_attempt_limit?: number | null
+          quota_short_limit?: number | null
+          result_payload?: Json | null
+          retry_at?: string | null
+          started_at: string
+          status: string
+          updated_at?: string
+          user_attempt_day?: string | null
+          user_attempt_reserved?: boolean
+          user_id: string
+          week_start: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          failure_code?: string | null
+          flyer_success_reserved?: boolean
+          flyer_try_reserved?: boolean
+          flyer_try_sent?: boolean
+          global_reserved_day?: string | null
+          global_sent_calls?: number
+          id?: string
+          idempotency_key?: string
+          identity_key?: string
+          personal_quota_disabled?: boolean
+          processing_expires_at?: string | null
+          quota_attempt_limit?: number | null
+          quota_short_limit?: number | null
+          result_payload?: Json | null
+          retry_at?: string | null
+          started_at?: string
+          status?: string
+          updated_at?: string
+          user_attempt_day?: string | null
+          user_attempt_reserved?: boolean
+          user_id?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
       generation_draft_submission_versions: {
         Row: {
           avoid_ingredients: string[]
@@ -577,6 +709,7 @@ export type Database = {
       }
       ai_jst_day: { Args: { p_now: string }; Returns: string }
       ai_jst_month_start: { Args: { p_now: string }; Returns: string }
+      ai_jst_week_start: { Args: { p_now: string }; Returns: string }
       ai_next_jst_midnight: { Args: { p_now: string }; Returns: string }
       ai_request_payload: {
         Args: {
@@ -631,6 +764,13 @@ export type Database = {
       current_safety_fingerprint: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: string
+      }
+      flyer_weekly_request_payload: {
+        Args: {
+          p_replayed?: boolean
+          p_request: Database["private"]["Tables"]["flyer_weekly_requests"]["Row"]
+        }
+        Returns: Json
       }
       idea_safety_fingerprint: { Args: never; Returns: string }
       is_canonical_bounded_text: {
@@ -700,6 +840,13 @@ export type Database = {
       project_billing_subscription: {
         Args: { p_force_apply?: boolean; p_payload: Json; p_user_id: string }
         Returns: string
+      }
+      release_flyer_weekly_reservations: {
+        Args: {
+          p_now: string
+          p_request: Database["private"]["Tables"]["flyer_weekly_requests"]["Row"]
+        }
+        Returns: undefined
       }
       release_identity_and_global_for_user_processing: {
         Args: { p_now?: string; p_user_id: string }
@@ -2334,6 +2481,10 @@ export type Database = {
         Args: { p_limit: number; p_now: string }
         Returns: number
       }
+      cleanup_stale_flyer_weekly_batch: {
+        Args: { p_limit: number; p_now: string }
+        Returns: number
+      }
       complete_household_member: {
         Args: { p_member_id: string }
         Returns: {
@@ -2486,6 +2637,19 @@ export type Database = {
         }
         Returns: Json
       }
+      finalize_flyer_weekly_failure: {
+        Args: {
+          p_failure_code: string
+          p_now?: string
+          p_request_id: string
+          p_sent: boolean
+        }
+        Returns: Json
+      }
+      finalize_flyer_weekly_success: {
+        Args: { p_now?: string; p_request_id: string; p_result: Json }
+        Returns: Json
+      }
       get_ai_generation_regeneration_snapshot: {
         Args: { p_request_id: string; p_user_id: string }
         Returns: {
@@ -2603,6 +2767,10 @@ export type Database = {
         Args: { p_keep_stripe_subscription_id: string; p_user_id: string }
         Returns: Json
       }
+      mark_flyer_weekly_sent: {
+        Args: { p_now?: string; p_request_id: string }
+        Returns: Json
+      }
       mutate_shopping_item: {
         Args: {
           p_expected_list_version: number
@@ -2704,6 +2872,19 @@ export type Database = {
           p_now?: string
           p_quota_disabled?: boolean
           p_request_id: string
+        }
+        Returns: Json
+      }
+      reserve_flyer_weekly: {
+        Args: {
+          p_attempt_limit: number
+          p_global_limit: number
+          p_idempotency_key: string
+          p_identity_key: string
+          p_now?: string
+          p_quota_disabled?: boolean
+          p_short_window_limit: number
+          p_user_id: string
         }
         Returns: Json
       }

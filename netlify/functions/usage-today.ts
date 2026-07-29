@@ -18,6 +18,50 @@ type QualityRpc = {
   month?: { consumed?: number; limit?: number; remaining?: number };
 };
 
+type FlyerWeeklyRpc = {
+  successConsumed?: number;
+  successLimit?: number;
+  successRemaining?: number;
+  triesConsumed?: number;
+  triesLimit?: number;
+  triesRemaining?: number;
+  weekStartJst?: string;
+};
+
+function mergeFlyerWeeklyProjection(flyer: FlyerWeeklyRpc | undefined): {
+  successConsumed: number;
+  successLimit: 2;
+  successRemaining: number;
+  triesConsumed: number;
+  triesLimit: 6;
+  triesRemaining: number;
+  weekStartJst: string;
+} {
+  const successLimit = planQuota.flyerWeekly.successPerJstWeek;
+  const triesLimit = planQuota.flyerWeekly.triesPerJstWeek;
+  // weekStartJst 欠落時は JST 月曜を Function で算出（RPC 障害時の wire 維持）
+  const weekStartJst =
+    typeof flyer?.weekStartJst === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(flyer.weekStartJst)
+      ? flyer.weekStartJst
+      : (() => {
+          const now = new Date();
+          const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+          const day = jst.getUTCDay(); // 0=Sun
+          const mondayOffset = day === 0 ? -6 : 1 - day;
+          jst.setUTCDate(jst.getUTCDate() + mondayOffset);
+          return jst.toISOString().slice(0, 10);
+        })();
+  return {
+    successConsumed: flyer?.successConsumed ?? 0,
+    successLimit,
+    successRemaining: flyer?.successRemaining ?? successLimit,
+    triesConsumed: flyer?.triesConsumed ?? 0,
+    triesLimit,
+    triesRemaining: flyer?.triesRemaining ?? triesLimit,
+    weekStartJst,
+  };
+}
+
 /** RPC quality 投影 + plusEntitled から available を合成する */
 function mergeQualityProjection(
   quality: QualityRpc | undefined,
@@ -102,6 +146,7 @@ export default async function usageToday(request: Request): Promise<Response> {
         attempts?: { limit?: number };
         shortWindow?: { limit?: number };
         quality?: QualityRpc;
+        flyerWeekly?: FlyerWeeklyRpc;
         globalAvailable?: boolean;
         retryAt?: string | null;
       };
@@ -131,6 +176,15 @@ export default async function usageToday(request: Request): Promise<Response> {
           },
           plusEntitled,
         ),
+        flyerWeekly: mergeFlyerWeeklyProjection({
+          successConsumed: 0,
+          successRemaining: planQuota.flyerWeekly.successPerJstWeek,
+          triesConsumed: 0,
+          triesRemaining: planQuota.flyerWeekly.triesPerJstWeek,
+          ...(typeof rpcBody.flyerWeekly?.weekStartJst === "string"
+            ? { weekStartJst: rpcBody.flyerWeekly.weekStartJst }
+            : {}),
+        }),
         globalAvailable: rpcBody.globalAvailable === true,
         retryAt: rpcBody.globalAvailable === true ? null : (rpcBody.retryAt ?? null),
       });
@@ -139,13 +193,17 @@ export default async function usageToday(request: Request): Promise<Response> {
 
     const rpcBody =
       typeof data === "object" && data !== null
-        ? (data as Record<string, unknown> & { quality?: QualityRpc })
+        ? (data as Record<string, unknown> & {
+            quality?: QualityRpc;
+            flyerWeekly?: FlyerWeeklyRpc;
+          })
         : {};
     const merged = usageTodayDataSchema.parse({
       ...rpcBody,
       plan: quotaPlan,
       plusEntitled,
       quality: mergeQualityProjection(rpcBody.quality, plusEntitled),
+      flyerWeekly: mergeFlyerWeeklyProjection(rpcBody.flyerWeekly),
     });
     return json(200, { ok: true, data: merged });
   } catch (error) {

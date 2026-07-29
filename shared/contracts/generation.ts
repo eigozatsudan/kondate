@@ -600,6 +600,13 @@ export const generationFailureCodes = [
   "quality_mode_requires_plus",
   "quality_daily_limit",
   "quality_monthly_limit",
+  // Plus チラシ週間
+  "flyer_requires_plus",
+  "flyer_weekly_limit",
+  "flyer_weekly_try_limit",
+  "flyer_invalid_image",
+  "flyer_unsupported_media",
+  "flyer_invalid_ai_response",
 ] as const;
 export type GenerationFailureCode = (typeof generationFailureCodes)[number];
 
@@ -899,6 +906,18 @@ export const usageTodayDataSchema = z
         available: z.boolean(),
       })
       .strict(),
+    // Task7: チラシ週間 success+try 投影
+    flyerWeekly: z
+      .object({
+        successConsumed: z.number().int().min(0).max(planQuota.defense.maxFlyerSuccessPerWeek),
+        successLimit: z.literal(planQuota.flyerWeekly.successPerJstWeek),
+        successRemaining: z.number().int().min(0).max(planQuota.defense.maxFlyerSuccessPerWeek),
+        triesConsumed: z.number().int().min(0).max(planQuota.defense.maxFlyerTriesPerWeek),
+        triesLimit: z.literal(planQuota.flyerWeekly.triesPerJstWeek),
+        triesRemaining: z.number().int().min(0).max(planQuota.defense.maxFlyerTriesPerWeek),
+        weekStartJst: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+      })
+      .strict(),
     globalAvailable: z.boolean(),
     retryAt: isoDateTimeSchema.nullable(),
   })
@@ -937,6 +956,26 @@ export const usageTodayDataSchema = z
         code: "custom",
         path: ["quality", "month", "remaining"],
         message: "quality month counts must balance",
+      });
+    }
+    if (
+      data.flyerWeekly.successConsumed + data.flyerWeekly.successRemaining !==
+      data.flyerWeekly.successLimit
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["flyerWeekly", "successRemaining"],
+        message: "flyer success counts must balance",
+      });
+    }
+    if (
+      data.flyerWeekly.triesConsumed + data.flyerWeekly.triesRemaining !==
+      data.flyerWeekly.triesLimit
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["flyerWeekly", "triesRemaining"],
+        message: "flyer try counts must balance",
       });
     }
     const blocked =
@@ -1015,6 +1054,12 @@ const nonConflictIssueMessages = {
   quality_mode_requires_plus: "くわしい AI での作成は Plus で使えます。",
   quality_daily_limit: "本日のプレミアム作成回数を使い切りました。",
   quality_monthly_limit: "今月のプレミアム回数を使い切りました。",
+  flyer_requires_plus: "チラシ写真から 1 週間の献立は Plus の機能です。",
+  flyer_weekly_limit: "今週のチラシ献立の作成上限に達しています。",
+  flyer_weekly_try_limit: "しばらくしてから再度お試しください。",
+  flyer_invalid_image: "画像を読み取れませんでした。別の写真でお試しください。",
+  flyer_unsupported_media: "対応している画像形式は JPEG / PNG / WebP です。",
+  flyer_invalid_ai_response: "週間献立を正しく確認できませんでした。",
 } as const satisfies Record<GenerationFailureCode, string>;
 
 export const issueMessages = {

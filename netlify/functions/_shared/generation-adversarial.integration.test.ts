@@ -808,7 +808,7 @@ describe("family canary matrix across idea and household generation boundaries",
   it("builds household OpenRouter DTO with anonymized preference canaries only", () => {
     const context = householdContextWithCanaries();
     const messages = buildGenerationMessages(asNewMenuExecution(context));
-    const userMessage = messages[1]?.content ?? "";
+    const userMessage = typeof messages[1]?.content === "string" ? messages[1].content : "";
     // 表示名・生 ID は AI 本文へ載せない
     expect(userMessage).not.toContain(canaries.displayName);
     expect(userMessage).not.toContain(memberId);
@@ -843,7 +843,7 @@ describe("family canary matrix across idea and household generation boundaries",
     assertNoCanary(contextJson, "idea GenerationContext after canary seed");
 
     const messages = buildGenerationMessages(asNewMenuExecution(idea));
-    const userMessage = messages[1]?.content ?? "";
+    const userMessage = typeof messages[1]?.content === "string" ? messages[1].content : "";
     assertNoCanary(userMessage, "idea OpenRouter body after canary seed");
     // idea は members 配列が空で、validationVersions も null 固定
     const serialized = userMessage

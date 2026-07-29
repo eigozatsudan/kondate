@@ -162,6 +162,13 @@ const routes = new Map([
       default: async () => Response.json({ ok: true, route: "entitlement" }),
     },
   ],
+  [
+    "/netlify/functions/flyer-weekly.ts",
+    {
+      config: { path: "/api/flyer-weekly", method: "POST" },
+      default: async () => Response.json({ ok: true, route: "flyer-weekly" }),
+    },
+  ],
 ]);
 
 async function withServer(loadModule, run) {
@@ -304,6 +311,13 @@ test("registers billing function modules for e2e proxy", () => {
       `expected functionModulePaths to include ${path}`,
     );
   }
+});
+
+test("registers flyer-weekly function module", () => {
+  assert.ok(
+    functionModulePaths.includes("/netlify/functions/flyer-weekly.ts"),
+    "expected functionModulePaths to include /netlify/functions/flyer-weekly.ts",
+  );
 });
 
 test("routes billing endpoints from allowlisted modules", async () => {

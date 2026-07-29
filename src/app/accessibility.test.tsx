@@ -141,6 +141,20 @@ beforeEach(() => {
     success: { consumed: 1, limit: 3, remaining: 2 },
     attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+    quality: {
+      day: { consumed: 0, limit: 3, remaining: 3 },
+      month: { consumed: 0, limit: 20, remaining: 20 },
+      available: false,
+    },
+    flyerWeekly: {
+      successConsumed: 0,
+      successLimit: 2,
+      successRemaining: 2,
+      triesConsumed: 0,
+      triesLimit: 6,
+      triesRemaining: 6,
+      weekStartJst: "2026-07-27",
+    },
     globalAvailable: true,
     retryAt: null,
   });

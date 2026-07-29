@@ -27,6 +27,8 @@ export const functionModulePaths = [
   "/netlify/functions/billing-portal.ts",
   "/netlify/functions/billing-webhook.ts",
   "/netlify/functions/billing-entitlement.ts",
+  // paid-plan-stripe Task7: チラシ週間献立
+  "/netlify/functions/flyer-weekly.ts",
 ];
 
 function escapeRegex(value) {

@@ -68,6 +68,8 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   OPENROUTER_MODELS: z.string(),
   // 品質モード専用 allowlist。BILLING_ENABLED=false 時は空/未設定可
   OPENROUTER_PLUS_MODELS: z.string().optional(),
+  // チラシ vision 専用（任意。未設定時は Plus list を流用 — Q1）
+  OPENROUTER_FLYER_MODELS: z.string().optional(),
   OPENROUTER_BASE_URL: z.url().default("https://openrouter.ai/api/v1"),
   GENERATION_REQUEST_HMAC_KEY: generationRequestHmacKeySchema,
   // identity 日次枠用。GENERATION_REQUEST_HMAC_KEY と共用しない
@@ -114,6 +116,8 @@ export type ServerEnv = Omit<
     models: readonly string[];
     /** 品質モード専用。BILLING_ENABLED=false 時は空配列可 */
     plusModels: readonly string[];
+    /** チラシ vision 専用。未設定時は空（ランタイムは plusModels へフォールバック） */
+    flyerModels: readonly string[];
     userDailyLimit: typeof releaseQuota.userDailySuccessLimit;
     userDailyAttemptLimit: typeof releaseQuota.userDailyExternalCallLimit;
     userShortWindowLimit: typeof releaseQuota.userShortWindowExternalCallLimit;
@@ -399,6 +403,16 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       "OPENROUTER_PLUS_MODELS must contain at least one model when BILLING_ENABLED=true",
     );
   }
+  const rawFlyer = result.data.OPENROUTER_FLYER_MODELS;
+  let flyerModels: readonly string[] = [];
+  if (rawFlyer !== undefined && rawFlyer.trim().length > 0) {
+    try {
+      flyerModels = parseOpenRouterModels(rawFlyer, { openRouterBaseUrl });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "invalid";
+      throw new Error(message.replaceAll("OPENROUTER_MODELS", "OPENROUTER_FLYER_MODELS"));
+    }
+  }
   const { GENERATION_REQUEST_HMAC_KEY, QUOTA_IDENTITY_HMAC_KEY, ...publicEnv } = result.data;
   return {
     ...publicEnv,
@@ -415,6 +429,7 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       baseUrl: openRouterBaseUrl.replace(/\/$/u, ""),
       models,
       plusModels,
+      flyerModels,
       userDailyLimit: result.data.USER_DAILY_AI_LIMIT,
       userDailyAttemptLimit: result.data.USER_DAILY_EXTERNAL_CALL_LIMIT,
       userShortWindowLimit: result.data.USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT,

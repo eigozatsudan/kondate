@@ -7,19 +7,37 @@ import {
   type AiGenerationResponse,
 } from "../../../shared/contracts/generation.js";
 import {
+  weeklyFlyerMenuResponseFormat,
+  weeklyFlyerMenuSchema,
+  type WeeklyFlyerMenu,
+} from "../../../shared/contracts/flyer-weekly.js";
+import {
   dishRegenerationAiOutputSchema,
   type DishRegenerationAiOutput,
 } from "../../../shared/contracts/regeneration.js";
 import { getServerEnv } from "./env.js";
 import { readOpenRouterMockScenario } from "./openrouter-mock-scenario.js";
 
+/** vision / text 両対応の content part（OpenRouter chat completions） */
+export type OpenRouterContentPart =
+  { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
 export type OpenRouterMessage = {
   role: "system" | "user" | "assistant";
-  content: string;
+  /**
+   * 通常生成は string。チラシ vision は ContentPart[]。
+   * 応答側 message.content は string のまま（ADV-25）。
+   */
+  content: string | OpenRouterContentPart[];
 };
 
-/** フル献立 / 置換料理の wire モード。response_format とパース先を切り替える */
-export type GenerationWireMode = "full_menu" | "replacement_dish";
+/** 通常生成メッセージの text content を取り出す（vision parts は空文字） */
+export function openRouterTextContent(content: OpenRouterMessage["content"]): string {
+  return typeof content === "string" ? content : "";
+}
+
+/** フル献立 / 置換料理 / チラシ週間の wire モード。response_format とパース先を切り替える */
+export type GenerationWireMode = "full_menu" | "replacement_dish" | "flyer_weekly";
 
 export type OpenRouterGenerationInput = {
   messages: readonly OpenRouterMessage[];
@@ -40,7 +58,8 @@ export type OpenRouterGenerationRuntimeInput = Readonly<{
 
 export type OpenRouterGenerationResult =
   | { mode: "full_menu"; output: AiGenerationResponse; modelId: string }
-  | { mode: "replacement_dish"; output: DishRegenerationAiOutput; modelId: string };
+  | { mode: "replacement_dish"; output: DishRegenerationAiOutput; modelId: string }
+  | { mode: "flyer_weekly"; output: WeeklyFlyerMenu; modelId: string };
 
 export class OpenRouterCallError extends Error {
   constructor(
@@ -259,7 +278,11 @@ async function sendMenuGenerationWithRuntime(
     // 並行安全: ALS 経由のリクエスト単位シナリオを優先し、無いときだけ env（単体テスト用）
     const testScenario = readOpenRouterMockScenario() ?? process.env.OPENROUTER_MOCK_SCENARIO;
     const responseFormat =
-      mode === "replacement_dish" ? dishRegenerationResponseFormat : menuResponseFormat;
+      mode === "replacement_dish"
+        ? dishRegenerationResponseFormat
+        : mode === "flyer_weekly"
+          ? weeklyFlyerMenuResponseFormat
+          : menuResponseFormat;
     assertWithinDeadline();
 
     let response: Response;
@@ -366,6 +389,21 @@ async function sendMenuGenerationWithRuntime(
       const result: OpenRouterGenerationResult = {
         mode: "replacement_dish",
         output: dishOutput.data,
+        modelId: envelope.data.model,
+      };
+      assertWithinDeadline();
+      return result;
+    }
+
+    if (mode === "flyer_weekly") {
+      const flyerOutput = weeklyFlyerMenuSchema.safeParse(decoded);
+      if (!flyerOutput.success) {
+        throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
+      }
+      assertWithinDeadline();
+      const result: OpenRouterGenerationResult = {
+        mode: "flyer_weekly",
+        output: flyerOutput.data,
         modelId: envelope.data.model,
       };
       assertWithinDeadline();

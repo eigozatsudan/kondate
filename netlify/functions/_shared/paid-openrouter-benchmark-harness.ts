@@ -68,6 +68,9 @@ export function diagnoseClosedComposeCodes(
   if (result.mode === "replacement_dish") {
     return Object.freeze(["invalid_provider_menu"]);
   }
+  if (result.mode === "flyer_weekly") {
+    return Object.freeze(["invalid_provider_menu"]);
+  }
   if (result.output.outcome === "constraint_conflict") {
     // 本番 compose と同じ projectProviderConflicts を通す。
     // wire 上の conflict code だけでは invalid_provider_menu になるケースを

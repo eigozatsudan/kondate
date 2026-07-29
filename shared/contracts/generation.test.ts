@@ -213,6 +213,7 @@ describe("usageTodayDataSchema", () => {
       expect(usageTodayDataSchema.parse(fixture)).toEqual(fixture);
       expect(Object.keys(fixture).sort()).toEqual([
         "attempts",
+        "flyerWeekly",
         "globalAvailable",
         "plan",
         "plusEntitled",
@@ -230,6 +231,16 @@ describe("usageTodayDataSchema", () => {
     available: false,
   };
 
+  const freeFlyerWeekly = {
+    successConsumed: 0,
+    successLimit: 2 as const,
+    successRemaining: 2,
+    triesConsumed: 0,
+    triesLimit: 6 as const,
+    triesRemaining: 6,
+    weekStartJst: "2026-07-27",
+  };
+
   it("accepts Plus limits on usageTodayDataSchema", () => {
     const plus = {
       plan: "plus" as const,
@@ -242,6 +253,7 @@ describe("usageTodayDataSchema", () => {
         month: { consumed: 0, limit: 20 as const, remaining: 20 },
         available: true,
       },
+      flyerWeekly: freeFlyerWeekly,
       globalAvailable: true,
       retryAt: null,
     };
@@ -256,6 +268,7 @@ describe("usageTodayDataSchema", () => {
       attempts: { sent: 0, limit: 6 as const, remaining: 6 },
       shortWindow: { sent: 0, limit: 4 as const, remaining: 4, retryAt: null },
       quality: freeQuality,
+      flyerWeekly: freeFlyerWeekly,
       globalAvailable: true,
       retryAt: null,
     };
@@ -271,6 +284,7 @@ describe("usageTodayDataSchema", () => {
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
+        flyerWeekly: freeFlyerWeekly,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -287,6 +301,7 @@ describe("usageTodayDataSchema", () => {
         attempts: { sent: 2, limit: 12, remaining: 10 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
+        flyerWeekly: freeFlyerWeekly,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -302,6 +317,7 @@ describe("usageTodayDataSchema", () => {
         attempts: { sent: 2, limit: 6, remaining: 4 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
+        flyerWeekly: freeFlyerWeekly,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -314,6 +330,7 @@ describe("usageTodayDataSchema", () => {
         attempts: { sent: 2, limit: 6, remaining: 5 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
+        flyerWeekly: freeFlyerWeekly,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -338,6 +355,7 @@ describe("usageTodayDataSchema", () => {
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
+        flyerWeekly: freeFlyerWeekly,
         globalAvailable: true,
         retryAt: "2026-07-11T15:00:00.000Z",
       }),
@@ -350,6 +368,7 @@ describe("usageTodayDataSchema", () => {
         attempts: { sent: 6, limit: 6, remaining: 0 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
+        flyerWeekly: freeFlyerWeekly,
         globalAvailable: true,
         retryAt: "2026-07-11T15:00:00.000Z",
       }),
@@ -367,6 +386,7 @@ describe("usageTodayDataSchema", () => {
           retryAt: "2026-07-11T09:10:00+09:00",
         },
         quality: freeQuality,
+        flyerWeekly: freeFlyerWeekly,
         globalAvailable: true,
         retryAt: "2026-07-11T09:10:00+09:00",
       }),

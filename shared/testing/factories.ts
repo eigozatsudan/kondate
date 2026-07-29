@@ -14,7 +14,7 @@ import { ideaSafetySnapshot } from "../safety/idea-fingerprint.js";
 
 export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 
-/** 利用状況の共有 fixture（usage-today 各層で再定義しない）。Task6: Free + quality 投影 */
+/** 利用状況の共有 fixture（usage-today 各層で再定義しない）。Task6/7: quality + flyerWeekly */
 const freeQualityFull = {
   day: {
     consumed: 0,
@@ -30,6 +30,16 @@ const freeQualityFull = {
   available: false,
 } as const;
 
+const freeFlyerWeeklyFull = {
+  successConsumed: 0,
+  successLimit: planQuota.flyerWeekly.successPerJstWeek,
+  successRemaining: planQuota.flyerWeekly.successPerJstWeek,
+  triesConsumed: 0,
+  triesLimit: planQuota.flyerWeekly.triesPerJstWeek,
+  triesRemaining: planQuota.flyerWeekly.triesPerJstWeek,
+  weekStartJst: "2026-07-27",
+} as const;
+
 export const availableUsageTodayFixture = {
   plan: "free" as const,
   plusEntitled: false,
@@ -42,6 +52,7 @@ export const availableUsageTodayFixture = {
     retryAt: null,
   },
   quality: freeQualityFull,
+  flyerWeekly: freeFlyerWeeklyFull,
   globalAvailable: true,
   retryAt: null,
 } as const;
@@ -58,6 +69,7 @@ export const shortWindowBlockedUsageTodayFixture = {
     retryAt: "2026-07-11T09:10:00+09:00",
   },
   quality: freeQualityFull,
+  flyerWeekly: freeFlyerWeeklyFull,
   globalAvailable: true,
   retryAt: "2026-07-11T09:10:00+09:00",
 } as const;

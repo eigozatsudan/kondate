@@ -206,6 +206,12 @@ const failureRetryable: Record<GenerationFailureCode, boolean> = {
   quality_mode_requires_plus: false,
   quality_daily_limit: false,
   quality_monthly_limit: false,
+  flyer_requires_plus: false,
+  flyer_weekly_limit: false,
+  flyer_weekly_try_limit: false,
+  flyer_invalid_image: false,
+  flyer_unsupported_media: false,
+  flyer_invalid_ai_response: true,
 };
 
 /** テストとサービス本体の正。message は必ず issueMessages 参照。 */
@@ -523,6 +529,11 @@ function composeCandidate(
       }
       return { kind: "invalid", issues: [{ code: "invalid_provider_menu" }] };
     }
+  }
+
+  // チラシ週間は別 Function。生成 compose 経路では受理しない
+  if (result.mode === "flyer_weekly") {
+    return { kind: "invalid", issues: [{ code: "invalid_provider_menu" }] };
   }
 
   // full_menu: new_menu と regenerate_menu

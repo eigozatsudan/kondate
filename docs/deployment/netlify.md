@@ -77,6 +77,19 @@
 - Builds / デプロイログ / `netlify.toml` / リポジトリ / preview コンテキスト / 任意の `VITE_` キーへは入れない
 - 値を印刷せず検証する
 
+## flyer Function は native sharp を同梱
+
+`POST /api/flyer-weekly` は画像デコードに **sharp**（native addon）を使う。
+
+| 項目 | 方針 |
+| --- | --- |
+| 依存 | `package.json` に `sharp` を **exact pin**（`npm install sharp --save-exact`） |
+| Bundling | Netlify Functions の esbuild が sharp を **external にしない**こと。platform は **linux x64**（Netlify ランタイム）で解決できるバイナリを同梱する |
+| 代替 | sharp が解決不能でも pure JS デコードへ silent に落とさない。デプロイ検証で失敗させ設計改訂する |
+| ローカル | `import sharp from "sharp"` が Node 上で成功すること（Task7 unit） |
+
+`OPENROUTER_FLYER_MODELS` は任意。未設定時は `OPENROUTER_PLUS_MODELS` を vision 送信に使う。
+
 ## ビルドコマンド
 
 本番ビルドは `verify:openrouter:models`（5 秒メタデータ期限）を含む経路を使う。
