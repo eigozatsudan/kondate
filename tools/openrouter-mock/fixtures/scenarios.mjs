@@ -224,7 +224,8 @@ unavailablePantryQuantity.menu.pantryUsage = [
 unavailablePantryQuantity.menu.dishes[0].ingredients[0].pantryRef = "pantry_1";
 
 const fallbackModelSuccess = clone();
-fallbackModelSuccess.menu.dishes[0].description = "fallback model success fixture";
+// 言語ゲート（日本語必須）を満たす。英語 description は validate で拒否される
+fallbackModelSuccess.menu.dishes[0].description = "フォールバックモデル成功用の説明";
 
 const recursivelyFreeze = (value) => {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {

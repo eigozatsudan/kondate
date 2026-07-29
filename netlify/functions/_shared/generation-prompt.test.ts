@@ -232,6 +232,15 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_CORE.slice(0, 40));
   });
 
+  it("requires Japanese user-facing text in the system prompt", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()));
+    const system = messages.find((message) => message.role === "system")?.content ?? "";
+    // description 等の英語混入を防ぐ言語契約（サーバー言語ゲートと整合）
+    expect(system).toContain("日本語");
+    expect(system).toContain("description");
+    expect(system).toContain("英語");
+  });
+
   it("idea path keeps empty adaptations/labels instruction", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeIdeaGenerationContext()));
     const system = messages.find((message) => message.role === "system")?.content ?? "";

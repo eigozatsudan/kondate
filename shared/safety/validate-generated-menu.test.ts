@@ -1212,6 +1212,31 @@ it("accepts idea menus with empty family fields and matching servings", () => {
   expect(result.menu.labelConfirmations).toEqual([]);
 });
 
+it("rejects English dish description as invalid_menu_structure (language gate)", () => {
+  const context = makeIdeaGenerationContext();
+  const base = makeGeneratedMenu({
+    servings: 2,
+    adaptations: [],
+    labelConfirmations: [],
+  });
+  const menu = makeGeneratedMenu({
+    servings: 2,
+    adaptations: [],
+    labelConfirmations: [],
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: "Beef fried rice with vegetables." } : dish,
+    ),
+  });
+  const result = validateGeneratedMenu(menu, context);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("英語 description の検証エラーを期待しました");
+  expect(result.issues).toContainEqual({
+    code: "invalid_menu_structure",
+    path: "dishes.0.description",
+    message: "利用者向けの文言は日本語で書いてください",
+  });
+});
+
 it("rejects idea menus with adaptations or servings mismatch", () => {
   const context = makeIdeaGenerationContext();
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu({ servings: 2 }), context), [

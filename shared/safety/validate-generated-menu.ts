@@ -19,6 +19,7 @@ import type {
 } from "./generation-context.js";
 import { createIdeaSafetyFingerprint } from "./idea-fingerprint.js";
 import { detectUnsupportedMedicalRequest } from "./medical-scope.js";
+import { collectNonJapaneseUserTextIssues } from "./japanese-user-text.js";
 import { collectDislikePreferenceGaps } from "./preference-gaps.js";
 
 type ConfirmationIdentity = Pick<
@@ -272,6 +273,8 @@ function collectCommonMenuIssues(
       message: `${kind} には対応していません`,
     });
   }
+  // 英語・他言語だけの name/description/手順 等を拒否（UI は日本語前提）
+  issues.push(...collectNonJapaneseUserTextIssues(generated));
   return issues;
 }
 
