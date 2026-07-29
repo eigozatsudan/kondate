@@ -1,7 +1,25 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 
 describe("auth continuation recovery", () => {
+  let originalIndexedDb: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    originalIndexedDb = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+    Object.defineProperty(globalThis, "indexedDB", {
+      configurable: true,
+      value: new SerializedIndexedDb(),
+    });
+  });
+
+  afterEach(() => {
+    if (originalIndexedDb === undefined) {
+      Reflect.deleteProperty(globalThis, "indexedDB");
+    } else {
+      Object.defineProperty(globalThis, "indexedDB", originalIndexedDb);
+    }
+  });
+
   it("allows only one tab to claim while a shared recovery lock is held", async () => {
     const storage = new MapStorage();
     let nowMs = Date.now();
@@ -126,6 +144,7 @@ describe("auth continuation recovery", () => {
       onComplete: vi.fn(),
       setInterval: (() => 1) as unknown as typeof window.setInterval,
     });
+    await flushPromises();
     expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
 
     stop();
@@ -211,7 +230,7 @@ describe("auth continuation recovery", () => {
     stop();
   });
 
-  it("serializes concurrent recovery wakes", () => {
+  it("serializes concurrent recovery wakes", async () => {
     const storage = new MapStorage();
     storage.setItem(
       "kondate.auth.flow.10000000-0000-4000-8000-000000000001",
@@ -242,6 +261,7 @@ describe("auth continuation recovery", () => {
     });
     window.dispatchEvent(new Event("focus"));
     document.dispatchEvent(new Event("visibilitychange"));
+    await flushPromises();
     expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
     resolveClaim?.({ kind: "deposited" });
     stop();
@@ -300,16 +320,12 @@ describe("auth continuation recovery", () => {
       now: () => new Date(nowMs),
       setInterval: setIntervalMock,
     });
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushPromises();
 
     for (let slot = 1; slot < 12; slot += 1) {
       nowMs += 5_000;
       intervalHandler?.();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushPromises();
     }
 
     expect(gateway.resumeFlow).toHaveBeenCalledTimes(12);
@@ -321,7 +337,188 @@ describe("auth continuation recovery", () => {
     });
     stop();
   });
+
+  it("serializes two instances through IndexedDB when Web Locks are unavailable", async () => {
+    const storage = flowStorage([
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+    ]);
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+
+    const firstStop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    const secondStop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      setInterval: (() => 2) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+    expect((globalThis.indexedDB as unknown as SerializedIndexedDb).transactionCount).toBe(2);
+    firstStop();
+    secondStop();
+  });
+
+  it("fails closed when neither Web Locks nor IndexedDB is available", async () => {
+    Reflect.deleteProperty(globalThis, "indexedDB");
+    const gateway = { resumeFlow: vi.fn() };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage: flowStorage(["10000000-0000-4000-8000-000000000001"]),
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it.each(["last-at", "cursor"])(
+    "does not claim when the %s coordination write fails",
+    async (failedKey) => {
+      const storage = new ThrowingCoordinationStorage(failedKey);
+      addFlow(storage, "10000000-0000-4000-8000-000000000001");
+      const gateway = {
+        resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+      };
+
+      const stop = startAuthContinuationRecovery({
+        gateway,
+        storage,
+        onComplete: vi.fn(),
+        setInterval: (() => 1) as unknown as typeof window.setInterval,
+      });
+      await flushPromises();
+
+      expect(gateway.resumeFlow).not.toHaveBeenCalled();
+      stop();
+    },
+  );
+
+  it("recovers from a future last-poll timestamp", async () => {
+    const nowMs = Date.now();
+    const storage = flowStorage(["10000000-0000-4000-8000-000000000001"], nowMs);
+    storage.setItem("kondate.auth.supabase.claim-poll-last-at", String(nowMs + 60_000));
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+    expect(storage.getItem("kondate.auth.supabase.claim-poll-last-at")).toBe(String(nowMs));
+    stop();
+  });
+
+  it("shares fair flow selection across two IndexedDB-coordinated instances", async () => {
+    let nowMs = Date.now();
+    const flowIds = [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+    ];
+    const storage = flowStorage(flowIds, nowMs);
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+    const intervalHandlers: Array<() => void> = [];
+    const setIntervalMock = ((handler: TimerHandler) => {
+      intervalHandlers.push(handler as () => void);
+      return intervalHandlers.length as unknown as ReturnType<typeof window.setInterval>;
+    }) as unknown as typeof window.setInterval;
+
+    const stops = [0, 1].map(() =>
+      startAuthContinuationRecovery({
+        gateway,
+        storage,
+        onComplete: vi.fn(),
+        now: () => new Date(nowMs),
+        setInterval: setIntervalMock,
+      }),
+    );
+    await flushPromises();
+    for (let slot = 1; slot < 4; slot += 1) {
+      nowMs += 5_000;
+      intervalHandlers.forEach((handler) => handler());
+      await flushPromises();
+    }
+
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(4);
+    expect(gateway.resumeFlow.mock.calls.map(([flowId]) => flowId)).toEqual([
+      flowIds[0],
+      flowIds[1],
+      flowIds[0],
+      flowIds[1],
+    ]);
+    stops.forEach((stop) => stop());
+  });
+
+  it("sanitizes a complete result before onComplete in the IndexedDB fallback", async () => {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const onComplete = vi.fn();
+    const stop = startAuthContinuationRecovery({
+      gateway: {
+        resumeFlow: vi.fn().mockResolvedValue({
+          kind: "complete",
+          flowId,
+          returnTo: "https://evil.test/phish",
+        }),
+      },
+      storage: flowStorage([flowId]),
+      onComplete,
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(onComplete).toHaveBeenCalledWith({
+      kind: "complete",
+      flowId,
+      returnTo: "/planner",
+    });
+    stop();
+  });
 });
+
+async function flushPromises(): Promise<void> {
+  for (let index = 0; index < 12; index += 1) await Promise.resolve();
+}
+
+function addFlow(storage: Storage, flowId: string, nowMs = Date.now()): void {
+  storage.setItem(
+    `kondate.auth.flow.${flowId}`,
+    JSON.stringify({
+      id: flowId,
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+      origin: "https://app.test",
+      returnTo: "/planner",
+      sessionExchange: "supabase",
+      startedAt: new Date(nowMs).toISOString(),
+    }),
+  );
+}
+
+function flowStorage(flowIds: string[], nowMs = Date.now()): MapStorage {
+  const storage = new MapStorage();
+  flowIds.forEach((flowId, index) => addFlow(storage, flowId, nowMs - 1_000 + index));
+  return storage;
+}
 
 class ImmediateLockManager {
   #held = false;
@@ -386,5 +583,80 @@ class MapStorage implements Storage {
   }
   setItem(key: string, value: string) {
     this.#values.set(key, value);
+  }
+}
+
+class ThrowingCoordinationStorage extends MapStorage {
+  constructor(private readonly failedKey: string) {
+    super();
+  }
+
+  override setItem(key: string, value: string): void {
+    if (key.includes(`claim-poll-${this.failedKey}`)) throw new Error("storage unavailable");
+    super.setItem(key, value);
+  }
+}
+
+class SerializedIndexedDb {
+  #tail = Promise.resolve();
+  transactionCount = 0;
+
+  open(): IDBOpenDBRequest {
+    const request = {
+      onblocked: null as ((event: Event) => void) | null,
+      onerror: null as ((event: Event) => void) | null,
+      onsuccess: null as ((event: Event) => void) | null,
+      onupgradeneeded: null as ((event: Event) => void) | null,
+    };
+    const database = {
+      objectStoreNames: { contains: () => true },
+      createObjectStore: vi.fn(),
+      close: vi.fn(),
+      transaction: () => this.#transaction(),
+    };
+    Object.defineProperty(request, "result", { value: database });
+    queueMicrotask(() => request.onsuccess?.(new Event("success")));
+    return request as unknown as IDBOpenDBRequest;
+  }
+
+  #transaction(): IDBTransaction {
+    this.transactionCount += 1;
+    let release = (): void => undefined;
+    const predecessor = this.#tail;
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const transaction = {
+      onabort: null as ((event: Event) => void) | null,
+      oncomplete: null as ((event: Event) => void) | null,
+      onerror: null as ((event: Event) => void) | null,
+    };
+    const getRequest = {
+      onerror: null as ((event: Event) => void) | null,
+      onsuccess: null as ((event: Event) => void) | null,
+    };
+    const finish = (): void => {
+      transaction.oncomplete?.(new Event("complete"));
+      release();
+    };
+    Object.assign(transaction, {
+      abort: () => {
+        transaction.onabort?.(new Event("abort"));
+        release();
+      },
+      objectStore: () => ({
+        get: () => {
+          void predecessor.then(() => {
+            getRequest.onsuccess?.(new Event("success"));
+          });
+          return getRequest;
+        },
+        put: () => {
+          queueMicrotask(finish);
+          return {} as IDBRequest;
+        },
+      }),
+    });
+    return transaction as unknown as IDBTransaction;
   }
 }

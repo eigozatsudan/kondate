@@ -1,6 +1,7 @@
 import {
   isAuthContinuationCallbackOwned,
   listUnexpiredAuthFlows,
+  ownedAuthStoragePrefixes,
   sanitizeReturnPath,
 } from "./auth-flow";
 
@@ -18,9 +19,13 @@ function isRecoveryComplete(result: RecoveryResult): result is RecoveryCompleteR
 }
 
 /** プロファイル横断で claim ポーリング間隔を共有する（F-AUTH-001: 複数タブの自己 429 防止）。 */
-const LAST_CLAIM_POLL_KEY = "kondate.auth.claim-poll-last-at";
-const CLAIM_POLL_CURSOR_KEY = "kondate.auth.claim-poll-cursor";
+const CLAIM_POLL_COORDINATION_PREFIX = `${ownedAuthStoragePrefixes[1]}.claim-poll`;
+const LAST_CLAIM_POLL_KEY = `${CLAIM_POLL_COORDINATION_PREFIX}-last-at`;
+const CLAIM_POLL_CURSOR_KEY = `${CLAIM_POLL_COORDINATION_PREFIX}-cursor`;
 const CLAIM_POLL_LOCK_NAME = "kondate.auth.claim-poll";
+const CLAIM_POLL_DATABASE_NAME = "kondate-auth-claim-poll";
+const CLAIM_POLL_STORE_NAME = "coordination";
+const CLAIM_POLL_TRANSACTION_KEY = "reservation";
 const MIN_CLAIM_POLL_GAP_MS = 5_000;
 
 function readLastPollAt(storage: Storage): number {
@@ -30,11 +35,13 @@ function readLastPollAt(storage: Storage): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function writeLastPollAt(storage: Storage, at: number): void {
+function writeStorageValue(storage: Storage, key: string, value: string): boolean {
   try {
-    storage.setItem(LAST_CLAIM_POLL_KEY, String(at));
+    storage.setItem(key, value);
+    return true;
   } catch {
-    // quota 超過時は協調が弱まるだけなので握りつぶす
+    // 予約状態を書けないとタブ間rate制限を保証できないため、claimせず閉じる。
+    return false;
   }
 }
 
@@ -45,11 +52,62 @@ function selectNextFlowId(flowIds: string[], storage: Storage): string | undefin
   return flowIds[(cursorIndex + 1) % flowIds.length];
 }
 
-function writeClaimPollCursor(storage: Storage, flowId: string): void {
+function openClaimPollDatabase(factory: IDBFactory): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open(CLAIM_POLL_DATABASE_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(CLAIM_POLL_STORE_NAME)) {
+        request.result.createObjectStore(CLAIM_POLL_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("IndexedDB upgrade blocked"));
+  });
+}
+
+async function runInIndexedDbCoordinator<T>(operation: () => T): Promise<T | undefined> {
+  if (typeof indexedDB === "undefined") return undefined;
+  let database: IDBDatabase;
   try {
-    storage.setItem(CLAIM_POLL_CURSOR_KEY, flowId);
+    database = await openClaimPollDatabase(indexedDB);
   } catch {
-    // cursorを保存できない場合も、5秒slotあたり1件というrate制限を優先して継続する。
+    return undefined;
+  }
+
+  try {
+    return await new Promise<T | undefined>((resolve) => {
+      let result: T | undefined;
+      let settled = false;
+      const settle = (value: T | undefined): void => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      let transaction: IDBTransaction;
+      try {
+        transaction = database.transaction(CLAIM_POLL_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CLAIM_POLL_STORE_NAME);
+        const read = store.get(CLAIM_POLL_TRANSACTION_KEY);
+        read.onsuccess = () => {
+          try {
+            result = operation();
+            store.put(Date.now(), CLAIM_POLL_TRANSACTION_KEY);
+          } catch {
+            transaction.abort();
+          }
+        };
+        read.onerror = () => transaction.abort();
+      } catch {
+        settle(undefined);
+        return;
+      }
+      transaction.oncomplete = () => settle(result);
+      transaction.onerror = () => settle(undefined);
+      transaction.onabort = () => settle(undefined);
+    });
+  } finally {
+    database.close();
   }
 }
 
@@ -64,13 +122,12 @@ export function startAuthContinuationRecovery(input: {
   let running = false;
   let stopped = false;
   const isStopped = (): boolean => stopped;
-  const runClaimPoll = async (): Promise<void> => {
+  const reserveClaim = (): string | undefined => {
     if (stopped) return;
     const nowMs = (input.now?.() ?? new Date()).getTime();
     // F-AUTH-001: タブ横断で 5s 間隔を守る。focus/visibility の連打も同じ床で抑える。
     const last = readLastPollAt(input.storage);
-    if (nowMs - last < MIN_CLAIM_POLL_GAP_MS) return;
-    writeLastPollAt(input.storage, nowMs);
+    if (last <= nowMs && nowMs - last < MIN_CLAIM_POLL_GAP_MS) return;
     const now = input.now?.() ?? new Date();
     const ttlMs = input.ttlMs ?? 300_000;
     const claimableFlowIds = listUnexpiredAuthFlows(input.storage, now, ttlMs)
@@ -78,7 +135,12 @@ export function startAuthContinuationRecovery(input: {
       .map((flow) => flow.id);
     const flowId = selectNextFlowId(claimableFlowIds, input.storage);
     if (flowId === undefined || isStopped()) return;
-    writeClaimPollCursor(input.storage, flowId);
+    if (!writeStorageValue(input.storage, LAST_CLAIM_POLL_KEY, String(nowMs))) return;
+    if (!writeStorageValue(input.storage, CLAIM_POLL_CURSOR_KEY, flowId)) return;
+    return flowId;
+  };
+  const runClaim = async (flowId: string | undefined): Promise<void> => {
+    if (flowId === undefined || stopped) return;
     const result = await input.gateway.resumeFlow(flowId);
     if (isRecoveryComplete(result)) {
       input.onComplete({
@@ -93,7 +155,7 @@ export function startAuthContinuationRecovery(input: {
     try {
       const lockManager = typeof navigator === "undefined" ? undefined : navigator.locks;
       if (lockManager === undefined) {
-        await runClaimPoll();
+        await runClaim(await runInIndexedDbCoordinator(reserveClaim));
         return;
       }
       // Web Locks 対応ブラウザでは待機列を作らず、次周期に譲ってタブ横断のclaim競合を防ぐ。
@@ -102,7 +164,7 @@ export function startAuthContinuationRecovery(input: {
         { ifAvailable: true },
         async (lock): Promise<void> => {
           if (lock === null || stopped) return;
-          await runClaimPoll();
+          await runClaim(reserveClaim());
         },
       );
     } finally {
