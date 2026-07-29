@@ -21,6 +21,7 @@ type AuthProviderProps = {
   children: ReactNode;
   client?: AuthProviderClient;
   recoveryGateway?: AuthContinuationRecoveryGateway;
+  navigateTo?: (returnTo: string) => void;
   startRecovery?: (input: {
     gateway: AuthContinuationRecoveryGateway;
     storage: Storage;
@@ -29,10 +30,23 @@ type AuthProviderProps = {
   }) => () => void;
 };
 
+function publishCompletionSafely(completion: { flowId: string; returnTo: string }): void {
+  try {
+    publishAuthContinuationCompletion(completion);
+  } catch {
+    // session確立後のlocalStorage障害はrefreshと遷移を妨げず、例外内容も外へ出さない。
+  }
+}
+
+function navigateToReturnPath(returnTo: string): void {
+  window.location.assign(returnTo);
+}
+
 export function AuthProvider({
   children,
   client: providedClient,
   recoveryGateway,
+  navigateTo = navigateToReturnPath,
   startRecovery = startAuthContinuationRecovery,
 }: AuthProviderProps) {
   const client = providedClient ?? getBrowserSupabaseClient();
@@ -73,22 +87,29 @@ export function AuthProvider({
       storage: window.localStorage,
       ttlMs: providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000,
       onComplete: (result) => {
-        publishAuthContinuationCompletion({ flowId: result.flowId, returnTo: result.returnTo });
+        publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
         void refreshSession();
-        if (result.returnTo.startsWith("/")) window.location.assign(result.returnTo);
+        if (result.returnTo.startsWith("/")) navigateTo(result.returnTo);
       },
     });
-  }, [defaultRecoveryGateway, providedClient, recoveryGateway, refreshSession, startRecovery]);
+  }, [
+    defaultRecoveryGateway,
+    navigateTo,
+    providedClient,
+    recoveryGateway,
+    refreshSession,
+    startRecovery,
+  ]);
 
   useEffect(
     () =>
       startAuthContinuationCompletionListener({
         onComplete: (result) => {
           void refreshSession();
-          window.location.assign(result.returnTo);
+          navigateTo(result.returnTo);
         },
       }),
-    [refreshSession],
+    [navigateTo, refreshSession],
   );
 
   const value = useMemo<AuthContextValue>(

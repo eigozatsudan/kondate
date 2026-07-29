@@ -144,6 +144,53 @@ describe("AuthProvider", () => {
     ).toEqual({ flowId: "flow-1", returnTo: "/onboarding" });
   });
 
+  it("refreshes the session after recovery completion when publishing fails", async () => {
+    window.history.replaceState(null, "", "/login");
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    let completeRecovery:
+      ((result: { kind: "complete"; flowId: string; returnTo: string }) => void) | undefined;
+    const navigateTo = vi.fn();
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error(`secret:${"A".repeat(43)}`);
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      render(
+        <AuthProvider
+          client={client}
+          recoveryGateway={{ resumeFlow: vi.fn() }}
+          navigateTo={navigateTo}
+          startRecovery={(input) => {
+            completeRecovery = input.onComplete;
+            return vi.fn();
+          }}
+        >
+          <Probe />
+        </AuthProvider>,
+      );
+      await screen.findByText("authenticated");
+
+      await act(async () => {
+        completeRecovery?.({ kind: "complete", flowId: "flow-1", returnTo: "/onboarding" });
+        await Promise.resolve();
+      });
+
+      expect(getSession).toHaveBeenCalledTimes(2);
+      expect(navigateTo).toHaveBeenCalledWith("/onboarding");
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      setItem.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   it("leaves callback claim ownership to AuthCallbackPage", async () => {
     window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
     const client = {

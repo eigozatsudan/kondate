@@ -471,3 +471,85 @@ it("handles the original callback result after StrictMode remounts the effect", 
     returnTo: "/onboarding",
   });
 });
+
+it("navigates after immediate completion even when publishing completion fails", async () => {
+  const secretError = new Error(`secret:${"A".repeat(43)}`);
+  vi.mocked(publishAuthContinuationCompletion).mockImplementationOnce(() => {
+    throw secretError;
+  });
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "complete",
+      continuation: "same_browser",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
+    resumeFlow: vi.fn(),
+  };
+  const router = createMemoryRouter(
+    [
+      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
+      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
+    ],
+    { initialEntries: ["/auth/callback?flow=flow-1"] },
+  );
+
+  try {
+    render(<RouterProvider router={router} />);
+
+    expect(await screen.findByRole("heading", { name: "家族の初回設定" })).toBeInTheDocument();
+    expect(consoleError).not.toHaveBeenCalled();
+  } finally {
+    consoleError.mockRestore();
+  }
+});
+
+it("cleans up and navigates after recovery completion when publishing fails", async () => {
+  const secretError = new Error(`secret:${"A".repeat(43)}`);
+  vi.mocked(publishAuthContinuationCompletion).mockImplementationOnce(() => {
+    throw secretError;
+  });
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const stopRecovery = vi.fn();
+  startAuthContinuationRecoveryMock.mockImplementationOnce(() => stopRecovery);
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
+    resumeFlow: vi.fn(),
+  };
+  const router = createMemoryRouter(
+    [
+      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
+      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
+    ],
+    { initialEntries: ["/auth/callback?flow=flow-1"] },
+  );
+
+  try {
+    render(<RouterProvider router={router} />);
+    await act(async () => Promise.resolve());
+    const recoveryInput = startAuthContinuationRecoveryMock.mock.calls.at(-1)?.[0];
+    await act(async () => {
+      recoveryInput?.onComplete({
+        kind: "complete",
+        flowId: "flow-1",
+        returnTo: "/onboarding",
+      });
+      await Promise.resolve();
+    });
+
+    expect(router.state.location.pathname).toBe("/onboarding");
+    expect(stopRecovery).toHaveBeenCalledOnce();
+    expect(consoleError).not.toHaveBeenCalled();
+  } finally {
+    consoleError.mockRestore();
+  }
+});

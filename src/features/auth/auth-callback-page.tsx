@@ -14,6 +14,14 @@ import {
   readAuthContinuationCallbackStartedAt,
 } from "./auth-flow";
 
+function publishCompletionSafely(completion: { flowId: string; returnTo: string }): void {
+  try {
+    publishAuthContinuationCompletion(completion);
+  } catch {
+    // session確立後のlocalStorage障害は遷移を妨げず、秘密を含み得る例外も外へ出さない。
+  }
+}
+
 export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; ttlMs?: number }) {
   const navigate = useNavigate();
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
@@ -57,7 +65,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
       if (!active) return;
       setResult(next);
       if (next.kind === "complete") {
-        publishAuthContinuationCompletion({ flowId: next.flowId, returnTo: next.returnTo });
+        publishCompletionSafely({ flowId: next.flowId, returnTo: next.returnTo });
         void navigate(next.returnTo, { replace: true });
       } else if (next.kind === "awaiting_completion") {
         const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
@@ -120,7 +128,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
           onComplete: (completion) => {
             if (finished) return;
             stopAwaiting();
-            publishAuthContinuationCompletion({
+            publishCompletionSafely({
               flowId: completion.flowId,
               returnTo: completion.returnTo,
             });
