@@ -50,7 +50,9 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
 
 /**
  * 終端（failed / constraint_conflict）からの復帰導線。
- * 「条件を直してやり直す」は onClear（pending+machine）で idle→/planner。
+ * 「条件を直してやり直す」は onClear（pending+machine）で idle へ。
+ * idle の遷移先は GenerationPage が pending.kind から決める
+ * （new_menu→/planner、regenerate_*→/menus/:sourceMenuId）。
  * 緊急献立・履歴は pending のみ消す（machine を idle にすると GenerationPage の
  * Navigate と <a href> が競合するため）。
  * 緊急献立 CTA は household / idea とも常時表示（2026-07-28 設計: idea 個人固定候補パス）。

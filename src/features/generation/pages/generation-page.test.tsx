@@ -1,11 +1,16 @@
 import type { Session } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
-import { createPendingGeneration, savePendingGeneration } from "../model/pending-generation";
+import {
+  clearPendingGeneration,
+  createPendingGeneration,
+  savePendingGeneration,
+} from "../model/pending-generation";
 import { GenerationPage } from "./generation-page";
 
 // --- モック定義 ---------------------------------------------------------
@@ -44,6 +49,8 @@ vi.mock("../api/usage-today-api", () => ({
 
 const USER_ID = "40000000-0000-4000-8000-000000000001";
 const KEY_A = "10000000-0000-4000-8000-000000000001";
+const SOURCE_MENU_ID = "60000000-0000-4000-8000-000000000001";
+const DISH_ID = "70000000-0000-4000-8000-000000000001";
 
 const quota = {
   consumed: false,
@@ -61,6 +68,22 @@ function makeCommand(idempotencyKey: string): GenerationCommand {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 3,
+      privacyNoticeVersion: "2026-07-28.v1",
+      expiredPantryConfirmations: [],
+    },
+  };
+}
+
+function makeRegenerateDishCommand(idempotencyKey: string): GenerationCommand {
+  return {
+    commandVersion: "generation-command.v2",
+    kind: "regenerate_dish",
+    request: {
+      idempotencyKey,
+      sourceMenuId: SOURCE_MENU_ID,
+      dishId: DISH_ID,
+      changeReason: "different_flavor",
+      changeReasonCustom: null,
       privacyNoticeVersion: "2026-07-28.v1",
       expiredPantryConfirmations: [],
     },
@@ -99,6 +122,7 @@ function renderGenerationPage(initialEntry = "/generation") {
     [
       { path: "/generation", element: <GenerationPage /> },
       { path: "/planner", element: <h1>プランナー</h1> },
+      { path: "/menus/:menuId", element: <h1>献立結果</h1> },
     ],
     { initialEntries: [initialEntry] },
   );
@@ -115,6 +139,7 @@ function renderGenerationPage(initialEntry = "/generation") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearPendingGeneration();
   currentUserIdRef.current = USER_ID;
   mockGetUsageToday.mockResolvedValue({
     success: { consumed: 1, limit: 3, remaining: 2 },
@@ -191,5 +216,52 @@ describe("GenerationPage", () => {
     expect(notice).toBeVisible();
     expect(notice.closest(".generation-resume-notice")).not.toBeNull();
     expect(screen.getByText(/いま入力した条件では新しく作り直していません/u)).toBeVisible();
+  });
+
+  // menus からの一品再生成が失敗したあと「条件を直してやり直す」で planner に落ちると
+  // 下書き文脈がなく操作不能になる。元の /menus/:sourceMenuId へ戻す。
+  it("returns to the source menus page after regenerate_dish failure clear", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(
+      makeRegenerateDishCommand(KEY_A),
+      USER_ID,
+      () => new Date(),
+    );
+    savePendingGeneration(pending);
+    mockStatus.mockResolvedValue(failedStatus(KEY_A));
+
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+    });
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/menus/${SOURCE_MENU_ID}`);
+    });
+    expect(await screen.findByRole("heading", { name: "献立結果" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
+  });
+
+  it("still returns to planner after new_menu failure clear", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
+    savePendingGeneration(pending);
+    mockStatus.mockResolvedValue(failedStatus(KEY_A));
+
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+    });
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/planner");
+    });
+    expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
   });
 });
