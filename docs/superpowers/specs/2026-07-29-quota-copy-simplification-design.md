@@ -4,7 +4,7 @@
 |------|-----|
 | 文書 | `docs/superpowers/specs/2026-07-29-quota-copy-simplification-design.md` |
 | 日付 | 2026-07-29 |
-| 状態 | **Draft — 敵対的レビュー指摘反映済み・ユーザー承認待ち** |
+| 状態 | **Approved**（2026-07-29 ユーザー承認。再生成案 A / 敵対的 D-* 反映済み） |
 | 関連 | MVP `2026-07-11-kondate-mvp-design.md` §10.3 / §11.2 / §14、無料版文言 `2026-07-28-season-freemium-quota-design.md` Feature 2 |
 | 先行議論 | 確認画面の「作成あと3回」「問い合わせあと6回」並記がユーザーに不明瞭 |
 | レビュー | 方針 ADV（セッション）; 設計書敵対的 `docs/reviews/2026-07-29-quota-copy-simplification-design-adversarial.md`（D-C1〜 / 再生成 **案 A**） |
