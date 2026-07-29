@@ -320,6 +320,259 @@ describe("auth continuation recovery", () => {
     }
   });
 
+  it.each(["web-locks", "indexed-db"] as const)(
+    "fairly reaches a target flow and a normal flow through %s",
+    async (coordinator) => {
+      const targetFlowId = "10000000-0000-4000-8000-000000000001";
+      const normalFlowId = "10000000-0000-4000-8000-000000000002";
+      let nowMs = Date.now();
+      const storage = flowStorage([targetFlowId, normalFlowId], nowMs);
+      storage.setItem(
+        `kondate.auth.supabase.callback-owner.${targetFlowId}`,
+        new Date(nowMs).toISOString(),
+      );
+      const gateway = {
+        resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+      };
+      const intervalHandlers: Array<() => void> = [];
+      const setIntervalMock = ((handler: TimerHandler) => {
+        intervalHandlers.push(handler as () => void);
+        return intervalHandlers.length as unknown as ReturnType<typeof window.setInterval>;
+      }) as unknown as typeof window.setInterval;
+      const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+      if (coordinator === "web-locks") {
+        Object.defineProperty(navigator, "locks", {
+          configurable: true,
+          value: new ImmediateLockManager(),
+        });
+      } else {
+        Reflect.deleteProperty(navigator, "locks");
+      }
+
+      try {
+        const stops = [
+          startAuthContinuationRecovery({
+            gateway,
+            storage,
+            targetFlowId,
+            onComplete: vi.fn(),
+            now: () => new Date(nowMs),
+            setInterval: setIntervalMock,
+          }),
+          startAuthContinuationRecovery({
+            gateway,
+            storage,
+            onComplete: vi.fn(),
+            now: () => new Date(nowMs),
+            setInterval: setIntervalMock,
+          }),
+        ];
+        await flushPromises();
+
+        for (let slot = 1; slot < 4; slot += 1) {
+          nowMs += 5_000;
+          intervalHandlers[0]?.();
+          await flushPromises();
+          intervalHandlers[1]?.();
+          await flushPromises();
+        }
+
+        expect(gateway.resumeFlow).toHaveBeenCalledTimes(4);
+        [targetFlowId, normalFlowId, targetFlowId, normalFlowId].forEach((flowId, index) => {
+          expect(gateway.resumeFlow).toHaveBeenNthCalledWith(index + 1, flowId);
+        });
+        stops.forEach((stop) => {
+          stop();
+        });
+      } finally {
+        if (originalLocks === undefined) {
+          Reflect.deleteProperty(navigator, "locks");
+        } else {
+          Object.defineProperty(navigator, "locks", originalLocks);
+        }
+      }
+    },
+  );
+
+  it.each(["web-locks", "indexed-db"] as const)(
+    "fairly reaches different target flows through %s",
+    async (coordinator) => {
+      const flowIds = [
+        "10000000-0000-4000-8000-000000000001",
+        "10000000-0000-4000-8000-000000000002",
+      ];
+      let nowMs = Date.now();
+      const storage = flowStorage(flowIds, nowMs);
+      flowIds.forEach((flowId) => {
+        storage.setItem(
+          `kondate.auth.supabase.callback-owner.${flowId}`,
+          new Date(nowMs).toISOString(),
+        );
+      });
+      const gateway = {
+        resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+      };
+      const intervalHandlers: Array<() => void> = [];
+      const setIntervalMock = ((handler: TimerHandler) => {
+        intervalHandlers.push(handler as () => void);
+        return intervalHandlers.length as unknown as ReturnType<typeof window.setInterval>;
+      }) as unknown as typeof window.setInterval;
+      const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+      if (coordinator === "web-locks") {
+        Object.defineProperty(navigator, "locks", {
+          configurable: true,
+          value: new ImmediateLockManager(),
+        });
+      } else {
+        Reflect.deleteProperty(navigator, "locks");
+      }
+
+      try {
+        const stops = flowIds.map((targetFlowId) =>
+          startAuthContinuationRecovery({
+            gateway,
+            storage,
+            targetFlowId,
+            onComplete: vi.fn(),
+            now: () => new Date(nowMs),
+            setInterval: setIntervalMock,
+          }),
+        );
+        await flushPromises();
+
+        for (let slot = 1; slot < 4; slot += 1) {
+          nowMs += 5_000;
+          intervalHandlers[0]?.();
+          await flushPromises();
+          intervalHandlers[1]?.();
+          await flushPromises();
+        }
+
+        expect(gateway.resumeFlow).toHaveBeenCalledTimes(4);
+        [flowIds[0], flowIds[1], flowIds[0], flowIds[1]].forEach((flowId, index) => {
+          expect(gateway.resumeFlow).toHaveBeenNthCalledWith(index + 1, flowId);
+        });
+        stops.forEach((stop) => {
+          stop();
+        });
+      } finally {
+        if (originalLocks === undefined) {
+          Reflect.deleteProperty(navigator, "locks");
+        } else {
+          Object.defineProperty(navigator, "locks", originalLocks);
+        }
+      }
+    },
+  );
+
+  it("keeps other flows progressing while a target claim remains pending", async () => {
+    const targetFlowId = "10000000-0000-4000-8000-000000000001";
+    const normalFlowId = "10000000-0000-4000-8000-000000000002";
+    let nowMs = Date.now();
+    const storage = flowStorage([targetFlowId, normalFlowId], nowMs);
+    storage.setItem(
+      `kondate.auth.supabase.callback-owner.${targetFlowId}`,
+      new Date(nowMs).toISOString(),
+    );
+    let releaseTarget: (() => void) | undefined;
+    const gateway = {
+      resumeFlow: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<{ kind: "awaiting_completion" }>((resolve) => {
+              releaseTarget = () => {
+                resolve({ kind: "awaiting_completion" });
+              };
+            }),
+        )
+        .mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+    const intervalHandlers: Array<() => void> = [];
+    const setIntervalMock = ((handler: TimerHandler) => {
+      intervalHandlers.push(handler as () => void);
+      return intervalHandlers.length as unknown as ReturnType<typeof window.setInterval>;
+    }) as unknown as typeof window.setInterval;
+
+    const stops = [
+      startAuthContinuationRecovery({
+        gateway,
+        storage,
+        targetFlowId,
+        onComplete: vi.fn(),
+        now: () => new Date(nowMs),
+        setInterval: setIntervalMock,
+      }),
+      startAuthContinuationRecovery({
+        gateway,
+        storage,
+        onComplete: vi.fn(),
+        now: () => new Date(nowMs),
+        setInterval: setIntervalMock,
+      }),
+    ];
+    await flushPromises();
+
+    nowMs += 5_000;
+    intervalHandlers[0]?.();
+    await flushPromises();
+    intervalHandlers[1]?.();
+    await flushPromises();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(2);
+    expect(gateway.resumeFlow).toHaveBeenNthCalledWith(1, targetFlowId);
+    expect(gateway.resumeFlow).toHaveBeenNthCalledWith(2, normalFlowId);
+    releaseTarget?.();
+    await flushPromises();
+    stops.forEach((stop) => {
+      stop();
+    });
+  });
+
+  it("ignores a stale target lease without stopping a normal flow", async () => {
+    const targetFlowId = "10000000-0000-4000-8000-000000000001";
+    const normalFlowId = "10000000-0000-4000-8000-000000000002";
+    let nowMs = Date.now();
+    const storage = flowStorage([targetFlowId, normalFlowId], nowMs);
+    storage.setItem(
+      `kondate.auth.supabase.callback-owner.${targetFlowId}`,
+      new Date(nowMs).toISOString(),
+    );
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+    const intervalHandlers: Array<() => void> = [];
+    const setIntervalMock = ((handler: TimerHandler) => {
+      intervalHandlers.push(handler as () => void);
+      return intervalHandlers.length as unknown as ReturnType<typeof window.setInterval>;
+    }) as unknown as typeof window.setInterval;
+    const targetStop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      targetFlowId,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: setIntervalMock,
+    });
+    const normalStop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: setIntervalMock,
+    });
+    await flushPromises();
+
+    nowMs += 20_000;
+    intervalHandlers[1]?.();
+    await flushPromises();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(2);
+    expect(gateway.resumeFlow).toHaveBeenNthCalledWith(2, normalFlowId);
+    targetStop();
+    normalStop();
+  });
+
   it("serializes concurrent recovery wakes", async () => {
     const storage = new MapStorage();
     storage.setItem(
@@ -580,6 +833,28 @@ describe("auth continuation recovery", () => {
     },
   );
 
+  it("does not claim a target flow when its lease write fails", async () => {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const storage = new ThrowingTargetLeaseStorage();
+    addFlow(storage, flowId);
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, new Date().toISOString());
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      targetFlowId: flowId,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    stop();
+  });
+
   it("recovers from a future last-poll timestamp", async () => {
     const nowMs = Date.now();
     const storage = flowStorage(["10000000-0000-4000-8000-000000000001"], nowMs);
@@ -817,6 +1092,13 @@ class ThrowingOnceCoordinationStorage extends MapStorage {
       throw new Error(`secret:${"A".repeat(43)}`);
     }
     return super.getItem(key);
+  }
+}
+
+class ThrowingTargetLeaseStorage extends MapStorage {
+  override setItem(key: string, value: string): void {
+    if (key.includes("claim-poll-target-lease")) throw new Error("storage unavailable");
+    super.setItem(key, value);
   }
 }
 

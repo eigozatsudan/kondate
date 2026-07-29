@@ -22,11 +22,20 @@ function isRecoveryComplete(result: RecoveryResult): result is RecoveryCompleteR
 const CLAIM_POLL_COORDINATION_PREFIX = `${ownedAuthStoragePrefixes[1]}.claim-poll`;
 const LAST_CLAIM_POLL_KEY = `${CLAIM_POLL_COORDINATION_PREFIX}-last-at`;
 const CLAIM_POLL_CURSOR_KEY = `${CLAIM_POLL_COORDINATION_PREFIX}-cursor`;
+const TARGET_RECOVERY_LEASE_PREFIX = `${CLAIM_POLL_COORDINATION_PREFIX}-target-lease.`;
 const CLAIM_POLL_LOCK_NAME = "kondate.auth.claim-poll";
 const CLAIM_POLL_DATABASE_NAME = "kondate-auth-claim-poll";
 const CLAIM_POLL_STORE_NAME = "coordination";
 const CLAIM_POLL_TRANSACTION_KEY = "reservation";
 const MIN_CLAIM_POLL_GAP_MS = 5_000;
+const TARGET_RECOVERY_LEASE_TTL_MS = MIN_CLAIM_POLL_GAP_MS * 3;
+
+type TargetRecoveryLease = {
+  flowId: string;
+  instanceId: string;
+  refreshedAt: number;
+  pending: boolean;
+};
 
 function readLastPollAt(storage: Storage): number {
   const raw = storage.getItem(LAST_CLAIM_POLL_KEY);
@@ -43,6 +52,67 @@ function writeStorageValue(storage: Storage, key: string, value: string): boolea
     // 予約状態を書けないとタブ間rate制限を保証できないため、claimせず閉じる。
     return false;
   }
+}
+
+function createRecoveryInstanceId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function readActiveTargetLeases(
+  storage: Storage,
+  nowMs: number,
+): Map<string, TargetRecoveryLease[]> {
+  const leases = new Map<string, TargetRecoveryLease[]>();
+  const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(
+    (key): key is string => key?.startsWith(TARGET_RECOVERY_LEASE_PREFIX) === true,
+  );
+  for (const key of keys) {
+    let lease: TargetRecoveryLease | undefined;
+    try {
+      const value: unknown = JSON.parse(storage.getItem(key) ?? "");
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "flowId" in value &&
+        typeof value.flowId === "string" &&
+        "instanceId" in value &&
+        typeof value.instanceId === "string" &&
+        "refreshedAt" in value &&
+        typeof value.refreshedAt === "number" &&
+        Number.isFinite(value.refreshedAt) &&
+        "pending" in value &&
+        typeof value.pending === "boolean"
+      ) {
+        lease = {
+          flowId: value.flowId,
+          instanceId: value.instanceId,
+          refreshedAt: value.refreshedAt,
+          pending: value.pending,
+        };
+      }
+    } catch {
+      // 破損leaseは有効なtarget所有証跡として扱わず、同じowned prefix内で除去する。
+    }
+    const expectedKey =
+      lease === undefined
+        ? undefined
+        : `${TARGET_RECOVERY_LEASE_PREFIX}${lease.flowId}.${lease.instanceId}`;
+    const age = lease === undefined ? Number.NaN : nowMs - lease.refreshedAt;
+    if (
+      lease === undefined ||
+      expectedKey !== key ||
+      age < 0 ||
+      age > TARGET_RECOVERY_LEASE_TTL_MS
+    ) {
+      storage.removeItem(key);
+      continue;
+    }
+    const flowLeases = leases.get(lease.flowId) ?? [];
+    flowLeases.push(lease);
+    leases.set(lease.flowId, flowLeases);
+  }
+  return leases;
 }
 
 function selectNextFlowId(flowIds: string[], storage: Storage): string | undefined {
@@ -147,7 +217,22 @@ export function startAuthContinuationRecovery(input: {
 }): () => void {
   let running = false;
   let stopped = false;
+  const instanceId = createRecoveryInstanceId();
+  const targetLeaseKey =
+    input.targetFlowId === undefined
+      ? undefined
+      : `${TARGET_RECOVERY_LEASE_PREFIX}${input.targetFlowId}.${instanceId}`;
   const isStopped = (): boolean => stopped;
+  const refreshTargetLease = (pending: boolean): boolean => {
+    if (input.targetFlowId === undefined || targetLeaseKey === undefined) return true;
+    const lease: TargetRecoveryLease = {
+      flowId: input.targetFlowId,
+      instanceId,
+      refreshedAt: (input.now?.() ?? new Date()).getTime(),
+      pending,
+    };
+    return writeStorageValue(input.storage, targetLeaseKey, JSON.stringify(lease));
+  };
   const reserveClaim = (): string | undefined => {
     if (stopped) return;
     const nowMs = (input.now?.() ?? new Date()).getTime();
@@ -157,14 +242,29 @@ export function startAuthContinuationRecovery(input: {
     const now = input.now?.() ?? new Date();
     const ttlMs = input.ttlMs ?? 300_000;
     const unexpiredFlows = listUnexpiredAuthFlows(input.storage, now, ttlMs);
-    const claimableFlowIds =
-      input.targetFlowId === undefined
-        ? unexpiredFlows
-            .filter((flow) => !isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs))
-            .map((flow) => flow.id)
-        : unexpiredFlows.filter((flow) => flow.id === input.targetFlowId).map((flow) => flow.id);
+    const activeTargetLeases = readActiveTargetLeases(input.storage, nowMs);
+    const callbackOwnedFlowIds = new Set(
+      unexpiredFlows
+        .filter((flow) => isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs))
+        .map((flow) => flow.id),
+    );
+    const claimableFlowIds = unexpiredFlows
+      .filter((flow) => {
+        if (!callbackOwnedFlowIds.has(flow.id)) return true;
+        const leases = activeTargetLeases.get(flow.id) ?? [];
+        return leases.length > 0 && leases.every((lease) => !lease.pending);
+      })
+      .map((flow) => flow.id);
     const flowId = selectNextFlowId(claimableFlowIds, input.storage);
     if (flowId === undefined || isStopped()) return;
+    const isCallbackOwned = callbackOwnedFlowIds.has(flowId);
+    const canHandleFlow =
+      input.targetFlowId === undefined
+        ? !isCallbackOwned
+        : isCallbackOwned && flowId === input.targetFlowId;
+    // 担当外flowを選んだinstanceは共有slotを消費せず、同じ周期の担当instanceへ譲る。
+    if (!canHandleFlow) return;
+    if (input.targetFlowId !== undefined && !refreshTargetLease(true)) return;
     if (!writeStorageValue(input.storage, LAST_CLAIM_POLL_KEY, String(nowMs))) return;
     if (!writeStorageValue(input.storage, CLAIM_POLL_CURSOR_KEY, flowId)) return;
     return flowId;
@@ -184,7 +284,7 @@ export function startAuthContinuationRecovery(input: {
     input.onResult?.(result);
   };
   const poll = async (): Promise<void> => {
-    if (running || stopped) return;
+    if (stopped || !refreshTargetLease(running) || running) return;
     running = true;
     try {
       const lockManager = typeof navigator === "undefined" ? undefined : navigator.locks;
@@ -205,6 +305,7 @@ export function startAuthContinuationRecovery(input: {
       // recovery失敗は次周期へ委ね、認証情報を含み得る例外をグローバルへ漏らさない。
     } finally {
       running = false;
+      if (!isStopped()) refreshTargetLease(false);
     }
   };
   // B-I1: claim の IP 上限 20/60s を超えないよう 5s 間隔（最大 12 回/分）にする。
@@ -222,5 +323,12 @@ export function startAuthContinuationRecovery(input: {
     clearInterval(timer);
     window.removeEventListener("focus", wake);
     document.removeEventListener("visibilitychange", wake);
+    if (targetLeaseKey !== undefined) {
+      try {
+        input.storage.removeItem(targetLeaseKey);
+      } catch {
+        // cleanup失敗時もleaseは短期で失効し、他flowをTTLまで停止させない。
+      }
+    }
   };
 }
