@@ -133,7 +133,22 @@ values.set("VITE_OAUTH_MOCK_ORIGIN", "http://127.0.0.1:8788");
 // secrets 再生成後は mock に戻るので、実キーは再設定が必要。
 values.set("OPENROUTER_API_KEY", "local-mock-key");
 values.set("OPENROUTER_MODELS", "mock/kondate-primary:free,mock/kondate-repair:free");
+values.set("OPENROUTER_PLUS_MODELS", "mock/kondate-primary:free,mock/kondate-repair:free");
+// 空 = flyer は OPENROUTER_PLUS_MODELS にフォールバック（env.ts / Q1）
+values.set("OPENROUTER_FLYER_MODELS", "");
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787/api/v1");
+// リリース固定（shared/contracts/function-budget.ts と compose と一致）
+values.set("OPENROUTER_TIMEOUT_MS", "24000");
+values.set("FUNCTION_TOTAL_BUDGET_MS", "55000");
+values.set("AI_PROCESSING_STALE_SECONDS", "180");
+values.set("BILLING_ENABLED", "false");
+values.set("STRIPE_API_VERSION", "2025-02-24.acacia");
+values.set("STRIPE_SECRET_KEY", "");
+values.set("STRIPE_WEBHOOK_SECRET", "");
+values.set("STRIPE_PRICE_PLUS_MONTHLY", "");
+values.set("STRIPE_PRICE_PLUS_YEARLY", "");
+values.set("STRIPE_MOCK_BASE_URL", "");
+values.set("AI_QUOTA_DISABLED", "false");
 
 // 時間メンテ用ローカル LOGIN。URL は Compose 内部の db:5432 のみ
 // （ホスト公開 127.0.0.1:54322 は受理しない）。値は .env にだけ書き、stdout には出さない。
