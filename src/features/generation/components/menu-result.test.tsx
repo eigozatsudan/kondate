@@ -54,6 +54,15 @@ it("shows the overall timeline before persistent dish tabs", () => {
   expect(timeline.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   // household 既定では本文先頭に AI 作成バナーを出す
   expect(container).toHaveTextContent("AIが作成した献立です");
+  // モデル未記録時はメタ行を出さない
+  expect(container).not.toHaveTextContent("作成モデル");
+});
+
+it("shows a muted short model label under the summary when generationModelId is set", () => {
+  render(
+    <MenuResult result={makeMenuResultViewModel({ generationModelId: "inception/mercury-2" })} />,
+  );
+  expect(screen.getByText("作成モデル: Mercury 2")).toBeInTheDocument();
 });
 
 it("shows dislike preference soft gaps when present", () => {

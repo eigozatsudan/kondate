@@ -2319,6 +2319,10 @@ export type Database = {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: Json
       }
+      get_menu_generation_model: {
+        Args: { p_menu_id: string }
+        Returns: string
+      }
       get_shopping_mutation_replay: {
         Args: {
           p_idempotency_key: string

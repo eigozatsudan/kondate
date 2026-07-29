@@ -351,6 +351,16 @@ export async function getMenuResult(
     preferenceGaps = collectDislikePreferenceGaps(menu, prefs);
   }
 
+  // 生成モデルは private 台帳投影。欠落・RPC 失敗は献立本体の表示を落とさない。
+  let generationModelId: string | null = null;
+  const { data: modelData, error: modelError } = await client.rpc("get_menu_generation_model", {
+    p_menu_id: menuId,
+  });
+  if (modelError === null && typeof modelData === "string") {
+    const trimmed = modelData.trim();
+    if (trimmed !== "") generationModelId = trimmed;
+  }
+
   return {
     targetMode: targetModeParsed.data,
     sourceSubmission,
@@ -386,5 +396,6 @@ export async function getMenuResult(
     }),
     pantryPostCookTargets,
     preferenceGaps,
+    generationModelId,
   };
 }

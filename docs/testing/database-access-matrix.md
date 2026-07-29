@@ -192,6 +192,7 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.get_ai_generation_status(p_user_id uuid, p_idempotency_key uuid, p_user_limit integer, p_identity_key text, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_ai_generation_submission_snapshot(p_request_id uuid, p_user_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_ai_usage_today(p_user_id uuid, p_identity_key text, p_now timestamp with time zone, p_global_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
+| `public.get_menu_generation_model(p_menu_id uuid)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC; owner-only projection of final actual_model_ids |
 | `public.release_identity_and_global_for_user_processing(p_user_id uuid, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; delete-account pre-release |
 | `public.get_current_safety_snapshot(p_user_id uuid, p_target_member_ids uuid[])` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_shopping_mutation_replay(p_user_id uuid, p_idempotency_key uuid, p_request_hash text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |

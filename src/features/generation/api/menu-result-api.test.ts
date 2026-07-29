@@ -322,6 +322,8 @@ function rawMenuRow() {
 function mockClient(options: {
   menu: { data: unknown; error: unknown };
   pantryRows?: readonly Record<string, unknown>[];
+  /** get_menu_generation_model RPC の戻り。省略時は null（モデル未記録） */
+  generationModel?: { data: unknown; error: unknown };
 }) {
   const menuChain = {
     eq: vi.fn(() => menuChain),
@@ -336,7 +338,13 @@ function mockClient(options: {
     }
     return { select: vi.fn(() => menuChain) };
   });
-  return { from };
+  const rpc = vi.fn((fn: string) => {
+    if (fn === "get_menu_generation_model") {
+      return Promise.resolve(options.generationModel ?? { data: null, error: null });
+    }
+    return Promise.resolve({ data: null, error: { message: `unexpected rpc: ${fn}` } });
+  });
+  return { from, rpc };
 }
 
 beforeEach(() => {
@@ -517,6 +525,33 @@ describe("getMenuResult", () => {
         },
       },
     ]);
+    // モデル未記録（RPC null）は generationModelId null
+    expect(result.generationModelId).toBeNull();
+  });
+
+  it("get_menu_generation_model の文字列を generationModelId に載せる", async () => {
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({
+        menu: { data: rawMenuRow(), error: null },
+        pantryRows: [],
+        generationModel: { data: "inception/mercury-2", error: null },
+      }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.generationModelId).toBe("inception/mercury-2");
+  });
+
+  it("get_menu_generation_model 失敗でも献立本体は返す", async () => {
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({
+        menu: { data: rawMenuRow(), error: null },
+        pantryRows: [],
+        generationModel: { data: null, error: { message: "rpc failed" } },
+      }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.menu.menuId).toBe(MENU_ID);
+    expect(result.generationModelId).toBeNull();
   });
 
   it("live pantry が無い used 選択は削除済みとして閉じる", async () => {

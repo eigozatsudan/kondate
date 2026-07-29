@@ -64,4 +64,10 @@ export type MenuResultViewModel = {
    * DB 専用列には載せない。preference_snapshot から都度算出する。
    */
   preferenceGaps: readonly PreferenceGapNote[];
+  /**
+   * 生成に使われた最終 OpenRouter model ID。
+   * private 台帳から所有者 RPC で投影する。台帳欠落・権限外・未記録は null。
+   * UI は formatGenerationModelLabel で短い表示名へ落とす。
+   */
+  generationModelId: string | null;
 };

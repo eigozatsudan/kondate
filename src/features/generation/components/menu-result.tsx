@@ -4,6 +4,7 @@ import {
   type PantryItem,
   type PantryItemInput,
 } from "@shared/contracts/pantry";
+import { formatGenerationModelLabel } from "@shared/contracts/generation-model-label";
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
 
@@ -346,6 +347,16 @@ export function MenuResult({
       <p className="mt-2 text-lg font-semibold break-words">
         食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
       </p>
+      {/*
+        生成モデルは透明性のための薄いメタ情報。主見出しの下に小さく置き、
+        台帳欠落時は出さない（推測ラベルを捏造しない）。
+      */}
+      {result.generationModelId !== null &&
+      formatGenerationModelLabel(result.generationModelId) !== "" ? (
+        <p className="mt-1 text-xs text-ink-muted break-words">
+          作成モデル: {formatGenerationModelLabel(result.generationModelId)}
+        </p>
+      ) : null}
       {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
       {result.preferenceGaps.length > 0 && (
         <section
