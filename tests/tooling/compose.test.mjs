@@ -303,6 +303,7 @@ test("provides the complete locked generation environment to the app service", a
     'OPENROUTER_TIMEOUT_MS: "60000"',
     'FUNCTION_TOTAL_BUDGET_MS: "150000"',
     'AI_PROCESSING_STALE_SECONDS: "180"',
+    "AI_QUOTA_DISABLED: ${AI_QUOTA_DISABLED:-false}",
   ]) {
     assert.match(app, new RegExp(`^ {6}${line.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "mu"));
   }

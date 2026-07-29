@@ -12,10 +12,10 @@ select has_function(
 select has_function(
   'public',
   'get_ai_usage_today',
-  array['uuid', 'timestamp with time zone', 'integer']
+  array['uuid', 'text', 'timestamp with time zone', 'integer']
 );
 
--- 旧 2 引数 overload が残っていないこと（p_global_limit 無視回帰の防止）
+-- 旧 overload が残っていないこと（identity_key / p_global_limit 無視回帰の防止）
 select is(
   (
     select count(*)::integer
@@ -23,11 +23,13 @@ select is(
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
       and p.proname = 'get_ai_usage_today'
-      and pg_get_function_identity_arguments(p.oid)
-        = 'p_user_id uuid, p_now timestamp with time zone'
+      and pg_get_function_identity_arguments(p.oid) in (
+        'p_user_id uuid, p_now timestamp with time zone',
+        'p_user_id uuid, p_now timestamp with time zone, p_global_limit integer'
+      )
   ),
   0,
-  'get_ai_usage_today has no 2-arg overload without p_global_limit'
+  'get_ai_usage_today has no pre-identity overload without p_identity_key'
 );
 
 do $body$
@@ -142,15 +144,26 @@ begin
     raise exception 'insert after window should succeed: %', v_result;
   end if;
 
-  -- p_global_limit が usage today に効く（上限 1・予約/送信 0 なら available）
-  v_result := public.get_ai_usage_today(v_owner, clock_timestamp(), 1);
+  -- p_global_limit が usage today に効く。
+  -- 共有 DB の当日 global 台帳に依存しないよう、行の無い固定日を p_now で指定する。
+  v_result := public.get_ai_usage_today(
+    v_owner,
+    tests.quota_identity_key(v_owner),
+    '2000-01-01 00:00:00+00'::timestamptz,
+    1
+  );
   if (v_result ->> 'globalAvailable') is distinct from 'true' then
     raise exception 'empty ledger should be globalAvailable with limit 1: %', v_result;
   end if;
 
   -- 無効な global limit は raise
   begin
-    perform public.get_ai_usage_today(v_owner, clock_timestamp(), 0);
+    perform public.get_ai_usage_today(
+      v_owner,
+      tests.quota_identity_key(v_owner),
+      '2000-01-01 00:00:00+00'::timestamptz,
+      0
+    );
     raise exception 'p_global_limit=0 should raise';
   exception
     when others then

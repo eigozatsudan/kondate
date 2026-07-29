@@ -12,8 +12,50 @@ select plan(22);
 
 delete from auth.users where id in (
   'c1000000-0000-4000-8000-000000000101',
-  'c1000000-0000-4000-8000-000000000102'
+  'c1000000-0000-4000-8000-000000000102',
+  'c1000000-0000-4000-8000-000000000103',
+  'c1000000-0000-4000-8000-000000000104'
 );
+
+-- 本ファイルは begin/rollback せず autocommit のため、再実行で identity 日次台帳と
+-- 残 request が user_attempt_limit 等を起こさないよう固定 fixture 分を掃除する。
+delete from private.ai_generation_requests
+where user_id in (
+  'c1000000-0000-4000-8000-000000000101',
+  'c1000000-0000-4000-8000-000000000102',
+  'c1000000-0000-4000-8000-000000000103',
+  'c1000000-0000-4000-8000-000000000104'
+);
+delete from private.generation_regeneration_snapshots
+where user_id in (
+  'c1000000-0000-4000-8000-000000000101',
+  'c1000000-0000-4000-8000-000000000102',
+  'c1000000-0000-4000-8000-000000000103',
+  'c1000000-0000-4000-8000-000000000104'
+);
+delete from private.ai_user_rate_windows
+where user_id in (
+  'c1000000-0000-4000-8000-000000000101',
+  'c1000000-0000-4000-8000-000000000102',
+  'c1000000-0000-4000-8000-000000000103',
+  'c1000000-0000-4000-8000-000000000104'
+);
+delete from private.ai_identity_daily_external_attempts
+where identity_key in (
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid),
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000102'::uuid),
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000103'::uuid),
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000104'::uuid)
+);
+delete from private.ai_identity_daily_usage
+where identity_key in (
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid),
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000102'::uuid),
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000103'::uuid),
+  tests.quota_identity_key('c1000000-0000-4000-8000-000000000104'::uuid)
+);
+-- 本ファイルの p_now が載せる JST 日。再実行で global 上限に当たるのを防ぐ
+delete from private.ai_global_daily_usage where usage_day = date '2026-07-22';
 
 do $block$
 begin

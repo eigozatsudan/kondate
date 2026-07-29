@@ -24,6 +24,8 @@ export type Database = {
           global_sent_calls: number
           id: string
           idempotency_key: string
+          identity_key: string
+          personal_quota_disabled: boolean
           processing_expires_at: string | null
           repair_attempted: boolean
           replace_dish_id: string | null
@@ -56,6 +58,8 @@ export type Database = {
           global_sent_calls?: number
           id?: string
           idempotency_key: string
+          identity_key: string
+          personal_quota_disabled?: boolean
           processing_expires_at?: string | null
           repair_attempted?: boolean
           replace_dish_id?: string | null
@@ -88,6 +92,8 @@ export type Database = {
           global_sent_calls?: number
           id?: string
           idempotency_key?: string
+          identity_key?: string
+          personal_quota_disabled?: boolean
           processing_expires_at?: string | null
           repair_attempted?: boolean
           replace_dish_id?: string | null
@@ -137,51 +143,51 @@ export type Database = {
         }
         Relationships: []
       }
-      ai_user_daily_external_attempts: {
+      ai_identity_daily_external_attempts: {
         Row: {
+          identity_key: string
           reserved_count: number
           sent_count: number
           updated_at: string
           usage_day: string
-          user_id: string
         }
         Insert: {
+          identity_key: string
           reserved_count?: number
           sent_count?: number
           updated_at?: string
           usage_day: string
-          user_id: string
         }
         Update: {
+          identity_key?: string
           reserved_count?: number
           sent_count?: number
           updated_at?: string
           usage_day?: string
-          user_id?: string
         }
         Relationships: []
       }
-      ai_user_daily_usage: {
+      ai_identity_daily_usage: {
         Row: {
+          identity_key: string
           reserved_count: number
           success_count: number
           updated_at: string
           usage_day: string
-          user_id: string
         }
         Insert: {
+          identity_key: string
           reserved_count?: number
           success_count?: number
           updated_at?: string
           usage_day: string
-          user_id: string
         }
         Update: {
+          identity_key?: string
           reserved_count?: number
           success_count?: number
           updated_at?: string
           usage_day?: string
-          user_id?: string
         }
         Relationships: []
       }
@@ -487,6 +493,17 @@ export type Database = {
         }
         Returns: string
       }
+      release_identity_and_global_for_user_processing: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: number
+      }
+      release_request_quota_reservations: {
+        Args: {
+          p_now: string
+          p_request: Database["private"]["Tables"]["ai_generation_requests"]["Row"]
+        }
+        Returns: undefined
+      }
       soft_delete_generation_draft: {
         Args: {
           p_draft_id: string
@@ -501,7 +518,6 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      upgrade_ai_daily_quota_checks_to_3_6: { Args: never; Returns: undefined }
       write_shopping_items: {
         Args: { p_items: Json; p_list_id: string; p_user_id: string }
         Returns: undefined
@@ -2264,6 +2280,7 @@ export type Database = {
       get_ai_generation_status: {
         Args: {
           p_idempotency_key: string
+          p_identity_key: string
           p_now?: string
           p_user_id: string
           p_user_limit: number
@@ -2290,7 +2307,12 @@ export type Database = {
         }[]
       }
       get_ai_usage_today: {
-        Args: { p_global_limit?: number; p_now?: string; p_user_id: string }
+        Args: {
+          p_global_limit?: number
+          p_identity_key: string
+          p_now?: string
+          p_user_id: string
+        }
         Returns: Json
       }
       get_current_safety_snapshot: {
@@ -2381,6 +2403,10 @@ export type Database = {
         }
         Returns: Json
       }
+      release_identity_and_global_for_user_processing: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: number
+      }
       reserve_ai_generation: {
         Args: {
           p_change_reason: string
@@ -2388,8 +2414,10 @@ export type Database = {
           p_draft_revision: number
           p_global_limit: number
           p_idempotency_key: string
+          p_identity_key: string
           p_integrity_context: Json
           p_now?: string
+          p_quota_disabled?: boolean
           p_replace_dish_id: string
           p_request_hmac: string
           p_request_hmac_version: string
@@ -2402,7 +2430,12 @@ export type Database = {
         Returns: Json
       }
       reserve_ai_repair_call: {
-        Args: { p_global_limit: number; p_now?: string; p_request_id: string }
+        Args: {
+          p_global_limit: number
+          p_now?: string
+          p_quota_disabled?: boolean
+          p_request_id: string
+        }
         Returns: Json
       }
       run_kondate_maintenance: {

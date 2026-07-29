@@ -205,10 +205,9 @@ it("set_onboarding_statusのonboarding_statusをOnboardingStatusのリテラル�
 });
 
 it("preserves every other reservation argument and return contract", () => {
-  // p_identity_key / p_quota_disabled は overlay で足す（typegen 前でも呼び出し側契約を固定）
-  type OverlayOnly = "p_identity_key" | "p_quota_disabled";
+  // identity 日次枠の p_identity_key / p_quota_disabled は typegen 済み。nullable 復元以外は生成型と一致
   expectTypeOf<
-    Omit<ReserveGeneration["Args"], NullableReserveGenerationArg | OverlayOnly>
+    Omit<ReserveGeneration["Args"], NullableReserveGenerationArg>
   >().toEqualTypeOf<Omit<GeneratedReserveGeneration["Args"], NullableReserveGenerationArg>>();
   expectTypeOf<ReserveGeneration["Returns"]>().toEqualTypeOf<
     GeneratedReserveGeneration["Returns"]

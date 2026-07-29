@@ -258,7 +258,7 @@ select is_empty(
   ('public.finalize_ai_generation_success(p_request_id uuid, p_menu jsonb, p_preference_snapshot jsonb, p_safety_snapshot jsonb, p_safety_fingerprint text, p_allergen_version text, p_food_rule_version text, p_target_members jsonb, p_expired_checks jsonb, p_source_menu_id uuid, p_change_reason text, p_change_reason_custom text, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.finalize_ai_generation_success_deadline_bounded(p_timeout_ms integer, p_request_id uuid, p_menu jsonb, p_preference_snapshot jsonb, p_safety_snapshot jsonb, p_safety_fingerprint text, p_allergen_version text, p_food_rule_version text, p_target_members jsonb, p_expired_checks jsonb, p_source_menu_id uuid, p_change_reason text, p_change_reason_custom text, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.get_ai_generation_regeneration_snapshot(p_request_id uuid, p_user_id uuid)', 'service_role', 'EXECUTE'),
-  ('public.get_ai_generation_status(p_user_id uuid, p_idempotency_key uuid, p_user_limit integer, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
+  ('public.get_ai_generation_status(p_user_id uuid, p_idempotency_key uuid, p_user_limit integer, p_identity_key text, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.get_ai_generation_submission_snapshot(p_request_id uuid, p_user_id uuid)', 'service_role', 'EXECUTE'),
   ('public.get_ai_usage_today(p_user_id uuid, p_identity_key text, p_now timestamp with time zone, p_global_limit integer)', 'service_role', 'EXECUTE'),
   ('public.get_current_safety_snapshot(p_user_id uuid, p_target_member_ids uuid[])', 'service_role', 'EXECUTE'),

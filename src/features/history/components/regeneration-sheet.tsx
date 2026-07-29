@@ -131,13 +131,12 @@ export function RegenerationSheet({
 
   const submit = form.handleSubmit(async (raw) => {
     form.clearErrors();
-    // RHF は未選択 radio を "" または undefined にし得る。どちらも「未選択」として扱う
-    const selected =
-      raw.changeReason === "" || raw.changeReason === undefined ? undefined : raw.changeReason;
-    if (selected === undefined) {
+    // FormValues の未選択は ""（defaultValues）。空なら送信させない
+    if (raw.changeReason === "") {
       form.setError("changeReason", { message: "理由を選んでください" });
       return;
     }
+    const selected = raw.changeReason;
     const parsed = regenerationReasonSchema.safeParse({
       changeReason: selected,
       changeReasonCustom:
