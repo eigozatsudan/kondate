@@ -59,6 +59,11 @@ describe("auth continuation recovery", () => {
         setInterval: setIntervalMock,
       });
 
+      expect(locks.requests).toHaveLength(2);
+      for (const request of locks.requests) {
+        expect(request.name).toBe("kondate.auth.claim-poll");
+        expect(request.options.ifAvailable).toBe(true);
+      }
       expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
       releaseClaim?.();
       await Promise.resolve();
@@ -78,6 +83,58 @@ describe("auth continuation recovery", () => {
         Object.defineProperty(navigator, "locks", originalLocks);
       }
     }
+  });
+
+  it("does not start another claim after cleanup while a claim is pending", async () => {
+    const storage = new MapStorage();
+    const startedAt = new Date().toISOString();
+    for (const flowId of [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+    ]) {
+      storage.setItem(
+        `kondate.auth.flow.${flowId}`,
+        JSON.stringify({
+          id: flowId,
+          secret: "A".repeat(43),
+          state: "B".repeat(43),
+          origin: "https://app.test",
+          returnTo: "/planner",
+          sessionExchange: "supabase",
+          startedAt,
+        }),
+      );
+    }
+    let releaseClaim: (() => void) | undefined;
+    const gateway = {
+      resumeFlow: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<{ kind: "deposited" }>((resolve) => {
+              releaseClaim = () => {
+                resolve({ kind: "deposited" });
+              };
+            }),
+        )
+        .mockResolvedValue({ kind: "deposited" }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+
+    stop();
+    releaseClaim?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
   });
 
   it("does not start a claim when cleanup runs before an acquired lock callback", async () => {
@@ -110,6 +167,9 @@ describe("auth continuation recovery", () => {
         setInterval: (() => 1) as unknown as typeof window.setInterval,
       });
       stop();
+      expect(locks.requests).toHaveLength(1);
+      expect(locks.requests[0]?.name).toBe("kondate.auth.claim-poll");
+      expect(locks.requests[0]?.options.ifAvailable).toBe(true);
       await locks.grant();
       expect(gateway.resumeFlow).not.toHaveBeenCalled();
     } finally {
@@ -206,12 +266,14 @@ describe("auth continuation recovery", () => {
 
 class ImmediateLockManager {
   #held = false;
+  readonly requests: Array<{ name: string; options: LockOptions }> = [];
 
   async request<T>(
-    _name: string,
-    _options: LockOptions,
+    name: string,
+    options: LockOptions,
     callback: (lock: Lock | null) => T | PromiseLike<T>,
   ): Promise<T> {
+    this.requests.push({ name, options });
     if (this.#held) return await callback(null);
     this.#held = true;
     try {
@@ -225,15 +287,17 @@ class ImmediateLockManager {
 class DeferredLockManager {
   #callback: ((lock: Lock | null) => void | PromiseLike<void>) | undefined;
   #resolveRequest: () => void = () => undefined;
+  readonly requests: Array<{ name: string; options: LockOptions }> = [];
   readonly #request = new Promise<void>((resolve) => {
     this.#resolveRequest = resolve;
   });
 
   request(
-    _name: string,
-    _options: LockOptions,
+    name: string,
+    options: LockOptions,
     callback: (lock: Lock | null) => void | PromiseLike<void>,
   ): Promise<void> {
+    this.requests.push({ name, options });
     this.#callback = callback;
     return this.#request;
   }

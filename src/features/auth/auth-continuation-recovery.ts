@@ -47,6 +47,7 @@ export function startAuthContinuationRecovery(input: {
 }): () => void {
   let running = false;
   let stopped = false;
+  const isStopped = (): boolean => stopped;
   const runClaimPoll = async (): Promise<void> => {
     if (stopped) return;
     const nowMs = (input.now?.() ?? new Date()).getTime();
@@ -58,6 +59,7 @@ export function startAuthContinuationRecovery(input: {
     const ttlMs = input.ttlMs ?? 300_000;
     for (const flow of listUnexpiredAuthFlows(input.storage, now, ttlMs)) {
       if (isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs)) continue;
+      if (isStopped()) return;
       const result = await input.gateway.resumeFlow(flow.id);
       if (isRecoveryComplete(result)) {
         input.onComplete({
