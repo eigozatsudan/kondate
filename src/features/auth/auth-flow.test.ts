@@ -3,6 +3,8 @@ import {
   clearAuthFlow,
   createContinuationApi,
   createAuthFlow,
+  isAuthContinuationCallbackOwned,
+  listUnexpiredAuthFlows,
   ownedAuthStoragePrefixes,
   readAuthFlow,
   sanitizeReturnPath,
@@ -83,6 +85,92 @@ describe("auth flow storage", () => {
       id: flowId,
       sessionExchange: "supabase",
     });
+  });
+
+  it("rebases a future flow once and retains it for at most one TTL", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/planner",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:10:00.000Z",
+      }),
+    );
+
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:00:00.000Z"), 300_000),
+    ).toHaveLength(1);
+    expect(readAuthFlow(flowId, storage)?.startedAt).toBe("2026-07-13T00:00:00.000Z");
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:05:00.001Z"), 300_000)).toEqual(
+      [],
+    );
+  });
+
+  it("rebases future callback ownership without crossing its TTL boundary", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const ownerKey = `kondate.auth.supabase.callback-owner.${flowId}`;
+    storage.setItem(ownerKey, "2026-07-13T00:10:00.000Z");
+
+    expect(
+      isAuthContinuationCallbackOwned(
+        flowId,
+        storage,
+        new Date("2026-07-13T00:00:00.000Z"),
+        300_000,
+      ),
+    ).toBe(true);
+    expect(storage.getItem(ownerKey)).toBe("2026-07-13T00:00:00.000Z");
+    expect(
+      isAuthContinuationCallbackOwned(
+        flowId,
+        storage,
+        new Date("2026-07-13T00:05:00.001Z"),
+        300_000,
+      ),
+    ).toBe(false);
+  });
+
+  it("removes non-finite and over-TTL flow and callback timestamps", () => {
+    const storage = new MapStorage();
+    const invalidFlowId = "10000000-0000-4000-8000-000000000001";
+    const expiredFlowId = "10000000-0000-4000-8000-000000000002";
+    for (const [flowId, startedAt] of [
+      [invalidFlowId, "invalid"],
+      [expiredFlowId, "2026-07-12T23:54:59.999Z"],
+    ] as const) {
+      storage.setItem(
+        `kondate.auth.flow.${flowId}`,
+        JSON.stringify({
+          id: flowId,
+          secret: "A".repeat(43),
+          state: "B".repeat(43),
+          origin: "https://app.test",
+          returnTo: "/planner",
+          sessionExchange: "supabase",
+          startedAt,
+        }),
+      );
+    }
+    const invalidOwnerId = "10000000-0000-4000-8000-000000000003";
+    const expiredOwnerId = "10000000-0000-4000-8000-000000000004";
+    storage.setItem(`kondate.auth.supabase.callback-owner.${invalidOwnerId}`, "invalid");
+    storage.setItem(
+      `kondate.auth.supabase.callback-owner.${expiredOwnerId}`,
+      "2026-07-12T23:54:59.999Z",
+    );
+    const now = new Date("2026-07-13T00:00:00.000Z");
+
+    expect(listUnexpiredAuthFlows(storage, now, 300_000)).toEqual([]);
+    expect(isAuthContinuationCallbackOwned(invalidOwnerId, storage, now, 300_000)).toBe(false);
+    expect(isAuthContinuationCallbackOwned(expiredOwnerId, storage, now, 300_000)).toBe(false);
+    expect(storage.length).toBe(0);
   });
 });
 

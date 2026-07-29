@@ -513,6 +513,39 @@ describe("auth continuation recovery", () => {
     stop();
   });
 
+  it("recovers in the current slot after clock rollback without crossing callback ownership", async () => {
+    const nowMs = Date.parse("2026-07-13T00:00:00.000Z");
+    const futureMs = nowMs + 60_000;
+    const ownerFlowId = "10000000-0000-4000-8000-000000000001";
+    const claimableFlowId = "10000000-0000-4000-8000-000000000002";
+    const storage = flowStorage([ownerFlowId, claimableFlowId], futureMs);
+    storage.setItem(
+      `kondate.auth.supabase.callback-owner.${ownerFlowId}`,
+      new Date(futureMs).toISOString(),
+    );
+    storage.setItem("kondate.auth.supabase.claim-poll-last-at", String(futureMs));
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledOnce();
+    expect(gateway.resumeFlow).toHaveBeenCalledWith(claimableFlowId);
+    expect(storage.getItem(`kondate.auth.supabase.callback-owner.${ownerFlowId}`)).toBe(
+      new Date(nowMs).toISOString(),
+    );
+    expect(storage.getItem("kondate.auth.supabase.claim-poll-last-at")).toBe(String(nowMs));
+    stop();
+  });
+
   it("shares fair flow selection across two IndexedDB-coordinated instances", async () => {
     let nowMs = Date.now();
     const flowIds = [

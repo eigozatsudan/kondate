@@ -139,9 +139,15 @@ export function isAuthContinuationCallbackOwned(
   const startedAt = storage.getItem(key);
   if (startedAt === null) return false;
   const age = now.getTime() - new Date(startedAt).getTime();
-  if (Number.isFinite(age) && age >= 0 && age <= ttlMs) return true;
-  storage.removeItem(key);
-  return false;
+  if (!Number.isFinite(age) || age > ttlMs) {
+    storage.removeItem(key);
+    return false;
+  }
+  if (age < 0) {
+    // 端末時計の巻戻りでは所有権を越境させず、現在から最大1 TTLだけ保持する。
+    storage.setItem(key, now.toISOString());
+  }
+  return true;
 }
 
 export function listUnexpiredAuthFlows(storage: Storage, now: Date, ttlMs = 300_000): AuthFlow[] {
@@ -154,8 +160,18 @@ export function listUnexpiredAuthFlows(storage: Storage, now: Date, ttlMs = 300_
     const flow = readAuthFlow(id, storage);
     if (flow === null) continue;
     const age = now.getTime() - new Date(flow.startedAt).getTime();
-    if (!Number.isFinite(age) || age < 0 || age > ttlMs) clearAuthFlow(id, storage);
-    else result.push(flow);
+    if (!Number.isFinite(age) || age > ttlMs) {
+      clearAuthFlow(id, storage);
+      continue;
+    }
+    if (age < 0) {
+      // 時計巻戻り後に毎回延命しないよう、保存基準そのものを現在へ一度だけ更新する。
+      const rebasedFlow = { ...flow, startedAt: now.toISOString() };
+      storage.setItem(key, JSON.stringify(rebasedFlow));
+      result.push(rebasedFlow);
+      continue;
+    }
+    result.push(flow);
   }
   return result.toSorted((left, right) => left.startedAt.localeCompare(right.startedAt));
 }
