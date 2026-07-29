@@ -2,6 +2,10 @@ import { z } from "zod";
 import { aiGeneratedMenuPayloadSchema } from "./ai-generation-output.js";
 import { cuisineGenres, generationStatuses, mealTypes, privacyNoticeVersion } from "./domain.js";
 import { generatedPantryUsageSchema, pantryUsageSchema } from "./pantry.js";
+// planQuota 正本。releaseQuota は Free 別名（既存 import / 本ファイル内 Zod が参照）
+import { releaseQuota } from "./plan-quota.js";
+export { releaseQuota, planQuota } from "./plan-quota.js";
+export type { PlanCode } from "./plan-quota.js";
 
 export const dishRoles = ["main", "side", "soup", "staple", "other"] as const;
 export const storeSections = [
@@ -561,13 +565,6 @@ export type MenuValidationResult =
 
 const uuidSchema = z.uuid();
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
-
-export const releaseQuota = {
-  userDailySuccessLimit: 3,
-  userDailyExternalCallLimit: 6,
-  userShortWindowExternalCallLimit: 4,
-  userShortWindowSeconds: 600,
-} as const;
 
 export const generationFailureCodes = [
   "consent_required",
