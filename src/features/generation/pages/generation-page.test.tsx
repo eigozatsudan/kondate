@@ -109,7 +109,7 @@ function failedStatus(idempotencyKey: string): Extract<GenerationStatusData, { s
     requestId: "50000000-0000-4000-8000-000000000001",
     error: {
       code: "invalid_ai_response",
-      message: "献立を作成できませんでした。成功回数には含まれません。",
+      message: "献立を正しく確認できませんでした。",
       retryable: true,
     },
     completedAt: "2026-07-11T00:00:01.000Z",

@@ -3,6 +3,7 @@ import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs
 import {
   generationConflictCopy,
   generationFailureCodes,
+  issueMessages,
   type GenerationCommand,
   type GenerationFailureCode,
   type GenerationStatusData,
@@ -41,6 +42,7 @@ import {
   createGenerationDeps,
   FINALIZE_RESERVE_MS,
   generationResponse,
+  getGenerationFailureCopy,
   projectProviderConflicts,
   REQUIRED_SEND_BUDGET_MS,
   runGeneration,
@@ -1800,6 +1802,14 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
   });
 });
 
+describe("getGenerationFailureCopy", () => {
+  it("uses issueMessages as the only failure message source", () => {
+    for (const code of generationFailureCodes) {
+      expect(getGenerationFailureCopy(code).message).toBe(issueMessages[code]);
+    }
+  });
+});
+
 describe("toGenerationStatus", () => {
   it("maps every closed Task 9 failure copy", () => {
     for (const code of [
@@ -1853,7 +1863,7 @@ describe("toGenerationStatus", () => {
       },
       error: {
         code: "internal_error",
-        message: "献立を作成できませんでした。成功回数には含まれません。",
+        message: "献立を作成できませんでした。",
         retryable: true,
       },
       completedAt: "2026-07-11T00:00:01.000Z",

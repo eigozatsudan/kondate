@@ -158,6 +158,50 @@ describe("generationIssueCodes and issueMessages", () => {
       expect(issueMessages[code]).toBe(generationConflictCopy[code]);
     }
   });
+
+  // 利用回数コピー簡素化: quota / soft-failure の利用者向け文言を固定し、運用用語を禁止する
+  const forbiddenUserCopyFragments = [
+    "成功回数",
+    "別の上限",
+    "AIへの送信",
+    "通信試行",
+    "問い合わせ",
+    "attempt",
+  ] as const;
+
+  const expectedQuotaMessages = {
+    user_daily_limit: "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+    user_attempt_limit:
+      "今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
+    user_short_window_limit:
+      "短い時間に何度も作成を試したため、少し待つ必要があります。しばらくしてから再度お試しください。",
+    global_daily_limit: "ただいま混雑しています。明日0:00（日本時間）以降にお試しください。",
+    model_unavailable: "AIが混み合っています。",
+    invalid_ai_response: "献立を正しく確認できませんでした。",
+    generation_timeout: "作成に時間がかかりました。",
+    internal_error: "献立を作成できませんでした。",
+    duplicate_output: "元の献立とほぼ同じ案だったため保存しませんでした。",
+  } as const;
+
+  it("uses the simplified quota and soft-failure copy", () => {
+    for (const [code, message] of Object.entries(expectedQuotaMessages)) {
+      expect(issueMessages[code as keyof typeof issueMessages]).toBe(message);
+    }
+  });
+
+  it("keeps every issueMessages value free of operator jargon fragments", () => {
+    for (const code of generationIssueCodes) {
+      const text = issueMessages[code];
+      for (const fragment of forbiddenUserCopyFragments) {
+        // 失敗時に code / fragment / text が分かるようオブジェクトで比較する
+        expect({ code, fragment, contains: text.includes(fragment) }).toEqual({
+          code,
+          fragment,
+          contains: false,
+        });
+      }
+    }
+  });
 });
 
 describe("usageTodayDataSchema", () => {
@@ -378,7 +422,7 @@ describe("generationStatusDataSchema", () => {
       quota: { ...quota, consumed: false },
       error: {
         code: "duplicate_output",
-        message: "元の献立とほぼ同じ案だったため保存しませんでした。今回は回数に含まれません",
+        message: "元の献立とほぼ同じ案だったため保存しませんでした。",
         retryable: true,
       },
       completedAt: "2026-07-11T00:00:01.000Z",

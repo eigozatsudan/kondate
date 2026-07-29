@@ -5,6 +5,7 @@ import {
   generationConflictCopy,
   generationConflictSchema,
   generationFailureCodes,
+  issueMessages,
   releaseQuota,
   type GenerationCommand,
   type GenerationFailureCode,
@@ -169,106 +170,51 @@ const providerConflictInputSchema = z
   .min(1)
   .max(12);
 
-const failureCopy: Record<GenerationFailureCode, { message: string; retryable: boolean }> = {
-  consent_required: { message: "AIへ送る情報の説明を確認してください。", retryable: false },
-  draft_not_found: { message: "保存した献立条件が見つかりませんでした。", retryable: false },
-  invalid_request: { message: "献立条件を確認してください。", retryable: false },
-  generation_in_progress: { message: "別の献立を作成中です。", retryable: true },
-  user_daily_limit: {
-    message: "今日は3回利用しました。明日0:00（日本時間）から利用できます",
-    retryable: false,
-  },
-  user_attempt_limit: {
-    message:
-      "本日のAIへの送信上限に達しました。献立の成功回数とは別の上限です。明日0:00（日本時間）から利用できます",
-    retryable: false,
-  },
-  user_short_window_limit: {
-    message: "10分間の通信試行上限に達しました。しばらくしてから再度お試しください",
-    retryable: false,
-  },
-  global_daily_limit: {
-    message: "本日分のAI受付がいっぱいです。成功回数には含まれません。明日0:00から再開します",
-    retryable: false,
-  },
-  allergy_unconfirmed: {
-    message: "アレルギー確認が必要な項目があります。確認してからもう一度お試しください。",
-    retryable: false,
-  },
-  allergen_missing: {
-    message: "アレルギー情報の登録が必要です。家族の設定を確認してください。",
-    retryable: false,
-  },
-  unmapped_custom_allergy: {
-    message: "登録されたアレルギー内容を確認できませんでした。家族の設定を確認してください。",
-    retryable: false,
-  },
-  unsupported_diet_unconfirmed: {
-    message: "離乳食・飲み込み/嚥下・治療食の確認が必要です。",
-    retryable: false,
-  },
-  regeneration_not_implemented: {
-    message: "再生成は次の計画で有効になります。",
-    retryable: false,
-  },
-  unsupported_diet: {
-    message: "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。",
-    retryable: false,
-  },
-  allergy_conflict: {
-    message: "アレルギー食材が、使いたい食材に含まれています",
-    retryable: false,
-  },
-  expired_pantry_unconfirmed: {
-    message: "期限を過ぎた食材は、今回の実物確認が必要です。",
-    retryable: false,
-  },
-  model_unavailable: {
-    message: "AIが混み合っています。成功回数には含まれません。",
-    retryable: true,
-  },
-  invalid_ai_response: {
-    message: "献立を正しく確認できませんでした。成功回数には含まれません。",
-    retryable: true,
-  },
-  generation_timeout: {
-    message: "作成に時間がかかりました。成功回数には含まれません。",
-    retryable: true,
-  },
-  internal_error: {
-    message: "献立を作成できませんでした。成功回数には含まれません。",
-    retryable: true,
-  },
-  // Plan 4 再生成契約の閉じた失敗コード（message は issueMessages と同一文言）
-  duplicate_output: {
-    message: "元の献立とほぼ同じ案だったため保存しませんでした。今回は回数に含まれません",
-    retryable: true,
-  },
-  idempotency_payload_mismatch: {
-    message: "前回と異なる内容で再送できません。もう一度操作してください",
-    retryable: false,
-  },
-  current_safety_revalidation_required: {
-    message: "現在の家族設定ではこの献立を利用できません",
-    retryable: false,
-  },
-  current_target_member_required: {
-    message: "現在の家族を1人以上選んでください",
-    retryable: false,
-  },
-  source_menu_not_found: {
-    message: "元の献立が見つかりません",
-    retryable: false,
-  },
-  replace_dish_not_found: {
-    message: "変更する料理が見つかりません",
-    retryable: false,
-  },
-  source_menu_changed: {
-    message: "元の献立が更新されたため、もう一度操作してください",
-    retryable: false,
-  },
+/**
+ * 失敗コードごとの retryable フラグ。message 本文は issueMessages が正本。
+ * true/false は従来 failureCopy と同一（変えない）。
+ */
+const failureRetryable: Record<GenerationFailureCode, boolean> = {
+  consent_required: false,
+  draft_not_found: false,
+  invalid_request: false,
+  generation_in_progress: true,
+  user_daily_limit: false,
+  user_attempt_limit: false,
+  user_short_window_limit: false,
+  global_daily_limit: false,
+  allergy_unconfirmed: false,
+  allergen_missing: false,
+  unmapped_custom_allergy: false,
+  unsupported_diet_unconfirmed: false,
+  regeneration_not_implemented: false,
+  unsupported_diet: false,
+  allergy_conflict: false,
+  expired_pantry_unconfirmed: false,
+  model_unavailable: true,
+  invalid_ai_response: true,
+  generation_timeout: true,
+  internal_error: true,
+  // Plan 4 再生成契約の閉じた失敗コード
+  duplicate_output: true,
+  idempotency_payload_mismatch: false,
+  current_safety_revalidation_required: false,
+  current_target_member_required: false,
+  source_menu_not_found: false,
+  replace_dish_not_found: false,
+  source_menu_changed: false,
 };
+
+/** テストとサービス本体の正。message は必ず issueMessages 参照。 */
+export function getGenerationFailureCopy(code: GenerationFailureCode): {
+  message: string;
+  retryable: boolean;
+} {
+  return {
+    message: issueMessages[code],
+    retryable: failureRetryable[code],
+  };
+}
 
 function closedFailureCode(error: unknown): GenerationFailureCode {
   if (!(error instanceof HttpError)) return "internal_error";
@@ -397,7 +343,7 @@ export function toGenerationStatus(
     requestId,
     quota,
     completedAt,
-    error: { code, ...failureCopy[code] },
+    error: { code, ...getGenerationFailureCopy(code) },
   };
 }
 

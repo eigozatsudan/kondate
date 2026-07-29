@@ -205,7 +205,7 @@ describe("GET /api/generations/:idempotencyKey/status", () => {
         status: "failed",
         error: {
           code: "internal_error",
-          message: "献立を作成できませんでした。成功回数には含まれません。",
+          message: "献立を作成できませんでした。",
         },
       },
     });
