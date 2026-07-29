@@ -5,10 +5,16 @@ import { getJstDateKey } from "@shared/time/jst";
 export type PlannerAttempt = {
   idempotencyKey: string;
   expiredPantryChecks: readonly ExpiredPantryCheck[];
+  /** Plus 品質モード「くわしく作る」。Free でも UI は出せるがサーバが 403。 */
+  qualityMode: boolean;
 };
 
 export function createPlannerAttempt(): PlannerAttempt {
-  return { idempotencyKey: crypto.randomUUID(), expiredPantryChecks: [] };
+  return {
+    idempotencyKey: crypto.randomUUID(),
+    expiredPantryChecks: [],
+    qualityMode: false,
+  };
 }
 
 export function isPastEnteredExpiry(item: PantryItem, now: Date): boolean {
@@ -34,6 +40,7 @@ export function confirmExpiredPantryItem(
 ): PlannerAttempt {
   return {
     ...attempt,
+    qualityMode: attempt.qualityMode,
     expiredPantryChecks: [
       ...attempt.expiredPantryChecks.filter((item) => item.pantryItemId !== pantryItemId),
       { pantryItemId, checkedAt: now.toISOString() },

@@ -101,8 +101,9 @@ const key = "82000000-0000-4000-8000-000000000001";
 const menuId = "83000000-0000-4000-8000-000000000001";
 const models = ["mock/primary:free", "mock/repair:free"] as const;
 const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "new_menu",
+  qualityMode: false,
   request: {
     idempotencyKey: key,
     draftId: "84000000-0000-4000-8000-000000000001",
@@ -1725,8 +1726,9 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
 
   it.each([
     {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_menu" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
@@ -1737,8 +1739,9 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       },
     },
     {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_dish" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
@@ -1999,8 +2002,9 @@ describe("runGeneration regeneration duplicate gating", () => {
       primaryIngredients: dish.ingredients.map((item) => item.name),
     });
     const wholeRegenerationCommand = {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_menu" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
@@ -2157,8 +2161,9 @@ describe("runGeneration regeneration duplicate gating", () => {
       ],
     });
     const dishRegenerationCommand = {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_dish" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: sourceMenu.menuId,
@@ -2283,8 +2288,9 @@ describe("runGeneration regeneration duplicate gating", () => {
       },
     });
     const dishRegenerationCommand = {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_dish" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: sourceMenu.menuId,
@@ -2371,8 +2377,9 @@ describe("runGeneration regeneration duplicate gating", () => {
 describe("runGeneration idea child_friendly rejection", () => {
   it("rejects an idea child_friendly command before provider send", async () => {
     const ideaChildFriendlyCommand = {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_menu" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
@@ -2429,8 +2436,9 @@ describe("runGeneration idea child_friendly rejection", () => {
 
   it("rejects idea dish regeneration with child_friendly before provider send", async () => {
     const ideaChildFriendlyDishCommand = {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_dish" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
@@ -2488,8 +2496,9 @@ describe("runGeneration idea child_friendly rejection", () => {
 
   it("allows household child_friendly regeneration to reach provider send", async () => {
     const householdChildFriendlyCommand = {
-      commandVersion: "generation-command.v2" as const,
+      commandVersion: "generation-command.v3" as const,
       kind: "regenerate_menu" as const,
+      qualityMode: false,
       request: {
         idempotencyKey: key,
         sourceMenuId: "88000000-0000-4000-8000-000000000001",
@@ -2679,8 +2688,9 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
       const regenCommand: GenerationCommand =
         kind === "regenerate_menu"
           ? {
-              commandVersion: "generation-command.v2",
+              commandVersion: "generation-command.v3",
               kind: "regenerate_menu",
+              qualityMode: false,
               request: {
                 idempotencyKey: key,
                 sourceMenuId: menuId,
@@ -2691,8 +2701,9 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
               },
             }
           : {
-              commandVersion: "generation-command.v2",
+              commandVersion: "generation-command.v3",
               kind: "regenerate_dish",
+              qualityMode: false,
               request: {
                 idempotencyKey: key,
                 sourceMenuId: menuId,
@@ -2733,8 +2744,9 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
       const regenCommand: GenerationCommand =
         kind === "regenerate_menu"
           ? {
-              commandVersion: "generation-command.v2",
+              commandVersion: "generation-command.v3",
               kind: "regenerate_menu",
+              qualityMode: false,
               request: {
                 idempotencyKey: key,
                 sourceMenuId: menuId,
@@ -2745,8 +2757,9 @@ describe("runGeneration propagates integrity invalid_request before reserve", ()
               },
             }
           : {
-              commandVersion: "generation-command.v2",
+              commandVersion: "generation-command.v3",
               kind: "regenerate_dish",
+              qualityMode: false,
               request: {
                 idempotencyKey: key,
                 sourceMenuId: menuId,

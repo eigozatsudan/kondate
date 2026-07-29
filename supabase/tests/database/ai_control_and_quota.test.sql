@@ -697,7 +697,7 @@ select has_function('public'::name, 'cleanup_stale_ai_generations'::name);
 select has_function('public'::name, 'get_ai_generation_submission_snapshot'::name);
 select ok(
   to_regprocedure(
-    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,integer,timestamptz)'
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,boolean,integer,timestamptz)'
   ) is not null,
   'the final reservation RPC has the exact seventeen-argument signature'
 );
@@ -804,21 +804,21 @@ select ok(
   has_function_privilege(
     'service_role',
     to_regprocedure(
-      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,integer,timestamptz)'
+      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,boolean,integer,timestamptz)'
     ),
     'EXECUTE'
   )
   and not has_function_privilege(
     'anon',
     to_regprocedure(
-      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,integer,timestamptz)'
+      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,boolean,integer,timestamptz)'
     ),
     'EXECUTE'
   )
   and not has_function_privilege(
     'authenticated',
     to_regprocedure(
-      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,integer,timestamptz)'
+      'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,boolean,integer,timestamptz)'
     ),
     'EXECUTE'
   ),
@@ -873,7 +873,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000099',
     'new_menu', null, null, null, null, null,
-    'generation-command.v2', repeat('9', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 6, 6, 4, 20, false, 180,
+    'generation-command.v3', repeat('9', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 6, 6, 4, 20, false, false, 180,
     '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'release_quota_mismatch',
@@ -883,7 +883,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000096',
     'new_menu', null, null, null, null, null,
-    'generation-command.v0', repeat('9', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, 180,
+    'generation-command.v0', repeat('9', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, false, 180,
     '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'invalid_request_hmac',
@@ -893,7 +893,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000096',
     'new_menu', null, null, null, null, null,
-    'generation-command.v2', repeat('g', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, 180,
+    'generation-command.v3', repeat('g', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, false, 180,
     '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'invalid_request_hmac',
@@ -916,7 +916,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000097',
     'regenerate_menu', null, null, null, null, null,
-    'generation-command.v2', repeat('7', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 0, false, 180,
+    'generation-command.v3', repeat('7', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 0, false, false, 180,
     '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'invalid_quota_configuration',
@@ -926,7 +926,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000098',
     'regenerate_menu', null, null, null, null, null,
-    'generation-command.v2', repeat('8', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 201, false, 180,
+    'generation-command.v3', repeat('8', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 201, false, false, 180,
     '2026-07-10 15:00:00+00'
   )
 $$, '22023', 'invalid_quota_configuration',
@@ -962,7 +962,7 @@ insert into private.ai_generation_requests (
   '10000000-0000-4000-8000-000000000002', tests.quota_identity_key(('10000000-0000-4000-8000-000000000002')::uuid), false,
   '20000000-0000-4000-8000-000000000090',
   'regenerate_menu', 'processing', date '2026-07-11',
-  'generation-command.v2', repeat('0', 64),
+  'generation-command.v3', repeat('0', 64),
   true, date '2026-07-11',
   '2026-07-10 15:30:00+00', '2026-07-10 15:00:00+00'
 );
@@ -972,7 +972,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000091',
     'new_menu', '30000000-0000-4000-8000-000000000099', 1,
-    null, null, null, 'generation-command.v2', repeat('1', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('1', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
   'a missing draft is rejected before lifecycle mutation');
@@ -981,7 +981,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000092',
     'new_menu', '30000000-0000-4000-8000-000000000001', 1,
-    null, null, null, 'generation-command.v2', repeat('2', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('2', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
   'a foreign draft is rejected without revealing ownership');
@@ -990,7 +990,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000093',
     'new_menu', '30000000-0000-4000-8000-000000000002', 1,
-    null, null, null, 'generation-command.v2', repeat('3', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('3', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
   'a stale draft revision is rejected');
@@ -1003,7 +1003,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000094',
     'new_menu', '30000000-0000-4000-8000-000000000002', 2,
-    null, null, null, 'generation-command.v2', repeat('4', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('4', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_unavailable',
   'a deleted draft is rejected');
@@ -1012,7 +1012,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000095',
     'regenerate_menu', '30000000-0000-4000-8000-000000000002', 2,
-    null, null, null, 'generation-command.v2', repeat('5', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('5', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, '22023', 'invalid_draft_reference',
   'a non-new request rejects draft arguments');
@@ -1084,7 +1084,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-0000000000a0',
     'new_menu', '30000000-0000-4000-8000-000000000002', 2,
-    null, null, null, 'generation-command.v2', repeat('a', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('a', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_revision_conflict',
   'an idea draft rejects household integrity before request or quota mutation');
@@ -1093,7 +1093,7 @@ select lives_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-0000000000a2',
     'new_menu', '30000000-0000-4000-8000-000000000002', 2,
-    null, null, null, 'generation-command.v2', repeat('f', 64), '{"kind":"new_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('f', 64), '{"kind":"new_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'an idea draft can reserve with matching idea integrity');
 -- 後続テストのため idea 予約を片付け
@@ -1117,7 +1117,7 @@ select throws_ok($$
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-0000000000a1',
     'new_menu', '30000000-0000-4000-8000-000000000002', 2,
-    null, null, null, 'generation-command.v2', repeat('b', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('b', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
   )
 $$, 'P0001', 'draft_revision_conflict',
   'an unselected-mode draft is rejected before request or quota mutation');
@@ -1164,7 +1164,7 @@ select is(
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000001',
     'new_menu', '30000000-0000-4000-8000-000000000001', 1,
-    null, null, null, 'generation-command.v2', repeat('1', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 15:00:00+00'
+    null, null, null, 'generation-command.v3', repeat('1', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 15:00:00+00'
   )->>'status',
   'processing'
 );
@@ -1277,7 +1277,7 @@ select is(
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000001',
     'new_menu', '30000000-0000-4000-8000-000000000001', 1,
-    null, null, null, 'generation-command.v2', repeat('1', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 15:00:01+00'
+    null, null, null, 'generation-command.v3', repeat('1', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 15:00:01+00'
   )->>'replayed',
   'true'
 );
@@ -1295,7 +1295,7 @@ select is(
     where idempotency_key = '20000000-0000-4000-8000-000000000001'
   ),
   jsonb_build_object(
-    'version', 'generation-command.v2',
+    'version', 'generation-command.v3',
     'hmac', repeat('1', 64)
   ),
   'a successful reservation stores the versioned request HMAC'
@@ -1313,7 +1313,7 @@ select is(
       '20000000-0000-4000-8000-000000000002',
       'new_menu', '30000000-0000-4000-8000-000000000001', 1,
       null, null, null,
-      'generation-command.v2', repeat('2', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 15:00:02+00'
+      'generation-command.v3', repeat('2', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 15:00:02+00'
     )
   ) - 'started_at' - 'completed_at' - 'retry_at' - 'processing_expires_at'
     - 'remaining' - 'user_daily_limit' - 'consumed',
@@ -1427,7 +1427,7 @@ select is(
     '10000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000003',
     'new_menu', '30000000-0000-4000-8000-000000000002', 3,
-    null, null, null, 'generation-command.v2', repeat('3', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 15:10:00+00'
+    null, null, null, 'generation-command.v3', repeat('3', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000002"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 15:10:00+00'
   )->>'status',
   'processing',
   'a new-menu reservation accepts nullable optional submission fields'
@@ -1574,7 +1574,7 @@ begin
     user_quota_reserved, global_reserved_day, processing_expires_at, started_at
   ) values (
     v_owner, tests.quota_identity_key((v_owner)::uuid), false, v_stale_key, 'regenerate_menu', 'processing', date '2026-07-11',
-    'generation-command.v2', repeat('a', 64),
+    'generation-command.v3', repeat('a', 64),
     true, date '2026-07-11',
     '2026-07-10 14:00:00+00', '2026-07-10 13:00:00+00'
   );
@@ -1586,7 +1586,7 @@ begin
   ) values (
     v_owner, tests.quota_identity_key((v_owner)::uuid), false, v_key, 'new_menu', 'failed',
     '30000000-0000-4000-8000-000000000001', 1, date '2026-07-11',
-    'generation-command.v2', repeat('b', 64),
+    'generation-command.v3', repeat('b', 64),
     false, '2026-07-10 15:20:00+00', '2026-07-10 15:20:01+00', 'model_unavailable'
   );
 
@@ -1610,7 +1610,7 @@ begin
     perform public.reserve_ai_generation(
       v_owner, v_key, 'new_menu',
       '30000000-0000-4000-8000-000000000001', 1,
-      null, null, null, 'generation-command.v2', repeat('c', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, 180, '2026-07-10 16:00:00+00'
+      null, null, null, 'generation-command.v3', repeat('c', 64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-10 16:00:00+00'
     );
     raise exception using errcode = 'XX000', message = 'expected_idempotency_payload_mismatch';
   exception when sqlstate '22023' then
@@ -1767,7 +1767,7 @@ declare
   v_after jsonb;
 begin
   if to_regprocedure(
-    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,integer,timestamptz)'
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,boolean,integer,timestamptz)'
   ) is null then
     raise exception 'the final reservation signature is missing';
   end if;
@@ -1811,7 +1811,7 @@ begin
   begin
     perform public.reserve_ai_generation(
       v_owner,v_key,'new_menu',v_draft_id,v_revision,
-      null,null,null,'generation-command.v2',repeat('a',64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, 180,'2026-07-11 00:00:00+00');
+      null,null,null,'generation-command.v3',repeat('a',64), '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000001'::uuid), 3, 6, 4, 20, false, false, 180,'2026-07-11 00:00:00+00');
     raise exception using errcode='XX000',message='expected_draft_unavailable';
   exception when sqlstate 'P0001' then
     if sqlerrm <> 'draft_unavailable' then raise; end if;
@@ -2007,13 +2007,13 @@ begin
     'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000080',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
-    'generation-command.v2',repeat('e',64), jsonb_build_object(
+    'generation-command.v3',repeat('e',64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', coalesce(v_draft.target_mode, 'household'),
       'servings', to_jsonb(v_draft.servings),
       'target_member_ids', to_jsonb(v_draft.target_member_ids),
       'source_menu_version', null
-    ), tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-11 00:00:10+00');
+    ), tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 00:00:10+00');
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000080';
   perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:00:11+00');
@@ -2106,13 +2106,13 @@ begin
     'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000081',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
-    'generation-command.v2',repeat('b',64), jsonb_build_object(
+    'generation-command.v3',repeat('b',64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', coalesce(v_draft.target_mode, 'household'),
       'servings', to_jsonb(v_draft.servings),
       'target_member_ids', to_jsonb(v_draft.target_member_ids),
       'source_menu_version', null
-    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-12 00:01:00+00');
+    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-12 00:01:00+00');
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000081';
   perform public.delete_generation_draft(v_draft.revision);
@@ -2136,13 +2136,13 @@ begin
   v_before_revision := v_draft.revision;
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000082',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
-    'generation-command.v2',repeat('c',64), jsonb_build_object(
+    'generation-command.v3',repeat('c',64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', coalesce(v_draft.target_mode, 'household'),
       'servings', to_jsonb(v_draft.servings),
       'target_member_ids', to_jsonb(v_draft.target_member_ids),
       'source_menu_version', null
-    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-12 00:02:00+00');
+    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-12 00:02:00+00');
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000082';
   perform public.mark_ai_global_sent(v_request_id,'2026-07-12 00:02:01+00');
@@ -2172,13 +2172,13 @@ begin
     'household',v_target_ids,null::smallint,30::smallint,'standard',array[]::text[],'',v_pantry_selections);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000083',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
-    'generation-command.v2',repeat('d',64), jsonb_build_object(
+    'generation-command.v3',repeat('d',64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', coalesce(v_draft.target_mode, 'household'),
       'servings', to_jsonb(v_draft.servings),
       'target_member_ids', to_jsonb(v_draft.target_member_ids),
       'source_menu_version', null
-    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-11 00:03:00+00');
+    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 00:03:00+00');
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000083';
   v_draft := public.save_generation_draft(v_draft.revision,'dinner',array['updated'],'japanese',
@@ -2205,13 +2205,13 @@ begin
   v_before_revision := v_draft.revision;
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000084',
     'regenerate_menu',null,null,'60000000-0000-4000-8000-000000000080',null,'simpler',
-    'generation-command.v2',repeat('e',64), jsonb_build_object(
+    'generation-command.v3',repeat('e',64), jsonb_build_object(
       'kind', 'regenerate_menu',
       'target_mode', 'household',
       'servings', 2,
       'target_member_ids', to_jsonb(v_target_ids),
       'source_menu_version', 1
-    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-11 00:14:00+00');
+    ),tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 00:14:00+00');
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000084';
   perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:14:01+00');
@@ -2348,13 +2348,13 @@ begin
     failure_code, started_at, completed_at
   ) values
     (v_old, v_owner, tests.quota_identity_key((v_owner)::uuid), false, '30000000-0000-4000-8000-0000000000b1', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('1', 64), date '2026-06-01',
+     'generation-command.v3', repeat('1', 64), date '2026-06-01',
      'generation_timeout', '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00'),
     (v_recent, v_owner, tests.quota_identity_key((v_owner)::uuid), false, '30000000-0000-4000-8000-0000000000b2', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('2', 64), date '2026-07-01',
+     'generation-command.v3', repeat('2', 64), date '2026-07-01',
      'generation_timeout', '2026-07-01 00:00:00+00', '2026-07-01 00:00:01+00'),
     (v_processing, v_owner, tests.quota_identity_key((v_owner)::uuid), false, '30000000-0000-4000-8000-0000000000b3', 'regenerate_menu', 'processing',
-     'generation-command.v2', repeat('3', 64), date '2026-06-01',
+     'generation-command.v3', repeat('3', 64), date '2026-06-01',
      null, '2026-06-01 00:00:00+00', null);
   insert into public.menus(
     id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
@@ -2372,7 +2372,7 @@ begin
     completed_menu_id, started_at, completed_at
   ) values (
     v_menu_linked, v_owner, tests.quota_identity_key((v_owner)::uuid), false, '30000000-0000-4000-8000-0000000000b4', 'regenerate_menu', 'succeeded',
-    'generation-command.v2', repeat('4', 64), date '2026-06-01',
+    'generation-command.v3', repeat('4', 64), date '2026-06-01',
     v_menu, '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00'
   );
 
@@ -2421,14 +2421,14 @@ begin
   v_payload := public.reserve_ai_generation(
     v_owner, '30000000-0000-4000-8000-0000000000c1', 'new_menu',
     v_draft.id, v_draft.revision, null, null, null,
-    'generation-command.v2', repeat('c', 64), jsonb_build_object(
+    'generation-command.v3', repeat('c', 64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', v_draft.target_mode,
       'servings', to_jsonb(v_draft.servings),
       'target_member_ids', to_jsonb(v_draft.target_member_ids),
       'source_menu_version', null
     ),
-    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180, '2026-07-11 01:00:00+00'
+    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180, '2026-07-11 01:00:00+00'
   );
   if v_payload->>'status' is distinct from 'processing' then
     raise exception 'initial reserve did not process: %', v_payload;
@@ -2471,14 +2471,14 @@ begin
     v_key := ('30000000-0000-4000-8000-0000000000d' || v_i::text)::uuid;
     v_payload := public.reserve_ai_generation(
       v_owner, v_key, 'new_menu', v_draft.id, v_draft.revision, null, null, null,
-      'generation-command.v2', repeat((v_i)::text, 64), jsonb_build_object(
+      'generation-command.v3', repeat((v_i)::text, 64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', v_draft.target_mode,
       'servings', to_jsonb(v_draft.servings),
       'target_member_ids', to_jsonb(v_draft.target_member_ids),
       'source_menu_version', null
     ),
-      tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180, '2026-07-11 02:00:00+00'
+      tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180, '2026-07-11 02:00:00+00'
     );
     if v_payload->>'status' is distinct from 'processing' then
       raise exception 'window reserve % did not process: %', v_i, v_payload;
@@ -2505,14 +2505,14 @@ begin
   v_payload := public.reserve_ai_generation(
     v_owner, '30000000-0000-4000-8000-0000000000d5', 'new_menu',
     v_draft.id, v_draft.revision, null, null, null,
-    'generation-command.v2', repeat('a', 64), jsonb_build_object(
+    'generation-command.v3', repeat('a', 64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', v_draft.target_mode,
       'servings', to_jsonb(v_draft.servings),
       'target_member_ids', to_jsonb(v_draft.target_member_ids),
       'source_menu_version', null
     ),
-    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180, '2026-07-11 02:00:20+00'
+    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180, '2026-07-11 02:00:20+00'
   );
   if v_payload->>'status' is distinct from 'processing' then
     raise exception 'fifth window reserve did not process: %', v_payload;
@@ -2855,14 +2855,14 @@ begin
   );
   perform public.reserve_ai_generation(
     v_owner, v_key, 'new_menu', v_draft_id, 1,
-    null, null, null, 'generation-command.v2', repeat('e', 64), jsonb_build_object(
+    null, null, null, 'generation-command.v3', repeat('e', 64), jsonb_build_object(
       'kind', 'new_menu',
       'target_mode', 'household',
       'servings', null,
       'target_member_ids', to_jsonb(array[v_owner]),
       'source_menu_version', null
     ),
-    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180, v_now
+    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180, v_now
   );
   select id into v_request_id from private.ai_generation_requests where idempotency_key = v_key;
   -- markSent 相当: 初回送信を消費し attempt/global 予約を解放した状態へ
@@ -2908,10 +2908,10 @@ begin
     failure_code, started_at, completed_at
   ) values
     (v_old_a, v_owner_a, tests.quota_identity_key((v_owner_a)::uuid), false, '30000000-0000-4000-8000-0000000000d1', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('c', 64), date '2026-06-01',
+     'generation-command.v3', repeat('c', 64), date '2026-06-01',
      'generation_timeout', '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00'),
     (v_old_b, v_owner_b, tests.quota_identity_key((v_owner_b)::uuid), false, '30000000-0000-4000-8000-0000000000d2', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('d', 64), date '2026-06-01',
+     'generation-command.v3', repeat('d', 64), date '2026-06-01',
      'generation_timeout', '2026-06-01 00:00:00+00', '2026-06-01 00:00:01+00');
 
   v_deleted := public.cleanup_ai_generation_requests(v_before, v_owner_a);
@@ -3034,13 +3034,13 @@ begin
     started_at, completed_at
   ) values
     (v_request, v_owner, tests.quota_identity_key((v_owner)::uuid), false, 'd2000000-0000-4000-8000-000000000001', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('a', 64), date '2026-07-22',
+     'generation-command.v3', repeat('a', 64), date '2026-07-22',
      '2026-07-22 00:00:00+00', '2026-07-22 00:00:01+00'),
     (v_owner_bare, v_owner, tests.quota_identity_key((v_owner)::uuid), false, 'd2000000-0000-4000-8000-000000000003', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('b', 64), date '2026-07-22',
+     'generation-command.v3', repeat('b', 64), date '2026-07-22',
      '2026-07-22 00:00:00+00', '2026-07-22 00:00:01+00'),
     (v_other_request, v_other, tests.quota_identity_key((v_other)::uuid), false, 'd2000000-0000-4000-8000-000000000002', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('c', 64), date '2026-07-22',
+     'generation-command.v3', repeat('c', 64), date '2026-07-22',
      '2026-07-22 00:00:00+00', '2026-07-22 00:00:01+00');
 
   insert into private.generation_regeneration_snapshots(
@@ -3236,7 +3236,7 @@ begin
   perform public.reserve_ai_generation(
     v_owner,'30000000-0000-4000-8000-0000000000f5',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
-    'generation-command.v2',repeat('a',64),
+    'generation-command.v3',repeat('a',64),
     jsonb_build_object(
       'kind','new_menu',
       'target_mode','idea',
@@ -3244,7 +3244,7 @@ begin
       'target_member_ids','[]'::jsonb,
       'source_menu_version',null
     ),
-    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-11 02:00:00+00'
+    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 02:00:00+00'
   );
   select id into strict v_request_id
   from private.ai_generation_requests
@@ -3371,7 +3371,7 @@ begin
     perform public.reserve_ai_generation(
       v_owner,v_idempotency_key,
       'new_menu',v_draft.id,v_draft.revision,null,null,null,
-      'generation-command.v2',repeat('b',64),
+      'generation-command.v3',repeat('b',64),
       jsonb_build_object(
         'kind','new_menu',
         'target_mode','idea',
@@ -3379,7 +3379,7 @@ begin
         'target_member_ids','[]'::jsonb,
         'source_menu_version',null
       ),
-      tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-11 02:10:00+00'
+      tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 02:10:00+00'
     );
     select id into strict v_request_id
     from private.ai_generation_requests
@@ -3558,7 +3558,7 @@ begin
   perform public.reserve_ai_generation(
     v_owner,'30000000-0000-4000-8000-0000000000f6',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
-    'generation-command.v2',repeat('c',64),
+    'generation-command.v3',repeat('c',64),
     jsonb_build_object(
       'kind','new_menu',
       'target_mode','household',
@@ -3566,7 +3566,7 @@ begin
       'target_member_ids',to_jsonb(array[v_member]),
       'source_menu_version',null
     ),
-    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-11 03:00:00+00'
+    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 03:00:00+00'
   );
   select id into strict v_request_id
   from private.ai_generation_requests
@@ -3770,7 +3770,7 @@ begin
         else '30000000-0000-4000-8000-0000000000f8'::uuid
       end,
       'new_menu',v_draft.id,v_draft.revision,null,null,null,
-      'generation-command.v2',repeat('d',64),
+      'generation-command.v3',repeat('d',64),
       jsonb_build_object(
         'kind','new_menu',
         'target_mode','household',
@@ -3778,7 +3778,7 @@ begin
         'target_member_ids',to_jsonb(array[v_member]),
         'source_menu_version',null
       ),
-      tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, 180,'2026-07-11 04:00:00+00'
+      tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 04:00:00+00'
     );
     select id into strict v_request_id
     from private.ai_generation_requests

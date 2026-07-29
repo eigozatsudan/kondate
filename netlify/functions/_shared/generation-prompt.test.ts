@@ -20,8 +20,9 @@ function asNewMenuExecution(
   return {
     kind: "new_menu",
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: "56000000-0000-4000-8000-000000000001",
         draftId: "84000000-0000-4000-8000-000000000001",

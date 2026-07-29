@@ -261,6 +261,8 @@ describe("parseOpenRouterModels", () => {
     const env = parseServerEnv({
       ...validServerEnv,
       BILLING_ENABLED: "true",
+      // Task6: billing 有効時は Plus 品質リスト必須
+      OPENROUTER_PLUS_MODELS: validServerEnv.OPENROUTER_MODELS,
       STRIPE_SECRET_KEY: "sk_test_xxx",
       STRIPE_WEBHOOK_SECRET: "whsec_xxx",
       STRIPE_PRICE_PLUS_MONTHLY: "price_m",
@@ -269,6 +271,7 @@ describe("parseOpenRouterModels", () => {
     });
     expect(env.billingEnabled).toBe(true);
     expect(env.stripe?.pricePlusMonthly).toBe("price_m");
+    expect(env.openRouter.plusModels.length).toBeGreaterThan(0);
   });
 
   it.each([

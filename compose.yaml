@@ -137,6 +137,7 @@ services:
       # 既定は openrouter-mock。本番相当の実 API は .env で上書きする（README 参照）。
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-local-mock-key}
       OPENROUTER_MODELS: ${OPENROUTER_MODELS:-mock/kondate-primary:free,mock/kondate-repair:free}
+      OPENROUTER_PLUS_MODELS: ${OPENROUTER_PLUS_MODELS:-mock/kondate-primary:free,mock/kondate-repair:free}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-http://openrouter-mock:8787/api/v1}
       USER_DAILY_AI_LIMIT: "3"
       USER_DAILY_EXTERNAL_CALL_LIMIT: "6"

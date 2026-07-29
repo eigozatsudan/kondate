@@ -158,8 +158,9 @@ describe("projectMenuForSurvivingTargets / dish-regen AI strip", () => {
       ],
     };
     const command: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_dish",
+      qualityMode: false,
       request: {
         sourceMenuId: sourceMenu.menuId,
         dishId,

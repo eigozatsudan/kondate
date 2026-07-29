@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aiGenerationResponseSchema,
   aiGenerationWireResponseSchema,
+  generationCommandSchema,
   generationConflictCodes,
   generationConflictCopy,
   generationIssueCodes,
@@ -215,12 +216,19 @@ describe("usageTodayDataSchema", () => {
         "globalAvailable",
         "plan",
         "plusEntitled",
+        "quality",
         "retryAt",
         "shortWindow",
         "success",
       ]);
     },
   );
+
+  const freeQuality = {
+    day: { consumed: 0, limit: 3 as const, remaining: 3 },
+    month: { consumed: 0, limit: 20 as const, remaining: 20 },
+    available: false,
+  };
 
   it("accepts Plus limits on usageTodayDataSchema", () => {
     const plus = {
@@ -229,6 +237,11 @@ describe("usageTodayDataSchema", () => {
       success: { consumed: 0, limit: 10 as const, remaining: 10 },
       attempts: { sent: 0, limit: 20 as const, remaining: 20 },
       shortWindow: { sent: 0, limit: 8 as const, remaining: 8, retryAt: null },
+      quality: {
+        day: { consumed: 0, limit: 3 as const, remaining: 3 },
+        month: { consumed: 0, limit: 20 as const, remaining: 20 },
+        available: true,
+      },
       globalAvailable: true,
       retryAt: null,
     };
@@ -242,6 +255,7 @@ describe("usageTodayDataSchema", () => {
       success: { consumed: 0, limit: 3 as const, remaining: 3 },
       attempts: { sent: 0, limit: 6 as const, remaining: 6 },
       shortWindow: { sent: 0, limit: 4 as const, remaining: 4, retryAt: null },
+      quality: freeQuality,
       globalAvailable: true,
       retryAt: null,
     };
@@ -256,6 +270,7 @@ describe("usageTodayDataSchema", () => {
         success: { consumed: 0, limit: 5, remaining: 5 },
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        quality: freeQuality,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -271,6 +286,7 @@ describe("usageTodayDataSchema", () => {
         success: { consumed: 1, limit: 5, remaining: 4 },
         attempts: { sent: 2, limit: 12, remaining: 10 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        quality: freeQuality,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -285,6 +301,7 @@ describe("usageTodayDataSchema", () => {
         success: { consumed: 1, limit: 3, remaining: 1 },
         attempts: { sent: 2, limit: 6, remaining: 4 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        quality: freeQuality,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -296,6 +313,7 @@ describe("usageTodayDataSchema", () => {
         success: { consumed: 1, limit: 3, remaining: 2 },
         attempts: { sent: 2, limit: 6, remaining: 5 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        quality: freeQuality,
         globalAvailable: true,
         retryAt: null,
       }).success,
@@ -319,6 +337,7 @@ describe("usageTodayDataSchema", () => {
         success: { consumed: 3, limit: 3, remaining: 0 },
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        quality: freeQuality,
         globalAvailable: true,
         retryAt: "2026-07-11T15:00:00.000Z",
       }),
@@ -330,6 +349,7 @@ describe("usageTodayDataSchema", () => {
         success: { consumed: 0, limit: 3, remaining: 3 },
         attempts: { sent: 6, limit: 6, remaining: 0 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        quality: freeQuality,
         globalAvailable: true,
         retryAt: "2026-07-11T15:00:00.000Z",
       }),
@@ -346,10 +366,38 @@ describe("usageTodayDataSchema", () => {
           remaining: 0,
           retryAt: "2026-07-11T09:10:00+09:00",
         },
+        quality: freeQuality,
         globalAvailable: true,
         retryAt: "2026-07-11T09:10:00+09:00",
       }),
     ).toMatchObject({ shortWindow: { remaining: 0, limit: 4 } });
+  });
+
+  it("requires generation-command.v3 with qualityMode boolean", () => {
+    const cmd = {
+      commandVersion: "generation-command.v3" as const,
+      kind: "new_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: "10000000-0000-4000-8000-000000000001",
+        draftId: "20000000-0000-4000-8000-000000000001",
+        draftRevision: 1,
+        privacyNoticeVersion: "2026-07-28.v1" as const,
+        expiredPantryConfirmations: [],
+      },
+    };
+    expect(generationCommandSchema.parse(cmd).qualityMode).toBe(false);
+  });
+
+  it("rejects retired generation-command version before v3", () => {
+    // 文字列リテラルで v2 を置かない（grep gate: production コードに旧版ゼロ）
+    const retiredVersion = ["generation-command", "v2"].join(".");
+    expect(
+      generationCommandSchema.safeParse({
+        commandVersion: retiredVersion,
+        qualityMode: false,
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts Plus generationQuotaSchema with userDailyLimit 10 and remaining up to 10", () => {

@@ -379,8 +379,9 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
   const requestId = "90000000-0000-4000-8000-000000000001";
   const key = "91000000-0000-4000-8000-000000000001";
   const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "new_menu",
+    qualityMode: false,
     request: {
       idempotencyKey: key,
       draftId: "92000000-0000-4000-8000-000000000001",
@@ -768,8 +769,9 @@ describe("family canary matrix across idea and household generation boundaries",
     return {
       kind: "new_menu" as const,
       command: {
-        commandVersion: "generation-command.v2" as const,
+        commandVersion: "generation-command.v3" as const,
         kind: "new_menu" as const,
+        qualityMode: false,
         request: {
           idempotencyKey: "56000000-0000-4000-8000-000000000001",
           draftId: "84000000-0000-4000-8000-000000000001",

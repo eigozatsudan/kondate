@@ -212,8 +212,10 @@ export function PlannerRoutePage() {
       }
       const pending = createPendingGeneration(
         {
-          commandVersion: "generation-command.v2",
+          commandVersion: "generation-command.v3",
           kind: "new_menu",
+          // attempt のトグルを command に載せる（HMAC に qualityMode を含める）
+          qualityMode: attempt.qualityMode,
           request: {
             idempotencyKey: attempt.idempotencyKey,
             draftId: draft.id,

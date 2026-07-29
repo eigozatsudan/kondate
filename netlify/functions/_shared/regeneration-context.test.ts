@@ -183,8 +183,9 @@ function makeLoaderDeps(
 }
 
 const dishCommand: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "regenerate_dish",
+  qualityMode: false,
   request: {
     sourceMenuId: "52000000-0000-4000-8000-000000000001",
     dishId: dish2Id,
@@ -197,8 +198,9 @@ const dishCommand: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
 };
 
 const menuCommand: Extract<GenerationCommand, { kind: "regenerate_menu" }> = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "regenerate_menu",
+  qualityMode: false,
   request: {
     sourceMenuId: "52000000-0000-4000-8000-000000000001",
     idempotencyKey: "82000000-0000-4000-8000-000000000002",
@@ -491,8 +493,9 @@ describe("loadRegenerationExecutionContext", () => {
       deps,
       user,
       {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "regenerate_dish",
+        qualityMode: false,
         request: {
           sourceMenuId: source.menu.menuId,
           dishId: dish2Id,
@@ -921,8 +924,9 @@ describe("isRegenerationDuplicate material equivalence", () => {
     const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
       kind: "regenerate_menu",
       command: {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "regenerate_menu",
+        qualityMode: false,
         request: {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           sourceMenuId: sourceMenu.menuId,
@@ -1337,8 +1341,9 @@ describe("buildDishRegenerationPrompt label source refs", () => {
     const retained = toRetainedDishPrompt(menu, firstDish.id);
     const prompt = buildDishRegenerationPrompt({
       command: {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "regenerate_dish",
+        qualityMode: false,
         request: {
           sourceMenuId: menu.menuId,
           dishId: firstDish.id,

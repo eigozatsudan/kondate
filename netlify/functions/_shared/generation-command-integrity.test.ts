@@ -6,7 +6,7 @@ import {
   type GenerationIntegrityContextV2,
 } from "../../../shared/contracts/generation.js";
 import {
-  canonicalizeGenerationCommandV2,
+  canonicalizeGenerationCommandV3,
   generationRequestHmac,
 } from "./generation-command-integrity.js";
 
@@ -56,8 +56,9 @@ const commands: readonly {
 }[] = [
   {
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         draftId: "20000000-0000-4000-8000-000000000001",
@@ -70,8 +71,9 @@ const commands: readonly {
   },
   {
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: "10000000-0000-4000-8000-000000000002",
         sourceMenuId: "40000000-0000-4000-8000-000000000001",
@@ -85,8 +87,9 @@ const commands: readonly {
   },
   {
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_dish",
+      qualityMode: false,
       request: {
         idempotencyKey: "10000000-0000-4000-8000-000000000003",
         sourceMenuId: "40000000-0000-4000-8000-000000000001",
@@ -101,7 +104,7 @@ const commands: readonly {
   },
 ];
 
-describe("generation command integrity v2", () => {
+describe("generation command integrity v3", () => {
   it.each(commands)(
     "is deterministic for $command.kind and sorts set-like fields",
     ({ command, integrity }) => {
@@ -119,8 +122,8 @@ describe("generation command integrity v2", () => {
               targetMemberIds: [...integrity.targetMemberIds].toReversed() as [string, ...string[]],
             }
           : integrity;
-      expect(canonicalizeGenerationCommandV2(reversed, reversedMembers)).toBe(
-        canonicalizeGenerationCommandV2(command, integrity),
+      expect(canonicalizeGenerationCommandV3(reversed, reversedMembers)).toBe(
+        canonicalizeGenerationCommandV3(command, integrity),
       );
       expect(generationRequestHmac(reversed, reversedMembers, key)).toBe(
         generationRequestHmac(command, integrity, key),
@@ -139,11 +142,11 @@ describe("generation command integrity v2", () => {
     expect(
       commands.map(
         ({ command, integrity }) =>
-          JSON.parse(canonicalizeGenerationCommandV2(command, integrity)) as unknown,
+          JSON.parse(canonicalizeGenerationCommandV3(command, integrity)) as unknown,
       ),
     ).toEqual([
       {
-        version: "generation-command.v2",
+        version: "generation-command.v3",
         kind: "new_menu",
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         draftId: "20000000-0000-4000-8000-000000000001",
@@ -158,9 +161,10 @@ describe("generation command integrity v2", () => {
         servings: null,
         targetMemberIds: sortedMembers,
         sourceMenuVersion: null,
+        qualityMode: false,
       },
       {
-        version: "generation-command.v2",
+        version: "generation-command.v3",
         kind: "regenerate_menu",
         idempotencyKey: "10000000-0000-4000-8000-000000000002",
         draftId: null,
@@ -175,9 +179,10 @@ describe("generation command integrity v2", () => {
         servings: 4,
         targetMemberIds: sortedMembers,
         sourceMenuVersion: 2,
+        qualityMode: false,
       },
       {
-        version: "generation-command.v2",
+        version: "generation-command.v3",
         kind: "regenerate_dish",
         idempotencyKey: "10000000-0000-4000-8000-000000000003",
         draftId: null,
@@ -192,6 +197,7 @@ describe("generation command integrity v2", () => {
         servings: 2,
         targetMemberIds: [],
         sourceMenuVersion: 5,
+        qualityMode: false,
       },
     ]);
   });
@@ -205,7 +211,7 @@ describe("generation command integrity v2", () => {
         throw new Error("fixture mismatch");
       }
       const canonical = JSON.parse(
-        canonicalizeGenerationCommandV2(entry.command, entry.integrity),
+        canonicalizeGenerationCommandV3(entry.command, entry.integrity),
       ) as { privacyNoticeVersion: string | null };
       expect(canonical.privacyNoticeVersion).toBe("2026-07-28.v1");
       const baseHmac = generationRequestHmac(entry.command, entry.integrity, key);
@@ -299,4 +305,11 @@ describe("generation command integrity v2", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+it("changes HMAC when only qualityMode flips", () => {
+  const base = commands[0]!;
+  const a = generationRequestHmac({ ...base.command, qualityMode: false }, base.integrity, key);
+  const b = generationRequestHmac({ ...base.command, qualityMode: true }, base.integrity, key);
+  expect(a).not.toBe(b);
 });

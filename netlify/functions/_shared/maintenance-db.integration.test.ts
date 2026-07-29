@@ -85,7 +85,7 @@ describe("maintenance-db integration", () => {
          'f9100000-0000-4000-8000-000000000001', $1,
          repeat('a', 64), false,
          'f9200000-0000-4000-8000-000000000001', 'regenerate_menu', 'failed',
-         'generation-command.v2', repeat('9', 64), current_date,
+         'generation-command.v3', repeat('9', 64), current_date,
          'generation_timeout', $2::timestamptz, $2::timestamptz
        ) on conflict do nothing`,
       [userId, older],
@@ -140,7 +140,7 @@ describe("maintenance-db integration", () => {
          'f9100000-0000-4000-8000-000000000002', $1,
          repeat('b', 64), false,
          'f9200000-0000-4000-8000-000000000002', 'regenerate_menu', 'failed',
-         'generation-command.v2', repeat('8', 64), current_date,
+         'generation-command.v3', repeat('8', 64), current_date,
          'generation_timeout', $2::timestamptz, $2::timestamptz
        ) on conflict do nothing`,
       [userId, older],

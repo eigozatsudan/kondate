@@ -118,8 +118,9 @@ let storage: ReturnType<typeof memoryStorage>;
 
 function makeCommand(idempotencyKey: string): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "new_menu",
+    qualityMode: false,
     request: {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
@@ -727,8 +728,9 @@ describe("useGenerationRecovery", () => {
     [
       "missing privacyNoticeVersion",
       {
-        commandVersion: "generation-command.v2" as const,
+        commandVersion: "generation-command.v3" as const,
         kind: "regenerate_menu" as const,
+        qualityMode: false,
         request: {
           idempotencyKey: KEY_A,
           sourceMenuId: "60000000-0000-4000-8000-000000000001",
@@ -743,8 +745,9 @@ describe("useGenerationRecovery", () => {
     [
       "previous privacyNoticeVersion",
       {
-        commandVersion: "generation-command.v2" as const,
+        commandVersion: "generation-command.v3" as const,
         kind: "regenerate_menu" as const,
+        qualityMode: false,
         request: {
           idempotencyKey: KEY_A,
           sourceMenuId: "60000000-0000-4000-8000-000000000001",

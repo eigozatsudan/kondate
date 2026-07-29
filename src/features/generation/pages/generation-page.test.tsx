@@ -62,8 +62,9 @@ const quota = {
 
 function makeCommand(idempotencyKey: string): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "new_menu",
+    qualityMode: false,
     request: {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
@@ -76,8 +77,9 @@ function makeCommand(idempotencyKey: string): GenerationCommand {
 
 function makeRegenerateDishCommand(idempotencyKey: string): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "regenerate_dish",
+    qualityMode: false,
     request: {
       idempotencyKey,
       sourceMenuId: SOURCE_MENU_ID,

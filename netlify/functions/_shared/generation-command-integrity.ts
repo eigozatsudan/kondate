@@ -2,12 +2,12 @@ import { Buffer } from "node:buffer";
 import { createHmac } from "node:crypto";
 import type {
   ExpiredPantryConfirmation,
-  GenerationCommandV2,
-  GenerationIntegrityContextV2,
+  GenerationCommandV3,
+  GenerationIntegrityContextV3,
 } from "../../../shared/contracts/generation.js";
-import { generationCommandVersionV2 } from "../../../shared/contracts/generation.js";
+import { generationCommandVersionV3 } from "../../../shared/contracts/generation.js";
 
-export const generationRequestHmacVersion = generationCommandVersionV2;
+export const generationRequestHmacVersion = generationCommandVersionV3;
 
 // 期限切れ在庫確認は集合として扱い、保存順に依存しないよう正規化する
 const sortedChecks = (
@@ -25,15 +25,16 @@ const sortedMemberIds = (values: readonly string[]): readonly string[] =>
 
 /**
  * 冪等性比較の唯一の正規表現。key 順は固定し、kind に存在しない値は null とする。
+ * v2 キー順の末尾に qualityMode を追加（v3 cutover）。
  * リクエスト JSON やプロンプト本文は台帳に載せない。
  * privacyNoticeVersion は new_menu / 再生成とも request から載せる（F1: 再生成でも必須）。
  */
-export function canonicalizeGenerationCommandV2(
-  command: GenerationCommandV2,
-  integrity: GenerationIntegrityContextV2,
+export function canonicalizeGenerationCommandV3(
+  command: GenerationCommandV3,
+  integrity: GenerationIntegrityContextV3,
 ): string {
   const isNewMenu = command.kind === "new_menu";
-  // key 順は brief Step 4 の固定順。JSON.stringify は挿入順を保持する。
+  // key 順は brief 固定。JSON.stringify は挿入順を保持する。
   return JSON.stringify({
     version: generationRequestHmacVersion,
     kind: command.kind,
@@ -50,6 +51,7 @@ export function canonicalizeGenerationCommandV2(
     servings: integrity.servings,
     targetMemberIds: sortedMemberIds(integrity.targetMemberIds),
     sourceMenuVersion: integrity.sourceMenuVersion,
+    qualityMode: command.qualityMode,
   });
 }
 
@@ -64,11 +66,11 @@ export function parseGenerationRequestHmacKey(value: string): Buffer {
 
 // 正規化したコマンド文字列に対する HMAC-SHA-256（小文字 hex 64 桁）
 export function generationRequestHmac(
-  command: GenerationCommandV2,
-  integrity: GenerationIntegrityContextV2,
+  command: GenerationCommandV3,
+  integrity: GenerationIntegrityContextV3,
   key: Uint8Array,
 ): string {
   return createHmac("sha256", key)
-    .update(canonicalizeGenerationCommandV2(command, integrity), "utf8")
+    .update(canonicalizeGenerationCommandV3(command, integrity), "utf8")
     .digest("hex");
 }

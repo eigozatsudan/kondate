@@ -1,4 +1,5 @@
 import type { Config } from "@netlify/functions";
+import { planQuota } from "../../shared/contracts/plan-quota.js";
 import { usageTodayDataSchema } from "../../shared/contracts/generation.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
 import {
@@ -12,12 +13,47 @@ import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.j
 import { computeQuotaIdentityKey } from "./_shared/quota-identity.js";
 import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
+type QualityRpc = {
+  day?: { consumed?: number; limit?: number; remaining?: number };
+  month?: { consumed?: number; limit?: number; remaining?: number };
+};
+
+/** RPC quality 投影 + plusEntitled から available を合成する */
+function mergeQualityProjection(
+  quality: QualityRpc | undefined,
+  plusEntitled: boolean,
+): {
+  day: { consumed: number; limit: 3; remaining: number };
+  month: { consumed: number; limit: 20; remaining: number };
+  available: boolean;
+} {
+  const dayLimit = planQuota.quality.perDay;
+  const monthLimit = planQuota.quality.perMonth;
+  const dayConsumed = quality?.day?.consumed ?? 0;
+  const monthConsumed = quality?.month?.consumed ?? 0;
+  const dayRemaining = quality?.day?.remaining ?? dayLimit;
+  const monthRemaining = quality?.month?.remaining ?? monthLimit;
+  return {
+    day: {
+      consumed: dayConsumed,
+      limit: dayLimit,
+      remaining: dayRemaining,
+    },
+    month: {
+      consumed: monthConsumed,
+      limit: monthLimit,
+      remaining: monthRemaining,
+    },
+    available: plusEntitled && dayRemaining > 0 && monthRemaining > 0,
+  };
+}
+
 /**
- * 生成行を作らず、当日の成功 / 外部 attempt / 短期窓 / 全体受付を返す。
+ * 生成行を作らず、当日の成功 / 外部 attempt / 短期窓 / 全体受付 / 品質枠を返す。
  * 台帳への insert は行わない。
  * globalAvailable は予約側と同じ GLOBAL_DAILY_AI_LIMIT を渡して計算する。
  * identity 日次はサーバ計算の identity_key で読む（クライアント指定不可）。
- * plan / plusEntitled は RPC に無く、entitlement から Function が merge する（ADV-6）。
+ * plan / plusEntitled / quality.available は RPC に無く、entitlement から Function が merge する。
  */
 export default async function usageToday(request: Request): Promise<Response> {
   if (request.method !== "GET") return methodNotAllowed(["GET"]);
@@ -65,6 +101,7 @@ export default async function usageToday(request: Request): Promise<Response> {
         success?: { limit?: number };
         attempts?: { limit?: number };
         shortWindow?: { limit?: number };
+        quality?: QualityRpc;
         globalAvailable?: boolean;
         retryAt?: string | null;
       };
@@ -87,16 +124,28 @@ export default async function usageToday(request: Request): Promise<Response> {
           remaining: limits.shortWindowLimit,
           retryAt: null,
         },
+        quality: mergeQualityProjection(
+          {
+            day: { consumed: 0, remaining: planQuota.quality.perDay },
+            month: { consumed: 0, remaining: planQuota.quality.perMonth },
+          },
+          plusEntitled,
+        ),
         globalAvailable: rpcBody.globalAvailable === true,
         retryAt: rpcBody.globalAvailable === true ? null : (rpcBody.retryAt ?? null),
       });
       return json(200, { ok: true, data: projected });
     }
 
+    const rpcBody =
+      typeof data === "object" && data !== null
+        ? (data as Record<string, unknown> & { quality?: QualityRpc })
+        : {};
     const merged = usageTodayDataSchema.parse({
-      ...(typeof data === "object" && data !== null ? data : {}),
+      ...rpcBody,
       plan: quotaPlan,
       plusEntitled,
+      quality: mergeQualityProjection(rpcBody.quality, plusEntitled),
     });
     return json(200, { ok: true, data: merged });
   } catch (error) {

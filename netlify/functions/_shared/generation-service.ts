@@ -203,6 +203,9 @@ const failureRetryable: Record<GenerationFailureCode, boolean> = {
   source_menu_not_found: false,
   replace_dish_not_found: false,
   source_menu_changed: false,
+  quality_mode_requires_plus: false,
+  quality_daily_limit: false,
+  quality_monthly_limit: false,
 };
 
 /** テストとサービス本体の正。message は必ず issueMessages 参照。 */
@@ -628,10 +631,21 @@ function unwrapStatusHydration(error: unknown): unknown {
 }
 
 export async function runGeneration(
-  deps: GenerationDependencies,
+  inputDeps: GenerationDependencies,
   command: GenerationCommand,
 ): Promise<GenerationStatusData> {
   const key = command.request.idempotencyKey;
+  // 品質モードは Plus リストのみ（repair も command.qualityMode / スナップショット継承）
+  const envForModels = getServerEnv();
+  const deps: GenerationDependencies = {
+    ...inputDeps,
+    models: command.qualityMode ? envForModels.openRouter.plusModels : inputDeps.models,
+  };
+  // 品質リスト空は model_unavailable（設定ミス。BILLING 有効時は env parse で拒否済み）
+  if (command.qualityMode && deps.models.length === 0) {
+    // reserve 前に閉じる（台帳非接触）。Free は repository 403 が先。
+    throw new HttpError(503, "model_unavailable", issueMessages.model_unavailable);
+  }
   const resolveIntegrity =
     deps.resolveIntegrityContext ??
     ((input: GenerationCommand) =>

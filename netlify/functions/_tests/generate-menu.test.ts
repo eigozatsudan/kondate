@@ -63,8 +63,9 @@ const user = {
   email: "owner@example.com",
 };
 const requestBody = {
-  commandVersion: "generation-command.v2" as const,
+  commandVersion: "generation-command.v3" as const,
   kind: "new_menu" as const,
+  qualityMode: false,
   request: {
     idempotencyKey: "82000000-0000-4000-8000-000000000001",
     draftId: "84000000-0000-4000-8000-000000000001",
@@ -349,7 +350,7 @@ describe("POST /api/generations/menu", () => {
           return Promise.resolve({
             kind: "hit" as const,
             requestId: current.request_id!,
-            requestHmacVersion: "generation-command.v2" as const,
+            requestHmacVersion: "generation-command.v3" as const,
             integrity: {
               kind: "new_menu" as const,
               targetMode: "household" as const,
@@ -390,8 +391,9 @@ describe("POST /api/generations/menu", () => {
     const executionContext: Extract<GenerationExecutionContext, { kind: "new_menu" }> = {
       kind: "new_menu",
       command: {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "new_menu",
+        qualityMode: false,
         request: {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           draftId: "84000000-0000-4000-8000-000000000001",

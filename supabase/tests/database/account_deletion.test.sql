@@ -125,7 +125,7 @@ begin
     'e2000000-0000-4000-8000-000000000002',
     'regenerate_menu',
     'failed',
-    'generation-command.v2',
+    'generation-command.v3',
     repeat('c', 64),
     date '2026-07-11',
     'generation_timeout',

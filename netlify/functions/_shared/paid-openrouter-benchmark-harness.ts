@@ -1,5 +1,5 @@
 import {
-  generationCommandVersionV2,
+  generationCommandVersionV3,
   type GenerationCommand,
 } from "../../../shared/contracts/generation.js";
 import type { IdeaGenerationContext } from "../../../shared/safety/generation-context.js";
@@ -155,7 +155,8 @@ function createFixedGenerationContext(): IdeaGenerationContext {
 }
 
 const benchmarkCommand: Extract<GenerationCommand, { kind: "new_menu" }> = {
-  commandVersion: generationCommandVersionV2,
+  commandVersion: generationCommandVersionV3,
+  qualityMode: false,
   kind: "new_menu",
   request: {
     idempotencyKey: benchmarkIdempotencyKey,

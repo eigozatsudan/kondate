@@ -27,6 +27,7 @@ export type Database = {
           identity_key: string
           personal_quota_disabled: boolean
           processing_expires_at: string | null
+          quality_mode: boolean
           quota_attempt_limit: number
           quota_short_limit: number
           quota_success_limit: number
@@ -64,6 +65,7 @@ export type Database = {
           identity_key: string
           personal_quota_disabled?: boolean
           processing_expires_at?: string | null
+          quality_mode?: boolean
           quota_attempt_limit?: number
           quota_short_limit?: number
           quota_success_limit?: number
@@ -101,6 +103,7 @@ export type Database = {
           identity_key?: string
           personal_quota_disabled?: boolean
           processing_expires_at?: string | null
+          quality_mode?: boolean
           quota_attempt_limit?: number
           quota_short_limit?: number
           quota_success_limit?: number
@@ -197,6 +200,54 @@ export type Database = {
           success_count?: number
           updated_at?: string
           usage_day?: string
+        }
+        Relationships: []
+      }
+      ai_identity_quality_daily: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          success_count: number
+          updated_at: string
+          usage_day: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day?: string
+        }
+        Relationships: []
+      }
+      ai_identity_quality_monthly: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          success_count: number
+          updated_at: string
+          usage_month: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_month: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_month?: string
         }
         Relationships: []
       }
@@ -525,6 +576,7 @@ export type Database = {
         Returns: boolean
       }
       ai_jst_day: { Args: { p_now: string }; Returns: string }
+      ai_jst_month_start: { Args: { p_now: string }; Returns: string }
       ai_next_jst_midnight: { Args: { p_now: string }; Returns: string }
       ai_request_payload: {
         Args: {
@@ -2632,6 +2684,7 @@ export type Database = {
           p_identity_key: string
           p_integrity_context: Json
           p_now?: string
+          p_quality_mode?: boolean
           p_quota_disabled?: boolean
           p_replace_dish_id: string
           p_request_hmac: string

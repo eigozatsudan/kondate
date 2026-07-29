@@ -2,9 +2,10 @@ import { z } from "zod";
 import {
   generationConflictCopy,
   generationConflictSchema,
-  generationCommandVersionV2,
-  type GenerationCommandV2,
-  type GenerationIntegrityContextV2,
+  generationCommandVersionV3,
+  issueMessages,
+  type GenerationCommandV3,
+  type GenerationIntegrityContextV3,
   type GenerationRequestLookup,
   type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
@@ -197,7 +198,7 @@ const lookupHitSchema = z
   .object({
     kind: z.literal("hit"),
     request_id: z.uuid(),
-    request_hmac_version: z.literal(generationCommandVersionV2),
+    request_hmac_version: z.literal(generationCommandVersionV3),
     integrity: z.unknown(),
   })
   .strict();
@@ -206,12 +207,12 @@ const lookupMissSchema = z.object({ kind: z.literal("miss") }).strict();
 export type GenerationReservationRepository = {
   lookup: (idempotencyKey: string) => Promise<GenerationRequestLookup>;
   replayExisting: (
-    command: GenerationCommandV2,
+    command: GenerationCommandV3,
     lookup: Extract<GenerationRequestLookup, { kind: "hit" }>,
   ) => Promise<QuotaRequestRecord>;
   reserveNew: (
-    command: GenerationCommandV2,
-    integrity: GenerationIntegrityContextV2,
+    command: GenerationCommandV3,
+    integrity: GenerationIntegrityContextV3,
   ) => Promise<QuotaRequestRecord>;
 };
 
@@ -240,7 +241,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
     try {
       const entitlement = await loadEntitlement(user.userId);
       const quotaPlan = applyQuotaPlan(entitlement, env.billingEnabled);
-      return limitsForPlan(quotaPlan);
+      return { limits: limitsForPlan(quotaPlan), quotaPlan };
     } catch (error: unknown) {
       if (error instanceof BillingEntitlementUnavailableError) {
         throw toEntitlementUnavailableHttpError(error);
@@ -249,11 +250,32 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
     }
   };
 
+  /**
+   * Free / !plus / kill で qualityMode:true は reserve 前 403。
+   * quality 台帳に触らない（RPC を呼ばない）。
+   */
+  const assertQualityModeAllowed = (
+    command: GenerationCommandV3,
+    quotaPlan: "free" | "plus",
+  ): void => {
+    if (!command.qualityMode) return;
+    if (quotaPlan !== "plus") {
+      throw new HttpError(
+        403,
+        "quality_mode_requires_plus",
+        issueMessages.quality_mode_requires_plus,
+      );
+    }
+  };
+
   const buildReserveArgs = async (
-    command: GenerationCommandV2,
-    integrity: GenerationIntegrityContextV2,
+    command: GenerationCommandV3,
+    integrity: GenerationIntegrityContextV3,
   ) => {
-    const limits = await resolvePlanLimits();
+    const { limits, quotaPlan } = await resolvePlanLimits();
+    assertQualityModeAllowed(command, quotaPlan);
+    // p_quality_mode は Plus かつ command.qualityMode のときのみ true
+    const pQualityMode = command.qualityMode && quotaPlan === "plus";
     const hmac = generationRequestHmac(command, integrity, env.generationIntegrity.requestHmacKey);
     const isNewMenu = command.kind === "new_menu";
     return {
@@ -274,6 +296,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       p_short_window_limit: limits.shortWindowLimit,
       p_global_limit: env.openRouter.globalDailyLimit,
       p_quota_disabled: quotaDisabled,
+      p_quality_mode: pQualityMode,
       p_stale_after_seconds: env.openRouter.staleAfterSeconds,
     };
   };
@@ -406,7 +429,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       );
     },
     async status(idempotencyKey: string) {
-      const limits = await resolvePlanLimits();
+      const { limits } = await resolvePlanLimits();
       return requestPayloadSchema.parse(
         await rpc("get_ai_generation_status", {
           p_user_id: user.userId,

@@ -66,6 +66,8 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   OPENROUTER_API_KEY: z.string().min(1),
   OPENROUTER_MODELS: z.string(),
+  // 品質モード専用 allowlist。BILLING_ENABLED=false 時は空/未設定可
+  OPENROUTER_PLUS_MODELS: z.string().optional(),
   OPENROUTER_BASE_URL: z.url().default("https://openrouter.ai/api/v1"),
   GENERATION_REQUEST_HMAC_KEY: generationRequestHmacKeySchema,
   // identity 日次枠用。GENERATION_REQUEST_HMAC_KEY と共用しない
@@ -110,6 +112,8 @@ export type ServerEnv = Omit<
     apiKey: string;
     baseUrl: string;
     models: readonly string[];
+    /** 品質モード専用。BILLING_ENABLED=false 時は空配列可 */
+    plusModels: readonly string[];
     userDailyLimit: typeof releaseQuota.userDailySuccessLimit;
     userDailyAttemptLimit: typeof releaseQuota.userDailyExternalCallLimit;
     userShortWindowLimit: typeof releaseQuota.userShortWindowExternalCallLimit;
@@ -374,6 +378,27 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     throw new Error("server_configuration_invalid");
   }
   const stripe = parseStripeConfig(source, { billingEnabled, isLocal });
+  const openRouterBaseUrl = result.data.OPENROUTER_BASE_URL;
+  const models = parseOpenRouterModels(result.data.OPENROUTER_MODELS, {
+    openRouterBaseUrl,
+  });
+  // 品質リスト: 未設定/空は billing 無効時のみ許可。有効時は同一ゲートで 1 件以上必須
+  const rawPlus = result.data.OPENROUTER_PLUS_MODELS;
+  let plusModels: readonly string[] = [];
+  if (rawPlus !== undefined && rawPlus.trim().length > 0) {
+    try {
+      plusModels = parseOpenRouterModels(rawPlus, { openRouterBaseUrl });
+    } catch (error: unknown) {
+      // エラー文言を PLUS 側と分かるようにする
+      const message = error instanceof Error ? error.message : "invalid";
+      throw new Error(message.replaceAll("OPENROUTER_MODELS", "OPENROUTER_PLUS_MODELS"));
+    }
+  }
+  if (billingEnabled && plusModels.length === 0) {
+    throw new Error(
+      "OPENROUTER_PLUS_MODELS must contain at least one model when BILLING_ENABLED=true",
+    );
+  }
   const { GENERATION_REQUEST_HMAC_KEY, QUOTA_IDENTITY_HMAC_KEY, ...publicEnv } = result.data;
   return {
     ...publicEnv,
@@ -387,10 +412,9 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     },
     openRouter: {
       apiKey: result.data.OPENROUTER_API_KEY,
-      baseUrl: result.data.OPENROUTER_BASE_URL.replace(/\/$/u, ""),
-      models: parseOpenRouterModels(result.data.OPENROUTER_MODELS, {
-        openRouterBaseUrl: result.data.OPENROUTER_BASE_URL,
-      }),
+      baseUrl: openRouterBaseUrl.replace(/\/$/u, ""),
+      models,
+      plusModels,
       userDailyLimit: result.data.USER_DAILY_AI_LIMIT,
       userDailyAttemptLimit: result.data.USER_DAILY_EXTERNAL_CALL_LIMIT,
       userShortWindowLimit: result.data.USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT,

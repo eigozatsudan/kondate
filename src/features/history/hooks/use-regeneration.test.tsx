@@ -196,8 +196,9 @@ describe("useRegeneration", () => {
       const command: GenerationCommand =
         kind === "regenerate_menu"
           ? {
-              commandVersion: "generation-command.v2" as const,
+              commandVersion: "generation-command.v3" as const,
               kind,
+              qualityMode: false,
               request: {
                 idempotencyKey: "10000000-0000-4000-8000-000000000011",
                 sourceMenuId: MENU_ID,
@@ -208,8 +209,9 @@ describe("useRegeneration", () => {
               },
             }
           : {
-              commandVersion: "generation-command.v2" as const,
+              commandVersion: "generation-command.v3" as const,
               kind,
+              qualityMode: false,
               request: {
                 idempotencyKey: "10000000-0000-4000-8000-000000000012",
                 sourceMenuId: MENU_ID,
@@ -373,8 +375,9 @@ describe("useRegeneration", () => {
   it("does not overwrite existing pending on startWhole; navigates to resume", async () => {
     const existing = createPendingGeneration(
       {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "new_menu",
+        qualityMode: false,
         request: {
           idempotencyKey: "10000000-0000-4000-8000-000000000099",
           draftId: "20000000-0000-4000-8000-000000000001",
@@ -411,8 +414,9 @@ describe("useRegeneration", () => {
   it("does not overwrite existing pending on startDish (idea); navigates to resume", async () => {
     const existing = createPendingGeneration(
       {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "new_menu",
+        qualityMode: false,
         request: {
           idempotencyKey: "10000000-0000-4000-8000-000000000088",
           draftId: "20000000-0000-4000-8000-000000000001",

@@ -596,6 +596,10 @@ export const generationFailureCodes = [
   "replace_dish_not_found",
   // Plan 7: 予約時に凍結した元献立 version と live source の不一致
   "source_menu_changed",
+  // Plus 品質モード（generation-command.v3）
+  "quality_mode_requires_plus",
+  "quality_daily_limit",
+  "quality_monthly_limit",
 ] as const;
 export type GenerationFailureCode = (typeof generationFailureCodes)[number];
 
@@ -691,46 +695,51 @@ export const regenerateDishRequestSchema = z
   .strict()
   .superRefine(refineRegenerationRequest);
 
-/** 生成コマンド wire / pending / HMAC の唯一の版。v1 は未デプロイのため削除済み。 */
-export const generationCommandVersionV2 = "generation-command.v2" as const;
+/** 生成コマンド wire / pending / HMAC の唯一の版。v2 は L12 cutover で廃止。 */
+export const generationCommandVersionV3 = "generation-command.v3" as const;
 
-export const generationCommandV2Schema = z.discriminatedUnion("kind", [
+export const generationCommandV3Schema = z.discriminatedUnion("kind", [
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("new_menu"),
+      // トップレベル必須。HMAC canonical に常に含める（省略で品質枠回避を禁止）
+      qualityMode: z.boolean(),
       request: newMenuGenerationRequestSchema,
     })
     .strict(),
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("regenerate_menu"),
+      qualityMode: z.boolean(),
       request: regenerateMenuRequestSchema,
     })
     .strict(),
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("regenerate_dish"),
+      qualityMode: z.boolean(),
       request: regenerateDishRequestSchema,
     })
     .strict(),
 ]);
 
-/** 後方互換の別名。実体は v2 のみ。 */
-export const generationCommandSchema = generationCommandV2Schema;
+/** 現行 command 版。実体は v3 のみ。 */
+export const generationCommandSchema = generationCommandV3Schema;
 
 export type RegenerateMenuRequest = z.infer<typeof regenerateMenuRequestSchema>;
 export type RegenerateDishRequest = z.infer<typeof regenerateDishRequestSchema>;
-export type GenerationCommandV2 = z.infer<typeof generationCommandV2Schema>;
-export type GenerationCommand = GenerationCommandV2;
+export type GenerationCommandV3 = z.infer<typeof generationCommandV3Schema>;
+export type GenerationCommand = GenerationCommandV3;
 
 /**
  * サーバー権威の整合性コンテキスト。クライアントから mode/servings/memberIds/source version を受け取らない。
  * kind × targetMode の判別可能 union で household 空 / idea 非空を型で禁止する。
+ * v3 でも integrity 形は変わらない（qualityMode は command 側）。
  */
-export type GenerationIntegrityContextV2 =
+export type GenerationIntegrityContextV3 =
   | {
       kind: "new_menu";
       targetMode: "household";
@@ -760,13 +769,16 @@ export type GenerationIntegrityContextV2 =
       sourceMenuVersion: number;
     };
 
+/** 旧名互換（import 移行用）。実体は V3。 */
+export type GenerationIntegrityContextV2 = GenerationIntegrityContextV3;
+
 export type GenerationRequestLookup =
   | { kind: "miss" }
   | {
       kind: "hit";
       requestId: string;
-      requestHmacVersion: "generation-command.v2";
-      integrity: GenerationIntegrityContextV2;
+      requestHmacVersion: "generation-command.v3";
+      integrity: GenerationIntegrityContextV3;
     };
 
 export const generationQuotaSchema = z
@@ -867,6 +879,26 @@ export const usageTodayDataSchema = z
         retryAt: isoDateTimeSchema.nullable(),
       })
       .strict(),
+    // Task6: 品質 day/month 投影。available は Function が plusEntitled と残数から算出してもよい
+    quality: z
+      .object({
+        day: z
+          .object({
+            consumed: z.number().int().min(0).max(planQuota.quality.perDay),
+            limit: z.literal(planQuota.quality.perDay),
+            remaining: z.number().int().min(0).max(planQuota.quality.perDay),
+          })
+          .strict(),
+        month: z
+          .object({
+            consumed: z.number().int().min(0).max(planQuota.quality.perMonth),
+            limit: z.literal(planQuota.quality.perMonth),
+            remaining: z.number().int().min(0).max(planQuota.quality.perMonth),
+          })
+          .strict(),
+        available: z.boolean(),
+      })
+      .strict(),
     globalAvailable: z.boolean(),
     retryAt: isoDateTimeSchema.nullable(),
   })
@@ -891,6 +923,20 @@ export const usageTodayDataSchema = z
         code: "custom",
         path: ["shortWindow", "remaining"],
         message: "window counts must balance",
+      });
+    }
+    if (data.quality.day.consumed + data.quality.day.remaining !== data.quality.day.limit) {
+      context.addIssue({
+        code: "custom",
+        path: ["quality", "day", "remaining"],
+        message: "quality day counts must balance",
+      });
+    }
+    if (data.quality.month.consumed + data.quality.month.remaining !== data.quality.month.limit) {
+      context.addIssue({
+        code: "custom",
+        path: ["quality", "month", "remaining"],
+        message: "quality month counts must balance",
       });
     }
     const blocked =
@@ -966,6 +1012,9 @@ const nonConflictIssueMessages = {
   source_menu_not_found: "元の献立が見つかりません",
   replace_dish_not_found: "変更する料理が見つかりません",
   source_menu_changed: "元の献立が更新されたため、もう一度操作してください",
+  quality_mode_requires_plus: "くわしい AI での作成は Plus で使えます。",
+  quality_daily_limit: "本日のプレミアム作成回数を使い切りました。",
+  quality_monthly_limit: "今月のプレミアム回数を使い切りました。",
 } as const satisfies Record<GenerationFailureCode, string>;
 
 export const issueMessages = {

@@ -23,6 +23,7 @@ it("期限確認を draft に混ぜず親 attempt へ exact check として返�
   const onAttemptChange = vi.fn();
   const attempt: PlannerAttempt = {
     idempotencyKey: "73000000-0000-0000-0000-000000000001",
+    qualityMode: false,
     expiredPantryChecks: [],
   };
   const { container } = render(
@@ -49,6 +50,7 @@ it("期限確認を draft に混ぜず親 attempt へ exact check として返�
 
   expect(onAttemptChange).toHaveBeenCalledWith({
     idempotencyKey: attempt.idempotencyKey,
+    qualityMode: false,
     expiredPantryChecks: [{ pantryItemId: item.id, checkedAt: "2026-07-11T03:00:00.000Z" }],
   });
   expect(onChange).toHaveBeenCalledWith([{ pantryItemId: item.id, priority: "prefer_use" }]);
@@ -59,6 +61,7 @@ it("別 attempt の確認を再利用しない", async () => {
   const onChange = vi.fn();
   const attempt: PlannerAttempt = {
     idempotencyKey: "73000000-0000-0000-0000-000000000002",
+    qualityMode: false,
     expiredPantryChecks: [{ pantryItemId: item.id, checkedAt: "2026-07-11T03:00:00.000Z" }],
   };
   const view = render(
@@ -79,6 +82,7 @@ it("別 attempt の確認を再利用しない", async () => {
       selections={[]}
       attempt={{
         idempotencyKey: "73000000-0000-0000-0000-000000000003",
+        qualityMode: false,
         expiredPantryChecks: [],
       }}
       onAttemptChange={vi.fn()}
@@ -94,6 +98,7 @@ it("期限確認をモーダルとして説明し安全な操作へフォーカ�
   const user = userEvent.setup();
   const attempt: PlannerAttempt = {
     idempotencyKey: "73000000-0000-0000-0000-000000000004",
+    qualityMode: false,
     expiredPantryChecks: [],
   };
   render(
@@ -142,6 +147,7 @@ it("期限確認中は背景の pointer 操作で選択を変更できない", a
       selections={[]}
       attempt={{
         idempotencyKey: "73000000-0000-0000-0000-000000000005",
+        qualityMode: false,
         expiredPantryChecks: [],
       }}
       onAttemptChange={vi.fn()}
@@ -169,6 +175,7 @@ it("確認中の同じ attempt 再描画は dialog focus を保ち、別 attempt
   } as const;
   const attempt: PlannerAttempt = {
     idempotencyKey: "73000000-0000-0000-0000-000000000006",
+    qualityMode: false,
     expiredPantryChecks: [],
   };
   const view = render(<PantrySelector {...commonProps} attempt={attempt} />);
@@ -188,6 +195,7 @@ it("確認中の同じ attempt 再描画は dialog focus を保ち、別 attempt
       {...commonProps}
       attempt={{
         idempotencyKey: "73000000-0000-0000-0000-000000000007",
+        qualityMode: false,
         expiredPantryChecks: [],
       }}
     />,
@@ -208,6 +216,7 @@ it("読込完了後に消えた選択を UUID を見せず解除できる", asyn
       selections={[{ pantryItemId: item.id, priority: "must_use" }]}
       attempt={{
         idempotencyKey: "73000000-0000-0000-0000-000000000008",
+        qualityMode: false,
         expiredPantryChecks: [],
       }}
       onAttemptChange={vi.fn()}
@@ -229,6 +238,7 @@ it("読込中は復元済み選択を削除扱いしない", () => {
       selections={[{ pantryItemId: item.id, priority: "must_use" }]}
       attempt={{
         idempotencyKey: "73000000-0000-0000-0000-000000000009",
+        qualityMode: false,
         expiredPantryChecks: [],
       }}
       onAttemptChange={vi.fn()}
@@ -258,6 +268,7 @@ it("50件選択後は未選択だけを無効化し選択済みは解除でき�
       selections={selections}
       attempt={{
         idempotencyKey: "73000000-0000-0000-0000-000000000010",
+        qualityMode: false,
         expiredPantryChecks: [],
       }}
       onAttemptChange={vi.fn()}

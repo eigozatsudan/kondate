@@ -18,7 +18,7 @@ const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 vi.mock("@/features/auth/session", () => ({ requireAccessToken: requireAccessTokenMock }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 
-const KEY = "kondate:generation:v2";
+const KEY = "kondate:generation:v3";
 const USER_ID = "40000000-0000-4000-8000-000000000001";
 const OTHER_USER_ID = "40000000-0000-4000-8000-000000000002";
 const IDEMPOTENCY_KEY = "10000000-0000-4000-8000-000000000001";
@@ -49,8 +49,9 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
   };
   if (kind === "new_menu") {
     return {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind,
+      qualityMode: false,
       request: {
         idempotencyKey: IDEMPOTENCY_KEY,
         draftId: "20000000-0000-4000-8000-000000000001",
@@ -61,11 +62,12 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
     };
   }
   if (kind === "regenerate_menu") {
-    return { commandVersion: "generation-command.v2", kind, request: base };
+    return { commandVersion: "generation-command.v3", kind, qualityMode: false, request: base };
   }
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind,
+    qualityMode: false,
     request: { ...base, dishId: "70000000-0000-4000-8000-000000000001" },
   };
 }

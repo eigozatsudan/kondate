@@ -308,7 +308,7 @@ async function seedMissingOwnedFamiliesViaPg(userId: string): Promise<void> {
          failure_code, started_at, completed_at
        )
        select $1::uuid, $2::uuid, repeat('c', 64), false, $3::uuid, 'regenerate_menu', 'failed',
-              'generation-command.v2', repeat('c', 64), (now() at time zone 'Asia/Tokyo')::date,
+              'generation-command.v3', repeat('c', 64), (now() at time zone 'Asia/Tokyo')::date,
               'generation_timeout', now(), now()
         where not exists (
           select 1 from private.generation_regeneration_snapshots where user_id = $2::uuid

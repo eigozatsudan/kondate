@@ -544,6 +544,24 @@ export function ReviewStep({
           家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
         </p>
       )}
+      {/* Q4: Plus 品質モード。Free でも見えるがサーバが quality_mode_requires_plus で拒否。 */}
+      <label className="stack quality-mode-toggle">
+        <span className="row quality-mode-toggle-row">
+          <input
+            type="checkbox"
+            checked={attempt.qualityMode}
+            disabled={disabled}
+            onChange={(event) => {
+              onAttemptChange({ ...attempt, qualityMode: event.target.checked });
+            }}
+            aria-describedby="quality-mode-hint"
+          />
+          <span>くわしく作る</span>
+        </span>
+        <span id="quality-mode-hint" className="muted">
+          Plus のくわしい AI で、より丁寧な献立を作ります（1 日の回数に限りがあります）
+        </span>
+      </label>
       <div className="wizard-actions">
         {onBack !== undefined && (
           <button

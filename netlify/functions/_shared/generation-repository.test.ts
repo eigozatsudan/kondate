@@ -96,8 +96,9 @@ const sourceMenuId = "60000000-0000-4000-8000-000000000001";
 const retryAt = "2026-07-20T00:00:00+09:00";
 
 const newMenuCommand: GenerationCommand = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "new_menu",
+  qualityMode: false,
   request: {
     idempotencyKey,
     draftId,
@@ -166,6 +167,7 @@ const reserveArgs = {
   p_short_window_limit: 4,
   p_global_limit: 20,
   p_quota_disabled: false,
+  p_quality_mode: false,
   p_stale_after_seconds: 180,
 };
 const markSentArgs = {
@@ -562,8 +564,9 @@ async function expectSanitizedDatabaseError(operation: Promise<unknown>): Promis
 describe("createGenerationRepository regeneration reserve", () => {
   it("reserves regenerate_menu and regenerate_dish through the same reserve_ai_generation RPC", async () => {
     const regenerateMenuCommand: GenerationCommand = {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_menu",
+      qualityMode: false,
       request: {
         idempotencyKey,
         sourceMenuId,
@@ -574,8 +577,9 @@ describe("createGenerationRepository regeneration reserve", () => {
       },
     };
     const regenerateDishCommand: GenerationCommand = {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_dish",
+      qualityMode: false,
       request: {
         idempotencyKey,
         sourceMenuId,
@@ -632,6 +636,7 @@ describe("createGenerationRepository regeneration reserve", () => {
       p_short_window_limit: 4,
       p_global_limit: 20,
       p_quota_disabled: false,
+      p_quality_mode: false,
       p_stale_after_seconds: 180,
     });
     expect(rpcMock).toHaveBeenNthCalledWith(2, "reserve_ai_generation", {
@@ -658,6 +663,7 @@ describe("createGenerationRepository regeneration reserve", () => {
       p_short_window_limit: 4,
       p_global_limit: 20,
       p_quota_disabled: false,
+      p_quality_mode: false,
       p_stale_after_seconds: 180,
     });
   });
@@ -731,6 +737,42 @@ describe("createGenerationRepository regeneration reserve", () => {
         p_attempt_limit: 20,
         p_short_window_limit: 8,
       }),
+    );
+  });
+
+  it("rejects qualityMode on Free before calling reserve RPC", async () => {
+    loadEntitlementMock.mockResolvedValue(freeEntitlement);
+    const repository = createGenerationRepository(user);
+    const qualityCommand = { ...newMenuCommand, qualityMode: true };
+    await expect(repository.reserveNew(qualityCommand, householdIntegrity)).rejects.toMatchObject({
+      status: 403,
+      code: "quality_mode_requires_plus",
+    });
+    expect(rpcMock).not.toHaveBeenCalledWith("reserve_ai_generation", expect.anything());
+  });
+
+  it("passes p_quality_mode true when Plus and qualityMode", async () => {
+    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        userDailyLimit: 3,
+        globalDailyLimit: 20,
+        staleAfterSeconds: 180,
+      },
+      generationIntegrity: {
+        requestHmacKey: hmacKey,
+      },
+      quotaIdentityHmacKey: identityHmacKey,
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    rpcMock.mockResolvedValueOnce({ data: publicRecord, error: null });
+    const repository = createGenerationRepository(user);
+    const qualityCommand = { ...newMenuCommand, qualityMode: true };
+    await repository.reserveNew(qualityCommand, householdIntegrity);
+    expect(rpcMock).toHaveBeenCalledWith(
+      "reserve_ai_generation",
+      expect.objectContaining({ p_quality_mode: true, p_user_limit: 10 }),
     );
   });
 });

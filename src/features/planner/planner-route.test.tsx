@@ -237,6 +237,7 @@ vi.mock("./components/planner-wizard", () => ({
           onClick={() => {
             props.onAttemptChange({
               idempotencyKey: props.attempt.idempotencyKey,
+              qualityMode: false,
               expiredPantryChecks: [
                 {
                   pantryItemId: "74000000-0000-4000-8000-000000000001",
@@ -719,6 +720,7 @@ it("route が更新された exact attempt を生成へ渡し新しい試行で�
     draft,
     {
       idempotencyKey: firstKey,
+      qualityMode: false,
       expiredPantryChecks: [
         {
           pantryItemId: "74000000-0000-4000-8000-000000000001",
@@ -753,6 +755,7 @@ it("生成成功の完了後だけ attempt を新しいキーと空の確認へ�
     draft,
     {
       idempotencyKey: firstKey,
+      qualityMode: false,
       expiredPantryChecks: [
         {
           pantryItemId: "74000000-0000-4000-8000-000000000001",
@@ -855,8 +858,9 @@ describe("PlannerRoutePage", () => {
     };
     expect(pending).toMatchObject({
       ownerUserId: draft.userId,
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: attemptKey,
         draftId: draft.id,
@@ -877,8 +881,9 @@ describe("PlannerRoutePage", () => {
   it("既存 pending があるときは上書きせず再開し attempt を回転しない", async () => {
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: { idempotencyKey: "existing" },
     });
     const user = userEvent.setup();

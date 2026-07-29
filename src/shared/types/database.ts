@@ -51,6 +51,8 @@ type ReserveGenerationArgs = Omit<GeneratedReserveGenerationArgs, NullableReserv
   p_short_window_limit: number;
   p_global_limit: number;
   p_quota_disabled?: boolean;
+  /** Task6: Plus 品質モード原子 reserve */
+  p_quality_mode?: boolean;
 };
 
 type GetAiUsageTodayArgs = {

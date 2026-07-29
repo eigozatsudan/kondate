@@ -250,8 +250,9 @@ export async function reviewGenerationQuality(input: {
   const messages = buildGenerationMessages({
     kind: "new_menu",
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: benchmarkIdempotencyKey,
         draftId: benchmarkDraftId,

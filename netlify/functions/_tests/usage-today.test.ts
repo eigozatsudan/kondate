@@ -51,11 +51,21 @@ const freeEntitlement = {
   dbPlusEntitled: false,
 };
 
-/** RPC は plan フィールドを返さない（Function が merge） */
+/** RPC は plan フィールドを返さない（Function が merge）。quality.available も Function 合成 */
+const freeQualityProjected = {
+  day: { consumed: 0, limit: 3 as const, remaining: 3 },
+  month: { consumed: 0, limit: 20 as const, remaining: 20 },
+  available: false,
+};
+
 const rpcUsagePayload = {
   success: { consumed: 0, limit: 3, remaining: 3 },
   attempts: { sent: 0, limit: 6, remaining: 6 },
   shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+  quality: {
+    day: { consumed: 0, limit: 3, remaining: 3 },
+    month: { consumed: 0, limit: 20, remaining: 20 },
+  },
   globalAvailable: true,
   retryAt: null,
 };
@@ -117,6 +127,7 @@ describe("usage-today", () => {
         success: { consumed: 0, limit: 3, remaining: 3 },
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+        quality: freeQualityProjected,
         globalAvailable: true,
         retryAt: null,
       },
@@ -173,6 +184,7 @@ describe("usage-today", () => {
       success: { consumed: 0, limit: 3, remaining: 3 },
       attempts: { sent: 0, limit: 6, remaining: 6 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+      quality: freeQualityProjected,
       globalAvailable: false,
       retryAt: "2026-07-29T00:00:00.000Z",
     });

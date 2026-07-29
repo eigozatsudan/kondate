@@ -69,10 +69,10 @@ select lives_ok(
     'f3000000-0000-4000-8000-000000000001'::uuid,
     'regenerate_menu', null, null,
     'f2000000-0000-4000-8000-000000000001'::uuid, null, 'simpler',
-    'generation-command.v2', repeat('c', 64),
+    'generation-command.v3', repeat('c', 64),
     '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    10, 20, 8, 20, false, 180, now()
+    10, 20, 8, 20, false, false, 180, now()
   )$$,
   'reserve_ai_generation accepts Plus limits 10/20/8'
 );
@@ -84,10 +84,10 @@ select throws_ok(
     'f3000000-0000-4000-8000-000000000099'::uuid,
     'regenerate_menu', null, null,
     'f2000000-0000-4000-8000-000000000001'::uuid, null, 'simpler',
-    'generation-command.v2', repeat('d', 64),
+    'generation-command.v3', repeat('d', 64),
     '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    5, 6, 4, 20, false, 180, now()
+    5, 6, 4, 20, false, false, 180, now()
   )$$,
   '22023',
   'release_quota_mismatch',
@@ -152,10 +152,10 @@ select public.reserve_ai_generation(
   'f3000000-0000-4000-8000-000000000002'::uuid,
   'regenerate_menu', null, null,
   'f2000000-0000-4000-8000-000000000001'::uuid, null, 'simpler',
-  'generation-command.v2', repeat('e', 64),
+  'generation-command.v3', repeat('e', 64),
   '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
   tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-  10, 20, 8, 20, false, 180, now()
+  10, 20, 8, 20, false, false, 180, now()
 );
 
 select is(

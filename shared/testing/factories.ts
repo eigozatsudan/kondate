@@ -1,5 +1,6 @@
 import { releaseQuota, type GeneratedMenu, type ValidatedMenu } from "../contracts/generation.js";
 import type { MenuResultViewModel } from "../contracts/menu-result.js";
+import { planQuota } from "../contracts/plan-quota.js";
 import type { CurrentSafetyContext } from "../safety/context.js";
 import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.js";
 import { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
@@ -13,7 +14,22 @@ import { ideaSafetySnapshot } from "../safety/idea-fingerprint.js";
 
 export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 
-/** 利用状況の共有 fixture（usage-today 各層で再定義しない）。Task3: Free 3/6/4 + plan */
+/** 利用状況の共有 fixture（usage-today 各層で再定義しない）。Task6: Free + quality 投影 */
+const freeQualityFull = {
+  day: {
+    consumed: 0,
+    limit: planQuota.quality.perDay,
+    remaining: planQuota.quality.perDay,
+  },
+  month: {
+    consumed: 0,
+    limit: planQuota.quality.perMonth,
+    remaining: planQuota.quality.perMonth,
+  },
+  // Free は available=false（plusEntitled が無い）
+  available: false,
+} as const;
+
 export const availableUsageTodayFixture = {
   plan: "free" as const,
   plusEntitled: false,
@@ -25,6 +41,7 @@ export const availableUsageTodayFixture = {
     remaining: 2,
     retryAt: null,
   },
+  quality: freeQualityFull,
   globalAvailable: true,
   retryAt: null,
 } as const;
@@ -40,6 +57,7 @@ export const shortWindowBlockedUsageTodayFixture = {
     remaining: 0,
     retryAt: "2026-07-11T09:10:00+09:00",
   },
+  quality: freeQualityFull,
   globalAvailable: true,
   retryAt: "2026-07-11T09:10:00+09:00",
 } as const;
