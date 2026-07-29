@@ -18,8 +18,15 @@ const allReasons = [
 /** 再生成理由のブラウザ入力契約。custom のときだけ自由記述を必須にする。 */
 const regenerationReasonSchema = z
   .object({
-    changeReason: z.enum(changeReasons),
-    changeReasonCustom: z.string().trim().min(1).max(200).nullable().default(null),
+    // 未選択（undefined / 空）でも Zod 既定の英語 Invalid option を出さない
+    changeReason: z.enum(changeReasons, "理由を選んでください"),
+    changeReasonCustom: z
+      .string()
+      .trim()
+      .min(1, "内容を入力してください")
+      .max(200, "200文字以内で入力してください")
+      .nullable()
+      .default(null),
   })
   .superRefine((value, context) => {
     if (value.changeReason === "custom" && !value.changeReasonCustom) {
@@ -124,10 +131,17 @@ export function RegenerationSheet({
 
   const submit = form.handleSubmit(async (raw) => {
     form.clearErrors();
+    // RHF は未選択 radio を "" または undefined にし得る。どちらも「未選択」として扱う
+    const selected =
+      raw.changeReason === "" || raw.changeReason === undefined ? undefined : raw.changeReason;
+    if (selected === undefined) {
+      form.setError("changeReason", { message: "理由を選んでください" });
+      return;
+    }
     const parsed = regenerationReasonSchema.safeParse({
-      changeReason: raw.changeReason === "" ? undefined : raw.changeReason,
+      changeReason: selected,
       changeReasonCustom:
-        raw.changeReason === "custom"
+        selected === "custom"
           ? raw.changeReasonCustom.trim() === ""
             ? null
             : raw.changeReasonCustom.trim()
@@ -141,9 +155,6 @@ export function RegenerationSheet({
         } else {
           form.setError("changeReason", { message: "理由を選んでください" });
         }
-      }
-      if (raw.changeReason === "") {
-        form.setError("changeReason", { message: "理由を選んでください" });
       }
       return;
     }
