@@ -508,8 +508,10 @@ async function handleSubscriptionEvent(
     });
   }
 
-  const statusForTrial =
-    event.type === "customer.subscription.deleted" ? "canceled" : projection.status;
+  // trial 焼成の status は **イベントオブジェクトの frozen status** を使う。
+  // live retrieve（projection）だと、applied 後 burn 500 → cancel → 同一 event 再送で
+  // retrieve=canceled となり burn が永久スキップされ、同一 identity の再 trial が開く。
+  const statusForTrial = event.type === "customer.subscription.deleted" ? "canceled" : sub.status;
   await maybeInsertTrialHistory(
     { admin: deps.admin, env: deps.env, log, requestId, startedAt },
     userId,
@@ -675,10 +677,19 @@ async function handleInvoiceEvent(
 
   // subscription.* が欠落・遅延しても invoice 経路だけで Plus が投影され得るため、
   // 初回 trialing|active の trial 焼成はイベント種別を問わず共有する（A7）。
+  // invoice.paid の duplicate 再送時は live retrieve が canceled でも焼成を再試行する
+  //（初回 applied 後 burn 失敗 → cancel で永久スキップされるのを防ぐ）。
+  const statusForTrial =
+    event.type === "invoice.paid" &&
+    outcome === "duplicate_processed" &&
+    status !== "trialing" &&
+    status !== "active"
+      ? "active"
+      : status;
   await maybeInsertTrialHistory(
     { admin: deps.admin, env: deps.env, log, requestId, startedAt },
     userId,
-    status,
+    statusForTrial,
     outcome,
   );
 

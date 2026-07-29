@@ -462,6 +462,73 @@ describe("handleBillingWebhook", () => {
     expect(args.p_identity_key).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it("still burns trial on duplicate retry when live sub is canceled after prior burn failure", async () => {
+    // 初回 applied + burn 500 のあと cancel され、同一 event_id が再送される経路。
+    // live retrieve が canceled でも event オブジェクトは trialing のまま → 焼成必須。
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", makeSubscription({ status: "trialing" }), {
+        id: "evt_trial_retry_after_cancel",
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "canceled" }));
+    rpc.mockImplementation((name: string) => {
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({
+          data: { ok: true, outcome: "duplicate_processed" },
+          error: null,
+        });
+      }
+      if (name === "insert_billing_trial_history") {
+        return Promise.resolve({ data: { ok: true, inserted: true }, error: null });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const trialCall = rpc.mock.calls.find(([n]) => n === "insert_billing_trial_history");
+    expect(trialCall).toBeDefined();
+  });
+
+  it("still burns trial on invoice.paid duplicate when live sub is canceled", async () => {
+    const invoice = {
+      id: "in_2",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, { id: "evt_invoice_retry_cancel" }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "canceled" }));
+    rpc.mockImplementation((name: string) => {
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({
+          data: { ok: true, outcome: "duplicate_processed" },
+          error: null,
+        });
+      }
+      if (name === "insert_billing_trial_history") {
+        return Promise.resolve({ data: { ok: true, inserted: true }, error: null });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(true);
+  });
+
   it("rejects invalid signature with 400 before body parse", async () => {
     constructEvent.mockImplementation(() => {
       throw new Error("Invalid signature");
