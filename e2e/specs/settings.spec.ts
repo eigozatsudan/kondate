@@ -26,7 +26,10 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByLabel("辛さ").selectOption("none");
   await page.getByRole("checkbox", { name: "小さめ" }).check();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
-  await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
+  // プラン管理の surfaces-closed status と同居するため、文言で絞る
+  await expect(
+    page.getByRole("status").filter({ hasText: "最新条件で再確認します" }),
+  ).toBeVisible();
   // 完了後は編集領域が閉じるため、一覧から再度開いて自由登録を続ける
   await page.getByRole("button", { name: "2人目の子どもを編集" }).click();
   await page.getByRole("textbox", { name: "自由登録名" }).fill("えんどう豆たんぱく");

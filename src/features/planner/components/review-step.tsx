@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
 import { collectPlannerRequestText, type PlannerDraftInput } from "@shared/contracts/planner";
-import { formatFreeTierQuotaCopy } from "@shared/copy/free-tier";
+import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
+import type { PlanCode } from "@shared/contracts/plan-quota";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import { getJstSeasonContext, type SeasonContext } from "@shared/season/jst-season";
+import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import { CurrentSafetySummary } from "../current-safety-summary";
 import { cuisineGenreLabel, mealLabel } from "../model/planner-labels";
@@ -84,6 +86,11 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   /** GET /api/usage/today の成功残数。未取得時は null（偽の残数を出さない） */
   usageRemaining?: number | null;
   /**
+   * usage.plan。個人枠コピー接頭（無料版は）の切替に使う。未取得は free 扱いしないよう null。
+   * null のときは残数行自体を出さない既存契約を維持するため、残数表示時は plan も必須。
+   */
+  plan?: PlanCode | null;
+  /**
    * 日次 attempt 残（外部 AI 送信枠）。未取得は null。
    * C-I12 residual: 0 のとき主 CTA を止める。null では止めない。
    */
@@ -136,12 +143,15 @@ export function ReviewStep({
   safetyMembers = [],
   onOpenEmergencyMenus,
   usageRemaining = null,
+  plan = null,
   attemptsRemaining = null,
   globalAvailable = null,
   shortWindowRetryAt = null,
   onEditStep,
   seasonContext = getJstSeasonContext(new Date()),
 }: ReviewStepProps) {
+  // 残数行用の plan。未取得なら free 接頭を避けず free として扱う（usage 未取得では行自体非表示）。
+  const quotaPlan: PlanCode = plan ?? "free";
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
   // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
   const [privacyGateOpen, setPrivacyGateOpen] = useState(false);
@@ -469,29 +479,36 @@ export function ReviewStep({
       {/* 設計 2026-07-29: dual 常時残数を supersede。常時は success 残の受け付け口調1行のみ。
           attempt 常時行は置かない。blocker 時は行動文（明日0:00 / 待ち）だけ。
           success0∧attempts0 は作成上限文のみ（attempts0 文は出さない）。
-          個人枠には formatFreeTierQuotaCopy、global 混雑文には付けない。
+          個人枠は formatPlanQuotaCopy（Free 接頭 / Plus 接頭なし）。global 混雑文には付けない。
+          L10-2: Free かつ remaining===1 のときソフト1行を続ける。
           hasActiveUsageBlocker 判定ロジックは維持。 */}
       {showSuccessRemaining ? (
         <p role="status">
-          {formatFreeTierQuotaCopy(
+          {formatPlanQuotaCopy(
             `本日あと${String(usageRemaining)}回まで献立の作成を受け付けます`,
+            quotaPlan,
           )}
         </p>
+      ) : null}
+      {showSuccessRemaining && quotaPlan === "free" && usageRemaining === 1 ? (
+        <p role="status">本日の無料回数が残り 1 回です</p>
       ) : null}
       {hasActiveUsageBlocker && (
         <div className="usage-limit-banner" role="alert">
           <strong className="usage-limit-banner-title">いまは新しい献立を作れません</strong>
           {usageRemaining === 0 && (
             <p className="usage-limit-banner-body">
-              {formatFreeTierQuotaCopy(
+              {formatPlanQuotaCopy(
                 "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+                quotaPlan,
               )}
             </p>
           )}
           {attemptsRemaining === 0 && usageRemaining !== 0 && (
             <p className="usage-limit-banner-body">
-              {formatFreeTierQuotaCopy(
+              {formatPlanQuotaCopy(
                 "今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
+                quotaPlan,
               )}
             </p>
           )}
@@ -502,7 +519,7 @@ export function ReviewStep({
           )}
           {shortWindowRetryAt !== null && (
             <p className="usage-limit-banner-body">
-              {formatFreeTierQuotaCopy(
+              {formatPlanQuotaCopy(
                 `短い時間に何度も作成を試したため、少し待つ必要があります。${new Intl.DateTimeFormat(
                   "ja-JP",
                   {
@@ -511,11 +528,35 @@ export function ReviewStep({
                     timeStyle: "short",
                   },
                 ).format(new Date(shortWindowRetryAt))}以降に再試行してください。`,
+                quotaPlan,
               )}
             </p>
           )}
+          {/* L10-1: Free 硬上限（成功残 0 または attempt 残 0）で Plus CTA */}
+          {quotaPlan === "free" && (usageRemaining === 0 || attemptsRemaining === 0) ? (
+            <PlusHardLimitCta />
+          ) : null}
         </div>
       )}
+      {/* Q4: Plus 品質モード。Free でも見えるがサーバが quality_mode_requires_plus で拒否。
+          idea 注意（§5.3）より前に置き、注意が wizard-actions の直前 sibling を保つ。 */}
+      <label className="stack quality-mode-toggle">
+        <span className="row quality-mode-toggle-row">
+          <input
+            type="checkbox"
+            checked={attempt.qualityMode}
+            disabled={disabled}
+            onChange={(event) => {
+              onAttemptChange({ ...attempt, qualityMode: event.target.checked });
+            }}
+            aria-describedby="quality-mode-hint"
+          />
+          <span>くわしく作る</span>
+        </span>
+        <span id="quality-mode-hint" className="muted">
+          Plus のくわしい AI で、より丁寧な献立を作ります（1 日の回数に限りがあります）
+        </span>
+      </label>
       {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。 */}
       {value.targetMode === "idea" && (
         <p role="note">

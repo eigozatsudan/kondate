@@ -74,7 +74,7 @@ revoke all on schema public from generation_pgtap_dblink_test;
 grant usage on schema public to generation_pgtap_dblink_test;
 -- service_role 相当の reserve は SECURITY DEFINER のため EXECUTE だけ付与する
 grant execute on function public.reserve_ai_generation(
-  uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, jsonb, text, integer, integer, boolean, integer, timestamptz
+  uuid, uuid, text, uuid, bigint, uuid, uuid, text, text, text, jsonb, text, integer, integer, integer, integer, boolean, boolean, integer, timestamptz
 ) to generation_pgtap_dblink_test;
 -- dblink セッションから identity_key ヘルパを使うため tests スキーマを許可
 grant usage on schema tests to generation_pgtap_dblink_test;
@@ -145,9 +145,9 @@ select public.reserve_ai_generation(
   'c3000000-0000-4000-8000-000000000101',
   1,
   null, null, null,
-  'generation-command.v2',
+  'generation-command.v3',
   repeat('1', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
   '2026-07-22 00:00:00+00'
 );
 
@@ -183,9 +183,9 @@ select is(
           'c3000000-0000-4000-8000-000000000101',
           1,
           null, null, null,
-          'generation-command.v2',
+          'generation-command.v3',
           repeat('2', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
           '2026-07-22 00:00:01+00'
         )->>'failure_code'
       $sql$
@@ -209,9 +209,9 @@ select is(
           null, null,
           'c4000000-0000-4000-8000-000000000101',
           null, 'simpler',
-          'generation-command.v2',
+          'generation-command.v3',
           repeat('3', 64),
-          '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+          '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
           '2026-07-22 00:00:02+00'
         )->>'failure_code'
       $sql$
@@ -236,9 +236,9 @@ select is(
           'c4000000-0000-4000-8000-000000000101',
           'c8000000-0000-4000-8000-000000000101',
           'simpler',
-          'generation-command.v2',
+          'generation-command.v3',
           repeat('4', 64),
-          '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+          '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
           '2026-07-22 00:00:03+00'
         )->>'failure_code'
       $sql$
@@ -288,9 +288,9 @@ select is(
           'c3000000-0000-4000-8000-000000000102',
           1,
           null, null, null,
-          'generation-command.v2',
+          'generation-command.v3',
           repeat('5', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000102'::uuid), 3, 20, false, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000102"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000102'::uuid), 3, 6, 4, 20, false, false, 180,
           '2026-07-22 00:00:04+00'
         )->>'status'
       $sql$
@@ -318,9 +318,9 @@ select is(
           'c3000000-0000-4000-8000-000000000101',
           1,
           null, null, null,
-          'generation-command.v2',
+          'generation-command.v3',
           repeat('1', 64),
-          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+          '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
           '2026-07-22 00:00:05+00'
         ) as payload
       $sql$
@@ -418,9 +418,9 @@ select is(
       null, null,
       'c4000000-0000-4000-8000-000000000101',
       null, 'simpler',
-      'generation-command.v2',
+      'generation-command.v3',
       repeat('a', 64),
-      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
       '2026-07-22 00:11:00+00'
     )->>'status'
   ),
@@ -541,9 +541,9 @@ select is(
       null, null,
       'c4000000-0000-4000-8000-000000000101',
       null, 'simpler',
-      'generation-command.v2',
+      'generation-command.v3',
       repeat('b', 64),
-      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
       '2026-07-22 00:12:00+00'
     )->>'status'
   ),
@@ -649,9 +649,9 @@ select is(
       'c4000000-0000-4000-8000-000000000101',
       'c8000000-0000-4000-8000-000000000101',
       'simpler',
-      'generation-command.v2',
+      'generation-command.v3',
       repeat('c', 64),
-      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
       '2026-07-22 00:13:00+00'
     )->>'status'
   ),
@@ -761,9 +761,9 @@ select is(
       'c4000000-0000-4000-8000-000000000101',
       'c8000000-0000-4000-8000-000000000101',
       'simpler',
-      'generation-command.v2',
+      'generation-command.v3',
       repeat('d', 64),
-      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 20, false, 180,
+      '{"kind":"regenerate_dish","target_mode":"household","servings":2,"target_member_ids":["c2000000-0000-4000-8000-000000000101"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000101'::uuid), 3, 6, 4, 20, false, false, 180,
       '2026-07-22 00:14:00+00'
     )->>'status'
   ),
@@ -914,8 +914,8 @@ select
 select public.reserve_ai_generation(
   'c1000000-0000-4000-8000-000000000103', 'c9000000-0000-4000-8000-000000000021',
   'new_menu', 'c3000000-0000-4000-8000-000000000103', 1, null, null, null,
-  'generation-command.v2', repeat('d', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000103'::uuid), 3, 20, false, 180, '2026-07-22 00:21:00+00'
+  'generation-command.v3', repeat('d', 64),
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000103"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000103'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-22 00:21:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests
@@ -926,8 +926,8 @@ select public.mark_ai_global_sent(
 select public.reserve_ai_generation(
   'c1000000-0000-4000-8000-000000000104', 'c9000000-0000-4000-8000-000000000022',
   'new_menu', 'c3000000-0000-4000-8000-000000000104', 1, null, null, null,
-  'generation-command.v2', repeat('e', 64),
-  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000104'::uuid), 3, 20, false, 180, '2026-07-22 00:22:00+00'
+  'generation-command.v3', repeat('e', 64),
+  '{"kind":"new_menu","target_mode":"household","servings":null,"target_member_ids":["c2000000-0000-4000-8000-000000000104"],"source_menu_version":null}'::jsonb, tests.quota_identity_key('c1000000-0000-4000-8000-000000000104'::uuid), 3, 6, 4, 20, false, false, 180, '2026-07-22 00:22:00+00'
 );
 select public.mark_ai_global_sent(
   (select id from private.ai_generation_requests

@@ -212,13 +212,13 @@ begin
     failure_code, started_at, completed_at
   ) values
     (v_old_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000001', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('1', 64), date '2026-06-01',
+     'generation-command.v3', repeat('1', 64), date '2026-06-01',
      'generation_timeout', v_older, v_older),
     (v_exact_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000002', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('2', 64), date '2026-06-24',
+     'generation-command.v3', repeat('2', 64), date '2026-06-24',
      'generation_timeout', v_exact, v_exact),
     (v_new_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000003', 'regenerate_menu', 'failed',
-     'generation-command.v2', repeat('3', 64), date '2026-06-25',
+     'generation-command.v3', repeat('3', 64), date '2026-06-25',
      'generation_timeout', v_newer, v_newer);
 
   insert into public.menus (
@@ -238,7 +238,7 @@ begin
     completed_menu_id, started_at, completed_at
   ) values (
     v_menu_req, v_user, tests.quota_identity_key(v_user), false, 'f2100000-0000-4000-8000-000000000004', 'regenerate_menu', 'succeeded',
-    'generation-command.v2', repeat('4', 64), date '2026-06-01',
+    'generation-command.v3', repeat('4', 64), date '2026-06-01',
     v_menu, v_older, v_older
   );
 
@@ -336,17 +336,17 @@ begin
   ) values
     -- 未送信: success / attempt / global 予約を解放する
     ('f2000000-0000-4000-8000-000000000005', v_user_a, tests.quota_identity_key(v_user_a), false, 'f2100000-0000-4000-8000-000000000005', 'regenerate_menu', 'processing',
-     'generation-command.v2', repeat('5', 64), date '2026-07-24',
+     'generation-command.v3', repeat('5', 64), date '2026-07-24',
      true, true, date '2026-07-24', date '2026-07-24', 0,
      v_now - interval '10 minutes', v_now - interval '1 second'),
     -- 送信済み: global_reserved_day は null。attempt も解放済み。success のみ解放
     ('f2000000-0000-4000-8000-000000000006', v_user_b, tests.quota_identity_key(v_user_b), false, 'f2100000-0000-4000-8000-000000000006', 'regenerate_menu', 'processing',
-     'generation-command.v2', repeat('6', 64), date '2026-07-24',
+     'generation-command.v3', repeat('6', 64), date '2026-07-24',
      true, false, null, null, 1,
      v_now - interval '10 minutes', v_now - interval '1 second'),
     -- 期限内 live: 触らない
     ('f2000000-0000-4000-8000-000000000007', v_user_c, tests.quota_identity_key(v_user_c), false, 'f2100000-0000-4000-8000-000000000007', 'regenerate_menu', 'processing',
-     'generation-command.v2', repeat('7', 64), date '2026-07-24',
+     'generation-command.v3', repeat('7', 64), date '2026-07-24',
      true, false, null, date '2026-07-24', 0,
      v_now - interval '1 minute', v_now + interval '5 minutes');
 end;
@@ -490,7 +490,7 @@ begin
       tests.quota_identity_key(v_user),
       false,
       ('f2300000-0000-4000-8000-00000000000' || v_i::text)::uuid,
-      'regenerate_menu', 'failed', 'generation-command.v2',
+      'regenerate_menu', 'failed', 'generation-command.v3',
       repeat(v_i::text, 64), date '2026-06-01',
       'generation_timeout',
       v_older - (v_i || ' seconds')::interval,

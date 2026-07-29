@@ -38,7 +38,7 @@ type SaveDraftArgs = Omit<GeneratedSaveDraftArgs, NullableDraftArgs> & {
 type NullableReserveGenerationArgs =
   "p_draft_id" | "p_draft_revision" | "p_source_menu_id" | "p_replace_dish_id" | "p_change_reason";
 
-// identity 日次枠: typegen 前後どちらでも p_identity_key / p_quota_disabled を要求する
+// identity 日次枠: typegen 前後どちらでも p_identity_key / p_quota_disabled と plan limits を要求する
 type ReserveGenerationArgs = Omit<GeneratedReserveGenerationArgs, NullableReserveGenerationArgs> & {
   p_draft_id: GeneratedReserveGenerationArgs["p_draft_id"] | null;
   p_draft_revision: GeneratedReserveGenerationArgs["p_draft_revision"] | null;
@@ -46,20 +46,31 @@ type ReserveGenerationArgs = Omit<GeneratedReserveGenerationArgs, NullableReserv
   p_replace_dish_id: GeneratedReserveGenerationArgs["p_replace_dish_id"] | null;
   p_change_reason: GeneratedReserveGenerationArgs["p_change_reason"] | null;
   p_identity_key: string;
+  p_user_limit: number;
+  p_attempt_limit: number;
+  p_short_window_limit: number;
+  p_global_limit: number;
   p_quota_disabled?: boolean;
+  /** Task6: Plus 品質モード原子 reserve */
+  p_quality_mode?: boolean;
 };
 
 type GetAiUsageTodayArgs = {
   p_user_id: string;
   p_identity_key: string;
+  p_user_limit: number;
+  p_attempt_limit: number;
+  p_short_window_limit: number;
+  p_global_limit: number;
   p_now?: string;
-  p_global_limit?: number;
 };
 
 type GetAiGenerationStatusArgs = {
   p_user_id: string;
   p_idempotency_key: string;
   p_user_limit: number;
+  p_attempt_limit: number;
+  p_short_window_limit: number;
   p_identity_key: string;
   p_now?: string;
 };
@@ -72,6 +83,12 @@ type ReserveAiRepairCallArgs = {
 };
 
 type ReleaseIdentityProcessingArgs = {
+  p_user_id: string;
+  p_now?: string;
+};
+
+/** flyer 週次 reserved 解放（delete-account / Auth CASCADE 前） */
+type ReleaseFlyerWeeklyProcessingArgs = {
   p_user_id: string;
   p_now?: string;
 };
@@ -177,6 +194,10 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       };
       release_identity_and_global_for_user_processing: {
         Args: ReleaseIdentityProcessingArgs;
+        Returns: number;
+      };
+      release_flyer_weekly_for_user_processing: {
+        Args: ReleaseFlyerWeeklyProcessingArgs;
         Returns: number;
       };
       finalize_ai_generation_failure: Omit<GeneratedFinalizeGenerationFailure, "Args"> & {

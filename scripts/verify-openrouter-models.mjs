@@ -137,6 +137,12 @@ export async function main(
   const configured = parseConfiguredModels(env.OPENROUTER_MODELS ?? "", {
     openRouterBaseUrl: baseUrl,
   });
+  // Task6: 品質リストも同一ゲート。未設定/空は BILLING 無効時のみ（構造検証はスキップ）
+  const rawPlus = env.OPENROUTER_PLUS_MODELS;
+  const plusConfigured =
+    typeof rawPlus === "string" && rawPlus.trim().length > 0
+      ? parseConfiguredModels(rawPlus, { openRouterBaseUrl: baseUrl })
+      : [];
   // 本番コンテキストでは公式 base URL のみを許可（lookalike / パス付き / 資格情報付きを拒否）
   if (env.CONTEXT === "production" && env.OPENROUTER_BASE_URL !== officialOpenRouterBaseUrl) {
     throw new Error(`production OPENROUTER_BASE_URL must equal ${officialOpenRouterBaseUrl}`);
@@ -168,6 +174,9 @@ export async function main(
     throw new Error("OpenRouter Models API returned an invalid body");
   }
   verifyRemoteModels(configured, body.data);
+  if (plusConfigured.length > 0) {
+    verifyRemoteModels(plusConfigured, body.data);
+  }
 }
 
 // 直接実行時のみ main を起動する（テストからの import では走らせない）

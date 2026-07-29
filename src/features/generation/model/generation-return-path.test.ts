@@ -9,13 +9,14 @@ const DISH_ID = "70000000-0000-4000-8000-000000000001";
 
 function newMenuCommand(): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "new_menu",
+    qualityMode: false,
     request: {
       idempotencyKey: "10000000-0000-4000-8000-000000000001",
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 1,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -23,14 +24,15 @@ function newMenuCommand(): GenerationCommand {
 
 function regenerateMenuCommand(): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "regenerate_menu",
+    qualityMode: false,
     request: {
       idempotencyKey: "10000000-0000-4000-8000-000000000002",
       sourceMenuId: SOURCE_MENU_ID,
       changeReason: "different_flavor",
       changeReasonCustom: null,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -38,15 +40,16 @@ function regenerateMenuCommand(): GenerationCommand {
 
 function regenerateDishCommand(): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "regenerate_dish",
+    qualityMode: false,
     request: {
       idempotencyKey: "10000000-0000-4000-8000-000000000003",
       sourceMenuId: SOURCE_MENU_ID,
       dishId: DISH_ID,
       changeReason: "different_flavor",
       changeReasonCustom: null,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatFreeTierQuotaCopy } from "./free-tier.js";
+import { formatPlanQuotaCopy } from "./plan-tier.js";
 
 describe("formatFreeTierQuotaCopy", () => {
   it("prefixes 無料版は", () => {
@@ -28,5 +29,14 @@ describe("formatFreeTierQuotaCopy", () => {
 
   it("returns empty for blank", () => {
     expect(formatFreeTierQuotaCopy("   ")).toBe("");
+  });
+
+  // plan-tier 経由で再度付けても「無料版は無料版は」にならないこと
+  it("does not double-prefix when composed with formatPlanQuotaCopy", () => {
+    const body = "本日の作成上限に達しています。";
+    const free = formatFreeTierQuotaCopy(body);
+    expect(formatPlanQuotaCopy(body, "free")).toBe(free);
+    expect(formatPlanQuotaCopy(free, "free")).toBe(free);
+    expect(formatPlanQuotaCopy(free, "free")).not.toMatch(/^無料版は無料版は/u);
   });
 });

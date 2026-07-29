@@ -2,16 +2,22 @@ import { z } from "zod";
 import {
   generationConflictCopy,
   generationConflictSchema,
-  generationCommandVersionV2,
-  releaseQuota,
-  type GenerationCommandV2,
-  type GenerationIntegrityContextV2,
+  generationCommandVersionV3,
+  issueMessages,
+  type GenerationCommandV3,
+  type GenerationIntegrityContextV3,
   type GenerationRequestLookup,
   type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
 import type { GenerationTargetMember } from "../../../shared/safety/generation-context.js";
 import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
 import type { Database } from "../../../src/shared/types/database.js";
+import {
+  applyQuotaPlan,
+  BillingEntitlementUnavailableError,
+  limitsForPlan,
+  loadEntitlement,
+} from "./billing-entitlement.js";
 import { getServerEnv } from "./env.js";
 import {
   generationRequestHmac,
@@ -101,7 +107,8 @@ const requestPayloadSchema = z
     processing_expires_at: z.iso.datetime({ offset: true }).nullable().optional(),
     completed_menu_id: z.uuid().nullable().optional(),
     remaining: z.number().int().min(0).optional(),
-    user_daily_limit: z.literal(releaseQuota.userDailySuccessLimit).optional(),
+    // Free 3 / Plus 10。defense max を default にしない
+    user_daily_limit: z.union([z.literal(3), z.literal(10)]).optional(),
     consumed: z.boolean().optional(),
     terminal_details: z.record(z.string(), z.unknown()).nullable().optional(),
     actual_model_ids: z.array(z.string()).optional(),
@@ -191,7 +198,7 @@ const lookupHitSchema = z
   .object({
     kind: z.literal("hit"),
     request_id: z.uuid(),
-    request_hmac_version: z.literal(generationCommandVersionV2),
+    request_hmac_version: z.literal(generationCommandVersionV3),
     integrity: z.unknown(),
   })
   .strict();
@@ -200,14 +207,23 @@ const lookupMissSchema = z.object({ kind: z.literal("miss") }).strict();
 export type GenerationReservationRepository = {
   lookup: (idempotencyKey: string) => Promise<GenerationRequestLookup>;
   replayExisting: (
-    command: GenerationCommandV2,
+    command: GenerationCommandV3,
     lookup: Extract<GenerationRequestLookup, { kind: "hit" }>,
   ) => Promise<QuotaRequestRecord>;
   reserveNew: (
-    command: GenerationCommandV2,
-    integrity: GenerationIntegrityContextV2,
+    command: GenerationCommandV3,
+    integrity: GenerationIntegrityContextV3,
   ) => Promise<QuotaRequestRecord>;
 };
+
+function toEntitlementUnavailableHttpError(error: unknown): HttpError {
+  if (error instanceof HttpError) return error;
+  return new HttpError(
+    503,
+    "billing_entitlement_unavailable",
+    "プラン情報を確認できませんでした。しばらくしてからお試しください。",
+  );
+}
 
 export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
   const env = getServerEnv();
@@ -217,10 +233,49 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
   // ServerEnv.aiQuotaDisabled は parse 済み boolean（local かつ AI_QUOTA_DISABLED=true のみ true）
   const quotaDisabled = env.aiQuotaDisabled;
 
-  const buildReserveArgs = (
-    command: GenerationCommandV2,
-    integrity: GenerationIntegrityContextV2,
+  /**
+   * entitlement → applyQuotaPlan → planQuota のみで limits を決める。
+   * env Free 固定や defense.max* を default にしない（A9）。
+   */
+  const resolvePlanLimits = async () => {
+    try {
+      const entitlement = await loadEntitlement(user.userId);
+      const quotaPlan = applyQuotaPlan(entitlement, env.billingEnabled);
+      return { limits: limitsForPlan(quotaPlan), quotaPlan };
+    } catch (error: unknown) {
+      if (error instanceof BillingEntitlementUnavailableError) {
+        throw toEntitlementUnavailableHttpError(error);
+      }
+      throw toEntitlementUnavailableHttpError(error);
+    }
+  };
+
+  /**
+   * Free / !plus / kill で qualityMode:true は reserve 前 403。
+   * quality 台帳に触らない（RPC を呼ばない）。
+   */
+  const assertQualityModeAllowed = (
+    command: GenerationCommandV3,
+    quotaPlan: "free" | "plus",
+  ): void => {
+    if (!command.qualityMode) return;
+    if (quotaPlan !== "plus") {
+      throw new HttpError(
+        403,
+        "quality_mode_requires_plus",
+        issueMessages.quality_mode_requires_plus,
+      );
+    }
+  };
+
+  const buildReserveArgs = async (
+    command: GenerationCommandV3,
+    integrity: GenerationIntegrityContextV3,
   ) => {
+    const { limits, quotaPlan } = await resolvePlanLimits();
+    assertQualityModeAllowed(command, quotaPlan);
+    // p_quality_mode は Plus かつ command.qualityMode のときのみ true
+    const pQualityMode = command.qualityMode && quotaPlan === "plus";
     const hmac = generationRequestHmac(command, integrity, env.generationIntegrity.requestHmacKey);
     const isNewMenu = command.kind === "new_menu";
     return {
@@ -236,9 +291,12 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       p_request_hmac: hmac,
       p_integrity_context: toIntegrityContextPayload(integrity),
       p_identity_key: identityKey,
-      p_user_limit: env.openRouter.userDailyLimit,
+      p_user_limit: limits.successPerDay,
+      p_attempt_limit: limits.attemptsPerDay,
+      p_short_window_limit: limits.shortWindowLimit,
       p_global_limit: env.openRouter.globalDailyLimit,
       p_quota_disabled: quotaDisabled,
+      p_quality_mode: pQualityMode,
       p_stale_after_seconds: env.openRouter.staleAfterSeconds,
     };
   };
@@ -264,7 +322,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       // 保存済み integrity から HMAC を再計算し、live draft/menu を読まずに台帳へ照合する
       try {
         return requestPayloadSchema.parse(
-          await rpc("reserve_ai_generation", buildReserveArgs(command, lookup.integrity)),
+          await rpc("reserve_ai_generation", await buildReserveArgs(command, lookup.integrity)),
         );
       } catch (error: unknown) {
         // lookup hit 後に row が消えた場合は miss へ戻さず fail-closed
@@ -277,7 +335,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
 
     async reserveNew(command, integrity) {
       return requestPayloadSchema.parse(
-        await rpc("reserve_ai_generation", buildReserveArgs(command, integrity)),
+        await rpc("reserve_ai_generation", await buildReserveArgs(command, integrity)),
       );
     },
   };
@@ -371,11 +429,14 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       );
     },
     async status(idempotencyKey: string) {
+      const { limits } = await resolvePlanLimits();
       return requestPayloadSchema.parse(
         await rpc("get_ai_generation_status", {
           p_user_id: user.userId,
           p_idempotency_key: idempotencyKey,
-          p_user_limit: env.openRouter.userDailyLimit,
+          p_user_limit: limits.successPerDay,
+          p_attempt_limit: limits.attemptsPerDay,
+          p_short_window_limit: limits.shortWindowLimit,
           p_identity_key: identityKey,
         }),
       );

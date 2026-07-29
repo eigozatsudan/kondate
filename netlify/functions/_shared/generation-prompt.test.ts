@@ -20,13 +20,14 @@ function asNewMenuExecution(
   return {
     kind: "new_menu",
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: "56000000-0000-4000-8000-000000000001",
         draftId: "84000000-0000-4000-8000-000000000001",
         draftRevision: 1,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [],
       },
     },
@@ -138,7 +139,7 @@ describe("buildGenerationMessages", () => {
 
     expect(messages).toHaveLength(2);
     expect(messages[0]?.role).toBe("system");
-    const userMessage = messages[1]?.content ?? "";
+    const userMessage = typeof messages[1]?.content === "string" ? messages[1].content : "";
     expect(userMessage.match(/<kondate_input_data>/gu)).toHaveLength(1);
     expect(userMessage.match(/<\/kondate_input_data>/gu)).toHaveLength(1);
     expect(userMessage).not.toContain(userIdCanary);
@@ -351,7 +352,8 @@ describe("buildGenerationMessages", () => {
 
   it("keeps two members in canonical submission order", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeTwoMemberContext()));
-    const serialized = (messages[1]?.content ?? "")
+    const content = typeof messages[1]?.content === "string" ? messages[1].content : "";
+    const serialized = content
       .replace("<kondate_input_data>\n", "")
       .replace("\n</kondate_input_data>", "");
     const payload = JSON.parse(serialized) as { members: readonly { ref: string }[] };

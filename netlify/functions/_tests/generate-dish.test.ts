@@ -29,15 +29,16 @@ const user = {
   email: "owner@example.com",
 };
 const requestBody = {
-  commandVersion: "generation-command.v2" as const,
+  commandVersion: "generation-command.v3" as const,
   kind: "regenerate_dish" as const,
+  qualityMode: false,
   request: {
     idempotencyKey: "82000000-0000-4000-8000-000000000001",
     sourceMenuId: "88000000-0000-4000-8000-000000000001",
     dishId: "89000000-0000-4000-8000-000000000001",
     changeReason: "simpler" as const,
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };

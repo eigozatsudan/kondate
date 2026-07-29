@@ -36,11 +36,25 @@
 | `USER_DAILY_EXTERNAL_CALL_LIMIT` | `6` |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | `4` |
 | `USER_SHORT_WINDOW_SECONDS` | `600` |
-| `GLOBAL_DAILY_AI_LIMIT` | 1..20（既定 20） |
+| `GLOBAL_DAILY_AI_LIMIT` | 1..**200**（製品 max。ローカル既定 20、本番運用推奨 80） |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
 | `OPENROUTER_TIMEOUT_MS` | `60000` |
 | `FUNCTION_TOTAL_BUDGET_MS` | `150000` |
 | `AI_PROCESSING_STALE_SECONDS` | `180` |
+| `BILLING_ENABLED` | `"true"` / `"false"` のみ。未設定は false。Checkout/Portal と品質・チラシ製品面の kill |
+| `STRIPE_SECRET_KEY` | server only。`sk_test_` / `sk_live_`。`BILLING_ENABLED=true` 時必須。Webhook は false でも鍵があれば稼働 |
+| `STRIPE_WEBHOOK_SECRET` | server only。`whsec_...` |
+| `STRIPE_PRICE_PLUS_MONTHLY` | server only。Price ID |
+| `STRIPE_PRICE_PLUS_YEARLY` | server only。Price ID |
+| `STRIPE_API_VERSION` | **`2025-02-24.acacia` 固定**（変更は設計改訂） |
+| `STRIPE_MOCK_BASE_URL` | ローカル exact mock のみ。本番に設定したら起動失敗 |
+
+**本番で存在してはならない（Billing）**
+
+- あらゆる `VITE_STRIPE_*` / `VITE_BILLING_*`
+- ブラウザ向け Price ID / `sk_` / `whsec_`
+
+課金 reconcile と Portal Dashboard チェックリストは `docs/runbooks/billing-reconcile.md`。
 
 ### 同期 Function のプラットフォーム上限（必須確認）
 
@@ -62,6 +76,19 @@
 - Netlify の **Functions ランタイム**保護スコープのみ
 - Builds / デプロイログ / `netlify.toml` / リポジトリ / preview コンテキスト / 任意の `VITE_` キーへは入れない
 - 値を印刷せず検証する
+
+## flyer Function は native sharp を同梱
+
+`POST /api/flyer-weekly` は画像デコードに **sharp**（native addon）を使う。
+
+| 項目 | 方針 |
+| --- | --- |
+| 依存 | `package.json` に `sharp` を **exact pin**（`npm install sharp --save-exact`） |
+| Bundling | Netlify Functions の esbuild が sharp を **external にしない**こと。platform は **linux x64**（Netlify ランタイム）で解決できるバイナリを同梱する |
+| 代替 | sharp が解決不能でも pure JS デコードへ silent に落とさない。デプロイ検証で失敗させ設計改訂する |
+| ローカル | `import sharp from "sharp"` が Node 上で成功すること（Task7 unit） |
+
+`OPENROUTER_FLYER_MODELS` は任意。未設定時は `OPENROUTER_PLUS_MODELS` を vision 送信に使う。
 
 ## ビルドコマンド
 

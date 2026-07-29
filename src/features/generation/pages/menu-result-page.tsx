@@ -60,7 +60,9 @@ import { confirmLabelConfirmation } from "../api/confirm-label-api";
 import { getMenuResult } from "../api/menu-result-api";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import { MenuResult, type MenuResultActions } from "../components/menu-result";
+import { FlyerUpsellBanner } from "@/features/billing/flyer-upsell-banner";
 import { useUsageToday } from "../hooks/use-usage-today";
+import { clearPendingGeneration } from "../model/pending-generation";
 
 function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): RegenerationUsageView {
   return {
@@ -73,9 +75,9 @@ function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): Regenerati
         : null,
     loading: usage.isPending || usage.isFetching,
     error: usage.isError,
+    plan: usage.isSuccess ? usage.data.plan : null,
   };
 }
-import { clearPendingGeneration } from "../model/pending-generation";
 
 export type MenuResultPageRevalidationView = {
   phase: RevalidationPhaseName;
@@ -264,9 +266,16 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
 
   // 操作バー・注意書きを含めて1つの main で包む（MenuResult は本文 fragment のみ）。
   // idea の必須注意は 1 枠に集約（免責・家族未使用・AI 作成を別枠で重ねない）。
+  // L10-6: Free 成功結果のときだけ週間 flyer upsell。
+  const plusEntitled = usage.isSuccess ? usage.data.plusEntitled : false;
   return (
     <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
       <IdeaMenuSafetyNotice />
+      {usage.isSuccess && !plusEntitled ? (
+        <div className="mb-4">
+          <FlyerUpsellBanner plusEntitled={false} />
+        </div>
+      ) : null}
       {actions === undefined ? (
         <MenuResult
           result={result}
@@ -662,11 +671,18 @@ function HouseholdResultBody({
             : null;
 
   // 再検証ステータス・買い物操作を含めて1つの main で包む。
+  // L10-6: Free 成功結果のときだけ週間 flyer upsell。
+  const plusEntitled = usage.isSuccess ? usage.data.plusEntitled : false;
   return (
     <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold break-words">
         {MENU_LABEL_DISCLAIMER}
       </p>
+      {usage.isSuccess && !plusEntitled ? (
+        <div className="mt-4">
+          <FlyerUpsellBanner plusEntitled={false} />
+        </div>
+      ) : null}
 
       {revalidation.phase === "checking" && (
         <p role="status" className="mt-4">

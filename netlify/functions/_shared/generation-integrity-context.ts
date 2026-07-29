@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  type GenerationCommandV2,
+  type GenerationCommandV3,
   type GenerationIntegrityContextV2,
 } from "../../../shared/contracts/generation.js";
 import { HttpError } from "./http.js";
@@ -68,7 +68,7 @@ const menuRowSchema = z
 export async function resolveGenerationIntegrityContext(
   admin: AdminClient,
   userId: string,
-  command: GenerationCommandV2,
+  command: GenerationCommandV3,
 ): Promise<GenerationIntegrityContextV2> {
   if (command.kind === "new_menu") {
     // draftId + draftRevision + owner で凍結候補を読む（削除済みは不可）

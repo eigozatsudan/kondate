@@ -1,5 +1,5 @@
 import {
-  generationCommandVersionV2,
+  generationCommandVersionV3,
   type GenerationCommand,
 } from "../../../shared/contracts/generation.js";
 import type { IdeaGenerationContext } from "../../../shared/safety/generation-context.js";
@@ -66,6 +66,9 @@ export function diagnoseClosedComposeCodes(
   uuid: () => string,
 ): readonly string[] {
   if (result.mode === "replacement_dish") {
+    return Object.freeze(["invalid_provider_menu"]);
+  }
+  if (result.mode === "flyer_weekly") {
     return Object.freeze(["invalid_provider_menu"]);
   }
   if (result.output.outcome === "constraint_conflict") {
@@ -155,13 +158,14 @@ function createFixedGenerationContext(): IdeaGenerationContext {
 }
 
 const benchmarkCommand: Extract<GenerationCommand, { kind: "new_menu" }> = {
-  commandVersion: generationCommandVersionV2,
+  commandVersion: generationCommandVersionV3,
+  qualityMode: false,
   kind: "new_menu",
   request: {
     idempotencyKey: benchmarkIdempotencyKey,
     draftId: benchmarkDraftId,
     draftRevision: 1,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };

@@ -20,9 +20,25 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "usage-today") {
       return {
         data: {
+          plan: "free" as const,
+          plusEntitled: false,
           success: { consumed: 0, limit: 3, remaining: 3 },
           attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+          quality: {
+            day: { consumed: 0, limit: 3, remaining: 3 },
+            month: { consumed: 0, limit: 20, remaining: 20 },
+            available: false,
+          },
+          flyerWeekly: {
+            successConsumed: 0,
+            successLimit: 2,
+            successRemaining: 2,
+            triesConsumed: 0,
+            triesLimit: 6,
+            triesRemaining: 6,
+            weekStartJst: "2026-07-27",
+          },
           globalAvailable: true,
           retryAt: null,
         },
@@ -39,7 +55,7 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "privacy") {
       return {
-        data: { user_id: "72000000-0000-4000-8000-000000000001", notice_version: "2026-07-28.v1" },
+        data: { user_id: "72000000-0000-4000-8000-000000000001", notice_version: "2026-07-29.v1" },
         isError: false,
         isPending: false,
       };

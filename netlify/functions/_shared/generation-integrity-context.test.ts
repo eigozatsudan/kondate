@@ -21,26 +21,28 @@ const menuId = "40000000-0000-4000-8000-000000000001";
 const dishId = "50000000-0000-4000-8000-000000000001";
 
 const newMenuCommand: GenerationCommand = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "new_menu",
+  qualityMode: false,
   request: {
     idempotencyKey: "60000000-0000-4000-8000-000000000001",
     draftId,
     draftRevision: 2,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };
 
 const regenerateCommand: GenerationCommand = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "regenerate_menu",
+  qualityMode: false,
   request: {
     idempotencyKey: "60000000-0000-4000-8000-000000000002",
     sourceMenuId: menuId,
     changeReason: "simpler",
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };

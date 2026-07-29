@@ -103,15 +103,16 @@ describe("buildDishRegenerationPrompt", () => {
       ],
     };
     const command: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_dish",
+      qualityMode: false,
       request: {
         sourceMenuId: sourceMenu.menuId,
         dishId: "50000000-0000-4000-8000-000000000001",
         idempotencyKey: "82000000-0000-4000-8000-000000000001",
         changeReason: "custom",
         changeReasonCustom: "もっとさっぱりした味にしたい",
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [],
       },
     };

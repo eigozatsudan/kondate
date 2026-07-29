@@ -10,12 +10,22 @@
 
 ## 削除順序（delete-account Function）
 
-1. 認証（bearer）。
+1. 認証（bearer）+ 確認フレーズ「削除する」。
 2. service_role で `release_identity_and_global_for_user_processing(p_user_id)` を呼び、
-   `processing` 中の identity / global **reserved** を解放して request を `failed` 化する
+   `processing` 中の identity / global / quality **reserved** を解放して request を `failed` 化する
   （success_count / sent_count は減らさない）。
-3. Auth Admin hard delete（CASCADE で user 所有行削除）。identity 日次表は user_id 無しのため残る。
-4. 防御第2経路: `private.ai_generation_requests` の BEFORE DELETE トリガでも reserved を解放する
+3. 未完了 flyer request があれば flyer reserved を helper 経由で best-effort 解放する
+  （失敗しても Auth 削除は止めない。stale cleanup が第二経路）。
+4. **billing cancel（best-effort）**:
+   - `get_billing_customer_by_user` → `stripe_customer_id` が無ければスキップ
+   - `stripe.subscriptions.list({ customer, status: "all" })` で **customer 単位の全 sub** を取得
+     （DB の `billing_subscriptions` 1 行だけを cancel 対象にしない）
+   - live/non-terminal（`canceled` / `incomplete_expired` 以外）を各 `subscriptions.cancel`
+   - 1 件失敗しても残りを試行し、SafeLog `billing_cancel_failed`（opaque sub/customer id のみ）
+   - cancel 成否にかかわらず Auth 削除へ進む
+5. Auth Admin hard delete（CASCADE で user 所有行・billing_customers/subscriptions 削除）。
+   identity 日次表と `billing_trial_history`（identity_key）は user_id 無しのため残る。
+6. 防御第2経路: `private.ai_generation_requests` の BEFORE DELETE トリガでも reserved を解放する
   （RPC スキップや運用の直削除でも reserved 孤児を防ぐ。二重解放は flags 下ろし後 no-op）。
 
 ## サポート応答

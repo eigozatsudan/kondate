@@ -89,6 +89,21 @@ vi.mock("react-router", async (importOriginal) => {
     useNavigate: () => navigateMock,
     // Router 未 wrap の unit でも resume query を読めるようにする
     useSearchParams: () => [new URLSearchParams(), vi.fn()],
+    // FlyerWeeklyPanel の Free CTA が Link を使うため、Router 無しでも描画できるよう差し替え
+    Link: ({
+      to,
+      children,
+      ...rest
+    }: {
+      to: string;
+      children?: React.ReactNode;
+      className?: string;
+      style?: React.CSSProperties;
+    }) => (
+      <a href={typeof to === "string" ? to : "#"} {...rest}>
+        {children}
+      </a>
+    ),
   };
 });
 vi.mock("@/features/household/household-api", async (importOriginal) => {
@@ -112,9 +127,25 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "usage-today") {
       return {
         data: {
+          plan: "free" as const,
+          plusEntitled: false,
           success: { consumed: 0, limit: 3, remaining: 3 },
           attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+          quality: {
+            day: { consumed: 0, limit: 3, remaining: 3 },
+            month: { consumed: 0, limit: 20, remaining: 20 },
+            available: false,
+          },
+          flyerWeekly: {
+            successConsumed: 0,
+            successLimit: 2,
+            successRemaining: 2,
+            triesConsumed: 0,
+            triesLimit: 6,
+            triesRemaining: 6,
+            weekStartJst: "2026-07-27",
+          },
           globalAvailable: true,
           retryAt: null,
         },
@@ -235,6 +266,7 @@ vi.mock("./components/planner-wizard", () => ({
           onClick={() => {
             props.onAttemptChange({
               idempotencyKey: props.attempt.idempotencyKey,
+              qualityMode: false,
               expiredPantryChecks: [
                 {
                   pantryItemId: "74000000-0000-4000-8000-000000000001",
@@ -344,7 +376,7 @@ beforeEach(() => {
     isError: false,
     isPending: false,
   };
-  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-28.v1" };
+  queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-29.v1" };
   savePlannerDraftMock.mockResolvedValue(draft);
   setOnboardingStatusMock.mockResolvedValue(undefined);
   getProfileMock.mockReset();
@@ -717,6 +749,7 @@ it("route が更新された exact attempt を生成へ渡し新しい試行で�
     draft,
     {
       idempotencyKey: firstKey,
+      qualityMode: false,
       expiredPantryChecks: [
         {
           pantryItemId: "74000000-0000-4000-8000-000000000001",
@@ -751,6 +784,7 @@ it("生成成功の完了後だけ attempt を新しいキーと空の確認へ�
     draft,
     {
       idempotencyKey: firstKey,
+      qualityMode: false,
       expiredPantryChecks: [
         {
           pantryItemId: "74000000-0000-4000-8000-000000000001",
@@ -853,13 +887,14 @@ describe("PlannerRoutePage", () => {
     };
     expect(pending).toMatchObject({
       ownerUserId: draft.userId,
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: attemptKey,
         draftId: draft.id,
         draftRevision: draft.revision,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [
           {
             pantryItemId: "74000000-0000-4000-8000-000000000001",
@@ -875,8 +910,9 @@ describe("PlannerRoutePage", () => {
   it("既存 pending があるときは上書きせず再開し attempt を回転しない", async () => {
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: { idempotencyKey: "existing" },
     });
     const user = userEvent.setup();

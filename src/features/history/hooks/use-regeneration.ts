@@ -72,8 +72,9 @@ export function useRegeneration(input: UseRegenerationInput) {
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
       const pending = createPendingGeneration(
         {
-          commandVersion: "generation-command.v2",
+          commandVersion: "generation-command.v3",
           kind: "regenerate_menu",
+          qualityMode: false,
           request: {
             idempotencyKey: crypto.randomUUID(),
             sourceMenuId: menuId,
@@ -107,8 +108,9 @@ export function useRegeneration(input: UseRegenerationInput) {
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
       const pending = createPendingGeneration(
         {
-          commandVersion: "generation-command.v2",
+          commandVersion: "generation-command.v3",
           kind: "regenerate_dish",
+          qualityMode: false,
           request: {
             idempotencyKey: crypto.randomUUID(),
             sourceMenuId: menuId,

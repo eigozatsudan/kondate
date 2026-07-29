@@ -61,6 +61,7 @@ function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): Regenerati
     successRemaining: usage.isSuccess ? usage.data.success.remaining : null,
     attemptsRemaining: usage.isSuccess ? usage.data.attempts.remaining : null,
     shortWindowRemaining: usage.isSuccess ? usage.data.shortWindow.remaining : null,
+    plan: usage.isSuccess ? usage.data.plan : null,
     shortWindowRetryAt:
       usage.isSuccess && usage.data.shortWindow.remaining === 0
         ? usage.data.shortWindow.retryAt

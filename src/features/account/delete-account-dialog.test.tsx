@@ -78,6 +78,21 @@ describe("DeleteAccountDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it("shows paid-plan cancellation copy on the dialog", () => {
+    render(
+      <DeleteAccountDialog
+        open
+        pending={false}
+        errorMessage={null}
+        onCancel={() => undefined}
+        onConfirm={() => Promise.resolve()}
+      />,
+    );
+    expect(
+      screen.getByText(/有料プランに入っている場合、解約手続きもあわせて行います/),
+    ).toBeVisible();
+  });
+
   it("maps Escape/cancel to onCancel without confirming", () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();

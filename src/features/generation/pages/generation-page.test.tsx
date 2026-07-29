@@ -62,13 +62,14 @@ const quota = {
 
 function makeCommand(idempotencyKey: string): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "new_menu",
+    qualityMode: false,
     request: {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 3,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -76,15 +77,16 @@ function makeCommand(idempotencyKey: string): GenerationCommand {
 
 function makeRegenerateDishCommand(idempotencyKey: string): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "regenerate_dish",
+    qualityMode: false,
     request: {
       idempotencyKey,
       sourceMenuId: SOURCE_MENU_ID,
       dishId: DISH_ID,
       changeReason: "different_flavor",
       changeReasonCustom: null,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -142,9 +144,25 @@ beforeEach(() => {
   clearPendingGeneration();
   currentUserIdRef.current = USER_ID;
   mockGetUsageToday.mockResolvedValue({
+    plan: "free" as const,
+    plusEntitled: false,
     success: { consumed: 1, limit: 3, remaining: 2 },
     attempts: { sent: 2, limit: 6, remaining: 4 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+    quality: {
+      day: { consumed: 0, limit: 3, remaining: 3 },
+      month: { consumed: 0, limit: 20, remaining: 20 },
+      available: false,
+    },
+    flyerWeekly: {
+      successConsumed: 0,
+      successLimit: 2,
+      successRemaining: 2,
+      triesConsumed: 0,
+      triesLimit: 6,
+      triesRemaining: 6,
+      weekStartJst: "2026-07-27",
+    },
     globalAvailable: true,
     retryAt: null,
   });

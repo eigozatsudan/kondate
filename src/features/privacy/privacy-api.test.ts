@@ -8,7 +8,7 @@ import {
 
 const consent = {
   user_id: "user-1",
-  notice_version: "2026-07-28.v1",
+  notice_version: "2026-07-29.v1",
   accepted_at: "2026-07-12T00:00:00.000Z",
   created_at: "2026-07-12T00:00:00.000Z",
 };
@@ -47,7 +47,7 @@ it("queries privacy_consents by user_id and the current notice_version", async (
   expect(existing.select).toHaveBeenCalledWith("*");
   expect(existing.eq).toHaveBeenNthCalledWith(1, "user_id", "user-1");
   expect(existing.eq).toHaveBeenNthCalledWith(2, "notice_version", privacyNoticeVersion);
-  expect(privacyNoticeVersion).toBe("2026-07-28.v1");
+  expect(privacyNoticeVersion).toBe("2026-07-29.v1");
   expect(existing.maybeSingle).toHaveBeenCalledOnce();
 });
 

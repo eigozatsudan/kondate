@@ -1,5 +1,6 @@
 import { releaseQuota, type GeneratedMenu, type ValidatedMenu } from "../contracts/generation.js";
 import type { MenuResultViewModel } from "../contracts/menu-result.js";
+import { planQuota } from "../contracts/plan-quota.js";
 import type { CurrentSafetyContext } from "../safety/context.js";
 import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.js";
 import { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
@@ -13,8 +14,35 @@ import { ideaSafetySnapshot } from "../safety/idea-fingerprint.js";
 
 export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 
-/** 利用状況の共有 fixture（usage-today 各層で再定義しない） */
+/** 利用状況の共有 fixture（usage-today 各層で再定義しない）。Task6/7: quality + flyerWeekly */
+const freeQualityFull = {
+  day: {
+    consumed: 0,
+    limit: planQuota.quality.perDay,
+    remaining: planQuota.quality.perDay,
+  },
+  month: {
+    consumed: 0,
+    limit: planQuota.quality.perMonth,
+    remaining: planQuota.quality.perMonth,
+  },
+  // Free は available=false（plusEntitled が無い）
+  available: false,
+} as const;
+
+const freeFlyerWeeklyFull = {
+  successConsumed: 0,
+  successLimit: planQuota.flyerWeekly.successPerJstWeek,
+  successRemaining: planQuota.flyerWeekly.successPerJstWeek,
+  triesConsumed: 0,
+  triesLimit: planQuota.flyerWeekly.triesPerJstWeek,
+  triesRemaining: planQuota.flyerWeekly.triesPerJstWeek,
+  weekStartJst: "2026-07-27",
+} as const;
+
 export const availableUsageTodayFixture = {
+  plan: "free" as const,
+  plusEntitled: false,
   success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
   attempts: { sent: 2, limit: releaseQuota.userDailyExternalCallLimit, remaining: 4 },
   shortWindow: {
@@ -23,11 +51,15 @@ export const availableUsageTodayFixture = {
     remaining: 2,
     retryAt: null,
   },
+  quality: freeQualityFull,
+  flyerWeekly: freeFlyerWeeklyFull,
   globalAvailable: true,
   retryAt: null,
 } as const;
 
 export const shortWindowBlockedUsageTodayFixture = {
+  plan: "free" as const,
+  plusEntitled: false,
   success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
   attempts: { sent: 4, limit: releaseQuota.userDailyExternalCallLimit, remaining: 2 },
   shortWindow: {
@@ -36,6 +68,8 @@ export const shortWindowBlockedUsageTodayFixture = {
     remaining: 0,
     retryAt: "2026-07-11T09:10:00+09:00",
   },
+  quality: freeQualityFull,
+  flyerWeekly: freeFlyerWeeklyFull,
   globalAvailable: true,
   retryAt: "2026-07-11T09:10:00+09:00",
 } as const;

@@ -22,7 +22,7 @@ it("accepts nullable draft references for regeneration reservations", () => {
     p_source_menu_id: "60000000-0000-4000-8000-000000000001",
     p_replace_dish_id: null,
     p_change_reason: "simpler",
-    p_request_hmac_version: "generation-command.v2",
+    p_request_hmac_version: "generation-command.v3",
     p_request_hmac: "a".repeat(64),
     p_integrity_context: {
       kind: "regenerate_menu",
@@ -32,6 +32,8 @@ it("accepts nullable draft references for regeneration reservations", () => {
       source_menu_version: 1,
     },
     p_user_limit: 3,
+    p_attempt_limit: 6,
+    p_short_window_limit: 4,
     p_identity_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     p_quota_disabled: false,
     p_global_limit: 20,

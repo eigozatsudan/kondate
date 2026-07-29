@@ -1,7 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import {
-  generationCommandVersionV2,
+  generationCommandVersionV3,
   newMenuGenerationRequestSchema,
   regenerateMenuRequestSchema,
 } from "../../shared/contracts/generation.js";
@@ -14,19 +14,21 @@ import {
 import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
 import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 
-/** 新規献立と献立全体再生成を同一 POST で受け付ける（v2 commandVersion + kind 必須） */
+/** 新規献立と献立全体再生成を同一 POST で受け付ける（v3 commandVersion + qualityMode + kind 必須） */
 const menuEndpointBodySchema = z.discriminatedUnion("kind", [
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("new_menu"),
+      qualityMode: z.boolean(),
       request: newMenuGenerationRequestSchema,
     })
     .strict(),
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("regenerate_menu"),
+      qualityMode: z.boolean(),
       request: regenerateMenuRequestSchema,
     })
     .strict(),

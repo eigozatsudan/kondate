@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   main,
   parseOpenRouterModels,
+  validateBillingStripeEnv,
   validateProductionCsp,
   validateProductionEnv,
 } from "./preflight-production.mjs";
@@ -233,4 +234,78 @@ test("main returns closed codes without secret leakage", () => {
   assert.equal(code, 1);
   assert.equal(lines.length, 1);
   assert.doesNotMatch(lines[0], new RegExp(password));
+});
+
+test("accepts GLOBAL_DAILY_AI_LIMIT up to 200 and rejects 201", () => {
+  assert.deepEqual(validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "200" })), {
+    projectRef,
+  });
+  assert.throws(
+    () => validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "201" })),
+    /GLOBAL_DAILY_AI_LIMIT/,
+  );
+});
+
+test("billing disabled with no Stripe keys is accepted", () => {
+  assert.deepEqual(validateProductionEnv(completeEnv({ BILLING_ENABLED: "false" })), {
+    projectRef,
+  });
+  validateBillingStripeEnv(completeEnv());
+});
+
+test("billing enabled requires full Stripe set and API version pin", () => {
+  assert.throws(
+    () => validateProductionEnv(completeEnv({ BILLING_ENABLED: "true" })),
+    /STRIPE_SECRET_KEY|OPENROUTER_PLUS_MODELS/,
+  );
+  assert.deepEqual(
+    validateProductionEnv(
+      completeEnv({
+        BILLING_ENABLED: "true",
+        STRIPE_SECRET_KEY: "sk_live_test_key_value",
+        STRIPE_WEBHOOK_SECRET: "whsec_test_key_value",
+        STRIPE_PRICE_PLUS_MONTHLY: "price_monthly_test",
+        STRIPE_PRICE_PLUS_YEARLY: "price_yearly_test",
+        STRIPE_API_VERSION: "2025-02-24.acacia",
+        OPENROUTER_PLUS_MODELS: "openai/gpt-5.6-luna",
+      }),
+    ),
+    { projectRef },
+  );
+  assert.throws(
+    () =>
+      validateBillingStripeEnv(
+        completeEnv({
+          BILLING_ENABLED: "true",
+          STRIPE_SECRET_KEY: "sk_live_test_key_value",
+          STRIPE_WEBHOOK_SECRET: "whsec_test_key_value",
+          STRIPE_PRICE_PLUS_MONTHLY: "price_monthly_test",
+          STRIPE_PRICE_PLUS_YEARLY: "price_yearly_test",
+          STRIPE_API_VERSION: "2025-01-01.acacia",
+          OPENROUTER_PLUS_MODELS: "openai/gpt-5.6-luna",
+        }),
+      ),
+    /STRIPE_API_VERSION/,
+  );
+});
+
+test("rejects VITE_STRIPE and STRIPE_MOCK_BASE_URL in production preflight", () => {
+  assert.throws(
+    () => validateProductionEnv(completeEnv({ VITE_STRIPE_SECRET_KEY: "" })),
+    /VITE_STRIPE/,
+  );
+  assert.throws(
+    () =>
+      validateBillingStripeEnv(
+        completeEnv({
+          STRIPE_SECRET_KEY: "sk_live_x",
+          STRIPE_WEBHOOK_SECRET: "whsec_x",
+          STRIPE_PRICE_PLUS_MONTHLY: "price_m",
+          STRIPE_PRICE_PLUS_YEARLY: "price_y",
+          STRIPE_API_VERSION: "2025-02-24.acacia",
+          STRIPE_MOCK_BASE_URL: "http://stripe-mock:8790",
+        }),
+      ),
+    /STRIPE_MOCK_BASE_URL/,
+  );
 });

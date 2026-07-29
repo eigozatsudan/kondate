@@ -118,13 +118,14 @@ let storage: ReturnType<typeof memoryStorage>;
 
 function makeCommand(idempotencyKey: string): GenerationCommand {
   return {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "new_menu",
+    qualityMode: false,
     request: {
       idempotencyKey,
       draftId: "20000000-0000-4000-8000-000000000001",
       draftRevision: 3,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -727,8 +728,9 @@ describe("useGenerationRecovery", () => {
     [
       "missing privacyNoticeVersion",
       {
-        commandVersion: "generation-command.v2" as const,
+        commandVersion: "generation-command.v3" as const,
         kind: "regenerate_menu" as const,
+        qualityMode: false,
         request: {
           idempotencyKey: KEY_A,
           sourceMenuId: "60000000-0000-4000-8000-000000000001",
@@ -743,8 +745,9 @@ describe("useGenerationRecovery", () => {
     [
       "previous privacyNoticeVersion",
       {
-        commandVersion: "generation-command.v2" as const,
+        commandVersion: "generation-command.v3" as const,
         kind: "regenerate_menu" as const,
+        qualityMode: false,
         request: {
           idempotencyKey: KEY_A,
           sourceMenuId: "60000000-0000-4000-8000-000000000001",
@@ -760,7 +763,8 @@ describe("useGenerationRecovery", () => {
   ] as const)(
     "mount recovery clears %s pending without POST or status",
     async (_label, rawPending) => {
-      storage.setItem("kondate:generation:v2", JSON.stringify(rawPending));
+      // pending storage key は v3 cutover 後の kondate:generation:v3
+      storage.setItem("kondate:generation:v3", JSON.stringify(rawPending));
       mockPost.mockClear();
       mockStatus.mockClear();
       mockDispatches.length = 0;
@@ -770,7 +774,7 @@ describe("useGenerationRecovery", () => {
       });
 
       await waitFor(() => {
-        expect(storage.getItem("kondate:generation:v2")).toBeNull();
+        expect(storage.getItem("kondate:generation:v3")).toBeNull();
       });
       expect(mockPost).not.toHaveBeenCalled();
       expect(mockStatus).not.toHaveBeenCalled();
@@ -803,5 +807,26 @@ describe("useGenerationRecovery", () => {
     expect(recovery.result.current.state.phase).toBe("request_conflict");
     expect(mockPost).not.toHaveBeenCalled();
     expect(mockStatus).not.toHaveBeenCalled();
+  });
+
+  // L10-4: Free 品質モード 403 は offline ではなく failed + issueMessages
+  it("maps POST quality_mode_requires_plus to failed terminal without offline", async () => {
+    mockPost.mockRejectedValueOnce(new Error("quality_mode_requires_plus"));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("failed");
+    if (recovery.result.current.state.phase !== "failed") {
+      throw new Error("expected failed");
+    }
+    expect(recovery.result.current.state.data.error.code).toBe("quality_mode_requires_plus");
+    expect(recovery.result.current.state.data.error.message).toContain("Plus");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    mockPost.mockClear();
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("failed");
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });

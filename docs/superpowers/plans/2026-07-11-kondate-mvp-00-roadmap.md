@@ -316,7 +316,7 @@ Server configuration uses these exact names and release defaults:
 | `USER_DAILY_EXTERNAL_CALL_LIMIT` | Release-locked `6` actual external sends per user/JST day |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | Release-locked `4` actual external sends |
 | `USER_SHORT_WINDOW_SECONDS` | Release-locked `600` |
-| `GLOBAL_DAILY_AI_LIMIT` | Default `20` actual external sends per JST day; operator may lower this positive-integer safety valve |
+| `GLOBAL_DAILY_AI_LIMIT` | Default local `20`; product **max 200** (ops recommended 80 when Plus is live). Preflight rejects >200 |
 | `OPENROUTER_TIMEOUT_MS` | `60000` per attempt |
 | `FUNCTION_TOTAL_BUDGET_MS` | `150000` total synchronous budget |
 | Terminal generation / shopping-mutation retention | Release-locked **30 days**, enforced in maintenance SQL (`interval '30 days'`), **not** an environment variable |
@@ -324,6 +324,21 @@ Server configuration uses these exact names and release defaults:
 | `SUPABASE_MAINTENANCE_DB_URL` | Functions-only TLS URL: direct `kondate_maintenance_login@db.<ref>:5432` or IPv4 Supavisor Session `kondate_maintenance_login.<ref>@<region>.pooler:5432`; port 6543 is forbidden and the connected `session_user` must be exact `kondate_maintenance_login`; never a build/browser variable |
 
 Retired non-variables (do not reintroduce in preflight or `.env.example`): `APP_ORIGIN` (use `SERVER_SITE_ORIGIN`), `FAILED_GENERATION_LEDGER_RETENTION_DAYS` (hardcoded 30-day SQL), `VITE_PRIVACY_POLICY_URL` (in-app privacy route). `OPENROUTER_MOCK_SCENARIO` is test-only and is honored only with the exact local mock base URL. Plan 6's environment parser and production preflight validate all names and fixed values from an explicit, environment-clean input; they reject leaked `VITE_` secrets, production OpenRouter lookalike URLs, arbitrary/lookalike Supabase hosts, path/query/credential URLs, and browser/server/direct/session project-ref mismatch. Local parsers continue to accept only the explicitly locked Compose origins.
+
+### Plus / Stripe（`2026-07-29-paid-plan-stripe` 追記）
+
+| Variable | Locked rule |
+|---|---|
+| `BILLING_ENABLED` | `"true"` / `"false"` only; unset = false. Checkout/Portal/品質/チラシ kill。**Webhook は鍵があれば継続** |
+| `STRIPE_SECRET_KEY` | server only `sk_test_` / `sk_live_`. required when `BILLING_ENABLED=true` or any Stripe key is set |
+| `STRIPE_WEBHOOK_SECRET` | server only `whsec_...` |
+| `STRIPE_PRICE_PLUS_MONTHLY` / `STRIPE_PRICE_PLUS_YEARLY` | Price IDs |
+| `STRIPE_API_VERSION` | **exact** `2025-02-24.acacia`（ADV-13） |
+| `STRIPE_MOCK_BASE_URL` | local only `http://stripe-mock:8790`. production preflight rejects |
+| `OPENROUTER_PLUS_MODELS` | required non-empty when `BILLING_ENABLED=true` |
+| `VITE_STRIPE_*` / `VITE_BILLING_*` | forbidden (parse + preflight throw) |
+
+`privacyNoticeVersion` current: **`2026-07-29.v1`**. Reconcile runbook: `docs/runbooks/billing-reconcile.md`.
 
 ## Migration Order
 

@@ -33,7 +33,7 @@ const privacyConsentQuery = vi.hoisted(() =>
     Promise.resolve({
       data: {
         user_id: "85000000-0000-4000-8000-000000000001",
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
       error: null,
@@ -183,28 +183,30 @@ function makeLoaderDeps(
 }
 
 const dishCommand: Extract<GenerationCommand, { kind: "regenerate_dish" }> = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "regenerate_dish",
+  qualityMode: false,
   request: {
     sourceMenuId: "52000000-0000-4000-8000-000000000001",
     dishId: dish2Id,
     idempotencyKey: "82000000-0000-4000-8000-000000000001",
     changeReason: "simpler",
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };
 
 const menuCommand: Extract<GenerationCommand, { kind: "regenerate_menu" }> = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "regenerate_menu",
+  qualityMode: false,
   request: {
     sourceMenuId: "52000000-0000-4000-8000-000000000001",
     idempotencyKey: "82000000-0000-4000-8000-000000000002",
     changeReason: "simpler",
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };
@@ -221,7 +223,7 @@ describe("loadRegenerationExecutionContext", () => {
     privacyConsentQuery.mockResolvedValue({
       data: {
         user_id: user.userId,
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
       error: null,
@@ -267,7 +269,7 @@ describe("loadRegenerationExecutionContext", () => {
       "foreign user's current consent",
       {
         user_id: "85000000-0000-4000-8000-000000000099",
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
     ],
@@ -305,7 +307,7 @@ describe("loadRegenerationExecutionContext", () => {
       "foreign user's current consent",
       {
         user_id: "85000000-0000-4000-8000-000000000099",
-        notice_version: "2026-07-28.v1",
+        notice_version: "2026-07-29.v1",
         accepted_at: "2026-07-11T00:00:00.000Z",
       },
     ],
@@ -491,15 +493,16 @@ describe("loadRegenerationExecutionContext", () => {
       deps,
       user,
       {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "regenerate_dish",
+        qualityMode: false,
         request: {
           sourceMenuId: source.menu.menuId,
           dishId: dish2Id,
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           changeReason: "simpler",
           changeReasonCustom: null,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },
@@ -921,14 +924,15 @@ describe("isRegenerationDuplicate material equivalence", () => {
     const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
       kind: "regenerate_menu",
       command: {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "regenerate_menu",
+        qualityMode: false,
         request: {
           idempotencyKey: "82000000-0000-4000-8000-000000000001",
           sourceMenuId: sourceMenu.menuId,
           changeReason: "simpler",
           changeReasonCustom: null,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },
@@ -1337,15 +1341,16 @@ describe("buildDishRegenerationPrompt label source refs", () => {
     const retained = toRetainedDishPrompt(menu, firstDish.id);
     const prompt = buildDishRegenerationPrompt({
       command: {
-        commandVersion: "generation-command.v2",
+        commandVersion: "generation-command.v3",
         kind: "regenerate_dish",
+        qualityMode: false,
         request: {
           sourceMenuId: menu.menuId,
           dishId: firstDish.id,
           idempotencyKey: "82000000-0000-4000-8000-000000000099",
           changeReason: "simpler",
           changeReasonCustom: null,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       },

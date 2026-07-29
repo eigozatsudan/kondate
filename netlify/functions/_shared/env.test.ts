@@ -59,7 +59,8 @@ describe("parseOpenRouterModels", () => {
       userDailyAttemptLimit: releaseQuota.userDailyExternalCallLimit,
       userShortWindowLimit: releaseQuota.userShortWindowExternalCallLimit,
       userShortWindowSeconds: releaseQuota.userShortWindowSeconds,
-      globalDailyLimit: 20,
+      // 未設定時の schema default は製品 max 200（compose ローカル既定 20 は env で明示）
+      globalDailyLimit: 200,
       timeoutMs: 60_000,
       functionTotalBudgetMs: 150_000,
       staleAfterSeconds: 180,
@@ -186,14 +187,107 @@ describe("parseOpenRouterModels", () => {
     ).toThrow("server_configuration_invalid");
   });
 
-  it.each(["0", "21"])("rejects out-of-range global quota %s", (value) => {
+  it.each(["0", "201"])("rejects out-of-range global quota %s", (value) => {
     expect(() => parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
+  });
+
+  it("accepts GLOBAL_DAILY_AI_LIMIT 21 within max 200", () => {
+    expect(
+      parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: "21" }).openRouter
+        .globalDailyLimit,
+    ).toBe(21);
   });
 
   it("allows the operator to lower the global quota", () => {
     expect(
       parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: "1" }).openRouter.globalDailyLimit,
     ).toBe(1);
+  });
+
+  it("defaults BILLING_ENABLED to false and keeps webhook keys optional when false", () => {
+    const env = parseServerEnv(validServerEnv);
+    expect(env.billingEnabled).toBe(false);
+    expect(env.stripe).toBeUndefined();
+  });
+
+  it("treats empty Stripe env strings as absent when BILLING_ENABLED is false", () => {
+    // compose の ${STRIPE_SECRET_KEY:-} 空展開で kill 中が壊れないこと
+    const env = parseServerEnv({
+      ...validServerEnv,
+      BILLING_ENABLED: "false",
+      STRIPE_SECRET_KEY: "",
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_PRICE_PLUS_MONTHLY: "",
+      STRIPE_PRICE_PLUS_YEARLY: "",
+      STRIPE_API_VERSION: "",
+      STRIPE_MOCK_BASE_URL: "",
+    });
+    expect(env.billingEnabled).toBe(false);
+    expect(env.stripe).toBeUndefined();
+  });
+
+  it("rejects VITE_STRIPE_SECRET_KEY in server env source", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        VITE_STRIPE_SECRET_KEY: "sk_test_x",
+      }),
+    ).toThrow(/server_configuration_invalid/);
+  });
+
+  it("requires Stripe secrets when BILLING_ENABLED=true", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        BILLING_ENABLED: "true",
+      }),
+    ).toThrow();
+  });
+
+  it("allows BILLING_ENABLED=false with webhook secrets present (A3)", () => {
+    const env = parseServerEnv({
+      ...validServerEnv,
+      BILLING_ENABLED: "false",
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_WEBHOOK_SECRET: "whsec_xxx",
+      STRIPE_PRICE_PLUS_MONTHLY: "price_m",
+      STRIPE_PRICE_PLUS_YEARLY: "price_y",
+      STRIPE_API_VERSION: "2025-02-24.acacia",
+    });
+    expect(env.billingEnabled).toBe(false);
+    expect(env.stripe?.webhookSecret).toBeTruthy();
+    expect(env.stripe?.apiVersion).toBe("2025-02-24.acacia");
+  });
+
+  it("rejects STRIPE_API_VERSION other than the locked pin when stripe keys present", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        BILLING_ENABLED: "false",
+        STRIPE_SECRET_KEY: "sk_test_xxx",
+        STRIPE_WEBHOOK_SECRET: "whsec_xxx",
+        STRIPE_PRICE_PLUS_MONTHLY: "price_m",
+        STRIPE_PRICE_PLUS_YEARLY: "price_y",
+        STRIPE_API_VERSION: "2024-01-01.acacia",
+      }),
+    ).toThrow(/server_configuration_invalid/);
+  });
+
+  it("accepts BILLING_ENABLED=true with full Stripe secrets", () => {
+    const env = parseServerEnv({
+      ...validServerEnv,
+      BILLING_ENABLED: "true",
+      // Task6: billing 有効時は Plus 品質リスト必須
+      OPENROUTER_PLUS_MODELS: validServerEnv.OPENROUTER_MODELS,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_WEBHOOK_SECRET: "whsec_xxx",
+      STRIPE_PRICE_PLUS_MONTHLY: "price_m",
+      STRIPE_PRICE_PLUS_YEARLY: "price_y",
+      STRIPE_API_VERSION: "2025-02-24.acacia",
+    });
+    expect(env.billingEnabled).toBe(true);
+    expect(env.stripe?.pricePlusMonthly).toBe("price_m");
+    expect(env.openRouter.plusModels.length).toBeGreaterThan(0);
   });
 
   it.each([

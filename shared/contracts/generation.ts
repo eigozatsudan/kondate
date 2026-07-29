@@ -2,6 +2,10 @@ import { z } from "zod";
 import { aiGeneratedMenuPayloadSchema } from "./ai-generation-output.js";
 import { cuisineGenres, generationStatuses, mealTypes, privacyNoticeVersion } from "./domain.js";
 import { generatedPantryUsageSchema, pantryUsageSchema } from "./pantry.js";
+// planQuota 正本。releaseQuota は Free 別名（既存 import / env 検証が参照）
+import { planQuota } from "./plan-quota.js";
+export { releaseQuota, planQuota } from "./plan-quota.js";
+export type { PlanCode } from "./plan-quota.js";
 
 export const dishRoles = ["main", "side", "soup", "staple", "other"] as const;
 export const storeSections = [
@@ -562,13 +566,6 @@ export type MenuValidationResult =
 const uuidSchema = z.uuid();
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 
-export const releaseQuota = {
-  userDailySuccessLimit: 3,
-  userDailyExternalCallLimit: 6,
-  userShortWindowExternalCallLimit: 4,
-  userShortWindowSeconds: 600,
-} as const;
-
 export const generationFailureCodes = [
   "consent_required",
   "draft_not_found",
@@ -599,6 +596,17 @@ export const generationFailureCodes = [
   "replace_dish_not_found",
   // Plan 7: 予約時に凍結した元献立 version と live source の不一致
   "source_menu_changed",
+  // Plus 品質モード（generation-command.v3）
+  "quality_mode_requires_plus",
+  "quality_daily_limit",
+  "quality_monthly_limit",
+  // Plus チラシ週間
+  "flyer_requires_plus",
+  "flyer_weekly_limit",
+  "flyer_weekly_try_limit",
+  "flyer_invalid_image",
+  "flyer_unsupported_media",
+  "flyer_invalid_ai_response",
 ] as const;
 export type GenerationFailureCode = (typeof generationFailureCodes)[number];
 
@@ -694,46 +702,51 @@ export const regenerateDishRequestSchema = z
   .strict()
   .superRefine(refineRegenerationRequest);
 
-/** 生成コマンド wire / pending / HMAC の唯一の版。v1 は未デプロイのため削除済み。 */
-export const generationCommandVersionV2 = "generation-command.v2" as const;
+/** 生成コマンド wire / pending / HMAC の唯一の版。v2 は L12 cutover で廃止。 */
+export const generationCommandVersionV3 = "generation-command.v3" as const;
 
-export const generationCommandV2Schema = z.discriminatedUnion("kind", [
+export const generationCommandV3Schema = z.discriminatedUnion("kind", [
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("new_menu"),
+      // トップレベル必須。HMAC canonical に常に含める（省略で品質枠回避を禁止）
+      qualityMode: z.boolean(),
       request: newMenuGenerationRequestSchema,
     })
     .strict(),
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("regenerate_menu"),
+      qualityMode: z.boolean(),
       request: regenerateMenuRequestSchema,
     })
     .strict(),
   z
     .object({
-      commandVersion: z.literal(generationCommandVersionV2),
+      commandVersion: z.literal(generationCommandVersionV3),
       kind: z.literal("regenerate_dish"),
+      qualityMode: z.boolean(),
       request: regenerateDishRequestSchema,
     })
     .strict(),
 ]);
 
-/** 後方互換の別名。実体は v2 のみ。 */
-export const generationCommandSchema = generationCommandV2Schema;
+/** 現行 command 版。実体は v3 のみ。 */
+export const generationCommandSchema = generationCommandV3Schema;
 
 export type RegenerateMenuRequest = z.infer<typeof regenerateMenuRequestSchema>;
 export type RegenerateDishRequest = z.infer<typeof regenerateDishRequestSchema>;
-export type GenerationCommandV2 = z.infer<typeof generationCommandV2Schema>;
-export type GenerationCommand = GenerationCommandV2;
+export type GenerationCommandV3 = z.infer<typeof generationCommandV3Schema>;
+export type GenerationCommand = GenerationCommandV3;
 
 /**
  * サーバー権威の整合性コンテキスト。クライアントから mode/servings/memberIds/source version を受け取らない。
  * kind × targetMode の判別可能 union で household 空 / idea 非空を型で禁止する。
+ * v3 でも integrity 形は変わらない（qualityMode は command 側）。
  */
-export type GenerationIntegrityContextV2 =
+export type GenerationIntegrityContextV3 =
   | {
       kind: "new_menu";
       targetMode: "household";
@@ -763,20 +776,24 @@ export type GenerationIntegrityContextV2 =
       sourceMenuVersion: number;
     };
 
+/** 旧名互換（import 移行用）。実体は V3。 */
+export type GenerationIntegrityContextV2 = GenerationIntegrityContextV3;
+
 export type GenerationRequestLookup =
   | { kind: "miss" }
   | {
       kind: "hit";
       requestId: string;
-      requestHmacVersion: "generation-command.v2";
-      integrity: GenerationIntegrityContextV2;
+      requestHmacVersion: "generation-command.v3";
+      integrity: GenerationIntegrityContextV3;
     };
 
 export const generationQuotaSchema = z
   .object({
     consumed: z.boolean(),
-    remaining: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
-    userDailyLimit: z.literal(releaseQuota.userDailySuccessLimit),
+    // 防御天井は Plus 最大成功数。製品 limit は 3|10 のみ
+    remaining: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
+    userDailyLimit: z.union([z.literal(3), z.literal(10)]),
     limitKind: z.enum(quotaLimitKinds).nullable(),
     retryAt: isoDateTimeSchema.nullable(),
   })
@@ -844,26 +861,61 @@ export type GenerationStatusData = z.infer<typeof generationStatusDataSchema>;
 
 export const usageTodayDataSchema = z
   .object({
+    // Task3: plan / plusEntitled は Function が entitlement から merge（RPC は返さない）
+    plan: z.enum(["free", "plus"]),
+    plusEntitled: z.boolean(),
     success: z
       .object({
-        consumed: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
-        limit: z.literal(releaseQuota.userDailySuccessLimit),
-        remaining: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
+        consumed: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
+        limit: z.union([z.literal(3), z.literal(10)]),
+        remaining: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
       })
       .strict(),
     attempts: z
       .object({
-        sent: z.number().int().min(0).max(releaseQuota.userDailyExternalCallLimit),
-        limit: z.literal(releaseQuota.userDailyExternalCallLimit),
-        remaining: z.number().int().min(0).max(releaseQuota.userDailyExternalCallLimit),
+        sent: z.number().int().min(0).max(planQuota.defense.maxAttemptsPerDay),
+        limit: z.union([z.literal(6), z.literal(20)]),
+        remaining: z.number().int().min(0).max(planQuota.defense.maxAttemptsPerDay),
       })
       .strict(),
     shortWindow: z
       .object({
-        sent: z.number().int().min(0).max(releaseQuota.userShortWindowExternalCallLimit),
-        limit: z.literal(releaseQuota.userShortWindowExternalCallLimit),
-        remaining: z.number().int().min(0).max(releaseQuota.userShortWindowExternalCallLimit),
+        sent: z.number().int().min(0).max(planQuota.defense.maxShortWindow),
+        limit: z.union([z.literal(4), z.literal(8)]),
+        remaining: z.number().int().min(0).max(planQuota.defense.maxShortWindow),
         retryAt: isoDateTimeSchema.nullable(),
+      })
+      .strict(),
+    // Task6: 品質 day/month 投影。available は Function が plusEntitled と残数から算出してもよい
+    quality: z
+      .object({
+        day: z
+          .object({
+            consumed: z.number().int().min(0).max(planQuota.quality.perDay),
+            limit: z.literal(planQuota.quality.perDay),
+            remaining: z.number().int().min(0).max(planQuota.quality.perDay),
+          })
+          .strict(),
+        month: z
+          .object({
+            consumed: z.number().int().min(0).max(planQuota.quality.perMonth),
+            limit: z.literal(planQuota.quality.perMonth),
+            remaining: z.number().int().min(0).max(planQuota.quality.perMonth),
+          })
+          .strict(),
+        available: z.boolean(),
+      })
+      .strict(),
+    // Task7: チラシ週間 success+try 投影
+    flyerWeekly: z
+      .object({
+        successConsumed: z.number().int().min(0).max(planQuota.defense.maxFlyerSuccessPerWeek),
+        successLimit: z.literal(planQuota.flyerWeekly.successPerJstWeek),
+        successRemaining: z.number().int().min(0).max(planQuota.defense.maxFlyerSuccessPerWeek),
+        triesConsumed: z.number().int().min(0).max(planQuota.defense.maxFlyerTriesPerWeek),
+        triesLimit: z.literal(planQuota.flyerWeekly.triesPerJstWeek),
+        triesRemaining: z.number().int().min(0).max(planQuota.defense.maxFlyerTriesPerWeek),
+        weekStartJst: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
       })
       .strict(),
     globalAvailable: z.boolean(),
@@ -890,6 +942,40 @@ export const usageTodayDataSchema = z
         code: "custom",
         path: ["shortWindow", "remaining"],
         message: "window counts must balance",
+      });
+    }
+    if (data.quality.day.consumed + data.quality.day.remaining !== data.quality.day.limit) {
+      context.addIssue({
+        code: "custom",
+        path: ["quality", "day", "remaining"],
+        message: "quality day counts must balance",
+      });
+    }
+    if (data.quality.month.consumed + data.quality.month.remaining !== data.quality.month.limit) {
+      context.addIssue({
+        code: "custom",
+        path: ["quality", "month", "remaining"],
+        message: "quality month counts must balance",
+      });
+    }
+    if (
+      data.flyerWeekly.successConsumed + data.flyerWeekly.successRemaining !==
+      data.flyerWeekly.successLimit
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["flyerWeekly", "successRemaining"],
+        message: "flyer success counts must balance",
+      });
+    }
+    if (
+      data.flyerWeekly.triesConsumed + data.flyerWeekly.triesRemaining !==
+      data.flyerWeekly.triesLimit
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["flyerWeekly", "triesRemaining"],
+        message: "flyer try counts must balance",
       });
     }
     const blocked =
@@ -965,6 +1051,15 @@ const nonConflictIssueMessages = {
   source_menu_not_found: "元の献立が見つかりません",
   replace_dish_not_found: "変更する料理が見つかりません",
   source_menu_changed: "元の献立が更新されたため、もう一度操作してください",
+  quality_mode_requires_plus: "くわしい AI での作成は Plus で使えます。",
+  quality_daily_limit: "本日のプレミアム作成回数を使い切りました。",
+  quality_monthly_limit: "今月のプレミアム回数を使い切りました。",
+  flyer_requires_plus: "チラシ写真から 1 週間の献立は Plus の機能です。",
+  flyer_weekly_limit: "今週のチラシ献立の作成上限に達しています。",
+  flyer_weekly_try_limit: "しばらくしてから再度お試しください。",
+  flyer_invalid_image: "画像を読み取れませんでした。別の写真でお試しください。",
+  flyer_unsupported_media: "対応している画像形式は JPEG / PNG / WebP です。",
+  flyer_invalid_ai_response: "週間献立を正しく確認できませんでした。",
 } as const satisfies Record<GenerationFailureCode, string>;
 
 export const issueMessages = {

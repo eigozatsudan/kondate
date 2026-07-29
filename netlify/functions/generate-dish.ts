@@ -1,7 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import {
-  generationCommandVersionV2,
+  generationCommandVersionV3,
   regenerateDishRequestSchema,
 } from "../../shared/contracts/generation.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
@@ -15,8 +15,9 @@ import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 
 const dishEndpointBodySchema = z
   .object({
-    commandVersion: z.literal(generationCommandVersionV2),
+    commandVersion: z.literal(generationCommandVersionV3),
     kind: z.literal("regenerate_dish"),
+    qualityMode: z.boolean(),
     request: regenerateDishRequestSchema,
   })
   .strict();

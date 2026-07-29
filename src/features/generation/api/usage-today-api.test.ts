@@ -23,9 +23,25 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 3, remaining: 2 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 1, limit: 4, remaining: 3, retryAt: null },
+            quality: {
+              day: { consumed: 0, limit: 3, remaining: 3 },
+              month: { consumed: 0, limit: 20, remaining: 20 },
+              available: false,
+            },
+            flyerWeekly: {
+              successConsumed: 0,
+              successLimit: 2,
+              successRemaining: 2,
+              triesConsumed: 0,
+              triesLimit: 6,
+              triesRemaining: 6,
+              weekStartJst: "2026-07-27",
+            },
             globalAvailable: true,
             retryAt: null,
           },
@@ -51,9 +67,25 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 5, remaining: 4 },
             attempts: { sent: 2, limit: 12, remaining: 10 },
             shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+            quality: {
+              day: { consumed: 0, limit: 3, remaining: 3 },
+              month: { consumed: 0, limit: 20, remaining: 20 },
+              available: false,
+            },
+            flyerWeekly: {
+              successConsumed: 0,
+              successLimit: 2,
+              successRemaining: 2,
+              triesConsumed: 0,
+              triesLimit: 6,
+              triesRemaining: 6,
+              weekStartJst: "2026-07-27",
+            },
             globalAvailable: true,
             retryAt: null,
           },
@@ -69,9 +101,25 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 3, remaining: 0 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+            quality: {
+              day: { consumed: 0, limit: 3, remaining: 3 },
+              month: { consumed: 0, limit: 20, remaining: 20 },
+              available: false,
+            },
+            flyerWeekly: {
+              successConsumed: 0,
+              successLimit: 2,
+              successRemaining: 2,
+              triesConsumed: 0,
+              triesLimit: 6,
+              triesRemaining: 6,
+              weekStartJst: "2026-07-27",
+            },
             globalAvailable: true,
             retryAt: null,
           },
@@ -87,9 +135,25 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 3, remaining: 2 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 1, limit: 4, remaining: 3, retryAt: null },
+            quality: {
+              day: { consumed: 0, limit: 3, remaining: 3 },
+              month: { consumed: 0, limit: 20, remaining: 20 },
+              available: false,
+            },
+            flyerWeekly: {
+              successConsumed: 0,
+              successLimit: 2,
+              successRemaining: 2,
+              triesConsumed: 0,
+              triesLimit: 6,
+              triesRemaining: 6,
+              weekStartJst: "2026-07-27",
+            },
             globalAvailable: true,
             retryAt: null,
             leaked: "no",

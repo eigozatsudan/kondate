@@ -44,6 +44,9 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
       <p className="mt-3">
         家族設定、冷蔵庫、献立履歴、買い物リストは削除され、元に戻せません。不正利用防止のため、メールから作った復元できない識別子と日々の利用回数だけは残ります。
       </p>
+      <p className="mt-2">
+        有料プランに入っている場合、解約手続きもあわせて行います。請求の詳細はメール（Stripe）をご確認ください。
+      </p>
       <label className="mt-4 block" htmlFor="delete-confirmation">
         確認のため「削除する」と入力
       </label>

@@ -379,13 +379,14 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
   const requestId = "90000000-0000-4000-8000-000000000001";
   const key = "91000000-0000-4000-8000-000000000001";
   const command: Extract<GenerationCommand, { kind: "new_menu" }> = {
-    commandVersion: "generation-command.v2",
+    commandVersion: "generation-command.v3",
     kind: "new_menu",
+    qualityMode: false,
     request: {
       idempotencyKey: key,
       draftId: "92000000-0000-4000-8000-000000000001",
       draftRevision: 1,
-      privacyNoticeVersion: "2026-07-28.v1",
+      privacyNoticeVersion: "2026-07-29.v1",
       expiredPantryConfirmations: [],
     },
   };
@@ -712,7 +713,7 @@ describe("family canary matrix across idea and household generation boundaries",
           ? {
               data: {
                 user_id: canaryUserId,
-                notice_version: "2026-07-28.v1",
+                notice_version: "2026-07-29.v1",
                 accepted_at: "2026-07-11T02:00:00.000Z",
               },
               error: null,
@@ -756,7 +757,7 @@ describe("family canary matrix across idea and household generation boundaries",
         idempotencyKey: "56000000-0000-4000-8000-000000000099",
         draftId: canaryDraftId,
         draftRevision: 1,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [],
       },
       new Date("2026-07-11T03:00:00.000Z"),
@@ -768,13 +769,14 @@ describe("family canary matrix across idea and household generation boundaries",
     return {
       kind: "new_menu" as const,
       command: {
-        commandVersion: "generation-command.v2" as const,
+        commandVersion: "generation-command.v3" as const,
         kind: "new_menu" as const,
+        qualityMode: false,
         request: {
           idempotencyKey: "56000000-0000-4000-8000-000000000001",
           draftId: "84000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-28.v1" as const,
+          privacyNoticeVersion: "2026-07-29.v1" as const,
           expiredPantryConfirmations: [] as {
             pantryItemId: string;
             checkedAt: string;
@@ -806,7 +808,7 @@ describe("family canary matrix across idea and household generation boundaries",
   it("builds household OpenRouter DTO with anonymized preference canaries only", () => {
     const context = householdContextWithCanaries();
     const messages = buildGenerationMessages(asNewMenuExecution(context));
-    const userMessage = messages[1]?.content ?? "";
+    const userMessage = typeof messages[1]?.content === "string" ? messages[1].content : "";
     // 表示名・生 ID は AI 本文へ載せない
     expect(userMessage).not.toContain(canaries.displayName);
     expect(userMessage).not.toContain(memberId);
@@ -841,7 +843,7 @@ describe("family canary matrix across idea and household generation boundaries",
     assertNoCanary(contextJson, "idea GenerationContext after canary seed");
 
     const messages = buildGenerationMessages(asNewMenuExecution(idea));
-    const userMessage = messages[1]?.content ?? "";
+    const userMessage = typeof messages[1]?.content === "string" ? messages[1].content : "";
     assertNoCanary(userMessage, "idea OpenRouter body after canary seed");
     // idea は members 配列が空で、validationVersions も null 固定
     const serialized = userMessage

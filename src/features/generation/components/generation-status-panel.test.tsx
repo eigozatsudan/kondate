@@ -44,9 +44,25 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   getUsageTodayMock.mockResolvedValue({
+    plan: "free" as const,
+    plusEntitled: false,
     success: { consumed: 1, limit: 3, remaining: 2 },
     attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+    quality: {
+      day: { consumed: 0, limit: 3, remaining: 3 },
+      month: { consumed: 0, limit: 20, remaining: 20 },
+      available: false,
+    },
+    flyerWeekly: {
+      successConsumed: 0,
+      successLimit: 2,
+      successRemaining: 2,
+      triesConsumed: 0,
+      triesLimit: 6,
+      triesRemaining: 6,
+      weekStartJst: "2026-07-27",
+    },
     globalAvailable: true,
     retryAt: null,
   });
@@ -73,6 +89,21 @@ describe("GenerationStatusPanel", () => {
     );
   });
 
+  it("shows Plus hard-limit CTA on Free daily limit failure without usage userId", () => {
+    const zeroQuota = {
+      ...quota,
+      remaining: 0,
+    } as const;
+    const zeroFailed: GenerationClientState = {
+      phase: "failed",
+      data: { ...failedData, quota: zeroQuota },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={zeroFailed} />);
+    expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/settings");
+  });
+
   it("shows emergency recovery link on failed recovery regardless of path", () => {
     render(<GenerationStatusPanel state={failedState} />);
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
@@ -91,6 +122,45 @@ describe("GenerationStatusPanel", () => {
     };
     render(<GenerationStatusPanel state={requestConflictState} />);
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toBeInTheDocument();
+  });
+
+  it("does not prefix Plus daily-limit failure with 無料版は (L16)", async () => {
+    vi.useRealTimers();
+    getUsageTodayMock.mockResolvedValue({
+      plan: "plus" as const,
+      plusEntitled: true,
+      success: { consumed: 10, limit: 10, remaining: 0 },
+      attempts: { sent: 0, limit: 20, remaining: 20 },
+      shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+      quality: {
+        day: { consumed: 0, limit: 3, remaining: 3 },
+        month: { consumed: 0, limit: 20, remaining: 20 },
+        available: true,
+      },
+      flyerWeekly: {
+        successConsumed: 0,
+        successLimit: 2,
+        successRemaining: 2,
+        triesConsumed: 0,
+        triesLimit: 6,
+        triesRemaining: 6,
+        weekStartJst: "2026-07-27",
+      },
+      globalAvailable: true,
+      retryAt: null,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel state={failedState} userId={USER_ID} />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(
+        "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/無料版は本日の作成上限/u)).not.toBeInTheDocument();
   });
 
   it("shows success remaining only via usage today without dual attempt lines", async () => {
@@ -113,6 +183,8 @@ describe("GenerationStatusPanel", () => {
   it("shows global unavailable without free-tier prefix on dual jargon lines", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
+      plan: "free" as const,
+      plusEntitled: false,
       success: { consumed: 1, limit: 3, remaining: 2 },
       attempts: { sent: 5, limit: 6, remaining: 1 },
       shortWindow: {
@@ -120,6 +192,20 @@ describe("GenerationStatusPanel", () => {
         limit: 4,
         remaining: 1,
         retryAt: null,
+      },
+      quality: {
+        day: { consumed: 0, limit: 3, remaining: 3 },
+        month: { consumed: 0, limit: 20, remaining: 20 },
+        available: false,
+      },
+      flyerWeekly: {
+        successConsumed: 0,
+        successLimit: 2,
+        successRemaining: 2,
+        triesConsumed: 0,
+        triesLimit: 6,
+        triesRemaining: 6,
+        weekStartJst: "2026-07-27",
       },
       globalAvailable: false,
       retryAt: "2026-07-11T15:00:00.000Z",
@@ -140,9 +226,25 @@ describe("GenerationStatusPanel", () => {
   it("does not show attempt remaining zero as a second residual line", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
+      plan: "free" as const,
+      plusEntitled: false,
       success: { consumed: 1, limit: 3, remaining: 2 },
       attempts: { sent: 6, limit: 6, remaining: 0 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
+      quality: {
+        day: { consumed: 0, limit: 3, remaining: 3 },
+        month: { consumed: 0, limit: 20, remaining: 20 },
+        available: false,
+      },
+      flyerWeekly: {
+        successConsumed: 0,
+        successLimit: 2,
+        successRemaining: 2,
+        triesConsumed: 0,
+        triesLimit: 6,
+        triesRemaining: 6,
+        weekStartJst: "2026-07-27",
+      },
       globalAvailable: true,
       retryAt: "2026-07-11T15:00:00.000Z",
     });
@@ -162,6 +264,8 @@ describe("GenerationStatusPanel", () => {
   it("shows short-window wait copy when usage returns a shortWindow retryAt", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
+      plan: "free" as const,
+      plusEntitled: false,
       success: { consumed: 1, limit: 3, remaining: 2 },
       attempts: { sent: 2, limit: 6, remaining: 4 },
       shortWindow: {
@@ -169,6 +273,20 @@ describe("GenerationStatusPanel", () => {
         limit: 4,
         remaining: 0,
         retryAt: "2026-07-11T09:10:00+09:00",
+      },
+      quality: {
+        day: { consumed: 0, limit: 3, remaining: 3 },
+        month: { consumed: 0, limit: 20, remaining: 20 },
+        available: false,
+      },
+      flyerWeekly: {
+        successConsumed: 0,
+        successLimit: 2,
+        successRemaining: 2,
+        triesConsumed: 0,
+        triesLimit: 6,
+        triesRemaining: 6,
+        weekStartJst: "2026-07-27",
       },
       globalAvailable: true,
       retryAt: "2026-07-11T09:10:00+09:00",

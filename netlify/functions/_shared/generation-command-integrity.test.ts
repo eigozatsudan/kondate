@@ -6,7 +6,7 @@ import {
   type GenerationIntegrityContextV2,
 } from "../../../shared/contracts/generation.js";
 import {
-  canonicalizeGenerationCommandV2,
+  canonicalizeGenerationCommandV3,
   generationRequestHmac,
 } from "./generation-command-integrity.js";
 
@@ -56,13 +56,14 @@ const commands: readonly {
 }[] = [
   {
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "new_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         draftId: "20000000-0000-4000-8000-000000000001",
         draftRevision: 3,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [...checks],
       },
     },
@@ -70,14 +71,15 @@ const commands: readonly {
   },
   {
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_menu",
+      qualityMode: false,
       request: {
         idempotencyKey: "10000000-0000-4000-8000-000000000002",
         sourceMenuId: "40000000-0000-4000-8000-000000000001",
         changeReason: "custom",
         changeReasonCustom: "野菜を増やす",
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [...checks],
       },
     },
@@ -85,15 +87,16 @@ const commands: readonly {
   },
   {
     command: {
-      commandVersion: "generation-command.v2",
+      commandVersion: "generation-command.v3",
       kind: "regenerate_dish",
+      qualityMode: false,
       request: {
         idempotencyKey: "10000000-0000-4000-8000-000000000003",
         sourceMenuId: "40000000-0000-4000-8000-000000000001",
         dishId: "50000000-0000-4000-8000-000000000001",
         changeReason: "simpler",
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: [...checks],
       },
     },
@@ -101,7 +104,7 @@ const commands: readonly {
   },
 ];
 
-describe("generation command integrity v2", () => {
+describe("generation command integrity v3", () => {
   it.each(commands)(
     "is deterministic for $command.kind and sorts set-like fields",
     ({ command, integrity }) => {
@@ -119,8 +122,8 @@ describe("generation command integrity v2", () => {
               targetMemberIds: [...integrity.targetMemberIds].toReversed() as [string, ...string[]],
             }
           : integrity;
-      expect(canonicalizeGenerationCommandV2(reversed, reversedMembers)).toBe(
-        canonicalizeGenerationCommandV2(command, integrity),
+      expect(canonicalizeGenerationCommandV3(reversed, reversedMembers)).toBe(
+        canonicalizeGenerationCommandV3(command, integrity),
       );
       expect(generationRequestHmac(reversed, reversedMembers, key)).toBe(
         generationRequestHmac(command, integrity, key),
@@ -139,11 +142,11 @@ describe("generation command integrity v2", () => {
     expect(
       commands.map(
         ({ command, integrity }) =>
-          JSON.parse(canonicalizeGenerationCommandV2(command, integrity)) as unknown,
+          JSON.parse(canonicalizeGenerationCommandV3(command, integrity)) as unknown,
       ),
     ).toEqual([
       {
-        version: "generation-command.v2",
+        version: "generation-command.v3",
         kind: "new_menu",
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         draftId: "20000000-0000-4000-8000-000000000001",
@@ -152,15 +155,16 @@ describe("generation command integrity v2", () => {
         dishId: null,
         changeReason: null,
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: sorted,
         targetMode: "household",
         servings: null,
         targetMemberIds: sortedMembers,
         sourceMenuVersion: null,
+        qualityMode: false,
       },
       {
-        version: "generation-command.v2",
+        version: "generation-command.v3",
         kind: "regenerate_menu",
         idempotencyKey: "10000000-0000-4000-8000-000000000002",
         draftId: null,
@@ -169,15 +173,16 @@ describe("generation command integrity v2", () => {
         dishId: null,
         changeReason: "custom",
         changeReasonCustom: "野菜を増やす",
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: sorted,
         targetMode: "household",
         servings: 4,
         targetMemberIds: sortedMembers,
         sourceMenuVersion: 2,
+        qualityMode: false,
       },
       {
-        version: "generation-command.v2",
+        version: "generation-command.v3",
         kind: "regenerate_dish",
         idempotencyKey: "10000000-0000-4000-8000-000000000003",
         draftId: null,
@@ -186,12 +191,13 @@ describe("generation command integrity v2", () => {
         dishId: "50000000-0000-4000-8000-000000000001",
         changeReason: "simpler",
         changeReasonCustom: null,
-        privacyNoticeVersion: "2026-07-28.v1",
+        privacyNoticeVersion: "2026-07-29.v1",
         expiredPantryConfirmations: sorted,
         targetMode: "idea",
         servings: 2,
         targetMemberIds: [],
         sourceMenuVersion: 5,
+        qualityMode: false,
       },
     ]);
   });
@@ -205,9 +211,9 @@ describe("generation command integrity v2", () => {
         throw new Error("fixture mismatch");
       }
       const canonical = JSON.parse(
-        canonicalizeGenerationCommandV2(entry.command, entry.integrity),
+        canonicalizeGenerationCommandV3(entry.command, entry.integrity),
       ) as { privacyNoticeVersion: string | null };
-      expect(canonical.privacyNoticeVersion).toBe("2026-07-28.v1");
+      expect(canonical.privacyNoticeVersion).toBe("2026-07-29.v1");
       const baseHmac = generationRequestHmac(entry.command, entry.integrity, key);
       // schema 上は現行 literal のみ許可だが、canonical 入力を差し替えて payload 依存を検証する
       const tamperedRequest = {
@@ -281,7 +287,7 @@ describe("generation command integrity v2", () => {
           idempotencyKey: "10000000-0000-4000-8000-000000000001",
           draftId: "20000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       }).success,
@@ -293,10 +299,17 @@ describe("generation command integrity v2", () => {
           idempotencyKey: "10000000-0000-4000-8000-000000000001",
           draftId: "20000000-0000-4000-8000-000000000001",
           draftRevision: 1,
-          privacyNoticeVersion: "2026-07-28.v1",
+          privacyNoticeVersion: "2026-07-29.v1",
           expiredPantryConfirmations: [],
         },
       }).success,
     ).toBe(false);
   });
+});
+
+it("changes HMAC when only qualityMode flips", () => {
+  const base = commands[0]!;
+  const a = generationRequestHmac({ ...base.command, qualityMode: false }, base.integrity, key);
+  const b = generationRequestHmac({ ...base.command, qualityMode: true }, base.integrity, key);
+  expect(a).not.toBe(b);
 });

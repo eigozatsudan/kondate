@@ -118,6 +118,46 @@ describe("createSafeLogger", () => {
     });
   });
 
+  it("serializes billing non-PII fields and drops email canaries", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "bill-1",
+      code: "billing_checkout_created",
+      durationMs: 12,
+      plan: "plus",
+      billingStatus: "active",
+      priceInterval: "month",
+      qualityMode: true,
+      flyer: false,
+      stripeCustomerId: "cus_abc",
+      stripeSubscriptionId: "sub_xyz",
+      alertMetric: 1,
+      email: "secret@example.com",
+      receiptEmail: "r@example.com",
+    } as Parameters<ReturnType<typeof createSafeLogger>>[0] & {
+      email: string;
+      receiptEmail: string;
+    });
+    const line = write.mock.calls[0]![0] as string;
+    expect(JSON.parse(line)).toEqual({
+      level: "info",
+      request_id: "bill-1",
+      code: "billing_checkout_created",
+      duration_ms: 12,
+      plan: "plus",
+      billing_status: "active",
+      price_interval: "month",
+      quality_mode: 1,
+      flyer: 0,
+      stripe_customer_id: "cus_abc",
+      stripe_subscription_id: "sub_xyz",
+      alert_metric: 1,
+    });
+    expect(line).not.toContain("secret@example.com");
+    expect(line).not.toContain("r@example.com");
+  });
+
   it("does not serialize free-text ingredient or allergy keys on emergency events", () => {
     const write = vi.fn();
     createSafeLogger(write)({

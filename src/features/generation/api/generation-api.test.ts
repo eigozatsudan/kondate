@@ -25,31 +25,34 @@ const processing: GenerationStatusData = {
   quota,
 };
 const newMenuCommand: GenerationCommand = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "new_menu",
+  qualityMode: false,
   request: {
     idempotencyKey: IDEMPOTENCY_KEY,
     draftId: "20000000-0000-4000-8000-000000000001",
     draftRevision: 3,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };
 const regenerateMenuCommand: GenerationCommand = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "regenerate_menu",
+  qualityMode: false,
   request: {
     idempotencyKey: IDEMPOTENCY_KEY,
     sourceMenuId: "60000000-0000-4000-8000-000000000001",
     changeReason: "simpler",
     changeReasonCustom: null,
-    privacyNoticeVersion: "2026-07-28.v1",
+    privacyNoticeVersion: "2026-07-29.v1",
     expiredPantryConfirmations: [],
   },
 };
 const regenerateDishCommand: GenerationCommand = {
-  commandVersion: "generation-command.v2",
+  commandVersion: "generation-command.v3",
   kind: "regenerate_dish",
+  qualityMode: false,
   request: {
     ...regenerateMenuCommand.request,
     dishId: "70000000-0000-4000-8000-000000000001",

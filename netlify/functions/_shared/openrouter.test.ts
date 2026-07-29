@@ -9,6 +9,7 @@ import {
   readResponseBodyWithByteCap,
   sendMenuGeneration,
   type OpenRouterGenerationInput,
+  type OpenRouterMessage,
 } from "./openrouter.js";
 
 const { getServerEnvMock } = vi.hoisted(() => ({
@@ -788,3 +789,14 @@ it.each([
     expect(headers.has("X-Kondate-Mock-Scenario")).toBe(expected);
   },
 );
+
+it("accepts content parts array for vision messages", () => {
+  const msg: OpenRouterMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "チラシから1週間の献立を作ってください" },
+      { type: "image_url", image_url: { url: "data:image/jpeg;base64,abc" } },
+    ],
+  };
+  expect(Array.isArray(msg.content)).toBe(true);
+});

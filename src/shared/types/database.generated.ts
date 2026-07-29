@@ -27,6 +27,10 @@ export type Database = {
           identity_key: string
           personal_quota_disabled: boolean
           processing_expires_at: string | null
+          quality_mode: boolean
+          quota_attempt_limit: number
+          quota_short_limit: number
+          quota_success_limit: number
           repair_attempted: boolean
           replace_dish_id: string | null
           request_hmac: string
@@ -61,6 +65,10 @@ export type Database = {
           identity_key: string
           personal_quota_disabled?: boolean
           processing_expires_at?: string | null
+          quality_mode?: boolean
+          quota_attempt_limit?: number
+          quota_short_limit?: number
+          quota_success_limit?: number
           repair_attempted?: boolean
           replace_dish_id?: string | null
           request_hmac: string
@@ -95,6 +103,10 @@ export type Database = {
           identity_key?: string
           personal_quota_disabled?: boolean
           processing_expires_at?: string | null
+          quality_mode?: boolean
+          quota_attempt_limit?: number
+          quota_short_limit?: number
+          quota_success_limit?: number
           repair_attempted?: boolean
           replace_dish_id?: string | null
           request_hmac?: string
@@ -191,6 +203,102 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_identity_flyer_weekly: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          success_count: number
+          updated_at: string
+          week_start: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          week_start: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
+      ai_identity_flyer_weekly_tries: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          sent_count: number
+          updated_at: string
+          week_start: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          week_start: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          sent_count?: number
+          updated_at?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
+      ai_identity_quality_daily: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          success_count: number
+          updated_at: string
+          usage_day: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day?: string
+        }
+        Relationships: []
+      }
+      ai_identity_quality_monthly: {
+        Row: {
+          identity_key: string
+          reserved_count: number
+          success_count: number
+          updated_at: string
+          usage_month: string
+        }
+        Insert: {
+          identity_key: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_month: string
+        }
+        Update: {
+          identity_key?: string
+          reserved_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_month?: string
+        }
+        Relationships: []
+      }
       ai_user_rate_windows: {
         Row: {
           sent_count: number
@@ -251,6 +359,216 @@ export type Database = {
           return_to?: string
           secret_hash?: string
           state_hash?: string
+        }
+        Relationships: []
+      }
+      billing_checkout_locks: {
+        Row: {
+          created_at: string
+          expires_at: string
+          lock_token: string
+          stripe_checkout_session_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          lock_token: string
+          stripe_checkout_session_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          lock_token?: string
+          stripe_checkout_session_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      billing_customers: {
+        Row: {
+          created_at: string
+          stripe_customer_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          stripe_customer_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          stripe_customer_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      billing_subscriptions: {
+        Row: {
+          cancel_at_period_end: boolean
+          current_period_end: string
+          current_period_start: string
+          last_stripe_event_created: number
+          last_stripe_event_id: string | null
+          past_due_since: string | null
+          status: string
+          stripe_price_id: string
+          stripe_subscription_id: string
+          trial_end: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cancel_at_period_end?: boolean
+          current_period_end: string
+          current_period_start: string
+          last_stripe_event_created?: number
+          last_stripe_event_id?: string | null
+          past_due_since?: string | null
+          status: string
+          stripe_price_id: string
+          stripe_subscription_id: string
+          trial_end?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cancel_at_period_end?: boolean
+          current_period_end?: string
+          current_period_start?: string
+          last_stripe_event_created?: number
+          last_stripe_event_id?: string | null
+          past_due_since?: string | null
+          status?: string
+          stripe_price_id?: string
+          stripe_subscription_id?: string
+          trial_end?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      billing_trial_history: {
+        Row: {
+          first_trial_at: string
+          identity_key: string
+        }
+        Insert: {
+          first_trial_at?: string
+          identity_key: string
+        }
+        Update: {
+          first_trial_at?: string
+          identity_key?: string
+        }
+        Relationships: []
+      }
+      billing_webhook_events: {
+        Row: {
+          event_type: string
+          processed_at: string
+          stripe_event_created: number
+          stripe_event_id: string
+        }
+        Insert: {
+          event_type: string
+          processed_at?: string
+          stripe_event_created: number
+          stripe_event_id: string
+        }
+        Update: {
+          event_type?: string
+          processed_at?: string
+          stripe_event_created?: number
+          stripe_event_id?: string
+        }
+        Relationships: []
+      }
+      flyer_weekly_requests: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          duration_ms: number | null
+          failure_code: string | null
+          flyer_success_reserved: boolean
+          flyer_try_reserved: boolean
+          flyer_try_sent: boolean
+          global_reserved_day: string | null
+          global_sent_calls: number
+          id: string
+          idempotency_key: string
+          identity_key: string
+          personal_quota_disabled: boolean
+          processing_expires_at: string | null
+          quota_attempt_limit: number | null
+          quota_short_limit: number | null
+          result_payload: Json | null
+          retry_at: string | null
+          started_at: string
+          status: string
+          updated_at: string
+          user_attempt_day: string | null
+          user_attempt_reserved: boolean
+          user_id: string
+          week_start: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          failure_code?: string | null
+          flyer_success_reserved?: boolean
+          flyer_try_reserved?: boolean
+          flyer_try_sent?: boolean
+          global_reserved_day?: string | null
+          global_sent_calls?: number
+          id?: string
+          idempotency_key: string
+          identity_key: string
+          personal_quota_disabled?: boolean
+          processing_expires_at?: string | null
+          quota_attempt_limit?: number | null
+          quota_short_limit?: number | null
+          result_payload?: Json | null
+          retry_at?: string | null
+          started_at: string
+          status: string
+          updated_at?: string
+          user_attempt_day?: string | null
+          user_attempt_reserved?: boolean
+          user_id: string
+          week_start: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          failure_code?: string | null
+          flyer_success_reserved?: boolean
+          flyer_try_reserved?: boolean
+          flyer_try_sent?: boolean
+          global_reserved_day?: string | null
+          global_sent_calls?: number
+          id?: string
+          idempotency_key?: string
+          identity_key?: string
+          personal_quota_disabled?: boolean
+          processing_expires_at?: string | null
+          quota_attempt_limit?: number | null
+          quota_short_limit?: number | null
+          result_payload?: Json | null
+          retry_at?: string | null
+          started_at?: string
+          status?: string
+          updated_at?: string
+          user_attempt_day?: string | null
+          user_attempt_reserved?: boolean
+          user_id?: string
+          week_start?: string
         }
         Relationships: []
       }
@@ -390,6 +708,8 @@ export type Database = {
         Returns: boolean
       }
       ai_jst_day: { Args: { p_now: string }; Returns: string }
+      ai_jst_month_start: { Args: { p_now: string }; Returns: string }
+      ai_jst_week_start: { Args: { p_now: string }; Returns: string }
       ai_next_jst_midnight: { Args: { p_now: string }; Returns: string }
       ai_request_payload: {
         Args: {
@@ -407,6 +727,23 @@ export type Database = {
           p_user_id: string
         }
         Returns: undefined
+      }
+      billing_entitlement_json: {
+        Args: {
+          p_cancel_at_period_end: boolean
+          p_current_period_end: string
+          p_now: string
+          p_past_due_since: string
+          p_status: string
+          p_trial_end: string
+        }
+        Returns: Json
+      }
+      billing_iso_z: { Args: { p_ts: string }; Returns: string }
+      billing_payload_timestamptz: { Args: { p_value: Json }; Returns: string }
+      billing_status_terminality_rank: {
+        Args: { p_status: string }
+        Returns: number
       }
       cleanup_expired_shopping_mutations: {
         Args: { p_limit?: number; p_user_id: string }
@@ -427,6 +764,13 @@ export type Database = {
       current_safety_fingerprint: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: string
+      }
+      flyer_weekly_request_payload: {
+        Args: {
+          p_replayed?: boolean
+          p_request: Database["private"]["Tables"]["flyer_weekly_requests"]["Row"]
+        }
+        Returns: Json
       }
       idea_safety_fingerprint: { Args: never; Returns: string }
       is_canonical_bounded_text: {
@@ -492,6 +836,21 @@ export type Database = {
           p_target_mode: string
         }
         Returns: string
+      }
+      project_billing_subscription: {
+        Args: { p_force_apply?: boolean; p_payload: Json; p_user_id: string }
+        Returns: string
+      }
+      release_flyer_weekly_for_user_processing: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: number
+      }
+      release_flyer_weekly_reservations: {
+        Args: {
+          p_now: string
+          p_request: Database["private"]["Tables"]["flyer_weekly_requests"]["Row"]
+        }
+        Returns: undefined
       }
       release_identity_and_global_for_user_processing: {
         Args: { p_now?: string; p_user_id: string }
@@ -2028,6 +2387,10 @@ export type Database = {
     }
     Functions: {
       accept_menu_version: { Args: { p_menu_id: string }; Returns: undefined }
+      acquire_billing_checkout_lock: {
+        Args: { p_expires_at: string; p_lock_token: string; p_user_id: string }
+        Returns: Json
+      }
       add_custom_member_allergy: {
         Args: {
           p_custom_aliases?: string[]
@@ -2079,6 +2442,14 @@ export type Database = {
         }
         Returns: Json
       }
+      bind_billing_checkout_session: {
+        Args: {
+          p_lock_token: string
+          p_stripe_checkout_session_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       claim_auth_continuation: {
         Args: {
           p_id: string
@@ -2111,6 +2482,10 @@ export type Database = {
         Returns: number
       }
       cleanup_stale_ai_generations_batch: {
+        Args: { p_limit: number; p_now: string }
+        Returns: number
+      }
+      cleanup_stale_flyer_weekly_batch: {
         Args: { p_limit: number; p_now: string }
         Returns: number
       }
@@ -2208,6 +2583,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      ensure_billing_customer: {
+        Args: { p_stripe_customer_id: string; p_user_id: string }
+        Returns: Json
+      }
       finalize_ai_generation_conflict: {
         Args: {
           p_conflict_codes: string[]
@@ -2262,6 +2641,19 @@ export type Database = {
         }
         Returns: Json
       }
+      finalize_flyer_weekly_failure: {
+        Args: {
+          p_failure_code: string
+          p_now?: string
+          p_request_id: string
+          p_sent: boolean
+        }
+        Returns: Json
+      }
+      finalize_flyer_weekly_success: {
+        Args: { p_now?: string; p_request_id: string; p_result: Json }
+        Returns: Json
+      }
       get_ai_generation_regeneration_snapshot: {
         Args: { p_request_id: string; p_user_id: string }
         Returns: {
@@ -2279,9 +2671,11 @@ export type Database = {
       }
       get_ai_generation_status: {
         Args: {
+          p_attempt_limit: number
           p_idempotency_key: string
           p_identity_key: string
           p_now?: string
+          p_short_window_limit: number
           p_user_id: string
           p_user_limit: number
         }
@@ -2308,11 +2702,26 @@ export type Database = {
       }
       get_ai_usage_today: {
         Args: {
-          p_global_limit?: number
+          p_attempt_limit: number
+          p_global_limit: number
           p_identity_key: string
           p_now?: string
+          p_short_window_limit: number
           p_user_id: string
+          p_user_limit: number
         }
+        Returns: Json
+      }
+      get_billing_customer_by_stripe_id: {
+        Args: { p_stripe_customer_id: string }
+        Returns: Json
+      }
+      get_billing_customer_by_user: {
+        Args: { p_user_id: string }
+        Returns: Json
+      }
+      get_billing_entitlement_for_user: {
+        Args: { p_now?: string; p_user_id: string }
         Returns: Json
       }
       get_current_safety_snapshot: {
@@ -2329,6 +2738,14 @@ export type Database = {
           p_request_hash: string
           p_user_id: string
         }
+        Returns: Json
+      }
+      has_billing_trial_history: {
+        Args: { p_identity_key: string }
+        Returns: boolean
+      }
+      insert_billing_trial_history: {
+        Args: { p_identity_key: string }
         Returns: Json
       }
       insert_user_feedback_rate_limited: {
@@ -2350,6 +2767,14 @@ export type Database = {
         Args: { p_now?: string; p_request_id: string }
         Returns: Json
       }
+      mark_billing_subscription_dual_cancel_keep: {
+        Args: { p_keep_stripe_subscription_id: string; p_user_id: string }
+        Returns: Json
+      }
+      mark_flyer_weekly_sent: {
+        Args: { p_now?: string; p_request_id: string }
+        Returns: Json
+      }
       mutate_shopping_item: {
         Args: {
           p_expected_list_version: number
@@ -2362,6 +2787,7 @@ export type Database = {
         }
         Returns: Json
       }
+      process_billing_stripe_event: { Args: { p_payload: Json }; Returns: Json }
       reconcile_menu_label_confirmations: {
         Args: {
           p_expected_safety_fingerprint: string
@@ -2407,12 +2833,25 @@ export type Database = {
         }
         Returns: Json
       }
+      release_billing_checkout_lock: {
+        Args: {
+          p_lock_token?: string
+          p_stripe_checkout_session_id?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      release_flyer_weekly_for_user_processing: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: number
+      }
       release_identity_and_global_for_user_processing: {
         Args: { p_now?: string; p_user_id: string }
         Returns: number
       }
       reserve_ai_generation: {
         Args: {
+          p_attempt_limit: number
           p_change_reason: string
           p_draft_id: string
           p_draft_revision: number
@@ -2421,11 +2860,13 @@ export type Database = {
           p_identity_key: string
           p_integrity_context: Json
           p_now?: string
+          p_quality_mode?: boolean
           p_quota_disabled?: boolean
           p_replace_dish_id: string
           p_request_hmac: string
           p_request_hmac_version: string
           p_request_kind: string
+          p_short_window_limit: number
           p_source_menu_id: string
           p_stale_after_seconds?: number
           p_user_id: string
@@ -2439,6 +2880,19 @@ export type Database = {
           p_now?: string
           p_quota_disabled?: boolean
           p_request_id: string
+        }
+        Returns: Json
+      }
+      reserve_flyer_weekly: {
+        Args: {
+          p_attempt_limit: number
+          p_global_limit: number
+          p_idempotency_key: string
+          p_identity_key: string
+          p_now?: string
+          p_quota_disabled?: boolean
+          p_short_window_limit: number
+          p_user_id: string
         }
         Returns: Json
       }
@@ -2536,6 +2990,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      upsert_billing_subscription_from_stripe: {
+        Args: { p_payload: Json }
+        Returns: Json
       }
     }
     Enums: {

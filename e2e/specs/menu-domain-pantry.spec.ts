@@ -660,7 +660,10 @@ test("keeps chicken-allergic household on non-chicken emergency candidates witho
   await openFirstMemberEditor(page);
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "鶏肉を追加" }).click();
-  await expect(page.getByRole("status")).toContainText("最新条件で再確認します");
+  // プラン管理の surfaces-closed status と同居するため、文言で絞る
+  await expect(
+    page.getByRole("status").filter({ hasText: "最新条件で再確認します" }),
+  ).toBeVisible();
   const selectedAllergies = page.getByRole("list", { name: "選択済みアレルギー" });
   await expect(
     selectedAllergies.getByRole("button", { name: "鶏肉を削除", exact: true }),
