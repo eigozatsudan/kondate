@@ -315,6 +315,10 @@ export async function cancelDualLiveSubscriptions(
  * Plus 投影後に焼成を落とすと、cancel 後の再 Checkout で 7 日 trial を再付与できる
  * 金銭経路の穴になる。identity 解決失敗・RPC 失敗は throw → 500 で Stripe 再送させ、
  * process が duplicate_processed になっても再試行で焼成を完了させる（fail-closed）。
+ *
+ * outcome は問わない（stale_ignored / same_second_skip も含む）。ignore-older で
+ * canceled が先に applied され、遅延 trialing が stale でも、event が trialing|active なら
+ * trial があった証拠として焼成する。insert は ON CONFLICT DO NOTHING で冪等。
  */
 export async function maybeInsertTrialHistory(
   deps: {
@@ -326,11 +330,9 @@ export async function maybeInsertTrialHistory(
   },
   userId: string,
   status: string,
-  outcome: ProcessBillingOutcome,
+  _outcome: ProcessBillingOutcome,
 ): Promise<void> {
   if (status !== "trialing" && status !== "active") return;
-  // applied または既に投影済み相当（duplicate は trial を再焼かないが冪等 insert も可）
-  if (outcome !== "applied" && outcome !== "duplicate_processed") return;
 
   const { data: userData, error: userError } = await deps.admin.auth.admin.getUserById(userId);
   if (userError !== null || userData.user === null) {

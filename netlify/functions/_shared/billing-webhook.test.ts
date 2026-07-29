@@ -495,6 +495,38 @@ describe("handleBillingWebhook", () => {
     expect(trialCall).toBeDefined();
   });
 
+  it("burns trial on stale_ignored trialing event after newer cancel applied (A7 ignore-older)", async () => {
+    // deleted が先に applied され、遅延 created(trialing) が stale_ignored になっても焼成必須。
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", makeSubscription({ status: "trialing" }), {
+        id: "evt_trial_stale_after_cancel",
+        created: 1000,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "canceled" }));
+    rpc.mockImplementation((name: string) => {
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({
+          data: { ok: true, outcome: "stale_ignored" },
+          error: null,
+        });
+      }
+      if (name === "insert_billing_trial_history") {
+        return Promise.resolve({ data: { ok: true, inserted: true }, error: null });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(true);
+  });
+
   it("still burns trial on invoice.paid duplicate when live sub is canceled", async () => {
     const invoice = {
       id: "in_2",
