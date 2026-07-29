@@ -33,7 +33,7 @@
             "name": "しょうゆ",
             "quantityValue": 1,
             "quantityText": "小さじ1",
-            "unit": "tsp",
+            "unit": null,
             "storeSection": "seasonings",
             "pantryRef": null,
             "labelConfirmationRequired": true
@@ -61,7 +61,7 @@
             "name": "にんじん",
             "quantityValue": 1,
             "quantityText": "1本",
-            "unit": "piece",
+            "unit": null,
             "storeSection": "produce",
             "pantryRef": null,
             "labelConfirmationRequired": false

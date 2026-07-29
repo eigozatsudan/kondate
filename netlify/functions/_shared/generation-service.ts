@@ -19,6 +19,7 @@ import {
   createIdeaSafetyFingerprint,
   ideaSafetySnapshot,
 } from "../../../shared/safety/idea-fingerprint.js";
+import { collectNonJapaneseUserTextIssuesFromDishRegenAiOutput } from "../../../shared/safety/japanese-user-text.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { getServerEnv } from "./env.js";
 import {
@@ -135,7 +136,7 @@ export type GenerationDependencies = {
     input: Parameters<typeof sendMenuGeneration>[0],
   ): Promise<OpenRouterGenerationResult>;
   now(): Date;
-  /** 単調時計。認証・予約も同じ 50s 予算を消費する */
+  /** 単調時計。認証・予約も同じ 150s 総予算を消費する */
   monotonicNow(): number;
   openRouterTimeoutMs: number;
   requestStartedAtMonotonicMs: number;
@@ -549,8 +550,15 @@ function composeCandidate(
       return { kind: "invalid", issues: [{ code: "invalid_provider_menu" }] };
     }
     try {
+      // 保持料理の過去英語 description を落とさない。今回の AI 出力だけ日本語ゲートする。
+      const languageIssues = collectNonJapaneseUserTextIssuesFromDishRegenAiOutput(result.output);
+      if (languageIssues.length > 0) {
+        return { kind: "invalid", issues: languageIssues };
+      }
       const candidate = materializeDishRegenerationCandidate(execution, result.output, uuid);
-      const checked = validateGeneratedMenu(candidate, context);
+      const checked = validateGeneratedMenu(candidate, context, {
+        checkJapaneseUserText: false,
+      });
       if (!checked.ok) return { kind: "invalid", issues: checked.issues };
       if (isRegenerationDuplicate(checked.menu, execution)) {
         return {
@@ -828,7 +836,7 @@ export async function runGeneration(
       excludedModelIds: readonly string[] = [],
       messages: readonly OpenRouterMessage[] = originalMessages,
     ): Promise<OpenRouterGenerationResult | "terminal"> => {
-      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 20s+2s を再確認する。
+      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 60s+2s を再確認する。
       // canRepair/外側ゲート通過後に時間が進んでも、部分 timeout で markSent しない。
       if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
@@ -914,7 +922,7 @@ export async function runGeneration(
       firstWasDuplicate = output.duplicate === true;
     }
 
-    // repair は canRepair（20s+2s 残）のときだけ。timeout 経路はここへ来ない
+    // repair は canRepair（60s+2s 残）のときだけ。timeout 経路はここへ来ない
     // 重複も 1 回だけ repair を通し、再重複なら duplicate_output（成功消費なし）
     if (!canRepair()) {
       return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);

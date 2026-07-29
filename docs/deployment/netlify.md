@@ -42,6 +42,21 @@
 | `FUNCTION_TOTAL_BUDGET_MS` | `150000` |
 | `AI_PROCESSING_STALE_SECONDS` | `180` |
 
+### 同期 Function のプラットフォーム上限（必須確認）
+
+アプリ側の総予算は設計ロックどおり **150 秒**（試行 60 秒）だが、Netlify の同期 Function 実行上限は
+公式ドキュメント上 **60 秒固定・非設定**（Background は 15 分だが本プロダクトは同期のみ・背景継続禁止）。
+
+- `netlify.toml` / `export const config` に timeout を書いて 150 秒へ引き上げる手段は無い。
+- 60 秒プラットフォーム上限の下では、一次 OpenRouter 試行だけで枠を使い切る可能性があり、
+  repair や finalize 前にプラットフォームが切断すると DB は `processing` のまま
+  `AI_PROCESSING_STALE_SECONDS`（180）まで残る。
+- **本番 ship 前に** 次のどちらかを満たすこと（未達なら 150s 予算の本番投入は不可）:
+  1. Netlify アカウントで同期上限 ≥150s が契約・確認済みである、または
+  2. 設計を改訂してアプリ予算とプラットフォーム上限を再整合する（本ドキュメント単独ではロックを緩めない）。
+
+ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しない。
+
 `GENERATION_REQUEST_HMAC_KEY` と `SUPABASE_MAINTENANCE_DB_URL` は:
 
 - Netlify の **Functions ランタイム**保護スコープのみ

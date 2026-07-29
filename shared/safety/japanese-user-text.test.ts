@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectNonJapaneseUserTextIssues,
+  collectNonJapaneseUserTextIssuesFromDishRegenAiOutput,
   isAcceptableJapaneseUserText,
 } from "./japanese-user-text.js";
 import { makeGeneratedMenu } from "../testing/factories.js";
@@ -90,6 +91,124 @@ describe("collectNonJapaneseUserTextIssues", () => {
     expect(collectNonJapaneseUserTextIssues(menu)).toEqual([
       expect.objectContaining({
         code: "invalid_menu_structure",
+        path: "timeline.0.instruction",
+      }),
+    ]);
+  });
+
+  // 結果 UI の「使わなかった理由」は collectMenuTextSources 外だが利用者向け文言
+  it("flags English pantryUsage.unusedReason", () => {
+    const menu = makeGeneratedMenu({
+      pantryUsage: [
+        {
+          selectionId: "58000000-0000-4000-8000-000000000001",
+          pantryItemId: "59000000-0000-4000-8000-000000000001",
+          pantryItemName: "にんじん",
+          priority: "prefer_use",
+          usageStatus: "unused",
+          plannedQuantity: null,
+          inventoryQuantity: null,
+          shortageQuantity: null,
+          unit: null,
+          dishIds: [],
+          unusedReason: "spoiled and skipped",
+        },
+      ],
+    });
+    expect(collectNonJapaneseUserTextIssues(menu)).toEqual([
+      expect.objectContaining({
+        code: "invalid_menu_structure",
+        path: "pantryUsage.0.unusedReason",
+        message: "利用者向けの文言は日本語で書いてください",
+      }),
+    ]);
+  });
+
+  it("rejects English unit tokens (tsp) that fixtures must not emit", () => {
+    expect(isAcceptableJapaneseUserText("tsp")).toBe(false);
+    expect(isAcceptableJapaneseUserText("piece")).toBe(false);
+  });
+});
+
+describe("collectNonJapaneseUserTextIssuesFromDishRegenAiOutput", () => {
+  const baseOutput = {
+    replacementDish: {
+      dishRef: "dish_1",
+      role: "main" as const,
+      position: 1,
+      name: "豚肉炒め",
+      description: "さっと炒める主菜",
+      cookingTimeMinutes: 15,
+      ingredients: [
+        {
+          ingredientRef: "ingredient_1",
+          position: 1,
+          name: "豚こま肉",
+          quantityValue: 200,
+          quantityText: "200g",
+          unit: "g",
+          storeSection: "meat_fish" as const,
+          pantryRef: null,
+          labelConfirmationRequired: false,
+        },
+      ],
+      steps: [
+        {
+          stepRef: "step_1",
+          position: 1,
+          instruction: "中火で炒める",
+        },
+      ],
+    },
+    timeline: [
+      {
+        timelineRef: "timeline_1",
+        position: 1,
+        startMinute: 0,
+        durationMinutes: 15,
+        instruction: "主菜を炒める",
+        dishRef: "dish_1",
+        stepRef: "step_1",
+      },
+    ],
+    adaptations: [],
+    pantryUsage: [],
+    labelConfirmations: [],
+  };
+
+  it("accepts Japanese AI output", () => {
+    expect(collectNonJapaneseUserTextIssuesFromDishRegenAiOutput(baseOutput)).toEqual([]);
+  });
+
+  it("flags English replacement description without caring about retained dishes", () => {
+    const issues = collectNonJapaneseUserTextIssuesFromDishRegenAiOutput({
+      ...baseOutput,
+      replacementDish: {
+        ...baseOutput.replacementDish,
+        description: "Beef fried rice with vegetables.",
+      },
+    });
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "invalid_menu_structure",
+        path: "replacementDish.description",
+        message: "利用者向けの文言は日本語で書いてください",
+      }),
+    ]);
+  });
+
+  it("flags English timeline instruction from AI", () => {
+    const issues = collectNonJapaneseUserTextIssuesFromDishRegenAiOutput({
+      ...baseOutput,
+      timeline: [
+        {
+          ...baseOutput.timeline[0]!,
+          instruction: "Cook the main dish",
+        },
+      ],
+    });
+    expect(issues).toEqual([
+      expect.objectContaining({
         path: "timeline.0.instruction",
       }),
     ]);

@@ -24,7 +24,7 @@
         "name": "しょうゆ",
         "quantityValue": 1,
         "quantityText": "小さじ1",
-        "unit": "tsp",
+        "unit": null,
         "storeSection": "seasonings",
         "pantryRef": null,
         "labelConfirmationRequired": true

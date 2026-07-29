@@ -110,9 +110,20 @@ function containsRequestedMainIngredient(
 }
 
 /** 食事区分・ジャンル・時間・主食材・回避・在庫の共通検査（両 mode） */
+/** validateGeneratedMenu の追加オプション。 */
+export type ValidateGeneratedMenuOptions = {
+  /**
+   * 利用者向け文言の日本語ゲート。既定 true。
+   * 一品再生成では保持料理に過去の英語 description が残ることがあるため、
+   * AI 出力側で別途検査し、ここでは false にする。
+   */
+  checkJapaneseUserText?: boolean;
+};
+
 function collectCommonMenuIssues(
   generated: GeneratedMenu,
   context: GenerationContext,
+  options: ValidateGeneratedMenuOptions = {},
 ): MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
   if (generated.mealType !== context.submission.mealType) {
@@ -273,8 +284,11 @@ function collectCommonMenuIssues(
       message: `${kind} には対応していません`,
     });
   }
-  // 英語・他言語だけの name/description/手順 等を拒否（UI は日本語前提）
-  issues.push(...collectNonJapaneseUserTextIssues(generated));
+  // 英語・他言語だけの name/description/手順 等を拒否（UI は日本語前提）。
+  // 一品再生成では保持料理の過去英語文を落とさないよう呼び出し側で抑止する。
+  if (options.checkJapaneseUserText !== false) {
+    issues.push(...collectNonJapaneseUserTextIssues(generated));
+  }
   return issues;
 }
 
@@ -314,6 +328,7 @@ function finalizeValidated(
 function validateIdeaMenu(
   generated: GeneratedMenu,
   context: IdeaGenerationContext,
+  options: ValidateGeneratedMenuOptions = {},
 ): MenuValidationResult {
   const issues: MenuValidationIssue[] = [];
   if (generated.adaptations.length !== 0) {
@@ -346,7 +361,7 @@ function validateIdeaMenu(
     });
   }
   // idea 型上 targetMembers / targetMemberIds は空固定。家族子行は adaptations 側で拒否済み
-  issues.push(...collectCommonMenuIssues(generated, context));
+  issues.push(...collectCommonMenuIssues(generated, context, options));
   if (issues.length > 0) return { ok: false, issues };
   return finalizeValidated(generated, [], createIdeaSafetyFingerprint());
 }
@@ -354,6 +369,7 @@ function validateIdeaMenu(
 function validateHouseholdMenu(
   generated: GeneratedMenu,
   context: HouseholdGenerationContext,
+  options: ValidateGeneratedMenuOptions = {},
 ): MenuValidationResult {
   const issues: MenuValidationIssue[] = [];
   const targetIds = new Set(context.targetMembers.map((member) => member.householdMemberId));
@@ -486,7 +502,7 @@ function validateHouseholdMenu(
     }
   }
 
-  issues.push(...collectCommonMenuIssues(generated, context));
+  issues.push(...collectCommonMenuIssues(generated, context, options));
 
   const easeAction = {
     small_pieces: "cut_small",
@@ -589,6 +605,7 @@ function validateHouseholdMenu(
 export function validateGeneratedMenu(
   menu: unknown,
   context: GenerationContext,
+  options: ValidateGeneratedMenuOptions = {},
 ): MenuValidationResult {
   const parsed = generatedMenuSchema.safeParse(menu);
   if (!parsed.success) {
@@ -602,9 +619,9 @@ export function validateGeneratedMenu(
     };
   }
   if (context.targetMode === "idea") {
-    return validateIdeaMenu(parsed.data, context);
+    return validateIdeaMenu(parsed.data, context, options);
   }
-  return validateHouseholdMenu(parsed.data, context);
+  return validateHouseholdMenu(parsed.data, context, options);
 }
 
 export type { GenerationContext } from "./generation-context.js";

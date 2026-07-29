@@ -10,6 +10,7 @@ import {
   parseServerEnv,
   supabaseServerEnvSchema,
 } from "./env.js";
+import { ATTEMPT_TIMEOUT_MS } from "./generation-service.js";
 
 // compose 現実に近い: exact mock base + mock/*:free（quota は release 固定 3/6/20）
 const validServerEnv = {
@@ -63,6 +64,8 @@ describe("parseOpenRouterModels", () => {
       functionTotalBudgetMs: 150_000,
       staleAfterSeconds: 180,
     });
+    // 二重正本ドリフト防止: generation-service 定数と env ロックを同一値に保つ
+    expect(ATTEMPT_TIMEOUT_MS).toBe(parsed.openRouter.timeoutMs);
     expect(parsed.generationIntegrity.requestHmacKey).toEqual(
       Buffer.from(validServerEnv.GENERATION_REQUEST_HMAC_KEY, "base64"),
     );

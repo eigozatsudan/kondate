@@ -1237,6 +1237,27 @@ it("rejects English dish description as invalid_menu_structure (language gate)",
   });
 });
 
+it("can skip Japanese language gate for dish-regen candidates with retained English", () => {
+  const context = makeIdeaGenerationContext();
+  const base = makeGeneratedMenu({
+    servings: 2,
+    adaptations: [],
+    labelConfirmations: [],
+  });
+  const menu = makeGeneratedMenu({
+    servings: 2,
+    adaptations: [],
+    labelConfirmations: [],
+    dishes: base.dishes.map((dish, index) =>
+      index === 1 ? { ...dish, description: "Stir-fried beef strips with green pepper." } : dish,
+    ),
+  });
+  // 一品再生成の保持料理に残る英語 description はゲート抑止で通す
+  expect(validateGeneratedMenu(menu, context, { checkJapaneseUserText: false }).ok).toBe(true);
+  // 抑止なしなら拒否
+  expect(validateGeneratedMenu(menu, context).ok).toBe(false);
+});
+
 it("rejects idea menus with adaptations or servings mismatch", () => {
   const context = makeIdeaGenerationContext();
   expectIssueCodes(validateGeneratedMenu(makeGeneratedMenu({ servings: 2 }), context), [

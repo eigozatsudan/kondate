@@ -57,8 +57,10 @@ export const GENERATION_SYSTEM_PROMPT_CORE =
   "利用者向けの文言（dishesのname・description、ingredientsのname、" +
   "stepsとtimelineのinstruction、adaptationsのportionText・追加処理・servingCheck、" +
   "safetyActionsのinstruction、pantryUsageのunusedReason）はすべて日本語で書いてください。" +
-  "英語・中国語・その他の外国語だけの本文は不可です。" +
-  "分量の数字と単位（g・ml・大さじ等）はそのままでよい。" +
+  // サーバー言語ゲートはラテン／非CJK汚染を拒否する。純粋な漢字のみは CJK として通し得る
+  // （中国語専用検出は別問題）。英語だけの description 等を最優先で防ぐ。
+  "英語などラテン文字だけの本文は不可です。日本語（ひらがな・カタカナ・漢字）で書いてください。" +
+  "分量の数字と単位（g・ml・大さじ等）はそのままでよい。ingredientsのunitにtsp・tbsp・piece等の英語単位だけは書かない。" +
   // pantry 契約（R2）
   "pantryの各要素はref・name・unitを持ちます。" +
   "ingredientsでpantryRefを使う場合:" +

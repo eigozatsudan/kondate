@@ -1,4 +1,5 @@
 import type { GeneratedMenu, MenuValidationIssue } from "../contracts/generation.js";
+import type { DishRegenerationAiOutput } from "../contracts/regeneration.js";
 import { collectMenuTextSources } from "./allergens.js";
 
 /**
@@ -53,21 +54,93 @@ export function isAcceptableJapaneseUserText(text: string): boolean {
 
 const NON_JAPANESE_MESSAGE = "利用者向けの文言は日本語で書いてください";
 
+function pushIfNonJapanese(
+  issues: MenuValidationIssue[],
+  path: string,
+  text: string | null | undefined,
+): void {
+  if (text === null || text === undefined) return;
+  if (isAcceptableJapaneseUserText(text)) return;
+  issues.push({
+    code: "invalid_menu_structure",
+    path,
+    message: NON_JAPANESE_MESSAGE,
+  });
+}
+
 /**
  * collectMenuTextSources が列挙する全 text leaf を言語検査する。
- * 失敗は invalid_menu_structure（既存 repair コード）に閉じる。
+ * 加えて結果 UI に出る pantryUsage.unusedReason（在庫「使わなかった理由」）も検査する。
+ * アレルゲン列挙の sourceType 制約を広げずにここで足す。
+ * 新規・まるごと再生成向け。失敗は invalid_menu_structure（既存 repair コード）に閉じる。
+ *
+ * 一品再生成では使わない: 保持料理に過去モデルの英語 description が残っていることがあり、
+ * その場合は {@link collectNonJapaneseUserTextIssuesFromDishRegenAiOutput} で
+ * 今回の AI 出力だけを検査する。
  */
 export function collectNonJapaneseUserTextIssues(
   menu: GeneratedMenu,
 ): readonly MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
   for (const source of collectMenuTextSources(menu)) {
-    if (isAcceptableJapaneseUserText(source.text)) continue;
-    issues.push({
-      code: "invalid_menu_structure",
-      path: source.sourcePath,
-      message: NON_JAPANESE_MESSAGE,
-    });
+    pushIfNonJapanese(issues, source.sourcePath, source.text);
+  }
+  // collectMenuTextSources は label sourceType に無い pantryUsage を列挙しない
+  for (const [index, usage] of menu.pantryUsage.entries()) {
+    pushIfNonJapanese(issues, `pantryUsage.${String(index)}.unusedReason`, usage.unusedReason);
+  }
+  return issues;
+}
+
+/**
+ * 一品再生成の AI wire 出力だけを言語検査する。
+ * 保持料理の name/description はサーバー側 DTO 由来のため対象外。
+ * timeline / adaptations 等の今回生成テキストは対象。
+ */
+export function collectNonJapaneseUserTextIssuesFromDishRegenAiOutput(
+  output: DishRegenerationAiOutput,
+): readonly MenuValidationIssue[] {
+  const issues: MenuValidationIssue[] = [];
+  const dish = output.replacementDish;
+  pushIfNonJapanese(issues, "replacementDish.name", dish.name);
+  pushIfNonJapanese(issues, "replacementDish.description", dish.description);
+  for (const [index, ingredient] of dish.ingredients.entries()) {
+    const base = `replacementDish.ingredients.${String(index)}`;
+    pushIfNonJapanese(issues, `${base}.name`, ingredient.name);
+    pushIfNonJapanese(issues, `${base}.quantityText`, ingredient.quantityText);
+    pushIfNonJapanese(issues, `${base}.unit`, ingredient.unit);
+  }
+  for (const [index, step] of dish.steps.entries()) {
+    pushIfNonJapanese(
+      issues,
+      `replacementDish.steps.${String(index)}.instruction`,
+      step.instruction,
+    );
+  }
+  for (const [index, row] of output.timeline.entries()) {
+    pushIfNonJapanese(issues, `timeline.${String(index)}.instruction`, row.instruction);
+  }
+  for (const [index, row] of output.adaptations.entries()) {
+    const base = `adaptations.${String(index)}`;
+    pushIfNonJapanese(issues, `${base}.portionText`, row.portionText);
+    pushIfNonJapanese(issues, `${base}.additionalCutting`, row.additionalCutting);
+    pushIfNonJapanese(issues, `${base}.additionalHeating`, row.additionalHeating);
+    pushIfNonJapanese(issues, `${base}.additionalSeasoning`, row.additionalSeasoning);
+    pushIfNonJapanese(issues, `${base}.servingCheck`, row.servingCheck);
+    for (const [actionIndex, action] of row.safetyActions.entries()) {
+      pushIfNonJapanese(
+        issues,
+        `${base}.safetyActions.${String(actionIndex)}.instruction`,
+        action.instruction,
+      );
+    }
+  }
+  for (const [index, row] of output.pantryUsage.entries()) {
+    pushIfNonJapanese(issues, `pantryUsage.${String(index)}.unusedReason`, row.unusedReason);
+    pushIfNonJapanese(issues, `pantryUsage.${String(index)}.pantryItemName`, row.pantryItemName);
+  }
+  for (const [index, row] of output.labelConfirmations.entries()) {
+    pushIfNonJapanese(issues, `labelConfirmations.${String(index)}.sourceText`, row.sourceText);
   }
   return issues;
 }
