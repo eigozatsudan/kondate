@@ -19,6 +19,7 @@ function isRecoveryComplete(result: RecoveryResult): result is RecoveryCompleteR
 
 /** プロファイル横断で claim ポーリング間隔を共有する（F-AUTH-001: 複数タブの自己 429 防止）。 */
 const LAST_CLAIM_POLL_KEY = "kondate.auth.claim-poll-last-at";
+const CLAIM_POLL_CURSOR_KEY = "kondate.auth.claim-poll-cursor";
 const CLAIM_POLL_LOCK_NAME = "kondate.auth.claim-poll";
 const MIN_CLAIM_POLL_GAP_MS = 5_000;
 
@@ -34,6 +35,21 @@ function writeLastPollAt(storage: Storage, at: number): void {
     storage.setItem(LAST_CLAIM_POLL_KEY, String(at));
   } catch {
     // quota 超過時は協調が弱まるだけなので握りつぶす
+  }
+}
+
+function selectNextFlowId(flowIds: string[], storage: Storage): string | undefined {
+  if (flowIds.length === 0) return undefined;
+  const cursor = storage.getItem(CLAIM_POLL_CURSOR_KEY);
+  const cursorIndex = cursor === null ? -1 : flowIds.indexOf(cursor);
+  return flowIds[(cursorIndex + 1) % flowIds.length];
+}
+
+function writeClaimPollCursor(storage: Storage, flowId: string): void {
+  try {
+    storage.setItem(CLAIM_POLL_CURSOR_KEY, flowId);
+  } catch {
+    // cursorを保存できない場合も、5秒slotあたり1件というrate制限を優先して継続する。
   }
 }
 
@@ -57,17 +73,18 @@ export function startAuthContinuationRecovery(input: {
     writeLastPollAt(input.storage, nowMs);
     const now = input.now?.() ?? new Date();
     const ttlMs = input.ttlMs ?? 300_000;
-    for (const flow of listUnexpiredAuthFlows(input.storage, now, ttlMs)) {
-      if (isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs)) continue;
-      if (isStopped()) return;
-      const result = await input.gateway.resumeFlow(flow.id);
-      if (isRecoveryComplete(result)) {
-        input.onComplete({
-          ...result,
-          returnTo: sanitizeReturnPath(result.returnTo),
-        });
-        break;
-      }
+    const claimableFlowIds = listUnexpiredAuthFlows(input.storage, now, ttlMs)
+      .filter((flow) => !isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs))
+      .map((flow) => flow.id);
+    const flowId = selectNextFlowId(claimableFlowIds, input.storage);
+    if (flowId === undefined || isStopped()) return;
+    writeClaimPollCursor(input.storage, flowId);
+    const result = await input.gateway.resumeFlow(flowId);
+    if (isRecoveryComplete(result)) {
+      input.onComplete({
+        ...result,
+        returnTo: sanitizeReturnPath(result.returnTo),
+      });
     }
   };
   const poll = async (): Promise<void> => {

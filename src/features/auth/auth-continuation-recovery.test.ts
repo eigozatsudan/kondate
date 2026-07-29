@@ -262,6 +262,65 @@ describe("auth continuation recovery", () => {
     expect(intervals).toEqual([5_000]);
     stop();
   });
+
+  it("claims at most one fairly selected flow per shared 5s slot", async () => {
+    const storage = new MapStorage();
+    const flowIds = [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+    ];
+    let nowMs = Date.now();
+    flowIds.forEach((flowId, index) => {
+      storage.setItem(
+        `kondate.auth.flow.${flowId}`,
+        JSON.stringify({
+          id: flowId,
+          secret: "A".repeat(43),
+          state: "B".repeat(43),
+          origin: "https://app.test",
+          returnTo: "/planner",
+          sessionExchange: "supabase",
+          startedAt: new Date(nowMs - 1_000 + index).toISOString(),
+        }),
+      );
+    });
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+    let intervalHandler: (() => void) | undefined;
+    const setIntervalMock = ((handler: TimerHandler) => {
+      intervalHandler = handler as () => void;
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    }) as unknown as typeof window.setInterval;
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: setIntervalMock,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    for (let slot = 1; slot < 12; slot += 1) {
+      nowMs += 5_000;
+      intervalHandler?.();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(12);
+    Array.from({ length: 12 }, (_, index) => index).forEach((index) => {
+      expect(gateway.resumeFlow).toHaveBeenNthCalledWith(
+        index + 1,
+        flowIds[index % flowIds.length],
+      );
+    });
+    stop();
+  });
 });
 
 class ImmediateLockManager {
