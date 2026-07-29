@@ -58,11 +58,11 @@ import {
   materializeDishRegenerationCandidate,
 } from "./regeneration-context.js";
 
-/** 1 回の OpenRouter 試行上限（ms） */
-export const ATTEMPT_TIMEOUT_MS = 20_000;
+/** 1 回の OpenRouter 試行上限（ms）。OPENROUTER_TIMEOUT_MS リリースロックと一致させる */
+export const ATTEMPT_TIMEOUT_MS = 60_000;
 /** 最終化用に確保する残り予算（ms） */
 export const FINALIZE_RESERVE_MS = 2_000;
-/** markSent 前に必要な最小残り予算 */
+/** markSent 前に必要な最小残り予算（試行上限 + finalize 予約） */
 export const REQUIRED_SEND_BUDGET_MS = ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS;
 
 /** 全 kind 共通の実行コンテキスト基底（Plan 4 が再生成経路で再利用） */
@@ -750,7 +750,7 @@ export async function runGeneration(
       Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
     );
   const canRepair = () => remainingMs() >= REQUIRED_SEND_BUDGET_MS;
-  // A-I9: provider 返却後も 50s 予算を守り、残 deadline が尽きたら succeed しない。
+  // A-I9: provider 返却後も総予算を守り、残 deadline が尽きたら succeed しない。
   const abortIfDeadlineExceeded = async (): Promise<GenerationStatusData | null> => {
     if (remainingMs() > 0) return null;
     return await fail("generation_timeout", null);

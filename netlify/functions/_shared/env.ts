@@ -78,8 +78,9 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
   GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(20),
   // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
-  OPENROUTER_TIMEOUT_MS: releaseLockedInteger(20_000, "20000"),
-  FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(50_000, "50000"),
+  // 60s/試行・150s/Function: 遅い有料モデル（luna 系等）が 20s 内に終わらないため延長
+  OPENROUTER_TIMEOUT_MS: releaseLockedInteger(60_000, "60000"),
+  FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(150_000, "150000"),
   AI_PROCESSING_STALE_SECONDS: releaseLockedInteger(180, "180"),
 });
 

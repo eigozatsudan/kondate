@@ -133,7 +133,7 @@ function makeNewMenuExecutionContext(
         ? "idea-fingerprint"
         : createCurrentSafetyFingerprint(generationContext.safety)),
     startedAtMonotonicMs: overrides.startedAtMonotonicMs ?? 0,
-    deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 50_000,
+    deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 150_000,
     regeneration: null,
   };
 }
@@ -236,9 +236,9 @@ function makeDeps(
     ),
     now: () => new Date("2026-07-11T00:00:00.000Z"),
     monotonicNow: () => 0,
-    openRouterTimeoutMs: 20_000,
+    openRouterTimeoutMs: 60_000,
     requestStartedAtMonotonicMs: 0,
-    functionTotalBudgetMs: 50_000,
+    functionTotalBudgetMs: 150_000,
     uuid: () => "86000000-0000-4000-8000-000000000001",
     logTerminalEvent: vi.fn(),
     ...overrides,
@@ -1079,11 +1079,11 @@ describe("runGeneration", () => {
     });
   });
 
-  describe("50-second deadline and pre-send budget", () => {
+  describe("150-second deadline and pre-send budget", () => {
     it("exports the release-locked budget constants", () => {
-      expect(ATTEMPT_TIMEOUT_MS).toBe(20_000);
+      expect(ATTEMPT_TIMEOUT_MS).toBe(60_000);
       expect(FINALIZE_RESERVE_MS).toBe(2_000);
-      expect(REQUIRED_SEND_BUDGET_MS).toBe(22_000);
+      expect(REQUIRED_SEND_BUDGET_MS).toBe(62_000);
     });
 
     it("fails before markSent when remaining is below REQUIRED_SEND_BUDGET_MS", async () => {
@@ -1096,10 +1096,10 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 50_000,
+          functionTotalBudgetMs: 150_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
-            nowMs = 50_000 - (REQUIRED_SEND_BUDGET_MS - 1);
+            nowMs = 150_000 - (REQUIRED_SEND_BUDGET_MS - 1);
             return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
@@ -1130,10 +1130,10 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 50_000,
+          functionTotalBudgetMs: 150_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
-            nowMs = 50_000 - REQUIRED_SEND_BUDGET_MS;
+            nowMs = 150_000 - REQUIRED_SEND_BUDGET_MS;
             return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
@@ -1165,7 +1165,7 @@ describe("runGeneration", () => {
 
     it("rechecks REQUIRED_SEND_BUDGET_MS before repair markSent", async () => {
       // 1 回目送信後に validate が失敗 → canRepair/reserveRepair は通るが、
-      // repair の markSent 直前で残り予算が 22s 未満になったら HTTP を送らない。
+      // repair の markSent 直前で残り予算が REQUIRED 未満になったら HTTP を送らない。
       const repository = makeRepository();
       vi.mocked(validateGeneratedMenu).mockReturnValueOnce({
         ok: false,
@@ -1174,7 +1174,7 @@ describe("runGeneration", () => {
       let nowMs = 0;
       repository.reserveRepair.mockImplementation(() => {
         // reserve 成功直後に共有予算が削られ、2 回目 markSent 前の再検査で落ちる。
-        nowMs = 50_000 - (REQUIRED_SEND_BUDGET_MS - 1);
+        nowMs = 150_000 - (REQUIRED_SEND_BUDGET_MS - 1);
         return Promise.resolve({ reserved: true, retry_at: null });
       });
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>().mockResolvedValue({
@@ -1187,7 +1187,7 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 50_000,
+          functionTotalBudgetMs: 150_000,
           monotonicNow: () => nowMs,
         }),
         command,
@@ -1203,11 +1203,11 @@ describe("runGeneration", () => {
     });
 
     it("fails with generation_timeout after provider when deadline is already exceeded", async () => {
-      // A-I9: pre-send は通るが provider 返却後に 50s を超え、succeed を呼ばない
+      // A-I9: pre-send は通るが provider 返却後に総予算を超え、succeed を呼ばない
       const repository = makeRepository();
       let nowMs = 0;
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
-        nowMs = 50_001;
+        nowMs = 150_001;
         return Promise.resolve({
           mode: "full_menu" as const,
           output: scenarios.success,
@@ -1219,7 +1219,7 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 50_000,
+          functionTotalBudgetMs: 150_000,
           monotonicNow: () => nowMs,
         }),
         command,
@@ -1240,7 +1240,7 @@ describe("runGeneration", () => {
       let postProviderClockReads = 0;
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
         // provider 返却後の clock 読み取りを数える
-        nowMs = 49_999;
+        nowMs = 149_999;
         postProviderClockReads = 0;
         return Promise.resolve({
           mode: "full_menu" as const,
@@ -1253,13 +1253,13 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 50_000,
+          functionTotalBudgetMs: 150_000,
           monotonicNow: () => {
-            if (nowMs < 49_999) return nowMs;
+            if (nowMs < 149_999) return nowMs;
             // 1 回目: outer abortIfDeadlineExceeded（残り 1ms → 通過）
             // 2 回目以降: succeedOrConflict 入口（超過 → fail）
             postProviderClockReads += 1;
-            return postProviderClockReads === 1 ? 49_999 : 50_001;
+            return postProviderClockReads === 1 ? 149_999 : 150_001;
           },
         }),
         command,
@@ -1281,7 +1281,7 @@ describe("runGeneration", () => {
       const repository = makeRepository();
       let nowMs = 0;
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
-        nowMs = 49_000;
+        nowMs = 149_000;
         return Promise.resolve({
           mode: "full_menu" as const,
           output: scenarios.success,
@@ -1300,7 +1300,7 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 50_000,
+          functionTotalBudgetMs: 150_000,
           monotonicNow: () => nowMs,
         }),
         command,
@@ -1653,15 +1653,15 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     email: "owner@example.com",
   };
   const timing = { requestStartedAtMonotonicMs: 1_234 };
-  const deadlineAtMonotonicMs = 51_234;
+  const deadlineAtMonotonicMs = 151_234;
   const loadRequestId = "87000000-0000-4000-8000-000000000001";
 
   beforeEach(() => {
     getServerEnvMock.mockReturnValue({
       openRouter: {
         models: [...models],
-        timeoutMs: 20_000,
-        functionTotalBudgetMs: 50_000,
+        timeoutMs: 60_000,
+        functionTotalBudgetMs: 150_000,
       },
     });
     createGenerationRepositoryMock.mockReturnValue({

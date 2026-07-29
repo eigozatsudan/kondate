@@ -426,12 +426,12 @@ AI応答はJSON SchemaとZodの両方で検証し、少なくとも次を確認�
 
 ### 11.4 同期Functionの実行時間予算
 
-生成・全体再生成・1品再生成は、Netlifyの同期Function 1回あたり総実行時間を50秒以内に収める。認証、予約、preflight、prompt変換、DB保存を含む総予算であり、クライアント側の待ち時間だけを指さない。
+生成・全体再生成・1品再生成は、Netlifyの同期Function 1回あたり総実行時間を150秒以内に収める。認証、予約、preflight、prompt変換、DB保存を含む総予算であり、クライアント側の待ち時間だけを指さない。
 
-- OpenRouterの各外部試行timeoutは約20秒とし、`AbortController` で打ち切る。
+- OpenRouterの各外部試行timeoutは約60秒とし、`AbortController` で打ち切る。
 - 最初の試行がtimeout、接続中断、結果不明になった場合はrepairを開始しない。
-- repairは、最初の試行が20秒以内に完全応答し、決定論的に不正と判定され、2回目の約20秒と保存・後処理用の余裕を含めても総予算50秒以内と見積もれる場合だけ開始する。
-- Functionは単調時計で経過時間を測り、各 `markSent` の前に20秒のprovider予算と2秒のfinalization reserveが残ることを確認する。不足時はHTTPを一度も送らず、当該attemptと全未送信予約を返してterminal timeoutへ確定する。provider timeoutは総deadlineの2秒前を越えず、finalizerも残deadlineでabortされ、50秒後に成功保存を続けない。送信済みattemptだけは返さない。
+- repairは、最初の試行が60秒以内に完全応答し、決定論的に不正と判定され、2回目の約60秒と保存・後処理用の余裕を含めても総予算150秒以内と見積もれる場合だけ開始する。
+- Functionは単調時計で経過時間を測り、各 `markSent` の前に60秒のprovider予算と2秒のfinalization reserveが残ることを確認する。不足時はHTTPを一度も送らず、当該attemptと全未送信予約を返してterminal timeoutへ確定する。provider timeoutは総deadlineの2秒前を越えず、finalizerも残deadlineでabortされ、150秒後に成功保存を続けない。送信済みattemptだけは返さない。
 - timeout後にバックグラウンドで保存やrepairを続けない。状態APIが返すterminal状態とDBのledgerを正とする。
 
 ## 12. データモデル
@@ -559,7 +559,7 @@ APIは機械判定用エラーコードと利用者向け日本語メッセー�
 - 献立変更と買い物リスト差分の算出。list-level警告、警告だけの変更、protected rowと新版必要量の差分を含むこと
 - 緊急献立の現在安全条件による決定論的絞り込み
 - allowlist prompt DTOの組み立てと匿名化。fixtureのuser/member/pantry/menu/dish/step UUIDが直列化本文へ1つも含まれないこと
-- 50秒総予算、各試行約20秒、timeout後repair禁止、残予算不足時の送信前中止
+- 150秒総予算、各試行約60秒、timeout後repair禁止、残予算不足時の送信前中止
 - エラーコードから日本語表示への変換
 
 ### 15.2 DB・API結合テスト
@@ -653,7 +653,7 @@ MVP完成は、次をすべて満たした状態とする。
 7. スキーマ上の全text leafを検査して直接アレルゲンを含む結果を保存しない。加工品確認はserver canonical `pending` とし、本人RPCだけが現在版をconfirmedにできる。発生源、アレルゲン日本語名、対象メンバーを材料・手順・取り分け・結果・買い物リストへ人間向けに表示する。AIの `safetyTags` を証拠にせず、幼児の全ナッツ・丸い食品、高齢者の餅等をstructured safety actionと本文整合で検証する。
 8. 対象外確認が未確認または該当ありの選択メンバーを含めず、離乳食、飲み込み・嚥下、治療食の依頼を通常献立として生成しない。
 9. 冷蔵庫食材を「必ず使う」「使えれば使う」で選び、数量、使用先、不足、保存後も再現できる未使用理由を扱える。期限経過時の状態確認は同じidempotency keyとJST当日だけ有効で、日付変更、下書き復元、新規・再生成へ持ち越されない。調理後は「使い切った」「まだある」と任意残量更新を明示操作できる。
-10. 献立全体の指定時間以内で、総調理時間と複数料理の統合調理順を確認できる。同期Functionは総予算50秒以内、外部試行は各約20秒で、timeout・結果不明後にrepairしない。
+10. 献立全体の指定時間以内で、総調理時間と複数料理の統合調理順を確認できる。同期Functionは総予算150秒以内、外部試行は各約60秒で、timeout・結果不明後にrepairしない。
 11. 材料、人数分の分量、手順、対象・量・分岐工程を持つ家族向け取り分けを料理タブで確認できる。ラベル確認と冷蔵庫使用先は内部refでなく家族・料理・材料名で理解できる。
 12. idempotency key保存直後、生成中、保存後応答前のいずれで画面終了・通信切断が起きても、`not_started` を含む状態と完成結果を同じkeyで回収でき、成功枠・外部attempt・OpenRouter呼び出しを二重消費しない。
 13. 変更理由を指定して献立全体または1品を再生成でき、理由が保存・匿名化AI入力・履歴へ反映され、同一結果は成功回数に含まれない。残す料理も現在安全条件で再検査する。
@@ -677,7 +677,7 @@ MVP完成は、次をすべて満たした状態とする。
 
 利用者外部call attempt日次上限またはアプリ全体上限に達した場合は受付終了を表示し、翌日の日本時間に自動再開する。短期rate limitは具体的な再開時刻を表示する。OpenRouter内部のモデル・プロバイダーフォールバックが複数の試行として扱われる場合、アプリが数える1回のHTTP呼び出しより先にOpenRouter側上限へ達する可能性がある。その場合も許可リスト外へ自動切替せず、モデル混雑・停止として案内する。
 
-生成ledgerとshopping mutation replay ledgerの30日削除、失効した認証continuationの削除、期限切れ予約の解放は、専用maintenance loginによるカテゴリごとのbounded定期ジョブで実行し、件数と終了コードだけを監視する。自由入力、認可code、token、verifierを運用ログへ出さない。同期Functionのp95と最大実行時間、外部試行timeout、timeout後repairが0件であることを監視し、50秒予算に近づいた場合はモデル追加ではなく処理を送信前に止める。
+生成ledgerとshopping mutation replay ledgerの30日削除、失効した認証continuationの削除、期限切れ予約の解放は、専用maintenance loginによるカテゴリごとのbounded定期ジョブで実行し、件数と終了コードだけを監視する。自由入力、認可code、token、verifierを運用ログへ出さない。同期Functionのp95と最大実行時間、外部試行timeout、timeout後repairが0件であることを監視し、150秒予算に近づいた場合はモデル追加ではなく処理を送信前に止める。
 
 公開規模や課金が想定を継続的に超える場合は、クォータ・候補モデル・キー limit の運営方針を改めて決定してから別スコープで設計する。free への自動フォールバックや許可リストの自動拡大は行わない。
 

@@ -255,8 +255,8 @@ export function validateProductionEnv(env) {
   requirePositiveIntegerString(env, "USER_SHORT_WINDOW_SECONDS", 600);
   requirePositiveIntegerString(env, "AUTH_CONTINUATION_TTL_SECONDS", 300);
   requirePositiveIntegerString(env, "VITE_AUTH_CONTINUATION_TTL_MS", 300_000);
-  requirePositiveIntegerString(env, "OPENROUTER_TIMEOUT_MS", 20_000);
-  requirePositiveIntegerString(env, "FUNCTION_TOTAL_BUDGET_MS", 50_000);
+  requirePositiveIntegerString(env, "OPENROUTER_TIMEOUT_MS", 60_000);
+  requirePositiveIntegerString(env, "FUNCTION_TOTAL_BUDGET_MS", 150_000);
   requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", 180);
   requirePositiveIntegerString(env, "VITE_MAGIC_LINK_RESEND_SECONDS");
   const globalLimit = requirePositiveIntegerString(env, "GLOBAL_DAILY_AI_LIMIT");

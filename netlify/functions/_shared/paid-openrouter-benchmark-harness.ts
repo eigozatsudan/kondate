@@ -33,7 +33,8 @@ const benchmarkMenuId = "91000000-0000-4000-8000-000000000004";
 const benchmarkUserId = "91000000-0000-4000-8000-000000000005";
 const benchmarkStartedAt = "2026-07-27T00:00:00.000Z";
 const benchmarkCompletedAt = "2026-07-27T00:00:01.000Z";
-const benchmarkTotalBudgetMs = 50_000;
+/** FUNCTION_TOTAL_BUDGET_MS リリースロックと一致 */
+const benchmarkTotalBudgetMs = 150_000;
 
 export type PaidBenchmarkUnitResult = Readonly<{
   ok: boolean;
@@ -476,7 +477,7 @@ export async function runPaidBenchmarkUnit(input: {
   };
 
   const status = await runGeneration(deps, benchmarkCommand);
-  // finalize/status読取後の値を一度だけ確定し、50秒境界到達を成功へ戻さない。
+  // finalize/status読取後の値を一度だけ確定し、総予算境界到達を成功へ戻さない。
   const totalElapsedMs = Math.max(0, Math.trunc(monotonicNow() - requestStartedAtMonotonicMs));
   const totalDeadlineExceeded = totalElapsedMs >= benchmarkTotalBudgetMs;
   const ok = status.status === "succeeded" && !totalDeadlineExceeded;

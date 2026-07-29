@@ -19,7 +19,7 @@
 - Use the approved visual direction: warm off-white background, terracotta primary action, subdued green pantry accents, the Plan 7 five-step guided planner wizard (meal → ingredients → cuisine → audience → review) with optional household setup, and tabbed dish results with an overall timeline first. Plan 7 supersedes the earlier single-screen / three-step planner home wording for product UI.
 - OpenRouter is called only from Netlify Functions. **Plan 8 (`2026-07-26-paid-openrouter-models`) 以降、モデル・クォータの正本は当該設計／本 Plan。歴史的 free-only 記述は上書き済みとする。** `OPENROUTER_MODELS` is a paid allowlist of explicit model IDs (no `:free` on real-API paths; `openrouter/auto` and equivalent routers rejected; mock `mock/*:free` only when `OPENROUTER_BASE_URL` is the exact local mock URL). Structured outputs require both `structured_outputs` and `response_format`; prompt+completion pricing sum ≤ $0.50/1M.
 - Release-locked user limits are exactly 3 successful generations per Japan calendar day, 6 actual OpenRouter sends per user/Japan day, and 4 sends per fixed 600-second window; application-wide actual sends default to 20 per Japan day. Preflight rejects any 3/6/4/600 drift. Sent attempts are never refunded.
-- Every OpenRouter attempt is bounded to 20 seconds and the complete synchronous Function to 50 seconds. Before each `markSent`, at least the full 20-second provider budget plus a 2-second finalization reserve must remain; otherwise no HTTP is sent and every unsent reservation is released. Timeout, connection loss, or an unknown first result never starts repair; repair is allowed once only when the remaining monotonic deadline leaves room for the second attempt and finalization.
+- Every OpenRouter attempt is bounded to 60 seconds and the complete synchronous Function to 150 seconds. Before each `markSent`, at least the full 60-second provider budget plus a 2-second finalization reserve must remain; otherwise no HTTP is sent and every unsent reservation is released. Timeout, connection loss, or an unknown first result never starts repair; repair is allowed once only when the remaining monotonic deadline leaves room for the second attempt and finalization.
 - Terminal failed/constraint/timeout generation ledger metadata and private shopping-mutation replay rows are retained for 30 days; auth continuations expire after 300 seconds. All are cascade-deleted immediately with the Auth user and are cleaned in bounded categories through the dedicated maintenance executor without retaining prompts, raw output, or unbounded free text.
 - Never log names, emails, allergies, free-form conditions, prompts, or raw AI responses. Log only request ID, error code, duration, and actual model ID.
 - Never store raw AI output. Persist only Zod-validated structures, validation versions, and unresolved label confirmations.
@@ -317,8 +317,8 @@ Server configuration uses these exact names and release defaults:
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | Release-locked `4` actual external sends |
 | `USER_SHORT_WINDOW_SECONDS` | Release-locked `600` |
 | `GLOBAL_DAILY_AI_LIMIT` | Default `20` actual external sends per JST day; operator may lower this positive-integer safety valve |
-| `OPENROUTER_TIMEOUT_MS` | `20000` per attempt |
-| `FUNCTION_TOTAL_BUDGET_MS` | `50000` total synchronous budget |
+| `OPENROUTER_TIMEOUT_MS` | `60000` per attempt |
+| `FUNCTION_TOTAL_BUDGET_MS` | `150000` total synchronous budget |
 | Terminal generation / shopping-mutation retention | Release-locked **30 days**, enforced in maintenance SQL (`interval '30 days'`), **not** an environment variable |
 | `AI_PROCESSING_STALE_SECONDS` | Release-locked `180` |
 | `SUPABASE_MAINTENANCE_DB_URL` | Functions-only TLS URL: direct `kondate_maintenance_login@db.<ref>:5432` or IPv4 Supavisor Session `kondate_maintenance_login.<ref>@<region>.pooler:5432`; port 6543 is forbidden and the connected `session_user` must be exact `kondate_maintenance_login`; never a build/browser variable |
@@ -367,8 +367,8 @@ Plan 6 **account_deletion** (logical "050") removes competing composite/non-casc
 
 ## Attempt, Idempotency, and Retention Invariants
 
-- New-key reservation atomically verifies owner-scoped draft/source/dish references and `draftRevision` before creating quota or request rows. Existing same-key/HMAC replay is read first. The per-user attempt and global counters become irrevocably sent only immediately before an external request and only when a full 20-second provider window plus 2-second finalization reserve remains. Preflight/deadline failures release every unsent reservation; sent attempts remain counted on success, provider failure, invalid output, disconnect, and timeout.
-- One repair may reserve a second user/global attempt only after a complete first response is deterministically invalid and the 50-second deadline can still accommodate a 20-second attempt plus finalization. Timeout or unknown outcome never repairs.
+- New-key reservation atomically verifies owner-scoped draft/source/dish references and `draftRevision` before creating quota or request rows. Existing same-key/HMAC replay is read first. The per-user attempt and global counters become irrevocably sent only immediately before an external request and only when a full 60-second provider window plus 2-second finalization reserve remains. Preflight/deadline failures release every unsent reservation; sent attempts remain counted on success, provider failure, invalid output, disconnect, and timeout.
+- One repair may reserve a second user/global attempt only after a complete first response is deterministically invalid and the 150-second deadline can still accommodate a 60-second attempt plus finalization. Timeout or unknown outcome never repairs.
 - Idempotency replay is read before stale expected-version checks. The same key plus canonical request hash returns the saved terminal response; the same key with a different hash fails closed.
 - Shopping-list creation and reconciliation read replay before menu, pantry, household-safety, active-list, or version state. A committed response lost in transport is automatically read back with the byte-identical persisted command; it never requires a second user click.
 - Every shopping item/list warning derived from a menu is canonical `pending` even if the menu source was previously confirmed. Creation/reconciliation warning rows are immutable human source/allergen/member provenance; successful active-list revalidation atomically replaces only a separate latest current projection. Deleted-source read-only UI uses provenance, while action gates use the current projection. Removed or “at home” source rows participate in reconciliation: a known increase becomes a positive delta; an unquantified increase requires explicit pantry review.
@@ -393,7 +393,7 @@ Plan 6 creates `docs/testing/acceptance-matrix.md` with exactly 22 rows matching
 | 7 | Plans 2, 3, 5 | All-text-leaf safety, canonical current pending confirmation, immutable shopping provenance/current-projection split, human snapshot UI |
 | 8 | Plans 2, 3 | Unsupported/unconfirmed diet and medical-scope preflight rejection |
 | 9 | Plans 2, 3 | Pantry priority, quantity/shortage, same-key same-JST expiry, post-cook actions |
-| 10 | Plan 3 | Timeline limit and fake-clock 20-second-attempt/2-second-finalize/50-second-total deadline, including no-send budget exhaustion |
+| 10 | Plan 3 | Timeline limit and fake-clock 60-second-attempt/2-second-finalize/150-second-total deadline, including no-send budget exhaustion |
 | 11 | Plan 3 | Dish tabs, portions/branches, human labels, keyboard navigation |
 | 12 | Plan 3 | Before-send/processing/response-loss same-key recovery, 30-minute/user-bound pending command, and draft-revision binding without double counts |
 | 13 | Plan 4 | Canonical quota path, full retained/local-ref replacement contract, surviving-member filtering, deterministic composition, reason persistence, and duplicate non-consumption |
