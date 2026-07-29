@@ -933,33 +933,42 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
   });
 
-  it("review に成功残数と短時間枠の再開時刻を生成ボタン近くへ出す", () => {
+  it("review に成功残（受け付け口調）のみ出し shortWindow では待ち文と CTA 無効", () => {
+    // short/global のみでは常時 success 行を残す（設計 D-I1 / P-I2）
     render(
       <Harness
         initialStep="review"
         initialDraft={reviewDraft}
         usageRemaining={3}
+        attemptsRemaining={5}
         shortWindowRetryAt="2026-07-25T05:10:00.000Z"
       />,
     );
-    expect(screen.getByText("無料版は本日あと3回作成できます")).toBeVisible();
+    expect(screen.getByText("無料版は本日あと3回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.queryByText(/AIへの問い合わせ/u)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
     const limit = screen.getByRole("alert");
     expect(limit).toHaveTextContent("いまは新しい献立を作れません");
     expect(limit).toHaveTextContent(/少し待つ必要があります/u);
     expect(limit).toHaveClass("usage-limit-banner");
   });
 
-  it("C-I12: 成功残 0 のとき主 CTA を止め上限メッセージを出す", () => {
+  it("C-I12: 成功残 0 のとき主 CTA を止め作成上限メッセージを出す", () => {
     render(<Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={0} />);
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
     const limit = screen.getByRole("alert");
     expect(limit).toHaveTextContent("いまは新しい献立を作れません");
-    expect(limit).toHaveTextContent("本日の作成回数の上限に達しています");
+    expect(limit).toHaveTextContent(
+      "無料版は本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+    );
+    expect(limit).not.toHaveTextContent("作成回数の上限");
+    expect(limit).not.toHaveTextContent("0時");
     expect(limit).toHaveClass("usage-limit-banner");
+    expect(screen.queryByText(/本日あと.*受け付けます/u)).not.toBeInTheDocument();
   });
 
-  it("成功残と attempts 残が同時に 0 のとき両方の理由を 1 つの警告にまとめる", () => {
-    const { container } = render(
+  it("success0 and attempts0 together show only the creation-limit body", () => {
+    render(
       <Harness
         initialStep="review"
         initialDraft={reviewDraft}
@@ -968,18 +977,16 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-    const limits = container.querySelectorAll('.usage-limit-banner[role="alert"]');
-    expect(limits).toHaveLength(1);
-    expect(limits[0]).toHaveTextContent("いまは新しい献立を作れません");
-    expect(limits[0]).toHaveTextContent(
-      "本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。",
+    const limit = screen.getByRole("alert");
+    expect(limit).toHaveTextContent("いまは新しい献立を作れません");
+    expect(limit).toHaveTextContent(
+      "無料版は本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
     );
-    expect(limits[0]).toHaveTextContent(
-      "AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。",
-    );
+    expect(limit).not.toHaveTextContent("受け付けられません");
+    expect(limit).not.toHaveTextContent("問い合わせ");
   });
 
-  it("C-I12 residual: attempts 残 0 のとき主 CTA を止め平易メッセージを出す", () => {
+  it("C-I12 residual: attempts 残 0 のとき主 CTA を止め受付停止メッセージを出す", () => {
     render(
       <Harness
         initialStep="review"
@@ -989,12 +996,18 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(screen.queryByText(/本日あと.*受け付けます/u)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "無料版は今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
+      ),
+    ).toBeVisible();
     const limit = screen.getByRole("alert");
     expect(limit).toHaveTextContent("いまは新しい献立を作れません");
-    expect(limit).toHaveTextContent("AIへの問い合わせ回数が上限です");
+    expect(limit).not.toHaveTextContent("AIへの問い合わせ");
   });
 
-  it("C-I12 residual: global 不可のとき主 CTA を止め平易メッセージを出す", () => {
+  it("C-I12 residual: global 不可のとき主 CTA を止め混雑メッセージを出す（無料版接頭なし）", () => {
     render(
       <Harness
         initialStep="review"
@@ -1004,10 +1017,18 @@ describe("PlannerWizard review step", () => {
         globalAvailable={false}
       />,
     );
+    expect(screen.getByText("無料版は本日あと3回まで献立の作成を受け付けます")).toBeVisible();
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(
+      screen.getByText("ただいま混雑しています。明日0:00（日本時間）以降にお試しください。"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(
+        "無料版はただいま混雑しています。明日0:00（日本時間）以降にお試しください。",
+      ),
+    ).not.toBeInTheDocument();
     const limit = screen.getByRole("alert");
     expect(limit).toHaveTextContent("いまは新しい献立を作れません");
-    expect(limit).toHaveTextContent("ただいま混雑しています");
   });
 
   it("C-I12 residual: null の attempts/global では誤って主 CTA を止めない", () => {
@@ -1020,12 +1041,16 @@ describe("PlannerWizard review step", () => {
         globalAvailable={null}
       />,
     );
+    // attemptsRemaining === null は未取得。常時 success 行は出してよい（誤停止しない）
+    expect(screen.getByText("無料版は本日あと3回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.queryByText(/AIへの問い合わせ/u)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeEnabled();
   });
 
   it("I2: shortWindow 残 0（retryAt あり）では成功・attempt 残があっても主 CTA を止める", () => {
     // shortWindowRetryAt は planner-route が remaining===0 のときだけ渡す。
     // 端末時計での再有効化はせず、usage 再取得で retryAt が消えたときだけ有効に戻る。
+    // short のみでは常時受け付け行が残る（設計 P-I2）
     render(
       <Harness
         initialStep="review"
@@ -1036,6 +1061,7 @@ describe("PlannerWizard review step", () => {
         shortWindowRetryAt="2026-07-25T05:10:00.000Z"
       />,
     );
+    expect(screen.getByText("無料版は本日あと3回まで献立の作成を受け付けます")).toBeVisible();
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
     const limit = screen.getByRole("alert");
     expect(limit).toHaveTextContent("いまは新しい献立を作れません");

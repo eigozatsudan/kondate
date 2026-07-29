@@ -178,6 +178,10 @@ export function ReviewStep({
     attemptsRemaining === 0 ||
     globalAvailable === false ||
     shortWindowRetryAt !== null;
+  // 設計 2026-07-29: dual 常時残数を supersede。常時は success 残の1行のみ。
+  // attemptsRemaining === null（未取得）では行を出してよい。0 のときだけ隠す。
+  const showSuccessRemaining =
+    usageRemaining !== null && usageRemaining > 0 && attemptsRemaining !== 0;
   const generateDisabled =
     disabled || hasUnavailablePantrySelections || medicalBlocked || hasActiveUsageBlocker;
   const closePrivacyGate = (): void => {
@@ -462,18 +466,15 @@ export function ReviewStep({
       <p role="status">
         いまは{seasonContext.labelJa}（{String(seasonContext.month)}月）の食材を優先して提案します
       </p>
-      {/* 設計 §10.3: 生成ボタン近くにサーバー正の本日残数・attempt・global・短時間枠を平易表示。
-          同時に複数の制限へ達しても理由を隠さず、1つの警告へまとめて重複表示を避ける。
-          個人枠の制限説明には「無料版は」を付ける（global 混雑文は付けない）。 */}
-      {usageRemaining !== null && usageRemaining !== 0 ? (
-        <p role="status">
-          {formatFreeTierQuotaCopy(`本日あと${String(usageRemaining)}回作成できます`)}
-        </p>
-      ) : null}
-      {attemptsRemaining !== null && attemptsRemaining !== 0 ? (
+      {/* 設計 2026-07-29: dual 常時残数を supersede。常時は success 残の受け付け口調1行のみ。
+          attempt 常時行は置かない。blocker 時は行動文（明日0:00 / 待ち）だけ。
+          success0∧attempts0 は作成上限文のみ（attempts0 文は出さない）。
+          個人枠には formatFreeTierQuotaCopy、global 混雑文には付けない。
+          hasActiveUsageBlocker 判定ロジックは維持。 */}
+      {showSuccessRemaining ? (
         <p role="status">
           {formatFreeTierQuotaCopy(
-            `AIへの問い合わせは本日あと${String(attemptsRemaining)}回まで受け付けます`,
+            `本日あと${String(usageRemaining)}回まで献立の作成を受け付けます`,
           )}
         </p>
       ) : null}
@@ -483,20 +484,20 @@ export function ReviewStep({
           {usageRemaining === 0 && (
             <p className="usage-limit-banner-body">
               {formatFreeTierQuotaCopy(
-                "本日の作成回数の上限に達しています。明日0時（日本時間）以降にお試しください。",
+                "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
               )}
             </p>
           )}
-          {attemptsRemaining === 0 && (
+          {attemptsRemaining === 0 && usageRemaining !== 0 && (
             <p className="usage-limit-banner-body">
               {formatFreeTierQuotaCopy(
-                "AIへの問い合わせ回数が上限です。明日0時（日本時間）以降にお試しください。",
+                "今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
               )}
             </p>
           )}
           {globalAvailable === false && (
             <p className="usage-limit-banner-body">
-              ただいま混雑しています。しばらくしてからお試しください。
+              ただいま混雑しています。明日0:00（日本時間）以降にお試しください。
             </p>
           )}
           {shortWindowRetryAt !== null && (
