@@ -12,26 +12,29 @@ const hmacKey = Buffer.alloc(32, 7);
 
 const identityHmacKey = Buffer.alloc(32, 9);
 
-const { createUserScopedSupabaseMock, getServerEnvMock, rpcMock, userClient } = vi.hoisted(() => {
-  const client = { from: vi.fn() };
-  return {
-    createUserScopedSupabaseMock: vi.fn(() => client),
-    getServerEnvMock: vi.fn(() => ({
-      openRouter: {
-        userDailyLimit: 3,
-        globalDailyLimit: 20,
-        staleAfterSeconds: 180,
-      },
-      generationIntegrity: {
-        requestHmacKey: Buffer.alloc(32, 7),
-      },
-      quotaIdentityHmacKey: Buffer.alloc(32, 9),
-      aiQuotaDisabled: false,
-    })),
-    rpcMock: vi.fn<RpcMock>(),
-    userClient: client,
-  };
-});
+const { createUserScopedSupabaseMock, getServerEnvMock, loadEntitlementMock, rpcMock, userClient } =
+  vi.hoisted(() => {
+    const client = { from: vi.fn() };
+    return {
+      createUserScopedSupabaseMock: vi.fn(() => client),
+      getServerEnvMock: vi.fn(() => ({
+        openRouter: {
+          userDailyLimit: 3,
+          globalDailyLimit: 20,
+          staleAfterSeconds: 180,
+        },
+        generationIntegrity: {
+          requestHmacKey: Buffer.alloc(32, 7),
+        },
+        quotaIdentityHmacKey: Buffer.alloc(32, 9),
+        aiQuotaDisabled: false,
+        billingEnabled: false,
+      })),
+      loadEntitlementMock: vi.fn(),
+      rpcMock: vi.fn<RpcMock>(),
+      userClient: client,
+    };
+  });
 
 vi.mock("./env.js", () => ({ getServerEnv: getServerEnvMock }));
 vi.mock("./supabase-admin.js", () => ({
@@ -40,13 +43,45 @@ vi.mock("./supabase-admin.js", () => ({
 vi.mock("./supabase-user.js", () => ({
   createUserScopedSupabase: createUserScopedSupabaseMock,
 }));
+vi.mock("./billing-entitlement.js", async () => {
+  const actual = await vi.importActual<typeof import("./billing-entitlement.js")>(
+    "./billing-entitlement.js",
+  );
+  return {
+    ...actual,
+    loadEntitlement: loadEntitlementMock,
+  };
+});
 
+import { BillingEntitlementUnavailableError, type Entitlement } from "./billing-entitlement.js";
 import {
   generationRequestHmac,
   generationRequestHmacVersion,
 } from "./generation-command-integrity.js";
 import { createGenerationRepository, type GenerationRepository } from "./generation-repository.js";
 import { computeQuotaIdentityKey } from "./quota-identity.js";
+
+const freeEntitlement: Entitlement = {
+  plan: "free",
+  status: "none",
+  plusEntitled: false,
+  pastDueGrace: false,
+  currentPeriodEnd: null,
+  cancelAtPeriodEnd: false,
+  trialEnd: null,
+  dbPlusEntitled: false,
+};
+
+const plusEntitlement: Entitlement = {
+  plan: "plus",
+  status: "active",
+  plusEntitled: true,
+  pastDueGrace: false,
+  currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+  cancelAtPeriodEnd: false,
+  trialEnd: null,
+  dbPlusEntitled: true,
+};
 
 const user = {
   userId: "10000000-0000-4000-8000-000000000001",
@@ -127,6 +162,8 @@ const reserveArgs = {
   },
   p_identity_key: expectedIdentityKey,
   p_user_limit: 3,
+  p_attempt_limit: 6,
+  p_short_window_limit: 4,
   p_global_limit: 20,
   p_quota_disabled: false,
   p_stale_after_seconds: 180,
@@ -204,6 +241,8 @@ const statusArgs = {
   p_user_id: user.userId,
   p_idempotency_key: idempotencyKey,
   p_user_limit: 3,
+  p_attempt_limit: 6,
+  p_short_window_limit: 4,
   p_identity_key: expectedIdentityKey,
 };
 
@@ -295,6 +334,8 @@ const successCases: readonly SuccessCase[] = [
 beforeEach(() => {
   vi.clearAllMocks();
   rpcMock.mockReset();
+  loadEntitlementMock.mockReset();
+  loadEntitlementMock.mockResolvedValue(freeEntitlement);
   getServerEnvMock.mockReturnValue({
     openRouter: {
       userDailyLimit: 3,
@@ -306,6 +347,7 @@ beforeEach(() => {
     },
     quotaIdentityHmacKey: identityHmacKey,
     aiQuotaDisabled: false,
+    billingEnabled: false,
   });
 });
 
@@ -586,6 +628,8 @@ describe("createGenerationRepository regeneration reserve", () => {
       },
       p_identity_key: expectedIdentityKey,
       p_user_limit: 3,
+      p_attempt_limit: 6,
+      p_short_window_limit: 4,
       p_global_limit: 20,
       p_quota_disabled: false,
       p_stale_after_seconds: 180,
@@ -610,9 +654,83 @@ describe("createGenerationRepository regeneration reserve", () => {
       },
       p_identity_key: expectedIdentityKey,
       p_user_limit: 3,
+      p_attempt_limit: 6,
+      p_short_window_limit: 4,
       p_global_limit: 20,
       p_quota_disabled: false,
       p_stale_after_seconds: 180,
     });
+  });
+
+  it("returns billing_entitlement_unavailable and does not reserve when loadEntitlement throws", async () => {
+    loadEntitlementMock.mockRejectedValue(new BillingEntitlementUnavailableError());
+    const repository = createGenerationRepository(user);
+    await expect(repository.reserveNew(newMenuCommand, householdIntegrity)).rejects.toMatchObject({
+      status: 503,
+      code: "billing_entitlement_unavailable",
+    });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("status() passes plan success limit not env Free-only when plus entitled", async () => {
+    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        userDailyLimit: 3,
+        globalDailyLimit: 20,
+        staleAfterSeconds: 180,
+      },
+      generationIntegrity: {
+        requestHmacKey: hmacKey,
+      },
+      quotaIdentityHmacKey: identityHmacKey,
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    rpcMock.mockResolvedValueOnce({ data: publicRecord, error: null });
+    const repository = createGenerationRepository(user);
+    await repository.status(idempotencyKey);
+    expect(rpcMock).toHaveBeenCalledWith("get_ai_generation_status", {
+      p_user_id: user.userId,
+      p_idempotency_key: idempotencyKey,
+      p_user_limit: 10,
+      p_attempt_limit: 20,
+      p_short_window_limit: 8,
+      p_identity_key: expectedIdentityKey,
+    });
+  });
+
+  it("parses reserve response with user_daily_limit 10", async () => {
+    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        userDailyLimit: 3,
+        globalDailyLimit: 20,
+        staleAfterSeconds: 180,
+      },
+      generationIntegrity: {
+        requestHmacKey: hmacKey,
+      },
+      quotaIdentityHmacKey: identityHmacKey,
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    rpcMock.mockResolvedValueOnce({
+      data: { ...publicRecord, user_daily_limit: 10, remaining: 9 },
+      error: null,
+    });
+    const repository = createGenerationRepository(user);
+    await expect(repository.reserveNew(newMenuCommand, householdIntegrity)).resolves.toMatchObject({
+      user_daily_limit: 10,
+      remaining: 9,
+    });
+    expect(rpcMock).toHaveBeenCalledWith(
+      "reserve_ai_generation",
+      expect.objectContaining({
+        p_user_limit: 10,
+        p_attempt_limit: 20,
+        p_short_window_limit: 8,
+      }),
+    );
   });
 });

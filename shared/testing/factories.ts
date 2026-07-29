@@ -13,8 +13,10 @@ import { ideaSafetySnapshot } from "../safety/idea-fingerprint.js";
 
 export { hardBeanAndReviewedNutRule } from "../safety/current-food-safety-rules.v1.js";
 
-/** 利用状況の共有 fixture（usage-today 各層で再定義しない） */
+/** 利用状況の共有 fixture（usage-today 各層で再定義しない）。Task3: Free 3/6/4 + plan */
 export const availableUsageTodayFixture = {
+  plan: "free" as const,
+  plusEntitled: false,
   success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
   attempts: { sent: 2, limit: releaseQuota.userDailyExternalCallLimit, remaining: 4 },
   shortWindow: {
@@ -28,6 +30,8 @@ export const availableUsageTodayFixture = {
 } as const;
 
 export const shortWindowBlockedUsageTodayFixture = {
+  plan: "free" as const,
+  plusEntitled: false,
   success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
   attempts: { sent: 4, limit: releaseQuota.userDailyExternalCallLimit, remaining: 2 },
   shortWindow: {

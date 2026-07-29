@@ -59,7 +59,8 @@ describe("parseOpenRouterModels", () => {
       userDailyAttemptLimit: releaseQuota.userDailyExternalCallLimit,
       userShortWindowLimit: releaseQuota.userShortWindowExternalCallLimit,
       userShortWindowSeconds: releaseQuota.userShortWindowSeconds,
-      globalDailyLimit: 20,
+      // 未設定時の schema default は製品 max 200（compose ローカル既定 20 は env で明示）
+      globalDailyLimit: 200,
       timeoutMs: 60_000,
       functionTotalBudgetMs: 150_000,
       staleAfterSeconds: 180,
@@ -186,14 +187,25 @@ describe("parseOpenRouterModels", () => {
     ).toThrow("server_configuration_invalid");
   });
 
-  it.each(["0", "21"])("rejects out-of-range global quota %s", (value) => {
+  it.each(["0", "201"])("rejects out-of-range global quota %s", (value) => {
     expect(() => parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
+  });
+
+  it("accepts GLOBAL_DAILY_AI_LIMIT 21 within max 200", () => {
+    expect(
+      parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: "21" }).openRouter
+        .globalDailyLimit,
+    ).toBe(21);
   });
 
   it("allows the operator to lower the global quota", () => {
     expect(
       parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: "1" }).openRouter.globalDailyLimit,
     ).toBe(1);
+  });
+
+  it("defaults billingEnabled to false in Task3", () => {
+    expect(parseServerEnv(validServerEnv).billingEnabled).toBe(false);
   });
 
   it.each([

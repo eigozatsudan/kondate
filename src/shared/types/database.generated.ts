@@ -27,6 +27,9 @@ export type Database = {
           identity_key: string
           personal_quota_disabled: boolean
           processing_expires_at: string | null
+          quota_attempt_limit: number
+          quota_short_limit: number
+          quota_success_limit: number
           repair_attempted: boolean
           replace_dish_id: string | null
           request_hmac: string
@@ -61,6 +64,9 @@ export type Database = {
           identity_key: string
           personal_quota_disabled?: boolean
           processing_expires_at?: string | null
+          quota_attempt_limit?: number
+          quota_short_limit?: number
+          quota_success_limit?: number
           repair_attempted?: boolean
           replace_dish_id?: string | null
           request_hmac: string
@@ -95,6 +101,9 @@ export type Database = {
           identity_key?: string
           personal_quota_disabled?: boolean
           processing_expires_at?: string | null
+          quota_attempt_limit?: number
+          quota_short_limit?: number
+          quota_success_limit?: number
           repair_attempted?: boolean
           replace_dish_id?: string | null
           request_hmac?: string
@@ -2442,9 +2451,11 @@ export type Database = {
       }
       get_ai_generation_status: {
         Args: {
+          p_attempt_limit: number
           p_idempotency_key: string
           p_identity_key: string
           p_now?: string
+          p_short_window_limit: number
           p_user_id: string
           p_user_limit: number
         }
@@ -2471,10 +2482,13 @@ export type Database = {
       }
       get_ai_usage_today: {
         Args: {
-          p_global_limit?: number
+          p_attempt_limit: number
+          p_global_limit: number
           p_identity_key: string
           p_now?: string
+          p_short_window_limit: number
           p_user_id: string
+          p_user_limit: number
         }
         Returns: Json
       }
@@ -2609,6 +2623,7 @@ export type Database = {
       }
       reserve_ai_generation: {
         Args: {
+          p_attempt_limit: number
           p_change_reason: string
           p_draft_id: string
           p_draft_revision: number
@@ -2622,6 +2637,7 @@ export type Database = {
           p_request_hmac: string
           p_request_hmac_version: string
           p_request_kind: string
+          p_short_window_limit: number
           p_source_menu_id: string
           p_stale_after_seconds?: number
           p_user_id: string

@@ -24,7 +24,7 @@ select throws_ok(
     'e1000000-0000-4000-8000-000000000001'::uuid, null, 'simpler',
     'generation-command.v2', repeat('a', 64),
     '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
-    'NOT-HEX', 3, 20, false, 180, now()
+    'NOT-HEX', 3, 6, 4, 20, false, 180, now()
   )$$,
   '22023',
   'invalid_identity_key',
@@ -197,7 +197,7 @@ select is(
 select ok(
   not has_function_privilege(
     'authenticated',
-    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,boolean,integer,timestamptz)',
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,integer,timestamptz)',
     'execute'
   ),
   'authenticated cannot EXECUTE reserve_ai_generation'
@@ -206,7 +206,7 @@ select ok(
 select ok(
   has_function_privilege(
     'service_role',
-    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,boolean,integer,timestamptz)',
+    'public.reserve_ai_generation(uuid,uuid,text,uuid,bigint,uuid,uuid,text,text,text,jsonb,text,integer,integer,integer,integer,boolean,integer,timestamptz)',
     'execute'
   ),
   'service_role can EXECUTE reserve_ai_generation'

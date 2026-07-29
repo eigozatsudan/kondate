@@ -23,6 +23,8 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 3, remaining: 2 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 1, limit: 4, remaining: 3, retryAt: null },
@@ -51,6 +53,8 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 5, remaining: 4 },
             attempts: { sent: 2, limit: 12, remaining: 10 },
             shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
@@ -69,6 +73,8 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 3, remaining: 0 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
@@ -87,6 +93,8 @@ describe("getUsageToday", () => {
         Response.json({
           ok: true,
           data: {
+            plan: "free" as const,
+            plusEntitled: false,
             success: { consumed: 1, limit: 3, remaining: 2 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 1, limit: 4, remaining: 3, retryAt: null },

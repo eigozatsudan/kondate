@@ -2,8 +2,8 @@ import { z } from "zod";
 import { aiGeneratedMenuPayloadSchema } from "./ai-generation-output.js";
 import { cuisineGenres, generationStatuses, mealTypes, privacyNoticeVersion } from "./domain.js";
 import { generatedPantryUsageSchema, pantryUsageSchema } from "./pantry.js";
-// planQuota 正本。releaseQuota は Free 別名（既存 import / 本ファイル内 Zod が参照）
-import { releaseQuota } from "./plan-quota.js";
+// planQuota 正本。releaseQuota は Free 別名（既存 import / env 検証が参照）
+import { planQuota } from "./plan-quota.js";
 export { releaseQuota, planQuota } from "./plan-quota.js";
 export type { PlanCode } from "./plan-quota.js";
 
@@ -772,8 +772,9 @@ export type GenerationRequestLookup =
 export const generationQuotaSchema = z
   .object({
     consumed: z.boolean(),
-    remaining: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
-    userDailyLimit: z.literal(releaseQuota.userDailySuccessLimit),
+    // 防御天井は Plus 最大成功数。製品 limit は 3|10 のみ
+    remaining: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
+    userDailyLimit: z.union([z.literal(3), z.literal(10)]),
     limitKind: z.enum(quotaLimitKinds).nullable(),
     retryAt: isoDateTimeSchema.nullable(),
   })
@@ -841,25 +842,28 @@ export type GenerationStatusData = z.infer<typeof generationStatusDataSchema>;
 
 export const usageTodayDataSchema = z
   .object({
+    // Task3: plan / plusEntitled は Function が entitlement から merge（RPC は返さない）
+    plan: z.enum(["free", "plus"]),
+    plusEntitled: z.boolean(),
     success: z
       .object({
-        consumed: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
-        limit: z.literal(releaseQuota.userDailySuccessLimit),
-        remaining: z.number().int().min(0).max(releaseQuota.userDailySuccessLimit),
+        consumed: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
+        limit: z.union([z.literal(3), z.literal(10)]),
+        remaining: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
       })
       .strict(),
     attempts: z
       .object({
-        sent: z.number().int().min(0).max(releaseQuota.userDailyExternalCallLimit),
-        limit: z.literal(releaseQuota.userDailyExternalCallLimit),
-        remaining: z.number().int().min(0).max(releaseQuota.userDailyExternalCallLimit),
+        sent: z.number().int().min(0).max(planQuota.defense.maxAttemptsPerDay),
+        limit: z.union([z.literal(6), z.literal(20)]),
+        remaining: z.number().int().min(0).max(planQuota.defense.maxAttemptsPerDay),
       })
       .strict(),
     shortWindow: z
       .object({
-        sent: z.number().int().min(0).max(releaseQuota.userShortWindowExternalCallLimit),
-        limit: z.literal(releaseQuota.userShortWindowExternalCallLimit),
-        remaining: z.number().int().min(0).max(releaseQuota.userShortWindowExternalCallLimit),
+        sent: z.number().int().min(0).max(planQuota.defense.maxShortWindow),
+        limit: z.union([z.literal(4), z.literal(8)]),
+        remaining: z.number().int().min(0).max(planQuota.defense.maxShortWindow),
         retryAt: isoDateTimeSchema.nullable(),
       })
       .strict(),

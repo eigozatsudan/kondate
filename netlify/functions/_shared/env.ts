@@ -76,7 +76,8 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
     "4",
   ),
   USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
-  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(20),
+  // アプリ全体安全弁。製品 max は 200（本番運用既定は別途 80 推奨）。ローカル compose 既定 20 は維持可
+  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(200),
   // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
   // 60s/試行・150s/Function: 遅い有料モデル（luna 系等）が 20s 内に終わらないため延長
   OPENROUTER_TIMEOUT_MS: releaseLockedInteger(60_000, "60000"),
@@ -119,6 +120,11 @@ export type ServerEnv = Omit<
   };
   /** identity 日次枠 HMAC 鍵（メールは保存しない） */
   quotaIdentityHmacKey: Uint8Array;
+  /**
+   * Stripe 課金面の有効化。Task3 では未配線で常に false（枠は Free 強制）。
+   * Task4 で BILLING_ENABLED と Stripe 鍵を結合する。
+   */
+  billingEnabled: boolean;
 };
 
 export function parseManagedSupabaseProjectRef(value: string): string | null {
@@ -286,6 +292,8 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       requestHmacKey: GENERATION_REQUEST_HMAC_KEY,
     },
     quotaIdentityHmacKey: QUOTA_IDENTITY_HMAC_KEY,
+    // Task3: BILLING_ENABLED 未配線。常に false（Task4 で Stripe 鍵と結合）
+    billingEnabled: false,
   };
 }
 

@@ -19,30 +19,30 @@ select hasnt_table('private'::name, 'ai_user_daily_external_attempts'::name);
 
 select throws_ok(
   $$insert into private.ai_identity_daily_usage (identity_key, usage_day, reserved_count, success_count)
-    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 2, 2)$$,
+    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 5, 6)$$,
   '23514',
   NULL,
-  'identity success ledger rejects reserved+success > 3'
+  'identity success ledger rejects reserved+success > 10'
 );
 
 select lives_ok(
   $$insert into private.ai_identity_daily_usage (identity_key, usage_day, reserved_count, success_count)
-    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 1, 2)$$,
-  'identity success ledger accepts reserved+success = 3'
+    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 4, 6)$$,
+  'identity success ledger accepts reserved+success = 10'
 );
 
 select throws_ok(
   $$insert into private.ai_identity_daily_external_attempts (identity_key, usage_day, reserved_count, sent_count)
-    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 3, 4)$$,
+    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 10, 11)$$,
   '23514',
   NULL,
-  'identity attempt ledger rejects reserved+sent > 6'
+  'identity attempt ledger rejects reserved+sent > 20'
 );
 
 select lives_ok(
   $$insert into private.ai_identity_daily_external_attempts (identity_key, usage_day, reserved_count, sent_count)
-    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 2, 4)$$,
-  'identity attempt ledger accepts reserved+sent = 6'
+    values (tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid), private.ai_jst_day(now()), 8, 12)$$,
+  'identity attempt ledger accepts reserved+sent = 20'
 );
 
 insert into private.ai_identity_daily_usage (identity_key, usage_day, reserved_count, success_count)

@@ -44,6 +44,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   getUsageTodayMock.mockResolvedValue({
+    plan: "free" as const,
+    plusEntitled: false,
     success: { consumed: 1, limit: 3, remaining: 2 },
     attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
@@ -113,6 +115,8 @@ describe("GenerationStatusPanel", () => {
   it("shows global unavailable without free-tier prefix on dual jargon lines", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
+      plan: "free" as const,
+      plusEntitled: false,
       success: { consumed: 1, limit: 3, remaining: 2 },
       attempts: { sent: 5, limit: 6, remaining: 1 },
       shortWindow: {
@@ -140,6 +144,8 @@ describe("GenerationStatusPanel", () => {
   it("does not show attempt remaining zero as a second residual line", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
+      plan: "free" as const,
+      plusEntitled: false,
       success: { consumed: 1, limit: 3, remaining: 2 },
       attempts: { sent: 6, limit: 6, remaining: 0 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
@@ -162,6 +168,8 @@ describe("GenerationStatusPanel", () => {
   it("shows short-window wait copy when usage returns a shortWindow retryAt", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
+      plan: "free" as const,
+      plusEntitled: false,
       success: { consumed: 1, limit: 3, remaining: 2 },
       attempts: { sent: 2, limit: 6, remaining: 4 },
       shortWindow: {

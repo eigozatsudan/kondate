@@ -260,7 +260,8 @@ export function validateProductionEnv(env) {
   requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", 180);
   requirePositiveIntegerString(env, "VITE_MAGIC_LINK_RESEND_SECONDS");
   const globalLimit = requirePositiveIntegerString(env, "GLOBAL_DAILY_AI_LIMIT");
-  if (globalLimit > 20) throw new Error("GLOBAL_DAILY_AI_LIMIT_invalid");
+  // 製品 max 200（Plus 公開時の運用既定 80 は別途）
+  if (globalLimit > 200) throw new Error("GLOBAL_DAILY_AI_LIMIT_invalid");
 
   if (String(env.OPENROUTER_BASE_URL) !== "https://openrouter.ai/api/v1") {
     throw new Error("OPENROUTER_BASE_URL_invalid");

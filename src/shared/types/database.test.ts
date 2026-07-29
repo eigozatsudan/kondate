@@ -32,6 +32,8 @@ it("accepts nullable draft references for regeneration reservations", () => {
       source_menu_version: 1,
     },
     p_user_limit: 3,
+    p_attempt_limit: 6,
+    p_short_window_limit: 4,
     p_identity_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     p_quota_disabled: false,
     p_global_limit: 20,

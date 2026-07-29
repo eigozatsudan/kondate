@@ -136,6 +136,8 @@ beforeEach(() => {
   });
   shoppingApiMocks.fetchReconcilableMenuSource.mockResolvedValue(null);
   getUsageTodayMock.mockResolvedValue({
+    plan: "free" as const,
+    plusEntitled: false,
     success: { consumed: 1, limit: 3, remaining: 2 },
     attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },

@@ -12,7 +12,7 @@ select has_function(
 select has_function(
   'public',
   'get_ai_usage_today',
-  array['uuid', 'text', 'timestamp with time zone', 'integer']
+  array['uuid', 'text', 'integer', 'integer', 'integer', 'integer', 'timestamp with time zone']
 );
 
 -- 旧 overload が残っていないこと（identity_key / p_global_limit 無視回帰の防止）
@@ -146,24 +146,14 @@ begin
 
   -- p_global_limit が usage today に効く。
   -- 共有 DB の当日 global 台帳に依存しないよう、行の無い固定日を p_now で指定する。
-  v_result := public.get_ai_usage_today(
-    v_owner,
-    tests.quota_identity_key(v_owner),
-    '2000-01-01 00:00:00+00'::timestamptz,
-    1
-  );
+  v_result := public.get_ai_usage_today(v_owner, tests.quota_identity_key(v_owner), 3, 6, 4, 1, '2000-01-01 00:00:00+00'::timestamptz);
   if (v_result ->> 'globalAvailable') is distinct from 'true' then
     raise exception 'empty ledger should be globalAvailable with limit 1: %', v_result;
   end if;
 
   -- 無効な global limit は raise
   begin
-    perform public.get_ai_usage_today(
-      v_owner,
-      tests.quota_identity_key(v_owner),
-      '2000-01-01 00:00:00+00'::timestamptz,
-      0
-    );
+    perform public.get_ai_usage_today(v_owner, tests.quota_identity_key(v_owner), 3, 6, 4, 0, '2000-01-01 00:00:00+00'::timestamptz);
     raise exception 'p_global_limit=0 should raise';
   exception
     when others then

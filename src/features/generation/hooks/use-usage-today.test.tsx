@@ -15,6 +15,8 @@ describe("useUsageToday", () => {
   beforeEach(() => {
     getUsageTodayMock.mockReset();
     getUsageTodayMock.mockResolvedValue({
+      plan: "free" as const,
+      plusEntitled: false,
       success: { consumed: 0, limit: 3, remaining: 3 },
       attempts: { sent: 0, limit: 6, remaining: 6 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
