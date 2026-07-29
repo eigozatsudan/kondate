@@ -190,12 +190,14 @@ test("Free hard-limit CTA copy is available from settings Plus section", async (
 test("Plus usage mock projects success limit 10 on settings plan section", async ({
   completedOnboardingPage: page,
 }) => {
-  // webhook 実注入の E2E 代替: entitlement + usage mock 後に Plus 枠（limit 10）が載ることを固定。
-  // 実 webhook 投影は Function unit / pgTAP が正本。
+  // webhook 実注入の E2E 代替: entitlement + usage mock 後に Plus 契約 UI が載ることを固定。
+  // Free CTA の「1 日最大 10 回」は !entitled 時のみ。Plus ではポータル導線が正。
+  // 実 webhook 投影と success limit 数値は Function unit / pgTAP が正本。
   await mockEntitlement(page, plusActiveEntitlement);
   await mockUsageTodayPlus(page);
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "プラン" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("こんだて日和 Plus")).toBeVisible();
-  await expect(page.getByText(/1 日最大 10 回まで/u)).toBeVisible();
+  await expect(page.getByText(/いまのプラン/u)).toBeVisible();
+  await expect(page.getByRole("button", { name: "お支払い・解約の管理" })).toBeVisible();
 });

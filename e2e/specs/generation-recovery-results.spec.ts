@@ -478,7 +478,11 @@ async function assertIdeaResultBoundary(page: Page, servings: number): Promise<v
   // notice: idea 必須2文は常時表示。AI/ラベル長文はダイアログで確認。
   await expectIdeaResultSurface(page);
   await openAndAssertIdeaSafetyDetails(page);
-  await page.getByRole("button", { name: "閉じる" }).click();
+  // 結果画面に別の「閉じる」がある場合があるため、安全詳細 dialog に限定する。
+  const ideaSafetyDialog = page.getByRole("dialog", {
+    name: "この献立はアイデアとして作成しました",
+  });
+  await ideaSafetyDialog.getByRole("button", { name: "閉じる" }).click();
   // 人数表示。menu.servings === N であることを本文の「N人分」表示で確認する。
   await expect(page.getByText(`${String(servings)}人分`, { exact: false })).toBeVisible();
   // 許可操作: 採用・お気に入り・whole/dish 再生成は利用できる
