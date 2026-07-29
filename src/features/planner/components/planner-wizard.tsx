@@ -56,6 +56,8 @@ export type PlannerWizardExtraProps = {
   onReset?: () => void;
   /** 設計 §10.3: review の生成ボタン近くに出す成功残数（未取得は null） */
   usageRemaining?: number | null;
+  /** usage.plan。formatPlanQuotaCopy / L10 CTA 用（未取得は null） */
+  plan?: "free" | "plus" | null;
   /** C-I12 residual: 日次 attempt 残（未取得は null） */
   attemptsRemaining?: number | null;
   /** C-I12 residual: アプリ全体の受付可否（未取得は null） */
@@ -135,6 +137,7 @@ export function PlannerWizard({
   onIdeaAudienceConfirmed,
   onReset,
   usageRemaining = null,
+  plan = null,
   attemptsRemaining = null,
   globalAvailable = null,
   shortWindowRetryAt = null,
@@ -499,6 +502,7 @@ export function PlannerWizard({
         safetyMembers={eligibleMembers}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
         usageRemaining={usageRemaining}
+        plan={plan}
         attemptsRemaining={attemptsRemaining}
         globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}

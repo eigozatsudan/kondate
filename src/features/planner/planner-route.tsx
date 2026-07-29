@@ -520,6 +520,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         audienceStatusError ?? submissionError
       }
       usageRemaining={usage.isSuccess ? usage.data.success.remaining : null}
+      plan={usage.isSuccess ? usage.data.plan : null}
       attemptsRemaining={usage.isSuccess ? usage.data.attempts.remaining : null}
       globalAvailable={usage.isSuccess ? usage.data.globalAvailable : null}
       shortWindowRetryAt={

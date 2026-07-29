@@ -75,6 +75,21 @@ describe("GenerationStatusPanel", () => {
     );
   });
 
+  it("shows Plus hard-limit CTA on Free daily limit failure without usage userId", () => {
+    const zeroQuota = {
+      ...quota,
+      remaining: 0,
+    } as const;
+    const zeroFailed: GenerationClientState = {
+      phase: "failed",
+      data: { ...failedData, quota: zeroQuota },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={zeroFailed} />);
+    expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/settings");
+  });
+
   it("shows emergency recovery link on failed recovery regardless of path", () => {
     render(<GenerationStatusPanel state={failedState} />);
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(

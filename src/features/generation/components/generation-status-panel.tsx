@@ -1,5 +1,7 @@
-import { formatFreeTierQuotaCopy } from "@shared/copy/free-tier";
+import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
+import type { PlanCode } from "@shared/contracts/plan-quota";
 import { getNextJstMidnight } from "@shared/time/jst";
+import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import type { GenerationClientState } from "../model/generation-machine";
 import { useUsageToday } from "../hooks/use-usage-today";
 import { clearPendingGeneration } from "../model/pending-generation";
@@ -28,6 +30,7 @@ function formatRetryAt(value: string): string {
  * 終端画面専用。request-local quota を attempt 真相として再解釈しない。
  * 設計 2026-07-29: success 残1行のみ。AI通信試行・10分残数行は出さない。
  * data.retryAt はパネル直下の quota.retryAt に一本化するためここでは出さない。
+ * 個人枠は formatPlanQuotaCopy。Free 硬上限時は L10-1 Plus CTA。
  */
 function TerminalGenerationUsage({ userId }: { userId: string }) {
   const usage = useUsageToday(userId);
@@ -36,21 +39,30 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
     return <p role="alert">本日の作成回数を確認できません。再読み込みしてください</p>;
   }
   const data = usage.data;
+  const plan: PlanCode = data.plan;
+  const hardLimited =
+    plan === "free" && (data.success.remaining === 0 || data.attempts.remaining === 0);
   return (
     <section aria-label="今日あと何回作れるか">
       <p>
-        {formatFreeTierQuotaCopy(
+        {formatPlanQuotaCopy(
           `本日あと${String(data.success.remaining)}回まで献立の作成を受け付けます`,
+          plan,
         )}
       </p>
+      {plan === "free" && data.success.remaining === 1 ? (
+        <p>本日の無料回数が残り 1 回です</p>
+      ) : null}
       <p>アプリ全体：{data.globalAvailable ? "作成できます" : "今日はここまで"}</p>
       {data.shortWindow.retryAt === null ? null : (
         <p>
-          {formatFreeTierQuotaCopy(
+          {formatPlanQuotaCopy(
             `短い時間に何度も作成を試したため、${formatRetryAt(data.shortWindow.retryAt)}以降に再試行してください。`,
+            plan,
           )}
         </p>
       )}
+      {hardLimited ? <PlusHardLimitCta /> : null}
     </section>
   );
 }
@@ -116,19 +128,30 @@ function TerminalQuotaBlock({
   userId,
   remaining,
   retryAt,
+  plan = "free",
+  showHardLimitCta = false,
 }: {
   userId?: string;
   remaining: number;
   retryAt: string | null;
+  plan?: PlanCode;
+  /** userId 無しフォールバック時の Free 硬上限 CTA（usage が無い経路）。 */
+  showHardLimitCta?: boolean;
 }) {
   return (
     <>
       {userId !== undefined ? (
         <TerminalGenerationUsage userId={userId} />
       ) : (
-        <p>
-          {formatFreeTierQuotaCopy(`本日あと${String(remaining)}回まで献立の作成を受け付けます`)}
-        </p>
+        <>
+          <p>
+            {formatPlanQuotaCopy(
+              `本日あと${String(remaining)}回まで献立の作成を受け付けます`,
+              plan,
+            )}
+          </p>
+          {showHardLimitCta && plan === "free" && remaining === 0 ? <PlusHardLimitCta /> : null}
+        </>
       )}
       {retryAt !== null ? <p>再開: {formatJstRetryTime(retryAt, new Date())}</p> : null}
     </>
@@ -209,9 +232,13 @@ export function GenerationStatusPanel({
       "user_attempt_limit",
       "user_short_window_limit",
     ]);
+    // 失敗面は usage が無いとき free 接頭を維持（userId 経路は TerminalGenerationUsage が plan を使う）。
     const failureMessage = quotaFailureCodes.has(state.data.error.code)
-      ? formatFreeTierQuotaCopy(state.data.error.message)
+      ? formatPlanQuotaCopy(state.data.error.message, "free")
       : state.data.error.message;
+    const hardLimitFailure =
+      state.data.error.code === "user_daily_limit" ||
+      state.data.error.code === "user_attempt_limit";
     return (
       <div className="gen-status-panel" data-phase="failed">
         <h1>献立を作成できませんでした</h1>
@@ -221,6 +248,7 @@ export function GenerationStatusPanel({
           {...(userId === undefined ? {} : { userId })}
           remaining={state.data.quota.remaining}
           retryAt={state.data.quota.retryAt}
+          showHardLimitCta={hardLimitFailure}
         />
         <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>

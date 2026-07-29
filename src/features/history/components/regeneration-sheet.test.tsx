@@ -16,7 +16,7 @@ beforeEach(() => {
   }
 });
 
-function usageView(remaining = 3): RegenerationUsageView {
+function usageView(remaining = 3, plan: "free" | "plus" = "free"): RegenerationUsageView {
   return {
     successRemaining: remaining,
     attemptsRemaining: 12,
@@ -24,6 +24,7 @@ function usageView(remaining = 3): RegenerationUsageView {
     shortWindowRetryAt: null,
     loading: false,
     error: false,
+    plan,
   };
 }
 
@@ -53,6 +54,32 @@ describe("RegenerationSheet", () => {
   it("explains conditional quota use before regeneration", () => {
     renderRegenerationSheet();
     expect(screen.getByText("無料版は別の献立が完成した場合に1回使用・現在残り3回")).toBeVisible();
+  });
+
+  it("shows Plus hard-limit CTA when Free success remaining is 0", () => {
+    render(
+      <RegenerationSheet
+        targetMode="household"
+        usage={usageView(0, "free")}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/settings");
+  });
+
+  it("does not prefix Plus remaining copy with 無料版は", () => {
+    render(
+      <RegenerationSheet
+        targetMode="household"
+        usage={usageView(2, "plus")}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/無料版は/)).not.toBeInTheDocument();
+    expect(screen.getByText("別の献立が完成した場合に1回使用・現在残り2回")).toBeVisible();
   });
 
   it("does not claim remaining 0 while usage is loading", () => {

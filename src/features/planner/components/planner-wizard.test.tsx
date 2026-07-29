@@ -60,6 +60,7 @@ function Harness({
   pantryItems = [],
   pantryItemsStatus = "loaded",
   usageRemaining = null,
+  plan = null,
   attemptsRemaining = null,
   globalAvailable = null,
   shortWindowRetryAt = null,
@@ -86,6 +87,7 @@ function Harness({
   pantryItems?: readonly PantryItem[];
   pantryItemsStatus?: "loading" | "loaded";
   usageRemaining?: number | null;
+  plan?: "free" | "plus" | null;
   attemptsRemaining?: number | null;
   globalAvailable?: boolean | null;
   shortWindowRetryAt?: string | null;
@@ -118,6 +120,7 @@ function Harness({
         canResolveDraftConflict={canResolveDraftConflict}
         draftConflictRefetchError={draftConflictRefetchError}
         usageRemaining={usageRemaining}
+        plan={plan}
         attemptsRemaining={attemptsRemaining}
         globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}
@@ -954,7 +957,9 @@ describe("PlannerWizard review step", () => {
   });
 
   it("C-I12: 成功残 0 のとき主 CTA を止め作成上限メッセージを出す", () => {
-    render(<Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={0} />);
+    render(
+      <Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={0} plan="free" />,
+    );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
     const limit = screen.getByRole("alert");
     expect(limit).toHaveTextContent("いまは新しい献立を作れません");
@@ -965,6 +970,48 @@ describe("PlannerWizard review step", () => {
     expect(limit).not.toHaveTextContent("0時");
     expect(limit).toHaveClass("usage-limit-banner");
     expect(screen.queryByText(/本日あと.*受け付けます/u)).not.toBeInTheDocument();
+  });
+
+  it("shows Plus hard-limit CTA when Free success remaining is 0", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={0}
+        attemptsRemaining={3}
+        plan="free"
+      />,
+    );
+    expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/settings");
+  });
+
+  it("shows soft one-remaining line without hard sell", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={1}
+        attemptsRemaining={3}
+        plan="free"
+      />,
+    );
+    expect(screen.getByText("本日の無料回数が残り 1 回です")).toBeVisible();
+    expect(screen.queryByText(/Plus なら 1 日最大 10 回/)).not.toBeInTheDocument();
+  });
+
+  it("does not prefix Plus remaining copy with 無料版は", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={2}
+        attemptsRemaining={5}
+        plan="plus"
+      />,
+    );
+    expect(screen.queryByText(/無料版は/)).not.toBeInTheDocument();
+    expect(screen.getByText("本日あと2回まで献立の作成を受け付けます")).toBeVisible();
   });
 
   it("success0 and attempts0 together show only the creation-limit body", () => {

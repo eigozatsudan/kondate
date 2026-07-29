@@ -16,10 +16,18 @@ const navigateMock = vi.hoisted(() => vi.fn());
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const requireAccessTokenMock = vi.hoisted(() => vi.fn().mockResolvedValue("token"));
 
+const emptySearchParams = new URLSearchParams();
+const setSearchParamsMock = vi.hoisted(() => vi.fn());
+
 // AccountSettingsSection が依存するナビ・掃除・トークン境界だけをモックし、家族 CRUD テストを壊さない
 vi.mock("react-router", async (importOriginal) => {
   const original = await importOriginal<typeof import("react-router")>();
-  return { ...original, useNavigate: () => navigateMock };
+  return {
+    ...original,
+    useNavigate: () => navigateMock,
+    // Router 無し unit でも ?billing= を読めるように空 params を返す（参照安定）
+    useSearchParams: () => [emptySearchParams, setSearchParamsMock],
+  };
 });
 vi.mock("@/features/auth/auth-cleanup", () => ({
   clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
@@ -29,6 +37,10 @@ vi.mock("@/features/auth/session", () => ({
 }));
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({ auth: {} }),
+}));
+// プラン UI は billing 専用テストで検証。家族 CRUD は entitlement API に依存させない。
+vi.mock("@/features/billing/plan-settings-section", () => ({
+  PlanSettingsSection: () => <section aria-label="プラン">プラン</section>,
 }));
 
 beforeEach(() => {

@@ -4,7 +4,9 @@ import { z } from "zod";
 import { changeReasons } from "@shared/contracts/domain";
 import type { ExpiredPantryConfirmation } from "@shared/contracts/generation";
 import type { TargetMode } from "@shared/contracts/planner";
-import { formatFreeTierQuotaCopy } from "@shared/copy/free-tier";
+import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
+import type { PlanCode } from "@shared/contracts/plan-quota";
+import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import type { ExpiredPantryForRegen } from "../model/expired-pantry-for-regen";
 
 const allReasons = [
@@ -57,6 +59,8 @@ export type RegenerationUsageView = {
   shortWindowRetryAt: string | null;
   loading: boolean;
   error: boolean;
+  /** usage.plan。未取得時は free 接頭を維持。 */
+  plan?: PlanCode | null;
 };
 
 export type RegenerationSheetProps = {
@@ -192,6 +196,7 @@ export function RegenerationSheet({
   // 設計 2026-07-29 案 A: null は未取得。0 のときだけ止め、確認画面と揃える
   const attemptsBlocked = usage.attemptsRemaining === 0;
   const shortWindowBlocked = usage.shortWindowRemaining === 0 && usage.shortWindowRetryAt !== null;
+  const quotaPlan: PlanCode = usage.plan ?? "free";
   const expiredUnconfirmed =
     expiredPantryItems.length > 0 &&
     expiredPantryItems.some((item) => !confirmedExpiredIds.has(item.pantryItemId));
@@ -292,37 +297,48 @@ export function RegenerationSheet({
         ) : (
           <div className="stack gap-1">
             <p>
-              {formatFreeTierQuotaCopy(
+              {formatPlanQuotaCopy(
                 usage.successRemaining === null
                   ? "別の献立が完成した場合に1回使用します"
                   : `別の献立が完成した場合に1回使用・現在残り${String(usage.successRemaining)}回`,
+                quotaPlan,
               )}
             </p>
+            {quotaPlan === "free" && usage.successRemaining === 1 ? (
+              <p role="status">本日の無料回数が残り 1 回です</p>
+            ) : null}
             {/* 案 A: attempt 常時残数行は出さない。0 / short ブロック時のみ行動文 */}
             {successBlocked ? (
               <p className="type-small" role="status">
-                {formatFreeTierQuotaCopy(
+                {formatPlanQuotaCopy(
                   "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+                  quotaPlan,
                 )}
               </p>
             ) : null}
             {attemptsBlocked && !successBlocked ? (
               <p className="type-small" role="status">
-                {formatFreeTierQuotaCopy(
+                {formatPlanQuotaCopy(
                   "今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
+                  quotaPlan,
                 )}
               </p>
             ) : null}
             {shortWindowBlocked && usage.shortWindowRetryAt !== null ? (
               <p className="type-small" role="status">
-                {formatFreeTierQuotaCopy(
+                {formatPlanQuotaCopy(
                   `しばらく続けて作成を試したため、${new Intl.DateTimeFormat("ja-JP", {
                     timeZone: "Asia/Tokyo",
                     dateStyle: "short",
                     timeStyle: "short",
                   }).format(new Date(usage.shortWindowRetryAt))}以降に再試行してください`,
+                  quotaPlan,
                 )}
               </p>
+            ) : null}
+            {/* L10-1: Free 硬上限で Plus CTA */}
+            {quotaPlan === "free" && (successBlocked || attemptsBlocked) ? (
+              <PlusHardLimitCta />
             ) : null}
           </div>
         )}
