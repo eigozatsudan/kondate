@@ -15,6 +15,11 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `private.ai_identity_daily_usage` | postgres | none | none | none | off (not exposed) | identity daily success ledger; no user_id FK; service via SECURITY DEFINER only |
 | `private.ai_user_rate_windows` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
 | `private.auth_continuations` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
+| `private.billing_checkout_locks` | postgres | none | none | none | off (not exposed) | Stripe checkout serialize lock; no Data API; service via SECURITY DEFINER only |
+| `private.billing_customers` | postgres | none | none | none | off (not exposed) | Stripe customer map; no Data API; service via SECURITY DEFINER only |
+| `private.billing_subscriptions` | postgres | none | none | none | off (not exposed) | Stripe subscription projection; no Data API; service via SECURITY DEFINER only |
+| `private.billing_trial_history` | postgres | none | none | none | off (not exposed) | trial burn ledger (identity_key); no user_id FK; service via SECURITY DEFINER only |
+| `private.billing_webhook_events` | postgres | none | none | none | off (not exposed) | Stripe event claim ledger; no Data API; service via SECURITY DEFINER only |
 | `private.generation_draft_submission_versions` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
 | `private.generation_regeneration_snapshots` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
 | `private.shopping_mutations` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
@@ -167,8 +172,10 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `private.write_shopping_items(p_user_id uuid, p_list_id uuid, p_items jsonb)` | postgres | none | none | none | n/a | private helper; no browser-role EXECUTE |
 | `public.accept_menu_version(p_menu_id uuid)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC |
 | `public.add_custom_member_allergy(p_member_id uuid, p_custom_name text, p_custom_aliases text[])` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC |
+| `public.acquire_billing_checkout_lock(p_user_id uuid, p_lock_token text, p_expires_at timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; checkout lock acquire |
 | `public.apply_shopping_draft(p_user_id uuid, p_menu_id uuid, p_mode text, p_active_list_id uuid, p_expected_list_version integer, p_safety_fingerprint text, p_idempotency_key uuid, p_request_hash text, p_draft jsonb)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.apply_shopping_reconciliation(p_user_id uuid, p_list_id uuid, p_expected_list_version integer, p_source_menu_id uuid, p_source_menu_version integer, p_safety_fingerprint text, p_idempotency_key uuid, p_request_hash text, p_resolved_diff jsonb)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
+| `public.bind_billing_checkout_session(p_user_id uuid, p_lock_token text, p_stripe_checkout_session_id text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; checkout session CAS bind |
 | `public.claim_auth_continuation(p_id uuid, p_state_hash bytea, p_secret_hash bytea, p_origin text, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.cleanup_ai_generation_requests(p_before timestamp with time zone, p_user_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; legacy opportunistic cleaner (no integer overload) |
 | `public.cleanup_ai_generation_requests_batch(p_before timestamp with time zone, p_limit integer)` | postgres | none | none | none | n/a (function) | scheduled batch helper; no browser/service EXECUTE; called only via `run_kondate_maintenance` |
@@ -184,6 +191,7 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.delete_member_allergy(p_allergy_id uuid)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC |
 | `public.delete_menu_group(p_derivation_group_id uuid)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC |
 | `public.deposit_auth_continuation(p_id uuid, p_state_hash bytea, p_origin text, p_ciphertext bytea, p_iv bytea, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
+| `public.ensure_billing_customer(p_user_id uuid, p_stripe_customer_id text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; billing customer upsert |
 | `public.finalize_ai_generation_conflict(p_request_id uuid, p_conflict_codes text[], p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.finalize_ai_generation_failure(p_request_id uuid, p_failure_code text, p_retry_at timestamp with time zone, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.finalize_ai_generation_success(p_request_id uuid, p_menu jsonb, p_preference_snapshot jsonb, p_safety_snapshot jsonb, p_safety_fingerprint text, p_allergen_version text, p_food_rule_version text, p_target_members jsonb, p_expired_checks jsonb, p_source_menu_id uuid, p_change_reason text, p_change_reason_custom text, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
@@ -192,9 +200,18 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.get_ai_generation_status(p_user_id uuid, p_idempotency_key uuid, p_user_limit integer, p_identity_key text, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_ai_generation_submission_snapshot(p_request_id uuid, p_user_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.get_ai_usage_today(p_user_id uuid, p_identity_key text, p_now timestamp with time zone, p_global_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
+| `public.get_billing_customer_by_stripe_id(p_stripe_customer_id text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; unmapped webhook resolve |
+| `public.get_billing_customer_by_user(p_user_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; customer id lookup |
+| `public.get_billing_entitlement_for_user(p_user_id uuid, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; A6 entitlement runtime authority |
 | `public.get_menu_generation_model(p_menu_id uuid)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC; owner-only projection of final actual_model_ids |
+| `public.has_billing_trial_history(p_identity_key text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; checkout trial pre-read |
+| `public.insert_billing_trial_history(p_identity_key text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; trial burn idempotent insert |
+| `public.mark_billing_subscription_dual_cancel_keep(p_user_id uuid, p_keep_stripe_subscription_id text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; dual-sub keep alignment |
+| `public.process_billing_stripe_event(p_payload jsonb)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; webhook claim+project single TX |
+| `public.release_billing_checkout_lock(p_user_id uuid, p_lock_token text, p_stripe_checkout_session_id text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; checkout lock release |
 | `public.release_identity_and_global_for_user_processing(p_user_id uuid, p_now timestamp with time zone)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; delete-account pre-release |
 | `public.get_current_safety_snapshot(p_user_id uuid, p_target_member_ids uuid[])` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
+| `public.upsert_billing_subscription_from_stripe(p_payload jsonb)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; reconcile/runbook only |
 | `public.get_shopping_mutation_replay(p_user_id uuid, p_idempotency_key uuid, p_request_hash text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.insert_user_feedback_rate_limited(p_user_id uuid, p_category text, p_body text, p_client_path text, p_limit integer, p_window_seconds integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; atomic 5/24h feedback rate limit |
 | `public.lookup_ai_generation_request(p_user_id uuid, p_idempotency_key uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |

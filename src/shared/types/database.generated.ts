@@ -254,6 +254,132 @@ export type Database = {
         }
         Relationships: []
       }
+      billing_checkout_locks: {
+        Row: {
+          created_at: string
+          expires_at: string
+          lock_token: string
+          stripe_checkout_session_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          lock_token: string
+          stripe_checkout_session_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          lock_token?: string
+          stripe_checkout_session_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      billing_customers: {
+        Row: {
+          created_at: string
+          stripe_customer_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          stripe_customer_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          stripe_customer_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      billing_subscriptions: {
+        Row: {
+          cancel_at_period_end: boolean
+          current_period_end: string
+          current_period_start: string
+          last_stripe_event_created: number
+          last_stripe_event_id: string | null
+          past_due_since: string | null
+          status: string
+          stripe_price_id: string
+          stripe_subscription_id: string
+          trial_end: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cancel_at_period_end?: boolean
+          current_period_end: string
+          current_period_start: string
+          last_stripe_event_created?: number
+          last_stripe_event_id?: string | null
+          past_due_since?: string | null
+          status: string
+          stripe_price_id: string
+          stripe_subscription_id: string
+          trial_end?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cancel_at_period_end?: boolean
+          current_period_end?: string
+          current_period_start?: string
+          last_stripe_event_created?: number
+          last_stripe_event_id?: string | null
+          past_due_since?: string | null
+          status?: string
+          stripe_price_id?: string
+          stripe_subscription_id?: string
+          trial_end?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      billing_trial_history: {
+        Row: {
+          first_trial_at: string
+          identity_key: string
+        }
+        Insert: {
+          first_trial_at?: string
+          identity_key: string
+        }
+        Update: {
+          first_trial_at?: string
+          identity_key?: string
+        }
+        Relationships: []
+      }
+      billing_webhook_events: {
+        Row: {
+          event_type: string
+          processed_at: string
+          stripe_event_created: number
+          stripe_event_id: string
+        }
+        Insert: {
+          event_type: string
+          processed_at?: string
+          stripe_event_created: number
+          stripe_event_id: string
+        }
+        Update: {
+          event_type?: string
+          processed_at?: string
+          stripe_event_created?: number
+          stripe_event_id?: string
+        }
+        Relationships: []
+      }
       generation_draft_submission_versions: {
         Row: {
           avoid_ingredients: string[]
@@ -408,6 +534,23 @@ export type Database = {
         }
         Returns: undefined
       }
+      billing_entitlement_json: {
+        Args: {
+          p_cancel_at_period_end: boolean
+          p_current_period_end: string
+          p_now: string
+          p_past_due_since: string
+          p_status: string
+          p_trial_end: string
+        }
+        Returns: Json
+      }
+      billing_iso_z: { Args: { p_ts: string }; Returns: string }
+      billing_payload_timestamptz: { Args: { p_value: Json }; Returns: string }
+      billing_status_terminality_rank: {
+        Args: { p_status: string }
+        Returns: number
+      }
       cleanup_expired_shopping_mutations: {
         Args: { p_limit?: number; p_user_id: string }
         Returns: number
@@ -491,6 +634,10 @@ export type Database = {
           p_target_members: Json
           p_target_mode: string
         }
+        Returns: string
+      }
+      project_billing_subscription: {
+        Args: { p_force_apply?: boolean; p_payload: Json; p_user_id: string }
         Returns: string
       }
       release_identity_and_global_for_user_processing: {
@@ -2028,6 +2175,10 @@ export type Database = {
     }
     Functions: {
       accept_menu_version: { Args: { p_menu_id: string }; Returns: undefined }
+      acquire_billing_checkout_lock: {
+        Args: { p_expires_at: string; p_lock_token: string; p_user_id: string }
+        Returns: Json
+      }
       add_custom_member_allergy: {
         Args: {
           p_custom_aliases?: string[]
@@ -2075,6 +2226,14 @@ export type Database = {
           p_safety_fingerprint: string
           p_source_menu_id: string
           p_source_menu_version: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      bind_billing_checkout_session: {
+        Args: {
+          p_lock_token: string
+          p_stripe_checkout_session_id: string
           p_user_id: string
         }
         Returns: Json
@@ -2208,6 +2367,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      ensure_billing_customer: {
+        Args: { p_stripe_customer_id: string; p_user_id: string }
+        Returns: Json
+      }
       finalize_ai_generation_conflict: {
         Args: {
           p_conflict_codes: string[]
@@ -2315,6 +2478,18 @@ export type Database = {
         }
         Returns: Json
       }
+      get_billing_customer_by_stripe_id: {
+        Args: { p_stripe_customer_id: string }
+        Returns: Json
+      }
+      get_billing_customer_by_user: {
+        Args: { p_user_id: string }
+        Returns: Json
+      }
+      get_billing_entitlement_for_user: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: Json
+      }
       get_current_safety_snapshot: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
         Returns: Json
@@ -2329,6 +2504,14 @@ export type Database = {
           p_request_hash: string
           p_user_id: string
         }
+        Returns: Json
+      }
+      has_billing_trial_history: {
+        Args: { p_identity_key: string }
+        Returns: boolean
+      }
+      insert_billing_trial_history: {
+        Args: { p_identity_key: string }
         Returns: Json
       }
       insert_user_feedback_rate_limited: {
@@ -2350,6 +2533,10 @@ export type Database = {
         Args: { p_now?: string; p_request_id: string }
         Returns: Json
       }
+      mark_billing_subscription_dual_cancel_keep: {
+        Args: { p_keep_stripe_subscription_id: string; p_user_id: string }
+        Returns: Json
+      }
       mutate_shopping_item: {
         Args: {
           p_expected_list_version: number
@@ -2362,6 +2549,7 @@ export type Database = {
         }
         Returns: Json
       }
+      process_billing_stripe_event: { Args: { p_payload: Json }; Returns: Json }
       reconcile_menu_label_confirmations: {
         Args: {
           p_expected_safety_fingerprint: string
@@ -2404,6 +2592,14 @@ export type Database = {
           p_list_id: string
           p_user_id: string
           p_warnings: Json
+        }
+        Returns: Json
+      }
+      release_billing_checkout_lock: {
+        Args: {
+          p_lock_token?: string
+          p_stripe_checkout_session_id?: string
+          p_user_id: string
         }
         Returns: Json
       }
@@ -2536,6 +2732,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      upsert_billing_subscription_from_stripe: {
+        Args: { p_payload: Json }
+        Returns: Json
       }
     }
     Enums: {
