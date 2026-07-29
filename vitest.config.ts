@@ -11,6 +11,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // 全 suite 並行時の userEvent 連鎖で既定 5s を超える flaky を防ぐ（単独では十分速い）
+    testTimeout: 15_000,
     setupFiles: ["./src/test/setup.ts"],
     include: [
       "src/**/*.test.{ts,tsx}",
