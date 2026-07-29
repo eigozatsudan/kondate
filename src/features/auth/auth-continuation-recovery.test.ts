@@ -200,7 +200,7 @@ describe("auth continuation recovery", () => {
     }
   });
 
-  it("does not contend for a flow owned by the same-browser callback tab", () => {
+  it("does not contend for a flow owned by the same-browser callback tab", async () => {
     const storage = new MapStorage();
     const flowId = "10000000-0000-4000-8000-000000000001";
     const startedAt = new Date().toISOString();
@@ -226,6 +226,7 @@ describe("auth continuation recovery", () => {
       setInterval: (() => 1) as unknown as typeof window.setInterval,
     });
 
+    await flushPromises();
     expect(gateway.resumeFlow).not.toHaveBeenCalled();
     stop();
   });
@@ -362,10 +363,95 @@ describe("auth continuation recovery", () => {
     await flushPromises();
 
     expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
-    expect((globalThis.indexedDB as unknown as SerializedIndexedDb).transactionCount).toBe(2);
+    const indexedDb = globalThis.indexedDB as unknown as SerializedIndexedDb;
+    expect(indexedDb.openCount).toBe(2);
+    expect(indexedDb.upgradeCount).toBe(1);
+    expect(indexedDb.createObjectStoreCount).toBe(1);
+    expect(indexedDb.transactionCount).toBe(2);
     firstStop();
     secondStop();
   });
+
+  it.each(["blocked", "error"] as const)(
+    "closes an IndexedDB connection after %s is followed by late success",
+    async (failure) => {
+      const indexedDb = new LateSuccessIndexedDb(failure);
+      Object.defineProperty(globalThis, "indexedDB", {
+        configurable: true,
+        value: indexedDb,
+      });
+
+      const stop = startAuthContinuationRecovery({
+        gateway: { resumeFlow: vi.fn() },
+        storage: flowStorage(["10000000-0000-4000-8000-000000000001"]),
+        onComplete: vi.fn(),
+        setInterval: (() => 1) as unknown as typeof window.setInterval,
+      });
+      await flushPromises();
+
+      expect(indexedDb.close).toHaveBeenCalledTimes(1);
+      stop();
+    },
+  );
+
+  it.each(["lock-request", "storage", "resume-flow"] as const)(
+    "absorbs a %s rejection and retries on the next interval",
+    async (failure) => {
+      const flowId = "10000000-0000-4000-8000-000000000001";
+      const storage =
+        failure === "storage" ? new ThrowingOnceCoordinationStorage() : flowStorage([flowId]);
+      if (failure === "storage") addFlow(storage, flowId);
+      let nowMs = Date.now();
+      const gateway = {
+        resumeFlow:
+          failure === "resume-flow"
+            ? vi
+                .fn()
+                .mockRejectedValueOnce(new Error(`secret:${"A".repeat(43)}`))
+                .mockResolvedValue({ kind: "awaiting_completion" })
+            : vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+      };
+      const locks =
+        failure === "lock-request" ? new RejectingOnceLockManager() : new ImmediateLockManager();
+      const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+      Object.defineProperty(navigator, "locks", {
+        configurable: true,
+        value: locks,
+      });
+      let intervalHandler: (() => void) | undefined;
+      const setIntervalMock = ((handler: TimerHandler) => {
+        intervalHandler = handler as () => void;
+        return 1 as unknown as ReturnType<typeof window.setInterval>;
+      }) as unknown as typeof window.setInterval;
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      try {
+        const stop = startAuthContinuationRecovery({
+          gateway,
+          storage,
+          onComplete: vi.fn(),
+          now: () => new Date(nowMs),
+          setInterval: setIntervalMock,
+        });
+        await flushPromises();
+
+        nowMs += 5_000;
+        intervalHandler?.();
+        await flushPromises();
+
+        expect(gateway.resumeFlow).toHaveBeenCalledTimes(failure === "resume-flow" ? 2 : 1);
+        expect(consoleError).not.toHaveBeenCalled();
+        stop();
+      } finally {
+        consoleError.mockRestore();
+        if (originalLocks === undefined) {
+          Reflect.deleteProperty(navigator, "locks");
+        } else {
+          Object.defineProperty(navigator, "locks", originalLocks);
+        }
+      }
+    },
+  );
 
   it("fails closed when neither Web Locks nor IndexedDB is available", async () => {
     Reflect.deleteProperty(globalThis, "indexedDB");
@@ -455,18 +541,19 @@ describe("auth continuation recovery", () => {
     await flushPromises();
     for (let slot = 1; slot < 4; slot += 1) {
       nowMs += 5_000;
-      intervalHandlers.forEach((handler) => handler());
+      intervalHandlers.forEach((handler) => {
+        handler();
+      });
       await flushPromises();
     }
 
     expect(gateway.resumeFlow).toHaveBeenCalledTimes(4);
-    expect(gateway.resumeFlow.mock.calls.map(([flowId]) => flowId)).toEqual([
-      flowIds[0],
-      flowIds[1],
-      flowIds[0],
-      flowIds[1],
-    ]);
-    stops.forEach((stop) => stop());
+    [flowIds[0], flowIds[1], flowIds[0], flowIds[1]].forEach((flowId, index) => {
+      expect(gateway.resumeFlow).toHaveBeenNthCalledWith(index + 1, flowId);
+    });
+    stops.forEach((stop) => {
+      stop();
+    });
   });
 
   it("sanitizes a complete result before onComplete in the IndexedDB fallback", async () => {
@@ -516,7 +603,9 @@ function addFlow(storage: Storage, flowId: string, nowMs = Date.now()): void {
 
 function flowStorage(flowIds: string[], nowMs = Date.now()): MapStorage {
   const storage = new MapStorage();
-  flowIds.forEach((flowId, index) => addFlow(storage, flowId, nowMs - 1_000 + index));
+  flowIds.forEach((flowId, index) => {
+    addFlow(storage, flowId, nowMs - 1_000 + index);
+  });
   return storage;
 }
 
@@ -597,11 +686,30 @@ class ThrowingCoordinationStorage extends MapStorage {
   }
 }
 
+class ThrowingOnceCoordinationStorage extends MapStorage {
+  #shouldThrow = true;
+
+  override getItem(key: string): string | null {
+    if (this.#shouldThrow && key === "kondate.auth.supabase.claim-poll-last-at") {
+      this.#shouldThrow = false;
+      throw new Error(`secret:${"A".repeat(43)}`);
+    }
+    return super.getItem(key);
+  }
+}
+
 class SerializedIndexedDb {
   #tail = Promise.resolve();
+  #hasStore = false;
+  openCount = 0;
+  upgradeCount = 0;
+  createObjectStoreCount = 0;
   transactionCount = 0;
 
-  open(): IDBOpenDBRequest {
+  open(name: string, version?: number): IDBOpenDBRequest {
+    expect(name).toBe("kondate-auth-claim-poll");
+    expect(version).toBe(1);
+    this.openCount += 1;
     const request = {
       onblocked: null as ((event: Event) => void) | null,
       onerror: null as ((event: Event) => void) | null,
@@ -609,13 +717,33 @@ class SerializedIndexedDb {
       onupgradeneeded: null as ((event: Event) => void) | null,
     };
     const database = {
-      objectStoreNames: { contains: () => true },
-      createObjectStore: vi.fn(),
+      objectStoreNames: {
+        contains: (storeName: string) => {
+          expect(storeName).toBe("coordination");
+          return this.#hasStore;
+        },
+      },
+      createObjectStore: (storeName: string) => {
+        expect(storeName).toBe("coordination");
+        this.#hasStore = true;
+        this.createObjectStoreCount += 1;
+        return {} as IDBObjectStore;
+      },
       close: vi.fn(),
-      transaction: () => this.#transaction(),
+      transaction: (storeName: string, mode?: IDBTransactionMode) => {
+        expect(storeName).toBe("coordination");
+        expect(mode).toBe("readwrite");
+        return this.#transaction();
+      },
     };
     Object.defineProperty(request, "result", { value: database });
-    queueMicrotask(() => request.onsuccess?.(new Event("success")));
+    queueMicrotask(() => {
+      if (!this.#hasStore) {
+        this.upgradeCount += 1;
+        request.onupgradeneeded?.(new Event("upgradeneeded"));
+      }
+      request.onsuccess?.(new Event("success"));
+    });
     return request as unknown as IDBOpenDBRequest;
   }
 
@@ -644,19 +772,71 @@ class SerializedIndexedDb {
         transaction.onabort?.(new Event("abort"));
         release();
       },
-      objectStore: () => ({
-        get: () => {
-          void predecessor.then(() => {
-            getRequest.onsuccess?.(new Event("success"));
-          });
-          return getRequest;
-        },
-        put: () => {
-          queueMicrotask(finish);
-          return {} as IDBRequest;
-        },
-      }),
+      objectStore: (storeName: string) => {
+        expect(storeName).toBe("coordination");
+        return {
+          get: (key: IDBValidKey) => {
+            expect(key).toBe("reservation");
+            void predecessor.then(() => {
+              getRequest.onsuccess?.(new Event("success"));
+            });
+            return getRequest;
+          },
+          put: (_value: unknown, key?: IDBValidKey) => {
+            expect(key).toBe("reservation");
+            queueMicrotask(finish);
+            return {} as IDBRequest;
+          },
+        };
+      },
     });
     return transaction as unknown as IDBTransaction;
+  }
+}
+
+class LateSuccessIndexedDb {
+  readonly close = vi.fn();
+
+  constructor(private readonly failure: "blocked" | "error") {}
+
+  open(): IDBOpenDBRequest {
+    const request = {
+      error: new Error("open failed"),
+      onblocked: null as ((event: Event) => void) | null,
+      onerror: null as ((event: Event) => void) | null,
+      onsuccess: null as ((event: Event) => void) | null,
+      onupgradeneeded: null as ((event: Event) => void) | null,
+    };
+    Object.defineProperty(request, "result", {
+      value: {
+        close: this.close,
+        objectStoreNames: { contains: () => true },
+      },
+    });
+    queueMicrotask(() => {
+      if (this.failure === "blocked") {
+        request.onblocked?.(new Event("blocked"));
+      } else {
+        request.onerror?.(new Event("error"));
+      }
+      queueMicrotask(() => request.onsuccess?.(new Event("success")));
+    });
+    return request as unknown as IDBOpenDBRequest;
+  }
+}
+
+class RejectingOnceLockManager extends ImmediateLockManager {
+  #shouldReject = true;
+
+  override async request<T>(
+    name: string,
+    options: LockOptions,
+    callback: (lock: Lock | null) => T | PromiseLike<T>,
+  ): Promise<T> {
+    if (this.#shouldReject) {
+      this.#shouldReject = false;
+      throw new Error(`secret:${"A".repeat(43)}`);
+    }
+    return await super.request(name, options, callback);
   }
 }

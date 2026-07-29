@@ -55,14 +55,30 @@ function selectNextFlowId(flowIds: string[], storage: Storage): string | undefin
 function openClaimPollDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(CLAIM_POLL_DATABASE_NAME, 1);
+    let settled = false;
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(CLAIM_POLL_STORE_NAME)) {
         request.result.createObjectStore(CLAIM_POLL_STORE_NAME);
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error("IndexedDB upgrade blocked"));
+    request.onsuccess = () => {
+      if (settled) {
+        request.result.close();
+        return;
+      }
+      settled = true;
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      if (settled) return;
+      settled = true;
+      reject(request.error ?? new Error("IndexedDB open failed"));
+    };
+    request.onblocked = () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("IndexedDB upgrade blocked"));
+    };
   });
 }
 
@@ -97,14 +113,22 @@ async function runInIndexedDbCoordinator<T>(operation: () => T): Promise<T | und
             transaction.abort();
           }
         };
-        read.onerror = () => transaction.abort();
+        read.onerror = () => {
+          transaction.abort();
+        };
       } catch {
         settle(undefined);
         return;
       }
-      transaction.oncomplete = () => settle(result);
-      transaction.onerror = () => settle(undefined);
-      transaction.onabort = () => settle(undefined);
+      transaction.oncomplete = () => {
+        settle(result);
+      };
+      transaction.onerror = () => {
+        settle(undefined);
+      };
+      transaction.onabort = () => {
+        settle(undefined);
+      };
     });
   } finally {
     database.close();
@@ -167,13 +191,19 @@ export function startAuthContinuationRecovery(input: {
           await runClaim(reserveClaim());
         },
       );
+    } catch {
+      // recovery失敗は次周期へ委ね、認証情報を含み得る例外をグローバルへ漏らさない。
     } finally {
       running = false;
     }
   };
   // B-I1: claim の IP 上限 20/60s を超えないよう 5s 間隔（最大 12 回/分）にする。
-  const timer = (input.setInterval ?? window.setInterval)(() => void poll(), 5_000);
-  const wake = (): void => void poll();
+  const timer = (input.setInterval ?? window.setInterval)(() => {
+    void poll();
+  }, 5_000);
+  const wake = (): void => {
+    void poll();
+  };
   window.addEventListener("focus", wake);
   document.addEventListener("visibilitychange", wake);
   void poll();
