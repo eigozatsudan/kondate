@@ -337,7 +337,7 @@ export function HouseholdSettingsForm({
   selectedMemberIdRef.current = selected?.id;
   const allergiesQuery = useQuery({
     queryKey: selected
-      ? householdKeys.allergies("settings", selected.id)
+      ? householdKeys.allergies(userId, selected.id)
       : ["settings-allergies", "none"],
     queryFn: () => api.listAllergies(selected?.id ?? "none"),
     enabled: selected !== undefined,
@@ -345,7 +345,7 @@ export function HouseholdSettingsForm({
   const currentAllergies = allergiesQuery.data ?? [];
   const dislikesQuery = useQuery({
     queryKey: selected
-      ? householdKeys.dislikes("settings", selected.id)
+      ? householdKeys.dislikes(userId, selected.id)
       : ["settings-dislikes", "none"],
     queryFn: () => api.listDislikes(selected?.id ?? "none"),
     enabled: selected !== undefined,
@@ -649,7 +649,7 @@ export function HouseholdSettingsForm({
       const pending = pendingRegisteredIntents.current.get(memberId);
       if (pending !== undefined) pending.registeredSaveEvidence = "allergy-insert";
       await queryClient.invalidateQueries({
-        queryKey: householdKeys.allergies("settings", memberId),
+        queryKey: householdKeys.allergies(userId, memberId),
       });
       const registeredStatusSaved = await savePendingRegisteredStatus(memberId);
       if (registeredStatusSaved === false) {
@@ -662,7 +662,7 @@ export function HouseholdSettingsForm({
         await api.invalidateSafety();
       }
     },
-    [api, queryClient, savePendingRegisteredStatus],
+    [api, queryClient, savePendingRegisteredStatus, userId],
   );
   const createDraft = useMutation({
     mutationFn: () => api.createDraft(members.length),
@@ -1266,14 +1266,47 @@ export function HouseholdSettingsForm({
                 ref={ageBandRef}
                 value={values.ageBand}
                 onChange={(event) => {
+                  const nextAge = event.target.value as AgeBand;
+                  const nextDefaults = defaultsForAgeBand(nextAge);
+                  // 直前の年齢デフォルトと一致する項目だけ上書きし、ユーザー編集を黙って潰さない。
+                  const previousAge = values.ageBand;
+                  const previousDefaults =
+                    previousAge in householdAgeLabels
+                      ? defaultsForAgeBand(previousAge)
+                      : null;
+                  const stillAtPreviousDefault = <T,>(
+                    current: T,
+                    previousDefault: T | undefined,
+                  ): boolean =>
+                    previousDefaults === null ||
+                    previousDefault === undefined ||
+                    JSON.stringify(current) === JSON.stringify(previousDefault);
                   updateAndSave({
-                    ageBand: event.target.value as AgeBand,
-                    portionSize: defaultsForAgeBand(event.target.value as AgeBand).portion_size,
-                    spiceLevel: defaultsForAgeBand(event.target.value as AgeBand).spice_level,
-                    easePreferences: defaultsForAgeBand(event.target.value as AgeBand)
-                      .ease_preferences,
-                    requiredSafetyConstraints: defaultsForAgeBand(event.target.value as AgeBand)
-                      .required_safety_constraints,
+                    ageBand: nextAge,
+                    portionSize: stillAtPreviousDefault(
+                      values.portionSize,
+                      previousDefaults?.portion_size,
+                    )
+                      ? nextDefaults.portion_size
+                      : values.portionSize,
+                    spiceLevel: stillAtPreviousDefault(
+                      values.spiceLevel,
+                      previousDefaults?.spice_level,
+                    )
+                      ? nextDefaults.spice_level
+                      : values.spiceLevel,
+                    easePreferences: stillAtPreviousDefault(
+                      values.easePreferences,
+                      previousDefaults?.ease_preferences,
+                    )
+                      ? nextDefaults.ease_preferences
+                      : values.easePreferences,
+                    requiredSafetyConstraints: stillAtPreviousDefault(
+                      values.requiredSafetyConstraints,
+                      previousDefaults?.required_safety_constraints,
+                    )
+                      ? nextDefaults.required_safety_constraints
+                      : values.requiredSafetyConstraints,
                   });
                 }}
               >
@@ -1322,6 +1355,12 @@ export function HouseholdSettingsForm({
                 </button>
               </div>
             )}
+            {(values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
+              currentAllergies.length > 0 && (
+                <p className="type-small" role="status">
+                  以前登録したアレルギーが残っています。献立生成の安全判定では引き続き使われます。「登録あり」に戻して編集するか、不要なら登録ありから削除してください。
+                </p>
+              )}
             {values.allergyStatus === "registered" && (
               <AllergyEditor
                 memberId={selected.id}
@@ -1362,7 +1401,7 @@ export function HouseholdSettingsForm({
                       pending.allergyRefetchToken = refetchToken;
                     }
                     await queryClient.invalidateQueries({
-                      queryKey: householdKeys.allergies("settings", selected.id),
+                      queryKey: householdKeys.allergies(userId, selected.id),
                     });
                     if (
                       pendingRegisteredIntents.current.get(selected.id) === pending &&
@@ -1482,7 +1521,7 @@ export function HouseholdSettingsForm({
                     async () => {
                       await api.addDislike(memberId, name);
                       await queryClient.invalidateQueries({
-                        queryKey: householdKeys.dislikes("settings", memberId),
+                        queryKey: householdKeys.dislikes(userId, memberId),
                       });
                       await api.invalidateSafety();
                     },
@@ -1511,7 +1550,7 @@ export function HouseholdSettingsForm({
                           async () => {
                             await api.removeDislike(item.id);
                             await queryClient.invalidateQueries({
-                              queryKey: householdKeys.dislikes("settings", memberId),
+                              queryKey: householdKeys.dislikes(userId, memberId),
                             });
                             await api.invalidateSafety();
                           },

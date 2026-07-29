@@ -11,6 +11,10 @@ import {
   type WeeklyFlyerMenu,
   type WeeklyFlyerMenuResult,
 } from "../../../shared/contracts/flyer-weekly.js";
+import {
+  FINALIZE_RESERVE_MS,
+  OPENROUTER_TIMEOUT_MS,
+} from "../../../shared/contracts/function-budget.js";
 import { issueMessages } from "../../../shared/contracts/generation.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
 import { normalizeFoodText } from "../../../shared/safety/allergens.js";
@@ -82,6 +86,9 @@ export type FlyerWeeklyAuthUser = {
   email: string;
 };
 
+/** mark 前に必要な最小残り予算（試行上限 + finalize 予約）。generation-service と同型。 */
+const REQUIRED_SEND_BUDGET_MS = OPENROUTER_TIMEOUT_MS + FINALIZE_RESERVE_MS;
+
 export type FlyerWeeklyDeps = {
   user: FlyerWeeklyAuthUser;
   /** テスト用: OpenRouter 呼び出し回数を数える */
@@ -90,6 +97,12 @@ export type FlyerWeeklyDeps = {
     timeoutMs: number,
   ) => Promise<OpenRouterGenerationResult>;
   now?: () => Date;
+  /** handler 入口の performance.now()。未指定時は本関数入口で計測する。 */
+  requestStartedAtMonotonicMs?: number;
+  /** 総予算 ms。既定はリリース固定 55s。 */
+  functionTotalBudgetMs?: number;
+  /** テスト用の単調時計。 */
+  monotonicNow?: () => number;
 };
 
 function entitlementUnavailableHttpError(): HttpError {
@@ -188,8 +201,14 @@ export async function runFlyerWeekly(
   imageBytes: Uint8Array,
   idempotencyKey: string = randomUUID(),
 ): Promise<{ menu: WeeklyFlyerMenuResult; requestId: string }> {
-  const started = performance.now();
   const env = getServerEnv();
+  const startedAtMonotonicMs = deps.requestStartedAtMonotonicMs ?? performance.now();
+  const functionTotalBudgetMs = deps.functionTotalBudgetMs ?? env.openRouter.functionTotalBudgetMs;
+  const monotonicNow = deps.monotonicNow ?? (() => performance.now());
+  const remainingMs = (): number =>
+    Math.max(0, Math.trunc(startedAtMonotonicMs + functionTotalBudgetMs - monotonicNow()));
+  // ログ duration は handler 相対の経過時間
+  const started = startedAtMonotonicMs;
   const requestIdForLog = randomUUID();
   let openRouterCalls = 0;
 
@@ -280,6 +299,16 @@ export async function runFlyerWeekly(
     throw new HttpError(500, "internal_error", issueMessages.internal_error);
   }
 
+  // mark 前に 24s+2s の残りが無ければ sent 化せず timeout（generation-service と同契約）
+  if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: "generation_timeout",
+      p_sent: false,
+    });
+    mapFailureHttp("generation_timeout");
+  }
+
   // mark sent（short + try→sent + attempt/global）
   const { data: markRaw, error: markError } = await rpcUntyped(admin, "mark_flyer_weekly_sent", {
     p_request_id: requestId,
@@ -321,13 +350,24 @@ export async function runFlyerWeekly(
       return send({ messages, timeoutMs, mode: "flyer_weekly" });
     });
 
+  // 試行 timeout は 24s と「残り − finalize 予約」の小さい方
+  const attemptTimeoutMs = Math.min(
+    env.openRouter.timeoutMs,
+    Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
+  );
+  if (attemptTimeoutMs <= 0) {
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: "generation_timeout",
+      p_sent: true,
+    });
+    mapFailureHttp("generation_timeout");
+  }
+
   let aiResult: OpenRouterGenerationResult;
   try {
     openRouterCalls += 1;
-    aiResult = await sender(
-      buildFlyerMessages(prepared.dataUrl),
-      Math.min(env.openRouter.timeoutMs, env.openRouter.functionTotalBudgetMs),
-    );
+    aiResult = await sender(buildFlyerMessages(prepared.dataUrl), attemptTimeoutMs);
   } catch (error: unknown) {
     const code = error instanceof OpenRouterCallError ? error.code : "model_unavailable";
     await rpcUntyped(admin, "finalize_flyer_weekly_failure", {

@@ -17,6 +17,8 @@ export const MAX_MULTIPART_BYTES = FLYER_MAX_RAW_BYTES + 256 * 1024;
  */
 export default async function flyerWeekly(request: Request): Promise<Response> {
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
+  // 総予算 55s の起点。multipart / sharp / OpenRouter 全体をこの時刻から測る。
+  const requestStartedAtMonotonicMs = performance.now();
   try {
     const user = await requireUserWithEmail(request);
     const contentType = request.headers.get("content-type") ?? "";
@@ -48,7 +50,10 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
     const buffer = new Uint8Array(await blob.arrayBuffer());
 
     const result = await runFlyerWeekly(
-      { user: { userId: user.userId, email: user.email } },
+      {
+        user: { userId: user.userId, email: user.email },
+        requestStartedAtMonotonicMs,
+      },
       buffer,
     );
 

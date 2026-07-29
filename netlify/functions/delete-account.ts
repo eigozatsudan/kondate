@@ -57,11 +57,20 @@ export const createDeleteAccountHandler =
         );
       }
       // 未完了 flyer の reserved は helper で解放（失敗しても Auth 削除は止めない）
+      // 返却 error だけでなく promise reject も best-effort として隔離する。
       if (deps.releaseFlyerProcessingReservations !== undefined) {
-        await deps.releaseFlyerProcessingReservations(auth.userId);
+        try {
+          await deps.releaseFlyerProcessingReservations(auth.userId);
+        } catch {
+          // flyer 解放失敗は Auth 削除を阻害しない
+        }
       }
       // Stripe cancel は best-effort。成否にかかわらず Auth delete へ進む
-      await deps.cancelBillingSubscriptions(auth.userId);
+      try {
+        await deps.cancelBillingSubscriptions(auth.userId);
+      } catch {
+        // billing cancel の throw も Auth 削除を阻害しない
+      }
       const { error } = await deps.deleteUser(auth.userId);
       if (error) {
         throw new HttpError(
@@ -94,11 +103,24 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
     return;
   }
 
-  const { data, error } = await admin.rpc("get_billing_customer_by_user", {
-    p_user_id: userId,
-  });
-  if (error !== null) {
-    // customer 解決失敗でも Auth 削除は進める
+  let data: unknown;
+  try {
+    const result = await admin.rpc("get_billing_customer_by_user", {
+      p_user_id: userId,
+    });
+    if (result.error !== null) {
+      // customer 解決失敗でも Auth 削除は進める
+      log({
+        level: "warn",
+        requestId,
+        code: "billing_cancel_failed",
+        durationMs: Date.now() - startedAt,
+      });
+      return;
+    }
+    data = result.data;
+  } catch {
+    // RPC 自体の throw も best-effort（Auth 削除は外側で継続）
     log({
       level: "warn",
       requestId,

@@ -40,7 +40,7 @@ export function DangerZone({
       ) : (
         <>
           <p>
-            家族設定、献立履歴、冷蔵庫の食材、買い物リストは削除され、元に戻せません。不正利用防止のため、メールから作った復元できない識別子と日々の利用回数だけは残ります。
+            家族設定、献立履歴、冷蔵庫の食材、買い物リストは削除され、元に戻せません。不正利用防止のため、メールから作った復元できない識別子や日々の利用回数、無料期間の利用履歴などの記録は残ることがあります。
           </p>
           <button
             type="button"
@@ -115,8 +115,12 @@ export function AccountSettingsSection() {
         setErrorMessage(mapDeleteError(parsed.data.error.code));
         return;
       }
-      // サーバー削除成功後だけローカル掃除。失敗時はダイアログを開いたまま再試行可能にする
-      await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
+      // サーバー削除成功後のローカル掃除は best-effort。失敗しても Auth は消えているので成功遷移する。
+      try {
+        await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
+      } catch {
+        // storage 例外で削除成功を失敗表示にしない
+      }
       window.location.replace("/login?accountDeleted=1");
     } catch {
       setErrorMessage(mapDeleteError(undefined));

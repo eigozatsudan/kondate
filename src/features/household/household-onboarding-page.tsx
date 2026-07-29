@@ -257,6 +257,9 @@ export function HouseholdOnboardingForm({
       <main className="page-frame stack">
         <h1>家族の初回設定</h1>
         <p>年齢のめやす、アレルギー、食べない食事の3項目から始めます。</p>
+        <p className="type-small">
+          AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
+        </p>
         {completeMembers.length > 0 && <p>{completeMembers.length}人の設定が完了しています。</p>}
         {startMutation.isError ? (
           <p className="error-message" role="alert">
@@ -314,6 +317,9 @@ export function HouseholdOnboardingForm({
         <p className="eyebrow">家族設定（任意）</p>
         <h1>家族の初回設定</h1>
         <p>設定済み項目 {completedRequired} / 3</p>
+        <p className="type-small">
+          AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
+        </p>
         <p
           className={saveState === "failed" ? "error-message" : "status-message"}
           aria-live="polite"
@@ -522,10 +528,14 @@ export function HouseholdOnboardingForm({
       <button
         className="primary-button"
         type="button"
-        disabled={!canComplete}
+        disabled={!canComplete || saveState === "failed"}
         onClick={() => {
           void saveQueue.current.then(async (saved) => {
-            if (!saved) return;
+            // 下書き保存失敗時は無言 return せず、失敗表示を明示して再試行可能にする。
+            if (!saved) {
+              setSaveState("failed");
+              return;
+            }
             let completed: HouseholdMemberRow;
             try {
               completed = await api.completeMember(draft.id);
