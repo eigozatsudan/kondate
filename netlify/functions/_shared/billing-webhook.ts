@@ -208,8 +208,15 @@ async function processStripeEvent(
   return parsed.data.outcome;
 }
 
+/** dual-sub 整理の結果。canonical 投影は keep 側を正とする。 */
+export type DualSubscriptionCleanup = {
+  keepSubscriptionId: string | null;
+  discardedSubscriptionIds: readonly string[];
+};
+
 /**
  * 二重 live subscription: 新しい方を Stripe cancel、DB は古い方 keep。
+ * 呼び出し側は discarded に含まれるイベント subscription を通常 projection してはならない。
  */
 export async function cancelDualLiveSubscriptions(
   deps: {
@@ -221,21 +228,30 @@ export async function cancelDualLiveSubscriptions(
   },
   userId: string,
   stripeCustomerId: string,
-): Promise<void> {
+): Promise<DualSubscriptionCleanup> {
   const listed = await deps.stripe.subscriptions.list({
     customer: stripeCustomerId,
     status: "all",
     limit: 20,
   });
   const live = listed.data.filter((sub) => LIVE_SUB_STATUSES.has(sub.status));
-  if (live.length <= 1) return;
+  if (live.length <= 1) {
+    return {
+      keepSubscriptionId: live[0]?.id ?? null,
+      discardedSubscriptionIds: [],
+    };
+  }
 
   const sorted = [...live].sort((a, b) => a.created - b.created);
   const keep = sorted[0];
-  if (keep === undefined) return;
+  if (keep === undefined) {
+    return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
+  }
 
+  const discardedSubscriptionIds: string[] = [];
   for (const newer of sorted.slice(1)) {
     await deps.stripe.subscriptions.cancel(newer.id);
+    discardedSubscriptionIds.push(newer.id);
     deps.log({
       level: "warn",
       requestId: deps.requestId,
@@ -246,10 +262,28 @@ export async function cancelDualLiveSubscriptions(
     });
   }
 
-  await deps.admin.rpc("mark_billing_subscription_dual_cancel_keep", {
-    p_user_id: userId,
-    p_keep_stripe_subscription_id: keep.id,
-  });
+  const { data: markData, error: markError } = await deps.admin.rpc(
+    "mark_billing_subscription_dual_cancel_keep",
+    {
+      p_user_id: userId,
+      p_keep_stripe_subscription_id: keep.id,
+    },
+  );
+  // keep 記録失敗は 500 で再送（discard 投影で誤 cancel 化しない）
+  if (markError !== null) {
+    throw new Error(markError.message ?? "mark_billing_subscription_dual_cancel_keep_failed");
+  }
+  if (markData !== null && typeof markData === "object") {
+    const ok = (markData as { ok?: unknown }).ok;
+    if (ok === false) {
+      throw new Error("mark_billing_subscription_dual_cancel_keep_rejected");
+    }
+  }
+
+  return {
+    keepSubscriptionId: keep.id,
+    discardedSubscriptionIds,
+  };
 }
 
 /**
@@ -329,23 +363,37 @@ async function handleSubscriptionEvent(
     });
   }
 
+  let dualCleanup: DualSubscriptionCleanup = {
+    keepSubscriptionId: null,
+    discardedSubscriptionIds: [],
+  };
   if (customerId !== null && LIVE_SUB_STATUSES.has(sub.status)) {
-    await cancelDualLiveSubscriptions(
+    dualCleanup = await cancelDualLiveSubscriptions(
       { stripe: deps.stripe, admin: deps.admin, log, requestId, startedAt },
       userId,
       customerId,
     );
   }
 
-  // 同一秒の決定論: retrieve を正として payload に載せる（evt_ 文字列順は使わない）
+  // 同一秒の決定論: retrieve を正として payload に載せる（evt_ 文字列順は使わない）。
+  // dual-sub で discard した subscription のイベントは keep 側を投影する（cancel 後 status で上書きしない）。
+  const projectSubscriptionId =
+    dualCleanup.discardedSubscriptionIds.includes(sub.id) && dualCleanup.keepSubscriptionId !== null
+      ? dualCleanup.keepSubscriptionId
+      : sub.id;
+
   let retrieved: SubscriptionProjection | null = null;
   try {
-    const liveSub = await deps.stripe.subscriptions.retrieve(sub.id);
+    const liveSub = await deps.stripe.subscriptions.retrieve(projectSubscriptionId);
     retrieved = projectionFromSubscription(liveSub);
   } catch {
-    retrieved = projectionFromSubscription(sub);
+    // discard 済みイベントで keep retrieve 失敗時は event オブジェクトで上書きしない
+    if (projectSubscriptionId === sub.id) {
+      retrieved = projectionFromSubscription(sub);
+    }
   }
-  const projection = retrieved ?? projectionFromSubscription(sub);
+  const projection =
+    retrieved ?? (projectSubscriptionId === sub.id ? projectionFromSubscription(sub) : null);
   if (projection === null) {
     // 投影不能は event 記録のみ（再送地獄回避で 200）
     const outcome = await processStripeEvent(deps.admin, {
@@ -539,7 +587,15 @@ async function handleInvoiceEvent(
 
   const projection = projectionFromSubscription(sub);
   if (projection === null) {
-    return json(200, { ok: true, data: { outcome: "event_only" } });
+    // 投影不能でも event ledger へ記録（再送地獄回避の 200 + durable claim）
+    const outcome = await processStripeEvent(deps.admin, {
+      stripe_event_id: event.id,
+      event_type: event.type,
+      stripe_event_created: event.created,
+      user_id: userId,
+      skip_subscription_projection: true,
+    });
+    return json(200, { ok: true, data: { outcome } });
   }
 
   const isPaid = event.type === "invoice.paid";

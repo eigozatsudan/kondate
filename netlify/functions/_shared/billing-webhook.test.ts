@@ -462,14 +462,24 @@ describe("handleBillingWebhook", () => {
     constructEvent.mockReturnValue(
       makeEvent("customer.subscription.created", newer, { id: "evt_dual" }),
     );
-    retrieve.mockResolvedValue(newer);
+    // cancel 後の newer retrieve は canceled を返し得る。投影は keep(older) を正とする。
+    retrieve.mockImplementation((id: string) => {
+      if (id === "sub_newer") {
+        return Promise.resolve(
+          makeSubscription({ id: "sub_newer", status: "canceled", created: 2000 }),
+        );
+      }
+      return Promise.resolve(older);
+    });
     list.mockResolvedValue({
       object: "list",
       data: [older, newer],
       has_more: false,
       url: "",
     });
-    cancel.mockResolvedValue(newer);
+    cancel.mockResolvedValue(
+      makeSubscription({ id: "sub_newer", status: "canceled", created: 2000 }),
+    );
 
     await handleBillingWebhook(signedRequest(), deps());
     expect(cancel).toHaveBeenCalledWith("sub_newer");
@@ -483,6 +493,52 @@ describe("handleBillingWebhook", () => {
     expect(logSink).toHaveBeenCalledWith(
       expect.objectContaining({ code: "billing_dual_subscription_canceled" }),
     );
+
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    // discard した newer ではなく keep(older) の id/status で投影する
+    expect(processPayload.stripe_subscription_id).toBe("sub_older");
+    expect(processPayload.status).toBe("active");
+  });
+
+  it("returns 500 when dual-sub mark_keep RPC fails", async () => {
+    const older = makeSubscription({
+      id: "sub_older",
+      created: 1000,
+      status: "active",
+    });
+    const newer = makeSubscription({
+      id: "sub_newer",
+      created: 2000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", newer, { id: "evt_dual_mark_fail" }),
+    );
+    list.mockResolvedValue({
+      object: "list",
+      data: [older, newer],
+      has_more: false,
+      url: "",
+    });
+    cancel.mockResolvedValue(newer);
+    rpc.mockImplementation((name: string) => {
+      if (name === "mark_billing_subscription_dual_cancel_keep") {
+        return Promise.resolve({ data: null, error: { message: "mark failed" } });
+      }
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({ data: { ok: true, outcome: "applied" }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
   });
 
   it("processes webhook when BILLING_ENABLED=false if secrets present (A3)", async () => {

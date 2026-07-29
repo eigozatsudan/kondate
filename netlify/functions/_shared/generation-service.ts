@@ -652,11 +652,8 @@ export async function runGeneration(
     ...inputDeps,
     models: command.qualityMode ? envForModels.openRouter.plusModels : inputDeps.models,
   };
-  // 品質リスト空は model_unavailable（設定ミス。BILLING 有効時は env parse で拒否済み）
-  if (command.qualityMode && deps.models.length === 0) {
-    // reserve 前に閉じる（台帳非接触）。Free は repository 403 が先。
-    throw new HttpError(503, "model_unavailable", issueMessages.model_unavailable);
-  }
+  // 品質リスト空の 503 は Plus 利用者だけ（Free / kill は repository の 403 quality_mode_requires_plus を先に返す）
+  // 空チェック自体は reserveNew 後・OpenRouter 直前で行い、Free 経路で 503 が CTA を潰さないようにする。
   const resolveIntegrity =
     deps.resolveIntegrityContext ??
     ((input: GenerationCommand) =>
@@ -689,6 +686,16 @@ export async function runGeneration(
   }
   const requestId = reserved.request_id;
   if (requestId === undefined) throw new Error("request_id_missing");
+  // Plus 経路で品質リストが空 = 設定ミス。Free は reserve 前に 403 済み。
+  // markSent 前に fail して try/台帳を対称解放する。
+  if (command.qualityMode && deps.models.length === 0) {
+    try {
+      await deps.repository.fail(requestId, "model_unavailable", null);
+      return await hydrate();
+    } catch (error) {
+      throw new TerminalTransitionError(unwrapStatusHydration(error));
+    }
+  }
   // 実際に OpenRouter へ送ったモデルだけを任意で載せる（未送信終端では省略）
   let loggedModelId: string | null = null;
   const emitTerminalLog = (level: "info" | "warn" | "error", code: string): void => {

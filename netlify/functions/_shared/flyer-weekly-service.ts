@@ -13,6 +13,7 @@ import {
 } from "../../../shared/contracts/flyer-weekly.js";
 import { issueMessages } from "../../../shared/contracts/generation.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
+import { normalizeFoodText } from "../../../shared/safety/allergens.js";
 import {
   applyQuotaPlan,
   BillingEntitlementUnavailableError,
@@ -126,17 +127,27 @@ function mapFailureHttp(code: string, retryAt: string | null = null): never {
   throw new HttpError(status, code, message, retryAt ? { retryAt } : undefined);
 }
 
-/** 食材名が現行 safety の禁止アレルゲンに触れていないか（全通 or fail） */
-function assertFlyerMenuSafe(
+/**
+ * 表示・保持フィールド全体が現行 safety の禁止アレルゲンに触れていないか（全通 or fail）。
+ * label / notes も検査対象。NFKC・全角・zero-width 等は normalizeFoodText で寄せる。
+ */
+export function assertFlyerMenuSafe(
   menu: WeeklyFlyerMenu,
   bannedIngredientNeedles: readonly string[],
 ): void {
   if (bannedIngredientNeedles.length === 0) return;
-  const loweredNeedles = bannedIngredientNeedles.map((n) => n.toLowerCase());
+  const needles = bannedIngredientNeedles
+    .map((n) => normalizeFoodText(n))
+    .filter((n) => n.length > 0);
+  if (needles.length === 0) return;
+
   for (const day of menu.days) {
-    const corpus = [day.mainName, day.sideName ?? "", ...day.ingredients].join(" ").toLowerCase();
-    for (const needle of loweredNeedles) {
-      if (needle.length > 0 && corpus.includes(needle)) {
+    // UI に出る可能性のある全フィールドを検査（main/side/ingredients だけだと provider が回避できる）
+    const corpus = normalizeFoodText(
+      [day.label, day.mainName, day.sideName ?? "", day.notes ?? "", ...day.ingredients].join(" "),
+    );
+    for (const needle of needles) {
+      if (corpus.includes(needle)) {
         throw new HttpError(
           400,
           "flyer_invalid_ai_response",

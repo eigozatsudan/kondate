@@ -1,5 +1,5 @@
 import type { Config } from "@netlify/functions";
-import { createStripeClient } from "./_shared/billing-stripe.js";
+import { getStripeClientFromEnv } from "./_shared/billing-stripe.js";
 import {
   handleBillingWebhook,
   type BillingWebhookAdmin,
@@ -60,9 +60,11 @@ export default async function billingWebhook(request: Request): Promise<Response
       admin: asWebhookAdmin(),
     });
   }
+  const stripe = getStripeClientFromEnv(env);
   return handleBillingWebhook(request, {
     env,
-    stripe: createStripeClient(env.stripe.secretKey),
+    // env.stripe ありなら client も必ず作れる（mockBaseUrl も伝播）
+    stripe: stripe as BillingWebhookStripe,
     admin: asWebhookAdmin(),
   });
 }

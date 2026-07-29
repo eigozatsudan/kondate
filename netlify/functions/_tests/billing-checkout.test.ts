@@ -313,4 +313,113 @@ describe("runBillingCheckout", () => {
     const response = await runBillingCheckout(request(), deps());
     expect(response.status).toBe(401);
   });
+
+  it("acquires checkout lock before Stripe Customer ensure (A1)", async () => {
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_user") {
+        return { data: null, error: null };
+      }
+      if (name === "ensure_billing_customer") {
+        return { data: { ok: true }, error: null };
+      }
+      if (name === "has_billing_trial_history") {
+        return { data: false, error: null };
+      }
+      if (name === "acquire_billing_checkout_lock") {
+        return { data: { ok: true, lock_token: LOCK_TOKEN }, error: null };
+      }
+      if (name === "bind_billing_checkout_session") {
+        return {
+          data: {
+            ok: true,
+            lock_token: LOCK_TOKEN,
+            stripe_checkout_session_id: SESSION_ID,
+          },
+          error: null,
+        };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
+    });
+
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(200);
+    expect(customersCreate).toHaveBeenCalledTimes(1);
+
+    const names = rpc.mock.calls.map(([n]) => n as string);
+    expect(names.indexOf("acquire_billing_checkout_lock")).toBeLessThan(
+      names.indexOf("get_billing_customer_by_user"),
+    );
+    expect(names.indexOf("acquire_billing_checkout_lock")).toBeLessThan(
+      names.indexOf("ensure_billing_customer"),
+    );
+  });
+
+  it("returns 503 when subscriptions.list fails (fail-closed)", async () => {
+    subscriptionsList.mockRejectedValue(new Error("stripe list down"));
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "request_failed" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "release_billing_checkout_lock",
+      expect.objectContaining({ p_lock_token: LOCK_TOKEN }),
+    );
+  });
+
+  it("returns 503 when ensure_billing_customer fails on search hit", async () => {
+    const customersSearch = vi.fn().mockResolvedValue({
+      data: [{ id: "cus_from_search" }],
+    });
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_user") {
+        return { data: null, error: null };
+      }
+      if (name === "ensure_billing_customer") {
+        return { data: null, error: { message: "ensure failed" } };
+      }
+      if (name === "has_billing_trial_history") {
+        return { data: false, error: null };
+      }
+      if (name === "acquire_billing_checkout_lock") {
+        return { data: { ok: true, lock_token: LOCK_TOKEN }, error: null };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
+    });
+
+    const d = deps();
+    d.stripe = {
+      ...d.stripe,
+      customers: { create: customersCreate, search: customersSearch },
+    };
+    const response = await runBillingCheckout(request(), d);
+    expect(response.status).toBe(503);
+    expect(customersCreate).not.toHaveBeenCalled();
+    expect(sessionsCreate).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "release_billing_checkout_lock",
+      expect.objectContaining({ p_lock_token: LOCK_TOKEN }),
+    );
+  });
+
+  it("expires Session and releases lock when Session URL is missing after bind", async () => {
+    sessionsCreate.mockResolvedValue({ id: SESSION_ID, url: null });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(503);
+    expect(sessionsExpire).toHaveBeenCalledWith(SESSION_ID);
+    expect(rpc).toHaveBeenCalledWith(
+      "release_billing_checkout_lock",
+      expect.objectContaining({
+        p_lock_token: LOCK_TOKEN,
+        p_stripe_checkout_session_id: SESSION_ID,
+      }),
+    );
+  });
 });

@@ -6,7 +6,7 @@ import {
   type DeleteAccountResult,
 } from "../../shared/contracts/account.js";
 import { requireUser } from "./_shared/auth.js";
-import { createStripeClient } from "./_shared/billing-stripe.js";
+import { getStripeClientFromEnv } from "./_shared/billing-stripe.js";
 import { getServerEnv } from "./_shared/env.js";
 import { handleError, HttpError, json, methodNotAllowed, parseJson } from "./_shared/http.js";
 import { createSafeLogger, type SafeLogEvent } from "./_shared/logger.js";
@@ -177,7 +177,7 @@ export default async function deleteAccount(request: Request): Promise<Response>
   const startedAt = Date.now();
   const requestId = randomUUID();
   const log = createSafeLogger();
-  const stripeClient = env.stripe === undefined ? null : createStripeClient(env.stripe.secretKey);
+  const stripeClient = getStripeClientFromEnv(env);
 
   return createDeleteAccountHandler({
     authenticate: requireUser,

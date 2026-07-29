@@ -38,6 +38,8 @@ export type PlanSettingsSectionProps = {
   userId: string;
   /** ?billing=success のとき webhook 遅延待ち re-fetch。 */
   pollAfterCheckoutSuccess?: boolean;
+  /** Plus 反映 / 5 分 deadline / 連続失敗で poll 終了したとき（query 除去用）。 */
+  onCheckoutPollSettled?: () => void;
   /** テスト注入。省略時は useEntitlement。 */
   entitlement?: EntitlementData | null;
   entitlementLoading?: boolean;
@@ -53,13 +55,17 @@ export type PlanSettingsSectionProps = {
 export function PlanSettingsSection({
   userId,
   pollAfterCheckoutSuccess = false,
+  onCheckoutPollSettled,
   entitlement: injected,
   entitlementLoading,
   entitlementError,
   onCheckout,
   onPortal,
 }: PlanSettingsSectionProps) {
-  const query = useEntitlement(userId, { pollAfterCheckoutSuccess });
+  const query = useEntitlement(userId, {
+    pollAfterCheckoutSuccess,
+    ...(onCheckoutPollSettled === undefined ? {} : { onCheckoutPollSettled }),
+  });
   const data = injected !== undefined ? injected : (query.data ?? null);
   const loading =
     entitlementLoading !== undefined ? entitlementLoading : query.isPending || query.isFetching;

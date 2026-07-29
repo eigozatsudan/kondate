@@ -3,7 +3,7 @@ import type { Config } from "@netlify/functions";
 import type Stripe from "stripe";
 import type { PortalData } from "../../shared/contracts/billing.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
-import { createStripeClient } from "./_shared/billing-stripe.js";
+import { getStripeClientFromEnv } from "./_shared/billing-stripe.js";
 import { getServerEnv, type ServerEnv } from "./_shared/env.js";
 import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.js";
 import { createSafeLogger, type SafeLogEvent } from "./_shared/logger.js";
@@ -91,7 +91,7 @@ export default async function billingPortal(request: Request): Promise<Response>
   return runBillingPortal(request, {
     env,
     authenticate: requireUserWithEmail,
-    stripe: env.stripe === undefined ? (null as never) : createStripeClient(env.stripe.secretKey),
+    stripe: getStripeClientFromEnv(env) ?? (null as never),
     admin: getSupabaseAdmin(),
   });
 }

@@ -56,6 +56,10 @@ export type BillingCheckoutDeps = {
 
 const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
 
+/**
+ * Stripe Customer を確定する。
+ * 呼び出し側はユーザー単位 Checkout ロック取得後に限定すること（並行 create 防止 = A1）。
+ */
 async function ensureStripeCustomer(deps: BillingCheckoutDeps, userId: string): Promise<string> {
   const { data, error } = await deps.admin.rpc("get_billing_customer_by_user", {
     p_user_id: userId,
@@ -79,13 +83,18 @@ async function ensureStripeCustomer(deps: BillingCheckoutDeps, userId: string): 
       });
       const hit = found.data[0];
       if (hit !== undefined) {
-        await deps.admin.rpc("ensure_billing_customer", {
+        const { error: ensureSearchError } = await deps.admin.rpc("ensure_billing_customer", {
           p_user_id: userId,
           p_stripe_customer_id: hit.id,
         });
+        // search ヒット後の mapping 失敗は fail-closed（Session を別 Customer で作らない）
+        if (ensureSearchError !== null) {
+          throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+        }
         return hit.id;
       }
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
       // search 失敗時は create へフォールバック
     }
   }
@@ -103,6 +112,20 @@ async function ensureStripeCustomer(deps: BillingCheckoutDeps, userId: string): 
   return created.id;
 }
 
+/** token 付き lock 解放（失敗経路の共通後始末） */
+async function releaseCheckoutLock(
+  deps: BillingCheckoutDeps,
+  userId: string,
+  lockToken: string,
+  sessionId?: string,
+): Promise<void> {
+  await deps.admin.rpc("release_billing_checkout_lock", {
+    p_user_id: userId,
+    p_lock_token: lockToken,
+    ...(sessionId === undefined ? {} : { p_stripe_checkout_session_id: sessionId }),
+  });
+}
+
 async function hasUsedTrial(deps: BillingCheckoutDeps, email: string): Promise<boolean> {
   const identityKey = computeQuotaIdentityKey(deps.env.quotaIdentityHmacKey, email);
   const { data, error } = await deps.admin.rpc("has_billing_trial_history", {
@@ -117,8 +140,9 @@ async function hasUsedTrial(deps: BillingCheckoutDeps, email: string): Promise<b
 
 /**
  * POST /api/billing/checkout の実装。
- * 順序: entitlement 確認 → acquire(lock_token) → sessions.create → bind。
- * create 失敗で release(token)。bind 失敗で expire + release。
+ * 順序: entitlement 確認 → acquire(lock_token) → Customer 確定 → list → sessions.create → bind。
+ * Customer 作成は lock 保護下（並行 Checkout で Customer/Session 不一致を防ぐ = A1）。
+ * create 失敗で release(token)。bind / URL 欠落で expire + release。
  */
 export async function runBillingCheckout(
   request: Request,
@@ -130,6 +154,9 @@ export async function runBillingCheckout(
   const requestId = deps.requestId ?? randomUUID();
   const log = deps.log ?? createSafeLogger();
   const now = deps.now ?? (() => new Date());
+  let lockToken: string | null = null;
+  let lockedUserId: string | null = null;
+  let createdSessionId: string | null = null;
 
   try {
     if (!deps.env.billingEnabled || deps.env.stripe === undefined) {
@@ -171,24 +198,9 @@ export async function runBillingCheckout(
         ? deps.env.stripe.pricePlusMonthly
         : deps.env.stripe.pricePlusYearly;
 
-    const customerId = await ensureStripeCustomer(deps, user.userId);
-
-    // Stripe 側の live sub がある場合は Portal 誘導（409）
-    try {
-      const listed = await deps.stripe.subscriptions.list({
-        customer: customerId,
-        status: "all",
-        limit: 10,
-      });
-      if (listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
-        throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
-      }
-    } catch (error: unknown) {
-      if (error instanceof HttpError) throw error;
-      // list 失敗は続行（acquire 後に create が最終判定）
-    }
-
-    const lockToken = (deps.createLockToken ?? randomUUID)();
+    // 先に lock。Customer 作成・list・Session はすべて token 保護下（設計図: lock + ensure）
+    lockToken = (deps.createLockToken ?? randomUUID)();
+    lockedUserId = user.userId;
     const expiresAt = new Date(now().getTime() + CHECKOUT_LOCK_TTL_MS).toISOString();
     const { data: acquireData, error: acquireError } = await deps.admin.rpc(
       "acquire_billing_checkout_lock",
@@ -199,6 +211,8 @@ export async function runBillingCheckout(
       },
     );
     if (acquireError !== null) {
+      lockToken = null;
+      lockedUserId = null;
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
     const acquireOk =
@@ -206,6 +220,8 @@ export async function runBillingCheckout(
       typeof acquireData === "object" &&
       (acquireData as { ok?: unknown }).ok === true;
     if (!acquireOk) {
+      lockToken = null;
+      lockedUserId = null;
       log({
         level: "info",
         requestId,
@@ -218,6 +234,23 @@ export async function runBillingCheckout(
         "billing_checkout_in_progress",
         "お支払い手続きが進行中です。しばらくしてからお試しください",
       );
+    }
+
+    const customerId = await ensureStripeCustomer(deps, user.userId);
+
+    // Stripe 側の live sub がある場合は Portal 誘導（409）。list 失敗は 503 fail-closed。
+    let listed: Stripe.ApiList<Stripe.Subscription>;
+    try {
+      listed = await deps.stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 10,
+      });
+    } catch {
+      throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+    }
+    if (listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
+      throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
 
     const usedTrial = await hasUsedTrial(deps, user.email);
@@ -241,20 +274,13 @@ export async function runBillingCheckout(
         locale: "ja",
       });
     } catch {
-      await deps.admin.rpc("release_billing_checkout_lock", {
-        p_user_id: user.userId,
-        p_lock_token: lockToken,
-      });
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
 
     if (typeof session.id !== "string" || session.id.length === 0) {
-      await deps.admin.rpc("release_billing_checkout_lock", {
-        p_user_id: user.userId,
-        p_lock_token: lockToken,
-      });
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
+    createdSessionId = session.id;
 
     const { data: bindData, error: bindError } = await deps.admin.rpc(
       "bind_billing_checkout_session",
@@ -288,21 +314,28 @@ export async function runBillingCheckout(
       } catch {
         // best-effort expire
       }
-      await deps.admin.rpc("release_billing_checkout_lock", {
-        p_user_id: user.userId,
-        p_lock_token: lockToken,
-      });
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
 
     if (typeof session.url !== "string" || session.url.length === 0) {
-      await deps.admin.rpc("release_billing_checkout_lock", {
-        p_user_id: user.userId,
-        p_lock_token: lockToken,
-        p_stripe_checkout_session_id: session.id,
-      });
+      // bind 済み Session に URL が無い = 利用不能。expire してから解放する。
+      try {
+        await deps.stripe.checkout.sessions.expire(session.id);
+        log({
+          level: "info",
+          requestId,
+          code: "billing_checkout_session_expired_compensation",
+          durationMs: Date.now() - startedAt,
+        });
+      } catch {
+        // best-effort expire
+      }
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
+
+    // 成功: lock は webhook completed/expired または TTL で解放（ここでは解放しない）
+    lockToken = null;
+    lockedUserId = null;
 
     log({
       level: "info",
@@ -315,6 +348,15 @@ export async function runBillingCheckout(
 
     return json<CheckoutData>(200, { ok: true, data: { url: session.url } });
   } catch (error: unknown) {
+    // 失敗経路: token 付き lock を必ず解放（成功時は上で null 化済み）
+    if (lockToken !== null && lockedUserId !== null) {
+      try {
+        await releaseCheckoutLock(deps, lockedUserId, lockToken, createdSessionId ?? undefined);
+      } catch {
+        // best-effort release
+      }
+    }
+
     if (error instanceof HttpError) {
       return json(error.status, {
         ok: false,

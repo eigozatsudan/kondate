@@ -9,8 +9,10 @@ import {
   type GenerationCommand,
 } from "@shared/contracts/generation";
 
-// storage key は v3 cutover に合わせる（旧 v2 pending は読まず破棄）
+// storage key は v3 cutover に合わせる（旧 v2 pending は読まず best-effort 削除）
 const key = "kondate:generation:v3";
+/** 旧 cutover 前キー。v3 reader が触れたタイミングで破棄する */
+const legacyV2Key = "kondate:generation:v2";
 
 export const PENDING_GENERATION_TTL_MS = 1_800_000 as const;
 
@@ -78,11 +80,27 @@ export function pendingGenerationCommand(value: PendingGeneration): GenerationCo
   });
 }
 
+/** 旧 v2 pending を best-effort で削除（v3 専用 cutover。読取パースはしない） */
+export function clearLegacyPendingGenerationV2(
+  storage: Pick<Storage, "getItem" | "removeItem"> = localStorage,
+): void {
+  try {
+    // 存在確認してから削除（テストの removeItem 回数と実機 I/O を抑える）
+    if (storage.getItem(legacyV2Key) === null) return;
+    storage.removeItem(legacyV2Key);
+  } catch {
+    // UI 継続のため削除失敗を吸収
+  }
+}
+
 export function readPendingGeneration(
   currentUserId: string,
   now: Date,
   storage: PendingGenerationReadStorage = localStorage,
 ): PendingGeneration | null {
+  // v3 読取のたびに旧キーを掃除（残留 v2 が容量・混乱を残さない）
+  clearLegacyPendingGenerationV2(storage);
+
   let raw: string | null;
   try {
     raw = storage.getItem(key);

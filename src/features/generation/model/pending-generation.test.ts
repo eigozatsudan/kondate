@@ -19,6 +19,7 @@ vi.mock("@/features/auth/session", () => ({ requireAccessToken: requireAccessTok
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 
 const KEY = "kondate:generation:v3";
+const LEGACY_V2_KEY = "kondate:generation:v2";
 const USER_ID = "40000000-0000-4000-8000-000000000001";
 const OTHER_USER_ID = "40000000-0000-4000-8000-000000000002";
 const IDEMPOTENCY_KEY = "10000000-0000-4000-8000-000000000001";
@@ -73,14 +74,17 @@ function makeCommand(kind: GenerationCommand["kind"]): GenerationCommand {
 }
 
 function memoryStorage(initial: string | null = null) {
-  let value = initial;
+  const map = new Map<string, string>();
+  if (initial !== null) {
+    map.set(KEY, initial);
+  }
   return {
-    getItem: vi.fn(() => value),
-    setItem: vi.fn((_key: string, next: string) => {
-      value = next;
+    getItem: vi.fn((k: string) => map.get(k) ?? null),
+    setItem: vi.fn((k: string, next: string) => {
+      map.set(k, next);
     }),
-    removeItem: vi.fn(() => {
-      value = null;
+    removeItem: vi.fn((k: string) => {
+      map.delete(k);
     }),
   };
 }
@@ -162,6 +166,15 @@ describe("pending generation storage", () => {
     const result = readPendingGeneration(USER_ID, new Date(Date.parse(STARTED_AT) + age), storage);
     expect(result !== null).toBe(kept);
     expect(storage.removeItem).toHaveBeenCalledTimes(kept ? 0 : 1);
+  });
+
+  it("best-effort removes legacy v2 pending key on v3 read", () => {
+    const storage = memoryStorage(JSON.stringify(storedPending()));
+    storage.setItem(LEGACY_V2_KEY, JSON.stringify({ kind: "legacy_v2_blob" }));
+    const result = readPendingGeneration(USER_ID, new Date(STARTED_AT), storage);
+    expect(result).not.toBeNull();
+    expect(storage.getItem(LEGACY_V2_KEY)).toBeNull();
+    expect(storage.removeItem).toHaveBeenCalledWith(LEGACY_V2_KEY);
   });
 
   it.each(["new_menu", "regenerate_menu", "regenerate_dish"] as const)(

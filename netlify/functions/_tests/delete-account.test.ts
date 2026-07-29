@@ -6,7 +6,7 @@ const requireUserMock = vi.hoisted(() => vi.fn());
 const adminDeleteUserMock = vi.hoisted(() => vi.fn());
 const rpcMock = vi.hoisted(() => vi.fn());
 const getServerEnvMock = vi.hoisted(() => vi.fn());
-const createStripeClientMock = vi.hoisted(() => vi.fn());
+const getStripeClientFromEnvMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../_shared/auth.js", () => ({
   requireUser: requireUserMock,
@@ -28,7 +28,7 @@ vi.mock("../_shared/env.js", () => ({
 }));
 
 vi.mock("../_shared/billing-stripe.js", () => ({
-  createStripeClient: createStripeClientMock,
+  getStripeClientFromEnv: getStripeClientFromEnvMock,
 }));
 
 const {
@@ -386,7 +386,7 @@ describe("production deleteUser adapter", () => {
     adminDeleteUserMock.mockReset();
     rpcMock.mockReset();
     getServerEnvMock.mockReset();
-    createStripeClientMock.mockReset();
+    getStripeClientFromEnvMock.mockReset();
     requireUserMock.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
     adminDeleteUserMock.mockResolvedValue({ data: { user: null }, error: null });
     // release_identity → 0; release_flyer → 0; get_billing_customer → empty
@@ -440,7 +440,7 @@ describe("production deleteUser adapter", () => {
 
   it("skips Stripe when no billing customer and still deletes auth user", async () => {
     const listMock = vi.fn();
-    createStripeClientMock.mockReturnValue({
+    getStripeClientFromEnvMock.mockReturnValue({
       subscriptions: { list: listMock, cancel: vi.fn() },
     });
     getServerEnvMock.mockReturnValue({
@@ -477,7 +477,7 @@ describe("production deleteUser adapter", () => {
       data: [{ id: SUB_ACTIVE, status: "active" }],
     });
     const cancelMock = vi.fn().mockResolvedValue({ id: SUB_ACTIVE, status: "canceled" });
-    createStripeClientMock.mockReturnValue({
+    getStripeClientFromEnvMock.mockReturnValue({
       subscriptions: { list: listMock, cancel: cancelMock },
     });
     getServerEnvMock.mockReturnValue({
@@ -529,7 +529,7 @@ describe("production deleteUser adapter", () => {
       .fn()
       .mockRejectedValueOnce(new Error("first cancel fails"))
       .mockResolvedValueOnce({});
-    createStripeClientMock.mockReturnValue({
+    getStripeClientFromEnvMock.mockReturnValue({
       subscriptions: { list: listMock, cancel: cancelMock },
     });
     getServerEnvMock.mockReturnValue({

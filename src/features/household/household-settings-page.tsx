@@ -203,9 +203,16 @@ export function HouseholdSettingsForm({
 }) {
   const queryClient = useQueryClient();
   // Checkout 成功戻り ?billing=success で entitlement を短周期 re-fetch（webhook 遅延 UX）
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const billingReturn = searchParams.get("billing");
   const pollAfterCheckoutSuccess = billingReturn === "success";
+  // Plus 反映・5 分 deadline・連続失敗後は query を外し無期限 poll を止める
+  const clearBillingReturnQuery = useCallback(() => {
+    if (!searchParams.has("billing")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("billing");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const membersKey = useMemo(() => householdKeys.members(userId), [userId]);
   const [selectedId, setSelectedId] = useState<string>();
   // 登録済み家族がある状態でページを開き直したとき、編集フォームを自動展開しない。
@@ -1090,7 +1097,11 @@ export function HouseholdSettingsForm({
           </button>
         </section>
         {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
-        <PlanSettingsSection userId={userId} pollAfterCheckoutSuccess={pollAfterCheckoutSuccess} />
+        <PlanSettingsSection
+          userId={userId}
+          pollAfterCheckoutSuccess={pollAfterCheckoutSuccess}
+          onCheckoutPollSettled={clearBillingReturnQuery}
+        />
         {/* アカウント操作（ログアウト等）の下にフィードバックを置く */}
         <AccountSettingsSection />
         <FeedbackSection />
@@ -1646,7 +1657,11 @@ export function HouseholdSettingsForm({
         </div>
       )}
       {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
-      <PlanSettingsSection userId={userId} pollAfterCheckoutSuccess={pollAfterCheckoutSuccess} />
+      <PlanSettingsSection
+        userId={userId}
+        pollAfterCheckoutSuccess={pollAfterCheckoutSuccess}
+        onCheckoutPollSettled={clearBillingReturnQuery}
+      />
       {/* Plan 6: アカウント操作は本ページ所有者の下に合成するだけ。家族 CRUD は置換しない。 */}
       <AccountSettingsSection />
       {/* フィードバックはログアウト等のアカウント操作の下へ。日常操作の邪魔にしない。 */}
