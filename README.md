@@ -4,7 +4,9 @@
 家族情報の登録は任意で、登録するとアレルギーや人数などを踏まえた家族向け献立、未登録でも一般的な献立アイデアを作れます。
 履歴の見返しや（家族向け献立からの）買い物リスト、生成失敗時の緊急献立なども用意しています。
 
-このrepositoryにはReactアプリ、Netlify Functions、共有contract、Supabaseのschemaとローカル開発環境が含まれます。
+無料のまま日常の献立づくりに使える **永久フリーミアム** に加え、有料プラン **「こんだて日和 Plus」**（Stripe Checkout / Customer Portal）で日次枠の拡大・品質モード・チラシ写真からの 1 週間献立を提供します。課金の正本はブラウザではなく **Netlify Functions + Stripe Webhook + Postgres** です。
+
+この repository には React アプリ、Netlify Functions、共有 contract、Supabase の schema、Stripe 連携、ローカル開発環境が含まれます。
 
 ## 技術構成
 
@@ -169,18 +171,220 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
    - 未同意なら AI 情報送信の説明（`/privacy`）を先に確認する
 5. `/generation` のあと結果（`/menus/:menuId`）が出れば、実 OpenRouter 経由で動いている
 
-#### 制約（本番と同じ）
+#### 制約（プラン別の個人枠）
 
-| 項目                                       | 値    |
-| ------------------------------------------ | ----- |
-| 成功生成 / 利用者 / JST 日                 | 3     |
-| 外部 AI 送信 / 利用者 / JST 日             | 6     |
-| 外部送信 / 600 秒窓                        | 4     |
-| 外部 AI 送信 / アプリ全体 / JST 日（既定） | 20    |
-| 1 試行タイムアウト                         | 20 秒 |
-| Function 総予算                            | 50 秒 |
+個人枠は **サーバが entitlement から決める** 値です。ブラウザが `plan=plus` を主張しても無視されます。
 
-有料モデルでも提供状況・単価・構造化対応は変わり得ます。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費し、課金も発生します）。
+| 項目 | Free | Plus（trialing / active 等） |
+| ---- | ---- | ---------------------------- |
+| 成功生成 / 利用者 / JST 日 | 3 | **10** |
+| 外部 AI 送信 / 利用者 / JST 日 | 6 | **20** |
+| 外部送信 / 600 秒窓 | 4 | **8** |
+| 品質モード（上位モデル） | 不可 | 3 / JST 日 **かつ** 20 / JST 暦月 |
+| チラシ→1 週間献立 | 入口のみ（locked） | 成功 2 回 / JST 暦週 |
+
+| 項目 | 値（全プラン共通の安全弁） |
+| ---- | -------------------------- |
+| 外部 AI 送信 / アプリ全体 / JST 日 | ローカル既定 **20**、本番運用推奨 **80**、上限 **200**（`GLOBAL_DAILY_AI_LIMIT`） |
+| 1 試行タイムアウト | 60 秒（`OPENROUTER_TIMEOUT_MS`） |
+| Function 総予算 | 150 秒（`FUNCTION_TOTAL_BUDGET_MS`。Netlify 同期上限との関係は [docs/deployment/netlify.md](docs/deployment/netlify.md)） |
+
+有料モデルでも提供状況・単価・構造化対応は変わり得ます。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **OpenRouter mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費し、課金も発生します）。
+
+### こんだて日和 Plus（Stripe 課金）
+
+設計の正本: [docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md](docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md)
+運用 reconcile: [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)
+本番 env 境界: [docs/deployment/netlify.md](docs/deployment/netlify.md)
+
+#### 何が Plus か（製品の要点）
+
+| 項目 | 内容 |
+| ---- | ---- |
+| プラン | Free + **単一**有料プラン「こんだて日和 Plus」のみ（Basic/Pro 段階なし） |
+| 価格（表示） | 月額 **¥580**（税込表示）/ 年額 **¥5,800**（約 2 か月分お得） |
+| トライアル | **7 日**無料（カード登録あり）。初回のみ（`billing_trial_history`） |
+| 決済 UI | Stripe **Checkout**（加入）+ **Customer Portal**（解約・支払い方法・領収書） |
+| 正本 | **Stripe Webhook** が entitlement を DB に投影。クライアントは信頼しない |
+| サーバ API | `GET /api/billing/entitlement`、`POST /api/billing/checkout`、`POST /api/billing/portal`、`POST /api/billing/webhook` |
+
+Plus の追加価値（P0）:
+
+1. **枠の余裕**（上表）
+2. **品質モード**（「くわしく作る」— 上位モデル allowlist。`OPENROUTER_PLUS_MODELS`）
+3. **チラシ画像 → 1 週間献立**（Plus のみ。画像は長期保存しない）
+
+#### アーキテクチャ（開発時に押さえる一点）
+
+```text
+ブラウザ ──► Functions（Checkout / Portal / generate / flyer）
+                │
+                ├─ loadEntitlement（DB 読取失敗は 503 fail-closed）
+                │     枠・品質・チラシを強制
+                │
+Stripe ──Webhook──► process_billing_stripe_event（単一 SECURITY DEFINER TX）
+                      private.billing_* を更新（service_role のみ書込）
+```
+
+- **`BILLING_ENABLED=false`（kill switch）**
+  - Checkout / Portal / 品質モード / チラシ製品面を閉じる
+  - **個人枠は Free 強制**（DB 上 Plus でも枠は 3/6/4）
+  - **`STRIPE_*` 鍵があれば Webhook は動き続ける**（cancel / past_due を取りこぼさない）
+  - 再有効化は reconcile 後にだけ `true` にする（[billing-reconcile.md](docs/runbooks/billing-reconcile.md)）
+- **禁止**: `VITE_STRIPE_*` / `VITE_BILLING_*`、ブラウザへの Price ID / `sk_` / `whsec_` 露出
+- **SDK**: `stripe@22.3.2` exact pin、API バージョン **`2025-02-24.acacia` 固定**（変更は設計改訂）
+
+#### 環境変数（サーバ専用）
+
+すべて **Functions ランタイムのみ**。ブラウザビルドに渡さない。
+
+| 変数 | ローカル既定 | 説明 |
+| ---- | ------------ | ---- |
+| `BILLING_ENABLED` | `false` | `"true"` / `"false"` のみ。未設定は false |
+| `STRIPE_SECRET_KEY` | 空 | `sk_test_…` / `sk_live_…`。`BILLING_ENABLED=true` 時は必須 |
+| `STRIPE_WEBHOOK_SECRET` | 空 | `whsec_…`。署名検証用 |
+| `STRIPE_PRICE_PLUS_MONTHLY` | 空 | Plus 月額 Price ID |
+| `STRIPE_PRICE_PLUS_YEARLY` | 空 | Plus 年額 Price ID |
+| `STRIPE_API_VERSION` | `2025-02-24.acacia` | **固定**。他値は起動拒否 |
+| `STRIPE_MOCK_BASE_URL` | 未設定 | **ローカル exact mock のみ**（`http://stripe-mock:8790`）。**本番に置いたら起動失敗** |
+| `OPENROUTER_PLUS_MODELS` | mock 時は mock モデル | Plus 品質モード用の有料 allowlist（本番は `:free` 禁止） |
+
+`.env.example` にも同趣旨のコメントがあります。`./scripts/generate-local-secrets.sh` 後の `.env` を編集して使います（**コミット禁止**）。
+
+#### ローカル開発での扱い
+
+ローカルの既定は **課金オフ**です。通常の献立生成・E2E は Stripe なしで進められます。
+
+| 目的 | やること |
+| ---- | -------- |
+| 日常開発・E2E（決定論） | `BILLING_ENABLED=false` のまま。Checkout/Portal/品質/チラシ UI は閉じる。枠は Free |
+| 設定画面の文面確認 | UI は entitlement API を見る。E2E は `page.route` で mock（`e2e/specs/billing-plus.spec.ts`） |
+| unit / Function テスト | `tools/stripe-mock/` の固定 Session URL・webhook secret をテストが注入。**本番 Stripe は呼ばない** |
+| 実 Stripe（test mode）で手確認 | 下の「ローカルで Stripe test mode を有効にする」 |
+
+DB 側の課金表・枠拡張はマイグレーションに含まれます（`20260729130000` 以降）。初回や schema 更新後:
+
+```bash
+./scripts/reset-local-db.sh
+# または migrate 済み stack なら
+docker compose run --rm migrate
+```
+
+#### ローカルで Stripe test mode を有効にする（任意）
+
+**カード課金は Stripe のテストモード**で行います。本番 live 鍵をローカルに置かないでください。
+
+1. [Stripe Dashboard（Test mode）](https://dashboard.stripe.com/test/dashboard) で Product / Price を作成
+   - Plus 月額・年額の **Price ID** を控える（税込表示と整合）
+2. Developers → API keys で **Secret key**（`sk_test_…`）を取得
+3. Developers → Webhooks で endpoint を追加（ローカルは [Stripe CLI](https://stripe.com/docs/stripe-cli) が現実的）:
+
+```bash
+# 例: CLI でローカル Function へ転送（app が Functions を配信している前提）
+stripe listen --forward-to http://127.0.0.1:5173/api/billing/webhook
+# 表示された whsec_… を STRIPE_WEBHOOK_SECRET に入れる
+```
+
+4. `.env` を編集:
+
+```bash
+BILLING_ENABLED=true
+STRIPE_SECRET_KEY=sk_test_xxxxxxxx
+STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxx
+STRIPE_PRICE_PLUS_MONTHLY=price_xxxxxxxx
+STRIPE_PRICE_PLUS_YEARLY=price_yyyyyyyy
+STRIPE_API_VERSION=2025-02-24.acacia
+# STRIPE_MOCK_BASE_URL は実 Stripe 利用時は未設定のまま
+OPENROUTER_PLUS_MODELS=openai/gpt-4o-mini   # ゲート合格の有料 ID に置換
+```
+
+5. app を再作成して反映:
+
+```bash
+docker compose up -d --wait --force-recreate app
+```
+
+6. ブラウザで確認（常に `http://127.0.0.1:5173`）:
+
+   1. ログイン → **設定** の「プラン」節
+   2. 「Plus をはじめる」→ Stripe Checkout（test カード `4242…` 等）
+   3. Webhook が届けば entitlement が Plus に変わり、枠 10 / 品質 / チラシが開く
+   4. 「お支払い・解約の管理」→ Customer Portal
+
+反映が Free のままなら数十秒待ち、Dashboard の Webhook 配信と `billing_user_unmapped` 等のサーバログを確認してください（カード番号やメールをログに残さない）。
+
+Customer Portal（Dashboard）の最低確認:
+
+- 既定言語 **ja**
+- 解約は **期間末**（即時解約のみにしない）
+- 解約時のダークパターン（強引な retention）は off
+- 月↔年の切替は初期オフでよい（ロードマップ後段）
+
+#### 本番デプロイ（Stripe まわり）
+
+本番の全体手順・CSP・preflight は [docs/deployment/netlify.md](docs/deployment/netlify.md) と [docs/testing/release-checklist.md](docs/testing/release-checklist.md) が正本です。課金だけ抜粋すると次のとおりです。
+
+**1. Stripe（Live）側の準備**
+
+| 手順 | 内容 |
+| ---- | ---- |
+| Product / Price | Plus 月額・年額。表示価格 ¥580 / ¥5,800 と整合 |
+| Webhook endpoint | `https://<本番 origin>/api/billing/webhook` |
+| 購読する主要 event | `customer.subscription.*`、`invoice.paid` / `invoice.payment_failed`、`checkout.session.completed` / `expired` など設計どおり |
+| Customer Portal | 上記チェックリスト（ja・期間末解約） |
+| 鍵 | **Live** の `sk_live_…` と endpoint の `whsec_…` を Netlify の **Functions スコープ**だけに入れる |
+
+**2. Netlify 環境変数（Billing）**
+
+| 変数 | 本番 |
+| ---- | ---- |
+| `BILLING_ENABLED` | 初回 ship 前は `false` のままデプロイ → Webhook 鍵だけ入れて投影を温め → reconcile 後に `true` が安全 |
+| `STRIPE_SECRET_KEY` | `sk_live_…` |
+| `STRIPE_WEBHOOK_SECRET` | 本番 endpoint の `whsec_…` |
+| `STRIPE_PRICE_PLUS_*` | Live Price ID |
+| `STRIPE_API_VERSION` | **`2025-02-24.acacia` のみ** |
+| `STRIPE_MOCK_BASE_URL` | **設定しない**（設定すると起動失敗） |
+| `OPENROUTER_PLUS_MODELS` | 検証済み有料 allowlist（品質モード用） |
+| `GLOBAL_DAILY_AI_LIMIT` | 運用推奨 **80**（最大 200） |
+
+**絶対に置かないもの**
+
+- `VITE_STRIPE_*` / `VITE_BILLING_*`
+- test の `sk_test_` / mock URL の本番持ち込み
+- ビルドログや `netlify.toml` への秘密直書き
+
+**3. DB マイグレーション**
+
+課金・プラン枠・品質・チラシの migration が本番 Supabase に適用済みであること（`20260729130000`〜`20260729170000` 系）。適用手順は [docs/deployment/supabase.md](docs/deployment/supabase.md) を参照。
+
+**4. デプロイ後の確認**
+
+```bash
+# 保護 runner 上（秘密を一時注入）。サイトビルドに service role を混ぜない
+npm run preflight:production
+```
+
+手動スモーク例:
+
+1. Free ユーザ: 設定に Plus 価格・トライアル文面、Checkout 導線
+2. Checkout 完了 → Webhook 後に Plus 表示・成功枠 10
+3. Portal から解約予約 → `cancel_at_period_end` が UI に出る
+4. `BILLING_ENABLED=false` にしたとき Checkout/品質/チラシが閉じ、枠が Free に戻ること（kill 試験はメンテ窓で）
+
+**5. 再有効化・事故対応**
+
+- Webhook 欠落や kill 長期後: [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)
+- アカウント削除時の Stripe cancel は best-effort: [docs/runbooks/account-deletion.md](docs/runbooks/account-deletion.md)
+
+#### よくあるつまずき
+
+| 症状 | 確認すること |
+| ---- | ------------ |
+| 設定に Plus 導線が出ない | `BILLING_ENABLED` と `productSurfacesOpen`。kill 中は意図的に閉じる |
+| Checkout 後も Free のまま | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ |
+| 品質モードが「通信を確認」になる | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示 |
+| 本番起動失敗 | `STRIPE_API_VERSION` が acacia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か |
+| E2E が Stripe に飛ぶ | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない |
 
 主な検証コマンド:
 
@@ -219,5 +423,13 @@ vendorしたSupabase公式Docker構成は、次のwrapperで更新します。
 - `COMPOSE_PROJECT_NAME`を手動設定せず、repositoryのwrapperを使用してください。
 - E2Eは同じcheckout内で排他実行され、終了時に通常のAuthとapp構成を復元します。
 
-より詳しいセットアップ、検証、Supabase更新、lockやsignalからの復旧は[docs/local-development.md](docs/local-development.md)を参照してください。
-本番デプロイとリリースゲートは[docs/testing/release-checklist.md](docs/testing/release-checklist.md)を参照してください。
+より詳しいセットアップ、検証、Supabase更新、lockやsignalからの復旧は [docs/local-development.md](docs/local-development.md) を参照してください。
+
+| 目的 | 文書 |
+| ---- | ---- |
+| 本番デプロイ・env 境界・preflight | [docs/deployment/netlify.md](docs/deployment/netlify.md) |
+| Supabase 本番 | [docs/deployment/supabase.md](docs/deployment/supabase.md) |
+| リリースゲート | [docs/testing/release-checklist.md](docs/testing/release-checklist.md) |
+| Plus / Stripe 設計 | [docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md](docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md) |
+| 課金 reconcile / Portal チェック | [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md) |
+| OpenRouter 有料モデル | [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md) |
