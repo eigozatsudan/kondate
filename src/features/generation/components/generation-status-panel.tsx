@@ -4,7 +4,7 @@ import type { GenerationClientState } from "../model/generation-machine";
 import { useUsageToday } from "../hooks/use-usage-today";
 import { clearPendingGeneration } from "../model/pending-generation";
 
-// 本日分の成功回数上限に伴う retryAt は JST 日次リセット（翌0:00）に一致するため、
+// 本日分の作成上限に伴う retryAt は JST 日次リセット（翌0:00）に一致するため、
 // 生の日時ではなく「明日H:MM」の相対表現で示す。
 // サーバは timestamptz→jsonb で "+00:00" を出し、クライアント toISOString は ".000Z"。
 // 文字列一致ではなく epoch ms で比較する（E-I1）。
@@ -24,26 +24,33 @@ function formatRetryAt(value: string): string {
   }).format(new Date(value));
 }
 
-/** 終端画面専用。request-local quota を attempt 真相として再解釈しない。 */
+/**
+ * 終端画面専用。request-local quota を attempt 真相として再解釈しない。
+ * 設計 2026-07-29: success 残1行のみ。AI通信試行・10分残数行は出さない。
+ * data.retryAt はパネル直下の quota.retryAt に一本化するためここでは出さない。
+ */
 function TerminalGenerationUsage({ userId }: { userId: string }) {
   const usage = useUsageToday(userId);
   if (usage.isPending) return <p role="status">最新の利用状況を確認しています</p>;
   if (!usage.isSuccess) {
-    return <p role="alert">最新のAI通信試行残数を確認できません。再読み込みしてください</p>;
+    return <p role="alert">本日の作成回数を確認できません。再読み込みしてください</p>;
   }
   const data = usage.data;
   return (
     <section aria-label="今日あと何回作れるか">
-      <p>{formatFreeTierQuotaCopy(`成功回数：本日あと${String(data.success.remaining)}回`)}</p>
-      <p>{formatFreeTierQuotaCopy(`AI通信試行：本日あと${String(data.attempts.remaining)}回`)}</p>
       <p>
-        {formatFreeTierQuotaCopy(`10分間の通信試行：あと${String(data.shortWindow.remaining)}回`)}
+        {formatFreeTierQuotaCopy(
+          `本日あと${String(data.success.remaining)}回まで献立の作成を受け付けます`,
+        )}
       </p>
       <p>アプリ全体：{data.globalAvailable ? "作成できます" : "今日はここまで"}</p>
       {data.shortWindow.retryAt === null ? null : (
-        <p>10分枠の再開：{formatRetryAt(data.shortWindow.retryAt)}</p>
+        <p>
+          {formatFreeTierQuotaCopy(
+            `短い時間に何度も作成を試したため、${formatRetryAt(data.shortWindow.retryAt)}以降に再試行してください。`,
+          )}
+        </p>
       )}
-      {data.retryAt === null ? null : <p>現在の受付再開：{formatRetryAt(data.retryAt)}</p>}
     </section>
   );
 }
@@ -95,6 +102,36 @@ function RecoveryLinks({ onClear }: { onClear?: () => void }) {
         作った献立を見る
       </a>
     </div>
+  );
+}
+
+/** 未消費時の共通1行（message 本文に埋め込まない。設計 L 未減 UI）。 */
+function NotConsumedNotice({ consumed }: { consumed: boolean }) {
+  if (consumed) return null;
+  return <p>献立は完成していないので、作成回数は減っていません</p>;
+}
+
+/** 終端の利用残数 + retryAt（request-local または usage）。retryAt はパネル直下に必ず1回。 */
+function TerminalQuotaBlock({
+  userId,
+  remaining,
+  retryAt,
+}: {
+  userId?: string;
+  remaining: number;
+  retryAt: string | null;
+}) {
+  return (
+    <>
+      {userId !== undefined ? (
+        <TerminalGenerationUsage userId={userId} />
+      ) : (
+        <p>
+          {formatFreeTierQuotaCopy(`本日あと${String(remaining)}回まで献立の作成を受け付けます`)}
+        </p>
+      )}
+      {retryAt !== null ? <p>再開: {formatJstRetryTime(retryAt, new Date())}</p> : null}
+    </>
   );
 }
 
@@ -156,15 +193,12 @@ export function GenerationStatusPanel({
         {state.data.conflicts.map((item) => (
           <p key={`${item.code}-${item.conditionRefs.join()}`}>{item.message}</p>
         ))}
-        {!state.data.quota.consumed && <p>成功回数には含まれません</p>}
-        {userId !== undefined ? (
-          <TerminalGenerationUsage userId={userId} />
-        ) : (
-          <p>
-            {formatFreeTierQuotaCopy(`成功回数：本日あと${String(state.data.quota.remaining)}回`)}
-          </p>
-        )}
-        {/* exactOptionalPropertyTypes: undefined を明示渡ししない */}
+        <NotConsumedNotice consumed={state.data.quota.consumed} />
+        <TerminalQuotaBlock
+          {...(userId === undefined ? {} : { userId })}
+          remaining={state.data.quota.remaining}
+          retryAt={state.data.quota.retryAt}
+        />
         <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
@@ -182,19 +216,12 @@ export function GenerationStatusPanel({
       <div className="gen-status-panel" data-phase="failed">
         <h1>献立を作成できませんでした</h1>
         <p>{failureMessage}</p>
-        {!state.data.quota.consumed && <p>成功回数には含まれません</p>}
-        {userId !== undefined ? (
-          <TerminalGenerationUsage userId={userId} />
-        ) : (
-          <>
-            <p>
-              {formatFreeTierQuotaCopy(`成功回数：本日あと${String(state.data.quota.remaining)}回`)}
-            </p>
-            {state.data.quota.retryAt !== null && (
-              <p>再開: {formatJstRetryTime(state.data.quota.retryAt, new Date())}</p>
-            )}
-          </>
-        )}
+        <NotConsumedNotice consumed={state.data.quota.consumed} />
+        <TerminalQuotaBlock
+          {...(userId === undefined ? {} : { userId })}
+          remaining={state.data.quota.remaining}
+          retryAt={state.data.quota.retryAt}
+        />
         <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );

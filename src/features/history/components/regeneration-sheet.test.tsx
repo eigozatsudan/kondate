@@ -172,4 +172,73 @@ describe("RegenerationSheet", () => {
     fireEvent(dialog, new Event("cancel", { cancelable: true }));
     expect(onCancel).toHaveBeenCalledTimes(2);
   });
+
+  // 設計 2026-07-29 案 A: attempts 0 / short window / null の事前ブロックと文言
+  it("disables submit when attempts remaining is zero", () => {
+    render(
+      <RegenerationSheet
+        targetMode="idea"
+        usage={{
+          successRemaining: 3,
+          attemptsRemaining: 0,
+          shortWindowRemaining: 4,
+          shortWindowRetryAt: null,
+          loading: false,
+          error: false,
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "無料版は今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "別案を作る" })).toBeDisabled();
+    expect(screen.queryByText(/AIへの問い合わせ/u)).not.toBeInTheDocument();
+    expect(screen.getByText(/別の献立が完成した場合に1回使用・現在残り3回/u)).toBeVisible();
+  });
+
+  it("disables submit when short window is blocked", () => {
+    render(
+      <RegenerationSheet
+        targetMode="idea"
+        usage={{
+          successRemaining: 3,
+          attemptsRemaining: 5,
+          shortWindowRemaining: 0,
+          shortWindowRetryAt: "2026-07-25T05:10:00.000Z",
+          loading: false,
+          error: false,
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "別案を作る" })).toBeDisabled();
+    expect(screen.getByText(/しばらく続けて作成を試したため/u)).toBeVisible();
+    expect(screen.getByText(/以降に再試行してください/u)).toBeVisible();
+  });
+
+  it("does not treat null attemptsRemaining as blocked", () => {
+    render(
+      <RegenerationSheet
+        targetMode="idea"
+        usage={{
+          successRemaining: 3,
+          attemptsRemaining: null,
+          shortWindowRemaining: 4,
+          shortWindowRetryAt: null,
+          loading: false,
+          error: false,
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    // 理由未選択のため submit は押せる見た目だが、attempts 理由では止めない
+    // disabled は form 理由不足ではなく attempts 以外 — 実装では attemptsBlocked false
+    expect(screen.queryByText(/受け付けられません/u)).not.toBeInTheDocument();
+  });
 });

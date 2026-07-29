@@ -30,7 +30,11 @@ const failedData: Extract<GenerationStatusData, { status: "failed" }> = {
   status: "failed",
   idempotencyKey: KEY,
   requestId: REQUEST_ID,
-  error: { code: "user_daily_limit", message: "本日の作成回数の上限に達しました", retryable: true },
+  error: {
+    code: "user_daily_limit",
+    message: "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+    retryable: false,
+  },
   completedAt: "2026-07-11T00:00:01.000Z",
   quota,
 };
@@ -53,11 +57,12 @@ afterEach(() => {
 });
 
 describe("GenerationStatusPanel", () => {
-  it("shows returned quota and Japan retry time after failure", () => {
+  it("shows simplified not-consumed notice and success remaining after failure", () => {
     render(<GenerationStatusPanel state={failedState} />);
-    expect(screen.getByText("成功回数には含まれません")).toBeVisible();
-    expect(screen.getByText("無料版は成功回数：本日あと2回")).toBeVisible();
-    expect(screen.getByText(/明日0:00/)).toBeVisible();
+    expect(screen.getByText("献立は完成していないので、作成回数は減っていません")).toBeVisible();
+    expect(screen.queryByText("成功回数には含まれません")).not.toBeInTheDocument();
+    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.getByText(/^再開:/u)).toBeVisible();
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
       "href",
       "/emergency-menus",
@@ -69,7 +74,6 @@ describe("GenerationStatusPanel", () => {
   });
 
   it("shows emergency recovery link on failed recovery regardless of path", () => {
-    // 2026-07-28 設計: idea 個人固定候補パスのため RecoveryLinks でも緊急献立を常時出す
     render(<GenerationStatusPanel state={failedState} />);
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
       "href",
@@ -79,7 +83,6 @@ describe("GenerationStatusPanel", () => {
   });
 
   it("shows emergency recovery link on request_conflict regardless of path", () => {
-    // panel 内 2 箇所目（request_conflict 専用）も緊急献立リンクを出す
     const requestConflictState: GenerationClientState = {
       phase: "request_conflict",
       code: "idempotency_payload_mismatch",
@@ -90,7 +93,7 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toBeInTheDocument();
   });
 
-  it("shows how many generations remain today and the app-wide status", async () => {
+  it("shows success remaining only via usage today without dual attempt lines", async () => {
     vi.useRealTimers();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -99,11 +102,15 @@ describe("GenerationStatusPanel", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
+    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/10分間の通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
+    // R-I1: retryAt はパネル直下に必ず1行（Terminal は data.retryAt を出さない）
+    expect(screen.getAllByText(/再開/u)).toHaveLength(1);
   });
 
-  // F5: attempt 残・short-window 残・global unavailable・0 境界の表示を固定する
-  it("shows attempt remaining, short-window remaining, and global unavailable copy", async () => {
+  it("shows global unavailable without free-tier prefix on dual jargon lines", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
       success: { consumed: 1, limit: 3, remaining: 2 },
@@ -125,13 +132,12 @@ describe("GenerationStatusPanel", () => {
     );
     const region = await screen.findByRole("region", { name: "今日あと何回作れるか" });
     expect(region).toBeVisible();
-    expect(screen.getByText("無料版は成功回数：本日あと2回")).toBeVisible();
-    expect(screen.getByText("無料版はAI通信試行：本日あと1回")).toBeVisible();
-    expect(screen.getByText("無料版は10分間の通信試行：あと1回")).toBeVisible();
+    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：今日はここまで")).toBeVisible();
   });
 
-  it("shows zero remaining for attempts when success still remains", async () => {
+  it("does not show attempt remaining zero as a second residual line", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
       success: { consumed: 1, limit: 3, remaining: 2 },
@@ -146,16 +152,17 @@ describe("GenerationStatusPanel", () => {
         <GenerationStatusPanel state={failedState} userId={USER_ID} />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("無料版はAI通信試行：本日あと0回")).toBeVisible();
-    expect(screen.getByText("無料版は成功回数：本日あと2回")).toBeVisible();
-    expect(screen.getByText("無料版は10分間の通信試行：あと4回")).toBeVisible();
+    expect(
+      await screen.findByText("無料版は本日あと2回まで献立の作成を受け付けます"),
+    ).toBeVisible();
+    expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
   });
 
-  it("shows zero remaining for short-window and success boundaries", async () => {
+  it("shows short-window wait copy when usage returns a shortWindow retryAt", async () => {
     vi.useRealTimers();
     getUsageTodayMock.mockResolvedValue({
-      success: { consumed: 3, limit: 3, remaining: 0 },
+      success: { consumed: 1, limit: 3, remaining: 2 },
       attempts: { sent: 2, limit: 6, remaining: 4 },
       shortWindow: {
         sent: 4,
@@ -172,12 +179,29 @@ describe("GenerationStatusPanel", () => {
         <GenerationStatusPanel state={failedState} userId={USER_ID} />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("無料版は成功回数：本日あと0回")).toBeVisible();
-    expect(screen.getByText("無料版は10分間の通信試行：あと0回")).toBeVisible();
-    expect(screen.getByText("無料版はAI通信試行：本日あと4回")).toBeVisible();
+    expect(
+      await screen.findByText("無料版は本日あと2回まで献立の作成を受け付けます"),
+    ).toBeVisible();
+    expect(screen.getByText(/短い時間に何度も作成を試したため/u)).toBeVisible();
+    expect(screen.queryByText(/10分間の通信試行/u)).not.toBeInTheDocument();
   });
 
-  it("shows request_conflict copy and fresh-start without success-count claim", async () => {
+  it("shows usage fetch error without dual jargon", async () => {
+    vi.useRealTimers();
+    getUsageTodayMock.mockRejectedValue(new Error("network"));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GenerationStatusPanel state={failedState} userId={USER_ID} />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText("本日の作成回数を確認できません。再読み込みしてください"),
+    ).toBeVisible();
+    expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
+  });
+
+  it("shows request_conflict copy and fresh-start without not-consumed claim", async () => {
     vi.useRealTimers();
     const onClear = vi.fn();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -193,11 +217,31 @@ describe("GenerationStatusPanel", () => {
       </QueryClientProvider>,
     );
     expect(screen.getByRole("heading", { name: "同じ操作を続けられませんでした" })).toBeVisible();
-    expect(screen.getByText(/再送できません/)).toBeVisible();
+    expect(screen.getByText(/再送できません/u)).toBeVisible();
     expect(screen.queryByText("成功回数には含まれません")).toBeNull();
+    expect(screen.queryByText("献立は完成していないので、作成回数は減っていません")).toBeNull();
     expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
     screen.getByRole("button", { name: "最初からやり直す" }).click();
     expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides not-consumed notice when success quota was consumed", () => {
+    const consumedFailed: GenerationClientState = {
+      phase: "failed",
+      data: {
+        ...failedData,
+        error: {
+          code: "invalid_ai_response",
+          message: "献立を正しく確認できませんでした。",
+          retryable: true,
+        },
+        quota: { ...quota, consumed: true },
+      },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={consumedFailed} />);
+    expect(screen.queryByText("献立は完成していないので、作成回数は減っていません")).toBeNull();
+    expect(screen.queryByText("成功回数には含まれません")).toBeNull();
   });
 
   it("shows a status message while checking saved progress", () => {

@@ -189,6 +189,9 @@ export function RegenerationSheet({
   });
 
   const successBlocked = usage.successRemaining === 0;
+  // 設計 2026-07-29 案 A: null は未取得。0 のときだけ止め、確認画面と揃える
+  const attemptsBlocked = usage.attemptsRemaining === 0;
+  const shortWindowBlocked = usage.shortWindowRemaining === 0 && usage.shortWindowRetryAt !== null;
   const expiredUnconfirmed =
     expiredPantryItems.length > 0 &&
     expiredPantryItems.some((item) => !confirmedExpiredIds.has(item.pantryItemId));
@@ -198,6 +201,8 @@ export function RegenerationSheet({
     usage.loading ||
     usage.error ||
     successBlocked ||
+    attemptsBlocked ||
+    shortWindowBlocked ||
     expiredUnconfirmed;
 
   return (
@@ -293,14 +298,22 @@ export function RegenerationSheet({
                   : `別の献立が完成した場合に1回使用・現在残り${String(usage.successRemaining)}回`,
               )}
             </p>
-            {usage.attemptsRemaining !== null && (
+            {/* 案 A: attempt 常時残数行は出さない。0 / short ブロック時のみ行動文 */}
+            {successBlocked ? (
               <p className="type-small" role="status">
                 {formatFreeTierQuotaCopy(
-                  `AIへの問い合わせは本日あと${String(usage.attemptsRemaining)}回まで受け付けます`,
+                  "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
                 )}
               </p>
-            )}
-            {usage.shortWindowRemaining === 0 && usage.shortWindowRetryAt !== null && (
+            ) : null}
+            {attemptsBlocked && !successBlocked ? (
+              <p className="type-small" role="status">
+                {formatFreeTierQuotaCopy(
+                  "今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
+                )}
+              </p>
+            ) : null}
+            {shortWindowBlocked && usage.shortWindowRetryAt !== null ? (
               <p className="type-small" role="status">
                 {formatFreeTierQuotaCopy(
                   `しばらく続けて作成を試したため、${new Intl.DateTimeFormat("ja-JP", {
@@ -310,7 +323,7 @@ export function RegenerationSheet({
                   }).format(new Date(usage.shortWindowRetryAt))}以降に再試行してください`,
                 )}
               </p>
-            )}
+            ) : null}
           </div>
         )}
         <div className="flex flex-wrap gap-2">

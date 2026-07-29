@@ -174,6 +174,10 @@ export function formatFreeTierQuotaCopy(body: string): string {
 
 #### 2.1 Allowlist（必ずラップ）
 
+> **Superseded (表示 allowlist 本文):** 利用者向け残数・上限・失敗コピーの allowlist / 削除対象は
+> `docs/superpowers/specs/2026-07-29-quota-copy-simplification-design.md` が正。
+> 本節の旧表は歴史的記録。新規実装は 2026-07-29 設計に従う。
+
 | 箇所 | body（現状文面を維持） |
 |------|------------------------|
 | `review-step.tsx` | `本日あと{n}回作成できます` |

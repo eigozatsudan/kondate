@@ -185,7 +185,7 @@ describe("GenerationPage", () => {
 
   it("wires session userId so terminal failure shows live usage today", async () => {
     // ページが userId を渡さないと request-local quota だけになり、
-    // useUsageToday（AI通信試行残数）が本番経路で動かない。
+    // useUsageToday（成功残の真相）が本番経路で動かない。
     const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
     savePendingGeneration(pending);
     mockStatus.mockResolvedValue(failedStatus(KEY_A));
@@ -196,9 +196,11 @@ describe("GenerationPage", () => {
       expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
     });
     expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
-    expect(screen.getByText("無料版はAI通信試行：本日あと4回")).toBeVisible();
+    // 設計 2026-07-29: success 残1行のみ。AI通信試行 dual は出さない
+    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
-    // request-local の成功回数だけ表示するフォールバック経路ではないこと
+    // request-local のフォールバック経路ではないこと
     expect(mockGetUsageToday).toHaveBeenCalled();
   });
 
