@@ -87,6 +87,12 @@ type ReleaseIdentityProcessingArgs = {
   p_now?: string;
 };
 
+/** flyer 週次 reserved 解放（delete-account / Auth CASCADE 前） */
+type ReleaseFlyerWeeklyProcessingArgs = {
+  p_user_id: string;
+  p_now?: string;
+};
+
 type FinalizeGenerationFailureArgs = Omit<GeneratedFinalizeGenerationFailureArgs, "p_retry_at"> & {
   p_retry_at?: NonNullable<GeneratedFinalizeGenerationFailureArgs["p_retry_at"]> | null;
 };
@@ -188,6 +194,10 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       };
       release_identity_and_global_for_user_processing: {
         Args: ReleaseIdentityProcessingArgs;
+        Returns: number;
+      };
+      release_flyer_weekly_for_user_processing: {
+        Args: ReleaseFlyerWeeklyProcessingArgs;
         Returns: number;
       };
       finalize_ai_generation_failure: Omit<GeneratedFinalizeGenerationFailure, "Args"> & {

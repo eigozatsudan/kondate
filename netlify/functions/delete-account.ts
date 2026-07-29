@@ -158,15 +158,18 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
 }
 
 /**
- * 未完了 flyer の reserved 解放口。
- * public 一括 RPC は未提供のため現状 no-op。
- * quality は release_identity → release_request_quota_reservations で対称解放済み。
- * flyer の stale は cleanup_stale_flyer_weekly_batch、Auth CASCADE で request 行は消える。
+ * 未完了 flyer の reserved 解放口（best-effort）。
+ * public.release_flyer_weekly_for_user_processing で processing 行を解放し、
+ * identity 週次台帳の reserved だけ戻す（success/sent は残す）。
+ * 失敗しても Auth 削除は進める（BEFORE DELETE トリガが CASCADE 時の第二経路）。
  */
-function releaseFlyerBestEffort(userId: string): Promise<{ error: null }> {
-  // public 一括 RPC が無い間は no-op。署名だけ userId を受け取り将来差し替え可能にする。
-  void userId;
-  return Promise.resolve({ error: null });
+async function releaseFlyerBestEffort(
+  userId: string,
+): Promise<{ error: { message: string } | null }> {
+  const { error } = await getSupabaseAdmin().rpc("release_flyer_weekly_for_user_processing", {
+    p_user_id: userId,
+  });
+  return { error: error === null ? null : { message: error.message } };
 }
 
 export default async function deleteAccount(request: Request): Promise<Response> {

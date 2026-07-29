@@ -389,9 +389,12 @@ describe("production deleteUser adapter", () => {
     createStripeClientMock.mockReset();
     requireUserMock.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
     adminDeleteUserMock.mockResolvedValue({ data: { user: null }, error: null });
-    // release_identity → 0; get_billing_customer → empty
+    // release_identity → 0; release_flyer → 0; get_billing_customer → empty
     rpcMock.mockImplementation((name: string) => {
       if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "release_flyer_weekly_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
       if (name === "get_billing_customer_by_user") {
@@ -411,8 +414,28 @@ describe("production deleteUser adapter", () => {
     expect(rpcMock).toHaveBeenCalledWith("release_identity_and_global_for_user_processing", {
       p_user_id: USER_ID,
     });
+    expect(rpcMock).toHaveBeenCalledWith("release_flyer_weekly_for_user_processing", {
+      p_user_id: USER_ID,
+    });
     expect(adminDeleteUserMock).toHaveBeenCalledTimes(1);
     expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
+  });
+
+  it("calls flyer release after identity release and before auth delete", async () => {
+    const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(200);
+    const identityOrder = rpcMock.mock.calls.findIndex(
+      (c) => c[0] === "release_identity_and_global_for_user_processing",
+    );
+    const flyerOrder = rpcMock.mock.calls.findIndex(
+      (c) => c[0] === "release_flyer_weekly_for_user_processing",
+    );
+    expect(identityOrder).toBeGreaterThanOrEqual(0);
+    expect(flyerOrder).toBeGreaterThanOrEqual(0);
+    expect(identityOrder).toBeLessThan(flyerOrder);
+    expect(rpcMock.mock.invocationCallOrder[flyerOrder]!).toBeLessThan(
+      adminDeleteUserMock.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("skips Stripe when no billing customer and still deletes auth user", async () => {
@@ -432,6 +455,9 @@ describe("production deleteUser adapter", () => {
     });
     rpcMock.mockImplementation((name: string) => {
       if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "release_flyer_weekly_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
       if (name === "get_billing_customer_by_user") {
@@ -466,6 +492,9 @@ describe("production deleteUser adapter", () => {
     });
     rpcMock.mockImplementation((name: string) => {
       if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "release_flyer_weekly_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
       if (name === "get_billing_customer_by_user") {
@@ -517,6 +546,9 @@ describe("production deleteUser adapter", () => {
       if (name === "release_identity_and_global_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
+      if (name === "release_flyer_weekly_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
       if (name === "get_billing_customer_by_user") {
         return Promise.resolve({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
       }
@@ -526,6 +558,24 @@ describe("production deleteUser adapter", () => {
     const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
     expect(response.status).toBe(200);
     expect(cancelMock).toHaveBeenCalledTimes(2);
+    expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
+  });
+
+  it("continues auth-delete when flyer release RPC fails (best-effort)", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "release_flyer_weekly_for_user_processing") {
+        return Promise.resolve({ data: null, error: { message: "flyer release failed" } });
+      }
+      if (name === "get_billing_customer_by_user") {
+        return Promise.resolve({ data: {}, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(200);
     expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
   });
 });

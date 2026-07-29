@@ -291,6 +291,7 @@ select is_empty(
   ('public.finalize_flyer_weekly_success(p_request_id uuid, p_result jsonb, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.finalize_flyer_weekly_failure(p_request_id uuid, p_failure_code text, p_sent boolean, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.cleanup_stale_flyer_weekly_batch(p_now timestamp with time zone, p_limit integer)', 'service_role', 'EXECUTE'),
+  ('public.release_flyer_weekly_for_user_processing(p_user_id uuid, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.release_identity_and_global_for_user_processing(p_user_id uuid, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.save_generation_draft(p_expected_revision bigint, p_meal_type text, p_main_ingredients text[], p_cuisine_genre text, p_target_mode text, p_target_member_ids uuid[], p_servings smallint, p_time_limit_minutes smallint, p_budget_preference text, p_avoid_ingredients text[], p_memo text, p_pantry_selections jsonb)', 'authenticated', 'EXECUTE'),
   ('public.set_onboarding_status(p_status text)', 'authenticated', 'EXECUTE'),

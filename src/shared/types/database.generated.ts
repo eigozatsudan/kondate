@@ -841,6 +841,10 @@ export type Database = {
         Args: { p_force_apply?: boolean; p_payload: Json; p_user_id: string }
         Returns: string
       }
+      release_flyer_weekly_for_user_processing: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: number
+      }
       release_flyer_weekly_reservations: {
         Args: {
           p_now: string
@@ -2836,6 +2840,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: Json
+      }
+      release_flyer_weekly_for_user_processing: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: number
       }
       release_identity_and_global_for_user_processing: {
         Args: { p_now?: string; p_user_id: string }
