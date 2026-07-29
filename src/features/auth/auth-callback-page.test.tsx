@@ -6,7 +6,10 @@ import { expect, it, vi } from "vitest";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
-import { markAuthContinuationCallbackOwner } from "./auth-flow";
+import {
+  markAuthContinuationCallbackOwner,
+  readAuthContinuationCallbackStartedAt,
+} from "./auth-flow";
 
 vi.mock("./auth-gateway", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-gateway")>();
@@ -23,7 +26,7 @@ vi.mock("./auth-flow", async (importOriginal) => {
   return {
     ...actual,
     clearAuthFlow: vi.fn(),
-    markAuthContinuationCallbackOwner: vi.fn(),
+    markAuthContinuationCallbackOwner: vi.fn(() => true),
     readAuthContinuationCallbackStartedAt: vi.fn(() => new Date().toISOString()),
   };
 });
@@ -86,7 +89,12 @@ it("removes callback credentials from the browser URL before completing the call
   expect(window.location.pathname + window.location.search + window.location.hash).toBe(
     "/auth/callback?flow=flow-1",
   );
-  expect(markAuthContinuationCallbackOwner).toHaveBeenCalledWith("flow-1");
+  expect(markAuthContinuationCallbackOwner).toHaveBeenCalledWith(
+    "flow-1",
+    window.localStorage,
+    expect.any(Date),
+    300_000,
+  );
 });
 
 it("creates the default gateway once and completes the callback once", async () => {
@@ -210,6 +218,87 @@ it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", a
   expect(router.state.location.state).toEqual({ authError: "unbound_callback" });
   view.unmount();
   vi.useRealTimers();
+});
+
+it("normalizes a callback-only future flow and stops retries at one fixed TTL", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  const actualFlow = await vi.importActual<typeof import("./auth-flow")>("./auth-flow");
+  vi.mocked(markAuthContinuationCallbackOwner).mockImplementation(
+    actualFlow.markAuthContinuationCallbackOwner,
+  );
+  vi.mocked(readAuthContinuationCallbackStartedAt).mockImplementation(
+    actualFlow.readAuthContinuationCallbackStartedAt,
+  );
+  const flowId = "10000000-0000-4000-8000-000000000001";
+  window.history.replaceState(null, "", `/auth/callback?flow=${flowId}`);
+  window.localStorage.setItem(
+    `kondate.auth.flow.${flowId}`,
+    JSON.stringify({
+      id: flowId,
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+      origin: window.location.origin,
+      returnTo: "/onboarding",
+      sessionExchange: "supabase",
+      startedAt: "2026-07-13T00:10:00.000Z",
+    }),
+  );
+  const resumeFlow = vi.fn().mockResolvedValue({
+    kind: "awaiting_completion",
+    flowId,
+    returnTo: "/onboarding",
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId,
+      returnTo: "/onboarding",
+    }),
+    resumeFlow,
+  };
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/auth/callback",
+        element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
+      },
+      { path: "/login", element: <h1>ログイン</h1> },
+    ],
+    { initialEntries: [`/auth/callback?flow=${flowId}`] },
+  );
+  const view = render(<RouterProvider router={router} />);
+  await act(async () => Promise.resolve());
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(300_000);
+  });
+  const callsAtExpiry = resumeFlow.mock.calls.length;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  const finalPath = router.state.location.pathname;
+  const finalCallCount = resumeFlow.mock.calls.length;
+  const marker = JSON.parse(
+    window.localStorage.getItem(`kondate.auth.supabase.clock-rebase.${flowId}`) ?? "null",
+  ) as unknown;
+  view.unmount();
+  window.localStorage.clear();
+  vi.mocked(markAuthContinuationCallbackOwner).mockImplementation(() => true);
+  vi.mocked(readAuthContinuationCallbackStartedAt).mockImplementation(() =>
+    new Date().toISOString(),
+  );
+  vi.useRealTimers();
+
+  expect(finalPath).toBe("/login");
+  expect(callsAtExpiry).toBeGreaterThan(0);
+  expect(finalCallCount).toBe(callsAtExpiry);
+  expect(marker).toEqual({
+    rebasedAt: "2026-07-13T00:00:00.000Z",
+    deadlineAt: "2026-07-13T00:05:00.000Z",
+  });
 });
 
 it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_completion", async () => {

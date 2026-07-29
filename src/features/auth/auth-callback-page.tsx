@@ -32,9 +32,18 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
       visibleUrl.hash = "";
       window.history.replaceState(window.history.state, "", visibleUrl);
       const flowId = callbackUrl.searchParams.get("flow");
+      const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
       callbackFlowId.current = flowId;
-      if (flowId !== null) markAuthContinuationCallbackOwner(flowId);
-      callbackPromise.current = activeGateway.completeCallback(callbackUrl);
+      const canContinue =
+        flowId === null ||
+        markAuthContinuationCallbackOwner(flowId, window.localStorage, new Date(), callbackTtlMs);
+      callbackPromise.current = canContinue
+        ? activeGateway.completeCallback(callbackUrl)
+        : Promise.resolve({
+            kind: "error",
+            code: "unbound_callback",
+            returnTo: "/login",
+          });
     }
     let active = true;
     let stopWaiting: (() => void) | undefined;
@@ -45,7 +54,13 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
         publishAuthContinuationCompletion({ flowId: next.flowId, returnTo: next.returnTo });
         void navigate(next.returnTo, { replace: true });
       } else if (next.kind === "awaiting_completion") {
-        const startedAt = readAuthContinuationCallbackStartedAt(next.flowId);
+        const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
+        const startedAt = readAuthContinuationCallbackStartedAt(
+          next.flowId,
+          window.localStorage,
+          new Date(),
+          callbackTtlMs,
+        );
         if (startedAt === null) {
           clearAuthFlow(next.flowId);
           void navigate("/login", {
@@ -70,7 +85,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
         const stopCompletionWait = startAuthContinuationCompletionWait({
           flowId: next.flowId,
           startedAt,
-          ttlMs: ttlMs ?? getPublicEnv().authContinuationTtlMs,
+          ttlMs: callbackTtlMs,
           onComplete: (completion) => {
             stopClaimRetry();
             void navigate(completion.returnTo, { replace: true });

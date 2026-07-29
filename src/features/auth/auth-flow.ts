@@ -12,8 +12,15 @@ const authFlowSchema = z
   })
   .strict();
 const legacyAuthFlowSchema = authFlowSchema.omit({ sessionExchange: true }).strict();
+const clockRebaseMarkerSchema = z
+  .object({
+    rebasedAt: z.iso.datetime({ offset: true }),
+    deadlineAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
 
 export type AuthFlow = z.infer<typeof authFlowSchema>;
+type ClockRebaseMarker = z.infer<typeof clockRebaseMarkerSchema>;
 
 export type FlowDeps = {
   randomBytes(size?: number): Uint8Array;
@@ -29,6 +36,8 @@ export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.sup
 
 const flowPrefix = ownedAuthStoragePrefixes[0];
 const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
+const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
+const defaultAuthContinuationTtlMs = 300_000;
 
 function base64url(bytes: Uint8Array): string {
   let binary = "";
@@ -105,8 +114,7 @@ export function readAuthFlow(id: string, storage: Storage): AuthFlow | null {
 }
 
 export function clearAuthFlow(id: string, storage: Storage = window.localStorage): void {
-  storage.removeItem(`${flowPrefix}${id}`);
-  storage.removeItem(`${callbackOwnerPrefix}${id}`);
+  clearAuthFlowClockState(id, storage);
 }
 
 export function clearClaimedAuthFlow(id: string, storage: Storage = window.localStorage): void {
@@ -114,19 +122,74 @@ export function clearClaimedAuthFlow(id: string, storage: Storage = window.local
   storage.removeItem(`${flowPrefix}${id}`);
 }
 
+export function markAuthContinuationCallbackOwner(flowId: string, storage?: Storage): void;
+export function markAuthContinuationCallbackOwner(
+  flowId: string,
+  storage: Storage,
+  now: Date,
+  ttlMs: number,
+): boolean;
 export function markAuthContinuationCallbackOwner(
   flowId: string,
   storage: Storage = window.localStorage,
-): void {
-  const flow = readAuthFlow(flowId, storage);
-  if (flow !== null) storage.setItem(`${callbackOwnerPrefix}${flowId}`, flow.startedAt);
+  now?: Date,
+  ttlMs = defaultAuthContinuationTtlMs,
+): boolean | void {
+  try {
+    const flow = readAuthFlow(flowId, storage);
+    if (flow === null) return now === undefined ? undefined : true;
+    if (now === undefined) {
+      storage.setItem(`${callbackOwnerPrefix}${flowId}`, flow.startedAt);
+      return;
+    }
+    const normalized = normalizeAuthClock(
+      flowId,
+      flow.startedAt,
+      storage,
+      now,
+      ttlMs,
+      (rebasedAt) => {
+        storage.setItem(
+          `${flowPrefix}${flowId}`,
+          JSON.stringify({ ...flow, startedAt: rebasedAt }),
+        );
+        const ownerKey = `${callbackOwnerPrefix}${flowId}`;
+        if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
+      },
+    );
+    if (normalized === null) return false;
+    storage.setItem(`${callbackOwnerPrefix}${flowId}`, normalized);
+    return true;
+  } catch {
+    // callback開始前の保存失敗はclaimを続けず、秘密を可能な範囲で破棄する。
+    clearAuthFlowClockState(flowId, storage);
+    return now === undefined ? undefined : false;
+  }
 }
 
 export function readAuthContinuationCallbackStartedAt(
   flowId: string,
   storage: Storage = window.localStorage,
+  now: Date = new Date(),
+  ttlMs = defaultAuthContinuationTtlMs,
 ): string | null {
-  return storage.getItem(`${callbackOwnerPrefix}${flowId}`);
+  try {
+    const startedAt = storage.getItem(`${callbackOwnerPrefix}${flowId}`);
+    if (startedAt === null) return null;
+    return normalizeAuthClock(flowId, startedAt, storage, now, ttlMs, (rebasedAt) => {
+      storage.setItem(`${callbackOwnerPrefix}${flowId}`, rebasedAt);
+      const flow = readAuthFlow(flowId, storage);
+      if (flow !== null) {
+        storage.setItem(
+          `${flowPrefix}${flowId}`,
+          JSON.stringify({ ...flow, startedAt: rebasedAt }),
+        );
+      }
+    });
+  } catch {
+    clearAuthFlowClockState(flowId, storage);
+    return null;
+  }
 }
 
 export function isAuthContinuationCallbackOwned(
@@ -135,22 +198,14 @@ export function isAuthContinuationCallbackOwned(
   now: Date,
   ttlMs: number,
 ): boolean {
-  const key = `${callbackOwnerPrefix}${flowId}`;
-  const startedAt = storage.getItem(key);
-  if (startedAt === null) return false;
-  const age = now.getTime() - new Date(startedAt).getTime();
-  if (!Number.isFinite(age) || age > ttlMs) {
-    storage.removeItem(key);
-    return false;
-  }
-  if (age < 0) {
-    // 端末時計の巻戻りでは所有権を越境させず、現在から最大1 TTLだけ保持する。
-    storage.setItem(key, now.toISOString());
-  }
-  return true;
+  return readAuthContinuationCallbackStartedAt(flowId, storage, now, ttlMs) !== null;
 }
 
-export function listUnexpiredAuthFlows(storage: Storage, now: Date, ttlMs = 300_000): AuthFlow[] {
+export function listUnexpiredAuthFlows(
+  storage: Storage,
+  now: Date,
+  ttlMs = defaultAuthContinuationTtlMs,
+): AuthFlow[] {
   const result: AuthFlow[] = [];
   const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(
     (key): key is string => key?.startsWith(flowPrefix) === true,
@@ -159,21 +214,111 @@ export function listUnexpiredAuthFlows(storage: Storage, now: Date, ttlMs = 300_
     const id = key.slice(flowPrefix.length);
     const flow = readAuthFlow(id, storage);
     if (flow === null) continue;
-    const age = now.getTime() - new Date(flow.startedAt).getTime();
-    if (!Number.isFinite(age) || age > ttlMs) {
-      clearAuthFlow(id, storage);
-      continue;
-    }
-    if (age < 0) {
-      // 時計巻戻り後に毎回延命しないよう、保存基準そのものを現在へ一度だけ更新する。
-      const rebasedFlow = { ...flow, startedAt: now.toISOString() };
-      storage.setItem(key, JSON.stringify(rebasedFlow));
-      result.push(rebasedFlow);
-      continue;
-    }
-    result.push(flow);
+    const normalized = normalizeAuthClock(id, flow.startedAt, storage, now, ttlMs, (rebasedAt) => {
+      storage.setItem(key, JSON.stringify({ ...flow, startedAt: rebasedAt }));
+      const ownerKey = `${callbackOwnerPrefix}${id}`;
+      if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
+    });
+    if (normalized !== null) result.push({ ...flow, startedAt: normalized });
   }
   return result.toSorted((left, right) => left.startedAt.localeCompare(right.startedAt));
+}
+
+function normalizeAuthClock(
+  flowId: string,
+  startedAt: string,
+  storage: Storage,
+  now: Date,
+  ttlMs: number,
+  persistRebase: (rebasedAt: string) => void,
+): string | null {
+  try {
+    const nowMs = now.getTime();
+    const startedAtMs = new Date(startedAt).getTime();
+    if (!Number.isFinite(nowMs) || !Number.isFinite(startedAtMs) || !isValidTtl(ttlMs)) {
+      clearAuthFlowClockState(flowId, storage);
+      return null;
+    }
+
+    const markerKey = `${clockRebasePrefix}${flowId}`;
+    const rawMarker = storage.getItem(markerKey);
+    if (rawMarker !== null) {
+      const marker = parseClockRebaseMarker(rawMarker);
+      if (marker === null || !isConsistentClockRebaseMarker(marker, startedAt, ttlMs)) {
+        clearAuthFlowClockState(flowId, storage);
+        return null;
+      }
+      const rebasedAtMs = new Date(marker.rebasedAt).getTime();
+      const deadlineAtMs = new Date(marker.deadlineAt).getTime();
+      if (nowMs < rebasedAtMs || nowMs > deadlineAtMs) {
+        clearAuthFlowClockState(flowId, storage);
+        return null;
+      }
+      return marker.rebasedAt;
+    }
+
+    const age = nowMs - startedAtMs;
+    if (age > ttlMs) {
+      clearAuthFlowClockState(flowId, storage);
+      return null;
+    }
+    if (age >= 0) return startedAt;
+
+    const marker: ClockRebaseMarker = {
+      rebasedAt: now.toISOString(),
+      deadlineAt: new Date(nowMs + ttlMs).toISOString(),
+    };
+    // markerを先に固定し、後続書込みが失敗しても再rebaseできない証跡を残す。
+    storage.setItem(markerKey, JSON.stringify(marker));
+    persistRebase(marker.rebasedAt);
+    return marker.rebasedAt;
+  } catch {
+    clearAuthFlowClockState(flowId, storage);
+    return null;
+  }
+}
+
+function parseClockRebaseMarker(raw: string): ClockRebaseMarker | null {
+  try {
+    const parsed = clockRebaseMarkerSchema.safeParse(JSON.parse(raw) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function isConsistentClockRebaseMarker(
+  marker: ClockRebaseMarker,
+  startedAt: string,
+  ttlMs: number,
+): boolean {
+  const rebasedAtMs = new Date(marker.rebasedAt).getTime();
+  const deadlineAtMs = new Date(marker.deadlineAt).getTime();
+  return (
+    isValidTtl(ttlMs) &&
+    Number.isFinite(rebasedAtMs) &&
+    Number.isFinite(deadlineAtMs) &&
+    startedAt === marker.rebasedAt &&
+    deadlineAtMs - rebasedAtMs === ttlMs
+  );
+}
+
+function isValidTtl(ttlMs: number): boolean {
+  return Number.isFinite(ttlMs) && ttlMs > 0;
+}
+
+function clearAuthFlowClockState(flowId: string, storage: Storage): void {
+  for (const key of [
+    `${flowPrefix}${flowId}`,
+    `${callbackOwnerPrefix}${flowId}`,
+    `${clockRebasePrefix}${flowId}`,
+  ]) {
+    try {
+      storage.removeItem(key);
+    } catch {
+      // fail-closed cleanupは他の保存値の削除を続け、個別Storage失敗を外へ漏らさない。
+    }
+  }
 }
 
 export function clearOwnedAuthStorage(storage: Storage): void {

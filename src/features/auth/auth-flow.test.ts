@@ -5,7 +5,9 @@ import {
   createAuthFlow,
   isAuthContinuationCallbackOwned,
   listUnexpiredAuthFlows,
+  markAuthContinuationCallbackOwner,
   ownedAuthStoragePrefixes,
+  readAuthContinuationCallbackStartedAt,
   readAuthFlow,
   sanitizeReturnPath,
 } from "./auth-flow";
@@ -90,26 +92,91 @@ describe("auth flow storage", () => {
   it("rebases a future flow once and retains it for at most one TTL", () => {
     const storage = new MapStorage();
     const flowId = "10000000-0000-4000-8000-000000000001";
-    storage.setItem(
-      `kondate.auth.flow.${flowId}`,
-      JSON.stringify({
-        id: flowId,
-        secret: "A".repeat(43),
-        state: "B".repeat(43),
-        origin: "https://app.test",
-        returnTo: "/planner",
-        sessionExchange: "supabase",
-        startedAt: "2026-07-13T00:10:00.000Z",
-      }),
-    );
+    const markerKey = `kondate.auth.supabase.clock-rebase.${flowId}`;
+    const ownerKey = `kondate.auth.supabase.callback-owner.${flowId}`;
+    writeFlow(storage, flowId, "2026-07-13T00:10:00.000Z");
+    storage.setItem(ownerKey, "2026-07-13T00:10:00.000Z");
 
     expect(
       listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:00:00.000Z"), 300_000),
     ).toHaveLength(1);
     expect(readAuthFlow(flowId, storage)?.startedAt).toBe("2026-07-13T00:00:00.000Z");
+    expect(storage.getItem(ownerKey)).toBe("2026-07-13T00:00:00.000Z");
+    expect(JSON.parse(storage.getItem(markerKey) ?? "null")).toEqual({
+      rebasedAt: "2026-07-13T00:00:00.000Z",
+      deadlineAt: "2026-07-13T00:05:00.000Z",
+    });
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:05:00.000Z"), 300_000),
+    ).toHaveLength(1);
     expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:05:00.001Z"), 300_000)).toEqual(
       [],
     );
+  });
+
+  it("fails closed instead of rebasing again after a second clock rollback", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const markerKey = `kondate.auth.supabase.clock-rebase.${flowId}`;
+    const ownerKey = `kondate.auth.supabase.callback-owner.${flowId}`;
+    writeFlow(storage, flowId, "2026-07-13T00:10:00.000Z");
+    storage.setItem(ownerKey, "2026-07-13T00:10:00.000Z");
+
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:00:00.000Z"), 300_000),
+    ).toHaveLength(1);
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-12T23:59:59.999Z"), 300_000)).toEqual(
+      [],
+    );
+    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
+    expect(storage.getItem(ownerKey)).toBeNull();
+    expect(storage.getItem(markerKey)).toBeNull();
+  });
+
+  it("fails closed for a corrupt rebase marker or marker write failure", () => {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const markerKey = `kondate.auth.supabase.clock-rebase.${flowId}`;
+    const corruptStorage = new MapStorage();
+    writeFlow(corruptStorage, flowId, "2026-07-13T00:00:00.000Z");
+    corruptStorage.setItem(markerKey, '{"rebasedAt":"invalid"}');
+
+    expect(
+      listUnexpiredAuthFlows(corruptStorage, new Date("2026-07-13T00:01:00.000Z"), 300_000),
+    ).toEqual([]);
+    expect(corruptStorage.length).toBe(0);
+
+    const failingStorage = new MarkerWriteFailingStorage(markerKey);
+    writeFlow(failingStorage, flowId, "2026-07-13T00:10:00.000Z");
+    expect(() =>
+      listUnexpiredAuthFlows(failingStorage, new Date("2026-07-13T00:00:00.000Z"), 300_000),
+    ).not.toThrow();
+    expect(failingStorage.length).toBe(0);
+  });
+
+  it("normalizes callback-only ownership to the fixed flow deadline", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    writeFlow(storage, flowId, "2026-07-13T00:10:00.000Z");
+
+    expect(
+      markAuthContinuationCallbackOwner(
+        flowId,
+        storage,
+        new Date("2026-07-13T00:00:00.000Z"),
+        300_000,
+      ),
+    ).toBe(true);
+    expect(
+      readAuthContinuationCallbackStartedAt(
+        flowId,
+        storage,
+        new Date("2026-07-13T00:00:00.000Z"),
+        300_000,
+      ),
+    ).toBe("2026-07-13T00:00:00.000Z");
+    expect(readAuthFlow(flowId, storage)?.startedAt).toBe("2026-07-13T00:00:00.000Z");
+    clearAuthFlow(flowId, storage);
+    expect(storage.length).toBe(0);
   });
 
   it("rebases future callback ownership without crossing its TTL boundary", () => {
@@ -186,29 +253,55 @@ it("preserves an unavailable claim HTTP status without reading sensitive respons
 });
 
 class MapStorage implements Storage {
-  readonly #values = new Map<string, string>();
+  protected readonly values = new Map<string, string>();
 
   get length() {
-    return this.#values.size;
+    return this.values.size;
   }
 
   clear() {
-    this.#values.clear();
+    this.values.clear();
   }
 
   getItem(key: string) {
-    return this.#values.get(key) ?? null;
+    return this.values.get(key) ?? null;
   }
 
   key(index: number) {
-    return [...this.#values.keys()][index] ?? null;
+    return [...this.values.keys()][index] ?? null;
   }
 
   removeItem(key: string) {
-    this.#values.delete(key);
+    this.values.delete(key);
   }
 
   setItem(key: string, value: string) {
-    this.#values.set(key, value);
+    this.values.set(key, value);
   }
+}
+
+class MarkerWriteFailingStorage extends MapStorage {
+  constructor(private readonly markerKey: string) {
+    super();
+  }
+
+  override setItem(key: string, value: string): void {
+    if (key === this.markerKey) throw new Error("marker write failed");
+    super.setItem(key, value);
+  }
+}
+
+function writeFlow(storage: Storage, flowId: string, startedAt: string): void {
+  storage.setItem(
+    `kondate.auth.flow.${flowId}`,
+    JSON.stringify({
+      id: flowId,
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+      origin: "https://app.test",
+      returnTo: "/planner",
+      sessionExchange: "supabase",
+      startedAt,
+    }),
+  );
 }
