@@ -6,7 +6,9 @@ import { expect, it, vi } from "vitest";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 import {
+  clearAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
 } from "./auth-flow";
@@ -21,6 +23,10 @@ vi.mock("./auth-continuation-completion", async (importOriginal) => {
   return { ...actual, publishAuthContinuationCompletion: vi.fn() };
 });
 
+vi.mock("./auth-continuation-recovery", () => ({
+  startAuthContinuationRecovery: vi.fn(() => () => undefined),
+}));
+
 vi.mock("./auth-flow", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-flow")>();
   return {
@@ -32,6 +38,7 @@ vi.mock("./auth-flow", async (importOriginal) => {
 });
 
 const createAuthGatewayMock = vi.mocked(createAuthGateway);
+const startAuthContinuationRecoveryMock = vi.mocked(startAuthContinuationRecovery);
 
 it("deposits in an isolated WebView and directs the user to the original browser", async () => {
   const gateway: AuthGateway = {
@@ -259,6 +266,8 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
     }),
     resumeFlow,
   };
+  const stopRecovery = vi.fn();
+  startAuthContinuationRecoveryMock.mockImplementationOnce(() => stopRecovery);
   const router = createMemoryRouter(
     [
       {
@@ -275,12 +284,12 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(300_000);
   });
-  const callsAtExpiry = resumeFlow.mock.calls.length;
+  const recoveryCallsAtExpiry = startAuthContinuationRecoveryMock.mock.calls.length;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10_000);
   });
   const finalPath = router.state.location.pathname;
-  const finalCallCount = resumeFlow.mock.calls.length;
+  const finalRecoveryCallCount = startAuthContinuationRecoveryMock.mock.calls.length;
   const marker = JSON.parse(
     window.localStorage.getItem(`kondate.auth.supabase.clock-rebase.${flowId}`) ?? "null",
   ) as unknown;
@@ -293,8 +302,9 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
   vi.useRealTimers();
 
   expect(finalPath).toBe("/login");
-  expect(callsAtExpiry).toBeGreaterThan(0);
-  expect(finalCallCount).toBe(callsAtExpiry);
+  expect(recoveryCallsAtExpiry).toBeGreaterThan(0);
+  expect(finalRecoveryCallCount).toBe(recoveryCallsAtExpiry);
+  expect(stopRecovery).toHaveBeenCalledOnce();
   expect(marker).toEqual({
     rebasedAt: "2026-07-13T00:00:00.000Z",
     deadlineAt: "2026-07-13T00:05:00.000Z",
@@ -333,11 +343,21 @@ it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_comp
     );
     render(<RouterProvider router={router} />);
     await act(async () => Promise.resolve());
-    // 5s claim retry 間隔
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
+    const recoveryInput = startAuthContinuationRecoveryMock.mock.calls.at(-1)?.[0];
+    expect(recoveryInput).toMatchObject({
+      gateway,
+      storage: window.localStorage,
+      targetFlowId: "flow-1",
     });
-    expect(resumeFlow).toHaveBeenCalledWith("flow-1");
+    await act(async () => {
+      recoveryInput?.onComplete({
+        kind: "complete",
+        flowId: "flow-1",
+        returnTo: "/onboarding",
+      });
+      await Promise.resolve();
+    });
+    expect(resumeFlow).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe("/onboarding");
     expect(publishAuthContinuationCompletion).toHaveBeenCalledWith({
       flowId: "flow-1",
@@ -346,6 +366,65 @@ it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_comp
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("fails closed when completeCallback rejects without leaking the rejection", async () => {
+  const flowId = "10000000-0000-4000-8000-000000000001";
+  const rejection = new Error(`secret:${"A".repeat(43)}`);
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockRejectedValue(rejection),
+    resumeFlow: vi.fn(),
+  };
+  const unhandled = vi.fn();
+  window.addEventListener("unhandledrejection", unhandled);
+  const router = createMemoryRouter(
+    [
+      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
+      { path: "/login", element: <h1>ログイン</h1> },
+    ],
+    { initialEntries: [`/auth/callback?flow=${flowId}`] },
+  );
+
+  render(<RouterProvider router={router} />);
+  expect(await screen.findByRole("heading", { name: "ログイン" })).toBeInTheDocument();
+
+  expect(unhandled).not.toHaveBeenCalled();
+  expect(router.state.location.state).toEqual({ authError: "unbound_callback" });
+  expect(clearAuthFlow).toHaveBeenCalledWith(flowId);
+  window.removeEventListener("unhandledrejection", unhandled);
+});
+
+it("maps a targeted recovery expiry to the existing callback terminal flow", async () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
+    resumeFlow: vi.fn(),
+  };
+  const router = createMemoryRouter(
+    [
+      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
+      { path: "/login", element: <h1>ログイン</h1> },
+    ],
+    { initialEntries: ["/auth/callback?flow=flow-1"] },
+  );
+
+  render(<RouterProvider router={router} />);
+  await act(async () => Promise.resolve());
+  const recoveryInput = startAuthContinuationRecoveryMock.mock.calls.at(-1)?.[0];
+  await act(async () => {
+    recoveryInput?.onResult?.({ kind: "expired" });
+    await Promise.resolve();
+  });
+
+  expect(router.state.location.pathname).toBe("/login");
+  expect(router.state.location.state).toEqual({ authError: "magic_link_expired" });
 });
 
 it("handles the original callback result after StrictMode remounts the effect", async () => {

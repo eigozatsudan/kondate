@@ -231,6 +231,95 @@ describe("auth continuation recovery", () => {
     stop();
   });
 
+  it("claims an explicitly targeted callback flow through the shared coordinator", async () => {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const storage = flowStorage([flowId]);
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, new Date().toISOString());
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/planner",
+      }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      targetFlowId: flowId,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledOnce();
+    expect(gateway.resumeFlow).toHaveBeenCalledWith(flowId);
+    expect(storage.getItem("kondate.auth.supabase.claim-poll-last-at")).not.toBeNull();
+    stop();
+  });
+
+  it("shares one pending claim slot across two callback recoveries and normal recovery", async () => {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const storage = flowStorage([flowId]);
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, new Date().toISOString());
+    let releaseClaim: (() => void) | undefined;
+    const gateway = {
+      resumeFlow: vi.fn(
+        () =>
+          new Promise<{ kind: "awaiting_completion" }>((resolve) => {
+            releaseClaim = () => {
+              resolve({ kind: "awaiting_completion" });
+            };
+          }),
+      ),
+    };
+    const locks = new ImmediateLockManager();
+    const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: locks,
+    });
+
+    try {
+      const stops = [
+        startAuthContinuationRecovery({
+          gateway,
+          storage,
+          targetFlowId: flowId,
+          onComplete: vi.fn(),
+          setInterval: (() => 1) as unknown as typeof window.setInterval,
+        }),
+        startAuthContinuationRecovery({
+          gateway,
+          storage,
+          targetFlowId: flowId,
+          onComplete: vi.fn(),
+          setInterval: (() => 2) as unknown as typeof window.setInterval,
+        }),
+        startAuthContinuationRecovery({
+          gateway,
+          storage,
+          onComplete: vi.fn(),
+          setInterval: (() => 3) as unknown as typeof window.setInterval,
+        }),
+      ];
+      await flushPromises();
+
+      expect(gateway.resumeFlow).toHaveBeenCalledOnce();
+      releaseClaim?.();
+      await flushPromises();
+      stops.forEach((stop) => {
+        stop();
+      });
+    } finally {
+      if (originalLocks === undefined) {
+        Reflect.deleteProperty(navigator, "locks");
+      } else {
+        Object.defineProperty(navigator, "locks", originalLocks);
+      }
+    }
+  });
+
   it("serializes concurrent recovery wakes", async () => {
     const storage = new MapStorage();
     storage.setItem(

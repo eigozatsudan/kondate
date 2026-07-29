@@ -162,7 +162,7 @@ it("uses Supabase Google and never the mock URL in production mode", async () =>
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 
-it("exchanges a magic-link flow with Supabase even when Google mock mode is enabled", async () => {
+it("deposits a magic-link callback without claiming it directly", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
   const claim = vi.fn().mockResolvedValue({ code: "magic-code-1", returnTo: "/onboarding" });
@@ -192,8 +192,13 @@ it("exchanges a magic-link flow with Supabase even when Google mock mode is enab
         `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
       ),
     ),
-  ).resolves.toMatchObject({ kind: "complete", returnTo: "/onboarding" });
-  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("magic-code-1");
+  ).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(claim).not.toHaveBeenCalled();
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
   expect(fetchImpl).not.toHaveBeenCalled();
 });
@@ -389,7 +394,7 @@ it("deposits for the original browser when this context never held the flow", as
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
 });
 
-it("completes in the original browser once claim and code exchange succeed", async () => {
+it("leaves a same-browser deposited callback for the shared recovery coordinator", async () => {
   const storage = new MapStorage();
   const deposit = vi.fn().mockResolvedValue(undefined);
   const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
@@ -408,15 +413,14 @@ it("completes in the original browser once claim and code exchange succeed", asy
   );
 
   expect(result).toEqual({
-    kind: "complete",
-    continuation: "same_browser",
+    kind: "awaiting_completion",
     returnTo: "/onboarding",
     flowId: flow.id,
   });
-  expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
-  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
+  expect(claim).not.toHaveBeenCalled();
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
-  expect(readAuthFlow(flow.id, storage)).toBeNull();
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
 
 it("waits for the winning tab when an in-flight recovery consumes the claim", async () => {

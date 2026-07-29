@@ -3,8 +3,10 @@ import { useNavigate } from "react-router";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import {
   publishAuthContinuationCompletion,
+  readAuthContinuationCompletion,
   startAuthContinuationCompletionWait,
 } from "./auth-continuation-completion";
+import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 import { getPublicEnv } from "@/shared/config/public-env";
 import {
   clearAuthFlow,
@@ -38,7 +40,11 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
         flowId === null ||
         markAuthContinuationCallbackOwner(flowId, window.localStorage, new Date(), callbackTtlMs);
       callbackPromise.current = canContinue
-        ? activeGateway.completeCallback(callbackUrl)
+        ? activeGateway.completeCallback(callbackUrl).catch((): AuthCallbackResult => ({
+            kind: "error",
+            code: "unbound_callback",
+            returnTo: "/login",
+          }))
         : Promise.resolve({
             kind: "error",
             code: "unbound_callback",
@@ -69,66 +75,66 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
           });
           return;
         }
-        // AUTH-01: 他タブ完了待ちに加え、コールバック所有者タブ自身が claim を再試行する。
-        // deposit 後の 429/5xx/network で waiting に入った単独タブが TTL まで固まるのを防ぐ。
-        // 間隔は recovery と同じ 5s（claim IP 上限 20/60s を超えない）。
-        let claimRetryFinished = false;
-        // DOM setInterval は number を返す（Node Timeout 型との混同を避ける）
-        let claimRetryTimer: number | undefined;
-        const stopClaimRetry = (): void => {
-          claimRetryFinished = true;
-          if (claimRetryTimer !== undefined) {
-            window.clearInterval(claimRetryTimer);
-            claimRetryTimer = undefined;
-          }
+        const existingCompletion = readAuthContinuationCompletion(next.flowId);
+        if (existingCompletion !== null) {
+          void navigate(existingCompletion.returnTo, { replace: true });
+          return;
+        }
+        let finished = false;
+        let stopCompletionWait = (): void => undefined;
+        let stopRecovery = (): void => undefined;
+        const stopAwaiting = (): void => {
+          if (finished) return;
+          finished = true;
+          stopCompletionWait();
+          stopRecovery();
         };
-        const stopCompletionWait = startAuthContinuationCompletionWait({
+        const failClosed = (authError: "magic_link_expired" | "unbound_callback"): void => {
+          if (finished) return;
+          stopAwaiting();
+          clearAuthFlow(next.flowId);
+          void navigate("/login", {
+            replace: true,
+            state: { authError },
+          });
+        };
+        stopCompletionWait = startAuthContinuationCompletionWait({
           flowId: next.flowId,
           startedAt,
           ttlMs: callbackTtlMs,
           onComplete: (completion) => {
-            stopClaimRetry();
+            if (finished) return;
+            stopAwaiting();
             void navigate(completion.returnTo, { replace: true });
           },
           onExpire: () => {
-            stopClaimRetry();
-            clearAuthFlow(next.flowId);
-            void navigate("/login", {
-              replace: true,
-              state: { authError: "unbound_callback" },
-            });
+            failClosed("unbound_callback");
           },
         });
-        claimRetryTimer = window.setInterval(() => {
-          if (claimRetryFinished) return;
-          void activeGateway.resumeFlow(next.flowId).then((retry) => {
-            if (claimRetryFinished) return;
-            if (retry.kind === "complete") {
-              stopClaimRetry();
-              stopCompletionWait();
-              publishAuthContinuationCompletion({
-                flowId: retry.flowId,
-                returnTo: retry.returnTo,
-              });
-              void navigate(retry.returnTo, { replace: true });
-            } else if (retry.kind === "error" || retry.kind === "expired") {
-              stopClaimRetry();
-              stopCompletionWait();
-              clearAuthFlow(next.flowId);
-              void navigate("/login", {
-                replace: true,
-                state: {
-                  authError: retry.kind === "expired" ? "magic_link_expired" : retry.code,
-                },
-              });
+        // callback ownerも通常recoveryと同じ共有slotを通し、タブ数にかかわらずclaim頻度を固定する。
+        stopRecovery = startAuthContinuationRecovery({
+          gateway: activeGateway,
+          storage: window.localStorage,
+          targetFlowId: next.flowId,
+          ttlMs: callbackTtlMs,
+          onComplete: (completion) => {
+            if (finished) return;
+            stopAwaiting();
+            publishAuthContinuationCompletion({
+              flowId: completion.flowId,
+              returnTo: completion.returnTo,
+            });
+            void navigate(completion.returnTo, { replace: true });
+          },
+          onResult: (recoveryResult) => {
+            if (recoveryResult.kind === "expired") {
+              failClosed("magic_link_expired");
+            } else if (recoveryResult.kind === "error") {
+              failClosed("unbound_callback");
             }
-            // awaiting_completion / deposited は継続待ち
-          });
-        }, 5_000);
-        stopWaiting = () => {
-          stopClaimRetry();
-          stopCompletionWait();
-        };
+          },
+        });
+        stopWaiting = stopAwaiting;
       } else if (next.kind === "expired") {
         if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
         void navigate("/login", {

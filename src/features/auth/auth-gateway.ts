@@ -182,7 +182,11 @@ export function createAuthGateway(
           returnTo: "/planner",
         };
       }
-      return this.resumeFlow(flowId);
+      return {
+        kind: "awaiting_completion",
+        flowId,
+        returnTo,
+      };
     },
 
     async resumeFlow(flowId) {

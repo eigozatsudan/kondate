@@ -139,6 +139,8 @@ export function startAuthContinuationRecovery(input: {
   gateway: AuthContinuationRecoveryGateway;
   storage: Storage;
   onComplete(result: RecoveryCompleteResult): void;
+  onResult?(result: RecoveryResult): void;
+  targetFlowId?: string;
   ttlMs?: number;
   now?: () => Date;
   setInterval?: typeof window.setInterval;
@@ -154,9 +156,13 @@ export function startAuthContinuationRecovery(input: {
     if (last <= nowMs && nowMs - last < MIN_CLAIM_POLL_GAP_MS) return;
     const now = input.now?.() ?? new Date();
     const ttlMs = input.ttlMs ?? 300_000;
-    const claimableFlowIds = listUnexpiredAuthFlows(input.storage, now, ttlMs)
-      .filter((flow) => !isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs))
-      .map((flow) => flow.id);
+    const unexpiredFlows = listUnexpiredAuthFlows(input.storage, now, ttlMs);
+    const claimableFlowIds =
+      input.targetFlowId === undefined
+        ? unexpiredFlows
+            .filter((flow) => !isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs))
+            .map((flow) => flow.id)
+        : unexpiredFlows.filter((flow) => flow.id === input.targetFlowId).map((flow) => flow.id);
     const flowId = selectNextFlowId(claimableFlowIds, input.storage);
     if (flowId === undefined || isStopped()) return;
     if (!writeStorageValue(input.storage, LAST_CLAIM_POLL_KEY, String(nowMs))) return;
@@ -167,11 +173,15 @@ export function startAuthContinuationRecovery(input: {
     if (flowId === undefined || stopped) return;
     const result = await input.gateway.resumeFlow(flowId);
     if (isRecoveryComplete(result)) {
-      input.onComplete({
+      const completeResult = {
         ...result,
         returnTo: sanitizeReturnPath(result.returnTo),
-      });
+      };
+      input.onComplete(completeResult);
+      input.onResult?.(completeResult);
+      return;
     }
+    input.onResult?.(result);
   };
   const poll = async (): Promise<void> => {
     if (running || stopped) return;
