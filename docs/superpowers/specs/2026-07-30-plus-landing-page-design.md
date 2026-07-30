@@ -4,9 +4,9 @@
 |------|-----|
 | 文書 | `docs/superpowers/specs/2026-07-30-plus-landing-page-design.md` |
 | 日付 | 2026-07-30 |
-| 状態 | **Review-ready**（通常 + 敵対的再レビュー反映済み。実装計画着手前のユーザー確認待ち） |
+| 状態 | **Approved for implementation**（実装計画あり。2026-07-30 設計+計画の通常/敵対的再レビュー反映済み） |
 | 関連 | Plus / Stripe `2026-07-29-paid-plan-stripe-design.md`（L3 価格・L10 ファネル・A3 kill）、設定 UI `PlanSettingsSection`、CTA `plus-cta.tsx` / flyer locked / flyer upsell、Checkout `billing-checkout.ts` |
-| レビュー | 初回敵対的 M1–M5；2026-07-30 通常+敵対的再レビュー（R-A1〜 反映。擬陽性は「採用しなかった指摘」） |
+| レビュー | 初回 M1–M5；再レビュー R-A1〜；**設計+計画合同** R-B1〜（循環依存・品質二重リンク・section CSS 等） |
 
 ---
 
@@ -253,12 +253,16 @@ entitlement は `GET /api/billing/entitlement` のみ。クライアントはプ
 
 **禁止:** LP と `PlanSettingsSection` で JSX / 文言を二重定義。
 
-**必須:** 例 `src/features/billing/checkout-interval-form.tsx`（名称は実装計画で確定）:
+**必須:**
 
-- props: `disabled`（surfaces 閉・pending）、`onCheckout(interval)`、必要なら注入用
-- 内部: 月/年ラジオ、年額時チェック、`YEARLY_CONFIRM_COPY`、`STRIPE_REDIRECT_NOTICE`、主ボタン
-- 定数: `plan-settings-section` から export 済みのものを **import して再利用**（移動してもよいが単一ソース）
-- ラジオ `name` はページ内で一意（設定と LP は別マウントなので衝突しない）
+1. **コピー単一ソース** `src/features/billing/billing-ui-copy.ts`（新規）  
+   - 少なくとも `YEARLY_CONFIRM_COPY` / `STRIPE_REDIRECT_NOTICE` / `PAST_DUE_COPY` / `PORTAL_BUTTON_LABEL` / `TRIAL_END_WARNING` をここに置く  
+   - `plan-settings-section.tsx` は **re-export** して既存 import パスを壊さない（循環依存禁止）
+2. **フォーム** `src/features/billing/checkout-interval-form.tsx`  
+   - props: `disabled?`（surfaces 閉）、`pending?`、`onSubmit: (interval: "month" | "year") => void | Promise<void>`  
+   - 定数は **`billing-ui-copy` のみ**から import（`plan-settings-section` を form が import しない — **循環依存禁止**）  
+   - 内部: 価格リスト・月/年ラジオ・年額確認・注記・「Plus をはじめる」  
+   - 年額未確認時は `onSubmit` を呼ばず、設定と同じエラー文を form 内 `role="alert"` で表示
 
 `PlanSettingsSection` は未加入 + surfaces 開のときこのフォームを使うようリファクタ（挙動・テスト exact 維持）。
 
@@ -331,8 +335,21 @@ Free（Checkout 可）ユーザー
 
 - Free（`qualityModeLocked`）時、hint「くわしい AI での作成は Plus で使えます」の近くに「Plus を見る」
 - `href`/`to` = `/plus`
-- 44×44 タッチ。hint とリンクで **同じ accessible name の重複操作**を避ける（リンク名は「Plus を見る」、hint は説明のまま）
-- 硬上限 CTA と同時表示され得るが、どちらも `/plus` でよい
+- 44×44 タッチ。hint とリンクで accessible name を混同しない（リンク名は「Plus を見る」、hint は説明のまま）
+- **硬上限 CTA と同時表示**され得る（review で Free かつ success 残 0）。どちらも `/plus` でよいが、**同一画面に同名リンクが 2 本**になる。unit は `getByRole` 単独ではなく `within(testId)` または `getAllByRole` で取る（計画 R-B2）
+
+### 表示分岐 pure 関数（実装契約）
+
+- `src/features/billing/plus-landing-view.ts` の `resolvePlusLandingView` が State matrix の **唯一の入口**
+- `CHECKOUT_BLOCKED_STATUSES` を export し、`kind: "full"` の `checkoutEnabled` は  
+  `productSurfacesOpen === true` **かつ** `status` が blocked 集合に含まれないこと  
+  （incomplete 等が短形をすり抜けた場合のベルト＆サスペンダー）
+
+### AppShell section CSS
+
+- `sectionForPath("/plus") === "plus"` に加え、`src/styles.css` に  
+  `[data-section="plus"] { --section-tint: #f6f6f4; }`（settings と同値）を **必須**  
+  - 未定義だと `background: var(--section-tint)` が無効になり chrome が壊れる
 
 ---
 
@@ -356,12 +373,14 @@ Free（Checkout 可）ユーザー
 
 | 操作 | パス |
 |------|------|
-| 新規 | `src/features/billing/plus-landing-page.tsx` (+ `.css` / `.test.tsx`) |
+| 新規 | `src/features/billing/billing-ui-copy.ts`（共有コピー。設定は re-export） |
 | 新規 | `src/features/billing/checkout-interval-form.tsx` (+ test) |
+| 新規 | `src/features/billing/plus-landing-view.ts` (+ test) |
+| 新規 | `src/features/billing/plus-landing-page.tsx` (+ `.css` / `.test.tsx`) |
 | 新規 | `src/features/billing/assets/plus-*.webp` |
-| 変更 | `src/app/router.tsx`、`app-shell.tsx`（`sectionForPath` + `sectionTitles.plus`） |
+| 変更 | `src/app/router.tsx`、`app-shell.tsx`、`styles.css`（`[data-section="plus"]`） |
 | 変更 | `plus-cta.tsx`、`flyer-upsell-banner.tsx`、`flyer-weekly-panel.tsx`、関連 test |
-| 変更 | `plan-settings-section.tsx`（共有 form 利用） |
+| 変更 | `plan-settings-section.tsx`（共有 form + copy re-export） |
 | 変更 | `review-step.tsx`（品質 Plus リンク） |
 | 変更 | `netlify/functions/_shared/billing-checkout.ts` + test |
 | 変更 | e2e `billing-plus.spec.ts` 等 |
@@ -399,6 +418,19 @@ Free（Checkout 可）ユーザー
 | R-A7 | should | 管理短形の Portal 有無が薄い | Portal 節を追加 |
 | R-A8 | info | soft 1 残にリンクを足すと押し売り | **非採用**（L10-2 維持） |
 
+### 設計+計画合同レビュー（R-B）採用
+
+| ID | 深刻度 | 内容 | 修正 |
+|----|--------|------|------|
+| R-B1 | must | form ↔ plan-settings の相互 import で循環依存 | `billing-ui-copy.ts` へ定数分離 |
+| R-B2 | must | Free review で硬上限+品質が同名「Plus を見る」×2 → unit が壊れる | within / getAllBy を必須化 |
+| R-B3 | must | `data-section=plus` に CSS が無いと tint 欠落 | settings 同色の `[data-section="plus"]` 必須 |
+| R-B4 | should | `checkoutEnabled` が blocked status を再検査しない | full 時に blocked 集合を AND |
+| R-B5 | should | design の form props 名 `onCheckout` と plan の `onSubmit` 不一致 | **`onSubmit` に統一** |
+| R-B6 | should | cancel_url テストが架空 mock 名 | happy path の `sessionsCreate` 引数へ断言 |
+| R-B7 | should | router.test に `/plus` が任意表記 | RequireSession 一覧へ **必須**追加 |
+| R-B8 | info | vite-env の webp declare は `vite/client` で足りることが多い | typecheck 失敗時のみ追加 |
+
 ### 採用しなかった指摘（擬陽性・意図的非スコープ）
 
 | 指摘 | 理由 |
@@ -409,6 +441,9 @@ Free（Checkout 可）ユーザー
 | Plus 加入者にマーケを見せよ | 変換済み。管理短形が正 |
 | `dbPlusEntitled` を UI 主キーにせよ | 現行 SQL で `plusEntitled` と同値。status 集合で 409 を先回り |
 | soft 1 残に「Plus について」必須 | L10-2 は押し売りしない。現状文のみを維持 |
+| 価格の 580 を planQuota 化せよ | L5 の税込表示固定。枠数字だけ planQuota |
+| 硬上限コピーの「10」を変数化せよ（既存 L10-1） | 本変更の必須ではない。カード/比較表は planQuota |
+| success を LP に戻せ | L7 維持 |
 
 ---
 
@@ -446,7 +481,7 @@ Free（Checkout 可）ユーザー
 ## Implementation notes（計画作成時の指針）
 
 1. RED: href 期待を `/plus` に更新するテスト、および LP の state matrix（**incomplete 含む**）から入る
-2. 共有 form 切り出し → PlanSettings 緑維持 → LP 実装 → cancel_url → shell plus section → 画像配置
+2. `billing-ui-copy` + 共有 form → CTA href → cancel_url → view pure → LP+shell+CSS → 画像 → E2E
 3. 検証: 対象 unit、`typecheck`、`lint`、`format:check`（Docker `app`）。billing-checkout の unit は functions 側の既存 runner に従う
 4. コミットは Conventional Commits・日本語。push / PR / 本番デプロイはしない
 
@@ -458,3 +493,4 @@ Free（Checkout 可）ユーザー
 |------|------|
 | 2026-07-30 | 初版。方針 B + kill 中も `/plus` + 敵対的 M1–M5 / S1 |
 | 2026-07-30 | 通常+敵対的再レビュー: R-A1 incomplete/409 先回り、R-A2 section `plus`、R-A3 戻る判定、L12 比較表、Portal/エラー/品質必須の明確化。擬陽性は非採用表へ |
+| 2026-07-30 | 設計+計画合同レビュー R-B1〜: 循環依存解消、二重 Plus リンクのテスト契約、section CSS、onSubmit 統一、blocked の checkoutEnabled |

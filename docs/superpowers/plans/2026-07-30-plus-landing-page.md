@@ -22,15 +22,17 @@
 - `success_url` は `/settings?billing=success` のまま。`cancel_url` のみ `/plus?billing=cancel`。
 - `git push` / PR / 本番デプロイ / `--no-verify` 禁止。
 - 設計の State matrix・`CHECKOUT_BLOCKED_STATUSES`・L12 比較表を再導出せず実装する。
+- **E2E（Task 7）は Task 1–6 完了かつ既知バグ解消後のみ。** バグ調査中・修正中は E2E を開始しない。
 
 ## Locked interfaces produced by this plan
 
 | 名前 | 場所 | 契約 |
 |------|------|------|
-| `CheckoutIntervalForm` | `src/features/billing/checkout-interval-form.tsx` | props: `disabled?: boolean`, `pending?: boolean`, `onSubmit: (interval: "month" \| "year") => void \| Promise<void>`, `errorMessage?: string \| null`。年額未確認時は `onSubmit` を呼ばず親へ error 文字列を返すか内部表示（設定既存文と同一）。定数 `YEARLY_CONFIRM_COPY` / `STRIPE_REDIRECT_NOTICE` は `plan-settings-section` から import 再利用 |
-| `CHECKOUT_BLOCKED_STATUSES` | `src/features/billing/plus-landing-view.ts` | `ReadonlySet` または `as const` 配列: `trialing`, `active`, `past_due`, `incomplete` |
-| `resolvePlusLandingView` | 同上 | 下記シグネチャ。後続 Task の LP が唯一の分岐入口 |
-| `PlusLandingPage` | `src/features/billing/plus-landing-page.tsx` | default export または named。router lazy から import |
+| 課金 UI コピー | `src/features/billing/billing-ui-copy.ts` | `YEARLY_CONFIRM_COPY` / `STRIPE_REDIRECT_NOTICE` / `PAST_DUE_COPY` / `PORTAL_BUTTON_LABEL` / `TRIAL_END_WARNING` の正本。`plan-settings-section` は re-export のみ |
+| `CheckoutIntervalForm` | `src/features/billing/checkout-interval-form.tsx` | props: `disabled?: boolean`, `pending?: boolean`, `onSubmit: (interval: "month" \| "year") => void \| Promise<void>`。年額未確認時は `onSubmit` 非呼び出し + form 内 alert。**定数は `billing-ui-copy` のみ import（plan-settings を import しない）** |
+| `CHECKOUT_BLOCKED_STATUSES` | `src/features/billing/plus-landing-view.ts` | `as const`: `trialing`, `active`, `past_due`, `incomplete` |
+| `resolvePlusLandingView` | 同上 | 下記シグネチャ。LP の唯一の分岐入口。`full.checkoutEnabled = productSurfacesOpen && !blocked(status)` |
+| `PlusLandingPage` | `src/features/billing/plus-landing-page.tsx` | named export。router lazy から import |
 | Plus CTA href | `plus-cta` / flyer / quality | すべて `/plus`。ラベル `"Plus を見る"` |
 
 ```ts
@@ -71,15 +73,16 @@ export function resolvePlusLandingView(input: {
 3. `status === "past_due" || pastDueGrace` → `past_due`
 4. `plusEntitled` → `entitled`
 5. `status === "incomplete"` → `incomplete`
-6. else → `full`（`checkoutEnabled = productSurfacesOpen`）
+6. else → `full`（`checkoutEnabled = productSurfacesOpen && status ∉ CHECKOUT_BLOCKED_STATUSES`）
 
 ## File Structure
 
 | ファイル | 責務 |
 |----------|------|
+| `src/features/billing/billing-ui-copy.ts` | 年額確認・Stripe 注記・past_due 等の固定コピー正本 |
 | `src/features/billing/checkout-interval-form.tsx` | 月/年・年額確認・注記・Plus をはじめる（設定・LP 共有） |
 | `src/features/billing/checkout-interval-form.test.tsx` | 年額ガード・月額 submit |
-| `src/features/billing/plan-settings-section.tsx` | 共有 form 利用にリファクタ（既存 export 定数維持） |
+| `src/features/billing/plan-settings-section.tsx` | 共有 form 利用 + copy re-export（既存 import 互換） |
 | `src/features/billing/plus-landing-view.ts` | State matrix pure 関数 |
 | `src/features/billing/plus-landing-view.test.ts` | matrix 全分岐 |
 | `src/features/billing/plus-landing-page.tsx` | LP UI |
@@ -92,22 +95,24 @@ export function resolvePlusLandingView(input: {
 | `src/features/planner/components/review-step.tsx` | 品質ゲート Plus リンク |
 | `src/app/router.tsx` | `/plus` ルート |
 | `src/app/layouts/app-shell.tsx` | section `plus` |
+| `src/styles.css` | `[data-section="plus"]` tint（settings と同値 `#f6f6f4`） |
 | `netlify/functions/_shared/billing-checkout.ts` | `cancel_url` |
 | `e2e/specs/billing-plus.spec.ts` | `/plus` 到達 |
 
 ---
 
-### Task 1: 共有 CheckoutIntervalForm と設定リファクタ
+### Task 1: billing-ui-copy + 共有 CheckoutIntervalForm + 設定リファクタ
 
 **Files:**
+- Create: `src/features/billing/billing-ui-copy.ts`
 - Create: `src/features/billing/checkout-interval-form.tsx`
 - Create: `src/features/billing/checkout-interval-form.test.tsx`
 - Modify: `src/features/billing/plan-settings-section.tsx`
 - Test: 上記 + 既存 `plan-settings-section.test.tsx`（壊さない）
 
 **Interfaces:**
-- Consumes: `YEARLY_CONFIRM_COPY`, `STRIPE_REDIRECT_NOTICE` from `plan-settings-section.tsx`
-- Produces: `CheckoutIntervalForm`（Locked interfaces 表）
+- Consumes: なし（copy 正本を新設）
+- Produces: `billing-ui-copy` 定数、`CheckoutIntervalForm`（Locked）
 
 - [ ] **Step 1: 共有 form の失敗テストを書く**
 
@@ -117,7 +122,7 @@ export function resolvePlusLandingView(input: {
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { YEARLY_CONFIRM_COPY, STRIPE_REDIRECT_NOTICE } from "./plan-settings-section";
+import { YEARLY_CONFIRM_COPY, STRIPE_REDIRECT_NOTICE } from "./billing-ui-copy";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
 
 describe("CheckoutIntervalForm", () => {
@@ -171,13 +176,40 @@ docker compose run --rm --no-deps app npm test -- --run src/features/billing/che
 
 Expected: FAIL（module not found）
 
-- [ ] **Step 3: `CheckoutIntervalForm` を実装**
+- [ ] **Step 3a: `billing-ui-copy.ts` を切り出す（R-B1）**
 
-`checkout-interval-form.tsx` の要点:
+`plan-settings-section.tsx` から次の定数を移動（文字列は **1 字も変えない**）:
+
+```ts
+// billing-ui-copy.ts
+export const TRIAL_END_WARNING =
+  "無料期間が終わると、登録したお支払い方法に料金がかかります" as const;
+export const YEARLY_CONFIRM_COPY =
+  "1 年分まとめてのお支払いです。途中解約しても残り期間の返金はありません（法令に従う場合を除く）" as const;
+export const PORTAL_BUTTON_LABEL = "お支払い・解約の管理" as const;
+export const STRIPE_REDIRECT_NOTICE = "カード入力画面に移ります" as const;
+export const PAST_DUE_COPY = "お支払いの更新が必要です" as const;
+```
+
+`plan-settings-section.tsx` で re-export（既存テストの import パスを壊さない）:
+
+```ts
+export {
+  TRIAL_END_WARNING,
+  YEARLY_CONFIRM_COPY,
+  PORTAL_BUTTON_LABEL,
+  STRIPE_REDIRECT_NOTICE,
+  PAST_DUE_COPY,
+} from "./billing-ui-copy";
+```
+
+- [ ] **Step 3b: `CheckoutIntervalForm` を実装**
+
+`checkout-interval-form.tsx` の要点（**`plan-settings-section` を import しない**）:
 
 ```tsx
 import { useState } from "react";
-import { STRIPE_REDIRECT_NOTICE, YEARLY_CONFIRM_COPY } from "./plan-settings-section";
+import { STRIPE_REDIRECT_NOTICE, YEARLY_CONFIRM_COPY } from "./billing-ui-copy";
 
 export type CheckoutIntervalFormProps = {
   disabled?: boolean;
@@ -268,7 +300,7 @@ export function CheckoutIntervalForm({
 />
 ```
 
-親から `interval` / `yearConfirmed` state と旧 `runCheckout` 内の年額チェックを削除。`YEARLY_*` 等の export は **残す**（他・form が import）。
+親から `interval` / `yearConfirmed` state と旧 `runCheckout` 内の年額チェックを削除。コピー定数は `billing-ui-copy` 正本 + plan-settings re-export。form は re-export 経由ではなく `billing-ui-copy` を直接 import。
 
 - [ ] **Step 5: 対象テスト GREEN**
 
@@ -287,7 +319,7 @@ Expected: PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/features/billing/checkout-interval-form.tsx src/features/billing/checkout-interval-form.test.tsx src/features/billing/plan-settings-section.tsx
+git add src/features/billing/billing-ui-copy.ts src/features/billing/checkout-interval-form.tsx src/features/billing/checkout-interval-form.test.tsx src/features/billing/plan-settings-section.tsx
 git commit -m "refactor: Checkout 間隔フォームを設定と共有可能にする"
 ```
 
@@ -323,19 +355,42 @@ expect(link).toHaveAttribute("href", "/plus");
 
 - `flyer-upsell-banner.test.tsx`: `href` `/plus`
 - `flyer-weekly-panel.test.tsx`: `expect(plusLink).toHaveAttribute("href", "/plus");`
-- `planner-wizard.test.tsx` 硬上限: `href` `/plus`
 - `generation-status-panel.test.tsx` / `regeneration-sheet.test.tsx`: `/plus`
-- `planner-wizard.test.tsx` の L10-4 に追加:
+- `planner-wizard.test.tsx` **硬上限**（R-B2: Free では品質リンクも出るため同名が 2 本）:
 
 ```tsx
-it("disables quality mode toggle on Free with Plus gate copy and link (L10-4)", () => {
-  // ...既存 assert...
-  const plusLink = screen.getByRole("link", { name: "Plus を見る" });
-  expect(plusLink).toHaveAttribute("href", "/plus");
+it("shows Plus hard-limit CTA when Free success remaining is 0", () => {
+  // within は @testing-library/react から import
+  // ...render Harness usageRemaining={0} plan="free"...
+  expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+  const hard = screen.getByTestId("plus-hard-limit-cta");
+  expect(within(hard).getByRole("link", { name: "Plus を見る" })).toHaveAttribute(
+    "href",
+    "/plus",
+  );
+  // 品質ゲート側も /plus（任意 assert）
+  expect(
+    screen.getAllByRole("link", { name: "Plus を見る" }).every((a) => a.getAttribute("href") === "/plus"),
+  ).toBe(true);
 });
 ```
 
-（Harness が Router 外なら `MemoryRouter` で包むか、生 `a` を使う。）
+- `planner-wizard.test.tsx` **L10-4**（硬上限と二重にしないよう **usageRemaining > 0**）:
+
+```tsx
+it("disables quality mode toggle on Free with Plus gate copy and link (L10-4)", () => {
+  render(
+    <Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={3} plan="free" />,
+  );
+  const checkbox = screen.getByRole("checkbox", { name: /くわしく作る/u });
+  expect(checkbox).toBeDisabled();
+  expect(screen.getByText("くわしい AI での作成は Plus で使えます")).toBeVisible();
+  // 硬上限 CTA が無いので Plus を見るは品質リンク 1 本
+  expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/plus");
+});
+```
+
+品質リンク実装は **生 `a href="/plus"`**（Harness が Router 外でも可）。
 
 - [ ] **Step 2: RED 確認**
 
@@ -425,31 +480,21 @@ git commit -m "feat: Plus を見るの着地を /plus にし品質ゲートに�
 - Consumes: 既存 Checkout Session 作成
 - Produces: `cancel_url = ${origin}/plus?billing=cancel`
 
-- [ ] **Step 1: 失敗テストを追加**
+- [ ] **Step 1: 失敗テストを追加（R-B6）**
 
-`billing-checkout.test.ts` 内、成功 Checkout をモックしている既存ケースに:
-
-```ts
-expect(createSessionMock).toHaveBeenCalledWith(
-  expect.objectContaining({
-    cancel_url: expect.stringMatching(/\/plus\?billing=cancel$/u),
-    success_url: expect.stringMatching(/\/settings\?billing=success$/u),
-  }),
-);
-```
-
-（実際の mock 変数名・呼び出し方に合わせて調整。`sessions.create` の引数を spy する。）
-
-既存に create spy が無ければ、最小の unit を追加:
+既存 happy path `acquire → sessions.create → bind → returns url` の `createArgs` に **フィールドを足す**（架空 mock 名を作らない）:
 
 ```ts
-it("sets cancel_url to /plus?billing=cancel and keeps success on settings", async () => {
-  // 既存の happy-path setup を再利用
-  // ...
-  expect(sessionCreateArgs.cancel_url).toBe(`${origin}/plus?billing=cancel`);
-  expect(sessionCreateArgs.success_url).toBe(`${origin}/settings?billing=success`);
-});
+const createArgs = sessionsCreate.mock.calls[0]![0] as {
+  // ...既存 fields...
+  success_url: string;
+  cancel_url: string;
+};
+expect(createArgs.success_url).toBe("http://127.0.0.1:5173/settings?billing=success");
+expect(createArgs.cancel_url).toBe("http://127.0.0.1:5173/plus?billing=cancel");
 ```
+
+（`SERVER_SITE_ORIGIN` は test の `baseEnv` が `http://127.0.0.1:5173`。）
 
 - [ ] **Step 2: RED**
 
@@ -577,6 +622,15 @@ describe("resolvePlusLandingView", () => {
     });
   });
 
+  it("never enables checkout when status is blocked even if surfaces open (belt)", () => {
+    // matrix 上 incomplete は短形だが、実装が full に落ちても checkoutEnabled false を保証するヘルパを
+    // isCheckoutBlockedStatus として export して unit してもよい。
+    // resolve の incomplete 分岐が先なので kind は incomplete。
+    const data: EntitlementData = { ...freeOpen, status: "incomplete" };
+    const view = resolvePlusLandingView({ loading: false, error: false, data });
+    expect(view.kind).toBe("incomplete");
+  });
+
   it("does not treat quotaPlan alone as entitled under kill", () => {
     // plusEntitled true + surfaces closed → entitled 短形（full ではない）
     const data: EntitlementData = {
@@ -617,10 +671,11 @@ git commit -m "feat: Plus LP の entitlement 表示分岐を追加する"
 - Modify: `src/app/router.tsx`
 - Modify: `src/app/layouts/app-shell.tsx`
 - Modify: `src/app/layouts/app-shell.test.tsx`
-- Modify: `src/app/router.test.tsx`（`/plus` を保護ルート一覧に含める場合）
+- Modify: `src/app/router.test.tsx`（`/plus` を RequireSession 一覧に **必須**追加）
+- Modify: `src/styles.css`（`[data-section="plus"]`）
 
 **Interfaces:**
-- Consumes: `resolvePlusLandingView`, `CheckoutIntervalForm`, `useEntitlement`, `useAuth`, plan-settings 定数、`createCheckoutSession` / `createPortalSession`
+- Consumes: `resolvePlusLandingView`, `CheckoutIntervalForm`, `useEntitlement`, `useAuth`, `billing-ui-copy`、`createCheckoutSession` / `createPortalSession`
 - Produces: 画面 `/plus`
 
 **固定コピー（export してテスト exact）:**
@@ -657,7 +712,8 @@ surfaces 閉鎖文は設定と同一:
 it("marks plus section on /plus (not settings)", () => {
   renderAppShellAt("/plus");
   expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "plus");
-  expect(screen.getByText("Plus")).toBeVisible(); // デスクトップ title。実装の出し方に合わせる
+  // desktop-section-bar は aria-hidden だが DOM に "Plus" を持つ
+  expect(document.querySelector(".desktop-section-bar")?.textContent).toBe("Plus");
 });
 ```
 
@@ -669,6 +725,19 @@ if (pathname === "/plus") return "plus";
 plus: "Plus",
 ```
 
+`styles.css`（R-B3 必須）:
+
+```css
+[data-section="plus"] {
+  --section-tint: #f6f6f4; /* settings と同値。新色を増やさない */
+}
+```
+
+`router.test.tsx` の RequireSession 一覧に `"/plus"` を追加:
+
+```ts
+it.each(["/planner", "/generation", "/pantry", "/history", "/shopping", "/settings", "/plus"])(
+```
 - [ ] **Step 2: LP の RTL テスト（画像は後 Task でも、先に `alt=""` の img または placeholder div で可）**
 
 注入 props で entitlement を渡せる設計:
@@ -722,6 +791,25 @@ it("shows cancel message when billing=cancel", () => {
   renderLp({ entitlement: freeOpen, initialEntry: "/plus?billing=cancel" });
   expect(screen.getByText(PLUS_LP_CANCEL)).toBeVisible();
 });
+
+it("shows entitled short form without checkout", () => {
+  renderLp({
+    entitlement: {
+      ...freeOpen,
+      plan: "plus",
+      status: "active",
+      plusEntitled: true,
+      dbPlusEntitled: true,
+      quotaPlan: "plus",
+    },
+  });
+  expect(screen.getByText(PLUS_LP_ACTIVE)).toBeVisible();
+  expect(screen.getByRole("link", { name: PLUS_LP_SETTINGS_LINK })).toHaveAttribute(
+    "href",
+    "/settings",
+  );
+  expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
+});
 ```
 
 Checkout エラー分岐（推奨）:
@@ -731,6 +819,7 @@ Checkout エラー分岐（推奨）:
 // → PLUS_LP_CHECKOUT_IN_PROGRESS
 ```
 
+比較表の数字 assert は `getByText(String(3))` が複数ヒットし得るため、**表の `within(screen.getByRole("table"))`** または `data-testid="plus-compare"` で絞る。
 - [ ] **Step 3: RED 後にページ実装**
 
 構造:
@@ -793,7 +882,7 @@ docker compose run --rm --no-deps app npm run typecheck
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/features/billing/plus-landing-page.tsx src/features/billing/plus-landing-page.css src/features/billing/plus-landing-page.test.tsx src/app/router.tsx src/app/layouts/app-shell.tsx src/app/layouts/app-shell.test.tsx src/app/router.test.tsx
+git add src/features/billing/plus-landing-page.tsx src/features/billing/plus-landing-page.css src/features/billing/plus-landing-page.test.tsx src/app/router.tsx src/app/layouts/app-shell.tsx src/app/layouts/app-shell.test.tsx src/app/router.test.tsx src/styles.css
 git commit -m "feat: Plus ランディングページ /plus を追加する"
 ```
 
@@ -838,7 +927,7 @@ import flyerUrl from "./assets/plus-benefit-flyer.webp";
 <img src={heroUrl} alt="" width={640} height={360} className="plus-landing__hero-img" />
 ```
 
-カードも同様。`vite-env` の画像 module 宣言が無ければ既存プロジェクトの画像 import パターンに合わせる（他で webp が無ければ `*.webp` の `declare module` を `src/vite-env.d.ts` に追加）。
+カードも同様。`/// <reference types="vite/client" />` が既にあれば `*.webp` は通常解決する。typecheck が module not found のときだけ `src/vite-env.d.ts` に `declare module "*.webp"` を足す（R-B8）。
 
 - [ ] **Step 3: CSS**
 
@@ -872,8 +961,16 @@ git commit -m "feat: Plus LP にイラストとビジュアルを載せる"
 
 ### Task 7: E2E と横断検証
 
+> **着手ゲート（必須）:** Task 1–6 の実装・unit・typecheck・lint・format:check がすべて GREEN で、既知バグが未解決のあいだは **本 Task を開始しない**。E2E は最後の受け入れであり、未修正バグの上では回さない。
+
 **Files:**
 - Modify: `e2e/specs/billing-plus.spec.ts`
+
+- [ ] **Step 0: 着手可否チェック**
+
+- Task 1–6 がすべて完了し、対応 unit が PASS
+- 合同レビュー R-B1〜 と実装中に見つかったバグがクローズ済み
+- 未解決 blocker がある場合は **ここで停止**し、E2E スクリプトを実行しない
 
 - [ ] **Step 1: E2E を `/plus` 到達に更新**
 
@@ -960,10 +1057,12 @@ git commit -m "test: Plus LP への E2E 導線を追加する"
 | success poll 維持 | 3（非変更）+ 5 |
 | 画像 4 枚 | 6 |
 | L12 比較表 planQuota | 5 |
-| shell section plus | 5 |
+| shell section plus + CSS tint | 5 |
 | 戻る key===default | 5 |
 | E2E | 7 |
 | Portal 短形 | 5 |
+| billing-ui-copy 循環依存回避 | 1 |
+| 二重 Plus リンク unit | 2 |
 
 ## Placeholder scan
 
@@ -971,19 +1070,34 @@ TBD / 「後で実装」なし。画像生成手段は Task 6 で 2 手段を明
 
 ## Type consistency
 
-- `CheckoutIntervalForm.onSubmit(interval)` と LP / 設定の `onCheckout` は `"month" | "year"`
+- `CheckoutIntervalForm.onSubmit(interval)` と LP / 設定の handler は `"month" | "year"`
 - `resolvePlusLandingView` の `kind` を LP が網羅 switch
-- `CHECKOUT_BLOCKED_STATUSES` は view モジュールのみ（サーバ集合とコメントで同期）
+- `CHECKOUT_BLOCKED_STATUSES` は view モジュール（サーバ 409 集合とコメント同期）
+- form は `billing-ui-copy` のみ。plan-settings ↔ form の相互 import 禁止
+
+## 合同レビュー反映（R-B）
+
+| ID | 修正箇所 |
+|----|----------|
+| R-B1 | Task 1: `billing-ui-copy.ts` |
+| R-B2 | Task 2: within hard-limit / L10-4 は usageRemaining>0 |
+| R-B3 | Task 5: `[data-section="plus"]` CSS |
+| R-B4 | Locked view: `checkoutEnabled` に blocked AND |
+| R-B5 | props 名 `onSubmit` 統一 |
+| R-B6 | Task 3: `sessionsCreate` 引数に断言 |
+| R-B7 | Task 5: router.test に `/plus` 必須 |
+| R-B8 | Task 6: webp declare は必要時のみ |
 
 ---
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-07-30-plus-landing-page.md`.
+Plan: `docs/superpowers/plans/2026-07-30-plus-landing-page.md`  
+Spec: `docs/superpowers/specs/2026-07-30-plus-landing-page-design.md`  
+
+合同レビュー R-B 反映済み。実装時は Task 1→6 のあと **Task 7（E2E）は着手ゲート通過後のみ**。
 
 **Two execution options:**
 
 1. **Subagent-Driven（推奨）** — Task ごとに fresh subagent + レビュー
 2. **Inline Execution** — このセッションで executing-plans に従い連続実装
-
-どちらで進めますか？
