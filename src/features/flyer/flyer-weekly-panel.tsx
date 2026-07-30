@@ -2,8 +2,10 @@ import { useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   FLYER_LOCKED_PREVIEW_COPY,
+  weeklyFlyerMenuResultSchema,
   type WeeklyFlyerMenuResult,
 } from "@shared/contracts/flyer-weekly";
+import { z } from "zod";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
@@ -96,19 +98,30 @@ export function FlyerWeeklyPanel({
         },
         body: form,
       });
-      const body = (await response.json()) as {
-        ok?: boolean;
-        data?: { menu: WeeklyFlyerMenuResult };
-        error?: { message?: string };
-      };
-      if (!response.ok || body.ok !== true || !body.data?.menu) {
+      // F-U11-1: 他 AI 面と同型で Zod 閉じた envelope のみ受理（未検証 cast 禁止）
+      const raw: unknown = await response.json();
+      const envelopeSchema = z.object({
+        ok: z.literal(true),
+        data: z.object({ menu: weeklyFlyerMenuResultSchema }),
+      });
+      const errorSchema = z.object({
+        ok: z.literal(false).optional(),
+        error: z.object({ message: z.string().optional() }).optional(),
+      });
+      const parsed = envelopeSchema.safeParse(raw);
+      if (!response.ok || !parsed.success) {
         // 端末失敗はキーを捨て、次の選択で新規予約する（失敗行への冪等 hit を避ける）
         stickyIdempotencyKeyRef.current = null;
-        setError(body.error?.message ?? "チラシ献立を作成できませんでした。");
+        const err = errorSchema.safeParse(raw);
+        setError(
+          err.success
+            ? (err.data.error?.message ?? "チラシ献立を作成できませんでした。")
+            : "チラシ献立を作成できませんでした。",
+        );
         return;
       }
       stickyIdempotencyKeyRef.current = null;
-      setMenu(body.data.menu);
+      setMenu(parsed.data.data.menu);
     } catch {
       // 通信断: sticky を残し、同じキーで再送できるようにする
       setError("チラシ献立を作成できませんでした。");

@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FLYER_LOCKED_PREVIEW_COPY } from "@shared/contracts/flyer-weekly";
 import { FlyerWeeklyPanel } from "./flyer-weekly-panel";
 
@@ -13,6 +13,10 @@ vi.mock("@/shared/lib/supabase", () => ({
 }));
 
 describe("FlyerWeeklyPanel", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("shows locked preview copy for Free", () => {
     render(
       <MemoryRouter>
@@ -50,5 +54,34 @@ describe("FlyerWeeklyPanel", () => {
     expect(screen.queryByTestId("flyer-weekly-upload")).toBeNull();
     const privacyLink = screen.getByRole("link", { name: "AI情報の説明を見る" });
     expect(privacyLink).toHaveAttribute("href", "/privacy?returnTo=%2Fplanner");
+  });
+
+  it("F-U11-1: rejects success body that fails weeklyFlyerMenuResultSchema", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            ok: true,
+            data: {
+              // weekStartJst 欠落・days 不完全 → Zod 拒否
+              menu: { days: [] },
+            },
+          }),
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["x"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText("チラシ献立を作成できませんでした。")).toBeVisible();
+    });
   });
 });
