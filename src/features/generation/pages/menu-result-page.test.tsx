@@ -605,6 +605,7 @@ describe("MenuResultPage", () => {
             servings: 2,
             timeLimitMinutes: 30,
             budgetPreference: "economy",
+            ingredientPreference: null,
             avoidIngredients: [],
             memo: "",
             pantrySelections: [],

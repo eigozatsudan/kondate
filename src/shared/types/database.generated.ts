@@ -580,6 +580,7 @@ export type Database = {
           cuisine_genre: string
           draft_id: string
           draft_revision: number
+          ingredient_preference: string | null
           main_ingredients: string[]
           meal_type: string
           memo: string
@@ -597,6 +598,7 @@ export type Database = {
           cuisine_genre: string
           draft_id: string
           draft_revision: number
+          ingredient_preference?: string | null
           main_ingredients: string[]
           meal_type: string
           memo: string
@@ -614,6 +616,7 @@ export type Database = {
           cuisine_genre?: string
           draft_id?: string
           draft_revision?: number
+          ingredient_preference?: string | null
           main_ingredients?: string[]
           meal_type?: string
           memo?: string
@@ -1104,6 +1107,7 @@ export type Database = {
           cuisine_genre: string | null
           deleted_at: string | null
           id: string
+          ingredient_preference: string | null
           main_ingredients: string[]
           meal_type: string | null
           memo: string
@@ -1123,6 +1127,7 @@ export type Database = {
           cuisine_genre?: string | null
           deleted_at?: string | null
           id?: string
+          ingredient_preference?: string | null
           main_ingredients?: string[]
           meal_type?: string | null
           memo?: string
@@ -1142,6 +1147,7 @@ export type Database = {
           cuisine_genre?: string | null
           deleted_at?: string | null
           id?: string
+          ingredient_preference?: string | null
           main_ingredients?: string[]
           meal_type?: string | null
           memo?: string
@@ -2690,6 +2696,7 @@ export type Database = {
           cuisine_genre: string
           draft_id: string
           draft_revision: number
+          ingredient_preference: string
           main_ingredients: string[]
           meal_type: string
           memo: string
@@ -2906,6 +2913,7 @@ export type Database = {
           p_budget_preference: string
           p_cuisine_genre: string
           p_expected_revision: number
+          p_ingredient_preference: string
           p_main_ingredients: string[]
           p_meal_type: string
           p_memo: string
@@ -2922,6 +2930,7 @@ export type Database = {
           cuisine_genre: string | null
           deleted_at: string | null
           id: string
+          ingredient_preference: string | null
           main_ingredients: string[]
           meal_type: string | null
           memo: string

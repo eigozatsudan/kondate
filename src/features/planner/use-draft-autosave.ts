@@ -49,6 +49,7 @@ function isPersistableDraft(value: PlannerDraftInput): boolean {
     servings: value.servings,
     timeLimitMinutes: value.timeLimitMinutes,
     budgetPreference: value.budgetPreference,
+    ingredientPreference: value.ingredientPreference,
     avoidIngredients: value.avoidIngredients,
     memo: value.memo,
     pantrySelections: value.pantrySelections,

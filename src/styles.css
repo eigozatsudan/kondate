@@ -1068,6 +1068,23 @@ dialog:not([open]) {
   gap: 12px;
 }
 
+/*
+ * Free 向けチラシ週間献立の locked preview（L10-3）。
+ * 点線枠＋薄い背景で「サンプル／ロック」を示し CTA へ誘導する。
+ * 強い blur は可読性を落として崩れに見えるため使わない。装飾のみ（aria-hidden）。
+ */
+.flyer-locked-preview {
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: var(--notice);
+  padding: 12px 14px;
+  user-select: none;
+}
+
+.flyer-locked-sample {
+  margin: 8px 0 0;
+  padding-inline-start: 1.25em;
+}
 
 /*
  * 献立成功後のチラシ upsell（L10-6）。
@@ -1629,8 +1646,85 @@ dialog:not([open]) {
 }
 
 /*
+ * 確認画面メタ情報のトーン階層（上から弱い→強い）。
+ * 季節 = 補足 / 残数 = 情報 / 上限 = danger バナー / 品質 = 操作カード / idea = 注意枠。
+ * 文言は設計固定。見た目だけで役割を区別する。
+ */
+.review-season-hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+.review-usage-status {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: 12px;
+  background: var(--notice);
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.review-usage-status--soft-limit {
+  border-left-color: var(--primary-strong);
+  font-weight: 700;
+}
+
+.quality-mode-toggle {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 12px 14px;
+}
+
+/* Free / plan 未取得: 操作不可を視覚的にも示す（チェックは disabled） */
+.quality-mode-toggle--locked {
+  border-color: var(--border);
+  background: #faf9f8;
+  opacity: 0.92;
+}
+
+.quality-mode-toggle--locked .quality-mode-label {
+  color: var(--muted);
+}
+
+.quality-mode-toggle-row {
+  /* control-label の横並び＋タッチ高さを引き継ぎ、ラベルを操作名として強調 */
+  font-weight: 700;
+}
+
+.quality-mode-label {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.quality-mode-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: 1.55;
+}
+
+.review-idea-caution {
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--primary-strong);
+  border-radius: 14px;
+  background: var(--notice);
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+/*
  * 作成上限・混雑・短時間枠で主 CTA を止めているときの強調枠。
- * 通常の残数案内（role=status の平文）とトーンを分け、止めている理由を一目で示す。
+ * 通常の残数案内（.review-usage-status）とトーンを分け、止めている理由を一目で示す。
  */
 .usage-limit-banner {
   display: grid;

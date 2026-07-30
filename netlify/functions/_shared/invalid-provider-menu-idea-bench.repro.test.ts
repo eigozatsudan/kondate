@@ -25,6 +25,7 @@ function ideaBenchContext(): IdeaGenerationContext {
       servings: 2,
       timeLimitMinutes: 15,
       budgetPreference: "standard",
+      ingredientPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],

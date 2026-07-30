@@ -59,7 +59,12 @@ function parseAvoidIngredientInput(rawValue: string): {
 
 export type ReviewFieldErrors = Partial<
   Record<
-    "timeLimitMinutes" | "budgetPreference" | "avoidIngredients" | "memo" | "pantrySelections",
+    | "timeLimitMinutes"
+    | "budgetPreference"
+    | "ingredientPreference"
+    | "avoidIngredients"
+    | "memo"
+    | "pantrySelections",
     string
   >
 >;
@@ -152,6 +157,8 @@ export function ReviewStep({
 }: ReviewStepProps) {
   // 残数行用の plan。未取得なら free 接頭を避けず free として扱う（usage 未取得では行自体非表示）。
   const quotaPlan: PlanCode = plan ?? "free";
+  // 品質トグルは Plus 確定時のみ操作可。null（usage 未取得）も Free 同様にロック（fail-closed）。
+  const qualityModeLocked = plan !== "plus";
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
   // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
   const [privacyGateOpen, setPrivacyGateOpen] = useState(false);
@@ -317,6 +324,7 @@ export function ReviewStep({
           medicalBlocked ||
           fieldErrors?.timeLimitMinutes != null ||
           fieldErrors?.budgetPreference != null ||
+          fieldErrors?.ingredientPreference != null ||
           fieldErrors?.avoidIngredients != null ||
           fieldErrors?.memo != null ||
           fieldErrors?.pantrySelections != null
@@ -385,6 +393,51 @@ export function ReviewStep({
           {fieldErrors?.budgetPreference != null && (
             <p id="review-budget-error" role="alert">
               {fieldErrors.budgetPreference}
+            </p>
+          )}
+          <label className="field">
+            材料
+            <select
+              value={value.ingredientPreference ?? ""}
+              disabled={disabled}
+              aria-invalid={fieldErrors?.ingredientPreference != null ? "true" : undefined}
+              aria-describedby={
+                fieldErrors?.ingredientPreference != null
+                  ? "review-ingredient-preference-error"
+                  : "review-ingredient-preference-hint"
+              }
+              onChange={(event) => {
+                const selected = event.target.value;
+                onChange({
+                  ...value,
+                  ingredientPreference:
+                    selected === "more"
+                      ? "more"
+                      : selected === "less"
+                        ? "less"
+                        : selected === "selected_only"
+                          ? "selected_only"
+                          : selected === "auto"
+                            ? "auto"
+                            : null,
+                });
+              }}
+            >
+              <option value="">指定なし</option>
+              <option value="more">多め</option>
+              <option value="less">少な目</option>
+              <option value="selected_only">
+                メイン食材と冷蔵庫から使う食材からしか使わない
+              </option>
+              <option value="auto">おまかせ</option>
+            </select>
+          </label>
+          <p id="review-ingredient-preference-hint" className="type-small">
+            材料の量や、買い足しの範囲の目安です。調味料の基本（塩・しょうゆ・油など）はどの選択でも使えます。
+          </p>
+          {fieldErrors?.ingredientPreference != null && (
+            <p id="review-ingredient-preference-error" role="alert">
+              {fieldErrors.ingredientPreference}
             </p>
           )}
           <label className="field">
@@ -471,9 +524,13 @@ export function ReviewStep({
         </div>
       )}
       {summaryError != null && <p role="alert">{summaryError}</p>}
-      {/* 季節は端末時計の best-effort。生成の権威はサーバープロンプト。
-          idea 注意文の直前配置契約を壊さないよう、usage / 主 CTA より上に置く。 */}
-      <p role="status">
+      {/*
+        確認末尾のメタ情報は意味ごとにトーンを分ける（同色の平文並びを避ける）。
+        1) 季節 = 弱い補足  2) 残数 = 情報ストリップ  3) 上限 = 既存 danger バナー
+        4) くわしく作る = 操作カード  5) idea 注意 = 主 CTA 直前の注意枠
+        idea 注意文の直前配置契約を壊さないよう、usage / 品質 / 主 CTA より上に季節を置く。
+      */}
+      <p role="status" className="review-season-hint type-small">
         いまは{seasonContext.labelJa}（{String(seasonContext.month)}月）の食材を優先して提案します
       </p>
       {/* 設計 2026-07-29: dual 常時残数を supersede。常時は success 残の受け付け口調1行のみ。
@@ -483,7 +540,7 @@ export function ReviewStep({
           L10-2: Free かつ remaining===1 のときソフト1行を続ける。
           hasActiveUsageBlocker 判定ロジックは維持。 */}
       {showSuccessRemaining ? (
-        <p role="status">
+        <p role="status" className="review-usage-status">
           {formatPlanQuotaCopy(
             `本日あと${String(usageRemaining)}回まで献立の作成を受け付けます`,
             quotaPlan,
@@ -491,7 +548,9 @@ export function ReviewStep({
         </p>
       ) : null}
       {showSuccessRemaining && quotaPlan === "free" && usageRemaining === 1 ? (
-        <p role="status">本日の無料回数が残り 1 回です</p>
+        <p role="status" className="review-usage-status review-usage-status--soft-limit">
+          本日の無料回数が残り 1 回です
+        </p>
       ) : null}
       {hasActiveUsageBlocker && (
         <div className="usage-limit-banner" role="alert">
@@ -538,28 +597,40 @@ export function ReviewStep({
           ) : null}
         </div>
       )}
-      {/* Q4: Plus 品質モード。Free でも見えるがサーバが quality_mode_requires_plus で拒否。
+      {/* Q4: Plus 品質モード。Free / plan 未取得はトグル不可（L10-4）。
+          Plus のみ操作可。サーバは Free の true を quality_mode_requires_plus で拒否する。
           idea 注意（§5.3）より前に置き、注意が wizard-actions の直前 sibling を保つ。 */}
-      <label className="stack quality-mode-toggle">
-        <span className="row quality-mode-toggle-row">
+      <label
+        className={
+          qualityModeLocked
+            ? "quality-mode-toggle quality-mode-toggle--locked"
+            : "quality-mode-toggle"
+        }
+      >
+        <span className="control-label quality-mode-toggle-row">
           <input
             type="checkbox"
-            checked={attempt.qualityMode}
-            disabled={disabled}
+            checked={qualityModeLocked ? false : attempt.qualityMode}
+            disabled={disabled || qualityModeLocked}
             onChange={(event) => {
+              // Free では disabled だが、念のため true を捨てる
+              if (qualityModeLocked) return;
               onAttemptChange({ ...attempt, qualityMode: event.target.checked });
             }}
             aria-describedby="quality-mode-hint"
           />
-          <span>くわしく作る</span>
+          <span className="quality-mode-label">くわしく作る</span>
         </span>
-        <span id="quality-mode-hint" className="muted">
-          Plus のくわしい AI で、より丁寧な献立を作ります（1 日の回数に限りがあります）
+        <span id="quality-mode-hint" className="quality-mode-hint">
+          {qualityModeLocked
+            ? "くわしい AI での作成は Plus で使えます"
+            : "Plus のくわしい AI で、より丁寧な献立を作ります（1 日の回数に限りがあります）"}
         </span>
       </label>
-      {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。 */}
+      {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。
+          role=note の要素自体が直前 sibling である契約を維持する（ラップしない）。 */}
       {value.targetMode === "idea" && (
-        <p role="note">
+        <p role="note" className="review-idea-caution">
           家族の年齢・アレルギーは確認されません。この献立はアイデアとして作成します。
         </p>
       )}

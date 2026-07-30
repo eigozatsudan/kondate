@@ -27,9 +27,7 @@ export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
   if (!plusEntitled) {
     return (
       <section className="stack card" data-testid="flyer-weekly-locked" aria-labelledby={inputId}>
-        <h2 id={inputId} className="section-title">
-          チラシから 1 週間の献立
-        </h2>
+        <h2 id={inputId}>チラシから 1 週間の献立</h2>
         <div className="flyer-locked-preview" aria-hidden="true">
           <p className="muted">サンプル: 月〜日の主菜プレビュー（ロック）</p>
           <ul className="muted flyer-locked-sample">
@@ -39,7 +37,8 @@ export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
           </ul>
         </div>
         <p>{FLYER_LOCKED_PREVIEW_COPY}</p>
-        <Link className="button primary" to="/settings" style={{ minHeight: 44, minWidth: 44 }}>
+        {/* primary-button はアプリ共通の CTA クラス。.button.primary は未定義で素のリンクになっていた */}
+        <Link className="primary-button" to="/settings">
           Plus を見る
         </Link>
       </section>
@@ -82,11 +81,10 @@ export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
 
   return (
     <section className="stack card" data-testid="flyer-weekly-upload" aria-labelledby={inputId}>
-      <h2 id={inputId} className="section-title">
-        チラシから 1 週間の献立
-      </h2>
+      <h2 id={inputId}>チラシから 1 週間の献立</h2>
       <p className="muted">スーパーのチラシ写真を 1 枚選ぶと、1 週間分の献立案を作ります。</p>
-      <label className="button secondary" style={{ minHeight: 44, display: "inline-flex" }}>
+      {/* secondary-button で 44px タッチターゲットと輪郭ボタン見た目を揃える */}
+      <label className="secondary-button" style={{ display: "inline-flex", cursor: "pointer" }}>
         {busy ? "作成中…" : "チラシ写真を選ぶ"}
         <input
           type="file"

@@ -140,6 +140,7 @@ function makeStoredMenu(
       cuisineGenre: "japanese",
       timeLimitMinutes: 15,
       budgetPreference: "standard",
+      ingredientPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],

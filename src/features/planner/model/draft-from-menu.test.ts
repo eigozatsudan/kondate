@@ -11,6 +11,7 @@ const ideaSubmission: Extract<PlannerSubmission, { targetMode: "idea" }> = {
   servings: 3,
   timeLimitMinutes: 30,
   budgetPreference: "economy",
+  ingredientPreference: null,
   avoidIngredients: ["セロリ"],
   memo: "さっぱりめに",
   pantrySelections: [
@@ -30,6 +31,7 @@ const householdSubmission: Extract<PlannerSubmission, { targetMode: "household" 
   servings: null,
   timeLimitMinutes: 15,
   budgetPreference: "standard",
+  ingredientPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -47,6 +49,7 @@ describe("createPlannerDraftFromMenu", () => {
       servings: null,
       timeLimitMinutes: 30,
       budgetPreference: "economy",
+      ingredientPreference: null,
       avoidIngredients: ["セロリ"],
       memo: "さっぱりめに",
       pantrySelections: [

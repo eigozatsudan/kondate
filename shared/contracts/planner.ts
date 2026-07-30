@@ -4,6 +4,12 @@ import { pantrySelectionDraftSchema } from "./pantry.js";
 
 export const plannerTimeLimits = [15, 30, 45] as const;
 export const budgetPreferences = ["economy", "standard"] as const;
+/**
+ * 材料の使い方（量・範囲）。確認画面の任意条件。
+ * more=多め / less=少な目 / selected_only=メイン食材と冷蔵庫から使う食材のみ /
+ * auto=おまかせ。null は未指定（モデル側の既定判断）。
+ */
+export const ingredientPreferences = ["more", "less", "selected_only", "auto"] as const;
 export const targetModes = ["household", "idea"] as const;
 export type TargetMode = (typeof targetModes)[number];
 
@@ -63,6 +69,7 @@ const draftShape = {
   servings: z.number().int().min(1).max(20).nullable(),
   timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
   budgetPreference: z.enum(budgetPreferences).nullable(),
+  ingredientPreference: z.enum(ingredientPreferences).nullable(),
   avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
   memo: boundedCanonicalText(0, 200),
   pantrySelections: z.array(pantrySelectionDraftSchema).max(50),
@@ -90,6 +97,7 @@ const submissionCommonShape = {
   cuisineGenre: z.enum(cuisineGenres),
   timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
   budgetPreference: z.enum(budgetPreferences).nullable(),
+  ingredientPreference: z.enum(ingredientPreferences).nullable(),
   avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
   memo: boundedCanonicalText(0, 200),
   pantrySelections: z.array(pantrySelectionDraftSchema).max(50),
@@ -115,6 +123,7 @@ export const plannerSubmissionSchema = z.discriminatedUnion("targetMode", [
 ]);
 
 export type BudgetPreference = (typeof budgetPreferences)[number];
+export type IngredientPreference = (typeof ingredientPreferences)[number];
 export type PlannerDraftInput = z.infer<typeof plannerDraftInputSchema>;
 export type PlannerDraft = z.infer<typeof plannerDraftSchema>;
 export type PlannerSubmission = z.infer<typeof plannerSubmissionSchema>;

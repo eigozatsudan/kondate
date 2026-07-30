@@ -22,6 +22,7 @@ export type PlannerFieldName =
   | "servings"
   | "timeLimitMinutes"
   | "budgetPreference"
+  | "ingredientPreference"
   | "avoidIngredients"
   | "memo"
   | "pantrySelections";
@@ -81,6 +82,7 @@ const plannerFieldNames: readonly PlannerFieldName[] = [
   "servings",
   "timeLimitMinutes",
   "budgetPreference",
+  "ingredientPreference",
   "avoidIngredients",
   "memo",
   "pantrySelections",
@@ -104,6 +106,7 @@ const stepByField: Readonly<Record<PlannerFieldName, PlannerStep>> = {
   servings: "audience",
   timeLimitMinutes: "review",
   budgetPreference: "review",
+  ingredientPreference: "review",
   avoidIngredients: "review",
   memo: "review",
   pantrySelections: "review",

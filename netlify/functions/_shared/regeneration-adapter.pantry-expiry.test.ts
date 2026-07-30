@@ -17,6 +17,7 @@ function submissionWithPantry(ids: readonly string[]): PlannerSubmission {
     servings: null,
     timeLimitMinutes: 30,
     budgetPreference: null,
+    ingredientPreference: null,
     avoidIngredients: [],
     memo: "",
     pantrySelections: ids.map((pantryItemId) => ({

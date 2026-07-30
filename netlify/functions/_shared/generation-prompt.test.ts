@@ -177,6 +177,7 @@ describe("buildGenerationMessages", () => {
       "cuisineGenre",
       "timeLimitMinutes",
       "budgetPreference",
+      "ingredientPreference",
       "avoidIngredients",
       "memo",
     ]);

@@ -143,6 +143,7 @@ beforeEach(() => {
     servings: null,
     timeLimitMinutes: null,
     budgetPreference: null,
+    ingredientPreference: null,
     avoidIngredients: [],
     memo: "",
     pantrySelections: [],

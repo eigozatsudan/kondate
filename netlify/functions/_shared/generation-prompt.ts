@@ -14,6 +14,7 @@ export type PromptPreferences = {
   cuisineGenre: GenerationContext["submission"]["cuisineGenre"];
   timeLimitMinutes: GenerationContext["submission"]["timeLimitMinutes"];
   budgetPreference: GenerationContext["submission"]["budgetPreference"];
+  ingredientPreference: GenerationContext["submission"]["ingredientPreference"];
   avoidIngredients: readonly string[];
   memo: string;
   /** idea のみ人数をプロンプトへ載せる。household は対象メンバー数で決まる */
@@ -86,6 +87,14 @@ export const GENERATION_SYSTEM_PROMPT_CORE =
   "usageStatus=usedのdishRefsは実際にそのpantryRefをingredientsに持つdishだけを列挙する。" +
   "priority=must_useのpantryは必ずusageStatus=usedにする。" +
   "plannedQuantityを書く場合は入力quantityと単位を両立させ、単位換算をしない。" +
+  // 材料の使い方（preferences.ingredientPreference）
+  "preferences.ingredientPreferenceがあるとき:" +
+  "more=材料の種類や分量をやや多めにし、献立に厚みを出す。" +
+  "less=材料の種類をできるだけ少なくし、シンプルにする。" +
+  "selected_only=買い足しの生鮮・乾物などは避け、" +
+  "mainIngredientsとpantry（今回使う冷蔵庫食材）に載る食材だけを使う。" +
+  "塩・しょうゆ・みりん・酢・油・砂糖などの基本調味料はselected_onlyでも可。" +
+  "autoまたはnull=材料の量・範囲はモデルが献立に合わせて判断する。" +
   // outcome
   "通常はoutcome=successの献立を返す。" +
   "アレルギー・安全制約を満たせない場合のみoutcome=constraint_conflictを使い、" +
@@ -159,6 +168,7 @@ function buildBaseGenerationMessages(
       cuisineGenre: context.submission.cuisineGenre,
       timeLimitMinutes: context.submission.timeLimitMinutes,
       budgetPreference: context.submission.budgetPreference,
+      ingredientPreference: context.submission.ingredientPreference,
       avoidIngredients: [...context.submission.avoidIngredients],
       memo: context.submission.memo,
       servings: context.submission.servings,
@@ -246,6 +256,7 @@ function buildBaseGenerationMessages(
     cuisineGenre: context.submission.cuisineGenre,
     timeLimitMinutes: context.submission.timeLimitMinutes,
     budgetPreference: context.submission.budgetPreference,
+    ingredientPreference: context.submission.ingredientPreference,
     avoidIngredients: [...context.submission.avoidIngredients],
     memo: context.submission.memo,
   } satisfies PromptPreferences;

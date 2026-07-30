@@ -21,7 +21,10 @@ describe("FlyerWeeklyPanel", () => {
     );
     expect(screen.getByTestId("flyer-weekly-locked")).toBeVisible();
     expect(screen.getByText(FLYER_LOCKED_PREVIEW_COPY)).toBeVisible();
-    expect(screen.getByRole("link", { name: "Plus を見る" })).toBeVisible();
+    const plusLink = screen.getByRole("link", { name: "Plus を見る" });
+    expect(plusLink).toBeVisible();
+    // 未定義の .button.primary ではなく共通 CTA クラスを使う（レイアウト崩れ防止）
+    expect(plusLink).toHaveClass("primary-button");
   });
 
   it("shows upload control for Plus", () => {
@@ -31,6 +34,8 @@ describe("FlyerWeeklyPanel", () => {
       </MemoryRouter>,
     );
     expect(screen.getByTestId("flyer-weekly-upload")).toBeVisible();
-    expect(screen.getByText("チラシ写真を選ぶ")).toBeVisible();
+    const upload = screen.getByText("チラシ写真を選ぶ");
+    expect(upload).toBeVisible();
+    expect(upload).toHaveClass("secondary-button");
   });
 });

@@ -126,6 +126,7 @@ it("未完成下書きのnullable項目をRPC引数として表現できる", ()
     p_servings: null,
     p_time_limit_minutes: null,
     p_budget_preference: null,
+    p_ingredient_preference: null,
     p_avoid_ingredients: [],
     p_memo: "",
     p_pantry_selections: [],
@@ -155,6 +156,7 @@ const invalidMemo = {
   p_servings: null,
   p_time_limit_minutes: null,
   p_budget_preference: null,
+  p_ingredient_preference: null,
   p_avoid_ingredients: [],
   // @ts-expect-error memoはnullableへ拡張しない
   p_memo: null,
@@ -171,7 +173,8 @@ type NullableDraftArg =
   | "p_target_mode"
   | "p_servings"
   | "p_time_limit_minutes"
-  | "p_budget_preference";
+  | "p_budget_preference"
+  | "p_ingredient_preference";
 type GeneratedReserveGeneration = GeneratedDatabase["public"]["Functions"]["reserve_ai_generation"];
 type NullableReserveGenerationArg =
   "p_draft_id" | "p_draft_revision" | "p_source_menu_id" | "p_replace_dish_id" | "p_change_reason";

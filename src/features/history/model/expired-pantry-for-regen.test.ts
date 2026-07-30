@@ -29,6 +29,7 @@ const submission = {
   servings: 2,
   timeLimitMinutes: null,
   budgetPreference: null,
+  ingredientPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [

@@ -21,6 +21,7 @@ const revisionOne: PlannerDraft = {
   servings: null,
   timeLimitMinutes: null,
   budgetPreference: null,
+  ingredientPreference: null,
   avoidIngredients: [],
   memo: "revision 1",
   pantrySelections: [],

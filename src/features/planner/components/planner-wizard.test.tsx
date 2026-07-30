@@ -21,6 +21,7 @@ const emptyDraft: PlannerDraftInput = {
   servings: null,
   timeLimitMinutes: null,
   budgetPreference: null,
+  ingredientPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -802,6 +803,60 @@ describe("PlannerWizard review step", () => {
     // primary ボタン行（wizard-actions）の直前 sibling が note であること
     expect(generate.parentElement).toHaveClass("wizard-actions");
     expect(generate.parentElement?.previousElementSibling).toBe(note);
+    // 注意枠トーン（平文と同色並びを避ける）
+    expect(note).toHaveClass("review-idea-caution");
+  });
+
+  it("distinguishes review meta tones for season, usage, quality, and idea caution", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "idea",
+          servings: 1,
+        }}
+        usageRemaining={3}
+        plan="free"
+      />,
+    );
+    expect(screen.getByText(/いまは.+の食材を優先して提案します/u).className).toMatch(
+      /review-season-hint/,
+    );
+    expect(screen.getByText("無料版は本日あと3回まで献立の作成を受け付けます")).toHaveClass(
+      "review-usage-status",
+    );
+    expect(screen.getByText("くわしく作る").closest("label")).toHaveClass("quality-mode-toggle");
+    expect(screen.getByRole("note")).toHaveClass("review-idea-caution");
+  });
+
+  it("disables quality mode toggle on Free with Plus gate copy (L10-4)", () => {
+    render(
+      <Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={3} plan="free" />,
+    );
+    // label 全文が accessible name になるため部分一致で取る
+    const checkbox = screen.getByRole("checkbox", { name: /くわしく作る/u });
+    expect(checkbox).toBeDisabled();
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByText("くわしい AI での作成は Plus で使えます")).toBeVisible();
+    expect(screen.getByText("くわしく作る").closest("label")).toHaveClass(
+      "quality-mode-toggle--locked",
+    );
+  });
+
+  it("enables quality mode toggle on Plus", () => {
+    render(
+      <Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={5} plan="plus" />,
+    );
+    const checkbox = screen.getByRole("checkbox", { name: /くわしく作る/u });
+    expect(checkbox).toBeEnabled();
+    expect(screen.getByText(/Plus のくわしい AI で、より丁寧な献立を作ります/u)).toBeVisible();
+    expect(screen.getByText("くわしく作る").closest("label")).not.toHaveClass(
+      "quality-mode-toggle--locked",
+    );
   });
 
   it("household 確認では現在の家族・安全条件の免責を表示する", () => {
