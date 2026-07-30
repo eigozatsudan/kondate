@@ -4,7 +4,7 @@
 |------|-----|
 | 文書 | `docs/superpowers/specs/2026-07-30-free-landing-page-design.md` |
 | 日付 | 2026-07-30 |
-| 状態 | **Review-ready**（1次・2次・敵対的レビュー反映済み。実装計画は未作成） |
+| 状態 | **Approved for implementation**（実装計画: `docs/superpowers/plans/2026-07-30-free-landing-page.md`） |
 | 関連 | MVP `2026-07-11-kondate-mvp-design.md`、Stripe/Free マトリクス `2026-07-29-paid-plan-stripe-design.md`（Free 機能の正本）、Plus LP `2026-07-30-plus-landing-page-design.md`（**対比・非混同**）、認証 `/login`・`RequireSession`・`RootEntryPage`・`AuthProvider` |
 | 人間合意 | 入口 = 未ログインの `/`；Plus は前面に出さない；中心機能 = 家族 / 献立 / 冷蔵庫；構成 A（ヒーロー+3カード+締め CTA）；トーン = アプリ既存 terracotta 継承 |
 | レビュー | R1: 1次 / 2次 / 敵対的（本ファイル §Revision Summary R1） |
@@ -369,8 +369,8 @@ Plus LP の `billing/` 配下には置かない。
 | §2 画面・コピー・ビジュアル | 人間 OK |
 | §3 実装境界・テスト・非目標 | 人間 OK |
 | R1 レビュー反映 | **済**（下記） |
-| 本書の人間最終確認 | **待ち** |
-| 実装計画 | 人間最終確認後に `writing-plans` |
+| 本書の人間最終確認 | レビュー反映済み（R1） |
+| 実装計画 | **`docs/superpowers/plans/2026-07-30-free-landing-page.md`** |
 
 ---
 
