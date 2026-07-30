@@ -15,12 +15,7 @@ const MENU = "40000000-0000-4000-8000-000000000001";
 
 function Probe({ menuId }: { menuId: string }) {
   const intent = useShoppingCreateIntent(menuId);
-  return (
-    <div
-      data-testid="probe"
-      data-active={intent.shoppingIntentActive ? "1" : "0"}
-    />
-  );
+  return <div data-testid="probe" data-active={intent.shoppingIntentActive ? "1" : "0"} />;
 }
 
 function mountAt(path: string, menuId: string = MENU) {

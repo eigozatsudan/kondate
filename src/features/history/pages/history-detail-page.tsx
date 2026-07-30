@@ -585,9 +585,7 @@ function HouseholdDetailBody({
   const mustCloseReconcileSheet = !actionsEnabled || shoppingGate.blocked;
   const canCreateShoppingList = canOpenCreateSheet;
   const nonRemovedCount =
-    activeList === null
-      ? 0
-      : activeList.items.filter((item) => !item.isRemovedByUser).length;
+    activeList === null ? 0 : activeList.items.filter((item) => !item.isRemovedByUser).length;
 
   // 安全 fail-closed: create/reconcile シートを閉じる（isPending では閉じない）
   useEffect(() => {
@@ -598,12 +596,7 @@ function HouseholdDetailBody({
     if (mustCloseReconcileSheet && shoppingSheet === "reconcile") {
       setShoppingSheet(null);
     }
-  }, [
-    mustCloseCreateSheet,
-    mustCloseReconcileSheet,
-    shoppingSheet,
-    clearShoppingSheetExpected,
-  ]);
+  }, [mustCloseCreateSheet, mustCloseReconcileSheet, shoppingSheet, clearShoppingSheetExpected]);
 
   // auto-open / StrictMode sheetExpected 復帰
   useEffect(() => {
@@ -625,13 +618,7 @@ function HouseholdDetailBody({
       el?.scrollIntoView({ block: "nearest" });
       el?.focus();
     });
-  }, [
-    menuId,
-    shoppingSheet,
-    canOpenCreateSheet,
-    shoppingIntentActive,
-    markShoppingAutoOpened,
-  ]);
+  }, [menuId, shoppingSheet, canOpenCreateSheet, shoppingIntentActive, markShoppingAutoOpened]);
 
   const queryKey = useMemo(
     () => ["menu-result", userId ?? "missing", menuId] as const,
@@ -1013,18 +1000,16 @@ function HouseholdDetailBody({
           この献立で買い物リストを作れます
         </p>
       ) : null}
-      {shoppingIntentActive && revalidation.phase !== "checked" ? (
+      {shoppingIntentActive && revalidation.phase === "checking" ? (
         <p className="mt-4" role="status">
           買い物リストを作る前に、いまの家族設定を確認しています
         </p>
       ) : null}
       {shoppingIntentActive &&
-      revalidation.phase === "checked" &&
-      !actionsEnabled ? (
+      (revalidation.phase === "error" || (revalidation.phase === "checked" && !actionsEnabled)) ? (
         <section className="card stack mt-4" role="alert">
           <p>
-            {revalidation.errorMessage ??
-              "現在の家族設定ではこの献立から買い物リストを作れません"}
+            {revalidation.errorMessage ?? "現在の家族設定ではこの献立から買い物リストを作れません"}
           </p>
           <Link className="secondary-button min-h-11" to={historyPathForShopping()}>
             履歴に戻る

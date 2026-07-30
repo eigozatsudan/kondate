@@ -717,9 +717,7 @@ describe("HistoryDetailPage safety gate", () => {
   });
 
   it("auto-opens create sheet from /history/:id?for=shopping when household can create", async () => {
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "household", id: MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     renderHistoryDetail({
       path: `/history/${MENU_ID}?for=shopping`,
       revalidation: { phase: "checked", result: validRevalidation },
@@ -749,9 +747,7 @@ describe("HistoryDetailPage safety gate", () => {
         },
       ],
     });
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "household", id: MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     renderHistoryDetail({
       path: `/history/${MENU_ID}?for=shopping`,
       revalidation: { phase: "checked", result: validRevalidation },
@@ -763,13 +759,9 @@ describe("HistoryDetailPage safety gate", () => {
 
 describe("HistoryDetailPage idea permitted actions boundary", () => {
   it("shows idea rejection on history detail with for=shopping", async () => {
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "idea", id: MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
     renderHistoryDetail({ path: `/history/${MENU_ID}?for=shopping` });
-    expect(
-      await screen.findByText(/アイデア献立は買い物リストに使えません/u),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/アイデア献立は買い物リストに使えません/u)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "買い物リストを作る" })).toBeNull();
     expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
     expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();

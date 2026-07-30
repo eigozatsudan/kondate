@@ -105,10 +105,7 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
       </div>
       <div className="history-card-actions">
         {representative.targetMode === "household" ? (
-          <Link
-            to={menusPathForShopping(representative.id)}
-            className="primary-button min-h-11"
-          >
+          <Link to={menusPathForShopping(representative.id)} className="primary-button min-h-11">
             買い物リストを作る
           </Link>
         ) : null}

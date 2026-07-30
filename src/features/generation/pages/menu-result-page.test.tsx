@@ -403,30 +403,22 @@ describe("MenuResultPage", () => {
   });
 
   it("auto-opens create sheet when for=shopping and can create", async () => {
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
     expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
   });
 
   it("shows idea rejection without shopping network when for=shopping", async () => {
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "idea", id: VALID_MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
     renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
-    expect(
-      await screen.findByText(/アイデア献立は買い物リストに使えません/u),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/アイデア献立は買い物リストに使えません/u)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "買い物リストを作る" })).toBeNull();
     expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
     expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
   });
 
   it("passes forceNewMode copy when shopping gate is blocked and for=shopping", async () => {
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     shoppingApi.revalidateActiveShoppingList.mockResolvedValue(invalidShoppingSafety);
     renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
     expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
@@ -436,9 +428,7 @@ describe("MenuResultPage", () => {
   });
 
   it("does not auto-open while pending create envelope exists", async () => {
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     sessionStorage.setItem(
       pendingShoppingCommandStorageKey("create", VALID_MENU_ID),
       JSON.stringify({
@@ -458,14 +448,13 @@ describe("MenuResultPage", () => {
   });
 
   it("uses non-removed item count on create sheet", async () => {
-    getMenuResultMock.mockResolvedValue(
-      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
-    );
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     shoppingApi.fetchActiveShoppingList.mockResolvedValue({
       ...activeShoppingList,
       items: [
         {
           id: SHOPPING_ITEM_ID,
+          listId: SHOPPING_LIST_ID,
           displayName: "にんじん",
           normalizedName: "にんじん",
           storeSection: "produce",
@@ -478,7 +467,6 @@ describe("MenuResultPage", () => {
           isRemovedByUser: true,
           pantryCheckRequired: false,
           labelWarnings: [],
-          sourceIngredients: [],
         },
       ],
     });
