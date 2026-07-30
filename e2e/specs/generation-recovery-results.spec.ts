@@ -664,7 +664,10 @@ test("ingredient empty next uses toast and alert instead of alertdialog", async 
   await clickWizardNext(page);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(page.getByRole("alert")).toContainText("メイン食材を1つ以上選んでください");
-  await expect(page.getByRole("status")).toContainText("メイン食材を1つ以上選んでください");
+  // autosave/billing の status と同居するため、検証トーストは文言で絞る
+  await expect(
+    page.getByRole("status").filter({ hasText: "メイン食材を1つ以上選んでください" }),
+  ).toBeVisible();
   await expect(page.getByRole("textbox", { name: "メイン食材" })).toBeFocused();
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
 });
@@ -708,7 +711,8 @@ test("offers only in-range servings so an out-of-range draft cannot be composed"
   await expect(next).toBeEnabled();
   await clickWizardNext(page);
   await expect(page.getByRole("alert")).toContainText("人数を選んでください");
-  await expect(page.getByRole("status")).toContainText("人数を選んでください");
+  // autosave/billing の status と同居するため、検証トーストは文言で絞る
+  await expect(page.getByRole("status").filter({ hasText: "人数を選んでください" })).toBeVisible();
   // 遷移しない
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   // 21のような範囲外は選択肢として存在しない。
