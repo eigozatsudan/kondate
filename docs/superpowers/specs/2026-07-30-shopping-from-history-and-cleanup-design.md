@@ -4,7 +4,7 @@
 |------|-----|
 | 文書 | `docs/superpowers/specs/2026-07-30-shopping-from-history-and-cleanup-design.md` |
 | 日付 | 2026-07-30 |
-| 状態 | **Approved for implementation planning（R2+L15）** |
+| 状態 | **Approved for implementation**（計画: `docs/superpowers/plans/2026-07-30-shopping-from-history-and-cleanup.md`） |
 | 関連 | MVP `2026-07-11-kondate-mvp-design.md` §9.1–9.2、Plan 5 買い物、`CreateListSheet` / `menu-result-page` / `history-detail-page` / `shopping-list-page`、idea 拒否（`2026-07-22-guided-planner-optional-household-design.md`） |
 | 人間合意 | 方針 **A**（履歴カード CTA）+ **案1**（確認後 CreateListSheet 自動）; 削除行クリーンアップの再訪復活を直す |
 | レビュー | R0 一次敵対的 + 二次独立 → R1 で Critical/Important を吸収。再レビュー対象は本改訂 |
