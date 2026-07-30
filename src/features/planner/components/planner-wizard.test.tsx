@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 import type { PlannerFieldName, PlannerStep } from "../model/planner-wizard";
 import type { PlannerSafetyMember } from "../planner-safety-member";
 import { createPlannerAttempt } from "../expired-pantry-checks";
@@ -99,40 +100,43 @@ function Harness({
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
   const [attempt, setAttempt] = useState(createPlannerAttempt());
   // Link（家族設定）のため MemoryRouter で包む（C-I2）
+  // incomplete「次へ」が useAppToast を使うため AppToastProvider も必須
   return (
     <MemoryRouter>
-      <PlannerWizard
-        draft={draft}
-        step={step}
-        eligibleMembers={eligibleMembers}
-        isSaving={isSaving}
-        error={error}
-        fieldErrors={fieldErrors}
-        onDraftChange={setDraft}
-        onStepChange={setStep}
-        onSubmit={onSubmit}
-        pantryItems={pantryItems}
-        pantryItemsStatus={pantryItemsStatus}
-        attempt={attempt}
-        onAttemptChange={setAttempt}
-        hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
-        onOpenPrivacyNotice={onOpenPrivacyNotice}
-        hasDraftConflict={hasDraftConflict}
-        canResolveDraftConflict={canResolveDraftConflict}
-        draftConflictRefetchError={draftConflictRefetchError}
-        usageRemaining={usageRemaining}
-        plan={plan}
-        attemptsRemaining={attemptsRemaining}
-        globalAvailable={globalAvailable}
-        shortWindowRetryAt={shortWindowRetryAt}
-        autosaveState={autosaveState}
-        {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
-        {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
-        {...(onReset !== undefined ? { onReset } : {})}
-        {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
-        {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
-        {...(onRetryAutosave !== undefined ? { onRetryAutosave } : {})}
-      />
+      <AppToastProvider>
+        <PlannerWizard
+          draft={draft}
+          step={step}
+          eligibleMembers={eligibleMembers}
+          isSaving={isSaving}
+          error={error}
+          fieldErrors={fieldErrors}
+          onDraftChange={setDraft}
+          onStepChange={setStep}
+          onSubmit={onSubmit}
+          pantryItems={pantryItems}
+          pantryItemsStatus={pantryItemsStatus}
+          attempt={attempt}
+          onAttemptChange={setAttempt}
+          hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
+          onOpenPrivacyNotice={onOpenPrivacyNotice}
+          hasDraftConflict={hasDraftConflict}
+          canResolveDraftConflict={canResolveDraftConflict}
+          draftConflictRefetchError={draftConflictRefetchError}
+          usageRemaining={usageRemaining}
+          plan={plan}
+          attemptsRemaining={attemptsRemaining}
+          globalAvailable={globalAvailable}
+          shortWindowRetryAt={shortWindowRetryAt}
+          autosaveState={autosaveState}
+          {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+          {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
+          {...(onReset !== undefined ? { onReset } : {})}
+          {...(onResolveDraftConflict !== undefined ? { onResolveDraftConflict } : {})}
+          {...(onRetryDraftConflict !== undefined ? { onRetryDraftConflict } : {})}
+          {...(onRetryAutosave !== undefined ? { onRetryAutosave } : {})}
+        />
+      </AppToastProvider>
     </MemoryRouter>
   );
 }
@@ -322,7 +326,8 @@ describe("PlannerWizard 固定順とnavigation", () => {
     expect(screen.getByRole("radio", { name: "朝食" })).not.toBeChecked();
     expect(screen.getByRole("radio", { name: "昼食" })).not.toBeChecked();
     expect(screen.getByRole("radio", { name: "夕食" })).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "次へ" })).toBeDisabled();
+    // incomplete でも押下可（親 disabled 以外では止めない）
+    expect(screen.getByRole("button", { name: "次へ" })).not.toBeDisabled();
   });
 
   it("食事ステップも wizard-actions と option list で狭幅向けに組む", () => {
@@ -1485,7 +1490,7 @@ describe("IngredientStep quick select", () => {
     expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
   });
 
-  it("shows a dialog when next is pressed without any main ingredient", async () => {
+  it("shows toast and inline alert when next is pressed without any main ingredient", async () => {
     const user = userEvent.setup();
     render(<Harness initialStep="ingredients" />);
 
@@ -1493,15 +1498,27 @@ describe("IngredientStep quick select", () => {
     expect(nextButton).toBeEnabled();
     await user.click(nextButton);
 
-    const dialog = screen.getByRole("alertdialog", { name: "メイン食材を選んでください" });
-    expect(dialog).toBeVisible();
-    expect(dialog).toHaveTextContent("献立の中心になる食材を1つ以上選んでから進んでください。");
-    // ダイアログ中は step を進めない
+    // empty alertdialog は廃止。toast + inline alert + textbox focus に統一
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("メイン食材を1つ以上選んでください");
+    expect(screen.getByRole("status")).toHaveTextContent("メイン食材を1つ以上選んでください");
+    expect(screen.getByRole("textbox")).toHaveFocus();
+    // step は進めない
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "3. ジャンル" })).not.toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole("button", { name: "閉じる" }));
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  it("suppresses validation toast on incomplete next while autosaveState is error", async () => {
+    const user = userEvent.setup();
+    render(<Harness autosaveState="error" onRetryAutosave={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+
+    // autosave error の alert と incomplete inline が併存し得る（設計の受け入れ済み残留）
+    // validation toast（status）は出さない
+    expect(screen.getByText("食事の時間帯を選んでください")).toBeVisible();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("radiogroup").querySelector("input:not([disabled])")).toHaveFocus();
   });
 
   it("does not change pantrySelections when selecting a quick candidate", async () => {

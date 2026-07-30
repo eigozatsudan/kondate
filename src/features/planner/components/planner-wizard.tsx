@@ -353,6 +353,7 @@ export function PlannerWizard({
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mealType ?? null}
+          suppressValidationToast={autosaveState === "error"}
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
@@ -379,6 +380,7 @@ export function PlannerWizard({
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.mainIngredients ?? null}
+          suppressValidationToast={autosaveState === "error"}
           pantryItems={pantryItems}
           pantryItemsStatus={pantryItemsStatus}
           {...editReturnActionLabels}
@@ -407,6 +409,7 @@ export function PlannerWizard({
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.cuisineGenre ?? null}
+          suppressValidationToast={autosaveState === "error"}
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
