@@ -236,12 +236,16 @@ test("main returns closed codes without secret leakage", () => {
   assert.doesNotMatch(lines[0], new RegExp(password));
 });
 
-test("accepts GLOBAL_DAILY_AI_LIMIT up to 200 and rejects 201", () => {
-  assert.deepEqual(validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "200" })), {
+// 製品 max は plan-quota.ts の globalDailyAiLimitProductMax（現状 500）と preflight ミラーが正本。
+test("accepts GLOBAL_DAILY_AI_LIMIT up to product max 500 and rejects 501", () => {
+  assert.deepEqual(validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "500" })), {
+    projectRef,
+  });
+  assert.deepEqual(validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "80" })), {
     projectRef,
   });
   assert.throws(
-    () => validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "201" })),
+    () => validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "501" })),
     /GLOBAL_DAILY_AI_LIMIT/,
   );
 });

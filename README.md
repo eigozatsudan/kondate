@@ -185,9 +185,22 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 | 項目                               | 値（全プラン共通の安全弁）                                                                                                                                                 |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 外部 AI 送信 / アプリ全体 / JST 日 | ローカル既定 **20**、本番運用推奨 **80**、上限 **200**（`GLOBAL_DAILY_AI_LIMIT`）                                                                                          |
+| 外部 AI 送信 / アプリ全体 / JST 日 | ローカル既定 **20**、本番運用推奨 **80**、製品 max **500**（`GLOBAL_DAILY_AI_LIMIT`。**上限の正本は ENV のみ**。SQL は範囲拒否しない）                                      |
 | 1 試行タイムアウト                 | 24 秒（`OPENROUTER_TIMEOUT_MS`。primary + 最大 1 repair が 55s 総予算内に収まる）                                                                                          |
 | Function 総予算                    | 55 秒（`FUNCTION_TOTAL_BUDGET_MS`。Netlify 同期 60s 硬上限の内側。正本: `shared/contracts/function-budget.ts` / [docs/deployment/netlify.md](docs/deployment/netlify.md)） |
+
+#### グローバル日次枠を上げる（運用・製品 max）
+
+`GLOBAL_DAILY_AI_LIMIT` は **アプリ全体**の外部 AI 送信安全弁です（JST 日・成功/失敗を問わず OpenRouter 送信を合算）。個人の Free/Plus 枠とは独立です。
+
+| やりたいこと | 手順 | コード / SQL |
+| ------------ | ---- | ------------ |
+| **運用値を上げる**（例: 本番 80 → 120、上限 500 未満） | Netlify の `GLOBAL_DAILY_AI_LIMIT` を変更して Functions を再デプロイ（または env 反映）。ローカルは `compose.yaml` / `.env` | **不要**。DB migration 不要 |
+| **製品 max 自体を上げる**（例: 500 → 1000） | 1. `shared/contracts/plan-quota.ts` の `globalDailyAiLimitProductMax` を更新 2. `scripts/preflight-production.mjs` の同値ミラーを更新 3. README / `docs/deployment/netlify.md` の数字を更新 4. 関連テストの期待値を確認 | **SQL 変更は不要**（RPC は `p_global_limit` を範囲拒否しない） |
+
+- 受理範囲は常に **1 .. 製品 max**（env Zod + 本番 preflight）。0 や max+1 は Function 起動 / preflight で拒否。
+- 未設定時の schema default は製品 max。ローカル compose は明示 **20**、本番運用推奨は **80**。
+- E2E は共有カウンタを truncate するだけで、上限値そのものは変えない（`e2e/fixtures/reset-global-ai-quota.ts`）。
 
 有料モデルでも提供状況・単価・構造化対応は変わり得ます。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **OpenRouter mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費し、課金も発生します）。
 
@@ -349,7 +362,7 @@ Customer Portal（Dashboard）の最低確認:
 | `STRIPE_MOCK_BASE_URL`    | **設定しない**（設定すると起動失敗）                                                                  |
 | `OPENROUTER_PLUS_MODELS`  | 検証済み有料 allowlist（品質モード用）                                                                |
 | `OPENROUTER_FLYER_MODELS` | 任意。チラシ vision。未設定なら Plus リスト                                                           |
-| `GLOBAL_DAILY_AI_LIMIT`   | 運用推奨 **80**（最大 200）                                                                           |
+| `GLOBAL_DAILY_AI_LIMIT`   | 運用推奨 **80**（1..製品 max **500**。ENV のみが正本。上げ方は上節「グローバル日次枠を上げる」）       |
 
 **絶対に置かないもの**
 

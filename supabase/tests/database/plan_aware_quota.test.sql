@@ -181,35 +181,34 @@ select is(
   'mark increments short window to 8 under Plus snapshot'
 );
 
--- 7. global 200 受理 / 201 拒否
+-- 7. global 上限は ENV のみ。SQL は大きな p_global_limit を拒否しない
 select lives_ok(
   $$select public.get_ai_usage_today(
     'f1000000-0000-4000-8000-000000000001'::uuid,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    10, 20, 8, 200, '2001-01-01 00:00:00+00'::timestamptz
+    10, 20, 8, 500, '2001-01-01 00:00:00+00'::timestamptz
   )$$,
-  'get_ai_usage_today accepts p_global_limit=200'
+  'get_ai_usage_today accepts p_global_limit=500'
 );
 
-select throws_ok(
+select lives_ok(
   $$select public.get_ai_usage_today(
     'f1000000-0000-4000-8000-000000000001'::uuid,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    10, 20, 8, 201, '2001-01-01 00:00:00+00'::timestamptz
+    10, 20, 8, 501, '2001-01-01 00:00:00+00'::timestamptz
   )$$,
-  '22023',
-  'invalid_quota_configuration',
-  'get_ai_usage_today rejects p_global_limit=201'
+  'get_ai_usage_today accepts p_global_limit=501 (SQL has no max; ENV enforces 500)'
 );
 
+-- 存在しない request_id でも範囲拒否にならない（repair_not_available 等へ進む）
 select throws_ok(
   $$select public.reserve_ai_repair_call(
     '00000000-0000-4000-8000-000000000001'::uuid,
-    201, false, now()
+    501, false, now()
   )$$,
-  '22023',
-  'invalid_quota_configuration',
-  'reserve_ai_repair_call rejects p_global_limit=201'
+  '55000',
+  'repair_not_available',
+  'reserve_ai_repair_call does not reject high p_global_limit as invalid_quota_configuration'
 );
 
 select * from finish();

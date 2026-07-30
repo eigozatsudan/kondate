@@ -1,5 +1,6 @@
 -- Plan: 2026-07-29 paid-plan-stripe Task 3
--- Plan-aware quota: CHECK 10/20/8, reserve/status/usage args, request snapshots, global 1..200.
+-- Plan-aware quota: CHECK 10/20/8, reserve/status/usage args, request snapshots.
+-- global 上限は ENV のみ（SQL の p_global_limit 範囲拒否はしない）。
 -- short window は mark-time のみ（A1）。entitlement 再読なし。quality_mode は Task6。
 
 -- ---------------------------------------------------------------------------
@@ -135,8 +136,8 @@ begin
      or p_short_window_limit is null or p_short_window_limit not in (4, 8) then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
-  if p_global_limit is null or p_global_limit not between 1 and 200
-     or p_stale_after_seconds < 30 then
+  -- p_global_limit の範囲は ENV のみが正本。SQL では拒否しない。
+  if p_stale_after_seconds < 30 then
     raise exception using errcode = '22023', message = 'invalid_quota_configuration';
   end if;
   if p_request_kind not in ('new_menu', 'regenerate_menu', 'regenerate_dish') then
@@ -491,7 +492,7 @@ grant execute on function public.reserve_ai_generation(
 ) to service_role;
 
 -- ---------------------------------------------------------------------------
--- 5. reserve_ai_repair_call（global 1..200 + attempt snapshot）
+-- 5. reserve_ai_repair_call（attempt snapshot。global 上限は ENV のみ）
 -- ---------------------------------------------------------------------------
 create or replace function public.reserve_ai_repair_call(
   p_request_id uuid,
@@ -510,9 +511,7 @@ declare
   v_day date := private.ai_jst_day(p_now);
   v_quota_disabled boolean := coalesce(p_quota_disabled, false);
 begin
-  if p_global_limit is null or p_global_limit not between 1 and 200 then
-    raise exception using errcode = '22023', message = 'invalid_quota_configuration';
-  end if;
+  -- p_global_limit の範囲は ENV のみが正本。SQL では拒否しない。
   select * into v_request from private.ai_generation_requests where id = p_request_id for update;
   if not found or v_request.status <> 'processing' or v_request.repair_attempted
      or v_request.global_reserved_day is not null
@@ -673,9 +672,7 @@ begin
      or p_short_window_limit is null or p_short_window_limit not in (4, 8) then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
-  if p_global_limit is null or p_global_limit not between 1 and 200 then
-    raise exception using errcode = '22023', message = 'invalid_quota_configuration';
-  end if;
+  -- p_global_limit の範囲は ENV のみが正本。SQL では拒否しない。
   v_global_limit := p_global_limit;
 
   select coalesce(success_count, 0), coalesce(reserved_count, 0)

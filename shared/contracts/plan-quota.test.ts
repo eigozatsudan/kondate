@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { planQuota, releaseQuota, type PlanCode } from "./plan-quota.js";
+import {
+  GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX,
+  planQuota,
+  releaseQuota,
+  type PlanCode,
+} from "./plan-quota.js";
 
 describe("planQuota", () => {
   it("locks Free and Plus product limits and defense ceilings", () => {
@@ -27,6 +32,13 @@ describe("planQuota", () => {
       maxFlyerSuccessPerWeek: 2,
       maxFlyerTriesPerWeek: 6,
     });
+  });
+
+  it("exports a single product max for GLOBAL_DAILY_AI_LIMIT (ENV-only; SQL has no range gate)", () => {
+    // 運用値は ENV だけで上げられる。製品 max の引き上げはこの定数（+ preflight ミラー）のみ。
+    expect(planQuota.globalDailyAiLimitProductMax).toBe(500);
+    expect(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX).toBe(planQuota.globalDailyAiLimitProductMax);
+    expect(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX).toBeGreaterThanOrEqual(80);
   });
 
   it("keeps releaseQuota as Free alias for legacy imports", () => {

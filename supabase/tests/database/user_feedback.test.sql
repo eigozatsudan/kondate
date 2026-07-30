@@ -151,20 +151,17 @@ begin
     raise exception 'empty ledger should be globalAvailable with limit 1: %', v_result;
   end if;
 
-  -- 無効な global limit は raise
-  begin
-    perform public.get_ai_usage_today(v_owner, tests.quota_identity_key(v_owner), 3, 6, 4, 0, '2000-01-01 00:00:00+00'::timestamptz);
-    raise exception 'p_global_limit=0 should raise';
-  exception
-    when others then
-      if sqlerrm is distinct from 'invalid_quota_configuration' then
-        raise exception 'unexpected error for invalid global limit: %', sqlerrm;
-      end if;
-  end;
+  -- global 上限は ENV のみ。SQL は p_global_limit=0 でも raise せず globalAvailable=false。
+  v_result := public.get_ai_usage_today(
+    v_owner, tests.quota_identity_key(v_owner), 3, 6, 4, 0, '2000-01-01 00:00:00+00'::timestamptz
+  );
+  if (v_result ->> 'globalAvailable') is distinct from 'false' then
+    raise exception 'p_global_limit=0 should report globalAvailable false without raise: %', v_result;
+  end if;
 end
 $body$;
 
-select pass('authenticated cannot read/write user_feedback; rate limit 5/24h; window reset; global limit validated');
+select pass('authenticated cannot read/write user_feedback; rate limit 5/24h; window reset; global limit env-only');
 
 select * from finish();
 rollback;

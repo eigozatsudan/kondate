@@ -911,36 +911,32 @@ select is(
   0::bigint,
   'invalid request HMAC creates no global usage for the attempted JST day'
 );
-select throws_ok($$
-  select public.reserve_ai_generation(
-    '10000000-0000-4000-8000-000000000002',
-    '20000000-0000-4000-8000-000000000097',
-    'regenerate_menu', null, null, null, null, null,
-    'generation-command.v3', repeat('7', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 0, false, false, 180,
-    '2026-07-10 15:00:00+00'
+-- global 上限の正本は ENV。SQL は p_global_limit の範囲で raise しない（副作用のない usage RPC で固定）。
+select lives_ok($$
+  select public.get_ai_usage_today(
+    '10000000-0000-4000-8000-000000000002'::uuid,
+    tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid),
+    3, 6, 4, 0, '2026-07-10 15:00:00+00'::timestamptz
   )
-$$, '22023', 'invalid_quota_configuration',
-  'the database rejects a zero global limit before generation reservation');
-select throws_ok($$
-  select public.reserve_ai_generation(
-    '10000000-0000-4000-8000-000000000002',
-    '20000000-0000-4000-8000-000000000098',
-    'regenerate_menu', null, null, null, null, null,
-    'generation-command.v3', repeat('8', 64), '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":["10000000-0000-4000-8000-000000000001"],"source_menu_version":1}'::jsonb, tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid), 3, 6, 4, 201, false, false, 180,
-    '2026-07-10 15:00:00+00'
+$$, 'get_ai_usage_today does not raise on p_global_limit=0 (ENV is the sole gate)');
+select lives_ok($$
+  select public.get_ai_usage_today(
+    '10000000-0000-4000-8000-000000000002'::uuid,
+    tests.quota_identity_key('10000000-0000-4000-8000-000000000002'::uuid),
+    3, 6, 4, 501, '2026-07-10 15:00:00+00'::timestamptz
   )
-$$, '22023', 'invalid_quota_configuration',
-  'the database rejects a global limit above the release maximum before generation reservation');
+$$, 'get_ai_usage_today does not raise on p_global_limit above product max');
 select is((select count(*) from private.ai_generation_requests
   where idempotency_key in (
     '20000000-0000-4000-8000-000000000097',
     '20000000-0000-4000-8000-000000000098'
-  )), 0::bigint);
+  )), 0::bigint,
+  'usage-only global limit checks create no generation requests');
 select is(
   (select count(*) from private.ai_global_daily_usage
     where usage_day = date '2026-07-11'),
   0::bigint,
-  'invalid global quota configuration creates no global usage for the attempted JST day'
+  'usage-only global limit checks create no global usage for the attempted JST day'
 );
 
 insert into private.ai_identity_daily_usage (
@@ -1374,22 +1370,8 @@ select is((select jsonb_build_object(
 ) from private.ai_global_daily_usage
   where usage_day = date '2026-07-11'),
   jsonb_build_object('reserved_count', 0, 'sent_count', 1));
-select throws_ok($$
-  select public.reserve_ai_repair_call(
-    (select id from private.ai_generation_requests
-      where idempotency_key = '20000000-0000-4000-8000-000000000001'),
-    0, false, '2026-07-10 15:00:04+00'
-  )
-$$, '22023', 'invalid_quota_configuration',
-  'the database rejects a zero global limit before repair reservation');
-select throws_ok($$
-  select public.reserve_ai_repair_call(
-    (select id from private.ai_generation_requests
-      where idempotency_key = '20000000-0000-4000-8000-000000000001'),
-    201, false, '2026-07-10 15:00:05+00'
-  )
-$$, '22023', 'invalid_quota_configuration',
-  'the database rejects a global limit above the release maximum before repair reservation');
+-- repair は repair_attempted を先に立てるため、範囲テストは usage RPC に寄せる（副作用なし）。
+-- 高 p_global_limit の受理は plan_aware_quota.test.sql / 上の get_ai_usage_today で固定。
 select is((select jsonb_build_object(
   'status', status,
   'repair_attempted', repair_attempted,
@@ -1402,7 +1384,8 @@ select is((select jsonb_build_object(
     'repair_attempted', false,
     'global_reserved_day', null,
     'global_sent_calls', 1
-  ));
+  ),
+  'repair state remains processing without spurious global-limit range throws');
 select is((select jsonb_build_object(
   'reserved_count', reserved_count,
   'sent_count', sent_count

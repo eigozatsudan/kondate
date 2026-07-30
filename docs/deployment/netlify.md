@@ -38,7 +38,7 @@
 | `USER_DAILY_EXTERNAL_CALL_LIMIT` | `6` |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | `4` |
 | `USER_SHORT_WINDOW_SECONDS` | `600` |
-| `GLOBAL_DAILY_AI_LIMIT` | 1..**200**（製品 max。ローカル既定 20、本番運用推奨 80） |
+| `GLOBAL_DAILY_AI_LIMIT` | 1..製品 max（現状 **500**、`planQuota.globalDailyAiLimitProductMax`）。**ENV のみが正本**（SQL 範囲拒否なし）。運用値の引き上げは Netlify env だけ。製品 max を超える運用は定数 + preflight ミラーを先に上げる。ローカル既定 20、本番運用推奨 80 |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
 | `OPENROUTER_TIMEOUT_MS` | `24000`（primary+repair が 55s 総予算内に収まる試行上限） |
 | `FUNCTION_TOTAL_BUDGET_MS` | `55000`（プラットフォーム 60s 硬上限の内側。headroom 5s） |

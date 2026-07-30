@@ -270,8 +270,8 @@ begin
      or p_short_window_limit is null or p_short_window_limit not in (4, 8) then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
-  if p_global_limit is null or p_global_limit not between 1 and 200
-     or p_stale_after_seconds < 30 then
+  -- p_global_limit の範囲は ENV のみが正本。SQL では拒否しない。
+  if p_stale_after_seconds < 30 then
     raise exception using errcode = '22023', message = 'invalid_quota_configuration';
   end if;
   if p_request_kind not in ('new_menu', 'regenerate_menu', 'regenerate_dish') then
@@ -956,9 +956,7 @@ begin
      or p_short_window_limit is null or p_short_window_limit not in (4, 8) then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
-  if p_global_limit is null or p_global_limit not between 1 and 200 then
-    raise exception using errcode = '22023', message = 'invalid_quota_configuration';
-  end if;
+  -- p_global_limit の範囲は ENV のみが正本。SQL では拒否しない。
   v_global_limit := p_global_limit;
 
   select coalesce(success_count, 0), coalesce(reserved_count, 0)

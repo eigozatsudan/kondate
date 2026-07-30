@@ -29,7 +29,18 @@ export const planQuota = {
     maxFlyerSuccessPerWeek: 2,
     maxFlyerTriesPerWeek: 6,
   },
+  /**
+   * アプリ全体の外部 AI 日次枠（GLOBAL_DAILY_AI_LIMIT）の製品 max。
+   * 正本は env.ts の Zod と preflight のミラー。SQL は p_global_limit を範囲拒否しない。
+   *
+   * - 運用値の引き上げ（例: 80→200）: Netlify ENV のみ。コード・SQL 不要。
+   * - 製品 max 自体の引き上げ（例: 500→1000）: この定数 + preflight のミラー + 文書のみ。
+   */
+  globalDailyAiLimitProductMax: 500,
 } as const;
+
+/** 上記 max の単独 export（env / テスト用） */
+export const GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX = planQuota.globalDailyAiLimitProductMax;
 
 export type PlanCode = "free" | "plus";
 

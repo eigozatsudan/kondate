@@ -208,9 +208,7 @@ begin
      or p_short_window_limit is null or p_short_window_limit not in (4, 8) then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
-  if p_global_limit is null or p_global_limit not between 1 and 200 then
-    raise exception using errcode = '22023', message = 'invalid_quota_configuration';
-  end if;
+  -- p_global_limit の範囲は ENV のみが正本。SQL では拒否しない。
 
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(p_user_id::text || ':flyer:' || p_idempotency_key, 0)
@@ -755,9 +753,7 @@ begin
      or p_short_window_limit is null or p_short_window_limit not in (4, 8) then
     raise exception using errcode = '22023', message = 'release_quota_mismatch';
   end if;
-  if p_global_limit is null or p_global_limit not between 1 and 200 then
-    raise exception using errcode = '22023', message = 'invalid_quota_configuration';
-  end if;
+  -- p_global_limit の範囲は ENV のみが正本。SQL では拒否しない。
   v_global_limit := p_global_limit;
 
   select coalesce(success_count, 0), coalesce(reserved_count, 0)

@@ -5,6 +5,7 @@ import {
   FUNCTION_TOTAL_BUDGET_MS,
   OPENROUTER_TIMEOUT_MS,
 } from "../../../shared/contracts/function-budget.js";
+import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX } from "../../../shared/contracts/plan-quota.js";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import { parseGenerationRequestHmacKey } from "./generation-command-integrity.js";
 
@@ -88,8 +89,10 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
     "4",
   ),
   USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
-  // アプリ全体安全弁。製品 max は 200（本番運用既定は別途 80 推奨）。ローカル compose 既定 20 は維持可
-  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(200),
+  // アプリ全体安全弁。製品 max は planQuota.globalDailyAiLimitProductMax（現状 500）。
+  // 運用値は ENV だけで上げられる。製品 max を超える値はここ（と preflight ミラー）を先に上げる。
+  // SQL は p_global_limit の範囲拒否をしない（ENV のみが正本）。
+  GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX),
   // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
   // Netlify 同期 60s 硬上限: 試行 24s（primary+repair）/ 総 55s（platform headroom 5s）
   OPENROUTER_TIMEOUT_MS: releaseLockedInteger(OPENROUTER_TIMEOUT_MS, "24000"),

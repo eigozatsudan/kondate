@@ -2,7 +2,7 @@
 # アプリ全体で共有されるAI日次枠(private.ai_global_daily_usage)を空にする。
 #
 # 生成系のE2Eは mobile+desktop の2プロジェクトで外部AI送信を累積する。この枠は
-# GLOBAL_DAILY_AI_LIMIT=20 のリリース確定値で頭打ちになり、しかもJST日付
+# ローカル既定 GLOBAL_DAILY_AI_LIMIT=20 で頭打ちになり、しかもJST日付
 # 単位でDBに積み上がる。そのため (1) 同じ日の2回目以降のスイート、(2) 1回の
 # full suite でも desktop 後半の shopping など、後半だけが global_daily_limit
 # で落ちる（ユーザ単位の枠はテストごとに新規ユーザを作るため影響しない）。

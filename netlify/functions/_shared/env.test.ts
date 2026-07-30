@@ -3,6 +3,7 @@ import {
   acceptedModelLists,
   rejectedModelLists,
 } from "../../../scripts/openrouter-models-contract.mjs";
+import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX } from "../../../shared/contracts/plan-quota.js";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import {
   parseManagedSupabaseProjectRef,
@@ -59,8 +60,8 @@ describe("parseOpenRouterModels", () => {
       userDailyAttemptLimit: releaseQuota.userDailyExternalCallLimit,
       userShortWindowLimit: releaseQuota.userShortWindowExternalCallLimit,
       userShortWindowSeconds: releaseQuota.userShortWindowSeconds,
-      // 未設定時の schema default は製品 max 200（compose ローカル既定 20 は env で明示）
-      globalDailyLimit: 200,
+      // 未設定時の schema default は製品 max（compose ローカル既定 20 は env で明示）
+      globalDailyLimit: GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX,
       timeoutMs: 24_000,
       functionTotalBudgetMs: 55_000,
       staleAfterSeconds: 180,
@@ -187,15 +188,27 @@ describe("parseOpenRouterModels", () => {
     ).toThrow("server_configuration_invalid");
   });
 
-  it.each(["0", "201"])("rejects out-of-range global quota %s", (value) => {
-    expect(() => parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
-  });
+  it.each(["0", String(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX + 1)])(
+    "rejects out-of-range global quota %s",
+    (value) => {
+      expect(() => parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: value })).toThrow();
+    },
+  );
 
-  it("accepts GLOBAL_DAILY_AI_LIMIT 21 within max 200", () => {
+  it("accepts GLOBAL_DAILY_AI_LIMIT 21 within product max", () => {
     expect(
       parseServerEnv({ ...validServerEnv, GLOBAL_DAILY_AI_LIMIT: "21" }).openRouter
         .globalDailyLimit,
     ).toBe(21);
+  });
+
+  it("accepts GLOBAL_DAILY_AI_LIMIT at product max (raisable via planQuota constant)", () => {
+    expect(
+      parseServerEnv({
+        ...validServerEnv,
+        GLOBAL_DAILY_AI_LIMIT: String(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX),
+      }).openRouter.globalDailyLimit,
+    ).toBe(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX);
   });
 
   it("allows the operator to lower the global quota", () => {
