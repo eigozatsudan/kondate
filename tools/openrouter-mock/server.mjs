@@ -133,7 +133,10 @@ const applySubmissionMenuShape = (fixture, messages, ideaServingsOverride = null
 
   const payload = readKondateInputPayload(messages);
   const preferences = isPlainObject(payload?.preferences) ? payload.preferences : null;
-  let menu = { ...fixture.menu, dishes: Array.isArray(fixture.menu.dishes) ? [...fixture.menu.dishes] : [] };
+  let menu = {
+    ...fixture.menu,
+    dishes: Array.isArray(fixture.menu.dishes) ? [...fixture.menu.dishes] : [],
+  };
 
   if (preferences !== null) {
     const mealType = preferences.mealType;
@@ -141,11 +144,7 @@ const applySubmissionMenuShape = (fixture, messages, ideaServingsOverride = null
       menu.mealType = mealType;
     }
     const cuisineGenre = preferences.cuisineGenre;
-    if (
-      cuisineGenre === "japanese" ||
-      cuisineGenre === "western" ||
-      cuisineGenre === "chinese"
-    ) {
+    if (cuisineGenre === "japanese" || cuisineGenre === "western" || cuisineGenre === "chinese") {
       // any は validate が一致要求しないので fixture の japanese のままでよい
       menu.cuisineGenre = cuisineGenre;
     }
@@ -185,9 +184,10 @@ const applySubmissionMenuShape = (fixture, messages, ideaServingsOverride = null
         dishRef: "dish_3",
         role: "soup",
         position: 3,
-        name: isPlainObject(soupBase) && typeof soupBase.name === "string"
-          ? `${soupBase.name}のスープ`
-          : "野菜スープ",
+        name:
+          isPlainObject(soupBase) && typeof soupBase.name === "string"
+            ? `${soupBase.name}のスープ`
+            : "野菜スープ",
         ingredients: Array.isArray(soupBase?.ingredients)
           ? soupBase.ingredients.map((ingredient, index) =>
               isPlainObject(ingredient)
@@ -401,8 +401,9 @@ async function handleRequest(request, response) {
   if (!dishMode && (key === "success" || ideaServingsValid)) {
     // 手動 UI / idea-servings-* : 提出 mealType・ジャンル・主食材・人数に合わせて fixture を整える。
     // 旧 applyIdeaMenuShape だけでは western/卵/昼食などで validate が落ち repair も同型失敗する。
-    const ideaServings =
-      ideaServingsValid ? ideaServingsFromKey : readIdeaServingsFromMessages(body.messages);
+    const ideaServings = ideaServingsValid
+      ? ideaServingsFromKey
+      : readIdeaServingsFromMessages(body.messages);
     fixture = applySubmissionMenuShape(fixture, body.messages, ideaServings);
     // idea-servings ヘッダだけで messages が idea でない合成経路向けに人数を再固定
     if (ideaServingsValid) {

@@ -52,11 +52,7 @@ export function FlyerUpsellBanner({
         <a href="/settings" className="flyer-upsell-banner-cta min-h-11">
           {PLUS_HARD_LIMIT_BUTTON}
         </a>
-        <button
-          type="button"
-          className="flyer-upsell-banner-dismiss min-h-11"
-          onClick={onDismiss}
-        >
+        <button type="button" className="flyer-upsell-banner-dismiss min-h-11" onClick={onDismiss}>
           閉じる
         </button>
       </div>

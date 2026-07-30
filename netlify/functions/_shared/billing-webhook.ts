@@ -168,7 +168,8 @@ function subscriptionIdFromInvoice(invoice: Stripe.Invoice): string | null {
     if (typeof parentSub === "string") {
       return parentSub.length > 0 ? parentSub : null;
     }
-    if (parentSub !== null && parentSub !== undefined && typeof parentSub.id === "string") {
+    // Stripe 型上 string 以外は Subscription オブジェクト
+    if (typeof parentSub !== "string" && typeof parentSub.id === "string") {
       return parentSub.id;
     }
   }
