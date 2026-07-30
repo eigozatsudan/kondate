@@ -444,6 +444,7 @@ vendorしたSupabase公式Docker構成は、次のwrapperで更新します。
 
 | 目的                              | 文書                                                                                                                         |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 本番 CLI 初回デプロイ・更新手順   | [docs/deployment/README.md](docs/deployment/README.md)                                                                       |
 | 本番デプロイ・env 境界・preflight | [docs/deployment/netlify.md](docs/deployment/netlify.md)                                                                     |
 | Supabase 本番                     | [docs/deployment/supabase.md](docs/deployment/supabase.md)                                                                   |
 | リリースゲート                    | [docs/testing/release-checklist.md](docs/testing/release-checklist.md)                                                       |

@@ -203,5 +203,52 @@ services:
       - node_modules:/workspace/node_modules
     entrypoint: ["/usr/local/bin/app-entrypoint.sh", "npx", "playwright", "test"]
 
+  # 本番/ステージング向け Netlify CLI（既定の up には載せない。profile deploy のみ）。
+  # ホストに Node / netlify-cli を入れず、package.json ピン留めの CLI を使う。
+  # 認証は対話 login より NETLIFY_AUTH_TOKEN（Personal Access Token）を推奨。
+  # サイト紐付けは NETLIFY_SITE_ID または作業ツリーの .netlify/（gitignored）。
+  netlify-cli:
+    profiles: ["deploy"]
+    build:
+      context: .
+      target: development
+    user: "0:0"
+    working_dir: /workspace
+    environment:
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
+      # 空のまま run すると認証エラーになる。値はシェルか .env から渡す（リポジトリに書かない）。
+      NETLIFY_AUTH_TOKEN: ${NETLIFY_AUTH_TOKEN:-}
+      NETLIFY_SITE_ID: ${NETLIFY_SITE_ID:-}
+    volumes:
+      - .:/workspace
+      - node_modules:/workspace/node_modules
+    # run の追加引数が末尾に連結される（例: ... netlify-cli status）
+    entrypoint: ["/usr/local/bin/app-entrypoint.sh", "npx", "netlify"]
+    restart: "no"
+
+  # 本番/ステージング向け Supabase CLI（既定の up には載せない。profile deploy のみ）。
+  # 認証は SUPABASE_ACCESS_TOKEN。DB 操作は対話パスワードまたは SUPABASE_DB_PASSWORD /
+  # --db-url（URL を履歴・ログに残さないこと。正本: docs/deployment/supabase.md）。
+  supabase-cli:
+    profiles: ["deploy"]
+    build:
+      context: .
+      target: development
+    user: "0:0"
+    working_dir: /workspace
+    environment:
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
+      SUPABASE_ACCESS_TOKEN: ${SUPABASE_ACCESS_TOKEN:-}
+      # link / db push が対話を避けられる場合のみ。未設定なら CLI が対話入力する。
+      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:-}
+      SUPABASE_PROJECT_ID: ${SUPABASE_PROJECT_ID:-}
+    volumes:
+      - .:/workspace
+      - node_modules:/workspace/node_modules
+    entrypoint: ["/usr/local/bin/app-entrypoint.sh", "npx", "supabase"]
+    restart: "no"
+
 volumes:
   node_modules:

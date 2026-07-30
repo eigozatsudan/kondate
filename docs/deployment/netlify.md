@@ -2,6 +2,9 @@
 
 ブラウザ安全変数とサーバ専用変数の境界、protected release runner、デプロイ後検証の正本。
 
+アカウント作成直後からの **CLI 初回デプロイと更新の手順**は
+[README.md](./README.md)（Compose profile `deploy` の `netlify-cli`）を先に読む。
+
 ## ブラウザ安全変数（ビルドに渡してよい）
 
 | 変数 | 本番値 |

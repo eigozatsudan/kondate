@@ -1,5 +1,8 @@
 # Supabase 本番デプロイ手順
 
+アカウント作成直後からの **CLI 初回デプロイと更新の手順**は
+[README.md](./README.md)（Compose profile `deploy` の `supabase-cli`）を先に読む。
+
 ## QUOTA_IDENTITY_HMAC_KEY のローテーション
 
 `QUOTA_IDENTITY_HMAC_KEY` を回すと、メールから導いた `identity_key` がすべて変わる。

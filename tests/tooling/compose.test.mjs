@@ -255,6 +255,36 @@ test("keeps the one-shot database test out of the default stack", async () => {
   assert.match(dbTest, /^ {4}profiles: \["test"\]$/mu);
 });
 
+test("keeps deploy CLIs on profile deploy and out of the default stack", async () => {
+  // 本番向け Netlify / Supabase CLI。通常 up に混ぜず、package.json ピン留め CLI を使う。
+  const compose = await readFile("compose.yaml", "utf8");
+  const netlifyCli = compose.match(
+    /^ {2}netlify-cli:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu,
+  )?.[1];
+  const supabaseCli = compose.match(
+    /^ {2}supabase-cli:\n([\s\S]*?)(?=^ {2}[\w-]+:|^volumes:)/mu,
+  )?.[1];
+  assert.ok(netlifyCli, "netlify-cli service is missing");
+  assert.ok(supabaseCli, "supabase-cli service is missing");
+  assert.match(netlifyCli, /^ {4}profiles: \["deploy"\]$/mu);
+  assert.match(supabaseCli, /^ {4}profiles: \["deploy"\]$/mu);
+  assert.match(
+    netlifyCli,
+    /^ {4}entrypoint: \["\/usr\/local\/bin\/app-entrypoint\.sh", "npx", "netlify"\]$/mu,
+  );
+  assert.match(
+    supabaseCli,
+    /^ {4}entrypoint: \["\/usr\/local\/bin\/app-entrypoint\.sh", "npx", "supabase"\]$/mu,
+  );
+  assert.match(netlifyCli, /^ {4}user: "0:0"$/mu);
+  assert.match(supabaseCli, /^ {4}user: "0:0"$/mu);
+  assert.match(netlifyCli, /NETLIFY_AUTH_TOKEN: \$\{NETLIFY_AUTH_TOKEN:-\}/u);
+  assert.match(supabaseCli, /SUPABASE_ACCESS_TOKEN: \$\{SUPABASE_ACCESS_TOKEN:-\}/u);
+  // ローカル mock スタックへの depends_on は付けない（本番 API 向けワンショット）
+  assert.doesNotMatch(netlifyCli, /^ {4}depends_on:/mu);
+  assert.doesNotMatch(supabaseCli, /^ {4}depends_on:/mu);
+});
+
 test("keeps host development on loopback while the container can accept published traffic", async () => {
   const [compose, dockerfile, viteConfig] = await Promise.all([
     readFile("compose.yaml", "utf8"),

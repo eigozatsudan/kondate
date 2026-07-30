@@ -27,6 +27,7 @@ Confirm versions on the release runner before Step A; record them only in the **
 
 | Document | Role |
 | --- | --- |
+| [docs/deployment/README.md](../deployment/README.md) | CLI first deploy / update (Compose profile `deploy`) |
 | [docs/deployment/supabase.md](../deployment/supabase.md) | Managed Supabase project, migrations, maintenance role |
 | [docs/deployment/netlify.md](../deployment/netlify.md) | Netlify site, Functions, scheduled maintenance, env |
 | [docs/runbooks/openrouter.md](../runbooks/openrouter.md) | Paid allowlist OpenRouter ops (mock exception exact base only) |
