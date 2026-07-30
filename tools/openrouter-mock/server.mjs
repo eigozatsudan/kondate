@@ -398,7 +398,10 @@ async function handleRequest(request, response) {
   let fixture = ideaServingsValid
     ? structuredClone(scenarios.success)
     : structuredClone(scenarios[key]);
-  if (!dishMode && (key === "success" || ideaServingsValid)) {
+  // success: 手動 UI 向けに提出条件へ合わせる。
+  // duplicate-menu: seed 時の success と同じ整形をしないと material 署名がずれ、
+  // 「重複失敗」E2E が成功遷移してしまう（3f97b69 の applySubmissionMenuShape 導入後）。
+  if (!dishMode && (key === "success" || key === "duplicate-menu" || ideaServingsValid)) {
     // 手動 UI / idea-servings-* : 提出 mealType・ジャンル・主食材・人数に合わせて fixture を整える。
     // 旧 applyIdeaMenuShape だけでは western/卵/昼食などで validate が落ち repair も同型失敗する。
     const ideaServings = ideaServingsValid

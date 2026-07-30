@@ -1684,7 +1684,8 @@ dialog:not([open]) {
 /* Free / plan 未取得: 操作不可を視覚的にも示す（チェックは disabled） */
 .quality-mode-toggle--locked {
   border-color: var(--border);
-  background: #faf9f8;
+  /* 裸の #faf9f8 は design color leak ガードに掛かるためトークン経由にする */
+  background: var(--app-background);
   opacity: 0.92;
 }
 
