@@ -1,4 +1,4 @@
-/* 無料 LP。新色トークンは増やさず既存 surface / card を使う。sticky CTA なし */
+/* 無料 LP。文章を主・画像は補助。新色トークンなし。sticky CTA なし */
 
 .free-landing {
   /* 下ナビ無しの公開 LP なので、締め CTA 後に少し余白を残す */
@@ -15,32 +15,71 @@
 /* 320px でも 2 行で収まる範囲に抑え、広い画面では page-frame 既定と揃える */
 .free-landing h1 {
   font-size: clamp(1.25rem, 4.5vw + 0.55rem, 1.5rem);
+  margin: 0;
 }
 
 .free-landing__lead {
-  font-size: 1.125rem;
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.65;
 }
 
+.free-landing__lead-sub {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: color-mix(in srgb, currentColor 82%, transparent);
+}
+
+/* ヒーローは帯状に抑え、画面の大半を画像で埋めない */
 .free-landing__hero-img {
   display: block;
   width: 100%;
   max-width: 100%;
   height: auto;
-  aspect-ratio: 16 / 9;
+  max-height: 8.5rem;
+  aspect-ratio: 2.5 / 1;
   object-fit: cover;
-  border-radius: 0.875rem;
+  border-radius: 0.75rem;
   background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
 }
 
-.free-landing__card-img {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  aspect-ratio: 1 / 1;
-  object-fit: cover;
-  border-radius: 0.875rem;
-  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
+.free-landing__section-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+/* 使い方ステップ：番号付きで何をするかが一目でわかる */
+.free-landing__flow-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.free-landing__flow-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.free-landing__flow-num {
+  flex: 0 0 1.75rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 40%, #e8ddd4);
+  color: color-mix(in srgb, currentColor 90%, #8b5a3c);
 }
 
 .free-landing__cards {
@@ -49,13 +88,76 @@
   padding: 0;
 }
 
+/* カードは横並び：小さなサムネ + 本文（画像が主役にならない） */
+.free-landing__card {
+  display: grid;
+  grid-template-columns: 4.75rem 1fr;
+  gap: 0.875rem;
+  align-items: start;
+  padding: 0.875rem;
+}
+
+.free-landing__card-img {
+  display: block;
+  width: 4.75rem;
+  height: 4.75rem;
+  max-width: 4.75rem;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 0.625rem;
+  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
+}
+
+.free-landing__card-body {
+  min-width: 0;
+}
+
+.free-landing__card-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.free-landing__card-body > p {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.free-landing__points {
+  margin: 0;
+  padding-left: 1.15rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: color-mix(in srgb, currentColor 88%, transparent);
+}
+
+.free-landing__points li + li {
+  margin-top: 0.35rem;
+}
+
 .free-landing__cta-row {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.875rem;
+  gap: 0.75rem;
 }
 
 .free-landing__login-link {
   text-align: center;
+}
+
+/* ごく狭い幅でもサムネを残しつつ本文を優先 */
+@media (max-width: 340px) {
+  .free-landing__card {
+    grid-template-columns: 3.75rem 1fr;
+    gap: 0.625rem;
+  }
+
+  .free-landing__card-img {
+    width: 3.75rem;
+    height: 3.75rem;
+    max-width: 3.75rem;
+  }
 }
