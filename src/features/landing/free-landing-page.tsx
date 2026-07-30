@@ -107,62 +107,62 @@ export function FreeLandingPage() {
           {FREE_LP_FEATURES_TITLE}
         </h2>
         <ul className="free-landing__cards stack gap-3" aria-label="できること">
-          <li className="free-landing__card card">
-            <img
-              src={familyUrl}
-              alt=""
-              width={160}
-              height={160}
-              className="free-landing__card-img"
-              decoding="async"
-            />
-            <div className="free-landing__card-body stack gap-2">
+          <li className="free-landing__card card stack gap-2">
+            <div className="free-landing__card-header">
+              <img
+                src={familyUrl}
+                alt=""
+                width={160}
+                height={160}
+                className="free-landing__card-img"
+                decoding="async"
+              />
               <h3 className="free-landing__card-title">{FREE_LP_FAMILY_TITLE}</h3>
-              <p>{FREE_LP_FAMILY_BODY}</p>
-              <ul className="free-landing__points">
-                {FREE_LP_FAMILY_POINTS.map((point) => (
-                  <li key={point}>{point}</li>
-                ))}
-              </ul>
             </div>
+            <p>{FREE_LP_FAMILY_BODY}</p>
+            <ul className="free-landing__points">
+              {FREE_LP_FAMILY_POINTS.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
           </li>
-          <li className="free-landing__card card">
-            <img
-              src={menuUrl}
-              alt=""
-              width={160}
-              height={160}
-              className="free-landing__card-img"
-              decoding="async"
-            />
-            <div className="free-landing__card-body stack gap-2">
+          <li className="free-landing__card card stack gap-2">
+            <div className="free-landing__card-header">
+              <img
+                src={menuUrl}
+                alt=""
+                width={160}
+                height={160}
+                className="free-landing__card-img"
+                decoding="async"
+              />
               <h3 className="free-landing__card-title">{FREE_LP_MENU_TITLE}</h3>
-              <p>{FREE_LP_MENU_BODY}</p>
-              <ul className="free-landing__points">
-                {FREE_LP_MENU_POINTS.map((point) => (
-                  <li key={point}>{point}</li>
-                ))}
-              </ul>
             </div>
+            <p>{FREE_LP_MENU_BODY}</p>
+            <ul className="free-landing__points">
+              {FREE_LP_MENU_POINTS.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
           </li>
-          <li className="free-landing__card card">
-            <img
-              src={pantryUrl}
-              alt=""
-              width={160}
-              height={160}
-              className="free-landing__card-img"
-              decoding="async"
-            />
-            <div className="free-landing__card-body stack gap-2">
+          <li className="free-landing__card card stack gap-2">
+            <div className="free-landing__card-header">
+              <img
+                src={pantryUrl}
+                alt=""
+                width={160}
+                height={160}
+                className="free-landing__card-img"
+                decoding="async"
+              />
               <h3 className="free-landing__card-title">{FREE_LP_PANTRY_TITLE}</h3>
-              <p>{FREE_LP_PANTRY_BODY}</p>
-              <ul className="free-landing__points">
-                {FREE_LP_PANTRY_POINTS.map((point) => (
-                  <li key={point}>{point}</li>
-                ))}
-              </ul>
             </div>
+            <p>{FREE_LP_PANTRY_BODY}</p>
+            <ul className="free-landing__points">
+              {FREE_LP_PANTRY_POINTS.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
           </li>
         </ul>
       </section>

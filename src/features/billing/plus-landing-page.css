@@ -65,28 +65,26 @@
   padding: 0;
 }
 
-/* カードは横並び：小さなサムネ + 本文 */
+/* カード：1 行目にサムネ+見出し、本文は全幅（左列の空きを出さない） */
 .plus-landing__card {
-  display: grid;
-  grid-template-columns: 4.75rem 1fr;
-  gap: 0.875rem;
-  align-items: start;
   padding: 0.875rem;
+}
+
+.plus-landing__card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .plus-landing__card-img {
   display: block;
-  width: 4.75rem;
-  height: 4.75rem;
-  max-width: 4.75rem;
+  flex: 0 0 3.5rem;
+  width: 3.5rem;
+  height: 3.5rem;
   aspect-ratio: 1 / 1;
   object-fit: cover;
   border-radius: 0.625rem;
   background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
-}
-
-.plus-landing__card-body {
-  min-width: 0;
 }
 
 .plus-landing__card-title {
@@ -96,7 +94,7 @@
   line-height: 1.4;
 }
 
-.plus-landing__card-body > p {
+.plus-landing__card > p {
   margin: 0;
   font-size: 0.9375rem;
   line-height: 1.6;
@@ -133,15 +131,3 @@
   background: color-mix(in srgb, var(--section-tint, #f6f6f4) 80%, #fff);
 }
 
-@media (max-width: 340px) {
-  .plus-landing__card {
-    grid-template-columns: 3.75rem 1fr;
-    gap: 0.625rem;
-  }
-
-  .plus-landing__card-img {
-    width: 3.75rem;
-    height: 3.75rem;
-    max-width: 3.75rem;
-  }
-}

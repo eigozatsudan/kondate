@@ -296,64 +296,62 @@ export function PlusLandingPage({
               {PLUS_LP_FEATURES_TITLE}
             </h2>
             <ul className="plus-landing__cards stack gap-3" aria-label="Plus のメリット">
-              <li className="plus-landing__card card">
-                <img
-                  src={quotaUrl}
-                  alt=""
-                  width={160}
-                  height={160}
-                  className="plus-landing__card-img"
-                  decoding="async"
-                />
-                <div className="plus-landing__card-body stack gap-2">
+              <li className="plus-landing__card card stack gap-2">
+                <div className="plus-landing__card-header">
+                  <img
+                    src={quotaUrl}
+                    alt=""
+                    width={160}
+                    height={160}
+                    className="plus-landing__card-img"
+                    decoding="async"
+                  />
                   <h3 className="plus-landing__card-title">{PLUS_LP_QUOTA_TITLE}</h3>
-                  <p>{PLUS_LP_QUOTA_BODY}</p>
-                  <ul className="plus-landing__points">
-                    <li>
-                      1 日の献立作成（成功）は最大 {planQuota.plus.successPerDay} 回まで
-                    </li>
-                    <li>無料プラン（最大 {planQuota.free.successPerDay} 回）より余裕があります</li>
-                    <li>作り直しが多い日でも、上限まで試せます</li>
-                  </ul>
                 </div>
+                <p>{PLUS_LP_QUOTA_BODY}</p>
+                <ul className="plus-landing__points">
+                  <li>1 日の献立作成（成功）は最大 {planQuota.plus.successPerDay} 回まで</li>
+                  <li>無料プラン（最大 {planQuota.free.successPerDay} 回）より余裕があります</li>
+                  <li>作り直しが多い日でも、上限まで試せます</li>
+                </ul>
               </li>
-              <li className="plus-landing__card card">
-                <img
-                  src={qualityUrl}
-                  alt=""
-                  width={160}
-                  height={160}
-                  className="plus-landing__card-img"
-                  decoding="async"
-                />
-                <div className="plus-landing__card-body stack gap-2">
+              <li className="plus-landing__card card stack gap-2">
+                <div className="plus-landing__card-header">
+                  <img
+                    src={qualityUrl}
+                    alt=""
+                    width={160}
+                    height={160}
+                    className="plus-landing__card-img"
+                    decoding="async"
+                  />
                   <h3 className="plus-landing__card-title">{PLUS_LP_QUALITY_TITLE}</h3>
-                  <p>{PLUS_LP_QUALITY_BODY}</p>
-                  <ul className="plus-landing__points">
-                    <li>献立の質問の途中で「くわしく作る」を選べます</li>
-                    <li>いつもより丁寧な献立を目指す方向けです</li>
-                    <li>使える回数には上限があります（使い切ると通常の作成になります）</li>
-                  </ul>
                 </div>
+                <p>{PLUS_LP_QUALITY_BODY}</p>
+                <ul className="plus-landing__points">
+                  <li>献立の質問の途中で「くわしく作る」を選べます</li>
+                  <li>いつもより丁寧な献立を目指す方向けです</li>
+                  <li>使える回数には上限があります（使い切ると通常の作成になります）</li>
+                </ul>
               </li>
-              <li className="plus-landing__card card">
-                <img
-                  src={flyerUrl}
-                  alt=""
-                  width={160}
-                  height={160}
-                  className="plus-landing__card-img"
-                  decoding="async"
-                />
-                <div className="plus-landing__card-body stack gap-2">
+              <li className="plus-landing__card card stack gap-2">
+                <div className="plus-landing__card-header">
+                  <img
+                    src={flyerUrl}
+                    alt=""
+                    width={160}
+                    height={160}
+                    className="plus-landing__card-img"
+                    decoding="async"
+                  />
                   <h3 className="plus-landing__card-title">{PLUS_LP_FLYER_TITLE}</h3>
-                  <p>{PLUS_LP_FLYER_BODY}</p>
-                  <ul className="plus-landing__points">
-                    <li>チラシの写真をアプリに送ります</li>
-                    <li>1 週間分の献立づくりの入口になります</li>
-                    <li>{FLYER_PRIVACY_NOTE}</li>
-                  </ul>
                 </div>
+                <p>{PLUS_LP_FLYER_BODY}</p>
+                <ul className="plus-landing__points">
+                  <li>チラシの写真をアプリに送ります</li>
+                  <li>1 週間分の献立づくりの入口になります</li>
+                  <li>{FLYER_PRIVACY_NOTE}</li>
+                </ul>
               </li>
             </ul>
           </section>
