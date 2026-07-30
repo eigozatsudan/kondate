@@ -4,7 +4,7 @@
 |------|-----|
 | 文書 | `docs/superpowers/specs/2026-07-30-ux-diversity-safety-design.md` |
 | 日付 | 2026-07-30 |
-| 状態 | **Approved for planning**（self-review + 敵対的/二次レビュー 0 Critical / 0 Important / 0 Minor。実装計画待ち） |
+| 状態 | **Approved for implementation**（設計 0/0/0。実装計画 `docs/superpowers/plans/2026-07-30-ux-diversity-safety.md`） |
 | 関連 | MVP `2026-07-11-kondate-mvp-design.md`、ウィザード `2026-07-22-guided-planner-optional-household-design.md`（§5.2 対象ステップの並び・表示を本設計 §5 が supersede）、再生成 Plan 4（`excludedDishSignatures` / `duplicate_output`） |
 | ブランチ | `feat/ux-diversity-safety` |
 | 後方互換 | **不要**（本番未デプロイ前提。clean 変更可） |
