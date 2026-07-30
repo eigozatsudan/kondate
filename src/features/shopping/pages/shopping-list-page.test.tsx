@@ -28,6 +28,7 @@ import {
   pendingShoppingCommandTtlMs,
   persistedShoppingCommand,
 } from "../api/shopping-api";
+import { historyPathForShopping } from "../shopping-intent";
 import { z } from "zod";
 
 const LIST_ID = "40000000-0000-4000-8000-000000000001";
@@ -730,8 +731,28 @@ describe("ShoppingListPage warnings and grouping", () => {
     );
     expect(await screen.findByText("買い物リストは空です")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "献立を作る" })).toHaveAttribute("href", "/planner");
-    expect(screen.getByRole("link", { name: "履歴から選ぶ" })).toHaveAttribute("href", "/history");
+    expect(screen.getByRole("link", { name: "履歴から選ぶ" })).toHaveAttribute(
+      "href",
+      historyPathForShopping(),
+    );
     expect(revalidateActiveShoppingList).not.toHaveBeenCalled();
+  });
+
+  it("links safety recovery history to for=shopping", async () => {
+    fetchActiveShoppingList.mockResolvedValue(makeShoppingList([makeItem()]));
+    revalidateActiveShoppingList.mockResolvedValue(
+      unverifiableSafety("元の献立が見つかりませんでした"),
+    );
+    render(
+      <Providers>
+        <ShoppingListPage />
+      </Providers>,
+    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "履歴を開く" })).toHaveAttribute(
+      "href",
+      historyPathForShopping(),
+    );
   });
 
   it("renders a human error when the active list cannot be loaded", async () => {
@@ -780,6 +801,68 @@ describe("ShoppingListPage warnings and grouping", () => {
     );
     // 削除済みは分母・分子どちらにも入れない（2件のうち1件）。
     expect(screen.getByText("2件のうち1件")).toBeInTheDocument();
+  });
+
+  it("hides server-removed by default and shows confirm only after successful remove", async () => {
+    const removedList = makeShoppingList(
+      [
+        makeItem({ id: ITEM_ID, displayName: "にんじん", isRemovedByUser: true }),
+        makeItem({ id: OTHER_ITEM_ID, displayName: "玉ねぎ", isRemovedByUser: true }),
+      ],
+      { version: 2 },
+    );
+    await renderPage(
+      makeShoppingList([
+        makeItem({ id: ITEM_ID, displayName: "にんじん" }),
+        makeItem({ id: OTHER_ITEM_ID, displayName: "玉ねぎ", isRemovedByUser: true }),
+      ]),
+    );
+    expect(screen.queryByText("玉ねぎをリストから外しました")).not.toBeInTheDocument();
+    fetchActiveShoppingList.mockResolvedValue(removedList);
+    mutateShoppingItem.mockResolvedValue({
+      listId: LIST_ID,
+      version: 2,
+      itemId: ITEM_ID,
+      replayed: false,
+    });
+    await user.click(screen.getByRole("button", { name: "削除" }));
+    expect(await screen.findByText("にんじんをリストから外しました")).toBeInTheDocument();
+    expect(screen.queryByText("玉ねぎをリストから外しました")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "外した項目の表示を消します。まちがえて消したときは、その場の「元に戻す」を先に押してください",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "リストをきれいにする" }));
+    expect(screen.queryByText("にんじんをリストから外しました")).not.toBeInTheDocument();
+  });
+
+  it("does not show confirm row when remove mutation fails", async () => {
+    await renderPage(makeShoppingList([makeItem({ displayName: "にんじん" })]));
+    mutateShoppingItem.mockRejectedValueOnce(new Error("network"));
+    await user.click(screen.getByRole("button", { name: "削除" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("にんじんをリストから外しました")).not.toBeInTheDocument();
+  });
+
+  it("offers another menu link when list has items", async () => {
+    await renderPage(makeShoppingList([makeItem()]));
+    expect(screen.getByRole("link", { name: "別の献立から作る" })).toHaveAttribute(
+      "href",
+      historyPathForShopping(),
+    );
+  });
+
+  it("shows empty buying message when all items are server-removed and none pending", async () => {
+    await renderPage(
+      makeShoppingList([makeItem({ displayName: "玉ねぎ", isRemovedByUser: true })]),
+    );
+    expect(screen.getByText("買うものは今ありません")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "＋ 項目を追加" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "別の献立から作る" })).toBeInTheDocument();
+    expect(screen.queryByText("玉ねぎをリストから外しました")).not.toBeInTheDocument();
   });
 
   it("matches edit form field chrome to the add form", async () => {
@@ -904,6 +987,21 @@ describe("ShoppingListPage mutations", () => {
 });
 
 describe("CreateListSheet", () => {
+  it("exposes create-list-title heading as programmatically focusable", () => {
+    render(
+      <CreateListSheet
+        activeList={null}
+        pending={false}
+        safetyBlocked={false}
+        onSubmit={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    const heading = screen.getByRole("heading", { name: "買い物リストを作る" });
+    expect(heading).toHaveAttribute("id", "create-list-title");
+    expect(heading).toHaveAttribute("tabIndex", "-1");
+  });
+
   it("submits the exact active list id and version for an append", async () => {
     const onSubmit = vi.fn();
     render(

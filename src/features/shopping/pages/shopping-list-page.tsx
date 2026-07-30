@@ -11,6 +11,7 @@ import { mutateShoppingItem } from "../api/shopping-api";
 import { categoryLabel } from "../category-label";
 import { ShoppingItemRow } from "../components/shopping-item-row";
 import { useShoppingList, useShoppingSafetyGate } from "../hooks/use-shopping-list";
+import { historyPathForShopping } from "../shopping-intent";
 
 const sections: readonly StoreSection[] = [
   "produce",
@@ -45,6 +46,8 @@ export function ShoppingListPage() {
   const manualFirstField = useRef<HTMLInputElement>(null);
   const editFirstField = useRef<HTMLInputElement>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  // 削除済みは既定非表示。mutation 成功後だけ pendingUndoIds に入れ確認行を出す（設計 L5）。
+  const [pendingUndoIds, setPendingUndoIds] = useState<ReadonlySet<string>>(() => new Set());
   // SP-I7: hooks は early return より前に置く
   const mutationInFlight = useRef(false);
   const [itemMutationPending, setItemMutationPending] = useState(false);
@@ -85,7 +88,7 @@ export function ShoppingListPage() {
           <a className="primary-button min-h-11" href="/planner">
             献立を作る
           </a>
-          <a className="secondary-button min-h-11" href="/history">
+          <a className="secondary-button min-h-11" href={historyPathForShopping()}>
             履歴から選ぶ
           </a>
         </section>
@@ -127,6 +130,22 @@ export function ShoppingListPage() {
           idempotencyKey: crypto.randomUUID(),
         }),
       );
+      // 成功時のみ確認行用 id を更新（失敗後の refetch でも pending を汚さない）
+      if (
+        value.itemId !== null &&
+        (value.operation === "remove" || value.operation === "mark_at_home")
+      ) {
+        const id = value.itemId;
+        setPendingUndoIds((prev) => new Set(prev).add(id));
+      }
+      if (value.itemId !== null && value.operation === "undo") {
+        const id = value.itemId;
+        setPendingUndoIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "list_version_conflict") {
         setMutationError("別の画面で更新されました。最新の内容を読み込みました");
@@ -189,6 +208,17 @@ export function ShoppingListPage() {
   const progressItems = list.items.filter((item) => !item.isRemovedByUser);
   const checkedCount = progressItems.filter((item) => item.isChecked).length;
   const totalCount = progressItems.length;
+  // server-removed は pending に入っているときだけ確認行として出す
+  const displayItems = list.items.filter(
+    (item) => !item.isRemovedByUser || pendingUndoIds.has(item.id),
+  );
+  const showCleanupButton = list.items.some(
+    (item) => item.isRemovedByUser && pendingUndoIds.has(item.id),
+  );
+  const allRemovedNoPending =
+    list.items.length > 0 &&
+    list.items.every((item) => item.isRemovedByUser) &&
+    pendingUndoIds.size === 0;
 
   return (
     <main className="page-frame stack">
@@ -200,6 +230,22 @@ export function ShoppingListPage() {
           </p>
         )}
       </header>
+      {showCleanupButton && (
+        <section className="stack">
+          <button
+            type="button"
+            className="secondary-button min-h-11"
+            onClick={() => {
+              setPendingUndoIds(new Set());
+            }}
+          >
+            リストをきれいにする
+          </button>
+          <p className="type-small">
+            外した項目の表示を消します。まちがえて消したときは、その場の「元に戻す」を先に押してください
+          </p>
+        </section>
+      )}
       {safetyGate.error && (
         <section className="card stack" role="alert">
           <p>{safetyGate.message}</p>
@@ -207,7 +253,7 @@ export function ShoppingListPage() {
           <p>
             元の献立が削除されている場合、このリストは操作できません。履歴から別の献立で新しい買い物リストを作成してください。
           </p>
-          <a className="secondary-button min-h-11" href="/history">
+          <a className="secondary-button min-h-11" href={historyPathForShopping()}>
             履歴を開く
           </a>
         </section>
@@ -238,7 +284,7 @@ export function ShoppingListPage() {
         </section>
       )}
       {sections.map((section) => {
-        const items = list.items.filter((item) => item.storeSection === section);
+        const items = displayItems.filter((item) => item.storeSection === section);
         return items.length === 0 ? null : (
           <section
             key={section}
@@ -287,6 +333,11 @@ export function ShoppingListPage() {
           </section>
         );
       })}
+      {allRemovedNoPending && (
+        <section className="card stack">
+          <p>買うものは今ありません</p>
+        </section>
+      )}
       {editingItem !== null && (
         <form
           className="card stack"
@@ -491,6 +542,9 @@ export function ShoppingListPage() {
           ＋ 項目を追加
         </button>
       )}
+      <a className="secondary-button min-h-11" href={historyPathForShopping()}>
+        別の献立から作る
+      </a>
     </main>
   );
 }

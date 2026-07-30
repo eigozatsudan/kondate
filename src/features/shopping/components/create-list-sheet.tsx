@@ -32,7 +32,10 @@ export function CreateListSheet({
   const effectiveMode = forceNewMode ? "new" : mode;
   return (
     <section className="card stack" aria-labelledby="create-list-title">
-      <h2 id="create-list-title">買い物リストを作る</h2>
+      {/* L14: auto-open 後にプログラム focus するため tabIndex=-1 */}
+      <h2 id="create-list-title" tabIndex={-1}>
+        買い物リストを作る
+      </h2>
       {activeList !== null && (
         <fieldset>
           <legend>作り方</legend>
