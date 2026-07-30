@@ -17,6 +17,8 @@ function sectionForPath(pathname: string): string {
   if (pathname === "/history" || pathname.startsWith("/history/")) return "history";
   if (pathname === "/shopping") return "shopping";
   if (pathname === "/settings") return "settings";
+  // Plus LP は下タブ非掲載の専用 section（settings に流用しない・R-A2）
+  if (pathname === "/plus") return "plus";
   // SHELL-M1: 緊急献立は planner 系統の chrome（生成失敗からの主要導線）
   if (pathname === "/emergency-menus" || pathname.startsWith("/emergency-menus/")) {
     return "planner";
@@ -31,6 +33,7 @@ const sectionTitles: Record<string, string> = {
   history: "履歴",
   shopping: "買い物",
   settings: "設定",
+  plus: "Plus",
   other: "こんだて日和",
 };
 

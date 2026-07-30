@@ -744,6 +744,11 @@
   --section-tint: #f6f6f4;
 }
 
+/* Plus LP: settings と同値。新色を増やさない（R-B3） */
+[data-section="plus"] {
+  --section-tint: #f6f6f4;
+}
+
 .app-section {
   min-height: 100vh;
   background: var(--section-tint);

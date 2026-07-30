@@ -28,6 +28,7 @@ function renderAppShellAt(path: string) {
           { path: "/history", element: <h1>履歴</h1> },
           { path: "/shopping", element: <h1>買い物</h1> },
           { path: "/settings", element: <h1>設定</h1> },
+          { path: "/plus", element: <h1>Plus LP</h1> },
           { path: "/emergency-menus", element: <h1>緊急献立</h1> },
           { path: "/unknown-section", element: <h1>その他</h1> },
         ],
@@ -71,5 +72,12 @@ describe("AppShell section tinting", () => {
   it("falls back to other for routes without a section", () => {
     renderAppShellAt("/unknown-section");
     expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "other");
+  });
+
+  it("marks plus section on /plus (not settings)", () => {
+    renderAppShellAt("/plus");
+    expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "plus");
+    // desktop-section-bar は aria-hidden だが DOM に "Plus" を持つ
+    expect(document.querySelector(".desktop-section-bar")?.textContent).toBe("Plus");
   });
 });

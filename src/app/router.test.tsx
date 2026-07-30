@@ -79,7 +79,7 @@ describe("app router", () => {
 
   // Step 10: RequireCompletedOnboarding は撤去済みで、家族設定は任意になった。
   // 主要な家庭内 route は RequireSession だけを通り、AppShell 配下に直接配置される。
-  it.each(["/planner", "/generation", "/pantry", "/history", "/shopping", "/settings"])(
+  it.each(["/planner", "/generation", "/pantry", "/history", "/shopping", "/settings", "/plus"])(
     "%s は RequireSession 配下にあり、完了済みonboardingガード配下ではない",
     (path) => {
       const router = createAppRouter();

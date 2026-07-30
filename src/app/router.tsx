@@ -98,6 +98,13 @@ export function createAppRouter(): AppRouter {
                 return { Component: HouseholdSettingsPage };
               },
             },
+            {
+              path: "/plus",
+              lazy: async () => {
+                const { PlusLandingPage } = await import("@/features/billing/plus-landing-page");
+                return { Component: PlusLandingPage };
+              },
+            },
           ],
         },
       ],

@@ -1,0 +1,55 @@
+/* Plus LP レイアウト。新色トークンは増やさず既存 surface / card を使う */
+
+.plus-landing {
+  padding-bottom: 5rem;
+}
+
+.plus-landing__back {
+  width: fit-content;
+  margin-bottom: 0.75rem;
+}
+
+.plus-landing__cancel {
+  margin-bottom: 0.75rem;
+}
+
+.plus-landing__lead {
+  font-size: 1.125rem;
+}
+
+.plus-landing__media {
+  /* Task 6 で webp を載せるまでの aspect 枠。CLS 抑制 */
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
+}
+
+.plus-landing__card .plus-landing__media {
+  aspect-ratio: 4 / 3;
+}
+
+.plus-landing__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.plus-landing__compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.plus-landing__compare th,
+.plus-landing__compare td {
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.plus-landing__compare thead th {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 80%, #fff);
+}
