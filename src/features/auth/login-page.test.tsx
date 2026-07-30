@@ -3,12 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import type { AuthGateway } from "./auth-gateway";
-import {
-  LOGIN_EMAIL_HINT,
-  LOGIN_PAGE_LEAD,
-  LOGIN_PAGE_NOTE,
-  LoginPage,
-} from "./login-page";
+import { LOGIN_EMAIL_HINT, LOGIN_PAGE_LEAD, LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
 
 vi.mock("./use-auth", () => ({
   useAuth: () => ({ status: "unauthenticated", session: null }),

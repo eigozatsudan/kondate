@@ -395,7 +395,8 @@ export function PlusLandingPage({
           <section className="stack gap-3" aria-label="お支払い">
             <h2 className="plus-landing__section-title">お支払いについて</h2>
             <p className="type-small">
-              月額または年額を選び、「Plus をはじめる」を押すとカード入力の画面へ移ります。解約や領収の確認は、加入後に設定から行えます。
+              月額または年額を選び、「Plus
+              をはじめる」を押すとカード入力の画面へ移ります。解約や領収の確認は、加入後に設定から行えます。
             </p>
             {!view.checkoutEnabled ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
             <CheckoutIntervalForm

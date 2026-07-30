@@ -837,7 +837,10 @@ function HouseholdDetailBody({
 
       {actionsEnabled && revalidation.result !== undefined && (
         <>
-          <div className="menu-result-gate-status sticky top-0 z-10 bg-canvas/95 py-2" role="status">
+          <div
+            className="menu-result-gate-status sticky top-0 z-10 bg-canvas/95 py-2"
+            role="status"
+          >
             <p className="m-0">{statusCopy}</p>
             {changedDetailLines.length > 0 && (
               <ul className="mt-1 list-disc pl-5 type-small">

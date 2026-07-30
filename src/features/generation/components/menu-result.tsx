@@ -360,11 +360,7 @@ export function MenuResult({
       ) : null}
       {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
       {result.preferenceGaps.length > 0 && (
-        <section
-          className="menu-result-soft-gap stack"
-          role="status"
-          aria-label="希望条件の注意"
-        >
+        <section className="menu-result-soft-gap stack" role="status" aria-label="希望条件の注意">
           <strong className="text-sm">苦手の希望について</strong>
           <ul className="list-disc pl-5 text-sm">
             {result.preferenceGaps.map((gap) => (

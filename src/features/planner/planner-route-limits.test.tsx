@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 
 const mocks = vi.hoisted(() => ({
   eligibleMemberIds: Array.from(
@@ -88,9 +89,12 @@ vi.mock("./use-draft-autosave", () => ({
 import { PlannerPage } from "./planner-route";
 
 it("新規下書きは対象を自動埋めせず、household 選択後も上限20人まで手選択する", async () => {
+  // MealStep が useAppToast を使うため Provider 必須
   render(
     <MemoryRouter>
-      <PlannerPage />
+      <AppToastProvider>
+        <PlannerPage />
+      </AppToastProvider>
     </MemoryRouter>,
   );
 

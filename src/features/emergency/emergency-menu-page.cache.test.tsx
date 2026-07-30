@@ -14,6 +14,7 @@ import {
   invalidateHouseholdSafetyDependents,
 } from "@/features/household/household-queries";
 import { plannerKeys } from "@/features/planner/planner-api";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 
 const getPlannerDraftMock = vi.hoisted(() => vi.fn());
 const listHouseholdMembersMock = vi.hoisted(() => vi.fn());
@@ -401,44 +402,50 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
     setProgress: vi.fn().mockResolvedValue({}),
   };
   const onDone = vi.fn();
+  // HouseholdOnboardingForm は useAppToast を使う。setItem 失敗は後続テストへ漏れないよう finally で戻す。
   const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("storage unavailable");
   });
-  const onboarding = render(
-    <QueryClientProvider client={queryClient}>
-      <HouseholdOnboardingForm
-        userId={eligibleMember.user_id}
-        api={onboardingApi}
-        onDone={onDone}
-      />
-    </QueryClientProvider>,
-  );
-  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
-  await waitFor(() => {
-    expect(onDone).toHaveBeenCalledOnce();
-  });
-  expect(setItem).toHaveBeenCalled();
-  onboarding.unmount();
-
-  render(
-    <MemoryRouter>
+  try {
+    const onboarding = render(
       <QueryClientProvider client={queryClient}>
-        <EmergencyMenuPage />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
-  await waitFor(() => {
-    expect(listHouseholdMembersMock).toHaveBeenCalledTimes(2);
-  });
-  await waitFor(() => {
-    expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targetMode: "household",
-        targetMemberIds: [eligibleMember.id],
-      }),
+        <AppToastProvider>
+          <HouseholdOnboardingForm
+            userId={eligibleMember.user_id}
+            api={onboardingApi}
+            onDone={onDone}
+          />
+        </AppToastProvider>
+      </QueryClientProvider>,
     );
-  });
-  setItem.mockRestore();
+    await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+    await waitFor(() => {
+      expect(onDone).toHaveBeenCalledOnce();
+    });
+    expect(setItem).toHaveBeenCalled();
+    onboarding.unmount();
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <EmergencyMenuPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(listHouseholdMembersMock).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(getEmergencyMenusMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+        }),
+      );
+    });
+  } finally {
+    setItem.mockRestore();
+  }
 });
 
 it("既存revisionの更新に失敗しても同一家族の安全変更後に候補を再取得する", async () => {
@@ -465,26 +472,29 @@ it("既存revisionの更新に失敗しても同一家族の安全変更後に�
   const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("storage unavailable");
   });
-  await act(async () => {
-    await invalidateHouseholdSafetyDependents(queryClient, userId);
-  });
+  try {
+    await act(async () => {
+      await invalidateHouseholdSafetyDependents(queryClient, userId);
+    });
 
-  await waitFor(() => {
-    expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(1);
-  });
-  expect(getEmergencyMenusMock).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      targetMode: "household",
-      targetMemberIds: [eligibleMember.id],
-    }),
-  );
-  expect(queryClient.getQueryState(inactiveCandidateKey)?.isInvalidated).toBe(true);
-  expect(
-    queryClient
-      .getQueryCache()
-      .findAll({ queryKey: ["emergency-menus"] })
-      .some((query) => query.queryKey[query.queryKey.length - 1] === "existing-revision:event:1"),
-  ).toBe(true);
-  expect(localStorage.getItem(householdSafetyRevisionStorageKey)).toBe("existing-revision");
-  setItem.mockRestore();
+    await waitFor(() => {
+      expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(1);
+    });
+    expect(getEmergencyMenusMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        targetMode: "household",
+        targetMemberIds: [eligibleMember.id],
+      }),
+    );
+    expect(queryClient.getQueryState(inactiveCandidateKey)?.isInvalidated).toBe(true);
+    expect(
+      queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["emergency-menus"] })
+        .some((query) => query.queryKey[query.queryKey.length - 1] === "existing-revision:event:1"),
+    ).toBe(true);
+    expect(localStorage.getItem(householdSafetyRevisionStorageKey)).toBe("existing-revision");
+  } finally {
+    setItem.mockRestore();
+  }
 });

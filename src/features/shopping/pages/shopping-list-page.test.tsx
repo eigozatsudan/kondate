@@ -234,9 +234,9 @@ function Providers({ children }: { children: ReactNode }) {
 /** ゲートが ready になるまで待つ。ready 前は全ての書き込み操作が disabled のため。 */
 async function waitForGateReady(): Promise<void> {
   await waitFor(() => {
-    // 読み込み中は「再確認しています」も出ないため、両方の消滅を待たないと
-    // ゲートが開く前に操作してしまう。
-    expect(screen.queryByText("買い物リストを読み込んでいます")).not.toBeInTheDocument();
+    // UI 文言は「…」付き。exact 文字列だと読み込み中でも null になり、フル suite
+    // 負荷下で gate ready 前に操作してフレークする。
+    expect(screen.queryByText("買い物リストを読み込んでいます…")).not.toBeInTheDocument();
     expect(screen.queryByText("現在の家族設定で再確認しています")).not.toBeInTheDocument();
   });
 }

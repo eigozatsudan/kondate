@@ -23,9 +23,7 @@ export function RootGatePage() {
 
   if (auth.status === "unauthenticated" || auth.session === null) {
     return (
-      <Suspense
-        fallback={<main className="page-frame">{SESSION_CHECK_COPY}</main>}
-      >
+      <Suspense fallback={<main className="page-frame">{SESSION_CHECK_COPY}</main>}>
         <FreeLandingPage />
       </Suspense>
     );
