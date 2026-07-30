@@ -45,6 +45,17 @@ describe("requireUser", () => {
     });
     expect(getUserMock).not.toHaveBeenCalled();
   });
+
+  it("returns 401 when getUser yields null user without error", async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: null,
+    });
+    await expect(requireUser(bearerRequest())).rejects.toMatchObject({
+      status: 401,
+      code: "auth_required",
+    });
+  });
 });
 
 describe("requireUserWithEmail", () => {

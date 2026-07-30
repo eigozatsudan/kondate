@@ -22,11 +22,17 @@ async function authenticateBearer(
   if (error !== null) {
     throw new HttpError(401, "auth_required", "ログインが必要です");
   }
+  // SDK 型は error===null で user 非 null だが、実ランタイムの null user を 401 に閉じる
+  // （TypeError→500 の形状差を作らない）
+  const user = data.user as { id: string; email?: string | null } | null | undefined;
+  if (user == null || typeof user.id !== "string" || user.id === "") {
+    throw new HttpError(401, "auth_required", "ログインが必要です");
+  }
   // identities[].identity_data.email は使わない（user.email のみが正）
   return {
-    userId: data.user.id,
+    userId: user.id,
     accessToken,
-    email: data.user.email,
+    email: user.email,
   };
 }
 
