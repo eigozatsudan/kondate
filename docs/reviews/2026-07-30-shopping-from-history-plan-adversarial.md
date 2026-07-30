@@ -5,7 +5,7 @@
 | 対象 | `docs/superpowers/plans/2026-07-30-shopping-from-history-and-cleanup.md`（commit `5c9d5b2` 時点） |
 | 照合 | 設計 `docs/superpowers/specs/2026-07-30-shopping-from-history-and-cleanup-design.md`（R2+L15）、`menu-result-page.tsx` / `history-detail-page.tsx` / `shopping-list-page.tsx` / `history-page.tsx` / `shopping-api.ts` |
 | 日付 | 2026-07-30 |
-| 判定 | **Needs revision** — Critical を直してから実装開始 |
+| 判定 | **Needs revision**（初版）→ 計画 r1 で反映済み（`2026-07-30-shopping-from-history-and-cleanup.md` Plan revision summary） |
 
 ---
 
