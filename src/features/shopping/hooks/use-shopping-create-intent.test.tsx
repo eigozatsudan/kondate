@@ -58,7 +58,7 @@ describe("useShoppingCreateIntent", () => {
     expect(screen.getByTestId("probe")).toHaveAttribute("data-active", "1");
   });
 
-  it("schedules clear only on true unmount", async () => {
+  it("schedules clear only on true unmount", () => {
     beginShoppingIntentCycle(MENU);
     markShoppingSheetAutoOpened(MENU);
     mountAt(`/menus/${MENU}`);

@@ -995,7 +995,7 @@ function HouseholdResultBody({
 
       {shoppingSheet === "create" && menuId !== null && (
         <CreateListSheet
-          key={`${activeList?.id ?? "none"}-${activeList?.version ?? 0}`}
+          key={`${activeList?.id ?? "none"}-${String(activeList?.version ?? 0)}`}
           activeList={
             activeList === null
               ? null
