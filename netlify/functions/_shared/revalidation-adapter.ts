@@ -171,6 +171,18 @@ function scanPantryNameSnapshotIssues(
   for (const [index, usage] of menu.pantryUsage.entries()) {
     if (normalizeFoodText(usage.pantryItemName) === "") continue;
     for (const member of safety.members) {
+      const memberLabel = memberDisplayLabel(stored, member.anonymousRef);
+      const pantryName = usage.pantryItemName.trim();
+      const pushPantryAllergenIssue = (allergenDisplayName: string) => {
+        issues.push({
+          code: "direct_allergen_match",
+          path: `pantryUsage.${String(index)}.pantryItemName`,
+          message:
+            pantryName === ""
+              ? `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`
+              : `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が「${pantryName}」に残っています`,
+        });
+      };
       for (const allergenId of member.allergenIds) {
         const aliases = safety.allergenDictionary.aliases.filter(
           (alias) => alias.allergenId === allergenId,
@@ -182,18 +194,17 @@ function scanPantryNameSnapshotIssues(
           const catalogEntry = safety.allergenDictionary.catalog.find(
             (entry) => entry.id === allergenId,
           );
-          const allergenDisplayName = catalogEntry?.displayName ?? "登録アレルギー";
-          const memberLabel = memberDisplayLabel(stored, member.anonymousRef);
-          const pantryName = usage.pantryItemName.trim();
-          issues.push({
-            code: "direct_allergen_match",
-            path: `pantryUsage.${String(index)}.pantryItemName`,
-            message:
-              pantryName === ""
-                ? `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が献立に残っています`
-                : `「${memberLabel}」さんの登録アレルギー「${allergenDisplayName}」が「${pantryName}」に残っています`,
-          });
+          pushPantryAllergenIssue(catalogEntry?.displayName ?? "登録アレルギー");
         }
+      }
+      // カタログ外の確認済みカスタムも在庫名 residual に hard match する（evaluateAllergens と同型）
+      for (const custom of member.customAllergies) {
+        const needles = [custom.name, ...custom.aliases].filter((value) => value.trim() !== "");
+        if (needles.length === 0) continue;
+        if (!needles.some((needle) => foodTextContainsAlias(usage.pantryItemName, needle))) {
+          continue;
+        }
+        pushPantryAllergenIssue(custom.name);
       }
     }
   }
@@ -258,22 +269,22 @@ async function loadCurrentMemberPreferences(
       dislikes: [],
     });
   }
-  // 嫌いなもの（dislikes）も好み drift として比較する
+  // 嫌いなもの（dislikes）も好み drift として比較する（列名は ingredient_name が正）
   const { data: dislikeRows, error: dislikeError } = await ownerClient
     .from("member_dislikes")
-    .select("member_id,name")
+    .select("member_id,ingredient_name")
     .in("member_id", [...memberIds]);
   if (dislikeError === null && Array.isArray(dislikeRows)) {
     for (const row of dislikeRows) {
-      const record = row as { member_id?: unknown; name?: unknown };
-      if (typeof record.member_id !== "string" || typeof record.name !== "string") {
+      const record = row as { member_id?: unknown; ingredient_name?: unknown };
+      if (typeof record.member_id !== "string" || typeof record.ingredient_name !== "string") {
         continue;
       }
       const current = map.get(record.member_id);
       if (current === undefined) continue;
       map.set(record.member_id, {
         ...current,
-        dislikes: [...current.dislikes, record.name],
+        dislikes: [...current.dislikes, record.ingredient_name],
       });
     }
   }
