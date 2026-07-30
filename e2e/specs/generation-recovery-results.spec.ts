@@ -825,7 +825,9 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     await page.goto("/settings");
     await expect(page).toHaveURL((url) => url.pathname === "/settings");
     await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible();
-    await expect(page.getByText("家族を追加してください")).toBeVisible();
+    // 0 人 empty: 見出し「家族を追加する」と CTA「家族を追加」（旧文言「家族を追加してください」は廃止）
+    await expect(page.getByRole("heading", { name: "家族を追加する" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "家族を追加" })).toBeVisible();
 
     // /emergency-menusは下書きなしとidea下書きの両方を検証する。
     // まず下書きなし（このユーザーはまだplanner下書きを保存していない）。
