@@ -11,8 +11,11 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/settings");
   await page.getByRole("button", { name: "家族を追加" }).click();
+  // incomplete でも完了は押下可。field alert + validation toast(status) + focus（§12.6）
+  await expect(page.getByRole("button", { name: "この家族の設定を完了" })).toBeEnabled();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
   await expect(page.getByRole("alert")).toContainText("年齢のめやすを選んでください");
+  await expect(page.getByRole("status")).toContainText("年齢のめやすを選んでください");
   await expect(page.getByLabel("年齢のめやす")).toBeFocused();
   await page.getByRole("textbox", { name: "呼び名" }).fill("子ども");
   await page.getByLabel("年齢のめやす").selectOption("age_3_5");

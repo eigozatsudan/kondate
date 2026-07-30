@@ -468,14 +468,17 @@ describe("wizard step accessibility", () => {
     },
   );
 
-  it("audience with zero members disables family mode, keeps idea selectable, and links to registration", async () => {
+  it("audience with zero members: idea radio first, family disabled, idea selectable, registration link", async () => {
     const { container } = renderWizard("audience", emptyDraft, []);
     await expectAccessible(container);
 
-    const family = screen.getByRole("radio", { name: "家族に合わせて作る" });
-    const idea = screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" });
-    expect(family).toBeDisabled();
-    expect(idea).not.toBeDisabled();
+    // 設計 L9: DOM 順は人数だけ → 家族に合わせて
+    const radios = screen.getAllByRole("radio");
+    expect(radios).toHaveLength(2);
+    expect(radios[0]).toHaveAccessibleName(/人数だけ指定してアイデアを見る/u);
+    expect(radios[1]).toHaveAccessibleName(/家族に合わせて作る/u);
+    expect(radios[0]).not.toBeDisabled();
+    expect(radios[1]).toBeDisabled();
     expect(screen.getByRole("link", { name: "家族を追加する" })).toBeVisible();
   });
 

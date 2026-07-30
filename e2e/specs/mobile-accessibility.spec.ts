@@ -119,6 +119,10 @@ const answerSharedWizardSteps = async (page: Page) => {
 
 const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") => {
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
+  // 設計 L9: DOM 順は人数だけ → 家族に合わせて
+  const audienceRadios = page.getByRole("radio");
+  await expect(audienceRadios.nth(0)).toHaveAccessibleName(/人数だけ指定してアイデアを見る/u);
+  await expect(audienceRadios.nth(1)).toHaveAccessibleName(/家族に合わせて作る/u);
   if (mode === "idea") {
     const ideaSave = waitDraftSave(page);
     await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
