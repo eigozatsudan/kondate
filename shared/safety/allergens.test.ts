@@ -70,6 +70,17 @@ describe("foodTextContainsAlias", () => {
   });
 
   it.each([
+    ["フランスパンを添える", "フランスパン"],
+    ["焼きそば", "焼きそば"],
+    ["中華麺の炒め", "中華麺"],
+    ["天ぷら粉で揚げる", "天ぷら粉"],
+    ["餃子の皮", "餃子の皮"],
+    ["ホットケーキミックス", "ホットケーキミックス"],
+  ])("S-I1 detects wheat product %s for alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
+  it.each([
     ["味噌汁", "味噌"],
     ["納豆ごはん", "納豆"],
     ["とんかつ用のパン粉", "パン粉"],

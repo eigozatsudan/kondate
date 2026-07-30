@@ -119,6 +119,19 @@ const additionalAliasValues: readonly (readonly [
   ["milk", "ヨーグルト", "derived", false],
   ["milk", "生クリーム", "derived", false],
   ["peanut", "ピーナツ", "direct", false],
+  // S-I1: 高頻度小麦製品（フライパン等との衝突を避けた具体形のみ）
+  ["wheat", "フランスパン", "derived", false],
+  ["wheat", "ロールパン", "derived", false],
+  ["wheat", "コッペパン", "derived", false],
+  ["wheat", "ベーグル", "derived", false],
+  ["wheat", "クロワッサン", "derived", false],
+  ["wheat", "ナン", "derived", false],
+  ["wheat", "中華麺", "derived", false],
+  ["wheat", "焼きそば", "derived", false],
+  ["wheat", "天ぷら粉", "derived", false],
+  ["wheat", "ホットケーキミックス", "derived", false],
+  ["wheat", "お好み焼き粉", "derived", false],
+  ["wheat", "餃子の皮", "derived", false],
 ];
 
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [
