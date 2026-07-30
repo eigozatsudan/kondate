@@ -52,7 +52,7 @@ it("shows the overall timeline before persistent dish tabs", () => {
   const timeline = screen.getByRole("heading", { name: "全体の段取り" });
   const tabs = screen.getByRole("tablist", { name: "料理" });
   expect(timeline.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  // household 既定では本文先頭に AI 作成バナーを出す
+  // household 既定では成功見出しの下に AI 作成バナーを出す（密着回避のため見出し優先）
   expect(container).toHaveTextContent("AIが作成した献立です");
   // モデル未記録時はメタ行を出さない
   expect(container).not.toHaveTextContent("作成モデル");

@@ -829,7 +829,7 @@ function HouseholdResultBody({
 
       {actionsEnabled && revalidation.result !== undefined && (
         <>
-          <p className="mt-4" role="status">
+          <p className="menu-result-gate-status" role="status">
             {statusCopy}
           </p>
           {actions === undefined ? (

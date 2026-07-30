@@ -1625,12 +1625,100 @@ dialog:not([open]) {
  * 調理タイムライン（縮退版）。比例配分はせず、時間の強調・料理ラベル・
  * 並行テキストで段取りを伝える。dish 色は 5 枠まで（契約 dishes max 5）。
  */
+/*
+ * 献立結果本文の縦リズム。
+ * 注意枠と成功見出しが密着しないよう、ヘッダ→注意→カードの順で gap を固定する。
+ */
+.menu-result {
+  display: grid;
+  gap: 20px;
+  padding-block: 8px 24px;
+}
+
+.menu-result-header {
+  display: grid;
+  gap: 8px;
+}
+
+.menu-result-title {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-display);
+  font-weight: 700;
+  line-height: var(--leading-display);
+}
+
+.menu-result-summary {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.menu-result-model {
+  margin: 0;
+  color: var(--muted);
+}
+
+.menu-result-ai-notice,
+.menu-result-soft-gap,
+.menu-result-alert {
+  margin: 0;
+  border: 1px solid var(--primary);
+  border-radius: 14px;
+  background: var(--notice);
+  padding: 14px 16px;
+  font-size: var(--text-small);
+  line-height: 1.6;
+}
+
+.menu-result-soft-gap {
+  font-size: inherit;
+}
+
+.menu-result-card {
+  margin: 0;
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 18px 16px;
+  box-shadow:
+    0 1px 3px rgb(15 23 42 / 6%),
+    0 8px 20px rgb(15 23 42 / 5%);
+}
+
+.menu-result-section-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.menu-result-dish-description {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.menu-result-tabs {
+  margin: 0;
+  padding-block: 10px 6px;
+  gap: 10px;
+}
+
+/* ページ枠の再検証ステータス（成功後の1行）。主見出しと競合しないよう薄く・余白多め。 */
+.menu-result-gate-status {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: 1.5;
+}
+
 .cook-timeline {
   display: grid;
-  margin: 12px 0 0;
+  margin: 14px 0 0;
   padding: 0;
   list-style: none;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
   max-width: 100%;
 }

@@ -333,34 +333,35 @@ export function MenuResult({
   // 子の min-content がはみ出しやすくなるため付けない。
   // idea の AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、
   // 本文側では household だけ AI 作成バナーを出す（二重表示防止）。
+  // 見出しを先に置き、注意枠が成功タイトルに密着しないよう縦リズムを分ける。
   return (
-    <div className="mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words pb-4 pt-2 text-ink [overflow-wrap:anywhere]">
+    <div className="menu-result mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
+      <header className="menu-result-header">
+        <h1 className="menu-result-title break-words">献立ができました</h1>
+        <p className="menu-result-summary break-words">
+          食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
+        </p>
+        {/*
+          生成モデルは透明性のための薄いメタ情報。主見出しの下に小さく置き、
+          台帳欠落時は出さない（推測ラベルを捏造しない）。
+        */}
+        {result.generationModelId !== null &&
+        formatGenerationModelLabel(result.generationModelId) !== "" ? (
+          <p className="menu-result-model type-small break-words">
+            作成モデル: {formatGenerationModelLabel(result.generationModelId)}
+          </p>
+        ) : null}
+      </header>
       {mode !== "idea" ? (
-        <p className="rounded-xl border border-amber-700 bg-amber-50 p-3 text-sm break-words">
+        <p className="menu-result-ai-notice break-words">
           <strong>AIが作成した献立です。</strong>{" "}
           内容、加熱状態、家庭内での混入を調理前に確認してください。
-        </p>
-      ) : null}
-      <h1 className={`${mode === "idea" ? "mt-0" : "mt-5"} text-2xl font-bold break-words`}>
-        献立ができました
-      </h1>
-      <p className="mt-2 text-lg font-semibold break-words">
-        食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
-      </p>
-      {/*
-        生成モデルは透明性のための薄いメタ情報。主見出しの下に小さく置き、
-        台帳欠落時は出さない（推測ラベルを捏造しない）。
-      */}
-      {result.generationModelId !== null &&
-      formatGenerationModelLabel(result.generationModelId) !== "" ? (
-        <p className="mt-1 text-xs text-ink-muted break-words">
-          作成モデル: {formatGenerationModelLabel(result.generationModelId)}
         </p>
       ) : null}
       {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
       {result.preferenceGaps.length > 0 && (
         <section
-          className="mt-4 rounded-xl border border-amber-700 bg-amber-50 p-3 stack"
+          className="menu-result-soft-gap stack"
           role="status"
           aria-label="希望条件の注意"
         >
@@ -377,16 +378,16 @@ export function MenuResult({
       </div>
       {/* 在庫更新ダイアログを開いている間は dialog 内だけに出し、二重表示しない */}
       {conflictMessage !== null && !postCookOpen && (
-        <p role="alert" className="mt-3 rounded-xl border border-amber-700 bg-amber-50 p-3">
+        <p role="alert" className="menu-result-alert break-words">
           {conflictMessage}
         </p>
       )}
 
       <section
         aria-labelledby="timeline-heading"
-        className="cook-timeline-panel mt-6 min-w-0 max-w-full rounded-2xl bg-white p-4 shadow-sm"
+        className="cook-timeline-panel menu-result-card min-w-0 max-w-full"
       >
-        <h2 id="timeline-heading" className="text-xl font-bold">
+        <h2 id="timeline-heading" className="menu-result-section-title">
           全体の段取り
         </h2>
         {/*
@@ -458,7 +459,7 @@ export function MenuResult({
       <div
         role="tablist"
         aria-label="料理"
-        className="sticky top-0 z-10 mt-6 flex min-w-0 max-w-full gap-2 overflow-x-auto bg-canvas py-2"
+        className="menu-result-tabs sticky top-0 z-10 flex min-w-0 max-w-full gap-2 overflow-x-auto bg-canvas"
       >
         {menu.dishes.map((dish) => (
           <button
@@ -487,10 +488,12 @@ export function MenuResult({
         id={`panel-${selected.id}`}
         role="tabpanel"
         aria-labelledby={`tab-${selected.id}`}
-        className="min-w-0 max-w-full rounded-2xl bg-white p-4 shadow-sm"
+        className="menu-result-card min-w-0 max-w-full"
       >
-        <h2 className="text-xl font-bold break-words">{selected.name}</h2>
-        <p className="break-words [overflow-wrap:anywhere]">{selected.description}</p>
+        <h2 className="menu-result-section-title break-words">{selected.name}</h2>
+        <p className="menu-result-dish-description break-words [overflow-wrap:anywhere]">
+          {selected.description}
+        </p>
         {onRegenerateSelectedDish !== undefined && (
           <div className="mt-4">
             {/*
@@ -615,8 +618,8 @@ export function MenuResult({
         )}
       </div>
 
-      <section aria-labelledby="pantry-heading" className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
-        <h2 id="pantry-heading" className="text-xl font-bold">
+      <section aria-labelledby="pantry-heading" className="menu-result-card">
+        <h2 id="pantry-heading" className="menu-result-section-title">
           冷蔵庫食材の使い方
         </h2>
         {menu.pantryUsage.length === 0 ? (
