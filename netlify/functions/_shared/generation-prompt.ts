@@ -155,6 +155,8 @@ export const GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA =
   "adaptationにはportionTextと、必要ならadditionalCutting/additionalHeating/" +
   "additionalSeasoning/servingCheck/safetyActionsを書き、" +
   "当該メンバーのportionSize・spiceLevel・eatingEase・requiredSafetyConstraintsを反映する。" +
+  "量smallは少なめ・小さめ・小盛り・少量・半分など、largeは多め・大盛り・たっぷり・増量など、" +
+  "辛さnoneは辛みなし・香辛料なし・辛くしないなど、mildは薄味・あっさり・控えめ・甘口などをportionText等に含める。" +
   "labelConfirmationsは、登録アレルゲンや加工品の確認が必要な材料があるときだけ付ける。" +
   "preferences.servingsは家族人数の目安であり、adaptationsを省略する理由にしない。";
 

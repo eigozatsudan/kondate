@@ -504,6 +504,16 @@ it.each([
   ["small", "mild", "小盛で、あっさり薄味にする"],
   ["large", "none", "大盛に増量し、辛いものを使わない"],
   ["large", "mild", "しっかりめの量で、塩分控えめの甘口にする"],
+  // Luna 実レス: 小さめは量 small の自然な言い回し（UI の食べやすさ語と重なるが許容する）
+  ["small", "regular", "主菜は小さめの1切れを目安に取り分ける。"],
+  ["small", "regular", "身を小さめにほぐす。"],
+  ["small", "none", "少し少なめに盛り、唐辛子を使わない"],
+  ["small", "none", "お子様盛りで、辛くせず味付けする"],
+  ["small", "mild", "半分の量にし、まろやかな薄味に仕上げる"],
+  ["large", "none", "たっぷりめに盛り、ピリ辛なしにする"],
+  ["large", "mild", "山盛りにし、やさしい味で塩控えめにする"],
+  ["small", "none", "量は小さめで、香辛料抜きにする"],
+  ["large", "none", "量を増やし、辛味を加えない"],
 ] as const)(
   "accepts expanded portion/spice wording hard matches: %s / %s / %s",
   (portionSize, spiceLevel, wording) => {
