@@ -248,19 +248,24 @@ export function startAuthContinuationRecovery(input: {
         .filter((flow) => isAuthContinuationCallbackOwned(flow.id, input.storage, now, ttlMs))
         .map((flow) => flow.id),
     );
+    // AUTH-R2: callback-owner 中は target lease がある間だけ排他。
+    // lease が全滅（callback タブ死亡・TTL 切れ）したら orphan として global recovery が claim できる。
     const claimableFlowIds = unexpiredFlows
       .filter((flow) => {
         if (!callbackOwnedFlowIds.has(flow.id)) return true;
         const leases = activeTargetLeases.get(flow.id) ?? [];
-        return leases.length > 0 && leases.every((lease) => !lease.pending);
+        if (leases.length === 0) return true;
+        return leases.every((lease) => !lease.pending);
       })
       .map((flow) => flow.id);
     const flowId = selectNextFlowId(claimableFlowIds, input.storage);
     if (flowId === undefined || isStopped()) return;
     const isCallbackOwned = callbackOwnedFlowIds.has(flowId);
+    const ownerLeases = activeTargetLeases.get(flowId) ?? [];
+    const isOrphanCallbackOwned = isCallbackOwned && ownerLeases.length === 0;
     const canHandleFlow =
       input.targetFlowId === undefined
-        ? !isCallbackOwned
+        ? !isCallbackOwned || isOrphanCallbackOwned
         : isCallbackOwned && flowId === input.targetFlowId;
     // 担当外flowを選んだinstanceは共有slotを消費せず、同じ周期の担当instanceへ譲る。
     if (!canHandleFlow) return;

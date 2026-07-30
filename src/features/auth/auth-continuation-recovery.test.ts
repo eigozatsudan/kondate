@@ -217,6 +217,16 @@ describe("auth continuation recovery", () => {
       }),
     );
     storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, startedAt);
+    // ライブな callback recovery lease がある間は global が claim しない（AUTH-R2 排他）
+    storage.setItem(
+      `kondate.auth.supabase.claim-poll-target-lease.${flowId}.liveinstance01`,
+      JSON.stringify({
+        flowId,
+        instanceId: "liveinstance01",
+        refreshedAt: Date.now(),
+        pending: false,
+      }),
+    );
     const gateway = { resumeFlow: vi.fn() };
 
     const stop = startAuthContinuationRecovery({
@@ -228,6 +238,44 @@ describe("auth continuation recovery", () => {
 
     await flushPromises();
     expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("AUTH-R2: global recovery claims orphan callback-owned flow when target leases expired", async () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const startedAt = new Date().toISOString();
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt,
+      }),
+    );
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, startedAt);
+    // lease 無し = callback タブ死亡。global が orphan を claim できる。
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/onboarding",
+      }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+
+    await flushPromises();
+    expect(gateway.resumeFlow).toHaveBeenCalledWith(flowId);
     stop();
   });
 
@@ -886,6 +934,16 @@ describe("auth continuation recovery", () => {
     storage.setItem(
       `kondate.auth.supabase.callback-owner.${ownerFlowId}`,
       new Date(futureMs).toISOString(),
+    );
+    // pending lease = callback が claim 中。claimable から除外し global は owner を跨がない。
+    storage.setItem(
+      `kondate.auth.supabase.claim-poll-target-lease.${ownerFlowId}.livecallback01`,
+      JSON.stringify({
+        flowId: ownerFlowId,
+        instanceId: "livecallback01",
+        refreshedAt: nowMs,
+        pending: true,
+      }),
     );
     storage.setItem("kondate.auth.supabase.claim-poll-last-at", String(futureMs));
     const gateway = {

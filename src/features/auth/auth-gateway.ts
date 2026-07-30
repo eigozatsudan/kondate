@@ -166,7 +166,19 @@ export function createAuthGateway(
           returnTo,
         };
       }
-      if (flowId === null || state === null || code === null) {
+      if (flowId === null) {
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      }
+      // AUTH-R1: strip 後のリロードでは code/state が消える。同ブラウザに未失効 secret があれば
+      // deposit 済み想定で claim/recovery を再開し、clearAuthFlow で秘密を焼かない。
+      if (state === null || code === null) {
+        if (stored !== null) {
+          return {
+            kind: "awaiting_completion",
+            flowId,
+            returnTo,
+          };
+        }
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
       try {

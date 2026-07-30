@@ -423,6 +423,47 @@ it("leaves a same-browser deposited callback for the shared recovery coordinator
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
 
+it("AUTH-R1: stripped callback reload keeps local secret and resumes awaiting_completion", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const api = continuationApiMock({ deposit });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  // strip 後の URL（code/state なし）でも local flow があれば claim 再開へ
+  const result = await gateway.completeCallback(
+    new URL(`http://127.0.0.1:5173/auth/callback?flow=${flow.id}`),
+  );
+
+  expect(result).toEqual({
+    kind: "awaiting_completion",
+    returnTo: "/onboarding",
+    flowId: flow.id,
+  });
+  expect(deposit).not.toHaveBeenCalled();
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+});
+
+it("AUTH-R1: stripped callback without local secret stays unbound", async () => {
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock(),
+    new MapStorage(),
+    gatewayDeps(),
+  );
+  const result = await gateway.completeCallback(
+    new URL("http://127.0.0.1:5173/auth/callback?flow=10000000-0000-4000-8000-000000000099"),
+  );
+  expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/planner" });
+});
+
 it("waits for the winning tab when an in-flight recovery consumes the claim", async () => {
   const storage = new MapStorage();
   let resolveWinningClaim: ((value: { code: string; returnTo: string }) => void) | undefined;
