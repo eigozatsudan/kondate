@@ -136,11 +136,17 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
       </main>
     );
   // 読み込み中も main ランドマークを維持する（axe region / ルート a11y 契約）。
-  // 操作バーは出さず、中立ステータスのみ。
+  // 操作バーは出さず、中立ステータス + 作成中と同系のインジケータのみ。
+  // AI 成功直後の遷移では getMenuResult が数秒かかることがあり、テキストだけだと空白に見える。
   if (query.isPending)
     return (
       <main className="page-frame">
-        <p role="status">献立を読み込んでいます</p>
+        <div className="gen-status-panel" data-phase="loading">
+          <div className="gen-status-indicator" aria-hidden="true" />
+          <p role="status" aria-live="polite">
+            献立を読み込んでいます
+          </p>
+        </div>
       </main>
     );
 

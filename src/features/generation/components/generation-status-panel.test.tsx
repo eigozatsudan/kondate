@@ -142,6 +142,31 @@ function renderWithUser(ui: ReactElement) {
 }
 
 describe("GenerationStatusPanel", () => {
+  it("succeeded では遷移・結果読込中のインジケータを出す", () => {
+    const succeededState: GenerationClientState = {
+      phase: "succeeded",
+      data: {
+        status: "succeeded",
+        idempotencyKey: KEY,
+        requestId: REQUEST_ID,
+        menuId: "30000000-0000-4000-8000-000000000001",
+        completedAt: "2026-07-11T00:00:01.000Z",
+        quota: {
+          consumed: true,
+          remaining: 1,
+          userDailyLimit: 3,
+          limitKind: "user",
+          retryAt: null,
+        },
+      },
+      effect: "navigate",
+    };
+    const { container } = render(<GenerationStatusPanel state={succeededState} />);
+    expect(screen.getByRole("status")).toHaveTextContent("献立を表示しています");
+    expect(container.querySelector(".gen-status-indicator")).not.toBeNull();
+    expect(container.querySelector('[data-phase="succeeded"]')).not.toBeNull();
+  });
+
   it("same-session new_menu household conflict shows helper once", () => {
     seedNewMenuHouseholdPending();
     renderWithUser(<GenerationStatusPanel state={constraintConflictState()} userId={USER_ID} />);

@@ -243,12 +243,13 @@ describe("MenuResultPage", () => {
     expect(getMenuResultMock).not.toHaveBeenCalled();
   });
 
-  it("読み込み中は中立なステータス表示を返す", () => {
+  it("読み込み中は中立なステータス表示とインジケータを返す", () => {
     getMenuResultMock.mockReturnValue(new Promise(() => undefined));
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
     expect(screen.getByRole("status")).toHaveTextContent("献立を読み込んでいます");
+    expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
     expect(clearPendingGenerationMock).not.toHaveBeenCalled();
   });
 

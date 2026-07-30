@@ -335,5 +335,17 @@ export function GenerationStatusPanel({
       </div>
     );
   }
+  // succeeded: navigate 完了〜結果取得までの空白を埋める。
+  // return null だとスピナーが消え、/menus/:id の isPending まで画面が空になる。
+  if (state.phase === "succeeded") {
+    return (
+      <div className="gen-status-panel" data-phase="succeeded">
+        <div className="gen-status-indicator" aria-hidden="true" />
+        <p role="status" aria-live="polite">
+          献立を表示しています
+        </p>
+      </div>
+    );
+  }
   return null;
 }
