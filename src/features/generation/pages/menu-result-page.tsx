@@ -55,6 +55,13 @@ import {
   useShoppingList,
   useShoppingSafetyGate,
 } from "@/features/shopping/hooks/use-shopping-list";
+import { useShoppingCreateIntent } from "@/features/shopping/hooks/use-shopping-create-intent";
+import {
+  hasPendingCreateCommand,
+  hasShoppingDidAutoOpen,
+  historyPathForShopping,
+  isShoppingSheetExpected,
+} from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { confirmLabelConfirmation } from "../api/confirm-label-api";
 import { getMenuResult } from "../api/menu-result-api";
@@ -98,6 +105,8 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   const userId = auth.session?.user.id;
   const parsed = z.uuid().safeParse(useParams().menuId);
   const menuId = parsed.success ? parsed.data : null;
+  // early return より前: intent strip / L15（Rules of Hooks）
+  const shoppingIntent = useShoppingCreateIntent(menuId ?? "");
   const queryKey = useMemo(
     () => ["menu-result", userId ?? "missing", menuId ?? "invalid"] as const,
     [menuId, userId],
@@ -141,7 +150,14 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   // 一切importされたhookを呼ばない構造にするため、component自体を分ける。
   if (query.data.targetMode === "idea") {
     return (
-      <IdeaResultBody result={query.data} menuId={menuId} userId={userId} queryKey={queryKey} />
+      <IdeaResultBody
+        result={query.data}
+        menuId={menuId}
+        userId={userId}
+        queryKey={queryKey}
+        shoppingIntentActive={shoppingIntent.shoppingIntentActive}
+        clearShoppingCycle={shoppingIntent.clearCycle}
+      />
     );
   }
   return (
@@ -150,6 +166,10 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
       menuId={menuId}
       userId={userId}
       queryKey={queryKey}
+      shoppingIntentActive={shoppingIntent.shoppingIntentActive}
+      markShoppingAutoOpened={shoppingIntent.markAutoOpened}
+      clearShoppingSheetExpected={shoppingIntent.clearSheetExpected}
+      clearShoppingCycle={shoppingIntent.clearCycle}
       {...(injected !== undefined ? { injectedRevalidation: injected } : {})}
     />
   );
@@ -160,6 +180,8 @@ type IdeaResultBodyProps = {
   menuId: string | null;
   userId: string | undefined;
   queryKey: readonly ["menu-result", string, string];
+  shoppingIntentActive: boolean;
+  clearShoppingCycle: () => void;
 };
 
 /**
@@ -168,9 +190,23 @@ type IdeaResultBodyProps = {
  * 採用・お気に入り・所有者/version 付き冷蔵庫反映・whole/dish 再生成だけを許可する。
  * 採用は家族安全確認を意味しない。
  */
-function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProps) {
+function IdeaResultBody({
+  result,
+  menuId,
+  userId,
+  queryKey,
+  shoppingIntentActive,
+  clearShoppingCycle,
+}: IdeaResultBodyProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  // storage clear 後もメッセージを残す（設計 I5）
+  const [showIdeaShoppingRejected, setShowIdeaShoppingRejected] = useState(false);
+  useEffect(() => {
+    if (!shoppingIntentActive) return;
+    setShowIdeaShoppingRejected(true);
+    clearShoppingCycle();
+  }, [shoppingIntentActive, clearShoppingCycle]);
   const usage = useUsageToday(userId ?? "");
   const usageView = usageViewFromQuery(usage);
   const pantryQuery = useQuery({
@@ -271,6 +307,17 @@ function IdeaResultBody({ result, menuId, userId, queryKey }: IdeaResultBodyProp
   return (
     <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
       <IdeaMenuSafetyNotice />
+      {showIdeaShoppingRejected ? (
+        <section className="card stack mb-4" role="status">
+          <p>アイデア献立は買い物リストに使えません。家族に合わせた献立を選んでください</p>
+          <Link className="secondary-button min-h-11" to={historyPathForShopping()}>
+            履歴に戻る
+          </Link>
+          <Link className="secondary-button min-h-11" to="/shopping">
+            買い物に戻る
+          </Link>
+        </section>
+      ) : null}
       {usage.isSuccess && !plusEntitled ? (
         <div className="mb-4">
           <FlyerUpsellBanner plusEntitled={false} />
@@ -428,6 +475,10 @@ type HouseholdResultBodyProps = {
   menuId: string | null;
   userId: string | undefined;
   queryKey: readonly ["menu-result", string, string];
+  shoppingIntentActive: boolean;
+  markShoppingAutoOpened: () => void;
+  clearShoppingSheetExpected: () => void;
+  clearShoppingCycle: () => void;
   injectedRevalidation?: MenuResultPageRevalidationView;
 };
 
@@ -440,6 +491,10 @@ function HouseholdResultBody({
   menuId,
   userId,
   queryKey,
+  shoppingIntentActive,
+  markShoppingAutoOpened,
+  clearShoppingSheetExpected,
+  clearShoppingCycle,
   injectedRevalidation,
 }: HouseholdResultBodyProps) {
   const queryClient = useQueryClient();
@@ -514,7 +569,59 @@ function HouseholdResultBody({
   // D-C1: 新規作成は active list の safety gate と分離（履歴詳細と同契約）
   const shoppingListBusy = shoppingList.isFetching || !shoppingList.isSuccess || menuId === null;
   const shoppingMutateBlocked = !actionsEnabled || shoppingGate.blocked || shoppingListBusy;
-  const canCreateShoppingList = actionsEnabled && !shoppingListBusy && !createList.isPending;
+  // 開く条件（ボタン disabled / auto-open）。閉じる条件とは分離（L8）
+  const canOpenCreateSheet = actionsEnabled && !shoppingListBusy && !createList.isPending;
+  const mustCloseCreateSheet = !actionsEnabled;
+  const mustCloseReconcileSheet = !actionsEnabled || shoppingGate.blocked;
+  const canCreateShoppingList = canOpenCreateSheet;
+  const nonRemovedCount =
+    activeList === null
+      ? 0
+      : activeList.items.filter((item) => !item.isRemovedByUser).length;
+
+  // 安全 fail-closed: create/reconcile シートを閉じる（isPending では閉じない）
+  useEffect(() => {
+    if (mustCloseCreateSheet && shoppingSheet === "create") {
+      setShoppingSheet(null);
+      clearShoppingSheetExpected();
+    }
+    if (mustCloseReconcileSheet && shoppingSheet === "reconcile") {
+      setShoppingSheet(null);
+    }
+  }, [
+    mustCloseCreateSheet,
+    mustCloseReconcileSheet,
+    shoppingSheet,
+    clearShoppingSheetExpected,
+  ]);
+
+  // auto-open / StrictMode sheetExpected 復帰
+  useEffect(() => {
+    if (menuId === null || menuId.length === 0) return;
+    if (shoppingSheet !== null) return;
+    if (hasPendingCreateCommand(menuId)) return;
+    if (!canOpenCreateSheet) return;
+
+    const restore = isShoppingSheetExpected(menuId);
+    const firstOpen = shoppingIntentActive && !hasShoppingDidAutoOpen(menuId);
+    if (!restore && !firstOpen) return;
+
+    setShoppingSheet("create");
+    if (firstOpen) {
+      markShoppingAutoOpened();
+    }
+    requestAnimationFrame(() => {
+      const el = document.getElementById("create-list-title");
+      el?.scrollIntoView({ block: "nearest" });
+      el?.focus();
+    });
+  }, [
+    menuId,
+    shoppingSheet,
+    canOpenCreateSheet,
+    shoppingIntentActive,
+    markShoppingAutoOpened,
+  ]);
 
   const ownerId = userId ?? "missing";
   const reconcileTarget = useQuery({
@@ -553,6 +660,7 @@ function HouseholdResultBody({
     try {
       await createList.mutateAsync(command);
       await finishShoppingCommand("create", command.menuId);
+      clearShoppingCycle();
       void navigate("/shopping");
     } catch (error) {
       failShoppingCommand("create", command.menuId, error);
@@ -871,21 +979,31 @@ function HouseholdResultBody({
         </p>
       )}
 
+      {shoppingIntentActive ? (
+        <p className="mt-4" role="status">
+          {actionsEnabled
+            ? "この献立で買い物リストを作れます"
+            : "買い物リストを作る前に、いまの家族設定を確認しています"}
+        </p>
+      ) : null}
+
       {shoppingSheet === "create" && menuId !== null && (
         <CreateListSheet
+          key={`${activeList?.id ?? "none"}-${activeList?.version ?? 0}`}
           activeList={
             activeList === null
               ? null
               : {
                   id: activeList.id,
                   version: activeList.version,
-                  itemCount: activeList.items.length,
+                  itemCount: nonRemovedCount,
                 }
           }
           pending={createList.isPending}
-          safetyBlocked={!canCreateShoppingList}
+          safetyBlocked={!canOpenCreateSheet}
+          forceNewMode={shoppingGate.blocked}
           onSubmit={(input) => {
-            if (!canCreateShoppingList) return;
+            if (!canOpenCreateSheet) return;
             const command = persistedShoppingCommand(
               "create",
               menuId,
@@ -904,6 +1022,7 @@ function HouseholdResultBody({
           }}
           onCancel={() => {
             setShoppingSheet(null);
+            clearShoppingCycle();
           }}
         />
       )}

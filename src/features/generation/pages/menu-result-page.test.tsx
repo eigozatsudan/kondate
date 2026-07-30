@@ -402,6 +402,39 @@ describe("MenuResultPage", () => {
     expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
   });
 
+  it("auto-opens create sheet when for=shopping and can create", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
+    );
+    renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+  });
+
+  it("shows idea rejection without shopping network when for=shopping", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "idea", id: VALID_MENU_ID }),
+    );
+    renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
+    expect(
+      await screen.findByText(/アイデア献立は買い物リストに使えません/u),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "買い物リストを作る" })).toBeNull();
+    expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
+    expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+  });
+
+  it("passes forceNewMode copy when shopping gate is blocked and for=shopping", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
+    );
+    shoppingApi.revalidateActiveShoppingList.mockResolvedValue(invalidShoppingSafety);
+    renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+    expect(
+      screen.getByText("今のリストは家族設定で確認できないため、新しいリストを作ります。"),
+    ).toBeInTheDocument();
+  });
+
   it("opens the create sheet, sends the exact active list id and version, and moves to the list", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
 
