@@ -29,8 +29,10 @@ begin
 
   v_before := p_now - interval '30 days';
   v_identity_cutoff := private.ai_jst_day(p_now) - 40;
-  -- 月次: 現在 JST 月の 1 日より 2 ヶ月前（= 現在月と前月を残す）
-  v_quality_month_cutoff := (date_trunc('month', v_identity_cutoff::timestamp) - interval '1 month')::date;
+  -- 月次: 現在 JST 月の 1 日 − 1 ヶ月（= 現在月と前月だけ残し、それより古い usage_month を削除）
+  v_quality_month_cutoff := (
+    date_trunc('month', private.ai_jst_day(p_now)::timestamp) - interval '1 month'
+  )::date;
   v_flyer_week_cutoff := private.ai_jst_week_start(p_now) - 84; -- 12 週 × 7 日
 
   v_stale := public.cleanup_stale_ai_generations_batch(p_now, p_limit);

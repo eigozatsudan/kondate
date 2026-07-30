@@ -486,6 +486,19 @@ async function handleSubscriptionEvent(
     );
   }
 
+  // cancel 済み discard の live-payload 再送: live が keep のみだと discarded=[] になり、
+  // イベント sub を canceled で投影して keep を上書きし得る。keep と異なる id なら discarded 扱い。
+  if (
+    dualCleanup.keepSubscriptionId !== null &&
+    dualCleanup.keepSubscriptionId !== sub.id &&
+    !dualCleanup.discardedSubscriptionIds.includes(sub.id)
+  ) {
+    dualCleanup = {
+      keepSubscriptionId: dualCleanup.keepSubscriptionId,
+      discardedSubscriptionIds: [...dualCleanup.discardedSubscriptionIds, sub.id],
+    };
+  }
+
   // 同一秒の決定論: retrieve を正として payload に載せる（evt_ 文字列順は使わない）。
   // dual-sub で discard した subscription のイベントは keep 側を投影する（cancel 後 status で上書きしない）。
   const projectingDiscardedOntoKeep =

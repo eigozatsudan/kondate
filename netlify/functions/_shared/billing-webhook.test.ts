@@ -725,6 +725,49 @@ describe("handleBillingWebhook", () => {
     );
   });
 
+  it("live-payload retry after discard cancel still projects keep active", async () => {
+    // dual cancel 後に Stripe が同じ live payload を再送しても discard を投影しない（BILL-1 residual）
+    const keep = makeSubscription({
+      id: "sub_keep_retry",
+      created: 1000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const discardedStillLivePayload = makeSubscription({
+      id: "sub_discarded_retry",
+      created: 2000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", discardedStillLivePayload, {
+        id: "evt_discard_retry_live",
+        created: 9_100,
+      }),
+    );
+    retrieve.mockImplementation((id: string) => {
+      if (id === "sub_keep_retry") return Promise.resolve(keep);
+      return Promise.resolve(
+        makeSubscription({ id: "sub_discarded_retry", status: "canceled", created: 2000 }),
+      );
+    });
+    // cancel 後: live は keep のみ
+    list.mockImplementation((params: { status?: string }) => {
+      const data = params.status === "active" || params.status === undefined ? [keep] : [];
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.stripe_subscription_id).toBe("sub_keep_retry");
+    expect(processPayload.status).toBe("active");
+  });
+
   it("late deleted of discarded dual-sub projects keep active instead of overwrite cancel", async () => {
     // dual cleanup 後に届く discard 側 deleted が keep を canceled 上書きしないこと（BILL-1）
     const keep = makeSubscription({
