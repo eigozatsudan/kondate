@@ -660,6 +660,8 @@ function HouseholdDetailBody({
       void queryClient.invalidateQueries({ queryKey });
       setShoppingSheet(null);
       setShoppingDiff(null);
+      // 意図的クローズ後に sheetExpected 復帰で再 open しない
+      clearShoppingSheetExpected();
       setShoppingError("買い物リストの状態が変わりました。もう一度確認してください");
       return;
     }
@@ -1006,12 +1008,31 @@ function HouseholdDetailBody({
         </p>
       )}
 
-      {shoppingIntentActive ? (
+      {shoppingIntentActive && actionsEnabled ? (
         <p className="mt-4" role="status">
-          {actionsEnabled
-            ? "この献立で買い物リストを作れます"
-            : "買い物リストを作る前に、いまの家族設定を確認しています"}
+          この献立で買い物リストを作れます
         </p>
+      ) : null}
+      {shoppingIntentActive && revalidation.phase !== "checked" ? (
+        <p className="mt-4" role="status">
+          買い物リストを作る前に、いまの家族設定を確認しています
+        </p>
+      ) : null}
+      {shoppingIntentActive &&
+      revalidation.phase === "checked" &&
+      !actionsEnabled ? (
+        <section className="card stack mt-4" role="alert">
+          <p>
+            {revalidation.errorMessage ??
+              "現在の家族設定ではこの献立から買い物リストを作れません"}
+          </p>
+          <Link className="secondary-button min-h-11" to={historyPathForShopping()}>
+            履歴に戻る
+          </Link>
+          <Link className="secondary-button min-h-11" to="/shopping">
+            買い物に戻る
+          </Link>
+        </section>
       ) : null}
 
       {shoppingSheet === "create" && (

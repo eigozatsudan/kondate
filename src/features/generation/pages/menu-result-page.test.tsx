@@ -435,6 +435,58 @@ describe("MenuResultPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not auto-open while pending create envelope exists", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
+    );
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", VALID_MENU_ID),
+      JSON.stringify({
+        createdAtMs: Date.now(),
+        command: {
+          menuId: VALID_MENU_ID,
+          mode: "new",
+          activeListId: null,
+          expectedListVersion: null,
+          idempotencyKey: "00000000-0000-4000-8000-000000000099",
+        },
+      }),
+    );
+    renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
+    await screen.findByRole("button", { name: "買い物リストを作る" });
+    expect(screen.queryByRole("heading", { name: "買い物リストを作る" })).toBeNull();
+  });
+
+  it("uses non-removed item count on create sheet", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", id: VALID_MENU_ID }),
+    );
+    shoppingApi.fetchActiveShoppingList.mockResolvedValue({
+      ...activeShoppingList,
+      items: [
+        {
+          id: SHOPPING_ITEM_ID,
+          displayName: "にんじん",
+          normalizedName: "にんじん",
+          storeSection: "produce",
+          quantityValue: 1,
+          quantityText: "1本",
+          unit: "本",
+          isChecked: false,
+          isManual: false,
+          isManuallyEdited: false,
+          isRemovedByUser: true,
+          pantryCheckRequired: false,
+          labelWarnings: [],
+          sourceIngredients: [],
+        },
+      ],
+    });
+    renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+    expect(screen.getByText(/今のリストへ追加（0件）/u)).toBeInTheDocument();
+  });
+
   it("opens the create sheet, sends the exact active list id and version, and moves to the list", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
 
