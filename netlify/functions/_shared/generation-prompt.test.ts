@@ -11,6 +11,7 @@ import { validateGeneratedMenu } from "../../../shared/safety/validate-generated
 import { DIVERSITY_SYSTEM_MARKER, type RecentDishHint } from "./diversity-hints.js";
 import {
   GENERATION_SYSTEM_PROMPT_CORE,
+  GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA,
   GENERATION_SYSTEM_PROMPT_IDEA_EXTRA,
   buildGenerationMessages,
 } from "./generation-prompt.js";
@@ -249,6 +250,10 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain("dish_1");
     expect(system).toContain("outcome=success");
     expect(system).toContain("constraint_conflict");
+    // 偽 conflict 抑止（mandatory_safety 過検知・空 conditionRefs・空 pantry）
+    expect(system).toContain("mandatory_safety_conflictは使わない");
+    expect(system).toContain("conditionRefsが空のconflictは出さない");
+    expect(system).toContain("pantryが空のときallergen_pantry_conflictは使わない");
     // 品数・役割は materialize の確定品数と揃える（invalid_menu_structure 本筋）
     expect(system).toContain("ちょうど2品");
     expect(system).toContain("ちょうど3品");
@@ -270,6 +275,18 @@ describe("buildGenerationMessages", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeIdeaGenerationContext()));
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
+    // household 専用の取り分け必須指示を idea に混ぜない
+    expect(system).not.toContain(GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA);
+  });
+
+  it("household path requires one adaptation per member and forbids empty adaptations", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()));
+    const system = messages.find((message) => message.role === "system")?.content ?? "";
+    expect(system).toContain(GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA);
+    expect(system).toContain("adaptationsは空配列にしない");
+    expect(system).toContain("anonymousMemberRef");
+    // idea 専用の空配列指示を household に混ぜない
+    expect(system).not.toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
   });
 
   it("includes JST seasonContext from server clock in payload and system", () => {

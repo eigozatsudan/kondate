@@ -101,10 +101,21 @@ export const GENERATION_SYSTEM_PROMPT_CORE_BODY =
   "mainIngredientsとpantry（今回使う冷蔵庫食材）に載る食材だけを使う。" +
   "塩・しょうゆ・みりん・酢・油・砂糖などの基本調味料はselected_onlyでも可。" +
   "autoまたはnull=材料の量・範囲はモデルが献立に合わせて判断する。" +
-  // outcome
+  // outcome（偽 conflict 抑止: 過検知の mandatory_safety を減らす）
   "通常はoutcome=successの献立を返す。" +
-  "アレルギー・安全制約を満たせない場合のみoutcome=constraint_conflictを使い、" +
-  "材料の都合や好みの曖昧さだけでconstraint_conflictにしない。";
+  "アレルギー・必須安全制約をどうしても満たせない場合のみoutcome=constraint_conflictを使う。" +
+  "材料の都合・好みの曖昧さ・品数や時間の難しさ・取り分け文の書きにくさだけでは" +
+  "constraint_conflictにしない。" +
+  "membersのallergenIds・requiredSafetyConstraints・カスタムアレルギーに" +
+  "該当する食材を使わずに献立が組めるときは、必ずoutcome=successにする。" +
+  "allergiesが空でrequiredSafetyConstraintsも空のメンバーだけなら、" +
+  "mandatory_safety_conflictは使わない。" +
+  "constraint_conflictにするときcodeはclosed集合" +
+  "（must_use_conflict/allergen_pantry_conflict/dish_count_conflict/" +
+  "mandatory_safety_conflict）のみ。" +
+  "mandatory_safety_conflictを使うときはconditionRefsに該当するmember_*/pantry_*を1つ以上入れる。" +
+  "conditionRefsが空のconflictは出さない。" +
+  "pantryが空のときallergen_pantry_conflictは使わない。";
 
 /**
  * 季節ブロック（制約より下位）。
@@ -123,30 +134,50 @@ export const GENERATION_SYSTEM_PROMPT_CORE = `${GENERATION_SYSTEM_PROMPT_CORE_BO
 
 /** idea 経路のみ: adaptations / labelConfirmations を空に固定 */
 export const GENERATION_SYSTEM_PROMPT_IDEA_EXTRA =
-  "家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列にしてください。";
+  "この入力はアイデアモードです。" +
+  "家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列にしてください。" +
+  "membersは空です。家族のアレルギー・年齢帯は適用しません。";
 
 /**
- * buildBase 用: 多様性なしの system（CORE_BODY + SEASON + idea extra）。
+ * household 経路のみ: 取り分けは対象メンバーと1:1（空配列禁止）。
+ * idea の「adaptations 空」指示と混同させない。
+ */
+export const GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA =
+  "この入力は家族モードです。" +
+  "outcome=successのときadaptationsは空配列にしない。" +
+  "入力membersの各refについて、anonymousMemberRefが一致するadaptationをちょうど1件ずつ含める" +
+  "（例: membersがmember_1のみならadaptationもmember_1のみ1件）。" +
+  "adaptationにはportionTextと、必要ならadditionalCutting/additionalHeating/" +
+  "additionalSeasoning/servingCheck/safetyActionsを書き、" +
+  "当該メンバーのportionSize・spiceLevel・eatingEase・requiredSafetyConstraintsを反映する。" +
+  "labelConfirmationsは、登録アレルゲンや加工品の確認が必要な材料があるときだけ付ける。" +
+  "preferences.servingsは家族人数の目安であり、adaptationsを省略する理由にしない。";
+
+/**
+ * buildBase 用: 多様性なしの system（CORE_BODY + SEASON + mode extra）。
  * recentDishHints 引数は持たない（locked）。
  */
 function buildSystemPrompt(targetMode: GenerationContext["targetMode"]): string {
   if (targetMode === "idea") {
     return `${GENERATION_SYSTEM_PROMPT_CORE}${GENERATION_SYSTEM_PROMPT_IDEA_EXTRA}`;
   }
-  return GENERATION_SYSTEM_PROMPT_CORE;
+  return `${GENERATION_SYSTEM_PROMPT_CORE}${GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA}`;
 }
 
 /**
  * new_menu 用 system 合成:
- * CORE_BODY + (flag on なら DIVERSITY) + SEASON + (idea なら IDEA_EXTRA)
+ * CORE_BODY + (flag on なら DIVERSITY) + SEASON + mode extra（idea または household）
  */
 function buildNewMenuSystemPrompt(
   targetMode: GenerationContext["targetMode"],
   diversityEnabled: boolean,
 ): string {
   const diversity = diversityEnabled ? DIVERSITY_PARAGRAPH : "";
-  const ideaExtra = targetMode === "idea" ? GENERATION_SYSTEM_PROMPT_IDEA_EXTRA : "";
-  return `${GENERATION_SYSTEM_PROMPT_CORE_BODY}${diversity}${GENERATION_SYSTEM_PROMPT_SEASON}${ideaExtra}`;
+  const modeExtra =
+    targetMode === "idea"
+      ? GENERATION_SYSTEM_PROMPT_IDEA_EXTRA
+      : GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA;
+  return `${GENERATION_SYSTEM_PROMPT_CORE_BODY}${diversity}${GENERATION_SYSTEM_PROMPT_SEASON}${modeExtra}`;
 }
 
 /**
