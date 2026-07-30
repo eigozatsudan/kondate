@@ -285,6 +285,8 @@ export function HouseholdSettingsForm({
   const ageBandRef = useRef<HTMLSelectElement>(null);
   const allergyStatusRef = useRef<HTMLSelectElement>(null);
   const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
+  // present かつ kinds 0 件のスキーマ失敗時に先頭 checkbox へ focus（オンボーディングと同方針）
+  const unsupportedDietKindsRef = useRef<HTMLFieldSetElement>(null);
   const beginSaveLineage = useCallback((memberId: string): SaveLineage => {
     const operationToken = (operationTokensByMemberRef.current.get(memberId) ?? 0) + 1;
     operationTokensByMemberRef.current.set(memberId, operationToken);
@@ -860,21 +862,30 @@ export function HouseholdSettingsForm({
     if (!parsed.success) {
       const nextErrors = toHouseholdFieldErrors(parsed.error);
       setErrors(nextErrors);
-      // 必須漏れ: field error + toast（先頭 message）+ focus。status 行の setMessage は使わない
-      // （toast が role=status のため二重になるのを避ける）
+      // 必須漏れ: field error + toast（先頭 message）+ focus。
+      // toast が role=status のため、autosave 成功の status 行を消して二重を避ける
+      setMessage("");
       const lead = firstHouseholdFieldError(nextErrors);
       showToast({
         message: lead?.message ?? FALLBACK_VALIDATION_TOAST,
         tone: "error",
       });
+      if (lead === undefined) {
+        return;
+      }
+      // kinds は select ではなく fieldset 内の先頭 checkbox へ（オンボーディングと同じ）
+      if (lead.key === "unsupportedDietKinds") {
+        const firstCheckbox =
+          unsupportedDietKindsRef.current?.querySelector<HTMLInputElement>("input:not([disabled])");
+        firstCheckbox?.focus();
+        return;
+      }
       const fieldRefs: Partial<Record<keyof HouseholdSettingsValue, typeof ageBandRef>> = {
         ageBand: ageBandRef,
         allergyStatus: allergyStatusRef,
         unsupportedDietStatus: unsupportedDietStatusRef,
       };
-      if (lead !== undefined) {
-        fieldRefs[lead.key]?.current?.focus();
-      }
+      fieldRefs[lead.key]?.current?.focus();
       return;
     }
     if (parsed.data.allergyStatus === "registered" && !allergiesQuery.isSuccess) {
@@ -1475,7 +1486,12 @@ export function HouseholdSettingsForm({
               <select
                 ref={unsupportedDietStatusRef}
                 value={values.unsupportedDietStatus}
-                aria-invalid={errors.unsupportedDietStatus !== undefined ? true : undefined}
+                aria-invalid={
+                  errors.unsupportedDietStatus !== undefined ||
+                  errors.unsupportedDietKinds !== undefined
+                    ? true
+                    : undefined
+                }
                 aria-describedby={
                   errors.unsupportedDietStatus !== undefined ||
                   errors.unsupportedDietKinds !== undefined
@@ -1497,7 +1513,7 @@ export function HouseholdSettingsForm({
               </select>
             </label>
             {values.unsupportedDietStatus === "present" && (
-              <fieldset className="control-group">
+              <fieldset ref={unsupportedDietKindsRef} className="control-group">
                 <legend>食べない食事</legend>
                 {unsupportedDietKinds.map((kind) => (
                   <label key={kind} className="control-label">

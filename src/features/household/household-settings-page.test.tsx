@@ -624,6 +624,39 @@ it("shows toast field error and focuses first invalid on incomplete save", async
   expect(screen.getByLabelText("年齢のめやす")).toHaveAttribute("aria-invalid", "true");
 });
 
+it("focuses kinds checkbox and clears leftover status on present-without-kinds complete", async () => {
+  // present + kinds 0 件だけが lead のとき fieldset 先頭 checkbox へ focus。
+  // autosave 成功の role=status を残したまま toast すると status が二重になるため消す。
+  const user = userEvent.setup();
+  const updateMember = vi.fn().mockResolvedValue(member);
+  await renderSettings({ updateMember });
+
+  fireEvent.change(await screen.findByLabelText("呼び名"), { target: { value: "保存済み" } });
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("家族設定が変わりました");
+  });
+  const saveCallsBeforeKindsError = updateMember.mock.calls.length;
+
+  await user.selectOptions(screen.getByLabelText("食べない食事はありますか"), "present");
+  // present + 空 kinds は autosave が schema で止まり、成功 status は残り得る
+  const complete = screen.getByRole("button", { name: "この家族の設定を完了" });
+  await user.click(complete);
+
+  // present / 完了どちらも保存に進まない
+  expect(updateMember.mock.calls.length).toBe(saveCallsBeforeKindsError);
+  // toast 1 つだけ（autosave の status 行は消えている）
+  const statuses = screen.getAllByRole("status");
+  expect(statuses).toHaveLength(1);
+  expect(statuses[0]).toHaveTextContent("該当する項目を選んでください");
+  expect(screen.getByRole("alert")).toHaveTextContent("該当する項目を選んでください");
+  // kinds 先頭 checkbox へ focus。status select にも aria-invalid
+  expect(screen.getByRole("checkbox", { name: "離乳食" })).toHaveFocus();
+  expect(screen.getByLabelText("食べない食事はありますか")).toHaveAttribute("aria-invalid", "true");
+});
+
 it("shows toast for registered allergy with zero items on complete", async () => {
   const user = userEvent.setup();
   const updateMember = vi.fn().mockResolvedValue(member);
