@@ -35,7 +35,7 @@
 | **M5** | Task3 **Creates** `billing-entitlement.test.ts` with A6 RED. |
 | **ADV-14** | Task3: env tests reject `0`/`201`, accept `21`; grep gate for leftover max-20 assumptions. |
 | **ADV-15** | Task6/7 Files list factories + usage-today tests + UI mocks for quality/flyerWeekly. |
-| **ADV-13** | Locked **`STRIPE_API_VERSION = "2025-02-24.acacia"`** in plan/env/example/tests. |
+| **ADV-13** | Locked **`STRIPE_API_VERSION = "2026-06-24.dahlia"`** in plan/env/example/tests（内部テスト前に acacia から再ピン）。 |
 | **M7** | File map: `src/features/history/components/regeneration-sheet.tsx`. |
 | **M8** | Task6 text: quality reserve co-consumes normal identity success/attempt in same TX. |
 | **M9** | Task1 `git add` includes `shared/copy/free-tier.test.ts`. |

@@ -232,7 +232,7 @@ Stripe ──Webhook──► process_billing_stripe_event（単一 SECURITY DEF
   - **`STRIPE_*` 鍵があれば Webhook は動き続ける**（cancel / past_due を取りこぼさない）
   - 再有効化は reconcile 後にだけ `true` にする（[billing-reconcile.md](docs/runbooks/billing-reconcile.md)）
 - **禁止**: `VITE_STRIPE_*` / `VITE_BILLING_*`、ブラウザへの Price ID / `sk_` / `whsec_` 露出
-- **SDK**: `stripe@22.3.2` exact pin、API バージョン **`2025-02-24.acacia` 固定**（変更は設計改訂）
+- **SDK**: `stripe@22.3.2` exact pin、API バージョン **`2026-06-24.dahlia` 固定**（変更は設計改訂）
 
 #### 環境変数（サーバ専用）
 
@@ -245,7 +245,7 @@ Stripe ──Webhook──► process_billing_stripe_event（単一 SECURITY DEF
 | `STRIPE_WEBHOOK_SECRET`     | 空                    | `whsec_…`。署名検証用                                                                 |
 | `STRIPE_PRICE_PLUS_MONTHLY` | 空                    | Plus 月額 Price ID                                                                    |
 | `STRIPE_PRICE_PLUS_YEARLY`  | 空                    | Plus 年額 Price ID                                                                    |
-| `STRIPE_API_VERSION`        | `2025-02-24.acacia`   | **固定**。他値は起動拒否                                                              |
+| `STRIPE_API_VERSION`        | `2026-06-24.dahlia`   | **固定**。他値は起動拒否                                                              |
 | `STRIPE_MOCK_BASE_URL`      | 未設定                | **ローカル exact mock のみ**（`http://stripe-mock:8790`）。**本番に置いたら起動失敗** |
 | `OPENROUTER_PLUS_MODELS`    | mock 時は mock モデル | Plus 品質モード用の有料 allowlist（本番は `:free` 禁止）                              |
 | `OPENROUTER_FLYER_MODELS`   | 未設定（任意）        | チラシ vision 専用 allowlist。空なら `OPENROUTER_PLUS_MODELS` にフォールバック        |
@@ -294,7 +294,7 @@ STRIPE_SECRET_KEY=sk_test_xxxxxxxx
 STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxx
 STRIPE_PRICE_PLUS_MONTHLY=price_xxxxxxxx
 STRIPE_PRICE_PLUS_YEARLY=price_yyyyyyyy
-STRIPE_API_VERSION=2025-02-24.acacia
+STRIPE_API_VERSION=2026-06-24.dahlia
 # STRIPE_MOCK_BASE_URL は実 Stripe 利用時は未設定のまま
 OPENROUTER_PLUS_MODELS=openai/gpt-4o-mini   # ゲート合格の有料 ID に置換
 # チラシ専用（任意）。未設定なら PLUS と同じリストを vision に使う
@@ -345,7 +345,7 @@ Customer Portal（Dashboard）の最低確認:
 | `STRIPE_SECRET_KEY`       | `sk_live_…`                                                                                           |
 | `STRIPE_WEBHOOK_SECRET`   | 本番 endpoint の `whsec_…`                                                                            |
 | `STRIPE_PRICE_PLUS_*`     | Live Price ID                                                                                         |
-| `STRIPE_API_VERSION`      | **`2025-02-24.acacia` のみ**                                                                          |
+| `STRIPE_API_VERSION`      | **`2026-06-24.dahlia` のみ**                                                                          |
 | `STRIPE_MOCK_BASE_URL`    | **設定しない**（設定すると起動失敗）                                                                  |
 | `OPENROUTER_PLUS_MODELS`  | 検証済み有料 allowlist（品質モード用）                                                                |
 | `OPENROUTER_FLYER_MODELS` | 任意。チラシ vision。未設定なら Plus リスト                                                           |
@@ -387,7 +387,7 @@ npm run preflight:production
 | 設定に Plus 導線が出ない         | `BILLING_ENABLED` と `productSurfacesOpen`。kill 中は意図的に閉じる                                                       |
 | Checkout 後も Free のまま        | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ                   |
 | 品質モードが「通信を確認」になる | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示                                                |
-| 本番起動失敗                     | `STRIPE_API_VERSION` が acacia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か |
+| 本番起動失敗                     | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か |
 | E2E が Stripe に飛ぶ             | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                          |
 
 主な検証コマンド:

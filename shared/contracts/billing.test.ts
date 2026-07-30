@@ -31,7 +31,7 @@ describe("billing contracts", () => {
     ).toBe(false);
   });
 
-  it("pins STRIPE_API_VERSION to the design-locked acacia string", () => {
-    expect(STRIPE_API_VERSION).toBe("2025-02-24.acacia");
+  it("pins STRIPE_API_VERSION to the design-locked dahlia string", () => {
+    expect(STRIPE_API_VERSION).toBe("2026-06-24.dahlia");
   });
 });

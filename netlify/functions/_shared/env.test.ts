@@ -252,11 +252,11 @@ describe("parseOpenRouterModels", () => {
       STRIPE_WEBHOOK_SECRET: "whsec_xxx",
       STRIPE_PRICE_PLUS_MONTHLY: "price_m",
       STRIPE_PRICE_PLUS_YEARLY: "price_y",
-      STRIPE_API_VERSION: "2025-02-24.acacia",
+      STRIPE_API_VERSION: "2026-06-24.dahlia",
     });
     expect(env.billingEnabled).toBe(false);
     expect(env.stripe?.webhookSecret).toBeTruthy();
-    expect(env.stripe?.apiVersion).toBe("2025-02-24.acacia");
+    expect(env.stripe?.apiVersion).toBe("2026-06-24.dahlia");
   });
 
   it("rejects STRIPE_API_VERSION other than the locked pin when stripe keys present", () => {
@@ -283,7 +283,7 @@ describe("parseOpenRouterModels", () => {
       STRIPE_WEBHOOK_SECRET: "whsec_xxx",
       STRIPE_PRICE_PLUS_MONTHLY: "price_m",
       STRIPE_PRICE_PLUS_YEARLY: "price_y",
-      STRIPE_API_VERSION: "2025-02-24.acacia",
+      STRIPE_API_VERSION: "2026-06-24.dahlia",
     });
     expect(env.billingEnabled).toBe(true);
     expect(env.stripe?.pricePlusMonthly).toBe("price_m");

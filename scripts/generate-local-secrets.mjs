@@ -142,7 +142,7 @@ values.set("OPENROUTER_TIMEOUT_MS", "24000");
 values.set("FUNCTION_TOTAL_BUDGET_MS", "55000");
 values.set("AI_PROCESSING_STALE_SECONDS", "180");
 values.set("BILLING_ENABLED", "false");
-values.set("STRIPE_API_VERSION", "2025-02-24.acacia");
+values.set("STRIPE_API_VERSION", "2026-06-24.dahlia");
 values.set("STRIPE_SECRET_KEY", "");
 values.set("STRIPE_WEBHOOK_SECRET", "");
 values.set("STRIPE_PRICE_PLUS_MONTHLY", "");

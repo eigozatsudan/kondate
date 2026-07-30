@@ -48,7 +48,7 @@
 | `STRIPE_WEBHOOK_SECRET` | server only。`whsec_...` |
 | `STRIPE_PRICE_PLUS_MONTHLY` | server only。Price ID |
 | `STRIPE_PRICE_PLUS_YEARLY` | server only。Price ID |
-| `STRIPE_API_VERSION` | **`2025-02-24.acacia` 固定**（変更は設計改訂） |
+| `STRIPE_API_VERSION` | **`2026-06-24.dahlia` 固定**（変更は設計改訂） |
 | `STRIPE_MOCK_BASE_URL` | ローカル exact mock のみ。本番に設定したら起動失敗 |
 
 **本番で存在してはならない（Billing）**

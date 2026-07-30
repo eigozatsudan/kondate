@@ -334,7 +334,7 @@ export function validateProductionEnv(env) {
 /**
  * BILLING_ENABLED と Stripe 鍵の整合を検証する。
  * - 未設定 / "false": 鍵は任意（Webhook 用に載せてもよいが、載せたなら完全一式 + API version ピン）
- * - "true": 全 Stripe 鍵必須 + STRIPE_API_VERSION=2025-02-24.acacia
+ * - "true": 全 Stripe 鍵必須 + STRIPE_API_VERSION=2026-06-24.dahlia
  * - VITE_STRIPE_* / VITE_BILLING_* は存在自体を拒否
  * - STRIPE_MOCK_BASE_URL は本番 preflight では拒否
  */
@@ -397,7 +397,7 @@ export function validateBillingStripeEnv(env) {
     }
   }
 
-  if (String(env.STRIPE_API_VERSION) !== "2025-02-24.acacia") {
+  if (String(env.STRIPE_API_VERSION) !== "2026-06-24.dahlia") {
     throw new Error("STRIPE_API_VERSION_invalid");
   }
 

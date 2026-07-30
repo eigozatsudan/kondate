@@ -450,7 +450,7 @@ describe("production deleteUser adapter", () => {
         webhookSecret: "whsec_x",
         pricePlusMonthly: "price_m",
         pricePlusYearly: "price_y",
-        apiVersion: "2025-02-24.acacia",
+        apiVersion: "2026-06-24.dahlia",
       },
     });
     rpcMock.mockImplementation((name: string) => {
@@ -487,7 +487,7 @@ describe("production deleteUser adapter", () => {
         webhookSecret: "whsec_x",
         pricePlusMonthly: "price_m",
         pricePlusYearly: "price_y",
-        apiVersion: "2025-02-24.acacia",
+        apiVersion: "2026-06-24.dahlia",
       },
     });
     rpcMock.mockImplementation((name: string) => {
@@ -539,7 +539,7 @@ describe("production deleteUser adapter", () => {
         webhookSecret: "whsec_x",
         pricePlusMonthly: "price_m",
         pricePlusYearly: "price_y",
-        apiVersion: "2025-02-24.acacia",
+        apiVersion: "2026-06-24.dahlia",
       },
     });
     rpcMock.mockImplementation((name: string) => {

@@ -57,14 +57,13 @@ function baseEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
 }
 
 function makeSubscription(overrides: Partial<Stripe.Subscription> = {}): Stripe.Subscription {
+  // dahlia: period は SubscriptionItem 側（Basil 2025-03-31 以降）
   return {
     id: SUB_ID,
     object: "subscription",
     customer: CUSTOMER_ID,
     status: "active",
     cancel_at_period_end: false,
-    current_period_start: 1_720_000_000,
-    current_period_end: 1_722_592_000,
     trial_end: null,
     created: 1_720_000_000,
     metadata: { supabase_user_id: USER_ID, plan_code: "plus" },
@@ -74,6 +73,8 @@ function makeSubscription(overrides: Partial<Stripe.Subscription> = {}): Stripe.
         {
           id: "si_1",
           object: "subscription_item",
+          current_period_start: 1_720_000_000,
+          current_period_end: 1_722_592_000,
           price: { id: "price_m", object: "price" },
         } as Stripe.SubscriptionItem,
       ],

@@ -6,7 +6,7 @@
 
 **Architecture:** ブラウザは plan を主張しない。`GET /api/billing/entitlement` と生成経路が `loadEntitlement`（DB 読取失敗は **503 fail-closed**）で枠を決める。Webhook 正本は **単一 SECURITY DEFINER TX** `process_billing_stripe_event`（event claim + subscription 行ロック + ignore-older / same-second + entitlement 投影 + processed 確定を不可分に実行。claim だけ成功して投影が落ちる経路を禁止）。billing 表への書込は **SECURITY DEFINER write RPCs のみ**（service_role EXECUTE; 表への direct DML 禁止）。Checkout は `lock_token` で acquire → Session 作成 → `bind_billing_checkout_session` → completed/expired/失敗で release。`planQuota` が製品定数、DB CHECK は防御 max（10/20/8）。品質は `reserve_ai_generation(..., p_quality_mode=true)` 原子 multi-ledger（通常 success/attempt も同一 TX で消費）。チラシは `reserve_flyer_weekly`（S1 成功枠満 → try/OpenRouter 非接触）。fail/stale/account-delete は quality/flyer **reserved** も対称解放。`BILLING_ENABLED=false` でも Webhook は鍵があれば継続し枠は Free 強制。
 
-**Tech Stack:** TypeScript strict / ESM、React 19 + Vite 8 + React Router 8 Data Mode、TanStack Query 5、Zod 4、Netlify Functions、Supabase Postgres（SECURITY DEFINER RPC + `private` schema）、Stripe Node SDK（`stripe@22.3.2` exact pin、**`STRIPE_API_VERSION = "2025-02-24.acacia"`** 固定）、Vitest / React Testing Library / Playwright / pgTAP、Docker 経由 `npm`（`docker compose run --rm --no-deps app …`）。
+**Tech Stack:** TypeScript strict / ESM、React 19 + Vite 8 + React Router 8 Data Mode、TanStack Query 5、Zod 4、Netlify Functions、Supabase Postgres（SECURITY DEFINER RPC + `private` schema）、Stripe Node SDK（`stripe@22.3.2` exact pin、**`STRIPE_API_VERSION = "2026-06-24.dahlia"`** 固定・内部テスト前に ADV-13 再ピン）、Vitest / React Testing Library / Playwright / pgTAP、Docker 経由 `npm`（`docker compose run --rm --no-deps app …`）。
 
 **Plan revision:** r2 — external Codex review（`docs/superpowers/plans/2026-07-29-paid-plan-stripe-external-review-codex-gpt5.md`）の open 6 件を計画修正（companion: `docs/superpowers/plans/2026-07-29-paid-plan-stripe-plan-fix-r2-external-codex.md`）。r1: adversarial + crosscheck + secondary must_fix（`docs/superpowers/plans/2026-07-29-paid-plan-stripe-plan-fix-r1.md`）。
 
@@ -102,7 +102,7 @@
 | `e2e/specs/` | billing / hard-limit CTA / flyer | 8 |
 | `package.json` / `package-lock.json` | `stripe@22.3.2`, `sharp` exact, `db:test` profile | 4,7,8 |
 | `src/shared/types/database.generated.ts` | typegen only | 2,3,6,7 |
-| `.env.example` | STRIPE_* / `STRIPE_API_VERSION=2025-02-24.acacia` / BILLING / PLUS_MODELS | 4,6 |
+| `.env.example` | STRIPE_* / `STRIPE_API_VERSION=2026-06-24.dahlia` / BILLING / PLUS_MODELS | 4,6 |
 
 ### Migration series（`> 20260729120000`）
 
@@ -1176,7 +1176,7 @@ git commit -m "feat: 日次・短時間枠をプラン可変にしCHECKを10/20/
 - Consumes: Task2 **write/read RPCs only**（表 direct DML 禁止）、Task1 planQuota、`computeQuotaIdentityKey`
 - Produces:
   - `stripe@22.3.2`（**exact pin**）
-  - **`STRIPE_API_VERSION` 固定文字列: `"2025-02-24.acacia"`**（ADV-13。env / `.env.example` / Stripe client factory / env tests で同一。変更は設計改訂）
+  - **`STRIPE_API_VERSION` 固定文字列: `"2026-06-24.dahlia"`**（ADV-13 再ピン。env / `.env.example` / Stripe client factory / env tests で同一。変更は設計改訂）
   - Routes（`Config.path`）:
     - `POST /api/billing/checkout` body `{ interval: "month" | "year" }`（**`priceInterval` ではない** — 設計 mermaid は diagram-only 誤り。plan/routes が正）
     - `POST /api/billing/portal`
@@ -1192,7 +1192,7 @@ git commit -m "feat: 日次・短時間枠をプラン可変にしCHECKを10/20/
 | 項目 | 値 |
 |------|-----|
 | Package | `stripe@22.3.2` exact |
-| API version | **`2025-02-24.acacia`**（本 Plan で固定。Dashboard と不一致なら deploy 前に設計改訂して全箇所置換） |
+| API version | **`2026-06-24.dahlia`**（本 Plan で固定。Dashboard と不一致なら deploy 前に設計改訂して全箇所置換） |
 | 理由 | 公式 Node SDK。semver range 禁止。API version を Dashboard 任せにしない |
 | インストール | Docker のみ（下記 Step） |
 
@@ -1237,11 +1237,11 @@ it("allows BILLING_ENABLED=false with webhook secrets present (A3)", () => {
     STRIPE_WEBHOOK_SECRET: "whsec_xxx",
     STRIPE_PRICE_PLUS_MONTHLY: "price_m",
     STRIPE_PRICE_PLUS_YEARLY: "price_y",
-    STRIPE_API_VERSION: "2025-02-24.acacia",
+    STRIPE_API_VERSION: "2026-06-24.dahlia",
   });
   expect(env.billingEnabled).toBe(false);
   expect(env.stripe?.webhookSecret).toBeTruthy();
-  expect(env.stripe?.apiVersion).toBe("2025-02-24.acacia");
+  expect(env.stripe?.apiVersion).toBe("2026-06-24.dahlia");
 });
 
 it("rejects STRIPE_API_VERSION other than the locked pin when stripe keys present", () => {
@@ -1472,7 +1472,7 @@ Checkout Session 作成パラメータ（ロック）:
   allow_promotion_codes: false,
   locale: "ja",
 }
-// Stripe client: new Stripe(secret, { apiVersion: "2025-02-24.acacia" })
+// Stripe client: new Stripe(secret, { apiVersion: "2026-06-24.dahlia" })
 ```
 
 Kill 分割表（A3）:
@@ -1521,7 +1521,7 @@ STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_PLUS_MONTHLY=
 STRIPE_PRICE_PLUS_YEARLY=
-STRIPE_API_VERSION=2025-02-24.acacia
+STRIPE_API_VERSION=2026-06-24.dahlia
 # STRIPE_MOCK_BASE_URL=  # local exact mock only
 ```
 
@@ -2271,7 +2271,7 @@ git commit -m "feat: Plusチラシ画像から1週間献立（try上限付き）
 - Modify: `shared/contracts/domain.ts` → `privacyNoticeVersion = "2026-07-29.v1"`
 - Modify: 全 privacy 参照テスト / generation fixtures
 - Modify: `src/features/privacy/privacy-copy.ts`（有料プラン・Stripe・trial 履歴の追記）
-- Modify: `scripts/preflight-production.mjs`（STRIPE 鍵、`STRIPE_API_VERSION=2025-02-24.acacia`、GLOBAL≤200、BILLING 整合）
+- Modify: `scripts/preflight-production.mjs`（STRIPE 鍵、`STRIPE_API_VERSION=2026-06-24.dahlia`、GLOBAL≤200、BILLING 整合）
 - Modify: `docs/deployment/netlify.md`（sharp + Stripe env）、roadmap Locked Environment Contract 注記
 - Modify: `package.json` `"db:test"` → `docker compose --profile test run --rm db-test`（ADV-23）
 - Create/Modify: `e2e/specs/billing-plus.spec.ts`（既存命名に合わせる）
@@ -2534,7 +2534,7 @@ r2: external Codex open issues 1–6 closed in plan body（see Plan revision log
 | delete-account list all subs | 8 | subscriptions.list status all | **Issue4** |
 | sequential Tasks + handoff | ops | 1→8 unique; no parallel | **Issue5** |
 | AGENTS §8 nine cmds | 8 | format…diff-check | **Issue6** |
-| stripe + API version pin | 4 | `22.3.2` + `2025-02-24.acacia` | **ADV-13** |
+| stripe + API version pin | 4 | `22.3.2` + `2026-06-24.dahlia` | **ADV-13** |
 | migrations > `20260729120000` | 2,3,6,7 | series 130000–160000 | ok |
 | db:types no --no-deps | 2,3,6,7 | `docker compose run --rm app npm run db:types` | **M1** |
 | billing-entitlement.test create | 3 | M5 | **M5** |
@@ -2545,7 +2545,7 @@ r2: external Codex open issues 1–6 closed in plan body（see Plan revision log
 ## Placeholder scan
 
 - TBD / TODO /「後で実装」逃げなし。
-- `STRIPE_API_VERSION` は **`2025-02-24.acacia` に固定**（placeholder 解消）。
+- `STRIPE_API_VERSION` は **`2026-06-24.dahlia` に固定**（placeholder 解消）。
 - Task2 write RPC 名を列挙済み（`process_billing_stripe_event` / bind lock / direct DML 禁止）。
 - Task6 v2 producer パスを列挙 + grep gate（**active code + pgTAP only**; 歴史 migration 非対象）。
 - Task6 DB CHECK/RPC v3 cutover + 旧 overload DROP + grant inventory + full db-test を明記。
@@ -2571,7 +2571,7 @@ r2: external Codex open issues 1–6 closed in plan body（see Plan revision log
 | `generation-command.v3` | generation.ts | v2 廃止 |
 | `qualityMode` | command top-level boolean | HMAC 含む |
 | Checkout body | `{ interval: "month"\|"year" }` | not priceInterval |
-| `STRIPE_API_VERSION` | env | **`2025-02-24.acacia`** |
+| `STRIPE_API_VERSION` | env | **`2026-06-24.dahlia`** |
 | Stripe SDK | `stripe@22.3.2` | exact |
 | GLOBAL | max **200**, local default 20, ops 80 | Task3/8 |
 | identity RPC authority was | `20260728150000` | superseded by `20260729140000`+ |
@@ -2613,7 +2613,7 @@ Companion: `docs/superpowers/plans/2026-07-29-paid-plan-stripe-plan-fix-r2-exter
 | M5 | Task3: create `billing-entitlement.test.ts` |
 | ADV-14 | Task3: GLOBAL max tests 0/201; 21 valid |
 | ADV-15 | Task6/7: factories/fixtures listed |
-| ADV-13 | pin `STRIPE_API_VERSION=2025-02-24.acacia` |
+| ADV-13 | pin `STRIPE_API_VERSION=2026-06-24.dahlia` |
 | M7 | File map regeneration-sheet path |
 | M8 | Task6 quality co-consumes normal success/attempt |
 | M9 | Task1 git add free-tier.test.ts |

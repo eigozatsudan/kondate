@@ -333,7 +333,7 @@ Retired non-variables (do not reintroduce in preflight or `.env.example`): `APP_
 | `STRIPE_SECRET_KEY` | server only `sk_test_` / `sk_live_`. required when `BILLING_ENABLED=true` or any Stripe key is set |
 | `STRIPE_WEBHOOK_SECRET` | server only `whsec_...` |
 | `STRIPE_PRICE_PLUS_MONTHLY` / `STRIPE_PRICE_PLUS_YEARLY` | Price IDs |
-| `STRIPE_API_VERSION` | **exact** `2025-02-24.acacia`（ADV-13） |
+| `STRIPE_API_VERSION` | **exact** `2026-06-24.dahlia`（ADV-13 再ピン、内部テスト前） |
 | `STRIPE_MOCK_BASE_URL` | local only `http://stripe-mock:8790`. production preflight rejects |
 | `OPENROUTER_PLUS_MODELS` | required non-empty when `BILLING_ENABLED=true` |
 | `VITE_STRIPE_*` / `VITE_BILLING_*` | forbidden (parse + preflight throw) |

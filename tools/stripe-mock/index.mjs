@@ -30,7 +30,7 @@ export function injectStripeWebhookEvent(input) {
   return {
     id,
     object: "event",
-    api_version: "2025-02-24.acacia",
+    api_version: "2026-06-24.dahlia",
     created,
     type: input.type,
     data: {

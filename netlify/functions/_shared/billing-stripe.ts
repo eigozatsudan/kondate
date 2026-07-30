@@ -14,28 +14,26 @@ export type CreateStripeClientOptions = {
 
 /**
  * Stripe クライアントを固定 API version で生成する。
- * apiVersion は ADV-13 で `"2025-02-24.acacia"` にロック（Dashboard 任せにしない）。
+ * apiVersion は ADV-13 で `STRIPE_API_VERSION`（現在 `2026-06-24.dahlia`）にロック。
+ * Dashboard のアカウント既定版に任せない。
  * mockBaseUrl があるときは SDK の接続先をその origin に向ける（local stripe-mock）。
  */
 export function createStripeClient(
   secretKey: string,
   options: CreateStripeClientOptions = {},
 ): Stripe {
-  // SDK 型の LatestApiVersion は同梱最新（例: dahlia）のみ。
-  // 製品は ADV-13 で acacia 固定のため unknown 経由でピンを送る。
-  const ctorOptions: Record<string, unknown> = {
+  const ctorOptions: Stripe.StripeConfig = {
     apiVersion: STRIPE_API_VERSION,
   };
   if (options.mockBaseUrl !== undefined && options.mockBaseUrl.length > 0) {
     // URL 分解: stripe-node は host/protocol/port を個別に受ける
     const parsed = new URL(options.mockBaseUrl);
     ctorOptions.host = parsed.hostname;
-    ctorOptions.protocol = parsed.protocol.replace(/:$/u, "");
+    ctorOptions.protocol = parsed.protocol.replace(/:$/u, "") as "http" | "https";
     if (parsed.port.length > 0) {
       ctorOptions.port = parsed.port;
     }
   }
-  // apiVersion は Record 経由で渡し、SDK の LatestApiVersion 制約を回避する
   return new Stripe(secretKey, ctorOptions);
 }
 

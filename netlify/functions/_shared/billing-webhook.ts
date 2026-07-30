@@ -75,13 +75,22 @@ export type BillingWebhookDeps = {
 };
 
 /**
- * acacia ピンでは Subscription に current_period_* がある。
- * SDK 型は最新 dahlia（item 側）のみのため両系統を読む。
+ * dahlia 以降は period が SubscriptionItem 側。
+ * Webhook endpoint が古い API version のときや再配信で acacia 形が来る場合に備え両系統を読む。
  */
 function periodUnixFromSubscription(sub: Stripe.Subscription): {
   start: number | null;
   end: number | null;
 } {
+  const item = sub.items.data[0];
+  if (
+    item !== undefined &&
+    typeof item.current_period_start === "number" &&
+    typeof item.current_period_end === "number"
+  ) {
+    return { start: item.current_period_start, end: item.current_period_end };
+  }
+  // acacia 以前: top-level current_period_*（Basil 2025-03-31 で item 側へ移動）
   const legacy = sub as Stripe.Subscription & {
     current_period_start?: number;
     current_period_end?: number;
@@ -91,14 +100,6 @@ function periodUnixFromSubscription(sub: Stripe.Subscription): {
     typeof legacy.current_period_end === "number"
   ) {
     return { start: legacy.current_period_start, end: legacy.current_period_end };
-  }
-  const item = sub.items.data[0];
-  if (
-    item !== undefined &&
-    typeof item.current_period_start === "number" &&
-    typeof item.current_period_end === "number"
-  ) {
-    return { start: item.current_period_start, end: item.current_period_end };
   }
   return { start: null, end: null };
 }
@@ -160,7 +161,17 @@ function customerIdFrom(
 }
 
 function subscriptionIdFromInvoice(invoice: Stripe.Invoice): string | null {
-  // acacia 互換: top-level subscription。dahlia 型では parent.subscription_details 側。
+  // dahlia: parent.subscription_details。acacia 以前は top-level subscription。
+  const details = invoice.parent?.subscription_details;
+  if (details !== null && details !== undefined) {
+    const parentSub = details.subscription;
+    if (typeof parentSub === "string") {
+      return parentSub.length > 0 ? parentSub : null;
+    }
+    if (parentSub !== null && parentSub !== undefined && typeof parentSub.id === "string") {
+      return parentSub.id;
+    }
+  }
   const legacy = invoice as Stripe.Invoice & {
     subscription?: string | Stripe.Subscription | null;
   };
@@ -169,13 +180,7 @@ function subscriptionIdFromInvoice(invoice: Stripe.Invoice): string | null {
   if (sub !== null && sub !== undefined && typeof sub === "object" && "id" in sub) {
     return typeof sub.id === "string" ? sub.id : null;
   }
-  const details = invoice.parent?.subscription_details;
-  if (details === null || details === undefined) return null;
-  const parentSub = details.subscription;
-  if (typeof parentSub === "string") {
-    return parentSub.length > 0 ? parentSub : null;
-  }
-  return parentSub.id;
+  return null;
 }
 
 /**

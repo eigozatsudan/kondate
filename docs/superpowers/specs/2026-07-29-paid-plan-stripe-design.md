@@ -390,7 +390,7 @@ sequenceDiagram
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...`。同上必須 |
 | `STRIPE_PRICE_PLUS_MONTHLY` | Price ID（`price_...`） |
 | `STRIPE_PRICE_PLUS_YEARLY` | Price ID |
-| `STRIPE_API_VERSION` | 固定ピン（実装時にロックした API version 文字列。例: `2025-...`）。変更は設計改訂 |
+| `STRIPE_API_VERSION` | 固定ピン **`2026-06-24.dahlia`**（ADV-13。内部テスト前に acacia から再ピン）。変更は設計改訂 |
 | （任意ローカル）`STRIPE_MOCK_BASE_URL` | exact ローカル mock のときのみ Checkout/Portal/Webhook を疑似化。本番で設定されていたら parse throw |
 
 `parseServerEnv`:

@@ -49,6 +49,9 @@ export const entitlementDataSchema = z
 
 export type EntitlementData = z.infer<typeof entitlementDataSchema>;
 
-/** ADV-13: Stripe API version 固定ピン。変更は設計改訂。 */
-export const STRIPE_API_VERSION = "2025-02-24.acacia" as const;
+/**
+ * ADV-13: Stripe API version 固定ピン。変更は設計改訂。
+ * 2026-07: 内部テスト前に `2026-06-24.dahlia` へ再ピン（stripe@22.3.2 の LatestApiVersion と一致）。
+ */
+export const STRIPE_API_VERSION = "2026-06-24.dahlia" as const;
 export type StripeApiVersion = typeof STRIPE_API_VERSION;

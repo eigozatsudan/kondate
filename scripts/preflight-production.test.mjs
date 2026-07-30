@@ -259,7 +259,7 @@ test("billing disabled with only STRIPE_API_VERSION pin does not require full ke
     validateProductionEnv(
       completeEnv({
         BILLING_ENABLED: "false",
-        STRIPE_API_VERSION: "2025-02-24.acacia",
+        STRIPE_API_VERSION: "2026-06-24.dahlia",
       }),
     ),
     { projectRef },
@@ -267,7 +267,7 @@ test("billing disabled with only STRIPE_API_VERSION pin does not require full ke
   validateBillingStripeEnv(
     completeEnv({
       BILLING_ENABLED: "false",
-      STRIPE_API_VERSION: "2025-02-24.acacia",
+      STRIPE_API_VERSION: "2026-06-24.dahlia",
     }),
   );
 });
@@ -285,7 +285,7 @@ test("billing enabled requires full Stripe set and API version pin", () => {
         STRIPE_WEBHOOK_SECRET: "whsec_test_key_value",
         STRIPE_PRICE_PLUS_MONTHLY: "price_monthly_test",
         STRIPE_PRICE_PLUS_YEARLY: "price_yearly_test",
-        STRIPE_API_VERSION: "2025-02-24.acacia",
+        STRIPE_API_VERSION: "2026-06-24.dahlia",
         OPENROUTER_PLUS_MODELS: "openai/gpt-5.6-luna",
       }),
     ),
@@ -321,7 +321,7 @@ test("rejects VITE_STRIPE and STRIPE_MOCK_BASE_URL in production preflight", () 
           STRIPE_WEBHOOK_SECRET: "whsec_x",
           STRIPE_PRICE_PLUS_MONTHLY: "price_m",
           STRIPE_PRICE_PLUS_YEARLY: "price_y",
-          STRIPE_API_VERSION: "2025-02-24.acacia",
+          STRIPE_API_VERSION: "2026-06-24.dahlia",
           STRIPE_MOCK_BASE_URL: "http://stripe-mock:8790",
         }),
       ),

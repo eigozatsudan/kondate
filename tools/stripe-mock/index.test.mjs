@@ -28,6 +28,6 @@ test("injectStripeWebhookEvent builds subscription-shaped event", () => {
   assert.equal(event.id, "evt_fixed");
   assert.equal(event.created, 2000);
   assert.equal(event.type, "customer.subscription.updated");
-  assert.equal(event.api_version, "2025-02-24.acacia");
+  assert.equal(event.api_version, "2026-06-24.dahlia");
   assert.equal(event.data.object.status, "active");
 });
