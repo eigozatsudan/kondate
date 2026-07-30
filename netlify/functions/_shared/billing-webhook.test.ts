@@ -809,6 +809,52 @@ describe("handleBillingWebhook", () => {
     expect(processPayload.status).toBe("active");
   });
 
+  it("invoice.paid for discarded dual-sub projects keep active instead of overwrite cancel", async () => {
+    // F-U05-1: dual cancel 後の discard 側 invoice.paid が keep を上書きしない
+    const keep = makeSubscription({
+      id: "sub_keep_invoice",
+      created: 1000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const discardedCanceled = makeSubscription({
+      id: "sub_discarded_invoice",
+      created: 2000,
+      status: "canceled",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const invoice = {
+      id: "in_discard_dual",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: "sub_discarded_invoice",
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, {
+        id: "evt_invoice_discard_dual",
+        created: 9_200,
+      }),
+    );
+    retrieve.mockImplementation((id: string) => {
+      if (id === "sub_keep_invoice") return Promise.resolve(keep);
+      return Promise.resolve(discardedCanceled);
+    });
+    list.mockImplementation((params: { status?: string }) => {
+      const data = params.status === "active" || params.status === undefined ? [keep] : [];
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.stripe_subscription_id).toBe("sub_keep_invoice");
+    expect(processPayload.status).toBe("active");
+  });
+
   it("cancels newer dual live subscription and keeps older entitled row", async () => {
     const older = makeSubscription({
       id: "sub_older",

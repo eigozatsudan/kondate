@@ -695,11 +695,12 @@ async function handleInvoiceEvent(
     return json(200, { ok: true, data: { outcome } });
   }
 
+  const resolvedCustomerId = customerId ?? customerIdFrom(sub.customer);
   const metadataUserId =
     typeof sub.metadata.supabase_user_id === "string" ? sub.metadata.supabase_user_id : null;
   const userId = await resolveBillingUserId(deps.admin, {
     metadataUserId,
-    stripeCustomerId: customerId ?? customerIdFrom(sub.customer),
+    stripeCustomerId: resolvedCustomerId,
   });
   if (userId === null) {
     log({
@@ -715,7 +716,56 @@ async function handleInvoiceEvent(
     });
   }
 
-  const projection = projectionFromSubscription(sub);
+  // F-U05-1: invoice 経路も subscription.* と同型の dual-sub keep リダイレクトを行う。
+  // discard 側の invoice.paid / payment_failed が keep を canceled 等で上書きしない。
+  let dualCleanup: DualSubscriptionCleanup = {
+    keepSubscriptionId: null,
+    discardedSubscriptionIds: [],
+  };
+  if (resolvedCustomerId !== null && LIVE_SUB_STATUSES.has(sub.status)) {
+    dualCleanup = await cancelDualLiveSubscriptions(
+      { stripe: deps.stripe, admin: deps.admin, log, requestId, startedAt },
+      userId,
+      resolvedCustomerId,
+    );
+  } else if (resolvedCustomerId !== null) {
+    dualCleanup = await resolveTerminalEventDualProjection(
+      { stripe: deps.stripe },
+      resolvedCustomerId,
+      sub.id,
+    );
+  }
+  if (
+    dualCleanup.keepSubscriptionId !== null &&
+    dualCleanup.keepSubscriptionId !== sub.id &&
+    !dualCleanup.discardedSubscriptionIds.includes(sub.id)
+  ) {
+    dualCleanup = {
+      keepSubscriptionId: dualCleanup.keepSubscriptionId,
+      discardedSubscriptionIds: [...dualCleanup.discardedSubscriptionIds, sub.id],
+    };
+  }
+
+  const projectingDiscardedOntoKeep =
+    dualCleanup.discardedSubscriptionIds.includes(sub.id) &&
+    dualCleanup.keepSubscriptionId !== null;
+  const projectSubscriptionId = projectingDiscardedOntoKeep
+    ? (dualCleanup.keepSubscriptionId as string)
+    : sub.id;
+
+  let projection: SubscriptionProjection | null = null;
+  try {
+    const liveSub = await deps.stripe.subscriptions.retrieve(projectSubscriptionId);
+    projection = projectionFromSubscription(liveSub);
+  } catch {
+    // discard イベントで keep retrieve 失敗時は event 側 sub で上書きしない
+    if (projectSubscriptionId === sub.id) {
+      projection = projectionFromSubscription(sub);
+    }
+  }
+  if (projection === null && projectSubscriptionId === sub.id) {
+    projection = projectionFromSubscription(sub);
+  }
   if (projection === null) {
     // 投影不能でも event ledger へ記録（再送地獄回避の 200 + durable claim）
     const outcome = await processStripeEvent(deps.admin, {
