@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import { AppToastProvider } from "@/shared/ui/app-toast";
+import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "../household-safety-helper-copy";
 import type { PlannerFieldName, PlannerStep } from "../model/planner-wizard";
 import type { PlannerSafetyMember } from "../planner-safety-member";
 import { createPlannerAttempt } from "../expired-pantry-checks";
@@ -962,6 +963,47 @@ describe("PlannerWizard review step", () => {
     expect(within(summary).getByText("子ども")).toBeVisible();
     expect(within(summary).queryByText("大人")).not.toBeInTheDocument();
     expect(within(summary).queryByText("卵アレルギー")).not.toBeInTheDocument();
+    // 補助文は CurrentSafetySummary の外（sibling）に1回
+    expect(screen.getByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).toBeInTheDocument();
+    expect(
+      within(summary).queryByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY),
+    ).not.toBeInTheDocument();
+  });
+
+  it("household review shows helper even when zero selected members", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [],
+        }}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: "現在の家族・安全条件" })).not.toBeInTheDocument();
+    expect(screen.getByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).toBeInTheDocument();
+  });
+
+  it("idea review does not show helper", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+        }}
+      />,
+    );
+    expect(screen.queryByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).not.toBeInTheDocument();
   });
 
   it("保存失敗時は現在stepを維持する", () => {

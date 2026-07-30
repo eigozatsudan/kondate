@@ -1,9 +1,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationStatusData } from "@shared/contracts/generation";
 import { getNextJstMidnight } from "@shared/time/jst";
+import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "@/features/planner/household-safety-helper-copy";
 import type { GenerationClientState } from "../model/generation-machine";
+import {
+  clearPendingGeneration,
+  createPendingGeneration,
+  savePendingGeneration,
+} from "../model/pending-generation";
+import {
+  clearPendingGenerationMeta,
+  savePendingGenerationMeta,
+} from "../model/pending-generation-meta";
 import { GenerationStatusPanel } from "./generation-status-panel";
 
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
@@ -70,9 +81,144 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  clearPendingGeneration();
+  clearPendingGenerationMeta();
 });
 
+function constraintConflictState(idempotencyKey: string = KEY): GenerationClientState {
+  const data: Extract<GenerationStatusData, { status: "constraint_conflict" }> = {
+    status: "constraint_conflict",
+    idempotencyKey,
+    requestId: REQUEST_ID,
+    conflicts: [
+      {
+        code: "mandatory_safety_conflict",
+        message: "必須の安全条件を満たす献立を作成できません。",
+        conditionRefs: ["member_1"],
+      },
+      {
+        code: "must_use_conflict",
+        message: "条件を同時に満たせません。",
+        conditionRefs: ["pantry_1"],
+      },
+    ],
+    completedAt: "2026-07-11T00:00:01.000Z",
+    quota,
+  };
+  return { phase: "constraint_conflict", data, effect: "none" };
+}
+
+function seedNewMenuHouseholdPending(idempotencyKey: string = KEY): void {
+  const pending = createPendingGeneration(
+    {
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey,
+        draftId: "20000000-0000-4000-8000-000000000001",
+        draftRevision: 1,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    },
+    USER_ID,
+    () => NOW,
+  );
+  savePendingGeneration(pending);
+  savePendingGenerationMeta({
+    kind: "new_menu",
+    targetMode: "household",
+    idempotencyKey,
+    ownerUserId: USER_ID,
+    createdAt: pending.createdAt,
+  });
+}
+
+function renderWithUser(ui: ReactElement) {
+  // userId 付きは TerminalQuotaBlock → useUsageToday が QueryClient を要求する
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
 describe("GenerationStatusPanel", () => {
+  it("same-session new_menu household conflict shows helper once", () => {
+    seedNewMenuHouseholdPending();
+    renderWithUser(<GenerationStatusPanel state={constraintConflictState()} userId={USER_ID} />);
+    expect(screen.getAllByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).toHaveLength(1);
+  });
+
+  it("reload: rehydrate pending+meta shows helper once", () => {
+    // storage に書いたあと unmount→remount で復帰経路を再現する
+    seedNewMenuHouseholdPending();
+    const first = renderWithUser(
+      <GenerationStatusPanel state={constraintConflictState()} userId={USER_ID} />,
+    );
+    expect(screen.getAllByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).toHaveLength(1);
+    first.unmount();
+    renderWithUser(<GenerationStatusPanel state={constraintConflictState()} userId={USER_ID} />);
+    expect(screen.getAllByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).toHaveLength(1);
+  });
+
+  it("after regenerate pending helper is absent", () => {
+    seedNewMenuHouseholdPending();
+    // regenerate save が meta を clear する契約を踏む
+    const regenerate = createPendingGeneration(
+      {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "10000000-0000-4000-8000-000000000099",
+          sourceMenuId: "60000000-0000-4000-8000-000000000001",
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      USER_ID,
+      () => NOW,
+    );
+    savePendingGeneration(regenerate);
+    renderWithUser(
+      <GenerationStatusPanel
+        state={constraintConflictState(regenerate.request.idempotencyKey)}
+        userId={USER_ID}
+      />,
+    );
+    expect(screen.queryByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).not.toBeInTheDocument();
+  });
+
+  it("idea new_menu conflict does not show household helper", () => {
+    const pending = createPendingGeneration(
+      {
+        commandVersion: "generation-command.v3",
+        kind: "new_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: KEY,
+          draftId: "20000000-0000-4000-8000-000000000001",
+          draftRevision: 1,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      USER_ID,
+      () => NOW,
+    );
+    savePendingGeneration(pending);
+    savePendingGenerationMeta({
+      kind: "new_menu",
+      targetMode: "idea",
+      idempotencyKey: KEY,
+      ownerUserId: USER_ID,
+      createdAt: pending.createdAt,
+    });
+    renderWithUser(<GenerationStatusPanel state={constraintConflictState()} userId={USER_ID} />);
+    expect(screen.queryByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).not.toBeInTheDocument();
+  });
+
   it("shows simplified not-consumed notice and success remaining after failure", () => {
     render(<GenerationStatusPanel state={failedState} />);
     expect(screen.getByText("献立は完成していないので、作成回数は減っていません")).toBeVisible();

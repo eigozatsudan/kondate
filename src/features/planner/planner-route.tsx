@@ -25,6 +25,7 @@ import {
   readPendingGeneration,
   savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
+import { savePendingGenerationMeta } from "@/features/generation/model/pending-generation-meta";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { getCurrentPrivacyConsent, hasCurrentPrivacyConsent } from "@/features/privacy/privacy-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
@@ -252,6 +253,20 @@ export function PlannerRoutePage() {
         userId,
       );
       savePendingGeneration(pending);
+      // household 補助文用 meta は new_menu のみ・draft.targetMode を正本に upsert。
+      // savePendingGeneration 本体は targetMode を知らないためここでは書かない。
+      const mode = draft.targetMode;
+      if (mode !== "household" && mode !== "idea") {
+        // submission 通過後の経路では通常到達しない。meta を残さず生成開始も止める。
+        throw new Error("target_mode_required");
+      }
+      savePendingGenerationMeta({
+        kind: "new_menu",
+        targetMode: mode,
+        idempotencyKey: pending.request.idempotencyKey,
+        ownerUserId: userId,
+        createdAt: pending.createdAt,
+      });
       if (signal.aborted) return Promise.resolve(false);
       void navigate("/generation");
       return Promise.resolve(true);
