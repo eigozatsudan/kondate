@@ -84,7 +84,8 @@ const additionalAliasValues: readonly (readonly [
   ["egg", "マヨネーズ", "processed", true],
   ["milk", "ホワイトソース", "processed", true],
   ["wheat", "ホワイトソース", "processed", true],
-  ["wheat", "食パン", "processed", true],
+  // 食パンは市販品でも小麦主原料がほぼ確実。S-I1 他パンと同型の hard match（乳は製品差があるため soft 維持）
+  ["wheat", "食パン", "derived", false],
   ["milk", "食パン", "processed", true],
   ["egg", "ハム", "processed", true],
   ["milk", "ハム", "processed", true],
@@ -132,6 +133,33 @@ const additionalAliasValues: readonly (readonly [
   ["wheat", "ホットケーキミックス", "derived", false],
   ["wheat", "お好み焼き粉", "derived", false],
   ["wheat", "餃子の皮", "derived", false],
+  // S-I2: 高頻度料理名・外来語（パスタ/粉名の部分一致では拾えない残差）
+  // 裸の「パン」はフライパン衝突のため載せない（S-I1 と同じ）
+  ["wheat", "スパゲッティ", "derived", false],
+  ["wheat", "スパゲティ", "derived", false],
+  ["wheat", "マカロニ", "derived", false],
+  ["wheat", "ラザニア", "derived", false],
+  ["wheat", "ピザ", "derived", false],
+  ["wheat", "トースト", "derived", false],
+  ["wheat", "ホットケーキ", "derived", false],
+  ["wheat", "お好み焼き", "derived", false],
+  ["wheat", "餃子", "derived", false],
+  ["wheat", "天ぷら", "derived", false],
+  ["wheat", "クッキー", "derived", false],
+  ["wheat", "ビスケット", "derived", false],
+  ["wheat", "ドーナツ", "derived", false],
+  ["wheat", "中力粉", "derived", false],
+  ["wheat", "全粒粉", "derived", false],
+  ["wheat", "グルテン", "derived", false],
+  ["wheat", "麩", "derived", false],
+  // 卵: 料理名・外来語（卵/たまご/玉子が葉に無いとき fail-open していた）
+  ["egg", "オムレツ", "derived", false],
+  ["egg", "オムライス", "derived", false],
+  ["egg", "目玉焼き", "derived", false],
+  ["egg", "エッグ", "derived", false],
+  ["egg", "スクランブルエッグ", "derived", false],
+  // えび: サーモン同型の外来語
+  ["shrimp", "シュリンプ", "direct", false],
 ];
 
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [

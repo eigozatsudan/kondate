@@ -81,6 +81,36 @@ describe("foodTextContainsAlias", () => {
   });
 
   it.each([
+    ["スパゲッティボロネーゼ", "スパゲッティ"],
+    ["マカロニグラタン", "マカロニ"],
+    ["マルゲリータピザ", "ピザ"],
+    ["朝食のトースト", "トースト"],
+    ["ホットケーキ", "ホットケーキ"],
+    ["お好み焼き", "お好み焼き"],
+    ["餃子", "餃子"],
+    ["天ぷらうどん", "天ぷら"],
+    ["クッキー", "クッキー"],
+    ["中力粉で伸ばす", "中力粉"],
+    ["食パン", "食パン"],
+  ])("S-I2 detects high-frequency wheat form %s via alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
+  it.each([
+    ["オムレツ", "オムレツ"],
+    ["オムライス", "オムライス"],
+    ["目玉焼き", "目玉焼き"],
+    ["エッグサンド", "エッグ"],
+    ["スクランブルエッグ", "スクランブルエッグ"],
+  ])("S-I2 detects egg dish/loan form %s via alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
+  it("S-I2 detects シュリンプ for shrimp", () => {
+    expect(foodTextContainsAlias("シュリンプサラダ", "シュリンプ")).toBe(true);
+  });
+
+  it.each([
     ["味噌汁", "味噌"],
     ["納豆ごはん", "納豆"],
     ["とんかつ用のパン粉", "パン粉"],
