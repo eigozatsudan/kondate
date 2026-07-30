@@ -69,7 +69,9 @@ const draftShape = {
   servings: z.number().int().min(1).max(20).nullable(),
   timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
   budgetPreference: z.enum(budgetPreferences).nullable(),
-  ingredientPreference: z.enum(ingredientPreferences).nullable(),
+  // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
+  // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
+  ingredientPreference: z.enum(ingredientPreferences).nullable().default(null),
   avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
   memo: boundedCanonicalText(0, 200),
   pantrySelections: z.array(pantrySelectionDraftSchema).max(50),
@@ -97,7 +99,8 @@ const submissionCommonShape = {
   cuisineGenre: z.enum(cuisineGenres),
   timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
   budgetPreference: z.enum(budgetPreferences).nullable(),
-  ingredientPreference: z.enum(ingredientPreferences).nullable(),
+  // 同上: 導入前 snapshot の欠損キーを null（未指定）へ正規化する
+  ingredientPreference: z.enum(ingredientPreferences).nullable().default(null),
   avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
   memo: boundedCanonicalText(0, 200),
   pantrySelections: z.array(pantrySelectionDraftSchema).max(50),

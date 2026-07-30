@@ -731,15 +731,20 @@ describe("PlannerWizard review step", () => {
     const select = screen.getByLabelText("材料の使い方");
     expect(select).toHaveValue("");
     // 4 値 + 指定なし。文言は planner-labels と一致させる。
-    expect(within(select as HTMLElement).getByRole("option", { name: "指定なし" })).toBeEnabled();
-    expect(within(select as HTMLElement).getByRole("option", { name: "多め" })).toBeEnabled();
-    expect(within(select as HTMLElement).getByRole("option", { name: "少な目" })).toBeEnabled();
+    const selectEl = select as HTMLSelectElement;
+    expect(within(selectEl).getByRole("option", { name: "指定なし" })).toBeEnabled();
+    expect(within(selectEl).getByRole("option", { name: "多め" })).toBeEnabled();
+    expect(within(selectEl).getByRole("option", { name: "少な目" })).toBeEnabled();
     expect(
-      within(select as HTMLElement).getByRole("option", {
-        name: "メイン食材と冷蔵庫から使う食材からしか使わない",
+      within(selectEl).getByRole("option", {
+        name: "メイン食材と冷蔵庫の食材を優先（買い足しを控えめに）",
       }),
     ).toBeEnabled();
-    expect(within(select as HTMLElement).getByRole("option", { name: "おまかせ" })).toBeEnabled();
+    expect(
+      within(selectEl).getByRole("option", {
+        name: "おまかせ（分量・範囲はモデル判断）",
+      }),
+    ).toBeEnabled();
 
     await user.selectOptions(select, "more");
     expect(select).toHaveValue("more");

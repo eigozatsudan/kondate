@@ -24,6 +24,8 @@ function buildReviewFieldErrors(
     result.timeLimitMinutes = fieldErrors.timeLimitMinutes;
   if (fieldErrors.budgetPreference !== undefined)
     result.budgetPreference = fieldErrors.budgetPreference;
+  if (fieldErrors.ingredientPreference !== undefined)
+    result.ingredientPreference = fieldErrors.ingredientPreference;
   if (fieldErrors.avoidIngredients !== undefined)
     result.avoidIngredients = fieldErrors.avoidIngredients;
   if (fieldErrors.memo !== undefined) result.memo = fieldErrors.memo;

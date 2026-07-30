@@ -55,6 +55,43 @@ describe("planner contracts", () => {
     ).toBe(false);
   });
 
+  it("defaults missing ingredientPreference to null on draft and submission (pre-feature snapshots)", () => {
+    // キーごと落とす（null を明示しない導入前 snapshot を模擬）
+    const draftWithoutKey = {
+      mealType: incompleteDraft.mealType,
+      mainIngredients: incompleteDraft.mainIngredients,
+      cuisineGenre: incompleteDraft.cuisineGenre,
+      targetMode: incompleteDraft.targetMode,
+      targetMemberIds: incompleteDraft.targetMemberIds,
+      servings: incompleteDraft.servings,
+      timeLimitMinutes: incompleteDraft.timeLimitMinutes,
+      budgetPreference: incompleteDraft.budgetPreference,
+      avoidIngredients: incompleteDraft.avoidIngredients,
+      memo: incompleteDraft.memo,
+      pantrySelections: incompleteDraft.pantrySelections,
+    };
+    expect(plannerDraftInputSchema.parse(draftWithoutKey)).toMatchObject({
+      ingredientPreference: null,
+    });
+
+    const submissionWithoutKey = {
+      mealType: validBase.mealType,
+      mainIngredients: validBase.mainIngredients,
+      cuisineGenre: validBase.cuisineGenre,
+      timeLimitMinutes: validBase.timeLimitMinutes,
+      budgetPreference: validBase.budgetPreference,
+      avoidIngredients: validBase.avoidIngredients,
+      memo: validBase.memo,
+      pantrySelections: validBase.pantrySelections,
+      targetMode: "household" as const,
+      targetMemberIds: [memberId],
+      servings: null,
+    };
+    expect(plannerSubmissionSchema.parse(submissionWithoutKey)).toMatchObject({
+      ingredientPreference: null,
+    });
+  });
+
   it("requires the three basic choices and one target for submission", () => {
     expect(plannerSubmissionSchema.safeParse(incompleteDraft).success).toBe(false);
     expect(
