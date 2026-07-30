@@ -66,6 +66,36 @@ const jsonResponse = (response, status, payload) => {
 };
 
 /**
+ * idea 判定: generation-prompt.ts の idea system 文にだけ含まれる句。
+ * household 向け system には無い。
+ */
+const isIdeaSystemPrompt = (messages) => {
+  if (!Array.isArray(messages)) return false;
+  const system = messages.find((message) => message?.role === "system");
+  const systemContent = typeof system?.content === "string" ? system.content : "";
+  return systemContent.includes(
+    "家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列",
+  );
+};
+
+/**
+ * user メッセージの kondate_input_data を読む。無ければ null。
+ */
+const readKondateInputPayload = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  const user = messages.find((message) => message?.role === "user");
+  const userContent = typeof user?.content === "string" ? user.content : "";
+  const match = /<kondate_input_data>\n([\s\S]*?)\n<\/kondate_input_data>/u.exec(userContent);
+  if (match === null) return null;
+  try {
+    const payload = JSON.parse(match[1]);
+    return isPlainObject(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * idea 検証が要求する形へ success 系 full_menu を整える。
  * adaptations / labelConfirmations を空にし、人数を提出値に合わせる。
  */
@@ -85,6 +115,121 @@ const applyIdeaMenuShape = (fixture, servings) => {
   };
 };
 
+/**
+ * ブラウザ手動操作向け: 固定 fixture を提出 preferences に合わせて揃える。
+ * - mealType / cuisineGenre（any 以外）を一致
+ * - mainIngredients を主菜名と先頭材料へ埋め込み（main_ingredient_missing 回避）
+ * - dinner は soup を足して 3 品にする
+ * - idea は人数・空 adaptations/labels
+ *
+ * E2E は朝食+鶏肉+和食で fixture と一致させることが多いが、手動 UI は
+ * 昼食/洋食/卵 なども選ぶ。未整列のままだと primary+repair とも invalid_ai_response になる。
+ */
+const applySubmissionMenuShape = (fixture, messages, ideaServingsOverride = null) => {
+  if (fixture === null || typeof fixture !== "object" || Array.isArray(fixture)) {
+    return fixture;
+  }
+  if (!isPlainObject(fixture.menu) || fixture.outcome !== "success") return fixture;
+
+  const payload = readKondateInputPayload(messages);
+  const preferences = isPlainObject(payload?.preferences) ? payload.preferences : null;
+  let menu = { ...fixture.menu, dishes: Array.isArray(fixture.menu.dishes) ? [...fixture.menu.dishes] : [] };
+
+  if (preferences !== null) {
+    const mealType = preferences.mealType;
+    if (mealType === "breakfast" || mealType === "lunch" || mealType === "dinner") {
+      menu.mealType = mealType;
+    }
+    const cuisineGenre = preferences.cuisineGenre;
+    if (
+      cuisineGenre === "japanese" ||
+      cuisineGenre === "western" ||
+      cuisineGenre === "chinese"
+    ) {
+      // any は validate が一致要求しないので fixture の japanese のままでよい
+      menu.cuisineGenre = cuisineGenre;
+    }
+    const mains = Array.isArray(preferences.mainIngredients)
+      ? preferences.mainIngredients.filter((name) => typeof name === "string" && name.length > 0)
+      : [];
+    if (mains.length > 0 && menu.dishes.length > 0) {
+      menu.dishes = menu.dishes.map((dish, dishIndex) => {
+        if (dishIndex !== 0 || !isPlainObject(dish)) return dish;
+        const mainName = mains[0];
+        const ingredients = Array.isArray(dish.ingredients)
+          ? dish.ingredients.map((ingredient, ingredientIndex) => {
+              if (!isPlainObject(ingredient)) return ingredient;
+              if (ingredientIndex < mains.length) {
+                return { ...ingredient, name: mains[ingredientIndex] };
+              }
+              return ingredient;
+            })
+          : dish.ingredients;
+        return {
+          ...dish,
+          name: `${mainName}の${typeof dish.name === "string" ? dish.name : "主菜"}`,
+          ingredients,
+        };
+      });
+    }
+  }
+
+  // dinner は main+side+soup の 3 品が必須。固定 fixture は 2 品なので soup を足す。
+  if (menu.mealType === "dinner" && menu.dishes.length === 2) {
+    const side = menu.dishes[1];
+    const soupBase = isPlainObject(side) ? side : menu.dishes[0];
+    menu.dishes = [
+      ...menu.dishes,
+      {
+        ...soupBase,
+        dishRef: "dish_3",
+        role: "soup",
+        position: 3,
+        name: isPlainObject(soupBase) && typeof soupBase.name === "string"
+          ? `${soupBase.name}のスープ`
+          : "野菜スープ",
+        ingredients: Array.isArray(soupBase?.ingredients)
+          ? soupBase.ingredients.map((ingredient, index) =>
+              isPlainObject(ingredient)
+                ? {
+                    ...ingredient,
+                    ingredientRef: `ingredient_soup_${String(index + 1)}`,
+                  }
+                : ingredient,
+            )
+          : [],
+        steps: [
+          {
+            stepRef: "step_soup_1",
+            position: 1,
+            instruction: "材料を煮てスープに仕上げる",
+          },
+        ],
+      },
+    ];
+  }
+
+  const ideaMode = isIdeaSystemPrompt(messages) || ideaServingsOverride !== null;
+  if (ideaMode) {
+    const servingsFromPrefs =
+      preferences !== null &&
+      typeof preferences.servings === "number" &&
+      Number.isInteger(preferences.servings) &&
+      preferences.servings >= 1 &&
+      preferences.servings <= 20
+        ? preferences.servings
+        : null;
+    const servings = ideaServingsOverride ?? servingsFromPrefs;
+    if (servings !== null) {
+      menu = { ...menu, servings, adaptations: [], labelConfirmations: [] };
+    } else {
+      menu = { ...menu, adaptations: [], labelConfirmations: [] };
+    }
+  }
+
+  return { ...fixture, menu };
+};
+
 /** full_menu fixture を provider の nullable 3-field wire 表現へ閉じる。 */
 const toMenuGenerationWireResponse = (fixture) => {
   if (!isPlainObject(fixture)) return fixture;
@@ -102,36 +247,20 @@ const toMenuGenerationWireResponse = (fixture) => {
  * household プロンプト（members 非空・idea 指示なし）では null。
  */
 const readIdeaServingsFromMessages = (messages) => {
-  if (!Array.isArray(messages)) return null;
-  const system = messages.find((message) => message?.role === "system");
-  const systemContent = typeof system?.content === "string" ? system.content : "";
-  // generation-prompt.ts の idea system 文と一致する判定（世帯向け system には無い）
+  if (!isIdeaSystemPrompt(messages)) return null;
+  const payload = readKondateInputPayload(messages);
+  if (payload === null || !isPlainObject(payload.preferences)) return null;
+  if (!Array.isArray(payload.members) || payload.members.length !== 0) return null;
+  const servings = payload.preferences.servings;
   if (
-    !systemContent.includes("家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列")
+    typeof servings !== "number" ||
+    !Number.isInteger(servings) ||
+    servings < 1 ||
+    servings > 20
   ) {
     return null;
   }
-  const user = messages.find((message) => message?.role === "user");
-  const userContent = typeof user?.content === "string" ? user.content : "";
-  const match = /<kondate_input_data>\n([\s\S]*?)\n<\/kondate_input_data>/u.exec(userContent);
-  if (match === null) return null;
-  try {
-    const payload = JSON.parse(match[1]);
-    if (!isPlainObject(payload) || !isPlainObject(payload.preferences)) return null;
-    if (!Array.isArray(payload.members) || payload.members.length !== 0) return null;
-    const servings = payload.preferences.servings;
-    if (
-      typeof servings !== "number" ||
-      !Number.isInteger(servings) ||
-      servings < 1 ||
-      servings > 20
-    ) {
-      return null;
-    }
-    return servings;
-  } catch {
-    return null;
-  }
+  return servings;
 };
 
 const readRequestBody = (request, response) =>
@@ -269,13 +398,15 @@ async function handleRequest(request, response) {
   let fixture = ideaServingsValid
     ? structuredClone(scenarios.success)
     : structuredClone(scenarios[key]);
-  if (ideaServingsValid) {
-    fixture = applyIdeaMenuShape(fixture, ideaServingsFromKey);
-  } else if (key === "success" && !dishMode) {
-    // ヘッダ無しの手動 idea 生成: プロンプトが idea なら default success を idea 形へ
-    const ideaServings = readIdeaServingsFromMessages(body.messages);
-    if (ideaServings !== null) {
-      fixture = applyIdeaMenuShape(fixture, ideaServings);
+  if (!dishMode && (key === "success" || ideaServingsValid)) {
+    // 手動 UI / idea-servings-* : 提出 mealType・ジャンル・主食材・人数に合わせて fixture を整える。
+    // 旧 applyIdeaMenuShape だけでは western/卵/昼食などで validate が落ち repair も同型失敗する。
+    const ideaServings =
+      ideaServingsValid ? ideaServingsFromKey : readIdeaServingsFromMessages(body.messages);
+    fixture = applySubmissionMenuShape(fixture, body.messages, ideaServings);
+    // idea-servings ヘッダだけで messages が idea でない合成経路向けに人数を再固定
+    if (ideaServingsValid) {
+      fixture = applyIdeaMenuShape(fixture, ideaServingsFromKey);
     }
   }
   if (!dishMode) {

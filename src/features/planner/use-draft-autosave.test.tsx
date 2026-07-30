@@ -119,6 +119,115 @@ it("サーバー baseline の再取得は保存せず、その後のユーザー
   expect(save).toHaveBeenCalledWith(edited, 2);
 });
 
+it("hydrate 由来の id/revision が混ざった完了 idea 下書きでも flush できる", async () => {
+  // sanitize 漏れや cache 直載せで row メタが state に混ざっても、入力整合だけ見て保存する
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const hydratedCompleteIdea = {
+    ...base,
+    mealType: "lunch" as const,
+    mainIngredients: ["牛肉"],
+    cuisineGenre: "any" as const,
+    targetMode: "idea" as const,
+    targetMemberIds: [] as string[],
+    servings: 2,
+    id: "71000000-0000-4000-8000-000000000099",
+    userId: "72000000-0000-4000-8000-000000000099",
+    revision: 9,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  } as PlannerDraftInput;
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: hydratedCompleteIdea,
+      enabled: true,
+      baselineRevision: 1,
+      resetToken: 0,
+      save,
+    }),
+  );
+
+  let row: PlannerDraft | undefined;
+  await act(async () => {
+    row = await result.current.flush();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(row?.revision).toBe(2);
+  expect(result.current.state).toBe("saved");
+});
+
+it("idea 選択直後の servings=null は DB 不能のため保存せず error にもしない", async () => {
+  // UI は mode 切替で idea+servings null の一時状態を作るが、generation_drafts CHECK と
+  // plannerDraftInputSchema は idea 完了形だけを許す。autosave が 400 を吐いて「保存できませんでした」
+  // にしないこと（人数確定後に初めて保存する）。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const incompleteIdea = {
+    ...base,
+    mealType: "dinner" as const,
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese" as const,
+    targetMode: "idea" as const,
+    targetMemberIds: [] as string[],
+    servings: null,
+  };
+  const completeIdea = { ...incompleteIdea, servings: 2 };
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: base } },
+  );
+
+  rerender({ value: incompleteIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.state).not.toBe("error");
+  expect(result.current.state).not.toBe("saving");
+
+  rerender({ value: completeIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(completeIdea, 1);
+  expect(result.current.state).toBe("saved");
+});
+
+it("flush は途中の idea 下書きを拒否し、完了形は保存する", async () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const incompleteIdea = {
+    ...base,
+    targetMode: "idea" as const,
+    targetMemberIds: [] as string[],
+    servings: null,
+  };
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: incompleteIdea } },
+  );
+
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toThrow(/途中|incomplete|人数/u);
+  });
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.state).not.toBe("error");
+
+  const completeIdea = { ...incompleteIdea, servings: 3 };
+  rerender({ value: completeIdea });
+  let row: PlannerDraft | undefined;
+  await act(async () => {
+    row = await result.current.flush();
+  });
+  expect(save).toHaveBeenCalledWith(completeIdea, 1);
+  expect(row?.revision).toBe(2);
+});
+
 it("flush は保留中 timer を置換し最新値の DB row を返す", async () => {
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>

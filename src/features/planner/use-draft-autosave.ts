@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
+import {
+  plannerDraftInputSchema,
+  type PlannerDraft,
+  type PlannerDraftInput,
+} from "@shared/contracts/planner";
 import { DraftRevisionConflictError } from "./planner-api";
 
 export type DraftSaveState = "idle" | "saving" | "saved" | "error";
@@ -15,6 +19,40 @@ class SupersededDraftSaveError extends Error {
     super("reset 前の下書き保存は無効化されました");
     this.name = "SupersededDraftSaveError";
   }
+}
+
+/**
+ * 質問途中の整合前状態（例: idea + servings=null）。
+ * DB CHECK / plannerDraftInputSchema が拒否するため RPC に送らない。
+ * debounce autosave では error toast にせず握りつぶし、flush では呼び出し元へ返す。
+ */
+export class IncompleteDraftSaveError extends Error {
+  readonly code = "incomplete_draft" as const;
+
+  constructor() {
+    super("献立条件の途中状態はまだ保存できません");
+    this.name = "IncompleteDraftSaveError";
+  }
+}
+
+/**
+ * 永続化可能か判定する。value に id/revision 等が混ざっていても入力フィールドだけ見る
+ * （hydrate 由来の余剰キーで false にしない）。
+ */
+function isPersistableDraft(value: PlannerDraftInput): boolean {
+  return plannerDraftInputSchema.safeParse({
+    mealType: value.mealType,
+    mainIngredients: value.mainIngredients,
+    cuisineGenre: value.cuisineGenre,
+    targetMode: value.targetMode,
+    targetMemberIds: value.targetMemberIds,
+    servings: value.servings,
+    timeLimitMinutes: value.timeLimitMinutes,
+    budgetPreference: value.budgetPreference,
+    avoidIngredients: value.avoidIngredients,
+    memo: value.memo,
+    pantrySelections: value.pantrySelections,
+  }).success;
 }
 
 export function useDraftAutosave({
@@ -81,6 +119,11 @@ export function useDraftAutosave({
         if (mountedRef.current) setState("error");
         return Promise.reject(conflictRef.current);
       }
+      // idea 選択直後など整合前の一時状態は RPC しない（CHECK 違反 → 偽の保存失敗 toast を防ぐ）。
+      // state は触らない（直前の idle/saved を維持。error にもしない）。
+      if (!isPersistableDraft(next)) {
+        return Promise.reject(new IncompleteDraftSaveError());
+      }
       const resetGeneration = resetGenerationRef.current;
       const operationNumber = ++operationNumberRef.current;
       if (mountedRef.current) setState("saving");
@@ -90,6 +133,7 @@ export function useDraftAutosave({
         }
         // 競合前に予約済みだった後続保存も、先行保存の競合判明後は実行しない。
         if (conflictRef.current !== null) throw conflictRef.current;
+        // キュー待ち中に value がさらに変わっていても、この operation の next を検証済み
         try {
           const saved = await save(next, revisionRef.current);
           if (resetGeneration !== resetGenerationRef.current) {
@@ -116,7 +160,8 @@ export function useDraftAutosave({
         (error: unknown) => {
           if (
             resetGeneration !== resetGenerationRef.current ||
-            error instanceof SupersededDraftSaveError
+            error instanceof SupersededDraftSaveError ||
+            error instanceof IncompleteDraftSaveError
           ) {
             return;
           }

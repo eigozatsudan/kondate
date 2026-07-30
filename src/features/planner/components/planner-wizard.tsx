@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PantryItem } from "@shared/contracts/pantry";
@@ -68,6 +68,11 @@ export type PlannerWizardExtraProps = {
   autosaveState?: "idle" | "saving" | "saved" | "error";
   /** autosave 失敗時の再試行（flush） */
   onRetryAutosave?: () => void;
+  /**
+   * 各 step の page-frame 末尾に置く追加 UI（L10-3 チラシ入口など）。
+   * page-frame 外に置くと幅・余白が崩れるため、main 内に描画する。
+   */
+  footer?: ReactNode;
 };
 
 /**
@@ -143,6 +148,7 @@ export function PlannerWizard({
   shortWindowRetryAt = null,
   autosaveState = "idle",
   onRetryAutosave,
+  footer = null,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLElement>(null);
@@ -348,6 +354,7 @@ export function PlannerWizard({
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
+        {footer}
       </main>
     );
   }
@@ -375,6 +382,7 @@ export function PlannerWizard({
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
+        {footer}
       </main>
     );
   }
@@ -400,6 +408,7 @@ export function PlannerWizard({
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
+        {footer}
       </main>
     );
   }
@@ -464,6 +473,7 @@ export function PlannerWizard({
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
+        {footer}
       </main>
     );
   }
@@ -510,6 +520,7 @@ export function PlannerWizard({
           void onSubmit();
         }}
       />
+      {footer}
     </main>
   );
 }

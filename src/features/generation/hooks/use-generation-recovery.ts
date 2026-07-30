@@ -22,6 +22,7 @@ import {
   savePendingGeneration,
   type PendingGeneration,
 } from "../model/pending-generation";
+import { plannerKeys } from "@/features/planner/planner-api";
 import { jstDayKey, usageTodayQueryKey } from "./use-usage-today";
 
 /** POST の ok:false で offline 再試行に落とさない端末コード（品質 gate / 枠）。 */
@@ -407,6 +408,10 @@ export function useGenerationRecovery(
       void queryClient.invalidateQueries({
         queryKey: usageTodayQueryKey(userId, jstDayKey()),
       });
+      // finalize が generation_drafts を soft-delete するため、planner の stale cache
+      // （旧 revision）を残すと緊急献立前の flush が draft_revision_conflict になる。
+      queryClient.setQueryData(plannerKeys.draft(userId), null);
+      void queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
     }
     return undefined;
   }, [isCurrent, navigate, queryClient, retryStatus, state, userId]);

@@ -311,6 +311,70 @@ describe("strict chat completion protocol", () => {
   );
 });
 
+describe("submission-aligned success fixtures", () => {
+  const ideaSystem =
+    "献立JSONだけを指定スキーマで返してください。" +
+    "家族向け取り分け(adaptations)とラベル確認(labelConfirmations)は空配列にしてください。";
+
+  const ideaMessages = (preferences) => [
+    { role: "system", content: ideaSystem },
+    {
+      role: "user",
+      content: `<kondate_input_data>\n${JSON.stringify({
+        preferences,
+        members: [],
+        pantry: [],
+      })}\n</kondate_input_data>`,
+    },
+  ];
+
+  it("aligns default success with idea mealType/genre/mainIngredient/servings for manual UI", async () => {
+    // 固定 fixture は breakfast/japanese/鶏肉。手動で lunch/western/卵/3人 を選ぶと
+    // 未整列のままでは invalid_ai_response になる。
+    const origin = await startServer();
+    const response = await send(origin, {
+      body: JSON.stringify({
+        ...validRequest(),
+        messages: ideaMessages({
+          mealType: "lunch",
+          cuisineGenre: "western",
+          mainIngredients: ["卵"],
+          servings: 3,
+        }),
+      }),
+    });
+    expect(response.status).toBe(200);
+    const content = JSON.parse((await response.json()).choices[0].message.content);
+    expect(content.menu.mealType).toBe("lunch");
+    expect(content.menu.cuisineGenre).toBe("western");
+    expect(content.menu.servings).toBe(3);
+    expect(content.menu.adaptations).toEqual([]);
+    expect(content.menu.labelConfirmations).toEqual([]);
+    expect(content.menu.dishes[0].name).toContain("卵");
+    expect(content.menu.dishes[0].ingredients[0].name).toBe("卵");
+  });
+
+  it("adds soup dish when preferences.mealType is dinner", async () => {
+    const origin = await startServer();
+    const response = await send(origin, {
+      body: JSON.stringify({
+        ...validRequest(),
+        messages: ideaMessages({
+          mealType: "dinner",
+          cuisineGenre: "any",
+          mainIngredients: ["牛肉"],
+          servings: 2,
+        }),
+      }),
+    });
+    expect(response.status).toBe(200);
+    const content = JSON.parse((await response.json()).choices[0].message.content);
+    expect(content.menu.mealType).toBe("dinner");
+    expect(content.menu.dishes).toHaveLength(3);
+    expect(content.menu.dishes.map((dish) => dish.role).sort()).toEqual(["main", "side", "soup"]);
+  });
+});
+
 describe("stateless repair sequence", () => {
   it("repeats primary-malformed and repair-success pairs in parallel", async () => {
     const origin = await startServer();
