@@ -124,7 +124,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   if (!parsed.success) return <Navigate to="/planner" replace />;
   if (query.isError)
     return (
-      <main className="p-4">
+      <main className="page-frame stack">
         <h1>献立を表示できません</h1>
         <p>履歴からもう一度確認してください。</p>
         <Link
@@ -139,7 +139,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   // 操作バーは出さず、中立ステータスのみ。
   if (query.isPending)
     return (
-      <main className="p-4">
+      <main className="page-frame">
         <p role="status">献立を読み込んでいます</p>
       </main>
     );
@@ -305,7 +305,7 @@ function IdeaResultBody({
   // L10-6: Free 成功結果のときだけ週間 flyer upsell。
   const plusEntitled = usage.isSuccess ? usage.data.plusEntitled : false;
   return (
-    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
+    <main className="page-frame guided-planner-theme min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
       <IdeaMenuSafetyNotice />
       {showIdeaShoppingRejected ? (
         <section className="card stack mb-4" role="status">
@@ -771,7 +771,7 @@ function HouseholdResultBody({
   // L10-6: Free 成功結果のときだけ週間 flyer upsell。
   const plusEntitled = usage.isSuccess ? usage.data.plusEntitled : false;
   return (
-    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
+    <main className="page-frame guided-planner-theme min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold break-words">
         {MENU_LABEL_DISCLAIMER}
       </p>

@@ -121,7 +121,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
 
   if (menuQuery.isPending) {
     return (
-      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
+      <main className="page-frame min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
         <p className="rounded-xl border border-amber-700 p-3 font-semibold">
           {MENU_LABEL_DISCLAIMER}
         </p>
@@ -134,7 +134,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
 
   if (menuQuery.isError) {
     return (
-      <main className="mx-auto w-full max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl">
+      <main className="page-frame min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
         <p className="rounded-xl border border-amber-700 p-3 font-semibold">
           {MENU_LABEL_DISCLAIMER}
         </p>
@@ -309,7 +309,7 @@ function IdeaDetailBody({
 
   // idea の必須注意は 1 枠に集約（免責・家族未使用・AI 作成を別枠で重ねない）。
   return (
-    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
+    <main className="page-frame guided-planner-theme min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
       <IdeaMenuSafetyNotice />
       {showIdeaShoppingRejected ? (
         <section className="card stack mb-4" role="status">
@@ -790,7 +790,7 @@ function HouseholdDetailBody({
   };
 
   return (
-    <main className="guided-planner-theme mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words px-4 pb-28 pt-6 text-ink sm:max-w-3xl [overflow-wrap:anywhere]">
+    <main className="page-frame guided-planner-theme min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">
         {MENU_LABEL_DISCLAIMER}
       </p>
