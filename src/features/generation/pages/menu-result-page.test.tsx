@@ -78,6 +78,16 @@ vi.mock("@/shared/lib/supabase", () => ({
   }),
 }));
 
+// F-U07-1 / HR-I1: listPantryItems を success に固定し、再生成 CTA が pantry 未取得で塞がらないようにする。
+const listPantryItemsMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])));
+vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
+  return {
+    ...original,
+    listPantryItems: listPantryItemsMock,
+  };
+});
+
 const VALID_MENU_ID = "30000000-0000-4000-8000-000000000001";
 const USER_A_ID = "31000000-0000-4000-8000-000000000001";
 const USER_B_ID = "31000000-0000-4000-8000-000000000002";
@@ -183,6 +193,7 @@ function renderPage(
 beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
+  listPantryItemsMock.mockResolvedValue([]);
   // jsdom 向け native dialog ポリフィル（再生成理由ダイアログ用）
   if (typeof HTMLDialogElement !== "undefined") {
     HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {

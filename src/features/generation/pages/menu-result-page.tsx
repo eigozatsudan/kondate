@@ -225,6 +225,13 @@ function IdeaResultBody({
       listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
     [pantryQuery.data, result.sourceSubmission],
   );
+  // HR-I1 / F-U07-1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない（空配列 fail-open を防ぐ）
+  const pantryGateReady = pantryQuery.isSuccess;
+  const pantryGateMessage = pantryQuery.isError
+    ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
+    : pantryQuery.isPending
+      ? "冷蔵庫を確認しています…"
+      : null;
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId: menuId ?? "00000000-0000-4000-8000-000000000000",
@@ -339,9 +346,10 @@ function IdeaResultBody({
           }}
           onSelectedDishChange={setSelectedDishId}
           onRegenerateSelectedDish={() => {
+            if (!pantryGateReady) return;
             setSheetMode("dish");
           }}
-          regenerateSelectedDishDisabled={dishIdForRegen === null}
+          regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
         />
       ) : (
         <MenuResult
@@ -354,9 +362,10 @@ function IdeaResultBody({
           }}
           onSelectedDishChange={setSelectedDishId}
           onRegenerateSelectedDish={() => {
+            if (!pantryGateReady) return;
             setSheetMode("dish");
           }}
-          regenerateSelectedDishDisabled={dishIdForRegen === null}
+          regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
         />
       )}
       {acceptFeedback !== null && (
@@ -374,12 +383,19 @@ function IdeaResultBody({
           {favoriteError}
         </p>
       )}
+      {pantryGateMessage !== null && (
+        <p className="mt-2" role="status">
+          {pantryGateMessage}
+        </p>
+      )}
 
       <div className="mt-6 flex flex-wrap gap-2">
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+          disabled={!pantryGateReady}
           onClick={() => {
+            if (!pantryGateReady) return;
             setSheetMode("whole");
           }}
         >
@@ -529,6 +545,13 @@ function HouseholdResultBody({
       listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
     [pantryQuery.data, result.sourceSubmission],
   );
+  // HR-I1 / F-U07-1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない（履歴詳細と同型）
+  const pantryGateReady = pantryQuery.isSuccess;
+  const pantryGateMessage = pantryQuery.isError
+    ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
+    : pantryQuery.isPending
+      ? "冷蔵庫を確認しています…"
+      : null;
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId: menuId ?? "00000000-0000-4000-8000-000000000000",
@@ -844,9 +867,10 @@ function HouseholdResultBody({
               }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
+                if (!pantryGateReady) return;
                 setSheetMode("dish");
               }}
-              regenerateSelectedDishDisabled={dishIdForRegen === null}
+              regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
             />
           ) : (
             <MenuResult
@@ -861,9 +885,10 @@ function HouseholdResultBody({
               }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
+                if (!pantryGateReady) return;
                 setSheetMode("dish");
               }}
-              regenerateSelectedDishDisabled={dishIdForRegen === null}
+              regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
             />
           )}
           {acceptFeedback !== null && (
@@ -876,6 +901,11 @@ function HouseholdResultBody({
               {acceptError}
             </p>
           )}
+          {pantryGateMessage !== null && (
+            <p className="mt-2" role="status">
+              {pantryGateMessage}
+            </p>
+          )}
         </>
       )}
 
@@ -883,8 +913,9 @@ function HouseholdResultBody({
         <button
           type="button"
           className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={!actionsEnabled}
+          disabled={!actionsEnabled || !pantryGateReady}
           onClick={() => {
+            if (!pantryGateReady) return;
             setSheetMode("whole");
           }}
         >
