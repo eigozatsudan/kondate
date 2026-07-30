@@ -29,7 +29,7 @@
 |------|------|------|
 | コピー定数 | `src/features/landing/free-landing-page.tsx` | 下表 `FREE_LP_*` を named export。テスト exact |
 | `FreeLandingPage` | 同上 | named export。props なし。API 非呼び出し |
-| `RootGatePage` | `src/features/landing/root-gate-page.tsx` | named export。State matrix のみ。**auth/ に二重実装しない** |
+| `RootGatePage` | `src/features/landing/root-gate-page.tsx` | named export。State matrix のみ。**auth/ に二重実装しない**。`FreeLandingPage` は **`React.lazy` + `Suspense`**（設計 L18） |
 | 画像 4 枚 | `src/features/landing/assets/free-*.webp` | パス固定（設計 L10） |
 | ルート `/` | `src/app/router.tsx` | **public**。祖先に `RequireSession` なし |
 
@@ -60,13 +60,14 @@ export const FREE_LP_EXISTING = "すでにアカウントがある方は" as con
 
 ```ts
 // 擬似コード。実装は root-gate-page.tsx 内
+// FreeLandingPage = lazy(() => import("./free-landing-page").then(m => ({ default: m.FreeLandingPage })))
 // 1. status === "loading" → <main className="page-frame">ログイン状態を確認しています…</main>
-// 2. status === "unauthenticated" || session === null → <FreeLandingPage />
+// 2. status === "unauthenticated" || session === null →
+//      <Suspense fallback={同上確認文}><FreeLandingPage /></Suspense>
 // 3. else (authenticated && session) → <RootEntryPage />
 ```
 
-loading 文言は `RequireSession` と **一字同一**: `ログイン状態を確認しています…`
-
+loading / Suspense fallback 文言は `RequireSession` と **一字同一**: `ログイン状態を確認しています…`
 ### 禁止語（unit が textContent で検出）
 
 `Plus`, `plus`（可視テキスト。className の `free-landing` は可）, `安全`, `絶対`, `保証`, `無制限`, `何回でも`

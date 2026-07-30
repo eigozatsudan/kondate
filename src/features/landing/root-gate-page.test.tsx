@@ -44,18 +44,19 @@ describe("RootGatePage", () => {
     expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
   });
 
-  it("shows free landing when unauthenticated", () => {
+  it("shows free landing when unauthenticated", async () => {
     useAuthMock.mockReturnValue({
       status: "unauthenticated",
       session: null,
       refreshSession: vi.fn(),
     });
     renderGate();
-    expect(screen.getByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+    // FreeLanding は React.lazy のため chunk 解決を待つ
+    expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
   });
 
-  it("shows free landing when session is null even if status is not unauthenticated", () => {
+  it("shows free landing when session is null even if status is not unauthenticated", async () => {
     // fail-closed: session null → LP（設計 L14）
     useAuthMock.mockReturnValue({
       status: "authenticated",
@@ -63,7 +64,7 @@ describe("RootGatePage", () => {
       refreshSession: vi.fn(),
     });
     renderGate();
-    expect(screen.getByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
   });
 

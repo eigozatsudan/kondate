@@ -57,6 +57,7 @@
 | L15 | sticky 下部 CTA は **採用しない**（ヒーロー CTA + 締め CTA の 2 箇所で足りる） |
 | L16 | ログアウト後の着地は現状維持 **`/login?signedOut=1`**（アカウント削除も `/login?…`）。LP へは切り替えない |
 | L17 | ブランド表示「こんだて日和」は **h1 にしない**。ページ唯一の h1 はヒーロー見出し |
+| L18 | `FreeLandingPage` は **`React.lazy` + 動的 `import()`** で別 chunk。`RootGate` 内 `Suspense` の fallback は loading と同文（`ログイン状態を確認しています…`）。ログイン済み path ではマーケ webp を読まない |
 
 ---
 
@@ -146,8 +147,9 @@ RequireSession:
 | 依存 | `useAuth`（`@/features/auth/use-auth`）、`RootEntryPage`（`@/features/auth/root-entry-page`）、`FreeLandingPage`（同 feature 内） |
 | 禁止 | `auth/` への二重 RootGate、`billing/*` import、generate / pantry / household API 呼び出し |
 
-`router.tsx` は `/` を public 配列側に置き、`element: <RootGatePage />` または薄い lazy で `RootGatePage` を載せる。  
-**推奨バンドル**: `FreeLandingPage` は `React.lazy` / 動的 `import()` で Gate 内または route lazy により **別 chunk**（ログイン済みユーザーが毎回マーケ画像を落とさない）。`RootEntryPage` は現状どおり同期 import でも可（既存バンドル前提を大きく変えない）。
+`router.tsx` は `/` を public 配列側に置き、`element: <RootGatePage />` を載せる（Gate 自体は同期 import で可）。
+
+**バンドル（L18）**: `FreeLandingPage` は Gate 内で `React.lazy` + 動的 `import("./free-landing-page")` により **別 chunk**。`Suspense` fallback は matrix 行 1 と同文。`RootEntryPage` は同期 import のまま。
 
 ### 保護ルート・認証まわりとの関係
 
@@ -350,7 +352,7 @@ Plus LP の `billing/` 配下には置かない。
 | `/` public 化で router テスト破綻 | supersede 表どおり assertion 更新を必須 |
 | アレルギーコピーが保証に見える | L8 + 禁止語 unit + 家族本文を「条件に使う」トーンに固定 |
 | Plus / 無料資産混同 | `landing/` vs `billing/`、ファイル名 `free-*` |
-| マーケ chunk が全ユーザーに載る | FreeLanding を別 chunk（推奨） |
+| マーケ chunk が全ユーザーに載る | FreeLanding を別 chunk（**L18 必須**） |
 | E2E 誤修正 | 未ログイン LP とログイン済み `/` を混同しない（fixtures コメント更新可） |
 
 ---
@@ -435,3 +437,50 @@ Plus LP の `billing/` 配下には置かない。
 | A5 無制限コピー | L7 と unit 禁止語へ昇格（再レビュー時の取りこぼしを修正） |
 
 **残課題（実装計画へ）**: Task 分割、exact コピー定数名の最終決定、画像生成、任意 E2E 1 本のゲート判断。設計ロックの追加変更は不要。
+
+---
+
+## Revision Summary R2（実装突合 + lazy + 1次/2次/敵対的）
+
+実施日: 2026-07-30（実装コミット群 `c3ac91a`..`ac5e414` + lazy 追補）
+
+### 突合結果（設計 L1–L17 → コード）
+
+| Lock | 実装 | 判定 |
+|------|------|------|
+| L1–L5, L11–L14, L17 | RootGate / FreeLanding / router public `/` / 3 カード / CTA `/login` | 一致 |
+| L6–L8 | 禁止語 unit + コピー | 一致 |
+| L9–L10 | free-landing CSS・webp 4 枚 ≤150KB | 一致 |
+| L15 sticky なし | CSS に sticky 無し（コメント内の「なし」のみ） | 一致 |
+| L16 logout | 未変更 | 一致 |
+| 旧「推奨」lazy | 未実装だった | **L18 に昇格し実装** |
+
+### 1次レビュー
+
+| ID | 深刻度 | 指摘 | 処置 |
+|----|--------|------|------|
+| R2-P1 | Important | FreeLanding 同期 import でログイン済みもマーケ chunk を引き得る | **L18 + RootGate `lazy`/`Suspense`** |
+| R2-P2 | Minor | `protected-routes.tsx` コメントが「`/` = RootEntry のみ」のまま | コメントを RootGate 前提に更新 |
+| R2-P3 | Minor | 設計が lazy を「推奨」のまま → 実装と文書がずれる | L18 で必須化 |
+
+### 2次検証
+
+| ID | 判定 | 内容 |
+|----|------|------|
+| R2-S1 | CONFIRMED | Suspense fallback を SESSION_CHECK 同文にすると chunk 待ち中も LP flash しない |
+| R2-S2 | CONFIRMED | Gate テストは lazy 後 `findByRole` が必要 → テスト更新 |
+| R2-S3 | PASS | landing+router unit 23/23（lazy 後） |
+| R2-S4 | 擬陽性 | CSS コメントの「sticky」語 — スタイル未使用 |
+
+### 敵対的
+
+| ID | 深刻度 | 指摘 | 処置 |
+|----|--------|------|------|
+| R2-A1 | Important | chunk 遅延中に空白や RootEntry を出すと未ログインが混乱 | fallback = loading 同文に固定 |
+| R2-A2 | Minor | session null→LP 表示中に login 完了 → Gate 再描画で RootEntry（Suspense 破棄） | 既存 matrix で十分。変更なし |
+| R2-A3 | 擬陽性 | JSDoc の「Plus に触れない」が禁止語 unit に引っかかる | textContent のみ検査の契約どおり。変更なし |
+| R2-A4 | 擬陽性 | E2E 未実施 = 欠陥 | Task 5 ゲート（人間明示時）。設計 Non-Goal 範囲 |
+
+### 再レビュー
+
+L18 とコメント修正後、実装・設計・計画の lazy 記述は一致。残は任意 E2E のみ。

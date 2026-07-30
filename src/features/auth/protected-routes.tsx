@@ -16,5 +16,6 @@ export function RequireSession() {
 }
 
 // RequireCompletedOnboarding は Plan 7 Task 6 で撤去した。
-// 家族設定は任意になり、主要routeはRequireSessionだけを通る。
-// 完了状態に応じた振り分けは "/" のRootEntryPageとWelcomePageが担う。
+// 家族設定は任意になり、主要 route は RequireSession だけを通る。
+// 公開 "/" は RootGatePage（未ログイン: 無料 LP / ログイン済み: RootEntryPage）。
+// welcome / planner 等の振り分けは RootEntryPage と Welcome が担う。
