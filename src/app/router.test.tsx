@@ -3,6 +3,7 @@ import type { DataRouteObject } from "react-router";
 import { describe, expect, it } from "vitest";
 import { RequireSession } from "@/features/auth/protected-routes";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
+import { RootGatePage } from "@/features/landing/root-gate-page";
 import { createAppRouter } from "./router";
 
 function findRoute(routes: DataRouteObject[], path: string): DataRouteObject | undefined {
@@ -98,10 +99,14 @@ describe("app router", () => {
     router.dispose();
   });
 
-  it("/ は RootEntryPage を経由してprofile statusに応じて振り分ける（route自体はRequireSession配下）", () => {
+  it("/ は public の RootGatePage で、RequireSession 配下にない", () => {
     const router = createAppRouter();
     const ancestors = findAncestorElementTypes(router.routes, "/");
-    expect(ancestors).toContain(RequireSession);
+    expect(ancestors).toBeDefined();
+    expect(ancestors).not.toContain(RequireSession);
+    const route = findRoute(router.routes, "/");
+    expect(route?.element).toBeDefined();
+    expect((route?.element as ReactElement).type).toBe(RootGatePage);
     router.dispose();
   });
 });

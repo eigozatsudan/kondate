@@ -1,7 +1,7 @@
 import { createBrowserRouter } from "react-router";
 import { AppShell } from "./layouts/app-shell";
 import { RequireSession } from "@/features/auth/protected-routes";
-import { RootEntryPage } from "@/features/auth/root-entry-page";
+import { RootGatePage } from "@/features/landing/root-gate-page";
 import { PantryPage } from "@/features/pantry/pantry-page";
 import { EmergencyMenuPage } from "@/features/emergency/emergency-menu-page";
 import { PlannerRoutePage } from "@/features/planner/planner-route";
@@ -30,9 +30,12 @@ export function createAppRouter(): AppRouter {
       },
     },
     {
+      path: "/",
+      element: <RootGatePage />,
+    },
+    {
       element: <RequireSession />,
       children: [
-        { path: "/", element: <RootEntryPage /> },
         {
           path: "/welcome",
           lazy: async () => {
