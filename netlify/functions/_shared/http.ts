@@ -4,9 +4,13 @@ import type { ApiResponse } from "../../../shared/contracts/http.js";
 const maxBodyBytes = 8 * 1024;
 
 export function jsonResponse(status: number, value: unknown): Response {
+  // auth continuation の code 等を含むため json() と同型で no-store を付ける
   return new Response(JSON.stringify(value), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
   });
 }
 
