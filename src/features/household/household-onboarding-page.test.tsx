@@ -2,8 +2,21 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 import type { HouseholdDraftPatch, HouseholdMemberRow } from "./household-api";
 import { HouseholdOnboardingForm, type HouseholdOnboardingApi } from "./household-onboarding-page";
+
+/** オンボーディング unit は useAppToast 前提のため Provider を同梱する */
+function renderOnboarding(
+  ui: React.ReactElement,
+  client: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
+  return render(
+    <QueryClientProvider client={client}>
+      <AppToastProvider>{ui}</AppToastProvider>
+    </QueryClientProvider>,
+  );
+}
 
 const draft: HouseholdMemberRow = {
   id: "member-1",
@@ -69,11 +82,7 @@ it("resumes one draft, saves each required selection, and completes through comp
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
 
   expect(await screen.findByText("設定済み項目 0 / 3")).toBeInTheDocument();
   await user.selectOptions(screen.getByLabelText("年齢のめやす"), "adult");
@@ -112,11 +121,7 @@ it("stays on the page and shows a retryable error when setProgress fails after c
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
 
   await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
@@ -150,11 +155,7 @@ it("does not call setProgress or navigate when completeMember fails", async () =
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
 
   await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
@@ -187,11 +188,7 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   await user.selectOptions(await screen.findByLabelText("食べない食事はありますか"), "present");
 
@@ -199,8 +196,12 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
     unsupported_diet_status: "present",
     unsupported_diet_kinds: [],
   });
+  // incomplete でも完了は押下可（設計 §6.3）。必須漏れは toast + field error + focus
   const completeButton = screen.getByRole("button", { name: "この家族の設定を完了する" });
-  expect(completeButton).toBeDisabled();
+  expect(completeButton).not.toBeDisabled();
+  await user.click(completeButton);
+  expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
+  expect(screen.getByRole("alert")).toBeVisible();
 
   await user.click(await screen.findByRole("checkbox", { name: "離乳食" }));
 
@@ -208,6 +209,35 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
     unsupported_diet_kinds: ["weaning_food"],
   });
   expect(completeButton).toBeEnabled();
+});
+
+it("shows toast field error and focuses first invalid on incomplete save", async () => {
+  const user = userEvent.setup();
+  const completeMember = vi.fn();
+  const api: HouseholdOnboardingApi = {
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn(),
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  const complete = await screen.findByRole("button", { name: "この家族の設定を完了する" });
+  expect(complete).not.toBeDisabled();
+  await user.click(complete);
+
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
+  // フォームレベル: 先頭 role=alert は1つ
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(document.activeElement).toBeTruthy();
+  expect(screen.getByLabelText("年齢のめやす")).toHaveFocus();
+  expect(screen.getByLabelText("年齢のめやす")).toHaveAttribute("aria-invalid", "true");
 });
 
 it("completes onboarding through setProgress->navigate when a complete member already exists and no draft is open", async () => {
@@ -231,11 +261,7 @@ it("completes onboarding through setProgress->navigate when a complete member al
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
 
   await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
@@ -261,11 +287,7 @@ it("stays on the page with a retryable error when setProgress fails for an alrea
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
 
   await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
@@ -293,11 +315,7 @@ it("serializes rapid draft updates in input order", async () => {
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
@@ -332,11 +350,7 @@ it("preserves rapid changes to the same field while the first save is pending", 
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   const displayName = await screen.findByLabelText("呼び名（任意・AIには送りません）");
   await user.type(displayName, "母娘");
@@ -378,11 +392,7 @@ it("waits for pending draft saves before completing a member", async () => {
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   await user.type(await screen.findByLabelText("呼び名（任意・AIには送りません）"), "母");
   await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
@@ -412,11 +422,7 @@ it("retries unsaved fields with a later queued save after an earlier save fails"
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
@@ -457,11 +463,7 @@ it("does not complete or report saved when the final queued save fails", async (
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   await user.type(await screen.findByLabelText("呼び名（任意・AIには送りません）"), "母");
   await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
@@ -484,14 +486,9 @@ it("任意性が明確な文言を表示し、旧「必須設定」表現を残�
     addCustomAllergy: vi.fn(),
     setProgress: vi.fn(),
   };
-  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   expect(await screen.findByText("家族設定（任意）", { exact: false })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "この家族の設定を完了する" })).toBeInTheDocument();
@@ -512,14 +509,9 @@ it("draft が無く complete member が既にいる場合も任意性が明確�
     addCustomAllergy: vi.fn(),
     setProgress: vi.fn(),
   };
-  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
-    <QueryClientProvider client={client}>
-      <HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   expect(
     await screen.findByRole("button", { name: "この家族の設定を完了する" }),

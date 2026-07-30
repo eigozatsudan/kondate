@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 import type {
   AllergenCatalogRow,
   HouseholdMemberPatch,
@@ -131,7 +132,9 @@ async function renderSettings(
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <HouseholdSettingsForm api={api} />
+      <AppToastProvider>
+        <HouseholdSettingsForm api={api} />
+      </AppToastProvider>
     </QueryClientProvider>,
   );
   if (!options.startClosed) {
@@ -587,7 +590,8 @@ it("clears the previous member's validation feedback when switching members", as
 
   fireEvent.change(await screen.findByLabelText("年齢のめやす"), { target: { value: "" } });
   await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
-  expect(screen.getByRole("status")).toHaveTextContent("必須項目を確認してください");
+  // validation toast（status）+ フォーム先頭 alert。文言は先頭 field message
+  expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
   expect(screen.getByRole("alert")).toBeVisible();
 
   await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
@@ -595,6 +599,45 @@ it("clears the previous member's validation feedback when switching members", as
   expect(await screen.findByRole("heading", { name: "「子ども」を編集中" })).toBeVisible();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("shows toast field error and focuses first invalid on incomplete save", async () => {
+  const user = userEvent.setup();
+  const updateMember = vi.fn().mockResolvedValue(member);
+  await renderSettings({ updateMember });
+
+  fireEvent.change(await screen.findByLabelText("年齢のめやす"), { target: { value: "" } });
+  const complete = screen.getByRole("button", { name: "この家族の設定を完了" });
+  expect(complete).not.toBeDisabled();
+  await user.click(complete);
+
+  expect(updateMember).not.toHaveBeenCalled();
+  // toast は role=status（設計 §6.3）
+  expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
+  // フォームレベル role=alert は先頭エラー1つ
+  const alerts = screen.getAllByRole("alert");
+  expect(alerts.length).toBeGreaterThanOrEqual(1);
+  expect(alerts[0]).toHaveTextContent(/選んでください|確認してください|入力内容/);
+  // 先頭 invalid field へ focus
+  expect(document.activeElement).toBeTruthy();
+  expect(screen.getByLabelText("年齢のめやす")).toHaveFocus();
+  expect(screen.getByLabelText("年齢のめやす")).toHaveAttribute("aria-invalid", "true");
+});
+
+it("shows toast for registered allergy with zero items on complete", async () => {
+  const user = userEvent.setup();
+  const updateMember = vi.fn().mockResolvedValue(member);
+  const { queryClient } = await renderSettings({
+    updateMember,
+    listAllergies: vi.fn().mockResolvedValue([]),
+  });
+  await waitForAllergies(queryClient);
+
+  await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+
+  expect(updateMember).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
 });
 
 it("does not publish a queued validation error after switching to another member", async () => {

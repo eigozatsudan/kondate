@@ -18,6 +18,7 @@ import { FeedbackSection } from "@/features/account/feedback-section";
 import { useAuth } from "@/features/auth/use-auth";
 import { PlanSettingsSection } from "@/features/billing/plan-settings-section";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { useAppToast } from "@/shared/ui/app-toast";
 import {
   addCustomMemberAllergy,
   addMemberDislike,
@@ -103,6 +104,23 @@ function registeredSaveBlockedMessage(
     return "アレルギー情報を確認できませんでした。もう一度お試しください";
   return undefined;
 }
+
+/** schema 定義順の先頭 field error（validation toast / form alert の正本） */
+function firstHouseholdFieldError(
+  errors: HouseholdFieldErrors,
+): { key: keyof HouseholdSettingsValue; message: string } | undefined {
+  const fieldOrder = Object.keys(householdSettingsSchema.shape) as (keyof HouseholdSettingsValue)[];
+  for (const key of fieldOrder) {
+    const message = errors[key];
+    if (message !== undefined) {
+      return { key, message };
+    }
+  }
+  return undefined;
+}
+
+const HOUSEHOLD_FORM_ERROR_ID = "household-settings-form-error";
+const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
 
 export interface HouseholdSettingsApi {
   listMembers(): Promise<HouseholdMemberRow[]>;
@@ -202,6 +220,7 @@ export function HouseholdSettingsForm({
   userId?: string;
 }) {
   const queryClient = useQueryClient();
+  const { show: showToast, dismiss: dismissToast } = useAppToast();
   // Checkout 成功戻り ?billing=success で entitlement を短周期 re-fetch（webhook 遅延 UX）
   const [searchParams, setSearchParams] = useSearchParams();
   const billingReturn = searchParams.get("billing");
@@ -234,6 +253,12 @@ export function HouseholdSettingsForm({
     ReadonlySet<string>
   >(() => new Set());
   const savingRef = useRef(false);
+  // ルート離脱で validation toast を残さない
+  useEffect(() => {
+    return () => {
+      dismissToast();
+    };
+  }, [dismissToast]);
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
   const editRevisionsByMemberRef = useRef(new Map<string, number>());
@@ -288,6 +313,8 @@ export function HouseholdSettingsForm({
     selectedMemberIdRef.current = memberId;
     setMessage("");
     setErrors({});
+    // 家族切替はフォーム離脱相当。validation toast を持ち越さない
+    dismissToast();
   };
   useEffect(() => {
     if (!editorOpen || !shouldFocusEditorHeadingRef.current) {
@@ -833,20 +860,25 @@ export function HouseholdSettingsForm({
     if (!parsed.success) {
       const nextErrors = toHouseholdFieldErrors(parsed.error);
       setErrors(nextErrors);
-      setMessage("必須項目を確認してください");
-      const fieldOrder = Object.keys(
-        householdSettingsSchema.shape,
-      ) as (keyof HouseholdSettingsValue)[];
+      // 必須漏れ: field error + toast（先頭 message）+ focus。status 行の setMessage は使わない
+      // （toast が role=status のため二重になるのを避ける）
+      const lead = firstHouseholdFieldError(nextErrors);
+      showToast({
+        message: lead?.message ?? FALLBACK_VALIDATION_TOAST,
+        tone: "error",
+      });
       const fieldRefs: Partial<Record<keyof HouseholdSettingsValue, typeof ageBandRef>> = {
         ageBand: ageBandRef,
         allergyStatus: allergyStatusRef,
         unsupportedDietStatus: unsupportedDietStatusRef,
       };
-      const firstInvalidField = fieldOrder.find((key) => key in nextErrors);
-      fieldRefs[firstInvalidField as keyof typeof fieldRefs]?.current?.focus();
+      if (lead !== undefined) {
+        fieldRefs[lead.key]?.current?.focus();
+      }
       return;
     }
     if (parsed.data.allergyStatus === "registered" && !allergiesQuery.isSuccess) {
+      // 確認中・取得失敗は既存 status 行のみ（toast なし。retry 導線を隠さない）
       setMessage(
         allergiesQuery.isError
           ? "アレルギー情報を確認できませんでした。もう一度お試しください"
@@ -856,9 +888,18 @@ export function HouseholdSettingsForm({
       return;
     }
     if (parsed.data.allergyStatus === "registered" && currentAllergies.length === 0) {
-      setMessage("登録ありの場合は1つ以上選んでください");
+      // 既存メッセージを field/inline に出し、同じ意味の toast（設計 §6.3 家族）
+      // toast が role=status のため、autosave 側の status 行（setMessage）は消して二重を避ける
+      const registeredEmptyMessage = "登録ありの場合は1つ以上選んでください";
+      setMessage("");
+      setErrors({ allergyStatus: registeredEmptyMessage });
+      showToast({ message: registeredEmptyMessage, tone: "error" });
+      allergyStatusRef.current?.focus();
       return;
     }
+    // バリデーション通過後は validation toast を即 dismiss（duration 待ちしない）
+    dismissToast();
+    setErrors({});
     // 完了snapshotの保存中は同じフォームから新しい書込みを開始させず、DBの後勝ち競合を防ぐ。
     savingRef.current = true;
     setSaving(true);
@@ -1223,9 +1264,9 @@ export function HouseholdSettingsForm({
           {message}
         </p>
       )}
-      {!editorOpen && Object.keys(errors).length > 0 && (
-        <p className="error-message" role="alert">
-          {Object.values(errors).join(" ")}
+      {!editorOpen && firstHouseholdFieldError(errors) !== undefined && (
+        <p id={HOUSEHOLD_FORM_ERROR_ID} className="error-message" role="alert">
+          {firstHouseholdFieldError(errors)?.message}
         </p>
       )}
       {editorOpen && selected !== undefined && values !== undefined && (
@@ -1244,9 +1285,10 @@ export function HouseholdSettingsForm({
               {message}
             </p>
           )}
-          {Object.keys(errors).length > 0 && (
-            <p className="error-message" role="alert">
-              {Object.values(errors).join(" ")}
+          {/* フォームレベル role=alert は先頭エラー1つ（設計 §6.3） */}
+          {firstHouseholdFieldError(errors) !== undefined && (
+            <p id={HOUSEHOLD_FORM_ERROR_ID} className="error-message" role="alert">
+              {firstHouseholdFieldError(errors)?.message}
             </p>
           )}
           <fieldset className="card stack" disabled={saving} aria-label="基本情報">
@@ -1265,6 +1307,10 @@ export function HouseholdSettingsForm({
               <select
                 ref={ageBandRef}
                 value={values.ageBand}
+                aria-invalid={errors.ageBand !== undefined ? true : undefined}
+                aria-describedby={
+                  errors.ageBand !== undefined ? HOUSEHOLD_FORM_ERROR_ID : undefined
+                }
                 onChange={(event) => {
                   const nextAge = event.target.value as AgeBand;
                   const nextDefaults = defaultsForAgeBand(nextAge);
@@ -1323,6 +1369,10 @@ export function HouseholdSettingsForm({
               <select
                 ref={allergyStatusRef}
                 value={values.allergyStatus}
+                aria-invalid={errors.allergyStatus !== undefined ? true : undefined}
+                aria-describedby={
+                  errors.allergyStatus !== undefined ? HOUSEHOLD_FORM_ERROR_ID : undefined
+                }
                 disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
                 onChange={(event) => {
                   if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
@@ -1425,6 +1475,13 @@ export function HouseholdSettingsForm({
               <select
                 ref={unsupportedDietStatusRef}
                 value={values.unsupportedDietStatus}
+                aria-invalid={errors.unsupportedDietStatus !== undefined ? true : undefined}
+                aria-describedby={
+                  errors.unsupportedDietStatus !== undefined ||
+                  errors.unsupportedDietKinds !== undefined
+                    ? HOUSEHOLD_FORM_ERROR_ID
+                    : undefined
+                }
                 onChange={(event) => {
                   updateAndSave({
                     unsupportedDietStatus: event.target.value as UnsupportedDietStatus,
