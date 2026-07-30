@@ -327,6 +327,55 @@ export async function cancelDualLiveSubscriptions(
 }
 
 /**
+ * 終端イベント（canceled / deleted）向け: イベント subscription が既に live でなく、
+ * 同一 Customer に別の live keep が残っている場合は discarded 扱いとする。
+ * 同一リクエスト内 dual cancel 後に遅れて届く discard 側 deleted が、
+ * keep 行を canceled で上書きしないための投影リダイレクト。
+ * Stripe cancel は行わない（既に terminal）。
+ */
+export async function resolveTerminalEventDualProjection(
+  deps: {
+    stripe: BillingWebhookStripe;
+  },
+  stripeCustomerId: string,
+  eventSubscriptionId: string,
+): Promise<DualSubscriptionCleanup> {
+  const byId = new Map<string, Stripe.Subscription>();
+  for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+    const listed = await deps.stripe.subscriptions.list({
+      customer: stripeCustomerId,
+      status,
+      limit: 100,
+    });
+    for (const sub of listed.data) {
+      byId.set(sub.id, sub);
+    }
+  }
+  const live = [...byId.values()].filter((sub) => LIVE_SUB_STATUSES.has(sub.status));
+  // イベント対象がまだ live なら通常投影（terminal と矛盾するが list を正にしない）
+  if (live.some((sub) => sub.id === eventSubscriptionId)) {
+    return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
+  }
+  // live が無い = 本当の単一 sub 終端。イベント自体を投影する
+  if (live.length === 0) {
+    return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
+  }
+  const sorted = [...live].sort((a, b) => {
+    const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
+    if (rankDiff !== 0) return rankDiff;
+    return a.created - b.created;
+  });
+  const keep = sorted[0];
+  if (keep === undefined) {
+    return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
+  }
+  return {
+    keepSubscriptionId: keep.id,
+    discardedSubscriptionIds: [eventSubscriptionId],
+  };
+}
+
+/**
  * 初回 trialing|active 後に trial_history を server identity_key で焼成（A7）。
  *
  * Plus 投影後に焼成を落とすと、cancel 後の再 Checkout で 7 日 trial を再付与できる
@@ -428,14 +477,23 @@ async function handleSubscriptionEvent(
       userId,
       customerId,
     );
+  } else if (customerId !== null) {
+    // 遅延 discarded cancel/deleted: live keep が残っていれば keep を投影する
+    dualCleanup = await resolveTerminalEventDualProjection(
+      { stripe: deps.stripe },
+      customerId,
+      sub.id,
+    );
   }
 
   // 同一秒の決定論: retrieve を正として payload に載せる（evt_ 文字列順は使わない）。
   // dual-sub で discard した subscription のイベントは keep 側を投影する（cancel 後 status で上書きしない）。
-  const projectSubscriptionId =
-    dualCleanup.discardedSubscriptionIds.includes(sub.id) && dualCleanup.keepSubscriptionId !== null
-      ? dualCleanup.keepSubscriptionId
-      : sub.id;
+  const projectingDiscardedOntoKeep =
+    dualCleanup.discardedSubscriptionIds.includes(sub.id) &&
+    dualCleanup.keepSubscriptionId !== null;
+  const projectSubscriptionId = projectingDiscardedOntoKeep
+    ? (dualCleanup.keepSubscriptionId as string)
+    : sub.id;
 
   let retrieved: SubscriptionProjection | null = null;
   try {
@@ -468,10 +526,13 @@ async function handleSubscriptionEvent(
     return json(200, { ok: true, data: { outcome } });
   }
 
+  // deleted で discarded を keep へリダイレクトしているとき、keep を canceled に落とさない
+  const forceCanceledFromDeleted =
+    event.type === "customer.subscription.deleted" && !projectingDiscardedOntoKeep;
+  const projectedStatus = forceCanceledFromDeleted ? "canceled" : projection.status;
+
   const clearPastDue =
-    projection.status === "active" ||
-    projection.status === "trialing" ||
-    event.type === "customer.subscription.deleted";
+    projectedStatus === "active" || projectedStatus === "trialing" || forceCanceledFromDeleted;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
@@ -480,7 +541,7 @@ async function handleSubscriptionEvent(
     user_id: userId,
     stripe_subscription_id: projection.stripe_subscription_id,
     stripe_price_id: projection.stripe_price_id,
-    status: event.type === "customer.subscription.deleted" ? "canceled" : projection.status,
+    status: projectedStatus,
     cancel_at_period_end: projection.cancel_at_period_end,
     current_period_start: projection.current_period_start,
     current_period_end: projection.current_period_end,
@@ -488,7 +549,7 @@ async function handleSubscriptionEvent(
     clear_past_due_since: clearPastDue,
     // same-second 用。RPC が created 比較後に参照。evt_ 辞書順は使わない。
     retrieved_subscription: {
-      status: event.type === "customer.subscription.deleted" ? "canceled" : projection.status,
+      status: projectedStatus,
       stripe_price_id: projection.stripe_price_id,
       stripe_subscription_id: projection.stripe_subscription_id,
       cancel_at_period_end: projection.cancel_at_period_end,

@@ -725,6 +725,47 @@ describe("handleBillingWebhook", () => {
     );
   });
 
+  it("late deleted of discarded dual-sub projects keep active instead of overwrite cancel", async () => {
+    // dual cleanup 後に届く discard 側 deleted が keep を canceled 上書きしないこと（BILL-1）
+    const keep = makeSubscription({
+      id: "sub_keep",
+      created: 1000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const discardedDeleted = makeSubscription({
+      id: "sub_discarded",
+      created: 2000,
+      status: "canceled",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", discardedDeleted, {
+        id: "evt_discard_deleted_late",
+        created: 9_000,
+      }),
+    );
+    retrieve.mockImplementation((id: string) => {
+      if (id === "sub_keep") return Promise.resolve(keep);
+      return Promise.resolve(discardedDeleted);
+    });
+    list.mockImplementation((params: { status?: string }) => {
+      const data = params.status === "active" || params.status === undefined ? [keep] : [];
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(cancel).not.toHaveBeenCalled();
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.stripe_subscription_id).toBe("sub_keep");
+    expect(processPayload.status).toBe("active");
+  });
+
   it("cancels newer dual live subscription and keeps older entitled row", async () => {
     const older = makeSubscription({
       id: "sub_older",
