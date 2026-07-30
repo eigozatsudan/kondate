@@ -467,9 +467,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setHasDraftConflict(false);
     setLatestConflictDraft(undefined);
     setDraftConflictRefetchError(false);
-    // baseline は維持し、次の保存が現 revision の上に空内容を書く。resetToken で in-flight 保存を無効化。
+    // hydrate 時の baseline ではなく、autosave が把握している現 revision を渡す。
+    // 古い baseline のまま resetToken すると revisionRef が巻き戻り conflict になる。
+    setBaselineRevision(autosave.revision);
     setResetToken((current) => current + 1);
-  }, []);
+  }, [autosave.revision]);
 
   // 同意のみが生成許可。拒否（「今はAIを使わない」）は永続化せず、毎回ゲートする。
   const hasAcceptedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);

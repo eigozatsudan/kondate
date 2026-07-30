@@ -230,6 +230,42 @@ it("flush は途中の idea 下書きを拒否し、完了形は保存する", a
   expect(row?.revision).toBe(2);
 });
 
+it("resetToken と同時に baseline を現 revision へ上げると次の保存が conflict にならない", async () => {
+  // planner-route の入力リセットは setBaselineRevision(autosave.revision)+setResetToken
+  // をセットで行う。古い baseline のまま resetToken だけ上げると revision が巻き戻る。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({
+      value,
+      baselineRevision,
+      resetToken,
+    }: {
+      value: PlannerDraftInput;
+      baselineRevision: number;
+      resetToken: number;
+    }) => useDraftAutosave({ value, enabled: true, baselineRevision, resetToken, save }),
+    { initialProps: { value: base, baselineRevision: 5, resetToken: 0 } },
+  );
+
+  const edited = { ...base, mealType: "dinner" as const };
+  rerender({ value: edited, baselineRevision: 5, resetToken: 0 });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenLastCalledWith(edited, 5);
+  expect(result.current.revision).toBe(6);
+
+  // リセット: 空下書き + 現 revision を baseline に渡す
+  const empty = { ...base };
+  rerender({ value: empty, baselineRevision: 6, resetToken: 1 });
+  const afterReset = { ...base, mealType: "lunch" as const };
+  rerender({ value: afterReset, baselineRevision: 6, resetToken: 1 });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenLastCalledWith(afterReset, 6);
+  expect(result.current.revision).toBe(7);
+});
+
 it("flush は保留中 timer を置換し最新値の DB row を返す", async () => {
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>

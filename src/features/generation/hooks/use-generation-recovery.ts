@@ -370,6 +370,20 @@ export function useGenerationRecovery(
       };
     }
     const token = lifecycleRef.current;
+    if (state.phase === "succeeded" && userId !== null) {
+      void queryClient.invalidateQueries({
+        queryKey: usageTodayQueryKey(userId, jstDayKey()),
+      });
+      // finalize の soft-delete は new_menu（draft_id あり）のみ。
+      // regenerate_* は下書きを消さないため、cache を null で潰すと planner の
+      // 一回限り hydrate が空フォームを固定し得る。kind は clear 前に読む。
+      // read() と同じく now を明示（省略すると mock/実装とも TTL 判定が壊れる）。
+      const pending = readPendingGeneration(userId, new Date());
+      if (pending?.kind === "new_menu") {
+        queryClient.setQueryData(plannerKeys.draft(userId), null);
+      }
+      void queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
+    }
     if (
       state.effect === "navigate" &&
       token !== null &&
@@ -403,15 +417,6 @@ export function useGenerationRecovery(
       void queryClient.invalidateQueries({
         queryKey: usageTodayQueryKey(userId, jstDayKey()),
       });
-    }
-    if (state.phase === "succeeded" && userId !== null) {
-      void queryClient.invalidateQueries({
-        queryKey: usageTodayQueryKey(userId, jstDayKey()),
-      });
-      // finalize が generation_drafts を soft-delete するため、planner の stale cache
-      // （旧 revision）を残すと緊急献立前の flush が draft_revision_conflict になる。
-      queryClient.setQueryData(plannerKeys.draft(userId), null);
-      void queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
     }
     return undefined;
   }, [isCurrent, navigate, queryClient, retryStatus, state, userId]);

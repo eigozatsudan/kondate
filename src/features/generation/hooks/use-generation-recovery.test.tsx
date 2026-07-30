@@ -829,4 +829,50 @@ describe("useGenerationRecovery", () => {
     expect(recovery.result.current.state.phase).toBe("failed");
     expect(mockPost).not.toHaveBeenCalled();
   });
+
+  it("nulls planner draft cache on new_menu success but not regenerate_menu", async () => {
+    // seed 経路は初回 effect を skip するため、実運用どおり startGeneration→POST succeeded で検証する。
+    const { plannerKeys } = await import("@/features/planner/planner-api");
+    const draftKey = plannerKeys.draft(USER_ID);
+    const staleDraft = { id: "draft", revision: 9 };
+
+    const runStart = async (pending: PendingGeneration) => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      client.setQueryData(draftKey, staleDraft);
+      mockPost.mockResolvedValueOnce(succeededStatus(pending.request.idempotencyKey));
+      const recovery = renderHook(() => useGenerationRecovery(), {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        ),
+      });
+      await act(() => recovery.result.current.startGeneration(pending));
+      await waitFor(() => {
+        expect(recovery.result.current.state.phase).toBe("succeeded");
+      });
+      return client.getQueryData(draftKey);
+    };
+
+    const afterNewMenu = await runStart(makePending(KEY_A));
+    expect(afterNewMenu).toBeNull();
+
+    const regenCommand: GenerationCommand = {
+      commandVersion: "generation-command.v3",
+      kind: "regenerate_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: KEY_B,
+        sourceMenuId: "60000000-0000-4000-8000-000000000099",
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+        changeReason: "different_flavor",
+        changeReasonCustom: null,
+      },
+    };
+    const regenPending = createPendingGeneration(regenCommand, USER_ID, () => FIXED_NOW);
+    const afterRegen = await runStart(regenPending);
+    // regenerate は soft-delete しない。stale を null で潰さない
+    expect(afterRegen).toEqual(staleDraft);
+  });
 });
