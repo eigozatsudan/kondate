@@ -160,28 +160,39 @@ function customerIdFrom(
   return null;
 }
 
-function subscriptionIdFromInvoice(invoice: Stripe.Invoice): string | null {
-  // dahlia: parent.subscription_details。acacia 以前は top-level subscription。
+/**
+ * Invoice から subscription id を取り出す。
+ * dahlia は parent.subscription_details.subscription、acacia 以前は top-level subscription。
+ * parent 側が null/undefined のときは legacy へ落ちる（throw 禁止 — webhook 500 再送嵐を防ぐ）。
+ * Stripe SDK 型は null を許さないが、実 payload / 再配信では null が来得るため unknown 経由で読む。
+ */
+export function subscriptionIdFromInvoice(invoice: Stripe.Invoice): string | null {
   const details = invoice.parent?.subscription_details;
   if (details !== null && details !== undefined) {
-    const parentSub = details.subscription;
-    if (typeof parentSub === "string") {
-      return parentSub.length > 0 ? parentSub : null;
-    }
-    // Stripe 型上 string 以外は Subscription オブジェクト
-    if (typeof parentSub !== "string" && typeof parentSub.id === "string") {
-      return parentSub.id;
-    }
+    // unknown: SDK 上は string | Subscription だが runtime null を TypeError なく扱う
+    const parentSub: unknown = details.subscription;
+    const fromParent = subscriptionIdFromUnknown(parentSub);
+    if (fromParent !== null) return fromParent;
   }
   const legacy = invoice as Stripe.Invoice & {
     subscription?: string | Stripe.Subscription | null;
   };
-  const sub = legacy.subscription;
-  if (typeof sub === "string" && sub.length > 0) return sub;
-  if (sub !== null && sub !== undefined && typeof sub === "object" && "id" in sub) {
-    return typeof sub.id === "string" ? sub.id : null;
+  return subscriptionIdFromUnknown(legacy.subscription);
+}
+
+/** string / {id} / null|undefined を TypeError なしで subscription id に正規化する */
+function subscriptionIdFromUnknown(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.length > 0 ? value : null;
   }
-  return null;
+  if (value === null || typeof value !== "object") {
+    return null;
+  }
+  if (!("id" in value)) {
+    return null;
+  }
+  const id = Reflect.get(value, "id");
+  return typeof id === "string" && id.length > 0 ? id : null;
 }
 
 /**

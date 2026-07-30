@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
 import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
 import type { ServerEnv } from "./env.js";
-import { handleBillingWebhook, type BillingWebhookDeps } from "./billing-webhook.js";
+import {
+  handleBillingWebhook,
+  subscriptionIdFromInvoice,
+  type BillingWebhookDeps,
+} from "./billing-webhook.js";
 
 const USER_ID = "a1000000-0000-4000-8000-000000000001";
 const CUSTOMER_ID = "cus_test_1";
@@ -103,6 +107,85 @@ function makeEvent(
     ...overrides,
   } as Stripe.Event;
 }
+
+describe("subscriptionIdFromInvoice", () => {
+  it("reads dahlia parent.subscription_details.subscription string", () => {
+    const invoice = {
+      id: "in_dahlia_str",
+      object: "invoice",
+      parent: {
+        type: "subscription_details",
+        subscription_details: { subscription: SUB_ID },
+      },
+    } as unknown as Stripe.Invoice;
+    expect(subscriptionIdFromInvoice(invoice)).toBe(SUB_ID);
+  });
+
+  it("reads dahlia parent.subscription_details.subscription expanded object", () => {
+    const invoice = {
+      id: "in_dahlia_obj",
+      object: "invoice",
+      parent: {
+        type: "subscription_details",
+        subscription_details: { subscription: { id: SUB_ID, object: "subscription" } },
+      },
+    } as unknown as Stripe.Invoice;
+    expect(subscriptionIdFromInvoice(invoice)).toBe(SUB_ID);
+  });
+
+  it("falls back to legacy top-level when parent.subscription is null", () => {
+    // 7b3e631 の typeof parentSub.id 直読みは null で TypeError → 500 再送嵐。
+    // null/undefined は throw せず acacia 形へ落ちる。
+    const invoice = {
+      id: "in_parent_null",
+      object: "invoice",
+      subscription: SUB_ID,
+      parent: {
+        type: "subscription_details",
+        subscription_details: { subscription: null },
+      },
+    } as unknown as Stripe.Invoice;
+    expect(subscriptionIdFromInvoice(invoice)).toBe(SUB_ID);
+  });
+
+  it("falls back to legacy when parent.subscription is undefined", () => {
+    const invoice = {
+      id: "in_parent_undef",
+      object: "invoice",
+      subscription: SUB_ID,
+      parent: {
+        type: "subscription_details",
+        subscription_details: {},
+      },
+    } as unknown as Stripe.Invoice;
+    expect(subscriptionIdFromInvoice(invoice)).toBe(SUB_ID);
+  });
+
+  it("returns null when parent.subscription is null and no legacy subscription", () => {
+    const invoice = {
+      id: "in_no_sub",
+      object: "invoice",
+      parent: {
+        type: "subscription_details",
+        subscription_details: { subscription: null },
+      },
+    } as unknown as Stripe.Invoice;
+    expect(subscriptionIdFromInvoice(invoice)).toBeNull();
+  });
+
+  it("prefers non-empty dahlia string over legacy", () => {
+    const invoice = {
+      id: "in_prefer_dahlia",
+      object: "invoice",
+      subscription: "sub_legacy",
+      parent: {
+        type: "subscription_details",
+        subscription_details: { subscription: SUB_ID },
+      },
+    } as unknown as Stripe.Invoice;
+    expect(subscriptionIdFromInvoice(invoice)).toBe(SUB_ID);
+  });
+});
 
 describe("handleBillingWebhook", () => {
   const constructEvent = vi.fn();
@@ -461,6 +544,28 @@ describe("handleBillingWebhook", () => {
     expect(trialCall).toBeDefined();
     const args = trialCall![1] as { p_identity_key: string };
     expect(args.p_identity_key).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("invoice.paid with dahlia parent.subscription null still retrieves via legacy and burns trial", async () => {
+    // parent.subscription_details.subscription=null でも TypeError せず legacy id で retrieve する。
+    const invoice = {
+      id: "in_dahlia_null_parent_sub",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+      parent: {
+        type: "subscription_details",
+        subscription_details: { subscription: null },
+      },
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, { id: "evt_invoice_dahlia_null" }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "active" }));
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(retrieve).toHaveBeenCalledWith(SUB_ID);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(true);
   });
 
   it("still burns trial on duplicate retry when live sub is canceled after prior burn failure", async () => {
