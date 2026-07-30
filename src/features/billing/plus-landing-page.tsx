@@ -10,6 +10,10 @@ import {
   SURFACES_CLOSED_COPY,
   TRIAL_END_WARNING,
 } from "./billing-ui-copy";
+import heroUrl from "./assets/plus-hero.webp";
+import quotaUrl from "./assets/plus-benefit-quota.webp";
+import qualityUrl from "./assets/plus-benefit-quality.webp";
+import flyerUrl from "./assets/plus-benefit-flyer.webp";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
 import { resolvePlusLandingView } from "./plus-landing-view";
 import { useEntitlement } from "./use-entitlement";
@@ -59,7 +63,7 @@ function formatTrialEnd(iso: string | null): string | null {
 /**
  * Plus ランディングページ（設計 2026-07-30）。
  * 表示分岐は resolvePlusLandingView のみ。Checkout は CheckoutIntervalForm 共有。
- * 画像アセットは Task 6 で webp を載せる（現状は media placeholder）。
+ * イラストは同一オリジン webp（装飾のため alt は空）。
  */
 export function PlusLandingPage({
   userId: injectedUserId,
@@ -253,8 +257,14 @@ export function PlusLandingPage({
       {view.kind === "full" ? (
         <div className="stack gap-4 plus-landing__full">
           <div className="plus-landing__hero stack gap-2">
-            {/* Task 6 で webp を載せる。現状は CLS を抑える空メディア枠 */}
-            <div className="plus-landing__media" aria-hidden="true" />
+            <img
+              src={heroUrl}
+              alt=""
+              width={1280}
+              height={720}
+              className="plus-landing__hero-img"
+              decoding="async"
+            />
             <h1>{PLUS_LP_H1}</h1>
             <p className="plus-landing__lead">{PLUS_LP_LEAD}</p>
             {view.checkoutEnabled ? (
@@ -266,17 +276,38 @@ export function PlusLandingPage({
 
           <ul className="plus-landing__cards stack gap-3">
             <li className="plus-landing__card card stack gap-2">
-              <div className="plus-landing__media" aria-hidden="true" />
+              <img
+                src={quotaUrl}
+                alt=""
+                width={640}
+                height={640}
+                className="plus-landing__card-img"
+                decoding="async"
+              />
               <h2>枠の余裕</h2>
               <p>Plus なら 1 日最大 {planQuota.plus.successPerDay} 回まで作成</p>
             </li>
             <li className="plus-landing__card card stack gap-2">
-              <div className="plus-landing__media" aria-hidden="true" />
+              <img
+                src={qualityUrl}
+                alt=""
+                width={640}
+                height={640}
+                className="plus-landing__card-img"
+                decoding="async"
+              />
               <h2>くわしく作る</h2>
               <p>「くわしく作る」でより丁寧な献立（回数に限りあり）</p>
             </li>
             <li className="plus-landing__card card stack gap-2">
-              <div className="plus-landing__media" aria-hidden="true" />
+              <img
+                src={flyerUrl}
+                alt=""
+                width={640}
+                height={640}
+                className="plus-landing__card-img"
+                decoding="async"
+              />
               <h2>チラシから 1 週間</h2>
               <p>チラシ写真から 1 週間の献立</p>
               <p className="type-small">{FLYER_PRIVACY_NOTE}</p>
