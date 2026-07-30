@@ -238,7 +238,7 @@ Plus LP の `billing/` 配下には置かない。
 | 締め | まずは無料ではじめられます | Plus 誘導 |
 
 - 文言の字句微調整は plan 内で可。**L5–L8・L17 と「Plus 文字列ゼロ」は破らない**
-- unit: LP レンダー結果のテキストに `Plus` / `plus` / `安全` / `絶対` / `保証` が **含まれない**（英字 Plus ブランド混入防止。`plus` は CSS クラス名を textContent に出さないこと）
+- unit: LP レンダー結果のテキストに次が **含まれない** — `Plus`、`plus`（CSS クラスを textContent に出さない）、`安全`、`絶対`、`保証`、`無制限`、`何回でも`（L6–L8）
 
 ### 画像（L10）
 
@@ -306,7 +306,7 @@ Plus LP の `billing/` 配下には置かない。
 | 層 | 内容 |
 |----|------|
 | Unit `RootGatePage` | loading → 確認文のみ・LP 文言なし；unauth / session null → LP の h1；authenticated+session → RootEntry 側（モック子または既知テキスト） |
-| Unit `FreeLandingPage` | h1・3 カード順（家族→献立→冷蔵庫）・主 CTA `to`/`href` = `/login`・副リンクも `/login`・**Plus / 安全 / 絶対 / 保証 が text に無い** |
+| Unit `FreeLandingPage` | h1・3 カード順（家族→献立→冷蔵庫）・主 CTA `to`/`href` = `/login`・副リンクも `/login`・**禁止語（L6–L8）が text に無い** |
 | Router | **`/` の祖先に `RequireSession` が無い**；`/planner` 等は従来どおり `RequireSession` 配下；`/login` は public のまま |
 | 回帰 | `root-entry-page` / `login-page` / `protected-routes` の既存契約を壊していないこと |
 | E2E | 本設計の **必須ゲート外**（人間が明示するまで defer 可）。入れるなら「未ログインで `/` → 無料ではじめる → login の見出し」1 本。**既存 `authenticatedPage` の `goto("/")` → welcome はログイン済みのため維持される想定**を計画に明記 |
@@ -432,5 +432,6 @@ Plus LP の `billing/` 配下には置かない。
 | Plus 境界 | 対比表・依存禁止で明確 |
 | E2E / logout 回帰 | 維持表 + L16 |
 | 内部矛盾 | 再読で重大な矛盾なし |
+| A5 無制限コピー | L7 と unit 禁止語へ昇格（再レビュー時の取りこぼしを修正） |
 
 **残課題（実装計画へ）**: Task 分割、exact コピー定数名の最終決定、画像生成、任意 E2E 1 本のゲート判断。設計ロックの追加変更は不要。
