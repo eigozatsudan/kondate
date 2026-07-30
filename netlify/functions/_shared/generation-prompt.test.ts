@@ -259,6 +259,10 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain("ちょうど3品");
     expect(system).toContain("mainまたはstaple");
     expect(system).toContain("totalElapsedMinutes");
+    // timeline の dish–step 対応（Luna 応答の dish_3+step_2 型を抑止）
+    expect(system).toContain("timelineでdishRefとstepRefを両方書くとき");
+    expect(system).toContain("stepRefはそのdishのstepsに含まれるstepだけを指す");
+    expect(system).toContain("adaptationsのbeforeStepRef");
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_CORE.slice(0, 40));
   });
 

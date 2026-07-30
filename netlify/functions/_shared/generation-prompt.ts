@@ -88,6 +88,11 @@ export const GENERATION_SYSTEM_PROMPT_CORE_BODY =
   "dinnerはmain・side・soupをすべて含める。" +
   "timelineの各要素はstartMinute+durationMinutesがtotalElapsedMinutesを超えない。" +
   "totalElapsedMinutesはpreferences.timeLimitMinutesがあるときそれを超えない。" +
+  // timeline / adaptation の dish–step 対応（materialize の dangling_ref 防止）
+  "timelineでdishRefとstepRefを両方書くとき、stepRefはそのdishのstepsに含まれるstepだけを指す。" +
+  "例: dish_3の工程がstep_8・step_9・step_10なら、timelineのdishRef=dish_3には" +
+  "step_8/step_9/step_10だけを使い、dish_1のstep_1やstep_2を付けない。" +
+  "adaptationsのbeforeStepRefも、そのadaptationのdishRefが持つsteps内のstepRefだけを指す。" +
   "preferences.mainIngredientsの各要素を料理名または材料名に含める。" +
   "pantryUsageには使ったpantryRefを漏れなく載せ、priorityは入力どおり、" +
   "usageStatus=usedのdishRefsは実際にそのpantryRefをingredientsに持つdishだけを列挙する。" +
