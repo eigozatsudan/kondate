@@ -987,7 +987,19 @@ describe("ShoppingListPage mutations", () => {
 });
 
 describe("CreateListSheet", () => {
-  it("exposes create-list-title heading as programmatically focusable", () => {
+  beforeEach(() => {
+    // jsdom 向け native dialog ポリフィル（削除確認などと同型）
+    if (typeof HTMLDialogElement !== "undefined") {
+      HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      };
+      HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+        this.removeAttribute("open");
+      };
+    }
+  });
+
+  it("opens as a dialog and exposes create-list-title as programmatically focusable", () => {
     render(
       <CreateListSheet
         activeList={null}
@@ -997,6 +1009,8 @@ describe("CreateListSheet", () => {
         onCancel={() => undefined}
       />,
     );
+    const dialog = screen.getByRole("dialog", { name: "買い物リストを作る" });
+    expect(dialog).toBeVisible();
     const heading = screen.getByRole("heading", { name: "買い物リストを作る" });
     expect(heading).toHaveAttribute("id", "create-list-title");
     expect(heading).toHaveAttribute("tabIndex", "-1");
@@ -1014,12 +1028,46 @@ describe("CreateListSheet", () => {
       />,
     );
     expect(screen.getByText(/今のリストへ追加（7件）/u)).toBeInTheDocument();
+    // 既定は append なので「消えます」警告は出さない
+    expect(screen.queryByText(/いまの買い物リスト（7件）は消えます/u)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "作成する" }));
     expect(onSubmit).toHaveBeenCalledWith({
       mode: "append",
       activeListId: LIST_ID,
       expectedListVersion: 3,
     });
+  });
+
+  it("warns that the current list will disappear when choosing a new list", async () => {
+    render(
+      <CreateListSheet
+        activeList={{ id: LIST_ID, version: 3, itemCount: 7 }}
+        pending={false}
+        safetyBlocked={false}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByLabelText("新しいリストにする"));
+    expect(
+      screen.getByText(/新しいリストにすると、いまの買い物リスト（7件）は消えます/u),
+    ).toBeInTheDocument();
+  });
+
+  it("always warns when forceNewMode requires a new list", () => {
+    render(
+      <CreateListSheet
+        activeList={{ id: LIST_ID, version: 3, itemCount: 4 }}
+        pending={false}
+        safetyBlocked={false}
+        forceNewMode
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/新しいリストにすると、いまの買い物リスト（4件）は消えます/u),
+    ).toBeInTheDocument();
   });
 
   it("submits a new list with null expectations when none is active", async () => {
