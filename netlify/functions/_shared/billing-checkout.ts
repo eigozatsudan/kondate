@@ -271,7 +271,7 @@ export async function runBillingCheckout(
         client_reference_id: user.userId,
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${origin}/settings?billing=success`,
-        cancel_url: `${origin}/settings?billing=cancel`,
+        cancel_url: `${origin}/plus?billing=cancel`,
         subscription_data: {
           ...(usedTrial ? {} : { trial_period_days: TRIAL_PERIOD_DAYS }),
           metadata: { supabase_user_id: user.userId, plan_code: "plus" },

@@ -224,6 +224,8 @@ describe("runBillingCheckout", () => {
       locale: string;
       allow_promotion_codes: boolean;
       payment_method_collection: string;
+      success_url: string;
+      cancel_url: string;
       subscription_data: {
         trial_period_days?: number;
         metadata: { supabase_user_id: string; plan_code: string };
@@ -242,6 +244,9 @@ describe("runBillingCheckout", () => {
         metadata: { supabase_user_id: USER_ID, plan_code: "plus" },
       },
     });
+    // R-B6: success は設定のまま、cancel のみ /plus に寄せる
+    expect(createArgs.success_url).toBe("http://127.0.0.1:5173/settings?billing=success");
+    expect(createArgs.cancel_url).toBe("http://127.0.0.1:5173/plus?billing=cancel");
 
     const bind = rpc.mock.calls.find(([n]) => n === "bind_billing_checkout_session");
     expect(bind![1]).toMatchObject({
