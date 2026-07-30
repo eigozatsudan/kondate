@@ -706,8 +706,51 @@ describe("PlannerWizard review step", () => {
     expect(timeLabel).toHaveClass("field");
     expect(body).toHaveClass("stack", "wizard-details-body");
     expect(body).toContainElement(screen.getByLabelText("予算"));
+    expect(body).toContainElement(screen.getByLabelText("材料の使い方"));
     expect(body).toContainElement(screen.getByLabelText("今回だけ避ける食材"));
     expect(body).toContainElement(screen.getByLabelText("自由メモ"));
+  });
+
+  it("追加条件の材料の使い方を選び draft に反映できる", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByText("追加条件"));
+    const select = screen.getByLabelText("材料の使い方");
+    expect(select).toHaveValue("");
+    // 4 値 + 指定なし。文言は planner-labels と一致させる。
+    expect(within(select as HTMLElement).getByRole("option", { name: "指定なし" })).toBeEnabled();
+    expect(within(select as HTMLElement).getByRole("option", { name: "多め" })).toBeEnabled();
+    expect(within(select as HTMLElement).getByRole("option", { name: "少な目" })).toBeEnabled();
+    expect(
+      within(select as HTMLElement).getByRole("option", {
+        name: "メイン食材と冷蔵庫から使う食材からしか使わない",
+      }),
+    ).toBeEnabled();
+    expect(within(select as HTMLElement).getByRole("option", { name: "おまかせ" })).toBeEnabled();
+
+    await user.selectOptions(select, "more");
+    expect(select).toHaveValue("more");
+    await user.selectOptions(select, "selected_only");
+    expect(select).toHaveValue("selected_only");
+    await user.selectOptions(select, "less");
+    expect(select).toHaveValue("less");
+    await user.selectOptions(select, "auto");
+    expect(select).toHaveValue("auto");
+    // ヒントが accessible description に載る
+    expect(select).toHaveAccessibleDescription(/調味料の基本/);
   });
 
   it("privacy未確認では説明ボタンを表示し、生成押下でダイアログへ誘導する", async () => {

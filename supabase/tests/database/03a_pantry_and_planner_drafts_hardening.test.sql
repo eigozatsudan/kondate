@@ -267,13 +267,14 @@ select is(
   (select jsonb_build_object(
     'mealType',meal_type,'mainIngredients',main_ingredients,'cuisineGenre',cuisine_genre,
     'targetMemberIds',target_member_ids,'timeLimitMinutes',time_limit_minutes,
-    'budgetPreference',budget_preference,'avoidIngredients',avoid_ingredients,
+    'budgetPreference',budget_preference,'ingredientPreference',ingredient_preference,
+    'avoidIngredients',avoid_ingredients,
     'memo',memo,'pantrySelections',pantry_selections,'revision',revision
   ) from public.generation_drafts),
   jsonb_build_object(
     'mealType',null,'mainIngredients',array_fill(repeat('🍳',80), array[8]),'cuisineGenre',null,
     'targetMemberIds',array(select ('20000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid from generate_series(1,20) as values_(i)),
-    'timeLimitMinutes',null,'budgetPreference',null,
+    'timeLimitMinutes',null,'budgetPreference',null,'ingredientPreference',null,
     'avoidIngredients',array(select '避ける' || i from generate_series(1,20) as values_(i)),
     'memo',repeat('🍳',200),
     'pantrySelections',(select jsonb_agg(jsonb_build_object('pantryItemId',('21000000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,'priority','prefer_use')) from generate_series(1,50) as values_(i)),
@@ -302,7 +303,7 @@ select is(
   (public.save_generation_draft(
     1, 'dinner', array['鶏肉','白菜'], 'japanese', 'household',
     array['20000000-0000-0000-0000-000000000001'::uuid], null::smallint, 30::smallint,
-    'standard',null, array['乳'], '更新',
+    'standard','selected_only', array['乳'], '更新',
     '[{"pantryItemId":"21000000-0000-0000-0000-000000000001","priority":"must_use"}]'::jsonb
   )).revision,
   2::bigint,
@@ -312,17 +313,24 @@ select is(
   (select jsonb_build_object(
     'mealType',meal_type,'mainIngredients',main_ingredients,'cuisineGenre',cuisine_genre,
     'targetMemberIds',target_member_ids,'timeLimitMinutes',time_limit_minutes,
-    'budgetPreference',budget_preference,'avoidIngredients',avoid_ingredients,
+    'budgetPreference',budget_preference,'ingredientPreference',ingredient_preference,
+    'avoidIngredients',avoid_ingredients,
     'memo',memo,'pantrySelections',pantry_selections,'revision',revision
   ) from public.generation_drafts),
   jsonb_build_object(
     'mealType','dinner','mainIngredients',array['鶏肉','白菜'],'cuisineGenre','japanese',
     'targetMemberIds',array['20000000-0000-0000-0000-000000000001'::uuid],
-    'timeLimitMinutes',30,'budgetPreference','standard','avoidIngredients',array['乳'],
+    'timeLimitMinutes',30,'budgetPreference','standard','ingredientPreference','selected_only',
+    'avoidIngredients',array['乳'],
     'memo','更新','pantrySelections','[{"pantryItemId":"21000000-0000-0000-0000-000000000001","priority":"must_use"}]'::jsonb,
     'revision',2
   ),
   'update round-trips the complete payload'
+);
+select throws_ok(
+  $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,30::smallint,'standard','plenty',array[]::text[],'','[]'::jsonb)$$,
+  '22023', 'invalid_draft_save',
+  'ingredient preference rejects undeclared values'
 );
 select throws_ok(
   $$select public.save_generation_draft(0,null,null,null,null,array[]::uuid[],null::smallint,null,null,null,array[]::text[],'','[]'::jsonb)$$,

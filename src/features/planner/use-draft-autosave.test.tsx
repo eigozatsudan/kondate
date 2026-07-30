@@ -201,14 +201,14 @@ it("flush は途中の idea 下書きを拒否し、完了形は保存する", a
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
     Promise.resolve(saved(value, revision + 1)),
   );
-  const incompleteIdea = {
+  const incompleteIdea: PlannerDraftInput = {
     ...base,
-    targetMode: "idea" as const,
-    targetMemberIds: [] as string[],
+    targetMode: "idea",
+    targetMemberIds: [],
     servings: null,
   };
   const { rerender, result } = renderHook(
-    ({ value }) =>
+    ({ value }: { value: PlannerDraftInput }) =>
       useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
     { initialProps: { value: incompleteIdea } },
   );
@@ -219,7 +219,8 @@ it("flush は途中の idea 下書きを拒否し、完了形は保存する", a
   expect(save).not.toHaveBeenCalled();
   expect(result.current.state).not.toBe("error");
 
-  const completeIdea = { ...incompleteIdea, servings: 3 };
+  // idea 完成形は servings を数値にする
+  const completeIdea: PlannerDraftInput = { ...incompleteIdea, servings: 3 };
   rerender({ value: completeIdea });
   let row: PlannerDraft | undefined;
   await act(async () => {

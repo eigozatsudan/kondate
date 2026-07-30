@@ -13,14 +13,14 @@ insert into auth.users (
 
 insert into public.generation_drafts (
   id, user_id, meal_type, main_ingredients, cuisine_genre, target_mode, target_member_ids,
-  servings, time_limit_minutes, budget_preference, avoid_ingredients, memo,
+  servings, time_limit_minutes, budget_preference, ingredient_preference, avoid_ingredients, memo,
   pantry_selections, revision
 ) values (
   '30000000-0000-4000-8000-000000000001',
   '10000000-0000-4000-8000-000000000001',
   'dinner', array['鶏肉'], 'japanese', 'household',
   array['10000000-0000-4000-8000-000000000001'::uuid],
-  null, 30, 'standard', array[]::text[], '', '[]'::jsonb, 1
+  null, 30, 'standard', 'selected_only', array[]::text[], '', '[]'::jsonb, 1
 );
 
 insert into public.generation_drafts (
@@ -1181,6 +1181,7 @@ select is(
     'servings', servings,
     'time_limit_minutes', time_limit_minutes,
     'budget_preference', budget_preference,
+    'ingredient_preference', ingredient_preference,
     'avoid_ingredients', avoid_ingredients,
     'memo', memo,
     'pantry_selections', pantry_selections,
@@ -1199,6 +1200,7 @@ select is(
     'servings', null,
     'time_limit_minutes', 30,
     'budget_preference', 'standard',
+    'ingredient_preference', 'selected_only',
     'avoid_ingredients', array[]::text[],
     'memo', '',
     'pantry_selections', '[]'::jsonb,
@@ -1224,6 +1226,7 @@ select is(
     'servings', servings,
     'time_limit_minutes', time_limit_minutes,
     'budget_preference', budget_preference,
+    'ingredient_preference', ingredient_preference,
     'avoid_ingredients', avoid_ingredients,
     'memo', memo,
     'pantry_selections', pantry_selections,
@@ -1244,6 +1247,7 @@ select is(
     'servings', null,
     'time_limit_minutes', 30,
     'budget_preference', 'standard',
+    'ingredient_preference', 'selected_only',
     'avoid_ingredients', array[]::text[],
     'memo', '',
     'pantry_selections', '[]'::jsonb,

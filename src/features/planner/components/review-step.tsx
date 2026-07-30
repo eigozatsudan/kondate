@@ -8,7 +8,12 @@ import { getJstSeasonContext, type SeasonContext } from "@shared/season/jst-seas
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import { CurrentSafetySummary } from "../current-safety-summary";
-import { cuisineGenreLabel, mealLabel } from "../model/planner-labels";
+import {
+  cuisineGenreLabel,
+  ingredientPreferenceLabel,
+  ingredientPreferenceLabels,
+  mealLabel,
+} from "../model/planner-labels";
 import { PantrySelector, type PantryItemsStatus } from "../pantry-selector";
 import type { PlannerSafetyMember } from "../planner-safety-member";
 import type { PlannerStep } from "../model/planner-wizard";
@@ -125,7 +130,7 @@ export const privacyNoticeRequiredMessage =
   "献立を作る前に、AI情報の説明を確認してください。「AI情報の説明を見る」を押してください。";
 
 /**
- * 任意条件（時間・予算・避ける食材・memo・pantry選択）をdetailsから開き、
+ * 任意条件（時間・予算・材料の使い方・避ける食材・memo・pantry選択）をdetailsから開き、
  * 生成直前の最終確認と送信を担うstep。
  * privacy 未確認時は「AI情報の説明を見る」を secondary ボタンで明示し、
  * 「献立を作る」押下では生成せず alertdialog で同じ操作へ誘導する
@@ -396,7 +401,7 @@ export function ReviewStep({
             </p>
           )}
           <label className="field">
-            材料
+            材料の使い方
             <select
               value={value.ingredientPreference ?? ""}
               disabled={disabled}
@@ -423,13 +428,11 @@ export function ReviewStep({
                 });
               }}
             >
-              <option value="">指定なし</option>
-              <option value="more">多め</option>
-              <option value="less">少な目</option>
-              <option value="selected_only">
-                メイン食材と冷蔵庫から使う食材からしか使わない
-              </option>
-              <option value="auto">おまかせ</option>
+              <option value="">{ingredientPreferenceLabel(null)}</option>
+              <option value="more">{ingredientPreferenceLabels.more}</option>
+              <option value="less">{ingredientPreferenceLabels.less}</option>
+              <option value="selected_only">{ingredientPreferenceLabels.selected_only}</option>
+              <option value="auto">{ingredientPreferenceLabels.auto}</option>
             </select>
           </label>
           <p id="review-ingredient-preference-hint" className="type-small">
