@@ -1068,6 +1068,78 @@ dialog:not([open]) {
   gap: 12px;
 }
 
+
+/*
+ * 献立成功後のチラシ upsell（L10-6）。
+ * 成功結果より前に置かれるが、主 CTA 級の card/primary にしない。
+ * 薄い枠＋小さめ muted 文＋テキストリンクで控えめに案内する。
+ */
+.flyer-upsell-banner {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--notice);
+  padding: 10px 12px;
+}
+
+.flyer-upsell-banner-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.flyer-upsell-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.flyer-upsell-banner-cta {
+  display: inline-flex;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--primary-strong);
+  background: transparent;
+  padding: 8px 4px;
+  font-size: var(--text-small);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.flyer-upsell-banner-cta:hover {
+  color: var(--primary);
+}
+
+.flyer-upsell-banner-dismiss {
+  display: inline-flex;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  padding: 8px 4px;
+  font-size: var(--text-small);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.flyer-upsell-banner-dismiss:hover {
+  color: var(--ink);
+}
+
 /*
  * チェック／ラジオの縦並びグループ。
  * .stack の 16px だと行間が空きすぎるので、44px ターゲットを保ちつつ詰める。
