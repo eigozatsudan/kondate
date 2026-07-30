@@ -531,6 +531,7 @@ describe("adversarial scenarios through runGeneration with the real local HTTP m
           startedAtMonotonicMs: 0,
           deadlineAtMonotonicMs: 55_000,
           regeneration: null,
+          recentDishHints: [] as const,
         }),
       ),
       validatePreflight: () => ({ ok: true }),
@@ -792,6 +793,7 @@ describe("family canary matrix across idea and household generation boundaries",
       startedAtMonotonicMs: 0,
       deadlineAtMonotonicMs: 50_000,
       regeneration: null,
+      recentDishHints: [] as const,
     };
   }
 

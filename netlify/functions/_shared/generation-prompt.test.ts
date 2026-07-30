@@ -1,21 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
+  makeGeneratedMenu,
   makeGenerationContext,
   makeIdeaGenerationContext,
+  makeValidatedMenu,
 } from "../../../shared/testing/factories.js";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import { DIVERSITY_SYSTEM_MARKER, type RecentDishHint } from "./diversity-hints.js";
 import {
   GENERATION_SYSTEM_PROMPT_CORE,
   GENERATION_SYSTEM_PROMPT_IDEA_EXTRA,
   buildGenerationMessages,
 } from "./generation-prompt.js";
-
-import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
-import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 
 /** 既存テストが GenerationContext を渡していた互換ラッパ（new_menu 実行文脈） */
 function asNewMenuExecution(
   context: GenerationContext,
+  recentDishHints: readonly RecentDishHint[] = [],
 ): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
   return {
     kind: "new_menu",
@@ -38,7 +42,24 @@ function asNewMenuExecution(
     startedAtMonotonicMs: 0,
     deadlineAtMonotonicMs: 50_000,
     regeneration: null,
+    recentDishHints,
   };
+}
+
+function systemText(messages: ReturnType<typeof buildGenerationMessages>): string {
+  const system = messages.find((message) => message.role === "system");
+  return typeof system?.content === "string" ? system.content : "";
+}
+
+function userPayload(
+  messages: ReturnType<typeof buildGenerationMessages>,
+): Record<string, unknown> {
+  const user = messages.find((message) => message.role === "user");
+  const content = typeof user?.content === "string" ? user.content : "";
+  const serialized = content
+    .replace("<kondate_input_data>\n", "")
+    .replace("\n</kondate_input_data>", "");
+  return JSON.parse(serialized) as Record<string, unknown>;
 }
 
 const firstPantryId = "74000000-0000-4000-8000-000000000001";
@@ -170,7 +191,9 @@ describe("buildGenerationMessages", () => {
       "pantry",
       "validationVersions",
       "seasonContext",
+      "recentDishHints",
     ]);
+    expect(payload.recentDishHints).toEqual([]);
     expectExactKeys(payload.preferences as object, [
       "mealType",
       "mainIngredients",
@@ -388,5 +411,116 @@ describe("buildGenerationMessages", () => {
     expect(() =>
       buildGenerationMessages(asNewMenuExecution(mutate(makeTwoMemberContext()))),
     ).toThrow("member_context_mismatch");
+  });
+
+  it("new_menu includes recentDishHints and marker before season", () => {
+    const hints: readonly RecentDishHint[] = [
+      { dishName: "親子丼", role: "main" },
+      { dishName: "みそ汁" },
+    ];
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext(), hints));
+    const system = systemText(messages);
+    const seasonIndex = system.indexOf("旬");
+    const markerIndex = system.indexOf(DIVERSITY_SYSTEM_MARKER);
+    expect(markerIndex).toBeGreaterThanOrEqual(0);
+    expect(markerIndex).toBeLessThan(seasonIndex >= 0 ? seasonIndex : system.length);
+    expect(system).toContain("多様性だけを理由にconstraint_conflictにしない");
+    expect(userPayload(messages).recentDishHints).toEqual([
+      { dishName: "親子丼", role: "main" },
+      { dishName: "みそ汁" },
+    ]);
+  });
+
+  it("new_menu always attaches recentDishHints array even when empty", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext(), []));
+    expect(userPayload(messages).recentDishHints).toEqual([]);
+    expect(systemText(messages)).toContain(DIVERSITY_SYSTEM_MARKER);
+  });
+
+  it("regenerate has no recentDishHints key and no marker", () => {
+    const context = makeGenerationContext();
+    const sourceMenu = makeValidatedMenu();
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "56000000-0000-4000-8000-000000000001",
+          sourceMenuId: sourceMenu.menuId,
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: context,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        excludedDishIds: [],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    const messages = buildGenerationMessages(execution);
+    const system = systemText(messages);
+    expect(system).not.toContain(DIVERSITY_SYSTEM_MARKER);
+    const baseUser = messages.find(
+      (message) =>
+        message.role === "user" &&
+        typeof message.content === "string" &&
+        message.content.includes("<kondate_input_data>"),
+    );
+    const content = typeof baseUser?.content === "string" ? baseUser.content : "";
+    const serialized = content
+      .replace("<kondate_input_data>\n", "")
+      .replace("\n</kondate_input_data>", "");
+    const payload = JSON.parse(serialized) as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(payload, "recentDishHints")).toBe(false);
+  });
+
+  it("§12.5 validateGeneratedMenu still ok with similar dish names when hints present", () => {
+    // validate は hints を見ない。近い recentDishHints でも success 可
+    const context = makeGenerationContext();
+    const menu = makeGeneratedMenu();
+    const result = validateGeneratedMenu(menu, context);
+    expect(result).toMatchObject({ ok: true });
+    const similarHints: readonly RecentDishHint[] = menu.dishes.map((dish) => ({
+      dishName: dish.name,
+      role: dish.role,
+    }));
+    const messages = buildGenerationMessages(asNewMenuExecution(context, similarHints));
+    expect(userPayload(messages).recentDishHints).toEqual(similarHints);
+    // メッセージ合成後も validate は execution 外なので成功のまま
+    expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+  });
+
+  it("fingerprint unchanged by recentDishHints on execution", () => {
+    const context = makeGenerationContext();
+    const withoutHints = asNewMenuExecution(context, []);
+    const withHints = asNewMenuExecution(context, [
+      { dishName: "カレー", role: "main" },
+      { dishName: "サラダ", role: "side" },
+    ]);
+    expect(withoutHints.expectedSafetyFingerprint).toBe(withHints.expectedSafetyFingerprint);
+    expect(withoutHints.expectedSafetyFingerprint).toBe(
+      createCurrentSafetyFingerprint(context.safety),
+    );
   });
 });
