@@ -202,6 +202,7 @@ function authValue(userId: string): AuthContextValue {
 
 function renderHistoryDetail(
   options: {
+    path?: string;
     revalidate?: () => Promise<RevalidationResult>;
     revalidation?: HistoryDetailRevalidationView;
     queryClient?: QueryClient;
@@ -212,6 +213,7 @@ function renderHistoryDetail(
   }
   const queryClient =
     options.queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const path = options.path ?? `/history/${MENU_ID}`;
   const router = createMemoryRouter(
     [
       {
@@ -227,7 +229,7 @@ function renderHistoryDetail(
       { path: "/generation", element: <h1>作成状況</h1> },
       { path: "/shopping", element: <h1>買い物リスト</h1> },
     ],
-    { initialEntries: [`/history/${MENU_ID}`] },
+    { initialEntries: [path] },
   );
   render(
     <AuthContext.Provider value={authValue(USER_ID)}>
@@ -713,9 +715,66 @@ describe("HistoryDetailPage safety gate", () => {
     });
     expect(await screen.findByRole("heading", { name: "献立変更の差分" })).toBeVisible();
   });
+
+  it("auto-opens create sheet from /history/:id?for=shopping when household can create", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", id: MENU_ID }),
+    );
+    renderHistoryDetail({
+      path: `/history/${MENU_ID}?for=shopping`,
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+  });
+
+  it("uses non-removed itemCount on create sheet", async () => {
+    shoppingApi.fetchActiveShoppingList.mockResolvedValue({
+      ...activeShoppingList,
+      items: [
+        {
+          id: "40000000-0000-4000-8000-000000000002",
+          listId: SHOPPING_LIST_ID,
+          displayName: "にんじん",
+          normalizedName: "にんじん",
+          storeSection: "produce",
+          quantityValue: 1,
+          quantityText: "1本",
+          unit: "本",
+          isChecked: false,
+          isManual: false,
+          isManuallyEdited: false,
+          isRemovedByUser: true,
+          pantryCheckRequired: false,
+          labelWarnings: [],
+        },
+      ],
+    });
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", id: MENU_ID }),
+    );
+    renderHistoryDetail({
+      path: `/history/${MENU_ID}?for=shopping`,
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+    expect(screen.getByText(/今のリストへ追加（0件）/u)).toBeInTheDocument();
+  });
 });
 
 describe("HistoryDetailPage idea permitted actions boundary", () => {
+  it("shows idea rejection on history detail with for=shopping", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "idea", id: MENU_ID }),
+    );
+    renderHistoryDetail({ path: `/history/${MENU_ID}?for=shopping` });
+    expect(
+      await screen.findByText(/アイデア献立は買い物リストに使えません/u),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "買い物リストを作る" })).toBeNull();
+    expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
+    expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+  });
+
   it("renders a permanent notice and permitted actions without mounting revalidation or shopping", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
 
