@@ -169,6 +169,13 @@ const routes = new Map([
       default: async () => Response.json({ ok: true, route: "flyer-weekly" }),
     },
   ],
+  [
+    "/netlify/functions/submit-feedback.ts",
+    {
+      config: { path: "/api/feedback", method: "POST" },
+      default: async () => Response.json({ ok: true, route: "feedback" }),
+    },
+  ],
 ]);
 
 async function withServer(loadModule, run) {

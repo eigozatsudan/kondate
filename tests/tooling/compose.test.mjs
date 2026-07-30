@@ -368,6 +368,20 @@ test("uses the isolated E2E Function server without changing the public origin",
   assert.doesNotMatch(compose, /KONDATE_E2E_FUNCTION_SERVER/u);
   assert.doesNotMatch(compose, /GOTRUE_RATE_LIMIT_EMAIL_SENT/u);
   assert.match(composeE2e, /KONDATE_E2E_FUNCTION_SERVER: "1"/u);
+  // ホスト .env が有料 allowlist でも E2E は mock 経路に閉じる
+  assert.match(composeE2e, /OPENROUTER_BASE_URL: http:\/\/openrouter-mock:8787\/api\/v1/u);
+  assert.match(
+    composeE2e,
+    /OPENROUTER_MODELS: mock\/kondate-primary:free,mock\/kondate-repair:free/u,
+  );
+  assert.match(
+    composeE2e,
+    /OPENROUTER_PLUS_MODELS: mock\/kondate-primary:free,mock\/kondate-repair:free/u,
+  );
+  assert.match(
+    composeE2e,
+    /OPENROUTER_FLYER_MODELS: mock\/kondate-primary:free,mock\/kondate-repair:free/u,
+  );
   // environment 直下に意図コメントがあっても SMTP 頻度は固定
   assert.match(
     composeE2e,

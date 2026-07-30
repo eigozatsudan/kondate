@@ -322,10 +322,12 @@ test("netlify.toml emits context CSP via _headers and keeps global headers CSP-f
     /Permissions-Policy\s*=\s*"camera=\(\), microphone=\(\), geolocation=\(\), payment=\(\)"/u,
   );
 
-  // 各 context の build が emit を実行する
+  // 各 context の build が emit を実行する（default / production / preview 系）。
+  // production は OpenRouter 検証、preview/branch は sharp 同梱検証を前置する。
   for (const pattern of [
     /command = "npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
-    /command = "npm run verify:openrouter:models && npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
+    /command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
+    /command = "npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
   ]) {
     assert.match(toml, pattern);
   }

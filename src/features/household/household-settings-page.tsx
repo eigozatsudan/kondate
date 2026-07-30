@@ -1271,9 +1271,7 @@ export function HouseholdSettingsForm({
                   // 直前の年齢デフォルトと一致する項目だけ上書きし、ユーザー編集を黙って潰さない。
                   const previousAge = values.ageBand;
                   const previousDefaults =
-                    previousAge in householdAgeLabels
-                      ? defaultsForAgeBand(previousAge)
-                      : null;
+                    previousAge in householdAgeLabels ? defaultsForAgeBand(previousAge) : null;
                   const stillAtPreviousDefault = <T,>(
                     current: T,
                     previousDefault: T | undefined,

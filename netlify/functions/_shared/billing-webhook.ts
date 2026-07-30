@@ -335,8 +335,8 @@ export async function maybeInsertTrialHistory(
   },
   userId: string,
   status: string,
-  _outcome: ProcessBillingOutcome,
 ): Promise<void> {
+  // process outcome に依存しない（fail-closed: イベント status のみで判定）
   if (status !== "trialing" && status !== "active") return;
 
   const { data: userData, error: userError } = await deps.admin.auth.admin.getUserById(userId);
@@ -523,7 +523,6 @@ async function handleSubscriptionEvent(
     { admin: deps.admin, env: deps.env, log, requestId, startedAt },
     userId,
     statusForTrial,
-    outcome,
   );
 
   return json(200, { ok: true, data: { outcome } });
@@ -697,7 +696,6 @@ async function handleInvoiceEvent(
     { admin: deps.admin, env: deps.env, log, requestId, startedAt },
     userId,
     statusForTrial,
-    outcome,
   );
 
   return json(200, { ok: true, data: { outcome } });

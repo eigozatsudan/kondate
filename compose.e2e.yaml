@@ -5,9 +5,13 @@ services:
       # ホスト .env が本番相当の OpenRouter 実 API を指していても、E2E は決定論的な
       # openrouter-mock に固定する（README のローカル既定と同じ）。実 API 向け手動確認は
       # 通常の compose up（compose.e2e なし）で行う。
+      # PLUS / FLYER も合わせて mock に固定しないと、predev の verify:openrouter:config が
+      # 「mock path accepts only mock/*:free」で落ちる（有料 allowlist が .env に残る経路）。
       OPENROUTER_API_KEY: local-mock-key
       OPENROUTER_BASE_URL: http://openrouter-mock:8787/api/v1
       OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
+      OPENROUTER_PLUS_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
+      OPENROUTER_FLYER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
     command: ["node", "tools/run-e2e-app.mjs"]
   auth:
     environment:
