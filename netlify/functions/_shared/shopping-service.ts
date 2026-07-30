@@ -114,6 +114,26 @@ export async function createShoppingListFromMenu(
   return deps.applyDraft({ ...command, requestHash, safetyFingerprint, draft });
 }
 
+/** 再照合対象 item を同一献立 lineage（menu id / derivation group）に限定する */
+async function scopeItemIdsForSourceMenu(
+  deps: ShoppingDependencies,
+  listId: string,
+  sourceMenuId: string,
+  sourceDerivationGroupId: string,
+): Promise<ReadonlySet<string>> {
+  const sources = await deps.loadActiveListSources(listId);
+  const ids = new Set<string>();
+  for (const source of sources) {
+    const sameMenu = source.menuId === sourceMenuId || source.sourceMenuIdSnapshot === sourceMenuId;
+    const sameGroup = source.sourceDerivationGroupId === sourceDerivationGroupId;
+    if (!sameMenu && !sameGroup) continue;
+    for (const item of source.itemSources) {
+      ids.add(item.itemId);
+    }
+  }
+  return ids;
+}
+
 export async function previewShoppingListDiff(
   deps: ShoppingDependencies,
   command: {
@@ -135,7 +155,13 @@ export async function previewShoppingListDiff(
     throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   if (list.version !== command.expectedListVersion)
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
-  return computeShoppingDiff(list, draft);
+  const scopeItemIds = await scopeItemIdsForSourceMenu(
+    deps,
+    command.listId,
+    command.sourceMenuId,
+    menu.derivationGroupId,
+  );
+  return computeShoppingDiff(list, draft, { scopeItemIds });
 }
 
 // --- 設計書 Task4: 買い物リスト単位の現在安全性の再検証 -------------------------------
@@ -399,9 +425,18 @@ export async function reconcileShoppingList(
   if (list.version !== command.expectedListVersion) {
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
   }
+  const scopeItemIds = await scopeItemIdsForSourceMenu(
+    deps,
+    command.listId,
+    command.sourceMenuId,
+    menu.derivationGroupId,
+  );
   let resolved;
   try {
-    resolved = resolveApprovedDiff(computeShoppingDiff(list, draft), command.approval);
+    resolved = resolveApprovedDiff(
+      computeShoppingDiff(list, draft, { scopeItemIds }),
+      command.approval,
+    );
   } catch (error: unknown) {
     // クライアント承認キーとサーバ再計算 diff の不一致は 4xx として閉じる（500 にしない）。
     if (error instanceof Error && error.message === "approved_diff_mismatch") {

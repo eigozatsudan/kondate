@@ -37,7 +37,20 @@ const diffKey = (item: {
       ])
     : JSON.stringify(["numeric", item.normalizedName, item.unit]);
 
-export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft): ShoppingDiff {
+export type ComputeShoppingDiffOptions = {
+  /**
+   * 再照合対象の item id 集合（同一献立 lineage の由来行）。
+   * 指定時、集合外の plain 行は replace/remove も候補消費もしない（他献立 append 分を温存）。
+   * protected 行は従来どおり保護し、集合外でも protectedItemIds に載せる。
+   */
+  scopeItemIds?: ReadonlySet<string>;
+};
+
+export function computeShoppingDiff(
+  current: ShoppingList,
+  next: ShoppingDraft,
+  options?: ComputeShoppingDiffOptions,
+): ShoppingDiff {
   const nextBuckets = new Map<string, ShoppingDraftItem[]>();
   for (const item of next.items) {
     const key = diffKey(item);
@@ -69,12 +82,20 @@ export function computeShoppingDiff(current: ShoppingList, next: ShoppingDraft):
   const protectedDerivedItems: ShoppingList["items"][number][] = [];
   const plainItems: ShoppingList["items"][number][] = [];
   const protectedFallbackItems: ShoppingList["items"][number][] = [];
+  const scopeItemIds = options?.scopeItemIds;
 
   for (const item of current.items) {
     if (protectedItem(item)) {
       protectedItemIds.push(item.id);
       // 手動行は新版のderived requirementを満たさず、候補を一切消費しない。
-      if (!item.isManual) protectedDerivedItems.push(item);
+      // multi-source: scope 外の protected も候補消費しない（他献立の購入済み行を横取りしない）
+      if (!item.isManual && (scopeItemIds === undefined || scopeItemIds.has(item.id))) {
+        protectedDerivedItems.push(item);
+      }
+      continue;
+    }
+    // multi-source: 再照合対象外の plain 行は温存（名前一致で他献立行を replace/remove しない）
+    if (scopeItemIds !== undefined && !scopeItemIds.has(item.id)) {
       continue;
     }
     plainItems.push(item);

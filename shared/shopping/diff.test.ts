@@ -430,6 +430,48 @@ it("proposes replace when only label warnings change (SP-I8)", () => {
   expect(diff.replace[0]?.next.labelWarnings).toHaveLength(1);
 });
 
+it("does not replace or remove out-of-scope multi-source plain rows", () => {
+  const foreignId = "30000000-0000-4000-8000-000000000001";
+  const scopedId = "30000000-0000-4000-8000-000000000002";
+  const foreign = makeItem({
+    id: foreignId,
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    quantityValue: 1,
+    quantityText: "1本",
+    unit: "本",
+  });
+  const scoped = makeItem({
+    id: scopedId,
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    quantityValue: 2,
+    quantityText: "2本",
+    unit: "本",
+  });
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    key: "carrot-3",
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 3,
+    quantityText: "3本",
+    unit: "本",
+  };
+  // 他献立の foreign が先に並んでいても scope 内の scoped だけを replace する
+  const diff = computeShoppingDiff(makeShoppingList([foreign, scoped]), next, {
+    scopeItemIds: new Set([scopedId]),
+  });
+  expect(diff.replace).toHaveLength(1);
+  expect(diff.replace[0]?.itemId).toBe(scopedId);
+  expect(diff.replace[0]?.next.quantityValue).toBe(3);
+  expect(diff.replace[0]?.next.quantityText).toBe("3本");
+  expect(diff.remove.map((row) => row.itemId)).not.toContain(foreignId);
+  expect(diff.remove.map((row) => row.itemId)).not.toContain(scopedId);
+});
+
 function makeItem(
   overrides: Partial<ShoppingList["items"][number]> = {},
 ): ShoppingList["items"][number] {
