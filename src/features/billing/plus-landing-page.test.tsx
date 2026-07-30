@@ -12,10 +12,15 @@ import {
   PLUS_LP_ACTIVE,
   PLUS_LP_CANCEL,
   PLUS_LP_CHECKOUT_IN_PROGRESS,
+  PLUS_LP_FEATURES_TITLE,
+  PLUS_LP_FLYER_TITLE,
   PLUS_LP_H1,
   PLUS_LP_INCOMPLETE,
   PLUS_LP_LEAD,
+  PLUS_LP_LEAD_BODY,
   PLUS_LP_NEUTRAL_SUB,
+  PLUS_LP_QUALITY_TITLE,
+  PLUS_LP_QUOTA_TITLE,
   PLUS_LP_SETTINGS_LINK,
   PLUS_LP_TRIAL,
   PlusLandingPage,
@@ -107,12 +112,21 @@ describe("PlusLandingPage", () => {
     renderLp({ entitlement: freeOpen });
     expect(screen.getByRole("heading", { level: 1, name: PLUS_LP_H1 })).toBeVisible();
     expect(screen.getByText(PLUS_LP_LEAD)).toBeVisible();
+    expect(screen.getByText(PLUS_LP_LEAD_BODY)).toBeVisible();
     expect(screen.getByText(PLUS_LP_TRIAL)).toBeVisible();
+    expect(screen.getByRole("heading", { level: 2, name: PLUS_LP_FEATURES_TITLE })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 3, name: PLUS_LP_QUOTA_TITLE })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 3, name: PLUS_LP_QUALITY_TITLE })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 3, name: PLUS_LP_FLYER_TITLE })).toBeVisible();
     expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeEnabled();
-    // 比較表だけを見る（カード見出しにも同数字が出るため getByText 単独禁止 R-C3）
+    // 比較表だけを見る（カードにも同数字が出るため getByText 単独禁止 R-C3）
     const table = screen.getByTestId("plus-compare");
     expect(within(table).getByText(String(planQuota.free.successPerDay))).toBeVisible();
     expect(within(table).getByText(String(planQuota.plus.successPerDay))).toBeVisible();
+    const imgs = document.querySelectorAll("main img");
+    expect(imgs.length).toBe(4);
+    expect(document.querySelector(".plus-landing__hero-img")).not.toBeNull();
+    expect(document.querySelectorAll(".plus-landing__card-img")).toHaveLength(3);
   });
 
   it("disables checkout and hides trial pitch when surfaces closed", () => {

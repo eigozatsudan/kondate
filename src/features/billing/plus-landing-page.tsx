@@ -22,8 +22,13 @@ import "./plus-landing-page.css";
 /** Plus LP 固定コピー（テスト exact 用に export） */
 export const PLUS_LP_H1 = "こんだて日和 Plus" as const;
 export const PLUS_LP_LEAD = "献立づくりに、余裕を。" as const;
+export const PLUS_LP_LEAD_BODY =
+  "無料プランでも毎日の一食は十分使えます。Plus は、作成回数に余裕を持たせたり、より丁寧な献立を試したり、チラシ写真から 1 週間の献立をつくったりしたい方向けです。" as const;
+export const PLUS_LP_LEAD_SUB =
+  "月額・年額のどちらかを選び、画面の案内に沿ってお支払いへ進めます。難しい設定は不要です。" as const;
 export const PLUS_LP_TRIAL = "はじめての方は 7 日間お試し（カード登録あり）" as const;
 export const PLUS_LP_NEUTRAL_SUB = "Plus でできること" as const;
+export const PLUS_LP_FEATURES_TITLE = "Plus の 3 つのメリット" as const;
 export const PLUS_LP_ACTIVE = "こんだて日和 Plus をご利用中です" as const;
 export const PLUS_LP_INCOMPLETE =
   "お支払いの手続きが完了していません。設定から続きをご確認ください。" as const;
@@ -31,6 +36,16 @@ export const PLUS_LP_CANCEL = "お支払いをキャンセルしました" as co
 export const PLUS_LP_CHECKOUT_IN_PROGRESS =
   "お支払い手続きが進行中です。しばらくしてからお試しください" as const;
 export const PLUS_LP_SETTINGS_LINK = "設定へ" as const;
+
+export const PLUS_LP_QUOTA_TITLE = "枠の余裕" as const;
+export const PLUS_LP_QUOTA_BODY =
+  "無料プランより多く、その日のうちに献立を作り直せます。家族の都合でやり直しが必要な日にも安心です。" as const;
+export const PLUS_LP_QUALITY_TITLE = "くわしく作る" as const;
+export const PLUS_LP_QUALITY_BODY =
+  "献立作成時に「くわしく作る」を選ぶと、より丁寧な献立を目指せます。使える回数には上限があります。" as const;
+export const PLUS_LP_FLYER_TITLE = "チラシから 1 週間" as const;
+export const PLUS_LP_FLYER_BODY =
+  "スーパーのチラシ写真を送ると、その特売を踏まえた 1 週間分の献立づくりに進めます（Plus だけの機能です）。" as const;
 
 const CHECKOUT_GENERIC_ERROR =
   "お支払い画面を開けませんでした。時間をおいてもう一度お試しください" as const;
@@ -255,18 +270,20 @@ export function PlusLandingPage({
       ) : null}
 
       {view.kind === "full" ? (
-        <div className="stack gap-4 plus-landing__full">
-          <div className="plus-landing__hero stack gap-2">
+        <div className="stack gap-5 plus-landing__full">
+          <div className="plus-landing__hero stack gap-3">
             <img
               src={heroUrl}
               alt=""
               width={1280}
-              height={720}
+              height={480}
               className="plus-landing__hero-img"
               decoding="async"
             />
             <h1>{PLUS_LP_H1}</h1>
             <p className="plus-landing__lead">{PLUS_LP_LEAD}</p>
+            <p className="plus-landing__lead-body">{PLUS_LP_LEAD_BODY}</p>
+            <p className="plus-landing__lead-sub">{PLUS_LP_LEAD_SUB}</p>
             {view.checkoutEnabled ? (
               <p className="plus-landing__trial">{PLUS_LP_TRIAL}</p>
             ) : (
@@ -274,48 +291,80 @@ export function PlusLandingPage({
             )}
           </div>
 
-          <ul className="plus-landing__cards stack gap-3">
-            <li className="plus-landing__card card stack gap-2">
-              <img
-                src={quotaUrl}
-                alt=""
-                width={640}
-                height={640}
-                className="plus-landing__card-img"
-                decoding="async"
-              />
-              <h2>枠の余裕</h2>
-              <p>Plus なら 1 日最大 {planQuota.plus.successPerDay} 回まで作成</p>
-            </li>
-            <li className="plus-landing__card card stack gap-2">
-              <img
-                src={qualityUrl}
-                alt=""
-                width={640}
-                height={640}
-                className="plus-landing__card-img"
-                decoding="async"
-              />
-              <h2>くわしく作る</h2>
-              <p>「くわしく作る」でより丁寧な献立（回数に限りあり）</p>
-            </li>
-            <li className="plus-landing__card card stack gap-2">
-              <img
-                src={flyerUrl}
-                alt=""
-                width={640}
-                height={640}
-                className="plus-landing__card-img"
-                decoding="async"
-              />
-              <h2>チラシから 1 週間</h2>
-              <p>チラシ写真から 1 週間の献立</p>
-              <p className="type-small">{FLYER_PRIVACY_NOTE}</p>
-            </li>
-          </ul>
+          <section className="stack gap-3" aria-labelledby="plus-features-title">
+            <h2 id="plus-features-title" className="plus-landing__section-title">
+              {PLUS_LP_FEATURES_TITLE}
+            </h2>
+            <ul className="plus-landing__cards stack gap-3" aria-label="Plus のメリット">
+              <li className="plus-landing__card card">
+                <img
+                  src={quotaUrl}
+                  alt=""
+                  width={160}
+                  height={160}
+                  className="plus-landing__card-img"
+                  decoding="async"
+                />
+                <div className="plus-landing__card-body stack gap-2">
+                  <h3 className="plus-landing__card-title">{PLUS_LP_QUOTA_TITLE}</h3>
+                  <p>{PLUS_LP_QUOTA_BODY}</p>
+                  <ul className="plus-landing__points">
+                    <li>
+                      1 日の献立作成（成功）は最大 {planQuota.plus.successPerDay} 回まで
+                    </li>
+                    <li>無料プラン（最大 {planQuota.free.successPerDay} 回）より余裕があります</li>
+                    <li>作り直しが多い日でも、上限まで試せます</li>
+                  </ul>
+                </div>
+              </li>
+              <li className="plus-landing__card card">
+                <img
+                  src={qualityUrl}
+                  alt=""
+                  width={160}
+                  height={160}
+                  className="plus-landing__card-img"
+                  decoding="async"
+                />
+                <div className="plus-landing__card-body stack gap-2">
+                  <h3 className="plus-landing__card-title">{PLUS_LP_QUALITY_TITLE}</h3>
+                  <p>{PLUS_LP_QUALITY_BODY}</p>
+                  <ul className="plus-landing__points">
+                    <li>献立の質問の途中で「くわしく作る」を選べます</li>
+                    <li>いつもより丁寧な献立を目指す方向けです</li>
+                    <li>使える回数には上限があります（使い切ると通常の作成になります）</li>
+                  </ul>
+                </div>
+              </li>
+              <li className="plus-landing__card card">
+                <img
+                  src={flyerUrl}
+                  alt=""
+                  width={160}
+                  height={160}
+                  className="plus-landing__card-img"
+                  decoding="async"
+                />
+                <div className="plus-landing__card-body stack gap-2">
+                  <h3 className="plus-landing__card-title">{PLUS_LP_FLYER_TITLE}</h3>
+                  <p>{PLUS_LP_FLYER_BODY}</p>
+                  <ul className="plus-landing__points">
+                    <li>チラシの写真をアプリに送ります</li>
+                    <li>1 週間分の献立づくりの入口になります</li>
+                    <li>{FLYER_PRIVACY_NOTE}</li>
+                  </ul>
+                </div>
+              </li>
+            </ul>
+          </section>
 
           <section className="stack gap-2" aria-labelledby="plus-compare-title">
-            <h2 id="plus-compare-title">Free との違い</h2>
+            <h2 id="plus-compare-title" className="plus-landing__section-title">
+              Free との違い
+            </h2>
+            <p className="type-small">
+              無料のまま使える機能はそのまま残ります。Plus で増えるのは、次の 3 点です。
+            </p>
             {/* 数字 assert は testid 配下で絞る（R-C3）。裸の 3/10 は planQuota から組み立て */}
             <table className="plus-landing__compare" data-testid="plus-compare">
               <thead>
@@ -346,6 +395,10 @@ export function PlusLandingPage({
           </section>
 
           <section className="stack gap-3" aria-label="お支払い">
+            <h2 className="plus-landing__section-title">お支払いについて</h2>
+            <p className="type-small">
+              月額または年額を選び、「Plus をはじめる」を押すとカード入力の画面へ移ります。解約や領収の確認は、加入後に設定から行えます。
+            </p>
             {!view.checkoutEnabled ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
             <CheckoutIntervalForm
               disabled={!view.checkoutEnabled}
