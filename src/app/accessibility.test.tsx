@@ -25,6 +25,7 @@ import type { PlannerSafetyMember } from "@/features/planner/planner-safety-memb
 import type { PlannerStep } from "@/features/planner/model/planner-wizard";
 import { ShoppingListPage } from "@/features/shopping/pages/shopping-list-page";
 import { runAxe } from "@/test/axe";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 import { AppShell } from "./layouts/app-shell";
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
@@ -178,9 +179,12 @@ function Providers({
   auth?: AuthContextValue;
 }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // ウィザード質問 step が useAppToast を使うため Provider を同梱する
   return (
     <QueryClientProvider client={client}>
-      <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>
+      <AuthContext.Provider value={auth}>
+        <AppToastProvider>{children}</AppToastProvider>
+      </AuthContext.Provider>
     </QueryClientProvider>
   );
 }

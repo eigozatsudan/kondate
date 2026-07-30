@@ -470,6 +470,7 @@ export function PlannerWizard({
           }}
           disabled={isSaving || confirmingIdeaAudience}
           eligibleMembers={eligibleMembers}
+          suppressValidationToast={autosaveState === "error"}
           fieldErrors={{
             targetMode: fieldErrors.targetMode ?? null,
             targetMemberIds: fieldErrors.targetMemberIds ?? null,
