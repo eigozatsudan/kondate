@@ -51,6 +51,7 @@ import { HttpError, json } from "./http.js";
 import { logGenerationEvent } from "./logger.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import {
+  createOpenRouterGenerationSender,
   OpenRouterCallError,
   sendMenuGeneration,
   type OpenRouterGenerationResult,
@@ -675,11 +676,23 @@ export async function runGeneration(
   command: GenerationCommand,
 ): Promise<GenerationStatusData> {
   const key = command.request.idempotencyKey;
-  // 品質モードは Plus リストのみ（repair も command.qualityMode / スナップショット継承）
+  // 品質モードは Plus リストのみ（repair も command.qualityMode / スナップショット継承）。
+  // 送信 body も createOpenRouterGenerationSender で同じリストに閉じ込める（flyer と同型）。
+  // sendMenuGeneration 既定は OPENROUTER_MODELS のため、deps.models 差し替えだけでは足りない。
   const envForModels = getServerEnv();
+  const models = command.qualityMode ? envForModels.openRouter.plusModels : inputDeps.models;
+  const callOpenRouter: GenerationDependencies["callOpenRouter"] = command.qualityMode
+    ? createOpenRouterGenerationSender({
+        apiKey: envForModels.openRouter.apiKey,
+        baseUrl: envForModels.openRouter.baseUrl,
+        models: envForModels.openRouter.plusModels,
+        timeoutMs: envForModels.openRouter.timeoutMs,
+      })
+    : (input) => inputDeps.callOpenRouter(input);
   const deps: GenerationDependencies = {
     ...inputDeps,
-    models: command.qualityMode ? envForModels.openRouter.plusModels : inputDeps.models,
+    models,
+    callOpenRouter,
   };
   // 品質リスト空の 503 は Plus 利用者だけ（Free / kill は repository の 403 quality_mode_requires_plus を先に返す）
   // 空チェック自体は reserveNew 後・OpenRouter 直前で行い、Free 経路で 503 が CTA を潰さないようにする。
