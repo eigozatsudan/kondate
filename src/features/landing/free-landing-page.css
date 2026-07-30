@@ -1,0 +1,55 @@
+/* 無料 LP。新色トークンは増やさず既存 surface / card を使う。sticky CTA なし */
+
+.free-landing {
+  padding-bottom: 2.5rem;
+}
+
+.free-landing__brand {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.free-landing__lead {
+  font-size: 1.125rem;
+}
+
+.free-landing__hero-img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
+}
+
+.free-landing__card-img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
+}
+
+.free-landing__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.free-landing__cta-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+.free-landing__login-link {
+  text-align: center;
+}
