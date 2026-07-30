@@ -53,17 +53,27 @@ function authValue(userId: string | null): AuthContextValue {
   };
 }
 
-function renderHistoryPage(props: { groups: readonly HistoryGroup[] }) {
+function renderHistoryPage(props: {
+  groups: readonly HistoryGroup[];
+  shoppingIntent?: boolean;
+  initialPath?: string;
+}) {
   const router = createMemoryRouter(
     [
       {
         path: "/history",
-        element: <HistoryPageContent groups={props.groups} />,
+        element: (
+          <HistoryPageContent
+            groups={props.groups}
+            shoppingIntent={props.shoppingIntent ?? false}
+          />
+        ),
       },
       { path: "/menus/:menuId", element: <h1>献立結果</h1> },
       { path: "/planner", element: <h1>プランナー</h1> },
+      { path: "/shopping", element: <h1>買い物</h1> },
     ],
-    { initialEntries: ["/history"] },
+    { initialEntries: [props.initialPath ?? "/history"] },
   );
   render(
     <QueryClientProvider
@@ -76,6 +86,19 @@ function renderHistoryPage(props: { groups: readonly HistoryGroup[] }) {
   );
   return router;
 }
+
+const ideaOnlyGroup: HistoryGroup = {
+  derivationGroupId: "group-idea",
+  versionCount: 1,
+  representative: {
+    id: "menu-idea",
+    title: "アイデア献立",
+    createdAt: "2026-07-11T10:00:00Z",
+    selectedAt: null,
+    isFavorite: false,
+    targetMode: "idea",
+  },
+};
 
 function renderConnectedHistoryPage(
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -266,5 +289,54 @@ describe("HistoryPage", () => {
     renderHistoryPage({ groups: [sampleGroup] });
     const link = await screen.findByRole("link", { name: "採用した献立" });
     expect(link).toHaveAttribute("href", "/menus/menu-2");
+  });
+
+  it("shows shopping banner when shoppingIntent", () => {
+    renderHistoryPage({ groups: [sampleGroup], shoppingIntent: true });
+    expect(screen.getByText("買い物リスト用に献立を選んでください")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "買い物に戻る" })).toHaveAttribute("href", "/shopping");
+    expect(screen.getByRole("link", { name: "買い物リストを作る" })).toBeInTheDocument();
+  });
+
+  it("shows dead-end when shoppingIntent and no household cards", () => {
+    renderHistoryPage({ groups: [ideaOnlyGroup], shoppingIntent: true });
+    expect(
+      screen.getByText(
+        "いま選べる家族向けの献立がありません。買い物リストに使えるのは家族に合わせた献立だけです",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "家族向けの献立を作る" })).toHaveAttribute(
+      "href",
+      "/planner",
+    );
+    expect(screen.queryByRole("link", { name: "買い物リストを作る" })).toBeNull();
+  });
+
+  it("shows banner on empty list with shoppingIntent", () => {
+    renderHistoryPage({ groups: [], shoppingIntent: true });
+    expect(screen.getByText("買い物リスト用に献立を選んでください")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "買い物に戻る" })).toBeInTheDocument();
+  });
+
+  it("passes for=shopping from URL into HistoryPage", async () => {
+    api.listHistoryGroups.mockResolvedValue([sampleGroup]);
+    const router = createMemoryRouter(
+      [
+        { path: "/history", element: <HistoryPage /> },
+        { path: "/shopping", element: <h1>買い物</h1> },
+        { path: "/planner", element: <h1>プランナー</h1> },
+      ],
+      { initialEntries: ["/history?for=shopping"] },
+    );
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <AuthContext.Provider value={authValue(USER_ID)}>
+          <RouterProvider router={router} />
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("買い物リスト用に献立を選んでください")).toBeInTheDocument();
   });
 });

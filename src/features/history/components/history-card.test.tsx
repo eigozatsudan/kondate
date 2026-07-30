@@ -6,6 +6,7 @@ import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import type { HistoryGroup } from "../model/group-history";
+import { menusPathForShopping } from "@/features/shopping/shopping-intent";
 import { HistoryCard } from "./history-card";
 
 const api = vi.hoisted(() => ({
@@ -66,10 +67,13 @@ function authValue(): AuthContextValue {
   };
 }
 
-function renderCard(group: HistoryGroup) {
+function renderCard(group: HistoryGroup, shoppingIntent = false) {
   const router = createMemoryRouter(
     [
-      { path: "/history", element: <HistoryCard group={group} /> },
+      {
+        path: "/history",
+        element: <HistoryCard group={group} shoppingIntent={shoppingIntent} />,
+      },
       { path: "/menus/:menuId", element: <h1>献立結果</h1> },
     ],
     { initialEntries: ["/history"] },
@@ -115,6 +119,36 @@ describe("HistoryCard mode badge", () => {
     const card = screen.getByRole("article");
     // 「確認済み」「安全」等、家族安全確認済みと誤解させる語をidea cardへ出さない
     expect(card.textContent).not.toMatch(/確認済み|安全に配慮|アレルギー対応済み/u);
+  });
+});
+
+describe("HistoryCard shopping CTA", () => {
+  it("shows shopping CTA for household only", () => {
+    renderCard(householdGroup());
+    const cta = screen.getByRole("link", { name: "買い物リストを作る" });
+    expect(cta).toHaveAttribute("href", menusPathForShopping("menu-household"));
+    expect(cta).toHaveClass("min-h-11");
+  });
+
+  it("hides shopping CTA for idea menus", () => {
+    renderCard(ideaGroup());
+    expect(screen.queryByRole("link", { name: "買い物リストを作る" })).toBeNull();
+  });
+
+  it("keeps plain title path without shopping intent", () => {
+    renderCard(householdGroup(), false);
+    expect(screen.getByRole("link", { name: "家族の献立" })).toHaveAttribute(
+      "href",
+      "/menus/menu-household",
+    );
+  });
+
+  it("uses shopping path on title when shoppingIntent", () => {
+    renderCard(householdGroup(), true);
+    expect(screen.getByRole("link", { name: "家族の献立" })).toHaveAttribute(
+      "href",
+      menusPathForShopping("menu-household"),
+    );
   });
 });
 

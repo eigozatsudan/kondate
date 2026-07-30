@@ -1,10 +1,13 @@
 import { useId, useRef, useState } from "react";
 import { Link } from "react-router";
+import { menusPathForShopping } from "@/features/shopping/shopping-intent";
 import type { HistoryGroup } from "../model/group-history";
 import { useDeleteMenuGroup, useToggleFavorite } from "../hooks/use-history";
 
 type HistoryCardProps = {
   group: HistoryGroup;
+  /** 履歴が for=shopping 文脈のとき true。タイトルも買い物 intent を付ける */
+  shoppingIntent?: boolean;
 };
 
 /**
@@ -13,7 +16,7 @@ type HistoryCardProps = {
  * - 44px タッチターゲットのお気に入り／削除
  * - 削除は native dialog で確認し、失敗時はカードを残して再試行可能
  */
-export function HistoryCard({ group }: HistoryCardProps) {
+export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps) {
   const titleId = useId();
   const dialogTitleId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -23,6 +26,9 @@ export function HistoryCard({ group }: HistoryCardProps) {
   const { representative, versionCount, derivationGroupId } = group;
   const favoritePending = toggleFavorite.isPending;
   const deletePending = deleteGroup.isPending;
+  const menuPath = shoppingIntent
+    ? menusPathForShopping(representative.id)
+    : `/menus/${representative.id}`;
 
   const openDeleteDialog = () => {
     setDeleteError(null);
@@ -62,7 +68,7 @@ export function HistoryCard({ group }: HistoryCardProps) {
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h2 id={titleId} className="min-w-0 text-lg font-bold break-words">
             <Link
-              to={`/menus/${representative.id}`}
+              to={menuPath}
               className="min-h-11 inline-flex items-center text-inherit underline-offset-2 hover:underline"
             >
               {representative.title.length > 0 ? representative.title : "献立"}
@@ -98,6 +104,14 @@ export function HistoryCard({ group }: HistoryCardProps) {
         </p>
       </div>
       <div className="history-card-actions">
+        {representative.targetMode === "household" ? (
+          <Link
+            to={menusPathForShopping(representative.id)}
+            className="primary-button min-h-11"
+          >
+            買い物リストを作る
+          </Link>
+        ) : null}
         <button
           type="button"
           className="secondary-button min-h-11"
