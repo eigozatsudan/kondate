@@ -41,6 +41,20 @@ describe("planner contracts", () => {
     expect(plannerDraftInputSchema.parse(incompleteDraft)).toEqual(incompleteDraft);
   });
 
+  it("accepts declared ingredient preference values and rejects unknown ones", () => {
+    for (const ingredientPreference of ["more", "less", "selected_only", "auto", null] as const) {
+      expect(
+        plannerDraftInputSchema.parse({ ...incompleteDraft, ingredientPreference }),
+      ).toMatchObject({ ingredientPreference });
+    }
+    expect(
+      plannerDraftInputSchema.safeParse({
+        ...incompleteDraft,
+        ingredientPreference: "plenty",
+      }).success,
+    ).toBe(false);
+  });
+
   it("requires the three basic choices and one target for submission", () => {
     expect(plannerSubmissionSchema.safeParse(incompleteDraft).success).toBe(false);
     expect(
