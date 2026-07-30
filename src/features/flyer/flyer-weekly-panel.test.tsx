@@ -25,6 +25,7 @@ describe("FlyerWeeklyPanel", () => {
     expect(plusLink).toBeVisible();
     // 未定義の .button.primary ではなく共通 CTA クラスを使う（レイアウト崩れ防止）
     expect(plusLink).toHaveClass("primary-button");
+    expect(plusLink).toHaveAttribute("href", "/plus");
   });
 
   it("shows upload control for Plus", () => {

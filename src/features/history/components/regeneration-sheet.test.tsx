@@ -66,7 +66,7 @@ describe("RegenerationSheet", () => {
       />,
     );
     expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
-    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/settings");
+    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/plus");
   });
 
   it("does not prefix Plus remaining copy with 無料版は", () => {

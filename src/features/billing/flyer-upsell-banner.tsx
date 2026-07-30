@@ -48,8 +48,8 @@ export function FlyerUpsellBanner({
     >
       <p className="flyer-upsell-banner-copy">{FLYER_UPSELL_COPY}</p>
       <div className="flyer-upsell-banner-actions">
-        {/* Checkout は設定画面。Router 外 unit でも描画できるよう a を使う。 */}
-        <a href="/settings" className="flyer-upsell-banner-cta min-h-11">
+        {/* 着地は Plus LP（/plus）。Router 外 unit でも描画できるよう a を使う。 */}
+        <a href="/plus" className="flyer-upsell-banner-cta min-h-11">
           {PLUS_HARD_LIMIT_BUTTON}
         </a>
         <button type="button" className="flyer-upsell-banner-dismiss min-h-11" onClick={onDismiss}>

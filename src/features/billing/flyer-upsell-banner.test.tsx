@@ -27,7 +27,7 @@ describe("FlyerUpsellBanner", () => {
     // 控えめ表示でも Plus 設定への導線は必須（コピーだけだと行動不能）。
     const plusLink = screen.getByRole("link", { name: PLUS_HARD_LIMIT_BUTTON });
     expect(plusLink).toBeVisible();
-    expect(plusLink).toHaveAttribute("href", "/settings");
+    expect(plusLink).toHaveAttribute("href", "/plus");
     expect(plusLink).toHaveClass("flyer-upsell-banner-cta");
     // fake timers 下の userEvent は hang しやすいので fireEvent を使う
     fireEvent.click(screen.getByRole("button", { name: "閉じる" }));

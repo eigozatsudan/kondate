@@ -630,6 +630,15 @@ export function ReviewStep({
             : "Plus のくわしい AI で、より丁寧な献立を作ります（1 日の回数に限りがあります）"}
         </span>
       </label>
+      {/* quality の </label> の直後。idea の role=note より前。note と wizard-actions の間に置かない。
+          label 内に入れない（checkbox の accessible name 汚染防止）。生 a で Harness が Router 外でも可。 */}
+      {qualityModeLocked ? (
+        <p className="quality-mode-plus-link-wrap">
+          <a href="/plus" className="inline-flex min-h-11 items-center font-semibold underline">
+            Plus を見る
+          </a>
+        </p>
+      ) : null}
       {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。
           role=note の要素自体が直前 sibling である契約を維持する（ラップしない）。 */}
       {value.targetMode === "idea" && (

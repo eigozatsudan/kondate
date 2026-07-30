@@ -881,7 +881,7 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("note")).toHaveClass("review-idea-caution");
   });
 
-  it("disables quality mode toggle on Free with Plus gate copy (L10-4)", () => {
+  it("disables quality mode toggle on Free with Plus gate copy and link (L10-4)", () => {
     render(
       <Harness initialStep="review" initialDraft={reviewDraft} usageRemaining={3} plan="free" />,
     );
@@ -893,6 +893,8 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByText("くわしく作る").closest("label")).toHaveClass(
       "quality-mode-toggle--locked",
     );
+    // 硬上限 CTA が無いので Plus を見るは品質リンク 1 本
+    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/plus");
   });
 
   it("enables quality mode toggle on Plus", () => {
@@ -1086,7 +1088,18 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
-    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/settings");
+    // Free では品質リンクも出るため同名が 2 本。硬上限は data-testid で限定する（R-B2）
+    const hard = screen.getByTestId("plus-hard-limit-cta");
+    expect(within(hard).getByRole("link", { name: "Plus を見る" })).toHaveAttribute(
+      "href",
+      "/plus",
+    );
+    // 品質ゲート側も /plus
+    expect(
+      screen
+        .getAllByRole("link", { name: "Plus を見る" })
+        .every((a) => a.getAttribute("href") === "/plus"),
+    ).toBe(true);
   });
 
   it("shows soft one-remaining line without hard sell", () => {

@@ -101,7 +101,7 @@ describe("GenerationStatusPanel", () => {
     };
     render(<GenerationStatusPanel state={zeroFailed} />);
     expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
-    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/settings");
+    expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/plus");
   });
 
   it("shows emergency recovery link on failed recovery regardless of path", () => {

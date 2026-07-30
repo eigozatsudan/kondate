@@ -58,7 +58,7 @@ export function FlyerWeeklyPanel({
         </div>
         <p>{FLYER_LOCKED_PREVIEW_COPY}</p>
         {/* primary-button はアプリ共通の CTA クラス。.button.primary は未定義で素のリンクになっていた */}
-        <Link className="primary-button" to="/settings">
+        <Link className="primary-button" to="/plus">
           Plus を見る
         </Link>
       </section>
