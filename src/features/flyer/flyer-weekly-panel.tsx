@@ -10,6 +10,11 @@ import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 export type FlyerWeeklyPanelProps = {
   /** Plus entitled かつ製品面が開いているとき true */
   plusEntitled: boolean;
+  /**
+   * 現行 privacy notice への同意済み。未同意時は AI 送信 UI を出さず /privacy へ誘導する（PRIV-1）。
+   * サーバ側でも consent_required で閉じる。
+   */
+  hasAcceptedPrivacy?: boolean;
 };
 
 function newIdempotencyKey(): string {
@@ -26,7 +31,10 @@ function newIdempotencyKey(): string {
  * Free: locked preview + Plus CTA。
  * Plus: 画像アップロード。
  */
-export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
+export function FlyerWeeklyPanel({
+  plusEntitled,
+  hasAcceptedPrivacy = true,
+}: FlyerWeeklyPanelProps) {
   const inputId = useId();
   const { session } = useAuth();
   const [busy, setBusy] = useState(false);
@@ -52,6 +60,18 @@ export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
         {/* primary-button はアプリ共通の CTA クラス。.button.primary は未定義で素のリンクになっていた */}
         <Link className="primary-button" to="/settings">
           Plus を見る
+        </Link>
+      </section>
+    );
+  }
+
+  if (!hasAcceptedPrivacy) {
+    return (
+      <section className="stack card" data-testid="flyer-weekly-privacy" aria-labelledby={inputId}>
+        <h2 id={inputId}>チラシから 1 週間の献立</h2>
+        <p>AI を使う前に、利用説明の確認が必要です。</p>
+        <Link className="primary-button" to="/privacy?returnTo=%2Fplanner">
+          AI情報の説明を見る
         </Link>
       </section>
     );

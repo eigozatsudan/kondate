@@ -5,10 +5,16 @@ import {
 } from "../../../shared/contracts/flyer-weekly.js";
 import {
   assertFlyerMenuSafe,
+  assertFlyerPrivacyConsent,
   jstWeekStartMonday,
   runFlyerWeeklyWithReserveStub,
 } from "./flyer-weekly-service.js";
 import { HttpError } from "./http.js";
+import { createUserScopedSupabase } from "./supabase-user.js";
+
+vi.mock("./supabase-user.js", () => ({
+  createUserScopedSupabase: vi.fn(),
+}));
 
 function sampleMenu(overrides: Partial<WeeklyFlyerMenu["days"][number]> = {}): WeeklyFlyerMenu {
   const baseDay = {
@@ -72,6 +78,66 @@ describe("flyer-weekly-service", () => {
     expect(result.openRouterCalls).toBe(0);
     expect(openRouterSender).not.toHaveBeenCalled();
     expect(flyerWeeklyIssueMessages.flyer_requires_plus).toContain("Plus");
+  });
+
+  it("PRIV-1: returns consent_required without OpenRouter when privacy not accepted", async () => {
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "processing",
+      },
+      openRouterSender,
+      plusEntitled: true,
+      billingEnabled: true,
+      hasPrivacyConsent: false,
+    });
+    expect(result.errorCode).toBe("consent_required");
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+});
+
+describe("assertFlyerPrivacyConsent", () => {
+  const user = {
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "user@example.com",
+    accessToken: "token",
+  };
+
+  it("rejects when no current privacy_consents row", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const eq2 = vi.fn().mockReturnValue({ maybeSingle });
+    const eq1 = vi.fn().mockReturnValue({ eq: eq2 });
+    const select = vi.fn().mockReturnValue({ eq: eq1 });
+    vi.mocked(createUserScopedSupabase).mockReturnValue({
+      from: vi.fn().mockReturnValue({ select }),
+    } as never);
+
+    await expect(assertFlyerPrivacyConsent(user)).rejects.toMatchObject({
+      status: 422,
+      code: "consent_required",
+    });
+  });
+
+  it("accepts when current notice version is recorded for the user", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: {
+        user_id: user.userId,
+        notice_version: "2026-07-29.v1",
+        accepted_at: "2026-07-29T00:00:00.000Z",
+      },
+      error: null,
+    });
+    const eq2 = vi.fn().mockReturnValue({ maybeSingle });
+    const eq1 = vi.fn().mockReturnValue({ eq: eq2 });
+    const select = vi.fn().mockReturnValue({ eq: eq1 });
+    vi.mocked(createUserScopedSupabase).mockReturnValue({
+      from: vi.fn().mockReturnValue({ select }),
+    } as never);
+
+    await expect(assertFlyerPrivacyConsent(user)).resolves.toBeUndefined();
   });
 });
 

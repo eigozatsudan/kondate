@@ -78,7 +78,11 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
 
     const result = await runFlyerWeekly(
       {
-        user: { userId: user.userId, email: user.email },
+        user: {
+          userId: user.userId,
+          email: user.email,
+          accessToken: user.accessToken,
+        },
         requestStartedAtMonotonicMs,
       },
       buffer,

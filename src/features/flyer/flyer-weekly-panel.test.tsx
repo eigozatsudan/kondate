@@ -38,4 +38,16 @@ describe("FlyerWeeklyPanel", () => {
     expect(upload).toBeVisible();
     expect(upload).toHaveClass("secondary-button");
   });
+
+  it("PRIV-1: Plus without privacy consent routes to notice instead of upload", () => {
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("flyer-weekly-privacy")).toBeVisible();
+    expect(screen.queryByTestId("flyer-weekly-upload")).toBeNull();
+    const privacyLink = screen.getByRole("link", { name: "AI情報の説明を見る" });
+    expect(privacyLink).toHaveAttribute("href", "/privacy?returnTo=%2Fplanner");
+  });
 });

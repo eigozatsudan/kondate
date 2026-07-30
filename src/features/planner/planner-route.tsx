@@ -622,7 +622,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onOpenEmergencyMenus={openEmergencyMenus}
       onReset={resetPlannerDraft}
       // L10-3: チラシ入口。page-frame 内に置き幅・下余白をウィザードと揃える
-      footer={<FlyerWeeklyPanel plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false} />}
+      footer={
+        <FlyerWeeklyPanel
+          plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false}
+          hasAcceptedPrivacy={hasAcceptedPrivacy}
+        />
+      }
       onSubmit={async () => {
         setSubmissionError(null);
         setFieldErrors({});

@@ -16,6 +16,7 @@ import {
   OPENROUTER_TIMEOUT_MS,
 } from "../../../shared/contracts/function-budget.js";
 import { issueMessages } from "../../../shared/contracts/generation.js";
+import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
 import { normalizeFoodText } from "../../../shared/safety/allergens.js";
 import {
@@ -28,6 +29,17 @@ import {
 import { loadCurrentSafetyContext } from "./current-safety.js";
 import { getServerEnv } from "./env.js";
 import { FlyerImageError, prepareFlyerImage } from "./flyer-image.js";
+import { HttpError } from "./http.js";
+import { safeLog } from "./logger.js";
+import {
+  createOpenRouterGenerationSender,
+  OpenRouterCallError,
+  type OpenRouterGenerationResult,
+  type OpenRouterMessage,
+} from "./openrouter.js";
+import { computeQuotaIdentityKey } from "./quota-identity.js";
+import { getSupabaseAdmin, type AdminSupabaseClient } from "./supabase-admin.js";
+import { createUserScopedSupabase } from "./supabase-user.js";
 
 /**
  * JST 週の月曜 YYYY-MM-DD。usage-today の flyer weekStart フォールバックと同式。
@@ -40,16 +52,6 @@ export function jstWeekStartMonday(now: Date): string {
   jst.setUTCDate(jst.getUTCDate() + mondayOffset);
   return jst.toISOString().slice(0, 10);
 }
-import { HttpError } from "./http.js";
-import { safeLog } from "./logger.js";
-import {
-  createOpenRouterGenerationSender,
-  OpenRouterCallError,
-  type OpenRouterGenerationResult,
-  type OpenRouterMessage,
-} from "./openrouter.js";
-import { computeQuotaIdentityKey } from "./quota-identity.js";
-import { getSupabaseAdmin, type AdminSupabaseClient } from "./supabase-admin.js";
 
 /**
  * 新 RPC を typegen 前に呼ぶ。migration 適用後は `npm run db:types` で正式型へ寄せる。
@@ -96,10 +98,20 @@ const markPayloadSchema = z.looseObject({
 export type FlyerWeeklyAuthUser = {
   userId: string;
   email: string;
+  /** privacy_consents を user-scoped で読むための JWT */
+  accessToken: string;
 };
 
 /** mark 前に必要な最小残り予算（試行上限 + finalize 予約）。generation-service と同型。 */
 const REQUIRED_SEND_BUDGET_MS = OPENROUTER_TIMEOUT_MS + FINALIZE_RESERVE_MS;
+
+const flyerConsentRowSchema = z
+  .object({
+    user_id: z.uuid(),
+    notice_version: z.literal(privacyNoticeVersion),
+    accepted_at: z.iso.datetime({ offset: true }),
+  })
+  .strict();
 
 export type FlyerWeeklyDeps = {
   user: FlyerWeeklyAuthUser;
@@ -115,7 +127,30 @@ export type FlyerWeeklyDeps = {
   functionTotalBudgetMs?: number;
   /** テスト用の単調時計。 */
   monotonicNow?: () => number;
+  /**
+   * テスト用: 現行 notice への同意確認を差し替え。
+   * 未指定時は privacy_consents を user-scoped に読む（生成経路と同型）。
+   */
+  assertPrivacyConsent?: (user: FlyerWeeklyAuthUser) => Promise<void>;
 };
+
+/**
+ * PRIV-1: チラシも OpenRouter へ送る AI 経路のため、現行 privacy_consents 必須。
+ * reserve / 画像処理の前に fail-closed し、未同意で try を焼かない。
+ */
+export async function assertFlyerPrivacyConsent(user: FlyerWeeklyAuthUser): Promise<void> {
+  const userClient = createUserScopedSupabase(user.accessToken);
+  const consentResult = await userClient
+    .from("privacy_consents")
+    .select("user_id,notice_version,accepted_at")
+    .eq("user_id", user.userId)
+    .eq("notice_version", privacyNoticeVersion)
+    .maybeSingle();
+  const consent = flyerConsentRowSchema.safeParse(consentResult.data);
+  if (consentResult.error !== null || !consent.success || consent.data.user_id !== user.userId) {
+    throw new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。");
+  }
+}
 
 function entitlementUnavailableHttpError(): HttpError {
   return new HttpError(
@@ -251,6 +286,10 @@ export async function runFlyerWeekly(
   if (quotaPlan !== "plus") {
     throw new HttpError(403, "flyer_requires_plus", flyerWeeklyIssueMessages.flyer_requires_plus);
   }
+
+  // PRIV-1: Plus でも未同意なら AI 送信しない（生成・再生成と同型）。OpenRouter 0 回。
+  const assertConsent = deps.assertPrivacyConsent ?? assertFlyerPrivacyConsent;
+  await assertConsent(deps.user);
 
   // 画像は reserve 前に検証（失敗で try を焼かない）
   let prepared;
@@ -515,10 +554,16 @@ export async function runFlyerWeeklyWithReserveStub(options: {
   ) => Promise<OpenRouterGenerationResult>;
   plusEntitled: boolean;
   billingEnabled: boolean;
+  /** 未指定は同意済み扱い。false で consent_required を再現する。 */
+  hasPrivacyConsent?: boolean;
 }): Promise<{ openRouterCalls: number; errorCode?: string }> {
   let openRouterCalls = 0;
   if (!options.billingEnabled || !options.plusEntitled) {
     return { openRouterCalls: 0, errorCode: "flyer_requires_plus" };
+  }
+  // PRIV-1: Plus でも未同意なら OpenRouter に触れない
+  if (options.hasPrivacyConsent === false) {
+    return { openRouterCalls: 0, errorCode: "consent_required" };
   }
   const reserve = reservePayloadSchema.parse(options.reserveResult);
   if (reserve.status === "failed" && reserve.failure_code === "flyer_weekly_limit") {
