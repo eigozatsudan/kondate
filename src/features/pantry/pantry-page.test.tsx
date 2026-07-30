@@ -66,7 +66,7 @@ it("初回読み込み中は未確定の食材件数を0件と表示しない", 
 
   expect(screen.getByRole("heading", { name: "登録済みの食材（件数を確認中）" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "登録済みの食材（0件）" })).not.toBeInTheDocument();
-  expect(screen.getByText("読み込み中…")).toBeVisible();
+  expect(screen.getByText("食材リストを読み込んでいます…")).toBeVisible();
 });
 
 it("登録済み一覧と件数を先に表示し、追加操作を始めるまでフォームを展開しない", async () => {

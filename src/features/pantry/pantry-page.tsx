@@ -216,7 +216,12 @@ export function PantryPageContent({
   return (
     <main className="page-frame stack">
       <h1>食材リスト</h1>
-      <p>期限日は並べ替えと注意表示のための入力です。アプリは食べられるかを判断しません。</p>
+      <p>
+        冷蔵庫やパントリーにある食材を登録する場所です。献立を作るときに「使いたい食材」として選べます。
+      </p>
+      <p className="type-small">
+        期限日は並び順や注意表示のための入力です。アプリが「食べられるか」を判断するものではありません。
+      </p>
       <section className="pantry-overview stack" aria-labelledby="pantry-list-heading">
         <div className="pantry-section-heading">
           <h2 id="pantry-list-heading">
@@ -224,7 +229,7 @@ export function PantryPageContent({
           </h2>
           <button
             ref={addTriggerRef}
-            className="primary-button"
+            className="primary-button min-h-11"
             type="button"
             disabled={saving || creating}
             aria-expanded={creating}
@@ -276,8 +281,16 @@ export function PantryPageContent({
             )}
           </div>
         )}
-        {loading && <p>読み込み中…</p>}
-        {!loading && items.length === 0 && <p>登録した食材はありません。</p>}
+        {loading && <p role="status">食材リストを読み込んでいます…</p>}
+        {!loading && items.length === 0 && !creating && (
+          <section className="card stack" aria-labelledby="pantry-empty-title">
+            <h3 id="pantry-empty-title">まだ食材がありません</h3>
+            <p>
+              「食材を追加」から、名前と分量などを入力して登録できます。全部入れなくても大丈夫です。使いたいものだけ登録してください。
+            </p>
+            <p className="type-small">あとから編集や削除もできます。</p>
+          </section>
+        )}
         <ul className="stack pantry-list" aria-label="冷蔵庫の食材">
           {items.map((item) => (
             <li className="card pantry-card" key={item.id}>

@@ -242,7 +242,12 @@ export function IngredientStep({
         </div>
         {pantryItemsStatus === "loading" && <p>冷蔵庫の食材を読み込んでいます…</p>}
         {pantryItemsStatus === "loaded" && pantryItems.length === 0 && (
-          <p>冷蔵庫に登録した食材はありません。</p>
+          <div className="stack gap-2">
+            <p>冷蔵庫に登録した食材はありません。</p>
+            <p className="type-small">
+              食材を使いたいときは、下のメニュー「冷蔵庫」から食材リストに登録できます。登録なしでも献立は作れます。
+            </p>
+          </div>
         )}
         {pantryItemsStatus === "loaded" && pantryItems.length > 0 && (
           <div className="wizard-chip-row">

@@ -51,35 +51,44 @@ export function ShoppingListPage() {
   if (query.isPending)
     return (
       <main className="page-frame">
-        <p>買い物リストを読み込んでいます</p>
+        <p role="status">買い物リストを読み込んでいます…</p>
       </main>
     );
   if (query.isError)
     return (
       <main className="page-frame stack">
-        <p role="alert">読み込めませんでした</p>
-        <button
-          type="button"
-          className="primary-button min-h-11"
-          onClick={() => {
-            void query.refetch();
-          }}
-        >
-          もう一度読み込む
-        </button>
+        <h1>買い物リスト</h1>
+        <section className="card stack">
+          <p role="alert">買い物リストを読み込めませんでした。通信を確認してください。</p>
+          <button
+            type="button"
+            className="primary-button min-h-11"
+            onClick={() => {
+              void query.refetch();
+            }}
+          >
+            もう一度読み込む
+          </button>
+        </section>
       </main>
     );
   if (query.data === null)
     return (
       <main className="page-frame stack">
         <h1>買い物リスト</h1>
-        <p>買い物リストは空です</p>
-        <a className="primary-button min-h-11" href="/planner">
-          献立を作る
-        </a>
-        <a className="secondary-button min-h-11" href="/history">
-          履歴から選ぶ
-        </a>
+        <section className="card stack">
+          <p>買い物リストは空です</p>
+          <p>
+            献立を作ったあと、結果画面や履歴から「買い物リスト」へ送れます。まだ献立がないときは、先に献立をつくってください。
+          </p>
+          <p className="type-small">買い物リストは、お店で買うもののメモとして使います。</p>
+          <a className="primary-button min-h-11" href="/planner">
+            献立を作る
+          </a>
+          <a className="secondary-button min-h-11" href="/history">
+            履歴から選ぶ
+          </a>
+        </section>
       </main>
     );
   const list = query.data;

@@ -711,8 +711,8 @@ it("家族0件でも登録済み領域と追加領域を分けて表示する", 
   await renderSettings({ listMembers: vi.fn().mockResolvedValue([]) });
 
   expect(await screen.findByRole("heading", { name: "登録済みの家族" })).toBeVisible();
-  expect(screen.getByText("登録済みの家族はいません。")).toBeVisible();
-  expect(screen.getByRole("heading", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.getByText("まだ家族は登録されていません。")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "家族を追加する" })).toBeVisible();
   expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
 });
 
@@ -874,7 +874,12 @@ it("shows the empty add screen immediately after deleting the last member", asyn
   await userEvent.click(await screen.findByRole("button", { name: "家族を削除" }));
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
 
-  expect(await screen.findByText("家族を追加してください")).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "家族を追加する" })).toBeVisible();
+  expect(
+    screen.getByText(
+      "「家族を追加」を押すと、1人目の入力が始まります。呼び名・年齢・アレルギーなどを順に入れられます。",
+    ),
+  ).toBeVisible();
   expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
   // 空状態でもアカウント操作は常時表示し、家族追加の結果としてログアウトが現れるようにしない
   expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();

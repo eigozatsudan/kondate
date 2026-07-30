@@ -49,9 +49,14 @@ export function HistoryPageContent({ groups }: { groups: readonly HistoryGroup[]
     return (
       <main className="page-frame stack">
         <h1>作った献立</h1>
+        <p className="type-small">
+          これまでに作った献立を見返す場所です。下のメニューでは「履歴」と表示されます。
+        </p>
         <section className="card stack">
           <p>まだ献立がありません</p>
-          <p className="field-hint">条件を入れて献立をつくると、ここに並びます。</p>
+          <p className="field-hint">
+            「献立」タブで質問に答えて献立をつくると、ここに並びます。あとから見返したり、買い物リストにしたりできます。
+          </p>
           <Link className="primary-button min-h-11" to="/planner">
             献立を作る
           </Link>
@@ -68,6 +73,9 @@ export function HistoryPageContent({ groups }: { groups: readonly HistoryGroup[]
   return (
     <main className="page-frame stack">
       <h1>作った献立</h1>
+      <p className="type-small">
+        過去に作った献立です。タップすると内容を見返せます。お気に入りだけに絞ることもできます。
+      </p>
       <label className="inline-flex min-h-11 items-center gap-2">
         <input
           type="checkbox"

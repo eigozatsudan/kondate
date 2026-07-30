@@ -1078,15 +1078,21 @@ export function HouseholdSettingsForm({
     return (
       <main className="page-frame stack">
         <h1>家族設定</h1>
+        <p>
+          一緒に食べる人の年齢・アレルギー・苦手なものを登録する場所です。登録すると、献立づくりで家族に合わせた条件を使いやすくなります。
+        </p>
+        <p className="type-small">必須ではありません。あとからでも登録できます。</p>
         <section className="card stack" aria-labelledby="registered-household-empty-title">
           <h2 id="registered-household-empty-title">登録済みの家族</h2>
-          <p>登録済みの家族はいません。</p>
+          <p>まだ家族は登録されていません。</p>
         </section>
         <section className="card stack" aria-labelledby="household-editor-empty-title">
-          <h2 id="household-editor-empty-title">家族情報を追加・編集</h2>
-          <p>家族を追加してください</p>
+          <h2 id="household-editor-empty-title">家族を追加する</h2>
+          <p>
+            「家族を追加」を押すと、1人目の入力が始まります。呼び名・年齢・アレルギーなどを順に入れられます。
+          </p>
           <button
-            className="primary-button"
+            className="primary-button min-h-11"
             type="button"
             disabled={createDraft.isPending || saving}
             onClick={() => {
@@ -1140,6 +1146,9 @@ export function HouseholdSettingsForm({
       <h1 ref={pageHeadingRef} tabIndex={-1}>
         家族設定
       </h1>
+      <p className="type-small">
+        一緒に食べる人の情報です。編集は各人の「編集」から。プランやログアウトはこのページの下にあります。
+      </p>
       <section className="card stack settings-section" aria-labelledby="registered-household-title">
         <h2 id="registered-household-title" className="settings-section-title">
           登録済みの家族

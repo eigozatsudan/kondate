@@ -347,7 +347,7 @@ describe("route accessibility", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "家族設定" })).toBeVisible();
     await expectAccessible(container);
     expect(screen.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
-    expect(screen.getByText("家族を追加してください")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "家族を追加する" })).toBeVisible();
     expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
   });
 

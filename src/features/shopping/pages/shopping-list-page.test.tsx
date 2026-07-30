@@ -742,7 +742,9 @@ describe("ShoppingListPage warnings and grouping", () => {
         <ShoppingListPage />
       </Providers>,
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent("読み込めませんでした");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストを読み込めませんでした。通信を確認してください。",
+    );
   });
 
   it("gives every control a 44px minimum touch target", async () => {

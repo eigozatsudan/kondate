@@ -190,9 +190,12 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
   }
 
   return (
-    <main className="page-frame" aria-live="polite">
+    <main className="page-frame stack" aria-live="polite">
       <h1>ログインを確認中</h1>
-      <p>この画面を閉じずにお待ちください。</p>
+      <p>Google やメールのリンクから戻ってきたあとの確認です。この画面を閉じずにお待ちください。</p>
+      <p className="type-small">
+        しばらく待っても進まないときは、前の画面に戻って「Googleで続ける」またはメールログインをやり直してください。
+      </p>
     </main>
   );
 }
