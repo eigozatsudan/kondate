@@ -241,6 +241,33 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(result.issues.some((issue) => /allergen|allergy/i.test(issue.code))).toBe(false);
   });
 
+  it("F-U07-2: fails closed with 503 when live pantry load errors (no false pantry_item_removed)", async () => {
+    const stored = makeStored();
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: null, error: { message: "db down" } },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    await expect(
+      validateStoredMenuCurrentSafety({
+        ownerClient: ownerClient as never,
+        admin: {} as never,
+        stored,
+        userId: USER_ID,
+      }),
+    ).rejects.toMatchObject({ status: 503, code: "request_failed" });
+  });
+
   it("fails closed with current_target_member_required when no surviving targets remain", async () => {
     const stored = makeStored({
       targetMemberIds: [],

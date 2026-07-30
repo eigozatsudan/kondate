@@ -221,7 +221,10 @@ async function loadLivePantryQuantities(
     .from("pantry_items")
     .select("id,quantity")
     .in("id", [...pantryItemIds]);
-  if (error !== null) return map;
+  // F-U07-2: 空 Map で fail-open すると全 usage が pantry_item_removed になるため fail-closed
+  if (error !== null) {
+    throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+  }
   for (const row of data) {
     const parsed = pantryLiveRowSchema.safeParse(row);
     if (!parsed.success) continue;
@@ -258,7 +261,10 @@ async function loadCurrentMemberPreferences(
     .from("household_members")
     .select("id,portion_size,spice_level,ease_preferences")
     .in("id", [...memberIds]);
-  if (error !== null) return map;
+  // F-U07-2: 空 Map は全 target が preference_changed になるため fail-closed
+  if (error !== null) {
+    throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+  }
   for (const row of data) {
     const parsed = householdPreferenceRowSchema.safeParse(row);
     if (!parsed.success) continue;
@@ -274,7 +280,10 @@ async function loadCurrentMemberPreferences(
     .from("member_dislikes")
     .select("member_id,ingredient_name")
     .in("member_id", [...memberIds]);
-  if (dislikeError === null && Array.isArray(dislikeRows)) {
+  if (dislikeError !== null) {
+    throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+  }
+  if (Array.isArray(dislikeRows)) {
     for (const row of dislikeRows) {
       const record = row as { member_id?: unknown; ingredient_name?: unknown };
       if (typeof record.member_id !== "string" || typeof record.ingredient_name !== "string") {

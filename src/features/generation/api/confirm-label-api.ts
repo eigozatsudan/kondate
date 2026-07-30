@@ -8,10 +8,10 @@ const envelopeSchema = z.discriminatedUnion("ok", [
       ok: z.literal(true),
       data: z
         .object({
-          confirmationId: z.string(),
-          confirmationStatus: z.string(),
+          confirmationId: z.uuid(),
+          confirmationStatus: z.enum(["pending", "confirmed"]),
           confirmedAt: z.string().nullable(),
-          confirmedBy: z.string().nullable(),
+          confirmedBy: z.uuid().nullable(),
         })
         .strict(),
     })
@@ -42,8 +42,9 @@ export async function confirmLabelConfirmation(
   confirmedBy: string | null;
 }> {
   const accessToken = await requireAccessToken(getBrowserSupabaseClient());
+  // F-U07-3: path 断片を encode し、他 API と同型の境界にする
   const response = await (deps.fetchImpl ?? fetch)(
-    `/api/menus/${menuId}/label-confirmations/${confirmationId}/confirm`,
+    `/api/menus/${encodeURIComponent(menuId)}/label-confirmations/${encodeURIComponent(confirmationId)}/confirm`,
     {
       method: "POST",
       headers: {
