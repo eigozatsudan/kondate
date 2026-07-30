@@ -8,13 +8,14 @@
 
 **Tech Stack:** React 19 / React Router 8 / TanStack Query 5 / TypeScript strict / Vitest / RTL / Playwright / Netlify Functions / Supabase JS / Zod
 
-**仕様書:** `docs/superpowers/specs/2026-07-30-ux-diversity-safety-design.md`（Approved for planning, commit `edfe575`）  
-**ブランチ / worktree:** `feat/ux-diversity-safety` / `.worktrees/ux-diversity-safety`
+**仕様書:** `docs/superpowers/specs/2026-07-30-ux-diversity-safety-design.md`  
+**ブランチ / worktree:** `feat/ux-diversity-safety` / `.worktrees/ux-diversity-safety`  
+**状態:** **Approved for implementation**（1次・2次・敵対的 + 再レビュー反映、0 残件想定）
 
 ## Global Constraints
 
-- Node.js `>=24 <25`。Node/npm は `docker compose run --rm --no-deps app <cmd>`。コマンドを `&&` / `;` で連結しない（1 コマンド＝1 ツール呼び出し）。
-- 各 Task: RED → GREEN → focused 検証（Vitest / typecheck / lint / format:check / `git diff --check`）→ レビュー（Critical/Important/**Minor ゼロ**まで）→ 日本語 Conventional Commit。
+- Node.js `>=24 <25`。Node/npm は `docker compose run --rm --no-deps app <cmd>`。コマンドを `&&` / `;` で連結しない。
+- 各 Task: RED → GREEN → focused 検証（Vitest / typecheck / lint / format:check / `git diff --check`）→ レビュー（Critical/Important/**Minor ゼロ**）→ 日本語 Conventional Commit。
 - UI 文言・コメント・コミットは日本語。識別子・テスト名は英語。`any` / 未検査 cast 禁止。
 - 320 CSS px・44×44・横スクロールなし。新カラー体系禁止。
 - 後方互換不要。`git push` / PR / 本番デプロイ / `--no-verify` 禁止。
@@ -26,21 +27,20 @@
 
 | 名前 | 場所 | 契約 |
 |------|------|------|
-| `HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY` | `src/features/planner/household-safety-helper-copy.ts` | 固定文 `"献立には今回選んだ家族の条件だけが使われます。"` の正本。review / generation はここだけ import |
-| `useAppToast` / `AppToastProvider` | `src/shared/ui/app-toast.tsx` | 下記シグネチャ |
-| `showValidationToast` 用途制限 | 同上 | validation 用途の `show` は planner 質問 step と household 追加・編集のみ |
-| `PendingGenerationMeta` | `src/features/generation/model/pending-generation-meta.ts` | 下記。pending と同一 localStorage 寿命 |
-| `DIVERSITY_HINTS_ENABLED` | `netlify/functions/_shared/diversity-hints.ts` | `true` 定数。off で load スキップ |
-| `loadRecentDishHints` | 同上 | fail-open・200ms・max 10 menus / 24 hints |
-| `RecentDishHint` | 同上（Functions private） | `{ dishName: string; role?: string }` |
-| `GenerationExecutionContext` (new_menu) | `generation-service.ts` | `recentDishHints: readonly RecentDishHint[]` を **new_menu のみ** 追加 |
+| `HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY` | `src/features/planner/household-safety-helper-copy.ts` | `"献立には今回選んだ家族の条件だけが使われます。"` |
+| `AppToastProvider` / `useAppToast` | `src/shared/ui/app-toast.tsx` | 下記。**validation 用途の `show` は planner 質問 step と household 追加・編集のみ** |
+| `PendingGenerationMeta` | `src/features/generation/model/pending-generation-meta.ts` | 下記 |
+| `clearPendingGeneration` | `pending-generation.ts` | **内部で必ず `clearPendingGenerationMeta` を呼ぶ** |
+| `DIVERSITY_HINTS_ENABLED` / `DIVERSITY_SYSTEM_MARKER` | `netlify/functions/_shared/diversity-hints.ts` | flag default `true`；マーカー `"【多様性ヒント】"` |
+| `loadRecentDishHints` | 同上 | fail-open・200ms・10 menus / 24 hints・never throw |
+| `RecentDishHint` | 同上 | `{ dishName: string; role?: string }` |
+| `GenerationExecutionContext` new_menu | `generation-service.ts` | `recentDishHints: readonly RecentDishHint[]` を **new_menu のみ** |
 
 ```ts
-// app-toast.tsx（Locked）
-export type AppToastTone = "error" | "info";
+// app-toast.tsx
 export type ShowAppToastInput = {
   message: string;
-  tone: AppToastTone;
+  tone: "error" | "info";
   durationMs?: number; // default 6000
 };
 export function AppToastProvider(props: { children: React.ReactNode }): React.JSX.Element;
@@ -48,192 +48,197 @@ export function useAppToast(): {
   show: (input: ShowAppToastInput) => void;
   dismiss: () => void;
 };
+// CSS: .app-toast { z-index: 20; pointer-events: auto; }  // hover pause 必須
 ```
 
 ```ts
-// pending-generation-meta.ts（Locked）
+// pending-generation-meta.ts
 export type PendingGenerationMeta = {
   kind: "new_menu";
   targetMode: "household" | "idea";
   idempotencyKey: string;
+  ownerUserId: string;
+  createdAt: string; // ISO
 };
 export function savePendingGenerationMeta(meta: PendingGenerationMeta, storage?: Storage): void;
-export function readPendingGenerationMeta(storage?: Storage): PendingGenerationMeta | null;
+/** pending と突合。欠落・owner/TTL/key 不一致は null */
+export function readPendingGenerationMeta(
+  userId: string,
+  now: Date,
+  storage?: Storage,
+): PendingGenerationMeta | null;
 export function clearPendingGenerationMeta(storage?: Storage): void;
-// storage key 例: "kondate:generation:v3:meta" — pending clear と同タイミングで必ず clear
+// key: "kondate:generation:v3:meta"
+// TTL: PENDING_GENERATION_TTL_MS と同じ（pending-generation.ts から import）
 ```
 
 ```ts
-// diversity-hints.ts（Locked）
+// diversity-hints.ts
 export const DIVERSITY_HINTS_ENABLED = true as const;
+export const DIVERSITY_SYSTEM_MARKER = "【多様性ヒント】" as const;
 export const RECENT_DISH_HINTS_TIMEOUT_MS = 200 as const;
 export const RECENT_MENUS_LIMIT = 10 as const;
 export const RECENT_DISH_HINTS_MAX = 24 as const;
 export type RecentDishHint = { dishName: string; role?: string };
 export function loadRecentDishHints(input: {
-  ownerClient: /* user-scoped Supabase */;
+  ownerClient: unknown; // user-scoped Supabase
   userId: string;
   timeoutMs?: number;
-  enabled?: boolean; // default DIVERSITY_HINTS_ENABLED
-}): Promise<readonly RecentDishHint[]>; // never throws; [] on fail/timeout/off
+}): Promise<readonly RecentDishHint[]>; // never throws
 ```
+
+**Incomplete 文言ロック（toast = inline 同一）:**
+
+| Step | 文言 |
+|------|------|
+| meal | `食事の時間帯を選んでください` |
+| ingredients | `メイン食材を1つ以上選んでください`（`mainIngredientRequiredMessage` もこの文字列に更新） |
+| cuisine | `ジャンルを選んでください` |
+| audience mode | `作る相手の選び方を選んでください` |
+| audience household 0 | `献立に合わせる家族を1人以上選んでください` |
+| audience idea servings | `人数を選んでください` |
 
 ## File Structure
 
 | ファイル | 責務 |
 |----------|------|
-| `src/shared/ui/app-toast.tsx` | Provider + hook + 表示 |
-| `src/shared/ui/app-toast.test.tsx` | 1 件制限・status role・dismiss |
-| `src/styles.css` | `.app-toast` z-index 20（autosave 15 の上） |
-| `src/app/providers.tsx` | `AppToastProvider` マウント |
-| `src/features/planner/components/meal-step.tsx` | incomplete 押下可 + toast + alert + focus |
-| `src/features/planner/components/cuisine-step.tsx` | 同上 |
-| `src/features/planner/components/ingredient-step.tsx` | empty dialog 廃止 → toast + inline |
-| `src/features/planner/components/audience-step.tsx` | 並び・サマリー・ヒント・incomplete UX |
-| `src/features/planner/components/review-step.tsx` | household 補助文 sibling |
-| `src/features/planner/components/planner-wizard.tsx` | 必要なら toast 配線 / autosave error 連携 |
-| `src/features/planner/household-safety-helper-copy.ts` | 固定補助文 |
-| `src/features/household/*` | validation toast + focus |
-| `src/features/generation/model/pending-generation-meta.ts` | targetMode メタ |
-| `src/features/generation/model/pending-generation.ts` | clear 時に meta も clear |
-| `src/features/planner/planner-route.tsx` | new_menu pending 保存時 meta upsert |
-| `src/features/history/hooks/use-regeneration.ts` | regenerate 時 meta clear |
-| `src/features/generation/components/generation-status-panel.tsx` | constraint_conflict 補助文 1 回 |
+| `src/shared/ui/app-toast.tsx` + `.test.tsx` | Provider / hook |
+| `src/styles.css` | `.app-toast` z=20, pointer-events auto |
+| `src/app/providers.tsx` | Provider マウント |
+| `src/features/planner/components/meal-step.tsx` | incomplete UX |
+| `src/features/planner/components/cuisine-step.tsx` | incomplete UX |
+| `src/features/planner/components/ingredient-step.tsx` | dialog 廃止 + incomplete UX |
+| `src/features/planner/components/audience-step.tsx` | 並び・サマリー・incomplete |
+| `src/features/planner/components/planner-wizard.tsx` | `suppressValidationToast={autosaveState==="error"}` |
+| `src/features/planner/components/review-step.tsx` | household 補助文 |
+| `src/features/planner/household-safety-helper-copy.ts` | 固定文 |
+| `src/features/household/*` | validation toast |
+| `src/features/generation/model/pending-generation-meta.ts` | meta API |
+| `src/features/generation/model/pending-generation.ts` | clear で meta も clear；regenerate save で meta clear |
+| `src/features/planner/planner-route.tsx` | new_menu 時 **だけ** meta upsert（`draft.targetMode`） |
+| `src/features/generation/components/generation-status-panel.tsx` | conflict 補助文 1 回 |
 | `netlify/functions/_shared/diversity-hints.ts` | load + constants |
-| `netlify/functions/_shared/generation-service.ts` | new_menu context に hints |
-| `netlify/functions/_shared/generation-prompt.ts` | CORE_BODY + DIVERSITY + SEASON 合成 |
-| `e2e/specs/*` | audience / incomplete セレクタ追随 |
-| `.superpowers/sdd/ux-diversity-safety-audit.md` | 経路監査 1–6 記録（gitignored 可） |
+| `netlify/functions/_shared/generation-service.ts` | new_menu に hints |
+| `netlify/functions/_shared/generation-prompt.ts` | CORE_BODY+DIVERSITY+SEASON |
+| `netlify/functions/_shared/generation-quality-review-entry.ts` | recentDishHints: [] |
+| `e2e/specs/*` | セレクタ追随 |
+
+**共通 verify（各 Task Step 末尾で実行）:**
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run <task-test-files>
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run format:check
+git diff --check
+```
 
 ---
 
 ### Task 1: AppToast 共通部品
 
-**Files:**
-- Create: `src/shared/ui/app-toast.tsx`
-- Create: `src/shared/ui/app-toast.test.tsx`
-- Modify: `src/styles.css`（`.app-toast` ブロック追加）
-- Modify: `src/app/providers.tsx`（Provider ラップ）
-- Modify: `src/app/providers.test.tsx`（必要なら Provider 内レンダー）
+**Files:** Create `src/shared/ui/app-toast.tsx`, `src/shared/ui/app-toast.test.tsx`; Modify `src/styles.css`, `src/app/providers.tsx`, `src/app/providers.test.tsx` if needed
 
-**Interfaces:**
-- Consumes: なし
-- Produces: `AppToastProvider`, `useAppToast`, CSS `.app-toast` z-index 20
+**Interfaces:** Produces `AppToastProvider`, `useAppToast`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write failing tests**
 
 ```tsx
-// src/shared/ui/app-toast.test.tsx
 import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppToastProvider, useAppToast } from "./app-toast";
+import { vi } from "vitest";
 
-function Probe() {
-  const toast = useAppToast();
+function Probe({ msg }: { msg: string }) {
+  const t = useAppToast();
   return (
-    <button type="button" onClick={() => toast.show({ message: "食事の時間帯を選んでください", tone: "error" })}>
-      show
-    </button>
+    <>
+      <button type="button" onClick={() => t.show({ message: msg, tone: "error" })}>
+        show
+      </button>
+      <button type="button" onClick={() => t.show({ message: "二件目", tone: "error" })}>
+        show2
+      </button>
+    </>
   );
 }
 
-it("shows a single status toast and replaces on second show", async () => {
+it("shows status toast and replaces on second show", async () => {
   const user = userEvent.setup();
   render(
     <AppToastProvider>
-      <Probe />
+      <Probe msg="食事の時間帯を選んでください" />
     </AppToastProvider>,
   );
   await user.click(screen.getByRole("button", { name: "show" }));
-  const status = screen.getByRole("status");
-  expect(status).toHaveTextContent("食事の時間帯を選んでください");
-  expect(status).toHaveAttribute("aria-live", "polite");
-  expect(status.className).toMatch(/app-toast/);
+  expect(screen.getByRole("status")).toHaveTextContent("食事の時間帯を選んでください");
+  expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+  await user.click(screen.getByRole("button", { name: "show2" }));
+  expect(screen.getAllByRole("status")).toHaveLength(1);
+  expect(screen.getByRole("status")).toHaveTextContent("二件目");
+});
+
+it("does not dismiss while hovered", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  render(
+    <AppToastProvider>
+      <Probe msg="保持" />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "show" }));
+  const toast = screen.getByRole("status");
+  await user.hover(toast);
+  await act(async () => {
+    vi.advanceTimersByTime(7000);
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("保持");
+  await user.unhover(toast);
+  await act(async () => {
+    vi.advanceTimersByTime(7000);
+  });
+  expect(screen.queryByRole("status")).toBeNull();
+  vi.useRealTimers();
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
+- [ ] **Step 2: RED**
 
 ```bash
 docker compose run --rm --no-deps app npm test -- --run src/shared/ui/app-toast.test.tsx
 ```
 
-Expected: FAIL（module not found）
+Expected: FAIL module not found
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 3: Implement**
 
-`AppToastProvider`: React context + state `current: { message, tone, durationMs } | null`。  
-`show`: 後勝ちで置換。`tone === "error"` でも **role="status" aria-live="polite"**（設計: alert は inline 側）。  
-default `durationMs = 6000`。タイマーで dismiss。**pointerenter / focusin でタイマー停止、leave / focusout で再開**。  
-`dismiss()` で即クリア。  
-DOM: `className="app-toast app-toast--error|info"` fixed 右上。  
-`useAppToast` は Provider 外で throw。
+- Context + state; `show` 後勝ち; error/info とも **role=status aria-live=polite**
+- default 6000ms; hover / focus-within でタイマー停止
+- CSS: `.app-toast { z-index: 20; pointer-events: auto; ... }`（autosave 見た目トークン流用）
+- `AppProviders` で wrap
 
-`src/styles.css` に追加（autosave 見た目トークン流用・z-index のみロック）:
+- [ ] **Step 4: Verify**（共通 verify ブロック）
 
-```css
-.app-toast {
-  position: fixed;
-  z-index: 20;
-  top: max(12px, env(safe-area-inset-top, 0px));
-  right: max(12px, env(safe-area-inset-right, 0px));
-  /* 色・padding は .autosave-toast に近い値をコピー */
-  pointer-events: none;
-  max-width: min(calc(100vw - 24px), 18rem);
-}
-.app-toast--error {
-  color: var(--danger);
-  border: 1px solid var(--border-strong);
-  background: #fff8f7;
-}
-```
-
-`AppProviders` で `QueryClientProvider` の内側（または外側どちらでも可だが children を包む）に `AppToastProvider` を追加。
-
-- [ ] **Step 4: Run tests and typecheck**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/shared/ui/app-toast.test.tsx
-docker compose run --rm --no-deps app npm run typecheck
-docker compose run --rm --no-deps app npm run lint
-docker compose run --rm --no-deps app npm run format:check
-```
-
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/shared/ui/app-toast.tsx src/shared/ui/app-toast.test.tsx src/styles.css src/app/providers.tsx src/app/providers.test.tsx
-git commit -m "feat: 入力漏れ用の AppToast を追加する"
-```
+- [ ] **Step 5: Commit** `feat: 入力漏れ用の AppToast を追加する`
 
 ---
 
-### Task 2: ウィザード質問 step の incomplete UX
+### Task 2: ウィザード meal / cuisine / ingredients incomplete UX
 
-**Files:**
-- Modify: `src/features/planner/components/meal-step.tsx`
-- Modify: `src/features/planner/components/cuisine-step.tsx`
-- Modify: `src/features/planner/components/ingredient-step.tsx`
-- Modify: 各既存 `*.test.tsx` / `planner-wizard.test.tsx` / `accessibility.test.tsx` の incomplete disabled 前提を更新
-- Test: 各 step のテストファイル（無ければ追加）
+**Files:**  
+- Modify: `meal-step.tsx`, `cuisine-step.tsx`, `ingredient-step.tsx`, `planner-wizard.tsx`  
+- Modify: 対応 `*.test.tsx`, `planner-wizard.test.tsx`
 
-**Interfaces:**
-- Consumes: `useAppToast` from Task 1
-- Produces: incomplete でも主ボタン押下可。文言ロック:
-  - meal: `食事の時間帯を選んでください`
-  - ingredients: `メイン食材を1つ以上選んでください`
-  - cuisine: `ジャンルを選んでください`
+**Interfaces:** Consumes `useAppToast`. Produces incomplete 押下可 + toast + alert + focus.  
+**必須:** `suppressValidationToast` prop。wizard が `autosaveState === "error"` のとき true。
 
-- [ ] **Step 1: Write failing tests（meal 例）**
+- [ ] **Step 1: Failing tests（3 step すべて全文）**
 
 ```tsx
-it("allows Next when empty and shows toast plus alert and focuses radiogroup", async () => {
-  const user = userEvent.setup();
+// meal
+it("meal incomplete next: toast+alert+focus, no onNext", async () => {
   const onNext = vi.fn();
+  const user = userEvent.setup();
   render(
     <AppToastProvider>
       <MealStep value={null} onChange={vi.fn()} onNext={onNext} />
@@ -245,530 +250,401 @@ it("allows Next when empty and shows toast plus alert and focuses radiogroup", a
   expect(onNext).not.toHaveBeenCalled();
   expect(screen.getByRole("alert")).toHaveTextContent("食事の時間帯を選んでください");
   expect(screen.getByRole("status")).toHaveTextContent("食事の時間帯を選んでください");
-  const group = screen.getByRole("radiogroup");
-  expect(group.querySelector("input,button")).toHaveFocus();
+  expect(screen.getByRole("radiogroup").querySelector("input:not([disabled])")).toHaveFocus();
 });
-```
 
-同様に cuisine / ingredients（ingredients は **alertdialog が無い**こと、toast+alert があること）。
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/planner/components/meal-step.tsx src/features/planner/components/cuisine-step.tsx src/features/planner/components/ingredient-step.tsx
-```
-
-（テストファイルパスに合わせて調整）Expected: FAIL
-
-- [ ] **Step 3: Implement**
-
-各 step:
-
-1. incomplete でも `disabled={disabled}` のみ（親 busy 以外は押下可）。
-2. ローカル `errorMessage` state。
-3. Next click:
-   - incomplete → set errorMessage、`useAppToast().show({ message, tone: "error" })`、focus 先（設計マトリクス）、return
-   - complete → `dismiss()` toast、clear error、`onNext()`
-4. value が complete になったら errorMessage clear。
-5. unmount で toast dismiss（useEffect cleanup）。
-6. ingredient: `emptyGateOpen` alertdialog ブロック削除。`mainIngredientRequiredMessage` を inline alert に流用。
-
-autosave error 中に toast を抑止する必要があれば、`planner-wizard` から `autosaveStatus === "error"` を props で渡すか、DOM に `.autosave-toast--error` があるとき toast を skip（設計: retry を隠さない）。Task 2 では **props `suppressValidationToast?: boolean`** を wizard から渡す最小実装でよい。
-
-- [ ] **Step 4: Verify**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/planner/
-docker compose run --rm --no-deps app npm run typecheck
-docker compose run --rm --no-deps app npm run lint
-docker compose run --rm --no-deps app npm run format:check
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git commit -m "feat: プランナー質問stepの未入力トーストを追加する"
-```
-
----
-
-### Task 3: audience 並び・選択サマリー・チェック必須 UX
-
-**Files:**
-- Modify: `src/features/planner/components/audience-step.tsx`
-- Modify: `src/features/planner/components/audience-step` 関連テスト / `planner-wizard.test.tsx` / `accessibility.test.tsx`
-- Modify: `src/features/planner/current-safety-summary.tsx`（必要なら props 追加は **しない** — 補助文は Task 6）
-
-**Interfaces:**
-- Consumes: `useAppToast`, `CurrentSafetySummary`, `normalizeAudienceForModeChange`
-- Produces: DOM 順 idea → household → checks → summary(selected)；incomplete 文言
-
-文言ロック:
-
-- mode 未選択 toast: `作る相手の選び方を選んでください`
-- household 0: `献立に合わせる家族を1人以上選んでください`
-- idea servings null: `人数を選んでください`
-- 常時ヒント: `献立に合わせる家族を1人以上選んでください`
-- 一覧注記: `一覧の表示は選ぶときの参考です。チェックしていない人の条件は献立に入りません。`
-- 選択 0 サマリー本文: `家族を選ぶと、その人の条件がここに表示されます。`
-- 選択 1+ 注記: `ここに出ている条件だけが献立に使われます。選んでいない家族は含まれません。`
-
-- [ ] **Step 1: Failing tests**
-
-```tsx
-it("orders idea radio before household and shows summary only for selected members under checks", () => {
+it("meal incomplete with suppressValidationToast: alert+focus only, no status toast", async () => {
+  const user = userEvent.setup();
   render(
-    <AudienceStep
-      value={{ targetMode: "household", targetMemberIds: [aId], servings: null }}
-      eligibleMembers={[memberA, memberB]}
-      onChange={vi.fn()}
-      onNext={vi.fn()}
-    />,
+    <AppToastProvider>
+      <MealStep value={null} onChange={vi.fn()} onNext={vi.fn()} suppressValidationToast />
+    </AppToastProvider>,
   );
-  const radios = screen.getAllByRole("radio");
-  expect(radios[0]).toHaveAccessibleName(/人数だけ/);
-  expect(radios[1]).toHaveAccessibleName(/家族に合わせて/);
-  // summary appears after checkboxes: query structure
-  expect(screen.getByRole("heading", { name: "現在の家族・安全条件" })).toBeInTheDocument();
-  expect(screen.getByText(memberA.displayName)).toBeInTheDocument();
-  // unselected B must not appear inside summary section — assert via within(summary)
+  await user.click(screen.getByRole("button", { name: "次へ" }));
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+  expect(screen.queryByRole("status")).toBeNull();
 });
 
-it("blocks next with toast when household has zero members", async () => { /* ... */ });
-```
+it("cuisine incomplete next: toast+alert+focus", async () => {
+  const onNext = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <AppToastProvider>
+      <CuisineStep value={null} onChange={vi.fn()} onNext={onNext} />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "次へ" }));
+  expect(onNext).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("ジャンルを選んでください");
+  expect(screen.getByRole("status")).toHaveTextContent("ジャンルを選んでください");
+  expect(screen.getByRole("radiogroup").querySelector("input:not([disabled])")).toHaveFocus();
+});
 
-- [ ] **Step 2: RED run**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/planner/components/
-```
-
-- [ ] **Step 3: Implement layout**
-
-1. ラジオ順: idea label を先、household を後。
-2. 削除: ラジオ上の `CurrentSafetySummary`。
-3. household ブロック順: ヒント → checkboxes → selected filter の `CurrentSafetySummary`（0 人時はメンバー行なし固定文。**免責・家族設定リンクは CurrentSafetySummary 内で維持**）。
-4. incomplete Next: Task 2 と同パターン。focus: mode → radiogroup; household 0 → members group; idea → chips/select。
-5. `isComplete` は Next の disabled に使わない（押下可）。
-
-- [ ] **Step 4: GREEN + verify**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/planner/
-docker compose run --rm --no-deps app npm run typecheck
-docker compose run --rm --no-deps app npm run format:check
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git commit -m "feat: 作る相手stepの並びと選択安全表示を直す"
-```
-
----
-
-### Task 4: 家族追加・編集の validation toast
-
-**Files:**
-- Modify: `src/features/household/household-onboarding-page.tsx`
-- Modify: `src/features/household/household-settings-page.tsx`（保存・完了経路）
-- Modify: 対応 `*.test.tsx`
-- Consumes: `useAppToast`, `householdSettingsSchema` / `toHouseholdFieldErrors`
-
-**Interfaces:**
-- Produces: 必須漏れで先頭 field message の toast + field errors + focus
-
-- [ ] **Step 1: Failing test**
-
-```tsx
-it("shows toast and focuses first invalid field when save is incomplete", async () => {
-  // render form with empty displayName / missing age as per schema
-  // click 保存 or 完了
-  // expect getByRole("status") message
-  // expect first invalid control focused
-  // expect field error text present
+it("ingredients incomplete: no alertdialog; toast+alert with locked copy", async () => {
+  const user = userEvent.setup();
+  render(
+    <AppToastProvider>
+      <IngredientStep value={[]} onChange={vi.fn()} onNext={vi.fn()} />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "次へ" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent("メイン食材を1つ以上選んでください");
+  expect(screen.getByRole("status")).toHaveTextContent("メイン食材を1つ以上選んでください");
+  // focus はメイン食材 text input（チップ button ではない）
+  expect(screen.getByRole("textbox")).toHaveFocus();
 });
 ```
 
 - [ ] **Step 2: RED**
 
 ```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/household/
+docker compose run --rm --no-deps app npm test -- --run src/features/planner/components/meal-step.test.tsx src/features/planner/components/cuisine-step.test.tsx src/features/planner/components/ingredient-step.test.tsx src/features/planner/components/planner-wizard.test.tsx
 ```
+
+（テストファイル名が違う場合は実在パスに合わせる）
 
 - [ ] **Step 3: Implement**
 
-保存ハンドラ先頭:
+1. incomplete でも `disabled={disabled}` のみ  
+2. errorMessage state; Next incomplete → set + toast（`!suppressValidationToast`）+ focusFirstEnabled  
+3. complete → dismiss toast, clear error, onNext  
+4. `mainIngredientRequiredMessage = "メイン食材を1つ以上選んでください"`  
+5. ingredient empty alertdialog **削除**  
+6. `planner-wizard.tsx`: 各 step に `suppressValidationToast={autosaveState === "error"}`  
+7. **focus は設計 §6.3 行ごと**（汎用 querySelector 一行は禁止）:
+   - meal / cuisine: 当該 `radiogroup` 内の先頭 `input:not([disabled])`
+   - ingredients: **メイン食材の text `input` を優先**（無ければ先頭の未選択チップ button）
+8. **ライフサイクル（必須）:**
+   - value が complete になったら inline error を clear
+   - unmount / step 離脱で `toast.dismiss()` + inline clear
+9. wizard: `suppressValidationToast={autosaveState === "error"}`
 
-```ts
-const parsed = householdSettingsSchema.safeParse(values);
-if (!parsed.success) {
-  const fieldErrors = toHouseholdFieldErrors(parsed.error);
-  setFieldErrors(fieldErrors);
-  const firstMessage =
-    focusOrder.map((k) => fieldErrors[k]).find(Boolean) ?? "入力内容を確認してください";
-  toast.show({ message: firstMessage, tone: "error" });
-  focusFirstInvalid(fieldErrors);
-  return;
-}
-toast.dismiss();
-// existing save...
-```
-
-ネットワーク失敗: 既存 `role="alert"` status 行があるなら toast 省略（設計）。
-
-- [ ] **Step 4: Verify + commit**
-
-```bash
-git commit -m "feat: 家族設定の必須漏れにトーストを出す"
-```
+- [ ] **Step 4: Verify** + **Step 5: Commit** `feat: プランナー質問stepの未入力トーストを追加する`
 
 ---
 
-### Task 5: 選択メンバー安全の経路監査 + §12.3a 回帰
+### Task 3: audience 並び・選択サマリー・incomplete
 
-**Files:**
-- Create: `.superpowers/sdd/ux-diversity-safety-audit.md`（gitignored ならコミット不要。Task 報告に表を残す）
-- Modify/Create tests:
-  - `netlify/functions/_shared/generation-context.test.ts`
-  - `netlify/functions/_shared/generation-prompt.test.ts`
-  - fingerprint 既存テストがあれば拡張
-- Modify production **のみ監査 fail 時**
+**Files:** `audience-step.tsx` + tests; `planner-wizard.tsx`（suppress 伝播）; a11y tests
 
-**Interfaces:**
-- Consumes: 既存 `loadGenerationContext`, `buildGenerationMessages`, `validateGenerationPreflight`, `createCurrentSafetyFingerprint`
-- Produces: 監査記録 + 回帰テスト固定
+**文言（ロック）:**  
+常時ヒント / household0 toast = `献立に合わせる家族を1人以上選んでください`  
+mode 未選択 = `作る相手の選び方を選んでください`  
+servings null = `人数を選んでください`  
+一覧注記 = `一覧の表示は選ぶときの参考です。チェックしていない人の条件は献立に入りません。`  
+選択0本文 = `家族を選ぶと、その人の条件がここに表示されます。`  
+選択1+注記 = `ここに出ている条件だけが献立に使われます。選んでいない家族は含まれません。`
 
-監査チェックリスト（各 pass/fail）:
+- [ ] **Step 1: Tests**
 
-1. generation-context member/dislike/safety load  
-2. buildGenerationMessages / prompt members  
-3. preflight / validate members  
-4. reserve snapshot target_member_ids  
-5. fingerprint 入力メンバー  
-6. finalize p_target_members  
+```tsx
+it("orders idea radio before household", () => {
+  render(<AudienceStep ... household with members />);
+  const radios = screen.getAllByRole("radio");
+  expect(radios[0]).toHaveAccessibleName(/人数だけ/);
+  expect(radios[1]).toHaveAccessibleName(/家族に合わせて/);
+});
 
-- [ ] **Step 1: Write regression test**
+it("summary lists only selected members under checkboxes", () => { /* A selected B not in summary section */ });
 
-```ts
-it("§12.3a excludes unselected allergic member B from context prompt preflight and fingerprint", async () => {
-  // A: allergy none, B: has allergen
-  // submission.targetMemberIds = [A]
-  const ctx = await loadGenerationContext(...);
-  expect(ctx.safety.members.map((m) => m.householdMemberId)).toEqual([A]);
-  const messages = buildGenerationMessages({ kind: "new_menu", generationContext: ctx, recentDishHints: [], ... });
-  const payload = JSON.parse(extractUserJson(messages));
-  expect(payload.members).toHaveLength(1);
-  const preflight = validateGenerationPreflight(ctx, now);
-  expect(preflight.ok || !preflight.issueCodes?.includes("allergy_conflict")).toBeTruthy();
-  // fingerprint from A-only safety must not equal fingerprint that includes B
+it("household zero selection shows empty fixed body", () => {
+  // targetMode household, targetMemberIds []
+  expect(screen.getByText("家族を選ぶと、その人の条件がここに表示されます。")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /家族設定を変更/ })).toBeInTheDocument();
+});
+
+it("household zero next: toast+alert+focus members group", async () => {
+  const user = userEvent.setup();
+  const onNext = vi.fn();
+  render(
+    <AppToastProvider>
+      <AudienceStep
+        value={{ targetMode: "household", targetMemberIds: [], servings: null }}
+        eligibleMembers={[memberA]}
+        onChange={vi.fn()}
+        onNext={onNext}
+      />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "次へ" }));
+  expect(onNext).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("献立に合わせる家族を1人以上選んでください");
+  expect(screen.getByRole("status")).toHaveTextContent("献立に合わせる家族を1人以上選んでください");
+  // focus はメンバー checkbox 群（mode radio ではない）
+  expect(screen.getByRole("checkbox")).toHaveFocus();
+});
+
+it("mode null next focuses mode radiogroup", async () => {
+  const user = userEvent.setup();
+  render(
+    <AppToastProvider>
+      <AudienceStep
+        value={{ targetMode: null, targetMemberIds: [], servings: null }}
+        eligibleMembers={[memberA]}
+        onChange={vi.fn()}
+        onNext={vi.fn()}
+      />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "次へ" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("作る相手の選び方を選んでください");
+  expect(screen.getAllByRole("radio")[0]).toHaveFocus();
+});
+
+it("idea servings null next focuses person chips", async () => {
+  const user = userEvent.setup();
+  render(
+    <AppToastProvider>
+      <AudienceStep
+        value={{ targetMode: "idea", targetMemberIds: [], servings: null }}
+        eligibleMembers={[]}
+        onChange={vi.fn()}
+        onNext={vi.fn()}
+      />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "次へ" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("人数を選んでください");
+  expect(screen.getByRole("button", { name: "1人" })).toHaveFocus();
 });
 ```
 
-- [ ] **Step 2: Run RED if any code path wrongly includes B; else PASS documents current correct server**
+- [ ] **Step 2: RED** → **Step 3: Implement**
 
-```bash
-docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/generation-prompt.test.ts
+1. ラジオ順 idea → household  
+2. ラジオ上サマリー削除  
+3. household: ヒント → checks → selected filter のサマリー  
+4. selected.length===0: 独自 empty section（見出し+固定文+リンク+免責）または CurrentSafetySummary を empty でもマウントし **audience-step 側**で固定文を出す（共有コンポーネントに補助文を埋め込まない）  
+5. incomplete Next = Task 2 パターン + suppressValidationToast  
+6. `isComplete` を disabled に使わない  
+7. focus: mode 未選択 → mode radiogroup; household 0 → **members チェック群**; idea servings null → chips（7+ は select）  
+8. complete 時 inline clear; unmount で toast dismiss（Task 2 ライフサイクルと同じ）  
+
+- [ ] **Step 4–5: Verify + Commit** `feat: 作る相手stepの並びと選択安全表示を直す`
+
+---
+
+### Task 4: 家族 validation toast
+
+**Files:** `household-onboarding-page.tsx`, `household-settings-page.tsx`, tests
+
+- [ ] **Step 1: Test**
+
+```tsx
+it("shows toast field error and focuses first invalid on incomplete save", async () => {
+  // empty required fields → click 保存/完了
+  expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
+  // form-level: 先頭 role=alert は1つ（または先頭 field error のみ alert）
+  expect(document.activeElement).toBeTruthy(); // first invalid
+});
 ```
 
-- [ ] **Step 3: Audit code paths（read-only then fix only if fail）**
+- [ ] **Step 2: RED** → **Step 3:** safeParse → fieldErrors + toast(先頭 message) + focus; 成功時 dismiss; フィールドが valid になったら form alert clear; ルート離脱で toast dismiss; ネット失敗は既存 alert のみ  
+- [ ] **Step 4–5: Verify + Commit** `feat: 家族設定の必須漏れにトーストを出す`
 
-Read and record:
+---
 
-- `generation-context.ts` `.in("id", submission.targetMemberIds)`
-- reserve RPC args from draft
-- `createCurrentSafetyFingerprint(context.safety)`
-- finalize target members
+### Task 5: 選択メンバー安全監査 + §12.3a
 
-If any path uses eligible-all, minimal fix + test.
+**Files:** generation-context/prompt/fingerprint tests; audit note in Task report
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 1: Strong regression**
 
-```bash
-git commit -m "test: 選択メンバーのみの安全経路を回帰固定する"
+```ts
+it("§12.3a A-only excludes allergic B from context prompt preflight fingerprint", async () => {
+  // A none, B allergen
+  const ctx = await loadGenerationContext(..., targetMemberIds: [A]);
+  expect(ctx.safety.members.map((m) => m.householdMemberId)).toEqual([A]);
+  expect(ctx.submission.targetMemberIds).toEqual([A]);
+  const payload = userPayload(buildGenerationMessages(newMenuExec(ctx, [])));
+  expect(payload.members).toHaveLength(1);
+  expect(JSON.stringify(payload)).not.toContain(B);
+  const preflight = validateGenerationPreflight(ctx, now);
+  expect(preflight.ok).toBe(true);
+  const fpA = createCurrentSafetyFingerprint(ctx.safety);
+  const fpAB = createCurrentSafetyFingerprint(safetyWithBoth);
+  expect(fpA).not.toBe(fpAB);
+});
 ```
 
-（コード修正があれば `fix:`）
+Audit checklist 1–6: record pass/fail with file:line. Fail → minimal code fix.
+
+- [ ] **Step 2–5: RED/GREEN/Verify/Commit** `test: 選択メンバーのみの安全経路を回帰固定する`
 
 ---
 
 ### Task 6: household 補助文 + pending メタ
 
-**Files:**
-- Create: `src/features/planner/household-safety-helper-copy.ts`
-- Create: `src/features/generation/model/pending-generation-meta.ts`
-- Create: `src/features/generation/model/pending-generation-meta.test.ts`
-- Modify: `src/features/generation/model/pending-generation.ts`（clear 連携）
-- Modify: `src/features/planner/planner-route.tsx`（new_menu save 時 upsert meta）
-- Modify: `src/features/history/hooks/use-regeneration.ts`（regenerate 時 clear meta）
-- Modify: `src/features/planner/components/review-step.tsx`（sibling 補助文）
-- Modify: `src/features/generation/components/generation-status-panel.tsx`
-- Modify: 各テスト
+**Files:**  
+`household-safety-helper-copy.ts`, `pending-generation-meta.ts` + test,  
+`pending-generation.ts`（**clear で meta clear**; regenerate 系 save で meta clear）,  
+`planner-route.tsx`（new_menu のみ **upsert meta with draft.targetMode**）,  
+`review-step.tsx`, `generation-status-panel.tsx` + tests
 
-**Interfaces:**
-- Consumes: `HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY`, pending meta API
-- Produces: 確認 + conflict UI 補助文
-
-- [ ] **Step 1: Failing tests**
-
-```ts
-// pending-generation-meta.test.ts
-it("round-trips meta and clears", () => {
-  const storage = memoryStorage();
-  savePendingGenerationMeta(
-    { kind: "new_menu", targetMode: "household", idempotencyKey: key },
-    storage,
-  );
-  expect(readPendingGenerationMeta(storage)?.targetMode).toBe("household");
-  clearPendingGenerationMeta(storage);
-  expect(readPendingGenerationMeta(storage)).toBeNull();
-});
-```
-
-```tsx
-// review-step: household shows helper under summary, not inside shared summary for idea
-// generation-status-panel:
-// - new_menu + household meta + constraint_conflict → helper once
-// - regenerate_* → no helper
-// - idea → no helper
-// - missing meta → no helper
-```
-
-- [ ] **Step 2: RED**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/generation/ src/features/planner/components/review-step
-```
-
-- [ ] **Step 3: Implement**
-
-1. `household-safety-helper-copy.ts`:
-
-```ts
-export const HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY =
-  "献立には今回選んだ家族の条件だけが使われます。" as const;
-```
-
-2. pending meta: localStorage key `kondate:generation:v3:meta`、Zod strict parse、TTL は **read 時に pending が null なら meta も捨てる**（または pending と同じ createdAt 比較）。実装最短: `clearPendingGeneration` / `savePendingGeneration` ラッパから meta clear/upsert を呼ぶ。
-
-3. `planner-route` new_menu:
+**Meta write rule:**  
+- Upsert **only** in planner-route after createPending/savePending for new_menu:  
 
 ```ts
 savePendingGeneration(pending);
+// submit 直前は plannerSubmissionSchema 通過後、または明示 narrow:
+const mode = draft.targetMode;
+if (mode !== "household" && mode !== "idea") {
+  // 生成開始不可の既存経路へ（meta を書かない）
+  throw new Error("target_mode_required");
+}
 savePendingGenerationMeta({
   kind: "new_menu",
-  targetMode: saved.targetMode, // "household" | "idea"
+  targetMode: mode,
   idempotencyKey: pending.request.idempotencyKey,
+  ownerUserId: userId,
+  createdAt: pending.createdAt,
 });
 ```
 
-4. regenerate / clearPending: `clearPendingGenerationMeta()`。
+- `clearPendingGeneration` **must** call `clearPendingGenerationMeta`  
+- `savePendingGeneration` when kind !== new_menu → clear meta  
+- **Do not** upsert meta inside savePending without targetMode arg  
 
-5. `review-step`: `value.targetMode === "household"` のとき `CurrentSafetySummary` の **直後**に `<p>{HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY}</p>`（共有コンポーネントに埋め込まない）。
-
-6. `GenerationStatusPanel` constraint_conflict 分岐:
+- [ ] **Step 1: Tests**
 
 ```ts
-const pending = readPendingGeneration(...);
-const meta = readPendingGenerationMeta();
-const showHelper =
-  pending?.kind === "new_menu" &&
-  meta?.kind === "new_menu" &&
-  meta.targetMode === "household" &&
-  meta.idempotencyKey === pending.request.idempotencyKey;
-// render helper once above/below conflicts list
+it("clearPendingGeneration clears meta", () => { /* ... */ });
+it("readPendingGenerationMeta returns null when pending missing or key mismatch", () => { /* ... */ });
+// Status panel:
+it("same-session new_menu household conflict shows helper once", () => { /* ... */ });
+it("reload: rehydrate pending+meta shows helper once", () => {
+  // write storage, remount panel, constraint_conflict
+});
+it("after regenerate pending helper is absent", () => { /* ... */ });
+// review:
+it("household review shows helper even when zero selected members", () => {
+  // targetMode household, targetMemberIds []
+  expect(screen.getByText(HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY)).toBeInTheDocument();
+});
+it("idea review does not show helper", () => { /* ... */ });
 ```
 
-- [ ] **Step 4: Verify + commit**
+- [ ] **Step 3: review-step**
 
-```bash
-git commit -m "feat: 選択家族のみの安全補助文とpendingメタを追加する"
+```tsx
+{value.targetMode === "household" && (
+  <>
+    {targetSafetyMembers.length > 0 ? (
+      <CurrentSafetySummary members={targetSafetyMembers} />
+    ) : null}
+    <p>{HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY}</p>
+  </>
+)}
 ```
+
+Panel algorithm: design 擬似コードどおり `readPendingGeneration` + `readPendingGenerationMeta(userId, now)`.
+
+- [ ] **Step 4–5: Verify + Commit** `feat: 選択家族のみの安全補助文とpendingメタを追加する`
 
 ---
 
-### Task 7: recentDishHints（ソフト多様性）
+### Task 7: recentDishHints soft diversity
 
-**Files:**
-- Create: `netlify/functions/_shared/diversity-hints.ts`
-- Create: `netlify/functions/_shared/diversity-hints.test.ts`
-- Modify: `netlify/functions/_shared/generation-service.ts`（ExecutionBase or new_menu に `recentDishHints`）
-- Modify: `netlify/functions/_shared/generation-prompt.ts` + `.test.ts`
-- Modify: `createBaseGenerationDeps` の `loadExecutionContext` で hints load
+**Files:**  
+`diversity-hints.ts` + test,  
+`generation-service.ts`（loadExecutionContext new_menu）,  
+`generation-prompt.ts` + test,  
+`generation-quality-review-entry.ts`（`recentDishHints: []`）,  
+`generation-service.test.ts` / `paid-openrouter-benchmark-harness.ts` 等の new_menu execution 組み立て,  
+helpers in `generation-prompt.test.ts` / adversarial
 
-**Interfaces:**
-- Consumes: owner Supabase client, userId
-- Produces: prompt payload `recentDishHints: [] | hints` on **new_menu only**
+**Rules:**  
+- `buildBaseGenerationMessages` **変更しない**（hints 引数なし）  
+- `buildGenerationMessages` のみ diversity 合成 + user JSON に `recentDishHints`  
+- never throw on hints  
+- call site: `DIVERSITY_HINTS_ENABLED ? loadRecentDishHints(...) : []`  
+- parallel: `Promise.all([loadGenerationContext, hintsPromise])` OK  
+- select: `dishes(id, name, role, position)`; sort position then id  
+- DIVERSITY_PARAGRAPH starts with `DIVERSITY_SYSTEM_MARKER`
 
-- [ ] **Step 1: Failing tests**
+- [ ] **Step 1: Tests**
 
 ```ts
-// diversity-hints.test.ts
-it("returns [] on timeout without throwing", async () => {
-  const slow = { from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: () => neverResolve() }) }) }) }) };
-  await expect(loadRecentDishHints({ ownerClient: slow, userId, timeoutMs: 10 })).resolves.toEqual([]);
-});
-
-it("flattens max 24 valid dish names newest menus first", async () => { /* mock rows */ });
-
-// generation-prompt.test.ts
-it("includes recentDishHints on new_menu and diversity paragraph before season when enabled", () => {
-  const messages = buildGenerationMessages(newMenuCtxWithHints);
-  expect(userPayload(messages).recentDishHints).toEqual([{ dishName: "肉じゃが", role: "main" }]);
+it("timeout returns [] without throw", async () => { /* ... */ });
+it("flattens max 24; same position sorts by id", async () => { /* ... */ });
+it("L13 off: loadRecentDishHints not called; payload []; no DIVERSITY_SYSTEM_MARKER", async () => { /* mock flag or inject enabled */ });
+it("new_menu includes recentDishHints and marker before season", () => {
   const system = systemText(messages);
-  const diversityIdx = system.indexOf("recentDishHints");
-  const seasonIdx = system.indexOf("seasonContext");
-  // diversity system paragraph marker string before season block
-  expect(diversityIdx).toBeLessThan(seasonIdx);
+  expect(system.indexOf(DIVERSITY_SYSTEM_MARKER)).toBeLessThan(system.indexOf("seasonContext") >= 0 ? system.indexOf("旬") : system.length);
+  expect(userPayload(messages).recentDishHints).toEqual([...]);
 });
-
-it("omits diversity and recentDishHints key on regenerate_menu", () => {
-  const messages = buildGenerationMessages(regenCtx);
-  expect(JSON.stringify(messages)).not.toContain("recentDishHints");
+it("regenerate has no recentDishHints key and no marker", () => { /* ... */ });
+it("§12.5 validateGeneratedMenu still ok with similar dish names when hints present", () => {
+  // existing validate success fixture + non-empty hints on execution only — validate ignores hints
 });
+it("fingerprint unchanged by recentDishHints on execution", () => { /* safety-only fingerprint */ });
 ```
 
-- [ ] **Step 2: RED**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/diversity-hints.test.ts netlify/functions/_shared/generation-prompt.test.ts
-```
-
-- [ ] **Step 3: Implement**
-
-`diversity-hints.ts`:
-
-- `DIVERSITY_HINTS_ENABLED = true`
-- `loadRecentDishHints`: if `enabled === false` return `[]` without querying
-- `Promise.race` timeout → `[]`
-- Query: `.from("menus").select("id, created_at, dishes(name, role, position)").eq("user_id", userId).order("created_at", { ascending: false }).limit(10)`
-- Flatten: position asc, drop empty names, cap 24, role optional key only if non-empty
-- never throw
-
-`generation-service.ts` new_menu loadExecutionContext:
+- [ ] **Step 3: loadExecutionContext**
 
 ```ts
-const generationContext = await loadGenerationContext(...);
-const recentDishHints = await loadRecentDishHints({
-  ownerClient: createUserScopedSupabase(user.accessToken),
-  userId: user.userId,
-});
-return { kind: "new_menu", ..., generationContext, recentDishHints, regeneration: null };
+const ownerClient = createUserScopedSupabase(user.accessToken);
+const hintsPromise = DIVERSITY_HINTS_ENABLED
+  ? loadRecentDishHints({ ownerClient, userId: user.userId })
+  : Promise.resolve([]);
+const [generationContext, recentDishHints] = await Promise.all([
+  loadGenerationContext(user, requestId, command.request),
+  hintsPromise,
+]);
+return { kind: "new_menu", generationContext, recentDishHints, regeneration: null, ... };
 ```
 
-Regenerate contexts: **do not** set recentDishHints (type only on new_menu branch).
-
-`generation-prompt.ts`:
-
-- Split `GENERATION_SYSTEM_PROMPT_CORE` into body + season OR compose at build time:
-  `CORE_BODY + (new_menu && enabled ? DIVERSITY_PARAGRAPH : "") + SEASON + ideaExtra`
-- DIVERSITY_PARAGRAPH 文意: 可能なら避ける / 多様性だけで constraint_conflict にしない / 安全より下位
-- `buildBaseGenerationMessages`: accept optional `recentDishHints` only when building for new_menu from `buildGenerationMessages`
-- new_menu user payload always includes `recentDishHints` array
-- regenerate: no key
-
-- [ ] **Step 4: Verify fingerprint 非混入**
-
-Assert `createCurrentSafetyFingerprint` inputs unchanged (no hints field). Existing fingerprint tests still pass.
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run netlify/functions/_shared/diversity-hints.test.ts netlify/functions/_shared/generation-prompt.test.ts netlify/functions/_shared/generation-service.test.ts
-docker compose run --rm --no-deps app npm run typecheck
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git commit -m "feat: 新規生成に最近料理のソフト多様性ヒントを載せる"
-```
+- [ ] **Step 4–5: Verify + Commit** `feat: 新規生成に最近料理のソフト多様性ヒントを載せる`
 
 ---
 
-### Task 8: E2E / a11y 追随 + 受け入れゲート
+### Task 8: E2E / a11y 追随
 
-**Files:**
-- Modify: `e2e/specs/*` が audience 順・empty dialog・disabled Next に依存する箇所
-- Modify: `src/app/accessibility.test.tsx` 必要箇所
-- Run focused e2e if stack available
+**Files:** e2e specs depending on audience order / alertdialog / disabled Next; `accessibility.test.tsx`
 
-- [ ] **Step 1: Grep and update selectors**
-
-```bash
-# host
-rg -n "家族に合わせて|alertdialog|メイン食材を選んでください|disabled.*次へ|targetMode" e2e src/app/accessibility.test.tsx
-```
-
-Update:
-
-- radio order / household select helpers
-- ingredient empty: alert/status text instead of alertdialog
-- incomplete next: expect visible message
-
-- [ ] **Step 2: Focused Vitest a11y + planner**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/app/accessibility.test.tsx src/features/planner/
-```
-
-- [ ] **Step 3: E2E（スタック up 時）**
-
-```bash
-./scripts/run-e2e.sh e2e/specs/<planner-or-audience-related>.ts
-```
-
-人間オペレータ実行でも可。失敗を修正。
-
-- [ ] **Step 4: Plan 完了ゲート（focused → 可能なら §8）**
-
-```bash
-docker compose run --rm --no-deps app npm run format:check
-docker compose run --rm --no-deps app npm run lint
-docker compose run --rm --no-deps app npm run typecheck
-docker compose run --rm --no-deps app npx vitest run
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git commit -m "test: 献立UX改善のE2Eとa11yを追随する"
-```
+- [ ] **Step 1:** `rg` for old selectors; update to toast/alert/idea-first  
+- [ ] **Step 2:** Vitest a11y + planner  
+- [ ] **Step 3:** focused e2e if stack up  
+- [ ] **Step 4:** format/lint/typecheck/vitest  
+- [ ] **Step 5:** Commit `test: 献立UX改善のE2Eとa11yを追随する`
 
 ---
 
-## Spec coverage (self-review)
+## Spec coverage
 
-| 設計要件 | Task |
-|----------|------|
-| AppToast L7 / §6.3 | 1–2, 4 |
-| meal/cuisine/ingredients incomplete | 2 |
-| audience L9 + 選択サマリー + ヒント | 3 |
-| 家族 validation toast §12.6 | 4 |
-| 選択のみ安全 監査 + §12.3a | 5 |
-| 補助文 + pending メタ §12.3b | 6 |
-| 多様性 soft L1–L5 L12–L14 | 7 |
-| E2E / a11y | 8 |
-| 確認 CTA toast 追加しない | 対象外（触らない） |
-| 再生成 hard 除外維持 | Task 7 で非変更をテスト |
+| 設計 | Task |
+|------|------|
+| AppToast + hover pause + z-index | 1 |
+| meal/cuisine/ingredients incomplete + autosave suppress | 2 |
+| audience L9 + empty summary + incomplete | 3 |
+| 家族 toast §12.6 | 4 |
+| §12.3a + audit 1–6 | 5 |
+| §12.3b helper + meta reload/regen | 6 |
+| L1–L5 L12–L14 diversity + L13 off + §12.5 | 7 |
+| E2E/a11y | 8 |
+| 確認 CTA validation toast 追加しない | 非対象（触らない） |
 
-## Placeholder scan
+## Review fix log（本版で閉じた指摘）
 
-TBD / 「同様に」のみの手順なし。Locked interfaces と文言は固定。
-
-## Type consistency
-
-- `RecentDishHint` / `recentDishHints` は new_menu のみ。
-- Helper copy 単一ソース `HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY`。
-- pending meta `idempotencyKey` は `pending.request.idempotencyKey` と一致比較。
-
----
+- pointer-events auto + hover test  
+- ingredients 文言単一ロック  
+- clearPendingGeneration が meta clear の choke point  
+- meta に ownerUserId/createdAt + read(userId,now)  
+- meta upsert は planner-route のみ（draft.targetMode）  
+- review helper は household 常時（0 選択でも）  
+- audience empty 固定文の実装先  
+- buildBase 非改変 / buildGenerationMessages のみ  
+- dish id ソート・L13 call-site・§12.5 テスト  
+- autosave suppress 必須 + tests  
+- プレースホルダ「同様に」除去・verify サイクル統一  
+- DIVERSITY_SYSTEM_MARKER  
+- generation-quality-review-entry 更新  
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-07-30-ux-diversity-safety.md`.
+Plan complete at `docs/superpowers/plans/2026-07-30-ux-diversity-safety.md`.
 
-**Two execution options:**
-
-1. **Subagent-Driven (recommended)** — fresh subagent per task, review between tasks  
-2. **Inline Execution** — executing-plans in this session with checkpoints  
+**1. Subagent-Driven (recommended)** · **2. Inline Execution**
 
 Which approach?

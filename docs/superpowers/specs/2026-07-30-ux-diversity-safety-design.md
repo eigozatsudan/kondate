@@ -4,7 +4,7 @@
 |------|-----|
 | 文書 | `docs/superpowers/specs/2026-07-30-ux-diversity-safety-design.md` |
 | 日付 | 2026-07-30 |
-| 状態 | **Approved for implementation**（設計 0/0/0。実装計画 `docs/superpowers/plans/2026-07-30-ux-diversity-safety.md`） |
+| 状態 | **Approved for implementation**（設計・計画の1次/2次/敵対的レビュー反映済） |
 | 関連 | MVP `2026-07-11-kondate-mvp-design.md`、ウィザード `2026-07-22-guided-planner-optional-household-design.md`（§5.2 対象ステップの並び・表示を本設計 §5 が supersede）、再生成 Plan 4（`excludedDishSignatures` / `duplicate_output`） |
 | ブランチ | `feat/ux-diversity-safety` |
 | 後方互換 | **不要**（本番未デプロイ前提。clean 変更可） |
@@ -182,10 +182,11 @@ loadExecutionContext(new_menu)
 - 共有 `GENERATION_SYSTEM_PROMPT_CORE` 文字列を恒久改変して再生成にも載せる実装は **禁止**
 - **system 合成レシピ（実装ロック）:** 既存 CORE 末尾の季節ブロックを **論理的に分離**してよい（構造リファクタ。再生成にも載る diversity の恒久埋め込みは禁止のまま）:
   `CORE_BODY + (kind==="new_menu" && DIVERSITY_HINTS_ENABLED ? DIVERSITY_PARAGRAPH : "") + SEASON_BLOCK + (idea ? IDEA_EXTRA : "")`
-- 合成は **`buildGenerationMessages` 側**で `kind` を見て行う。`buildBaseGenerationMessages` に diversity を直書きしない
-- Vitest: new_menu+flag on では diversity が season **より前**；regen では diversity 段落も `recentDishHints` キーも無し
-- L13 off では **`loadRecentDishHints` を呼ばない**。new_menu の user payload は `recentDishHints: []`。system 多様性段落なし
-- L13 on かつ new_menu では load（fail-open）し、配列は空または最大 24。system 多様性段落あり
+- 合成は **`buildGenerationMessages` 側**で `kind` を見て行う。`buildBaseGenerationMessages` に diversity を直書きしない（`recentDishHints` 引数も足さない）
+- 多様性段落の安定マーカー（テスト用）: 定数 `DIVERSITY_SYSTEM_MARKER = "【多様性ヒント】"` を段落先頭に含める
+- Vitest: new_menu+flag on では `DIVERSITY_SYSTEM_MARKER` が season **より前**；regen ではマーカーも `recentDishHints` キーも無し
+- L13 off: call site で **`loadRecentDishHints` を呼ばない**。new_menu user payload は `recentDishHints: []`。system 多様性段落なし（関数内部 early-return だけに頼らない）
+- L13 on かつ new_menu: load（fail-open）し、配列は空または最大 24。system 多様性段落あり
 - `recentDishHints` キーは **new_menu の user payload にのみ**付ける（常に配列）。再生成 user メッセージにキーを足さない
 - フラグ識別子: `DIVERSITY_HINTS_ENABLED`（default `true`）。置き場: `netlify/functions/_shared` 定数
 
@@ -205,6 +206,7 @@ loadExecutionContext(new_menu)
 - モデルが指示に反して diversity 由来の `constraint_conflict` を返した場合は **既存 conflict 処理のまま**（新コードで success に曲げない）。これは残留リスクとし、L13 で system 文を弱められるようにする
 - 多様性パスは **新しいユーザー向け失敗クラスを追加しない**
 - `recentDishHints` は fingerprint / reserve・HMAC / quota に **載せない**（L14）
+- hints の parse/合成失敗は **`[]` に落として続行**。`buildGenerationMessages` は hints を理由に throw しない
 
 ---
 
@@ -290,7 +292,7 @@ loadExecutionContext(new_menu)
 
 **配置（実装ロック）:**
 
-1. 確認: **`review-step` 内**で `CurrentSafetySummary` の **直下**（sibling）。**共有 `CurrentSafetySummary` 本体に埋め込まない**（audience に漏れない）
+1. 確認: **`review-step` 内**。`targetMode === "household"` なら **常に**補助文を出す（`targetSafetyMembers.length === 0` でも）。サマリーがあるときはその **sibling 直下**。サマリーが無いときも安全ブロック領域に単独で出す。**共有 `CurrentSafetySummary` 本体に埋め込まない**
 2. 生成結果: `GenerationStatusPanel` の `constraint_conflict` 分岐のみ
 
 **生成結果の kind / targetMode 正本（実装ロック）:**
@@ -300,7 +302,7 @@ loadExecutionContext(new_menu)
 | 材料 | 規則 |
 |------|------|
 | `pending.kind` | terminal / in-flight で pending がある間は **kind の唯一の正本** |
-| `pending` メタの `targetMode` + `idempotencyKey` | `new_menu` の `createPendingGeneration` / `savePendingGeneration` と **同一ストレージ・同一 TTL・同一 clear 経路**で永続する（localStorage pending と一緒）。キー名は実装でよいが **legacy sessionStorage `generation-target-mode` は使わない** |
+| `pending` メタ | `{ kind: "new_menu", targetMode, idempotencyKey, ownerUserId, createdAt }` を **pending と同じ localStorage 寿命**で保持。`readPendingGenerationMeta(userId, now)` は `readPendingGeneration` と突合し、pending 欠落・owner 不一致・TTL 切れ・idempotencyKey 不一致なら null。**legacy sessionStorage `generation-target-mode` は使わない** |
 | status HTTP | `kind`/`targetMode` 追加は必須にしない |
 | live draft | in-flight の正本に **しない**（submit 後に書き換えられ得る） |
 
@@ -308,20 +310,21 @@ loadExecutionContext(new_menu)
 
 | イベント | pending メタ（targetMode 等） |
 |----------|-------------------------------|
-| `new_menu` の `savePendingGeneration` / create | **Upsert** `{ kind: "new_menu", targetMode, idempotencyKey }`（clear-only 禁止） |
-| `regenerate_*` の `savePendingGeneration` | **Clear** targetMode メタ、または kind を regenerate に上書きして helper 非対象にする |
-| `clearGeneration` | Clear |
-| RecoveryLinks 等で pending clear | **メタも同時 clear** |
-| 結果離脱 | Clear |
+| `new_menu` submit（planner-route が targetMode を知っている） | **Upsert** meta（`ownerUserId`/`createdAt`/idempotencyKey 含む）。`savePendingGeneration` 本体は meta を **upsert しない** |
+| `regenerate_*` の `savePendingGeneration` | **`clearPendingGenerationMeta` 必須**（helper 非対象） |
+| `clearPendingGeneration`（全 call site） | **実装内部で meta も必ず clear**（RecoveryLinks / clearGeneration / 結果離脱を含む） |
+| 結果離脱 | Clear（上に含まれる） |
 
 **表示アルゴリズム（GenerationStatusPanel）:**
 
 ```
 if status !== constraint_conflict: no helper
-kind = pending?.kind ?? null   // pending 無し terminal では helper なしでよい（fail-closed）
-meta = loadPendingMeta()       // pending と同一ストア
-if meta?.idempotencyKey !== pending?.request.idempotencyKey: no helper
-if kind === "new_menu" && meta?.targetMode === "household": show helper once
+pending = readPendingGeneration(userId, now)
+if pending == null: no helper
+kind = pending.kind
+meta = readPendingGenerationMeta(userId, now)  // pending と突合済み or null
+if meta == null || meta.idempotencyKey !== pending.request.idempotencyKey: no helper
+if kind === "new_menu" && meta.targetMode === "household": show helper once
 else: no helper
 ```
 
@@ -376,7 +379,7 @@ incomplete 時は `onNext` / 保存成功コールバックを **呼ばない**�
   - autosave z-index = **15**、validation `.app-toast` z-index = **20**（ロック）  
   - autosave **error（retry あり）表示中は validation toast を出さず、inline alert のみ**（retry を隠さない）  
   - autosave saving/saved の上には validation を重ねてよい  
-  - validation toast にアクションは置かない（pointer-events 不要）  
+  - validation toast に**アクションボタンは置かない**。ただし toast ルートは **`pointer-events: auto`** とし、hover / `:focus-within` で 6s タイマを停止する（WCAG 2.2.1）  
   - 本設計の validation toast が出る surface に modal/alertdialog を同時表示しない（ingredient empty dialog 廃止後）
 
 #### エラーライフサイクル（必須）
