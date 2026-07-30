@@ -5,6 +5,14 @@ import type { MagicLinkState } from "./magic-link-state";
 import { sanitizeReturnPath } from "./auth-flow";
 import { useAuth } from "./use-auth";
 
+/** 低リテラシー向け：登録とログインが同じ操作であることを明示（MVP 設計の単一画面方針） */
+export const LOGIN_PAGE_LEAD =
+  "はじめての方も、すでに使っている方も、この画面から進めます。" as const;
+export const LOGIN_PAGE_NOTE =
+  "新規登録の別画面はありません。下のボタンかメールで進むと、はじめての方はアカウントができます。パスワードの設定は不要です。" as const;
+export const LOGIN_EMAIL_HINT =
+  "届いたメールのリンクを開くと入れます。はじめてのメールアドレスでも大丈夫です。" as const;
+
 type LoginLocationState = {
   authError?:
     "oauth_cancelled" | "auth_callback_failed" | "magic_link_expired" | "unbound_callback";
@@ -225,9 +233,11 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const email = state.status === "verifying" || state.status === "complete" ? "" : state.email;
   return (
     <main className="page-frame stack">
-      <div>
+      <div className="stack gap-2">
         <p className="eyebrow">毎日の献立を、家族に合わせて</p>
         <h1>こんだて日和</h1>
+        <p>{LOGIN_PAGE_LEAD}</p>
+        <p className="type-small">{LOGIN_PAGE_NOTE}</p>
       </div>
       {authErrorCopy !== null && (
         <section className="card stack" role="alert">
@@ -241,19 +251,21 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
         </section>
       )}
       <button
-        className="primary-button"
+        className="primary-button min-h-11"
         type="button"
         disabled={googlePending}
         onClick={() => void startGoogle()}
       >
         {googlePending ? "Googleへ移動中…" : "Googleで続ける"}
       </button>
+      <p className="type-small">Google アカウントではじめての方も、そのまま使えます。</p>
       {googleError && (
         <p className="error-message" role="alert">
           Googleログインを開始できませんでした。もう一度お試しください。
         </p>
       )}
       <form className="card stack" onSubmit={(event) => void send(event)}>
+        <p className="type-small">メールで進む場合</p>
         <label className="field">
           <span>メールアドレス</span>
           <input
@@ -266,7 +278,12 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
             }}
           />
         </label>
-        <button className="secondary-button" disabled={state.status === "sending"} type="submit">
+        <p className="type-small">{LOGIN_EMAIL_HINT}</p>
+        <button
+          className="secondary-button min-h-11"
+          disabled={state.status === "sending"}
+          type="submit"
+        >
           {state.status === "sending" ? "送信中…" : "ログイン用メールを送る"}
         </button>
         {state.status === "send_failed" && (

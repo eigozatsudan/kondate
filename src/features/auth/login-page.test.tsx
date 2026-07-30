@@ -3,11 +3,38 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import type { AuthGateway } from "./auth-gateway";
-import { LoginPage } from "./login-page";
+import {
+  LOGIN_EMAIL_HINT,
+  LOGIN_PAGE_LEAD,
+  LOGIN_PAGE_NOTE,
+  LoginPage,
+} from "./login-page";
 
 vi.mock("./use-auth", () => ({
   useAuth: () => ({ status: "unauthenticated", session: null }),
 }));
+
+it("explains that first-time users can register on the same screen", () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText(LOGIN_PAGE_LEAD)).toBeVisible();
+  expect(screen.getByText(LOGIN_PAGE_NOTE)).toBeVisible();
+  expect(screen.getByText(LOGIN_EMAIL_HINT)).toBeVisible();
+  expect(screen.getByText("Google アカウントではじめての方も、そのまま使えます。")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+});
 
 it("places Google first and renders the complete sent state", async () => {
   const user = userEvent.setup();
