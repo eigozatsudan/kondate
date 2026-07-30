@@ -181,6 +181,12 @@ function mapRpcError(error: { message: string }): never {
       "menu_version_already_in_list",
       "この献立はすでに今の買い物リストへ追加されています",
     ],
+    // SP-3: 出典削除済みリストへの append 拒否。mode=new で作り直す。
+    list_unverifiable: [
+      409,
+      "list_unverifiable",
+      "削除された献立が残っているため、新しい買い物リストを作り直してください",
+    ],
     menu_not_found: [404, "menu_not_found", "献立が見つかりません"],
     idea_menu_not_supported: [
       422,

@@ -1062,34 +1062,52 @@ begin
     raise exception 'owner matrix: edit must succeed and advance version to %', v_version;
   end if;
 
-  -- mark_at_home は derived を soft-remove（is_removed_by_user）する。checked は解除しない。
+  -- SP-1: 編集済み derived を mark_at_home → undo しても is_manually_edited は単調に残る
   v_response := public.mutate_shopping_item(
-    v_list_id, v_version, v_list_fingerprint, 'mark_at_home', v_derived_id,
+    v_list_id, v_version, v_list_fingerprint, 'edit', v_derived_id,
     'c8000000-0000-4000-8000-000000000024'::uuid,
-    '{}'::jsonb
+    jsonb_build_object(
+      'displayName','にんじん特選','normalizedName','にんじん特選','storeSection','produce',
+      'quantityText','5本','unit','本'
+    )
   );
   v_version := v_version + 1;
   if (v_response->>'version')::integer <> v_version
     or not exists(select 1 from public.shopping_items
-      where id = v_derived_id and is_removed_by_user) then
-    raise exception 'owner matrix: mark_at_home must soft-remove and advance version to %', v_version;
+      where id = v_derived_id and is_manually_edited and display_name = 'にんじん特選') then
+    raise exception 'owner matrix: edit derived must set is_manually_edited at version %', v_version;
   end if;
 
+  -- mark_at_home は derived を soft-remove（is_removed_by_user）する。checked は解除しない。
   v_response := public.mutate_shopping_item(
-    v_list_id, v_version, v_list_fingerprint, 'undo', v_derived_id,
+    v_list_id, v_version, v_list_fingerprint, 'mark_at_home', v_derived_id,
     'c8000000-0000-4000-8000-000000000025'::uuid,
     '{}'::jsonb
   );
   v_version := v_version + 1;
   if (v_response->>'version')::integer <> v_version
     or not exists(select 1 from public.shopping_items
-      where id = v_derived_id and not is_removed_by_user) then
-    raise exception 'owner matrix: undo must restore and advance version to %', v_version;
+      where id = v_derived_id and is_removed_by_user and is_manually_edited) then
+    raise exception 'owner matrix: mark_at_home must soft-remove keeping edit flag at version %', v_version;
+  end if;
+
+  v_response := public.mutate_shopping_item(
+    v_list_id, v_version, v_list_fingerprint, 'undo', v_derived_id,
+    'c8000000-0000-4000-8000-000000000026'::uuid,
+    '{}'::jsonb
+  );
+  v_version := v_version + 1;
+  if (v_response->>'version')::integer <> v_version
+    or not exists(select 1 from public.shopping_items
+      where id = v_derived_id and not is_removed_by_user and is_manually_edited
+        and display_name = 'にんじん特選') then
+    raise exception 'owner matrix: undo must restore removal and keep is_manually_edited at version %',
+      v_version;
   end if;
 
   v_response := public.mutate_shopping_item(
     v_list_id, v_version, v_list_fingerprint, 'remove', v_manual_id,
-    'c8000000-0000-4000-8000-000000000026'::uuid,
+    'c8000000-0000-4000-8000-000000000027'::uuid,
     '{}'::jsonb
   );
   v_version := v_version + 1;
