@@ -1,16 +1,25 @@
 import { useState } from "react";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { createCheckoutSession, createPortalSession } from "./billing-api";
+import {
+  PAST_DUE_COPY,
+  PORTAL_BUTTON_LABEL,
+  STRIPE_REDIRECT_NOTICE,
+  SURFACES_CLOSED_COPY,
+  TRIAL_END_WARNING,
+} from "./billing-ui-copy";
+import { CheckoutIntervalForm } from "./checkout-interval-form";
 import { useEntitlement } from "./use-entitlement";
 
-/** 設定 UI 固定コピー（テスト exact）。 */
-export const TRIAL_END_WARNING =
-  "無料期間が終わると、登録したお支払い方法に料金がかかります" as const;
-export const YEARLY_CONFIRM_COPY =
-  "1 年分まとめてのお支払いです。途中解約しても残り期間の返金はありません（法令に従う場合を除く）" as const;
-export const PORTAL_BUTTON_LABEL = "お支払い・解約の管理" as const;
-export const STRIPE_REDIRECT_NOTICE = "カード入力画面に移ります" as const;
-export const PAST_DUE_COPY = "お支払いの更新が必要です" as const;
+// 既存テストの import パスを壊さない re-export（正本は billing-ui-copy）
+export {
+  TRIAL_END_WARNING,
+  YEARLY_CONFIRM_COPY,
+  PORTAL_BUTTON_LABEL,
+  STRIPE_REDIRECT_NOTICE,
+  PAST_DUE_COPY,
+  SURFACES_CLOSED_COPY,
+} from "./billing-ui-copy";
 
 function formatTrialEnd(iso: string | null): string | null {
   if (iso === null) return null;
@@ -51,6 +60,7 @@ export type PlanSettingsSectionProps = {
 /**
  * 設定のプラン管理（L10-5）。
  * ブラウザは /api/billing/* のみ。Price ID / sk_ は出さない。
+ * Checkout 間隔 UI は CheckoutIntervalForm を共有利用する。
  */
 export function PlanSettingsSection({
   userId,
@@ -71,8 +81,7 @@ export function PlanSettingsSection({
     entitlementLoading !== undefined ? entitlementLoading : query.isPending || query.isFetching;
   const error = entitlementError !== undefined ? entitlementError : query.isError;
 
-  const [interval, setInterval] = useState<"month" | "year">("month");
-  const [yearConfirmed, setYearConfirmed] = useState(false);
+  // interval / yearConfirmed は form 内完結。親は pending と API 結果エラーのみ持つ。
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -81,28 +90,6 @@ export function PlanSettingsSection({
   const isTrialing = data?.status === "trialing";
   const isPastDue = data?.status === "past_due" || data?.pastDueGrace === true;
   const trialEndLabel = formatTrialEnd(data?.trialEnd ?? null);
-
-  async function runCheckout(): Promise<void> {
-    if (pending) return;
-    if (interval === "year" && !yearConfirmed) {
-      setActionError("年額のお支払いについて確認にチェックを入れてください");
-      return;
-    }
-    setPending(true);
-    setActionError(null);
-    try {
-      if (onCheckout !== undefined) {
-        await onCheckout(interval);
-      } else {
-        const { url } = await createCheckoutSession({ interval });
-        window.location.assign(url);
-      }
-    } catch {
-      setActionError("お支払い画面を開けませんでした。時間をおいてもう一度お試しください");
-    } finally {
-      setPending(false);
-    }
-  }
 
   async function runPortal(): Promise<void> {
     if (pending) return;
@@ -139,7 +126,7 @@ export function PlanSettingsSection({
             いまのプラン: <strong>{planLabel(data)}</strong>
           </p>
 
-          {!surfacesOpen ? <p role="status">お支払い管理は現在ご利用いただけません。</p> : null}
+          {!surfacesOpen ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
 
           {isTrialing ? (
             <div className="stack gap-1">
@@ -169,62 +156,28 @@ export function PlanSettingsSection({
           {!entitled && surfacesOpen ? (
             <div className="stack gap-3">
               <p>こんだて日和 Plus なら、1 日最大 10 回まで献立を作れます。</p>
-              <ul className="stack gap-1">
-                <li>月額 580 円（税込）</li>
-                <li>年額 5,800 円（税込・2か月分お得）</li>
-              </ul>
-              <fieldset className="stack gap-2">
-                <legend className="font-semibold">お支払いの種類</legend>
-                <label className="flex min-h-11 items-center gap-3">
-                  <input
-                    type="radio"
-                    name="billing-interval"
-                    value="month"
-                    checked={interval === "month"}
-                    onChange={() => {
-                      setInterval("month");
-                      setYearConfirmed(false);
-                    }}
-                  />
-                  <span>月額 580 円</span>
-                </label>
-                <label className="flex min-h-11 items-center gap-3">
-                  <input
-                    type="radio"
-                    name="billing-interval"
-                    value="year"
-                    checked={interval === "year"}
-                    onChange={() => {
-                      setInterval("year");
-                    }}
-                  />
-                  <span>年額 5,800 円</span>
-                </label>
-              </fieldset>
-              {interval === "year" ? (
-                <label className="flex min-h-11 items-start gap-3">
-                  <input
-                    type="checkbox"
-                    checked={yearConfirmed}
-                    onChange={(event) => {
-                      setYearConfirmed(event.target.checked);
-                      setActionError(null);
-                    }}
-                  />
-                  <span>{YEARLY_CONFIRM_COPY}</span>
-                </label>
-              ) : null}
-              <p className="type-small">{STRIPE_REDIRECT_NOTICE}</p>
-              <button
-                type="button"
-                className="primary-button min-h-11"
-                disabled={pending}
-                onClick={() => {
-                  void runCheckout();
+              <CheckoutIntervalForm
+                pending={pending}
+                onSubmit={async (interval) => {
+                  // pending 管理は親のみ。form は onSubmit と年額確認に専念する。
+                  setPending(true);
+                  setActionError(null);
+                  try {
+                    if (onCheckout !== undefined) {
+                      await onCheckout(interval);
+                    } else {
+                      const { url } = await createCheckoutSession({ interval });
+                      window.location.assign(url);
+                    }
+                  } catch {
+                    setActionError(
+                      "お支払い画面を開けませんでした。時間をおいてもう一度お試しください",
+                    );
+                  } finally {
+                    setPending(false);
+                  }
                 }}
-              >
-                Plus をはじめる
-              </button>
+              />
             </div>
           ) : null}
 
