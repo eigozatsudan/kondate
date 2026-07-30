@@ -788,9 +788,17 @@ function HouseholdResultBody({
       ) : null}
 
       {revalidation.phase === "checking" && (
-        <p role="status" className="mt-4">
-          現在の家族設定で確認しています
-        </p>
+        <div
+          className="revalidation-checking-overlay"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="revalidation-checking-panel">
+            <div className="gen-status-indicator" aria-hidden="true" />
+            <p>現在の家族設定で確認しています</p>
+          </div>
+        </div>
       )}
 
       {revalidation.phase === "error" && (

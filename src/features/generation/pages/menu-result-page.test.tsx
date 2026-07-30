@@ -336,6 +336,8 @@ describe("MenuResultPage", () => {
     // 献立本体の取得が終わったあとも再検証が終わるまで操作を閉じる
     expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
     expect(screen.getByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
+    expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
     // 本文が閉じている間もラベル確認の免責文は常時表示する
     expect(

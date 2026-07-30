@@ -1887,6 +1887,37 @@ dialog:not([open]) {
   }
 }
 
+/*
+ * 現行家族設定の再検証中オーバーレイ。
+ * 文言は安全ゲート契約どおり固定。操作は下層の disabled で閉じ、視覚的にも全面で示す。
+ */
+.revalidation-checking-overlay {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(51 44 39 / 45%);
+}
+
+.revalidation-checking-panel {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  width: min(100%, 320px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.revalidation-checking-panel p {
+  margin: 0;
+  font-weight: 600;
+}
+
 /* デスクトップ用の細い上部セクションバー。操作順はスマホと同一。 */
 .desktop-section-bar {
   display: none;

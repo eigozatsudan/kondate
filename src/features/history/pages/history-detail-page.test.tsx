@@ -426,12 +426,15 @@ describe("HistoryDetailPage safety gate", () => {
     const revalidate = deferredPromise<RevalidationResult>();
     renderHistoryDetail({ revalidate: () => revalidate.promise });
     expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
+    expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
     expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
     act(() => {
       revalidate.resolve(validRevalidation);
     });
     expect(await screen.findByText("現在の家族設定で確認しました")).toBeVisible();
+    expect(document.querySelector(".revalidation-checking-overlay")).toBeNull();
   });
 
   it("allows regeneration after a changed but valid current-safety result", async () => {
