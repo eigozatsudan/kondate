@@ -28,6 +28,18 @@ import {
 import { loadCurrentSafetyContext } from "./current-safety.js";
 import { getServerEnv } from "./env.js";
 import { FlyerImageError, prepareFlyerImage } from "./flyer-image.js";
+
+/**
+ * JST 週の月曜 YYYY-MM-DD。usage-today の flyer weekStart フォールバックと同式。
+ * UTC toISOString の暦日は使わない（JST 深夜付近でずれる）。
+ */
+export function jstWeekStartMonday(now: Date): string {
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const day = jst.getUTCDay(); // 0=Sun
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  jst.setUTCDate(jst.getUTCDate() + mondayOffset);
+  return jst.toISOString().slice(0, 10);
+}
 import { HttpError } from "./http.js";
 import { safeLog } from "./logger.js";
 import {
@@ -458,10 +470,11 @@ export async function runFlyerWeekly(
     mapFailureHttp("flyer_invalid_ai_response");
   }
 
+  // reserve / model 欠落時も UTC 暦ではなく JST 月曜（usage-today と同アルゴリズム）
   const weekStart =
     typeof reserve.week_start === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(reserve.week_start)
       ? reserve.week_start
-      : (parsedMenu.data.weekStartJst ?? new Date().toISOString().slice(0, 10));
+      : (parsedMenu.data.weekStartJst ?? jstWeekStartMonday(new Date()));
 
   const resultMenu: WeeklyFlyerMenuResult = {
     ...parsedMenu.data,

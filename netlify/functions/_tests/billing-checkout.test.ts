@@ -371,6 +371,42 @@ describe("runBillingCheckout", () => {
     );
   });
 
+  it("denies trial when has_billing_trial_history returns non-boolean data (fail-closed)", async () => {
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_user") {
+        return { data: { stripe_customer_id: "cus_existing" }, error: null };
+      }
+      if (name === "has_billing_trial_history") {
+        // error 無しだが data が null → 以前は falsy で trial を与えてしまっていた
+        return { data: null, error: null };
+      }
+      if (name === "acquire_billing_checkout_lock") {
+        return { data: { ok: true, lock_token: LOCK_TOKEN }, error: null };
+      }
+      if (name === "bind_billing_checkout_session") {
+        return {
+          data: {
+            ok: true,
+            lock_token: LOCK_TOKEN,
+            stripe_checkout_session_id: SESSION_ID,
+          },
+          error: null,
+        };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
+    });
+
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(200);
+    const createArgs = sessionsCreate.mock.calls[0]![0] as {
+      subscription_data: { trial_period_days?: number };
+    };
+    expect(createArgs.subscription_data.trial_period_days).toBeUndefined();
+  });
+
   it("returns 503 when ensure_billing_customer fails on search hit", async () => {
     const customersSearch = vi.fn().mockResolvedValue({
       data: [{ id: "cus_from_search" }],

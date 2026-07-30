@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   FLYER_LOCKED_PREVIEW_COPY,
@@ -12,6 +12,15 @@ export type FlyerWeeklyPanelProps = {
   plusEntitled: boolean;
 };
 
+function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const stamp = String(Date.now());
+  const entropy = Math.random().toString(16).slice(2);
+  return `${stamp}-${entropy}`;
+}
+
 /**
  * チラシ→1 週間献立の入口。
  * Free: locked preview + Plus CTA。
@@ -23,6 +32,9 @@ export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<WeeklyFlyerMenuResult | null>(null);
+  // 通信断など結果不明な再試行では同一キーを使い、try 二重消費を防ぐ。
+  // 端末失敗・成功後は破棄し、次の選択で新しいキーを採番する。
+  const stickyIdempotencyKeyRef = useRef<string | null>(null);
 
   if (!plusEntitled) {
     return (
@@ -50,13 +62,17 @@ export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
     setBusy(true);
     setError(null);
     setMenu(null);
+    const attemptKey = stickyIdempotencyKeyRef.current ?? newIdempotencyKey();
+    stickyIdempotencyKeyRef.current = attemptKey;
     try {
       const form = new FormData();
       form.append("image", file);
+      form.append("idempotencyKey", attemptKey);
       const response = await fetch("/api/flyer-weekly", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.access_token}`,
+          "Idempotency-Key": attemptKey,
         },
         body: form,
       });
@@ -66,11 +82,15 @@ export function FlyerWeeklyPanel({ plusEntitled }: FlyerWeeklyPanelProps) {
         error?: { message?: string };
       };
       if (!response.ok || body.ok !== true || !body.data?.menu) {
+        // 端末失敗はキーを捨て、次の選択で新規予約する（失敗行への冪等 hit を避ける）
+        stickyIdempotencyKeyRef.current = null;
         setError(body.error?.message ?? "チラシ献立を作成できませんでした。");
         return;
       }
+      stickyIdempotencyKeyRef.current = null;
       setMenu(body.data.menu);
     } catch {
+      // 通信断: sticky を残し、同じキーで再送できるようにする
       setError("チラシ献立を作成できませんでした。");
     } finally {
       setBusy(false);

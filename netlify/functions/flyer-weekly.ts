@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Config } from "@netlify/functions";
 import { flyerWeeklyIssueMessages } from "../../shared/contracts/flyer-weekly.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
@@ -11,9 +12,34 @@ import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.j
  */
 export const MAX_MULTIPART_BYTES = FLYER_MAX_RAW_BYTES + 256 * 1024;
 
+/** reserve_flyer_weekly の idempotency_key 長制限（1..128）に合わせる */
+const IDEMPOTENCY_KEY_MAX = 128;
+/** 自由文混入を防ぐ。UUID およびフォールバック採番（timestamp-hex）を許可 */
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{1,128}$/u;
+
+/**
+ * クライアントの Idempotency-Key / form を受理する。不正・欠落時はサーバー採番。
+ * allergy 等の自由文は無視（image + キー以外を信頼しない）。
+ */
+export function resolveFlyerIdempotencyKey(request: Request, form: FormData): string {
+  const header = request.headers.get("idempotency-key")?.trim() ?? "";
+  const fromFormRaw = form.get("idempotencyKey");
+  const fromForm = typeof fromFormRaw === "string" ? fromFormRaw.trim() : "";
+  const candidate = header.length > 0 ? header : fromForm;
+  if (
+    candidate.length >= 1 &&
+    candidate.length <= IDEMPOTENCY_KEY_MAX &&
+    IDEMPOTENCY_KEY_RE.test(candidate)
+  ) {
+    return candidate;
+  }
+  return randomUUID();
+}
+
 /**
  * POST /api/flyer-weekly
- * multipart/form-data の image フィールドのみ受理（クライアント safety 禁止）。
+ * multipart/form-data の image フィールドを受理（クライアント safety 禁止）。
+ * 任意で Idempotency-Key ヘッダまたは form idempotencyKey（UUID）を受け取る。
  */
 export default async function flyerWeekly(request: Request): Promise<Response> {
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
@@ -41,13 +67,14 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
       throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
     }
 
-    // image 以外のフィールドは無視（allergy 等を信頼しない）
+    // image 以外のフィールドは safety に使わない（キーは冪等用のみ）
     const image = form.get("image");
     if (image === null || typeof image === "string") {
       throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
     }
     const blob = image as Blob;
     const buffer = new Uint8Array(await blob.arrayBuffer());
+    const idempotencyKey = resolveFlyerIdempotencyKey(request, form);
 
     const result = await runFlyerWeekly(
       {
@@ -55,6 +82,7 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
         requestStartedAtMonotonicMs,
       },
       buffer,
+      idempotencyKey,
     );
 
     return json(200, {

@@ -135,6 +135,10 @@ async function hasUsedTrial(deps: BillingCheckoutDeps, email: string): Promise<b
     // trial 判定不能は trial なし（焼かない・与えない fail-closed 寄りの有料開始）
     return true;
   }
+  // RPC は boolean 想定。null / 予期しない形は「使用済み扱い」で trial を与えない。
+  if (typeof data !== "boolean") {
+    return true;
+  }
   return data;
 }
 

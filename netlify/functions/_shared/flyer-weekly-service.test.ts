@@ -3,7 +3,11 @@ import {
   flyerWeeklyIssueMessages,
   type WeeklyFlyerMenu,
 } from "../../../shared/contracts/flyer-weekly.js";
-import { assertFlyerMenuSafe, runFlyerWeeklyWithReserveStub } from "./flyer-weekly-service.js";
+import {
+  assertFlyerMenuSafe,
+  jstWeekStartMonday,
+  runFlyerWeeklyWithReserveStub,
+} from "./flyer-weekly-service.js";
 import { HttpError } from "./http.js";
 
 function sampleMenu(overrides: Partial<WeeklyFlyerMenu["days"][number]> = {}): WeeklyFlyerMenu {
@@ -68,6 +72,15 @@ describe("flyer-weekly-service", () => {
     expect(result.openRouterCalls).toBe(0);
     expect(openRouterSender).not.toHaveBeenCalled();
     expect(flyerWeeklyIssueMessages.flyer_requires_plus).toContain("Plus");
+  });
+});
+
+describe("jstWeekStartMonday", () => {
+  it("returns JST Monday even near UTC midnight (not raw UTC calendar day)", () => {
+    // 2026-07-27 15:30 UTC = 2026-07-28 00:30 JST (火曜) → 月曜 2026-07-27
+    expect(jstWeekStartMonday(new Date("2026-07-27T15:30:00.000Z"))).toBe("2026-07-27");
+    // 2026-07-26 15:00 UTC = 2026-07-27 00:00 JST (月曜)
+    expect(jstWeekStartMonday(new Date("2026-07-26T15:00:00.000Z"))).toBe("2026-07-27");
   });
 });
 
