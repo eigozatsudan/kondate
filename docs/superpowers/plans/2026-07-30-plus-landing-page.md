@@ -23,12 +23,13 @@
 - `git push` / PR / 本番デプロイ / `--no-verify` 禁止。
 - 設計の State matrix・`CHECKOUT_BLOCKED_STATUSES`・L12 比較表を再導出せず実装する。
 - **E2E（Task 7）は Task 1–6 完了かつ既知バグ解消後のみ。** バグ調査中・修正中は E2E を開始しない。
+- 戻る判定は `location.key !== "default"` **または** 同一 origin `document.referrer`（生 a フルロード対応）。`history.length` 禁止。
 
 ## Locked interfaces produced by this plan
 
 | 名前 | 場所 | 契約 |
 |------|------|------|
-| 課金 UI コピー | `src/features/billing/billing-ui-copy.ts` | `YEARLY_CONFIRM_COPY` / `STRIPE_REDIRECT_NOTICE` / `PAST_DUE_COPY` / `PORTAL_BUTTON_LABEL` / `TRIAL_END_WARNING` の正本。`plan-settings-section` は re-export のみ |
+| 課金 UI コピー | `src/features/billing/billing-ui-copy.ts` | `YEARLY_CONFIRM_COPY` / `STRIPE_REDIRECT_NOTICE` / `PAST_DUE_COPY` / `PORTAL_BUTTON_LABEL` / `TRIAL_END_WARNING` / **`SURFACES_CLOSED_COPY`** の正本。`plan-settings-section` は re-export のみ |
 | `CheckoutIntervalForm` | `src/features/billing/checkout-interval-form.tsx` | props: `disabled?: boolean`, `pending?: boolean`, `onSubmit: (interval: "month" \| "year") => void \| Promise<void>`。年額未確認時は `onSubmit` 非呼び出し + form 内 alert。**定数は `billing-ui-copy` のみ import（plan-settings を import しない）** |
 | `CHECKOUT_BLOCKED_STATUSES` | `src/features/billing/plus-landing-view.ts` | `as const`: `trialing`, `active`, `past_due`, `incomplete` |
 | `resolvePlusLandingView` | 同上 | 下記シグネチャ。LP の唯一の分岐入口。`full.checkoutEnabled = productSurfacesOpen && !blocked(status)` |
@@ -189,6 +190,8 @@ export const YEARLY_CONFIRM_COPY =
 export const PORTAL_BUTTON_LABEL = "お支払い・解約の管理" as const;
 export const STRIPE_REDIRECT_NOTICE = "カード入力画面に移ります" as const;
 export const PAST_DUE_COPY = "お支払いの更新が必要です" as const;
+export const SURFACES_CLOSED_COPY =
+  "お支払い管理は現在ご利用いただけません。" as const;
 ```
 
 `plan-settings-section.tsx` で re-export（既存テストの import パスを壊さない）:
@@ -200,8 +203,11 @@ export {
   PORTAL_BUTTON_LABEL,
   STRIPE_REDIRECT_NOTICE,
   PAST_DUE_COPY,
+  SURFACES_CLOSED_COPY,
 } from "./billing-ui-copy";
 ```
+
+設定内の surfaces 閉直書きを `SURFACES_CLOSED_COPY` に置換（文言 exact 維持）。
 
 - [ ] **Step 3b: `CheckoutIntervalForm` を実装**
 
@@ -439,9 +445,10 @@ export function PlusHardLimitCta({ className }: { className?: string }) {
 </Link>
 ```
 
-`review-step.tsx` — 品質ロック時、hint の直後（label 内ではなく **label の外の sibling** 推奨。label 内に入れない）:
+`review-step.tsx` — 品質ロック時（R-C2）:
 
 ```tsx
+{/* quality の </label> の直後。idea の role=note より前。note と wizard-actions の間に置かない */}
 {qualityModeLocked ? (
   <p className="quality-mode-plus-link-wrap">
     <a href="/plus" className="inline-flex min-h-11 items-center font-semibold underline">
@@ -451,7 +458,9 @@ export function PlusHardLimitCta({ className }: { className?: string }) {
 ) : null}
 ```
 
-配置は `quality-mode-hint` の直後・idea caution の前。`aria-describedby` は hint のまま（リンクは別操作）。
+- label **内に入れない**（checkbox の accessible name 汚染防止）
+- idea 注意（`role="note"`）は引き続き `wizard-actions` の **直前 sibling**（既存 §5.3 契約）
+- `aria-describedby` は hint のまま（リンクは別操作）
 
 - [ ] **Step 4: GREEN**
 
@@ -738,6 +747,7 @@ plus: "Plus",
 ```ts
 it.each(["/planner", "/generation", "/pantry", "/history", "/shopping", "/settings", "/plus"])(
 ```
+
 - [ ] **Step 2: LP の RTL テスト（画像は後 Task でも、先に `alt=""` の img または placeholder div で可）**
 
 注入 props で entitlement を渡せる設計:
@@ -762,14 +772,15 @@ it("shows full LP benefits and checkout when free and open", () => {
   expect(screen.getByText(PLUS_LP_LEAD)).toBeVisible();
   expect(screen.getByText(PLUS_LP_TRIAL)).toBeVisible();
   expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeEnabled();
-  // 比較表: planQuota 由来の数字
-  expect(screen.getByText(String(planQuota.free.successPerDay))).toBeVisible();
-  expect(screen.getByText(String(planQuota.plus.successPerDay))).toBeVisible();
+  // 比較表だけを見る（カード見出しにも同数字が出るため getByText 単独禁止 R-C3）
+  const table = screen.getByTestId("plus-compare");
+  expect(within(table).getByText(String(planQuota.free.successPerDay))).toBeVisible();
+  expect(within(table).getByText(String(planQuota.plus.successPerDay))).toBeVisible();
 });
 
 it("disables checkout and hides trial pitch when surfaces closed", () => {
   renderLp({ entitlement: { ...freeOpen, productSurfacesOpen: false } });
-  expect(screen.getByText("お支払い管理は現在ご利用いただけません。")).toBeVisible();
+  expect(screen.getByText(SURFACES_CLOSED_COPY)).toBeVisible();
   expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeDisabled();
   expect(screen.queryByText(PLUS_LP_TRIAL)).not.toBeInTheDocument();
   expect(screen.getByText(PLUS_LP_NEUTRAL_SUB)).toBeVisible();
@@ -819,7 +830,8 @@ Checkout エラー分岐（推奨）:
 // → PLUS_LP_CHECKOUT_IN_PROGRESS
 ```
 
-比較表の数字 assert は `getByText(String(3))` が複数ヒットし得るため、**表の `within(screen.getByRole("table"))`** または `data-testid="plus-compare"` で絞る。
+比較表の数字 assert は **必ず** `within(screen.getByTestId("plus-compare"))` で絞る（R-C3）。
+
 - [ ] **Step 3: RED 後にページ実装**
 
 構造:
@@ -831,17 +843,26 @@ Checkout エラー分岐（推奨）:
 </main>
 ```
 
-戻る:
+戻る（R-C1）:
 
 ```ts
 const location = useLocation();
 const navigate = useNavigate();
 function onBack() {
-  if (location.key === "default") {
-    void navigate("/planner", { replace: true });
-  } else {
-    void navigate(-1);
+  let sameOriginReferrer = false;
+  try {
+    const ref = document.referrer;
+    sameOriginReferrer =
+      ref.length > 0 && new URL(ref).origin === window.location.origin;
+  } catch {
+    sameOriginReferrer = false;
   }
+  // SPA 内遷移、または生 a フルロード後でも同一 origin から来た場合は履歴を戻る
+  if (location.key !== "default" || sameOriginReferrer) {
+    void navigate(-1);
+    return;
+  }
+  void navigate("/planner", { replace: true });
 }
 ```
 
@@ -853,7 +874,7 @@ function onBack() {
 - 品質: 「くわしく作る」でより丁寧な献立（回数に限りあり）
 - チラシ: チラシ写真から 1 週間の献立 + 小さく「写真は長期保存しません」
 
-比較表: `<table>` または定義リスト。列は設計 L12 のみ。
+比較表: `<table data-testid="plus-compare">`（必須 testid）。列は設計 L12 のみ。
 
 画像: Task 6 前は空の `div.plus-landing__media` でも GREEN 可。ただし Task 6 で webp を必ず載せる。
 
@@ -1087,6 +1108,11 @@ TBD / 「後で実装」なし。画像生成手段は Task 6 で 2 手段を明
 | R-B6 | Task 3: `sessionsCreate` 引数に断言 |
 | R-B7 | Task 5: router.test に `/plus` 必須 |
 | R-B8 | Task 6: webp declare は必要時のみ |
+| R-C1 | Task 5: 戻る = key + same-origin referrer |
+| R-C2 | Task 2: 品質リンクは label 直後・note 前 |
+| R-C3 | Task 5: plus-compare within |
+| R-C4 | Task 1: SURFACES_CLOSED_COPY |
+| R-C5 | design Testing onSubmit（文書側） |
 
 ---
 
@@ -1095,7 +1121,7 @@ TBD / 「後で実装」なし。画像生成手段は Task 6 で 2 手段を明
 Plan: `docs/superpowers/plans/2026-07-30-plus-landing-page.md`  
 Spec: `docs/superpowers/specs/2026-07-30-plus-landing-page-design.md`  
 
-合同レビュー R-B 反映済み。実装時は Task 1→6 のあと **Task 7（E2E）は着手ゲート通過後のみ**。
+合同レビュー R-B / **R-C** 反映済み。実装時は Task 1→6 のあと **Task 7（E2E）は着手ゲート通過後のみ**。
 
 **Two execution options:**
 

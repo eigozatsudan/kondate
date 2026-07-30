@@ -6,7 +6,7 @@
 | 日付 | 2026-07-30 |
 | 状態 | **Approved for implementation**（実装計画あり。2026-07-30 設計+計画の通常/敵対的再レビュー反映済み） |
 | 関連 | Plus / Stripe `2026-07-29-paid-plan-stripe-design.md`（L3 価格・L10 ファネル・A3 kill）、設定 UI `PlanSettingsSection`、CTA `plus-cta.tsx` / flyer locked / flyer upsell、Checkout `billing-checkout.ts` |
-| レビュー | 初回 M1–M5；再レビュー R-A1〜；**設計+計画合同** R-B1〜（循環依存・品質二重リンク・section CSS 等） |
+| レビュー | M1–M5；R-A1〜；R-B1〜；**R-C1〜**（戻る referrer・note sibling・SURFACES_CLOSED_COPY 等） |
 
 ---
 
@@ -115,11 +115,14 @@ AppShell children:
   - `sectionTitles.plus` = **`"Plus"`**（デスクトップ上部バー用。ページ h1 は LP 側「こんだて日和 Plus」）
   - 配色: settings と同系統のニュートラル chrome でよい（新色トークンは増やさない）
   - 下タブは path 不一致のためどれも `aria-current` にしない（意図どおり）
-- **戻る（R-A3 確定）**:
+- **戻る（R-A3 + R-C1 確定）**:
   - ラベル「戻る」、`min-h-11`
-  - `useNavigate(-1)` は **同一アプリ内から来たときだけ**（React Router の `location.key !== "default"` を目安にする）
-  - 直打ち・外部・履歴なし相当（`location.key === "default"`）は **`navigate("/planner", { replace: true })`**
-  - `history.length` は使わない（ブラウザごとに信頼できない）
+  - **`history.length` は使わない**
+  - 判定（どちらか満たせば `navigate(-1)`）:
+    1. React Router の `location.key !== "default"`（SPA 内遷移）
+    2. または `document.referrer` が **同一 origin**（生 `<a href="/plus">` のフルロード後でも、アプリ内から来ていれば -1 が使える）
+  - どちらも満たさない（直打ち・外部・Stripe 以外の外部 referrer 等）→ **`navigate("/planner", { replace: true })`**
+  - 根拠: Plus CTA の一部は Router 外 unit のため生 `a` のまま。フルロード後は常に `key === "default"` になるため、key 単独では「アプリ内から来た」を誤判定する
 
 ### 「Plus を見る」の更新箇所
 
@@ -257,6 +260,7 @@ entitlement は `GET /api/billing/entitlement` のみ。クライアントはプ
 
 1. **コピー単一ソース** `src/features/billing/billing-ui-copy.ts`（新規）  
    - 少なくとも `YEARLY_CONFIRM_COPY` / `STRIPE_REDIRECT_NOTICE` / `PAST_DUE_COPY` / `PORTAL_BUTTON_LABEL` / `TRIAL_END_WARNING` をここに置く  
+   - 加えて kill / surfaces 閉の **`SURFACES_CLOSED_COPY`** = `"お支払い管理は現在ご利用いただけません。"`（設定と LP で一字同一。現状設定に直書きされている文を移す）  
    - `plan-settings-section.tsx` は **re-export** して既存 import パスを壊さない（循環依存禁止）
 2. **フォーム** `src/features/billing/checkout-interval-form.tsx`  
    - props: `disabled?`（surfaces 閉）、`pending?`、`onSubmit: (interval: "month" | "year") => void | Promise<void>`  
@@ -336,6 +340,8 @@ Free（Checkout 可）ユーザー
 - Free（`qualityModeLocked`）時、hint「くわしい AI での作成は Plus で使えます」の近くに「Plus を見る」
 - `href`/`to` = `/plus`
 - 44×44 タッチ。hint とリンクで accessible name を混同しない（リンク名は「Plus を見る」、hint は説明のまま）
+- **配置ロック（R-C2）**: quality の `</label>` の **直後 sibling**、かつ idea の `role="note"`（§5.3）の **前**。  
+  `role="note"` が `wizard-actions` の **直前 sibling** である契約を壊さない（note と wizard-actions の間に Plus リンクを挟まない）
 - **硬上限 CTA と同時表示**され得る（review で Free かつ success 残 0）。どちらも `/plus` でよいが、**同一画面に同名リンクが 2 本**になる。unit は `getByRole` 単独ではなく `within(testId)` または `getAllByRole` で取る（計画 R-B2）
 
 ### 表示分岐 pure 関数（実装契約）
@@ -358,7 +364,7 @@ Free（Checkout 可）ユーザー
 | 層 | 内容 |
 |----|------|
 | unit LP | Free+open: 3 メリット・価格・はじめる可；Free+closed: 閉鎖文・CTA 無効・トライアル煽りなし；past_due: マーケなし + PAST_DUE；entitled: 設定誘導・Checkout なし；**incomplete: マーケ/Checkout なし + 短形 C**；`?billing=cancel` メッセージ |
-| unit 共有 form | 年額確認なしで checkout 呼ばない；月額で `onCheckout("month")` |
+| unit 共有 form | 年額確認なしで checkout 呼ばない；月額で `onSubmit("month")` |
 | unit CTA | PlusHardLimit / flyer upsell / flyer locked の href/to が `/plus` |
 | unit 品質ゲート | Plus リンクが `/plus`（**必須**） |
 | unit checkout サーバ | `cancel_url` が `/plus?billing=cancel`（既存 billing-checkout テストを更新） |
@@ -444,6 +450,8 @@ Free（Checkout 可）ユーザー
 | 価格の 580 を planQuota 化せよ | L5 の税込表示固定。枠数字だけ planQuota |
 | 硬上限コピーの「10」を変数化せよ（既存 L10-1） | 本変更の必須ではない。カード/比較表は planQuota |
 | success を LP に戻せ | L7 維持 |
+| `history.length` で戻せ | 不可靠。R-C1 の key + same-origin referrer を正 |
+| 全 CTA を即 Link 化せよ（必須） | unit Router 外方針あり。Link 化は任意、戻るは referrer で吸収 |
 
 ---
 
@@ -494,3 +502,4 @@ Free（Checkout 可）ユーザー
 | 2026-07-30 | 初版。方針 B + kill 中も `/plus` + 敵対的 M1–M5 / S1 |
 | 2026-07-30 | 通常+敵対的再レビュー: R-A1 incomplete/409 先回り、R-A2 section `plus`、R-A3 戻る判定、L12 比較表、Portal/エラー/品質必須の明確化。擬陽性は非採用表へ |
 | 2026-07-30 | 設計+計画合同レビュー R-B1〜: 循環依存解消、二重 Plus リンクのテスト契約、section CSS、onSubmit 統一、blocked の checkoutEnabled |
+| 2026-07-30 | 再レビュー R-C1〜: 戻る判定（referrer）、品質リンク DOM 順序、SURFACES_CLOSED_COPY、比較表 unit |
