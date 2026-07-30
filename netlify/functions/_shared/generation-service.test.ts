@@ -59,12 +59,20 @@ const {
   createGenerationRepositoryMock,
   loadRegenerationExecutionContextMock,
   createRegenerationLoaderDepsMock,
+  createUserScopedSupabaseMock,
+  loadRecentDishHintsMock,
+  diversityHintsState,
 } = vi.hoisted(() => ({
   getServerEnvMock: vi.fn(),
   loadGenerationContextMock: vi.fn(),
   createGenerationRepositoryMock: vi.fn(),
   loadRegenerationExecutionContextMock: vi.fn(),
   createRegenerationLoaderDepsMock: vi.fn(() => ({ requestStartedAtMonotonicMs: 0 })),
+  createUserScopedSupabaseMock: vi.fn(() => ({ from: vi.fn() })),
+  loadRecentDishHintsMock: vi.fn((): Promise<readonly { dishName: string; role?: string }[]> =>
+    Promise.resolve([]),
+  ),
+  diversityHintsState: { enabled: true },
 }));
 
 vi.mock("../../../shared/safety/validate-generated-menu.js", () => ({
@@ -95,6 +103,19 @@ vi.mock("./regeneration-context.js", async (importOriginal) => {
 vi.mock("./regeneration-adapter.js", () => ({
   createRegenerationLoaderDeps: createRegenerationLoaderDepsMock,
 }));
+vi.mock("./supabase-user.js", () => ({
+  createUserScopedSupabase: createUserScopedSupabaseMock,
+}));
+vi.mock("./diversity-hints.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./diversity-hints.js")>();
+  return {
+    ...actual,
+    get DIVERSITY_HINTS_ENABLED() {
+      return diversityHintsState.enabled;
+    },
+    loadRecentDishHints: loadRecentDishHintsMock,
+  };
+});
 
 const requestId = "81000000-0000-4000-8000-000000000001";
 const key = "82000000-0000-4000-8000-000000000001";
@@ -122,6 +143,7 @@ function makeNewMenuExecutionContext(
     expectedSafetyFingerprint?: string;
     startedAtMonotonicMs?: number;
     deadlineAtMonotonicMs?: number;
+    recentDishHints?: Extract<GenerationExecutionContext, { kind: "new_menu" }>["recentDishHints"];
   } = {},
 ): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
   const generationContext = overrides.generationContext ?? makeGenerationContext();
@@ -138,6 +160,7 @@ function makeNewMenuExecutionContext(
     startedAtMonotonicMs: overrides.startedAtMonotonicMs ?? 0,
     deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 55_000,
     regeneration: null,
+    recentDishHints: overrides.recentDishHints ?? [],
   };
 }
 
@@ -1680,6 +1703,10 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       status: vi.fn(),
     });
     loadGenerationContextMock.mockReset();
+    createUserScopedSupabaseMock.mockClear();
+    loadRecentDishHintsMock.mockReset();
+    loadRecentDishHintsMock.mockResolvedValue([]);
+    diversityHintsState.enabled = true;
   });
 
   it("keeps the production integrity resolver wired to the current admin lookup", async () => {
@@ -1704,6 +1731,8 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
   it("returns a full new_menu GenerationExecutionContext with regeneration null", async () => {
     const generationContext = makeGenerationContext();
     loadGenerationContextMock.mockResolvedValue(generationContext);
+    const hints = [{ dishName: "生姜焼き", role: "main" }] as const;
+    loadRecentDishHintsMock.mockResolvedValue([...hints]);
 
     const deps = createGenerationDeps(user, timing);
     const execution = await deps.loadExecutionContext(
@@ -1721,8 +1750,33 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       startedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
       deadlineAtMonotonicMs,
       regeneration: null,
+      recentDishHints: [...hints],
     });
     expect(loadGenerationContextMock).toHaveBeenCalledWith(user, loadRequestId, command.request);
+    expect(createUserScopedSupabaseMock).toHaveBeenCalledWith(user.accessToken);
+    expect(loadRecentDishHintsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: user.userId,
+      }),
+    );
+  });
+
+  it("L13 off: loadRecentDishHints not called; recentDishHints []", async () => {
+    diversityHintsState.enabled = false;
+    const generationContext = makeGenerationContext();
+    loadGenerationContextMock.mockResolvedValue(generationContext);
+
+    const deps = createGenerationDeps(user, timing);
+    const execution = await deps.loadExecutionContext(
+      command,
+      loadRequestId,
+      deadlineAtMonotonicMs,
+    );
+
+    expect(execution.kind).toBe("new_menu");
+    if (execution.kind !== "new_menu") throw new Error("expected new_menu");
+    expect(execution.recentDishHints).toEqual([]);
+    expect(loadRecentDishHintsMock).not.toHaveBeenCalled();
   });
 
   it.each([

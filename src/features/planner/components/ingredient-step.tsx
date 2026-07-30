@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
+import { useAppToast } from "@/shared/ui/app-toast";
 import {
   commonMainIngredients,
   excludeCanonicalMainIngredient,
@@ -12,51 +13,90 @@ import type { PlannerStepProps } from "./planner-wizard-props";
 const mainIngredientLimit = 8;
 const mainIngredientLengthLimit = 80;
 
-export type IngredientStepProps = PlannerStepProps<readonly string[]> & {
+export type IngredientStepProps = Omit<PlannerStepProps<readonly string[]>, "disabled"> & {
+  /** 親の isSaving 等。incomplete 判定では使わず、押下可否はこれだけ */
+  disabled?: boolean;
   errorMessage?: string | null;
-  pantryItems: readonly PantryItem[];
-  pantryItemsStatus: PantryItemsStatus;
+  /**
+   * true のとき incomplete 押下で toast を出さない（inline + focus のみ）。
+   * wizard が autosaveState === "error" のとき渡す。
+   */
+  suppressValidationToast?: boolean;
+  pantryItems?: readonly PantryItem[];
+  pantryItemsStatus?: PantryItemsStatus;
 };
 
 /**
  * 主食材を1件ずつ追加するstep。クイック選択・自由入力・冷蔵庫候補はすべて
  * 同じ canonical helper と onChange(mainIngredients) 経由で更新する。
  * 質問順・8件/80文字制限・pantrySelections 非干渉は既存契約を維持する。
+ * 0件のまま「次へ」は alertdialog ではなく toast + inline alert + text input focus。
  */
-/** メイン食材ゼロのまま進もうとしたときに出す案内（dialog と role=alert で共用） */
-export const mainIngredientRequiredMessage =
-  "献立の中心になる食材を1つ以上選んでから進んでください。";
+/** メイン食材ゼロのまま進もうとしたときに出す案内（toast と role=alert で共用） */
+export const mainIngredientRequiredMessage = "メイン食材を1つ以上選んでください";
 
 export function IngredientStep({
   value,
   onChange,
   onBack,
   onNext,
-  disabled,
-  errorMessage,
-  pantryItems,
-  pantryItemsStatus,
+  disabled = false,
+  errorMessage: externalErrorMessage,
+  suppressValidationToast = false,
+  pantryItems = [],
+  pantryItemsStatus = "loaded",
   nextLabel = "次へ",
   backLabel = "戻る",
 }: IngredientStepProps) {
+  const { show: showToast, dismiss: dismissToast } = useAppToast();
   const [ingredient, setIngredient] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
-  // 未選択のまま次へを押したときの案内。disabled だと押下フィードバックが無いため、
-  // ボタンは有効のまま alertdialog で理由を伝える（privacy ゲートと同型）。
-  const [emptyGateOpen, setEmptyGateOpen] = useState(false);
+  // 未選択のまま次へを押したときの案内（empty alertdialog 廃止後の代替）
+  const [incompleteError, setIncompleteError] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const emptyGateCloseRef = useRef<HTMLButtonElement>(null);
+  const freeInputRef = useRef<HTMLInputElement>(null);
+  const quickSelectRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     headingRef.current?.focus();
   }, []);
+
+  // 1件以上選んだら incomplete インラインを clear
   useEffect(() => {
-    if (emptyGateOpen) emptyGateCloseRef.current?.focus();
-  }, [emptyGateOpen]);
+    if (value.length > 0) {
+      setIncompleteError(null);
+    }
+  }, [value]);
+
+  // step 離脱で validation toast を残さない
+  useEffect(() => {
+    return () => {
+      dismissToast();
+    };
+  }, [dismissToast]);
+
   const errorId = "ingredient-step-error";
-  const emptyGateDescriptionId = "ingredient-empty-gate-description";
-  const combinedError = errorMessage ?? localError;
-  const closeEmptyGate = (): void => {
-    setEmptyGateOpen(false);
+  const combinedError = incompleteError ?? externalErrorMessage ?? localError;
+
+  /**
+   * 設計 §6.3: メイン食材の text input を優先。
+   * 無ければ先頭の未選択クイック選択チップ button。
+   */
+  const focusMainIngredientControl = (): void => {
+    const freeInput = freeInputRef.current;
+    if (freeInput != null && !freeInput.disabled) {
+      freeInput.focus();
+      return;
+    }
+    const chips = quickSelectRef.current?.querySelectorAll<HTMLButtonElement>("button.wizard-chip");
+    if (chips == null) return;
+    for (const chip of chips) {
+      if (chip.disabled) continue;
+      // 未選択 = aria-pressed が true でない
+      if (chip.getAttribute("aria-pressed") === "true") continue;
+      chip.focus();
+      return;
+    }
   };
 
   /**
@@ -101,6 +141,20 @@ export function IngredientStep({
     tryAddIngredient(candidate);
   };
 
+  const handleNext = (): void => {
+    if (value.length === 0) {
+      setIncompleteError(mainIngredientRequiredMessage);
+      if (!suppressValidationToast) {
+        showToast({ message: mainIngredientRequiredMessage, tone: "error" });
+      }
+      focusMainIngredientControl();
+      return;
+    }
+    setIncompleteError(null);
+    dismissToast();
+    onNext();
+  };
+
   return (
     <section className="card stack" aria-labelledby="ingredient-step-title">
       <h2 id="ingredient-step-title" tabIndex={-1} ref={headingRef}>
@@ -109,7 +163,7 @@ export function IngredientStep({
 
       <section className="ingredient-quick-select stack" aria-labelledby="ingredient-quick-title">
         <h3 id="ingredient-quick-title">よく使う食材から選ぶ</h3>
-        <div className="wizard-chip-row">
+        <div ref={quickSelectRef} className="wizard-chip-row">
           {commonMainIngredients.map((candidate) => {
             const pressed = includesCanonicalMainIngredient(value, candidate);
             return (
@@ -162,6 +216,7 @@ export function IngredientStep({
           <label className="field ingredient-entry-field">
             メイン食材
             <input
+              ref={freeInputRef}
               value={ingredient}
               disabled={disabled}
               aria-invalid={combinedError != null ? "true" : undefined}
@@ -288,54 +343,11 @@ export function IngredientStep({
           className="wizard-action primary-button"
           type="button"
           disabled={disabled}
-          onClick={() => {
-            if (value.length === 0) {
-              setEmptyGateOpen(true);
-              return;
-            }
-            closeEmptyGate();
-            onNext();
-          }}
+          onClick={handleNext}
         >
           {nextLabel}
         </button>
       </div>
-      {emptyGateOpen && (
-        <div
-          className="pantry-expired-dialog-backdrop"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) closeEmptyGate();
-          }}
-        >
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="ingredient-empty-gate-title"
-            aria-describedby={emptyGateDescriptionId}
-            className="card stack pantry-expired-dialog-panel"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                closeEmptyGate();
-              }
-            }}
-          >
-            <h2 id="ingredient-empty-gate-title">メイン食材を選んでください</h2>
-            <p id={emptyGateDescriptionId}>{mainIngredientRequiredMessage}</p>
-            <button
-              ref={emptyGateCloseRef}
-              className="wizard-action primary-button"
-              type="button"
-              onClick={closeEmptyGate}
-            >
-              閉じる
-            </button>
-          </div>
-        </div>
-      )}
     </section>
   );
 }

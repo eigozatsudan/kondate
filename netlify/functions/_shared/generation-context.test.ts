@@ -4,6 +4,8 @@ import {
   type NewMenuGenerationRequest,
 } from "../../../shared/contracts/generation.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { makeGenerationContext } from "../../../shared/testing/factories.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
@@ -14,6 +16,8 @@ import {
   validateGenerationPreflight,
   validateTransientChecks,
 } from "./generation-context.js";
+import { buildGenerationMessages } from "./generation-prompt.js";
+import type { GenerationExecutionContext } from "./generation-service.js";
 
 vi.mock("./supabase-admin.js", () => ({ getSupabaseAdmin: vi.fn() }));
 vi.mock("./supabase-user.js", () => ({ createUserScopedSupabase: vi.fn() }));
@@ -530,7 +534,131 @@ describe("loadGenerationContext", () => {
       ).toBe(false);
     }
   });
+
+  // Design §12.3a / Task 5: A なしアレルギー・B あり、draft=A のみ →
+  // context / prompt / preflight / fingerprint に B が出ないことを回帰固定する。
+  it("§12.3a A-only excludes allergic B from context prompt preflight fingerprint", async () => {
+    const memberA = memberId;
+    const memberB = secondMemberId;
+    const baseSafety = makeGenerationContext().safety;
+    // A: アレルギーなし。B は fingerprint 比較用にだけ構築し、loader へは渡さない。
+    const safetyAOnly: CurrentSafetyContext = {
+      ...baseSafety,
+      members: baseSafety.members.map((member) => ({
+        ...member,
+        householdMemberId: memberA,
+        anonymousRef: "member_1",
+        allergyStatus: "none",
+        allergenIds: [],
+        hasUnmappedCustomAllergy: false,
+        customAllergies: [],
+      })),
+    };
+    const safetyWithBoth: CurrentSafetyContext = {
+      ...safetyAOnly,
+      members: [
+        ...safetyAOnly.members,
+        {
+          ...safetyAOnly.members[0]!,
+          householdMemberId: memberB,
+          anonymousRef: "member_2",
+          allergyStatus: "registered",
+          allergenIds: ["wheat"],
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+        },
+      ],
+    };
+
+    // 家族に B（registered / wheat）がいても、snapshot の target が A のみなら
+    // loader は A だけを読む。.in を素通しするモックなので返り値は A のみで SQL 境界を再現する。
+    arrangeLoader({
+      snapshotData: [{ ...snapshot, target_member_ids: [memberA] }],
+      members: [completeMember],
+      dislikes: [{ member_id: memberA, ingredient_name: "ピーマン" }],
+      safety: safetyAOnly,
+    });
+
+    const ctx = await loadGenerationContext(
+      { userId, accessToken: "access-token" },
+      requestId,
+      request,
+      now,
+    );
+
+    expect(ctx.targetMode).toBe("household");
+    if (ctx.targetMode !== "household") {
+      throw new Error("expected household generation context");
+    }
+    expect(ctx.submission.targetMemberIds).toEqual([memberA]);
+    expect(ctx.safety.members.map((member) => member.householdMemberId)).toEqual([memberA]);
+    expect(ctx.targetMembers.map((member) => member.householdMemberId)).toEqual([memberA]);
+    expect(ctx.memberPreferences.map((member) => member.householdMemberId)).toEqual([memberA]);
+    expect(ctx.safety.members[0]?.allergyStatus).toBe("none");
+    expect(ctx.safety.members[0]?.allergenIds).toEqual([]);
+    // 現行 safety 読取へ渡す ID 集合も A のみ（未選択 B を混ぜない）
+    expect(loadCurrentSafetyContext).toHaveBeenCalledWith(expect.anything(), userId, [memberA]);
+    const contextSerialized = JSON.stringify(ctx);
+    expect(contextSerialized).not.toContain(memberB);
+    expect(contextSerialized).not.toContain("B_ALLERGIC_CANARY");
+    expect(contextSerialized).not.toContain("B_DISLIKE_CANARY");
+
+    const messages = buildGenerationMessages(asNewMenuExecution(ctx));
+    const payload = userPayloadFromMessages(messages);
+    expect(payload.members).toHaveLength(1);
+    const payloadSerialized = JSON.stringify(payload);
+    expect(payloadSerialized).not.toContain(memberB);
+    expect(payloadSerialized).not.toContain("B_DISLIKE_CANARY");
+    // prompt members の allergenIds に B の小麦が載らない（カタログ表記は payload 外）
+    expect(payload.members[0]).toMatchObject({ allergenIds: [] });
+
+    const preflight = validateGenerationPreflight(ctx, now);
+    expect(preflight.ok).toBe(true);
+
+    const fpA = createCurrentSafetyFingerprint(ctx.safety);
+    const fpAB = createCurrentSafetyFingerprint(safetyWithBoth);
+    expect(fpA).not.toBe(fpAB);
+  });
 });
+
+/** §12.3a 回帰用: GenerationContext を new_menu 実行文脈へ包む */
+function asNewMenuExecution(
+  context: GenerationContext,
+): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
+  return {
+    kind: "new_menu",
+    command: {
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: request.idempotencyKey,
+        draftId,
+        draftRevision: request.draftRevision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    },
+    requestId,
+    generationContext: context,
+    expectedSafetyFingerprint:
+      context.targetMode === "idea" ? "idea" : createCurrentSafetyFingerprint(context.safety),
+    startedAtMonotonicMs: 0,
+    deadlineAtMonotonicMs: 50_000,
+    regeneration: null,
+    recentDishHints: [],
+  };
+}
+
+function userPayloadFromMessages(
+  messages: ReturnType<typeof buildGenerationMessages>,
+): { members: readonly unknown[] } & Record<string, unknown> {
+  const content = typeof messages[1]?.content === "string" ? messages[1].content : "";
+  const serialized = content
+    .replace("<kondate_input_data>\n", "")
+    .replace("\n</kondate_input_data>", "");
+  return JSON.parse(serialized) as { members: readonly unknown[] } & Record<string, unknown>;
+}
 
 describe("validateTransientChecks", () => {
   const selected = [pantryId];

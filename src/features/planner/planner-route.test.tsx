@@ -338,6 +338,7 @@ const pendingGenerationMock = vi.hoisted(() => ({
   createPendingGeneration: vi.fn(),
   savePendingGeneration: vi.fn(),
   readPendingGeneration: vi.fn(),
+  savePendingGenerationMeta: vi.fn(),
 }));
 vi.mock("@/features/generation/model/pending-generation", async (importOriginal) => {
   const original =
@@ -347,6 +348,14 @@ vi.mock("@/features/generation/model/pending-generation", async (importOriginal)
     createPendingGeneration: pendingGenerationMock.createPendingGeneration,
     savePendingGeneration: pendingGenerationMock.savePendingGeneration,
     readPendingGeneration: pendingGenerationMock.readPendingGeneration,
+  };
+});
+vi.mock("@/features/generation/model/pending-generation-meta", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/generation/model/pending-generation-meta")>();
+  return {
+    ...original,
+    savePendingGenerationMeta: pendingGenerationMock.savePendingGenerationMeta,
   };
 });
 
@@ -394,10 +403,12 @@ beforeEach(() => {
   pendingGenerationMock.createPendingGeneration.mockReset();
   pendingGenerationMock.savePendingGeneration.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReset();
+  pendingGenerationMock.savePendingGenerationMeta.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   pendingGenerationMock.createPendingGeneration.mockImplementation(
     (command: unknown, ownerUserId: string) => ({
       ownerUserId,
+      createdAt: "2026-07-11T00:00:00.000Z",
       ...(command as object),
     }),
   );
@@ -903,6 +914,15 @@ describe("PlannerRoutePage", () => {
           },
         ],
       },
+    });
+    // new_menu のみ draft.targetMode 付き meta を upsert（補助文判定用）
+    expect(pendingGenerationMock.savePendingGenerationMeta).toHaveBeenCalledTimes(1);
+    expect(pendingGenerationMock.savePendingGenerationMeta).toHaveBeenCalledWith({
+      kind: "new_menu",
+      targetMode: draft.targetMode,
+      idempotencyKey: attemptKey,
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
     });
     // POST 完了を待たず、保存直後に遷移する（再生成経路と同型）
     expect(navigateMock).toHaveBeenCalledWith("/generation");

@@ -8,6 +8,7 @@ import {
   regenerateMenuRequestSchema,
   type GenerationCommand,
 } from "@shared/contracts/generation";
+import { clearPendingGenerationMeta } from "./pending-generation-meta";
 
 // storage key は v3 cutover に合わせる（旧 v2 pending は読まず best-effort 削除）
 const key = "kondate:generation:v3";
@@ -56,7 +57,9 @@ export const pendingGenerationSchema = z.discriminatedUnion("kind", [
 export type PendingGeneration = z.infer<typeof pendingGenerationSchema>;
 
 type PendingGenerationReadStorage = Pick<Storage, "getItem" | "removeItem">;
-type PendingGenerationWriteStorage = Pick<Storage, "setItem">;
+/** setItem 必須。regenerate 保存時の meta clear 用に removeItem を任意で受ける */
+type PendingGenerationWriteStorage = Pick<Storage, "setItem"> &
+  Partial<Pick<Storage, "removeItem">>;
 type PendingGenerationRemoveStorage = Pick<Storage, "removeItem">;
 
 export function createPendingGeneration(
@@ -144,6 +147,15 @@ export function savePendingGeneration(
   storage: PendingGenerationWriteStorage = localStorage,
 ): void {
   storage.setItem(key, JSON.stringify(pendingGenerationSchema.parse(value)));
+  // regenerate_* は household 補助文の対象外。残存 meta で誤表示しないよう落とす。
+  // meta の upsert は planner-route が draft.targetMode を知る new_menu 時のみ行い、
+  // ここからは targetMode 無しで meta を書かない。
+  if (value.kind !== "new_menu") {
+    const removeItem = storage.removeItem;
+    if (typeof removeItem === "function") {
+      clearPendingGenerationMeta({ removeItem: removeItem.bind(storage) });
+    }
+  }
 }
 
 export function clearPendingGeneration(
@@ -154,4 +166,6 @@ export function clearPendingGeneration(
   } catch {
     // UIと認証の後始末を継続するため削除失敗を吸収する。
   }
+  // RecoveryLinks / clearGeneration / 結果離脱を含む全 clear 経路で meta も必ず落とす
+  clearPendingGenerationMeta(storage);
 }

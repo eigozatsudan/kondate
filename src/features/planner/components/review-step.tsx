@@ -8,6 +8,7 @@ import { getJstSeasonContext, type SeasonContext } from "@shared/season/jst-seas
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import { CurrentSafetySummary } from "../current-safety-summary";
+import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "../household-safety-helper-copy";
 import {
   cuisineGenreLabel,
   ingredientPreferenceLabel,
@@ -220,7 +221,18 @@ export function ReviewStep({
       <h2 id="review-step-title" tabIndex={-1} ref={headingRef}>
         5. 確認
       </h2>
-      {targetSafetyMembers.length > 0 && <CurrentSafetySummary members={targetSafetyMembers} />}
+      {/*
+        household では選択 0 人でも補助文を常時出す（サマリー無しでも安全ブロック領域に単独表示）。
+        共有 CurrentSafetySummary 本体には埋め込まず sibling 直下に置く（設計 §6.2）。
+      */}
+      {value.targetMode === "household" && (
+        <>
+          {targetSafetyMembers.length > 0 ? (
+            <CurrentSafetySummary members={targetSafetyMembers} />
+          ) : null}
+          <p>{HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY}</p>
+        </>
+      )}
       <dl className="wizard-review-list">
         {/*
           項目名 | 回答。変更ボタンは dd 内に置き definition-list を満たす。

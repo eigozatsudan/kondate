@@ -57,12 +57,23 @@ import {
   type OpenRouterMessage,
 } from "./openrouter.js";
 import { runWithOpenRouterMockScenario } from "./openrouter-mock-scenario.js";
+import {
+  DIVERSITY_HINTS_ENABLED,
+  loadRecentDishHints,
+  type RecentDishHint,
+} from "./diversity-hints.js";
 import { createRegenerationLoaderDeps } from "./regeneration-adapter.js";
 import {
   isRegenerationDuplicate,
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
 } from "./regeneration-context.js";
+import { createUserScopedSupabase } from "./supabase-user.js";
+
+/** L13 フラグを boolean として読む（`true as const` の死枝 lint 回避 + テスト mock 可） */
+function isDiversityHintsEnabled(flag: boolean): boolean {
+  return flag;
+}
 
 /** 1 回の OpenRouter 試行上限（ms）。OPENROUTER_TIMEOUT_MS リリースロックと一致させる */
 export const ATTEMPT_TIMEOUT_MS = OPENROUTER_TIMEOUT_MS;
@@ -106,12 +117,15 @@ export type RegenerationExecutionPayload = {
 /**
  * オーケストレーション所有の実行コンテキスト。
  * Plan 4 はここから import し、同名型を再宣言してはならない。
+ * new_menu のみ recentDishHints（prompt 専用・fingerprint 非介入）を載せる。
  */
 export type GenerationExecutionContext =
   | (ExecutionBase & {
       kind: "new_menu";
       command: Extract<GenerationCommand, { kind: "new_menu" }>;
       regeneration: null;
+      /** soft diversity 用。空配列可。fingerprint / quota に含めない */
+      recentDishHints: readonly RecentDishHint[];
     })
   | (ExecutionBase & {
       kind: "regenerate_menu";
@@ -411,12 +425,23 @@ function createBaseGenerationDeps(
           "再生成は次の計画で有効になります。",
         );
       }
-      const generationContext = await loadGenerationContext(user, requestId, command.request);
+      // L13: flag off 時は load 自体を呼ばない（内部 early-return に頼らない）
+      // `true as const` を直接三項に置くと lint が死枝扱いするため boolean 引数経由で読む
+      const diversityEnabled = isDiversityHintsEnabled(DIVERSITY_HINTS_ENABLED);
+      const ownerClient = createUserScopedSupabase(user.accessToken);
+      const hintsPromise = diversityEnabled
+        ? loadRecentDishHints({ ownerClient, userId: user.userId })
+        : Promise.resolve([] as const);
+      const [generationContext, recentDishHints] = await Promise.all([
+        loadGenerationContext(user, requestId, command.request),
+        hintsPromise,
+      ]);
       return {
         kind: "new_menu",
         command,
         requestId,
         generationContext,
+        recentDishHints,
         expectedSafetyFingerprint:
           generationContext.targetMode === "idea"
             ? createIdeaSafetyFingerprint()

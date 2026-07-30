@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { AgeBand, UnsupportedDietKind, UnsupportedDietStatus } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { useAppToast } from "@/shared/ui/app-toast";
 import {
   addCustomMemberAllergy,
   addStandardMemberAllergy,
@@ -28,6 +29,66 @@ const unsupportedDietOptions: ReadonlyArray<readonly [UnsupportedDietKind, strin
   ["swallowing_concern", "飲み込み・むせの不安"],
   ["therapeutic_diet", "医師等から指示された治療食"],
 ];
+
+/** オンボーディング必須フィールドの field error（settings schema と同文言系） */
+type OnboardingFieldErrors = {
+  ageBand?: string;
+  allergyStatus?: string;
+  unsupportedDietStatus?: string;
+  unsupportedDietKinds?: string;
+};
+
+const ONBOARDING_FORM_ERROR_ID = "household-onboarding-form-error";
+const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
+
+const ONBOARDING_FIELD_ORDER = [
+  "ageBand",
+  "allergyStatus",
+  "unsupportedDietStatus",
+  "unsupportedDietKinds",
+] as const satisfies ReadonlyArray<keyof OnboardingFieldErrors>;
+
+/**
+ * 完了押下時の必須検証。settings の householdSettingsSchema と同系メッセージを返す。
+ * アレルギー登録あり0件・食べない食事 present で kinds 空も含む。
+ */
+function validateOnboardingDraft(
+  draft: HouseholdMemberRow,
+  allergyCount: number,
+): OnboardingFieldErrors {
+  const errors: OnboardingFieldErrors = {};
+  if (draft.age_band === null) {
+    errors.ageBand = "年齢のめやすを選んでください";
+  }
+  if (draft.allergy_status === null) {
+    errors.allergyStatus = "アレルギーの確認を選んでください";
+  } else if (draft.allergy_status === "registered" && allergyCount === 0) {
+    // 既存 completeBlockedReason と同じ意味（設計: 既存メッセージ + 同義 toast）
+    errors.allergyStatus =
+      "アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。";
+  }
+  if (draft.unsupported_diet_status === null) {
+    errors.unsupportedDietStatus = "食べない食事があるか選んでください";
+  } else if (
+    draft.unsupported_diet_status === "present" &&
+    draft.unsupported_diet_kinds.length === 0
+  ) {
+    errors.unsupportedDietKinds = "該当する項目を選んでください";
+  }
+  return errors;
+}
+
+function firstOnboardingFieldError(
+  errors: OnboardingFieldErrors,
+): { key: keyof OnboardingFieldErrors; message: string } | undefined {
+  for (const key of ONBOARDING_FIELD_ORDER) {
+    const message = errors[key];
+    if (message !== undefined) {
+      return { key, message };
+    }
+  }
+  return undefined;
+}
 
 export interface HouseholdOnboardingApi {
   listMembers: () => Promise<HouseholdMemberRow[]>;
@@ -88,6 +149,7 @@ export function HouseholdOnboardingForm({
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { show: showToast, dismiss: dismissToast } = useAppToast();
   const [saveState, setSaveState] = useState<"saved" | "saving" | "failed">("saved");
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const pendingSavePatch = useRef<HouseholdDraftPatch>({});
@@ -99,6 +161,19 @@ export function HouseholdOnboardingForm({
   const [skipPending, setSkipPending] = useState(false);
   // HP-I1: AllergyEditor 失敗を利用者に見せる（設定画面と同型）
   const [allergyError, setAllergyError] = useState<string | null>(null);
+  // 完了押下後の fieldErrors（valid になったら clear）
+  const [fieldErrors, setFieldErrors] = useState<OnboardingFieldErrors>({});
+  const ageBandRef = useRef<HTMLSelectElement>(null);
+  const allergyStatusRef = useRef<HTMLSelectElement>(null);
+  const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
+  const unsupportedDietKindsRef = useRef<HTMLFieldSetElement>(null);
+
+  // ルート離脱で validation toast を残さない
+  useEffect(() => {
+    return () => {
+      dismissToast();
+    };
+  }, [dismissToast]);
 
   /** C-C1: 画面内から skipped へ抜け、アイデア導線へ進める */
   const skipOnboarding = async (): Promise<void> => {
@@ -196,6 +271,7 @@ export function HouseholdOnboardingForm({
     try {
       await api.setProgress("complete");
       setCompleteError(false);
+      dismissToast();
       onDone();
     } catch {
       setCompleteError(true);
@@ -211,23 +287,82 @@ export function HouseholdOnboardingForm({
     ].filter(Boolean).length;
   }, [draft]);
 
-  const canComplete =
-    draft !== null &&
-    completedRequired === 3 &&
-    (draft.allergy_status !== "registered" || allergies.length > 0) &&
-    (draft.unsupported_diet_status !== "present" || draft.unsupported_diet_kinds.length > 0);
+  // フィールドが valid になったら form alert / fieldErrors を必ず clear（設計 §6.3 lifecycle）
+  // 既に error を出しているときだけ再評価し、直った項目は落として残件だけ残す。
+  useEffect(() => {
+    if (draft === null) return;
+    setFieldErrors((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const next = validateOnboardingDraft(draft, allergies.length);
+      if (Object.keys(next).length === 0) return {};
+      const same =
+        ONBOARDING_FIELD_ORDER.every((key) => prev[key] === next[key]) &&
+        Object.keys(prev).length === Object.keys(next).length;
+      return same ? prev : next;
+    });
+  }, [draft, allergies.length]);
 
-  // HP-I2: 3/3 表示なのに完了不可のとき、理由を明示する（袋小路の無言 disable を防ぐ）
-  const completeBlockedReason = useMemo(() => {
-    if (draft === null || completedRequired < 3 || canComplete) return null;
-    if (draft.allergy_status === "registered" && allergies.length === 0) {
-      return "アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。";
+  const leadFieldError = firstOnboardingFieldError(fieldErrors);
+
+  const focusFirstInvalid = (errors: OnboardingFieldErrors): void => {
+    const lead = firstOnboardingFieldError(errors);
+    if (lead === undefined) return;
+    if (lead.key === "ageBand") {
+      ageBandRef.current?.focus();
+      return;
     }
-    if (draft.unsupported_diet_status === "present" && draft.unsupported_diet_kinds.length === 0) {
-      return "「食べない食事がある」ときは、該当する項目を1つ以上選んでください。";
+    if (lead.key === "allergyStatus") {
+      allergyStatusRef.current?.focus();
+      return;
     }
-    return null;
-  }, [allergies.length, canComplete, completedRequired, draft]);
+    if (lead.key === "unsupportedDietStatus") {
+      unsupportedDietStatusRef.current?.focus();
+      return;
+    }
+    // kinds: fieldset 内の先頭 checkbox
+    const firstCheckbox =
+      unsupportedDietKindsRef.current?.querySelector<HTMLInputElement>("input:not([disabled])");
+    firstCheckbox?.focus();
+  };
+
+  /** incomplete 完了押下: fieldErrors + toast + focus。成功時のみ complete を進める */
+  const handleCompleteClick = (): void => {
+    if (draft === null) return;
+    void saveQueue.current.then(async (saved) => {
+      // 下書き保存失敗時は無言 return せず、失敗表示を明示して再試行可能にする。
+      // ネットワーク失敗は既存 status 行のみ（toast なし）
+      if (!saved) {
+        setSaveState("failed");
+        return;
+      }
+      const nextErrors = validateOnboardingDraft(draft, allergies.length);
+      if (Object.keys(nextErrors).length > 0) {
+        setFieldErrors(nextErrors);
+        const lead = firstOnboardingFieldError(nextErrors);
+        showToast({
+          message: lead?.message ?? FALLBACK_VALIDATION_TOAST,
+          tone: "error",
+        });
+        focusFirstInvalid(nextErrors);
+        return;
+      }
+      setFieldErrors({});
+      dismissToast();
+      let completed: HouseholdMemberRow;
+      try {
+        completed = await api.completeMember(draft.id);
+      } catch {
+        // ネット失敗: 既存 saveState failed 表示のみ（toast なし）
+        setSaveState("failed");
+        return;
+      }
+      replaceMember(completed);
+      // complete 成功後は家族安全依存 query を必ず無効化し、
+      // localStorage 失敗時でも revision/event 経由で緊急献立などを更新する。
+      await invalidateHouseholdSafetyDependents(queryClient, userId);
+      await finishOnboarding();
+    });
+  };
 
   if (membersQuery.isPending) {
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
@@ -342,8 +477,13 @@ export function HouseholdOnboardingForm({
         <label className="field">
           <span>年齢のめやす</span>
           <select
+            ref={ageBandRef}
             aria-label="年齢のめやす"
             value={draft.age_band ?? ""}
+            aria-invalid={fieldErrors.ageBand !== undefined ? true : undefined}
+            aria-describedby={
+              fieldErrors.ageBand !== undefined ? ONBOARDING_FORM_ERROR_ID : undefined
+            }
             onChange={(event) => {
               const ageBand = event.target.value as AgeBand;
               void save({ age_band: ageBand, ...defaultsForAgeBand(ageBand) });
@@ -362,8 +502,13 @@ export function HouseholdOnboardingForm({
         <label className="field">
           <span>アレルギーの確認</span>
           <select
+            ref={allergyStatusRef}
             aria-label="アレルギーの確認"
             value={draft.allergy_status ?? ""}
+            aria-invalid={fieldErrors.allergyStatus !== undefined ? true : undefined}
+            aria-describedby={
+              fieldErrors.allergyStatus !== undefined ? ONBOARDING_FORM_ERROR_ID : undefined
+            }
             onChange={(event) => void save({ allergy_status: event.target.value })}
           >
             <option value="">選んでください</option>
@@ -476,8 +621,21 @@ export function HouseholdOnboardingForm({
         <label className="field">
           <span>食べない食事はありますか</span>
           <select
+            ref={unsupportedDietStatusRef}
             aria-label="食べない食事はありますか"
             value={draft.unsupported_diet_status ?? ""}
+            aria-invalid={
+              fieldErrors.unsupportedDietStatus !== undefined ||
+              fieldErrors.unsupportedDietKinds !== undefined
+                ? true
+                : undefined
+            }
+            aria-describedby={
+              fieldErrors.unsupportedDietStatus !== undefined ||
+              fieldErrors.unsupportedDietKinds !== undefined
+                ? ONBOARDING_FORM_ERROR_ID
+                : undefined
+            }
             onChange={(event) => {
               const value = event.target.value as UnsupportedDietStatus;
               void save({
@@ -494,7 +652,7 @@ export function HouseholdOnboardingForm({
         </label>
 
         {draft.unsupported_diet_status === "present" && (
-          <fieldset>
+          <fieldset ref={unsupportedDietKindsRef}>
             <legend>該当する項目</legend>
             {unsupportedDietOptions.map(([value, label]) => (
               <label key={value} className="field">
@@ -520,36 +678,18 @@ export function HouseholdOnboardingForm({
         )}
       </section>
 
-      {completeBlockedReason !== null && (
-        <p className="error-message" role="alert">
-          {completeBlockedReason}
+      {/* フォームレベル role=alert は先頭エラー1つ（設計 §6.3） */}
+      {leadFieldError !== undefined && (
+        <p id={ONBOARDING_FORM_ERROR_ID} className="error-message" role="alert">
+          {leadFieldError.message}
         </p>
       )}
       <button
         className="primary-button"
         type="button"
-        disabled={!canComplete || saveState === "failed"}
-        onClick={() => {
-          void saveQueue.current.then(async (saved) => {
-            // 下書き保存失敗時は無言 return せず、失敗表示を明示して再試行可能にする。
-            if (!saved) {
-              setSaveState("failed");
-              return;
-            }
-            let completed: HouseholdMemberRow;
-            try {
-              completed = await api.completeMember(draft.id);
-            } catch {
-              setSaveState("failed");
-              return;
-            }
-            replaceMember(completed);
-            // complete 成功後は家族安全依存 query を必ず無効化し、
-            // localStorage 失敗時でも revision/event 経由で緊急献立などを更新する。
-            await invalidateHouseholdSafetyDependents(queryClient, userId);
-            await finishOnboarding();
-          });
-        }}
+        // incomplete でも押下可。failed 保存中のみ止める（選び直して再試行）
+        disabled={saveState === "failed"}
+        onClick={handleCompleteClick}
       >
         この家族の設定を完了する
       </button>

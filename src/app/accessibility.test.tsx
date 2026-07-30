@@ -25,6 +25,7 @@ import type { PlannerSafetyMember } from "@/features/planner/planner-safety-memb
 import type { PlannerStep } from "@/features/planner/model/planner-wizard";
 import { ShoppingListPage } from "@/features/shopping/pages/shopping-list-page";
 import { runAxe } from "@/test/axe";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 import { AppShell } from "./layouts/app-shell";
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
@@ -178,9 +179,12 @@ function Providers({
   auth?: AuthContextValue;
 }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // ウィザード質問 step が useAppToast を使うため Provider を同梱する
   return (
     <QueryClientProvider client={client}>
-      <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>
+      <AuthContext.Provider value={auth}>
+        <AppToastProvider>{children}</AppToastProvider>
+      </AuthContext.Provider>
     </QueryClientProvider>
   );
 }
@@ -464,14 +468,17 @@ describe("wizard step accessibility", () => {
     },
   );
 
-  it("audience with zero members disables family mode, keeps idea selectable, and links to registration", async () => {
+  it("audience with zero members: idea radio first, family disabled, idea selectable, registration link", async () => {
     const { container } = renderWizard("audience", emptyDraft, []);
     await expectAccessible(container);
 
-    const family = screen.getByRole("radio", { name: "家族に合わせて作る" });
-    const idea = screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" });
-    expect(family).toBeDisabled();
-    expect(idea).not.toBeDisabled();
+    // 設計 L9: DOM 順は人数だけ → 家族に合わせて
+    const radios = screen.getAllByRole("radio");
+    expect(radios).toHaveLength(2);
+    expect(radios[0]).toHaveAccessibleName(/人数だけ指定してアイデアを見る/u);
+    expect(radios[1]).toHaveAccessibleName(/家族に合わせて作る/u);
+    expect(radios[0]).not.toBeDisabled();
+    expect(radios[1]).toBeDisabled();
     expect(screen.getByRole("link", { name: "家族を追加する" })).toBeVisible();
   });
 

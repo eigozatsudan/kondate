@@ -2,9 +2,11 @@ import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
 import type { PlanCode } from "@shared/contracts/plan-quota";
 import { getNextJstMidnight } from "@shared/time/jst";
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
+import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "@/features/planner/household-safety-helper-copy";
 import type { GenerationClientState } from "../model/generation-machine";
 import { useUsageToday } from "../hooks/use-usage-today";
-import { clearPendingGeneration } from "../model/pending-generation";
+import { clearPendingGeneration, readPendingGeneration } from "../model/pending-generation";
+import { readPendingGenerationMeta } from "../model/pending-generation-meta";
 
 // 本日分の作成上限に伴う retryAt は JST 日次リセット（翌0:00）に一致するため、
 // 生の日時ではなく「明日H:MM」の相対表現で示す。
@@ -257,12 +259,25 @@ export function GenerationStatusPanel({
     );
   }
   if (state.phase === "constraint_conflict") {
+    // 設計 §6.2: new_menu × household のみ補助文を conflicts 一覧に対してちょうど1回。
+    // idea / regenerate_* / pending・meta 欠落・key 不一致は出さない（reload 後も pending TTL 内なら可）。
+    const now = new Date();
+    const pending = userId === undefined ? null : readPendingGeneration(userId, now);
+    const meta =
+      userId === undefined || pending === null ? null : readPendingGenerationMeta(userId, now);
+    const showHouseholdHelper =
+      pending !== null &&
+      meta !== null &&
+      meta.idempotencyKey === pending.request.idempotencyKey &&
+      pending.kind === "new_menu" &&
+      meta.targetMode === "household";
     return (
       <div className="gen-status-panel" data-phase="constraint_conflict">
         <h1>条件を同時に満たせませんでした</h1>
         {state.data.conflicts.map((item) => (
           <p key={`${item.code}-${item.conditionRefs.join()}`}>{item.message}</p>
         ))}
+        {showHouseholdHelper ? <p>{HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY}</p> : null}
         <NotConsumedNotice consumed={state.data.quota.consumed} />
         <TerminalQuotaBlock
           {...(userId === undefined ? {} : { userId })}

@@ -649,6 +649,29 @@ for (const servings of [1, 20] as const) {
   });
 }
 
+test("ingredient empty next uses toast and alert instead of alertdialog", async ({
+  authenticatedPage: page,
+}) => {
+  // 設計 §6.3: メイン食材 0 件の「次へ」は empty alertdialog ではなく
+  // toast(status) + inline alert + 入力 focus。遷移しない。
+  await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+  await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  await page.getByRole("radio", { name: "朝食" }).check();
+  await clickWizardNext(page);
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+  await clickWizardNext(page);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText("メイン食材を1つ以上選んでください");
+  // autosave/billing の status と同居するため、検証トーストは文言で絞る
+  await expect(
+    page.getByRole("status").filter({ hasText: "メイン食材を1つ以上選んでください" }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "メイン食材" })).toBeFocused();
+  await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
+});
+
 test("offers only in-range servings so an out-of-range draft cannot be composed", async ({
   authenticatedPage: page,
 }) => {
@@ -667,16 +690,31 @@ test("offers only in-range servings so an out-of-range draft cannot be composed"
   await clickWizardNext(page);
   await page.getByRole("radio", { name: "和食" }).check();
   await clickWizardNext(page);
+  // 設計 L9: 人数だけ → 家族に合わせて（0 メンバー時は後者 disabled）
+  const audienceRadios = page.getByRole("radio");
+  await expect(audienceRadios).toHaveCount(2);
+  await expect(audienceRadios.nth(0)).toHaveAccessibleName(/人数だけ指定してアイデアを見る/u);
+  await expect(audienceRadios.nth(1)).toHaveAccessibleName(/家族に合わせて作る/u);
+  await expect(audienceRadios.nth(1)).toBeDisabled();
+
   await page.getByRole("radio", { name: "人数だけ指定してアイデアを見る" }).check();
   const servingsSelect = page.getByLabel("7人以上（20人まで）");
-  // 未選択のうちは1〜6のチップも押されておらず、次へは進めない。
+  // 未選択のうちは1〜6のチップも押されておらず、incomplete のまま。
+  // 旧: 次へ disabled。現: 押下可 + toast(status) + inline alert（設計 §6.3）。
   for (const count of [1, 2, 3, 4, 5, 6]) {
     await expect(page.getByRole("button", { name: `${String(count)}人` })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
   }
-  await expect(page.getByRole("button", { name: "次へ" })).toBeDisabled();
+  const next = page.getByRole("button", { name: "次へ" });
+  await expect(next).toBeEnabled();
+  await clickWizardNext(page);
+  await expect(page.getByRole("alert")).toContainText("人数を選んでください");
+  // autosave/billing の status と同居するため、検証トーストは文言で絞る
+  await expect(page.getByRole("status").filter({ hasText: "人数を選んでください" })).toBeVisible();
+  // 遷移しない
+  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   // 21のような範囲外は選択肢として存在しない。
   await expect(servingsSelect.locator("option")).toHaveText([
     "選ばない",
@@ -695,9 +733,8 @@ test("offers only in-range servings so an out-of-range draft cannot be composed"
     "19人",
     "20人",
   ]);
-  await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   await servingsSelect.selectOption("20");
-  await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+  await expect(next).toBeEnabled();
 });
 
 // --- 5-route smoke matrix（Task 6 Step 13 / Task 9 idea 許可） ---

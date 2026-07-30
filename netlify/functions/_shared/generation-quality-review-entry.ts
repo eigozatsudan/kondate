@@ -268,6 +268,7 @@ export async function reviewGenerationQuality(input: {
     startedAtMonotonicMs: started,
     deadlineAtMonotonicMs: started + 55_000,
     regeneration: null,
+    recentDishHints: [],
   });
 
   const sender = createOpenRouterGenerationSender({

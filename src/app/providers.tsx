@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type PropsWithChildren } from "react";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 
 type AppProvidersProps = PropsWithChildren<{
   queryClient?: QueryClient;
@@ -22,5 +23,10 @@ function createDefaultQueryClient() {
 
 export function AppProviders({ children, queryClient }: AppProvidersProps) {
   const [ownedClient] = useState(createDefaultQueryClient);
-  return <QueryClientProvider client={queryClient ?? ownedClient}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient ?? ownedClient}>
+      {/* validation toast はルート付近で 1 回だけマウントする */}
+      <AppToastProvider>{children}</AppToastProvider>
+    </QueryClientProvider>
+  );
 }

@@ -63,7 +63,7 @@ async function updatePlannerAndAwaitAutosave(
 /**
  * 食事帯を切り替えて review へ戻す。
  * 緊急献立はメイン食材 AND 一致で絞るため、対象 fixture に合う mainIngredient を載せる
- * （朝食=鮭 / 昼食=ひき肉 / 夕食=鶏肉。空にすると ingredient 空ゲートで次へ進めない）。
+ * （朝食=鮭 / 昼食=ひき肉 / 夕食=鶏肉。空のまま次へしても toast+alert で止まり、確認へ進めない）。
  */
 async function savePlannerMeal(
   page: Page,
