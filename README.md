@@ -406,12 +406,12 @@ npm run preflight:production
 本番 CLI デプロイ（Netlify / Supabase）のつまずきは
 [docs/deployment/README.md](docs/deployment/README.md) §6 が正本。Free プランで特に多いもの:
 
-| 症状 | 確認すること |
-| --- | --- |
-| env を Functions だけに限定できない | Free は **All scopes のみ**。秘密に `VITE_` を付けない |
-| `env:set --secret` / `missing key` | `--secret --context=production`（**`=` 形式**）。`--context production KEY` は KEY が context に飲まれる |
-| deploy が memory 422 | Function **memory 指定は Pro+**。`netlify.toml` と `flyer-weekly.ts` の両方から外す（既定 1024MB） |
-| `db push` が `db.<ref>...` 解決失敗 | Direct は IPv6 のみになりがち。**Shared Session pooler（5432）** を使う |
+| 症状                                | 確認すること                                                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| env を Functions だけに限定できない | Free は **All scopes のみ**。秘密に `VITE_` を付けない                                                   |
+| `env:set --secret` / `missing key`  | `--secret --context=production`（**`=` 形式**）。`--context production KEY` は KEY が context に飲まれる |
+| deploy が memory 422                | Function **memory 指定は Pro+**。`netlify.toml` と `flyer-weekly.ts` の両方から外す（既定 1024MB）       |
+| `db push` が `db.<ref>...` 解決失敗 | Direct は IPv6 のみになりがち。**Shared Session pooler（5432）** を使う                                  |
 
 主な検証コマンド:
 

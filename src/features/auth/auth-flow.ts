@@ -5,8 +5,7 @@ const authFlowReturnToSchema = z
   .string()
   .refine(
     (value) =>
-      value === "/" ||
-      (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
+      value === "/" || (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
     "invalid_return_to",
   );
 
