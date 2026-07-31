@@ -10,9 +10,10 @@
  * 1. カンマ区切りで split し、各要素を trim する。空要素は拒否する（filter で落とさない）。
  * 2. 結果が空なら拒否する（OPENROUTER_MODELS must not be empty）。
  * 3. 重複 ID は拒否する（順序は保持する）。
- * 4. openrouter/auto・openrouter/free・openrouter/auto-beta は常に拒否する。
+ * 4. openrouter/auto・openrouter/free・openrouter/auto-beta は常に拒否する（大小文字無視）。
  * 5. base URL が exact mock（http://openrouter-mock:8787/api/v1）のときだけ
- *    mock/*:free を受理する。それ以外の base では :free も mock/ も拒否し、有料明示 ID を受理する。
+ *    mock/*:free を受理する（:free 接尾は case-insensitive）。それ以外の base では
+ *    :free（:Free/:FREE 含む）も mock/ も拒否し、有料明示 ID を受理する。
  * 6. mock 例外は OPENROUTER_BASE_URL の exact 一致のみ。isLocal / SERVER_SITE_ORIGIN は使わない。
  * 7. 受理時は trim 済み ID の順序付き配列を返す。
  *
@@ -23,8 +24,8 @@
  */
 export const modelListRules = `
 - comma-split + trim; empty elements rejected (no filter(Boolean)); empty list rejected; duplicates rejected; order preserved
-- reject openrouter/auto, openrouter/free, openrouter/auto-beta always
-- exact mock base only: accept mock/*:free; non-mock base rejects any :free and any mock/ prefix
+- reject openrouter/auto, openrouter/free, openrouter/auto-beta always (case-insensitive)
+- exact mock base only: accept mock/*:free (:free suffix case-insensitive); non-mock base rejects any :free/:Free/:FREE and any mock/ prefix
 - mock exception uses OPENROUTER_BASE_URL exact match only (not isLocal / SERVER_SITE_ORIGIN)
 - remote: id exists; structured_outputs AND response_format; usable pricing; prompt+completion ≤ 4.00 USD/1M
 `.trim();
@@ -77,6 +78,9 @@ export const rejectedModelLists = [
   { raw: "openrouter/free", baseUrl: "https://openrouter.ai/api/v1" },
   { raw: "openrouter/auto-beta", baseUrl: "https://openrouter.ai/api/v1" },
   { raw: "vendor/a:free", baseUrl: "https://openrouter.ai/api/v1" },
+  { raw: "vendor/a:Free", baseUrl: "https://openrouter.ai/api/v1" },
+  { raw: "vendor/a:FREE", baseUrl: "https://openrouter.ai/api/v1" },
+  { raw: "OpenRouter/Auto", baseUrl: "https://openrouter.ai/api/v1" },
   { raw: "mock/first:free", baseUrl: "https://openrouter.ai/api/v1" },
   // exact mock 以外では mock/ 接頭辞そのものを拒否（:free 無しの mock/vendor-paid 含む）
   { raw: "mock/vendor-paid", baseUrl: "https://openrouter.ai/api/v1" },

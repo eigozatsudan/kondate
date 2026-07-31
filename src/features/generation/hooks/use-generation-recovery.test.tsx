@@ -835,11 +835,11 @@ describe("useGenerationRecovery", () => {
   });
 
   // 本番調査: ok:false 業務 code を offline「通信確認」に落とすと第三者端末で永久停止する。
+  // pre-reserve / 合成確定失敗のみ Error 名で failed に焼く（G7）。
   it.each([
     ["consent_required", "AIへ送る情報の説明"],
     ["draft_not_found", "献立条件が見つかりません"],
     ["invalid_request", "献立条件を確認"],
-    ["generation_timeout", "時間がかかりました"],
   ] as const)("maps POST %s to failed terminal without offline", async (code, messagePart) => {
     mockPost.mockRejectedValueOnce(new Error(code));
     const recovery = renderRecoveryAt(idleState, null);
@@ -852,6 +852,22 @@ describe("useGenerationRecovery", () => {
     expect(recovery.result.current.state.data.error.message).toContain(messagePart);
     expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
     expect(mockDispatches).not.toContainEqual({ type: "network_error" });
+  });
+
+  // G7: post-reserve 系 code が Error.message で来ても pending を焼かない（ok:true 正規終端と非対称）
+  it.each([
+    "generation_timeout",
+    "model_unavailable",
+    "invalid_ai_response",
+    "internal_error",
+    "duplicate_output",
+  ] as const)("keeps pending offline on POST Error %s (post-reserve recoverable)", async (code) => {
+    mockPost.mockRejectedValueOnce(new Error(code));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("offline");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingA);
+    expect(mockDispatches).toContainEqual({ type: "network_error" });
   });
 
   // G1/G2: POST の閉じた 5xx 系 code で pending を焼くと processing 台帳を status 回収できない

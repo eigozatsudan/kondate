@@ -1493,7 +1493,8 @@ describe("runGeneration", () => {
     expect(result).toEqual({
       status: "failed",
       idempotencyKey: key,
-      requestId: activeRequestId,
+      // 他行 request_id は載せない（G13）。activeRequestId は reserve mock 用の残骸。
+      requestId: "00000000-0000-4000-8000-000000000098",
       quota: {
         consumed: false,
         remaining: 2,
@@ -1509,6 +1510,9 @@ describe("runGeneration", () => {
       },
     });
     expect(result.status).not.toBe("not_started");
+    if (result.status === "failed") {
+      expect(result.requestId).not.toBe(activeRequestId);
+    }
     expect(repository.status).not.toHaveBeenCalled();
     expect(loadExecutionContext).not.toHaveBeenCalled();
     expect(repository.markSent).not.toHaveBeenCalled();

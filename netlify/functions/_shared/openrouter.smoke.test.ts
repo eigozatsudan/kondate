@@ -42,7 +42,7 @@ export function assertRealPaidOpenRouterSmokeConfig(config: RealPaidOpenRouterSm
     if (model.length === 0) {
       throw new Error("OpenRouter paid smoke rejects empty OPENROUTER_MODELS elements");
     }
-    if (model.endsWith(":free")) {
+    if (model.toLowerCase().endsWith(":free")) {
       throw new Error(
         `OpenRouter paid smoke rejects :free model: ${model} (use paid allowlist IDs only)`,
       );

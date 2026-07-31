@@ -295,6 +295,9 @@ export function projectProviderConflicts(
   });
 }
 
+/** generation_in_progress 合成失敗用。他行 request_id をクライアントへ載せない（G13）。 */
+const SYNTHETIC_IN_PROGRESS_REQUEST_ID = "00000000-0000-4000-8000-000000000098";
+
 export function toGenerationStatus(
   record: QuotaRequestRecord,
   idempotencyKey: string,
@@ -721,9 +724,10 @@ export async function runGeneration(
   };
   if (reserved.status !== "processing" || reserved.replayed === true) {
     // generation_in_progress は台帳行を増やさない合成 failed。status(key) は
-    // not_started になるため、reserve payload をそのまま GenerationStatusData へ写す。
+    // not_started になるため、reserve payload を GenerationStatusData へ写す。
+    // 他 active 行の request_id は運用相関の誤認源なので sentinel に置換する（G6/G13）。
     if (reserved.status === "failed" && reserved.failure_code === "generation_in_progress") {
-      return toGenerationStatus(reserved, key);
+      return toGenerationStatus({ ...reserved, request_id: SYNTHETIC_IN_PROGRESS_REQUEST_ID }, key);
     }
     try {
       return await hydrate();

@@ -43,6 +43,8 @@ export function useGenerationProgressMessage(
   if (!active) {
     resolvedAnchorMsRef.current = null;
     maxStageIndexSeenRef.current = 0;
+    // 非表示時の戻り値。失敗/完了後に古い stage 文言が残って誤認されないよう中立句へ（G12）。
+    message = "確認できませんでした";
   } else {
     const nowMs = Date.now();
     // usable な anchor は毎回採用。null / 不正は sticky capture を維持（V-C1）。

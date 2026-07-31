@@ -87,17 +87,19 @@ export function parseOpenRouterModels(value, context = {}) {
   } catch {
     mockPath = false;
   }
+  // router / :free は大小文字を正規化して拒否（env.ts と鏡像・G4/G5）
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   for (const model of models) {
-    if (routers.has(model)) {
+    const normalized = model.toLowerCase();
+    if (routers.has(normalized)) {
       throw new Error(`OPENROUTER_MODELS rejects router model ID: ${model}`);
     }
     if (mockPath) {
-      if (!model.startsWith("mock/") || !model.endsWith(":free")) {
+      if (!model.startsWith("mock/") || !normalized.endsWith(":free")) {
         throw new Error(`OPENROUTER_MODELS mock path accepts only mock/*:free: ${model}`);
       }
-    } else if (model.endsWith(":free") || model.startsWith("mock/")) {
-      // 設計: exact mock 以外では mock/ も :free も拒否
+    } else if (normalized.endsWith(":free") || model.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否（:Free/:FREE 含む）
       throw new Error(`OPENROUTER_MODELS rejects mock/ or :free model on non-mock base: ${model}`);
     }
   }

@@ -235,14 +235,18 @@ async function sendMenuGenerationWithRuntime(
   const configuredModels = runtime.models;
   // 有料 allowlist ガード: router 集合・空・重複は常に拒否。
   // real API base 上の :free と mock/ も拒否（mock 例外は exact mock base のみ）。
+  // pricing / structured_outputs の remote 必須化はデプロイ verify 側（G4 residual）。
+  // ここでは invalid 連発を避けるため、明らかに不正な ID を fetch 前に落とす。
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   const rejectsRouterOrEmptyOrDup =
     configuredModels.length === 0 ||
     new Set(configuredModels).size !== configuredModels.length ||
-    configuredModels.some((model) => routers.has(model));
+    configuredModels.some((model) => routers.has(model.toLowerCase()));
   const rejectsMockOrFreeOnRealApi =
     !isExactLocalMockBaseUrl(runtime.baseUrl) &&
-    configuredModels.some((model) => model.endsWith(":free") || model.startsWith("mock/"));
+    configuredModels.some(
+      (model) => model.toLowerCase().endsWith(":free") || model.startsWith("mock/"),
+    );
   if (rejectsRouterOrEmptyOrDup || rejectsMockOrFreeOnRealApi) {
     throw new OpenRouterCallError("model_unavailable");
   }

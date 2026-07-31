@@ -178,8 +178,10 @@ describe("generationIssueCodes and issueMessages", () => {
     user_short_window_limit:
       "短い時間に何度も作成を試したため、少し待つ必要があります。しばらくしてから再度お試しください。",
     global_daily_limit: "ただいま混雑しています。明日0:00（日本時間）以降にお試しください。",
-    model_unavailable: "AIが混み合っています。",
-    invalid_ai_response: "献立を正しく確認できませんでした。",
+    model_unavailable:
+      "AIが混み合っています。作成を受け付けたあと完了できなかったため、しばらくしてからお試しください。",
+    invalid_ai_response:
+      "献立を正しく確認できませんでした。続けて試すと本日の受付上限に達しやすくなります。",
     generation_timeout: "作成に時間がかかりました。",
     internal_error: "献立を作成できませんでした。",
     duplicate_output: "元の献立とほぼ同じ案だったため保存しませんでした。",

@@ -55,17 +55,19 @@ export function parseConfiguredModels(raw, context = {}) {
     throw new Error("OPENROUTER_MODELS must not contain duplicates");
   }
   const mockPath = isExactLocalMockBaseUrl(openRouterBaseUrl);
+  // router / :free は大小文字を正規化して拒否（env.ts と鏡像・G4/G5）
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   for (const id of models) {
-    if (routers.has(id)) {
+    const normalized = id.toLowerCase();
+    if (routers.has(normalized)) {
       throw new Error("OPENROUTER_MODELS rejects router model IDs");
     }
     if (mockPath) {
-      if (!id.startsWith("mock/") || !id.endsWith(":free")) {
+      if (!id.startsWith("mock/") || !normalized.endsWith(":free")) {
         throw new Error("OPENROUTER_MODELS mock path accepts only mock/*:free IDs");
       }
-    } else if (id.endsWith(":free") || id.startsWith("mock/")) {
-      // 設計: exact mock 以外では mock/ も :free も拒否
+    } else if (normalized.endsWith(":free") || id.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否（:Free/:FREE 含む）
       throw new Error("OPENROUTER_MODELS rejects mock/ or :free models on non-mock base URL");
     }
   }

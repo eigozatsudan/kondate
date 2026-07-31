@@ -45,6 +45,20 @@ const CLOSED_SERVER_RECOVERABLE_CODES = new Set([
   "quota_transition_failed",
 ]);
 
+/**
+ * ok:false + Error.message 経路で来る post-reserve 系 code。
+ * 正規業務終端は ok:true + status failed。Error 名だけで failed に焼くと
+ * processing 台帳の status 回収を失うため POST では offline 維持する（G7）。
+ * GET は status 回収そのものなので generationFailureCodes を failed のまま扱う。
+ */
+const POST_ERROR_STATUS_RECOVERABLE_FAILURE_CODES = new Set([
+  "model_unavailable",
+  "invalid_ai_response",
+  "generation_timeout",
+  "internal_error",
+  "duplicate_output",
+]);
+
 /** offline 自動再試行の初回間隔。以降は指数バックオフ（上限 OFFLINE_RETRY_MAX_MS）。 */
 const OFFLINE_RETRY_BASE_MS = 5_000;
 const OFFLINE_RETRY_MAX_MS = 60_000;
@@ -103,6 +117,11 @@ function classifyGenerationClientError(
     return { kind: "request_conflict" };
   }
   if (isGenerationFailureCode(code)) {
+    // G7: POST の Error 経路では post-reserve 系を offline にして pending を守る。
+    // pre-reserve / 合成業務 code（draft_not_found 等）は従来どおり failed。
+    if (surface === "post" && POST_ERROR_STATUS_RECOVERABLE_FAILURE_CODES.has(code)) {
+      return { kind: "offline" };
+    }
     return { kind: "failed", code, message: issueMessages[code] };
   }
   if (CLOSED_SERVER_RECOVERABLE_CODES.has(code)) {

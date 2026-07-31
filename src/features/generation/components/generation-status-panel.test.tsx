@@ -485,7 +485,9 @@ describe("GenerationStatusPanel", () => {
       </QueryClientProvider>,
     );
     expect(
-      await screen.findByText("本日の作成回数を確認できません。再読み込みしてください"),
+      await screen.findByText(
+        "プラン情報を含む本日の作成回数を確認できません。再読み込みしてください",
+      ),
     ).toBeVisible();
     expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
   });
@@ -521,7 +523,8 @@ describe("GenerationStatusPanel", () => {
         ...failedData,
         error: {
           code: "invalid_ai_response",
-          message: "献立を正しく確認できませんでした。",
+          message:
+            "献立を正しく確認できませんでした。続けて試すと本日の受付上限に達しやすくなります。",
           retryable: true,
         },
         quota: { ...quota, consumed: true },

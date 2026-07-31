@@ -210,17 +210,20 @@ export function parseOpenRouterModels(
     throw new Error("OPENROUTER_MODELS must not contain duplicates");
   }
   const mockPath = isExactLocalMockBaseUrl(context.openRouterBaseUrl);
+  // router / :free は大小文字を正規化して拒否（G4/G5: 手編集 env の抜けを閉じる）
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   for (const model of models) {
-    if (routers.has(model)) {
+    const normalized = model.toLowerCase();
+    if (routers.has(normalized)) {
       throw new Error(`OPENROUTER_MODELS rejects router model ID: ${model}`);
     }
     if (mockPath) {
-      if (!model.startsWith("mock/") || !model.endsWith(":free")) {
+      // mock 例外は prefix 小文字固定 + :free は case-insensitive
+      if (!model.startsWith("mock/") || !normalized.endsWith(":free")) {
         throw new Error(`OPENROUTER_MODELS mock path accepts only mock/*:free: ${model}`);
       }
-    } else if (model.endsWith(":free") || model.startsWith("mock/")) {
-      // 設計: exact mock 以外では mock/ も :free も拒否
+    } else if (normalized.endsWith(":free") || model.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否（:Free/:FREE 含む）
       throw new Error(`OPENROUTER_MODELS rejects mock/ or :free model on non-mock base: ${model}`);
     }
   }

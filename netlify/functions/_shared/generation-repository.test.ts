@@ -434,6 +434,66 @@ describe("createGenerationRepository", () => {
     }
   });
 
+  // G3: reserve SQL の閉じた failure を quota_transition_failed 500 に潰さない
+  it.each([
+    {
+      sqlMessage: "draft_unavailable",
+      sqlCode: "P0001",
+      status: 404,
+      code: "draft_not_found",
+      messageIncludes: "献立条件",
+    },
+    {
+      sqlMessage: "draft_revision_conflict",
+      sqlCode: "P0001",
+      status: 422,
+      code: "invalid_request",
+      messageIncludes: "献立条件",
+    },
+    {
+      sqlMessage: "source_menu_not_found",
+      sqlCode: "P0002",
+      status: 404,
+      code: "source_menu_not_found",
+      messageIncludes: "元の献立",
+    },
+    {
+      sqlMessage: "source_menu_changed",
+      sqlCode: "P0001",
+      status: 409,
+      code: "source_menu_changed",
+      messageIncludes: "更新",
+    },
+    {
+      sqlMessage: "replace_dish_not_found",
+      sqlCode: "P0002",
+      status: 404,
+      code: "replace_dish_not_found",
+      messageIncludes: "変更する料理",
+    },
+  ] as const)("maps reserve SQL $sqlMessage to closed HttpError $code", async (testCase) => {
+    const databaseError = new PostgrestError({
+      message: testCase.sqlMessage,
+      details: "private database details",
+      hint: "private database hint",
+      code: testCase.sqlCode,
+    });
+    rpcMock.mockResolvedValueOnce({ data: null, error: databaseError });
+    const repository = createGenerationRepository(user);
+
+    try {
+      await repository.reserveNew(newMenuCommand, householdIntegrity);
+      throw new Error("Expected repository.reserveNew to reject");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(HttpError);
+      if (!(error instanceof HttpError)) throw error;
+      expect(error.status).toBe(testCase.status);
+      expect(error.code).toBe(testCase.code);
+      expect(error.message).toContain(testCase.messageIncludes);
+      expect(String(error)).not.toContain("private database");
+    }
+  });
+
   it.each([
     { code: "P0001", label: "stale fingerprint raise" },
     { code: "22023", label: "null expected fingerprint raise" },

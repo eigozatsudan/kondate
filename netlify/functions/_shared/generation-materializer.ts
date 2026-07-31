@@ -228,7 +228,8 @@ export function materializeAiGeneratedMenu(
       additionalHeating: adaptation.additionalHeating,
       additionalSeasoning: adaptation.additionalSeasoning,
       servingCheck: adaptation.servingCheck,
-      safetyTags: adaptation.safetyTags,
+      // adaptation の AI tags も信頼せず strip（G10）
+      safetyTags: [],
       safetyActions: adaptation.safetyActions.map((action) => {
         if (
           action.dishRef !== adaptation.dishRef ||
@@ -414,7 +415,8 @@ export function materializeAiGeneratedMenu(
     cuisineGenre: menu.cuisineGenre,
     servings: menu.servings,
     totalElapsedMinutes: menu.totalElapsedMinutes,
-    safetyTags: menu.safetyTags,
+    // AI safetyTags は権威にしない。persist 残党を避けるため常に空（G10）。validate は actions 側。
+    safetyTags: [],
     dishes: materializedDishes,
     timeline: materializedTimeline,
     adaptations: materializedAdaptations,

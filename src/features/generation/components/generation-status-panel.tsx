@@ -40,7 +40,9 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
   const usage = useUsageToday(userId);
   if (usage.isPending) return <p role="status">最新の利用状況を確認しています</p>;
   if (!usage.isSuccess) {
-    return <p role="alert">本日の作成回数を確認できません。再読み込みしてください</p>;
+    return (
+      <p role="alert">プラン情報を含む本日の作成回数を確認できません。再読み込みしてください</p>
+    );
   }
   const data = usage.data;
   const plan: PlanCode = data.plan;

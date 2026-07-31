@@ -439,4 +439,14 @@ describe("materializeAiGeneratedMenu", () => {
       anonymousMemberRef: "member_1",
     });
   });
+
+  // G10: AI が付けた safetyTags は materialize 後に残さない（権威は actions/validate）
+  it("strips AI safetyTags from menu and adaptations", () => {
+    const payload = makePayload();
+    payload.safetyTags = ["remove_bones", "cut_small"];
+    payload.adaptations[0]!.safetyTags = ["soften"];
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.safetyTags).toEqual([]);
+    expect(menu.adaptations[0]?.safetyTags).toEqual([]);
+  });
 });

@@ -1040,8 +1040,12 @@ const nonConflictIssueMessages = {
   unsupported_diet: "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。",
   allergy_conflict: "アレルギー食材が、使いたい食材に含まれています",
   expired_pantry_unconfirmed: "期限を過ぎた食材は、今回の実物確認が必要です。",
-  model_unavailable: "AIが混み合っています。",
-  invalid_ai_response: "献立を正しく確認できませんでした。",
+  // G9: markSent 後は attempt を返さない。混み合い＝受付後の未完了として伝える
+  model_unavailable:
+    "AIが混み合っています。作成を受け付けたあと完了できなかったため、しばらくしてからお試しください。",
+  // G11: invalid 連発で attempt が先に尽き得ることを平易に示す（枠返却はしない）
+  invalid_ai_response:
+    "献立を正しく確認できませんでした。続けて試すと本日の受付上限に達しやすくなります。",
   generation_timeout: "作成に時間がかかりました。",
   internal_error: "献立を作成できませんでした。",
   duplicate_output: "元の献立とほぼ同じ案だったため保存しませんでした。",

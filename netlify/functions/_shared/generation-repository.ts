@@ -151,6 +151,53 @@ function isStatementTimeoutError(error: unknown): boolean {
   );
 }
 
+/**
+ * SQL raise の exact message を閉じた HttpError に写す。
+ * integrity 解決（TS）と同系の業務 code を POST 経路でも UX 可能な形で返す（G3）。
+ * 未知 message は null（呼び出し側が quota_transition_failed）。
+ */
+function mapClosedRpcFailure(error: PostgrestLikeError): HttpError | null {
+  const message = error.message ?? "";
+  const code = error.code ?? "";
+  // 業務 raise は P0001 / P0002 / 22023。それ以外はインフラ扱いのまま 500 へ。
+  if (code !== "P0001" && code !== "P0002" && code !== "22023") {
+    return null;
+  }
+  if (message === "idempotency_payload_mismatch") {
+    return new HttpError(
+      409,
+      "idempotency_payload_mismatch",
+      "同じ操作番号で異なる内容は送信できません。最初からやり直してください。",
+    );
+  }
+  // finalize の fingerprint 不一致が raise で返る旧経路向け。
+  // 正規経路は SQL 側で constraint_conflict に原子遷移する。
+  if (message === "current_safety_changed") {
+    return new HttpError(
+      409,
+      "current_safety_changed",
+      generationConflictCopy.current_safety_changed,
+    );
+  }
+  // reserve 内 TOCTOU: integrity で見えた draft/menu が消えた・競合した
+  if (message === "draft_unavailable") {
+    return new HttpError(404, "draft_not_found", issueMessages.draft_not_found);
+  }
+  if (message === "draft_revision_conflict") {
+    return new HttpError(422, "invalid_request", issueMessages.invalid_request);
+  }
+  if (message === "source_menu_not_found") {
+    return new HttpError(404, "source_menu_not_found", issueMessages.source_menu_not_found);
+  }
+  if (message === "source_menu_changed") {
+    return new HttpError(409, "source_menu_changed", issueMessages.source_menu_changed);
+  }
+  if (message === "replace_dish_not_found") {
+    return new HttpError(404, "replace_dish_not_found", issueMessages.replace_dish_not_found);
+  }
+  return null;
+}
+
 async function rpc<Name extends PublicFunctionName>(
   name: Name,
   parameters: PublicFunctions[Name]["Args"],
@@ -165,30 +212,11 @@ async function rpc<Name extends PublicFunctionName>(
     if (isStatementTimeoutError(error)) {
       throw new GenerationFinalizeTimeoutError();
     }
-    // 同一冪等キーで異なるコマンド本文は非再試行の 409 へ固定する
-    if (
-      isPostgrestLikeError(error) &&
-      error.code === "22023" &&
-      error.message === "idempotency_payload_mismatch"
-    ) {
-      throw new HttpError(
-        409,
-        "idempotency_payload_mismatch",
-        "同じ操作番号で異なる内容は送信できません。最初からやり直してください。",
-      );
-    }
-    // finalize の fingerprint 不一致が raise で返る旧経路向け。
-    // 正規経路は SQL 側で constraint_conflict に原子遷移する。
-    if (
-      isPostgrestLikeError(error) &&
-      (error.code === "P0001" || error.code === "22023") &&
-      error.message === "current_safety_changed"
-    ) {
-      throw new HttpError(
-        409,
-        "current_safety_changed",
-        generationConflictCopy.current_safety_changed,
-      );
+    // reserve / finalize が raise する閉じた業務 code を 500 に潰さない（G3）。
+    // message exact のみ信頼し、P0001/P0002/22023 以外の雑音は quota_transition_failed へ。
+    if (isPostgrestLikeError(error)) {
+      const closed = mapClosedRpcFailure(error);
+      if (closed !== null) throw closed;
     }
     throw new HttpError(500, "quota_transition_failed", "生成の受付状態を更新できませんでした。");
   }

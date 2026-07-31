@@ -1,6 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { stageMessageAt } from "../model/progress-stages";
 import {
   GENERATION_PROGRESS_TICK_MS,
   useGenerationProgressMessage,
@@ -18,13 +17,13 @@ describe("useGenerationProgressMessage", () => {
     vi.useRealTimers();
   });
 
-  it("returns stage 0 when inactive", () => {
+  it("returns neutral inactive message without stale stage copy (G12)", () => {
     const { result } = renderHook(() =>
       useGenerationProgressMessage({ active: false, anchorMs: null }),
     );
     expect(result.current).toEqual({
       stageIndex: 0,
-      message: stageMessageAt(0),
+      message: "確認できませんでした",
     });
   });
 
@@ -110,7 +109,7 @@ describe("useGenerationProgressMessage", () => {
 
     rerender({ active: false });
     expect(result.current.stageIndex).toBe(0);
-    expect(result.current.message).toBe(stageMessageAt(0));
+    expect(result.current.message).toBe("確認できませんでした");
   });
 
   // 実装レビュー D-M1: unmount 以外に active→false で interval が落ちることを固定する
