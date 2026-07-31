@@ -129,4 +129,8 @@ export async function completeMinimumOnboarding(page: Page): Promise<void> {
   // あることを明確に伝えるための文言変更）。旧文言のままだとE2Eがボタンを
   // 見つけられずタイムアウトするため、新文言に追随する。
   await page.getByRole("button", { name: "この家族の設定を完了する" }).click();
+  // 家族アテンション強化後: 1人目完了直後は次アクション画面に留まる。
+  // planner へ進む共通 fixture は「献立を始める」を押すまで完了とみなす。
+  await expect(page.getByRole("heading", { name: /人目の登録が完了しました/u })).toBeVisible();
+  await page.getByRole("button", { name: "献立を始める" }).click();
 }
