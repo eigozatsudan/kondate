@@ -1,7 +1,7 @@
 /**
  * 本番 Scheduled Function: 毎時 1 回、境界付きメンテナンス RPC を呼ぶ。
  * path なし schedule のみ。直接 URL では呼べない。
- * 成功時は 4 集計 + duration のみを snake_case で safeLog する。
+ * 成功時は 8 集計（stale/ledgers/shopping/auth/feedback/drafts/identity/flyer）+ duration のみを snake_case で safeLog する。
  */
 import type { Config } from "@netlify/functions";
 import { parseManagedSupabaseProjectRef } from "./_shared/env.js";
@@ -46,6 +46,8 @@ export default async function maintenanceCleanup(): Promise<Response> {
       authContinuationsDeleted: counts.authContinuationsDeleted,
       userFeedbackDeleted: counts.userFeedbackDeleted,
       draftSubmissionsDeleted: counts.draftSubmissionsDeleted,
+      identityLedgersDeleted: counts.identityLedgersDeleted,
+      flyerLedgersDeleted: counts.flyerLedgersDeleted,
     });
     return new Response(null, { status: 204 });
   } catch {

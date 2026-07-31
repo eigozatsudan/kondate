@@ -56,6 +56,8 @@ describe("createSafeLogger", () => {
       authContinuationsDeleted: 4,
       userFeedbackDeleted: 5,
       draftSubmissionsDeleted: 6,
+      identityLedgersDeleted: 7,
+      flyerLedgersDeleted: 8,
     });
     expect(JSON.parse(write.mock.calls[0]![0] as string)).toEqual({
       level: "info",
@@ -68,6 +70,8 @@ describe("createSafeLogger", () => {
       auth_continuations_deleted: 4,
       user_feedback_deleted: 5,
       draft_submissions_deleted: 6,
+      identity_ledgers_deleted: 7,
+      flyer_ledgers_deleted: 8,
     });
   });
 
@@ -338,5 +342,35 @@ describe("logGenerationEvent", () => {
       code: "succeeded",
       duration_ms: 12,
     });
+  });
+});
+
+describe("closedErrorCode on all logger sinks", () => {
+  it("collapses free-text code on createSafeLogger", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "error",
+      requestId: "req-free",
+      code: "Unexpected JSON at position 0",
+      durationMs: 1,
+    });
+    const parsed = JSON.parse(write.mock.calls[0]![0] as string) as { code: string };
+    expect(parsed.code).toBe("request_failed");
+  });
+
+  it("collapses free-text code on logGenerationEvent", () => {
+    const info = vi.fn();
+    logGenerationEvent(
+      "error",
+      {
+        requestId: "req-gen",
+        errorCode: "provider said: boom!",
+        durationMs: 2,
+        modelId: null,
+      },
+      { info, warn: vi.fn(), error: info },
+    );
+    const parsed = JSON.parse(info.mock.calls[0]![0] as string) as { code: string };
+    expect(parsed.code).toBe("request_failed");
   });
 });

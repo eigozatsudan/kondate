@@ -32,10 +32,34 @@ export type PublicEnv = {
   oauthMockOrigin: string | null;
 };
 
+/** ブラウザへ露出してよい VITE_* の allowlist（これ以外の VITE_* は fail-closed） */
+const allowedViteKeys = new Set([
+  "VITE_SUPABASE_URL",
+  "VITE_SUPABASE_PUBLISHABLE_KEY",
+  "VITE_MAGIC_LINK_RESEND_SECONDS",
+  "VITE_AUTH_CONTINUATION_TTL_MS",
+  "VITE_AUTH_PROVIDER_MODE",
+  "VITE_OAUTH_MOCK_ORIGIN",
+]);
+
+/**
+ * import.meta.env / テスト用 source に未知の VITE_* があれば拒否する。
+ * Vite は VITE_ 接頭辞をクライアント露出するため、parse 対象外の秘密 alias を fail-closed にする。
+ */
+function rejectUnexpectedViteKeys(source: Record<string, unknown>): void {
+  for (const key of Object.keys(source)) {
+    if (!key.startsWith("VITE_")) continue;
+    if (!allowedViteKeys.has(key)) {
+      throw new Error("公開設定を読み込めません");
+    }
+  }
+}
+
 export function parsePublicEnv(
   source: Record<string, unknown>,
   context: PublicEnvParseContext = { production: false },
 ): PublicEnv {
+  rejectUnexpectedViteKeys(source);
   const result = publicEnvSchema.safeParse(source);
   if (!result.success) throw new Error("公開設定を読み込めません");
 

@@ -47,49 +47,71 @@ function sameSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean
 }
 
 /**
+ * idea 経路向け: safety が null でも主要な表記ゆれ（卵↔たまご 等）を閉じる
+ * 確認済みシノニム群。カタカナは normalizeFoodText でひらがなへ寄る。
+ * 辞書全体の代替ではなく、preference 整合の最小 residual 低減用。
+ */
+const reviewedAvoidSynonymGroups: readonly ReadonlySet<string>[] = [
+  new Set(["卵", "たまご", "玉子"].map(normalizeFoodText)),
+  new Set(["牛乳", "ミルク"].map(normalizeFoodText)),
+  new Set(["小麦", "こむぎ"].map(normalizeFoodText)),
+  new Set(["えび", "海老"].map(normalizeFoodText)),
+  new Set(["かに", "蟹"].map(normalizeFoodText)),
+  new Set(["そば", "蕎麦"].map(normalizeFoodText)),
+];
+
+/**
  * 希望「使わない食材」の照合針を広げる。
  * ユーザー入力がアレルゲン辞書の displayName / alias に一致するとき、
  * 同一 allergenId の全 alias・表示名を needle に加える（U2-I2）。
- * idea 経路は safety が null のため正規化 includes のみ。
+ * idea は safety null のため辞書は使えないが、確認済みシノニム群で表記ゆれを閉じる。
  */
 function expandAvoidNeedles(avoided: string, context: GenerationContext): readonly string[] {
   const normalizedAvoided = normalizeFoodText(avoided);
   if (normalizedAvoided.length === 0) return [];
   const needles = new Set<string>([normalizedAvoided]);
-  // household 以外（idea）は safety が無く alias 展開しない
-  if (context.targetMode !== "household") {
+
+  if (context.targetMode === "household") {
+    const dictionary = context.safety.allergenDictionary;
+    const matchedIds = new Set<string>();
+    for (const entry of dictionary.catalog) {
+      if (normalizeFoodText(entry.displayName) === normalizedAvoided) {
+        matchedIds.add(entry.id);
+      }
+    }
+    for (const alias of dictionary.aliases) {
+      if (
+        normalizeFoodText(alias.alias) === normalizedAvoided ||
+        normalizeFoodText(alias.normalizedAlias) === normalizedAvoided
+      ) {
+        matchedIds.add(alias.allergenId);
+      }
+    }
+    if (matchedIds.size > 0) {
+      for (const entry of dictionary.catalog) {
+        if (matchedIds.has(entry.id)) {
+          const n = normalizeFoodText(entry.displayName);
+          if (n.length > 0) needles.add(n);
+        }
+      }
+      for (const alias of dictionary.aliases) {
+        if (!matchedIds.has(alias.allergenId)) continue;
+        const n = normalizeFoodText(alias.alias);
+        if (n.length > 0) needles.add(n);
+        const nn = normalizeFoodText(alias.normalizedAlias);
+        if (nn.length > 0) needles.add(nn);
+      }
+    }
     return [...needles];
   }
-  const dictionary = context.safety.allergenDictionary;
 
-  const matchedIds = new Set<string>();
-  for (const entry of dictionary.catalog) {
-    if (normalizeFoodText(entry.displayName) === normalizedAvoided) {
-      matchedIds.add(entry.id);
+  // idea: 辞書無しでも確認済みシノニム群で表記ゆれを閉じる（S6）
+  for (const group of reviewedAvoidSynonymGroups) {
+    if (group.has(normalizedAvoided)) {
+      for (const n of group) {
+        if (n.length > 0) needles.add(n);
+      }
     }
-  }
-  for (const alias of dictionary.aliases) {
-    if (
-      normalizeFoodText(alias.alias) === normalizedAvoided ||
-      normalizeFoodText(alias.normalizedAlias) === normalizedAvoided
-    ) {
-      matchedIds.add(alias.allergenId);
-    }
-  }
-  if (matchedIds.size === 0) return [...needles];
-
-  for (const entry of dictionary.catalog) {
-    if (matchedIds.has(entry.id)) {
-      const n = normalizeFoodText(entry.displayName);
-      if (n.length > 0) needles.add(n);
-    }
-  }
-  for (const alias of dictionary.aliases) {
-    if (!matchedIds.has(alias.allergenId)) continue;
-    const n = normalizeFoodText(alias.alias);
-    if (n.length > 0) needles.add(n);
-    const nn = normalizeFoodText(alias.normalizedAlias);
-    if (nn.length > 0) needles.add(nn);
   }
   return [...needles];
 }

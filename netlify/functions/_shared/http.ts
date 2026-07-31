@@ -103,9 +103,37 @@ export function methodNotAllowed(allowed: readonly string[]): Response {
   );
 }
 
+/**
+ * Content-Type が JSON 系か（application/json または *+json）。
+ * charset 等のパラメータは許容する。parseJsonRequest より緩いが text/plain 等は拒否。
+ */
+function isJsonContentType(header: string | null): boolean {
+  if (header === null) return false;
+  const mediaType = header.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
+/**
+ * fieldErrors の path 名は残し、メッセージは入力本文を埋め込まない固定語に閉じる。
+ * 将来の refine が free-text を message に載せてもクライアントへエコーしない。
+ */
+function closedFieldErrors(
+  fieldErrors: Record<string, string[] | undefined>,
+): Record<string, string[]> {
+  const closed: Record<string, string[]> = {};
+  for (const [path, messages] of Object.entries(fieldErrors)) {
+    if (messages === undefined || messages.length === 0) continue;
+    closed[path] = messages.map(() => "invalid");
+  }
+  return closed;
+}
+
 export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   let value: unknown;
   try {
+    if (!isJsonContentType(request.headers.get("content-type"))) {
+      throw new HttpError(400, "invalid_json", "JSONを読み取れません");
+    }
     const declared = Number(request.headers.get("content-length") ?? "0");
     if (Number.isFinite(declared) && declared > 65_536) {
       throw new HttpError(413, "request_too_large", "入力が大きすぎます");
@@ -122,7 +150,7 @@ export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Prom
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
     throw new HttpError(400, "invalid_request", "入力内容を確認してください", {
-      fields: z.flattenError(parsed.error).fieldErrors,
+      fields: closedFieldErrors(z.flattenError(parsed.error).fieldErrors),
     });
   }
   return parsed.data;

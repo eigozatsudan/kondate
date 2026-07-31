@@ -5,6 +5,7 @@ import type {
   ValidatedMenu,
 } from "../contracts/generation.js";
 import type { CurrentSafetyContext } from "./context.js";
+import { normalizeFoodText, normalizeFoodTextBase } from "./normalize-food-text.js";
 
 export type AllergenCatalogEntry = {
   id: string;
@@ -36,26 +37,10 @@ export type MenuTextSource = {
   ingredientId: string | null;
 };
 
-/** カタカナ（ァ-ヶ）を対応するひらがなへ折り畳む。 */
-function foldKatakanaToHiragana(value: string): string {
-  return value.replace(/[\u30a1-\u30f6]/gu, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
-}
+// 正規化本体は normalize-food-text に分離（preference-gaps 等が allergens 評価を引き込まない）
+export { normalizeFoodText } from "./normalize-food-text.js";
 
 const FOOD_TEXT_SEPARATOR = /[\s\u3000、。・,./（）()「」『』']/u;
-
-function normalizeFoodTextBase(value: string): string {
-  return foldKatakanaToHiragana(value.normalize("NFKC"))
-    .toLocaleLowerCase("ja-JP")
-    .replace(/\p{Cf}/gu, "");
-}
-
-/**
- * 献立テキストと辞書 alias を同じ空間へ寄せる。
- * 半角カナ等を先に NFKC で全角へ寄せてから、カタカナ→ひらがなへ折り畳む。
- */
-export function normalizeFoodText(value: string): string {
-  return normalizeFoodTextBase(value).replace(/[\s\u3000、。・,./（）()「」『』']/gu, "");
-}
 
 const EXCLUDED_ALIAS_CONTEXTS = new Map<string, readonly string[]>([
   ["乳", ["豆乳"]],

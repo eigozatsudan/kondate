@@ -21,6 +21,10 @@ export type SafeLogEvent = {
   authContinuationsDeleted?: number;
   userFeedbackDeleted?: number;
   draftSubmissionsDeleted?: number;
+  /** identity / quality 台帳削除件数（行 ID は出さない） */
+  identityLedgersDeleted?: number;
+  /** flyer 台帳・終端 flyer request 削除件数 */
+  flyerLedgersDeleted?: number;
   /** 緊急献立: household | idea */
   path?: "household" | "idea";
   /** 緊急献立: Stage M 結果。空応答は null */
@@ -64,9 +68,16 @@ export type SafeGenerationLogEvent = {
 
 type SafeSink = Record<"info" | "warn" | "error", (line: string) => void>;
 
+/** code 欄に自由文や例外 message を載せない（閉じた snake_case のみ） */
+function closedErrorCode(raw: string): string {
+  if (/^[a-z][a-z0-9_]{0,79}$/u.test(raw)) return raw;
+  return "request_failed";
+}
+
 /**
  * 許可フィールドだけをシリアライズするロガーを返す。
  * 未定義の任意キーは無視され、JSON に混入しない。
+ * code は closedErrorCode で閉じ、HTTP 境界以外の generation ログも free-text を載せない。
  */
 export const createSafeLogger =
   (write: LogWriter = console.log) =>
@@ -75,7 +86,7 @@ export const createSafeLogger =
     const record: Record<string, string | number | null> = {
       level: event.level,
       request_id: event.requestId,
-      code: event.code,
+      code: closedErrorCode(event.code),
       duration_ms: Math.max(0, Math.trunc(event.durationMs)),
     };
     if (event.modelId !== undefined) record.model_id = event.modelId;
@@ -96,6 +107,12 @@ export const createSafeLogger =
     }
     if (event.draftSubmissionsDeleted !== undefined) {
       record.draft_submissions_deleted = event.draftSubmissionsDeleted;
+    }
+    if (event.identityLedgersDeleted !== undefined) {
+      record.identity_ledgers_deleted = event.identityLedgersDeleted;
+    }
+    if (event.flyerLedgersDeleted !== undefined) {
+      record.flyer_ledgers_deleted = event.flyerLedgersDeleted;
     }
     // 緊急献立: 列挙・件数のみ。null も明示的に出す（省略すると集計が欠ける）
     if (event.path !== undefined) record.path = event.path;
@@ -134,12 +151,6 @@ export const createSafeLogger =
 
 /** 本番 Functions の既定シンク（stdout 相当） */
 export const safeLog = createSafeLogger();
-
-/** code 欄に自由文や例外 message を載せない（閉じた snake_case のみ） */
-function closedErrorCode(raw: string): string {
-  if (/^[a-z][a-z0-9_]{0,79}$/u.test(raw)) return raw;
-  return "request_failed";
-}
 
 export type GenerationHttpRoute = NonNullable<SafeLogEvent["generationRoute"]>;
 

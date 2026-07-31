@@ -360,7 +360,9 @@ select is(
     'shoppingMutationsDeleted', 4,
     'authContinuationsDeleted', 2,
     'userFeedbackDeleted', 0,
-    'draftSubmissionsDeleted', 0
+    'draftSubmissionsDeleted', 0,
+    'identityLedgersDeleted', 0,
+    'flyerLedgersDeleted', 0
   ),
   'first maintenance run finalizes stale, deletes older ledgers/mutations/continuations'
 );
@@ -456,7 +458,9 @@ select is(
     'shoppingMutationsDeleted', 0,
     'authContinuationsDeleted', 0,
     'userFeedbackDeleted', 0,
-    'draftSubmissionsDeleted', 0
+    'draftSubmissionsDeleted', 0,
+    'identityLedgersDeleted', 0,
+    'flyerLedgersDeleted', 0
   ),
   'second maintenance run is idempotent zero counts'
 );
@@ -579,7 +583,7 @@ end;
 $shop_boundary$;
 select pass('per-user and account-wide shopping cleaners retain exact 30-day boundary');
 
--- 返却キーは厳密に 6 つ（draft submission freeze 30 日保持を含む）
+-- 返却キーは厳密に 8 つ（identity / flyer 台帳削除可視化を含む）
 select is(
   (
     select array_agg(key order by key)
@@ -590,12 +594,14 @@ select is(
   array[
     'authContinuationsDeleted',
     'draftSubmissionsDeleted',
+    'flyerLedgersDeleted',
     'generationLedgersDeleted',
+    'identityLedgersDeleted',
     'shoppingMutationsDeleted',
     'staleReservationsFinalized',
     'userFeedbackDeleted'
   ]::text[],
-  'run_kondate_maintenance returns exactly six camelCase count keys'
+  'run_kondate_maintenance returns exactly eight camelCase count keys'
 );
 
 -- OPS-1: menu 保持 ledger が参照する freeze を age DELETE しても maintenance 全体が落ちない

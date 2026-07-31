@@ -1556,3 +1556,39 @@ it("rejects idea menus with adaptations or servings mismatch", () => {
   });
   expect(menuValidationIssueCodes).toContain(servingsMismatch.issues[0]?.code);
 });
+
+it("idea mode expands reviewed avoid synonyms (卵↔たまご) without safety dictionary", () => {
+  // S6: idea は safety null でも確認済みシノニムで preference 整合を閉じる
+  const context = makeIdeaGenerationContext({
+    submission: {
+      ...makeIdeaGenerationContext().submission,
+      avoidIngredients: ["卵"],
+    },
+  });
+  const base = makeGeneratedMenu({
+    servings: 2,
+    adaptations: [],
+    labelConfirmations: [],
+  });
+  const menu = makeGeneratedMenu({
+    servings: 2,
+    adaptations: [],
+    labelConfirmations: [],
+    dishes: base.dishes.map((dish, index) =>
+      index === 0
+        ? {
+            ...dish,
+            ingredients: [
+              ...dish.ingredients,
+              {
+                ...dish.ingredients[0]!,
+                id: "58000000-0000-4000-8000-0000000000ef",
+                name: "たまご",
+              },
+            ],
+          }
+        : dish,
+    ),
+  });
+  expectOnlyIssueCode(validateGeneratedMenu(menu, context), "avoid_ingredient_used");
+});

@@ -42,3 +42,53 @@ describe("generic JSON boundary", () => {
     },
   );
 });
+
+describe("parseJson content-type and field error closing", () => {
+  it("rejects non-JSON content type", async () => {
+    const promise = parseJson(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ ok: true }),
+      }),
+      z.object({ ok: z.boolean() }),
+    );
+    await expect(promise).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_json",
+    } satisfies Partial<HttpError>);
+  });
+
+  it("accepts application/json with charset and +json", async () => {
+    for (const contentType of ["application/json; charset=utf-8", "application/vnd.api+json"]) {
+      const value = await parseJson(
+        new Request("https://functions.test", {
+          method: "POST",
+          headers: { "content-type": contentType },
+          body: JSON.stringify("ok"),
+        }),
+        z.string(),
+      );
+      expect(value).toBe("ok");
+    }
+  });
+
+  it("maps fieldErrors messages to generic invalid without embedding input", async () => {
+    await expect(
+      parseJson(
+        new Request("https://functions.test", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "x".repeat(3) }),
+        }),
+        z.object({
+          name: z.string().min(10, "名前は10文字以上: 入力値をそのまま出さない"),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_request",
+      details: { fields: { name: ["invalid"] } },
+    });
+  });
+});

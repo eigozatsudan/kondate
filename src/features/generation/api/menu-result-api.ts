@@ -6,6 +6,8 @@ import { collectDislikePreferenceGaps } from "@shared/safety/preference-gaps";
 import { z } from "zod";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
+// preference_snapshot は write 側で { submission, memberPreferences } を載せる。
+// soft gap 算出に必要な memberPreferences だけ厳密に読み、余剰キーは無視する。
 const preferenceSnapshotMembersSchema = z.looseObject({
   memberPreferences: z
     .array(

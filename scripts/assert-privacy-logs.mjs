@@ -41,6 +41,10 @@ const absencePatterns = [
   /"customName"\s*:/iu,
   /"allergy_note"\s*:/iu,
   /"free_form"/iu,
+  // 構造化 user id / email キー（値 redact 対象外の漏れ検知）
+  /"user_id"\s*:/iu,
+  /"userId"\s*:/iu,
+  /"email"\s*:/iu,
   // 典型的な日本語氏名パターン（姓＋名、2〜8文字の漢字連続など）
   /[\u4e00-\u9fff]{1,4}\s*[\u4e00-\u9fff]{1,4}(?:さん|様)?/u,
   // アクセストークン断片
@@ -52,12 +56,18 @@ const absencePatterns = [
  * @param {{ requireGeneration?: boolean }} [options]
  */
 /**
- * request_id は台帳 ID（UUID）を載せてよい契約。所有 user id の裸 UUID 漏れだけを弾くため、
- * 許可キー request_id の値は検査前に伏せる。
+ * 許可された opaque id キーの値は検査前に伏せる。
+ * request_id は correlation 用 UUID を載せてよい契約。
+ * stripe_customer_id / stripe_subscription_id は opaque Stripe id 契約。
+ * 構造化 user_id 等の非許可キーに UUID が載った場合は bare UUID 検査で落とす。
+ * residual: 非 generation 行は field allowlist 対象外（absencePatterns 依存）。
  * @param {string} logText
  */
-function redactAllowedRequestIds(logText) {
-  return logText.replace(/"request_id"\s*:\s*"[^"]*"/gu, '"request_id":"<redacted>"');
+function redactAllowedOpaqueIds(logText) {
+  return logText
+    .replace(/"request_id"\s*:\s*"[^"]*"/gu, '"request_id":"<redacted>"')
+    .replace(/"stripe_customer_id"\s*:\s*"[^"]*"/gu, '"stripe_customer_id":"<redacted>"')
+    .replace(/"stripe_subscription_id"\s*:\s*"[^"]*"/gu, '"stripe_subscription_id":"<redacted>"');
 }
 
 export function assertPrivacyLogs(logText, options = {}) {
@@ -65,7 +75,7 @@ export function assertPrivacyLogs(logText, options = {}) {
   if (logText.trim().length === 0) {
     throw new Error("privacy_log_empty");
   }
-  const scanned = redactAllowedRequestIds(logText);
+  const scanned = redactAllowedOpaqueIds(logText);
   for (const pattern of absencePatterns) {
     if (pattern.test(scanned)) {
       throw new Error("privacy_log_sensitive_present");
@@ -115,6 +125,8 @@ export function assertPrivacyLogs(logText, options = {}) {
           "auth_continuations_deleted",
           "user_feedback_deleted",
           "draft_submissions_deleted",
+          "identity_ledgers_deleted",
+          "flyer_ledgers_deleted",
           "path",
           "match_mode",
           "empty_reason",

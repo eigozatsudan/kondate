@@ -25,6 +25,8 @@ const counts = {
   authContinuationsDeleted: 4,
   userFeedbackDeleted: 0,
   draftSubmissionsDeleted: 0,
+  identityLedgersDeleted: 0,
+  flyerLedgersDeleted: 0,
 };
 
 function mockHappyPath(): void {
@@ -100,8 +102,7 @@ describe("runMaintenance", () => {
 
   it("does not force ssl option for local sslmode=disable", async () => {
     mockHappyPath();
-    const localUrl =
-      "postgresql://kondate_maintenance_login:x@db:5432/postgres?sslmode=disable";
+    const localUrl = "postgresql://kondate_maintenance_login:x@db:5432/postgres?sslmode=disable";
     await runMaintenance({
       connectionString: localUrl,
       now: "2026-07-24T12:00:00.000Z",

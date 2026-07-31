@@ -27,8 +27,11 @@ it.each([
   "透析中なので食事を調整して",
   "透析向けの献立にして",
   "CKD の食事制限に合わせて",
+  "CKDでタンパク制限の献立",
   "タンパク制限の食事にして",
   "たんぱく制限でお願い",
+  "えんげが不安なので柔らかく",
+  "透析中なのでメニュー調整",
 ])("detects paraphrased unsupported medical request: %s", (requestText) => {
   const kinds = detectUnsupportedMedicalRequest(requestText);
   expect(kinds.length).toBeGreaterThan(0);

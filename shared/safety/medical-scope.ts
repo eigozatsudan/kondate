@@ -6,7 +6,7 @@ const patterns: ReadonlyArray<readonly [UnsupportedDietKind, RegExp]> = [
   ["weaning_food", /離乳食|離乳期|赤ちゃん用/u],
   [
     "swallowing_concern",
-    /嚥下|えん下|飲み込み|むせ|とろみ食|とろみをつけ|とろみ付け|とろみ付|嚥下調整|刻み食/u,
+    /嚥下|えん下|えんげ|飲み込み|むせ|とろみ食|とろみをつけ|とろみ付け|とろみ付|嚥下調整|刻み食/u,
   ],
   [
     "therapeutic_diet",

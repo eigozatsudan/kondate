@@ -1,5 +1,6 @@
 import type { GeneratedMenu, PreferenceGapNote, ValidatedMenu } from "../contracts/generation.js";
-import { normalizeFoodText } from "./allergens.js";
+// allergens 評価本体をブラウザ graph に引き込まないよう正規化のみを import する
+import { normalizeFoodText } from "./normalize-food-text.js";
 
 /**
  * 苦手 soft gap を献立テキストから集める（A-I7）。

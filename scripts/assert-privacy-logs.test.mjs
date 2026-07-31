@@ -102,4 +102,24 @@ describe("assertPrivacyLogs", () => {
     });
     assert.equal(assertPrivacyLogs(`${line}\n`).generationLines, 1);
   });
+
+  it("rejects structured user_id key on log lines", () => {
+    assert.throws(
+      () => assertPrivacyLogs(`${goodLine}\n{"user_id":"10000000-0000-4000-8000-000000000001"}\n`),
+      /privacy_log_sensitive_present/,
+    );
+  });
+
+  it("allows stripe opaque ids after redaction on generation lines with billing fields", () => {
+    // generation code 行に billing 許可キーが載る場合の redact（実運用は稀だが allowlist 整合）
+    const line = JSON.stringify({
+      level: "info",
+      code: "succeeded",
+      request_id: "req-1",
+      duration_ms: 1,
+      stripe_customer_id: "cus_testopaque",
+      stripe_subscription_id: "sub_testopaque",
+    });
+    assert.equal(assertPrivacyLogs(`${line}\n`).generationLines, 1);
+  });
 });

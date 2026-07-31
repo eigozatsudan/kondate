@@ -85,8 +85,17 @@ tests; use `format:check` not `format`) → review → Conventional Commit in Ja
   budget (see `shared/contracts/function-budget.ts`; Netlify sync 60s wall),
   auth-continuation TTL, retention for terminal generation/shopping-replay rows.
 - Ownership boundaries are fixed: `shared/contracts` ← browser + Functions;
-  `shared/safety` ← Functions + emergency-menu service; `src/features` ← browser
-  only; `netlify/functions` ← server only. Do not cross these.
+  `shared/safety` ← Functions + emergency-menu service (full allergen evaluation,
+  food-rules, validate-generated-menu, generation hard gates); pure dual-surface
+  modules under `shared/safety` intentionally shared with the browser for UX
+  pre-checks only — currently `medical-scope`, `normalize-food-text`, and
+  `preference-gaps` (display soft gaps; no hard safety authority). Type-only
+  imports from `shared/safety` (e.g. `ExpiredPantryCheck`) are allowed. Do not
+  import evaluation pipelines or server-only helpers into `src/`.
+  Intentional dual-surface non-safety packages for the browser: `shared/shopping`,
+  `shared/emergency` (contracts/filter as designed), `shared/copy`, `shared/time`,
+  `shared/season`. `src/features` ← browser only; `netlify/functions` ← server
+  only. Do not cross these.
 - Locked interfaces, API route ownership, and migration order already in the
   tree are not renegotiable casually — needing to redefine a locked export or
   cross an ownership boundary is a signal to stop and ask, not to change it.

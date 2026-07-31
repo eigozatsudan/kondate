@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe("maintenance-cleanup scheduled function", () => {
-  it("returns 204 and logs four snake_case aggregates only on success", async () => {
+  it("returns 204 and logs eight snake_case aggregates only on success", async () => {
     selectMaintenanceEnvironmentMode.mockReturnValue("local");
     parseMaintenanceDatabaseEnv.mockReturnValue("postgresql://opaque");
     runMaintenance.mockResolvedValue({
@@ -47,6 +47,8 @@ describe("maintenance-cleanup scheduled function", () => {
       authContinuationsDeleted: 4,
       userFeedbackDeleted: 5,
       draftSubmissionsDeleted: 6,
+      identityLedgersDeleted: 7,
+      flyerLedgersDeleted: 8,
     });
 
     const response = await maintenanceCleanup();
@@ -64,7 +66,9 @@ describe("maintenance-cleanup scheduled function", () => {
         "code",
         "draft_submissions_deleted",
         "duration_ms",
+        "flyer_ledgers_deleted",
         "generation_ledgers_deleted",
+        "identity_ledgers_deleted",
         "level",
         "request_id",
         "shopping_mutations_deleted",
@@ -80,6 +84,8 @@ describe("maintenance-cleanup scheduled function", () => {
       generation_ledgers_deleted: 2,
       shopping_mutations_deleted: 3,
       auth_continuations_deleted: 4,
+      identity_ledgers_deleted: 7,
+      flyer_ledgers_deleted: 8,
     });
     expect(parsed).not.toHaveProperty("durationMs");
     expect(parsed).not.toHaveProperty("errorCode");
@@ -119,6 +125,8 @@ describe("maintenance-cleanup scheduled function", () => {
       authContinuationsDeleted: 0,
       userFeedbackDeleted: 0,
       draftSubmissionsDeleted: 0,
+      identityLedgersDeleted: 0,
+      flyerLedgersDeleted: 0,
     });
     await maintenanceCleanup();
     expect(parseManagedSupabaseProjectRef).toHaveBeenCalled();

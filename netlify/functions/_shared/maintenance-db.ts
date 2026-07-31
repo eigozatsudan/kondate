@@ -15,6 +15,10 @@ export type MaintenanceCounts = {
   authContinuationsDeleted: number;
   userFeedbackDeleted: number;
   draftSubmissionsDeleted: number;
+  /** identity / quality 日次・月次台帳の削除合計 */
+  identityLedgersDeleted: number;
+  /** flyer 週次台帳 + 終端 flyer request の削除合計 */
+  flyerLedgersDeleted: number;
 };
 
 export type RunMaintenanceInput = {
@@ -38,6 +42,8 @@ const COUNT_KEYS = [
   "authContinuationsDeleted",
   "userFeedbackDeleted",
   "draftSubmissionsDeleted",
+  "identityLedgersDeleted",
+  "flyerLedgersDeleted",
 ] as const;
 
 const productionTlsSslmode = /(?:^|[?&])sslmode=(?:require|verify-ca|verify-full)(?:&|$)/u;

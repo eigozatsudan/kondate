@@ -21,11 +21,22 @@ export type GenerationTargetMember = {
   displayNameSnapshot: string;
 };
 
+/**
+ * 永続 preference_snapshot の既知キー。
+ * write 経路は { submission, memberPreferences } を載せ、read 側は submission を再検証する。
+ * 余剰キーは許容するが、型上は既知フィールドを明示する（S11: Record 全面 unknown を縮小）。
+ */
+export type PreferenceSnapshot = {
+  readonly submission?: unknown;
+  readonly memberPreferences?: readonly GenerationMemberPreference[];
+  readonly [key: string]: unknown;
+};
+
 export type GenerationContextBase = {
   pantryItems: readonly PantryItem[];
   expiredPantryChecks: readonly ExpiredPantryCheck[];
   idempotencyKey: string;
-  preferenceSnapshot: Readonly<Record<string, unknown>>;
+  preferenceSnapshot: PreferenceSnapshot;
   safetySnapshot: Readonly<Record<string, unknown>>;
 };
 
