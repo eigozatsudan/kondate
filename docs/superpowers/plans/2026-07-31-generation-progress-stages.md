@@ -9,7 +9,21 @@
 **Tech Stack:** React 19 / TypeScript strict / Vitest / RTL / fake timers
 
 **仕様書:** `docs/superpowers/specs/2026-07-31-generation-progress-stages-design.md`（Approved・レビュー改訂済み、L0–L14）  
-**設計レビュー:** `docs/reviews/2026-07-31-generation-progress-stages-design-primary.md` / `-adversarial.md` / `-secondary.md`
+**設計レビュー:** `docs/reviews/2026-07-31-generation-progress-stages-design-primary.md` / `-adversarial.md` / `-secondary.md`  
+**計画レビュー:** `docs/reviews/2026-07-31-generation-progress-stages-plan-primary.md` / `-adversarial.md` / `-secondary.md`  
+→ **本版 r1 で V-I1〜V-I3 / V-M1〜V-M2 を吸収**
+
+## Plan revision summary (r1)
+
+| ID | 反映 |
+|----|------|
+| V-I1 | 本番から `!` 除去。`stageMessageAt` + リテラル fallback。Task 1 に lint |
+| V-I2 | panel: submitting→processing `rerender` で L1 非後退 it を全文追加 |
+| V-I3 | processing 相対 `it.each`（0/10s/35s/60s）+ unmount で `vi.getTimerCount()===0` |
+| V-M1 | Task 3: panel RED と a11y 置換を Step 分離 |
+| V-M2 | Task 2 typecheck 期待を PASS のみ |
+| V-M3 | Global Constraints に StrictMode / R8 一文 |
+| P1/D-C1 | narrowing Critical は TS 5.9.3 実測で棄却。配線は `state.phase` 直書きを推奨形として固定 |
 
 ## Global Constraints
 
@@ -21,18 +35,21 @@
 - `git push` / PR / 本番 deploy / `--no-verify` 禁止。
 - プレースホルダ禁止: `// ...`、「同様に」「流用」だけのステップを置かない。
 - 進捗にプロンプト・生 AI・内部用語を出さない（L7/L8）。完了％バー禁止（L4）。
+- **本番 `src/**` に non-null assertion (`!`) を書かない**（`@typescript-eslint/no-non-null-assertion`。test のみ off）。
+- StrictMode 二重 mount で sticky が一瞬リセットされ得るのは設計 R8 許容。追加テスト不要。
 
 ## Locked interfaces produced by this plan
 
 | 名前 | 場所 | 契約 |
 |------|------|------|
 | `GENERATION_PROGRESS_STAGES` | `model/progress-stages.ts` | §3 表と同一 5 要素。`afterMs` 昇順 |
+| `stageMessageAt` | 同 | `(index: number) => string`。`!` なし。表外 index は stage0 文言 |
 | `selectGenerationProgressStageIndex` | 同 | `(elapsedMs: number) => number`。負・非有限 → 0 |
-| `selectGenerationProgressMessage` | 同 | index 対応文言 |
+| `selectGenerationProgressMessage` | 同 | `stageMessageAt(select…Index(elapsed))` |
 | `resolveProcessingAnchorMs` | 同 | `(startedAt: string, nowMs: number) => number \| null`。NaN / 未来 5s 超 → null |
 | `GENERATION_PROGRESS_TICK_MS` | `hooks/use-generation-progress-message.ts` | `1000` 固定 |
 | `useGenerationProgressMessage` | 同 | 下表 Args / 戻り値。V-C1/V-C2/L1 |
-| panel wiring | `generation-status-panel.tsx` | early return **前**で hook。`active = submitting \|\| processing` |
+| panel wiring | `generation-status-panel.tsx` | early return **前**で hook。`active = state.phase === "submitting" \|\| state.phase === "processing"`。`state.data` は `state.phase === "processing"` 直書きでアクセス |
 | `data-progress-stage` | 進捗 `role="status"` 要素 | L1 後 `stageIndex` 必須 |
 
 ### 段階表（L3・再導出禁止）
@@ -81,7 +98,7 @@ on each render:
   calculated = selectGenerationProgressStageIndex(elapsed)
   stageIndex = max(calculated, maxStageIndexSeenRef)
   maxStageIndexSeenRef = stageIndex
-  message = GENERATION_PROGRESS_STAGES[stageIndex].message
+  message = stageMessageAt(stageIndex)
   return { message, stageIndex }
 useEffect when active:
   setInterval 1000ms → force re-render (setState tick)
@@ -90,24 +107,25 @@ useEffect when active:
 ```
 
 **禁止:** `elapsed = now - (anchorMs ?? Date.now())` を毎評価すること（elapsed≈0 固定）。  
-**禁止:** 初回だけ stage0 を `useState` 初期値にし、1s 後まで直さないこと。
+**禁止:** 初回だけ stage0 を `useState` 初期値にし、1s 後まで直さないこと。  
+**禁止:** 本番コードの non-null assertion (`!`)。
 
 ## File Structure
 
 | ファイル | 責務 |
 |----------|------|
-| `src/features/generation/model/progress-stages.ts` | 表・選択・L2 正規化 helper |
+| `src/features/generation/model/progress-stages.ts` | 表・`stageMessageAt`・選択・L2 正規化 |
 | `src/features/generation/model/progress-stages.test.ts` | 境界・正規化 |
 | `src/features/generation/hooks/use-generation-progress-message.ts` | sticky / 同期評価 / L1 / interval |
 | `src/features/generation/hooks/use-generation-progress-message.test.tsx` | fake timers |
 | `src/features/generation/components/generation-status-panel.tsx` | 配線・表示 |
-| `src/features/generation/components/generation-status-panel.test.tsx` | 相対時刻・data-progress-stage |
+| `src/features/generation/components/generation-status-panel.test.tsx` | 相対時刻・L1 跨ぎ・unmount |
 | `src/app/accessibility.test.tsx` | processing status 追随 |
 | 触らない | `shared/contracts/**`、`netlify/**`、`generation-machine.ts`、poll 2s |
 
 ---
 
-### Task 1: 段階表純関数 + L2 正規化
+### Task 1: 段階表純関数 + L2 正規化（`!` なし）
 
 **Files:**
 - Create: `src/features/generation/model/progress-stages.ts`
@@ -116,7 +134,7 @@ useEffect when active:
 
 **Interfaces:**
 - Consumes: なし
-- Produces: `GENERATION_PROGRESS_STAGES`, `selectGenerationProgressStageIndex`, `selectGenerationProgressMessage`, `resolveProcessingAnchorMs`
+- Produces: `GENERATION_PROGRESS_STAGES`, `stageMessageAt`, `selectGenerationProgressStageIndex`, `selectGenerationProgressMessage`, `resolveProcessingAnchorMs`
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -129,6 +147,7 @@ import {
   resolveProcessingAnchorMs,
   selectGenerationProgressMessage,
   selectGenerationProgressStageIndex,
+  stageMessageAt,
 } from "./progress-stages";
 
 describe("GENERATION_PROGRESS_STAGES", () => {
@@ -140,6 +159,15 @@ describe("GENERATION_PROGRESS_STAGES", () => {
       { afterMs: 30_000, message: "組み合わせと段取りを整えています" },
       { afterMs: 45_000, message: "仕上げの確認をしています" },
     ]);
+  });
+});
+
+describe("stageMessageAt", () => {
+  it("returns stage 0 copy for out-of-range indexes without throwing", () => {
+    expect(stageMessageAt(0)).toBe("条件を確認しています");
+    expect(stageMessageAt(4)).toBe("仕上げの確認をしています");
+    expect(stageMessageAt(99)).toBe("条件を確認しています");
+    expect(stageMessageAt(-1)).toBe("条件を確認しています");
   });
 });
 
@@ -205,7 +233,7 @@ docker compose run --rm --no-deps app npm test -- --run src/features/generation/
 
 Expected: FAIL（module not found または export 不足）
 
-- [ ] **Step 3: 最小実装を書く**
+- [ ] **Step 3: 最小実装を書く（V-I1: `!` なし）**
 
 Create `src/features/generation/model/progress-stages.ts`:
 
@@ -228,6 +256,21 @@ export const GENERATION_PROGRESS_STAGES: readonly GenerationProgressStage[] = [
   { afterMs: 45_000, message: "仕上げの確認をしています" },
 ] as const;
 
+/** stage0 と同じ文言。noUncheckedIndexedAccess 用のリテラル fallback（! 禁止）。 */
+const FALLBACK_PROGRESS_MESSAGE = "条件を確認しています" as const;
+
+/**
+ * 段階 index から文言を返す。範囲外は stage0 文言。
+ * 本番コードでは non-null assertion を使わない（V-I1）。
+ */
+export function stageMessageAt(index: number): string {
+  const stage = GENERATION_PROGRESS_STAGES[index] ?? GENERATION_PROGRESS_STAGES[0];
+  if (stage === undefined) {
+    return FALLBACK_PROGRESS_MESSAGE;
+  }
+  return stage.message;
+}
+
 /** 経過 ms から段階 index を返す（L1 ガードなし。表示 max はフック側）。 */
 export function selectGenerationProgressStageIndex(elapsedMs: number): number {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
@@ -236,7 +279,9 @@ export function selectGenerationProgressStageIndex(elapsedMs: number): number {
   let index = 0;
   for (let i = 0; i < GENERATION_PROGRESS_STAGES.length; i += 1) {
     const stage = GENERATION_PROGRESS_STAGES[i];
-    if (stage === undefined) break;
+    if (stage === undefined) {
+      break;
+    }
     if (elapsedMs >= stage.afterMs) {
       index = i;
     } else {
@@ -247,9 +292,7 @@ export function selectGenerationProgressStageIndex(elapsedMs: number): number {
 }
 
 export function selectGenerationProgressMessage(elapsedMs: number): string {
-  const index = selectGenerationProgressStageIndex(elapsedMs);
-  const stage = GENERATION_PROGRESS_STAGES[index];
-  return stage?.message ?? GENERATION_PROGRESS_STAGES[0]!.message;
+  return stageMessageAt(selectGenerationProgressStageIndex(elapsedMs));
 }
 
 /**
@@ -279,7 +322,23 @@ docker compose run --rm --no-deps app npm test -- --run src/features/generation/
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: lint（本番 `!` が無いこと）**
+
+Run:
+
+```bash
+docker compose run --rm --no-deps app npm run lint -- --no-error-on-unmatched-pattern src/features/generation/model/progress-stages.ts
+```
+
+Expected: PASS（`no-non-null-assertion` 違反なし）
+
+※ プロジェクトの lint CLI がファイル引数を受けない場合は次を使う:
+
+```bash
+docker compose run --rm --no-deps app npx eslint src/features/generation/model/progress-stages.ts
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/features/generation/model/progress-stages.ts src/features/generation/model/progress-stages.test.ts
@@ -296,7 +355,7 @@ git commit -m "feat: 献立作成待ちの体感用段階表と L2 正規化を�
 - Test: 同 test ファイル
 
 **Interfaces:**
-- Consumes: `GENERATION_PROGRESS_STAGES`, `selectGenerationProgressStageIndex`（Task 1）
+- Consumes: `stageMessageAt`, `selectGenerationProgressStageIndex`（Task 1）
 - Produces: `GENERATION_PROGRESS_TICK_MS`, `GenerationProgressMessageArgs`, `GenerationProgressView`, `useGenerationProgressMessage`
 
 - [ ] **Step 1: 失敗するテストを書く**
@@ -306,7 +365,7 @@ Create `src/features/generation/hooks/use-generation-progress-message.test.tsx`:
 ```tsx
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GENERATION_PROGRESS_STAGES } from "../model/progress-stages";
+import { stageMessageAt } from "../model/progress-stages";
 import {
   GENERATION_PROGRESS_TICK_MS,
   useGenerationProgressMessage,
@@ -330,7 +389,7 @@ describe("useGenerationProgressMessage", () => {
     );
     expect(result.current).toEqual({
       stageIndex: 0,
-      message: GENERATION_PROGRESS_STAGES[0]!.message,
+      message: stageMessageAt(0),
     });
   });
 
@@ -339,7 +398,6 @@ describe("useGenerationProgressMessage", () => {
     const { result } = renderHook(() =>
       useGenerationProgressMessage({ active: true, anchorMs }),
     );
-    // advanceTimers なしで index 3
     expect(result.current.stageIndex).toBe(3);
     expect(result.current.message).toBe("組み合わせと段取りを整えています");
   });
@@ -377,7 +435,6 @@ describe("useGenerationProgressMessage", () => {
     act(() => {
       vi.advanceTimersByTime(GENERATION_PROGRESS_TICK_MS);
     });
-    // まだ 10s 経過帯（tick でアンカー差し替えしていない）
     expect(result.current.stageIndex).toBe(2);
   });
 
@@ -420,7 +477,7 @@ describe("useGenerationProgressMessage", () => {
 
     rerender({ active: false });
     expect(result.current.stageIndex).toBe(0);
-    expect(result.current.message).toBe(GENERATION_PROGRESS_STAGES[0]!.message);
+    expect(result.current.message).toBe(stageMessageAt(0));
   });
 });
 ```
@@ -435,15 +492,15 @@ docker compose run --rm --no-deps app npm test -- --run src/features/generation/
 
 Expected: FAIL（module not found）
 
-- [ ] **Step 3: 最小実装を書く**
+- [ ] **Step 3: 最小実装を書く（`stageMessageAt` のみ・`!` なし）**
 
 Create `src/features/generation/hooks/use-generation-progress-message.ts`:
 
 ```ts
 import { useEffect, useRef, useState } from "react";
 import {
-  GENERATION_PROGRESS_STAGES,
   selectGenerationProgressStageIndex,
+  stageMessageAt,
 } from "../model/progress-stages";
 
 /** 経過再評価間隔（L12）。「約」ではない。 */
@@ -483,7 +540,7 @@ export function useGenerationProgressMessage(
 
   // 描画ごとに同期計算する（初回を stage0 固定にしない・V-C2）
   let stageIndex = 0;
-  let message = GENERATION_PROGRESS_STAGES[0]!.message;
+  let message = stageMessageAt(0);
 
   if (!active) {
     resolvedAnchorMsRef.current = null;
@@ -500,9 +557,7 @@ export function useGenerationProgressMessage(
     const calculated = selectGenerationProgressStageIndex(elapsedMs);
     stageIndex = Math.max(calculated, maxStageIndexSeenRef.current);
     maxStageIndexSeenRef.current = stageIndex;
-    message =
-      GENERATION_PROGRESS_STAGES[stageIndex]?.message ??
-      GENERATION_PROGRESS_STAGES[0]!.message;
+    message = stageMessageAt(stageIndex);
   }
 
   useEffect(() => {
@@ -531,7 +586,7 @@ docker compose run --rm --no-deps app npm test -- --run src/features/generation/
 
 Expected: PASS
 
-- [ ] **Step 5: typecheck（この Task の範囲）**
+- [ ] **Step 5: typecheck + lint**
 
 Run:
 
@@ -539,7 +594,15 @@ Run:
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-Expected: PASS（または本 Task 起因の error なし）
+Expected: PASS
+
+Run:
+
+```bash
+docker compose run --rm --no-deps app npx eslint src/features/generation/hooks/use-generation-progress-message.ts
+```
+
+Expected: PASS
 
 - [ ] **Step 6: Commit**
 
@@ -562,11 +625,17 @@ git commit -m "feat: 献立作成進捗の sticky・同期評価フックを追�
 - Consumes: `useGenerationProgressMessage`, `resolveProcessingAnchorMs`（Task 1–2）
 - Produces: submitting/processing の進捗1行 + `data-progress-stage`
 
-- [ ] **Step 1: panel に進捗テストを追加し（失敗を確認）、a11y の旧文言 assert を相対時刻に直す下準備の失敗テストを書く**
+- [ ] **Step 1: panel の失敗テストを追加する（a11y はまだ触らない・V-M1）**
 
-`generation-status-panel.test.tsx` の既存 `NOW` / `beforeEach`（fake timers + `setSystemTime(NOW)`）を維持したまま、**次の describe をファイル末尾の `describe("GenerationStatusPanel"` 内に追加**する。既存 processing テストの `startedAt: "2026-07-11T00:00:00.000Z"` は進捗 assert に使わない（補足文テストのままでよいが、進捗用は相対のみ）。
+`generation-status-panel.test.tsx` の既存 `NOW` / `beforeEach`（fake timers + `setSystemTime(NOW)`）を維持したまま、`describe("GenerationStatusPanel"` 内に次を追加する。
 
-追加する it:
+import に `act` が無ければ追加:
+
+```ts
+import { act, render, screen } from "@testing-library/react";
+```
+
+追加する it（全文）:
 
 ```ts
   it("shows sticky progress stages while submitting", () => {
@@ -583,36 +652,152 @@ git commit -m "feat: 献立作成進捗の sticky・同期評価フックを追�
     expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
   });
 
-  it("shows synchronous mid-stage message for processing with relative startedAt", () => {
+  it.each([
+    [0, 0, "条件を確認しています"],
+    [10_000, 2, "AI に献立案を聞いています"],
+    [35_000, 3, "組み合わせと段取りを整えています"],
+    [60_000, 4, "仕上げの確認をしています"],
+  ] as const)(
+    "processing startedAt NOW-%s → stage %s synchronously (V-I3)",
+    (agoMs, stage, message) => {
+      const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
+        status: "processing",
+        idempotencyKey: KEY,
+        requestId: REQUEST_ID,
+        startedAt: new Date(NOW.getTime() - agoMs).toISOString(),
+        quota,
+      };
+      render(
+        <GenerationStatusPanel
+          state={{ phase: "processing", data: processingData, effect: "poll" }}
+        />,
+      );
+      const status = screen.getByRole("status");
+      expect(status).toHaveTextContent(message);
+      expect(status).toHaveAttribute("data-progress-stage", String(stage));
+      expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
+    },
+  );
+
+  it("keeps progress stage when phase moves submitting → processing (V-I2)", () => {
+    const { rerender } = render(
+      <GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />,
+    );
+    act(() => {
+      vi.setSystemTime(new Date(NOW.getTime() + 10_000));
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+
     const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
       status: "processing",
       idempotencyKey: KEY,
       requestId: REQUEST_ID,
-      startedAt: new Date(NOW.getTime() - 35_000).toISOString(),
+      // サーバ開始が「いま」に見えるアンカー → 計算上は stage0 だが L1 で stage2 を維持
+      startedAt: new Date(NOW.getTime() + 10_000).toISOString(),
       quota,
     };
-    render(
+    rerender(
       <GenerationStatusPanel
         state={{ phase: "processing", data: processingData, effect: "poll" }}
       />,
     );
-    expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("組み合わせと段取りを整えています");
-    expect(status).toHaveAttribute("data-progress-stage", "3");
-    expect(
-      screen.getByText("この画面を閉じても、同じ作成IDであとから確認できます。"),
-    ).toBeVisible();
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+    expect(screen.getByRole("status")).toHaveTextContent("AI に献立案を聞いています");
+  });
+
+  it("clears progress interval on unmount (V-I3)", () => {
+    const { unmount } = render(
+      <GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />,
+    );
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 ```
 
-import に不足があれば追加:
+既存 processing テストの `startedAt: "2026-07-11T00:00:00.000Z"` は**進捗 assert に使わない**（見出し・補足・onClear のまま残してよい）。
 
-```ts
-import { act, render, screen } from "@testing-library/react";
+- [ ] **Step 2: panel テストを実行し、新規 it が失敗することを確認する**
+
+Run:
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/features/generation/components/generation-status-panel.test.tsx
 ```
 
-（既に `render, screen` があれば `act` のみ追加）
+Expected: 新規 it が FAIL（`data-progress-stage` 欠如 / 固定文言のまま）
+
+- [ ] **Step 3: GenerationStatusPanel を配線する**
+
+`generation-status-panel.tsx` の import に追加:
+
+```ts
+import { resolveProcessingAnchorMs } from "../model/progress-stages";
+import { useGenerationProgressMessage } from "../hooks/use-generation-progress-message";
+```
+
+`export function GenerationStatusPanel(...)` 本体の**先頭**（最初の `if (state.phase === "checking")` より前）に（**`state.phase` 直書き**・V-I1 配線）:
+
+```ts
+  const progressActive =
+    state.phase === "submitting" || state.phase === "processing";
+  const progressAnchorMs =
+    state.phase === "processing"
+      ? resolveProcessingAnchorMs(state.data.startedAt, Date.now())
+      : null;
+  const { message: progressMessage, stageIndex: progressStageIndex } =
+    useGenerationProgressMessage({
+      active: progressActive,
+      anchorMs: progressAnchorMs,
+    });
+```
+
+**禁止:** `const phase = state.phase` に逃がしてから `state.data` に触る必要はないが、触る場合も `state.phase === "processing"` で narrow できる形を維持する。`as` / `any` 禁止。
+
+`submitting` 分岐を置換:
+
+```tsx
+  if (state.phase === "submitting") {
+    return (
+      <div className="gen-status-panel" data-phase="submitting">
+        <div className="gen-status-indicator" aria-hidden="true" />
+        <p
+          role="status"
+          aria-live="polite"
+          data-progress-stage={String(progressStageIndex)}
+        >
+          {progressMessage}
+        </p>
+      </div>
+    );
+  }
+```
+
+`processing` 分岐の進捗1行だけ置換（見出し・補足・RecoveryLinks はそのまま）:
+
+```tsx
+        <p
+          role="status"
+          aria-live="polite"
+          data-progress-stage={String(progressStageIndex)}
+        >
+          {progressMessage}
+        </p>
+```
+
+checking / offline / 終端では `progressMessage` を DOM に出さない。
+
+- [ ] **Step 4: panel テストを通す**
+
+Run:
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/features/generation/components/generation-status-panel.test.tsx
+```
+
+Expected: PASS
+
+- [ ] **Step 5: a11y の旧固定文言 assert を置換する（V-M1・配線後）**
 
 `src/app/accessibility.test.tsx` の processing ケースを次に置換する（fake timers は使わず、**表のいずれかの文言**を許容し、見出しと axe を維持）:
 
@@ -653,85 +838,7 @@ import { act, render, screen } from "@testing-library/react";
   });
 ```
 
-- [ ] **Step 2: panel テストを実行し、進捗 it が失敗することを確認する**
-
-Run:
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/generation/components/generation-status-panel.test.tsx
-```
-
-Expected: 新規 it が FAIL（固定文言 / `data-progress-stage` 欠如）
-
-- [ ] **Step 3: GenerationStatusPanel を配線する**
-
-`generation-status-panel.tsx` の import に追加:
-
-```ts
-import { resolveProcessingAnchorMs } from "../model/progress-stages";
-import { useGenerationProgressMessage } from "../hooks/use-generation-progress-message";
-```
-
-`export function GenerationStatusPanel(...)` 本体の**先頭**（最初の `if (state.phase === "checking")` より前）に:
-
-```ts
-  const phase = state.phase;
-  const progressActive = phase === "submitting" || phase === "processing";
-  const progressAnchorMs =
-    phase === "processing"
-      ? resolveProcessingAnchorMs(state.data.startedAt, Date.now())
-      : null;
-  const { message: progressMessage, stageIndex: progressStageIndex } =
-    useGenerationProgressMessage({
-      active: progressActive,
-      anchorMs: progressAnchorMs,
-    });
-```
-
-`submitting` 分岐を置換:
-
-```tsx
-  if (state.phase === "submitting") {
-    return (
-      <div className="gen-status-panel" data-phase="submitting">
-        <div className="gen-status-indicator" aria-hidden="true" />
-        <p
-          role="status"
-          aria-live="polite"
-          data-progress-stage={String(progressStageIndex)}
-        >
-          {progressMessage}
-        </p>
-      </div>
-    );
-  }
-```
-
-`processing` 分岐の進捗1行だけ置換（見出し・補足・RecoveryLinks はそのまま）:
-
-```tsx
-        <p
-          role="status"
-          aria-live="polite"
-          data-progress-stage={String(progressStageIndex)}
-        >
-          {progressMessage}
-        </p>
-```
-
-**注意:** `phase === "processing"` のときだけ `state.data.startedAt` に触る（narrowing）。checking 等では hook は `active: false` で呼ばれ DOM に `progressMessage` を出さない。
-
-- [ ] **Step 4: panel テストを通す**
-
-Run:
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/features/generation/components/generation-status-panel.test.tsx
-```
-
-Expected: PASS
-
-- [ ] **Step 5: a11y テストを通す**
+- [ ] **Step 6: a11y テストを通す**
 
 Run:
 
@@ -741,7 +848,7 @@ docker compose run --rm --no-deps app npm test -- --run src/app/accessibility.te
 
 Expected: PASS
 
-- [ ] **Step 6: 関連ユニットをまとめて通す**
+- [ ] **Step 7: 関連ユニット + ゲートをまとめて通す**
 
 Run（1 コマンドずつ）:
 
@@ -761,9 +868,13 @@ docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
 ```
 
+```bash
+git diff --check
+```
+
 Expected: すべて PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/features/generation/components/generation-status-panel.tsx src/features/generation/components/generation-status-panel.test.tsx src/app/accessibility.test.tsx
@@ -779,29 +890,32 @@ git commit -m "feat: 献立作成中に体感用の段階進捗文言を表示�
 | §3 段階表 L3 | Task 1 |
 | select index/message・負数/非有限 | Task 1 |
 | resolveProcessingAnchorMs V-I4 | Task 1 |
+| 本番 `!` 禁止 V-I1 | Task 1–2 |
 | sticky null V-C1 L9 | Task 2 |
 | 同期初期評価 V-C2 L10 | Task 2 |
-| L1 前進のみ・active false リセット | Task 2 |
+| L1 前進のみ・active false リセット | Task 2 + Task 3 V-I2 |
 | interval 1000ms L12 | Task 2 |
 | `{ message, stageIndex }` L13 | Task 2 |
 | panel 先頭単一 hook V-I1 L11 | Task 3 |
 | submitting/processing 表示・data-progress-stage | Task 3 |
-| checking/offline/終端非変更 | Task 3（DOM に進捗を出さない） |
-| a11y 追随 V-I2 | Task 3 |
-| 相対 startedAt V-I3 | Task 3 |
-| L6 契約非変更 | 全 Task（触らない一覧） |
+| processing 相対 0/10/35/60s V-I3 | Task 3 |
+| unmount interval 掃除 V-I3 | Task 3 |
+| submitting→processing L1 panel V-I2 | Task 3 |
+| checking/offline/終端非変更 | Task 3 |
+| a11y 追随 V-I2 設計 | Task 3 Step 5–6 |
+| L6 契約非変更 | 全 Task |
 | R1–R8 許容 | 実装変更なし |
 
-**Placeholder scan:** なし（全文コード掲載）。  
-**Type consistency:** Task 2 の export 名を Task 3 がそのまま import。
+**Placeholder scan:** なし（全文コード掲載。`// ...` コメントのみのステップなし）。  
+**Type consistency:** Task 1 の `stageMessageAt` を Task 2 が import。Task 3 は `resolveProcessingAnchorMs` + hook。
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-07-31-generation-progress-stages.md`.
+Plan r1 complete and saved to `docs/superpowers/plans/2026-07-31-generation-progress-stages.md`.
 
 **Two execution options:**
 
-1. **Subagent-Driven (recommended)** — 1 Task ごとに新規サブエージェント、Task 間でレビュー
-2. **Inline Execution** — このセッションで executing-plans に従いチェックポイント付き実行
+1. **Subagent-Driven (recommended)** — 1 Task ごとに新規サブエージェント、Task 間でレビュー  
+2. **Inline Execution** — このセッションで executing-plans に従いチェックポイント付き実行  
 
 どちらで進めますか？
