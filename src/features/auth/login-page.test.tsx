@@ -107,6 +107,33 @@ it("restores sent context when magic link expired and last email is known (B-I8)
   sessionStorage.removeItem("kondate.auth.lastMagicEmail");
 });
 
+it("does not rehydrate sent UI when accountDeleted notice must show", () => {
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "user@example.com",
+      flowId: "flow-rehydrate-1",
+      resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+    }),
+  );
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/login?accountDeleted=1"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole("status")).toHaveTextContent("アカウントを削除しました");
+  expect(screen.queryByText("メールを確認してください")).not.toBeInTheDocument();
+  sessionStorage.removeItem("kondate.auth.magicSentUi");
+});
+
 it("U1-I2 rehydrates magic-link sent UI from sessionStorage after reload", async () => {
   const resendAvailableAt = new Date(Date.now() + 60_000).toISOString();
   sessionStorage.setItem(

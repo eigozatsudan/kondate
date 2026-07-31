@@ -89,10 +89,20 @@ function rememberMagicSentUi(snapshot: MagicSentUiSnapshot | null): void {
   }
 }
 
-function initialMagicLinkState(authError: LoginLocationState["authError"]): MagicLinkState {
+function initialMagicLinkState(
+  authError: LoginLocationState["authError"],
+  search: string,
+): MagicLinkState {
   // マジックリンク期限切れは送信済み文脈へ戻す（再入力を強いない）
   if (authError === "magic_link_expired") {
     return { status: "expired", email: readLastMagicEmail() };
+  }
+  // サインアウト / アカウント削除後の案内は idle フォーム上の status で出す。
+  // sent UI 再水和が優先されると案内が消える（account-deletion E2E）。
+  const query = new URLSearchParams(search);
+  if (query.get("accountDeleted") === "1" || query.get("signedOut") === "1") {
+    rememberMagicSentUi(null);
+    return { status: "idle", email: "" };
   }
   // U1-I2: リロード後も sent UI を復元（再送クールダウン中は特に重要）
   const sent = readMagicSentUi();
@@ -126,7 +136,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   // 明示的な復帰先は従来どおり安全化し、指定がない初回ログインだけ使い方の案内へ導く。
   const returnTo = params.has("returnTo") ? sanitizeReturnPath(params.get("returnTo")) : "/welcome";
   const [state, setState] = useState<MagicLinkState>(() =>
-    initialMagicLinkState(locationState.authError),
+    initialMagicLinkState(locationState.authError, location.search),
   );
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [googleError, setGoogleError] = useState(false);
