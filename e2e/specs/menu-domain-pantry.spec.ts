@@ -185,9 +185,7 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await page.getByRole("textbox", { name: "呼び名" }).fill("緊急用家族");
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page
-    .getByLabel(/このアプリで献立を作れない事情はありますか/)
-    .selectOption("none");
+  await page.getByLabel(/このアプリで献立を作れない事情はありますか/).selectOption("none");
   const memberCompleted = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&

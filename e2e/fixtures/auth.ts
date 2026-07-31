@@ -41,9 +41,10 @@ export const test = base.extend<AuthFixtures>({
     // magic-link経由のログイン自体は常に/plannerへ着地する（既存仕様・変更なし）。
     // RootEntryPageの新規振分け（not_started|in_progress→/welcome）を検証するには、
     // ログイン後に改めて"/"へ遷移してRootEntryPageのprofile判定を経由する必要がある。
-    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    // callback→claim→code 交換はモバイル・負荷下で 5s 既定を超え得る（oauth-mock と同様 30s）。
+    await expect(page).toHaveURL((url) => url.pathname === "/planner", { timeout: 30_000 });
     await page.goto("/");
-    await expect(page).toHaveURL((url) => url.pathname === "/welcome");
+    await expect(page).toHaveURL((url) => url.pathname === "/welcome", { timeout: 30_000 });
     await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible();
     await provide(page);
   },
@@ -126,9 +127,7 @@ export async function completeMinimumOnboarding(page: Page): Promise<void> {
   await confirmAddScopeNotice(page);
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page
-    .getByLabel(/このアプリで献立を作れない事情はありますか/)
-    .selectOption("none");
+  await page.getByLabel(/このアプリで献立を作れない事情はありますか/).selectOption("none");
   // サブパスBで「残りはあとで設定して完了」「この内容で設定を完了する」の2種類の
   // 完了ボタン文言が「この家族の設定を完了する」へ統一された（家族設定が任意で
   // あることを明確に伝えるための文言変更）。旧文言のままだとE2Eがボタンを

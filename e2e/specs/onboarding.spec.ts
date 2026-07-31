@@ -15,9 +15,7 @@ test("resumes a partially saved member, shows next-action after complete, then r
   await page.reload();
   await expect(page.getByLabel("年齢のめやす")).toHaveValue("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page
-    .getByLabel(/このアプリで献立を作れない事情はありますか/)
-    .selectOption("none");
+  await page.getByLabel(/このアプリで献立を作れない事情はありますか/).selectOption("none");
 
   await expect(page.getByText("まずは1人分から登録しましょう")).toBeVisible();
 

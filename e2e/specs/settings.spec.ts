@@ -26,9 +26,7 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByLabel("年齢のめやす").selectOption("age_3_5");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "くるみを追加" }).click();
-  await page
-    .getByLabel(/このアプリで献立を作れない事情はありますか/)
-    .selectOption("none");
+  await page.getByLabel(/このアプリで献立を作れない事情はありますか/).selectOption("none");
   await page.getByLabel("骨を除く").check();
   await page.getByLabel("食べる量").selectOption("small");
   await page.getByLabel("苦手食材を追加").fill("ねぎ");
