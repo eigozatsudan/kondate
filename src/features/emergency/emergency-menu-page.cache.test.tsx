@@ -391,6 +391,13 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
   };
   const onboardingApi: HouseholdOnboardingApi = {
     listMembers: vi.fn(() => Promise.resolve([onboardingMember])),
+    getProfile: vi.fn().mockResolvedValue({
+      user_id: eligibleMember.user_id,
+      onboarding_status: "in_progress",
+      onboarding_completed_at: null,
+      created_at: "2026-07-11T00:00:00.000Z",
+      updated_at: "2026-07-11T00:00:00.000Z",
+    }),
     createDraft: vi.fn(),
     updateDraft: vi.fn(),
     completeMember: vi.fn(() => {
@@ -418,7 +425,9 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
         </AppToastProvider>
       </QueryClientProvider>,
     );
+    // completeMember 後は次アクション画面。献立を始めるで setProgress + onDone。
     await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+    await user.click(await screen.findByRole("button", { name: "献立を始める" }));
     await waitFor(() => {
       expect(onDone).toHaveBeenCalledOnce();
     });

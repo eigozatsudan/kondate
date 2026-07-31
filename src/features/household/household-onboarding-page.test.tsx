@@ -3,7 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppToastProvider } from "@/shared/ui/app-toast";
-import type { HouseholdDraftPatch, HouseholdMemberRow } from "./household-api";
+import type { OnboardingStatus } from "@shared/contracts/domain";
+import type { HouseholdDraftPatch, HouseholdMemberRow, ProfileRow } from "./household-api";
 import { HouseholdOnboardingForm, type HouseholdOnboardingApi } from "./household-onboarding-page";
 
 /** オンボーディング unit は useAppToast 前提のため Provider を同梱する */
@@ -36,6 +37,55 @@ const draft: HouseholdMemberRow = {
   updated_at: "2026-07-11T00:00:00.000Z",
 };
 
+const completeAdult: HouseholdMemberRow = {
+  ...draft,
+  status: "complete",
+  age_band: "adult",
+  allergy_status: "none",
+  unsupported_diet_status: "none",
+};
+
+function mockProfile(status: OnboardingStatus): ProfileRow {
+  return {
+    user_id: "user-1",
+    onboarding_status: status,
+    onboarding_completed_at:
+      status === "complete" || status === "skipped" ? "2026-07-11T00:00:00.000Z" : null,
+    created_at: "2026-07-11T00:00:00.000Z",
+    updated_at: "2026-07-11T00:00:00.000Z",
+  };
+}
+
+/** invalidate → listMembers refetch 後も complete が残るようにする */
+function createMembersApiState(initial: HouseholdMemberRow[]) {
+  let members = initial.map((member) => ({ ...member }));
+  return {
+    listMembers: vi.fn(() => Promise.resolve(members.map((member) => ({ ...member })))),
+    upsert(member: HouseholdMemberRow) {
+      const index = members.findIndex((item) => item.id === member.id);
+      if (index >= 0) {
+        members[index] = { ...member };
+      } else {
+        members = [...members, { ...member }];
+      }
+    },
+  };
+}
+
+function baseApi(overrides: Partial<HouseholdOnboardingApi> = {}): HouseholdOnboardingApi {
+  return {
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
+    createDraft: vi.fn(),
+    updateDraft: vi.fn(),
+    completeMember: vi.fn(),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    addCustomAllergy: vi.fn(),
+    setProgress: vi.fn().mockResolvedValue({}),
+    ...overrides,
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -46,40 +96,34 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-it("resumes one draft, saves each required selection, and completes through completeMember->setProgress->navigate", async () => {
+it("completes member without setProgress or navigate, then shows next-action screen", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
   let currentDraft = draft;
-  const order: string[] = [];
   const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
     currentDraft = { ...currentDraft, ...patch };
+    membersState.upsert(currentDraft);
     return Promise.resolve(currentDraft);
   });
   const completeMember = vi.fn(() => {
-    order.push("completeMember");
-    return Promise.resolve({
-      ...draft,
+    const completed = {
+      ...currentDraft,
       age_band: "adult" as const,
       allergy_status: "none" as const,
       unsupported_diet_status: "none" as const,
       status: "complete" as const,
-    });
+    };
+    membersState.upsert(completed);
+    return Promise.resolve(completed);
   });
-  const setProgress = vi.fn(() => {
-    order.push("setProgress");
-    return Promise.resolve({});
-  });
-  const onDone = vi.fn(() => {
-    order.push("navigate");
-  });
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([draft]),
-    createDraft: vi.fn(),
+  const setProgress = vi.fn().mockResolvedValue({});
+  const onDone = vi.fn();
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     updateDraft,
     completeMember,
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
     setProgress,
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
@@ -91,46 +135,76 @@ it("resumes one draft, saves each required selection, and completes through comp
   expect(await screen.findByText("設定済み項目 3 / 3")).toBeInTheDocument();
   expect(updateDraft).toHaveBeenCalledTimes(3);
   await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
+
   await waitFor(() => {
-    expect(onDone).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+    ).toBeInTheDocument();
   });
+  expect(screen.getByText("1人の設定が完了しています。")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "献立を始める" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "続けて家族を追加" })).toBeInTheDocument();
   expect(completeMember).toHaveBeenCalledWith("member-1");
-  expect(setProgress).toHaveBeenCalledWith("complete");
-  expect(order).toEqual(["completeMember", "setProgress", "navigate"]);
+  expect(setProgress).not.toHaveBeenCalled();
+  expect(onDone).not.toHaveBeenCalled();
 });
 
-it("stays on the page and shows a retryable error when setProgress fails after completeMember succeeds", async () => {
+it("starts planner from next-action via setProgress complete then onDone", async () => {
   const user = userEvent.setup();
-  const completableDraft: HouseholdMemberRow = {
-    ...draft,
-    age_band: "adult",
-    allergy_status: "none",
-    unsupported_diet_status: "none",
-  };
-  const completeMember = vi.fn().mockResolvedValue({ ...completableDraft, status: "complete" });
-  const setProgress = vi.fn().mockRejectedValue(new Error("network"));
+  const membersState = createMembersApiState([completeAdult]);
+  const setProgress = vi.fn().mockResolvedValue({});
   const onDone = vi.fn();
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([completableDraft]),
-    createDraft: vi.fn(),
-    updateDraft: vi.fn(),
-    completeMember,
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
     setProgress,
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
 
-  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+  await user.click(await screen.findByRole("button", { name: "献立を始める" }));
+  await waitFor(() => {
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+  expect(setProgress).toHaveBeenCalledWith("complete");
+});
 
+it("keeps next-action and shows error when setProgress complete fails on primary CTA", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
+  const onDone = vi.fn();
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
+    setProgress: vi.fn().mockRejectedValue(new Error("network")),
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "献立を始める" }));
   expect(
     await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
   ).toBeInTheDocument();
-  expect(completeMember).toHaveBeenCalledWith("member-1");
-  expect(setProgress).toHaveBeenCalledWith("complete");
   expect(onDone).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+  ).toBeInTheDocument();
+});
+
+it("uses 献立を始める as primary CTA when complete members exist without draft", async () => {
+  const membersState = createMembersApiState([completeAdult]);
+  const api = baseApi({ listMembers: membersState.listMembers });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByRole("button", { name: "献立を始める" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "続けて家族を追加" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "この家族の設定を完了する" }),
+  ).not.toBeInTheDocument();
 });
 
 it("does not call setProgress or navigate when completeMember fails", async () => {
@@ -141,18 +215,15 @@ it("does not call setProgress or navigate when completeMember fails", async () =
     allergy_status: "none",
     unsupported_diet_status: "none",
   };
+  const membersState = createMembersApiState([completableDraft]);
   const completeMember = vi.fn().mockRejectedValue(new Error("network"));
   const setProgress = vi.fn();
   const onDone = vi.fn();
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([completableDraft]),
-    createDraft: vi.fn(),
-    updateDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     completeMember,
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
     setProgress,
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
@@ -173,19 +244,17 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
     age_band: "adult",
     allergy_status: "none",
   };
+  const membersState = createMembersApiState([currentDraft]);
   const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
     currentDraft = { ...currentDraft, ...patch };
+    membersState.upsert(currentDraft);
     return Promise.resolve(currentDraft);
   });
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([currentDraft]),
-    createDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     updateDraft,
     completeMember: vi.fn(),
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -196,7 +265,6 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
     unsupported_diet_status: "present",
     unsupported_diet_kinds: [],
   });
-  // incomplete でも完了は押下可（設計 §6.3）。必須漏れは toast + field error + focus
   const completeButton = screen.getByRole("button", { name: "この家族の設定を完了する" });
   expect(completeButton).not.toBeDisabled();
   await user.click(completeButton);
@@ -213,16 +281,12 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
 
 it("shows toast field error and focuses first invalid on incomplete save", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
   const completeMember = vi.fn();
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([draft]),
-    createDraft: vi.fn(),
-    updateDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     completeMember,
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -233,86 +297,24 @@ it("shows toast field error and focuses first invalid on incomplete save", async
 
   expect(completeMember).not.toHaveBeenCalled();
   expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
-  // フォームレベル: 先頭 role=alert は1つ
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(document.activeElement).toBeTruthy();
   expect(screen.getByLabelText("年齢のめやす")).toHaveFocus();
   expect(screen.getByLabelText("年齢のめやす")).toHaveAttribute("aria-invalid", "true");
 });
 
-it("completes onboarding through setProgress->navigate when a complete member already exists and no draft is open", async () => {
-  const user = userEvent.setup();
-  const order: string[] = [];
-  const onDone = vi.fn(() => {
-    order.push("navigate");
-  });
-  const setProgress = vi.fn(() => {
-    order.push("setProgress");
-    return Promise.resolve({});
-  });
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([{ ...draft, status: "complete" as const }]),
-    createDraft: vi.fn(),
-    updateDraft: vi.fn(),
-    completeMember: vi.fn(),
-    listAllergies: vi.fn(),
-    addCustomAllergy: vi.fn(),
-    setProgress,
-  };
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
-
-  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
-
-  await waitFor(() => {
-    expect(onDone).toHaveBeenCalledOnce();
-  });
-  expect(setProgress).toHaveBeenCalledWith("complete");
-  expect(order).toEqual(["setProgress", "navigate"]);
-});
-
-it("stays on the page with a retryable error when setProgress fails for an already-complete member", async () => {
-  const user = userEvent.setup();
-  const onDone = vi.fn();
-  const setProgress = vi.fn().mockRejectedValue(new Error("network"));
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([{ ...draft, status: "complete" as const }]),
-    createDraft: vi.fn(),
-    updateDraft: vi.fn(),
-    completeMember: vi.fn(),
-    listAllergies: vi.fn(),
-    addCustomAllergy: vi.fn(),
-    setProgress,
-  };
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
-
-  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
-
-  expect(
-    await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
-  ).toBeInTheDocument();
-  expect(onDone).not.toHaveBeenCalled();
-});
-
 it("serializes rapid draft updates in input order", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
   const firstUpdate = deferred<HouseholdMemberRow>();
   const updateDraft = vi
     .fn()
     .mockImplementationOnce(() => firstUpdate.promise)
     .mockResolvedValueOnce({ ...draft, age_band: "adult", allergy_status: "none" });
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([draft]),
-    createDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     updateDraft,
-    completeMember: vi.fn(),
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -334,20 +336,16 @@ it("serializes rapid draft updates in input order", async () => {
 
 it("preserves rapid changes to the same field while the first save is pending", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
   const firstUpdate = deferred<HouseholdMemberRow>();
   const updateDraft = vi
     .fn()
     .mockImplementationOnce(() => firstUpdate.promise)
     .mockResolvedValueOnce({ ...draft, display_name: "母娘" });
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([draft]),
-    createDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     updateDraft,
-    completeMember: vi.fn(),
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -376,20 +374,22 @@ it("waits for pending draft saves before completing a member", async () => {
     allergy_status: "none",
     unsupported_diet_status: "none",
   };
-  const completeMember = vi.fn().mockResolvedValue({
-    ...completableDraft,
-    display_name: "母",
-    status: "complete",
+  const membersState = createMembersApiState([completableDraft]);
+  const completeMember = vi.fn(() => {
+    const completed = {
+      ...completableDraft,
+      display_name: "母",
+      status: "complete" as const,
+    };
+    membersState.upsert(completed);
+    return Promise.resolve(completed);
   });
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([completableDraft]),
-    createDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     updateDraft: vi.fn().mockReturnValue(pendingUpdate.promise),
     completeMember,
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
     setProgress: vi.fn(),
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -406,20 +406,16 @@ it("waits for pending draft saves before completing a member", async () => {
 
 it("retries unsaved fields with a later queued save after an earlier save fails", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
   const firstUpdate = deferred<HouseholdMemberRow>();
   const updateDraft = vi
     .fn()
     .mockImplementationOnce(() => firstUpdate.promise)
     .mockResolvedValueOnce({ ...draft, allergy_status: "none" });
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([draft]),
-    createDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     updateDraft,
-    completeMember: vi.fn(),
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -451,16 +447,13 @@ it("does not complete or report saved when the final queued save fails", async (
     allergy_status: "none",
     unsupported_diet_status: "none",
   };
+  const membersState = createMembersApiState([completableDraft]);
   const completeMember = vi.fn();
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([completableDraft]),
-    createDraft: vi.fn(),
+  const api = baseApi({
+    listMembers: membersState.listMembers,
     updateDraft: vi.fn().mockReturnValue(pendingUpdate.promise),
     completeMember,
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -477,15 +470,8 @@ it("does not complete or report saved when the final queued save fails", async (
 });
 
 it("任意性が明確な文言を表示し、旧「必須設定」表現を残さない", async () => {
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([draft]),
-    createDraft: vi.fn(),
-    updateDraft: vi.fn(),
-    completeMember: vi.fn(),
-    listAllergies: vi.fn().mockResolvedValue([]),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+  const membersState = createMembersApiState([draft]);
+  const api = baseApi({ listMembers: membersState.listMembers });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
@@ -493,27 +479,113 @@ it("任意性が明確な文言を表示し、旧「必須設定」表現を残�
   expect(await screen.findByText("家族設定（任意）", { exact: false })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "この家族の設定を完了する" })).toBeInTheDocument();
   expect(screen.queryByText("必須設定", { exact: false })).not.toBeInTheDocument();
-  // C-C1: 離脱 CTA は必須（旧「残りはあとで…」文言は使わない）
   expect(
     screen.getByRole("button", { name: "あとで設定する（アイデアから始める）" }),
   ).toBeInTheDocument();
 });
 
-it("draft が無く complete member が既にいる場合も任意性が明確な完了ボタン文言を使う", async () => {
-  const api: HouseholdOnboardingApi = {
-    listMembers: vi.fn().mockResolvedValue([{ ...draft, status: "complete" as const }]),
-    createDraft: vi.fn(),
-    updateDraft: vi.fn(),
-    completeMember: vi.fn(),
-    listAllergies: vi.fn(),
-    addCustomAllergy: vi.fn(),
-    setProgress: vi.fn(),
-  };
+it("shows first-person callout while editing the initial draft", async () => {
+  const membersState = createMembersApiState([draft]);
+  const api = baseApi({ listMembers: membersState.listMembers });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
+  expect(await screen.findByText("まずは1人分から登録しましょう")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "家族が複数いる場合も、最初は1人で十分です。追加の家族は、このあとや設定画面からいつでも登録できます。",
+    ),
+  ).toBeInTheDocument();
+});
+
+it("shows continue-callout when drafting after a complete member exists", async () => {
+  const secondDraft = { ...draft, id: "member-2", sort_order: 1 };
+  const membersState = createMembersApiState([completeAdult, secondDraft]);
+  const api = baseApi({ listMembers: membersState.listMembers });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByText("続けて家族を登録できます")).toBeInTheDocument();
+  expect(screen.queryByText("まずは1人分から登録しましょう")).not.toBeInTheDocument();
+});
+
+it("hides skip on next-action when profile is already complete", async () => {
+  const membersState = createMembersApiState([completeAdult]);
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    getProfile: vi.fn().mockResolvedValue(mockProfile("complete")),
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
   expect(
-    await screen.findByRole("button", { name: "この家族の設定を完了する" }),
+    await screen.findByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
   ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "あとで設定する（アイデアから始める）" }),
+  ).not.toBeInTheDocument();
+});
+
+it("shows skip on next-action when profile is in_progress and skips to onDone", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
+  const setProgress = vi.fn().mockResolvedValue({});
+  const onDone = vi.fn();
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
+    setProgress,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
+
+  await user.click(
+    await screen.findByRole("button", { name: "あとで設定する（アイデアから始める）" }),
+  );
+  await waitFor(() => {
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+  expect(setProgress).toHaveBeenCalledWith("skipped");
+});
+
+it("adds another member from next-action and shows continue callout", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
+  const createDraft = vi.fn(() => {
+    const created = { ...draft, id: "member-2", sort_order: 1, status: "draft" as const };
+    membersState.upsert(created);
+    return Promise.resolve(created);
+  });
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    createDraft,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "続けて家族を追加" }));
+  await waitFor(() => {
+    expect(createDraft).toHaveBeenCalled();
+  });
+  expect(await screen.findByText("続けて家族を登録できます")).toBeInTheDocument();
+});
+
+it("omits setProgress when starting planner while profile is already complete", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
+  const setProgress = vi.fn().mockResolvedValue({});
+  const onDone = vi.fn();
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    getProfile: vi.fn().mockResolvedValue(mockProfile("complete")),
+    setProgress,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "献立を始める" }));
+  await waitFor(() => {
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+  expect(setProgress).not.toHaveBeenCalled();
 });

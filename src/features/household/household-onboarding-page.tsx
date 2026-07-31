@@ -5,20 +5,23 @@ import type { AgeBand, UnsupportedDietKind, UnsupportedDietStatus } from "@share
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { useAppToast } from "@/shared/ui/app-toast";
+import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
 import {
   addCustomMemberAllergy,
   addStandardMemberAllergy,
   completeHouseholdMember,
+  deleteMemberAllergy,
+  getProfile,
+  listAllergenAliases,
+  listAllergenCatalog,
   listHouseholdMembers,
   listMemberAllergies,
   setOnboardingStatus,
   startHouseholdOnboarding,
   updateHouseholdMemberDraft,
-  deleteMemberAllergy,
-  listAllergenCatalog,
-  listAllergenAliases,
   type HouseholdDraftPatch,
   type HouseholdMemberRow,
+  type ProfileRow,
 } from "./household-api";
 import { defaultsForAgeBand } from "./household-defaults";
 import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
@@ -92,6 +95,7 @@ function firstOnboardingFieldError(
 
 export interface HouseholdOnboardingApi {
   listMembers: () => Promise<HouseholdMemberRow[]>;
+  getProfile: () => Promise<ProfileRow>;
   createDraft: (sortOrder: number) => Promise<HouseholdMemberRow>;
   updateDraft: (memberId: string, patch: HouseholdDraftPatch) => Promise<HouseholdMemberRow>;
   completeMember: (memberId: string) => Promise<HouseholdMemberRow>;
@@ -108,6 +112,7 @@ function createHouseholdApi(userId: string): HouseholdOnboardingApi {
   const client = getBrowserSupabaseClient();
   return {
     listMembers: () => listHouseholdMembers(client, userId),
+    getProfile: () => getProfile(client, userId),
     createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
     updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
@@ -159,6 +164,8 @@ export function HouseholdOnboardingForm({
   const [completeError, setCompleteError] = useState(false);
   const [skipError, setSkipError] = useState(false);
   const [skipPending, setSkipPending] = useState(false);
+  // completeMember / finish / skip 中の連打防止
+  const [actionPending, setActionPending] = useState(false);
   // HP-I1: AllergyEditor 失敗を利用者に見せる（設定画面と同型）
   const [allergyError, setAllergyError] = useState<string | null>(null);
   // 完了押下後の fieldErrors（valid になったら clear）
@@ -167,6 +174,7 @@ export function HouseholdOnboardingForm({
   const allergyStatusRef = useRef<HTMLSelectElement>(null);
   const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
   const unsupportedDietKindsRef = useRef<HTMLFieldSetElement>(null);
+  const nextActionHeadingRef = useRef<HTMLHeadingElement>(null);
 
   // ルート離脱で validation toast を残さない
   useEffect(() => {
@@ -175,26 +183,20 @@ export function HouseholdOnboardingForm({
     };
   }, [dismissToast]);
 
-  /** C-C1: 画面内から skipped へ抜け、アイデア導線へ進める */
-  const skipOnboarding = async (): Promise<void> => {
-    setSkipPending(true);
-    setSkipError(false);
-    try {
-      await api.setProgress("skipped");
-      onDone();
-    } catch {
-      setSkipError(true);
-    } finally {
-      setSkipPending(false);
-    }
-  };
   const membersQuery = useQuery({
     queryKey: householdKeys.members(userId),
     queryFn: api.listMembers,
   });
+  const profileQuery = useQuery({
+    queryKey: householdKeys.profile(userId),
+    queryFn: api.getProfile,
+  });
   const members = membersQuery.data ?? [];
   const draft = members.find((member) => member.status === "draft") ?? null;
   const completeMembers = members.filter((member) => member.status === "complete");
+  const onboardingStatus = profileQuery.data?.onboarding_status;
+  // complete / skipped / 未取得では skip CTA を出さない（RPC 遷移表）
+  const canShowSkip = onboardingStatus === "not_started" || onboardingStatus === "in_progress";
   const allergiesQuery = useQuery({
     queryKey: householdKeys.allergies(userId, draft?.id ?? "none"),
     queryFn: () => (draft === null ? Promise.resolve([]) : api.listAllergies(draft.id)),
@@ -265,16 +267,38 @@ export function HouseholdOnboardingForm({
     return queuedSave;
   };
 
-  // 家族設定の完了（completeMember→setProgress("complete")→遷移）は必ずこの順序で
-  // 行い、どちらかが失敗したら現在画面に残って再試行できるようにする。
-  const finishOnboarding = async () => {
+  /** 献立へ進む。profile が既に complete なら setProgress を省略する。 */
+  const finishOnboarding = async (): Promise<void> => {
+    setActionPending(true);
+    setCompleteError(false);
     try {
-      await api.setProgress("complete");
-      setCompleteError(false);
+      if (onboardingStatus !== "complete") {
+        await api.setProgress("complete");
+        await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+      }
       dismissToast();
       onDone();
     } catch {
       setCompleteError(true);
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  /** C-C1: 画面内から skipped へ抜け、アイデア導線へ進める */
+  const skipOnboarding = async (): Promise<void> => {
+    setSkipPending(true);
+    setSkipError(false);
+    setActionPending(true);
+    try {
+      await api.setProgress("skipped");
+      await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+      onDone();
+    } catch {
+      setSkipError(true);
+    } finally {
+      setSkipPending(false);
+      setActionPending(false);
     }
   };
 
@@ -325,7 +349,7 @@ export function HouseholdOnboardingForm({
     firstCheckbox?.focus();
   };
 
-  /** incomplete 完了押下: fieldErrors + toast + focus。成功時のみ complete を進める */
+  /** incomplete 完了押下: fieldErrors + toast + focus。成功時は次アクションへ（setProgress しない） */
   const handleCompleteClick = (): void => {
     if (draft === null) return;
     void saveQueue.current.then(async (saved) => {
@@ -348,21 +372,33 @@ export function HouseholdOnboardingForm({
       }
       setFieldErrors({});
       dismissToast();
+      setActionPending(true);
       let completed: HouseholdMemberRow;
       try {
         completed = await api.completeMember(draft.id);
       } catch {
         // ネット失敗: 既存 saveState failed 表示のみ（toast なし）
         setSaveState("failed");
+        setActionPending(false);
         return;
       }
       replaceMember(completed);
       // complete 成功後は家族安全依存 query を必ず無効化し、
       // localStorage 失敗時でも revision/event 経由で緊急献立などを更新する。
-      await invalidateHouseholdSafetyDependents(queryClient, userId);
-      await finishOnboarding();
+      // ここでは setProgress / navigate しない（次アクション画面へ）。
+      try {
+        await invalidateHouseholdSafetyDependents(queryClient, userId);
+      } finally {
+        setActionPending(false);
+      }
     });
   };
+
+  // 次アクション表示時に見出しへフォーカスし、画面切替を伝える
+  useEffect(() => {
+    if (draft !== null || completeMembers.length === 0) return;
+    nextActionHeadingRef.current?.focus();
+  }, [draft, completeMembers.length]);
 
   if (membersQuery.isPending) {
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
@@ -387,7 +423,7 @@ export function HouseholdOnboardingForm({
     );
   }
 
-  if (draft === null) {
+  if (draft === null && completeMembers.length === 0) {
     return (
       <main className="page-frame stack">
         <h1>家族の初回設定</h1>
@@ -395,43 +431,88 @@ export function HouseholdOnboardingForm({
         <p className="type-small">
           AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
         </p>
-        {completeMembers.length > 0 && <p>{completeMembers.length}人の設定が完了しています。</p>}
         {startMutation.isError ? (
           <p className="error-message" role="alert">
             家族設定を開始できませんでした。通信を確認して再試行してください。
           </p>
         ) : null}
         <button
-          className="primary-button"
+          className="primary-button min-h-11"
           type="button"
-          disabled={startMutation.isPending}
+          disabled={startMutation.isPending || actionPending}
           onClick={() => {
             startMutation.mutate();
           }}
         >
-          {completeMembers.length === 0 ? "家族設定を始める" : "家族を追加"}
+          家族設定を始める
         </button>
-        {completeMembers.length > 0 && (
+        {canShowSkip ? (
           <button
-            className="secondary-button"
+            className="text-button min-h-11"
             type="button"
+            disabled={skipPending || actionPending}
             onClick={() => {
-              void finishOnboarding();
+              void skipOnboarding();
             }}
           >
-            この家族の設定を完了する
+            あとで設定する（アイデアから始める）
           </button>
+        ) : null}
+        {skipError && (
+          <p className="error-message" role="alert">
+            スキップできませんでした。通信を確認して再試行してください。
+          </p>
         )}
+      </main>
+    );
+  }
+
+  if (draft === null && completeMembers.length > 0) {
+    const n = completeMembers.length;
+    return (
+      <main className="page-frame stack">
+        <h1 ref={nextActionHeadingRef} tabIndex={-1}>
+          {n === 1 ? "1人目の登録が完了しました" : "登録が完了しました"}
+        </h1>
+        <p>{n}人の設定が完了しています。</p>
+        <p>ほかの家族も続けて登録できます。あとから設定の「家族設定」でも追加できます。</p>
+        {startMutation.isError ? (
+          <p className="error-message" role="alert">
+            家族設定を開始できませんでした。通信を確認して再試行してください。
+          </p>
+        ) : null}
         <button
-          className="text-button min-h-11"
+          className="primary-button min-h-11"
           type="button"
-          disabled={skipPending}
+          disabled={actionPending || profileQuery.isPending}
           onClick={() => {
-            void skipOnboarding();
+            void finishOnboarding();
           }}
         >
-          あとで設定する（アイデアから始める）
+          献立を始める
         </button>
+        <button
+          className="secondary-button min-h-11"
+          type="button"
+          disabled={actionPending || startMutation.isPending || profileQuery.isPending}
+          onClick={() => {
+            startMutation.mutate();
+          }}
+        >
+          続けて家族を追加
+        </button>
+        {canShowSkip ? (
+          <button
+            className="text-button min-h-11"
+            type="button"
+            disabled={actionPending || skipPending}
+            onClick={() => {
+              void skipOnboarding();
+            }}
+          >
+            あとで設定する（アイデアから始める）
+          </button>
+        ) : null}
         {completeError && (
           <p className="error-message" role="alert">
             設定を完了できませんでした。通信を確認して再試行してください。
@@ -446,11 +527,28 @@ export function HouseholdOnboardingForm({
     );
   }
 
+  // ここから draft 編集フォーム（draft は上の分岐で null でない）
+  if (draft === null) {
+    return <main className="page-frame">家族設定を読み込んでいます…</main>;
+  }
+
   return (
     <main className="page-frame stack">
       <div>
         <p className="eyebrow">家族設定（任意）</p>
         <h1>家族の初回設定</h1>
+        <InlineNotice
+          tone="notice"
+          title={
+            completeMembers.length === 0
+              ? "まずは1人分から登録しましょう"
+              : "続けて家族を登録できます"
+          }
+        >
+          {completeMembers.length === 0
+            ? "家族が複数いる場合も、最初は1人で十分です。追加の家族は、このあとや設定画面からいつでも登録できます。"
+            : "何人でも登録できます。登録が終わったら「献立を始める」で先に進めます。あとから設定の「家族設定」でも追加・編集できます。"}
+        </InlineNotice>
         <p>設定済み項目 {completedRequired} / 3</p>
         <p className="type-small">
           AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
@@ -685,24 +783,26 @@ export function HouseholdOnboardingForm({
         </p>
       )}
       <button
-        className="primary-button"
+        className="primary-button min-h-11"
         type="button"
-        // incomplete でも押下可。failed 保存中のみ止める（選び直して再試行）
-        disabled={saveState === "failed"}
+        // incomplete でも押下可。failed 保存中・actionPending 中は止める
+        disabled={saveState === "failed" || actionPending}
         onClick={handleCompleteClick}
       >
         この家族の設定を完了する
       </button>
-      <button
-        className="text-button min-h-11"
-        type="button"
-        disabled={skipPending}
-        onClick={() => {
-          void skipOnboarding();
-        }}
-      >
-        あとで設定する（アイデアから始める）
-      </button>
+      {canShowSkip ? (
+        <button
+          className="text-button min-h-11"
+          type="button"
+          disabled={skipPending || actionPending}
+          onClick={() => {
+            void skipOnboarding();
+          }}
+        >
+          あとで設定する（アイデアから始める）
+        </button>
+      ) : null}
       {draft.allergy_status === "unconfirmed" && (
         <p className="error-message">
           アレルギーを確認するまで、このメンバーは献立生成に使えません。
