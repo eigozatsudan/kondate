@@ -111,7 +111,12 @@ const additionalAliasValues: readonly (readonly [
   ["soy", "油揚げ", "derived", false],
   ["soy", "厚揚げ", "derived", false],
   ["soy", "きなこ", "derived", false],
+  // U3-001: 「きな粉」は「きなこ」と NFKC では同一視されない（粉≠こ）
+  ["soy", "きな粉", "derived", false],
   ["soy", "枝豆", "derived", false],
+  // 高頻度パン形（裸の「パン」はフライパン衝突のため載せない）
+  ["wheat", "バゲット", "derived", false],
+  ["milk", "パルメザン", "derived", false],
   ["wheat", "パン粉", "derived", false],
   ["wheat", "そうめん", "derived", false],
   ["wheat", "素麺", "derived", false],
