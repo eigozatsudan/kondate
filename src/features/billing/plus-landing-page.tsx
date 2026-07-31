@@ -47,14 +47,13 @@ export const PLUS_LP_FLYER_TITLE = "チラシから 1 週間" as const;
 export const PLUS_LP_FLYER_BODY =
   "スーパーのチラシ写真を送ると、その特売を踏まえた 1 週間分の献立づくりに進めます（Plus だけの機能です）。" as const;
 
-/**
- * Plus アップグレード申込の一時クローズ。
- * true のあいだ LP の Checkout を閉じ、開発中バナーを出す（公開時に false に戻す）。
- */
-export const PLUS_LP_UPGRADE_COMING_SOON = true as const;
-export const PLUS_LP_COMING_SOON_BADGE = "ただいま開発中" as const;
-export const PLUS_LP_COMING_SOON_BODY =
-  "Plus へのアップグレードはもう少しで公開予定です。今はお申し込みいただけません。お楽しみに！" as const;
+// BILL-1: ゲート定数は Settings と共有（LP 専用モジュールに閉じない）
+import {
+  PLUS_LP_COMING_SOON_BADGE,
+  PLUS_LP_COMING_SOON_BODY,
+  PLUS_LP_UPGRADE_COMING_SOON,
+} from "./plus-upgrade-gate";
+export { PLUS_LP_COMING_SOON_BADGE, PLUS_LP_COMING_SOON_BODY, PLUS_LP_UPGRADE_COMING_SOON };
 
 const CHECKOUT_GENERIC_ERROR =
   "お支払い画面を開けませんでした。時間をおいてもう一度お試しください" as const;

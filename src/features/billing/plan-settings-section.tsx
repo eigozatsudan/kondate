@@ -9,6 +9,11 @@ import {
   TRIAL_END_WARNING,
 } from "./billing-ui-copy";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
+import {
+  PLUS_LP_COMING_SOON_BADGE,
+  PLUS_LP_COMING_SOON_BODY,
+  PLUS_LP_UPGRADE_COMING_SOON,
+} from "./plus-upgrade-gate";
 import { useEntitlement } from "./use-entitlement";
 
 // 既存テストの import パスを壊さない re-export（正本は billing-ui-copy）
@@ -156,28 +161,38 @@ export function PlanSettingsSection({
           {!entitled && surfacesOpen ? (
             <div className="stack gap-3">
               <p>こんだて日和 Plus なら、1 日最大 10 回まで献立を作れます。</p>
-              <CheckoutIntervalForm
-                pending={pending}
-                onSubmit={async (interval) => {
-                  // pending 管理は親のみ。form は onSubmit と年額確認に専念する。
-                  setPending(true);
-                  setActionError(null);
-                  try {
-                    if (onCheckout !== undefined) {
-                      await onCheckout(interval);
-                    } else {
-                      const { url } = await createCheckoutSession({ interval });
-                      window.location.assign(url);
+              {/* BILL-1: LP の COMING_SOON と設定の Checkout を揃える（申込不可なのに Settings だけ課金可にしない） */}
+              {PLUS_LP_UPGRADE_COMING_SOON ? (
+                <div className="stack gap-2" role="status">
+                  <p className="type-small">
+                    <strong>{PLUS_LP_COMING_SOON_BADGE}</strong>
+                  </p>
+                  <p className="type-small">{PLUS_LP_COMING_SOON_BODY}</p>
+                </div>
+              ) : (
+                <CheckoutIntervalForm
+                  pending={pending}
+                  onSubmit={async (interval) => {
+                    // pending 管理は親のみ。form は onSubmit と年額確認に専念する。
+                    setPending(true);
+                    setActionError(null);
+                    try {
+                      if (onCheckout !== undefined) {
+                        await onCheckout(interval);
+                      } else {
+                        const { url } = await createCheckoutSession({ interval });
+                        window.location.assign(url);
+                      }
+                    } catch {
+                      setActionError(
+                        "お支払い画面を開けませんでした。時間をおいてもう一度お試しください",
+                      );
+                    } finally {
+                      setPending(false);
                     }
-                  } catch {
-                    setActionError(
-                      "お支払い画面を開けませんでした。時間をおいてもう一度お試しください",
-                    );
-                  } finally {
-                    setPending(false);
-                  }
-                }}
-              />
+                  }}
+                />
+              )}
             </div>
           ) : null}
 

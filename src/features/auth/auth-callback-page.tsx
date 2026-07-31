@@ -150,7 +150,16 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
           state: { authError: "magic_link_expired" },
         });
       } else if (next.kind === "error") {
-        if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
+        // AUTH-1: unbound_callback では秘密を焼かない。
+        // gateway は state mismatch / hash / deposit 失敗で意図的に clear しない。
+        // ページ側の無条件 clear は公開 flow UUID 経由の in-flight 秘密破壊（DoS）になる。
+        // provider 端末エラー（oauth_cancelled / auth_callback_failed）だけ端末 secret を消す。
+        if (
+          callbackFlowId.current !== null &&
+          (next.code === "oauth_cancelled" || next.code === "auth_callback_failed")
+        ) {
+          clearAuthFlow(callbackFlowId.current);
+        }
         void navigate("/login", {
           replace: true,
           state: { authError: next.code },

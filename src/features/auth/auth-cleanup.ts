@@ -20,9 +20,18 @@ export type ClearLocalAuthOptions = {
  */
 export const SIGN_OUT_TIMEOUT_MS = 4_000;
 
+/** マジックリンク宛先・送信 UI（sessionStorage）。owned prefix 外のため明示掃除。 */
+const MAGIC_LINK_RESIDUAL_KEYS = [
+  "kondate.auth.lastMagicEmail",
+  "kondate.auth.magicSentUi",
+] as const;
+
 function clearOwnedBrowserStorage(): void {
   for (const storage of [localStorage, sessionStorage]) {
     clearOwnedAuthStorage(storage);
+    for (const key of MAGIC_LINK_RESIDUAL_KEYS) {
+      storage.removeItem(key);
+    }
     for (const key of Object.keys(storage)) {
       if (
         key.startsWith("kondate:generation:") ||

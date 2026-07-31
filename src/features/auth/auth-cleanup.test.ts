@@ -36,6 +36,12 @@ describe("clearLocalAuthAndDrafts", () => {
   it("removes owned auth/recovery keys from both storages and keeps unrelated preferences", async () => {
     seedOwnedKeys(localStorage);
     seedOwnedKeys(sessionStorage);
+    // AUTH-3: マジックリンク宛先は owned prefix 外だがログアウトで消す
+    sessionStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
+    sessionStorage.setItem(
+      "kondate.auth.magicSentUi",
+      JSON.stringify({ email: "user@example.com", flowId: "f", resendAvailableAt: "t" }),
+    );
 
     const signOut = vi.fn().mockResolvedValue({ error: null });
     const client = {
@@ -54,6 +60,8 @@ describe("clearLocalAuthAndDrafts", () => {
       expect(storage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
     }
+    expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
+    expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();
   });
 
   it("uses global signOut when signOutScope is global and falls back to local on failure", async () => {

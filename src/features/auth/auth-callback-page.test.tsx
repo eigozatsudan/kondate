@@ -379,6 +379,8 @@ it("fails closed when completeCallback rejects without leaking the rejection", a
   };
   const unhandled = vi.fn();
   window.addEventListener("unhandledrejection", unhandled);
+  // 前テストの mock 呼び出しを捨て、本ケースだけの clear 有無を見る
+  vi.mocked(clearAuthFlow).mockClear();
   const router = createMemoryRouter(
     [
       { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
@@ -392,7 +394,8 @@ it("fails closed when completeCallback rejects without leaking the rejection", a
 
   expect(unhandled).not.toHaveBeenCalled();
   expect(router.state.location.state).toEqual({ authError: "unbound_callback" });
-  expect(clearAuthFlow).toHaveBeenCalledWith(flowId);
+  // AUTH-1: unbound では秘密を焼かない（state mismatch 等と同一ポリシー）
+  expect(clearAuthFlow).not.toHaveBeenCalled();
   window.removeEventListener("unhandledrejection", unhandled);
 });
 

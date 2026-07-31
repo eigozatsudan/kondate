@@ -105,16 +105,16 @@ async function mockUsageTodayPlus(page: Page): Promise<void> {
 
 test.setTimeout(180_000);
 
-test("settings shows Free plan prices when product surfaces are open", async ({
+test("settings shows Free plan and coming-soon gate when product surfaces are open", async ({
   completedOnboardingPage: page,
 }) => {
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "プラン" })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/月額 580 円/u).first()).toBeVisible();
-  await expect(page.getByText(/年額 5,800 円/u).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Plus をはじめる" })).toBeVisible();
-  await expect(page.getByText("カード入力画面に移ります")).toBeVisible();
+  // BILL-1: LP の COMING_SOON と揃え、Settings からも Checkout を出さない
+  await expect(page.getByText(/こんだて日和 Plus なら/u)).toBeVisible();
+  await expect(page.getByText("ただいま開発中")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Plus をはじめる" })).toHaveCount(0);
 });
 
 test("settings shows trial end warning when entitlement is trialing", async ({

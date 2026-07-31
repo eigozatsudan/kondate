@@ -19,16 +19,20 @@ export function useHistoryGroups() {
   });
 }
 
-/** 代表献立のお気に入り付け外し。成功後に一覧を無効化する。 */
+/** 代表献立のお気に入り付け外し。成功後に一覧と結果キャッシュを無効化する。 */
 export function useToggleFavorite() {
   const queryClient = useQueryClient();
   const userId = useAuth().session?.user.id;
   return useMutation({
     mutationFn: (command: { menuId: string; isFavorite: boolean }) =>
       setMenuFavorite(command.menuId, command.isFavorite),
-    onSuccess: async () => {
+    onSuccess: async (_data, command) => {
       if (userId === undefined) return;
-      await queryClient.invalidateQueries({ queryKey: historyKeys.groups(userId) });
+      // HIST-2: menu-result を残すと 30s stale 内の再マウントで星が DB と逆に戻る
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: historyKeys.groups(userId) }),
+        queryClient.invalidateQueries({ queryKey: ["menu-result", userId, command.menuId] }),
+      ]);
     },
     retry: false,
   });

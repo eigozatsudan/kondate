@@ -12,6 +12,11 @@ import {
   TRIAL_END_WARNING,
   YEARLY_CONFIRM_COPY,
 } from "./plan-settings-section";
+import {
+  PLUS_LP_COMING_SOON_BADGE,
+  PLUS_LP_COMING_SOON_BODY,
+  PLUS_LP_UPGRADE_COMING_SOON,
+} from "./plus-upgrade-gate";
 
 // 注入 props で描画するため API は呼ばないが、hook が Query を立てるので失敗させない
 vi.mock("./billing-api", () => ({
@@ -88,13 +93,20 @@ function renderPlan(props: Partial<ComponentProps<typeof PlanSettingsSection>> =
 }
 
 describe("PlanSettingsSection", () => {
-  it("shows Free plan price and Plus をはじめる CTA when not entitled", () => {
+  it("shows Free plan copy and aligns checkout gate with Plus LP coming-soon", () => {
     renderPlan();
-    // 価格は一覧とラジオに出るので all で存在を確認
-    expect(screen.getAllByText(/月額 580 円/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText(/年額 5,800 円/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeVisible();
-    expect(screen.getByText(STRIPE_REDIRECT_NOTICE)).toBeVisible();
+    expect(screen.getByText(/こんだて日和 Plus なら/)).toBeVisible();
+    // BILL-1: COMING_SOON 中は Settings も Checkout を出さない（LP と矛盾させない）
+    if (PLUS_LP_UPGRADE_COMING_SOON) {
+      expect(screen.getByText(PLUS_LP_COMING_SOON_BADGE)).toBeVisible();
+      expect(screen.getByText(PLUS_LP_COMING_SOON_BODY)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
+    } else {
+      expect(screen.getAllByText(/月額 580 円/).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/年額 5,800 円/).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeVisible();
+      expect(screen.getByText(STRIPE_REDIRECT_NOTICE)).toBeVisible();
+    }
   });
 
   it("shows trial end warning copy while trialing", () => {
@@ -119,6 +131,7 @@ describe("PlanSettingsSection", () => {
   });
 
   it("requires yearly confirmation before checkout and shows fixed copy", async () => {
+    if (PLUS_LP_UPGRADE_COMING_SOON) return;
     const onCheckout = vi.fn(() => Promise.resolve());
     const user = userEvent.setup();
     renderPlan({ onCheckout });
@@ -134,6 +147,7 @@ describe("PlanSettingsSection", () => {
   });
 
   it("starts monthly checkout without year confirm", async () => {
+    if (PLUS_LP_UPGRADE_COMING_SOON) return;
     const onCheckout = vi.fn(() => Promise.resolve());
     const user = userEvent.setup();
     renderPlan({ onCheckout });
