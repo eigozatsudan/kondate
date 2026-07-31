@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppToastProvider } from "@/shared/ui/app-toast";
 import type { OnboardingStatus } from "@shared/contracts/domain";
 import type { HouseholdDraftPatch, HouseholdMemberRow, ProfileRow } from "./household-api";
 import { HouseholdOnboardingForm, type HouseholdOnboardingApi } from "./household-onboarding-page";
+import { UNSUPPORTED_DIET_KIND_LABELS } from "./unsupported-diet-copy";
 
 /** オンボーディング unit は useAppToast 前提のため Provider を同梱する */
 function renderOnboarding(
@@ -18,6 +19,9 @@ function renderOnboarding(
     </QueryClientProvider>,
   );
 }
+
+/** 親質問は長いため部分一致（settings と同契約） */
+const unsupportedDietStatusLabel = /このアプリで献立を作れない事情はありますか/u;
 
 const draft: HouseholdMemberRow = {
   id: "member-1",
@@ -131,7 +135,7 @@ it("completes member without setProgress or navigate, then shows next-action scr
   expect(await screen.findByText("設定済み項目 0 / 3")).toBeInTheDocument();
   await user.selectOptions(screen.getByLabelText("年齢のめやす"), "adult");
   await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
-  await user.selectOptions(screen.getByLabelText("食べない食事はありますか"), "none");
+  await user.selectOptions(screen.getByLabelText(unsupportedDietStatusLabel), "none");
   expect(await screen.findByText("設定済み項目 3 / 3")).toBeInTheDocument();
   expect(updateDraft).toHaveBeenCalledTimes(3);
   await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
@@ -261,7 +265,7 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
 
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
-  await user.selectOptions(await screen.findByLabelText("食べない食事はありますか"), "present");
+  await user.selectOptions(await screen.findByLabelText(unsupportedDietStatusLabel), "present");
 
   expect(updateDraft).toHaveBeenNthCalledWith(1, "member-1", {
     unsupported_diet_status: "present",
@@ -274,7 +278,9 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
   expect(screen.getAllByText(/選んでください|確認してください|入力内容/).length).toBeGreaterThan(0);
   expect(screen.getByRole("alert")).toBeVisible();
 
-  await user.click(await screen.findByRole("checkbox", { name: "離乳食" }));
+  await user.click(
+    await screen.findByRole("checkbox", { name: UNSUPPORTED_DIET_KIND_LABELS.weaning_food }),
+  );
 
   expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", {
     unsupported_diet_kinds: ["weaning_food"],
@@ -566,11 +572,69 @@ it("adds another member from next-action and shows continue callout", async () =
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
+  // 追加前確認を経てから createDraft（ダイアログ OK 後のみ）
   await user.click(await screen.findByRole("button", { name: "続けて家族を追加" }));
+  expect(createDraft).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "登録の前に" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "登録を続ける" }));
   await waitFor(() => {
     expect(createDraft).toHaveBeenCalled();
   });
   expect(await screen.findByText("続けて家族を登録できます")).toBeInTheDocument();
+});
+
+it("shows add-scope notice before starting onboarding and cancel does not create", async () => {
+  const user = userEvent.setup();
+  const createDraft = vi.fn();
+  // メンバー0・draftなしの初期画面
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([]),
+    getProfile: vi.fn().mockResolvedValue(mockProfile("not_started")),
+    createDraft,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "家族設定を始める" }));
+  expect(createDraft).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "登録の前に" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "やめる" }));
+  expect(createDraft).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "登録の前に" })).not.toBeInTheDocument();
+});
+
+it("single-flights createDraft when confirm is invoked twice in the same turn", async () => {
+  // 同期 startingDraftRef により、isPending 再レンダー前の二重 OK でも 1 回だけ
+  const user = userEvent.setup();
+  let resolveDraft!: (value: HouseholdMemberRow) => void;
+  const createDraft = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveDraft = resolve;
+      }),
+  );
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([]),
+    getProfile: vi.fn().mockResolvedValue(mockProfile("not_started")),
+    createDraft,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "家族設定を始める" }));
+  const continueButton = screen.getByRole("button", { name: "登録を続ける" });
+  // 同一 tick の二重発火を再現（userEvent は間に re-render を挟む）
+  fireEvent.click(continueButton);
+  fireEvent.click(continueButton);
+  await waitFor(() => {
+    expect(createDraft).toHaveBeenCalledTimes(1);
+  });
+  resolveDraft({
+    ...draft,
+    id: "member-started",
+    status: "draft",
+    sort_order: 0,
+  });
 });
 
 it("omits setProgress when starting planner while profile is already complete", async () => {

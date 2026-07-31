@@ -51,6 +51,20 @@ import {
   type HouseholdSettingsValue,
 } from "./household-settings-schema";
 import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
+import {
+  ADD_SCOPE_NOTICE_BODY,
+  ADD_SCOPE_NOTICE_CANCEL,
+  ADD_SCOPE_NOTICE_CONTINUE,
+  ADD_SCOPE_NOTICE_FOOTNOTE,
+  ADD_SCOPE_NOTICE_ITEMS,
+  ADD_SCOPE_NOTICE_TITLE,
+  UNSUPPORTED_DIET_EMPTY_ADD_HELP,
+  UNSUPPORTED_DIET_KIND_LABELS,
+  UNSUPPORTED_DIET_KINDS_LEGEND,
+  UNSUPPORTED_DIET_PRESENT_HELP,
+  UNSUPPORTED_DIET_STATUS_HELP,
+  UNSUPPORTED_DIET_STATUS_LABEL,
+} from "./unsupported-diet-copy";
 
 type PendingRegisteredIntent = {
   member: HouseholdMemberRow;
@@ -81,12 +95,7 @@ const householdAgeLabels: Readonly<Record<string, string>> = {
   senior: "高齢者",
 };
 
-/** 食べない食事の表示ラベル。enum キー（英語）を画面に出さない（オンボーディングと同文言）。 */
-const unsupportedDietKindLabels: Readonly<Record<UnsupportedDietKind, string>> = {
-  weaning_food: "離乳食",
-  swallowing_concern: "飲み込み・むせの不安",
-  therapeutic_diet: "医師等から指示された治療食",
-};
+const ADD_SCOPE_NOTICE_TITLE_ID = "add-scope-notice-title";
 
 function householdMemberDisplayName(member: HouseholdMemberRow): string {
   // 未設定時に「呼び名」を含むと、編集ボタンの aria-label が
@@ -243,6 +252,8 @@ export function HouseholdSettingsForm({
   const [message, setMessage] = useState("");
   const [dislike, setDislike] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<HouseholdMemberRow>();
+  // 家族追加前の対象外事情確認。クライアントのみ。DB 永続化しない。
+  const [addScopeNoticeOpen, setAddScopeNoticeOpen] = useState(false);
   const [deletingMemberIds, setDeletingMemberIds] = useState<ReadonlySet<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [pendingOperationVersion, setPendingOperationVersion] = useState(0);
@@ -277,6 +288,9 @@ export function HouseholdSettingsForm({
   const pendingRegisteredIntents = useRef(new Map<string, PendingRegisteredIntent>());
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deleteConfirm = useRef<HTMLButtonElement>(null);
+  // 追加前ダイアログを開いたトリガーへ閉じたあと focus を戻す（削除確認と同型）
+  const addScopeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const addScopeContinueRef = useRef<HTMLButtonElement>(null);
   const editorHeadingRef = useRef<HTMLHeadingElement>(null);
   const pageHeadingRef = useRef<HTMLHeadingElement>(null);
   const shouldFocusEditorHeadingRef = useRef(false);
@@ -430,6 +444,25 @@ export function HouseholdSettingsForm({
       trigger?.focus();
     };
   }, [deleteTarget]);
+
+  // 追加前確認: 主ボタンへ focus / Escape で閉じる / 閉じたあと trigger へ戻す
+  // 削除確認と同時に出さない想定。deleteTarget があるときは削除側 Escape が優先されるよう
+  // 本 effect は addScopeNoticeOpen のみ監視する。
+  useEffect(() => {
+    if (!addScopeNoticeOpen) return;
+    const trigger = addScopeTriggerRef.current;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setAddScopeNoticeOpen(false);
+      }
+    };
+    addScopeContinueRef.current?.focus();
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      trigger?.focus();
+    };
+  }, [addScopeNoticeOpen]);
 
   const update = (patch: Partial<HouseholdSettingsValue>) => {
     if (savingRef.current || selected === undefined) return undefined;
@@ -724,7 +757,63 @@ export function HouseholdSettingsForm({
     creatingDraftRef.current = true;
     createDraft.mutate();
   };
+  /** 「家族を追加」押下: createDraft 前に対象外事情の確認ダイアログを開く */
+  const openAddScopeNotice = (trigger: HTMLButtonElement) => {
+    if (savingRef.current || creatingDraftRef.current || cancellingDraftRef.current) return;
+    addScopeTriggerRef.current = trigger;
+    setAddScopeNoticeOpen(true);
+  };
+  const confirmAddScopeNotice = () => {
+    // OK 後に status を present へ自動設定しない（設計 §7）。下書き作成のみ。
+    setAddScopeNoticeOpen(false);
+    requestCreateDraft();
+  };
+  const cancelAddScopeNotice = () => {
+    setAddScopeNoticeOpen(false);
+  };
   const [cancellingDraft, setCancellingDraft] = useState(false);
+
+  /** 追加前確認ダイアログ（空状態・一覧の両方で同じ markup） */
+  const addScopeNoticeDialog = addScopeNoticeOpen ? (
+    <div className="pantry-expired-dialog-backdrop">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={ADD_SCOPE_NOTICE_TITLE_ID}
+        className="card stack pantry-expired-dialog-panel"
+      >
+        <h2 id={ADD_SCOPE_NOTICE_TITLE_ID}>{ADD_SCOPE_NOTICE_TITLE}</h2>
+        <p>{ADD_SCOPE_NOTICE_BODY}</p>
+        <ul>
+          {ADD_SCOPE_NOTICE_ITEMS.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+        <p className="type-small">{ADD_SCOPE_NOTICE_FOOTNOTE}</p>
+        <button
+          ref={addScopeContinueRef}
+          className="primary-button min-h-11"
+          type="button"
+          disabled={createDraft.isPending}
+          onClick={() => {
+            confirmAddScopeNotice();
+          }}
+        >
+          {ADD_SCOPE_NOTICE_CONTINUE}
+        </button>
+        <button
+          className="text-button min-h-11"
+          type="button"
+          disabled={createDraft.isPending}
+          onClick={() => {
+            cancelAddScopeNotice();
+          }}
+        >
+          {ADD_SCOPE_NOTICE_CANCEL}
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   /** 削除対象に紐づくローカル編集状態を掃除する。 */
   const clearMemberLocalState = useCallback((targetId: string) => {
@@ -1152,20 +1241,19 @@ export function HouseholdSettingsForm({
         </section>
         <section className="card stack" aria-labelledby="household-editor-empty-title">
           <h2 id="household-editor-empty-title">家族を追加する</h2>
-          <p>
-            「家族を追加」を押すと、1人目の入力が始まります。呼び名・年齢・アレルギーなどを順に入れられます。
-          </p>
+          <p>{UNSUPPORTED_DIET_EMPTY_ADD_HELP}</p>
           <button
             className="primary-button min-h-11"
             type="button"
             disabled={createDraft.isPending || saving}
-            onClick={() => {
-              requestCreateDraft();
+            onClick={(event) => {
+              openAddScopeNotice(event.currentTarget);
             }}
           >
             家族を追加
           </button>
         </section>
+        {addScopeNoticeDialog}
         {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
         <PlanSettingsSection
           userId={userId}
@@ -1284,8 +1372,8 @@ export function HouseholdSettingsForm({
           className="secondary-button"
           type="button"
           disabled={createDraft.isPending || saving}
-          onClick={() => {
-            requestCreateDraft();
+          onClick={(event) => {
+            openAddScopeNotice(event.currentTarget);
           }}
         >
           家族を追加
@@ -1518,7 +1606,7 @@ export function HouseholdSettingsForm({
               />
             )}
             <label className="field">
-              <span>食べない食事はありますか</span>
+              <span>{UNSUPPORTED_DIET_STATUS_LABEL}</span>
               <select
                 ref={unsupportedDietStatusRef}
                 value={values.unsupportedDietStatus}
@@ -1548,9 +1636,11 @@ export function HouseholdSettingsForm({
                 <option value="unconfirmed">未確認</option>
               </select>
             </label>
+            {/* 親質問直下: アレルギー／苦手との混同防止（設計 I1・常時表示） */}
+            <p className="type-small">{UNSUPPORTED_DIET_STATUS_HELP}</p>
             {values.unsupportedDietStatus === "present" && (
               <fieldset ref={unsupportedDietKindsRef} className="control-group">
-                <legend>食べない食事</legend>
+                <legend>{UNSUPPORTED_DIET_KINDS_LEGEND}</legend>
                 {unsupportedDietKinds.map((kind) => (
                   <label key={kind} className="control-label">
                     <input
@@ -1560,9 +1650,10 @@ export function HouseholdSettingsForm({
                         setArray("unsupportedDietKinds", kind, event.target.checked);
                       }}
                     />
-                    {unsupportedDietKindLabels[kind]}
+                    {UNSUPPORTED_DIET_KIND_LABELS[kind]}
                   </label>
                 ))}
+                <p className="type-small">{UNSUPPORTED_DIET_PRESENT_HELP}</p>
               </fieldset>
             )}
             <fieldset className="control-group">
@@ -1802,6 +1893,7 @@ export function HouseholdSettingsForm({
           </div>
         </div>
       )}
+      {addScopeNoticeDialog}
       {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
       <PlanSettingsSection
         userId={userId}

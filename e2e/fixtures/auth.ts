@@ -1,5 +1,6 @@
 import { expect, test as base, type Page } from "@playwright/test";
 import { z } from "zod";
+import { confirmAddScopeNotice } from "./household";
 
 const messageListSchema = z.object({
   messages: z.array(
@@ -121,9 +122,12 @@ export async function requestMagicLinkAndReadUrl(page: Page, email: string): Pro
 
 export async function completeMinimumOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "家族設定を始める" }).click();
+  await confirmAddScopeNotice(page);
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page.getByLabel("食べない食事はありますか").selectOption("none");
+  await page
+    .getByLabel(/このアプリで献立を作れない事情はありますか/)
+    .selectOption("none");
   // サブパスBで「残りはあとで設定して完了」「この内容で設定を完了する」の2種類の
   // 完了ボタン文言が「この家族の設定を完了する」へ統一された（家族設定が任意で
   // あることを明確に伝えるための文言変更）。旧文言のままだとE2Eがボタンを

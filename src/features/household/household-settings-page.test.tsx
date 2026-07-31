@@ -12,6 +12,13 @@ import type {
 } from "./household-api";
 import { householdKeys } from "./household-queries";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
+import {
+  UNSUPPORTED_DIET_EMPTY_ADD_HELP,
+  UNSUPPORTED_DIET_KIND_LABELS,
+  UNSUPPORTED_DIET_KINDS_REQUIRED,
+  UNSUPPORTED_DIET_PRESENT_HELP,
+  UNSUPPORTED_DIET_STATUS_HELP,
+} from "./unsupported-diet-copy";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -155,6 +162,13 @@ async function waitForAllergies(queryClient: QueryClient, memberId = "member-1")
     ).toBe("success");
   });
 }
+
+/** 追加前確認ダイアログで「登録を続ける」を押す（createDraft は OK 後のみ） */
+async function confirmAddScopeNotice() {
+  await userEvent.click(screen.getByRole("button", { name: "登録を続ける" }));
+}
+
+const unsupportedDietStatusLabel = /このアプリで献立を作れない事情はありますか/u;
 
 it("登録済み一覧と追加・編集領域を分け、同名・未設定でも一覧から一意に選べる", async () => {
   const second: HouseholdMemberRow = {
@@ -487,6 +501,8 @@ it("does not start completion while creating another draft", async () => {
 
   const addButton = await screen.findByRole("button", { name: /^家族を追加$/u });
   await userEvent.click(addButton);
+  expect(createDraft).not.toHaveBeenCalled();
+  await confirmAddScopeNotice();
   await waitFor(() => {
     expect(createDraft).toHaveBeenCalledTimes(1);
   });
@@ -504,6 +520,8 @@ it("still completes the original member after createDraft fails", async () => {
   await renderSettings({ createDraft, updateMember }, { startClosed: true });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  expect(createDraft).not.toHaveBeenCalled();
+  await confirmAddScopeNotice();
   await waitFor(() => {
     expect(createDraft).toHaveBeenCalledTimes(1);
   });
@@ -562,6 +580,8 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
     expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
   });
   await userEvent.click(screen.getByRole("button", { name: /^家族を追加$/u }));
+  expect(createDraft).not.toHaveBeenCalled();
+  await confirmAddScopeNotice();
   await waitFor(() => {
     expect(createDraft).toHaveBeenCalledTimes(1);
   });
@@ -640,7 +660,7 @@ it("focuses kinds checkbox and clears leftover status on present-without-kinds c
   });
   const saveCallsBeforeKindsError = updateMember.mock.calls.length;
 
-  await user.selectOptions(screen.getByLabelText("食べない食事はありますか"), "present");
+  await user.selectOptions(screen.getByLabelText(unsupportedDietStatusLabel), "present");
   // present + 空 kinds は autosave が schema で止まり、成功 status は残り得る
   const complete = screen.getByRole("button", { name: "この家族の設定を完了" });
   await user.click(complete);
@@ -650,11 +670,13 @@ it("focuses kinds checkbox and clears leftover status on present-without-kinds c
   // toast 1 つだけ（autosave の status 行は消えている）
   const statuses = screen.getAllByRole("status");
   expect(statuses).toHaveLength(1);
-  expect(statuses[0]).toHaveTextContent("該当する項目を選んでください");
-  expect(screen.getByRole("alert")).toHaveTextContent("該当する項目を選んでください");
+  expect(statuses[0]).toHaveTextContent(UNSUPPORTED_DIET_KINDS_REQUIRED);
+  expect(screen.getByRole("alert")).toHaveTextContent(UNSUPPORTED_DIET_KINDS_REQUIRED);
   // kinds 先頭 checkbox へ focus。status select にも aria-invalid
-  expect(screen.getByRole("checkbox", { name: "離乳食" })).toHaveFocus();
-  expect(screen.getByLabelText("食べない食事はありますか")).toHaveAttribute("aria-invalid", "true");
+  expect(
+    screen.getByRole("checkbox", { name: UNSUPPORTED_DIET_KIND_LABELS.weaning_food }),
+  ).toHaveFocus();
+  expect(screen.getByLabelText(unsupportedDietStatusLabel)).toHaveAttribute("aria-invalid", "true");
 });
 
 it("shows toast for registered allergy with zero items on complete", async () => {
@@ -863,12 +885,14 @@ it("creates and selects a new draft while an existing member is present", async 
   const { queryClient } = await renderSettings({ createDraft }, { startClosed: true });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  expect(createDraft).not.toHaveBeenCalled();
+  await confirmAddScopeNotice();
 
   expect(createDraft).toHaveBeenCalledWith(1);
   expect(await screen.findByLabelText("呼び名")).toHaveValue("");
   expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("");
-  expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("");
+  expect(screen.getByLabelText(unsupportedDietStatusLabel)).toHaveValue("");
   expect(screen.getByRole("button", { name: "この家族の設定を完了" })).toBeVisible();
   expect(screen.getByRole("button", { name: "追加をやめる" })).toBeVisible();
   // 下書き追加中は「家族を削除」を出さず、中止操作だけに絞る
@@ -904,6 +928,8 @@ it("cancels a newly added draft without completing it", async () => {
   );
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  expect(createDraft).not.toHaveBeenCalled();
+  await confirmAddScopeNotice();
   expect(await screen.findByRole("button", { name: "追加をやめる" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "家族を削除" })).not.toBeInTheDocument();
 
@@ -951,11 +977,7 @@ it("shows the empty add screen immediately after deleting the last member", asyn
   await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
 
   expect(await screen.findByRole("heading", { name: "家族を追加する" })).toBeVisible();
-  expect(
-    screen.getByText(
-      "「家族を追加」を押すと、1人目の入力が始まります。呼び名・年齢・アレルギーなどを順に入れられます。",
-    ),
-  ).toBeVisible();
+  expect(screen.getByText(UNSUPPORTED_DIET_EMPTY_ADD_HELP)).toBeVisible();
   expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
   // 空状態でもアカウント操作は常時表示し、家族追加の結果としてログアウトが現れるようにしない
   expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
@@ -1137,9 +1159,14 @@ it("prevents duplicate draft creation from the empty add screen", async () => {
   const add = await screen.findByRole("button", { name: /^家族を追加$/u });
 
   await userEvent.click(add);
-  await userEvent.click(add);
-
+  expect(createDraft).not.toHaveBeenCalled();
+  await confirmAddScopeNotice();
+  // 作成中は追加ボタンが disabled（single-flight / isPending）
+  await waitFor(() => {
+    expect(createDraft).toHaveBeenCalledTimes(1);
+  });
   expect(add).toBeDisabled();
+  await userEvent.click(add);
   expect(createDraft).toHaveBeenCalledTimes(1);
   await act(async () => {
     resolveCreate?.({ ...member, id: "member-2", status: "draft" });
@@ -1177,9 +1204,10 @@ it("keeps every new draft field through consecutive autosaves and completes with
   });
 
   await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  await confirmAddScopeNotice();
   await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
-  await userEvent.selectOptions(screen.getByLabelText("食べない食事はありますか"), "none");
+  await userEvent.selectOptions(screen.getByLabelText(unsupportedDietStatusLabel), "none");
   await userEvent.click(screen.getByLabelText("骨を除く"));
 
   for (let index = 0; index < 2; index += 1) {
@@ -1197,7 +1225,7 @@ it("keeps every new draft field through consecutive autosaves and completes with
   await waitFor(() => {
     expect(screen.getByLabelText("年齢のめやす")).toHaveValue("adult");
     expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
-    expect(screen.getByLabelText("食べない食事はありますか")).toHaveValue("none");
+    expect(screen.getByLabelText(unsupportedDietStatusLabel)).toHaveValue("none");
     expect(screen.getByLabelText("骨を除く")).toBeChecked();
   });
   expect(updateDraft.mock.calls[1]?.[1]).toEqual(
@@ -1249,15 +1277,62 @@ it("shows Japanese labels for unsupported diet kinds, not English enum keys", as
   // 回帰: 設定編集フォームが weaning_food 等のキーをそのまま出していた
   await renderSettings();
   await userEvent.selectOptions(
-    await screen.findByLabelText("食べない食事はありますか"),
+    await screen.findByLabelText(unsupportedDietStatusLabel),
     "present",
   );
-  expect(screen.getByText("離乳食")).toBeInTheDocument();
-  expect(screen.getByText("飲み込み・むせの不安")).toBeInTheDocument();
-  expect(screen.getByText("医師等から指示された治療食")).toBeInTheDocument();
+  expect(screen.getByText(UNSUPPORTED_DIET_STATUS_HELP)).toBeInTheDocument();
+  expect(screen.getByText(UNSUPPORTED_DIET_PRESENT_HELP)).toBeInTheDocument();
+  expect(screen.getByText(UNSUPPORTED_DIET_KIND_LABELS.weaning_food)).toBeInTheDocument();
+  expect(screen.getByText(UNSUPPORTED_DIET_KIND_LABELS.swallowing_concern)).toBeInTheDocument();
+  expect(screen.getByText(UNSUPPORTED_DIET_KIND_LABELS.therapeutic_diet)).toBeInTheDocument();
   expect(screen.queryByText("weaning_food")).not.toBeInTheDocument();
   expect(screen.queryByText("swallowing_concern")).not.toBeInTheDocument();
   expect(screen.queryByText("therapeutic_diet")).not.toBeInTheDocument();
+});
+
+it("shows add-scope notice before createDraft and cancel does not create", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    status: "draft",
+    display_name: null,
+    age_band: null,
+    allergy_status: null,
+    unsupported_diet_status: null,
+    sort_order: 1,
+  };
+  const createDraft = vi.fn().mockResolvedValue(draft);
+  await renderSettings({ createDraft }, { startClosed: true });
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  const dialog = screen.getByRole("dialog", { name: "登録の前に" });
+  expect(dialog).toBeVisible();
+  expect(dialog).toHaveTextContent("その方個人向け");
+  expect(dialog).toHaveTextContent("他の家族向け");
+  expect(createDraft).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "やめる" }));
+  expect(screen.queryByRole("dialog", { name: "登録の前に" })).not.toBeInTheDocument();
+  expect(createDraft).not.toHaveBeenCalled();
+});
+
+it("does not open add-scope notice when editing an existing member", async () => {
+  await renderSettings();
+  expect(screen.getByRole("region", { name: "家族情報を追加・編集" })).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: "登録の前に" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText(unsupportedDietStatusLabel)).toBeVisible();
+});
+
+it("closes add-scope notice on Escape without createDraft", async () => {
+  const createDraft = vi.fn().mockResolvedValue({
+    ...member,
+    id: "member-2",
+    status: "draft",
+  });
+  await renderSettings({ createDraft }, { startClosed: true });
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  expect(screen.getByRole("dialog", { name: "登録の前に" })).toBeVisible();
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "登録の前に" })).not.toBeInTheDocument();
+  expect(createDraft).not.toHaveBeenCalled();
 });
 
 it.each([

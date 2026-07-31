@@ -1,4 +1,5 @@
 import { expect, test } from "../fixtures/auth";
+import { confirmAddScopeNotice } from "../fixtures/household";
 
 test("completed fixture opens the protected planner", async ({ completedOnboardingPage: page }) => {
   await expect(page).toHaveURL(/\/planner$/u);
@@ -11,6 +12,7 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/settings");
   await page.getByRole("button", { name: "家族を追加" }).click();
+  await confirmAddScopeNotice(page);
   // incomplete でも完了は押下可。field alert + validation toast(status) + focus（§12.6）
   await expect(page.getByRole("button", { name: "この家族の設定を完了" })).toBeEnabled();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
@@ -24,7 +26,9 @@ test("adds, edits, and deletes a household member without account deletion", asy
   await page.getByLabel("年齢のめやす").selectOption("age_3_5");
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "くるみを追加" }).click();
-  await page.getByLabel("食べない食事はありますか").selectOption("none");
+  await page
+    .getByLabel(/このアプリで献立を作れない事情はありますか/)
+    .selectOption("none");
   await page.getByLabel("骨を除く").check();
   await page.getByLabel("食べる量").selectOption("small");
   await page.getByLabel("苦手食材を追加").fill("ねぎ");
