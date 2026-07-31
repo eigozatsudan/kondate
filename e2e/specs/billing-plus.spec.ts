@@ -176,15 +176,12 @@ test("Free hard-limit CTA copy is available from settings Plus section", async (
   // 生成を 3 回回して hard limit にするのは flaky なため、
   // Free 向け Plus CTA 文面（Plus なら 1 日最大 10 回）が設定のプラン節に出ることを固定する。
   // L10-1 review 面 CTA は planner-wizard unit（shows Plus hard-limit CTA…）が正本。
+  // BILL-1: COMING_SOON 中は Checkout ボタンの代わりに開発中案内を出す。
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/settings");
   await expect(page.getByText(/1 日最大 10 回まで/u)).toBeVisible({ timeout: 15_000 });
-  await expect(
-    page
-      .getByRole("link", { name: "Plus を見る" })
-      .or(page.getByRole("button", { name: "Plus をはじめる" }))
-      .first(),
-  ).toBeVisible();
+  await expect(page.getByText("ただいま開発中")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Plus をはじめる" })).toHaveCount(0);
 });
 
 test("Plus usage mock projects success limit 10 on settings plan section", async ({

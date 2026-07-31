@@ -446,6 +446,11 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await openReviewOptionalDetails(page);
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
   await expect(page.getByLabel("キャベツの使い方")).toHaveValue("must_use");
+  // PLAN-1: 復元後 attempt 確認は消えるため、既選択の期限切れで確認ダイアログが開く。
+  // チェックは dialog 中 disabled のため、先に確認してから解除する。
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await updatePlannerAndAwaitAutosave(
     page,
     () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
