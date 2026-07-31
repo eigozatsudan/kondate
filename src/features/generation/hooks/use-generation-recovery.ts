@@ -27,24 +27,32 @@ import {
 import { plannerKeys } from "@/features/planner/planner-api";
 import { jstDayKey, usageTodayQueryKey } from "./use-usage-today";
 
-/** POST の ok:false で offline 再試行に落とさない端末コード（品質 gate / 枠）。 */
-const TERMINAL_POST_FAILURE_CODES = new Set<string>([
-  "quality_mode_requires_plus",
-  "quality_daily_limit",
-  "quality_monthly_limit",
-  "idempotency_payload_mismatch",
-]);
-
 const generationFailureCodeSet = new Set<string>(generationFailureCodes);
 
 function isGenerationFailureCode(code: string): code is GenerationFailureCode {
   return generationFailureCodeSet.has(code);
 }
 
+/**
+ * generationFailureCodes 外だが ok:false で返る閉じたサーバ code。
+ * offline「通信確認」に落とすと永久待ちになるため端末失敗へ写す。
+ * 表示 message はここに閉じ、code は UI 契約上 internal_error に寄せる。
+ */
+const CLOSED_SERVER_TERMINAL_MESSAGES: Readonly<Record<string, string>> = {
+  billing_entitlement_unavailable:
+    "プラン情報を確認できませんでした。しばらくしてからお試しください。",
+  request_failed: "献立を作成できませんでした。",
+  quota_transition_failed: "献立を作成できませんでした。",
+};
+
+/** 実ネット断時の offline 自動再試行間隔（online イベントが来ない端末向け）。 */
+const OFFLINE_RETRY_INTERVAL_MS = 5_000;
+
 /** ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。 */
 function syntheticFailedStatus(
   idempotencyKey: string,
   code: GenerationFailureCode,
+  message: string = issueMessages[code],
 ): Extract<GenerationStatusData, { status: "failed" }> {
   return {
     status: "failed",
@@ -52,7 +60,7 @@ function syntheticFailedStatus(
     requestId: "00000000-0000-4000-8000-000000000099",
     error: {
       code,
-      message: issueMessages[code],
+      message,
       retryable: false,
     },
     completedAt: new Date().toISOString(),
@@ -64,6 +72,40 @@ function syntheticFailedStatus(
       retryAt: null,
     },
   };
+}
+
+/**
+ * API throw を端末分類する。
+ * - auth → 再ログイン
+ * - request_conflict → 冪等衝突専用 UI
+ * - failed → 業務/品質/閉じたサーバ code（offline にしない）
+ * - offline → transport・未知の Error.message のみ
+ */
+function classifyGenerationClientError(
+  error: unknown,
+):
+  | { kind: "auth" }
+  | { kind: "request_conflict" }
+  | { kind: "failed"; code: GenerationFailureCode; message: string }
+  | { kind: "offline" } {
+  if (isAuthSessionFailure(error)) {
+    return { kind: "auth" };
+  }
+  if (!(error instanceof Error)) {
+    return { kind: "offline" };
+  }
+  const code = error.message;
+  if (code === "idempotency_payload_mismatch") {
+    return { kind: "request_conflict" };
+  }
+  if (isGenerationFailureCode(code)) {
+    return { kind: "failed", code, message: issueMessages[code] };
+  }
+  const closedMessage = CLOSED_SERVER_TERMINAL_MESSAGES[code];
+  if (closedMessage !== undefined) {
+    return { kind: "failed", code: "internal_error", message: closedMessage };
+  }
+  return { kind: "offline" };
 }
 
 export type GenerationRecoveryController = {
@@ -186,9 +228,9 @@ export function useGenerationRecovery(
           dispatch({ type: "status", data });
         } catch (error) {
           if (!isCurrent(token)) return;
+          const classified = classifyGenerationClientError(error);
           // Plan 3: 409 idempotency_payload_mismatch は offline 再試行ループへ落とさない。
-          // 任意の Error.message は端末化しない（transport は offline。auth は再ログイン）。
-          if (error instanceof Error && error.message === "idempotency_payload_mismatch") {
+          if (classified.kind === "request_conflict") {
             token.phase = "request_conflict";
             // remount / C1 安全のため pending は即消し、端末 UI はメモリ上に残す。
             clearPendingGeneration();
@@ -199,27 +241,28 @@ export function useGenerationRecovery(
             });
             return;
           }
-          // L10-4: quality_mode_requires_plus 等は 403 ok:false。offline「通信確認」に落とさない。
-          if (
-            error instanceof Error &&
-            TERMINAL_POST_FAILURE_CODES.has(error.message) &&
-            isGenerationFailureCode(error.message)
-          ) {
+          // 業務・品質・閉じたサーバ code は failed。offline「通信確認」に落とさない（本番 422 調査）。
+          if (classified.kind === "failed") {
             clearPendingGeneration();
-            const failed = syntheticFailedStatus(pending.request.idempotencyKey, error.message);
+            const failed = syntheticFailedStatus(
+              pending.request.idempotencyKey,
+              classified.code,
+              classified.message,
+            );
             token.phase = "failed";
             dispatch({ type: "status", data: failed });
             return;
           }
           // 認証切れを offline にすると「通信確認」のまま永久に止まる（複数端末ログアウト等）。
           // lifecycle も無効化し、replace 遅延中に再試行が「operation is active」で詰まるのを防ぐ（A2）。
-          if (isAuthSessionFailure(error)) {
+          if (classified.kind === "auth") {
             clearPendingGeneration();
             invalidateLifecycle();
             dispatch({ type: "clear" });
             void redirectToLoginForExpiredSession({ returnTo: "/planner" });
             return;
           }
+          // transport / 未知の Error.message のみ offline
           token.phase = "offline";
           dispatch({ type: "network_error" });
         }
@@ -290,11 +333,34 @@ export function useGenerationRecovery(
           void resumeNotStarted(token, pending);
       } catch (error) {
         if (!isCurrent(token)) return;
-        if (isAuthSessionFailure(error)) {
+        const classified = classifyGenerationClientError(error);
+        if (classified.kind === "auth") {
           clearPendingGeneration();
           invalidateLifecycle();
           dispatch({ type: "clear" });
           void redirectToLoginForExpiredSession({ returnTo: "/planner" });
+          return;
+        }
+        // GET status の業務/閉じたサーバ code も offline にしない（本番 503 連打調査）。
+        if (classified.kind === "failed") {
+          clearPendingGeneration();
+          const failed = syntheticFailedStatus(
+            pending.request.idempotencyKey,
+            classified.code,
+            classified.message,
+          );
+          token.phase = "failed";
+          dispatch({ type: "status", data: failed });
+          return;
+        }
+        if (classified.kind === "request_conflict") {
+          clearPendingGeneration();
+          token.phase = "request_conflict";
+          dispatch({
+            type: "request_conflict",
+            code: "idempotency_payload_mismatch",
+            message: issueMessages.idempotency_payload_mismatch,
+          });
           return;
         }
         token.phase = "offline";
@@ -470,6 +536,22 @@ export function useGenerationRecovery(
       data.subscription.unsubscribe();
     };
   }, [clearGeneration, dispatch, read, retryStatus, userId]);
+
+  // ブラウザが online のまま API だけ落ちる場合、window "online" が再発火しない。
+  // offline 表示中のみ間隔再試行し、業務 code は classify 側で failed へ逃がす。
+  useEffect(() => {
+    if (state.phase !== "offline") return undefined;
+    const tick = () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+      if (document.hidden) return;
+      if (read() === null) return;
+      void retryStatus();
+    };
+    const timer = window.setInterval(tick, OFFLINE_RETRY_INTERVAL_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [state.phase, read, retryStatus]);
 
   return { state, startGeneration, retryStatus, clearGeneration };
 }

@@ -834,6 +834,55 @@ describe("useGenerationRecovery", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  // 本番調査: ok:false 業務 code を offline「通信確認」に落とすと第三者端末で永久停止する。
+  it.each([
+    ["consent_required", "AIへ送る情報の説明"],
+    ["draft_not_found", "献立条件が見つかりません"],
+    ["invalid_request", "献立条件を確認"],
+    ["generation_timeout", "時間がかかりました"],
+  ] as const)("maps POST %s to failed terminal without offline", async (code, messagePart) => {
+    mockPost.mockRejectedValueOnce(new Error(code));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("failed");
+    if (recovery.result.current.state.phase !== "failed") {
+      throw new Error("expected failed");
+    }
+    expect(recovery.result.current.state.data.error.code).toBe(code);
+    expect(recovery.result.current.state.data.error.message).toContain(messagePart);
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    expect(mockDispatches).not.toContainEqual({ type: "network_error" });
+  });
+
+  it("maps POST billing_entitlement_unavailable to failed without offline", async () => {
+    mockPost.mockRejectedValueOnce(new Error("billing_entitlement_unavailable"));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("failed");
+    if (recovery.result.current.state.phase !== "failed") {
+      throw new Error("expected failed");
+    }
+    expect(recovery.result.current.state.data.error.code).toBe("internal_error");
+    expect(recovery.result.current.state.data.error.message).toContain("プラン情報");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+  });
+
+  it.each([
+    ["invalid_request", "献立条件を確認"],
+    ["billing_entitlement_unavailable", "プラン情報"],
+  ] as const)("maps GET %s to failed terminal without offline", async (code, messagePart) => {
+    mockStatus.mockRejectedValueOnce(new Error(code));
+    const recovery = renderRecoveryAt(processingState, pendingA);
+    await act(() => recovery.result.current.retryStatus());
+    expect(recovery.result.current.state.phase).toBe("failed");
+    if (recovery.result.current.state.phase !== "failed") {
+      throw new Error("expected failed");
+    }
+    expect(recovery.result.current.state.data.error.message).toContain(messagePart);
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    expect(mockDispatches).not.toContainEqual({ type: "network_error" });
+  });
+
   // 複数端末ログアウト等: auth 失敗を offline「通信確認」に落とさず再ログインへ
   it("redirects to login on POST auth_required without entering offline", async () => {
     mockPost.mockRejectedValueOnce(new Error("auth_required"));
