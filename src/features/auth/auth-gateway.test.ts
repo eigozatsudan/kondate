@@ -1,7 +1,11 @@
 import type { AuthError } from "@supabase/supabase-js";
 import { expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
-import { createAuthGateway, type AuthGatewayDeps } from "./auth-gateway";
+import {
+  createAuthGateway,
+  IMMEDIATE_CLAIM_TIMEOUT_MS,
+  type AuthGatewayDeps,
+} from "./auth-gateway";
 import {
   ContinuationHttpError,
   createAuthFlow,
@@ -459,6 +463,41 @@ it("same-browser immediate claim 404 keeps secret for recovery coordinator fallb
   expect(claim).toHaveBeenCalled();
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+});
+
+it("same-browser immediate claim hang times out into awaiting_completion with secret kept", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    const deposit = vi.fn().mockResolvedValue(undefined);
+    // claim が never-settle → withTimeout で awaiting へ倒す
+    const claim = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const api = continuationApiMock({ deposit, claim });
+    const client = authClientMock();
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+    const pending = gateway.completeCallback(
+      new URL(
+        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(IMMEDIATE_CLAIM_TIMEOUT_MS);
+    await expect(pending).resolves.toEqual({
+      kind: "awaiting_completion",
+      returnTo: "/onboarding",
+      flowId: flow.id,
+    });
+    expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+    expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("AUTH-R1: stripped callback reload keeps local secret and resumes awaiting_completion", async () => {

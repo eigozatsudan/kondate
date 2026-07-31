@@ -111,7 +111,20 @@ it("shows visible error copy when the callback arrives unbound to a known flow",
   );
 });
 
-it("shows the same unbound error when authError is passed as a query (full leave)", () => {
+it.each([
+  {
+    code: "unbound_callback" as const,
+    copy: "ログインの情報を確認できませんでした。最初からやり直してください。",
+  },
+  {
+    code: "oauth_cancelled" as const,
+    copy: "Googleログインがキャンセルされました。もう一度試すか、別の方法を選べます。",
+  },
+  {
+    code: "auth_callback_failed" as const,
+    copy: "ログインを確認できませんでした。もう一度お試しください。",
+  },
+] as const)("shows authError=$code from query (full leave path)", ({ code, copy }) => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
@@ -120,14 +133,12 @@ it("shows the same unbound error when authError is passed as a query (full leave
   };
 
   render(
-    <MemoryRouter initialEntries={["/login?authError=unbound_callback"]}>
+    <MemoryRouter initialEntries={[`/login?authError=${code}`]}>
       <LoginPage gateway={gateway} />
     </MemoryRouter>,
   );
 
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "ログインの情報を確認できませんでした。最初からやり直してください。",
-  );
+  expect(screen.getByRole("alert")).toHaveTextContent(copy);
 });
 
 it("restores sent context when magic link expired and last email is known (B-I8)", () => {

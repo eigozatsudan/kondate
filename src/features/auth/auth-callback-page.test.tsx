@@ -540,3 +540,57 @@ it("uses full-page leave for success so SPA navigate is not required", async () 
   // MemoryRouter 上には留まっても、本番は location.replace 相当が呼ばれる
   expect(leaveAuthCallback).toHaveBeenCalledTimes(1);
 });
+
+it("fails closed when completeCallback never settles past the continuation TTL", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  try {
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
+      resumeFlow: vi.fn(),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
+    await act(async () => Promise.resolve());
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not force-leave a deposited WebView at the hang watchdog TTL", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  try {
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockResolvedValue({
+        kind: "deposited",
+        continuation: "original_browser",
+        flowId: "flow-1",
+        returnTo: "/planner",
+      }),
+      resumeFlow: vi.fn(),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
+    // fake timers 下では findBy* の wait が hang するため flush 後に getBy*
+    await act(async () => Promise.resolve());
+    expect(
+      screen.getByText(
+        "元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません",
+      ),
+    ).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});

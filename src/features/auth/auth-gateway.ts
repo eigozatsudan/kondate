@@ -14,6 +14,14 @@ import {
 } from "./auth-flow";
 import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
+import { withTimeout } from "./async-timeout";
+
+/**
+ * deposit 後の即 claim/exchange 上限。
+ * settle しないと AuthCallbackPage が awaiting に入れず TTL fail-closed も武装できないため、
+ * ここで切って awaiting（recovery + page TTL）へフォールバックする。
+ */
+export const IMMEDIATE_CLAIM_TIMEOUT_MS = 30_000;
 
 export type SentMagicLink = {
   flowId: string;
@@ -202,8 +210,17 @@ export function createAuthGateway(
       }
       // 同一ブラウザ: deposit 直後に即 claim/exchange する。
       // iOS 等で recovery の 5s poll / タイマー抑制に依存すると「確認中」が長く見える。
-      // 一時失敗は resumeFlow が awaiting を返し、AuthCallbackPage の recovery がフォールバックする。
-      return gateway.resumeFlow(flowId);
+      // 一時失敗・timeout は awaiting を返し、AuthCallbackPage の recovery + TTL がフォールバックする。
+      try {
+        return await withTimeout(gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
+      } catch {
+        // withTimeout は "timeout" Error のみ reject。下層 resumeFlow は kind で返す。
+        return {
+          kind: "awaiting_completion",
+          flowId,
+          returnTo,
+        };
+      }
     },
 
     async resumeFlow(flowId) {

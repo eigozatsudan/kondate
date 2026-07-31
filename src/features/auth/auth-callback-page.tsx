@@ -55,6 +55,8 @@ export function AuthCallbackPage({
   const callbackFlowId = useRef<string | null>(null);
   // 二重 leave を防ぐ（StrictMode 再実行や complete + recovery 競合）
   const leftRef = useRef(false);
+  // deposited は案内を読み終わるまで watchdog で強制 leave しない
+  const stayOnDepositedRef = useRef(false);
 
   const leaveOnce = (href: string): void => {
     if (leftRef.current) return;
@@ -71,6 +73,8 @@ export function AuthCallbackPage({
   };
 
   useEffect(() => {
+    const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
+
     if (callbackPromise.current === null) {
       const callbackUrl = new URL(window.location.href);
       const visibleUrl = new URL(callbackUrl);
@@ -82,7 +86,6 @@ export function AuthCallbackPage({
       visibleUrl.hash = "";
       window.history.replaceState(window.history.state, "", visibleUrl);
       const flowId = callbackUrl.searchParams.get("flow");
-      const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
       callbackFlowId.current = flowId;
       const canContinue =
         flowId === null ||
@@ -99,6 +102,30 @@ export function AuthCallbackPage({
             returnTo: "/login",
           });
     }
+
+    // completeCallback が deposit/claim で hang しても continuation TTL で fail-closed する。
+    // awaiting 分岐の completion wait は kind 確定後にしか武装されないため、ここが必須。
+    const flowIdForWatch = callbackFlowId.current;
+    const ownerStartedAt =
+      flowIdForWatch === null
+        ? null
+        : readAuthContinuationCallbackStartedAt(
+            flowIdForWatch,
+            window.localStorage,
+            new Date(),
+            callbackTtlMs,
+          );
+    const startedAtMs =
+      ownerStartedAt !== null && Number.isFinite(new Date(ownerStartedAt).getTime())
+        ? new Date(ownerStartedAt).getTime()
+        : Date.now();
+    const remainingMs = Math.max(0, startedAtMs + callbackTtlMs - Date.now());
+    const hangWatchdog = window.setTimeout(() => {
+      if (leftRef.current || stayOnDepositedRef.current) return;
+      if (flowIdForWatch !== null) clearAuthFlow(flowIdForWatch);
+      leaveLoginError("unbound_callback");
+    }, remainingMs);
+
     let active = true;
     let stopWaiting: (() => void) | undefined;
     void callbackPromise.current.then((next) => {
@@ -107,8 +134,9 @@ export function AuthCallbackPage({
       if (next.kind === "complete") {
         publishCompletionSafely({ flowId: next.flowId, returnTo: next.returnTo });
         leaveSuccess(next.returnTo);
+      } else if (next.kind === "deposited") {
+        stayOnDepositedRef.current = true;
       } else if (next.kind === "awaiting_completion") {
-        const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
         const startedAt = readAuthContinuationCallbackStartedAt(
           next.flowId,
           window.localStorage,
@@ -197,6 +225,7 @@ export function AuthCallbackPage({
     return () => {
       active = false;
       stopWaiting?.();
+      window.clearTimeout(hangWatchdog);
     };
   }, [activeGateway, ttlMs, leaveAuthCallback]);
 
