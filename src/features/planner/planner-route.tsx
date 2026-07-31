@@ -151,12 +151,24 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
   const allergenNames = new Map(catalog.map((item) => [item.id, item.display_name]));
   const members = completeRows.map<PlannerSafetyMember>((member, index) => {
     const memberAllergies = allergies[index] ?? [];
+    // U3-I6: 一部だけ解決できたとき、未解決分を silently drop しない
+    let unresolvedAllergyCount = 0;
     const allergyNames = memberAllergies.flatMap((allergy) => {
       if (allergy.allergen_id !== null) {
         const displayName = allergenNames.get(allergy.allergen_id);
-        return displayName === undefined ? [] : [displayName];
+        if (displayName === undefined) {
+          unresolvedAllergyCount += 1;
+          return [];
+        }
+        return [displayName];
       }
-      return allergy.custom_confirmed && allergy.custom_name !== null ? [allergy.custom_name] : [];
+      if (allergy.custom_confirmed && allergy.custom_name !== null) {
+        return [allergy.custom_name];
+      }
+      if (allergy.custom_confirmed) {
+        unresolvedAllergyCount += 1;
+      }
+      return [];
     });
     const blockedReason =
       member.allergy_status === "unconfirmed"
@@ -166,21 +178,25 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
           : member.unsupported_diet_status === "present"
             ? "離乳食・嚥下調整食・治療食には対応できません"
             : null;
+    const allergyLabel =
+      member.allergy_status === "none"
+        ? "アレルギーなし"
+        : allergyNames.length > 0
+          ? unresolvedAllergyCount > 0
+            ? `${allergyNames.join("・")}（ほか名前を表示できない項目あり）`
+            : allergyNames.join("・")
+          : member.allergy_status === "unconfirmed"
+            ? "アレルギー未確認"
+            : // GP-I2 / MVP §7.1: 件数・有無だけの「登録アレルギーあり」は禁止
+              "名前を表示できないアレルギー項目があります";
     return {
       id: member.id,
       displayName: member.display_name?.trim() || `家族${String(index + 1)}`,
       ageBandLabel:
         member.age_band === null ? "年齢未確認" : (ageLabels[member.age_band] ?? "年齢未確認"),
-      allergyLabel:
-        member.allergy_status === "none"
-          ? "アレルギーなし"
-          : allergyNames.length > 0
-            ? allergyNames.join("・")
-            : member.allergy_status === "unconfirmed"
-              ? "アレルギー未確認"
-              : // GP-I2 / MVP §7.1: 件数・有無だけの「登録アレルギーあり」は禁止
-                "名前を表示できないアレルギー項目があります",
+      allergyLabel,
       // カタログ解決不能な registered は選択不可（表示名だけの有無要約を出さない）
+      // 一部解決時は label で under-disclosure を明示し、選択は維持（サーバは allergen id で照合）
       blockedReason:
         blockedReason ??
         (member.allergy_status === "registered" && allergyNames.length === 0
@@ -557,8 +573,19 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   if ((!initialized && draftQuery.isError) || safetyQuery.isError || pantryQuery.isError) {
     return (
-      <main className="page-frame">
+      <main className="page-frame stack">
         <p role="alert">献立条件を読み込めませんでした。再読み込みしてください。</p>
+        <button
+          className="secondary-button min-h-11"
+          type="button"
+          onClick={() => {
+            if (!initialized && draftQuery.isError) void draftQuery.refetch();
+            if (safetyQuery.isError) void safetyQuery.refetch();
+            if (pantryQuery.isError) void pantryQuery.refetch();
+          }}
+        >
+          再試行
+        </button>
       </main>
     );
   }

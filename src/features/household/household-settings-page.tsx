@@ -1117,8 +1117,19 @@ export function HouseholdSettingsForm({
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
   if (membersQuery.isError || catalogQuery.isError || aliasesQuery.isError)
     return (
-      <main className="page-frame">
+      <main className="page-frame stack">
         <p role="alert">家族設定を読み込めませんでした。</p>
+        <button
+          className="secondary-button min-h-11"
+          type="button"
+          onClick={() => {
+            void membersQuery.refetch();
+            void catalogQuery.refetch();
+            void aliasesQuery.refetch();
+          }}
+        >
+          再試行
+        </button>
       </main>
     );
   // 編集を開いているときだけ values を要求する。一覧表示中に values 未初期化で
@@ -1301,7 +1312,20 @@ export function HouseholdSettingsForm({
             「{householdMemberDisplayName(selected)}」を編集中
           </h3>
           {message && (
-            <p className="status-message" role="status" aria-live="polite">
+            // U3-I7: 失敗文言は assertive で通知。role は status を維持（既存テスト・二重 role 衝突回避）。
+            <p
+              className={
+                message.includes("できませんでした") || message.includes("失敗")
+                  ? "error-message"
+                  : "status-message"
+              }
+              role="status"
+              aria-live={
+                message.includes("できませんでした") || message.includes("失敗")
+                  ? "assertive"
+                  : "polite"
+              }
+            >
               {message}
             </p>
           )}
@@ -1393,7 +1417,9 @@ export function HouseholdSettingsForm({
                 aria-describedby={
                   errors.allergyStatus !== undefined ? HOUSEHOLD_FORM_ERROR_ID : undefined
                 }
-                disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending}
+                // U3-I2: 読込中は誤操作防止で止めるが、一覧 error 後も なし/未確認 へ戻せるようにする。
+                // （旧: !isSuccess だと error 時も全ロックされ完了不能）
+                disabled={selectedAllergyMutationPending || allergiesQuery.isPending}
                 onChange={(event) => {
                   if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
                   const allergyStatus = event.target.value as AllergyStatus;

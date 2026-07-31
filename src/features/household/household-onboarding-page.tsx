@@ -55,22 +55,27 @@ const ONBOARDING_FIELD_ORDER = [
  * 完了押下時の必須検証。settings の householdSettingsSchema と同系メッセージを返す。
  * アレルギー登録あり0件・食べない食事 present で kinds 空も含む。
  */
+/** U3-I3: select の placeholder `""` は未選択。null と同様に未充足とみなす。 */
+function isOnboardingEnumFilled(value: string | null): boolean {
+  return value !== null && value !== "";
+}
+
 function validateOnboardingDraft(
   draft: HouseholdMemberRow,
   allergyCount: number,
 ): OnboardingFieldErrors {
   const errors: OnboardingFieldErrors = {};
-  if (draft.age_band === null) {
+  if (!isOnboardingEnumFilled(draft.age_band)) {
     errors.ageBand = "年齢のめやすを選んでください";
   }
-  if (draft.allergy_status === null) {
+  if (!isOnboardingEnumFilled(draft.allergy_status)) {
     errors.allergyStatus = "アレルギーの確認を選んでください";
   } else if (draft.allergy_status === "registered" && allergyCount === 0) {
     // 既存 completeBlockedReason と同じ意味（設計: 既存メッセージ + 同義 toast）
     errors.allergyStatus =
       "アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。";
   }
-  if (draft.unsupported_diet_status === null) {
+  if (!isOnboardingEnumFilled(draft.unsupported_diet_status)) {
     errors.unsupportedDietStatus = "食べない食事があるか選んでください";
   } else if (
     draft.unsupported_diet_status === "present" &&
@@ -305,9 +310,9 @@ export function HouseholdOnboardingForm({
   const completedRequired = useMemo(() => {
     if (draft === null) return 0;
     return [
-      draft.age_band !== null,
-      draft.allergy_status !== null,
-      draft.unsupported_diet_status !== null,
+      isOnboardingEnumFilled(draft.age_band),
+      isOnboardingEnumFilled(draft.allergy_status),
+      isOnboardingEnumFilled(draft.unsupported_diet_status),
     ].filter(Boolean).length;
   }, [draft]);
 
@@ -353,6 +358,8 @@ export function HouseholdOnboardingForm({
   const handleCompleteClick = (): void => {
     if (draft === null) return;
     void saveQueue.current.then(async (saved) => {
+      // 再試行時は前回 complete エラーを消す
+      setCompleteError(false);
       // 下書き保存失敗時は無言 return せず、失敗表示を明示して再試行可能にする。
       // ネットワーク失敗は既存 status 行のみ（toast なし）
       if (!saved) {
@@ -377,8 +384,9 @@ export function HouseholdOnboardingForm({
       try {
         completed = await api.completeMember(draft.id);
       } catch {
-        // ネット失敗: 既存 saveState failed 表示のみ（toast なし）
-        setSaveState("failed");
+        // U3-I1: complete 失敗でも CTA を disabled にしない（再押下で再試行できる）。
+        // autosave の failed 文言と混同しないよう completeError を立てる。
+        setCompleteError(true);
         setActionPending(false);
         return;
       }
@@ -555,7 +563,8 @@ export function HouseholdOnboardingForm({
         </p>
         <p
           className={saveState === "failed" ? "error-message" : "status-message"}
-          aria-live="polite"
+          role={saveState === "failed" ? "alert" : "status"}
+          aria-live={saveState === "failed" ? "assertive" : "polite"}
         >
           {saveState === "saving" && "保存中…"}
           {saveState === "saved" && "保存済み"}
@@ -583,7 +592,13 @@ export function HouseholdOnboardingForm({
               fieldErrors.ageBand !== undefined ? ONBOARDING_FORM_ERROR_ID : undefined
             }
             onChange={(event) => {
-              const ageBand = event.target.value as AgeBand;
+              // U3-I3: プレースホルダは null へ戻す（空文字を filled 扱いしない）
+              const value = event.target.value;
+              if (value === "") {
+                void save({ age_band: null });
+                return;
+              }
+              const ageBand = value as AgeBand;
               void save({ age_band: ageBand, ...defaultsForAgeBand(ageBand) });
             }}
           >
@@ -607,7 +622,10 @@ export function HouseholdOnboardingForm({
             aria-describedby={
               fieldErrors.allergyStatus !== undefined ? ONBOARDING_FORM_ERROR_ID : undefined
             }
-            onChange={(event) => void save({ allergy_status: event.target.value })}
+            onChange={(event) => {
+              const value = event.target.value;
+              void save({ allergy_status: value === "" ? null : value });
+            }}
           >
             <option value="">選んでください</option>
             <option value="none">なし</option>
@@ -735,10 +753,15 @@ export function HouseholdOnboardingForm({
                 : undefined
             }
             onChange={(event) => {
-              const value = event.target.value as UnsupportedDietStatus;
+              const value = event.target.value;
+              if (value === "") {
+                void save({ unsupported_diet_status: null, unsupported_diet_kinds: [] });
+                return;
+              }
+              const status = value as UnsupportedDietStatus;
               void save({
-                unsupported_diet_status: value,
-                unsupported_diet_kinds: value === "present" ? draft.unsupported_diet_kinds : [],
+                unsupported_diet_status: status,
+                unsupported_diet_kinds: status === "present" ? draft.unsupported_diet_kinds : [],
               });
             }}
           >
@@ -785,8 +808,8 @@ export function HouseholdOnboardingForm({
       <button
         className="primary-button min-h-11"
         type="button"
-        // incomplete でも押下可。failed 保存中・actionPending 中は止める
-        disabled={saveState === "failed" || actionPending}
+        // U3-I1: incomplete でも押下可。autosave failed でも complete は再試行可能にする
+        disabled={actionPending}
         onClick={handleCompleteClick}
       >
         この家族の設定を完了する

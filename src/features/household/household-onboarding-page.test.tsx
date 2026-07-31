@@ -230,9 +230,11 @@ it("does not call setProgress or navigate when completeMember fails", async () =
 
   await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
 
+  // U3-I1: complete 失敗は専用 alert。autosave failed 文言に倒さず CTA 再試行可能。
   expect(
-    await screen.findByText("保存できませんでした。選び直して再試行してください。"),
+    await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
   ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "この家族の設定を完了する" })).toBeEnabled();
   expect(setProgress).not.toHaveBeenCalled();
   expect(onDone).not.toHaveBeenCalled();
 });
@@ -268,7 +270,8 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
   const completeButton = screen.getByRole("button", { name: "この家族の設定を完了する" });
   expect(completeButton).not.toBeDisabled();
   await user.click(completeButton);
-  expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
+  // toast と form alert の両方に検証メッセージが出る
+  expect(screen.getAllByText(/選んでください|確認してください|入力内容/).length).toBeGreaterThan(0);
   expect(screen.getByRole("alert")).toBeVisible();
 
   await user.click(await screen.findByRole("checkbox", { name: "離乳食" }));
@@ -296,7 +299,7 @@ it("shows toast field error and focuses first invalid on incomplete save", async
   await user.click(complete);
 
   expect(completeMember).not.toHaveBeenCalled();
-  expect(screen.getByRole("status")).toHaveTextContent(/選んでください|確認してください|入力内容/);
+  expect(screen.getAllByText(/選んでください|確認してください|入力内容/).length).toBeGreaterThan(0);
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(document.activeElement).toBeTruthy();
   expect(screen.getByLabelText("年齢のめやす")).toHaveFocus();

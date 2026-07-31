@@ -1934,7 +1934,8 @@ it("keeps allergy operations disabled after failure and enables them only after 
   const customName = screen.getByLabelText("自由登録名");
   const customConfirm = screen.getByLabelText("一覧にないアレルギーとして登録");
   const customAdd = screen.getByRole("button", { name: "自由登録を追加" });
-  expect(allergyStatus).toBeDisabled();
+  // U3-I2: 一覧失敗でも status は なし/未確認 へ戻せる。追加操作だけ止める。
+  expect(allergyStatus).toBeEnabled();
   expect(standardAdd).toBeDisabled();
   expect(customName).toBeDisabled();
   expect(customConfirm).toBeDisabled();
