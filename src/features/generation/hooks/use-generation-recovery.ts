@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
+import { isAuthSessionFailure } from "@/features/auth/session";
+import { redirectToLoginForExpiredSession } from "@/features/auth/session-expiry";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
@@ -185,7 +187,7 @@ export function useGenerationRecovery(
         } catch (error) {
           if (!isCurrent(token)) return;
           // Plan 3: 409 idempotency_payload_mismatch は offline 再試行ループへ落とさない。
-          // 任意の Error.message は端末化しない（transport/auth は従来どおり offline）。
+          // 任意の Error.message は端末化しない（transport は offline。auth は再ログイン）。
           if (error instanceof Error && error.message === "idempotency_payload_mismatch") {
             token.phase = "request_conflict";
             // remount / C1 安全のため pending は即消し、端末 UI はメモリ上に残す。
@@ -209,6 +211,15 @@ export function useGenerationRecovery(
             dispatch({ type: "status", data: failed });
             return;
           }
+          // 認証切れを offline にすると「通信確認」のまま永久に止まる（複数端末ログアウト等）。
+          // lifecycle も無効化し、replace 遅延中に再試行が「operation is active」で詰まるのを防ぐ（A2）。
+          if (isAuthSessionFailure(error)) {
+            clearPendingGeneration();
+            invalidateLifecycle();
+            dispatch({ type: "clear" });
+            void redirectToLoginForExpiredSession({ returnTo: "/planner" });
+            return;
+          }
           token.phase = "offline";
           dispatch({ type: "network_error" });
         }
@@ -220,7 +231,7 @@ export function useGenerationRecovery(
       });
       return operation;
     },
-    [dispatch, isCurrent],
+    [dispatch, invalidateLifecycle, isCurrent],
   );
 
   useEffect(() => {
@@ -277,8 +288,15 @@ export function useGenerationRecovery(
         dispatch({ type: "status", data });
         if (data.status === "not_started" && isCurrent(token))
           void resumeNotStarted(token, pending);
-      } catch {
+      } catch (error) {
         if (!isCurrent(token)) return;
+        if (isAuthSessionFailure(error)) {
+          clearPendingGeneration();
+          invalidateLifecycle();
+          dispatch({ type: "clear" });
+          void redirectToLoginForExpiredSession({ returnTo: "/planner" });
+          return;
+        }
         token.phase = "offline";
         dispatch({ type: "network_error" });
       }
@@ -289,7 +307,7 @@ export function useGenerationRecovery(
       if (statusInFlightRef.current === record) statusInFlightRef.current = null;
     });
     return operation;
-  }, [dispatch, isCurrent, read, resumeNotStarted]);
+  }, [dispatch, invalidateLifecycle, isCurrent, read, resumeNotStarted]);
 
   const startGeneration = useCallback(
     async (pending: PendingGeneration) => {

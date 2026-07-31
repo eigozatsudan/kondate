@@ -97,10 +97,14 @@ function initialMagicLinkState(
   if (authError === "magic_link_expired") {
     return { status: "expired", email: readLastMagicEmail() };
   }
-  // サインアウト / アカウント削除後の案内は idle フォーム上の status で出す。
+  // サインアウト / アカウント削除 / セッション失効の案内は idle フォーム上の status で出す。
   // sent UI 再水和が優先されると案内が消える（account-deletion E2E）。
   const query = new URLSearchParams(search);
-  if (query.get("accountDeleted") === "1" || query.get("signedOut") === "1") {
+  if (
+    query.get("accountDeleted") === "1" ||
+    query.get("signedOut") === "1" ||
+    query.get("sessionExpired") === "1"
+  ) {
     rememberMagicSentUi(null);
     return { status: "idle", email: "" };
   }
@@ -172,7 +176,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     return null;
   }, [locationState.authError]);
 
-  // サインアウト / アカウント削除後の案内（クエリは表示用。認証状態は既にクリア済み）
+  // サインアウト / アカウント削除 / セッション失効の案内（クエリは表示用。認証状態は既にクリア済み）
   const statusNotice = useMemo(() => {
     const query = new URLSearchParams(location.search);
     if (query.get("accountDeleted") === "1") {
@@ -180,6 +184,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     }
     if (query.get("signedOut") === "1") {
       return "ログアウトしました。";
+    }
+    if (query.get("sessionExpired") === "1") {
+      return "ログインの有効期限が切れたか、別の端末でログアウトされたため、もう一度ログインしてください。";
     }
     return null;
   }, [location.search]);

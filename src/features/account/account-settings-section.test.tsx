@@ -105,9 +105,9 @@ describe("AccountSettingsSection", () => {
     await user.click(screen.getByRole("button", { name: "ログアウト" }));
 
     expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledTimes(1);
+    // 通常ログアウトは local 既定（他端末セッション維持）。scope オプションは付けない。
     expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledWith(
       getBrowserSupabaseClientMock.mock.results[0]?.value ?? getBrowserSupabaseClientMock(),
-      { signOutScope: "global" },
     );
     expect(locationReplaceMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();

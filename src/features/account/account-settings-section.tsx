@@ -76,9 +76,10 @@ export function AccountSettingsSection() {
     if (signingOut) return;
     setSigningOut(true);
     try {
-      // 遷移より先に掃除を完了させ、復帰キーが残ったまま /login へ行かない
-      // U1-003: 通常ログアウトは global でサーバー側 refresh も無効化する
-      await clearLocalAuthAndDrafts(getBrowserSupabaseClient(), { signOutScope: "global" });
+      // 遷移より先に掃除を完了させ、復帰キーが残ったまま /login へ行かない。
+      // 通常ログアウトは local（この端末のみ）。他端末のセッションは維持する。
+      // 全端末失効が必要な場合は signOutScope: "global" を明示する。
+      await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
       window.location.replace("/login?signedOut=1");
     } finally {
       setSigningOut(false);

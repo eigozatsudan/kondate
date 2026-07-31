@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/shared/types/database";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
-import { clearLocalAuthAndDrafts } from "./auth-cleanup";
+import { clearLocalAuthAndDrafts, SIGN_OUT_TIMEOUT_MS } from "./auth-cleanup";
 
 function seedOwnedKeys(storage: Storage): void {
   storage.setItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001", '{"id":"flow"}');
@@ -26,6 +26,11 @@ describe("clearLocalAuthAndDrafts", () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
+    vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("removes owned auth/recovery keys from both storages and keeps unrelated preferences", async () => {
@@ -76,6 +81,23 @@ describe("clearLocalAuthAndDrafts", () => {
     } as unknown as SupabaseClient<Database>;
 
     await expect(clearLocalAuthAndDrafts(client)).resolves.toBeUndefined();
+    expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
+    expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+  });
+
+  it("clears storage even when signOut never settles (A2)", async () => {
+    vi.useFakeTimers();
+    seedOwnedKeys(localStorage);
+    seedOwnedKeys(sessionStorage);
+    const signOut = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+
+    const pending = clearLocalAuthAndDrafts(client);
+    await vi.advanceTimersByTimeAsync(SIGN_OUT_TIMEOUT_MS);
+    await expect(pending).resolves.toBeUndefined();
+    expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
   });

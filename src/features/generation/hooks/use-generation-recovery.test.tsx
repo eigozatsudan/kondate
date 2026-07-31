@@ -23,6 +23,7 @@ const mockClearPending = vi.hoisted(() => vi.fn());
 const mockDispatches = vi.hoisted(() => [] as GenerationEvent[]);
 const navigateMock = vi.hoisted(() => vi.fn());
 const unsubscribeMock = vi.hoisted(() => vi.fn());
+const redirectToLoginForExpiredSessionMock = vi.hoisted(() => vi.fn());
 const authCallbackRef = vi.hoisted(() => ({
   current: null as ((event: string, session: Session | null) => void) | null,
 }));
@@ -38,6 +39,9 @@ vi.mock("@/features/auth/use-auth", () => ({
         ? null
         : ({ user: { id: currentUserIdRef.current } } as Session),
   }),
+}));
+vi.mock("@/features/auth/session-expiry", () => ({
+  redirectToLoginForExpiredSession: redirectToLoginForExpiredSessionMock,
 }));
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
@@ -828,6 +832,29 @@ describe("useGenerationRecovery", () => {
     });
     expect(recovery.result.current.state.phase).toBe("failed");
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  // 複数端末ログアウト等: auth 失敗を offline「通信確認」に落とさず再ログインへ
+  it("redirects to login on POST auth_required without entering offline", async () => {
+    mockPost.mockRejectedValueOnce(new Error("auth_required"));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(redirectToLoginForExpiredSessionMock).toHaveBeenCalledWith({ returnTo: "/planner" });
+    expect(mockClearPending).toHaveBeenCalled();
+    expect(recovery.result.current.state.phase).toBe("idle");
+    expect(mockDispatches).toContainEqual({ type: "clear" });
+    expect(mockDispatches).not.toContainEqual({ type: "network_error" });
+  });
+
+  it("redirects to login on GET auth_required during status check", async () => {
+    mockStatus.mockRejectedValueOnce(new Error("auth_required"));
+    const recovery = renderRecoveryAt(processingState, pendingA);
+    await act(() => recovery.result.current.retryStatus());
+    expect(redirectToLoginForExpiredSessionMock).toHaveBeenCalledWith({ returnTo: "/planner" });
+    expect(mockClearPending).toHaveBeenCalled();
+    expect(recovery.result.current.state.phase).toBe("idle");
+    expect(mockDispatches).toContainEqual({ type: "clear" });
+    expect(recovery.result.current.state.phase).not.toBe("offline");
   });
 
   it("nulls planner draft cache on new_menu success but not regenerate_menu", async () => {
