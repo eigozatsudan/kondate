@@ -240,6 +240,8 @@ type WizardMockProps = {
   onResolveDraftConflict?: () => void;
   onRetryDraftConflict?: () => void;
   onOpenEmergencyMenus?: () => void;
+  /** 入力内容を空に戻し step を meal へ戻す。route が draft / autosave を所有する */
+  onReset?: () => void;
 };
 const wizardPropsSpy = vi.hoisted(() => vi.fn());
 vi.mock("./components/planner-wizard", () => ({

@@ -949,8 +949,7 @@ export async function runGeneration(
     }
     // 許可リストが2本以上のときだけ失敗モデルを exclude。
     // 1本構成では exclude すると候補0になり repair 不能になるため、同モデル再送を許す。
-    const excludedModelIds =
-      deps.models.length <= 1 || firstModelId === null ? [] : [firstModelId];
+    const excludedModelIds = deps.models.length <= 1 || firstModelId === null ? [] : [firstModelId];
     const eligibleModels = deps.models.filter((model) => !excludedModelIds.includes(model));
     if (eligibleModels.length === 0) {
       return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);

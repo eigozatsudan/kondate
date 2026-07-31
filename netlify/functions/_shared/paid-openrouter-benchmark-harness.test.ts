@@ -178,9 +178,28 @@ describe("runPaidBenchmarkUnit", () => {
     expect(result.sends.map((send) => send.responseModel)).toEqual([null, repairModel]);
   });
 
-  it("does not repair a known invalid response when a single-model configuration is exhausted", async () => {
+  it("repairs with the same model when a single-model configuration fails primary", async () => {
+    // generation-service: 1 本構成では exclude せず同モデルで 1 回 repair する
     const { result, requests } = await runWithSteps(
-      [{ kind: "output", model: primaryModel, output: invalidIdeaOutput() }],
+      [
+        { kind: "output", model: primaryModel, output: invalidIdeaOutput() },
+        { kind: "output", model: primaryModel, output: validIdeaOutput() },
+      ],
+      { configuration: [primaryModel] },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("repair_success");
+    expect(requests.map((request) => request.models)).toEqual([[primaryModel], [primaryModel]]);
+    expect(result.sends.map((send) => send.excludedModel)).toEqual([null, null]);
+  });
+
+  it("fails after same-model repair exhausts a single-model configuration", async () => {
+    const { result, requests } = await runWithSteps(
+      [
+        { kind: "output", model: primaryModel, output: invalidIdeaOutput() },
+        { kind: "output", model: primaryModel, output: invalidIdeaOutput() },
+      ],
       { configuration: [primaryModel] },
     );
 
@@ -193,7 +212,7 @@ describe("runPaidBenchmarkUnit", () => {
     expect(result.diagnosticCodes.length).toBeGreaterThan(0);
     expect(result.diagnosticCodes.every((code) => typeof code === "string")).toBe(true);
     expect(JSON.stringify(result.diagnosticCodes)).not.toMatch(/prompt|message|raw/iu);
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
   });
 
   it.each([

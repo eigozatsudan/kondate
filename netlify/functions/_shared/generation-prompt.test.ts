@@ -293,7 +293,9 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain("soft→kind=soften");
     expect(system).toContain("small_pieces→kind=cut_small");
     expect(system).toContain("boneless→kind=remove_bones");
-    expect(system).toContain("量の「小さめに盛り」や通常の「煮込む」だけではeatingEaseを満たしたことにならない");
+    expect(system).toContain(
+      "量の「小さめに盛り」や通常の「煮込む」だけではeatingEaseを満たしたことにならない",
+    );
     // idea 専用の空配列指示を household に混ぜない
     expect(system).not.toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
   });
