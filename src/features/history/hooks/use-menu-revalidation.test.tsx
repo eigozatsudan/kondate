@@ -52,12 +52,21 @@ const valid: RevalidationResult = {
   currentLabelWarnings: [],
 };
 
+const invalid: RevalidationResult = {
+  ...valid,
+  status: "invalid",
+  safetyFingerprint: "invalid-fp",
+  issues: [{ code: "allergen_present", path: "dishes.0", message: "アレルゲンが含まれます" }],
+};
+
 function deferredPromise<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -161,7 +170,6 @@ describe("useMenuRevalidation", () => {
     const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
     expect(result.current.phase).toBe("checking");
 
-    // 初回を完了させ actionable にする
     act(() => {
       first.resolve(valid);
     });
@@ -169,7 +177,6 @@ describe("useMenuRevalidation", () => {
       expect(result.current.phase).toBe("checked");
     });
 
-    // 古い飛行中要求 A と、後から始まる最新要求 B を重ねる
     const older = deferredPromise<RevalidationResult>();
     const newer = deferredPromise<RevalidationResult>();
     revalidateMenuMock.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
@@ -180,7 +187,6 @@ describe("useMenuRevalidation", () => {
     expect(result.current.phase).toBe("checking");
     expect(result.current.result).toBeUndefined();
 
-    // さらにシグナルで最新世代を進める（A が残ったまま B が始まる）
     act(() => {
       window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
     });
@@ -197,7 +203,6 @@ describe("useMenuRevalidation", () => {
       safetyFingerprint: "fresh-latest",
     };
 
-    // 古い A が先に解決しても、最新 B が未完了なら checking のまま（stale authority を返さない）
     act(() => {
       older.resolve(stale);
     });
@@ -233,6 +238,165 @@ describe("useMenuRevalidation", () => {
     });
   });
 
+  it("keeps checked result during soft recheck (focus / background poll path)", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    expect(result.current.phase).toBe("checked");
+    expect(result.current.result?.status).toBe("valid");
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
+  it("soft recheck on window focus does not enter checking when already checked", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(result.current.phase).toBe("checked");
+    expect(result.current.result).toEqual(valid);
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
+  it("soft recheck resolving to invalid keeps phase checked with invalid status", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    expect(result.current.phase).toBe("checked");
+    expect(result.current.result?.status).toBe("valid");
+    act(() => {
+      deferred.resolve(invalid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+      expect(result.current.result?.status).toBe("invalid");
+    });
+    expect(result.current.result?.issues[0]?.code).toBe("allergen_present");
+  });
+
+  it("soft network failure keeps last-known-good checked result", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    act(() => {
+      deferred.reject(new Error("network"));
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    expect(result.current.result?.status).toBe("valid");
+    expect(result.current.result?.safetyFingerprint).toBe("current");
+  });
+
+  it("hard recheck network failure ends in error without reopening prior valid", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      result.current.beginHardRecheck();
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    act(() => {
+      deferred.reject(new Error("network"));
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("error");
+    });
+    expect(result.current.result).toBeUndefined();
+    expect(result.current.errorMessage).toMatch(/network|確認できませんでした/u);
+  });
+
+  it("soft in-flight then hard safety event drops to checking without prior result", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const softFlight = deferredPromise<RevalidationResult>();
+    const hardFlight = deferredPromise<RevalidationResult>();
+    revalidateMenuMock
+      .mockReturnValueOnce(softFlight.promise)
+      .mockReturnValueOnce(hardFlight.promise);
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    expect(result.current.phase).toBe("checked");
+    act(() => {
+      window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    // soft が後から成功しても hard 未完了なら checking のまま
+    act(() => {
+      softFlight.resolve(valid);
+    });
+    expect(result.current.phase).toBe("checking");
+    act(() => {
+      hardFlight.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
+  it("online recovery uses hard recheck (not soft)", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
   // 60 秒 poll は history-detail-page の sixty-second-poll ケースで page 統合として検証する
-  // （React Query と fake timers の組み合わせは unit では不安定）
 });
