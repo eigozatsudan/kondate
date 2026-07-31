@@ -152,16 +152,16 @@ export function useMenuRevalidation(menuId: string) {
 
   // hard / 初回 data なしだけ checking。soft の isFetching では直前結果を出したままにする。
   // soft 失敗は hasData 維持で checked（last-known-good）。hard 失敗は data 無しで error。
+  // TQ の結果 union 上、!hasData かつ非 pending/fetching は error 側に絞られるため
+  // isError を再度問わない（no-unnecessary-condition）。
   const hasData = query.data !== undefined;
   const phase: RevalidationPhaseName = forcedChecking
     ? "checking"
-    : !hasData && (query.isPending || query.isFetching)
-      ? "checking"
-      : !hasData && query.isError
-        ? "error"
-        : hasData
-          ? "checked"
-          : "checking";
+    : hasData
+      ? "checked"
+      : query.isPending || query.isFetching
+        ? "checking"
+        : "error";
 
   const errorMessage =
     query.error instanceof Error ? query.error.message : "現在の家族設定で確認できませんでした";
