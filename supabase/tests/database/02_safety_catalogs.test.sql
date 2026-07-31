@@ -96,7 +96,7 @@ select ok(not exists(select 1 from public.food_safety_rules
 select is(
   (select match_terms from public.food_safety_rules where id = 'bones_for_young_and_senior'),
   array[
-    '小骨','骨付き','魚','鮭','さけ','サケ','鯖','さば','サバ','鯵','あじ','アジ','鰯',
+    '小骨','骨付き','魚','鮭','さけ','サケ','サーモン','さーもん','鯖','さば','サバ','鯵','あじ','アジ','鰯',
     'いわし','イワシ','鯛','たい','タイ','ぶり','ブリ','たら','タラ','さんま','サンマ',
     'ししゃも','うなぎ','穴子'
   ]::text[],
