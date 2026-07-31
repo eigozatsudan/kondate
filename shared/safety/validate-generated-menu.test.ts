@@ -567,6 +567,15 @@ it.each([
   ["large", "mild", "山盛りにし、やさしい味で塩控えめにする"],
   ["small", "none", "量は小さめで、香辛料抜きにする"],
   ["large", "none", "量を増やし、辛味を加えない"],
+  // U2-I3: 自然な否定・調整言い回し（quota burn 防止）
+  // portion が regular なら辛さ文言だけ、small/large なら量+辛さの両方を含む
+  ["regular", "none", "香辛料は入れていません"],
+  ["regular", "none", "香辛料を入れていません。ピリッとさせない"],
+  ["regular", "none", "香辛料は使いません"],
+  ["regular", "none", "辛味は加えていません"],
+  ["small", "none", "子ども用に量を調整する。辛味は加えていません"],
+  ["small", "none", "少なめに盛り、香辛料は入れていません"],
+  ["large", "none", "多めに取り分け、スパイスは入れていません"],
 ] as const)(
   "accepts expanded portion/spice wording hard matches: %s / %s / %s",
   (portionSize, spiceLevel, wording) => {

@@ -50,6 +50,34 @@ describe("auth flow storage", () => {
     expect(sanitizeReturnPath("/x/..//evil.example")).toBe("/planner");
   });
 
+  it("U1-M1 rejects protocol-relative and embedded // when reading a tampered flow", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000099";
+    const base = {
+      id: flowId,
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+      origin: "https://app.test",
+      sessionExchange: "supabase" as const,
+      startedAt: "2026-07-13T00:00:00.000Z",
+    };
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({ ...base, returnTo: "//evil.example" }),
+    );
+    expect(readAuthFlow(flowId, storage)).toBeNull();
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({ ...base, returnTo: "/planner//x" }),
+    );
+    expect(readAuthFlow(flowId, storage)).toBeNull();
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({ ...base, returnTo: "/planner" }),
+    );
+    expect(readAuthFlow(flowId, storage)).toMatchObject({ returnTo: "/planner" });
+  });
+
   it("keeps the claim secret only in the initiating browser", async () => {
     const shared = new MapStorage();
     const isolated = new MapStorage();

@@ -135,6 +135,17 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias("牛乳プリン", "牛こま")).toBe(false);
   });
 
+  // U2-I4: 推奨表示の高頻度残差
+  it.each([
+    ["長芋の磯辺揚げ", "長芋"],
+    ["ながいもすりおろし", "ながいも"],
+    ["アップルパイ", "アップル"],
+    ["マカデミアナッツ", "マカデミア"],
+    ["鮑のステーキ", "鮑"],
+  ])("U2-I4 detects residual form %s via alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
   it.each([
     ["味噌汁", "味噌"],
     ["納豆ごはん", "納豆"],

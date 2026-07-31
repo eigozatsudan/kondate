@@ -181,6 +181,11 @@ export function createAuthGateway(
         }
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
+      // U1-M3: ローカル flow があるときは URL state と一致してから deposit する。
+      // 不一致のまま deposit すると後続 claim が mismatch 消去（B-I2）で自壊する。
+      if (stored !== null && state !== stored.state) {
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      }
       try {
         await continuationApi.deposit(flowId, { state, code });
       } catch {

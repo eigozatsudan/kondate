@@ -141,13 +141,23 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
 
   let subscriptions: Stripe.Subscription[];
   try {
+    // U1-M5: limit 100 の1ページでは取り切れない病理ケースに備え、has_more まで辿る。
     // status: "all" で terminal 含む全件を取得し、live のみ cancel（Issue 4）
-    const listed = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "all",
-      limit: 100,
-    });
-    subscriptions = listed.data;
+    subscriptions = [];
+    let startingAfter: string | undefined;
+    for (;;) {
+      const listed = await stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 100,
+        ...(startingAfter === undefined ? {} : { starting_after: startingAfter }),
+      });
+      subscriptions.push(...listed.data);
+      if (!listed.has_more || listed.data.length === 0) break;
+      const last = listed.data[listed.data.length - 1];
+      if (last === undefined) break;
+      startingAfter = last.id;
+    }
   } catch {
     log({
       level: "warn",

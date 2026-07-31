@@ -1,12 +1,22 @@
 import { z } from "zod";
 
+/** U1-M1: storage 改ざん時も protocol-relative `//…` や埋め込み `//` を読まない */
+const authFlowReturnToSchema = z
+  .string()
+  .refine(
+    (value) =>
+      value === "/" ||
+      (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
+    "invalid_return_to",
+  );
+
 const authFlowSchema = z
   .object({
     id: z.uuid(),
     secret: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
     state: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
     origin: z.url(),
-    returnTo: z.string().startsWith("/"),
+    returnTo: authFlowReturnToSchema,
     sessionExchange: z.enum(["supabase", "oauth_mock"]),
     startedAt: z.iso.datetime({ offset: true }),
   })

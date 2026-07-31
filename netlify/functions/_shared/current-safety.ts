@@ -192,6 +192,12 @@ const additionalAliasValues: readonly (readonly [
   ["beef", "牛ひき", "derived", false],
   ["beef", "牛バラ", "derived", false],
   ["beef", "牛もも", "derived", false],
+  // U2-I4: 推奨表示の高頻度残差（衝突レビュー済みの具体形のみ）
+  ["yam", "長芋", "direct", false],
+  ["yam", "ながいも", "direct", false],
+  ["apple", "アップル", "direct", false],
+  ["macadamia_nut", "マカデミア", "direct", false],
+  ["abalone", "鮑", "direct", false],
 ];
 
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [
