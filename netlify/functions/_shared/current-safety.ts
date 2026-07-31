@@ -165,6 +165,33 @@ const additionalAliasValues: readonly (readonly [
   ["egg", "スクランブルエッグ", "derived", false],
   // えび: サーモン同型の外来語
   ["shrimp", "シュリンプ", "direct", false],
+  // U2-C1: 推奨表示肉類は displayName のみだと AI の部位名・外来語が fail-open する。
+  // 裸の「鶏」「牛」「豚」は 鶏卵・牛乳 等と衝突するため載せない（複数文字の具体形のみ）。
+  ["chicken", "チキン", "direct", false],
+  ["chicken", "とり肉", "direct", false],
+  ["chicken", "鳥肉", "direct", false],
+  ["chicken", "鶏むね", "derived", false],
+  ["chicken", "鶏もも", "derived", false],
+  ["chicken", "ささみ", "derived", false],
+  ["chicken", "若鶏", "derived", false],
+  ["chicken", "鶏ひき", "derived", false],
+  ["chicken", "地鶏", "derived", false],
+  ["pork", "ポーク", "direct", false],
+  ["pork", "豚バラ", "derived", false],
+  ["pork", "豚こま", "derived", false],
+  ["pork", "豚ひき", "derived", false],
+  ["pork", "ぶた肉", "direct", false],
+  ["pork", "豚ロース", "derived", false],
+  ["pork", "スペアリブ", "derived", false],
+  ["pork", "ベーコン", "processed", true],
+  ["pork", "ソーセージ", "processed", true],
+  ["beef", "ビーフ", "direct", false],
+  ["beef", "牛こま", "derived", false],
+  ["beef", "牛薄切り", "derived", false],
+  ["beef", "和牛", "derived", false],
+  ["beef", "牛ひき", "derived", false],
+  ["beef", "牛バラ", "derived", false],
+  ["beef", "牛もも", "derived", false],
 ];
 
 export const currentAllergenAliasManifest: readonly AliasManifestEntry[] = [

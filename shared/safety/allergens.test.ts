@@ -110,6 +110,31 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias("シュリンプサラダ", "シュリンプ")).toBe(true);
   });
 
+  // U2-C1: 肉類は displayName（鶏肉/豚肉/牛肉）だけでは部位・外来語を取りこぼす
+  it.each([
+    ["チキンソテー", "チキン"],
+    ["とり肉の煮物", "とり肉"],
+    ["鶏むねの塩焼き", "鶏むね"],
+    ["鶏もも肉", "鶏もも"],
+    ["ささみフライ", "ささみ"],
+    ["ポークソテー", "ポーク"],
+    ["豚バラの角煮", "豚バラ"],
+    ["豚こま切れ", "豚こま"],
+    ["ぶた肉団子", "ぶた肉"],
+    ["ビーフシチュー", "ビーフ"],
+    ["和牛ステーキ", "和牛"],
+    ["牛こま肉", "牛こま"],
+    ["牛バラ煮", "牛バラ"],
+  ])("U2-C1 detects meat cut/loan form %s via alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
+  it("U2-C1 does not use bare 牛 (would hit 牛乳)", () => {
+    // 肉 alias は複数文字のみ。牛乳テキストが牛肉 hard match にならないことを固定
+    expect(foodTextContainsAlias("牛乳プリン", "牛肉")).toBe(false);
+    expect(foodTextContainsAlias("牛乳プリン", "牛こま")).toBe(false);
+  });
+
   it.each([
     ["味噌汁", "味噌"],
     ["納豆ごはん", "納豆"],

@@ -268,6 +268,36 @@ it("rejects required deboning evidence bound to a non-fish ingredient", () => {
   );
 });
 
+// U2-C2: サーモンは さけ 部分一致にならず、matchTerms に明示が必要
+it("U2-C2 triggers bones rule for サーモン ingredient without deboning evidence", () => {
+  const base = makeCurrentSafetyContext();
+  const issues = evaluateFoodSafetyRules(menuWithNamedIngredient("サーモン"), {
+    ...makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          ageBand: "age_3_5",
+          requiredSafetyConstraints: [],
+        },
+      ],
+      foodSafetyRules: [
+        {
+          id: "bones_for_young_and_senior",
+          appliesToAgeBands: ["post_weaning_to_2", "age_3_5", "senior"],
+          matchTerms: ["鮭", "さけ", "サーモン", "さーもん"],
+          ruleKind: "requires_tag",
+          requiredSafetyTag: "remove_bones",
+          userMessage: "小骨を完全に除く工程が必要です",
+          ruleVersion: "jp-caa-child-shape-2026-07.v1",
+        },
+      ],
+    }),
+  });
+  expect(issues).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: "age_shape_rule" })]),
+  );
+});
+
 it("does not apply a deboning rule when non-ingredient text alone identifies an ingredient as fish", () => {
   const base = makeValidatedMenu();
   const firstDish = base.dishes[0]!;

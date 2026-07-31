@@ -78,6 +78,9 @@ export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
       "鮭",
       "さけ",
       "サケ",
+      // U2-C2: アレルゲン辞書と同型。normalize 後 さーもん は さけ を含まない
+      "サーモン",
+      "さーもん",
       "鯖",
       "さば",
       "サバ",

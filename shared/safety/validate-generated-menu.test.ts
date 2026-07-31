@@ -335,6 +335,59 @@ it.each([
     code: "avoid_ingredient_used",
   },
   {
+    // U2-I2: avoid「卵」が AI の「たまご」表記でも hard-fail する（辞書 alias 展開）
+    name: "avoid ingredient synonym via allergen alias",
+    menu: makeGeneratedMenu({
+      dishes: makeGeneratedMenu().dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              // main の「ごはん」は残し、別名葉だけ追加して synonym 照合を見る
+              ingredients: [
+                ...dish.ingredients,
+                {
+                  ...dish.ingredients[0]!,
+                  id: "58000000-0000-4000-8000-0000000000ee",
+                  name: "たまご",
+                },
+              ],
+            }
+          : dish,
+      ),
+    }),
+    context: (() => {
+      const safety = makeCurrentSafetyContext({
+        allergenDictionary: {
+          version: "jp-caa-2026-04.v1",
+          catalog: [{ id: "egg", displayName: "卵", catalogVersion: "jp-caa-2026-04.v1" }],
+          aliases: [
+            {
+              allergenId: "egg",
+              alias: "卵",
+              normalizedAlias: "卵",
+              aliasKind: "direct",
+              requiresLabelConfirmation: false,
+              dictionaryVersion: "jp-caa-2026-04.v1",
+            },
+            {
+              allergenId: "egg",
+              alias: "たまご",
+              normalizedAlias: "たまご",
+              aliasKind: "direct",
+              requiresLabelConfirmation: false,
+              dictionaryVersion: "jp-caa-2026-04.v1",
+            },
+          ],
+        },
+      });
+      return makeGenerationContext({
+        safety,
+        submission: { ...makeGenerationContext().submission, avoidIngredients: ["卵"] },
+      });
+    })(),
+    code: "avoid_ingredient_used",
+  },
+  {
     name: "required dish role",
     menu: makeGeneratedMenu({
       dishes: makeGeneratedMenu().dishes.map((dish) => ({ ...dish, role: "main" })),

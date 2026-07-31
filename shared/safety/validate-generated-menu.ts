@@ -46,6 +46,53 @@ function sameSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean
   return left.size === right.size && [...left].every((value) => right.has(value));
 }
 
+/**
+ * 希望「使わない食材」の照合針を広げる。
+ * ユーザー入力がアレルゲン辞書の displayName / alias に一致するとき、
+ * 同一 allergenId の全 alias・表示名を needle に加える（U2-I2）。
+ * idea 経路は safety が null のため正規化 includes のみ。
+ */
+function expandAvoidNeedles(avoided: string, context: GenerationContext): readonly string[] {
+  const normalizedAvoided = normalizeFoodText(avoided);
+  if (normalizedAvoided.length === 0) return [];
+  const needles = new Set<string>([normalizedAvoided]);
+  if (context.targetMode !== "household" || context.safety === null) {
+    return [...needles];
+  }
+  const dictionary = context.safety.allergenDictionary;
+
+  const matchedIds = new Set<string>();
+  for (const entry of dictionary.catalog) {
+    if (normalizeFoodText(entry.displayName) === normalizedAvoided) {
+      matchedIds.add(entry.id);
+    }
+  }
+  for (const alias of dictionary.aliases) {
+    if (
+      normalizeFoodText(alias.alias) === normalizedAvoided ||
+      normalizeFoodText(alias.normalizedAlias) === normalizedAvoided
+    ) {
+      matchedIds.add(alias.allergenId);
+    }
+  }
+  if (matchedIds.size === 0) return [...needles];
+
+  for (const entry of dictionary.catalog) {
+    if (matchedIds.has(entry.id)) {
+      const n = normalizeFoodText(entry.displayName);
+      if (n.length > 0) needles.add(n);
+    }
+  }
+  for (const alias of dictionary.aliases) {
+    if (!matchedIds.has(alias.allergenId)) continue;
+    const n = normalizeFoodText(alias.alias);
+    if (n.length > 0) needles.add(n);
+    const nn = normalizeFoodText(alias.normalizedAlias);
+    if (nn.length > 0) needles.add(nn);
+  }
+  return [...needles];
+}
+
 function memberPairKey(householdMemberId: string, anonymousRef: string): string {
   return `${householdMemberId}\u0000${anonymousRef}`;
 }
@@ -180,7 +227,10 @@ function collectCommonMenuIssues(
     }
   }
   for (const avoided of context.submission.avoidIngredients) {
-    if (identityFoodText.includes(normalizeFoodText(avoided))) {
+    // U2-I2: カタログに載る語（卵↔たまご 等）は alias 展開して hard avoid を閉じる。
+    // 自由入力で辞書外の語は従来どおり正規化 includes のみ。
+    const avoidedNeedles = expandAvoidNeedles(avoided, context);
+    if (avoidedNeedles.some((needle) => identityFoodText.includes(needle))) {
       issues.push({
         code: "avoid_ingredient_used",
         path: "dishes",

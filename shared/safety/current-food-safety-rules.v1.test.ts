@@ -9,8 +9,9 @@ const migrationSql = readFileSync(
   "supabase/migrations/20260711000400_safety_catalog_data.sql",
   "utf8",
 );
+// 最新の bones match_terms 補正 migration（サーモン追加含む）を TS 契約の正本とする
 const correctiveMigrationSql = readFileSync(
-  "supabase/migrations/20260716000250_expand_fish_safety_terms.sql",
+  "supabase/migrations/20260731141000_bones_salmon_terms_u2_c2.sql",
   "utf8",
 );
 
@@ -83,6 +84,8 @@ describe("current food safety rules v1 migration contract", () => {
       "鮭",
       "さけ",
       "サケ",
+      "サーモン",
+      "さーもん",
       "鯖",
       "さば",
       "サバ",
