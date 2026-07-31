@@ -8,7 +8,9 @@ import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
 import {
   householdKeys,
   householdSafetyChangedEvent,
+  householdSafetyRevisionKey,
   householdSafetyRevisionStorageKey,
+  isHouseholdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { emergencyMenuKeys, getEmergencyMenus } from "./emergency-menu-api";
@@ -52,8 +54,14 @@ export function EmergencyMenuPage() {
   const draftQueryEnabled = userId !== undefined;
   const householdSafetyEventVersion = useRef(0);
   const [householdSafetyRevision, setHouseholdSafetyRevision] = useState(() => {
+    if (userId === undefined) return "initial";
     try {
-      return localStorage.getItem(householdSafetyRevisionStorageKey) ?? "initial";
+      // U4-003: user-scoped を優先、レガシー固定キーは移行読取
+      return (
+        localStorage.getItem(householdSafetyRevisionKey(userId)) ??
+        localStorage.getItem(householdSafetyRevisionStorageKey) ??
+        "initial"
+      );
     } catch {
       return "initial";
     }
@@ -92,11 +100,15 @@ export function EmergencyMenuPage() {
   // idea 下書きでは household 安全信号を購読しない（safetyRealtimeEnabled で gate）。
   useEffect(() => {
     if (userId === undefined || !safetyRealtimeEnabled) return;
+    const revisionKey = householdSafetyRevisionKey(userId);
     const refreshRevision = () => {
       householdSafetyEventVersion.current += 1;
       setHouseholdSafetyRevision((current) => {
         try {
-          const storedRevision = localStorage.getItem(householdSafetyRevisionStorageKey);
+          // U4-003: user-scoped key を優先し、レガシー固定キーは移行読取のみ
+          const storedRevision =
+            localStorage.getItem(revisionKey) ??
+            localStorage.getItem(householdSafetyRevisionStorageKey);
           return `${storedRevision ?? current}:event:${String(householdSafetyEventVersion.current)}`;
         } catch {
           return `${current}:event:${String(householdSafetyEventVersion.current)}`;
@@ -104,7 +116,9 @@ export function EmergencyMenuPage() {
       });
     };
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === householdSafetyRevisionStorageKey) refreshRevision();
+      if (event.key === revisionKey || isHouseholdSafetyRevisionStorageKey(event.key)) {
+        refreshRevision();
+      }
     };
     const handleVisible = () => {
       if (document.visibilityState === "visible") refreshRevision();

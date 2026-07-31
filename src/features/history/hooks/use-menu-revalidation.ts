@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   householdSafetyChangedEvent,
-  householdSafetyRevisionStorageKey,
+  isHouseholdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { revalidateMenu, type RevalidationResult } from "../api/revalidation-api";
@@ -67,7 +67,7 @@ export function useMenuRevalidation(menuId: string) {
       beginRecheck();
     };
     const stored = (event: StorageEvent) => {
-      if (event.key === householdSafetyRevisionStorageKey) changed();
+      if (isHouseholdSafetyRevisionStorageKey(event.key)) changed();
     };
     const onFocus = () => {
       if (document.visibilityState === "visible") changed();

@@ -4,8 +4,8 @@ import { NavLink, Outlet, useLocation } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
-  householdSafetyRevisionStorageKey,
   invalidateHouseholdSafetyQueries,
+  isHouseholdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
 
 /** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
@@ -111,7 +111,7 @@ export function AppShell() {
     if (userId === undefined) return undefined;
     const invalidate = () => void invalidateHouseholdSafetyQueries(queryClient, userId);
     const onStorage = (event: StorageEvent) => {
-      if (event.key === householdSafetyRevisionStorageKey) invalidate();
+      if (isHouseholdSafetyRevisionStorageKey(event.key)) invalidate();
     };
     window.addEventListener("storage", onStorage);
     window.addEventListener(householdSafetyChangedEvent, invalidate);

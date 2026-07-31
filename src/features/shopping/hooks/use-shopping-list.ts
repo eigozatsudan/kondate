@@ -9,7 +9,7 @@ import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
-  householdSafetyRevisionStorageKey,
+  isHouseholdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
@@ -96,7 +96,7 @@ export function useShoppingSafetyGate() {
       void refresh();
     };
     const stored = (event: StorageEvent) => {
-      if (event.key === householdSafetyRevisionStorageKey) void refresh();
+      if (isHouseholdSafetyRevisionStorageKey(event.key)) void refresh();
     };
     const visible = () => {
       if (document.visibilityState === "visible") void refresh();

@@ -11,7 +11,20 @@ export const householdKeys = {
 };
 
 export const householdSafetyChangedEvent = "kondate:household-safety-changed" as const;
+/** レガシー固定キー（移行中読取互換）。新規書込は householdSafetyRevisionKey(userId) を使う。 */
 export const householdSafetyRevisionStorageKey = "kondate:household-safety-revision" as const;
+/** U4-003: 端末共有時の cross-user 誤無効化を避ける user-scoped key */
+export function householdSafetyRevisionKey(userId: string): string {
+  return `${householdSafetyRevisionStorageKey}:${userId}`;
+}
+/** storage イベントが安全 revision 系か（固定 or user-scoped） */
+export function isHouseholdSafetyRevisionStorageKey(key: string | null): boolean {
+  if (key === null) return false;
+  return (
+    key === householdSafetyRevisionStorageKey ||
+    key.startsWith(`${householdSafetyRevisionStorageKey}:`)
+  );
+}
 export const householdSafetyQueryPrefixes = {
   currentSafety: ["current-safety"],
   menuResult: ["menu-result"],
@@ -40,7 +53,7 @@ export async function invalidateHouseholdSafetyDependents(
 ): Promise<void> {
   await invalidateHouseholdSafetyQueries(queryClient, userId);
   try {
-    localStorage.setItem(householdSafetyRevisionStorageKey, crypto.randomUUID());
+    localStorage.setItem(householdSafetyRevisionKey(userId), crypto.randomUUID());
   } catch {
     // Current-tab query invalidation still prevents a stale action when storage is unavailable.
   }
