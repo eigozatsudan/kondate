@@ -87,12 +87,12 @@ describe("AuthProvider", () => {
 
   it("U1-I4 keeps loading on cold-start getSession error until a success arrives", async () => {
     let calls = 0;
-    const getSession = vi.fn().mockImplementation(async () => {
+    const getSession = vi.fn().mockImplementation(() => {
       calls += 1;
       if (calls === 1) {
-        return { data: { session: null }, error: { message: "idb_locked" } };
+        return Promise.resolve({ data: { session: null }, error: { message: "idb_locked" } });
       }
-      return { data: { session }, error: null };
+      return Promise.resolve({ data: { session }, error: null });
     });
     const client = {
       auth: {

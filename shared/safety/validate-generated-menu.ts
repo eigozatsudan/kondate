@@ -56,7 +56,8 @@ function expandAvoidNeedles(avoided: string, context: GenerationContext): readon
   const normalizedAvoided = normalizeFoodText(avoided);
   if (normalizedAvoided.length === 0) return [];
   const needles = new Set<string>([normalizedAvoided]);
-  if (context.targetMode !== "household" || context.safety === null) {
+  // household 以外（idea）は safety が無く alias 展開しない
+  if (context.targetMode !== "household") {
     return [...needles];
   }
   const dictionary = context.safety.allergenDictionary;
