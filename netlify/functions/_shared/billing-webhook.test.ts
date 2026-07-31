@@ -4,6 +4,7 @@ import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
 import type { ServerEnv } from "./env.js";
 import {
   handleBillingWebhook,
+  resolveBillingUserId,
   subscriptionIdFromInvoice,
   type BillingWebhookDeps,
 } from "./billing-webhook.js";
@@ -1022,5 +1023,55 @@ describe("handleBillingWebhook", () => {
       }
     ).p_payload;
     expect(processPayload.skip_subscription_projection).toBe(true);
+  });
+});
+
+describe("resolveBillingUserId U5-M1", () => {
+  it("returns metadata when only metadata is present", async () => {
+    const admin = { rpc: vi.fn() };
+    await expect(
+      resolveBillingUserId(admin as never, {
+        metadataUserId: USER_ID,
+        stripeCustomerId: null,
+      }),
+    ).resolves.toBe(USER_ID);
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("returns mapped user when only customer map is present", async () => {
+    const admin = {
+      rpc: vi.fn().mockResolvedValue({ data: { user_id: USER_ID }, error: null }),
+    };
+    await expect(
+      resolveBillingUserId(admin as never, {
+        metadataUserId: null,
+        stripeCustomerId: CUSTOMER_ID,
+      }),
+    ).resolves.toBe(USER_ID);
+  });
+
+  it("returns null when metadata and map disagree", async () => {
+    const other = "b2000000-0000-4000-8000-000000000002";
+    const admin = {
+      rpc: vi.fn().mockResolvedValue({ data: { user_id: other }, error: null }),
+    };
+    await expect(
+      resolveBillingUserId(admin as never, {
+        metadataUserId: USER_ID,
+        stripeCustomerId: CUSTOMER_ID,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("returns user when metadata and map agree", async () => {
+    const admin = {
+      rpc: vi.fn().mockResolvedValue({ data: { user_id: USER_ID }, error: null }),
+    };
+    await expect(
+      resolveBillingUserId(admin as never, {
+        metadataUserId: USER_ID,
+        stripeCustomerId: CUSTOMER_ID,
+      }),
+    ).resolves.toBe(USER_ID);
   });
 });

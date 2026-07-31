@@ -150,6 +150,8 @@ test("production CSP connect-src matches VITE_SUPABASE_URL without wildcards", (
   const env = completeEnv();
   assert.deepEqual(validateProductionEnv(env), { projectRef });
   assert.equal(validateProductionCsp(env.VITE_SUPABASE_URL), true);
+  // U5-M3: 成果物パスが無いときは純関数照合のみ（従来どおり true）
+  assert.equal(validateProductionCsp(env.VITE_SUPABASE_URL, { headersPath: undefined }), true);
 
   const headers = buildDeployHeadersFile({
     context: "production",

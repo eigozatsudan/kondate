@@ -326,7 +326,7 @@ test("netlify.toml emits context CSP via _headers and keeps global headers CSP-f
   // production は OpenRouter 検証、preview/branch は sharp 同梱検証を前置する。
   for (const pattern of [
     /command = "npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
-    /command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs --context production"/u,
+    /command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs --context production && npm run verify:browser-secrets -- --require-dist"/u,
     /command = "npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
   ]) {
     assert.match(toml, pattern);

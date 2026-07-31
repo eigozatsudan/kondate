@@ -4,6 +4,8 @@
  * URL 成分・project ref・秘密値は出さない。
  */
 import { Buffer } from "node:buffer";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertProductionCspMatchesSupabaseUrl, buildDeployHeadersFile } from "./csp-headers.mjs";
 
@@ -21,13 +23,29 @@ export function parseManagedSupabaseProjectRef(value) {
  * production ビルドが書く _headers の connect-src が
  * VITE_SUPABASE_URL と一致し、*.supabase.co を含まないことを検証する。
  * リポジトリに project ref を直書きせず、emit と同じ純関数を再利用する。
+ *
+ * U5-M3: dist/_headers が既に存在するとき（ビルド後 preflight）は
+ * 純関数再計算だけでなく、成果物本文も exact 一致させる。
  */
-export function validateProductionCsp(supabaseUrl) {
+export function validateProductionCsp(supabaseUrl, options = {}) {
   const headers = buildDeployHeadersFile({
     context: "production",
     supabaseUrl,
   });
   assertProductionCspMatchesSupabaseUrl(headers, supabaseUrl);
+  const artifactPath = options.headersPath;
+  if (typeof artifactPath === "string" && artifactPath.length > 0) {
+    const { readFileSync, existsSync } = options.fs ?? {};
+    if (typeof existsSync === "function" && typeof readFileSync === "function") {
+      if (!existsSync(artifactPath)) {
+        throw new Error("csp_headers_artifact_missing");
+      }
+      const onDisk = readFileSync(artifactPath, "utf8");
+      if (onDisk !== headers) {
+        throw new Error("csp_headers_artifact_mismatch");
+      }
+    }
+  }
   return true;
 }
 
@@ -330,7 +348,12 @@ export function validateProductionEnv(env) {
 
   // production CSP の connect-src が browser managed origin と一致すること。
   // 不一致だと本番だけ API が CSP ブロックされるため、preflight で fail-closed する。
-  validateProductionCsp(browserUrl);
+  // U5-M3: ビルド後に dist/_headers がある環境では成果物も照合する。
+  const headersPath = join(process.cwd(), "dist", "_headers");
+  validateProductionCsp(browserUrl, {
+    headersPath: existsSync(headersPath) ? headersPath : undefined,
+    fs: { existsSync, readFileSync },
+  });
 
   return { projectRef: serverRef };
 }

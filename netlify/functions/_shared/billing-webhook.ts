@@ -206,17 +206,26 @@ export async function resolveBillingUserId(
     stripeCustomerId: string | null;
   },
 ): Promise<string | null> {
-  const meta = options.metadataUserId;
-  if (typeof meta === "string" && meta.length > 0) {
-    return meta;
+  // U5-M1: metadata と customer マップが両方あるときは一致必須（ops 誤タグでの取り違え防止）。
+  // 片方だけならその経路を採用。どちらも無ければ null。
+  const meta =
+    typeof options.metadataUserId === "string" && options.metadataUserId.length > 0
+      ? options.metadataUserId
+      : null;
+  let mapped: string | null = null;
+  if (options.stripeCustomerId !== null) {
+    const { data, error } = await admin.rpc("get_billing_customer_by_stripe_id", {
+      p_stripe_customer_id: options.stripeCustomerId,
+    });
+    if (error === null && data !== null && typeof data === "object") {
+      const userId = (data as { user_id?: unknown }).user_id;
+      if (typeof userId === "string" && userId.length > 0) mapped = userId;
+    }
   }
-  if (options.stripeCustomerId === null) return null;
-  const { data, error } = await admin.rpc("get_billing_customer_by_stripe_id", {
-    p_stripe_customer_id: options.stripeCustomerId,
-  });
-  if (error !== null || data === null || typeof data !== "object") return null;
-  const userId = (data as { user_id?: unknown }).user_id;
-  return typeof userId === "string" && userId.length > 0 ? userId : null;
+  if (meta !== null && mapped !== null) {
+    return meta === mapped ? meta : null;
+  }
+  return meta ?? mapped;
 }
 
 async function processStripeEvent(
