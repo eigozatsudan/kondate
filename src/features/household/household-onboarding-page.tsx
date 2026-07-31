@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import type { AgeBand, UnsupportedDietKind, UnsupportedDietStatus } from "@shared/contracts/domain";
+import {
+  unsupportedDietKinds,
+  type AgeBand,
+  type UnsupportedDietStatus,
+} from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { useAppToast } from "@/shared/ui/app-toast";
@@ -26,12 +30,23 @@ import {
 import { defaultsForAgeBand } from "./household-defaults";
 import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
 import { AllergyEditor } from "./allergy-editor";
-
-const unsupportedDietOptions: ReadonlyArray<readonly [UnsupportedDietKind, string]> = [
-  ["weaning_food", "離乳食"],
-  ["swallowing_concern", "飲み込み・むせの不安"],
-  ["therapeutic_diet", "医師等から指示された治療食"],
-];
+import {
+  ADD_SCOPE_NOTICE_BODY,
+  ADD_SCOPE_NOTICE_CANCEL,
+  ADD_SCOPE_NOTICE_CONTINUE,
+  ADD_SCOPE_NOTICE_FOOTNOTE,
+  ADD_SCOPE_NOTICE_ITEMS,
+  ADD_SCOPE_NOTICE_TITLE,
+  UNSUPPORTED_DIET_KIND_LABELS,
+  UNSUPPORTED_DIET_KINDS_LEGEND,
+  UNSUPPORTED_DIET_KINDS_REQUIRED,
+  UNSUPPORTED_DIET_ONBOARDING_INTRO,
+  UNSUPPORTED_DIET_PRESENT_HELP,
+  UNSUPPORTED_DIET_STATUS_HELP,
+  UNSUPPORTED_DIET_STATUS_LABEL,
+  UNSUPPORTED_DIET_STATUS_REQUIRED,
+  UNSUPPORTED_DIET_UNCONFIRMED_HELP,
+} from "./unsupported-diet-copy";
 
 /** オンボーディング必須フィールドの field error（settings schema と同文言系） */
 type OnboardingFieldErrors = {
@@ -43,6 +58,7 @@ type OnboardingFieldErrors = {
 
 const ONBOARDING_FORM_ERROR_ID = "household-onboarding-form-error";
 const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
+const ADD_SCOPE_NOTICE_TITLE_ID = "onboarding-add-scope-notice-title";
 
 const ONBOARDING_FIELD_ORDER = [
   "ageBand",
@@ -53,7 +69,7 @@ const ONBOARDING_FIELD_ORDER = [
 
 /**
  * 完了押下時の必須検証。settings の householdSettingsSchema と同系メッセージを返す。
- * アレルギー登録あり0件・食べない食事 present で kinds 空も含む。
+ * アレルギー登録あり0件・作れない事情 present で kinds 空も含む。
  */
 /** U3-I3: select の placeholder `""` は未選択。null と同様に未充足とみなす。 */
 function isOnboardingEnumFilled(value: string | null): boolean {
@@ -75,13 +91,14 @@ function validateOnboardingDraft(
     errors.allergyStatus =
       "アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。";
   }
+  // 共有定数（Task 1）。schema / settings と文字列を二重に持たない（設計 I6）
   if (!isOnboardingEnumFilled(draft.unsupported_diet_status)) {
-    errors.unsupportedDietStatus = "食べない食事があるか選んでください";
+    errors.unsupportedDietStatus = UNSUPPORTED_DIET_STATUS_REQUIRED;
   } else if (
     draft.unsupported_diet_status === "present" &&
     draft.unsupported_diet_kinds.length === 0
   ) {
-    errors.unsupportedDietKinds = "該当する項目を選んでください";
+    errors.unsupportedDietKinds = UNSUPPORTED_DIET_KINDS_REQUIRED;
   }
   return errors;
 }
@@ -180,6 +197,11 @@ export function HouseholdOnboardingForm({
   const unsupportedDietStatusRef = useRef<HTMLSelectElement>(null);
   const unsupportedDietKindsRef = useRef<HTMLFieldSetElement>(null);
   const nextActionHeadingRef = useRef<HTMLHeadingElement>(null);
+  // 追加前ダイアログを開いたトリガーへ閉じたあと focus を戻す（settings と同型）
+  const addScopeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const addScopeContinueRef = useRef<HTMLButtonElement>(null);
+  // 家族追加前の対象外事情確認。クライアントのみ。DB 永続化しない。
+  const [addScopeNoticeOpen, setAddScopeNoticeOpen] = useState(false);
 
   // ルート離脱で validation toast を残さない
   useEffect(() => {
@@ -236,6 +258,85 @@ export function HouseholdOnboardingForm({
     },
   });
   // HO-I1: 開始失敗を無言にせず、skip/complete と同型の role=alert を出す
+
+  // 追加前確認: 主ボタンへ focus / Escape で閉じる / 閉じたあと trigger へ戻す
+  // settings の削除確認・追加前確認と同契約（設計 §5.3）
+  // OK 後は dialog を先に閉じるため pending 中に Escape が来る経路はない
+  useEffect(() => {
+    if (!addScopeNoticeOpen) return;
+    const trigger = addScopeTriggerRef.current;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setAddScopeNoticeOpen(false);
+      }
+    };
+    addScopeContinueRef.current?.focus();
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      trigger?.focus();
+    };
+  }, [addScopeNoticeOpen]);
+
+  /** 「家族設定を始める」「続けて家族を追加」: createDraft 前に対象外事情の確認を開く */
+  const openAddScopeNotice = (trigger: HTMLButtonElement) => {
+    if (startMutation.isPending || actionPending) return;
+    addScopeTriggerRef.current = trigger;
+    setAddScopeNoticeOpen(true);
+  };
+  const confirmAddScopeNotice = () => {
+    // OK 後に status を present へ自動設定しない（設計 §7）。下書き作成のみ。
+    // single-flight: isPending 中は再 mutate しない
+    if (startMutation.isPending) return;
+    setAddScopeNoticeOpen(false);
+    startMutation.mutate();
+  };
+  const cancelAddScopeNotice = () => {
+    if (startMutation.isPending) return;
+    setAddScopeNoticeOpen(false);
+  };
+
+  /** 追加前確認ダイアログ（未開始・次アクションの両方で同じ markup） */
+  const addScopeNoticeDialog = addScopeNoticeOpen ? (
+    <div className="pantry-expired-dialog-backdrop">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={ADD_SCOPE_NOTICE_TITLE_ID}
+        className="card stack pantry-expired-dialog-panel"
+      >
+        <h2 id={ADD_SCOPE_NOTICE_TITLE_ID}>{ADD_SCOPE_NOTICE_TITLE}</h2>
+        <p>{ADD_SCOPE_NOTICE_BODY}</p>
+        <ul>
+          {ADD_SCOPE_NOTICE_ITEMS.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+        <p className="type-small">{ADD_SCOPE_NOTICE_FOOTNOTE}</p>
+        <button
+          ref={addScopeContinueRef}
+          className="primary-button min-h-11"
+          type="button"
+          disabled={startMutation.isPending}
+          onClick={() => {
+            confirmAddScopeNotice();
+          }}
+        >
+          {ADD_SCOPE_NOTICE_CONTINUE}
+        </button>
+        <button
+          className="text-button min-h-11"
+          type="button"
+          disabled={startMutation.isPending}
+          onClick={() => {
+            cancelAddScopeNotice();
+          }}
+        >
+          {ADD_SCOPE_NOTICE_CANCEL}
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   const save = (patch: HouseholdDraftPatch) => {
     if (draft === null) return Promise.resolve();
@@ -435,7 +536,7 @@ export function HouseholdOnboardingForm({
     return (
       <main className="page-frame stack">
         <h1>家族の初回設定</h1>
-        <p>年齢のめやす、アレルギー、食べない食事の3項目から始めます。</p>
+        <p>{UNSUPPORTED_DIET_ONBOARDING_INTRO}</p>
         <p className="type-small">
           AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
         </p>
@@ -448,8 +549,8 @@ export function HouseholdOnboardingForm({
           className="primary-button min-h-11"
           type="button"
           disabled={startMutation.isPending || actionPending}
-          onClick={() => {
-            startMutation.mutate();
+          onClick={(event) => {
+            openAddScopeNotice(event.currentTarget);
           }}
         >
           家族設定を始める
@@ -471,6 +572,7 @@ export function HouseholdOnboardingForm({
             スキップできませんでした。通信を確認して再試行してください。
           </p>
         )}
+        {addScopeNoticeDialog}
       </main>
     );
   }
@@ -503,8 +605,8 @@ export function HouseholdOnboardingForm({
           className="secondary-button min-h-11"
           type="button"
           disabled={actionPending || startMutation.isPending || profileQuery.isPending}
-          onClick={() => {
-            startMutation.mutate();
+          onClick={(event) => {
+            openAddScopeNotice(event.currentTarget);
           }}
         >
           続けて家族を追加
@@ -531,6 +633,7 @@ export function HouseholdOnboardingForm({
             スキップできませんでした。通信を確認して再試行してください。
           </p>
         )}
+        {addScopeNoticeDialog}
       </main>
     );
   }
@@ -744,10 +847,10 @@ export function HouseholdOnboardingForm({
         )}
 
         <label className="field">
-          <span>食べない食事はありますか</span>
+          <span>{UNSUPPORTED_DIET_STATUS_LABEL}</span>
           <select
             ref={unsupportedDietStatusRef}
-            aria-label="食べない食事はありますか"
+            aria-label={UNSUPPORTED_DIET_STATUS_LABEL}
             value={draft.unsupported_diet_status ?? ""}
             aria-invalid={
               fieldErrors.unsupportedDietStatus !== undefined ||
@@ -780,30 +883,30 @@ export function HouseholdOnboardingForm({
             <option value="unconfirmed">未確認</option>
           </select>
         </label>
+        {/* 親質問直下: アレルギー／苦手との混同防止（設計 I1・常時表示） */}
+        <p className="type-small">{UNSUPPORTED_DIET_STATUS_HELP}</p>
 
         {draft.unsupported_diet_status === "present" && (
           <fieldset ref={unsupportedDietKindsRef}>
-            <legend>該当する項目</legend>
-            {unsupportedDietOptions.map(([value, label]) => (
-              <label key={value} className="field">
+            <legend>{UNSUPPORTED_DIET_KINDS_LEGEND}</legend>
+            {unsupportedDietKinds.map((kind) => (
+              <label key={kind} className="field">
                 <span>
                   <input
                     type="checkbox"
-                    checked={draft.unsupported_diet_kinds.includes(value)}
+                    checked={draft.unsupported_diet_kinds.includes(kind)}
                     onChange={(event) => {
                       const next = event.target.checked
-                        ? [...draft.unsupported_diet_kinds, value]
-                        : draft.unsupported_diet_kinds.filter((item) => item !== value);
+                        ? [...draft.unsupported_diet_kinds, kind]
+                        : draft.unsupported_diet_kinds.filter((item) => item !== kind);
                       void save({ unsupported_diet_kinds: next });
                     }}
                   />
-                  {label}
+                  {UNSUPPORTED_DIET_KIND_LABELS[kind]}
                 </span>
               </label>
             ))}
-            <p>
-              通常の献立では対応できません。対象メンバーから外すか、専門職の指示に従ってください。
-            </p>
+            <p className="type-small">{UNSUPPORTED_DIET_PRESENT_HELP}</p>
           </fieldset>
         )}
       </section>
@@ -841,9 +944,7 @@ export function HouseholdOnboardingForm({
         </p>
       )}
       {draft.unsupported_diet_status === "unconfirmed" && (
-        <p className="error-message">
-          食べない食事を確認するまで、このメンバーは献立生成に使えません。
-        </p>
+        <p className="error-message">{UNSUPPORTED_DIET_UNCONFIRMED_HELP}</p>
       )}
       {completeError && (
         <p className="error-message" role="alert">
