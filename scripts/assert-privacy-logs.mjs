@@ -99,7 +99,8 @@ export function assertPrivacyLogs(logText, options = {}) {
     if ("requestId" in parsed || "errorCode" in parsed || "durationMs" in parsed) {
       throw new Error("privacy_log_camel_case");
     }
-    // 許可キー以外の自由文フィールドを拒否
+    // 許可キー以外の自由文フィールドを拒否。
+    // SafeLogEvent / createSafeLogger が出し得る snake_case キーと揃える（S2: generation_route 等の stale allowlist 修正）。
     for (const key of Object.keys(parsed)) {
       if (
         ![
@@ -112,6 +113,24 @@ export function assertPrivacyLogs(logText, options = {}) {
           "generation_ledgers_deleted",
           "shopping_mutations_deleted",
           "auth_continuations_deleted",
+          "user_feedback_deleted",
+          "draft_submissions_deleted",
+          "path",
+          "match_mode",
+          "empty_reason",
+          "candidate_count",
+          "meal_type",
+          "main_ingredient_count",
+          "plan",
+          "billing_status",
+          "price_interval",
+          "quality_mode",
+          "flyer",
+          "stripe_customer_id",
+          "stripe_subscription_id",
+          "alert_metric",
+          "generation_route",
+          "http_status",
         ].includes(key)
       ) {
         throw new Error("privacy_log_unexpected_field");

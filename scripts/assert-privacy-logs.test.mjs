@@ -90,4 +90,16 @@ describe("assertPrivacyLogs", () => {
       /privacy_log_unexpected_field/,
     );
   });
+
+  it("allows generation_route and http_status from SafeLogEvent HTTP boundary", () => {
+    const line = JSON.stringify({
+      level: "error",
+      code: "constraint_conflict",
+      request_id: "req-1",
+      duration_ms: 12,
+      generation_route: "menu",
+      http_status: 422,
+    });
+    assert.equal(assertPrivacyLogs(`${line}\n`).generationLines, 1);
+  });
 });
