@@ -14,14 +14,24 @@ Managed Supabase プロジェクトの作成から、Auth（コールバック /
 
 ## 1. プロジェクト作成と秘密の記録
 
-1. 選定リージョンで managed プロジェクトを作成する。
-2. 次をデプロイ用シークレットマネージャへ記録する（メンテナンス用クレデンシャルとは別）:
+1. 選定リージョンで managed プロジェクトを作成する（日本向けなら **Asia-Pacific** など近いリージョン）。
+2. **Database password** は強力な値を生成し、シークレットマネージャへ保存する（再表示できない想定）。
+3. **New project 画面の Security**（作成時のチェックボックス）は次に固定する:
+
+   | 項目 | 設定 | 理由 |
+   | --- | --- | --- |
+   | **Enable Data API** | **オン** | ブラウザの `supabase-js` が PostgREST（Data API）経由で `public` を読む。オフだとアプリの DB アクセスが成立しない |
+   | **Automatically expose new tables** | **オフ** | 本リポジトリは migration で `revoke all` → 必要分だけ `grant` する least-privilege。新表の自動公開は権限境界と逆。Dashboard も手動制御時は無効を推奨 |
+   | **Enable automatic RLS** | **オン** | migration でも `enable row level security` 済み。Dashboard や手作業で `public` に表ができたときの fail-closed 保険（policy なしならクライアントから読めない） |
+
+4. **GitHub (optional)** の「コード push で schema を自動デプロイ」は、本リポジトリの正本手順（クリーンなコミット上の `db push` / 保護リリース）と別経路になる。**未連携のまま**、または連携しても **自動 migration に頼らない**（適用順・検証は [README.md](./README.md) と本ファイル §3）。
+5. 作成後、次をデプロイ用シークレットマネージャへ記録する（メンテナンス用クレデンシャルとは別）:
    - 正確な 20 文字 project ref
    - 正確な origin `https://<project-ref>.supabase.co`
    - publishable key
    - service-role key
    - 管理者用デプロイ DB URL
-3. この MVP ではカスタム / 任意 REST origin を拒否する。ブラウザとサーバのアプリ URL は同じ managed origin、publishable key も同一値とする。
+6. この MVP ではカスタム / 任意 REST origin を拒否する。ブラウザとサーバのアプリ URL は同じ managed origin、publishable key も同一値とする。
 
 ## 2. Auth サイト URL とコールバック
 

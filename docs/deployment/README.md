@@ -90,13 +90,23 @@ CLI だけでは完結しない準備です。アカウントを作った直後�
 ### 1.1 Supabase
 
 1. [Supabase Dashboard](https://supabase.com/dashboard) で組織・プロジェクトを作成する。
-2. リージョンを選び、**Database password** を生成してシークレットマネージャへ保存する（再表示できない想定で扱う）。
-3. **Settings → API** から次を記録する（値は印刷・コミットしない）:
+2. リージョンを選ぶ（日本向け利用者なら **Asia-Pacific** など近いリージョン）。
+3. **Database password** を生成し、シークレットマネージャへ保存する（再表示できない想定で扱う）。
+4. **New project の Security** は次の固定方針（詳細・理由は [supabase.md §1](./supabase.md)）:
+
+   | 項目 | 設定 |
+   | --- | --- |
+   | Enable Data API | **オン**（PostgREST / `supabase-js` 必須） |
+   | Automatically expose new tables | **オフ**（migration の明示 GRANT と least-privilege） |
+   | Enable automatic RLS | **オン**（`public` 新表の fail-closed 保険） |
+
+5. **GitHub (optional)** のスキーマ自動デプロイは、本リポジトリの運用（オペレータの `db push` / 保護手順）と別経路になるため、**未連携か、連携しても自動 migration に頼らない**。
+6. 作成後、**Settings → API** から次を記録する（値は印刷・コミットしない）:
    - Project URL（`https://<20文字ref>.supabase.co` のみ。カスタム REST origin は不可）
    - `anon` / publishable key
    - `service_role` key
-4. **Settings → General** の Reference ID（20 文字）を `SUPABASE_PROJECT_ID` として控える。
-5. Auth は [supabase.md](./supabase.md) に従う（Site URL / Redirect / Google / **Custom SMTP** / メールテンプレート）:
+7. **Settings → General** の Reference ID（20 文字）を `SUPABASE_PROJECT_ID` として控える。
+8. Auth は [supabase.md](./supabase.md) に従う（Site URL / Redirect / Google / **Custom SMTP** / メールテンプレート）:
    - Site URL は **後で決まる Netlify 本番 origin** に合わせる（仮 URL のままだとマジックリンクがずれる）。
    - ローカル開発用 `http://127.0.0.1:5173/auth/callback` は許可リストに残してよい。
    - **マジックリンク本番運用には Custom SMTP が必須**（既定 SMTP はチーム内探索用。正本: supabase.md §2.3）。
