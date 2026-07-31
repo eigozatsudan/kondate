@@ -47,6 +47,15 @@ export const PLUS_LP_FLYER_TITLE = "チラシから 1 週間" as const;
 export const PLUS_LP_FLYER_BODY =
   "スーパーのチラシ写真を送ると、その特売を踏まえた 1 週間分の献立づくりに進めます（Plus だけの機能です）。" as const;
 
+/**
+ * Plus アップグレード申込の一時クローズ。
+ * true のあいだ LP の Checkout を閉じ、開発中バナーを出す（公開時に false に戻す）。
+ */
+export const PLUS_LP_UPGRADE_COMING_SOON = true as const;
+export const PLUS_LP_COMING_SOON_BADGE = "ただいま開発中" as const;
+export const PLUS_LP_COMING_SOON_BODY =
+  "Plus へのアップグレードはもう少しで公開予定です。今はお申し込みいただけません。お楽しみに！" as const;
+
 const CHECKOUT_GENERIC_ERROR =
   "お支払い画面を開けませんでした。時間をおいてもう一度お試しください" as const;
 const PORTAL_GENERIC_ERROR =
@@ -284,7 +293,7 @@ export function PlusLandingPage({
             <p className="plus-landing__lead">{PLUS_LP_LEAD}</p>
             <p className="plus-landing__lead-body">{PLUS_LP_LEAD_BODY}</p>
             <p className="plus-landing__lead-sub">{PLUS_LP_LEAD_SUB}</p>
-            {view.checkoutEnabled ? (
+            {view.checkoutEnabled && !PLUS_LP_UPGRADE_COMING_SOON ? (
               <p className="plus-landing__trial">{PLUS_LP_TRIAL}</p>
             ) : (
               <p className="plus-landing__neutral">{PLUS_LP_NEUTRAL_SUB}</p>
@@ -394,13 +403,33 @@ export function PlusLandingPage({
 
           <section className="stack gap-3" aria-label="お支払い">
             <h2 className="plus-landing__section-title">お支払いについて</h2>
-            <p className="type-small">
-              月額または年額を選び、「Plus
-              をはじめる」を押すとカード入力の画面へ移ります。解約や領収の確認は、加入後に設定から行えます。
-            </p>
-            {!view.checkoutEnabled ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
+            {PLUS_LP_UPGRADE_COMING_SOON ? (
+              <p className="type-small">
+                月額・年額の料金は下記のとおりです。アップグレードのお申し込みは公開後にご利用いただけます。
+              </p>
+            ) : (
+              <p className="type-small">
+                月額または年額を選び、「Plus
+                をはじめる」を押すとカード入力の画面へ移ります。解約や領収の確認は、加入後に設定から行えます。
+              </p>
+            )}
+            {PLUS_LP_UPGRADE_COMING_SOON ? (
+              <div
+                className="plus-landing__coming-soon"
+                role="status"
+                data-testid="plus-coming-soon"
+              >
+                <span className="plus-landing__coming-soon-badge" aria-hidden="true">
+                  ✨ {PLUS_LP_COMING_SOON_BADGE}
+                </span>
+                <p className="plus-landing__coming-soon-body">{PLUS_LP_COMING_SOON_BODY}</p>
+              </div>
+            ) : null}
+            {!view.checkoutEnabled && !PLUS_LP_UPGRADE_COMING_SOON ? (
+              <p role="status">{SURFACES_CLOSED_COPY}</p>
+            ) : null}
             <CheckoutIntervalForm
-              disabled={!view.checkoutEnabled}
+              disabled={!view.checkoutEnabled || PLUS_LP_UPGRADE_COMING_SOON}
               pending={pending}
               onSubmit={(interval) => {
                 void runCheckout(interval);

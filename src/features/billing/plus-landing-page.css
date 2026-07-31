@@ -130,3 +130,58 @@
   font-weight: 600;
   background: color-mix(in srgb, var(--section-tint, #f6f6f4) 80%, #fff);
 }
+
+/* Plus 申込・開発中バナー（一時クローズ用。ポップだが注意を引く） */
+.plus-landing__coming-soon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 1rem 1.125rem;
+  text-align: center;
+  border-radius: 1rem;
+  border: 2px dashed color-mix(in srgb, var(--primary, #c45c26) 55%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--primary, #c45c26) 12%, var(--surface, #fff)) 0%,
+    color-mix(in srgb, var(--section-tint, #f6f6f4) 85%, #fff) 100%
+  );
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--primary, #c45c26) 18%, transparent);
+}
+
+.plus-landing__coming-soon-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.75rem;
+  padding: 0.2rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--primary-ink, #fff);
+  background: var(--primary, #c45c26);
+  transform: rotate(-1.5deg);
+}
+
+.plus-landing__coming-soon-body {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.55;
+  color: color-mix(in srgb, currentColor 92%, transparent);
+}
+
+/* 開発中クローズ時の CTA を「押せない」見た目に寄せる */
+.plus-landing .primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  filter: grayscale(0.25);
+  box-shadow: none;
+}
+
+.plus-landing fieldset:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

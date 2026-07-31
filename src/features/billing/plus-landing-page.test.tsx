@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { createMemoryRouter } from "react-router";
@@ -11,7 +11,8 @@ import { PAST_DUE_COPY, SURFACES_CLOSED_COPY } from "./billing-ui-copy";
 import {
   PLUS_LP_ACTIVE,
   PLUS_LP_CANCEL,
-  PLUS_LP_CHECKOUT_IN_PROGRESS,
+  PLUS_LP_COMING_SOON_BADGE,
+  PLUS_LP_COMING_SOON_BODY,
   PLUS_LP_FEATURES_TITLE,
   PLUS_LP_FLYER_TITLE,
   PLUS_LP_H1,
@@ -22,7 +23,7 @@ import {
   PLUS_LP_QUALITY_TITLE,
   PLUS_LP_QUOTA_TITLE,
   PLUS_LP_SETTINGS_LINK,
-  PLUS_LP_TRIAL,
+  PLUS_LP_UPGRADE_COMING_SOON,
   PlusLandingPage,
 } from "./plus-landing-page";
 
@@ -113,12 +114,18 @@ describe("PlusLandingPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: PLUS_LP_H1 })).toBeVisible();
     expect(screen.getByText(PLUS_LP_LEAD)).toBeVisible();
     expect(screen.getByText(PLUS_LP_LEAD_BODY)).toBeVisible();
-    expect(screen.getByText(PLUS_LP_TRIAL)).toBeVisible();
+    // 開発中クローズ中はトライアル訴求を隠し、ニュートラル副題を出す
+    expect(screen.getByText(PLUS_LP_NEUTRAL_SUB)).toBeVisible();
     expect(screen.getByRole("heading", { level: 2, name: PLUS_LP_FEATURES_TITLE })).toBeVisible();
     expect(screen.getByRole("heading", { level: 3, name: PLUS_LP_QUOTA_TITLE })).toBeVisible();
     expect(screen.getByRole("heading", { level: 3, name: PLUS_LP_QUALITY_TITLE })).toBeVisible();
     expect(screen.getByRole("heading", { level: 3, name: PLUS_LP_FLYER_TITLE })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeEnabled();
+    // 一時クローズ: 申込ボタンは無効 + 開発中バナー
+    expect(PLUS_LP_UPGRADE_COMING_SOON).toBe(true);
+    expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeDisabled();
+    expect(screen.getByTestId("plus-coming-soon")).toBeVisible();
+    expect(screen.getByText(PLUS_LP_COMING_SOON_BODY)).toBeVisible();
+    expect(screen.getByText(new RegExp(PLUS_LP_COMING_SOON_BADGE, "u"))).toBeVisible();
     // 比較表だけを見る（カードにも同数字が出るため getByText 単独禁止 R-C3）
     const table = screen.getByTestId("plus-compare");
     expect(within(table).getByText(String(planQuota.free.successPerDay))).toBeVisible();
@@ -131,9 +138,14 @@ describe("PlusLandingPage", () => {
 
   it("disables checkout and hides trial pitch when surfaces closed", () => {
     renderLp({ entitlement: { ...freeOpen, productSurfacesOpen: false } });
-    expect(screen.getByText(SURFACES_CLOSED_COPY)).toBeVisible();
+    // 開発中バナーが surfaces クローズ文言より優先（二重表示しない）
+    if (PLUS_LP_UPGRADE_COMING_SOON) {
+      expect(screen.getByText(PLUS_LP_COMING_SOON_BODY)).toBeVisible();
+      expect(screen.queryByText(SURFACES_CLOSED_COPY)).not.toBeInTheDocument();
+    } else {
+      expect(screen.getByText(SURFACES_CLOSED_COPY)).toBeVisible();
+    }
     expect(screen.getByRole("button", { name: "Plus をはじめる" })).toBeDisabled();
-    expect(screen.queryByText(PLUS_LP_TRIAL)).not.toBeInTheDocument();
     expect(screen.getByText(PLUS_LP_NEUTRAL_SUB)).toBeVisible();
   });
 
@@ -173,13 +185,13 @@ describe("PlusLandingPage", () => {
     expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
   });
 
-  it("shows in-progress message when checkout returns billing_checkout_in_progress", async () => {
-    const onCheckout = vi.fn(() => Promise.reject(new Error("billing_checkout_in_progress")));
+  it("keeps Plus start button non-interactive while upgrade is under development", async () => {
+    const onCheckout = vi.fn(() => Promise.resolve());
     const user = userEvent.setup();
     renderLp({ entitlement: freeOpen, onCheckout });
-    await user.click(screen.getByRole("button", { name: "Plus をはじめる" }));
-    await waitFor(() => {
-      expect(screen.getByText(PLUS_LP_CHECKOUT_IN_PROGRESS)).toBeVisible();
-    });
+    const button = screen.getByRole("button", { name: "Plus をはじめる" });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(onCheckout).not.toHaveBeenCalled();
   });
 });
