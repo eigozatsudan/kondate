@@ -88,6 +88,30 @@ export function PantrySelector({
     setPendingItem(null);
   };
 
+  /** 既選択の期限切れ hydrate か、新規選択かで確認後の選択更新を分ける (PLAN-1 residual) */
+  const isPendingAlreadySelected =
+    pendingItem !== null && selections.some((entry) => entry.pantryItemId === pendingItem.id);
+
+  const confirmPendingExpired = (): void => {
+    if (pendingItem === null) return;
+    const checkedAt = now();
+    onAttemptChange(confirmExpiredPantryItem(attempt, pendingItem.id, checkedAt));
+    // 既選択なら attempt だけ更新。重複 prefer_use 行を足さない
+    if (!isPendingAlreadySelected) {
+      onChange([...selections, { pantryItemId: pendingItem.id, priority: "prefer_use" }]);
+    }
+    closeDialog();
+  };
+
+  const declinePendingExpired = (): void => {
+    if (pendingItem === null) return;
+    // 既選択の辞退は選択解除。閉じるだけだと effect が即再オープンする
+    if (isPendingAlreadySelected) {
+      onChange(selections.filter((entry) => entry.pantryItemId !== pendingItem.id));
+    }
+    closeDialog();
+  };
+
   const select = (item: PantryItem): void => {
     const checkedAt = now();
     if (
@@ -175,7 +199,7 @@ export function PantrySelector({
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
-                closeDialog();
+                declinePendingExpired();
                 return;
               }
               if (event.key !== "Tab") return;
@@ -199,10 +223,7 @@ export function PantrySelector({
               type="button"
               disabled={disabled}
               onClick={() => {
-                const checkedAt = now();
-                onAttemptChange(confirmExpiredPantryItem(attempt, pendingItem.id, checkedAt));
-                onChange([...selections, { pantryItemId: pendingItem.id, priority: "prefer_use" }]);
-                closeDialog();
+                confirmPendingExpired();
               }}
             >
               実物を確認して今回だけ選ぶ
@@ -213,7 +234,7 @@ export function PantrySelector({
               type="button"
               disabled={disabled}
               onClick={() => {
-                closeDialog();
+                declinePendingExpired();
               }}
             >
               選ばない

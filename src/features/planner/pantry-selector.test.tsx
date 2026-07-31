@@ -163,6 +163,64 @@ it("期限確認中は背景の pointer 操作で選択を変更できない", a
   expect(onChange).not.toHaveBeenCalled();
 });
 
+it("既選択の期限切れを確認しても prefer_use 行を重複追加しない (PLAN-1 hydrate confirm)", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  const onAttemptChange = vi.fn();
+  const expiredItem: PantryItem = {
+    ...item,
+    expiresOn: "2026-07-01",
+  };
+  render(
+    <PantrySelector
+      items={[expiredItem]}
+      itemsStatus="loaded"
+      selections={[{ pantryItemId: expiredItem.id, priority: "must_use" }]}
+      attempt={{
+        idempotencyKey: "73000000-0000-0000-0000-000000000016",
+        qualityMode: false,
+        expiredPantryChecks: [],
+      }}
+      onAttemptChange={onAttemptChange}
+      onChange={onChange}
+      now={() => new Date("2026-07-11T03:00:00.000Z")}
+    />,
+  );
+
+  expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }));
+  expect(onAttemptChange).toHaveBeenCalled();
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+it("既選択の期限切れを選ばないで選択解除する (PLAN-1 hydrate decline)", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  const expiredItem: PantryItem = {
+    ...item,
+    expiresOn: "2026-07-01",
+  };
+  render(
+    <PantrySelector
+      items={[expiredItem]}
+      itemsStatus="loaded"
+      selections={[{ pantryItemId: expiredItem.id, priority: "must_use" }]}
+      attempt={{
+        idempotencyKey: "73000000-0000-0000-0000-000000000017",
+        qualityMode: false,
+        expiredPantryChecks: [],
+      }}
+      onAttemptChange={vi.fn()}
+      onChange={onChange}
+      now={() => new Date("2026-07-11T03:00:00.000Z")}
+    />,
+  );
+
+  expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "選ばない" }));
+  expect(onChange).toHaveBeenCalledWith([]);
+});
+
 it("確認中の同じ attempt 再描画は dialog focus を保ち、別 attempt は trigger へ戻す", async () => {
   const user = userEvent.setup();
   const commonProps = {
