@@ -10,10 +10,10 @@
 [functions]
   external_node_modules = ["sharp"]
 
-# チラシ: 画像デコード負荷。memory は Credit-based Pro+ で有効。
+# チラシ: sharp 同梱。memory は Credit-based Pro+ 専用（Free は 422 でデプロイ失敗）。
+# Pro 復帰時のみ memory = "2048" を有効化し、flyer-weekly.ts の config.memory も合わせる。
 [functions."flyer-weekly"]
   external_node_modules = ["sharp"]
-  memory = "2048"
 
 [context.production]
   # U5-I1: CONTEXT 欠落時の deploy-preview CSP へ fail-open しないよう --context を明示する

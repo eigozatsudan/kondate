@@ -104,7 +104,7 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
 export const config: Config = {
   path: "/api/flyer-weekly",
   method: "POST",
-  // sharp デコード + vision。Credit-based Pro 以上で有効。他プランは既定 1024MB のまま。
-  memory: 2048,
+  // memory は Credit-based Pro+ 専用。Free では API が 422 でデプロイ全体失敗するため未指定（既定 1024MB）。
+  // Pro 復帰時は netlify.toml の memory とセットで memory: 2048 を戻す（docs/deployment/README.md §4.3）。
   rateLimit: { windowLimit: 20, windowSize: 180, aggregateBy: ["ip"] },
 };
