@@ -1,6 +1,6 @@
 /**
  * R1 Stage 1: Models API カタログ完全列挙 + 機械フィルタ survivor 表を書く。
- * 設計: docs/superpowers/specs/2026-07-27-openrouter-candidate-configuration-reslist-design.md §5.2.0
+ * 設計メモ（履歴）: docs/archive/superpowers/specs/2026-07-27-openrouter-candidate-configuration-reslist-design.md §5.2.0
  *
  * Method B（Stage-1 専用高予算・1 発取得）。本番 chat の 1 MiB / 5s は変更しない。
  * 有料キーが必要。キー・生 body・raw model output は成果物に書かない。
@@ -230,7 +230,7 @@ export async function buildCatalogSnapshot({ apiKey, fetchImpl = fetch, now = ()
 export async function main(env = process.env) {
   const snapshot = await buildCatalogSnapshot({ apiKey: env.OPENROUTER_API_KEY });
   const day = snapshot.snapshotDate.slice(0, 10);
-  const outDir = join(repoRoot, "docs/bugfix/artifacts");
+  const outDir = join(repoRoot, "docs/archive/bugfix/artifacts");
   const outPath = join(outDir, `r1-models-snapshot-${day}.json`);
   await mkdir(outDir, { recursive: true });
   // 秘密・生 body なしの closed 成果物のみ書く
@@ -279,8 +279,8 @@ export async function main(env = process.env) {
     JSON.stringify(
       {
         ok: true,
-        outPath: `docs/bugfix/artifacts/r1-models-snapshot-${day}.json`,
-        detailPath: `docs/bugfix/artifacts/r1-models-snapshot-${day}-mechanical-exclusions.json`,
+        outPath: `docs/archive/bugfix/artifacts/r1-models-snapshot-${day}.json`,
+        detailPath: `docs/archive/bugfix/artifacts/r1-models-snapshot-${day}-mechanical-exclusions.json`,
         entryCount: snapshot.entryCount,
         mechanicalSurvivors: snapshot.mechanicalSurvivors.length,
         postExSurvivors: snapshot.survivors.length,

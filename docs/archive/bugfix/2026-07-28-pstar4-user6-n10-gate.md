@@ -1,0 +1,66 @@
+# P*=$4 再改訂 + 指定6モデル N=10 gate（2026-07-28）
+
+## 背景
+
+指定6モデル診断（P*=$1）では 5/6 が機械 EXCLUDE または timeout。ユーザー指示 **A** =  
+**P* 再改訂 → 再 snapshot → N=10**。
+
+併せて直前の本筋修正（品数不一致 → `invalid_menu_structure`、prompt に確定品数契約）が有効。
+
+## P* 改訂
+
+| 項目 | 値 |
+|------|-----|
+| 旧 | $1.00 / 1M |
+| 新 | **$4.00 / 1M** |
+| 正本 | `scripts/verify-openrouter-models.mjs` → `maxPromptPlusCompletionUsdPerMillion = 4` |
+| 根拠 | grok-4.3 = $3.75 を機械通過させる（他 nano/gemini/minimax も P* 内） |
+
+設計追記: `docs/archive/superpowers/specs/2026-07-27-openrouter-r2-prompt-materialize-r3-price-cap-design.md` §15.1
+
+## Snapshot（P*=4）
+
+- `docs/archive/bugfix/artifacts/r1-models-snapshot-2026-07-28.json`
+- entryCount 341 / mechanicalSurvivors **155** / postEx **138**
+
+## N=10 結果（要約）
+
+| 構成 | 結果 |
+|------|------|
+| **`["x-ai/grok-4.3"]`** | **10/10 PASS**（primary_success） |
+| 他4構成（nano / gemini-lite / minimax / deepseek-v4-flash） | unit1 FAIL |
+
+詳細: `docs/archive/bugfix/artifacts/r1-user6-p4-decision-record-2026-07-28.md`
+
+## 本番提案（初回・この文書時点）
+
+```bash
+OPENROUTER_MODELS=x-ai/grok-4.3
+```
+
+## 続報（同日・安い帯探索後）
+
+strict-accept 安価 shortlist の N=10 で追加 PASS:
+
+| 構成 | USD/1M | 結果 |
+|------|-------:|------|
+| `["inception/mercury-2"]` | 1.00 | **10/10**・推奨 |
+| `["openai/gpt-4.1-mini"]` | 2.00 | **10/10** |
+| `["inception/mercury-2","openai/gpt-4.1-nano"]` | 1.00+0.50 | **10/10** |
+| `["x-ai/grok-4.3"]` | 3.75 | 10/10（既存） |
+
+詳細: `docs/archive/bugfix/2026-07-28-cheap-strict-accept-n10.md`
+
+現行推奨:
+
+```bash
+OPENROUTER_MODELS=inception/mercury-2
+# または repair 付き
+OPENROUTER_MODELS=inception/mercury-2,openai/gpt-4.1-nano
+```
+
+## Ship 状態
+
+- **exact 構成 N=10 合格が複数**（mercury-2 が最安推奨）
+- デプロイは運用者が hard limit・env を確認のうえ実施（本エージェントは push/deploy しない）
+- qwen3.7-flash は SO AND 不足のまま別設計が必要

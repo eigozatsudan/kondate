@@ -257,7 +257,11 @@ export async function main(env = process.env, argv = process.argv.slice(2)) {
   process.stdout.write(JSON.stringify(summary) + "\n");
 
   const day = new Date().toISOString().slice(0, 10);
-  const defaultOut = join(repoRoot, "docs/bugfix/artifacts", `strict-schema-probe-${day}.json`);
+  const defaultOut = join(
+    repoRoot,
+    "docs/archive/bugfix/artifacts",
+    `strict-schema-probe-${day}.json`,
+  );
   const path = outPath ?? defaultOut;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(

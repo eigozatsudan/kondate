@@ -27,8 +27,8 @@ export const officialModelsUrl = `${officialOpenRouterBaseUrl}/models?output_mod
 
 /**
  * P*=$4 後・N=10 合格構成の union。
- * 証跡: docs/bugfix/2026-07-28-cheap-strict-accept-n10.md
- *       docs/bugfix/2026-07-28-gpt56-luna-enablement.md
+ * 証跡（履歴）: docs/archive/bugfix/2026-07-28-cheap-strict-accept-n10.md
+ *               docs/archive/bugfix/2026-07-28-gpt56-luna-enablement.md
  */
 export const candidateModelIds = Object.freeze([
   "openai/gpt-5.6-luna",

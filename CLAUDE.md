@@ -17,72 +17,41 @@ step entirely.
 
 ## What this repository is
 
-こんだて日和 (Kondate) MVP — a mobile-first React/Vite SPA backed by Supabase and
-Netlify Functions. The full product spec and the delivery roadmap are the only
-sources of truth for scope and design:
+こんだて日和 (Kondate) — a mobile-first React/Vite SPA backed by Supabase and
+Netlify Functions (Plus billing via Stripe). MVP delivery and many follow-on
+increments are **already implemented**.
 
-- Design spec: `docs/superpowers/specs/2026-07-11-kondate-mvp-design.md`
-  (baseline commit `cd0cb70` or a later commit that only clarifies it — never a
-  silent fallback to older wording). Guided planner / optional household:
-  `docs/superpowers/specs/2026-07-22-guided-planner-optional-household-design.md`.
-- Roadmap: `docs/superpowers/plans/2026-07-11-kondate-mvp-00-roadmap.md`
-- Plans 1–5: `docs/superpowers/plans/2026-07-11-kondate-mvp-0{1..5}-*.md`
-- Plan 7 (guided planner): `docs/superpowers/plans/2026-07-22-guided-planner-optional-household.md`
-- Plan 6 (hardening/deployment): `docs/superpowers/plans/2026-07-11-kondate-mvp-06-hardening-deployment.md`
+### Authority (read this first)
 
-Delivery order follows the roadmap table (1 → 2 → 3 → 4 → 5 → **7 → 6**), not the
-filename number on Plan 6: hardening runs only after Plans 1–5 and Plan 7. A plan
-begins only after every plan it depends on has passed its full verification gate
-and review. Within a plan, Tasks execute in numeric order — do not skip ahead or
-reorder because a later Task looks easier.
+1. **Implementation is the source of truth** for behavior and locked values:
+   `src/`, `netlify/functions/`, `shared/`, `supabase/migrations/`, tests, `e2e/`.
+2. **Agent process / style**: this file + `AGENTS.md` + `SubAgents.md`.
+3. **Operational docs** (local dev, deploy, runbooks, testing): see `docs/README.md`.
+4. **`docs/archive/`** — historical Superpowers plans/specs, adversarial reviews,
+   gate evidence. **Do not open by default.** Use only for archaeology when the
+   human asks about past decisions. Never override implementation with archive text.
 
-**Never re-derive or simplify the design.** These documents were produced through an
-adversarial review process and contain exact values (ports, origins, TTLs, quotas,
-schema names, route paths) that look like they could be tightened or generalized —
-they can't. If a plan step's literal code or exact value seems wrong, redundant, or
-overcautious, that is a signal to ask the human before changing it, not to "improve"
-it silently.
+Exact values (ports, origins, TTLs, quotas, schema names, route paths, model
+allowlists) live in code and contracts (especially `shared/contracts/`). If a
+value looks overcautious or redundant, **ask the human** before changing it — do
+not "tighten" or generalize silently. Historical design/plan wording in
+`docs/archive/` is not an excuse to re-litigate shipped behavior.
 
-## Required per-Task workflow
+Doc map for agents: **`docs/README.md`**.
 
-Exactly one Task per work session unless the human explicitly asks for more. For
-each Task:
+### When the human assigns a plan Task
 
-1. **Read first**: the full text of the target Task, plus the contracts/interfaces
-   of any Task it depends on (check "Consumes:" in the Task header and the plan's
-   "Locked interfaces produced by this increment" section). Do not start from
-   memory of a prior session.
-2. **RED**: write the failing tests the plan specifies (plan Task text usually gives
-   exact test code — transcribe it, don't invent alternatives).
-3. Run the tests in Docker and confirm they fail for the expected reason (missing
-   module/export), not a typo.
-4. **GREEN**: implement the minimum code to pass, following the plan's given code
-   where the plan supplies it verbatim.
-5. **REFACTOR**: clean up only within the scope of this Task.
-6. **検証 (verify)**: run the Task's focused tests, `typecheck`, `lint`,
-   `format:check` (and any migration/pgTAP the Task adds) in Docker. Use
-   `format:check`, not `format` — the latter is `prettier --write .` and mutates
-   files, which is not a verification step.
-7. **レビュー (review)**: a read-only pass over the diff for spec compliance and
-   quality before/around commit — see `SubAgents.md` for how to structure this with
-   subagents.
-8. `git diff --check` and `git status --short` before committing.
-9. **Commit**: one Conventional Commit in Japanese (see `AGENTS.md` for format and
-   examples). Historically a Task may end as an implementation commit plus a small
-   `fix:` follow-up once review finds something — that is fine; re-running the
-   full workflow for the fix is not required, but the fix still needs its own
-   focused verification.
+If (and only if) the human points at a specific plan Task to execute, follow that
+Task text and `SubAgents.md`. Do not browse `docs/archive/superpowers/plans/` to
+invent the next Task. Prefer one Task per work session unless the human asks for
+more. Progress ledger (optional, git-ignored): `.superpowers/sdd/progress.md` —
+if it disagrees with `git log`, trust `git log`.
 
-Track progress in `.superpowers/sdd/progress.md` (git-ignored). Before starting,
-read it and `git log` to see which Tasks are already complete — never re-implement
-a Task the ledger marks done. If the ledger and `git log` disagree, trust `git log`.
-Match the existing file's own style rather than a fixed template: it records one
-line per Task with either `complete` (commit hash(es), review clean) or
-`implemented` (work landed but something — e.g. a missing `pg_prove` binary, a
-deferred cross-Task wiring — kept verification partial); keep using `implemented`
-honestly instead of forcing `complete` when a follow-up is still owed.
+Typical Task loop when doing plan-driven work: read Task → RED tests → GREEN
+minimum implementation → focused verify (`format:check`, lint, typecheck, focused
+tests; use `format:check` not `format`) → review → Conventional Commit in Japanese.
 
-## Global constraints (condensed — the plan files are authoritative)
+## Global constraints (condensed — verify exact numbers in code/contracts)
 
 - Node.js `>=24 <25` only; ESM; TypeScript `strict: true`, no `any` or unchecked
   casts at network/DB boundaries.
@@ -101,7 +70,7 @@ honestly instead of forcing `complete` when a follow-up is still owed.
   equivalent routers). Mock `mock/*:free` is allowed only when
   `OPENROUTER_BASE_URL` is the exact local mock URL. Models must support both
   `structured_outputs` and `response_format`, with prompt+completion ≤ $4.00/1M.
-  Free-only was abolished by Plan 8 (`2026-07-26-paid-openrouter-models`).
+  Free-only production models were abolished (paid allowlist only on real API).
 - Never log or persist names, emails, allergies, free-form conditions, prompts, or
   raw AI output. Only Zod-validated structures are stored.
 - Current household safety constraints always override historical snapshots.
@@ -109,19 +78,18 @@ honestly instead of forcing `complete` when a follow-up is still owed.
 - All user-owned public tables have RLS + explicit grants; shared safety catalogs
   are authenticated read-only (not user-owned, still not open-write); AI control
   tables live in a non-exposed `private` schema.
-- Release-locked quota anchors (verify exact current values in the roadmap's
-  Locked Environment Contract — Plan 8 改訂後の値): 3 successful generations
-  per JST day, 6 external AI sends/day and 4 per 600s per user, 20/day
-  application-wide default, 24s per OpenRouter attempt / 55s total Function
-  budget (Netlify sync 60s wall; see `shared/contracts/function-budget.ts`), 300s
-  auth-continuation TTL, 30-day retention for terminal generation/shopping-replay
-  rows.
+- Release-locked quota anchors (verify exact current values in
+  `shared/contracts/plan-quota.ts`, env, and preflight — do not invent from
+  memory): freemium daily generation success limit, per-user AI send limits,
+  application-wide daily AI default, OpenRouter attempt budget / Function total
+  budget (see `shared/contracts/function-budget.ts`; Netlify sync 60s wall),
+  auth-continuation TTL, retention for terminal generation/shopping-replay rows.
 - Ownership boundaries are fixed: `shared/contracts` ← browser + Functions;
   `shared/safety` ← Functions + emergency-menu service; `src/features` ← browser
   only; `netlify/functions` ← server only. Do not cross these.
-- Locked interfaces, API route ownership, and migration order (see the roadmap's
-  tables) are not renegotiable within a Task — a Task that seems to need a locked
-  interface changed is a signal to stop and ask, not to change it.
+- Locked interfaces, API route ownership, and migration order already in the
+  tree are not renegotiable casually — needing to redefine a locked export or
+  cross an ownership boundary is a signal to stop and ask, not to change it.
 
 ## Hard prohibitions
 

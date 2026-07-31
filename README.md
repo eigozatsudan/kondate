@@ -206,9 +206,10 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 ### こんだて日和 Plus（Stripe 課金）
 
-設計の正本: [docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md](docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md)
-運用 reconcile: [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)
-本番 env 境界: [docs/deployment/netlify.md](docs/deployment/netlify.md)
+実装の正本: `shared/contracts/plan-quota.ts`、`netlify/functions/billing-*`、関連 migration  
+運用 reconcile: [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)  
+本番 env 境界: [docs/deployment/netlify.md](docs/deployment/netlify.md)  
+（配送時の設計メモは [docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md) — 実装と差があれば実装を正）
 
 #### 何が Plus か（製品の要点）
 
@@ -459,6 +460,7 @@ vendorしたSupabase公式Docker構成は、次のwrapperで更新します。
 | 本番デプロイ・env 境界・preflight | [docs/deployment/netlify.md](docs/deployment/netlify.md)                                                                     |
 | Supabase 本番                     | [docs/deployment/supabase.md](docs/deployment/supabase.md)                                                                   |
 | リリースゲート                    | [docs/testing/release-checklist.md](docs/testing/release-checklist.md)                                                       |
-| Plus / Stripe 設計                | [docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md](docs/superpowers/specs/2026-07-29-paid-plan-stripe-design.md) |
-| 課金 reconcile / Portal チェック  | [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)                                                     |
-| OpenRouter 有料モデル             | [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)                                                                   |
+| ドキュメント索引（エージェント向け） | [docs/README.md](docs/README.md)                                                                                               |
+| 課金 reconcile / Portal チェック     | [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)                                                       |
+| OpenRouter 有料モデル                | [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)                                                                     |
+| Plus 設計メモ（履歴）                | [docs/archive/…](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md)                                        |

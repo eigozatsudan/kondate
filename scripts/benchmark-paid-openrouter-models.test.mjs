@@ -172,7 +172,7 @@ test("candidate shortlist and exact ordered configurations match the N=10 freeze
   // KD-R1-17: frozen IDs ⊆ committed survivor artifact（P*=$4 snapshot）
   const artifactPath = join(
     dirname(fileURLToPath(import.meta.url)),
-    "../docs/bugfix/artifacts/r1-models-snapshot-2026-07-28.json",
+    "../docs/archive/bugfix/artifacts/r1-models-snapshot-2026-07-28.json",
   );
   const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
   const survivorIds = new Set(artifact.survivors.map((row) => row.id));

@@ -25,13 +25,11 @@ description: >
 
 ## 正本と制約
 
-- 設計・スコープの正本:
-  - `docs/superpowers/specs/2026-07-11-kondate-mvp-design.md`
-  - `docs/superpowers/specs/2026-07-22-guided-planner-optional-household-design.md`
-  - Phase 1 で列挙した `docs/superpowers/specs/*` の関連設計（レビュー成果物 `*-adversarial-review.md` / `*-secondary-review.md` 等は正本にしない）
-  - roadmap / plans
+- **実装が仕様の正**: `src/`、`netlify/functions/`、`shared/`、`supabase/migrations/`、テスト、`e2e/`
+- 運用ドキュメント索引: `docs/README.md`（`docs/archive/` は既定で読まない）
+- 履歴の設計/計画が必要な考古学のみ: `docs/archive/superpowers/specs|plans`（実装と矛盾したら実装を正）
 - プロセス: `CLAUDE.md`、`AGENTS.md`、`SubAgents.md`
-- **設計を再解釈・緩和しない。** ロック契約（origin、quota、RLS、TTL、モデル allowlist 等）に触れる変更は先にユーザー報告
+- **ロック契約を再解釈・緩和しない。** origin、quota、RLS、TTL、モデル allowlist 等に触れる変更は先にユーザー報告
 - Node/npm は Docker 経由（`docker compose run --rm --no-deps app …`）。`db:test` / `e2e` はホストの `docker compose` / `./scripts/run-e2e.sh`
 - コマンドを `&&` / `;` で連結しない（1 コマンド = 1 ツール呼び出し）。assert ブロック等、既存 skill/workflow がまとめる例外のみ可
 - **禁止**: `git push`、PR 作成、本番/staging デプロイ、`--no-verify`、force push、破壊的 git（ユーザー明示なし）
@@ -177,9 +175,9 @@ python3 -c "import uuid; print(uuid.uuid4().hex[:8])"
 
 ### 設計索引（必須）
 
-1. `docs/superpowers/specs/` を列挙する
-2. 設計正本（`*-design.md` 等）を unit にマップする。純粋なレビューメモは正本にしない
-3. コードがあるのに設計ゼロの unit は、その旨を `plan.md` に明示し、実装と MVP design / 関連 plan を最低限紐づける
+1. **まず実装と契約**（`src/features/*`、`netlify/functions/*`、`shared/contracts`、`shared/safety`）を unit にマップする
+2. 運用 docs（`docs/README.md` の表）を必要なら読む。`docs/archive/` は実装と過去決定の突き合わせが必要な unit だけに限定
+3. コードがあるのに契約/テストが薄い unit は、その旨を `plan.md` に明示し、関連テスト・E2E を最低限紐づける
 
 ### 既定の機能単位（Kondate）
 
@@ -263,7 +261,7 @@ Reviewer 指示の要点（プロンプトに含める）:
 重点:
 1. 潜在バグ・エッジケース（null、レース、TTL、再送、部分失敗）
 2. リグレッションリスク（呼び出し側契約、idempotency、状態機械）
-3. 仕様と実装の乖離（design の文言を正とする）
+3. 仕様と実装の乖離（実装・契約・テストを正とする。archive design は参考のみ）
 4. データ不整合（RLS、所有権、snapshot vs current safety）
 5. セキュリティ（認証・認可、インジェクション、秘密、IDOR、continuation）
 

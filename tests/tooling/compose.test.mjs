@@ -475,8 +475,11 @@ test("documents the Docker-only clean initialization and verification workflow",
     readFile("docs/local-development.md", "utf8"),
     readFile("package.json", "utf8"),
     readFile("scripts/reset-local-db.sh", "utf8"),
-    readFile("docs/superpowers/specs/2026-07-13-pg17-supabase-refresh-design.md", "utf8"),
-    readFile("docs/superpowers/plans/2026-07-13-pg17-supabase-refresh.md", "utf8"),
+    readFile(
+      "docs/archive/superpowers/specs/2026-07-13-pg17-supabase-refresh-design.md",
+      "utf8",
+    ),
+    readFile("docs/archive/superpowers/plans/2026-07-13-pg17-supabase-refresh.md", "utf8"),
   ]);
 
   assert.match(

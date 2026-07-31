@@ -118,8 +118,8 @@ export async function main(env = process.env, argv = process.argv.slice(2)) {
   process.stdout.write(JSON.stringify(summary) + "\n");
 
   const day = new Date().toISOString().slice(0, 10);
-  const outPath = join(repoRoot, "docs/bugfix/artifacts", `quality-review-${day}.json`);
-  mkdirSync(join(repoRoot, "docs/bugfix/artifacts"), { recursive: true });
+  const outPath = join(repoRoot, "docs/archive/bugfix/artifacts", `quality-review-${day}.json`);
+  mkdirSync(join(repoRoot, "docs/archive/bugfix/artifacts"), { recursive: true });
   writeFileSync(
     outPath,
     JSON.stringify(

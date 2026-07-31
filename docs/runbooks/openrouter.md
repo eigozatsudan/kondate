@@ -41,9 +41,9 @@
 4. `["inception/mercury-2","openai/gpt-4.1-nano"]`（N=10 PASS）
 5. `["x-ai/grok-4.3"]`（N=10 PASS）
 
-Stage 1 カタログ snapshot / 意思決定記録:
-`docs/bugfix/artifacts/r1-models-snapshot-2026-07-28.json` /
-`docs/bugfix/2026-07-28-cheap-strict-accept-n10.md`
+Stage 1 カタログ snapshot / 意思決定記録（履歴）:
+`docs/archive/bugfix/artifacts/r1-models-snapshot-2026-07-28.json` /
+`docs/archive/bugfix/2026-07-28-cheap-strict-accept-n10.md`
 
 eligible 部分集合・preflight（R1 CLI）:
 
