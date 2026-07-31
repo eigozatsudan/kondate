@@ -17,10 +17,8 @@
 | Important | 7 |
 | Minor | 3 |
 
-**Verdict: Request changes**
-
-骨格（enum/DB 不変、追加前ダイアログ、フォーム文言の事情軸化、コピー単一ソース）は正しい。  
-実装計画に進む前に、下記 Important を **設計本文へ吸収**すること。Response 欄だけのメモでは不十分。
+**Verdict (at review time): Request changes**  
+**Post-r2 design:** I1–I7 および M1–M3 を設計本文 `2026-07-31-unsupported-diet-copy-clarity-design.md` r2 へ吸収済み → **Approve for implementation planning**
 
 ---
 
@@ -38,7 +36,7 @@
 - **Evidence:** 変更後ラベル「このアプリで作れない食事の事情はありますか」。MVP §6 ではアレルギー確認と対象外確認は別フィールド。現状 UI も分離済み。
 - **Failure:** 利用者がアレルギー・苦手・宗教制限などを「食事の事情」と広く解釈 → 該当あり → 出てくるのは3種別のみ → 誤選択または誤って kind 付与で **生成対象外**。
 - **Design fix:** 親質問を3種別にスコープ固定する。例:「離乳食・飲み込みの不安・治療食など、このアプリで献立を作れない事情はありますか」。または親の直下に常時「アレルギーや苦手は別の項目です」を固定。バリデーション／未確認メッセージの「食事の事情」も同スコープ語に揃える。
-- **Status:** open
+- **Status:** addressed in design r2
 
 ### I2. 追加前ダイアログ主文が「世帯全体が使えない」に読める
 
@@ -46,7 +44,7 @@
 - **Evidence:** 「次に当てはまる方のメニューには、このアプリでは対応していません。」補足はあるが主文に「その方個人向け／他家族向けは可」が無い。
 - **Failure:** 乳児＋大人世帯が初回ダイアログでアプリ全体を諦めて「やめる」→離脱。大人向け献立という本来の利用を失う。
 - **Design fix:** 主文を個人スコープに固定。例:「当てはまる方がいる場合、**その方個人向け**のメニューには対応していません。**他の家族向けの献立はこれまでどおり作れます。**」
-- **Status:** open
+- **Status:** addressed in design r2
 
 ### I3. a11y が「削除確認と同系統」と言いながら必須挙動が列挙不足
 
@@ -59,7 +57,7 @@
   3. 開く操作ごとに trigger を記録し close 時にその要素へ focus
   4. 見出しは `aria-label` または可視見出し + `aria-labelledby` をページ内で統一
   5. 主ボタン経路は single-flight（settings の `creatingDraftRef` / onboarding `isPending` と同等）
-- **Status:** open
+- **Status:** addressed in design r2
 
 ### I4. E2E／追加入口の列挙が曖昧で実装漏れを誘発
 
@@ -67,7 +65,7 @@
 - **Evidence:** 「`e2e/fixtures/auth.ts` ほか」。実経路は `auth.ts` の `completeMinimumOnboarding`、`onboarding.spec.ts`、`settings.spec.ts`、`menu-domain-pantry.spec.ts`、`history.ts` の `openFirstMemberEditor`（編集が無いとき「家族を追加」）。settings/onboarding 単体もボタン直後に `createDraft` を assert。
 - **Failure:** auth だけ直し他が落ちる、または「ほか」解釈で未修正マージ試み。
 - **Design fix:** 必須更新ファイルを列挙固定。「ほか」禁止。E2E は `confirmAddScopeNotice(page)` 等の1ヘルパーに「登録を続ける」を集約することを推奨として書く。
-- **Status:** open
+- **Status:** addressed in design r2
 
 ### I5. 「旧文言の入力面残存ゼロ（repo 検索）」が過広
 
@@ -77,7 +75,7 @@
 - **Design fix:** 検索範囲を固定:
   - 必須ゼロ: `src/features/household/**` のユーザー向け文字列（本番・schema・共有 copy・テスト期待値）
   - 意図的残置: `docs/**`、planner/generation 拒否コピー（§3）、必要ならコメント方針を1行
-- **Status:** open
+- **Status:** addressed in design r2
 
 ### I6. onboarding 完了バリデーションが schema と二重定義であることの未記載
 
@@ -85,7 +83,7 @@
 - **Evidence:** `household-onboarding-page.tsx` がローカルで `食べない食事があるか選んでください` / `該当する項目を選んでください` を保持。settings は schema 経由。
 - **Failure:** schema と共有定数だけ更新し onboarding エラーが旧文言のまま。
 - **Design fix:** onboarding complete 前バリデーション短文も同一共有定数を import すると §8.1 に明記。変更対象に1行追加。
-- **Status:** open
+- **Status:** addressed in design r2
 
 ### I7. 空状態ヘルプが「押すと入力が始まる」のまま（ダイアログと矛盾）
 
@@ -141,16 +139,8 @@
 
 ## 実装計画に進む前のゲート
 
-設計本文に最低限吸収すべき:
+- [x] I1–I7 / M1–M3 を設計 r2 本文へ吸収
+- [ ] `writing-plans` で実装計画を作成
+- [ ] 実装（subagent-driven または inline）
 
-1. I1 親質問のスコープ固定  
-2. I2 ダイアログ主文の個人／他家族スコープ  
-3. I3 a11y 必須列挙 + single-flight  
-4. I4 E2E/単体ファイル列挙固定  
-5. I5 旧文言検索範囲  
-6. I6 onboarding ローカル validate の共有定数化  
-7. I7 空状態ヘルプ文言
-
-上記反映後、再レビューは差分確認で足りる想定（フル再サイクル必須ではない）。Minor は実装計画 Task に落としても可。
-
-**Next:** 設計書 r2 へ I1–I7 を吸収 → 人間承認 → `writing-plans`
+**Next:** 実装計画 → 実装
