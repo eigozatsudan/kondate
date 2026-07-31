@@ -395,14 +395,14 @@ npm run preflight:production
 
 #### よくあるつまずき
 
-| 症状                             | 確認すること                                                                                                              |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| 設定に Plus 導線が出ない         | `BILLING_ENABLED` と `productSurfacesOpen`。kill 中は意図的に閉じる                                                       |
-| Checkout 後も Free のまま        | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ                   |
-| 品質モードが「通信を確認」になる | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示                                                |
+| 症状                                     | 確認すること                                                                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 設定に Plus 導線が出ない                 | `BILLING_ENABLED` と `productSurfacesOpen`。kill 中は意図的に閉じる                                                                |
+| Checkout 後も Free のまま                | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ                            |
+| 品質モードが「通信を確認」になる         | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示                                                         |
 | 献立作成が「通信を確認しています」のまま | 業務エラー（同意・下書き・枠等）を offline に落としていた古いクライアント。現行は failed 画面。本当の通信断のみ offline 自動再試行 |
-| 本番起動失敗                     | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か |
-| E2E が Stripe に飛ぶ             | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                          |
+| 本番起動失敗                             | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か          |
+| E2E が Stripe に飛ぶ                     | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                                   |
 
 本番 CLI デプロイ（Netlify / Supabase）のつまずきは
 [docs/deployment/README.md](docs/deployment/README.md) §6 が正本。Free プランで特に多いもの:

@@ -1,3 +1,5 @@
+import { HttpError } from "./http.js";
+
 /**
  * 運用ログの閉じた形。
  * 氏名・メール・アレルギー・プロンプト・生 AI 応答は決して出さない。
@@ -42,6 +44,13 @@ export type SafeLogEvent = {
   stripeSubscriptionId?: string;
   /** unmapped 等の集計カウンタ（本文は出さない） */
   alertMetric?: number;
+  /**
+   * 生成 HTTP 境界のルートテンプレ名のみ（ユーザー入力 path 断片は載せない）。
+   * Observability / Function log で menu vs status を区別する。
+   */
+  generationRoute?: "menu" | "dish" | "status";
+  /** 返却 HTTP ステータス（本文・PII は出さない） */
+  httpStatus?: number;
 };
 
 type LogWriter = (serialized: string) => void;
@@ -114,11 +123,81 @@ export const createSafeLogger =
     if (event.alertMetric !== undefined) {
       record.alert_metric = Math.max(0, Math.trunc(event.alertMetric));
     }
+    if (event.generationRoute !== undefined) {
+      record.generation_route = event.generationRoute;
+    }
+    if (event.httpStatus !== undefined) {
+      record.http_status = Math.max(0, Math.trunc(event.httpStatus));
+    }
     write(JSON.stringify(record));
   };
 
 /** 本番 Functions の既定シンク（stdout 相当） */
 export const safeLog = createSafeLogger();
+
+/** code 欄に自由文や例外 message を載せない（閉じた snake_case のみ） */
+function closedErrorCode(raw: string): string {
+  if (/^[a-z][a-z0-9_]{0,79}$/u.test(raw)) return raw;
+  return "request_failed";
+}
+
+export type GenerationHttpRoute = NonNullable<SafeLogEvent["generationRoute"]>;
+
+/**
+ * 生成 HTTP 境界の閉じた運用ログ（Function log / Observability 検索用）。
+ * email・本文・prompt は出さない。correlationId は冪等キー UUID または handler 発行 UUID。
+ */
+export function logGenerationHttpBoundary(
+  event: {
+    route: GenerationHttpRoute;
+    code: string;
+    durationMs: number;
+    correlationId: string;
+    httpStatus: number;
+    level?: SafeLogEvent["level"];
+  },
+  write: LogWriter = console.log,
+): void {
+  const httpStatus = Math.max(0, Math.trunc(event.httpStatus));
+  const level = event.level ?? (httpStatus >= 500 ? "error" : httpStatus >= 400 ? "warn" : "info");
+  createSafeLogger(write)({
+    level,
+    requestId: event.correlationId,
+    code: closedErrorCode(event.code),
+    durationMs: event.durationMs,
+    generationRoute: event.route,
+    httpStatus,
+  });
+}
+
+/**
+ * handleError 前後で閉じた HTTP 境界ログを残す（ok:false 経路）。
+ * message 本文は出さない。code は HttpError.code または request_failed。
+ */
+export function handleGenerationHttpError(
+  route: GenerationHttpRoute,
+  error: unknown,
+  input: {
+    startedAtMonotonicMs: number;
+    correlationId: string;
+    handle: (error: unknown) => Response;
+  },
+  write: LogWriter = console.log,
+): Response {
+  const response = input.handle(error);
+  const code = error instanceof HttpError ? error.code : "request_failed";
+  logGenerationHttpBoundary(
+    {
+      route,
+      code,
+      durationMs: performance.now() - input.startedAtMonotonicMs,
+      correlationId: input.correlationId,
+      httpStatus: response.status,
+    },
+    write,
+  );
+  return response;
+}
 
 /**
  * Plan 3 互換ラッパ。errorCode → code、null modelId → 省略。

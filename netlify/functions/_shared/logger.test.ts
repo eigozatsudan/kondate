@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSafeLogger, logGenerationEvent } from "./logger.js";
+import {
+  createSafeLogger,
+  handleGenerationHttpError,
+  logGenerationEvent,
+  logGenerationHttpBoundary,
+} from "./logger.js";
+import { HttpError } from "./http.js";
 
 describe("createSafeLogger", () => {
   it("serializes only the approved operational fields", () => {
@@ -192,6 +198,84 @@ describe("createSafeLogger", () => {
     });
     expect(line).not.toContain("鶏肉");
     expect(line).not.toContain("卵");
+  });
+});
+
+describe("logGenerationHttpBoundary", () => {
+  it("serializes route and http_status without free-text message", () => {
+    const write = vi.fn();
+    logGenerationHttpBoundary(
+      {
+        route: "status",
+        code: "billing_entitlement_unavailable",
+        durationMs: 32,
+        correlationId: "35e5f7fd-5769-47e1-88d0-bc5f2682a9de",
+        httpStatus: 503,
+      },
+      write,
+    );
+    const line = write.mock.calls[0]![0] as string;
+    expect(JSON.parse(line)).toEqual({
+      level: "error",
+      request_id: "35e5f7fd-5769-47e1-88d0-bc5f2682a9de",
+      code: "billing_entitlement_unavailable",
+      duration_ms: 32,
+      generation_route: "status",
+      http_status: 503,
+    });
+    expect(line).not.toContain("プラン");
+    expect(line).not.toContain("@");
+  });
+
+  it("collapses free-text code into request_failed", () => {
+    const write = vi.fn();
+    logGenerationHttpBoundary(
+      {
+        route: "menu",
+        code: "Unexpected JSON at position 0",
+        durationMs: 1,
+        correlationId: "corr-1",
+        httpStatus: 500,
+      },
+      write,
+    );
+    const parsed = JSON.parse(write.mock.calls[0]![0] as string) as { code: string };
+    expect(parsed.code).toBe("request_failed");
+  });
+
+  it("handleGenerationHttpError logs closed code from HttpError", () => {
+    const write = vi.fn();
+    const response = handleGenerationHttpError(
+      "menu",
+      new HttpError(422, "consent_required", "AIへ送る情報の説明を確認してください。"),
+      {
+        startedAtMonotonicMs: performance.now() - 10,
+        correlationId: "82000000-0000-4000-8000-000000000001",
+        handle: (error) => {
+          if (error instanceof HttpError) {
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                error: { code: error.code, message: error.message },
+              }),
+              { status: error.status },
+            );
+          }
+          return new Response("{}", { status: 500 });
+        },
+      },
+      write,
+    );
+    expect(response.status).toBe(422);
+    const parsed = JSON.parse(write.mock.calls[0]![0] as string) as {
+      code: string;
+      generation_route: string;
+      http_status: number;
+    };
+    expect(parsed.code).toBe("consent_required");
+    expect(parsed.generation_route).toBe("menu");
+    expect(parsed.http_status).toBe(422);
+    expect(write.mock.calls[0]![0] as string).not.toContain("AIへ");
   });
 });
 

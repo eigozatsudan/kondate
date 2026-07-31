@@ -94,6 +94,63 @@ describe("GET /api/generations/:idempotencyKey/status", () => {
     expect(status).not.toHaveBeenCalled();
   });
 
+  it("writes a closed Function log line for entitlement 503 without message body", async () => {
+    const write = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.mocked(requireUserWithEmail).mockResolvedValue(user);
+    vi.mocked(createGenerationRepository).mockImplementation(() => {
+      throw new HttpError(
+        503,
+        "billing_entitlement_unavailable",
+        "プラン情報を確認できませんでした。しばらくしてからお試しください。",
+      );
+    });
+
+    const response = await handler(request(), context(key));
+    expect(response.status).toBe(503);
+    const lines = write.mock.calls.map((call) => String(call[0]));
+    write.mockRestore();
+    const boundary = lines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .find((row) => row?.generation_route === "status");
+    expect(boundary).toMatchObject({
+      code: "billing_entitlement_unavailable",
+      generation_route: "status",
+      http_status: 503,
+      request_id: key,
+    });
+    expect(JSON.stringify(boundary)).not.toContain("プラン");
+  });
+
+  it("logs failed terminal status with http_status 503 for generation_timeout", async () => {
+    const write = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    status.mockResolvedValue({ ...record("failed"), failure_code: "generation_timeout" });
+
+    const response = await handler(request(), context(key));
+    expect(response.status).toBe(503);
+    const lines = write.mock.calls.map((call) => String(call[0]));
+    write.mockRestore();
+    const boundary = lines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .find((row) => row?.code === "generation_timeout");
+    expect(boundary).toMatchObject({
+      generation_route: "status",
+      http_status: 503,
+      request_id: key,
+    });
+  });
+
   it.each([[undefined], ["sentinel-path-value"]])(
     "rejects a missing or malformed path key before repository creation",
     async (idempotencyKey) => {
