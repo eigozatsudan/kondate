@@ -3,13 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import type { AuthGateway } from "./auth-gateway";
-import { LOGIN_EMAIL_HINT, LOGIN_PAGE_LEAD, LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
+import {
+  LOGIN_EMAIL_HINT,
+  LOGIN_PAGE_LEAD,
+  LOGIN_PAGE_NOTE,
+  LOGIN_PAGE_NOTE_WITH_EMAIL,
+  LoginPage,
+} from "./login-page";
 
 vi.mock("./use-auth", () => ({
   useAuth: () => ({ status: "unauthenticated", session: null }),
 }));
 
-it("explains that first-time users can register on the same screen", () => {
+/** メール導線を再表示するテスト用クエリ（本番既定は非表示） */
+const emailLoginEntry = "/login?emailLogin=1";
+
+it("explains that first-time users can register on the same screen (Google only by default)", () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
@@ -25,9 +34,29 @@ it("explains that first-time users can register on the same screen", () => {
 
   expect(screen.getByText(LOGIN_PAGE_LEAD)).toBeVisible();
   expect(screen.getByText(LOGIN_PAGE_NOTE)).toBeVisible();
-  expect(screen.getByText(LOGIN_EMAIL_HINT)).toBeVisible();
+  expect(screen.queryByText(LOGIN_EMAIL_HINT)).toBeNull();
+  expect(screen.queryByLabelText("メールアドレス")).toBeNull();
   expect(screen.getByText("Google アカウントではじめての方も、そのまま使えます。")).toBeVisible();
   expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "ログイン用メールを送る" })).toBeNull();
+});
+
+it("shows email magic-link form when emailLogin=1", () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={[emailLoginEntry]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText(LOGIN_PAGE_NOTE_WITH_EMAIL)).toBeVisible();
+  expect(screen.getByText(LOGIN_EMAIL_HINT)).toBeVisible();
   expect(screen.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
 });
 
@@ -45,7 +74,7 @@ it("places Google first and renders the complete sent state", async () => {
   };
 
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[emailLoginEntry]}>
       <LoginPage gateway={gateway} />
     </MemoryRouter>,
   );
@@ -209,7 +238,7 @@ it("allows retrying Google after switching from a magic link and a failed start"
   };
 
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[emailLoginEntry]}>
       <LoginPage gateway={gateway} />
     </MemoryRouter>,
   );
@@ -243,7 +272,7 @@ it("uses /welcome for Google and magic link when returnTo is omitted", async () 
   };
 
   render(
-    <MemoryRouter initialEntries={["/login"]}>
+    <MemoryRouter initialEntries={[emailLoginEntry]}>
       <LoginPage gateway={gateway} />
     </MemoryRouter>,
   );
@@ -272,7 +301,7 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
   };
 
   render(
-    <MemoryRouter initialEntries={["/login?returnTo=%2Fpantry"]}>
+    <MemoryRouter initialEntries={["/login?emailLogin=1&returnTo=%2Fpantry"]}>
       <LoginPage gateway={gateway} />
     </MemoryRouter>,
   );
@@ -286,11 +315,11 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
 });
 
 it.each([
-  ["empty", "/login?returnTo=", "/planner"],
+  ["empty", "/login?emailLogin=1&returnTo=", "/planner"],
   // B-I5: 裸 "/" は RootEntry へ戻すために許可する
-  ["bare slash", "/login?returnTo=%2F", "/"],
-  ["external URL", "/login?returnTo=https%3A%2F%2Fattacker.example", "/planner"],
-  ["protocol-relative URL", "/login?returnTo=%2F%2Fattacker.example", "/planner"],
+  ["bare slash", "/login?emailLogin=1&returnTo=%2F", "/"],
+  ["external URL", "/login?emailLogin=1&returnTo=https%3A%2F%2Fattacker.example", "/planner"],
+  ["protocol-relative URL", "/login?emailLogin=1&returnTo=%2F%2Fattacker.example", "/planner"],
 ])(
   "sanitizes an explicit %s returnTo for Google and magic link",
   async (_label, entry, expected) => {

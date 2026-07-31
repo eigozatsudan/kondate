@@ -82,7 +82,8 @@ export const test = base.extend<AuthFixtures>({
 export { expect };
 
 export async function requestMagicLinkAndReadUrl(page: Page, email: string): Promise<string> {
-  await page.goto("/login?returnTo=%2Fplanner");
+  // 本番 UI はメール導線を非表示。E2E は ?emailLogin=1 でフォームを出し gateway 経路を維持する。
+  await page.goto("/login?returnTo=%2Fplanner&emailLogin=1");
   await page.getByLabel("メールアドレス").fill(email);
   await page.getByRole("button", { name: "ログイン用メールを送る" }).click();
   await expect(page.getByText(`${email} に送りました`)).toBeVisible();

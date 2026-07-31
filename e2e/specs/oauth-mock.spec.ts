@@ -49,5 +49,6 @@ test("local Google cancellation returns through the app callback with actionable
   expect(callbackUrl.searchParams.has("code")).toBe(false);
   await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible();
   await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+  // メール導線はいったん非表示（gateway 自体は維持）
+  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toHaveCount(0);
 });

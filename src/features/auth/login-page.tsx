@@ -8,10 +8,27 @@ import { useAuth } from "./use-auth";
 /** 低リテラシー向け：登録とログインが同じ操作であることを明示（MVP 設計の単一画面方針） */
 export const LOGIN_PAGE_LEAD =
   "はじめての方も、すでに使っている方も、この画面から進めます。" as const;
+/** Google のみ表示時（メール導線をいったん隠している間） */
 export const LOGIN_PAGE_NOTE =
+  "新規登録の別画面はありません。下のボタンで進むと、はじめての方はアカウントができます。" as const;
+/** メール導線を出すときの補足（SHOW_EMAIL_LOGIN / ?emailLogin=1 / 復旧導線） */
+export const LOGIN_PAGE_NOTE_WITH_EMAIL =
   "新規登録の別画面はありません。下のボタンかメールで進むと、はじめての方はアカウントができます。パスワードの設定は不要です。" as const;
 export const LOGIN_EMAIL_HINT =
   "届いたメールのリンクを開くと入れます。はじめてのメールアドレスでも大丈夫です。" as const;
+
+/**
+ * ログイン画面のメール導線をいったん非表示にする。
+ * AuthGateway.sendMagicLink・callback・sent/expired UI は残す。
+ * 再表示: true にするか、クエリ `?emailLogin=1`（E2E・手動確認用）。
+ * （boolean 注釈は true 切替時に lint の always-falsy を避けるため）
+ */
+export const SHOW_EMAIL_LOGIN: boolean = false;
+
+function emailLoginRequested(search: string): boolean {
+  if (SHOW_EMAIL_LOGIN) return true;
+  return new URLSearchParams(search).get("emailLogin") === "1";
+}
 
 type LoginLocationState = {
   authError?:
@@ -142,9 +159,29 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const [state, setState] = useState<MagicLinkState>(() =>
     initialMagicLinkState(locationState.authError, location.search),
   );
+  // 既定は非表示。クエリ・期限切れ・送信済み復元・「メールアドレスを変更」でフォームを出す。
+  const [emailUnlocked, setEmailUnlocked] = useState(() => {
+    if (emailLoginRequested(location.search)) return true;
+    if (locationState.authError === "magic_link_expired") return true;
+    const query = new URLSearchParams(location.search);
+    if (
+      query.get("accountDeleted") === "1" ||
+      query.get("signedOut") === "1" ||
+      query.get("sessionExpired") === "1"
+    ) {
+      return false;
+    }
+    return readMagicSentUi() !== null;
+  });
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [googleError, setGoogleError] = useState(false);
   const [googlePending, setGooglePending] = useState(false);
+  const showEmailSection =
+    emailUnlocked ||
+    state.status === "sending" ||
+    state.status === "send_failed" ||
+    state.status === "sent" ||
+    state.status === "expired";
 
   useEffect(() => {
     if (state.status !== "sent") return;
@@ -194,6 +231,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const send = async (event?: SyntheticEvent) => {
     event?.preventDefault();
     const email = "email" in state ? state.email : "";
+    setEmailUnlocked(true);
     setState({ status: "sending", email });
     try {
       const sent = await activeGateway.sendMagicLink(email, returnTo);
@@ -279,6 +317,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
             className="text-button"
             type="button"
             onClick={() => {
+              setEmailUnlocked(true);
               setState({ status: "idle", email: state.email });
             }}
           >
@@ -316,12 +355,18 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
         <p className="eyebrow">毎日の献立を、家族に合わせて</p>
         <h1>こんだて日和</h1>
         <p>{LOGIN_PAGE_LEAD}</p>
-        <p className="type-small">{LOGIN_PAGE_NOTE}</p>
+        <p className="type-small">
+          {showEmailSection ? LOGIN_PAGE_NOTE_WITH_EMAIL : LOGIN_PAGE_NOTE}
+        </p>
       </div>
       {authErrorCopy !== null && (
         <section className="card stack" role="alert">
           <p className="error-message">{authErrorCopy}</p>
-          <p>Googleを再試行、別のGoogleアカウント、またはメールを選べます。</p>
+          <p>
+            {showEmailSection
+              ? "Googleを再試行、別のGoogleアカウント、またはメールを選べます。"
+              : "Googleを再試行するか、別のGoogleアカウントを選べます。"}
+          </p>
         </section>
       )}
       {statusNotice !== null && (
@@ -343,34 +388,36 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
           Googleログインを開始できませんでした。もう一度お試しください。
         </p>
       )}
-      <form className="card stack" onSubmit={(event) => void send(event)}>
-        <p className="type-small">メールで進む場合</p>
-        <label className="field">
-          <span>メールアドレス</span>
-          <input
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(event) => {
-              setState({ status: "idle", email: event.target.value });
-            }}
-          />
-        </label>
-        <p className="type-small">{LOGIN_EMAIL_HINT}</p>
-        <button
-          className="secondary-button min-h-11"
-          disabled={state.status === "sending"}
-          type="submit"
-        >
-          {state.status === "sending" ? "送信中…" : "ログイン用メールを送る"}
-        </button>
-        {state.status === "send_failed" && (
-          <p className="error-message" role="alert">
-            {state.message}
-          </p>
-        )}
-      </form>
+      {showEmailSection && (
+        <form className="card stack" onSubmit={(event) => void send(event)}>
+          <p className="type-small">メールで進む場合</p>
+          <label className="field">
+            <span>メールアドレス</span>
+            <input
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => {
+                setState({ status: "idle", email: event.target.value });
+              }}
+            />
+          </label>
+          <p className="type-small">{LOGIN_EMAIL_HINT}</p>
+          <button
+            className="secondary-button min-h-11"
+            disabled={state.status === "sending"}
+            type="submit"
+          >
+            {state.status === "sending" ? "送信中…" : "ログイン用メールを送る"}
+          </button>
+          {state.status === "send_failed" && (
+            <p className="error-message" role="alert">
+              {state.message}
+            </p>
+          )}
+        </form>
+      )}
     </main>
   );
 }
