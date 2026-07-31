@@ -113,16 +113,16 @@ function createHouseholdApi(userId: string): HouseholdOnboardingApi {
 ```ts
 import type { ProfileRow } from "./household-api";
 
-function mockProfile(status: ProfileRow["onboarding_status"]): ProfileRow {
+function mockProfile(status: string): ProfileRow {
+  // profiles.Row は user_id / onboarding_status / onboarding_completed_at / created_at / updated_at のみ
   return {
     user_id: "user-1",
     onboarding_status: status,
     onboarding_completed_at:
       status === "complete" || status === "skipped" ? "2026-07-11T00:00:00.000Z" : null,
-    display_name: null,
     created_at: "2026-07-11T00:00:00.000Z",
     updated_at: "2026-07-11T00:00:00.000Z",
-  } as ProfileRow;
+  };
 }
 
 function baseApi(overrides: Partial<HouseholdOnboardingApi> = {}): HouseholdOnboardingApi {
