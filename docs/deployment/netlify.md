@@ -1,9 +1,13 @@
 # Netlify 本番デプロイ手順
 
-ブラウザ安全変数とサーバ専用変数の境界、protected release runner、デプロイ後検証の正本。
+ブラウザ安全変数とサーバ専用変数の境界、protected release runner、デプロイ後検証、
+`maintenance-cleanup` Scheduled Function の正本。
 
 アカウント作成直後からの **CLI 初回デプロイと更新の手順**は
 [README.md](./README.md)（Compose profile `deploy` の `netlify-cli`）を先に読む。
+
+Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) が正本
+（マジックリンクの送信は Supabase Auth。Netlify に `SMTP_*` は置かない）。
 
 ## ブラウザ安全変数（ビルドに渡してよい）
 
@@ -19,7 +23,7 @@
 
 - `VITE_OAUTH_MOCK_ORIGIN`（空でも不可）
 - `KONDATE_MAINTENANCE_ENV`（空でも不可）
-- あらゆる `VITE_` 付きサーバ秘密（`VITE_SUPABASE_SERVICE_ROLE_KEY` / `VITE_OPENROUTER_API_KEY` / `VITE_GENERATION_REQUEST_HMAC_KEY` / `VITE_SUPABASE_MAINTENANCE_DB_URL`）
+- あらゆる `VITE_` 付きサーバ秘密（`VITE_SUPABASE_SERVICE_ROLE_KEY` / `VITE_OPENROUTER_API_KEY` / `VITE_GENERATION_REQUEST_HMAC_KEY` / `VITE_QUOTA_IDENTITY_HMAC_KEY` / `VITE_AUTH_CONTINUATION_ENCRYPTION_KEY` / `VITE_SUPABASE_MAINTENANCE_DB_URL`）
 
 ## サーバ専用変数（Functions ランタイム）
 
@@ -28,9 +32,10 @@
 | `SUPABASE_URL` | `VITE_SUPABASE_URL` と byte 同一の managed origin |
 | `SUPABASE_PUBLISHABLE_KEY` | `VITE_SUPABASE_PUBLISHABLE_KEY` と byte 同一 |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role |
-| `SERVER_SITE_ORIGIN` | 正確な HTTPS origin のみ |
-| `AUTH_CONTINUATION_ENCRYPTION_KEY` | canonical base64・32 バイト |
+| `SERVER_SITE_ORIGIN` | 正確な HTTPS origin のみ（末尾スラッシュなし） |
+| `AUTH_CONTINUATION_ENCRYPTION_KEY` | canonical base64・32 バイト。Functions スコープのみ |
 | `GENERATION_REQUEST_HMAC_KEY` | canonical base64・32 バイト。サンプル / ローカル値禁止。Functions スコープのみ |
+| `QUOTA_IDENTITY_HMAC_KEY` | canonical base64・32 バイト。**`GENERATION_REQUEST_HMAC_KEY` と別鍵**（共用禁止）。サンプル / ローカル値禁止。Functions スコープのみ。`preflight:production` 必須 |
 | `SUPABASE_MAINTENANCE_DB_URL` | 同一 project ref に束縛した TLS DB URL。Functions スコープのみ |
 | `OPENROUTER_API_KEY` | プロバイダ鍵 |
 | `OPENROUTER_BASE_URL` | 正確に `https://openrouter.ai/api/v1` |
@@ -60,6 +65,17 @@
 - ブラウザ向け Price ID / `sk_` / `whsec_`
 
 課金 reconcile と Portal Dashboard チェックリストは `docs/runbooks/billing-reconcile.md`。
+ルート README の「本番デプロイ（Stripe まわり）」も参照。
+
+### Stripe Webhook（初回）
+
+1. Stripe Dashboard（Live / Test を誤らない）で endpoint を登録する:
+   - URL: `https://<production-origin>/api/billing/webhook`
+2. 購読 event は設計どおり（`customer.subscription.*`、`invoice.paid` /
+   `invoice.payment_failed`、`checkout.session.completed` / `expired` 等）。
+3. endpoint の `whsec_…` を **Functions スコープ**の `STRIPE_WEBHOOK_SECRET` にだけ入れる。
+4. 初回 ship は `BILLING_ENABLED=false` のまま Webhook 鍵だけ入れて投影を温め、
+   reconcile 後に `true` が安全（詳細は billing-reconcile）。
 
 ### 同期 Function のプラットフォーム上限（ロック済み再整合）
 
@@ -78,7 +94,8 @@ Netlify の同期 Function 実行上限は公式どおり **60 秒固定・非�
 
 ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しないが、**同じ 24s/55s env ロック**を使う。
 
-`GENERATION_REQUEST_HMAC_KEY` と `SUPABASE_MAINTENANCE_DB_URL` は:
+`GENERATION_REQUEST_HMAC_KEY`・`QUOTA_IDENTITY_HMAC_KEY`・`SUPABASE_MAINTENANCE_DB_URL`・
+`AUTH_CONTINUATION_ENCRYPTION_KEY` は:
 
 - Netlify の **Functions ランタイム**保護スコープのみ
 - Builds / デプロイログ / `netlify.toml` / リポジトリ / preview コンテキスト / 任意の `VITE_` キーへは入れない
@@ -118,7 +135,8 @@ Content-Security-Policy を書く（Netlify の `[[headers]]` は context 分割
 
 ## Protected release runner（サイトビルドの外）
 
-1. シークレットマネージャから完全なサーバ秘密集合を一時環境へ注入する。
+1. シークレットマネージャから完全なサーバ秘密集合を一時環境へ注入する
+   （上表の必須キー。`QUOTA_IDENTITY_HMAC_KEY` を落とさない）。
 2. 環境をクリーンにした subprocess で:
 
 ```bash
@@ -142,7 +160,50 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 
 ## HMAC の安定性
 
-台帳は HMAC のみを保持する。MVP 中の鍵ローテーションは、新しい HMAC 版 / キーリング移行と pending コマンド処理のレビューなしに環境変数だけ差し替えてはならない。
+台帳・identity 枠は HMAC のみを保持する。
+
+| 鍵 | 用途 | ローテ注意 |
+| --- | --- | --- |
+| `GENERATION_REQUEST_HMAC_KEY` | 生成コマンド整合性 | MVP 中は新 HMAC 版 / キーリング移行と pending 処理のレビューなしに env だけ差し替えない |
+| `QUOTA_IDENTITY_HMAC_KEY` | メール正規化 → identity 日次枠 | **回すと identity がすべて変わり、日次成功・attempt 枠は事実上リセット**（旧行は unlinkable）。`GENERATION_REQUEST_HMAC_KEY` と**別鍵のまま**維持する |
+
+ブラウザ・ログ・チケットへ鍵や identity_key を載せない。
+
+## `maintenance-cleanup` Scheduled Function
+
+`netlify/functions/maintenance-cleanup.ts`。DB 側 LOGIN の用意は [supabase.md](./supabase.md) §4–6。
+
+| 項目 | 値 |
+| --- | --- |
+| スケジュール | `@hourly`（`path` なし。**URL では呼べない**） |
+| 実行環境 | **published production のみ**（deploy preview / branch では動かない） |
+| バッチ | 4 カテゴリ各最大 250 行（stale 予約 → 終端生成台帳 → shopping mutation → auth continuation） |
+| 保持 | 終端生成台帳・shopping mutation は厳密 30 日未満削除 |
+| 第 5 カテゴリ | なし。`generation_regeneration_snapshots` は終端台帳 CASCADE のみ |
+| DB | dedicated LOGIN `kondate_maintenance_login`、role 既定と transaction-local `statement_timeout=20s` |
+| クライアント | 25 秒、プラットフォーム Scheduled 上限 30 秒の下 |
+| 監視 | 4 集計件数 + duration + 閉じたエラーコードのみ（URL・行 ID・PII 禁止） |
+
+初回 production デプロイ後:
+
+1. Functions に `SUPABASE_MAINTENANCE_DB_URL` が入っていること。
+2. Netlify の Scheduled Functions / ログで `maintenance_cleanup` が hourly に載ること
+   （プレビューではなく **production publish** 後）。
+3. 失敗時は閉じた `maintenance_cleanup_failed` と集計のみ。接続 URL を印刷して調査しない。
+
+### ローカル診断
+
+1. `./scripts/provision-maintenance-role.sh` で ephemeral login を用意する。
+2. `docker compose run --rm --no-deps app npm exec --offline netlify -- dev` を `dev` コンテキストで起動（生成済み `.env` の local-mode を尊重）。
+3. 別端末で
+   `docker compose run --rm --no-deps app npm exec --offline netlify -- functions:invoke maintenance-cleanup`
+   URL プローブは試みない。
+
+### タイムアウト時
+
+1. 閉じた失敗メトリクスと集計件数だけを見る。
+2. ステージングの SQLSTATE `57014` 統合テストで再現する。
+3. 生ドライバエラーやメンテナンス URL の印刷は有効化しない。
 
 ## ローカル値の持ち込み禁止
 
@@ -150,8 +211,9 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 
 - `oauth-mock` origin / サービス
 - `KONDATE_MAINTENANCE_ENV=local`
-- サンプル HMAC / ローカル生成 HMAC
+- サンプル HMAC / ローカル生成 HMAC（両鍵）
 - ローカル `MAINTENANCE_DB_PASSWORD` / `SUPABASE_MAINTENANCE_DB_URL`
+- ローカル `SMTP_*` / mailpit（Auth メールは Supabase Custom SMTP）
 
 ## メンテナンスパスワードローテーション
 

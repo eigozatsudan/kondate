@@ -6,16 +6,17 @@
 | 文書 | 役割 |
 | --- | --- |
 | **この README** | アカウント作成 → 初回デプロイ → 日常更新の手順書 |
-| [supabase.md](./supabase.md) | Managed プロジェクト、マイグレーション、メンテナンス LOGIN、秘密の扱い |
-| [netlify.md](./netlify.md) | ブラウザ/サーバ env 境界、CSP、preflight、保護リリース runner |
+| [supabase.md](./supabase.md) | Managed プロジェクト、Auth（コールバック / Google / **Custom SMTP**）、マイグレーション、メンテナンス LOGIN |
+| [netlify.md](./netlify.md) | ブラウザ/サーバ env 境界、HMAC、CSP、preflight、**maintenance-cleanup**、保護リリース runner |
 | [../testing/release-checklist.md](../testing/release-checklist.md) | リリースゲート（候補 SHA・検証コマンド） |
 | [../runbooks/openrouter.md](../runbooks/openrouter.md) | 有料 OpenRouter allowlist |
 | [../runbooks/billing-reconcile.md](../runbooks/billing-reconcile.md) | Stripe / Plus 運用 |
+| [../runbooks/account-deletion.md](../runbooks/account-deletion.md) | アカウント削除のオペレータ経路 |
 
 **このリポジトリのエージェント（AI）は本番・ステージングへデプロイしません。**
 手順の実行主体は人間オペレータ（または承認済みの保護リリース runner）です。
 
-秘密（パスワード、service role、PAT、DB URL、HMAC 鍵）をコマンド履歴・チケット・
+秘密（パスワード、service role、PAT、DB URL、HMAC 鍵、SMTP 資格情報）をコマンド履歴・チケット・
 チャット・git・ビルドログに残さないでください。
 
 ---
@@ -95,9 +96,11 @@ CLI だけでは完結しない準備です。アカウントを作った直後�
    - `anon` / publishable key
    - `service_role` key
 4. **Settings → General** の Reference ID（20 文字）を `SUPABASE_PROJECT_ID` として控える。
-5. Auth / コールバック / Google プロバイダは [supabase.md](./supabase.md) の「Auth サイト URL とコールバック」に従う。
+5. Auth は [supabase.md](./supabase.md) に従う（Site URL / Redirect / Google / **Custom SMTP** / メールテンプレート）:
    - Site URL は **後で決まる Netlify 本番 origin** に合わせる（仮 URL のままだとマジックリンクがずれる）。
    - ローカル開発用 `http://127.0.0.1:5173/auth/callback` は許可リストに残してよい。
+   - **マジックリンク本番運用には Custom SMTP が必須**（既定 SMTP はチーム内探索用。正本: supabase.md §2.3）。
+   - ローカル Compose の `SMTP_*` / mailpit は本番にコピーしない。
 
 ### 1.2 Netlify
 
@@ -113,8 +116,9 @@ CLI だけでは完結しない準備です。アカウントを作った直後�
 | サービス | 必要なもの |
 | --- | --- |
 | OpenRouter | API キーと、有料 allowlist モデル ID（`:free` 禁止。正本: [openrouter.md](../runbooks/openrouter.md)） |
-| Google OAuth（本番 Auth） | 承認済みリダイレクト URI に Supabase コールバック |
-| Stripe（Plus を有効にする場合） | `sk_` / `whsec_` / Price ID。kill スイッチは `BILLING_ENABLED`（[netlify.md](./netlify.md)） |
+| Google OAuth（本番 Auth） | Cloud Console の承認済みリダイレクトに `https://<ref>.supabase.co/auth/v1/callback`。証跡: [google-oauth-staging.md](../testing/google-oauth-staging.md) |
+| Auth メール / Custom SMTP | マジックリンク用。Supabase Dashboard で設定（[supabase.md §2.3](./supabase.md)）。Netlify env ではない |
+| Stripe（Plus を有効にする場合） | Live/Test の `sk_` / endpoint `whsec_` / Price ID。Webhook URL `https://<origin>/api/billing/webhook`。kill は `BILLING_ENABLED`（[netlify.md](./netlify.md) / [billing-reconcile.md](../runbooks/billing-reconcile.md)） |
 
 ---
 
@@ -143,7 +147,7 @@ docker compose --profile deploy run --rm supabase-cli projects list
 
 ## 3. 初回: Supabase（スキーマ投入）
 
-詳細・メンテナンス LOGIN・型ドリフトは [supabase.md](./supabase.md) が正本です。ここでは CLI の最短列だけ示します。
+詳細・Auth メール・メンテナンス LOGIN・型ドリフトは [supabase.md](./supabase.md) が正本です。ここでは CLI の最短列だけ示します。
 
 ### 3.1 ログインとプロジェクト紐付け
 
@@ -173,23 +177,25 @@ docker compose --profile deploy run --rm supabase-cli db push \
 ```
 
 - マイグレーションは前方のみ。失敗したら新しいマイグレーションで直す（`db reset` や破壊的巻き戻しは本番で使わない）。
-- 適用順・Plan 7 / アカウント削除 / メンテナンス migration の確認は [supabase.md](./supabase.md) §3。
+- **未適用分をすべて**載せる（Plan 7 / アカウント削除 / メンテナンスに加え identity 枠・Billing 系も。正本: [supabase.md](./supabase.md) §3）。
 - マイグレーション外の **メンテナンス LOGIN**（`kondate_maintenance_login`）は同 §4。  
   `SUPABASE_MAINTENANCE_DB_URL` は Netlify Functions スコープだけに入れる（同 §5–6）。
 
-### 3.3 Auth を Netlify origin に合わせる
+### 3.3 Auth を Netlify origin に合わせる（+ SMTP）
 
-Netlify の本番 origin が決まったら、Supabase Auth の Site URL と Redirect URLs を更新する:
+Netlify の本番 origin が決まったら、Supabase Auth を更新する:
 
 - Site URL: `https://<production-host>`
 - Redirect: `https://<production-host>/auth/callback`
 - ローカル: `http://127.0.0.1:5173/auth/callback`（開発継続用）
+- **Custom SMTP** と Magic Link テンプレート（[supabase.md §2.2–2.3](./supabase.md)）が未設定なら、一般利用者へマジックリンクが届かない
 
 ---
 
 ## 4. 初回: Netlify（サイト作成・env・デプロイ）
 
 env の完全表と禁止事項は [netlify.md](./netlify.md) が正本です。
+`npm run preflight:production` の必須キー集合とも一致させる。
 
 ### 4.1 ログインとサイト
 
@@ -214,10 +220,10 @@ docker compose --profile deploy run --rm netlify-cli link --id "$NETLIFY_SITE_ID
 
 | 区分 | 例 | 置き場 |
 | --- | --- | --- |
-| ブラウザ安全 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_AUTH_PROVIDER_MODE=supabase`, TTL 系 | Builds + 必要なら Functions |
-| サーバ専用 | `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_*`, HMAC, `SUPABASE_MAINTENANCE_DB_URL`, Stripe | **Functions のみ**（Builds / ログ / `VITE_` 禁止） |
+| ブラウザ安全 | `VITE_SUPABASE_*`、`VITE_AUTH_PROVIDER_MODE=supabase`、`VITE_MAGIC_LINK_RESEND_SECONDS`、`VITE_AUTH_CONTINUATION_TTL_MS` | Builds + 必要なら Functions |
+| サーバ専用 | service role、OpenRouter、**両 HMAC**、continuation 暗号鍵、maintenance DB URL、Stripe | **Functions のみ**（Builds / ログ / `VITE_` 禁止） |
 
-最低限そろえる対応関係:
+最低限そろえる対応関係（抜けやすい必須を含む。数値・禁止の正本は [netlify.md](./netlify.md)）:
 
 | Netlify 変数 | 値の出所 |
 | --- | --- |
@@ -226,8 +232,16 @@ docker compose --profile deploy run --rm netlify-cli link --id "$NETLIFY_SITE_ID
 | `SUPABASE_SERVICE_ROLE_KEY` | service_role（Functions のみ） |
 | `SERVER_SITE_ORIGIN` | 正確な Netlify HTTPS origin（末尾スラッシュなし） |
 | `VITE_AUTH_PROVIDER_MODE` | `supabase` のみ（本番） |
-| 枠・予算系 | `USER_DAILY_AI_LIMIT=3` など [netlify.md](./netlify.md) の固定値 |
-| OpenRouter | 有料 allowlist + `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` |
+| `VITE_MAGIC_LINK_RESEND_SECONDS` | 正の整数（例: 60） |
+| `VITE_AUTH_CONTINUATION_TTL_MS` | `300000` |
+| `AUTH_CONTINUATION_TTL_SECONDS` | `300`（Functions） |
+| `AUTH_CONTINUATION_ENCRYPTION_KEY` | canonical base64・32 バイト（Functions のみ） |
+| `GENERATION_REQUEST_HMAC_KEY` | canonical base64・32 バイト。ローカル/サンプル禁止（Functions のみ） |
+| `QUOTA_IDENTITY_HMAC_KEY` | 同上。**生成 HMAC と別鍵**（Functions のみ） |
+| `SUPABASE_MAINTENANCE_DB_URL` | least-privilege LOGIN の TLS URL（Functions のみ。[supabase.md](./supabase.md)） |
+| 枠・予算系 | `USER_DAILY_AI_LIMIT=3`、`USER_DAILY_EXTERNAL_CALL_LIMIT=6`、`USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`、`USER_SHORT_WINDOW_SECONDS=600`、`GLOBAL_DAILY_AI_LIMIT`（本番推奨 80）、`OPENROUTER_TIMEOUT_MS=24000`、`FUNCTION_TOTAL_BUDGET_MS=55000`、`AI_PROCESSING_STALE_SECONDS=180` |
+| OpenRouter | 有料 allowlist + `OPENROUTER_API_KEY` + `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` |
+| Stripe（Plus 時） | [netlify.md](./netlify.md) の Billing 行。Webhook: `https://<origin>/api/billing/webhook` |
 
 CLI で 1 件入れる例（値はシェルから。echo しない）:
 
@@ -237,7 +251,7 @@ docker compose --profile deploy run --rm -it netlify-cli env:set VITE_AUTH_PROVI
 ```
 
 大量の秘密は Dashboard の UI または保護されたシークレット注入の方が事故が少ないです。  
-**禁止の再掲**: `VITE_OAUTH_MOCK_ORIGIN`、あらゆる `VITE_*` サーバ秘密、ローカル mock の OpenRouter base、サンプル HMAC。
+**禁止の再掲**: `VITE_OAUTH_MOCK_ORIGIN`、あらゆる `VITE_*` サーバ秘密（`VITE_QUOTA_IDENTITY_HMAC_KEY` 含む）、ローカル mock の OpenRouter base、サンプル HMAC、ローカル `SMTP_*`。
 
 ### 4.3 初回デプロイ
 
@@ -266,9 +280,12 @@ Git 継続デプロイを主にする場合:
 手元の最小確認（秘密を印刷しない）:
 
 1. 本番 origin が HTTPS で開き、SPA がロードされる。
-2. マジックリンクまたは Google で Auth コールバックが完了する。
-3. Functions が 5xx の嵐にならない（例: `/api/` 配下の公開ヘルス相当があれば）。
-4. Netlify の Function ログに PII・プロンプト・生 AI 出力が出ていない。
+2. **マジックリンク**: チーム外の実メールで受信 → リンク → Auth コールバック完了（Custom SMTP 未設定だとここで止まる）。
+3. **Google**: 同じ origin でコールバック完了。
+4. Functions が 5xx の嵐にならない（例: `/api/` 配下の公開ヘルス相当があれば）。
+5. Netlify の Function ログに PII・プロンプト・生 AI 出力が出ていない。
+6. **`maintenance-cleanup`**: production publish 後に Scheduled が載り、`SUPABASE_MAINTENANCE_DB_URL` があること（[netlify.md](./netlify.md)）。
+7. Plus を使うなら Stripe Webhook が `https://<origin>/api/billing/webhook` に届くこと。
 
 ---
 
@@ -320,10 +337,11 @@ docker compose --profile deploy run --rm supabase-cli db push \
 1. 候補 SHA を固定（clean worktree）
 2. ローカル / CI ゲート（format・lint・typecheck・vitest・pgTAP・e2e・build）
 3. Supabase: 未適用 migration を db push（必要時のみ）
-4. 保護 runner: preflight:production（サーバ秘密はビルドに載せない）
+4. 保護 runner: preflight:production（サーバ秘密はビルドに載せない。両 HMAC 必須）
 5. Netlify: production デプロイ
 6. verify:production-deploy → smoke:production → verify:production-deploy
-7. 証跡は保護システムのみ（git に origin / secret / 生ログを書かない）
+7. マジックリンク到達・maintenance-cleanup・（Plus 時）Webhook を確認
+8. 証跡は保護システムのみ（git に origin / secret / 生ログを書かない）
 ```
 
 ---
@@ -340,17 +358,23 @@ docker compose --profile deploy run --rm supabase-cli db push \
 | production ビルドで OpenRouter 検証失敗 | 有料 allowlist・`OPENROUTER_API_KEY`・`OPENROUTER_BASE_URL` が production env にあるか |
 | sharp / flyer ビルド失敗 | `npm run verify:sharp:netlify`（lock に linux-x64）。[netlify.md](./netlify.md) |
 | Auth コールバック失敗 | Supabase Redirect URLs と `SERVER_SITE_ORIGIN` / 実 origin の一致 |
+| マジックリンクが届かない / チーム外だけ失敗 | Custom SMTP 未設定・既定 SMTP 制限・SPF/DKIM・Auth Rate Limits（[supabase.md §2.3](./supabase.md)） |
+| マジックリンクは届くがログインできない | Site URL / Redirect / リンク内 origin のずれ |
 | CSP で Supabase が弾かれる | `VITE_SUPABASE_URL` の exact origin。ref 変更時は URL 系を同時更新 |
+| preflight が `QUOTA_IDENTITY_HMAC_KEY` で失敗 | Functions に別鍵の canonical base64 32 バイトがあるか。`VITE_` 別名は禁止 |
+| `maintenance-cleanup` が動かない | production publish か、`SUPABASE_MAINTENANCE_DB_URL` の有無（preview では動かない） |
+| Stripe が Plus にならない | Webhook URL `…/api/billing/webhook`・`whsec_`・`BILLING_ENABLED`（[billing-reconcile.md](../runbooks/billing-reconcile.md)） |
 
 ---
 
 ## 7. セキュリティチェックリスト（毎回）
 
-- [ ] PAT / DB URL / service role を git・screenshot・チケットに載せていない
+- [ ] PAT / DB URL / service role / SMTP 資格情報を git・screenshot・チケットに載せていない
 - [ ] 本番に `VITE_OAUTH_MOCK_ORIGIN` や mock OpenRouter base が無い
-- [ ] `VITE_` 付きでサーバ秘密を付けていない
+- [ ] `VITE_` 付きでサーバ秘密を付けていない（`VITE_QUOTA_IDENTITY_HMAC_KEY` 含む）
 - [ ] `GENERATION_REQUEST_HMAC_KEY` と `QUOTA_IDENTITY_HMAC_KEY` は別鍵
 - [ ] `SUPABASE_MAINTENANCE_DB_URL` は Functions のみ・least-privilege LOGIN
+- [ ] Auth マジックリンクは **Custom SMTP**（ローカル mailpit を本番に使っていない）
 - [ ] ログにメール・アレルギー・プロンプト・生 AI 出力が無い
 
 ---

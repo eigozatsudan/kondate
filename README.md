@@ -89,7 +89,7 @@ http://127.0.0.1:5173
 1. ログイン画面でメールアドレスを入れ「ログイン用メールを送る」
 2. Mailpit UI（[http://127.0.0.1:8025](http://127.0.0.1:8025)）でメールを開き、リンクから続行する
 
-ローカルの SMTP は Compose の `mailpit`（ホスト `1025` / `8025`）です。本番 Google の検証は [docs/testing/google-oauth-staging.md](docs/testing/google-oauth-staging.md) を参照してください。
+ローカルの SMTP は Compose の `mailpit`（ホスト `1025` / `8025`）です。本番のマジックリンクは Managed Supabase の **Custom SMTP** が必須（ローカル `SMTP_*` を本番へコピーしない）。手順は [docs/deployment/supabase.md](docs/deployment/supabase.md) §2.3。本番 Google の検証は [docs/testing/google-oauth-staging.md](docs/testing/google-oauth-staging.md) を参照してください。
 
 #### `/api/auth/continuations` が 404 になる場合
 

@@ -155,27 +155,7 @@ docker compose up -d --force-recreate --no-deps app
 
 ## `maintenance-cleanup` Scheduled Function
 
-| 項目 | 値 |
-| --- | --- |
-| スケジュール | `@hourly`（`path` なし。URL では呼べない） |
-| 実行環境 | published production のみ（deploy preview では動かない） |
-| バッチ | 4 カテゴリ各最大 250 行 |
-| 保持 | 終端生成台帳・shopping mutation は厳密 30 日未満削除 |
-| 第 5 カテゴリ | なし。`generation_regeneration_snapshots` は終端台帳 CASCADE のみ |
-| DB | dedicated LOGIN `kondate_maintenance_login`、role 既定と transaction-local `statement_timeout=20s` |
-| クライアント | 25 秒、プラットフォーム上限 30 秒の下 |
-| 監視 | 4 集計件数 + duration + 閉じたエラーコードのみ |
-
-### ローカル診断
-
-1. `./scripts/provision-maintenance-role.sh` で ephemeral login を用意する。
-2. `docker compose run --rm --no-deps app npm exec --offline netlify -- dev` を `dev` コンテキストで起動（生成済み `.env` の local-mode を尊重）。
-3. 別端末で
-   `docker compose run --rm --no-deps app npm exec --offline netlify -- functions:invoke maintenance-cleanup`
-   URL プローブは試みない。
-
-### タイムアウト時
-
-1. 閉じた失敗メトリクスと集計件数だけを見る。
-2. ステージングの SQLSTATE `57014` 統合テストで再現する。
-3. 生ドライバエラーやメンテナンス URL の印刷は有効化しない。
+定期掃除の契約・ローカル診断・タイムアウト手順の **正本は**
+[docs/deployment/netlify.md](../deployment/netlify.md) の「`maintenance-cleanup` Scheduled Function」。
+DB LOGIN の用意は [docs/deployment/supabase.md](../deployment/supabase.md)。
+（本 runbook は OpenRouter 運用専用。重複を避けるため詳細は deployment 側へ寄せた。）
