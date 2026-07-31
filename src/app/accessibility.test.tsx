@@ -591,10 +591,9 @@ describe("generation and result accessibility", () => {
     expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
     const status = screen.getByRole("status");
     expect(status).toBeVisible();
-    // 旧固定文は廃止。段階表のいずれかの体感文言。
-    expect(status.textContent).toMatch(
-      /条件を確認しています|献立の指示を組み立てています|AI に献立案を聞いています|組み合わせと段取りを整えています|仕上げの確認をしています/,
-    );
+    // 旧固定文は廃止。startedAt≈now なので同期評価は stage0（実装レビュー D-M2）。
+    expect(status).toHaveTextContent("条件を確認しています");
+    expect(status).toHaveAttribute("data-progress-stage", "0");
   });
 
   it("menu result pending keeps a main landmark and status under the real page", async () => {

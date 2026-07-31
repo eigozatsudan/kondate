@@ -614,6 +614,17 @@ describe("GenerationStatusPanel", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  // 実装レビュー D-M1: 終端/checking へ落ちたときも interval が残らない
+  it("clears progress interval when leaving submitting for checking", () => {
+    const { rerender } = render(
+      <GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />,
+    );
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    rerender(<GenerationStatusPanel state={{ phase: "checking", effect: "status" }} />);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("shows a resumable message while processing", () => {
     const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
       status: "processing",

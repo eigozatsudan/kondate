@@ -112,4 +112,16 @@ describe("useGenerationProgressMessage", () => {
     expect(result.current.stageIndex).toBe(0);
     expect(result.current.message).toBe(stageMessageAt(0));
   });
+
+  // 実装レビュー D-M1: unmount 以外に active→false で interval が落ちることを固定する
+  it("clears the progress interval when active becomes false", () => {
+    const { rerender } = renderHook(
+      ({ active }: { active: boolean }) => useGenerationProgressMessage({ active, anchorMs: null }),
+      { initialProps: { active: true } },
+    );
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    rerender({ active: false });
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
