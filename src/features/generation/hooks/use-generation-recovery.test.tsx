@@ -867,20 +867,32 @@ describe("useGenerationRecovery", () => {
     expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
   });
 
-  it.each([
-    ["invalid_request", "献立条件を確認"],
-    ["billing_entitlement_unavailable", "プラン情報"],
-  ] as const)("maps GET %s to failed terminal without offline", async (code, messagePart) => {
-    mockStatus.mockRejectedValueOnce(new Error(code));
+  it("maps GET invalid_request to failed terminal without offline", async () => {
+    mockStatus.mockRejectedValueOnce(new Error("invalid_request"));
     const recovery = renderRecoveryAt(processingState, pendingA);
     await act(() => recovery.result.current.retryStatus());
     expect(recovery.result.current.state.phase).toBe("failed");
     if (recovery.result.current.state.phase !== "failed") {
       throw new Error("expected failed");
     }
-    expect(recovery.result.current.state.data.error.message).toContain(messagePart);
+    expect(recovery.result.current.state.data.error.message).toContain("献立条件を確認");
     expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
     expect(mockDispatches).not.toContainEqual({ type: "network_error" });
+  });
+
+  // 敵対的レビュー I-1: GET の entitlement 一時 503 で pending を焼くと processing 復旧不能。
+  it.each([
+    "billing_entitlement_unavailable",
+    "request_failed",
+    "quota_transition_failed",
+  ] as const)("keeps pending offline on GET %s (transient server path)", async (code) => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockRejectedValueOnce(new Error(code));
+    const recovery = renderRecoveryAt(processingState, pendingA);
+    await act(() => recovery.result.current.retryStatus());
+    expect(recovery.result.current.state.phase).toBe("offline");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingA);
+    expect(mockDispatches).toContainEqual({ type: "network_error" });
   });
 
   // 複数端末ログアウト等: auth 失敗を offline「通信確認」に落とさず再ログインへ

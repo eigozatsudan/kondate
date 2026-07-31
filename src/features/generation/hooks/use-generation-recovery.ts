@@ -35,8 +35,9 @@ function isGenerationFailureCode(code: string): code is GenerationFailureCode {
 
 /**
  * generationFailureCodes 外だが ok:false で返る閉じたサーバ code。
- * offline「通信確認」に落とすと永久待ちになるため端末失敗へ写す。
- * 表示 message はここに閉じ、code は UI 契約上 internal_error に寄せる。
+ * POST では端末 failed（offline 永久待ちを避ける）。
+ * GET status では offline + pending 維持（entitlement 一瞬落ちで processing 復旧ハンドルを焼かない）。
+ * 表示 message はここに閉じ、POST 時の code は UI 契約上 internal_error に寄せる。
  */
 const CLOSED_SERVER_TERMINAL_MESSAGES: Readonly<Record<string, string>> = {
   billing_entitlement_unavailable:
@@ -45,8 +46,11 @@ const CLOSED_SERVER_TERMINAL_MESSAGES: Readonly<Record<string, string>> = {
   quota_transition_failed: "献立を作成できませんでした。",
 };
 
-/** 実ネット断時の offline 自動再試行間隔（online イベントが来ない端末向け）。 */
-const OFFLINE_RETRY_INTERVAL_MS = 5_000;
+const CLOSED_SERVER_TERMINAL_CODES = new Set(Object.keys(CLOSED_SERVER_TERMINAL_MESSAGES));
+
+/** offline 自動再試行の初回間隔。以降は指数バックオフ（上限 OFFLINE_RETRY_MAX_MS）。 */
+const OFFLINE_RETRY_BASE_MS = 5_000;
+const OFFLINE_RETRY_MAX_MS = 60_000;
 
 /** ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。 */
 function syntheticFailedStatus(
@@ -78,11 +82,14 @@ function syntheticFailedStatus(
  * API throw を端末分類する。
  * - auth → 再ログイン
  * - request_conflict → 冪等衝突専用 UI
- * - failed → 業務/品質/閉じたサーバ code（offline にしない）
- * - offline → transport・未知の Error.message のみ
+ * - failed → 業務/品質 code。POST の閉じたサーバ code も含む
+ * - offline → transport・未知。GET の閉じたサーバ code も含む（pending 維持）
+ *
+ * @param surface POST は作成確定の業務失敗を failed に、GET は一時障害を offline に分ける
  */
 function classifyGenerationClientError(
   error: unknown,
+  surface: "post" | "get" = "post",
 ):
   | { kind: "auth" }
   | { kind: "request_conflict" }
@@ -101,9 +108,17 @@ function classifyGenerationClientError(
   if (isGenerationFailureCode(code)) {
     return { kind: "failed", code, message: issueMessages[code] };
   }
-  const closedMessage = CLOSED_SERVER_TERMINAL_MESSAGES[code];
-  if (closedMessage !== undefined) {
-    return { kind: "failed", code: "internal_error", message: closedMessage };
+  if (CLOSED_SERVER_TERMINAL_CODES.has(code)) {
+    // GET: status() 内の entitlement 一時失敗などを offline に残し、作成中 pending を焼かない
+    if (surface === "get") {
+      return { kind: "offline" };
+    }
+    const closedMessage = CLOSED_SERVER_TERMINAL_MESSAGES[code];
+    return {
+      kind: "failed",
+      code: "internal_error",
+      message: closedMessage ?? issueMessages.internal_error,
+    };
   }
   return { kind: "offline" };
 }
@@ -228,7 +243,7 @@ export function useGenerationRecovery(
           dispatch({ type: "status", data });
         } catch (error) {
           if (!isCurrent(token)) return;
-          const classified = classifyGenerationClientError(error);
+          const classified = classifyGenerationClientError(error, "post");
           // Plan 3: 409 idempotency_payload_mismatch は offline 再試行ループへ落とさない。
           if (classified.kind === "request_conflict") {
             token.phase = "request_conflict";
@@ -333,7 +348,8 @@ export function useGenerationRecovery(
           void resumeNotStarted(token, pending);
       } catch (error) {
         if (!isCurrent(token)) return;
-        const classified = classifyGenerationClientError(error);
+        // GET は surface "get": 閉じたサーバ code は offline（pending 維持）。業務 code のみ failed。
+        const classified = classifyGenerationClientError(error, "get");
         if (classified.kind === "auth") {
           clearPendingGeneration();
           invalidateLifecycle();
@@ -341,7 +357,6 @@ export function useGenerationRecovery(
           void redirectToLoginForExpiredSession({ returnTo: "/planner" });
           return;
         }
-        // GET status の業務/閉じたサーバ code も offline にしない（本番 503 連打調査）。
         if (classified.kind === "failed") {
           clearPendingGeneration();
           const failed = syntheticFailedStatus(
@@ -538,18 +553,39 @@ export function useGenerationRecovery(
   }, [clearGeneration, dispatch, read, retryStatus, userId]);
 
   // ブラウザが online のまま API だけ落ちる場合、window "online" が再発火しない。
-  // offline 表示中のみ間隔再試行し、業務 code は classify 側で failed へ逃がす。
+  // offline 表示中のみ指数バックオフ再試行（5s→10s→…→60s）。半死 API の連打を抑える。
+  const offlineRetryAttemptRef = useRef(0);
   useEffect(() => {
-    if (state.phase !== "offline") return undefined;
-    const tick = () => {
-      if (typeof navigator !== "undefined" && !navigator.onLine) return;
-      if (document.hidden) return;
-      if (read() === null) return;
-      void retryStatus();
+    if (state.phase !== "offline") {
+      offlineRetryAttemptRef.current = 0;
+      return undefined;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    const arm = () => {
+      const attempt = offlineRetryAttemptRef.current;
+      const delay = Math.min(
+        OFFLINE_RETRY_MAX_MS,
+        OFFLINE_RETRY_BASE_MS * 2 ** Math.min(attempt, 4),
+      );
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        if (
+          (typeof navigator === "undefined" || navigator.onLine) &&
+          !document.hidden &&
+          read() !== null
+        ) {
+          void retryStatus();
+        }
+        // 成功して phase が変わっても cleanup で cancelled になる。失敗継続時のみ attempt を進める。
+        offlineRetryAttemptRef.current = Math.min(attempt + 1, 8);
+        arm();
+      }, delay);
     };
-    const timer = window.setInterval(tick, OFFLINE_RETRY_INTERVAL_MS);
+    arm();
     return () => {
-      window.clearInterval(timer);
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [state.phase, read, retryStatus]);
 
