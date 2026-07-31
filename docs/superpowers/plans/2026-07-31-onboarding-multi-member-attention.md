@@ -4,12 +4,27 @@
 
 **Goal:** `/onboarding` で1人目完了後に即 `/planner` へ飛ばさず、見逃しにくい callout と次アクション（献立を始める / 続けて家族を追加 / 条件付き skip）を出し、複数登録できることを伝える。
 
-**Architecture:** `HouseholdOnboardingForm` 内で `completeMember` と `setProgress("complete")` を分離する。次アクション条件は `draft === null && completeMembers.length > 0`。CTA 分岐のため既存 `getProfile` + `householdKeys.profile` を読む（RPC 変更なし）。静的案内は `InlineNotice`。
+**Architecture:** `HouseholdOnboardingForm` 内で `completeMember` と `setProgress("complete")` を分離する。次アクション条件は `draft === null && completeMembers.length > 0`。CTA 分岐のため既存 `getProfile` + `householdKeys.profile` を読む（RPC 変更なし）。静的案内は `InlineNotice`。complete 後も `invalidateHouseholdSafetyDependents` は維持する（members refetch が走るため **unit の listMembers は stateful 必須**）。
 
 **Tech Stack:** React 19 / TanStack Query 5 / TypeScript strict / Vitest / RTL / Playwright E2E
 
 **仕様書:** `docs/superpowers/specs/2026-07-31-onboarding-multi-member-attention-design.md`（敵対的レビュー反映済み）  
-**敵対的レビュー:** `docs/reviews/2026-07-31-onboarding-multi-member-attention-design-adversarial.md`
+**設計敵対的レビュー:** `docs/reviews/2026-07-31-onboarding-multi-member-attention-design-adversarial.md`  
+**計画レビュー:** `docs/reviews/2026-07-31-onboarding-multi-member-attention-plan-reviews.md`（一次・二次・敵対）→ **本版 r1 で C-P1〜C-P3 / I-P1〜I-P5 を吸収**
+
+## Plan revision summary (r1)
+
+| ID | 反映 |
+|----|------|
+| C-P1 | `createMembersApiState` + complete/createDraft で upsert。invalidate 後も complete が残る |
+| C-P2 | factory / `handleCompleteClick` / 開始画面 JSX を全文掲載。`// ...` 禁止 |
+| C-P3 | 旧 it 削除リストと置換コードを明示 |
+| I-P1 | completeMember 中も `actionPending` |
+| I-P2 | member 0 開始画面の全文 |
+| I-P3 | 全テスト `baseApi` 化、直書き API を grep 0 件 |
+| I-P4 | `./scripts/run-e2e.sh e2e/specs/onboarding.spec.ts` のみ |
+| I-P5 | setProgress 成功後は `invalidateQueries(profile)` を維持（setQueryData 任意） |
+| M-P2 | Execution Handoff の選択質問を削除 |
 
 ## Global Constraints
 
@@ -22,41 +37,37 @@
 - `git push` / PR / 本番 deploy / `--no-verify` 禁止。
 - 検証は `format:check`（`format` の write は使わない）。
 - プレースホルダ禁止: `// ...`、「同様に」「流用」だけのステップを置かない。
+- **unit で members を返す mock は stateful にする**（C-P1）。`invalidateHouseholdSafetyDependents` を onboarding から外さない。
 
 ## Locked interfaces produced by this plan
 
 | 名前 | 場所 | 契約 |
 |------|------|------|
-| `HouseholdOnboardingApi.getProfile` | `household-onboarding-page.tsx` | `() => Promise<ProfileRow>`。テスト注入必須 |
-| `createHouseholdApi` | 同 | `getProfile: () => getProfile(client, userId)` を追加 |
+| `HouseholdOnboardingApi.getProfile` | `household-onboarding-page.tsx` | `() => Promise<ProfileRow>`。必須 |
+| `createHouseholdApi` | 同 | `getProfile: () => getProfile(client, userId)` を含む全文 |
 | 次アクション条件 | 同 | `draft === null && completeMembers.length > 0` |
 | skip 表示 | 同 | `onboarding_status === "not_started" \|\| === "in_progress"` のみ。未取得・error は非表示 |
-| 主 CTA ラベル | 同 | **常に** `献立を始める`（再訪でも同じ。設計の「献立に戻る」は採用しない） |
-| 主 CTA 動作 | 同 | status が `complete` なら `setProgress` 省略して `onDone()` のみ。それ以外は `setProgress("complete")` 成功後 `onDone()` |
-| 副 CTA | 同 | `続けて家族を追加` → `startMutation` / `createDraft(members.length)` |
-| callout | 同 | `InlineNotice` `tone="notice"`。文言は §5.1 固定 |
+| 主 CTA ラベル | 同 | **常に** `献立を始める` |
+| 主 CTA 動作 | 同 | status が `complete` なら `setProgress` 省略して `onDone()` のみ。それ以外は `setProgress("complete")` 成功後 `onDone()`。成功後 profile は `invalidateQueries(householdKeys.profile)` |
+| 副 CTA | 同 | `続けて家族を追加` → `startMutation.mutate()` → `createDraft(members.length)` |
+| callout | 同 | `InlineNotice` `tone="notice"`。文言は下表固定 |
 | 人数行 | 同 | 常に `` `${n}人の設定が完了しています。` `` |
-| focus | 同 | 次アクション `h1` に `tabIndex={-1}` + mount/切替時 `focus()` |
-| pending | 同 | `actionPending`（complete/skip/start のいずれか）中は次アクションとフォームの全関連 CTA を disable |
+| focus | 同 | 次アクション `h1` に `tabIndex={-1}` + `draft===null && completeMembers.length>0` のとき `focus()` |
+| pending | 同 | `actionPending` は **completeMember 実行中**・finish・skip 中に true。フォーム完了ボタンと次アクション CTA を disable。`startMutation.isPending` も副 CTA に併用 |
 
-### 固定 copy（転記禁止のゆれを防ぐ）
+### 固定 copy
 
 ```ts
-// 1人目 callout
 const CALLOUT_FIRST_TITLE = "まずは1人分から登録しましょう";
 const CALLOUT_FIRST_BODY =
   "家族が複数いる場合も、最初は1人で十分です。追加の家族は、このあとや設定画面からいつでも登録できます。";
-
-// 2人目以降 callout
 const CALLOUT_MORE_TITLE = "続けて家族を登録できます";
 const CALLOUT_MORE_BODY =
   "何人でも登録できます。登録が終わったら「献立を始める」で先に進めます。あとから設定の「家族設定」でも追加・編集できます。";
-
-// 次アクション
+const NEXT_ACTION_BODY =
+  "ほかの家族も続けて登録できます。あとから設定の「家族設定」でも追加できます。";
 // h1: n===1 ? "1人目の登録が完了しました" : "登録が完了しました"
-// body: "ほかの家族も続けて登録できます。あとから設定の「家族設定」でも追加できます。"
-// primary: "献立を始める"
-// secondary: "続けて家族を追加"
+// primary: "献立を始める" / secondary: "続けて家族を追加"
 // skip: "あとで設定する（アイデアから始める）"
 ```
 
@@ -65,9 +76,19 @@ const CALLOUT_MORE_BODY =
 | ファイル | 責務 |
 |----------|------|
 | `src/features/household/household-onboarding-page.tsx` | profile 読取、callout、次アクション UI、complete/setProgress 分離、focus、pending |
-| `src/features/household/household-onboarding-page.test.tsx` | 設計 §7.1 の置換表・必須ケース |
-| `e2e/specs/onboarding.spec.ts` | 次アクション経由で planner（必須） |
+| `src/features/household/household-onboarding-page.test.tsx` | stateful members + baseApi + 設計 §7.1 |
+| `e2e/specs/onboarding.spec.ts` | 次アクション経由（必須） |
 | 触らない | `household-settings-page.*`、welcome、RPC、migrations |
+
+### 削除する既存 it（Task 1 で必ず消す）
+
+| 旧 it 名（完全一致） | 理由 |
+|----------------------|------|
+| `resumes one draft, saves each required selection, and completes through completeMember->setProgress->navigate` | complete→navigate 廃止 |
+| `stays on the page and shows a retryable error when setProgress fails after completeMember succeeds` | setProgress が complete 直列でない |
+| `completes onboarding through setProgress->navigate when a complete member already exists and no draft is open` | ボタン名・契約変更 |
+| `stays on the page with a retryable error when setProgress fails for an already-complete member` | 主 CTA 名変更（置換 it で再掲） |
+| `draft が無く complete member が既にいる場合も任意性が明確な完了ボタン文言を使う` | 旧「この家族の設定を完了する」期待 |
 
 ---
 
@@ -79,22 +100,48 @@ const CALLOUT_MORE_BODY =
 - Test: 同 test ファイル
 
 **Interfaces:**
-- Consumes: 既存 `HouseholdOnboardingApi`（本 Task で `getProfile` を追加）
-- Produces: `getProfile` on API; completeMember 成功後に次アクション UI; 主 CTA「献立を始める」
+- Consumes: 既存 `HouseholdOnboardingApi` フィールド + 本 Task で `getProfile`
+- Produces: 次アクション UI、`canShowSkip`、`actionPending`、stateful テストヘルパ
 
-- [ ] **Step 1: `HouseholdOnboardingApi` に `getProfile` を足し、テスト用ヘルパを用意する**
+- [ ] **Step 1: 実装側 interface / factory を拡張する（テストより先に型だけでも可。本 Step では page の型と factory を先に直し、テストがコンパイルできるようにする）**
 
-`household-onboarding-page.tsx` の interface と factory を拡張:
+`household-onboarding-page.tsx` の import に追加:
 
 ```ts
-import type { ProfileRow } from "./household-api";
-import { getProfile /* 既存 import 群に追加 */ } from "./household-api";
+import {
+  addCustomMemberAllergy,
+  addStandardMemberAllergy,
+  completeHouseholdMember,
+  deleteMemberAllergy,
+  getProfile,
+  listAllergenAliases,
+  listAllergenCatalog,
+  listHouseholdMembers,
+  listMemberAllergies,
+  setOnboardingStatus,
+  startHouseholdOnboarding,
+  updateHouseholdMemberDraft,
+  type HouseholdDraftPatch,
+  type HouseholdMemberRow,
+  type ProfileRow,
+} from "./household-api";
+```
 
+（既存 import をこの集合に置き換える。欠けていた `getProfile` / `ProfileRow` を必ず含める。）
+
+```ts
 export interface HouseholdOnboardingApi {
   listMembers: () => Promise<HouseholdMemberRow[]>;
   getProfile: () => Promise<ProfileRow>;
   createDraft: (sortOrder: number) => Promise<HouseholdMemberRow>;
-  // ...既存のまま
+  updateDraft: (memberId: string, patch: HouseholdDraftPatch) => Promise<HouseholdMemberRow>;
+  completeMember: (memberId: string) => Promise<HouseholdMemberRow>;
+  listAllergies: (memberId: string) => Promise<Awaited<ReturnType<typeof listMemberAllergies>>>;
+  listCatalog?: () => Promise<Awaited<ReturnType<typeof listAllergenCatalog>>>;
+  listAliases?: () => Promise<Awaited<ReturnType<typeof listAllergenAliases>>>;
+  addStandardAllergy?: (memberId: string, allergenId: string) => Promise<unknown>;
+  addCustomAllergy: (memberId: string, name: string, aliases: string[]) => Promise<unknown>;
+  removeAllergy?: (allergyId: string) => Promise<unknown>;
   setProgress: (status: "in_progress" | "complete" | "skipped") => Promise<unknown>;
 }
 
@@ -103,18 +150,30 @@ function createHouseholdApi(userId: string): HouseholdOnboardingApi {
   return {
     listMembers: () => listHouseholdMembers(client, userId),
     getProfile: () => getProfile(client, userId),
-    // ...既存
+    createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
+    updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
+    completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
+    listAllergies: (memberId) => listMemberAllergies(client, userId, memberId),
+    listCatalog: () => listAllergenCatalog(client),
+    listAliases: () => listAllergenAliases(client),
+    addStandardAllergy: (memberId, allergenId) =>
+      addStandardMemberAllergy(client, userId, memberId, allergenId),
+    addCustomAllergy: (memberId, name, aliases) =>
+      addCustomMemberAllergy(client, userId, memberId, name, aliases),
+    removeAllergy: (allergyId) => deleteMemberAllergy(client, userId, allergyId),
+    setProgress: (status) => setOnboardingStatus(client, userId, status),
   };
 }
 ```
 
-テスト側に共通 mock を追加（`household-onboarding-page.test.tsx` 先頭付近）:
+- [ ] **Step 2: テストヘルパ（stateful members + baseApi + mockProfile）を test ファイル先頭に追加する**
+
+`household-onboarding-page.test.tsx` の import と draft 定数の直後に:
 
 ```ts
 import type { ProfileRow } from "./household-api";
 
 function mockProfile(status: string): ProfileRow {
-  // profiles.Row は user_id / onboarding_status / onboarding_completed_at / created_at / updated_at のみ
   return {
     user_id: "user-1",
     onboarding_status: status,
@@ -122,6 +181,25 @@ function mockProfile(status: string): ProfileRow {
       status === "complete" || status === "skipped" ? "2026-07-11T00:00:00.000Z" : null,
     created_at: "2026-07-11T00:00:00.000Z",
     updated_at: "2026-07-11T00:00:00.000Z",
+  };
+}
+
+/** invalidate → listMembers refetch 後も complete が残るようにする（C-P1） */
+function createMembersApiState(initial: HouseholdMemberRow[]) {
+  let members = initial.map((member) => ({ ...member }));
+  return {
+    listMembers: vi.fn(async () => members.map((member) => ({ ...member }))),
+    upsert(member: HouseholdMemberRow) {
+      const index = members.findIndex((item) => item.id === member.id);
+      if (index >= 0) {
+        members[index] = { ...member };
+      } else {
+        members = [...members, { ...member }];
+      }
+    },
+    snapshot(): HouseholdMemberRow[] {
+      return members.map((member) => ({ ...member }));
+    },
   };
 }
 
@@ -138,37 +216,43 @@ function baseApi(overrides: Partial<HouseholdOnboardingApi> = {}): HouseholdOnbo
     ...overrides,
   };
 }
+
+const completeAdult = {
+  ...draft,
+  status: "complete" as const,
+  age_band: "adult" as const,
+  allergy_status: "none" as const,
+  unsupported_diet_status: "none" as const,
+};
 ```
 
-`ProfileRow` の必須フィールドが `as ProfileRow` で足りない場合は、生成型に合わせてフィールドを足す（`database.generated.ts` の `profiles.Row` を読む）。
-
-- [ ] **Step 2: 失敗するテストを書く（旧 happy path を置換）**
-
-既存の  
-`resumes one draft, saves each required selection, and completes through completeMember->setProgress->navigate`  
-を次に**置き換える**（削除して新規）:
+- [ ] **Step 3: 失敗するテストを書く（削除リストの it を消し、以下を追加）**
 
 ```ts
 it("completes member without setProgress or navigate, then shows next-action screen", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
   let currentDraft = draft;
   const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
     currentDraft = { ...currentDraft, ...patch };
+    membersState.upsert(currentDraft);
     return Promise.resolve(currentDraft);
   });
-  const completeMember = vi.fn(() =>
-    Promise.resolve({
+  const completeMember = vi.fn(() => {
+    const completed = {
       ...currentDraft,
       age_band: "adult" as const,
       allergy_status: "none" as const,
       unsupported_diet_status: "none" as const,
       status: "complete" as const,
-    }),
-  );
+    };
+    membersState.upsert(completed);
+    return Promise.resolve(completed);
+  });
   const setProgress = vi.fn().mockResolvedValue({});
   const onDone = vi.fn();
   const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([draft]),
+    listMembers: membersState.listMembers,
     updateDraft,
     completeMember,
     setProgress,
@@ -193,22 +277,20 @@ it("completes member without setProgress or navigate, then shows next-action scr
   expect(completeMember).toHaveBeenCalledWith("member-1");
   expect(setProgress).not.toHaveBeenCalled();
   expect(onDone).not.toHaveBeenCalled();
+  // invalidate 後も listMembers は complete を返す
+  await waitFor(() => {
+    expect(membersState.listMembers.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+  expect(screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" })).toBeInTheDocument();
 });
 
 it("starts planner from next-action via setProgress complete then onDone", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
   const setProgress = vi.fn().mockResolvedValue({});
   const onDone = vi.fn();
   const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([
-      {
-        ...draft,
-        status: "complete" as const,
-        age_band: "adult" as const,
-        allergy_status: "none" as const,
-        unsupported_diet_status: "none" as const,
-      },
-    ]),
+    listMembers: membersState.listMembers,
     getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
     setProgress,
   });
@@ -222,30 +304,13 @@ it("starts planner from next-action via setProgress complete then onDone", async
   });
   expect(setProgress).toHaveBeenCalledWith("complete");
 });
-```
 
-既存の  
-`completes onboarding through setProgress->navigate when a complete member already exists and no draft is open`  
-はボタン名が旧「この家族の設定を完了する」のため、上記2本目に置き換える（重複削除）。
-
-既存の  
-`stays on the page and shows a retryable error when setProgress fails after completeMember succeeds`  
-は削除し、代わりに（本 Task または Task 3 で）:
-
-```ts
 it("keeps next-action and shows error when setProgress complete fails on primary CTA", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
   const onDone = vi.fn();
   const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([
-      {
-        ...draft,
-        status: "complete" as const,
-        age_band: "adult" as const,
-        allergy_status: "none" as const,
-        unsupported_diet_status: "none" as const,
-      },
-    ]),
+    listMembers: membersState.listMembers,
     getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
     setProgress: vi.fn().mockRejectedValue(new Error("network")),
   });
@@ -258,17 +323,39 @@ it("keeps next-action and shows error when setProgress complete fails on primary
     await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
   ).toBeInTheDocument();
   expect(onDone).not.toHaveBeenCalled();
-  expect(screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+  ).toBeInTheDocument();
+});
+
+it("uses 献立を始める as primary CTA when complete members exist without draft", async () => {
+  const membersState = createMembersApiState([completeAdult]);
+  const api = baseApi({ listMembers: membersState.listMembers });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByRole("button", { name: "献立を始める" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "続けて家族を追加" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "この家族の設定を完了する" }),
+  ).not.toBeInTheDocument();
 });
 ```
 
-既存の  
-`stays on the page with a retryable error when setProgress fails for an already-complete member`  
-も主 CTA 名を「献立を始める」に合わせて更新する。
+残りの既存 it（validation / skip / serial save 等）は **すべて `baseApi({ ... })` に書き換え**、`getProfile` 欠けを無くす。  
+完了後に `invalidateHouseholdSafetyDependents` が走る it では `createMembersApiState` を使う。
 
-**すべての** `HouseholdOnboardingApi` リテラルに `getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress"))` を足す（コンパイルを通す）。一括で `baseApi` 経由に寄せてよい。
+移行完了条件:
 
-- [ ] **Step 3: テストを実行し、失敗を確認する**
+```bash
+# ホストで。test 内の API 直書きが 0 件であること（baseApi 経由のみ）
+rg -n "const api: HouseholdOnboardingApi" src/features/household/household-onboarding-page.test.tsx
+```
+
+Expected: マッチ 0 件（またはコメントのみ）。
+
+- [ ] **Step 4: テストを実行し、失敗を確認する**
 
 Run:
 
@@ -276,33 +363,23 @@ Run:
 docker compose run --rm --no-deps app npm test -- --run src/features/household/household-onboarding-page.test.tsx
 ```
 
-Expected: FAIL（次アクション見出しが無い / 旧テストがまだ complete→navigate を期待 / `getProfile` 不足 など）
+Expected: FAIL（次アクション UI 未実装 / getProfile 未配線 等）
 
-- [ ] **Step 4: 最小実装 — profile query・次アクション分岐・complete 分離**
+- [ ] **Step 5: 最小実装 — profile query・分岐 UI・complete 分離・pending**
 
-`HouseholdOnboardingForm` 内:
+`HouseholdOnboardingForm` 本体に追加・変更するコード（要点を**全文**で適用する）:
 
 ```ts
 const profileQuery = useQuery({
   queryKey: householdKeys.profile(userId),
   queryFn: api.getProfile,
 });
-
 const onboardingStatus = profileQuery.data?.onboarding_status;
 const canShowSkip =
   onboardingStatus === "not_started" || onboardingStatus === "in_progress";
 
 const nextActionHeadingRef = useRef<HTMLHeadingElement>(null);
 const [actionPending, setActionPending] = useState(false);
-
-// completeMember 成功後は finishOnboarding を呼ばない
-const handleCompleteClick = (): void => {
-  // ... validation / completeMember 既存どおり
-  // 成功後:
-  replaceMember(completed);
-  await invalidateHouseholdSafetyDependents(queryClient, userId);
-  // finishOnboarding() を削除
-};
 
 const finishOnboarding = async (): Promise<void> => {
   setActionPending(true);
@@ -336,15 +413,103 @@ const skipOnboarding = async (): Promise<void> => {
     setActionPending(false);
   }
 };
+
+const handleCompleteClick = (): void => {
+  if (draft === null) return;
+  void saveQueue.current.then(async (saved) => {
+    if (!saved) {
+      setSaveState("failed");
+      return;
+    }
+    const nextErrors = validateOnboardingDraft(draft, allergies.length);
+    if (Object.keys(nextErrors).length > 0) {
+      setFieldErrors(nextErrors);
+      const lead = firstOnboardingFieldError(nextErrors);
+      showToast({
+        message: lead?.message ?? FALLBACK_VALIDATION_TOAST,
+        tone: "error",
+      });
+      focusFirstInvalid(nextErrors);
+      return;
+    }
+    setFieldErrors({});
+    dismissToast();
+    setActionPending(true);
+    let completed: HouseholdMemberRow;
+    try {
+      completed = await api.completeMember(draft.id);
+    } catch {
+      setSaveState("failed");
+      setActionPending(false);
+      return;
+    }
+    replaceMember(completed);
+    try {
+      await invalidateHouseholdSafetyDependents(queryClient, userId);
+    } finally {
+      setActionPending(false);
+    }
+    // finishOnboarding は呼ばない — 次アクションへ
+  });
+};
+
+useEffect(() => {
+  if (draft !== null || completeMembers.length === 0) return;
+  nextActionHeadingRef.current?.focus();
+}, [draft, completeMembers.length]);
 ```
 
-`draft === null` 分岐を分割:
+**開始画面（draft null・complete 0）全文:**
 
 ```tsx
 if (draft === null && completeMembers.length === 0) {
-  // 既存の「家族設定を始める」+ skip（canShowSkip のときだけ）
+  return (
+    <main className="page-frame stack">
+      <h1>家族の初回設定</h1>
+      <p>年齢のめやす、アレルギー、食べない食事の3項目から始めます。</p>
+      <p className="type-small">
+        AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。
+      </p>
+      {startMutation.isError ? (
+        <p className="error-message" role="alert">
+          家族設定を開始できませんでした。通信を確認して再試行してください。
+        </p>
+      ) : null}
+      <button
+        className="primary-button min-h-11"
+        type="button"
+        disabled={startMutation.isPending || actionPending}
+        onClick={() => {
+          startMutation.mutate();
+        }}
+      >
+        家族設定を始める
+      </button>
+      {canShowSkip ? (
+        <button
+          className="text-button min-h-11"
+          type="button"
+          disabled={skipPending || actionPending}
+          onClick={() => {
+            void skipOnboarding();
+          }}
+        >
+          あとで設定する（アイデアから始める）
+        </button>
+      ) : null}
+      {skipError && (
+        <p className="error-message" role="alert">
+          スキップできませんでした。通信を確認して再試行してください。
+        </p>
+      )}
+    </main>
+  );
 }
+```
 
+**次アクション画面（draft null・complete ≥ 1）全文:**
+
+```tsx
 if (draft === null && completeMembers.length > 0) {
   const n = completeMembers.length;
   return (
@@ -408,18 +573,34 @@ if (draft === null && completeMembers.length > 0) {
 }
 ```
 
-focus effect（次アクション表示時）:
+**フォーム末尾**の完了・skip:
 
-```ts
-useEffect(() => {
-  if (draft !== null || completeMembers.length === 0) return;
-  nextActionHeadingRef.current?.focus();
-}, [draft, completeMembers.length]);
+```tsx
+<button
+  className="primary-button min-h-11"
+  type="button"
+  disabled={saveState === "failed" || actionPending}
+  onClick={handleCompleteClick}
+>
+  この家族の設定を完了する
+</button>
+{canShowSkip ? (
+  <button
+    className="text-button min-h-11"
+    type="button"
+    disabled={skipPending || actionPending}
+    onClick={() => {
+      void skipOnboarding();
+    }}
+  >
+    あとで設定する（アイデアから始める）
+  </button>
+) : null}
 ```
 
-フォーム末尾の skip も `canShowSkip` で囲む。開始画面（member 0）の skip も同様。
+members 読込中・エラーの既存分岐は維持。`membersQuery.isPending` のあとに上記 `draft === null` 二分岐を置く。
 
-- [ ] **Step 5: テストを実行し、Task 1 分が通ることを確認する**
+- [ ] **Step 6: テスト PASS**
 
 Run:
 
@@ -427,9 +608,9 @@ Run:
 docker compose run --rm --no-deps app npm test -- --run src/features/household/household-onboarding-page.test.tsx
 ```
 
-Expected: 本 Task で追加・置換したケースが PASS。未更新の旧ケースが残っていれば FAIL → すべて `getProfile` 付きに直し、旧 complete→navigate 期待を消す。
+Expected: Task 1 追加分 PASS。残り it も `baseApi` 化済みで PASS（callout 未実装 it は Task 2 まで無いので本ファイル全体が PASS すること）。
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/features/household/household-onboarding-page.tsx src/features/household/household-onboarding-page.test.tsx
@@ -443,21 +624,22 @@ EOF
 
 ---
 
-### Task 2: 入力中 callout（1人目 / 2人目以降）と skip 分岐テスト
+### Task 2: 入力中 callout と skip / 追加 / complete 時 setProgress 省略
 
 **Files:**
 - Modify: `src/features/household/household-onboarding-page.tsx`
 - Modify: `src/features/household/household-onboarding-page.test.tsx`
 
 **Interfaces:**
-- Consumes: Task 1 の次アクション・`canShowSkip`・`getProfile`
-- Produces: draft フォーム先頭の `InlineNotice` 分岐 copy
+- Consumes: Task 1 の次アクション・`canShowSkip`・`createMembersApiState`・`baseApi`
+- Produces: `InlineNotice` 分岐、skip 非表示、createDraft 後 callout、complete 時 setProgress 省略
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [ ] **Step 1: 失敗するテストを追加する**
 
 ```ts
 it("shows first-person callout while editing the initial draft", async () => {
-  const api = baseApi({ listMembers: vi.fn().mockResolvedValue([draft]) });
+  const membersState = createMembersApiState([draft]);
+  const api = baseApi({ listMembers: membersState.listMembers });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
@@ -471,18 +653,8 @@ it("shows first-person callout while editing the initial draft", async () => {
 
 it("shows continue-callout when drafting after a complete member exists", async () => {
   const secondDraft = { ...draft, id: "member-2", sort_order: 1 };
-  const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([
-      {
-        ...draft,
-        status: "complete" as const,
-        age_band: "adult" as const,
-        allergy_status: "none" as const,
-        unsupported_diet_status: "none" as const,
-      },
-      secondDraft,
-    ]),
-  });
+  const membersState = createMembersApiState([completeAdult, secondDraft]);
+  const api = baseApi({ listMembers: membersState.listMembers });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
@@ -491,16 +663,9 @@ it("shows continue-callout when drafting after a complete member exists", async 
 });
 
 it("hides skip on next-action when profile is already complete", async () => {
+  const membersState = createMembersApiState([completeAdult]);
   const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([
-      {
-        ...draft,
-        status: "complete" as const,
-        age_band: "adult" as const,
-        allergy_status: "none" as const,
-        unsupported_diet_status: "none" as const,
-      },
-    ]),
+    listMembers: membersState.listMembers,
     getProfile: vi.fn().mockResolvedValue(mockProfile("complete")),
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -516,18 +681,11 @@ it("hides skip on next-action when profile is already complete", async () => {
 
 it("shows skip on next-action when profile is in_progress and skips to onDone", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
   const setProgress = vi.fn().mockResolvedValue({});
   const onDone = vi.fn();
   const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([
-      {
-        ...draft,
-        status: "complete" as const,
-        age_band: "adult" as const,
-        allergy_status: "none" as const,
-        unsupported_diet_status: "none" as const,
-      },
-    ]),
+    listMembers: membersState.listMembers,
     getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
     setProgress,
   });
@@ -545,17 +703,14 @@ it("shows skip on next-action when profile is in_progress and skips to onDone", 
 
 it("adds another member from next-action and shows continue callout", async () => {
   const user = userEvent.setup();
-  const createDraft = vi.fn().mockResolvedValue({ ...draft, id: "member-2", sort_order: 1 });
+  const membersState = createMembersApiState([completeAdult]);
+  const createDraft = vi.fn(async () => {
+    const created = { ...draft, id: "member-2", sort_order: 1, status: "draft" as const };
+    membersState.upsert(created);
+    return created;
+  });
   const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([
-      {
-        ...draft,
-        status: "complete" as const,
-        age_band: "adult" as const,
-        allergy_status: "none" as const,
-        unsupported_diet_status: "none" as const,
-      },
-    ]),
+    listMembers: membersState.listMembers,
     createDraft,
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -570,18 +725,11 @@ it("adds another member from next-action and shows continue callout", async () =
 
 it("omits setProgress when starting planner while profile is already complete", async () => {
   const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
   const setProgress = vi.fn().mockResolvedValue({});
   const onDone = vi.fn();
   const api = baseApi({
-    listMembers: vi.fn().mockResolvedValue([
-      {
-        ...draft,
-        status: "complete" as const,
-        age_band: "adult" as const,
-        allergy_status: "none" as const,
-        unsupported_diet_status: "none" as const,
-      },
-    ]),
+    listMembers: membersState.listMembers,
     getProfile: vi.fn().mockResolvedValue(mockProfile("complete")),
     setProgress,
   });
@@ -596,7 +744,7 @@ it("omits setProgress when starting planner while profile is already complete", 
 });
 ```
 
-- [ ] **Step 2: テストを実行し、失敗を確認する**
+- [ ] **Step 2: RED 確認**
 
 Run:
 
@@ -604,7 +752,7 @@ Run:
 docker compose run --rm --no-deps app npm test -- --run src/features/household/household-onboarding-page.test.tsx
 ```
 
-Expected: callout / skip 非表示 / createDraft 後 callout などが FAIL
+Expected: callout 系 FAIL
 
 - [ ] **Step 3: callout 実装**
 
@@ -612,7 +760,7 @@ Expected: callout / skip 非表示 / createDraft 後 callout などが FAIL
 import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
 ```
 
-draft フォームの `h1` 直後（進捗の前）:
+draft フォームヘッダ（`eyebrow` / `h1` の直後、進捗の前）:
 
 ```tsx
 <p className="eyebrow">家族設定（任意）</p>
@@ -632,9 +780,11 @@ draft フォームの `h1` 直後（進捗の前）:
 <p>設定済み項目 {completedRequired} / 3</p>
 ```
 
-`role="status"` を自分で付けない（`InlineNotice` の `role="note"` を使う）。
+`role="status"` を付けない（`InlineNotice` が `role="note"`）。
 
-- [ ] **Step 4: テスト PASS を確認**
+Task 1 の `finishOnboarding` が既に `onboardingStatus !== "complete"` 分岐を持っていれば本 Step の実装追加は callout のみ。分岐が無ければ Task 1 の `finishOnboarding` 全文を再適用する。
+
+- [ ] **Step 4: GREEN**
 
 Run:
 
@@ -642,11 +792,9 @@ Run:
 docker compose run --rm --no-deps app npm test -- --run src/features/household/household-onboarding-page.test.tsx
 ```
 
-Expected: PASS（本ファイル全体）
+Expected: PASS（ファイル全体）
 
 - [ ] **Step 5: typecheck / lint / format:check**
-
-Run（各コマンド独立）:
 
 ```bash
 docker compose run --rm --no-deps app npm run typecheck
@@ -660,7 +808,7 @@ docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
 ```
 
-Expected: いずれも exit 0
+Expected: exit 0
 
 - [ ] **Step 6: Commit**
 
@@ -682,12 +830,12 @@ EOF
 - Modify: `e2e/specs/onboarding.spec.ts`
 
 **Interfaces:**
-- Consumes: Task 1–2 の UI 文言・ボタン名
-- Produces: CI が次アクション経由の完了フローを検証
+- Consumes: Task 1–2 の UI 文言
+- Produces: CI が次アクション経由を検証
 
-- [ ] **Step 1: E2E を設計 §7.2 どおりに書き換える**
+- [ ] **Step 1: E2E 全文置換**
 
-`e2e/specs/onboarding.spec.ts` を次の内容に置き換える（テスト名も更新）:
+`e2e/specs/onboarding.spec.ts`:
 
 ```ts
 import { expect, test } from "../fixtures/auth";
@@ -707,7 +855,6 @@ test("resumes a partially saved member, shows next-action after complete, then r
   await page.getByLabel("アレルギーの確認").selectOption("none");
   await page.getByLabel("食べない食事はありますか").selectOption("none");
 
-  // 入力中 callout（1人目）
   await expect(page.getByText("まずは1人分から登録しましょう")).toBeVisible();
 
   await page.getByRole("button", { name: "この家族の設定を完了する" }).click();
@@ -721,11 +868,9 @@ test("resumes a partially saved member, shows next-action after complete, then r
 
   await page.getByRole("button", { name: "献立を始める" }).click();
 
-  // 家族設定完了はAI利用同意を一切経由せず/plannerへ遷移する。
   await expect(page).toHaveURL(/\/planner$/u);
   await expect(page.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
 
-  // /privacyを独立して開いて同意を保存する。
   await page.goto("/privacy?returnTo=%2Fplanner");
   await expect(page.getByRole("button", { name: "確認して進む" })).toBeDisabled();
   await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
@@ -733,7 +878,7 @@ test("resumes a partially saved member, shows next-action after complete, then r
   await expect(page).toHaveURL(/\/planner$/u);
   await expect(page.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
 
-  // /onboardingへ戻っても complete のまま。次アクション相当 + skip 非表示。
+  // complete 再訪: 人数行 + skip 非表示
   await page.goto("/onboarding");
   await expect(page.getByText("1人の設定が完了しています。")).toBeVisible();
   await expect(
@@ -742,19 +887,13 @@ test("resumes a partially saved member, shows next-action after complete, then r
 });
 ```
 
-- [ ] **Step 2: E2E を実行する**
-
-ホストで（`app` コンテナ内の `npm run e2e` は使わない）:
+- [ ] **Step 2: E2E 実行（コマンド固定）**
 
 ```bash
 ./scripts/run-e2e.sh e2e/specs/onboarding.spec.ts
 ```
 
-スクリプトが引数を受け取らない場合はプロジェクトの README / `scripts/run-e2e.sh` を読み、onboarding だけに絞れるなら絞る。無理ならフル e2e のうち onboarding 失敗有無を確認。
-
-Expected: PASS
-
-失敗時: 文言・タイミング（保存済み待ち）をログで確認し、実装またはセレクタを直す。`getByLabel` が複数ある場合は既存どおりのラベルを維持。
+Expected: PASS（`run-e2e.sh` は引数を playwright test に渡す）。
 
 - [ ] **Step 3: 最終 focused 検証**
 
@@ -798,36 +937,21 @@ EOF
 
 | 設計 | Task |
 |------|------|
-| §5.1 callout 分岐・InlineNotice・status 禁止 | Task 2 |
-| §5.2 次アクション見出し・人数行・本文・3 CTA | Task 1 |
-| §5.2 skip 条件・complete で非表示 | Task 1–2 |
-| §5.2 主 CTA complete 時 setProgress 省略 | Task 2 テスト + Task 1 finishOnboarding |
-| §5.2 focus h1 | Task 1 |
-| §5.2 pending disable | Task 1 `actionPending` |
+| §5.1 callout 分岐・InlineNotice | Task 2 |
+| §5.2 次アクション・人数行・3 CTA | Task 1 |
+| §5.2 skip 条件 | Task 1–2 |
+| §5.2 complete 時 setProgress 省略 | Task 1 finish + Task 2 テスト |
+| §5.2 focus / pending（complete 含む） | Task 1 |
 | §5.3 complete 後 setProgress しない | Task 1 |
-| §4.2 中間状態（コードは分離のみ、welcome 非変更） | Task 1（意図どおり） |
 | §4.4 getProfile | Task 1 |
-| §7.1 単体 | Task 1–2 |
-| §7.2 E2E 必須 | Task 3 |
-| 設定ディープリンク非対象 | 全 Task で Link を追加しない |
+| §7.1 単体 + stateful | Task 1–2 |
+| §7.2 E2E | Task 3 |
+| invalidate safety 維持 | Task 1（外さない） |
 | DB/API 非変更 | 全 Task |
 
-## Placeholder / type consistency check
+## Placeholder / type consistency check (r1)
 
-- 主 CTA ラベルは **「献立を始める」に固定**（設計の「献立に戻る」任意は不採用）。
-- `getProfile` は API と factory と全テスト mock で一致。
-- `canShowSkip` は `not_started | in_progress` のみ。
-- コマンドは `&&` 連結なしで記載。
-
----
-
-## Execution Handoff
-
-Plan complete and saved to `docs/superpowers/plans/2026-07-31-onboarding-multi-member-attention.md`.
-
-**Two execution options:**
-
-1. **Subagent-Driven (recommended)** — タスクごとに新しい subagent、間にレビュー
-2. **Inline Execution** — このセッションで executing-plans に沿って逐次実装
-
-どちらで進めますか？
+- `// ...` 無し。
+- 主 CTA は「献立を始める」のみ。
+- `getProfile` / `createMembersApiState` / `baseApi` が一貫。
+- E2E コマンドは `./scripts/run-e2e.sh e2e/specs/onboarding.spec.ts` のみ。
