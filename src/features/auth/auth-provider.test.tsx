@@ -85,6 +85,40 @@ describe("AuthProvider", () => {
     expect(getSession).toHaveBeenCalledTimes(2);
   });
 
+  it("U1-I4 keeps loading on cold-start getSession error until a success arrives", async () => {
+    let calls = 0;
+    const getSession = vi.fn().mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return { data: { session: null }, error: { message: "idb_locked" } };
+      }
+      return { data: { session }, error: null };
+    });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({
+          data: { subscription: createAuthSubscription() },
+        }),
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider client={client}>
+        <Probe />
+      </AuthProvider>,
+    );
+    // 初回失敗では unauthenticated に倒れず loading のまま
+    expect(await screen.findByText("loading")).toBeInTheDocument();
+    expect(screen.queryByText("unauthenticated")).not.toBeInTheDocument();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+  });
+
   it("accepts an injectable recovery boundary without creating an auth gateway", async () => {
     const client = {
       auth: {

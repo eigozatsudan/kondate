@@ -20,6 +20,17 @@ type LoginLocationState = {
 
 /** 期限切れ復帰用。秘密は載せず、直近に送った宛先メールだけを短寿命で覚える（B-I8）。 */
 const lastMagicEmailStorageKey = "kondate.auth.lastMagicEmail";
+/**
+ * U1-I2 / B-I9: 送信済み UI の再表示用（秘密は載せない）。
+ * リロード後も「送信済み・再送まで Ns」を復元し、無意味な再送で live secret を焼かない。
+ */
+const magicSentUiStorageKey = "kondate.auth.magicSentUi";
+
+type MagicSentUiSnapshot = {
+  email: string;
+  flowId: string;
+  resendAvailableAt: string;
+};
 
 function readLastMagicEmail(): string {
   try {
@@ -39,6 +50,57 @@ function rememberLastMagicEmail(email: string): void {
   } catch {
     // sessionStorage 拒否時は期限切れ復元を諦めるだけ
   }
+}
+
+function readMagicSentUi(): MagicSentUiSnapshot | null {
+  try {
+    const raw = sessionStorage.getItem(magicSentUiStorageKey);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const email = "email" in parsed ? parsed.email : null;
+    const flowId = "flowId" in parsed ? parsed.flowId : null;
+    const resendAvailableAt =
+      "resendAvailableAt" in parsed ? parsed.resendAvailableAt : null;
+    if (
+      typeof email !== "string" ||
+      email.trim() === "" ||
+      typeof flowId !== "string" ||
+      flowId.length === 0 ||
+      typeof resendAvailableAt !== "string" ||
+      Number.isNaN(Date.parse(resendAvailableAt))
+    ) {
+      return null;
+    }
+    return { email: email.trim(), flowId, resendAvailableAt };
+  } catch {
+    return null;
+  }
+}
+
+function rememberMagicSentUi(snapshot: MagicSentUiSnapshot | null): void {
+  try {
+    if (snapshot === null) {
+      sessionStorage.removeItem(magicSentUiStorageKey);
+      return;
+    }
+    sessionStorage.setItem(magicSentUiStorageKey, JSON.stringify(snapshot));
+  } catch {
+    // sessionStorage 拒否時は sent UI 復元を諦めるだけ
+  }
+}
+
+function initialMagicLinkState(authError: LoginLocationState["authError"]): MagicLinkState {
+  // マジックリンク期限切れは送信済み文脈へ戻す（再入力を強いない）
+  if (authError === "magic_link_expired") {
+    return { status: "expired", email: readLastMagicEmail() };
+  }
+  // U1-I2: リロード後も sent UI を復元（再送クールダウン中は特に重要）
+  const sent = readMagicSentUi();
+  if (sent !== null) {
+    return { status: "sent", ...sent };
+  }
+  return { status: "idle", email: "" };
 }
 
 function readLoginLocationState(value: unknown): LoginLocationState {
@@ -64,13 +126,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const params = new URLSearchParams(location.search);
   // 明示的な復帰先は従来どおり安全化し、指定がない初回ログインだけ使い方の案内へ導く。
   const returnTo = params.has("returnTo") ? sanitizeReturnPath(params.get("returnTo")) : "/welcome";
-  const [state, setState] = useState<MagicLinkState>(() => {
-    // マジックリンク期限切れは送信済み文脈へ戻す（再入力を強いない）
-    if (locationState.authError === "magic_link_expired") {
-      return { status: "expired", email: readLastMagicEmail() };
-    }
-    return { status: "idle", email: "" };
-  });
+  const [state, setState] = useState<MagicLinkState>(() =>
+    initialMagicLinkState(locationState.authError),
+  );
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [googleError, setGoogleError] = useState(false);
   const [googlePending, setGooglePending] = useState(false);
@@ -124,6 +182,11 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     try {
       const sent = await activeGateway.sendMagicLink(email, returnTo);
       rememberLastMagicEmail(sent.email);
+      rememberMagicSentUi({
+        email: sent.email,
+        flowId: sent.flowId,
+        resendAvailableAt: sent.resendAvailableAt,
+      });
       setState({ status: "sent", ...sent });
     } catch {
       setState({

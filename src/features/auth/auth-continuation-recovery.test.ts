@@ -903,7 +903,7 @@ describe("auth continuation recovery", () => {
     stop();
   });
 
-  it("recovers from a future last-poll timestamp", async () => {
+  it("U1-I3 normalizes a future last-poll timestamp without claiming in the same cycle", async () => {
     const nowMs = Date.now();
     const storage = flowStorage(["10000000-0000-4000-8000-000000000001"], nowMs);
     storage.setItem("kondate.auth.supabase.claim-poll-last-at", String(nowMs + 60_000));
@@ -920,13 +920,43 @@ describe("auth continuation recovery", () => {
     });
     await flushPromises();
 
-    expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+    // 未来 last は gap バイパスを防ぐため正規化のみ。同一周期で claim バーストしない。
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
     expect(storage.getItem("kondate.auth.supabase.claim-poll-last-at")).toBe(String(nowMs));
     stop();
   });
 
-  it("recovers in the current slot after clock rollback without crossing callback ownership", async () => {
-    const nowMs = Date.parse("2026-07-13T00:00:00.000Z");
+  it("U1-I3 claims on the next cycle after normalizing a future last-poll timestamp", async () => {
+    let nowMs = Date.now();
+    const storage = flowStorage(["10000000-0000-4000-8000-000000000001"], nowMs);
+    storage.setItem("kondate.auth.supabase.claim-poll-last-at", String(nowMs + 60_000));
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+    let intervalCb: (() => void) | undefined;
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: ((cb: () => void) => {
+        intervalCb = cb;
+        return 1;
+      }) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+
+    // 5s 床を超えた次周期で claim できる
+    nowMs += 5_000;
+    intervalCb?.();
+    await flushPromises();
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("recovers claimable flow after clock rollback without crossing callback ownership", async () => {
+    let nowMs = Date.parse("2026-07-13T00:00:00.000Z");
     const futureMs = nowMs + 60_000;
     const ownerFlowId = "10000000-0000-4000-8000-000000000001";
     const claimableFlowId = "10000000-0000-4000-8000-000000000002";
@@ -949,22 +979,33 @@ describe("auth continuation recovery", () => {
     const gateway = {
       resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
     };
+    let intervalCb: (() => void) | undefined;
 
     const stop = startAuthContinuationRecovery({
       gateway,
       storage,
       onComplete: vi.fn(),
       now: () => new Date(nowMs),
-      setInterval: (() => 1) as unknown as typeof window.setInterval,
+      setInterval: ((cb: () => void) => {
+        intervalCb = cb;
+        return 1;
+      }) as unknown as typeof window.setInterval,
     });
+    await flushPromises();
+    // 第1周期: 未来 last を正規化のみ
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    expect(storage.getItem("kondate.auth.supabase.claim-poll-last-at")).toBe(String(nowMs));
+
+    nowMs += 5_000;
+    intervalCb?.();
     await flushPromises();
 
     expect(gateway.resumeFlow).toHaveBeenCalledOnce();
     expect(gateway.resumeFlow).toHaveBeenCalledWith(claimableFlowId);
+    // owner の未来 timestamp は list 走査で現在時刻へ正規化される（ownership 自体は維持）
     expect(storage.getItem(`kondate.auth.supabase.callback-owner.${ownerFlowId}`)).toBe(
       new Date(nowMs).toISOString(),
     );
-    expect(storage.getItem("kondate.auth.supabase.claim-poll-last-at")).toBe(String(nowMs));
     stop();
   });
 

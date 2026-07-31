@@ -107,6 +107,35 @@ it("restores sent context when magic link expired and last email is known (B-I8)
   sessionStorage.removeItem("kondate.auth.lastMagicEmail");
 });
 
+it("U1-I2 rehydrates magic-link sent UI from sessionStorage after reload", async () => {
+  const resendAvailableAt = new Date(Date.now() + 60_000).toISOString();
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "user@example.com",
+      flowId: "flow-rehydrate-1",
+      resendAvailableAt,
+    }),
+  );
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("user@example.com に送りました")).toBeInTheDocument();
+  // クールダウン中は再送ボタンが無効（無意味な再送で secret を焼かない）
+  expect(await screen.findByRole("button", { name: /秒後に再送できます/ })).toBeDisabled();
+  sessionStorage.removeItem("kondate.auth.magicSentUi");
+});
+
 it("allows retrying Google after switching from a magic link and a failed start", async () => {
   const user = userEvent.setup();
   const gateway: AuthGateway = {

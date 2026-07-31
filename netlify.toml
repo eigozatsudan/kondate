@@ -16,7 +16,8 @@
   memory = "2048"
 
 [context.production]
-  command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs"
+  # U5-I1: CONTEXT 欠落時の deploy-preview CSP へ fail-open しないよう --context を明示する
+  command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs --context production"
 
 [context.deploy-preview]
   command = "npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs"

@@ -237,8 +237,14 @@ export function startAuthContinuationRecovery(input: {
     if (stopped) return;
     const nowMs = (input.now?.() ?? new Date()).getTime();
     // F-AUTH-001: タブ横断で 5s 間隔を守る。focus/visibility の連打も同じ床で抑える。
+    // U1-I3: last が未来（時計戻り・改ざん）だと `last <= nowMs` が偽になり gap がスキップされるため、
+    // 未来値は now に正規化してその周期の claim を見送る。
     const last = readLastPollAt(input.storage);
-    if (last <= nowMs && nowMs - last < MIN_CLAIM_POLL_GAP_MS) return;
+    if (last > nowMs) {
+      writeStorageValue(input.storage, LAST_CLAIM_POLL_KEY, String(nowMs));
+      return;
+    }
+    if (nowMs - last < MIN_CLAIM_POLL_GAP_MS) return;
     const now = input.now?.() ?? new Date();
     const ttlMs = input.ttlMs ?? 300_000;
     const unexpiredFlows = listUnexpiredAuthFlows(input.storage, now, ttlMs);
