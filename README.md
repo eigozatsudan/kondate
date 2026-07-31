@@ -403,6 +403,16 @@ npm run preflight:production
 | 本番起動失敗                     | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か |
 | E2E が Stripe に飛ぶ             | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                          |
 
+本番 CLI デプロイ（Netlify / Supabase）のつまずきは
+[docs/deployment/README.md](docs/deployment/README.md) §6 が正本。Free プランで特に多いもの:
+
+| 症状 | 確認すること |
+| --- | --- |
+| env を Functions だけに限定できない | Free は **All scopes のみ**。秘密に `VITE_` を付けない |
+| `env:set --secret` / `missing key` | `--secret --context=production`（**`=` 形式**）。`--context production KEY` は KEY が context に飲まれる |
+| deploy が memory 422 | Function **memory 指定は Pro+**。`netlify.toml` と `flyer-weekly.ts` の両方から外す（既定 1024MB） |
+| `db push` が `db.<ref>...` 解決失敗 | Direct は IPv6 のみになりがち。**Shared Session pooler（5432）** を使う |
+
 主な検証コマンド:
 
 ```bash

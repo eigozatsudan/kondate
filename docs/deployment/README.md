@@ -256,9 +256,35 @@ docker compose --profile deploy run --rm netlify-cli link --id "$NETLIFY_SITE_ID
 CLI で 1 件入れる例（値はシェルから。echo しない）:
 
 ```bash
-# スコープは運用ポリシーに合わせる（build / functions / post-processing 等）
-docker compose --profile deploy run --rm -it netlify-cli env:set VITE_AUTH_PROVIDER_MODE supabase
+# 非秘密（全 context / All scopes 既定）
+docker compose --profile deploy run --rm netlify-cli env:set \
+  VITE_AUTH_PROVIDER_MODE supabase
+
+# 秘密: --secret は non-dev の context 必須。--context は可変長なので = 形式を使う
+# （--context production KEY と書くと KEY が context に飲まれ missing key になる）
+docker compose --profile deploy run --rm netlify-cli env:set \
+  --secret --context=production \
+  OPENROUTER_API_KEY 'sk-or-...'
 ```
+
+#### 無料プランでの env スコープ（Specific scopes 不可）
+
+Netlify 無料プランでは UI の **Specific scopes**（Builds / Functions の分割）が **Upgrade ロック**される。  
+設計書の「サーバ秘密は Functions のみ」は **Pro 以上**で UI/CLI の scope 分割ができる前提の理想形である。
+
+| プラン | できること |
+| --- | --- |
+| **Free** | **All scopes** のみ（ビルドにも秘密が渡る） |
+| **Pro+** | Functions のみ / Builds のみ など scope 分割可 |
+
+**Free での代替防御（必須）**
+
+1. サーバ秘密に **`VITE_` を絶対に付けない**（Vite は `VITE_` だけをブラウザ JS に埋め込む）
+2. 秘密は `--secret --context=production` で登録し、UI では **Contains secret values** を付ける
+3. ビルドログに env を echo しない
+4. 管理画面に入れるメンバーには env が見える／扱える前提で権限を絞る
+
+`VITE_` なしでも **Netlify のプロジェクト権限者**には env が存在する（Secret でもマスクされるだけで権限は残る）。
 
 大量の秘密は Dashboard の UI または保護されたシークレット注入の方が事故が少ないです。  
 **禁止の再掲**: `VITE_OAUTH_MOCK_ORIGIN`、あらゆる `VITE_*` サーバ秘密（`VITE_QUOTA_IDENTITY_HMAC_KEY` 含む）、ローカル mock の OpenRouter base、サンプル HMAC、ローカル `SMTP_*`。
@@ -276,6 +302,24 @@ docker compose --profile deploy run --rm netlify-cli deploy --build
 # 内容を確認したうえで本番公開
 docker compose --profile deploy run --rm netlify-cli deploy --build --prod
 ```
+
+#### Function `memory` と無料プラン（422）
+
+`flyer-weekly` の **memory 指定（例: 2048）は Credit-based Pro+ 専用**。  
+無料プランでは CDN 設定 API が次で **デプロイ全体を失敗**させる（無視されない）:
+
+```text
+Configuring function memory requires a Pro plan or higher with credit-based pricing. 422
+```
+
+設定箇所は次の **両方**（どちらか片方だけ外しても、もう一方で 422 になり得る）:
+
+- `netlify.toml` の `[functions."flyer-weekly"]` → `memory = "2048"`
+- `netlify/functions/flyer-weekly.ts` の `export const config` → `memory: 2048`
+
+**Free でデプロイする場合**: 上記 memory を **設定しない**（既定 1024MB）。  
+**Pro でチラシを 2048MB 運用する場合**: 両方に復帰する。  
+sharp / チラシの方針は [netlify.md](./netlify.md) の flyer 節。
 
 Git 継続デプロイを主にする場合:
 
@@ -363,9 +407,16 @@ docker compose --profile deploy run --rm supabase-cli db push \
 | `KONDATE_COMPOSE_PROJECT_NAME is required` | `.env` を `./scripts/generate-local-secrets.sh` で用意する |
 | `netlify` / `supabase` が not found | `docker compose build app` と `node_modules` ボリューム。`npm ci` 済みの development イメージを使う |
 | Netlify 認証エラー | `NETLIFY_AUTH_TOKEN` の有効期限・スコープ。`status` で確認 |
+| `link` が `"undefined"` / Site ID | **UUID の Site ID** を使う（サイト名 slug ではない）。既 link なら `status` で確認。Dashboard または `sites:list` |
+| env UI で Specific scopes / All scopes が使えない | Free は **All scopes のみ**。ダイアログを閉じてやり直すか `env:set`（`--scope` なし）。§4.2 |
+| `env:set` が `missing required argument 'key'` | `--context production KEY` で KEY が context に飲まれている。**`--context=production`** を使う |
+| `env:set --secret` が context エラー | `--secret` 時は **`--context=production`**（non-dev）必須 |
 | Supabase 認証エラー | `SUPABASE_ACCESS_TOKEN`。組織の権限 |
-| `db push` 失敗 | DB パスワード、ネットワーク、既適用 checksum との食い違い（手編集 migration 禁止） |
-| production ビルドで OpenRouter 検証失敗 | 有料 allowlist・`OPENROUTER_API_KEY`・`OPENROUTER_BASE_URL` が production env にあるか |
+| `db push` が Unix ソケット / 空 URL | ホストで `"$SUPABASE_DB_URL"` が空。export するかコンテナ内で展開。§3.2 |
+| `db push` が `db.<ref>.supabase.co` no such host | Direct は IPv6 のみになりがち。**Shared Session pooler（5432）** を使う。Dedicated IPv4 add-on は必須ではない。[supabase.md](./supabase.md) |
+| `db push` 失敗（その他） | DB パスワード、ネットワーク、既適用 checksum との食い違い（手編集 migration 禁止） |
+| production ビルドで OpenRouter 検証失敗 | 有料 allowlist・`OPENROUTER_API_KEY`・`OPENROUTER_BASE_URL` が production env にあるか。`OPENROUTER_MODELS` の空要素・末尾カンマ禁止 |
+| deploy が memory 422 で post-build 失敗 | Free では Function **memory 指定禁止**。`netlify.toml` と `flyer-weekly.ts` の **両方**から外す。§4.3 |
 | sharp / flyer ビルド失敗 | `npm run verify:sharp:netlify`（lock に linux-x64）。[netlify.md](./netlify.md) |
 | Auth コールバック失敗 | Supabase Redirect URLs と `SERVER_SITE_ORIGIN` / 実 origin の一致 |
 | マジックリンクが届かない / チーム外だけ失敗 | Custom SMTP 未設定・既定 SMTP 制限・SPF/DKIM・Auth Rate Limits（[supabase.md §2.3](./supabase.md)） |
@@ -400,10 +451,12 @@ docker compose --profile deploy run --rm supabase-cli --version
 docker compose --profile deploy run --rm netlify-cli status
 docker compose --profile deploy run --rm netlify-cli sites:list
 docker compose --profile deploy run --rm netlify-cli env:list
+docker compose --profile deploy run --rm netlify-cli env:set KEY value
+docker compose --profile deploy run --rm netlify-cli env:set --secret --context=production KEY value
 docker compose --profile deploy run --rm netlify-cli deploy --build
 docker compose --profile deploy run --rm netlify-cli deploy --build --prod
 
-# Supabase
+# Supabase（$SUPABASE_DB_URL はホストで export。Direct ではなく Session pooler 推奨）
 docker compose --profile deploy run --rm supabase-cli projects list
 docker compose --profile deploy run --rm -it supabase-cli link --project-ref "$SUPABASE_PROJECT_ID"
 docker compose --profile deploy run --rm supabase-cli db push --db-url "$SUPABASE_DB_URL" --include-all

@@ -109,7 +109,7 @@ Netlify の同期 Function 実行上限は公式どおり **60 秒固定・非�
 | --- | --- |
 | 依存 | `package.json` に `sharp` を **exact pin**（`npm install sharp --save-exact`） |
 | Bundling | `netlify.toml` の `[functions] external_node_modules = ["sharp"]` で esbuild に潰さず **node_modules として同梱**。lockfile に `@img/sharp-linux-x64` が必須（Netlify ランタイム） |
-| memory | `flyer-weekly` に `memory = 2048`（Credit-based Pro+ で有効。他プランは既定 1024MB） |
+| memory | **Credit-based Pro+ のみ** `2048` を設定可。Free では `netlify.toml` / `flyer-weekly.ts` の **どちらにも memory を書かない**（書くと deploy が 422 で全体失敗。既定 1024MB） |
 | ペイロード | multipart Content-Length 上限 = 画像 raw 4MiB + 256KiB（Netlify 実効 ~4.5MB 内） |
 | 検証 | `npm run verify:sharp:netlify`（exact pin / linux-x64 lock / import+decode）。production・preview・branch の build command と `prebuild` で fail-closed |
 | 代替 | sharp が解決不能でも pure JS デコードへ silent に落とさない |
