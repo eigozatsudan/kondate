@@ -16,8 +16,8 @@
 **このリポジトリのエージェント（AI）は本番・ステージングへデプロイしません。**
 手順の実行主体は人間オペレータ（または承認済みの保護リリース runner）です。
 
-秘密（パスワード、service role、PAT、DB URL、HMAC 鍵、SMTP 資格情報）をコマンド履歴・チケット・
-チャット・git・ビルドログに残さないでください。
+秘密（パスワード、Supabase Secret / service_role、PAT、DB URL、HMAC 鍵、SMTP 資格情報）を
+コマンド履歴・チケット・チャット・git・ビルドログに残さないでください。
 
 ---
 
@@ -73,7 +73,7 @@ docker compose up -d --wait
 | `SUPABASE_PROJECT_ID` | プロジェクト Settings → General の **Reference ID**（20 文字） | `link` 等 |
 
 シェルに export するか、**git 管理外**の `.env` にだけ書いて Compose に渡します。
-本番サイトの **Functions 用秘密**（service role 等）を、CLI 用 PAT と混同しないこと。
+本番サイトの **Functions 用秘密**（Supabase Secret / service_role 等）を、CLI 用 PAT と混同しないこと。
 
 ```bash
 export NETLIFY_AUTH_TOKEN='...'          # 履歴に残さない入力方法を使う
@@ -101,11 +101,11 @@ CLI だけでは完結しない準備です。アカウントを作った直後�
    | Enable automatic RLS | **オン**（`public` 新表の fail-closed 保険） |
 
 5. **GitHub (optional)** のスキーマ自動デプロイは、本リポジトリの運用（オペレータの `db push` / 保護手順）と別経路になるため、**未連携か、連携しても自動 migration に頼らない**。
-6. 作成後、**Settings → API** から次を記録する（値は印刷・コミットしない）:
+6. 作成後、次を記録する（値は印刷・コミットしない。キーの世代は [supabase.md §1.1](./supabase.md) が正本）:
    - Project URL（`https://<20文字ref>.supabase.co` のみ。カスタム REST origin は不可）
-   - `anon` / publishable key
-   - `service_role` key
-7. **Settings → General** の Reference ID（20 文字）を `SUPABASE_PROJECT_ID` として控える。
+   - **Publishable key**（推奨: `sb_publishable_…`。Dashboard の *Legacy anon…* は旧 `anon` JWT）
+   - **Secret key**（推奨: `sb_secret_…`。Legacy の `service_role` JWT は過渡用。env 名は `SUPABASE_SERVICE_ROLE_KEY`）
+7. **Settings → General** の **Reference ID**（20 文字 project ref。通称 Project ID と同値）を `SUPABASE_PROJECT_ID` として控える。
 8. Auth は [supabase.md](./supabase.md) に従う（Site URL / Redirect / Google / **Custom SMTP** / メールテンプレート）:
    - Site URL は **後で決まる Netlify 本番 origin** に合わせる（仮 URL のままだとマジックリンクがずれる）。
    - ローカル開発用 `http://127.0.0.1:5173/auth/callback` は許可リストに残してよい。
@@ -231,15 +231,15 @@ docker compose --profile deploy run --rm netlify-cli link --id "$NETLIFY_SITE_ID
 | 区分 | 例 | 置き場 |
 | --- | --- | --- |
 | ブラウザ安全 | `VITE_SUPABASE_*`、`VITE_AUTH_PROVIDER_MODE=supabase`、`VITE_MAGIC_LINK_RESEND_SECONDS`、`VITE_AUTH_CONTINUATION_TTL_MS` | Builds + 必要なら Functions |
-| サーバ専用 | service role、OpenRouter、**両 HMAC**、continuation 暗号鍵、maintenance DB URL、Stripe | **Functions のみ**（Builds / ログ / `VITE_` 禁止） |
+| サーバ専用 | Supabase Secret（`SUPABASE_SERVICE_ROLE_KEY`）、OpenRouter、**両 HMAC**、continuation 暗号鍵、maintenance DB URL、Stripe | **Functions のみ**（Builds / ログ / `VITE_` 禁止） |
 
 最低限そろえる対応関係（抜けやすい必須を含む。数値・禁止の正本は [netlify.md](./netlify.md)）:
 
 | Netlify 変数 | 値の出所 |
 | --- | --- |
 | `VITE_SUPABASE_URL` / `SUPABASE_URL` | 同一の `https://<ref>.supabase.co` |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY` | 同一 publishable key |
-| `SUPABASE_SERVICE_ROLE_KEY` | service_role（Functions のみ） |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY` | 同一 **Publishable**（推奨 `sb_publishable_…`。過渡的に Legacy `anon` JWT 可） |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Secret**（推奨 `sb_secret_…`。過渡的に Legacy `service_role` JWT 可）。Functions のみ |
 | `SERVER_SITE_ORIGIN` | 正確な Netlify HTTPS origin（末尾スラッシュなし） |
 | `VITE_AUTH_PROVIDER_MODE` | `supabase` のみ（本番） |
 | `VITE_MAGIC_LINK_RESEND_SECONDS` | 正の整数（例: 60） |
@@ -379,7 +379,7 @@ docker compose --profile deploy run --rm supabase-cli db push \
 
 ## 7. セキュリティチェックリスト（毎回）
 
-- [ ] PAT / DB URL / service role / SMTP 資格情報を git・screenshot・チケットに載せていない
+- [ ] PAT / DB URL / Supabase Secret（service_role）/ SMTP 資格情報を git・screenshot・チケットに載せていない
 - [ ] 本番に `VITE_OAUTH_MOCK_ORIGIN` や mock OpenRouter base が無い
 - [ ] `VITE_` 付きでサーバ秘密を付けていない（`VITE_QUOTA_IDENTITY_HMAC_KEY` 含む）
 - [ ] `GENERATION_REQUEST_HMAC_KEY` と `QUOTA_IDENTITY_HMAC_KEY` は別鍵

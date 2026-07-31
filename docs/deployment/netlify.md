@@ -14,7 +14,7 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | 変数 | 本番値 |
 | --- | --- |
 | `VITE_SUPABASE_URL` | 正確な managed origin `https://<20-char-ref>.supabase.co` |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | publishable key（サーバ側と同値） |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | **Publishable**（推奨 `sb_publishable_…`。サーバ側と同値。詳細: [supabase.md §1.1](./supabase.md)） |
 | `VITE_MAGIC_LINK_RESEND_SECONDS` | 正の整数（例: 60） |
 | `VITE_AUTH_CONTINUATION_TTL_MS` | `300000` |
 | `VITE_AUTH_PROVIDER_MODE` | `supabase` のみ |
@@ -30,8 +30,8 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | 変数 | 要件 |
 | --- | --- |
 | `SUPABASE_URL` | `VITE_SUPABASE_URL` と byte 同一の managed origin |
-| `SUPABASE_PUBLISHABLE_KEY` | `VITE_SUPABASE_PUBLISHABLE_KEY` と byte 同一 |
-| `SUPABASE_SERVICE_ROLE_KEY` | service role |
+| `SUPABASE_PUBLISHABLE_KEY` | `VITE_SUPABASE_PUBLISHABLE_KEY` と byte 同一（推奨 Publishable `sb_publishable_…`。過渡的に Legacy `anon` JWT 可） |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Secret**（推奨 `sb_secret_…`。過渡的に Legacy `service_role` JWT 可）。env 名は歴史的。**Functions のみ**。ブラウザ / `VITE_` 禁止 |
 | `SERVER_SITE_ORIGIN` | 正確な HTTPS origin のみ（末尾スラッシュなし） |
 | `AUTH_CONTINUATION_ENCRYPTION_KEY` | canonical base64・32 バイト。Functions スコープのみ |
 | `GENERATION_REQUEST_HMAC_KEY` | canonical base64・32 バイト。サンプル / ローカル値禁止。Functions スコープのみ |

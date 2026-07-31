@@ -3,9 +3,10 @@
 アカウント作成直後からの **CLI 初回デプロイと更新の手順**は
 [README.md](./README.md)（Compose profile `deploy` の `supabase-cli`）を先に読む。
 
-Managed Supabase プロジェクトの作成から、Auth（コールバック / Google / **Custom SMTP**）、
-マイグレーション適用、least-privilege メンテナンス LOGIN の用意、スキーマ検証までの正本。
-**パスワード・接続 URL・サービスロールキーをコマンド履歴・チケット・ログに残さない。**
+Managed Supabase プロジェクトの作成から、API キー（**Publishable / Secret** と Legacy）、
+Auth（コールバック / Google / **Custom SMTP**）、マイグレーション適用、least-privilege
+メンテナンス LOGIN の用意、スキーマ検証までの正本。
+**パスワード・接続 URL・Secret / service_role をコマンド履歴・チケット・ログに残さない。**
 
 `QUOTA_IDENTITY_HMAC_KEY` の生成・配置・ローテ影響は Netlify Functions 側の鍵であり、
 正本は [netlify.md](./netlify.md)（サーバ専用変数・HMAC）。
@@ -26,12 +27,43 @@ Managed Supabase プロジェクトの作成から、Auth（コールバック /
 
 4. **GitHub (optional)** の「コード push で schema を自動デプロイ」は、本リポジトリの正本手順（クリーンなコミット上の `db push` / 保護リリース）と別経路になる。**未連携のまま**、または連携しても **自動 migration に頼らない**（適用順・検証は [README.md](./README.md) と本ファイル §3）。
 5. 作成後、次をデプロイ用シークレットマネージャへ記録する（メンテナンス用クレデンシャルとは別）:
-   - 正確な 20 文字 project ref
+   - 正確な 20 文字 project ref（Settings → General の **Reference ID**。通称 project ref / Project ID と同値）
    - 正確な origin `https://<project-ref>.supabase.co`
-   - publishable key
-   - service-role key
+   - **Publishable key** と **Secret key**（次節。Netlify env へ載せる値）
    - 管理者用デプロイ DB URL
-6. この MVP ではカスタム / 任意 REST origin を拒否する。ブラウザとサーバのアプリ URL は同じ managed origin、publishable key も同一値とする。
+6. この MVP ではカスタム / 任意 REST origin を拒否する。ブラウザとサーバのアプリ URL は同じ managed origin、**publishable も browser / server で同一値**とする。
+
+### 1.1 API キー（Publishable / Secret と Legacy）
+
+Dashboard の **Settings → API Keys**（または Project の Connect ダイアログ）に、世代の異なるキーがある。
+
+| 役割 | 推奨（新形式） | Legacy（旧形式） | 本リポジトリの env |
+| --- | --- | --- | --- |
+| ブラウザ・低権限 | **Publishable** `sb_publishable_…` | **`anon`**（長寿命 JWT）。UI では *Legacy anon, service_role API keys* | `VITE_SUPABASE_PUBLISHABLE_KEY` と `SUPABASE_PUBLISHABLE_KEY`（**同一値**） |
+| サーバ特権・RLS バイパス | **Secret** `sb_secret_…` | **`service_role`**（長寿命 JWT）。同上 Legacy | `SUPABASE_SERVICE_ROLE_KEY`（**Functions のみ**。env 名は歴史的に service_role） |
+
+公式の整理:
+
+- `anon` は publishable の legacy 版、`service_role` は secret の legacy 版。
+- 新キーを作っても Legacy はすぐ無効にはならず、**当面は両方が並存**し得る。
+- Supabase は **2026 年末までに Legacy を deprecate** する方針。新規プロジェクトは **Publishable + Secret を先に使う**。
+
+#### 本番オペレータ手順
+
+1. **Settings → API Keys** を開く（*Legacy* タブだけに頼らない）。
+2. Publishable が無ければ **Create new API Keys** 等で作成し、`sb_publishable_…` を控える。
+3. Secret を 1 本以上作成し、`sb_secret_…` を控える（コンポーネントごとに分ける運用も可。本 MVP は Functions 用 1 本で足りる）。
+4. Netlify へは次のように載せる（値は印刷しない）:
+   - `VITE_SUPABASE_PUBLISHABLE_KEY` = Publishable（Builds 可）
+   - `SUPABASE_PUBLISHABLE_KEY` = **同じ** Publishable（Functions）
+   - `SUPABASE_SERVICE_ROLE_KEY` = Secret（**Functions のみ**。`VITE_` 禁止）
+5. **禁止**: Secret / Legacy `service_role` をブラウザ・`VITE_`・git・チケット・ビルドログへ。
+6. Legacy の `anon` / `service_role` JWT も **過渡的には**同じ env スロットに入れて動くが、新規は新形式を正とする。移行後に Legacy を Dashboard で無効化するのは別ステップ（アプリ全経路が新キーに切り替わってから）。
+
+#### ローカルとの違い
+
+ローカル Compose は self-host 互換のため、`scripts/generate-local-secrets.mjs` が **JWT 形式の `ANON_KEY` / `SERVICE_ROLE_KEY`** を生成し、それを publishable / service スロットへマップする。  
+**本番 Managed にローカル JWT をコピーしない。** 本番は Dashboard の Publishable / Secret（または当面の Legacy）を使う。
 
 ## 2. Auth サイト URL とコールバック
 
