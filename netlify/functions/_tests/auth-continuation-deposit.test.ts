@@ -166,6 +166,7 @@ describe("auth continuation deposit", () => {
     );
 
     expect(response.status).toBe(204);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.text()).toBe("");
     expect(deposit).toHaveBeenCalledTimes(1);
     expect(stored).not.toBeNull();

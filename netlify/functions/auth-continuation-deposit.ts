@@ -106,7 +106,13 @@ export function createHandler(
         iv: encrypted.iv,
         now: new Date().toISOString(),
       });
-      return deposited ? new Response(null, { status: 204 }) : continuationUnavailable();
+      // U1-004: 空 204 でも continuation 経路は no-store を揃える（json/jsonResponse と同型）
+      return deposited
+        ? new Response(null, {
+            status: 204,
+            headers: { "cache-control": "no-store" },
+          })
+        : continuationUnavailable();
     } catch {
       return continuationUnavailable();
     }

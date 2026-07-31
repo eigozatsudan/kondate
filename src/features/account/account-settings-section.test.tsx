@@ -107,6 +107,7 @@ describe("AccountSettingsSection", () => {
     expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledTimes(1);
     expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledWith(
       getBrowserSupabaseClientMock.mock.results[0]?.value ?? getBrowserSupabaseClientMock(),
+      { signOutScope: "global" },
     );
     expect(locationReplaceMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();

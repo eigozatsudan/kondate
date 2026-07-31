@@ -51,6 +51,21 @@ describe("clearLocalAuthAndDrafts", () => {
     }
   });
 
+  it("uses global signOut when signOutScope is global and falls back to local on failure", async () => {
+    const signOut = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("global unavailable"))
+      .mockResolvedValueOnce({ error: null });
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+
+    await clearLocalAuthAndDrafts(client, { signOutScope: "global" });
+
+    expect(signOut).toHaveBeenNthCalledWith(1, { scope: "global" });
+    expect(signOut).toHaveBeenNthCalledWith(2, { scope: "local" });
+  });
+
   it("resolves even when signOut fails because the server user is already gone", async () => {
     seedOwnedKeys(localStorage);
     const signOut = vi
