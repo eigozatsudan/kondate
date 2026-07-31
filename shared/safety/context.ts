@@ -8,7 +8,7 @@ import type {
 import type { AllergenDictionary } from "./allergens.js";
 import type { FoodSafetyRule } from "./food-rules.js";
 
-/** 確認済み自由登録アレルギー（評価用。プロンプトへは載せない）。 */
+/** 確認済み自由登録アレルギー（評価 hard match + 設計 §4.2 の prompt DTO 送信対象）。 */
 export type CurrentSafetyCustomAllergy = {
   name: string;
   aliases: readonly string[];

@@ -304,7 +304,8 @@ describe("useMenuRevalidation", () => {
     expect(result.current.result?.issues[0]?.code).toBe("allergen_present");
   });
 
-  it("soft network failure keeps last-known-good checked result", async () => {
+  it("soft network failure closes gate (error) instead of reopening last-known-good valid", async () => {
+    // H5: 検知〜再検査完了まで fail-closed。soft 失敗で旧 valid の CTA を開かない。
     const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
     await waitFor(() => {
       expect(result.current.phase).toBe("checked");
@@ -314,14 +315,16 @@ describe("useMenuRevalidation", () => {
     act(() => {
       result.current.beginSoftRecheck();
     });
+    // soft 飛行中は focus 点滅防止のため checked のまま
+    expect(result.current.phase).toBe("checked");
     act(() => {
       deferred.reject(new Error("network"));
     });
     await waitFor(() => {
-      expect(result.current.phase).toBe("checked");
+      expect(result.current.phase).toBe("error");
     });
-    expect(result.current.result?.status).toBe("valid");
-    expect(result.current.result?.safetyFingerprint).toBe("current");
+    expect(result.current.result).toBeUndefined();
+    expect(result.current.errorMessage).toMatch(/network|確認できませんでした/u);
   });
 
   it("hard recheck network failure ends in error without reopening prior valid", async () => {

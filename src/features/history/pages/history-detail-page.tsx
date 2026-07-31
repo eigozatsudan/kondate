@@ -12,6 +12,7 @@ import {
 } from "@shared/contracts/shopping";
 import {
   IdeaMenuSafetyNotice,
+  EASE_SOFT_NOT_SWALLOW_DISCLAIMER,
   MENU_LABEL_DISCLAIMER,
 } from "@/features/generation/components/idea-menu-safety-notice";
 import { useAuth } from "@/features/auth/use-auth";
@@ -794,6 +795,7 @@ function HouseholdDetailBody({
       <p className="rounded-xl border border-amber-700 p-3 font-semibold">
         {MENU_LABEL_DISCLAIMER}
       </p>
+      <p className="type-small text-ink/80">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
 
       {revalidation.phase === "checking" && (
         <div

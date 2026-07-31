@@ -38,6 +38,12 @@ export type GenerationPromptDto = {
     portionSize: string;
     allergenIds: readonly string[];
     hasUnmappedCustomAllergy: boolean;
+    /**
+     * 設計 §4.2 step 6: 確認済み自由登録語は外部送信 allowlist に含む。
+     * name と aliases を載せ、モデルが hard match 前に回避できるようにする。
+     * evaluateAllergens の hard match は維持（AGS-I2）。
+     */
+    customAllergies: readonly { name: string; aliases: readonly string[] }[];
     dislikes: readonly string[];
     spiceLevel: string;
     eatingEase: readonly string[];
@@ -115,7 +121,7 @@ const GENERATION_SYSTEM_PROMPT_CORE_PREFIX =
  * 出典: 旧 CORE_BODY の members〜allergen_pantry まで。
  */
 const GENERATION_SYSTEM_PROMPT_OUTCOME_TAIL =
-  "membersのallergenIds・requiredSafetyConstraints・カスタムアレルギーに" +
+  "membersのallergenIds・customAllergies（name/aliases）・requiredSafetyConstraintsに" +
   "該当する食材を使わずに献立が組めるときは、必ずoutcome=successにする。" +
   "allergiesが空でrequiredSafetyConstraintsも空のメンバーだけなら、" +
   "mandatory_safety_conflictは使わない。" +
@@ -418,6 +424,11 @@ function buildBaseGenerationMessages(
       portionSize: preferences.portionSize,
       allergenIds: [...member.allergenIds],
       hasUnmappedCustomAllergy: member.hasUnmappedCustomAllergy,
+      // 設計 §4.2 L119: 確認済み自由登録語を allowlist DTO へ載せる（評価 hard は AGS-I2 のまま）
+      customAllergies: member.customAllergies.map((custom) => ({
+        name: custom.name,
+        aliases: [...custom.aliases],
+      })),
       dislikes: [...preferences.dislikes],
       spiceLevel: preferences.spiceLevel,
       eatingEase: [...preferences.easePreferences],

@@ -5,6 +5,13 @@ import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
 export const MENU_LABEL_DISCLAIMER =
   "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。";
 
+/**
+ * 設計 L213: 「やわらかめ」は一般家庭の食べやすさであり嚥下調整ではないことの明記。
+ * アレルギー非保証（MENU_LABEL_DISCLAIMER）とは別軸。入力時は必須、結果は短い固定文。
+ */
+export const EASE_SOFT_NOT_SWALLOW_DISCLAIMER =
+  "「やわらかめ」は家庭での食べやすさの希望です。嚥下調整食や医療的な食事対応ではありません。";
+
 /** 必須注意を開く操作名（unit / e2e で共有）。 */
 export const IDEA_SAFETY_DETAILS_BUTTON_LABEL = "注意事項を見る";
 
@@ -101,6 +108,7 @@ export function IdeaMenuSafetyNotice() {
               内容、加熱状態、家庭内での混入を調理前に確認してください。
             </p>
             <p className="font-semibold">{MENU_LABEL_DISCLAIMER}</p>
+            <p className="type-small">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
           </div>
           <button
             type="button"

@@ -17,6 +17,7 @@ import { AccountSettingsSection } from "@/features/account/account-settings-sect
 import { FeedbackSection } from "@/features/account/feedback-section";
 import { useAuth } from "@/features/auth/use-auth";
 import { PlanSettingsSection } from "@/features/billing/plan-settings-section";
+import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { useAppToast } from "@/shared/ui/app-toast";
 import {
@@ -1795,6 +1796,10 @@ export function HouseholdSettingsForm({
                       : "やわらかめ"}
                 </label>
               ))}
+              {/* 設計 L213: 入力時に嚥下調整ではないことを明記（医療スコープ非検出と整合） */}
+              <p className="type-small" role="note">
+                {EASE_SOFT_NOT_SWALLOW_DISCLAIMER}
+              </p>
             </fieldset>
           </fieldset>
           {/*

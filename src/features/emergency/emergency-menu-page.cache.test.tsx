@@ -18,6 +18,7 @@ import { AppToastProvider } from "@/shared/ui/app-toast";
 
 const getPlannerDraftMock = vi.hoisted(() => vi.fn());
 const listHouseholdMembersMock = vi.hoisted(() => vi.fn());
+const listMemberAllergiesMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
 const realtime = vi.hoisted(() => ({
   handlers: [] as { table: string; filter: string; callback: () => void }[],
@@ -52,7 +53,11 @@ vi.mock("@/features/planner/planner-api", async (importOriginal) => {
 });
 vi.mock("@/features/household/household-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/household/household-api")>();
-  return { ...original, listHouseholdMembers: listHouseholdMembersMock };
+  return {
+    ...original,
+    listHouseholdMembers: listHouseholdMembersMock,
+    listMemberAllergies: listMemberAllergiesMock,
+  };
 });
 vi.mock("./emergency-menu-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("./emergency-menu-api")>();
@@ -109,7 +114,9 @@ function emitRealtime(table: string, ownerId: string): void {
 
 async function renderVisibleEmergencyResponse() {
   listHouseholdMembersMock.mockReset();
+  listMemberAllergiesMock.mockReset();
   listHouseholdMembersMock.mockResolvedValue([eligibleMember]);
+  listMemberAllergiesMock.mockResolvedValue([]);
   getEmergencyMenusMock.mockReset();
   getEmergencyMenusMock.mockResolvedValue(emergencyResponse("旧候補"));
   const queryClient = new QueryClient({
@@ -128,6 +135,8 @@ async function renderVisibleEmergencyResponse() {
 }
 
 beforeEach(() => {
+  listMemberAllergiesMock.mockReset();
+  listMemberAllergiesMock.mockResolvedValue([]);
   vi.clearAllMocks();
   vi.useRealTimers();
   localStorage.clear();

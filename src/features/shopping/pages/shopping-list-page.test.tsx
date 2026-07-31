@@ -29,6 +29,7 @@ import {
   persistedShoppingCommand,
 } from "../api/shopping-api";
 import { historyPathForShopping } from "../shopping-intent";
+import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { z } from "zod";
 
 const LIST_ID = "40000000-0000-4000-8000-000000000001";
@@ -696,6 +697,8 @@ describe("ShoppingListPage warnings and grouping", () => {
       },
     );
     expect(screen.getByText("デミグラスソース・乳・はなこ")).toBeInTheDocument();
+    // H4: 警告の有無に関わらず AI アレルギー非保証を常時表示
+    expect(screen.getByText(MENU_LABEL_DISCLAIMER)).toBeInTheDocument();
     // 保存済み provenance は current authority に昇格しない
     expect(screen.queryByText("現在の条件では確認できない過去の警告")).not.toBeInTheDocument();
     expect(screen.queryByText(SOURCE_ID)).not.toBeInTheDocument();

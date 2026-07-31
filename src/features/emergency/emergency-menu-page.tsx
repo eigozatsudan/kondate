@@ -3,7 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
 import { useAuth } from "@/features/auth/use-auth";
-import { listHouseholdMembers, type HouseholdMemberRow } from "@/features/household/household-api";
+import {
+  listHouseholdMembers,
+  listMemberAllergies,
+  type HouseholdMemberRow,
+  type MemberAllergyRow,
+} from "@/features/household/household-api";
 import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
 import {
   householdKeys,
@@ -37,11 +42,21 @@ const householdSafetyOnlyBannerText =
 const ideaSafetyOnlyBannerText =
   "メイン食材は一致しませんでした。アレルギー条件は適用していません。";
 
-function isEmergencyEligibleMember(member: HouseholdMemberRow): boolean {
+/** 緊急 fixture は標準 allergen ID のみ照合。確認済み自由登録があるメンバーはサーバ Stage S 前と同様に除外。 */
+type EmergencyHouseholdMember = HouseholdMemberRow & {
+  hasConfirmedCustomAllergy: boolean;
+};
+
+function memberHasConfirmedCustomAllergy(allergies: readonly MemberAllergyRow[]): boolean {
+  return allergies.some((row) => row.allergen_id === null && row.custom_confirmed);
+}
+
+function isEmergencyEligibleMember(member: EmergencyHouseholdMember): boolean {
   return (
     member.status === "complete" &&
     (member.allergy_status === "none" || member.allergy_status === "registered") &&
-    member.unsupported_diet_status === "none"
+    member.unsupported_diet_status === "none" &&
+    !member.hasConfirmedCustomAllergy
   );
 }
 
@@ -167,7 +182,24 @@ export function EmergencyMenuPage() {
     // 同画面・別画面の安全更新eventのどちらでもfresh cacheを再利用しない。
     queryKey: [...householdKeys.members(userId ?? "missing"), "emergency", householdSafetyRevision],
     enabled: householdQueryEnabled,
-    queryFn: () => listHouseholdMembers(getBrowserSupabaseClient(), userId ?? ""),
+    queryFn: async (): Promise<EmergencyHouseholdMember[]> => {
+      const client = getBrowserSupabaseClient();
+      const uid = userId ?? "";
+      const members = await listHouseholdMembers(client, uid);
+      // サーバ hasUnmappedCustomAllergy と同趣旨: 確認済み自由登録があれば緊急対象外
+      return Promise.all(
+        members.map(async (member) => {
+          if (member.status !== "complete") {
+            return { ...member, hasConfirmedCustomAllergy: false };
+          }
+          const allergies = await listMemberAllergies(client, uid, member.id);
+          return {
+            ...member,
+            hasConfirmedCustomAllergy: memberHasConfirmedCustomAllergy(allergies),
+          };
+        }),
+      );
+    },
   });
   // mode未選択の下書きだけは、後から完了した家族を初期対象にできる。
   // ideaまたは明示済みhouseholdから別家族へ黙って切り替えない。
@@ -305,7 +337,7 @@ export function EmergencyMenuPage() {
         : eligibleMemberIds.length === 0
           ? {
               message:
-                "表示できる対象の家族がいません。アレルギー確認と家族設定の完了を確認してください。",
+                "表示できる対象の家族がいません。アレルギー確認（自由登録アレルギーを含む）と家族設定の完了を確認してください。",
               href: "/onboarding",
               linkLabel: "家族設定を確認する",
             }
@@ -340,7 +372,7 @@ export function EmergencyMenuPage() {
 /** 設計 §5 post-API empty body（exact plain JP）。message は heading のみに使い body は emptyReason で分岐する。 */
 function postApiEmptyBody(response: EmergencyMenusData): string {
   if (response.emptyReason === "current_safety_unavailable" && response.path === "household") {
-    return "アレルギー確認未了または対応できない食事条件のため、候補を表示していません。条件は緩めていません";
+    return "アレルギー確認未了・自由登録アレルギー、または対応できない食事条件のため、候補を表示していません。条件は緩めていません";
   }
   if (response.emptyReason === "no_matching_fixture" && response.path === "household") {
     return "いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません";

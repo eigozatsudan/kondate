@@ -12,6 +12,7 @@ import { categoryLabel } from "../category-label";
 import { ShoppingItemRow } from "../components/shopping-item-row";
 import { useShoppingList, useShoppingSafetyGate } from "../hooks/use-shopping-list";
 import { historyPathForShopping } from "../shopping-intent";
+import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 
 const sections: readonly StoreSection[] = [
   "produce",
@@ -230,6 +231,10 @@ export function ShoppingListPage() {
           </p>
         )}
       </header>
+      {/* 設計 L221: 買い物リストにも AI アレルギー非保証を常時表示（警告 0 件でも） */}
+      <p className="type-small" role="note">
+        {MENU_LABEL_DISCLAIMER}
+      </p>
       {showCleanupButton && (
         <section className="stack">
           <button

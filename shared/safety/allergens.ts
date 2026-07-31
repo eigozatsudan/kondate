@@ -388,7 +388,7 @@ export function evaluateAllergens(
         }
       }
     }
-    // AGS-I2: 確認済み自由登録語は辞書外でも hard match する（プロンプトには載せない）。
+    // AGS-I2: 確認済み自由登録語は辞書外でも hard match する（prompt 送信は generation-prompt 側）。
     for (const custom of member.customAllergies) {
       const needles = [custom.name, ...custom.aliases].filter((value) => value.trim() !== "");
       if (needles.length === 0) continue;

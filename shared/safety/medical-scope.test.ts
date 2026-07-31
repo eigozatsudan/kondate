@@ -20,3 +20,23 @@ it.each(["塩分を少し控えめにして", "甘さ控えめにして"])(
     expect(detectUnsupportedMedicalRequest(requestText)).toEqual([]);
   },
 );
+
+it.each([
+  "とろみをつけてほしい",
+  "とろみ付けの食事にして",
+  "透析中なので食事を調整して",
+  "透析向けの献立にして",
+  "CKD の食事制限に合わせて",
+  "タンパク制限の食事にして",
+  "たんぱく制限でお願い",
+])("detects paraphrased unsupported medical request: %s", (requestText) => {
+  const kinds = detectUnsupportedMedicalRequest(requestText);
+  expect(kinds.length).toBeGreaterThan(0);
+});
+
+it.each(["とろみがないスープが好き", "透析の話を聞いた", "タンパク質を多めに"])(
+  "keeps ordinary non-medical phrasing in scope: %s",
+  (requestText) => {
+    expect(detectUnsupportedMedicalRequest(requestText)).toEqual([]);
+  },
+);

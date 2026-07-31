@@ -26,7 +26,8 @@ export function menuRevalidationQueryKey(menuId: string) {
  *   失敗時は error（旧 valid で reopen しない）。
  * - soft: poll / focus / visibility。直前の checked 結果を出したまま裏で POST する
  *   （マウスをウィンドウへ戻しただけの focus でフル画面ゲートが点滅するのを防ぐ）。
- *   soft のネットワーク失敗は last-known-good を維持（意図的）。
+ *   soft のネットワーク失敗は error へ（last-known-good valid で CTA を開かない = fail-closed）。
+ *   soft 飛行中かつ直前が成功済みのときだけ checked を維持する。
  * - online 復帰は hard（offline 閉鎖のあと、成功するまで操作を再開しない）。
  *
  * 飛行中の hard は常に checking。古い hard の完了で最新の閉じ状態を開けない。
@@ -150,14 +151,13 @@ export function useMenuRevalidation(menuId: string) {
     };
   }, [beginHardRecheck, beginSoftRecheck, menuId]);
 
-  // hard / 初回 data なしだけ checking。soft の isFetching では直前結果を出したままにする。
-  // soft 失敗は hasData 維持で checked（last-known-good）。hard 失敗は data 無しで error。
-  // TQ の結果 union 上、!hasData かつ非 pending/fetching は error 側に絞られるため
-  // isError を再度問わない（no-unnecessary-condition）。
+  // hard / 初回 data なしだけ checking。soft の isFetching では直前結果を出したままにする
+  // （focus 点滅防止）。soft ネットワーク失敗は isError で error へ落とし、旧 valid の CTA を開かない。
+  // hard 失敗は data 無し + isError で error。成功済み data かつ非 error のときだけ checked。
   const hasData = query.data !== undefined;
   const phase: RevalidationPhaseName = forcedChecking
     ? "checking"
-    : hasData
+    : hasData && !query.isError
       ? "checked"
       : query.isPending || query.isFetching
         ? "checking"

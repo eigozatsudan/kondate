@@ -11,6 +11,7 @@ import {
 } from "@shared/contracts/shopping";
 import {
   IdeaMenuSafetyNotice,
+  EASE_SOFT_NOT_SWALLOW_DISCLAIMER,
   MENU_LABEL_DISCLAIMER,
 } from "@/features/generation/components/idea-menu-safety-notice";
 import { useAuth } from "@/features/auth/use-auth";
@@ -804,6 +805,7 @@ function HouseholdResultBody({
       <p className="rounded-xl border border-amber-700 p-3 font-semibold break-words">
         {MENU_LABEL_DISCLAIMER}
       </p>
+      <p className="type-small text-ink/80">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
       {usage.isSuccess && !plusEntitled ? (
         <div className="mt-4">
           <FlyerUpsellBanner plusEntitled={false} />

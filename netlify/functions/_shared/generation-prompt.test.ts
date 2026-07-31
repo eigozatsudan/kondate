@@ -215,6 +215,7 @@ describe("buildGenerationMessages", () => {
       "portionSize",
       "allergenIds",
       "hasUnmappedCustomAllergy",
+      "customAllergies",
       "dislikes",
       "spiceLevel",
       "eatingEase",
@@ -244,6 +245,30 @@ describe("buildGenerationMessages", () => {
       members: [{ ref: "member_1", dislikes: [freeText] }],
     });
     expect(serialized).toContain(uuidText);
+  });
+
+  it("includes confirmed custom allergy name and aliases on members for model avoidance (H1)", () => {
+    const base = makeGenerationContext();
+    const member = base.safety.members[0]!;
+    const context = {
+      ...base,
+      safety: {
+        ...base.safety,
+        members: [
+          {
+            ...member,
+            allergyStatus: "registered" as const,
+            hasUnmappedCustomAllergy: true,
+            customAllergies: [{ name: "えび粉", aliases: ["エビパウダー"] as const }],
+          },
+        ],
+      },
+    };
+    const payload = userPayload(buildGenerationMessages(asNewMenuExecution(context)));
+    const promptMember = (payload.members as { customAllergies: unknown }[])[0]!;
+    expect(promptMember.customAllergies).toEqual([{ name: "えび粉", aliases: ["エビパウダー"] }]);
+    const system = systemText(buildGenerationMessages(asNewMenuExecution(context)));
+    expect(system).toContain("customAllergies");
   });
 
   it("includes structural pantry and outcome contracts in the system prompt", () => {

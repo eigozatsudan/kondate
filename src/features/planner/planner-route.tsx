@@ -179,13 +179,14 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
           : member.unsupported_diet_status === "present"
             ? "離乳食・嚥下調整食・治療食には対応できません"
             : null;
+    // §7.1: 具体名を常時表示。status=none でも残存行があれば名前を出す（設定 UI と同方針）
     const allergyLabel =
-      member.allergy_status === "none"
-        ? "アレルギーなし"
-        : allergyNames.length > 0
-          ? unresolvedAllergyCount > 0
-            ? `${allergyNames.join("・")}（ほか名前を表示できない項目あり）`
-            : allergyNames.join("・")
+      allergyNames.length > 0
+        ? unresolvedAllergyCount > 0
+          ? `${allergyNames.join("・")}（ほか名前を表示できない項目あり）`
+          : allergyNames.join("・")
+        : member.allergy_status === "none"
+          ? "アレルギーなし"
           : member.allergy_status === "unconfirmed"
             ? "アレルギー未確認"
             : // GP-I2 / MVP §7.1: 件数・有無だけの「登録アレルギーあり」は禁止

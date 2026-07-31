@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   IDEA_SAFETY_DETAILS_BUTTON_LABEL,
   IdeaMenuSafetyNotice,
+  EASE_SOFT_NOT_SWALLOW_DISCLAIMER,
   MENU_LABEL_DISCLAIMER,
 } from "./idea-menu-safety-notice";
 
@@ -52,6 +53,7 @@ describe("IdeaMenuSafetyNotice", () => {
     expect(within(dialog).getByText("年齢・アレルギーへの適合は確認されていません")).toBeVisible();
     expect(within(dialog).getByText(/AIが作成した献立です/u)).toBeVisible();
     expect(within(dialog).getByText(MENU_LABEL_DISCLAIMER)).toBeVisible();
+    expect(within(dialog).getByText(EASE_SOFT_NOT_SWALLOW_DISCLAIMER)).toBeVisible();
   });
 
   it("closes from 閉じる and from the dialog cancel event", async () => {

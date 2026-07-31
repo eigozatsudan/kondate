@@ -1004,7 +1004,7 @@ it("shows differentiated post-API empty copy for current_safety_unavailable", ()
   );
   expect(
     screen.getByText(
-      "アレルギー確認未了または対応できない食事条件のため、候補を表示していません。条件は緩めていません",
+      "アレルギー確認未了・自由登録アレルギー、または対応できない食事条件のため、候補を表示していません。条件は緩めていません",
     ),
   ).toBeVisible();
   expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
