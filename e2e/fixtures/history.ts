@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { z } from "zod";
 import { expect, test as authTest } from "./auth";
+import { confirmAddScopeNotice } from "./household";
 import { accessTokenFromPage, localRestHeaders } from "./local-supabase";
 import { resetGlobalAiQuotaForE2e } from "./reset-global-ai-quota";
 
@@ -82,6 +83,7 @@ export async function openFirstMemberEditor(page: Page): Promise<void> {
     await edit.click();
   } else {
     await page.getByRole("button", { name: "家族を追加" }).click();
+    await confirmAddScopeNotice(page);
   }
   await expect(nameField).toBeVisible({ timeout: 15_000 });
 }

@@ -5,6 +5,7 @@ import {
   openFirstMemberEditor,
   selectHouseholdAudienceWithMember,
 } from "../fixtures/history";
+import { confirmAddScopeNotice } from "../fixtures/household";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -179,11 +180,14 @@ test("waits for the latest draft save before requesting emergency menus", async 
       new URL(response.url()).pathname.endsWith("/rest/v1/household_members"),
   );
   await page.getByRole("button", { name: "家族を追加" }).click();
+  await confirmAddScopeNotice(page);
   const selectedMemberId = await readCreatedId(await memberCreated);
   await page.getByRole("textbox", { name: "呼び名" }).fill("緊急用家族");
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page.getByLabel("食べない食事はありますか").selectOption("none");
+  await page
+    .getByLabel(/このアプリで献立を作れない事情はありますか/)
+    .selectOption("none");
   const memberCompleted = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&

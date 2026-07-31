@@ -1,4 +1,5 @@
 import { expect, test } from "../fixtures/auth";
+import { confirmAddScopeNotice } from "../fixtures/household";
 
 test("resumes a partially saved member, shows next-action after complete, then reaches /planner without privacy consent", async ({
   authenticatedPage: page,
@@ -8,12 +9,15 @@ test("resumes a partially saved member, shows next-action after complete, then r
   await page.getByRole("button", { name: "家族情報を登録する" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/onboarding");
   await page.getByRole("button", { name: "家族設定を始める" }).click();
+  await confirmAddScopeNotice(page);
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await expect(page.getByText("保存済み")).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("年齢のめやす")).toHaveValue("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
-  await page.getByLabel("食べない食事はありますか").selectOption("none");
+  await page
+    .getByLabel(/このアプリで献立を作れない事情はありますか/)
+    .selectOption("none");
 
   await expect(page.getByText("まずは1人分から登録しましょう")).toBeVisible();
 
