@@ -68,7 +68,7 @@ describe("runMaintenance", () => {
   it("uses one client, fixed parameterized RPC SQL, and four-count parse before commit", async () => {
     mockHappyPath();
     const result = await runMaintenance({
-      connectionString: "postgresql://x",
+      connectionString: "postgresql://x?sslmode=require",
       now: "2026-07-24T12:00:00.000Z",
       batchSize: 250,
     });
@@ -82,7 +82,11 @@ describe("runMaintenance", () => {
       application_name: "kondate-maintenance",
       connectionTimeoutMillis: 5_000,
       query_timeout: 25_000,
+      // connectionString の sslmode は剥がし、ssl オプションで TLS のみ有効化
+      ssl: { rejectUnauthorized: false },
     });
+    // Object.assign で parse(connectionString) が ssl を上書きしないよう sslmode を除去する
+    expect(String(clientOptions?.connectionString)).not.toMatch(/sslmode=/u);
     const sqlCalls = query.mock.calls.map((c) => String(c[0]));
     expect(sqlCalls).toContain("begin");
     expect(sqlCalls).toContain("set local role kondate_maintenance_executor");
@@ -92,6 +96,21 @@ describe("runMaintenance", () => {
     expect(rpcCall?.[1]).toEqual(["2026-07-24T12:00:00.000Z", 250]);
     expect(sqlCalls).toContain("commit");
     expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not force ssl option for local sslmode=disable", async () => {
+    mockHappyPath();
+    const localUrl =
+      "postgresql://kondate_maintenance_login:x@db:5432/postgres?sslmode=disable";
+    await runMaintenance({
+      connectionString: localUrl,
+      now: "2026-07-24T12:00:00.000Z",
+      batchSize: 250,
+    });
+    const clientOptions = (Client as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(clientOptions).not.toHaveProperty("ssl");
+    expect(clientOptions?.connectionString).toBe(localUrl);
   });
 
   it("rolls back and ends on malformed counts", async () => {
