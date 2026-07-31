@@ -162,11 +162,12 @@ it("uses Supabase Google and never the mock URL in production mode", async () =>
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 
-it("deposits a magic-link callback without claiming it directly", async () => {
+it("same-browser magic-link callback deposits then claims immediately", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
   const claim = vi.fn().mockResolvedValue({ code: "magic-code-1", returnTo: "/onboarding" });
-  const api = continuationApiMock({ claim });
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const api = continuationApiMock({ claim, deposit });
   const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
   const client = authClientMock();
   const gateway = createAuthGateway(
@@ -193,14 +194,18 @@ it("deposits a magic-link callback without claiming it directly", async () => {
       ),
     ),
   ).resolves.toEqual({
-    kind: "awaiting_completion",
+    kind: "complete",
+    continuation: "same_browser",
     flowId: flow.id,
     returnTo: "/onboarding",
   });
-  expect(claim).not.toHaveBeenCalled();
-  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  expect(deposit).toHaveBeenCalledWith(flow.id, { state: flow.state, code: "code-1" });
+  expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
+  // magic link の sessionExchange は supabase。mock exchange は使わない。
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("magic-code-1");
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
   expect(fetchImpl).not.toHaveBeenCalled();
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
 it("exchanges a stored Google mock flow only with the local mock provider", async () => {
@@ -394,7 +399,7 @@ it("deposits for the original browser when this context never held the flow", as
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
 });
 
-it("leaves a same-browser deposited callback for the shared recovery coordinator", async () => {
+it("same-browser callback deposits then claims and exchanges immediately", async () => {
   const storage = new MapStorage();
   const deposit = vi.fn().mockResolvedValue(undefined);
   const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
@@ -413,13 +418,46 @@ it("leaves a same-browser deposited callback for the shared recovery coordinator
   );
 
   expect(result).toEqual({
+    kind: "complete",
+    continuation: "same_browser",
+    returnTo: "/onboarding",
+    flowId: flow.id,
+  });
+  expect(deposit).toHaveBeenCalledWith(flow.id, { state: flow.state, code: "code-1" });
+  expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
+  expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
+  // claim 成功後は clearClaimedAuthFlow で secret を消す
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("same-browser immediate claim 404 keeps secret for recovery coordinator fallback", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const claim = vi.fn().mockRejectedValue(new ContinuationHttpError(404));
+  const api = continuationApiMock({ deposit, claim });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  const result = await gateway.completeCallback(
+    new URL(`http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`),
+  );
+
+  // 一時 404 は terminal にせず、callback 側 recovery poll へ委ねる
+  expect(result).toEqual({
     kind: "awaiting_completion",
     returnTo: "/onboarding",
     flowId: flow.id,
   });
-  expect(claim).not.toHaveBeenCalled();
+  expect(deposit).toHaveBeenCalled();
+  expect(claim).toHaveBeenCalled();
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
-  expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
 

@@ -83,7 +83,8 @@ export function createAuthGateway(
   deps: AuthGatewayDeps = browserAuthGatewayDeps,
 ): AuthGateway {
   const client = providedClient ?? getBrowserSupabaseClient();
-  return {
+  // completeCallback から同一オブジェクトの resumeFlow を呼ぶため、先に束縛する。
+  const gateway: AuthGateway = {
     async signInWithGoogle(returnTo) {
       replaceExistingAuthFlows(storage);
       const provider = deps.getPublicEnv();
@@ -199,11 +200,10 @@ export function createAuthGateway(
           returnTo: "/planner",
         };
       }
-      return {
-        kind: "awaiting_completion",
-        flowId,
-        returnTo,
-      };
+      // 同一ブラウザ: deposit 直後に即 claim/exchange する。
+      // iOS 等で recovery の 5s poll / タイマー抑制に依存すると「確認中」が長く見える。
+      // 一時失敗は resumeFlow が awaiting を返し、AuthCallbackPage の recovery がフォールバックする。
+      return gateway.resumeFlow(flowId);
     },
 
     async resumeFlow(flowId) {
@@ -264,4 +264,5 @@ export function createAuthGateway(
       }
     },
   };
+  return gateway;
 }
