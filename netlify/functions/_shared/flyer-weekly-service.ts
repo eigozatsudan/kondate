@@ -473,6 +473,30 @@ export async function runFlyerWeekly(
     // メンバー 0 人（idea 世帯）でも Zod 通過後の構造は受理。banned は空。
     if (memberIds.length > 0) {
       const safety = await loadCurrentSafetyContext(admin, deps.user.userId, memberIds);
+      // U6-001: unconfirmed / allergen_missing を generation と同型で fail-closed。
+      // 未確認世帯で banned=[] のまま受理するとアレルゲン検査が実質スキップされる。
+      for (const member of safety.members) {
+        if (member.allergyStatus === "unconfirmed") {
+          throw new HttpError(422, "allergy_unconfirmed", issueMessages.allergy_unconfirmed);
+        }
+        if (
+          member.allergyStatus === "registered" &&
+          member.allergenIds.length === 0 &&
+          member.customAllergies.length === 0
+        ) {
+          throw new HttpError(422, "allergen_missing", issueMessages.allergen_missing);
+        }
+        if (member.unsupportedDietStatus === "unconfirmed") {
+          throw new HttpError(
+            422,
+            "unsupported_diet_unconfirmed",
+            issueMessages.unsupported_diet_unconfirmed,
+          );
+        }
+        if (member.unsupportedDietStatus === "present") {
+          throw new HttpError(422, "unsupported_diet", issueMessages.unsupported_diet);
+        }
+      }
       const banned: string[] = [];
       const catalogById = new Map(
         safety.allergenDictionary.catalog.map((entry) => [entry.id, entry.displayName] as const),

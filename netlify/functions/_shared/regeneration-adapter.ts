@@ -138,6 +138,10 @@ export function createRegenerationLoaderDeps(
     if (error !== null) {
       throw new HttpError(503, "internal_error", "冷蔵庫の食材を確認できませんでした");
     }
+    // U3-007: 新規献立の loadOwnedPantryItems と同型。欠落 ID を黙って落とさない。
+    if (data.length !== pantryItemIds.length) {
+      throw new HttpError(422, "invalid_request", "冷蔵庫の食材を確認できませんでした");
+    }
     return data.map((row) => ({
       id: row.id,
       userId: row.user_id,

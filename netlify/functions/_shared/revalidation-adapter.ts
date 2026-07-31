@@ -414,6 +414,18 @@ export async function validateStoredMenuCurrentSafety(input: {
         message: "アレルギー確認が必要です",
       });
     }
+    // U3-002: generation / validateGeneratedMenu と同型。registered なのに針が無い状態を false-valid にしない。
+    if (
+      member.allergyStatus === "registered" &&
+      member.allergenIds.length === 0 &&
+      member.customAllergies.length === 0
+    ) {
+      issues.push({
+        code: "allergen_missing",
+        path: member.anonymousRef,
+        message: "登録アレルゲンを選んでください",
+      });
+    }
     // AGS-I2: 評価可能なカスタムは evaluateAllergens 側。空のときだけ unmapped。
     if (
       member.hasUnmappedCustomAllergy &&
@@ -583,34 +595,36 @@ export async function buildStoredGenerationContext(input: {
         "id,user_id,name,quantity,unit,expires_on,expiration_type,opened_state,created_at,updated_at",
       )
       .in("id", [...pantryItemIds]);
-    if (error === null) {
-      for (const row of data) {
-        const expirationType =
-          row.expiration_type === "use_by" ||
-          row.expiration_type === "best_before" ||
-          row.expiration_type === "other" ||
-          row.expiration_type === "unknown"
-            ? row.expiration_type
-            : null;
-        const openedState =
-          row.opened_state === "unopened" ||
-          row.opened_state === "opened" ||
-          row.opened_state === "unknown"
-            ? row.opened_state
-            : null;
-        pantryItems.push({
-          id: row.id,
-          userId: row.user_id,
-          name: row.name,
-          quantity: row.quantity,
-          unit: row.unit,
-          expiresOn: row.expires_on,
-          expirationType,
-          openedState,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        });
-      }
+    // U3-003: 読取失敗を空配列のまま進めると再生成が fail-open になる。live 在庫読取と同型で閉じる。
+    if (error !== null) {
+      throw new HttpError(503, "internal_error", "冷蔵庫の食材を確認できませんでした");
+    }
+    for (const row of data) {
+      const expirationType =
+        row.expiration_type === "use_by" ||
+        row.expiration_type === "best_before" ||
+        row.expiration_type === "other" ||
+        row.expiration_type === "unknown"
+          ? row.expiration_type
+          : null;
+      const openedState =
+        row.opened_state === "unopened" ||
+        row.opened_state === "opened" ||
+        row.opened_state === "unknown"
+          ? row.opened_state
+          : null;
+      pantryItems.push({
+        id: row.id,
+        userId: row.user_id,
+        name: row.name,
+        quantity: row.quantity,
+        unit: row.unit,
+        expiresOn: row.expires_on,
+        expirationType,
+        openedState,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
     }
   }
 
@@ -622,14 +636,35 @@ export async function buildStoredGenerationContext(input: {
     } => member.householdMemberId !== null,
   );
 
-  const asPortion = (value: string | null | undefined): PortionSize =>
-    value === "small" || value === "regular" || value === "large" ? value : "regular";
-  const asSpice = (value: string | null | undefined): SpiceLevel =>
-    value === "none" || value === "mild" || value === "regular" ? value : "regular";
+  const asPortion = (value: string | null | undefined): PortionSize | null =>
+    value === "small" || value === "regular" || value === "large" ? value : null;
+  const asSpice = (value: string | null | undefined): SpiceLevel | null =>
+    value === "none" || value === "mild" || value === "regular" ? value : null;
   const asEase = (values: readonly string[] | undefined): EasePreference[] =>
     (values ?? []).flatMap((value) =>
       value === "small_pieces" || value === "boneless" || value === "soft" ? [value] : [],
     );
+
+  // U3-006: ライブ好みが欠ける対象を regular/空 dislikes で埋めない（generation と同型で fail-closed）
+  const memberPreferences = surviving.map((member) => {
+    const live = livePreferences.get(member.householdMemberId);
+    if (live === undefined) {
+      throw new HttpError(422, "invalid_request", "家族の好み設定を確認できませんでした");
+    }
+    const portionSize = asPortion(live.portionSize);
+    const spiceLevel = asSpice(live.spiceLevel);
+    if (portionSize === null || spiceLevel === null) {
+      throw new HttpError(422, "invalid_request", "家族の分量・辛さ設定を確認してください");
+    }
+    return {
+      householdMemberId: member.householdMemberId,
+      anonymousMemberRef: member.anonymousMemberRef,
+      portionSize,
+      spiceLevel,
+      easePreferences: asEase(live.easePreferences),
+      dislikes: [...live.dislikes],
+    };
+  });
 
   return {
     targetMode: "household" as const,
@@ -652,17 +687,7 @@ export async function buildStoredGenerationContext(input: {
     },
     safety,
     pantryItems,
-    memberPreferences: surviving.map((member) => {
-      const live = livePreferences.get(member.householdMemberId);
-      return {
-        householdMemberId: member.householdMemberId,
-        anonymousMemberRef: member.anonymousMemberRef,
-        portionSize: asPortion(live?.portionSize),
-        spiceLevel: asSpice(live?.spiceLevel),
-        easePreferences: asEase(live?.easePreferences),
-        dislikes: live === undefined ? [] : [...live.dislikes],
-      };
-    }),
+    memberPreferences,
     targetMembers: surviving.map((member) => ({
       householdMemberId: member.householdMemberId,
       anonymousRef: member.anonymousMemberRef,

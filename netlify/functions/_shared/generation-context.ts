@@ -148,7 +148,8 @@ function memberFailure(member: HouseholdMemberRow): GenerationFailureCode | null
   if (member.unsupported_diet_status === "unconfirmed") return "unsupported_diet_unconfirmed";
   if (member.unsupported_diet_status === "present") return "unsupported_diet";
   if (member.unsupported_diet_status === null) return "invalid_request";
-  if (member.display_name === null || member.portion_size === null || member.spice_level === null) {
+  // U4-001: 呼び名（display_name）は設計上 optional。分量・辛さのみ必須。
+  if (member.portion_size === null || member.spice_level === null) {
     return "invalid_request";
   }
   return null;
@@ -157,17 +158,13 @@ function memberFailure(member: HouseholdMemberRow): GenerationFailureCode | null
 function requireCompleteMember(member: HouseholdMemberRow): CompleteHouseholdMemberRow {
   const failure = memberFailure(member);
   if (failure !== null) throwGenerationFailure(failure);
-  if (
-    member.display_name === null ||
-    member.age_band === null ||
-    member.portion_size === null ||
-    member.spice_level === null
-  ) {
+  if (member.age_band === null || member.portion_size === null || member.spice_level === null) {
     throw invalidRequest();
   }
   return {
     ...member,
-    display_name: member.display_name,
+    // null 呼び名は空文字に正規化し、AI へは送らないスナップショット用途のみ
+    display_name: member.display_name ?? "",
     age_band: member.age_band,
     portion_size: member.portion_size,
     spice_level: member.spice_level,

@@ -7,6 +7,7 @@ import {
 } from "@shared/contracts/flyer-weekly";
 import { z } from "zod";
 import { useAuth } from "@/features/auth/use-auth";
+import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 export type FlyerWeeklyPanelProps = {
@@ -136,6 +137,10 @@ export function FlyerWeeklyPanel({
     <section className="stack card" data-testid="flyer-weekly-upload" aria-labelledby={inputId}>
       <h2 id={inputId}>チラシから 1 週間の献立</h2>
       <p className="muted">スーパーのチラシ写真を 1 枚選ぶと、1 週間分の献立案を作ります。</p>
+      {/* U6-005: 生成・緊急献立と同型の非保証免責（加工品ラベル確認を含む） */}
+      <p className="muted" data-testid="flyer-weekly-disclaimer">
+        {MENU_LABEL_DISCLAIMER}
+      </p>
       {/* secondary-button で 44px タッチターゲットと輪郭ボタン見た目を揃える */}
       <label className="secondary-button" style={{ display: "inline-flex", cursor: "pointer" }}>
         {busy ? "作成中…" : "チラシ写真を選ぶ"}

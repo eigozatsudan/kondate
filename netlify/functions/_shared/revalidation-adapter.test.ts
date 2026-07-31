@@ -241,6 +241,53 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(result.issues.some((issue) => /allergen|allergy/i.test(issue.code))).toBe(false);
   });
 
+  // U3-002: registered なのに針が無い世帯を false-valid にしない
+  it("marks allergen_missing when allergy is registered with no allergens", async () => {
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            householdMemberId: LIVE_MEMBER_ID,
+            anonymousRef: "member_1",
+            ageBand: "adult",
+            allergyStatus: "registered",
+            allergenIds: [],
+            hasUnmappedCustomAllergy: false,
+            customAllergies: [],
+            requiredSafetyConstraints: [],
+            unsupportedDietStatus: "none",
+            unsupportedDietKinds: [],
+          },
+        ],
+      }),
+    );
+    const stored = makeStored();
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [{ id: PANTRY_ITEM_ID, quantity: 200 }], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "allergen_missing")).toBe(true);
+  });
+
   it("F-U07-2: fails closed with 503 when live pantry load errors (no false pantry_item_removed)", async () => {
     const stored = makeStored();
     const ownerClient = ownerClientWith({
