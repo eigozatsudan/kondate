@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { createCurrentSafetyFingerprint } from "./fingerprint.js";
+import {
+  createCurrentSafetyFingerprint,
+  createFinalizeSafetyFingerprint,
+  withSqlOrdinalAnonymousRefs,
+} from "./fingerprint.js";
 import { makeCurrentSafetyContext } from "../testing/factories.js";
 
 it("sorts arrays and members and changes when current safety changes", () => {
@@ -21,6 +25,30 @@ it("sorts arrays and members and changes when current safety changes", () => {
   });
   expect(createCurrentSafetyFingerprint(first)).toBe(createCurrentSafetyFingerprint(reordered));
   expect(createCurrentSafetyFingerprint(first)).not.toBe(createCurrentSafetyFingerprint(changed));
+});
+
+it("HIST-1: finalize fingerprint renumbers historical refs to SQL ordinality", () => {
+  const base = makeCurrentSafetyContext().members[0]!;
+  const survivorOnly = makeCurrentSafetyContext({
+    members: [
+      {
+        ...base,
+        householdMemberId: "55000000-0000-4000-8000-000000000002",
+        // 履歴上 member_2 だった生存メンバーだけ
+        anonymousRef: "member_2",
+      },
+    ],
+  });
+  const renumbered = withSqlOrdinalAnonymousRefs(survivorOnly, [
+    "55000000-0000-4000-8000-000000000002",
+  ]);
+  expect(renumbered.members[0]?.anonymousRef).toBe("member_1");
+  const historicalFp = createCurrentSafetyFingerprint(survivorOnly);
+  const finalizeFp = createFinalizeSafetyFingerprint(survivorOnly, [
+    "55000000-0000-4000-8000-000000000002",
+  ]);
+  expect(finalizeFp).not.toBe(historicalFp);
+  expect(finalizeFp).toBe(createCurrentSafetyFingerprint(renumbered));
 });
 
 it("changes when custom allergy text changes while hasUnmapped stays true (F-SAF-002)", () => {

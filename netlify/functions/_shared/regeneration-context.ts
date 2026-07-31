@@ -22,7 +22,7 @@ import {
   isMateriallySameMenu,
   type DishSignatureInput,
 } from "../../../shared/safety/deduplicate.js";
-import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import { createFinalizeSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { createIdeaSafetyFingerprint } from "../../../shared/safety/idea-fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
@@ -623,13 +623,17 @@ export async function loadRegenerationExecutionContext(
     },
   };
 
+  // HIST-1: finalize と同じ ordinal ref で expected を置く（履歴 ref のままでは SQL と不一致）
   const executionBase = {
     requestId,
     generationContext,
     expectedSafetyFingerprint:
       generationContext.targetMode === "idea"
         ? createIdeaSafetyFingerprint()
-        : createCurrentSafetyFingerprint(generationContext.safety),
+        : createFinalizeSafetyFingerprint(
+            generationContext.safety,
+            generationContext.targetMembers.map((member) => member.householdMemberId),
+          ),
     startedAtMonotonicMs: deps.requestStartedAtMonotonicMs,
     deadlineAtMonotonicMs,
   };

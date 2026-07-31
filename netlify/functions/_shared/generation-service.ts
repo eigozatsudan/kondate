@@ -18,7 +18,10 @@ import {
   type MenuValidationResult,
   type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
-import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import {
+  createCurrentSafetyFingerprint,
+  createFinalizeSafetyFingerprint,
+} from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import {
   createIdeaSafetyFingerprint,
@@ -624,6 +627,9 @@ function buildSuccessInput(
   execution: GenerationExecutionContext,
 ) {
   const lineage = lineageFields(execution);
+  // HIST-1: SQL lock は p_target_members 配列順の ordinality で member_1..N を採番する。
+  // 再生成 context の履歴 ref をそのまま hash すると survivor だけでも current_safety_changed になる。
+  const householdTargetIds = context.targetMembers.map((member) => member.householdMemberId);
   const base = {
     requestId,
     menu,
@@ -631,7 +637,7 @@ function buildSuccessInput(
     safetyFingerprint:
       context.targetMode === "idea"
         ? createIdeaSafetyFingerprint()
-        : createCurrentSafetyFingerprint(context.safety),
+        : createFinalizeSafetyFingerprint(context.safety, householdTargetIds),
     expiredChecks: [...context.expiredPantryChecks],
     ...lineage,
   };
