@@ -29,7 +29,7 @@ export function continuationUnavailable(): Response {
 }
 
 /**
- * claim RPC 成功後に decrypt / 応答検証が失敗したとき用。
+ * claim RPC 成功後に payload 読取（bytea）/ decrypt / 応答検証が失敗したとき用。
  * サーバ側 code は既に single-use で消去済みなので、クライアントは 404 リトライではなく
  * terminal（410 Gone）として扱う。
  */

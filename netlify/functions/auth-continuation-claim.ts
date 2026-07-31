@@ -43,8 +43,11 @@ type ClaimTransitionInput = {
   origin: string;
   now: string;
 };
+/** claim 成功時の payload。RPC が行を返した後に読めない場合は "gone"（ciphertext は既に burned）。 */
 type ClaimTransitionResult = { ciphertext: Uint8Array; iv: Uint8Array; returnTo: string };
-type ClaimTransition = (input: ClaimTransitionInput) => Promise<ClaimTransitionResult | null>;
+type ClaimTransition = (
+  input: ClaimTransitionInput,
+) => Promise<ClaimTransitionResult | "gone" | null>;
 type ClaimHandlerDependencies = {
   origin: string;
   encryptionKey: Uint8Array;
@@ -80,6 +83,23 @@ function fromBytea(value: string): Uint8Array | null {
   return bytes;
 }
 
+/**
+ * RPC が 1 行返したあとの bytea を ClaimTransitionResult に落とす。
+ * 形式不正 / IV 長不正は ciphertext が既に single-use で消えているため "gone"。
+ * 単体テストから production 経路を再現できるように export する。
+ */
+export function parseClaimedContinuationRow(row: {
+  encrypted_code: string;
+  code_iv: string;
+  return_to: string;
+}): ClaimTransitionResult | "gone" {
+  const ciphertext = fromBytea(row.encrypted_code);
+  const iv = fromBytea(row.code_iv);
+  // IV は AES-GCM 96-bit 固定。読めない / 長さ不正は burned 後の破損として terminal。
+  if (ciphertext === null || iv === null || iv.byteLength !== 12) return "gone";
+  return { ciphertext, iv, returnTo: row.return_to };
+}
+
 function createAdminTransition(): ClaimTransition {
   // 型生成は未適用のマイグレーションを含まないため、公開RPCの入出力だけをここで固定する。
   const client = createAdminSupabaseClient() as unknown as ClaimRpcClient;
@@ -92,11 +112,10 @@ function createAdminTransition(): ClaimTransition {
       p_now: input.now,
     });
     const row = data?.[0];
+    // 未存在・binding 失敗・RPC エラー・行数不正は 404（リトライ可）
     if (error !== null || data === null || row === undefined || data.length !== 1) return null;
-    const ciphertext = fromBytea(row.encrypted_code);
-    const iv = fromBytea(row.code_iv);
-    if (ciphertext === null || iv === null || iv.byteLength !== 12) return null;
-    return { ciphertext, iv, returnTo: row.return_to };
+    // ここ以降は RPC が single-use で ciphertext を焼いた後
+    return parseClaimedContinuationRow(row);
   };
 }
 
@@ -132,7 +151,9 @@ export function createHandler(
       });
       // claim 前の未存在・binding 不一致・未 deposit は 404（クライアントはリトライ可）
       if (result === null) return continuationUnavailable();
-      // ここ以降は RPC が single-use で ciphertext を焼いた後。decrypt / 応答検証失敗は
+      // RPC は成功したが payload（bytea）が読めない — ciphertext は burned 済み → 410
+      if (result === "gone") return continuationGone();
+      // ここ以降も RPC が single-use で ciphertext を焼いた後。decrypt / 応答検証失敗は
       // 404 だとクライアントが無限リトライするため 410 で terminal にする（C1）。
       try {
         const code = await decryptContinuationCode(

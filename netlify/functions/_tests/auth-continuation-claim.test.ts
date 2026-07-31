@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { config, createHandler } from "../auth-continuation-claim.js";
+import { config, createHandler, parseClaimedContinuationRow } from "../auth-continuation-claim.js";
 import { encryptContinuationCode, sha256 } from "../_shared/auth-continuation-crypto.js";
 
 const ORIGIN = "https://app.test";
@@ -294,5 +294,70 @@ describe("auth continuation claim", () => {
       ok: false,
       error: { code: "continuation_unavailable" },
     });
+  });
+
+  it("C1 residual: returns 410 when claim reports gone (fromBytea / IV after burn)", async () => {
+    // production createAdminTransition が parseClaimedContinuationRow で "gone" を返す経路。
+    // ciphertext は RPC 側で既に single-use 消去済みのため 404 リトライ不可。
+    const claim = vi.fn().mockResolvedValue("gone");
+    const handler = createHandler({
+      origin: ORIGIN,
+      encryptionKey: new Uint8Array(32).fill(3),
+      claim,
+    });
+    const response = await handler(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { origin: ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ secret: SECRET, state: STATE }),
+      }),
+      { params: { continuationId: CONTINUATION_ID } },
+    );
+    expect(response.status).toBe(410);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: { code: "continuation_unavailable" },
+    });
+    expect(claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("C1 residual: parseClaimedContinuationRow maps invalid bytea / IV length to gone", () => {
+    expect(
+      parseClaimedContinuationRow({
+        encrypted_code: "not-bytea",
+        code_iv: "\\x000000000000000000000000",
+        return_to: RETURN_TO,
+      }),
+    ).toBe("gone");
+
+    expect(
+      parseClaimedContinuationRow({
+        encrypted_code: "\\xdeadbeef",
+        code_iv: "not-bytea",
+        return_to: RETURN_TO,
+      }),
+    ).toBe("gone");
+
+    // AES-GCM IV は 12 bytes 固定。11 bytes は不正
+    expect(
+      parseClaimedContinuationRow({
+        encrypted_code: "\\xdeadbeef",
+        code_iv: "\\x0000000000000000000000",
+        return_to: RETURN_TO,
+      }),
+    ).toBe("gone");
+
+    // 正常系: ciphertext + 12-byte IV
+    const ok = parseClaimedContinuationRow({
+      encrypted_code: "\\xdeadbeef",
+      code_iv: "\\x000000000000000000000000",
+      return_to: RETURN_TO,
+    });
+    expect(ok).not.toBe("gone");
+    if (ok !== "gone") {
+      expect(ok.returnTo).toBe(RETURN_TO);
+      expect(ok.ciphertext).toEqual(Uint8Array.from([0xde, 0xad, 0xbe, 0xef]));
+      expect(ok.iv.byteLength).toBe(12);
+    }
   });
 });
