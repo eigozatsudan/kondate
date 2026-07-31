@@ -16,6 +16,10 @@ import {
   buildGenerationMessages,
 } from "./generation-prompt.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
+import {
+  HOUSEHOLD_KITCHEN_SYSTEM_MARKER,
+  HOUSEHOLD_KITCHEN_PARAGRAPH,
+} from "./household-kitchen-prompt.js";
 
 /** 既存テストが GenerationContext を渡していた互換ラッパ（new_menu 実行文脈） */
 function asNewMenuExecution(
@@ -550,5 +554,83 @@ describe("buildGenerationMessages", () => {
     expect(withoutHints.expectedSafetyFingerprint).toBe(
       createCurrentSafetyFingerprint(context.safety),
     );
+  });
+
+  it("household kitchen soft: idea and household new_menu include marker and kitchen-unique soft fragments", () => {
+    for (const context of [makeGenerationContext(), makeIdeaGenerationContext()]) {
+      const system = systemText(buildGenerationMessages(asNewMenuExecution(context)));
+      expect(system).toContain(HOUSEHOLD_KITCHEN_SYSTEM_MARKER);
+      expect(system).toContain("基本器具");
+      // S1: 既存 outcome の constraint_conflictにしない だけでは不可。キッチン固有
+      expect(system).toContain("寄せきれなくても");
+      expect(system).toContain(HOUSEHOLD_KITCHEN_PARAGRAPH);
+      // flag on の non-conflict 機材句（並列挿入の完全部分文字列）
+      expect(system).toContain("材料の都合・機材・器具の都合・好みの曖昧さ");
+    }
+  });
+
+  it("household kitchen soft: kitchen marker is before diversity marker and season on new_menu", () => {
+    // 前提: 本ファイルでは DIVERSITY_HINTS_ENABLED を mock しない（default on）。
+    // diversity off 時の順序は generation-prompt-diversity-off / kitchen-off の対象外。
+    const system = systemText(buildGenerationMessages(asNewMenuExecution(makeGenerationContext())));
+    const kitchenIndex = system.indexOf(HOUSEHOLD_KITCHEN_SYSTEM_MARKER);
+    const diversityIndex = system.indexOf(DIVERSITY_SYSTEM_MARKER);
+    const seasonIndex = system.indexOf("季節のために制約を破らないでください");
+    expect(kitchenIndex).toBeGreaterThanOrEqual(0);
+    expect(diversityIndex).toBeGreaterThanOrEqual(0);
+    expect(diversityIndex).toBeGreaterThan(kitchenIndex);
+    expect(seasonIndex).toBeGreaterThan(diversityIndex);
+    // outcome はキッチンの後（機材句は outcome 内）
+    const gearIndex = system.indexOf("機材・器具の都合");
+    expect(gearIndex).toBeGreaterThan(kitchenIndex);
+  });
+
+  it("household kitchen soft: regenerate_menu base system includes full kitchen assembly (not new_menu-only)", () => {
+    const context = makeGenerationContext();
+    const sourceMenu = makeValidatedMenu();
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "56000000-0000-4000-8000-000000000001",
+          sourceMenuId: sourceMenu.menuId,
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: context,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        excludedDishIds: [],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    const system = systemText(buildGenerationMessages(execution));
+    // L12 / S2: 再生成 base にも同じ CORE 組み立てが載る（stub チート防止）
+    expect(system).toContain(HOUSEHOLD_KITCHEN_SYSTEM_MARKER);
+    expect(system).toContain(HOUSEHOLD_KITCHEN_PARAGRAPH);
+    expect(system).toContain("材料の都合・機材・器具の都合・好みの曖昧さ");
+    expect(system).not.toContain(DIVERSITY_SYSTEM_MARKER);
   });
 });
