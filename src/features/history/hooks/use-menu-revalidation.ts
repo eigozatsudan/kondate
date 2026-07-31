@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   householdSafetyChangedEvent,
@@ -20,16 +20,8 @@ export function menuRevalidationQueryKey(menuId: string) {
 
 /**
  * /menus/:menuId と /history/:menuId が共有する現行安全ゲート。
- *
- * 再検査には 2 種ある:
- * - hard: 家族条件が変わったと分かる経路。同一ターンで checking に落とし本文を隠す。
- *   失敗時は error（旧 valid で reopen しない）。
- * - soft: poll / focus / visibility。直前の checked 結果を出したまま裏で POST する
- *   （マウスをウィンドウへ戻しただけの focus でフル画面ゲートが点滅するのを防ぐ）。
- *   soft のネットワーク失敗は last-known-good を維持（意図的）。
- * - online 復帰は hard（offline 閉鎖のあと、成功するまで操作を再開しない）。
- *
- * 飛行中の hard は常に checking。古い hard の完了で最新の閉じ状態を開けない。
+ * 同一イベントターンで checking に入り、manual-success の逃げ道は持たない。
+ * 飛行中の再検証は常に checking とし、古い要求の完了で最新の閉じ状態を開けない。
  * Realtime は RLS で本人行に限定し、browser から owner ID を送らない。
  */
 export function useMenuRevalidation(menuId: string) {
@@ -38,11 +30,8 @@ export function useMenuRevalidation(menuId: string) {
   // 単調増加。完了時に最新世代だけが forcedChecking を解除する
   const requestGenerationRef = useRef(0);
 
-  // 配列参照を render ごとに変えない（callback/effect thrash で poll・Realtime が壊れる）
-  const queryKey = useMemo(() => menuRevalidationQueryKey(menuId), [menuId]);
-
   const query = useQuery({
-    queryKey,
+    queryKey: menuRevalidationQueryKey(menuId),
     queryFn: async () => {
       const generation = ++requestGenerationRef.current;
       try {
@@ -57,60 +46,34 @@ export function useMenuRevalidation(menuId: string) {
     staleTime: 0,
     retry: false,
     refetchOnMount: "always",
-    // focus は自前 soft recheck で扱う。RQ 既定の window focus refetch と二重にしない
-    refetchOnWindowFocus: false,
     enabled: menuId.length > 0,
   });
 
   /**
-   * soft: キャッシュを残したまま再 POST。表示は直前の checked を維持する。
+   * 同期的に checking へ落とし、active query を再 POST する。
+   * stale confirm 失敗など、invalidate 非同期だけでは間が空く経路から呼ぶ。
    */
-  const beginSoftRecheck = useCallback(() => {
-    if (menuId.length === 0) return;
+  const beginRecheck = useCallback(() => {
+    setForcedChecking(true);
     void cache.invalidateQueries({
-      queryKey,
+      queryKey: menuRevalidationQueryKey(menuId),
       exact: true,
       refetchType: "active",
     });
-  }, [cache, menuId, queryKey]);
-
-  /**
-   * hard: 同期的に checking へ落とし、キャッシュを本当に捨ててから再 POST する。
-   * setQueryData(undefined) は TQ v5 で no-op のため removeQueries / resetQueries を使う。
-   * 進行中 soft の finally が forcedChecking を下ろさないよう、先に世代を進める。
-   */
-  const beginHardRecheck = useCallback(() => {
-    if (menuId.length === 0) return;
-    // 進行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
-    requestGenerationRef.current += 1;
-    setForcedChecking(true);
-    void cache.cancelQueries({ queryKey, exact: true });
-    // data を消してから active refetch（失敗時 hasData=false → error、旧 valid に戻さない）
-    void cache.resetQueries({ queryKey, exact: true });
-  }, [cache, menuId, queryKey]);
-
-  /**
-   * 公開 API は hard（ラベル確認後・stale confirm 失敗など fail-closed が必要な呼び出し元向け）。
-   */
-  const beginRecheck = beginHardRecheck;
+  }, [cache, menuId]);
 
   useEffect(() => {
-    const hard = () => {
-      beginHardRecheck();
-    };
-    const soft = () => {
-      beginSoftRecheck();
+    const changed = () => {
+      beginRecheck();
     };
     const stored = (event: StorageEvent) => {
-      if (isHouseholdSafetyRevisionStorageKey(event.key)) hard();
+      if (isHouseholdSafetyRevisionStorageKey(event.key)) changed();
     };
-    // マウスを画面へ戻しただけでも window focus が飛ぶため soft（裏再検査）
     const onFocus = () => {
-      if (document.visibilityState === "visible") soft();
+      if (document.visibilityState === "visible") changed();
     };
-    // online は hard: offline で閉じたあと、成功するまで操作を再開しない
     const onOnline = () => {
-      hard();
+      changed();
     };
     const onOffline = () => {
       // オフライン中は fetch が始まらないため、明示的に閉じ続ける
@@ -118,8 +81,8 @@ export function useMenuRevalidation(menuId: string) {
     };
     const channel = getBrowserSupabaseClient()
       .channel(`menu-safety:${menuId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "household_members" }, hard)
-      .on("postgres_changes", { event: "*", schema: "public", table: "member_allergies" }, hard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "household_members" }, changed)
+      .on("postgres_changes", { event: "*", schema: "public", table: "member_allergies" }, changed)
       .subscribe();
     // 既定は 60s。E2E のみ window 上の test seam で短縮可能（本番は未設定）。
     const pollMs = (() => {
@@ -130,16 +93,16 @@ export function useMenuRevalidation(menuId: string) {
         : 60_000;
     })();
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) soft();
+      if (document.visibilityState === "visible" && navigator.onLine) changed();
     }, pollMs);
-    window.addEventListener(householdSafetyChangedEvent, hard);
+    window.addEventListener(householdSafetyChangedEvent, changed);
     window.addEventListener("storage", stored);
     window.addEventListener("focus", onFocus);
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
-      window.removeEventListener(householdSafetyChangedEvent, hard);
+      window.removeEventListener(householdSafetyChangedEvent, changed);
       window.removeEventListener("storage", stored);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("online", onOnline);
@@ -148,31 +111,24 @@ export function useMenuRevalidation(menuId: string) {
       window.clearInterval(timer);
       void channel.unsubscribe();
     };
-  }, [beginHardRecheck, beginSoftRecheck, menuId]);
+  }, [beginRecheck, menuId]);
 
-  // hard / 初回 data なしだけ checking。soft の isFetching では直前結果を出したままにする。
-  // soft 失敗は hasData 維持で checked（last-known-good）。hard 失敗は data 無しで error。
-  const hasData = query.data !== undefined;
-  const phase: RevalidationPhaseName = forcedChecking
-    ? "checking"
-    : !hasData && (query.isPending || query.isFetching)
+  // isPending だけでは再検証 invalidate 後に古い data が残る。
+  // isFetching で飛行中を、forcedChecking で同一ターンの即時閉鎖とオフラインをカバーする。
+  const phase: RevalidationPhaseName =
+    forcedChecking || query.isPending || query.isFetching
       ? "checking"
-      : !hasData && query.isError
+      : query.isError
         ? "error"
-        : hasData
-          ? "checked"
-          : "checking";
+        : "checked";
 
   const errorMessage =
     query.error instanceof Error ? query.error.message : "現在の家族設定で確認できませんでした";
 
   const refetch = useCallback(() => {
-    // エラー画面の「もう一度確認」は hard（操作再開前に閉じたゲートを取り直す）
-    requestGenerationRef.current += 1;
     setForcedChecking(true);
-    void cache.cancelQueries({ queryKey, exact: true });
-    return cache.resetQueries({ queryKey, exact: true });
-  }, [cache, queryKey]);
+    return query.refetch();
+  }, [query]);
 
   return {
     ...query,
@@ -180,8 +136,6 @@ export function useMenuRevalidation(menuId: string) {
     result: phase === "checked" ? query.data : undefined,
     errorMessage: phase === "error" ? errorMessage : undefined,
     beginRecheck,
-    beginSoftRecheck,
-    beginHardRecheck,
     refetch,
   };
 }

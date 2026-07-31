@@ -904,66 +904,42 @@ describe("MenuResultPage shared revalidation gate", () => {
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
   });
 
-  it.each(["realtime-household-member", "realtime-member-allergy", "online"] as const)(
-    "fails closed and starts a fresh current-safety check for %s",
-    async (signal) => {
-      const revalidate = deferredPromise<RevalidationResult>();
-      renderMenuResultPage({
-        initialRevalidation: validRevalidation,
-        nextRevalidation: revalidate.promise,
+  it.each([
+    "focus",
+    "visible-visibilitychange",
+    "online",
+    "realtime-household-member",
+    "realtime-member-allergy",
+    "sixty-second-poll",
+  ] as const)("fails closed and starts a fresh current-safety check for %s", async (signal) => {
+    if (signal === "sixty-second-poll") vi.useFakeTimers({ shouldAdvanceTime: true });
+    const revalidate = deferredPromise<RevalidationResult>();
+    renderMenuResultPage({
+      initialRevalidation: validRevalidation,
+      nextRevalidation: revalidate.promise,
+    });
+    expect(await screen.findByRole("heading", { name: /献立/u })).toBeVisible();
+    if (signal === "sixty-second-poll") {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
       });
-      expect(await screen.findByRole("heading", { name: /献立/u })).toBeVisible();
+    } else {
       act(() => {
         fireSafetySignal(signal);
       });
-      // Realtime / online 復帰は hard: フルゲートで本文・操作を閉じる
-      expect(
-        screen
-          .getAllByRole("status")
-          .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
-      ).toBe(true);
-      expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
-      act(() => {
-        revalidate.resolve(validRevalidation);
-      });
-      expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
-    },
-  );
-
-  it.each(["focus", "visible-visibilitychange", "sixty-second-poll"] as const)(
-    "soft-rechecks in background without overlay for %s",
-    async (signal) => {
-      if (signal === "sixty-second-poll") vi.useFakeTimers({ shouldAdvanceTime: true });
-      const revalidate = deferredPromise<RevalidationResult>();
-      renderMenuResultPage({
-        initialRevalidation: validRevalidation,
-        nextRevalidation: revalidate.promise,
-      });
-      expect(await screen.findByRole("heading", { name: /献立/u })).toBeVisible();
-      if (signal === "sixty-second-poll") {
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(60_000);
-        });
-      } else {
-        act(() => {
-          fireSafetySignal(signal);
-        });
-      }
-      // focus / poll は soft: オーバーレイを出さず操作可能なまま裏再検査
-      expect(
-        screen
-          .queryAllByRole("status")
-          .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
-      ).toBe(false);
-      expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
-      expect(screen.getByRole("heading", { name: /献立/u })).toBeVisible();
-      act(() => {
-        revalidate.resolve(validRevalidation);
-      });
-      expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
-      if (signal === "sixty-second-poll") vi.useRealTimers();
-    },
-  );
+    }
+    // MenuResult 内の status と競合し得るため、文言で絞る
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
+    ).toBe(true);
+    expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
+    act(() => {
+      revalidate.resolve(validRevalidation);
+    });
+    expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
+  });
 
   it("lists invalid issues and keeps content closed", async () => {
     revalidateMenuMock.mockResolvedValue({
