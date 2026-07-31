@@ -60,8 +60,7 @@ function readMagicSentUi(): MagicSentUiSnapshot | null {
     if (typeof parsed !== "object" || parsed === null) return null;
     const email = "email" in parsed ? parsed.email : null;
     const flowId = "flowId" in parsed ? parsed.flowId : null;
-    const resendAvailableAt =
-      "resendAvailableAt" in parsed ? parsed.resendAvailableAt : null;
+    const resendAvailableAt = "resendAvailableAt" in parsed ? parsed.resendAvailableAt : null;
     if (
       typeof email !== "string" ||
       email.trim() === "" ||
