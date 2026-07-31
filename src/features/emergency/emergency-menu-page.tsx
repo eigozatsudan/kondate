@@ -186,39 +186,54 @@ export function EmergencyMenuPage() {
         : [];
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
 
-  const mealType = draft?.mealType ?? "dinner";
+  // EMRG-1: mealType 未選択の下書きに夕食を捏造しない（null は pre-API empty）
+  const mealType = draft?.mealType ?? null;
   const mainIngredients = draft?.mainIngredients ?? [];
   const pantryItemIds = draft?.pantrySelections.map((item) => item.pantryItemId) ?? [];
   // 設計 §5: idea は targetMemberIds 空・targetMode idea。eligible 0 でも候補 query を起動する。
-  const request = isIdea
-    ? {
-        mealType,
-        mainIngredients,
-        targetMode: "idea" as const,
-        targetMemberIds: [] as const,
-        pantryItemIds,
-      }
-    : {
-        mealType,
-        mainIngredients,
-        targetMode: "household" as const,
-        targetMemberIds,
-        pantryItemIds,
-      };
+  const request =
+    mealType === null
+      ? null
+      : isIdea
+        ? {
+            mealType,
+            mainIngredients,
+            targetMode: "idea" as const,
+            targetMemberIds: [] as const,
+            pantryItemIds,
+          }
+        : {
+            mealType,
+            mainIngredients,
+            targetMode: "household" as const,
+            targetMemberIds,
+            pantryItemIds,
+          };
 
   const candidateQueryEnabled =
     userId !== undefined &&
     draftReady &&
+    request !== null &&
     (isIdea || (householdQueryEnabled && householdQuery.isSuccess && targetMemberIds.length > 0));
 
   const query = useQuery({
     queryKey: emergencyMenuKeys.candidates({
       userId: userId ?? "missing",
-      ...request,
+      // request null（mealType 未設定）時は query を起動しない。key は安定 placeholder。
+      mealType: request?.mealType ?? "dinner",
+      mainIngredients: request?.mainIngredients ?? [],
+      targetMode: request?.targetMode ?? "household",
+      targetMemberIds: request?.targetMemberIds ?? [],
+      pantryItemIds: request?.pantryItemIds ?? [],
       householdSafetyRevision,
     }),
     enabled: candidateQueryEnabled,
-    queryFn: () => getEmergencyMenus(request),
+    queryFn: () => {
+      if (request === null) {
+        throw new Error("emergency request missing mealType");
+      }
+      return getEmergencyMenus(request);
+    },
   });
 
   // loading / error は candidateQueryEnabled の後に定義する（設計 §5 順序）。
@@ -243,6 +258,24 @@ export function EmergencyMenuPage() {
         </Link>
         <h1>15分緊急献立</h1>
         <p role="alert">献立条件の下書きがありません。献立画面で条件を保存してください。</p>
+      </main>
+    );
+  }
+
+  // EMRG-1: 食事帯が未選択なら候補 API を叩かず planner へ戻す
+  if (draftReady && mealType === null && !loading && error === null) {
+    return (
+      <main className="page-frame stack emergency-menu-page">
+        <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
+          ← 献立画面へ戻る
+        </Link>
+        <h1>15分緊急献立</h1>
+        <p role="alert">
+          食事の時間帯がまだ決まっていません。献立画面で朝・昼・夕を選んでから開き直してください。
+        </p>
+        <Link className="primary-button min-h-11" to="/planner">
+          献立画面へ戻る
+        </Link>
       </main>
     );
   }

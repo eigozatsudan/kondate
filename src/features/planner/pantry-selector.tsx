@@ -55,6 +55,23 @@ export function PantrySelector({
     }
   }, [attempt.idempotencyKey, pendingItem]);
 
+  // PLAN-1: 既選択の期限切れ（下書き hydrate）でも確認ダイアログを出す
+  useEffect(() => {
+    if (disabled || itemsStatus !== "loaded" || pendingItem !== null) return;
+    const checkedAt = now();
+    for (const selection of selections) {
+      const item = items.find((entry) => entry.id === selection.pantryItemId);
+      if (item === undefined) continue;
+      if (
+        isPastEnteredExpiry(item, checkedAt) &&
+        !hasCurrentExpiredConfirmation(attempt, item.id, checkedAt)
+      ) {
+        setPendingItem(item);
+        return;
+      }
+    }
+  }, [attempt, disabled, items, itemsStatus, now, pendingItem, selections]);
+
   useEffect(() => {
     if (pendingItem !== null) {
       safeActionRef.current?.focus();

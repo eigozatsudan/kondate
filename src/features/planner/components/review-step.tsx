@@ -6,7 +6,11 @@ import type { PlanCode } from "@shared/contracts/plan-quota";
 import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
 import { getJstSeasonContext, type SeasonContext } from "@shared/season/jst-season";
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
-import type { PlannerAttempt } from "../expired-pantry-checks";
+import {
+  hasCurrentExpiredConfirmation,
+  isPastEnteredExpiry,
+  type PlannerAttempt,
+} from "../expired-pantry-checks";
 import { CurrentSafetySummary } from "../current-safety-summary";
 import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "../household-safety-helper-copy";
 import {
@@ -188,6 +192,18 @@ export function ReviewStep({
   const hasUnavailablePantrySelections =
     pantryItemsStatus === "loaded" &&
     value.pantrySelections.some((selection) => !pantryItemIds.has(selection.pantryItemId));
+  // PLAN-1: 下書き復元・日付跨ぎで期限切れが既選択のとき、新規選択時と同じ確認が要る
+  const nowForExpiry = new Date();
+  const hasUnconfirmedExpiredPantry =
+    pantryItemsStatus === "loaded" &&
+    value.pantrySelections.some((selection) => {
+      const item = pantryItems.find((entry) => entry.id === selection.pantryItemId);
+      if (item === undefined) return false;
+      return (
+        isPastEnteredExpiry(item, nowForExpiry) &&
+        !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiry)
+      );
+    });
   // Plan 2: AI 送信前のクライアント医療境界。サーバー preflight と同一 detector を使う。
   const medicalBlocked =
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
@@ -206,7 +222,11 @@ export function ReviewStep({
   const showSuccessRemaining =
     usageRemaining !== null && usageRemaining > 0 && attemptsRemaining !== 0;
   const generateDisabled =
-    disabled || hasUnavailablePantrySelections || medicalBlocked || hasActiveUsageBlocker;
+    disabled ||
+    hasUnavailablePantrySelections ||
+    hasUnconfirmedExpiredPantry ||
+    medicalBlocked ||
+    hasActiveUsageBlocker;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };
@@ -519,6 +539,11 @@ export function ReviewStep({
       </details>
       {hasUnavailablePantrySelections && (
         <p role="alert">冷蔵庫から削除された食材の選択を解除してから献立を作ってください。</p>
+      )}
+      {hasUnconfirmedExpiredPantry && (
+        <p role="alert">
+          期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。
+        </p>
       )}
       {medicalBlocked && <p role="alert">{medicalRequestBlockedMessage}</p>}
       {!hasAcceptedOrDeclinedPrivacy && (
