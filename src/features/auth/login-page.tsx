@@ -133,15 +133,30 @@ function initialMagicLinkState(
   return { status: "idle", email: "" };
 }
 
+function isAuthErrorCode(value: unknown): value is NonNullable<LoginLocationState["authError"]> {
+  return (
+    value === "oauth_cancelled" ||
+    value === "auth_callback_failed" ||
+    value === "magic_link_expired" ||
+    value === "unbound_callback"
+  );
+}
+
 function readLoginLocationState(value: unknown): LoginLocationState {
   if (typeof value !== "object" || value === null || !("authError" in value)) return {};
   const authError = value.authError;
-  if (
-    authError === "oauth_cancelled" ||
-    authError === "auth_callback_failed" ||
-    authError === "magic_link_expired" ||
-    authError === "unbound_callback"
-  ) {
+  if (isAuthErrorCode(authError)) {
+    return { authError };
+  }
+  return {};
+}
+
+/** history.state に加え、callback の location.replace 用クエリも読む（iOS フル遷移）。 */
+function readLoginAuthError(state: unknown, search: string): LoginLocationState {
+  const fromState = readLoginLocationState(state);
+  if (fromState.authError !== undefined) return fromState;
+  const authError = new URLSearchParams(search).get("authError");
+  if (isAuthErrorCode(authError)) {
     return { authError };
   }
   return {};
@@ -152,7 +167,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
   const activeGateway = gateway ?? defaultGateway;
   const location = useLocation();
-  const locationState = readLoginLocationState(location.state);
+  const locationState = readLoginAuthError(location.state, location.search);
   const params = new URLSearchParams(location.search);
   // 明示的な復帰先は従来どおり安全化し、指定がない初回ログインだけ使い方の案内へ導く。
   const returnTo = params.has("returnTo") ? sanitizeReturnPath(params.get("returnTo")) : "/welcome";

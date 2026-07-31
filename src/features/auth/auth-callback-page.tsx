@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import {
   publishAuthContinuationCompletion,
@@ -12,7 +11,20 @@ import {
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
+  sanitizeReturnPath,
 } from "./auth-flow";
+
+type AuthCallbackErrorCode =
+  "oauth_cancelled" | "auth_callback_failed" | "magic_link_expired" | "unbound_callback";
+
+/** 本番既定: フルナビゲーション。OAuth 戻り直後の SPA navigate は iOS で効かないことがある。 */
+export function defaultLeaveAuthCallback(href: string): void {
+  window.location.replace(href);
+}
+
+function loginErrorHref(code: AuthCallbackErrorCode): string {
+  return `/login?authError=${encodeURIComponent(code)}`;
+}
 
 function publishCompletionSafely(completion: { flowId: string; returnTo: string }): void {
   try {
@@ -22,13 +34,41 @@ function publishCompletionSafely(completion: { flowId: string; returnTo: string 
   }
 }
 
-export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; ttlMs?: number }) {
-  const navigate = useNavigate();
+export function AuthCallbackPage({
+  gateway,
+  ttlMs,
+  leaveAuthCallback = defaultLeaveAuthCallback,
+}: {
+  gateway?: AuthGateway;
+  ttlMs?: number;
+  /**
+   * 認証完了・失敗後に callback 画面を離れる。
+   * AuthProvider / session-expiry と同型の location.replace を既定にし、
+   * テストだけ差し替える（MemoryRouter の SPA navigate では iOS 再現にならない）。
+   */
+  leaveAuthCallback?: (href: string) => void;
+}) {
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
   const activeGateway = gateway ?? defaultGateway;
   const callbackPromise = useRef<Promise<AuthCallbackResult> | null>(null);
   const callbackFlowId = useRef<string | null>(null);
+  // 二重 leave を防ぐ（StrictMode 再実行や complete + recovery 競合）
+  const leftRef = useRef(false);
+
+  const leaveOnce = (href: string): void => {
+    if (leftRef.current) return;
+    leftRef.current = true;
+    leaveAuthCallback(href);
+  };
+
+  const leaveSuccess = (returnTo: string): void => {
+    leaveOnce(sanitizeReturnPath(returnTo));
+  };
+
+  const leaveLoginError = (code: AuthCallbackErrorCode): void => {
+    leaveOnce(loginErrorHref(code));
+  };
 
   useEffect(() => {
     if (callbackPromise.current === null) {
@@ -66,7 +106,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
       setResult(next);
       if (next.kind === "complete") {
         publishCompletionSafely({ flowId: next.flowId, returnTo: next.returnTo });
-        void navigate(next.returnTo, { replace: true });
+        leaveSuccess(next.returnTo);
       } else if (next.kind === "awaiting_completion") {
         const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
         const startedAt = readAuthContinuationCallbackStartedAt(
@@ -77,15 +117,12 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
         );
         if (startedAt === null) {
           clearAuthFlow(next.flowId);
-          void navigate("/login", {
-            replace: true,
-            state: { authError: "unbound_callback" },
-          });
+          leaveLoginError("unbound_callback");
           return;
         }
         const existingCompletion = readAuthContinuationCompletion(next.flowId);
         if (existingCompletion !== null) {
-          void navigate(existingCompletion.returnTo, { replace: true });
+          leaveSuccess(existingCompletion.returnTo);
           return;
         }
         let finished = false;
@@ -101,10 +138,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
           if (finished) return;
           stopAwaiting();
           clearAuthFlow(next.flowId);
-          void navigate("/login", {
-            replace: true,
-            state: { authError },
-          });
+          leaveLoginError(authError);
         };
         stopCompletionWait = startAuthContinuationCompletionWait({
           flowId: next.flowId,
@@ -113,7 +147,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
           onComplete: (completion) => {
             if (finished) return;
             stopAwaiting();
-            void navigate(completion.returnTo, { replace: true });
+            leaveSuccess(completion.returnTo);
           },
           onExpire: () => {
             failClosed("unbound_callback");
@@ -132,7 +166,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
               flowId: completion.flowId,
               returnTo: completion.returnTo,
             });
-            void navigate(completion.returnTo, { replace: true });
+            leaveSuccess(completion.returnTo);
           },
           onResult: (recoveryResult) => {
             if (recoveryResult.kind === "expired") {
@@ -145,10 +179,7 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
         stopWaiting = stopAwaiting;
       } else if (next.kind === "expired") {
         if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
-        void navigate("/login", {
-          replace: true,
-          state: { authError: "magic_link_expired" },
-        });
+        leaveLoginError("magic_link_expired");
       } else if (next.kind === "error") {
         // AUTH-1: unbound_callback では秘密を焼かない。
         // gateway は state mismatch / hash / deposit 失敗で意図的に clear しない。
@@ -160,17 +191,14 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
         ) {
           clearAuthFlow(callbackFlowId.current);
         }
-        void navigate("/login", {
-          replace: true,
-          state: { authError: next.code },
-        });
+        leaveLoginError(next.code);
       }
     });
     return () => {
       active = false;
       stopWaiting?.();
     };
-  }, [activeGateway, navigate, ttlMs]);
+  }, [activeGateway, ttlMs, leaveAuthCallback]);
 
   if (result?.kind === "deposited") {
     return (
@@ -188,7 +216,8 @@ export function AuthCallbackPage({ gateway, ttlMs }: { gateway?: AuthGateway; tt
             type="button"
             className="primary-button min-h-11"
             onClick={() => {
-              void navigate("/login", { replace: true });
+              // ユーザー操作後は SPA navigate でもよいが、iOS 一貫性のためフル遷移する
+              leaveOnce("/login");
             }}
           >
             最初からやり直す

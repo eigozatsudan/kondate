@@ -40,6 +40,49 @@ vi.mock("./auth-flow", async (importOriginal) => {
 const createAuthGatewayMock = vi.mocked(createAuthGateway);
 const startAuthContinuationRecoveryMock = vi.mocked(startAuthContinuationRecovery);
 
+function renderCallback(
+  gateway: AuthGateway,
+  options?: {
+    initialEntry?: string;
+    ttlMs?: number;
+    leaveAuthCallback?: (href: string) => void;
+    strict?: boolean;
+  },
+) {
+  const leaveAuthCallback = options?.leaveAuthCallback ?? vi.fn();
+  const callbackElement =
+    options?.ttlMs === undefined ? (
+      <AuthCallbackPage gateway={gateway} leaveAuthCallback={leaveAuthCallback} />
+    ) : (
+      <AuthCallbackPage
+        gateway={gateway}
+        ttlMs={options.ttlMs}
+        leaveAuthCallback={leaveAuthCallback}
+      />
+    );
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/auth/callback",
+        element: callbackElement,
+      },
+      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
+      { path: "/login", element: <h1>ログイン</h1> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: [options?.initialEntry ?? "/auth/callback?flow=flow-1"] },
+  );
+  const ui = options?.strict ? (
+    <StrictMode>
+      <RouterProvider router={router} />
+    </StrictMode>
+  ) : (
+    <RouterProvider router={router} />
+  );
+  const view = render(ui);
+  return { leaveAuthCallback, router, view };
+}
+
 it("deposits in an isolated WebView and directs the user to the original browser", async () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
@@ -52,15 +95,8 @@ it("deposits in an isolated WebView and directs the user to the original browser
     }),
     resumeFlow: vi.fn(),
   };
-  const router = createMemoryRouter(
-    [
-      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
-      { path: "/onboarding", element: <h1>家族設定</h1> },
-    ],
-    { initialEntries: ["/auth/callback?flow=flow-1"] },
-  );
+  renderCallback(gateway);
 
-  render(<RouterProvider router={router} />);
   expect(
     await screen.findByText(
       "元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません",
@@ -68,7 +104,7 @@ it("deposits in an isolated WebView and directs the user to the original browser
   ).toBeInTheDocument();
   // B-C1: deposited にはやり直し CTA が必須（session は作らない）
   expect(screen.getByRole("button", { name: "最初からやり直す" })).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "家族設定" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "家族の初回設定" })).not.toBeInTheDocument();
 });
 
 it("removes callback credentials from the browser URL before completing the callback", () => {
@@ -84,11 +120,7 @@ it("removes callback credentials from the browser URL before completing the call
     "/auth/callback?flow=flow-1&state=state-1&code=code-1&error=server_error#access_token=secret",
   );
 
-  const router = createMemoryRouter(
-    [{ path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} /> }],
-    { initialEntries: ["/auth/callback"] },
-  );
-  render(<RouterProvider router={router} />);
+  renderCallback(gateway, { ttlMs: 300_000, initialEntry: "/auth/callback" });
 
   // モック関数はthisを参照しないため、呼び出し回数だけを検証する。
   // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -117,9 +149,16 @@ it("creates the default gateway once and completes the callback once", async () 
     resumeFlow: vi.fn(),
   };
   createAuthGatewayMock.mockReturnValue(gateway);
-  const router = createMemoryRouter([{ path: "/auth/callback", element: <AuthCallbackPage /> }], {
-    initialEntries: ["/auth/callback?flow=flow-1"],
-  });
+  const leaveAuthCallback = vi.fn();
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/auth/callback",
+        element: <AuthCallbackPage leaveAuthCallback={leaveAuthCallback} />,
+      },
+    ],
+    { initialEntries: ["/auth/callback?flow=flow-1"] },
+  );
 
   render(<RouterProvider router={router} />);
 
@@ -142,15 +181,11 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
     }),
     resumeFlow: vi.fn(),
   };
-  const router = createMemoryRouter(
-    [{ path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} /> }],
-    { initialEntries: ["/auth/callback?flow=flow-1"] },
-  );
-
-  render(<RouterProvider router={router} />);
+  const { leaveAuthCallback, router } = renderCallback(gateway, { ttlMs: 300_000 });
 
   expect(await screen.findByRole("heading", { name: "ログインを確認中" })).toBeInTheDocument();
   expect(router.state.location.pathname).toBe("/auth/callback");
+  expect(leaveAuthCallback).not.toHaveBeenCalled();
 });
 
 it("uses completion published before the losing callback starts waiting", async () => {
@@ -173,20 +208,10 @@ it("uses completion published before the losing callback starts waiting", async 
       returnTo: "/onboarding",
     }),
   };
-  const router = createMemoryRouter(
-    [
-      {
-        path: "/auth/callback",
-        element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
-      },
-      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
-    ],
-    { initialEntries: ["/auth/callback?flow=flow-1"] },
-  );
+  const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
 
-  render(<RouterProvider router={router} />);
-
-  expect(await screen.findByRole("heading", { name: "家族の初回設定" })).toBeInTheDocument();
+  await act(async () => Promise.resolve());
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
 });
 
 it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", async () => {
@@ -206,23 +231,12 @@ it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", a
       returnTo: "/onboarding",
     }),
   };
-  const router = createMemoryRouter(
-    [
-      {
-        path: "/auth/callback",
-        element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
-      },
-      { path: "/login", element: <h1>ログイン</h1> },
-    ],
-    { initialEntries: ["/auth/callback?flow=flow-1"] },
-  );
-  const view = render(<RouterProvider router={router} />);
+  const { leaveAuthCallback, view } = renderCallback(gateway, { ttlMs: 300_000 });
   await act(async () => Promise.resolve());
 
   await act(() => vi.advanceTimersByTime(300_000));
 
-  expect(router.state.location.pathname).toBe("/login");
-  expect(router.state.location.state).toEqual({ authError: "unbound_callback" });
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
   view.unmount();
   vi.useRealTimers();
 });
@@ -268,17 +282,12 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
   };
   const stopRecovery = vi.fn();
   startAuthContinuationRecoveryMock.mockImplementationOnce(() => stopRecovery);
-  const router = createMemoryRouter(
-    [
-      {
-        path: "/auth/callback",
-        element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
-      },
-      { path: "/login", element: <h1>ログイン</h1> },
-    ],
-    { initialEntries: [`/auth/callback?flow=${flowId}`] },
-  );
-  const view = render(<RouterProvider router={router} />);
+  const leaveAuthCallback = vi.fn();
+  const { view } = renderCallback(gateway, {
+    ttlMs: 300_000,
+    initialEntry: `/auth/callback?flow=${flowId}`,
+    leaveAuthCallback,
+  });
   await act(async () => Promise.resolve());
 
   await act(async () => {
@@ -288,7 +297,6 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10_000);
   });
-  const finalPath = router.state.location.pathname;
   const finalRecoveryCallCount = startAuthContinuationRecoveryMock.mock.calls.length;
   const marker = JSON.parse(
     window.localStorage.getItem(`kondate.auth.supabase.clock-rebase.${flowId}`) ?? "null",
@@ -301,7 +309,7 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
   );
   vi.useRealTimers();
 
-  expect(finalPath).toBe("/login");
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
   expect(recoveryCallsAtExpiry).toBeGreaterThan(0);
   expect(finalRecoveryCallCount).toBe(recoveryCallsAtExpiry);
   expect(stopRecovery).toHaveBeenCalledOnce();
@@ -331,17 +339,7 @@ it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_comp
       }),
       resumeFlow,
     };
-    const router = createMemoryRouter(
-      [
-        {
-          path: "/auth/callback",
-          element: <AuthCallbackPage gateway={gateway} ttlMs={300_000} />,
-        },
-        { path: "/onboarding", element: <h1>家族の初回設定</h1> },
-      ],
-      { initialEntries: ["/auth/callback?flow=flow-1"] },
-    );
-    render(<RouterProvider router={router} />);
+    const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
     await act(async () => Promise.resolve());
     const recoveryInput = startAuthContinuationRecoveryMock.mock.calls.at(-1)?.[0];
     expect(recoveryInput).toMatchObject({
@@ -358,7 +356,7 @@ it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_comp
       await Promise.resolve();
     });
     expect(resumeFlow).not.toHaveBeenCalled();
-    expect(router.state.location.pathname).toBe("/onboarding");
+    expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
     expect(publishAuthContinuationCompletion).toHaveBeenCalledWith({
       flowId: "flow-1",
       returnTo: "/onboarding",
@@ -381,19 +379,14 @@ it("fails closed when completeCallback rejects without leaking the rejection", a
   window.addEventListener("unhandledrejection", unhandled);
   // 前テストの mock 呼び出しを捨て、本ケースだけの clear 有無を見る
   vi.mocked(clearAuthFlow).mockClear();
-  const router = createMemoryRouter(
-    [
-      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
-      { path: "/login", element: <h1>ログイン</h1> },
-    ],
-    { initialEntries: [`/auth/callback?flow=${flowId}`] },
-  );
+  const { leaveAuthCallback } = renderCallback(gateway, {
+    initialEntry: `/auth/callback?flow=${flowId}`,
+  });
 
-  render(<RouterProvider router={router} />);
-  expect(await screen.findByRole("heading", { name: "ログイン" })).toBeInTheDocument();
+  await act(async () => Promise.resolve());
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
 
   expect(unhandled).not.toHaveBeenCalled();
-  expect(router.state.location.state).toEqual({ authError: "unbound_callback" });
   // AUTH-1: unbound では秘密を焼かない（state mismatch 等と同一ポリシー）
   expect(clearAuthFlow).not.toHaveBeenCalled();
   window.removeEventListener("unhandledrejection", unhandled);
@@ -410,15 +403,8 @@ it("maps a targeted recovery expiry to the existing callback terminal flow", asy
     }),
     resumeFlow: vi.fn(),
   };
-  const router = createMemoryRouter(
-    [
-      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
-      { path: "/login", element: <h1>ログイン</h1> },
-    ],
-    { initialEntries: ["/auth/callback?flow=flow-1"] },
-  );
+  const { leaveAuthCallback } = renderCallback(gateway);
 
-  render(<RouterProvider router={router} />);
   await act(async () => Promise.resolve());
   const recoveryInput = startAuthContinuationRecoveryMock.mock.calls.at(-1)?.[0];
   await act(async () => {
@@ -426,8 +412,7 @@ it("maps a targeted recovery expiry to the existing callback terminal flow", asy
     await Promise.resolve();
   });
 
-  expect(router.state.location.pathname).toBe("/login");
-  expect(router.state.location.state).toEqual({ authError: "magic_link_expired" });
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=magic_link_expired");
 });
 
 it("handles the original callback result after StrictMode remounts the effect", async () => {
@@ -445,19 +430,10 @@ it("handles the original callback result after StrictMode remounts the effect", 
       returnTo: "/onboarding",
     }),
   };
-  const router = createMemoryRouter(
-    [
-      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
-      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
-    ],
-    { initialEntries: ["/auth/callback?code=code-1&state=state-1"] },
-  );
-
-  render(
-    <StrictMode>
-      <RouterProvider router={router} />
-    </StrictMode>,
-  );
+  const { leaveAuthCallback } = renderCallback(gateway, {
+    initialEntry: "/auth/callback?code=code-1&state=state-1",
+    strict: true,
+  });
   resolveCallback?.({
     kind: "complete",
     continuation: "same_browser",
@@ -465,7 +441,8 @@ it("handles the original callback result after StrictMode remounts the effect", 
     flowId: "flow-1",
   });
 
-  expect(await screen.findByRole("heading", { name: "家族の初回設定" })).toBeInTheDocument();
+  await act(async () => Promise.resolve());
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
   // StrictModeでも認証コードを二重交換しないことを保証する。
   // eslint-disable-next-line @typescript-eslint/unbound-method
   expect(gateway.completeCallback).toHaveBeenCalledTimes(1);
@@ -473,9 +450,11 @@ it("handles the original callback result after StrictMode remounts the effect", 
     flowId: "flow-1",
     returnTo: "/onboarding",
   });
+  // leave は二重に走らない
+  expect(leaveAuthCallback).toHaveBeenCalledTimes(1);
 });
 
-it("navigates after immediate completion even when publishing completion fails", async () => {
+it("leaves after immediate completion even when publishing completion fails", async () => {
   const secretError = new Error(`secret:${"A".repeat(43)}`);
   vi.mocked(publishAuthContinuationCompletion).mockImplementationOnce(() => {
     throw secretError;
@@ -492,25 +471,18 @@ it("navigates after immediate completion even when publishing completion fails",
     }),
     resumeFlow: vi.fn(),
   };
-  const router = createMemoryRouter(
-    [
-      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
-      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
-    ],
-    { initialEntries: ["/auth/callback?flow=flow-1"] },
-  );
 
   try {
-    render(<RouterProvider router={router} />);
-
-    expect(await screen.findByRole("heading", { name: "家族の初回設定" })).toBeInTheDocument();
+    const { leaveAuthCallback } = renderCallback(gateway);
+    await act(async () => Promise.resolve());
+    expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
     expect(consoleError).not.toHaveBeenCalled();
   } finally {
     consoleError.mockRestore();
   }
 });
 
-it("cleans up and navigates after recovery completion when publishing fails", async () => {
+it("cleans up and leaves after recovery completion when publishing fails", async () => {
   const secretError = new Error(`secret:${"A".repeat(43)}`);
   vi.mocked(publishAuthContinuationCompletion).mockImplementationOnce(() => {
     throw secretError;
@@ -528,16 +500,9 @@ it("cleans up and navigates after recovery completion when publishing fails", as
     }),
     resumeFlow: vi.fn(),
   };
-  const router = createMemoryRouter(
-    [
-      { path: "/auth/callback", element: <AuthCallbackPage gateway={gateway} /> },
-      { path: "/onboarding", element: <h1>家族の初回設定</h1> },
-    ],
-    { initialEntries: ["/auth/callback?flow=flow-1"] },
-  );
 
   try {
-    render(<RouterProvider router={router} />);
+    const { leaveAuthCallback } = renderCallback(gateway);
     await act(async () => Promise.resolve());
     const recoveryInput = startAuthContinuationRecoveryMock.mock.calls.at(-1)?.[0];
     await act(async () => {
@@ -549,10 +514,29 @@ it("cleans up and navigates after recovery completion when publishing fails", as
       await Promise.resolve();
     });
 
-    expect(router.state.location.pathname).toBe("/onboarding");
+    expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
     expect(stopRecovery).toHaveBeenCalledOnce();
     expect(consoleError).not.toHaveBeenCalled();
   } finally {
     consoleError.mockRestore();
   }
+});
+
+it("uses full-page leave for success so SPA navigate is not required", async () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "complete",
+      continuation: "same_browser",
+      flowId: "flow-1",
+      returnTo: "/welcome",
+    }),
+    resumeFlow: vi.fn(),
+  };
+  const { leaveAuthCallback } = renderCallback(gateway);
+  await act(async () => Promise.resolve());
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/welcome");
+  // MemoryRouter 上には留まっても、本番は location.replace 相当が呼ばれる
+  expect(leaveAuthCallback).toHaveBeenCalledTimes(1);
 });

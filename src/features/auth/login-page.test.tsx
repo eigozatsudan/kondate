@@ -111,6 +111,25 @@ it("shows visible error copy when the callback arrives unbound to a known flow",
   );
 });
 
+it("shows the same unbound error when authError is passed as a query (full leave)", () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/login?authError=unbound_callback"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "ログインの情報を確認できませんでした。最初からやり直してください。",
+  );
+});
+
 it("restores sent context when magic link expired and last email is known (B-I8)", () => {
   sessionStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
   const gateway: AuthGateway = {
