@@ -563,6 +563,7 @@ function renderMenuResultRoute(menuId: string = MENU_ID): ReturnType<typeof rend
 
 describe("generation and result accessibility", () => {
   it("generation processing exposes 献立を作っています heading or status", async () => {
+    const startedAt = new Date().toISOString();
     const { container } = render(
       <main className="page-frame stack">
         <GenerationStatusPanel
@@ -573,7 +574,7 @@ describe("generation and result accessibility", () => {
               status: "processing",
               idempotencyKey: "key-1",
               requestId: "req-1",
-              startedAt: "2026-07-11T00:00:00.000Z",
+              startedAt,
               quota: {
                 consumed: false,
                 remaining: 3,
@@ -588,8 +589,11 @@ describe("generation and result accessibility", () => {
     );
     await expectAccessible(container);
     expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "料理の組み合わせと全体の段取りを確認しています",
+    const status = screen.getByRole("status");
+    expect(status).toBeVisible();
+    // 旧固定文は廃止。段階表のいずれかの体感文言。
+    expect(status.textContent).toMatch(
+      /条件を確認しています|献立の指示を組み立てています|AI に献立案を聞いています|組み合わせと段取りを整えています|仕上げの確認をしています/,
     );
   });
 

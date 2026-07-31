@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerationStatusData } from "@shared/contracts/generation";
@@ -536,6 +536,82 @@ describe("GenerationStatusPanel", () => {
   it("shows a status message while checking saved progress", () => {
     render(<GenerationStatusPanel state={{ phase: "checking", effect: "status" }} />);
     expect(screen.getByRole("status")).toHaveTextContent("保存した作成状況を確認しています");
+  });
+
+  it("shows sticky progress stages while submitting", () => {
+    render(<GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("条件を確認しています");
+    expect(status).toHaveAttribute("data-progress-stage", "0");
+
+    act(() => {
+      vi.setSystemTime(new Date(NOW.getTime() + 10_000));
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("AI に献立案を聞いています");
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+  });
+
+  it.each([
+    [0, 0, "条件を確認しています"],
+    [10_000, 2, "AI に献立案を聞いています"],
+    [35_000, 3, "組み合わせと段取りを整えています"],
+    [60_000, 4, "仕上げの確認をしています"],
+  ] as const)(
+    "processing startedAt NOW-%s → stage %s synchronously (V-I3)",
+    (agoMs, stage, message) => {
+      const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
+        status: "processing",
+        idempotencyKey: KEY,
+        requestId: REQUEST_ID,
+        startedAt: new Date(NOW.getTime() - agoMs).toISOString(),
+        quota,
+      };
+      render(
+        <GenerationStatusPanel
+          state={{ phase: "processing", data: processingData, effect: "poll" }}
+        />,
+      );
+      const status = screen.getByRole("status");
+      expect(status).toHaveTextContent(message);
+      expect(status).toHaveAttribute("data-progress-stage", String(stage));
+      expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
+    },
+  );
+
+  it("keeps progress stage when phase moves submitting → processing (V-I2)", () => {
+    const { rerender } = render(
+      <GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />,
+    );
+    act(() => {
+      vi.setSystemTime(new Date(NOW.getTime() + 10_000));
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+
+    const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
+      status: "processing",
+      idempotencyKey: KEY,
+      requestId: REQUEST_ID,
+      // サーバ開始が「いま」に見えるアンカー → 計算上は stage0 だが L1 で stage2 を維持
+      startedAt: new Date(NOW.getTime() + 10_000).toISOString(),
+      quota,
+    };
+    rerender(
+      <GenerationStatusPanel
+        state={{ phase: "processing", data: processingData, effect: "poll" }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+    expect(screen.getByRole("status")).toHaveTextContent("AI に献立案を聞いています");
+  });
+
+  it("clears progress interval on unmount (V-I3)", () => {
+    const { unmount } = render(
+      <GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />,
+    );
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("shows a resumable message while processing", () => {

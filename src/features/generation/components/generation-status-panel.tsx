@@ -4,7 +4,9 @@ import { getNextJstMidnight } from "@shared/time/jst";
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "@/features/planner/household-safety-helper-copy";
 import type { GenerationClientState } from "../model/generation-machine";
+import { useGenerationProgressMessage } from "../hooks/use-generation-progress-message";
 import { useUsageToday } from "../hooks/use-usage-today";
+import { resolveProcessingAnchorMs } from "../model/progress-stages";
 import { clearPendingGeneration, readPendingGeneration } from "../model/pending-generation";
 import { readPendingGenerationMeta } from "../model/pending-generation-meta";
 
@@ -217,6 +219,19 @@ export function GenerationStatusPanel({
   /** request_conflict から idle へ戻し、planner 再入力へ進ませる */
   onClear?: () => void;
 }) {
+  // 進捗 hook は phase 分岐より前に 1 回だけ呼ぶ（Rules of Hooks・V-I1）
+  const progressActive = state.phase === "submitting" || state.phase === "processing";
+  const progressAnchorMs =
+    state.phase === "processing"
+      ? resolveProcessingAnchorMs(state.data.startedAt, Date.now())
+      : null;
+  const { message: progressMessage, stageIndex: progressStageIndex } = useGenerationProgressMessage(
+    {
+      active: progressActive,
+      anchorMs: progressAnchorMs,
+    },
+  );
+
   if (state.phase === "checking") {
     return (
       <div className="gen-status-panel" data-phase="checking">
@@ -231,8 +246,8 @@ export function GenerationStatusPanel({
     return (
       <div className="gen-status-panel" data-phase="submitting">
         <div className="gen-status-indicator" aria-hidden="true" />
-        <p role="status" aria-live="polite">
-          条件を確認しています
+        <p role="status" aria-live="polite" data-progress-stage={String(progressStageIndex)}>
+          {progressMessage}
         </p>
       </div>
     );
@@ -242,8 +257,8 @@ export function GenerationStatusPanel({
       <div className="gen-status-panel" data-phase="processing">
         <div className="gen-status-indicator" aria-hidden="true" />
         <h1>献立を作っています</h1>
-        <p role="status" aria-live="polite">
-          料理の組み合わせと全体の段取りを確認しています
+        <p role="status" aria-live="polite" data-progress-stage={String(progressStageIndex)}>
+          {progressMessage}
         </p>
         <p>この画面を閉じても、同じ作成IDであとから確認できます。</p>
         {/* 長時間 processing / ハング時の脱出。pending を捨て条件入力へ戻せる */}
