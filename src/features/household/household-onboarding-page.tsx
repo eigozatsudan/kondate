@@ -200,6 +200,9 @@ export function HouseholdOnboardingForm({
   // 追加前ダイアログを開いたトリガーへ閉じたあと focus を戻す（settings と同型）
   const addScopeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const addScopeContinueRef = useRef<HTMLButtonElement>(null);
+  // createDraft の同期 single-flight（settings の creatingDraftRef と同型）。
+  // isPending だけだと同一 tick の OK 連打で二重 mutate し得る。
+  const startingDraftRef = useRef(false);
   // 家族追加前の対象外事情確認。クライアントのみ。DB 永続化しない。
   const [addScopeNoticeOpen, setAddScopeNoticeOpen] = useState(false);
 
@@ -256,17 +259,21 @@ export function HouseholdOnboardingForm({
           current.some((member) => member.id === created.id) ? current : [...current, created],
       );
     },
+    onSettled: () => {
+      // 成功・失敗どちらでも同期ガードを下ろし、次の追加を許可する
+      startingDraftRef.current = false;
+    },
   });
   // HO-I1: 開始失敗を無言にせず、skip/complete と同型の role=alert を出す
 
   // 追加前確認: 主ボタンへ focus / Escape で閉じる / 閉じたあと trigger へ戻す
   // settings の削除確認・追加前確認と同契約（設計 §5.3）
-  // OK 後は dialog を先に閉じるため pending 中に Escape が来る経路はない
+  // 作成中は Escape で閉じない（settings create 中の close 抑止と同趣旨）
   useEffect(() => {
     if (!addScopeNoticeOpen) return;
     const trigger = addScopeTriggerRef.current;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !startingDraftRef.current) {
         setAddScopeNoticeOpen(false);
       }
     };
@@ -280,19 +287,20 @@ export function HouseholdOnboardingForm({
 
   /** 「家族設定を始める」「続けて家族を追加」: createDraft 前に対象外事情の確認を開く */
   const openAddScopeNotice = (trigger: HTMLButtonElement) => {
-    if (startMutation.isPending || actionPending) return;
+    if (startingDraftRef.current || startMutation.isPending || actionPending) return;
     addScopeTriggerRef.current = trigger;
     setAddScopeNoticeOpen(true);
   };
   const confirmAddScopeNotice = () => {
     // OK 後に status を present へ自動設定しない（設計 §7）。下書き作成のみ。
-    // single-flight: isPending 中は再 mutate しない
-    if (startMutation.isPending) return;
+    // single-flight: settings の creatingDraftRef と同型の同期ガード
+    if (startingDraftRef.current || startMutation.isPending) return;
+    startingDraftRef.current = true;
     setAddScopeNoticeOpen(false);
     startMutation.mutate();
   };
   const cancelAddScopeNotice = () => {
-    if (startMutation.isPending) return;
+    if (startingDraftRef.current || startMutation.isPending) return;
     setAddScopeNoticeOpen(false);
   };
 

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppToastProvider } from "@/shared/ui/app-toast";
@@ -600,6 +600,41 @@ it("shows add-scope notice before starting onboarding and cancel does not create
   expect(screen.getByRole("dialog", { name: "登録の前に" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "やめる" }));
   expect(createDraft).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "登録の前に" })).not.toBeInTheDocument();
+});
+
+it("single-flights createDraft when confirm is invoked twice in the same turn", async () => {
+  // 同期 startingDraftRef により、isPending 再レンダー前の二重 OK でも 1 回だけ
+  const user = userEvent.setup();
+  let resolveDraft!: (value: HouseholdMemberRow) => void;
+  const createDraft = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveDraft = resolve;
+      }),
+  );
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([]),
+    getProfile: vi.fn().mockResolvedValue(mockProfile("not_started")),
+    createDraft,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "家族設定を始める" }));
+  const continueButton = screen.getByRole("button", { name: "登録を続ける" });
+  // 同一 tick の二重発火を再現（userEvent は間に re-render を挟む）
+  fireEvent.click(continueButton);
+  fireEvent.click(continueButton);
+  await waitFor(() => {
+    expect(createDraft).toHaveBeenCalledTimes(1);
+  });
+  resolveDraft({
+    ...draft,
+    id: "member-started",
+    status: "draft",
+    sort_order: 0,
+  });
 });
 
 it("omits setProgress when starting planner while profile is already complete", async () => {
