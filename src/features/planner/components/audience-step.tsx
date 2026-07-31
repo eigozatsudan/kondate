@@ -317,7 +317,7 @@ export function AudienceStep({
       )}
       {value.targetMode === "household" && (
         <>
-          {/* 0 人: チェック必須を強調。1 人以上: 短い note に格下げして残す（§6.2） */}
+          {/* 0 人: チェック必須を強調。1 人以上: 短い note に格下げ（§6.2 / U3-M3） */}
           <p
             id={householdHintId}
             className={
@@ -325,7 +325,9 @@ export function AudienceStep({
             }
             role="note"
           >
-            {householdZeroMessage}
+            {selectedSelectableCount === 0
+              ? householdZeroMessage
+              : "選んだ家族の条件で献立を作ります。"}
           </p>
           <div
             ref={membersGroupRef}

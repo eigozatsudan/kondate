@@ -1118,7 +1118,8 @@ export function HouseholdSettingsForm({
   if (membersQuery.isError || catalogQuery.isError || aliasesQuery.isError)
     return (
       <main className="page-frame stack">
-        <p role="alert">家族設定を読み込めませんでした。</p>
+        {/* U3-M4: オンボーディングと同型の回復案内 */}
+        <p role="alert">家族設定を読み込めませんでした。通信を確認して再試行してください。</p>
         <button
           className="secondary-button min-h-11"
           type="button"

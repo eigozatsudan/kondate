@@ -725,6 +725,15 @@ export function HouseholdOnboardingForm({
                   .then(() => {
                     setCustomAllergy("");
                     setCustomConfirmed(false);
+                    setAllergyError(null);
+                  })
+                  .catch((error: unknown) => {
+                    // U3-M2: fallback 経路でも失敗を沈黙させない
+                    setAllergyError(
+                      error instanceof Error
+                        ? error.message
+                        : "アレルギー情報を更新できませんでした",
+                    );
                   })
               }
             >
