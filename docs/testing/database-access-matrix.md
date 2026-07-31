@@ -5,6 +5,8 @@ Rows are derived from migrations after Plan 7 (including guided planner / option
 
 Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy`, `reason`.
 
+**`service_role` on `public`:** matrix は **ALL**。ローカル Compose は default privileges で CREATE 時に付くが、本番 managed で "Automatically expose new tables" をオフにすると付かない。`20260731170000_service_role_public_table_grants.sql` が全 `public` アプリ表へ明示 `GRANT ALL … TO service_role` する。`private` は表 GRANT なし（SECURITY DEFINER RPC のみ）。
+
 ## Tables
 
 | object | owner | anon | authenticated | service_role | RLS/policy | reason |

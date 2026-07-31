@@ -22,7 +22,7 @@ Auth（コールバック / Google / **Custom SMTP**）、マイグレーショ�
    | 項目 | 設定 | 理由 |
    | --- | --- | --- |
    | **Enable Data API** | **オン** | ブラウザの `supabase-js` が PostgREST（Data API）経由で `public` を読む。オフだとアプリの DB アクセスが成立しない |
-   | **Automatically expose new tables** | **オフ** | 本リポジトリは migration で `revoke all` → 必要分だけ `grant` する least-privilege。新表の自動公開は権限境界と逆。Dashboard も手動制御時は無効を推奨 |
+   | **Automatically expose new tables** | **オフ** | 本リポジトリは migration で `revoke all` → 必要分だけ `grant` する least-privilege。新表の自動公開は権限境界と逆。Dashboard も手動制御時は無効を推奨。**オフのとき local Compose の default privileges（CREATE 時に `service_role` へ ALL）が本番では付かない**ため、`public` 表への `service_role` GRANT は migration で明示する（`20260731170000_service_role_public_table_grants.sql` / `docs/testing/database-access-matrix.md`）。未付与だと Functions の admin 読取が `42501 permission denied` になる |
    | **Enable automatic RLS** | **オン** | migration でも `enable row level security` 済み。Dashboard や手作業で `public` に表ができたときの fail-closed 保険（policy なしならクライアントから読めない） |
 
 4. **GitHub (optional)** の「コード push で schema を自動デプロイ」は、本リポジトリの正本手順（クリーンなコミット上の `db push` / 保護リリース）と別経路になる。**未連携のまま**、または連携しても **自動 migration に頼らない**（適用順・検証は [README.md](./README.md) と本ファイル §3）。

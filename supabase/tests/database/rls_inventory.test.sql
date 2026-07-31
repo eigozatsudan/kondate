@@ -1,10 +1,10 @@
 -- RLS / grant inventory after Plan 7.
--- plan(8) = 4 generic inventory assertions + 4 matrix symmetry assertions.
+-- plan(10) = 4 generic + 4 matrix symmetry + service_role public ALL + private none.
 -- expected_* CTEs are generated from the live catalog after Plan 7 migrations
 -- and documented in docs/testing/database-access-matrix.md.
 \ir 000_helpers.sql
 begin;
-select plan(8);
+select plan(10);
 
 -- (1) RLS enabled on every public user-owned table
 select is_empty(
@@ -388,6 +388,70 @@ select is_empty(
     except select 'missing:'||object||'|'||policy_name||'|'||cmd from live
   $$,
   'RLS policies match database-access-matrix'
+);
+
+-- (9) service_role has full table privileges on every public application table.
+-- Managed production with "Automatically expose new tables" OFF does not inherit
+-- local compose default privileges; migrations must grant explicitly (see
+-- 20260731170000_service_role_public_table_grants.sql and the access matrix).
+select is_empty(
+  $$
+    with expected_public(object) as (values
+      ('public.allergen_aliases'),
+      ('public.allergen_catalog'),
+      ('public.dish_ingredients'),
+      ('public.dishes'),
+      ('public.food_safety_rules'),
+      ('public.generation_drafts'),
+      ('public.generation_pantry_selections'),
+      ('public.household_members'),
+      ('public.member_allergies'),
+      ('public.member_dislikes'),
+      ('public.menu_label_confirmations'),
+      ('public.menu_member_adaptations'),
+      ('public.menu_revalidations'),
+      ('public.menu_safety_actions'),
+      ('public.menu_target_members'),
+      ('public.menu_timeline_steps'),
+      ('public.menus'),
+      ('public.pantry_items'),
+      ('public.privacy_consents'),
+      ('public.profiles'),
+      ('public.recipe_steps'),
+      ('public.shopping_current_label_warnings'),
+      ('public.shopping_item_sources'),
+      ('public.shopping_items'),
+      ('public.shopping_label_confirmations'),
+      ('public.shopping_list_sources'),
+      ('public.shopping_lists'),
+      ('public.user_feedback')
+    ),
+    need(priv) as (values
+      ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+      ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')
+    ),
+    expected(object, privilege) as (
+      select object, priv from expected_public cross join need
+    ),
+    live as (
+      select table_schema||'.'||table_name as object, privilege_type as privilege
+      from information_schema.role_table_grants
+      where table_schema = 'public' and grantee = 'service_role'
+    )
+    select 'missing:'||object||'|'||privilege from expected
+    except select 'missing:'||object||'|'||privilege from live
+  $$,
+  'service_role has ALL privileges on public application tables'
+);
+
+-- (10) service_role has no direct table grants on private schema (RPC only)
+select is_empty(
+  $$
+    select table_schema||'.'||table_name||':'||privilege_type
+    from information_schema.role_table_grants
+    where grantee = 'service_role' and table_schema = 'private'
+  $$,
+  'service_role has no private schema table grants'
 );
 
 select * from finish();
