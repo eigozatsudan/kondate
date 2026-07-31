@@ -1,7 +1,7 @@
 -- Plan 6 Task 8: 時間メンテナンス RPC / バッチ / 実行ロール / 30 日境界
 \ir 000_helpers.sql
 begin;
-select plan(26);
+select plan(27);
 
 -- ---------------------------------------------------------------------------
 -- シグネチャ: バッチ 4 つ + run_kondate_maintenance、レガシ互換の存在
@@ -597,6 +597,83 @@ select is(
   ]::text[],
   'run_kondate_maintenance returns exactly six camelCase count keys'
 );
+
+-- OPS-1: menu 保持 ledger が参照する freeze を age DELETE しても maintenance 全体が落ちない
+-- 参照なし freeze は消え、参照あり freeze は残る
+do $ops1$
+declare
+  v_user uuid := 'f1000000-0000-4000-8000-000000000001';
+  v_member uuid := 'f7000000-0000-4000-8000-000000000001';
+  v_draft uuid := 'f6000000-0000-4000-8000-000000000001';
+  v_orphan_draft uuid := 'f6000000-0000-4000-8000-000000000002';
+  v_menu uuid := 'f3000000-0000-4000-8000-000000000099';
+  v_request uuid := 'f2000000-0000-4000-8000-000000000099';
+  v_before timestamptz := '2026-07-24 12:00:00+00'::timestamptz - interval '31 days';
+  v_deleted integer;
+begin
+  insert into public.menus (
+    id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
+    preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
+    allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+    derivation_group_id
+  ) values (
+    v_menu, v_user, 'dinner', 'japanese', 2, 15,
+    '{}'::jsonb, '{}'::jsonb, repeat('b', 64), 'household',
+    'dict', 'rule', 'schema', v_menu
+  )
+  on conflict (id) do nothing;
+
+  insert into private.generation_draft_submission_versions (
+    draft_id, user_id, draft_revision, meal_type, main_ingredients,
+    cuisine_genre, target_mode, target_member_ids, servings, time_limit_minutes,
+    budget_preference, avoid_ingredients, memo, pantry_selections, captured_at
+  ) values
+    (
+      v_draft, v_user, 1, 'dinner', array['ごはん']::text[],
+      'any', 'household', array[v_member]::uuid[], null, 15,
+      'standard', array[]::text[], 'linked freeze', '[]'::jsonb, v_before
+    ),
+    (
+      v_orphan_draft, v_user, 1, 'dinner', array['ごはん']::text[],
+      'any', 'household', array[v_member]::uuid[], null, 15,
+      'standard', array[]::text[], 'orphan freeze', '[]'::jsonb, v_before
+    )
+  on conflict do nothing;
+
+  insert into private.ai_generation_requests (
+    id, user_id, identity_key, personal_quota_disabled, idempotency_key, request_kind, status,
+    request_hmac_version, request_hmac, user_usage_day,
+    draft_id, draft_revision, completed_menu_id, started_at, completed_at
+  ) values (
+    v_request, v_user, tests.quota_identity_key(v_user), false, v_request, 'new_menu', 'succeeded',
+    'generation-command.v3', repeat('9', 64), date '2026-06-20',
+    v_draft, 1, v_menu, v_before, v_before
+  )
+  on conflict (id) do nothing;
+
+  v_deleted := private.cleanup_generation_draft_submission_versions(
+    '2026-07-24 12:00:00+00'::timestamptz - interval '30 days',
+    250
+  );
+
+  if not exists (
+    select 1 from private.generation_draft_submission_versions
+    where draft_id = v_draft and user_id = v_user and draft_revision = 1
+  ) then
+    raise exception 'OPS-1: referenced freeze was deleted';
+  end if;
+  if exists (
+    select 1 from private.generation_draft_submission_versions
+    where draft_id = v_orphan_draft and user_id = v_user and draft_revision = 1
+  ) then
+    raise exception 'OPS-1: unreferenced freeze was retained';
+  end if;
+  if v_deleted < 1 then
+    raise exception 'OPS-1: expected at least one unreferenced freeze delete, got %', v_deleted;
+  end if;
+end;
+$ops1$;
+select pass('OPS-1: unreferenced draft freezes delete; menu-linked freezes retained without abort');
 
 select * from finish();
 rollback;
