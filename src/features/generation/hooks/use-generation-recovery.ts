@@ -35,18 +35,15 @@ function isGenerationFailureCode(code: string): code is GenerationFailureCode {
 
 /**
  * generationFailureCodes 外だが ok:false で返る閉じたサーバ code。
- * POST では端末 failed（offline 永久待ちを避ける）。
- * GET status では offline + pending 維持（entitlement 一瞬落ちで processing 復旧ハンドルを焼かない）。
- * 表示 message はここに閉じ、POST 時の code は UI 契約上 internal_error に寄せる。
+ * POST/GET とも offline + pending 維持（G1/G2: reserve 後の 500 で pending を焼くと
+ * processing 台帳を status 再送できず枠拘束・ロックアウトになる）。
+ * 端末 failed にするのは ok:true 契約の generationFailureCodes のみ。
  */
-const CLOSED_SERVER_TERMINAL_MESSAGES: Readonly<Record<string, string>> = {
-  billing_entitlement_unavailable:
-    "プラン情報を確認できませんでした。しばらくしてからお試しください。",
-  request_failed: "献立を作成できませんでした。",
-  quota_transition_failed: "献立を作成できませんでした。",
-};
-
-const CLOSED_SERVER_TERMINAL_CODES = new Set(Object.keys(CLOSED_SERVER_TERMINAL_MESSAGES));
+const CLOSED_SERVER_RECOVERABLE_CODES = new Set([
+  "billing_entitlement_unavailable",
+  "request_failed",
+  "quota_transition_failed",
+]);
 
 /** offline 自動再試行の初回間隔。以降は指数バックオフ（上限 OFFLINE_RETRY_MAX_MS）。 */
 const OFFLINE_RETRY_BASE_MS = 5_000;
@@ -108,17 +105,10 @@ function classifyGenerationClientError(
   if (isGenerationFailureCode(code)) {
     return { kind: "failed", code, message: issueMessages[code] };
   }
-  if (CLOSED_SERVER_TERMINAL_CODES.has(code)) {
-    // GET: status() 内の entitlement 一時失敗などを offline に残し、作成中 pending を焼かない
-    if (surface === "get") {
-      return { kind: "offline" };
-    }
-    const closedMessage = CLOSED_SERVER_TERMINAL_MESSAGES[code];
-    return {
-      kind: "failed",
-      code: "internal_error",
-      message: closedMessage ?? issueMessages.internal_error,
-    };
+  if (CLOSED_SERVER_RECOVERABLE_CODES.has(code)) {
+    // surface に関わらず pending 維持して status/再POST で回収する（G1/G2）
+    void surface;
+    return { kind: "offline" };
   }
   return { kind: "offline" };
 }

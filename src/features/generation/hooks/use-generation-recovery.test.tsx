@@ -854,17 +854,18 @@ describe("useGenerationRecovery", () => {
     expect(mockDispatches).not.toContainEqual({ type: "network_error" });
   });
 
-  it("maps POST billing_entitlement_unavailable to failed without offline", async () => {
-    mockPost.mockRejectedValueOnce(new Error("billing_entitlement_unavailable"));
+  // G1/G2: POST の閉じた 5xx 系 code で pending を焼くと processing 台帳を status 回収できない
+  it.each([
+    "billing_entitlement_unavailable",
+    "request_failed",
+    "quota_transition_failed",
+  ] as const)("keeps pending offline on POST %s (recoverable server path)", async (code) => {
+    mockPost.mockRejectedValueOnce(new Error(code));
     const recovery = renderRecoveryAt(idleState, null);
     await act(() => recovery.result.current.startGeneration(pendingA));
-    expect(recovery.result.current.state.phase).toBe("failed");
-    if (recovery.result.current.state.phase !== "failed") {
-      throw new Error("expected failed");
-    }
-    expect(recovery.result.current.state.data.error.code).toBe("internal_error");
-    expect(recovery.result.current.state.data.error.message).toContain("プラン情報");
-    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    expect(recovery.result.current.state.phase).toBe("offline");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingA);
+    expect(mockDispatches).toContainEqual({ type: "network_error" });
   });
 
   it("maps GET invalid_request to failed terminal without offline", async () => {
