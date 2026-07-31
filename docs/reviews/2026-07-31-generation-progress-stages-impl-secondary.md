@@ -82,3 +82,12 @@ jsdom canvas / 無関係 a11y の `act` 警告は既存ノイズ。失敗なし�
 | マージ可否 | **可**（push/PR はリポジトリ方針に従う） |
 
 **Verdict:** 一次 **Approve** と敵対的 **ACCEPT** を二次確認で維持する。実装フォローアップの Must はない。
+
+### フォローアップ（2026-07-31）
+
+非擬陽性の Minor のみを `78d52a2` で閉じた:
+
+| ID | 対応 |
+|----|------|
+| D-M1 | hook: `active→false` で `vi.getTimerCount()===0`。panel: submitting→checking で同様 |
+| D-M2 | a11y: `startedAt≈now` で stage0 文言 + `data-progress-stage="0"` |
