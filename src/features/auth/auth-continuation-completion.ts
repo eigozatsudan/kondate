@@ -2,6 +2,8 @@ import { z } from "zod";
 import { clearAuthFlow, sanitizeReturnPath } from "./auth-flow";
 
 const completionStorageKey = "kondate.auth.supabase.continuation-complete";
+/** same-tab 通知用。storage イベントは書き込みタブでは発火しないため CustomEvent を併用する。 */
+const completionEventName = "kondate.auth.supabase.continuation-complete";
 const completionSchema = z
   .object({
     flowId: z.string().min(1),
@@ -11,6 +13,18 @@ const completionSchema = z
 
 export type AuthContinuationCompletion = z.infer<typeof completionSchema>;
 
+function toSafeCompletion(completion: AuthContinuationCompletion): AuthContinuationCompletion {
+  return { ...completion, returnTo: sanitizeReturnPath(completion.returnTo) };
+}
+
+function parseCompletionPayload(raw: unknown): AuthContinuationCompletion | null {
+  try {
+    return toSafeCompletion(completionSchema.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 export function readAuthContinuationCompletion(
   flowId: string,
   storage: Storage = window.localStorage,
@@ -18,10 +32,12 @@ export function readAuthContinuationCompletion(
   const raw = storage.getItem(completionStorageKey);
   if (raw === null) return null;
   try {
-    const completion = completionSchema.parse(JSON.parse(raw));
-    return completion.flowId === flowId
-      ? { ...completion, returnTo: sanitizeReturnPath(completion.returnTo) }
-      : null;
+    const completion = parseCompletionPayload(JSON.parse(raw));
+    if (completion === null) {
+      storage.removeItem(completionStorageKey);
+      return null;
+    }
+    return completion.flowId === flowId ? completion : null;
   } catch {
     storage.removeItem(completionStorageKey);
     return null;
@@ -33,27 +49,39 @@ export function publishAuthContinuationCompletion(
   storage: Storage = window.localStorage,
 ): void {
   clearAuthFlow(completion.flowId, storage);
-  storage.setItem(
-    completionStorageKey,
-    JSON.stringify({ ...completion, returnTo: sanitizeReturnPath(completion.returnTo) }),
-  );
+  const safe = toSafeCompletion(completion);
+  storage.setItem(completionStorageKey, JSON.stringify(safe));
+  // storage イベントは書き込み同一タブでは発火しない。late publish を wait/listener が拾えるよう same-tab 通知する。
+  window.dispatchEvent(new CustomEvent(completionEventName, { detail: safe }));
 }
 
 export function startAuthContinuationCompletionListener(input: {
   onComplete(completion: AuthContinuationCompletion): void;
 }): () => void {
+  const deliver = (raw: unknown): void => {
+    const completion = parseCompletionPayload(raw);
+    if (completion === null) return;
+    input.onComplete(completion);
+  };
+
   const onStorage = (event: StorageEvent): void => {
     if (event.key !== completionStorageKey || event.newValue === null) return;
     try {
-      const completion = completionSchema.parse(JSON.parse(event.newValue));
-      input.onComplete({ ...completion, returnTo: sanitizeReturnPath(completion.returnTo) });
+      deliver(JSON.parse(event.newValue));
     } catch {
-      // 他タブから届いた破損値は認証後の遷移に利用しない。
+      // 他タブから届いた破損 JSON は認証後の遷移に利用しない。
     }
   };
+  const onSameTab = (event: Event): void => {
+    if (!(event instanceof CustomEvent)) return;
+    deliver(event.detail);
+  };
+
   window.addEventListener("storage", onStorage);
+  window.addEventListener(completionEventName, onSameTab);
   return () => {
     window.removeEventListener("storage", onStorage);
+    window.removeEventListener(completionEventName, onSameTab);
   };
 }
 

@@ -47,6 +47,51 @@ it("notifies another tab when the callback tab completes the bound flow", () => 
   stop();
 });
 
+it("notifies the same tab when publish completes the bound flow", () => {
+  window.localStorage.removeItem("kondate.auth.supabase.continuation-complete");
+  const onComplete = vi.fn();
+  const stop = startAuthContinuationCompletionListener({ onComplete });
+
+  // storage イベントは書き込みタブでは発火しない。publish の CustomEvent で same-tab 通知する。
+  publishAuthContinuationCompletion(
+    { flowId: "flow-1", returnTo: "/onboarding" },
+    window.localStorage,
+  );
+
+  expect(onComplete).toHaveBeenCalledWith({ flowId: "flow-1", returnTo: "/onboarding" });
+  stop();
+  window.localStorage.removeItem("kondate.auth.supabase.continuation-complete");
+});
+
+it("completes wait from same-tab publish after the waiter has started", () => {
+  window.localStorage.removeItem("kondate.auth.supabase.continuation-complete");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  const onComplete = vi.fn();
+  const onExpire = vi.fn();
+  // 起動時 read では未完了。その後同一タブの late publish を拾えること（R1）。
+  const stop = startAuthContinuationCompletionWait({
+    flowId: "flow-1",
+    startedAt: "2026-07-13T00:00:00.000Z",
+    ttlMs: 300_000,
+    onComplete,
+    onExpire,
+  });
+
+  publishAuthContinuationCompletion(
+    { flowId: "flow-1", returnTo: "/onboarding" },
+    window.localStorage,
+  );
+
+  expect(onComplete).toHaveBeenCalledOnce();
+  expect(onComplete).toHaveBeenCalledWith({ flowId: "flow-1", returnTo: "/onboarding" });
+  vi.advanceTimersByTime(300_000);
+  expect(onExpire).not.toHaveBeenCalled();
+  stop();
+  window.localStorage.removeItem("kondate.auth.supabase.continuation-complete");
+  vi.useRealTimers();
+});
+
 it("expires an uncompleted handoff at the existing auth flow TTL and cleans up its listener", () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
@@ -189,4 +234,5 @@ it("publishes only a safe same-origin return path", () => {
     flowId: "flow-1",
     returnTo: "/planner",
   });
+  window.localStorage.removeItem("kondate.auth.supabase.continuation-complete");
 });
