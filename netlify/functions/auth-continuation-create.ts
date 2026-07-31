@@ -100,8 +100,10 @@ export function createHandler(
   dependencies: CreateHandlerDependencies,
 ): (request: Request) => Promise<Response> {
   return async (request) => {
-    if (request.method !== "POST" || !requireOrigin(request, dependencies.origin))
-      return invalidRequest();
+    // method 不正は 400。origin 不一致は deposit/claim と同じく 404（利用不可）へ揃える（C11）。
+    // 認証バイパスにはならない（create 自体が失敗するだけ）。クライアント開始系は両 status とも失敗扱い。
+    if (request.method !== "POST") return invalidRequest();
+    if (!requireOrigin(request, dependencies.origin)) return continuationUnavailable();
 
     let body: z.infer<typeof createRequestSchema>;
     try {

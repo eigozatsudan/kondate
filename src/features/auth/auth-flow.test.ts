@@ -232,6 +232,62 @@ describe("auth flow storage", () => {
     ).toBe(false);
   });
 
+  it("C13 clips rebased local deadline to server expiresAt when known", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const markerKey = `kondate.auth.supabase.clock-rebase.${flowId}`;
+    // クライアント startedAt は未来、サーバ expires は now+120s（フル TTL 300s より短い）
+    writeFlow(storage, flowId, "2026-07-13T00:10:00.000Z", "2026-07-13T00:02:00.000Z");
+
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:00:00.000Z"), 300_000),
+    ).toHaveLength(1);
+    // rebasedAt = deadline - ttl = 00:02 - 5m = 23:57 previous day
+    expect(readAuthFlow(flowId, storage)?.startedAt).toBe("2026-07-12T23:57:00.000Z");
+    expect(JSON.parse(storage.getItem(markerKey) ?? "null")).toEqual({
+      rebasedAt: "2026-07-12T23:57:00.000Z",
+      deadlineAt: "2026-07-13T00:02:00.000Z",
+    });
+    // サーバ期限ちょうどはまだ有効、直後は落とす（フル TTL まで延命しない）
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:02:00.000Z"), 300_000),
+    ).toHaveLength(1);
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:02:00.001Z"), 300_000)).toEqual(
+      [],
+    );
+  });
+
+  it("C13 expires a non-rebased flow when server expiresAt has passed", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:01:00.000Z");
+    // ローカル age は 90s < 300s だがサーバ期限超過 → 削除
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:01:30.000Z"), 300_000)).toEqual(
+      [],
+    );
+    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
+  });
+
+  it("C13 keeps full local TTL when server expiresAt is unknown", async () => {
+    const storage = new MapStorage();
+    const api = continuationApiMock();
+    // create 応答に expiresAt はあるが、storage 直書きの旧 flow は expires 無し
+    writeFlow(storage, "10000000-0000-4000-8000-000000000001", "2026-07-13T00:10:00.000Z");
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:00:00.000Z"), 300_000),
+    ).toHaveLength(1);
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:05:00.000Z"), 300_000),
+    ).toHaveLength(1);
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:05:00.001Z"), 300_000)).toEqual(
+      [],
+    );
+
+    // createAuthFlow は create 応答の expiresAt を flow に保存する
+    const flow = await createAuthFlow("/planner", api, new MapStorage(), fixedFlowDeps);
+    expect(flow.expiresAt).toBe("2026-07-11T00:05:00Z");
+  });
+
   it("removes non-finite and over-TTL flow and callback timestamps", () => {
     const storage = new MapStorage();
     const invalidFlowId = "10000000-0000-4000-8000-000000000001";
@@ -340,7 +396,7 @@ class MarkerWriteFailingStorage extends MapStorage {
   }
 }
 
-function writeFlow(storage: Storage, flowId: string, startedAt: string): void {
+function writeFlow(storage: Storage, flowId: string, startedAt: string, expiresAt?: string): void {
   storage.setItem(
     `kondate.auth.flow.${flowId}`,
     JSON.stringify({
@@ -351,6 +407,7 @@ function writeFlow(storage: Storage, flowId: string, startedAt: string): void {
       returnTo: "/planner",
       sessionExchange: "supabase",
       startedAt,
+      ...(expiresAt === undefined ? {} : { expiresAt }),
     }),
   );
 }

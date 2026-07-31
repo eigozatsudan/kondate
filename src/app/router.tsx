@@ -30,6 +30,9 @@ export function createAppRouter(): AppRouter {
       },
     },
     {
+      // 後続 free-landing 設計（2026-07-30）がベースライン §168 の
+      // 「未ログインは login + callback 以外不可」を改正し、公開 `/` を RootGate にした。
+      // 保護ルート（/planner 等）は RequireSession のまま。機能は変えない（C12 doc drift 注記）。
       path: "/",
       element: <RootGatePage />,
     },

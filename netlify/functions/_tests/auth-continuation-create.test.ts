@@ -50,7 +50,7 @@ describe("auth continuation create", () => {
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty("secret");
   });
 
-  it("rejects missing Origin with a closed invalid_request envelope", async () => {
+  it("rejects missing Origin with a closed continuation_unavailable envelope", async () => {
     const create = vi.fn();
     const handler = createHandler({ origin: ORIGIN, ttlSeconds: 300, create });
     const response = await handler(
@@ -60,18 +60,19 @@ describe("auth continuation create", () => {
         body: JSON.stringify({ state: STATE, secret: SECRET, returnTo: "/planner" }),
       }),
     );
-    expect(response.status).toBe(400);
+    // C11: create の origin 失敗も deposit/claim と同じ 404（利用不可）に揃える
+    expect(response.status).toBe(404);
     const body: unknown = await response.json();
     expect(body).toEqual({
       ok: false,
-      error: { code: "invalid_request", message: "リクエストを確認してください" },
+      error: { code: "continuation_unavailable", message: "認証をもう一度お試しください" },
     });
     // 開いた error 形状を拒否する（stack / Zod issues / secret を出さない）
     expect(JSON.stringify(body)).not.toMatch(/secret|stack|issues|zod/iu);
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("rejects wrong Origin with a closed invalid_request envelope", async () => {
+  it("rejects wrong Origin with a closed continuation_unavailable envelope", async () => {
     const create = vi.fn();
     const handler = createHandler({ origin: ORIGIN, ttlSeconds: 300, create });
     const response = await handler(
@@ -81,8 +82,8 @@ describe("auth continuation create", () => {
         body: JSON.stringify({ state: STATE, secret: SECRET, returnTo: "/planner" }),
       }),
     );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual(closedErrorBody(400, "invalid_request").body);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual(closedErrorBody(404, "continuation_unavailable").body);
     expect(create).not.toHaveBeenCalled();
   });
 

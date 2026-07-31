@@ -18,6 +18,8 @@ const authFlowSchema = z
     returnTo: authFlowReturnToSchema,
     sessionExchange: z.enum(["supabase", "oauth_mock"]),
     startedAt: z.iso.datetime({ offset: true }),
+    // create 応答のサーバ絶対期限。無い（旧 storage）ならローカル TTL のみ（C13）。
+    expiresAt: z.iso.datetime({ offset: true }).optional(),
   })
   .strict();
 const legacyAuthFlowSchema = authFlowSchema.omit({ sessionExchange: true }).strict();
@@ -165,6 +167,7 @@ export function markAuthContinuationCallbackOwner(
         const ownerKey = `${callbackOwnerPrefix}${flowId}`;
         if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
       },
+      flow.expiresAt,
     );
     if (normalized === null) return false;
     storage.setItem(`${callbackOwnerPrefix}${flowId}`, normalized);
@@ -185,16 +188,26 @@ export function readAuthContinuationCallbackStartedAt(
   try {
     const startedAt = storage.getItem(`${callbackOwnerPrefix}${flowId}`);
     if (startedAt === null) return null;
-    return normalizeAuthClock(flowId, startedAt, storage, now, ttlMs, (rebasedAt) => {
-      storage.setItem(`${callbackOwnerPrefix}${flowId}`, rebasedAt);
-      const flow = readAuthFlow(flowId, storage);
-      if (flow !== null) {
-        storage.setItem(
-          `${flowPrefix}${flowId}`,
-          JSON.stringify({ ...flow, startedAt: rebasedAt }),
-        );
-      }
-    });
+    // callback-only 所有でも flow が残っていればサーバ期限でクリップする（C13）。
+    const flow = readAuthFlow(flowId, storage);
+    return normalizeAuthClock(
+      flowId,
+      startedAt,
+      storage,
+      now,
+      ttlMs,
+      (rebasedAt) => {
+        storage.setItem(`${callbackOwnerPrefix}${flowId}`, rebasedAt);
+        const latest = readAuthFlow(flowId, storage);
+        if (latest !== null) {
+          storage.setItem(
+            `${flowPrefix}${flowId}`,
+            JSON.stringify({ ...latest, startedAt: rebasedAt }),
+          );
+        }
+      },
+      flow?.expiresAt,
+    );
   } catch {
     clearAuthFlowClockState(flowId, storage);
     return null;
@@ -223,14 +236,28 @@ export function listUnexpiredAuthFlows(
     const id = key.slice(flowPrefix.length);
     const flow = readAuthFlow(id, storage);
     if (flow === null) continue;
-    const normalized = normalizeAuthClock(id, flow.startedAt, storage, now, ttlMs, (rebasedAt) => {
-      storage.setItem(key, JSON.stringify({ ...flow, startedAt: rebasedAt }));
-      const ownerKey = `${callbackOwnerPrefix}${id}`;
-      if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
-    });
+    const normalized = normalizeAuthClock(
+      id,
+      flow.startedAt,
+      storage,
+      now,
+      ttlMs,
+      (rebasedAt) => {
+        storage.setItem(key, JSON.stringify({ ...flow, startedAt: rebasedAt }));
+        const ownerKey = `${callbackOwnerPrefix}${id}`;
+        if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
+      },
+      flow.expiresAt,
+    );
     if (normalized !== null) result.push({ ...flow, startedAt: normalized });
   }
   return result.toSorted((left, right) => left.startedAt.localeCompare(right.startedAt));
+}
+
+function parseServerExpiresMs(serverExpiresAt: string | null | undefined): number | null {
+  if (serverExpiresAt === undefined || serverExpiresAt === null) return null;
+  const ms = new Date(serverExpiresAt).getTime();
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function normalizeAuthClock(
@@ -240,6 +267,8 @@ function normalizeAuthClock(
   now: Date,
   ttlMs: number,
   persistRebase: (rebasedAt: string) => void,
+  /** create 応答の絶対期限。未知ならローカル TTL のみ（C13）。 */
+  serverExpiresAt?: string | null,
 ): string | null {
   try {
     const nowMs = now.getTime();
@@ -248,6 +277,8 @@ function normalizeAuthClock(
       clearAuthFlowClockState(flowId, storage);
       return null;
     }
+
+    const serverExpiresMs = parseServerExpiresMs(serverExpiresAt);
 
     const markerKey = `${clockRebasePrefix}${flowId}`;
     const rawMarker = storage.getItem(markerKey);
@@ -258,7 +289,10 @@ function normalizeAuthClock(
         return null;
       }
       const rebasedAtMs = new Date(marker.rebasedAt).getTime();
-      const deadlineAtMs = new Date(marker.deadlineAt).getTime();
+      const markerDeadlineMs = new Date(marker.deadlineAt).getTime();
+      // サーバ期限が分かれば marker より厳しい方へ（C13）
+      const deadlineAtMs =
+        serverExpiresMs === null ? markerDeadlineMs : Math.min(markerDeadlineMs, serverExpiresMs);
       if (nowMs < rebasedAtMs || nowMs > deadlineAtMs) {
         clearAuthFlowClockState(flowId, storage);
         return null;
@@ -266,16 +300,33 @@ function normalizeAuthClock(
       return marker.rebasedAt;
     }
 
-    const age = nowMs - startedAtMs;
-    if (age > ttlMs) {
+    const localDeadlineMs = startedAtMs + ttlMs;
+    const effectiveDeadlineMs =
+      serverExpiresMs === null ? localDeadlineMs : Math.min(localDeadlineMs, serverExpiresMs);
+    if (nowMs > effectiveDeadlineMs) {
       clearAuthFlowClockState(flowId, storage);
       return null;
     }
+
+    const age = nowMs - startedAtMs;
     if (age >= 0) return startedAt;
 
+    // future startedAt: 1 回だけ rebase。deadline は min(now+ttl, serverExpires)（C13）。
+    // rebasedAt = deadline - ttl に固定すると deadlineAt - rebasedAt === ttl の marker 整合を保ち、
+    // hangWatchdog の startedAt+ttl がサーバ期限と一致する。
+    const rebasedLocalDeadlineMs = nowMs + ttlMs;
+    const deadlineAtMs =
+      serverExpiresMs === null
+        ? rebasedLocalDeadlineMs
+        : Math.min(rebasedLocalDeadlineMs, serverExpiresMs);
+    if (deadlineAtMs <= nowMs) {
+      clearAuthFlowClockState(flowId, storage);
+      return null;
+    }
+    const rebasedAtMs = deadlineAtMs - ttlMs;
     const marker: ClockRebaseMarker = {
-      rebasedAt: now.toISOString(),
-      deadlineAt: new Date(nowMs + ttlMs).toISOString(),
+      rebasedAt: new Date(rebasedAtMs).toISOString(),
+      deadlineAt: new Date(deadlineAtMs).toISOString(),
     };
     // markerを先に固定し、後続書込みが失敗しても再rebaseできない証跡を残す。
     storage.setItem(markerKey, JSON.stringify(marker));
@@ -431,6 +482,8 @@ export async function createAuthFlow(
     returnTo: safeReturnTo,
     sessionExchange,
     startedAt: deps.now().toISOString(),
+    // サーバ絶対期限を保持し、ローカル clock rebase 時にクリップする（C13）
+    expiresAt: created.expiresAt,
   });
   storage.setItem(`${flowPrefix}${flow.id}`, JSON.stringify(flow));
   return flow;
