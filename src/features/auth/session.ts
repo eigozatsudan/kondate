@@ -39,10 +39,10 @@ export async function requireAccessToken(client: BrowserSupabaseClient): Promise
   if (error !== null || data.session === null) throw new AuthSessionRequiredError();
 
   const session = data.session;
-  const expiresAtMs =
-    typeof session.expires_at === "number" ? session.expires_at * 1000 : undefined;
+  // expires_at 欠落・非 number は期限不明とみなし refresh を試みる（C10）
   const needsRefresh =
-    expiresAtMs !== undefined && expiresAtMs <= Date.now() + ACCESS_TOKEN_REFRESH_SKEW_MS;
+    typeof session.expires_at !== "number" ||
+    session.expires_at * 1000 <= Date.now() + ACCESS_TOKEN_REFRESH_SKEW_MS;
 
   if (!needsRefresh) {
     return session.access_token;

@@ -125,6 +125,34 @@ describe("requireAccessToken", () => {
     await vi.advanceTimersByTimeAsync(ACCESS_TOKEN_REFRESH_TIMEOUT_MS);
     await expectation;
   });
+
+  it("C10: refreshes when expires_at is missing so a stale token is not trusted", async () => {
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: "token-without-expiry",
+              // expires_at 欠落
+            },
+          },
+          error: null,
+        }),
+        refreshSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: "refreshed-token",
+              expires_at: Math.floor(Date.now() / 1000) + 3600,
+            },
+          },
+          error: null,
+        }),
+      },
+    };
+
+    await expect(requireAccessToken(client as never)).resolves.toBe("refreshed-token");
+    expect(client.auth.refreshSession).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("isAuthSessionFailure", () => {

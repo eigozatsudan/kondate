@@ -3,6 +3,7 @@ import { z } from "zod";
 import { decryptContinuationCode, sha256 } from "./_shared/auth-continuation-crypto.js";
 import { getServerEnv } from "./_shared/env.js";
 import {
+  continuationGone,
   continuationUnavailable,
   invalidRequest,
   jsonResponse,
@@ -129,16 +130,23 @@ export function createHandler(
         origin: dependencies.origin,
         now: new Date().toISOString(),
       });
+      // claim 前の未存在・binding 不一致・未 deposit は 404（クライアントはリトライ可）
       if (result === null) return continuationUnavailable();
-      const code = await decryptContinuationCode(
-        { ciphertext: result.ciphertext, iv: result.iv },
-        continuationId,
-        dependencies.origin,
-        dependencies.encryptionKey,
-      );
-      const response = claimResponseSchema.safeParse({ code, returnTo: result.returnTo });
-      if (!response.success) return continuationUnavailable();
-      return jsonResponse(200, { ok: true, data: response.data });
+      // ここ以降は RPC が single-use で ciphertext を焼いた後。decrypt / 応答検証失敗は
+      // 404 だとクライアントが無限リトライするため 410 で terminal にする（C1）。
+      try {
+        const code = await decryptContinuationCode(
+          { ciphertext: result.ciphertext, iv: result.iv },
+          continuationId,
+          dependencies.origin,
+          dependencies.encryptionKey,
+        );
+        const response = claimResponseSchema.safeParse({ code, returnTo: result.returnTo });
+        if (!response.success) return continuationGone();
+        return jsonResponse(200, { ok: true, data: response.data });
+      } catch {
+        return continuationGone();
+      }
     } catch {
       return continuationUnavailable();
     }

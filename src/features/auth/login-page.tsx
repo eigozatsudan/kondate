@@ -278,6 +278,13 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     }
   };
 
+  // ログイン成功後はマジックリンク宛先の PII を sessionStorage に残さない（C9）
+  useEffect(() => {
+    if (auth.status !== "authenticated") return;
+    rememberLastMagicEmail("");
+    rememberMagicSentUi(null);
+  }, [auth.status]);
+
   // 既にセッションがある場合はフォームを出さず returnTo へ進める
   if (auth.status === "authenticated") {
     return <Navigate to={returnTo} replace />;

@@ -2,7 +2,12 @@ import type { Session } from "@supabase/supabase-js";
 import { act, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { AuthProvider, type AuthProviderClient } from "./auth-provider";
+import {
+  AuthProvider,
+  COLD_START_GET_SESSION_TIMEOUT_MS,
+  COLD_START_SESSION_DEADLINE_MS,
+  type AuthProviderClient,
+} from "./auth-provider";
 import { useAuth } from "./use-auth";
 
 const session = { access_token: "token", user: { id: "user-1" } } as Session;
@@ -247,5 +252,43 @@ describe("AuthProvider", () => {
 
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     expect(recovery).not.toHaveBeenCalled();
+  });
+
+  it("C5: fails closed to unauthenticated when cold-start getSession never settles past deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const getSession = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: () => ({
+            data: { subscription: createAuthSubscription() },
+          }),
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider client={client}>
+          <Probe />
+        </AuthProvider>,
+      );
+      expect(screen.getByText("loading")).toBeInTheDocument();
+
+      // 単発 withTimeout 後も rety は続くが loaded にはしない
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_GET_SESSION_TIMEOUT_MS);
+      });
+      expect(screen.getByText("loading")).toBeInTheDocument();
+
+      // 全体 deadline タイマーで未ログイン fail-closed
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          COLD_START_SESSION_DEADLINE_MS - COLD_START_GET_SESSION_TIMEOUT_MS,
+        );
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

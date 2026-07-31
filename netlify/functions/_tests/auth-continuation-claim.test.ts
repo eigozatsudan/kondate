@@ -234,4 +234,65 @@ describe("auth continuation claim", () => {
       error: { code: "continuation_unavailable" },
     });
   });
+
+  it("C1: returns 410 when claim succeeds but decrypt fails (code already burned)", async () => {
+    const encryptionKey = crypto.getRandomValues(new Uint8Array(32));
+    const wrongKey = crypto.getRandomValues(new Uint8Array(32));
+    const encrypted = await encryptContinuationCode(
+      AUTH_CODE,
+      CONTINUATION_ID,
+      ORIGIN,
+      encryptionKey,
+    );
+    const claim = vi.fn().mockResolvedValue({
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      returnTo: RETURN_TO,
+    });
+    // claim は成功するが handler 側の鍵が違う → decrypt 失敗
+    const handler = createHandler({ origin: ORIGIN, encryptionKey: wrongKey, claim });
+    const response = await handler(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { origin: ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ secret: SECRET, state: STATE }),
+      }),
+      { params: { continuationId: CONTINUATION_ID } },
+    );
+    expect(response.status).toBe(410);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: { code: "continuation_unavailable" },
+    });
+    expect(claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("C1: returns 410 when claim succeeds but returnTo fails response schema", async () => {
+    const encryptionKey = crypto.getRandomValues(new Uint8Array(32));
+    const encrypted = await encryptContinuationCode(
+      AUTH_CODE,
+      CONTINUATION_ID,
+      ORIGIN,
+      encryptionKey,
+    );
+    const claim = vi.fn().mockResolvedValue({
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      returnTo: "//evil.example",
+    });
+    const handler = createHandler({ origin: ORIGIN, encryptionKey, claim });
+    const response = await handler(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { origin: ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ secret: SECRET, state: STATE }),
+      }),
+      { params: { continuationId: CONTINUATION_ID } },
+    );
+    expect(response.status).toBe(410);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: { code: "continuation_unavailable" },
+    });
+  });
 });

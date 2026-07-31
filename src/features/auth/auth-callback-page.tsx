@@ -11,6 +11,7 @@ import {
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
+  readAuthFlow,
   sanitizeReturnPath,
 } from "./auth-flow";
 
@@ -22,8 +23,17 @@ export function defaultLeaveAuthCallback(href: string): void {
   window.location.replace(href);
 }
 
-function loginErrorHref(code: AuthCallbackErrorCode): string {
-  return `/login?authError=${encodeURIComponent(code)}`;
+/** fail-closed 時も可能な限り returnTo を保持し、再ログイン後の行き先を落とさない（C4）。 */
+function loginErrorHref(code: AuthCallbackErrorCode, returnTo?: string): string {
+  const params = new URLSearchParams({ authError: code });
+  if (returnTo !== undefined && returnTo !== "") {
+    const safe = sanitizeReturnPath(returnTo);
+    // /login 自身や callback を returnTo にすると認証後にループするため載せない
+    if (safe !== "/login" && !safe.startsWith("/login?") && !safe.startsWith("/auth/callback")) {
+      params.set("returnTo", safe);
+    }
+  }
+  return `/login?${params.toString()}`;
 }
 
 function publishCompletionSafely(completion: { flowId: string; returnTo: string }): void {
@@ -57,6 +67,8 @@ export function AuthCallbackPage({
   const leftRef = useRef(false);
   // deposited は案内を読み終わるまで watchdog で強制 leave しない
   const stayOnDepositedRef = useRef(false);
+  // hangWatchdog は storage に flow が無いケースでも returnTo を落とさない（テスト・strip 後）
+  const hangWatchReturnToRef = useRef<string | undefined>(undefined);
 
   const leaveOnce = (href: string): void => {
     if (leftRef.current) return;
@@ -68,8 +80,8 @@ export function AuthCallbackPage({
     leaveOnce(sanitizeReturnPath(returnTo));
   };
 
-  const leaveLoginError = (code: AuthCallbackErrorCode): void => {
-    leaveOnce(loginErrorHref(code));
+  const leaveLoginError = (code: AuthCallbackErrorCode, returnTo?: string): void => {
+    leaveOnce(loginErrorHref(code, returnTo));
   };
 
   useEffect(() => {
@@ -122,8 +134,14 @@ export function AuthCallbackPage({
     const remainingMs = Math.max(0, startedAtMs + callbackTtlMs - Date.now());
     const hangWatchdog = window.setTimeout(() => {
       if (leftRef.current || stayOnDepositedRef.current) return;
+      // storage の flow と gateway 結果の双方から returnTo を拾う（C4）
+      const fromStorage =
+        flowIdForWatch === null
+          ? undefined
+          : (readAuthFlow(flowIdForWatch, window.localStorage)?.returnTo ?? undefined);
+      const watchedReturnTo = fromStorage ?? hangWatchReturnToRef.current;
       if (flowIdForWatch !== null) clearAuthFlow(flowIdForWatch);
-      leaveLoginError("unbound_callback");
+      leaveLoginError("unbound_callback", watchedReturnTo);
     }, remainingMs);
 
     let active = true;
@@ -131,6 +149,7 @@ export function AuthCallbackPage({
     void callbackPromise.current.then((next) => {
       if (!active) return;
       setResult(next);
+      hangWatchReturnToRef.current = next.returnTo;
       if (next.kind === "complete") {
         publishCompletionSafely({ flowId: next.flowId, returnTo: next.returnTo });
         leaveSuccess(next.returnTo);
@@ -145,7 +164,7 @@ export function AuthCallbackPage({
         );
         if (startedAt === null) {
           clearAuthFlow(next.flowId);
-          leaveLoginError("unbound_callback");
+          leaveLoginError("unbound_callback", next.returnTo);
           return;
         }
         const existingCompletion = readAuthContinuationCompletion(next.flowId);
@@ -166,7 +185,7 @@ export function AuthCallbackPage({
           if (finished) return;
           stopAwaiting();
           clearAuthFlow(next.flowId);
-          leaveLoginError(authError);
+          leaveLoginError(authError, next.returnTo);
         };
         stopCompletionWait = startAuthContinuationCompletionWait({
           flowId: next.flowId,
@@ -207,8 +226,9 @@ export function AuthCallbackPage({
         stopWaiting = stopAwaiting;
       } else if (next.kind === "expired") {
         if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
-        leaveLoginError("magic_link_expired");
-      } else if (next.kind === "error") {
+        leaveLoginError("magic_link_expired", next.returnTo);
+      } else {
+        // kind === "error"（網羅的に残りは error のみ）
         // AUTH-1: unbound_callback では秘密を焼かない。
         // gateway は state mismatch / hash / deposit 失敗で意図的に clear しない。
         // ページ側の無条件 clear は公開 flow UUID 経由の in-flight 秘密破壊（DoS）になる。
@@ -219,7 +239,7 @@ export function AuthCallbackPage({
         ) {
           clearAuthFlow(callbackFlowId.current);
         }
-        leaveLoginError(next.code);
+        leaveLoginError(next.code, next.returnTo);
       }
     });
     return () => {

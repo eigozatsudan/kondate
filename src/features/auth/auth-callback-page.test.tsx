@@ -236,7 +236,9 @@ it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", a
 
   await act(() => vi.advanceTimersByTime(300_000));
 
-  expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
+  expect(leaveAuthCallback).toHaveBeenCalledWith(
+    "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+  );
   view.unmount();
   vi.useRealTimers();
 });
@@ -309,7 +311,9 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
   );
   vi.useRealTimers();
 
-  expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
+  expect(leaveAuthCallback).toHaveBeenCalledWith(
+    "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+  );
   expect(recoveryCallsAtExpiry).toBeGreaterThan(0);
   expect(finalRecoveryCallCount).toBe(recoveryCallsAtExpiry);
   expect(stopRecovery).toHaveBeenCalledOnce();
@@ -384,6 +388,7 @@ it("fails closed when completeCallback rejects without leaking the rejection", a
   });
 
   await act(async () => Promise.resolve());
+  // catch 経路の synthetic returnTo=/login はループ防止のため login URL に載せない
   expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
 
   expect(unhandled).not.toHaveBeenCalled();
@@ -412,7 +417,9 @@ it("maps a targeted recovery expiry to the existing callback terminal flow", asy
     await Promise.resolve();
   });
 
-  expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=magic_link_expired");
+  expect(leaveAuthCallback).toHaveBeenCalledWith(
+    "/login?authError=magic_link_expired&returnTo=%2Fonboarding",
+  );
 });
 
 it("handles the original callback result after StrictMode remounts the effect", async () => {

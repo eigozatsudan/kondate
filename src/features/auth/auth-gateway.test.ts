@@ -617,3 +617,74 @@ it.each([
   });
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
+
+it("C1: claim 410 (post-consume decrypt failure) is terminal unbound, not awaiting", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockRejectedValue(new ContinuationHttpError(410));
+  const api = continuationApiMock({ claim });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "error",
+    code: "unbound_callback",
+    returnTo: "/onboarding",
+  });
+});
+
+it("C7: rejects unexpected query keys such as access_token without depositing", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const api = continuationApiMock({ deposit });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1&access_token=stolen`,
+    ),
+  );
+
+  expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/planner" });
+  expect(deposit).not.toHaveBeenCalled();
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+});
+
+it("C4: publishes continuation completion when resumeFlow completes", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toMatchObject({
+    kind: "complete",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(
+    JSON.parse(storage.getItem("kondate.auth.supabase.continuation-complete") ?? "null"),
+  ).toEqual({ flowId: flow.id, returnTo: "/onboarding" });
+});

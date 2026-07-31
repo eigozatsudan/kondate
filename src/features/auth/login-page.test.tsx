@@ -10,9 +10,10 @@ import {
   LOGIN_PAGE_NOTE_WITH_EMAIL,
   LoginPage,
 } from "./login-page";
+import { useAuth } from "./use-auth";
 
 vi.mock("./use-auth", () => ({
-  useAuth: () => ({ status: "unauthenticated", session: null }),
+  useAuth: vi.fn(() => ({ status: "unauthenticated", session: null })),
 }));
 
 /** メール導線を再表示するテスト用クエリ（本番既定は非表示） */
@@ -342,6 +343,48 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
   await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
   await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
   expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/pantry");
+});
+
+it("C9: clears magic-link residual sessionStorage when already authenticated", () => {
+  sessionStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "user@example.com",
+      flowId: "flow-1",
+      resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+    }),
+  );
+  vi.mocked(useAuth).mockReturnValue({
+    status: "authenticated",
+    session: { user: { id: "user-1" } } as never,
+    refreshSession: vi.fn(),
+  });
+  try {
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/login"]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
+    expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();
+  } finally {
+    vi.mocked(useAuth).mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+    });
+    sessionStorage.removeItem("kondate.auth.lastMagicEmail");
+    sessionStorage.removeItem("kondate.auth.magicSentUi");
+  }
 });
 
 it.each([

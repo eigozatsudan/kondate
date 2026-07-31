@@ -1,4 +1,12 @@
 /**
+ * deposit 後の即 claim/exchange、および recovery poll 1 回分の上限。
+ * settle しないと UI が awaiting に入れず TTL fail-closed も武装できないため、
+ * ここで切って awaiting（recovery + page TTL）へフォールバックする。
+ * auth-gateway / recovery の双方から参照するため timeout ユーティリティ側に置く（循環 import 回避）。
+ */
+export const IMMEDIATE_CLAIM_TIMEOUT_MS = 30_000;
+
+/**
  * 認証まわりの network await が never-settle しても UI を永久に止めないための上限待ち。
  * timeout 後も元 Promise は放置（cancel 不能な SDK 呼び出し向け）。
  */

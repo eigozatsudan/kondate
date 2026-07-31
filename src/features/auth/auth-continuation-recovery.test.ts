@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IMMEDIATE_CLAIM_TIMEOUT_MS } from "./async-timeout";
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 
 describe("auth continuation recovery", () => {
@@ -84,13 +85,16 @@ describe("auth continuation recovery", () => {
       }
       expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
       releaseClaim?.();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      // withTimeout(Promise.race) と lock コールバック完了まで microtask を十分回す
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
 
       nowMs += 5_000;
       intervalHandlers[1]?.();
-      await Promise.resolve();
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
       expect(gateway.resumeFlow).toHaveBeenCalledTimes(2);
       firstStop();
       secondStop();
@@ -1075,6 +1079,55 @@ describe("auth continuation recovery", () => {
       returnTo: "/planner",
     });
     stop();
+  });
+
+  it("C4: times out a hung resumeFlow so the recovery poll loop can continue", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new MapStorage();
+      const flowId = "10000000-0000-4000-8000-000000000001";
+      addFlow(storage, flowId);
+      const gateway = {
+        resumeFlow: vi.fn().mockReturnValue(new Promise(() => undefined)),
+      };
+      const onComplete = vi.fn();
+      const onResult = vi.fn();
+      const intervalHandlers: Array<() => void> = [];
+      const setIntervalMock = ((handler: TimerHandler) => {
+        intervalHandlers.push(handler as () => void);
+        return intervalHandlers.length as unknown as ReturnType<typeof window.setInterval>;
+      }) as unknown as typeof window.setInterval;
+
+      const stop = startAuthContinuationRecovery({
+        gateway,
+        storage,
+        onComplete,
+        onResult,
+        setInterval: setIntervalMock,
+      });
+      await flushPromises();
+      expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+
+      // hang 中は running=true のまま次 poll を拒否する
+      intervalHandlers[0]?.();
+      await flushPromises();
+      expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+
+      // withTimeout で running を解放。onResult/onComplete は出さない（awaiting 維持）
+      await vi.advanceTimersByTimeAsync(IMMEDIATE_CLAIM_TIMEOUT_MS);
+      await flushPromises();
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(onResult).not.toHaveBeenCalled();
+
+      // 次周期（5s gap）で再 claim できる
+      await vi.advanceTimersByTimeAsync(5_000);
+      intervalHandlers[0]?.();
+      await flushPromises();
+      expect(gateway.resumeFlow).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

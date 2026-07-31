@@ -4,6 +4,7 @@ import {
   ownedAuthStoragePrefixes,
   sanitizeReturnPath,
 } from "./auth-flow";
+import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
 
 export type RecoveryResult =
   | { kind: "complete"; flowId: string; returnTo: string }
@@ -282,7 +283,14 @@ export function startAuthContinuationRecovery(input: {
   };
   const runClaim = async (flowId: string | undefined): Promise<void> => {
     if (flowId === undefined || stopped) return;
-    const result = await input.gateway.resumeFlow(flowId);
+    // C4: claim 後 exchange hang で recovery の running を永久占有しない。
+    // timeout 時は onResult を出さず awaiting 相当のまま次周期へ（秘密は焼かない）。
+    let result: RecoveryResult;
+    try {
+      result = await withTimeout(input.gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
+    } catch {
+      return;
+    }
     if (isRecoveryComplete(result)) {
       const completeResult = {
         ...result,

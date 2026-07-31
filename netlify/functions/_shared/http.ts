@@ -28,6 +28,18 @@ export function continuationUnavailable(): Response {
   });
 }
 
+/**
+ * claim RPC 成功後に decrypt / 応答検証が失敗したとき用。
+ * サーバ側 code は既に single-use で消去済みなので、クライアントは 404 リトライではなく
+ * terminal（410 Gone）として扱う。
+ */
+export function continuationGone(): Response {
+  return jsonResponse(410, {
+    ok: false,
+    error: { code: "continuation_unavailable", message: "認証をもう一度お試しください" },
+  });
+}
+
 export function requireOrigin(request: Request, origin: string): boolean {
   return request.headers.get("origin") === origin;
 }

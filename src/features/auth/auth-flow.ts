@@ -361,8 +361,20 @@ export class ContinuationHttpError extends Error {
 const createResponseSchema = z
   .object({ id: z.uuid(), expiresAt: z.iso.datetime({ offset: true }) })
   .strict();
+/** サーバ claim 応答と同型。sanitize 前のパースで protocol-relative 等を落とす（C8） */
 const claimResponseSchema = z
-  .object({ code: z.string().min(1).max(2_048), returnTo: z.string() })
+  .object({
+    code: z.string().min(1).max(2_048),
+    returnTo: z
+      .string()
+      .max(500)
+      .refine(
+        (value) =>
+          value === "/" ||
+          (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
+        { message: "invalid_return_to" },
+      ),
+  })
   .strict();
 const successEnvelope = <T extends z.ZodType>(schema: T) =>
   z.object({ ok: z.literal(true), data: schema }).strict();

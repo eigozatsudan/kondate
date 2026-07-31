@@ -12,16 +12,28 @@ import {
   createContinuationApi,
   type ContinuationApi,
 } from "./auth-flow";
+import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
-import { withTimeout } from "./async-timeout";
+import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
+
+/** 互換 re-export（正本は async-timeout.ts） */
+export { IMMEDIATE_CLAIM_TIMEOUT_MS };
 
 /**
- * deposit 後の即 claim/exchange 上限。
- * settle しないと AuthCallbackPage が awaiting に入れず TTL fail-closed も武装できないため、
- * ここで切って awaiting（recovery + page TTL）へフォールバックする。
+ * completeCallback が受け付けるクエリキー。
+ * OAuth 標準 + アプリ flow 束縛 + Supabase OTP の error_code（期限切れ判定）。
+ * access_token / refresh_token 等の未知キーは unbound_callback（C7）。
  */
-export const IMMEDIATE_CLAIM_TIMEOUT_MS = 30_000;
+const COMPLETE_CALLBACK_ALLOWED_QUERY_KEYS = new Set([
+  "flow",
+  "state",
+  "code",
+  "error",
+  "error_description",
+  "error_uri",
+  "error_code",
+]);
 
 export type SentMagicLink = {
   flowId: string;
@@ -157,6 +169,12 @@ export function createAuthGateway(
 
     async completeCallback(url) {
       if (url.hash !== "") return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      // C7: 許可クエリ以外（access_token 等）は fail-closed
+      for (const key of url.searchParams.keys()) {
+        if (!COMPLETE_CALLBACK_ALLOWED_QUERY_KEYS.has(key)) {
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
+      }
       const flowId = url.searchParams.get("flow");
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
@@ -211,6 +229,7 @@ export function createAuthGateway(
       // 同一ブラウザ: deposit 直後に即 claim/exchange する。
       // iOS 等で recovery の 5s poll / タイマー抑制に依存すると「確認中」が長く見える。
       // 一時失敗・timeout は awaiting を返し、AuthCallbackPage の recovery + TTL がフォールバックする。
+      // claim 後 exchange が hang しても resumeFlow 側が complete 時に completion を publish する（C4）。
       try {
         return await withTimeout(gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
       } catch {
@@ -255,10 +274,18 @@ export function createAuthGateway(
         if (error !== null) throw new Error("provider exchange failed");
         clearClaimedAuthFlow(flow.id, storage);
         // F-AUTH-002: claim 成功の returnTo も再 sanitize（create 経路の防御を二重化）
+        const safeReturnTo = sanitizeReturnPath(claimedCode.returnTo);
+        // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。
+        // gateway に注入された storage と同じ領域へ書き、テストの MapStorage とも一致させる。
+        try {
+          publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
+        } catch {
+          // localStorage 障害は complete 結果自体を妨げない
+        }
         return {
           kind: "complete",
           continuation: "same_browser",
-          returnTo: sanitizeReturnPath(claimedCode.returnTo),
+          returnTo: safeReturnTo,
           flowId: flow.id,
         };
       } catch (error) {
@@ -269,6 +296,7 @@ export function createAuthGateway(
         }
         // B-I4: 404（未 deposit / 競合待ち）・429・5xx・ネットワークはリトライ可能。
         // フローと secret を残し、待機タブを /login へ落とさない。
+        // 410（claim 後 decrypt 失敗で code 焼失）は terminal unbound（C1）。
         if (error instanceof ContinuationHttpError) {
           if (error.status === 404 || error.status === 429 || error.status >= 500) {
             return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
