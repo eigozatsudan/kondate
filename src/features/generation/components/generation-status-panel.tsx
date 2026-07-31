@@ -246,6 +246,9 @@ export function GenerationStatusPanel({
           料理の組み合わせと全体の段取りを確認しています
         </p>
         <p>この画面を閉じても、同じ作成IDであとから確認できます。</p>
+        {/* 長時間 processing / ハング時の脱出。pending を捨て条件入力へ戻せる */}
+        <p>途中でやめる場合は、下の「条件を直してやり直す」で作成中のIDを破棄できます。</p>
+        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }
@@ -255,6 +258,9 @@ export function GenerationStatusPanel({
         <div className="gen-status-indicator" aria-hidden="true" />
         <h1>通信を確認しています</h1>
         <p>接続が戻ると、保存した作成IDから自動で確認します。</p>
+        {/* 実ネット断以外（API 失敗・長時間 POST）でも offline に落ちる。
+            自動復帰だけに頼ると pending 保持で planner 再開がループするため、明示破棄を出す。 */}
+        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }

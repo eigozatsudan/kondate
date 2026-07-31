@@ -156,7 +156,15 @@ export const GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA =
   "additionalSeasoning/servingCheck/safetyActionsを書き、" +
   "当該メンバーのportionSize・spiceLevel・eatingEase・requiredSafetyConstraintsを反映する。" +
   "量smallは少なめ・小さめ・小盛り・少量・半分など、largeは多め・大盛り・たっぷり・増量など、" +
-  "辛さnoneは辛みなし・香辛料なし・辛くしないなど、mildは薄味・あっさり・控えめ・甘口などをportionText等に含める。" +
+  "辛さnoneは辛みなし・香辛料なし・辛くしないなど、mildは薄味・あっさり・控えめ・甘口・辛くしないなどをportionText等に含める。" +
+  // eatingEase は validate が safetyActions.kind を hard 照合する。文言だけでは足りない。
+  "eatingEaseがあるメンバーは、そのメンバーのadaptation.safetyActionsに対応kindを含めることを最優先する:" +
+  "soft→kind=soften（やわらかく煮る・煮崩す等の手順をinstructionに書く）、" +
+  "small_pieces→kind=cut_small（細かく切る・一口大にする）、" +
+  "boneless→kind=remove_bones（骨を除く）。" +
+  "kindを付けられない場合のみ、cutting/heating/servingCheckに" +
+  "soft=やわらか/箸で切れ、small_pieces=細かく切/一口大、boneless=骨を除く 等の明示語を書く。" +
+  "量の「小さめに盛り」や通常の「煮込む」だけではeatingEaseを満たしたことにならない。" +
   "labelConfirmationsは、登録アレルゲンや加工品の確認が必要な材料があるときだけ付ける。" +
   "preferences.servingsは家族人数の目安であり、adaptationsを省略する理由にしない。";
 

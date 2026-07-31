@@ -635,6 +635,214 @@ it("still hard-fails when portion/spice wording is unrelated", () => {
   expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
 });
 
+it("accepts soft eatingEase via soft wording without kind=soften (Luna soft-text rescue)", () => {
+  // 実レス: soft 要求に kind=soften が無く、やわらかく/十分に煮る 等の文言だけのケースを受理する
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const firstIngredient = baseMenu.dishes[0]!.ingredients[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "少なめに盛り付ける。辛くしない。",
+        additionalHeating: "中心まで火を通し、やわらかく仕上げる。",
+        additionalCutting: "食べやすい大きさに整える。",
+        servingCheck: "やわらかさを確認して提供する。",
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: adaptation.dishId,
+            ingredientId: firstIngredient.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: adaptation.branchBeforeRecipeStepId,
+            instruction: "小さめに成形する。",
+          },
+        ],
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "small",
+        spiceLevel: "mild",
+        easePreferences: ["soft"],
+        dislikes: [],
+      },
+    ],
+  });
+  expect(validateGeneratedMenu(menu, context)).toMatchObject({ ok: true });
+});
+
+it("still hard-fails soft eatingEase when neither soften action nor soft wording is present", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "少なめに盛り付ける。",
+        additionalHeating: "中心まで火を通す。",
+        additionalCutting: null,
+        additionalSeasoning: "薄味にする。",
+        servingCheck: "盛り付けを確認する。",
+        safetyActions: [],
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "small",
+        spiceLevel: "mild",
+        easePreferences: ["soft"],
+        dislikes: [],
+      },
+    ],
+  });
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
+});
+
+it("does not treat ordinary stew heating as soft eatingEase", () => {
+  // 敵対的: 「十分に煮る」「弱火で煮込む」だけでは soft hard を通さない
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "少なめに盛り付ける。",
+        additionalHeating: "弱火で10分煮込む。中心まで十分に煮る。",
+        additionalSeasoning: "薄味にする。",
+        servingCheck: "盛り付けを確認する。",
+        safetyActions: [],
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "small",
+        spiceLevel: "mild",
+        easePreferences: ["soft"],
+        dislikes: [],
+      },
+    ],
+  });
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
+});
+
+it("does not treat portion-small wording as small_pieces eatingEase", () => {
+  // 敵対的: 量の「小さめ」だけでは small_pieces を通さない（cut_small 必須 or 切断語）
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "主菜は小さめの1切れを目安に取り分ける。",
+        additionalCutting: null,
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "盛り付けを確認する。",
+        safetyActions: [],
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "small",
+        spiceLevel: "regular",
+        easePreferences: ["small_pieces"],
+        dislikes: [],
+      },
+    ],
+  });
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
+});
+
+it("does not treat shredding as boneless eatingEase", () => {
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "通常量",
+        additionalCutting: "身をほぐして盛り付ける。",
+        additionalHeating: null,
+        additionalSeasoning: null,
+        servingCheck: "盛り付けを確認する。",
+        safetyActions: [],
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "regular",
+        spiceLevel: "regular",
+        easePreferences: ["boneless"],
+        dislikes: [],
+      },
+    ],
+  });
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
+});
+
+it("does not let safetyAction instruction alone satisfy portion/spice hard checks", () => {
+  // instruction に好み語があっても portionText 等が無関係なら mismatch
+  const base = makeGenerationContext();
+  const baseMenu = makeGeneratedMenu();
+  const adaptation = baseMenu.adaptations[0]!;
+  const firstIngredient = baseMenu.dishes[0]!.ingredients[0]!;
+  const menu = makeGeneratedMenu({
+    adaptations: [
+      {
+        ...adaptation,
+        portionText: "通常どおり",
+        additionalSeasoning: "いつもの味",
+        additionalCutting: null,
+        additionalHeating: null,
+        servingCheck: "盛り付けを確認",
+        safetyActions: [
+          {
+            kind: "cut_small",
+            dishId: adaptation.dishId,
+            ingredientId: firstIngredient.id,
+            anonymousMemberRef: "member_1",
+            beforeRecipeStepId: adaptation.branchBeforeRecipeStepId,
+            instruction: "やわらかく小さめに切る。辛くしない。",
+          },
+        ],
+      },
+    ],
+  });
+  const context = makeGenerationContext({
+    memberPreferences: [
+      {
+        ...base.memberPreferences[0]!,
+        portionSize: "small",
+        spiceLevel: "none",
+        easePreferences: [],
+        dislikes: [],
+      },
+    ],
+  });
+  expectIssueCodes(validateGeneratedMenu(menu, context), ["member_preference_mismatch"]);
+});
+
 it("does not count a negated timeline-only mention as a requested main ingredient", () => {
   const menu = makeGeneratedMenu({
     timeline: [

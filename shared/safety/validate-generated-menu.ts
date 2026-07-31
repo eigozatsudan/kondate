@@ -570,12 +570,22 @@ function validateHouseholdMenu(
   const spiceNonePattern =
     /辛味なし|辛みなし|香辛料なし|スパイスなし|味付けなし|辛くしない|辛くせず|辛くなく|辛くない|辛いものを使わない|唐辛子なし|唐辛子を?使わない|唐辛子抜き|ピリ辛にしない|ピリ辛なし|ピリ辛を出さない|辛味を控|辛みを控|辛さを控|辛さを抑え|辛味を抑え|辛味を加えない|辛みを加えない|辛みをつけない|無香辛料|無辛味?|香辛料を使わない|香辛料抜き|スパイスを使わない|刺激を控え|刺激を抑え|辛口にしない|香辛料は入れ(?:てい?)?ません|香辛料は使いません|香辛料は使わない|香辛料を入れていません|スパイスは入れ(?:てい?)?ません|スパイスは使いません|辛味は加え(?:てい?)?ません|辛みは加え(?:てい?)?ません|辛味は使っていません|ピリッとさせない|ピリッとしない|辛く仕上げない|辛くはしない|辛い調味料は使わない|辛い調味料なし/u;
   const spiceMildPattern =
-    /薄味|薄味に|薄味め|薄めの?味|薄めに|薄め味|味を薄|味付けを薄|控えめ|味控えめ|塩分控えめ|塩控えめ|塩分を控え|甘口|甘口め|少し甘め|あっさり|あっさりめ|あっさり味|軽めの?味|軽め味付け|まろやか|やさしい味|優しい味|刺激控えめ|辛さ控えめ|辛味控えめ|ピリ辛を避|辛さを抑えめ|薄味に仕上げ|薄味に仕上げる|味をマイルド|マイルドな味/u;
+    /薄味|薄味に|薄味め|薄めの?味|薄めに|薄め味|味を薄|味付けを薄|控えめ|味控えめ|塩分控えめ|塩控えめ|塩分を控|甘口|甘口め|少し甘め|あっさり|あっさりめ|あっさり味|軽めの?味|軽め味付け|まろやか|やさしい味|優しい味|刺激控えめ|辛さ控えめ|辛味控えめ|ピリ辛を避|辛さを抑えめ|薄味に仕上げ|薄味に仕上げる|味をマイルド|マイルドな味|辛くしない|辛くせず|辛くなく|辛くない|香辛料なし|スパイスなし|辛味なし|辛みなし/u;
+  // eatingEase は原則 safetyActions.kind。文言救済は「切断・やわらか・骨除去」に限定し、
+  // 量（小さめ盛り）や通常の加熱（煮込む）語と衝突させない。
+  const softEasePattern =
+    /やわらか|柔らか|軟らか|トロトロ|とろとろ|煮崩|箸で切れ|舌でつぶ|歯茎|飲み込みやす/u;
+  // 切断専用。量 small の「小さめに盛り」等とは共有しない（小さ[めく] 単独は不可）。
+  const smallPiecesEasePattern =
+    /みじん切|細かく切|細切|一口大|さいの目|角切|薄切|食べやすい大きさに切|小さめに切|小さく切|細かくみじん/u;
+  // 骨除去専用。ほぐし／身だけは骨なしを意味しない。
+  const bonelessEasePattern = /骨を?取|骨を?除|骨なし|骨抜き|骨を丁寧|骨を外/u;
   for (const preference of context.memberPreferences) {
     const adaptations = generated.adaptations.filter(
       (adaptation) => adaptation.anonymousMemberRef === preference.anonymousMemberRef,
     );
-    const adaptationText = adaptations
+    // portion / spice は取り分け本文のみ（safetyActions.instruction を混ぜない）
+    const preferenceFieldText = adaptations
       .flatMap((adaptation) => [
         adaptation.portionText,
         adaptation.additionalCutting,
@@ -585,18 +595,34 @@ function validateHouseholdMenu(
       ])
       .filter((text): text is string => text !== null)
       .join(" ");
+    // ease 文言救済は cutting/heating/serving + action.instruction（kind 欠落時）
+    const easeFieldText = adaptations
+      .flatMap((adaptation) => [
+        adaptation.additionalCutting,
+        adaptation.additionalHeating,
+        adaptation.servingCheck,
+        ...adaptation.safetyActions.map((action) => action.instruction),
+      ])
+      .filter((text): text is string => text !== null)
+      .join(" ");
     const portionMatches =
       preference.portionSize === "regular" ||
-      (preference.portionSize === "small" && portionSmallPattern.test(adaptationText)) ||
-      (preference.portionSize === "large" && portionLargePattern.test(adaptationText));
+      (preference.portionSize === "small" && portionSmallPattern.test(preferenceFieldText)) ||
+      (preference.portionSize === "large" && portionLargePattern.test(preferenceFieldText));
+    // mild は none より弱い要求。none 向け文言（辛くしない等）も mild を満たすとみなす。
     const spiceMatches =
       preference.spiceLevel === "regular" ||
-      (preference.spiceLevel === "none" && spiceNonePattern.test(adaptationText)) ||
-      (preference.spiceLevel === "mild" && spiceMildPattern.test(adaptationText));
+      (preference.spiceLevel === "none" && spiceNonePattern.test(preferenceFieldText)) ||
+      (preference.spiceLevel === "mild" &&
+        (spiceMildPattern.test(preferenceFieldText) || spiceNonePattern.test(preferenceFieldText)));
     const actions = adaptations.flatMap((adaptation) => adaptation.safetyActions);
-    const easeMatches = preference.easePreferences.every((ease) =>
-      actions.some((action) => action.kind === easeAction[ease]),
-    );
+    const easeMatches = preference.easePreferences.every((ease) => {
+      if (actions.some((action) => action.kind === easeAction[ease])) return true;
+      if (ease === "soft" && softEasePattern.test(easeFieldText)) return true;
+      if (ease === "small_pieces" && smallPiecesEasePattern.test(easeFieldText)) return true;
+      if (ease === "boneless" && bonelessEasePattern.test(easeFieldText)) return true;
+      return false;
+    });
     // A-I7 方針: 量・辛さ・食べやすさは hard。苦手は soft gap（結果画面のみ表示）。
     if (adaptations.length === 0 || !portionMatches || !spiceMatches || !easeMatches) {
       issues.push({

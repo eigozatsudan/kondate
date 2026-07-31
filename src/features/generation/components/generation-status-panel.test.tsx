@@ -557,6 +557,25 @@ describe("GenerationStatusPanel", () => {
     ).toBeVisible();
   });
 
+  it("lets the user abandon a processing run via onClear", () => {
+    const onClear = vi.fn();
+    const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
+      status: "processing",
+      idempotencyKey: KEY,
+      requestId: REQUEST_ID,
+      startedAt: "2026-07-11T00:00:00.000Z",
+      quota,
+    };
+    render(
+      <GenerationStatusPanel
+        state={{ phase: "processing", data: processingData, effect: "poll" }}
+        onClear={onClear}
+      />,
+    );
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(onClear).toHaveBeenCalledOnce();
+  });
+
   it("shows an offline message while waiting for connectivity", () => {
     render(
       <GenerationStatusPanel
@@ -564,5 +583,17 @@ describe("GenerationStatusPanel", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "通信を確認しています" })).toBeVisible();
+  });
+
+  it("lets the user abandon an offline run via onClear", () => {
+    const onClear = vi.fn();
+    render(
+      <GenerationStatusPanel
+        state={{ phase: "offline", previous: failedState, effect: "wait_online" }}
+        onClear={onClear}
+      />,
+    );
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(onClear).toHaveBeenCalledOnce();
   });
 });

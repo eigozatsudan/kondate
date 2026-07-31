@@ -289,6 +289,11 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA);
     expect(system).toContain("adaptationsは空配列にしない");
     expect(system).toContain("anonymousMemberRef");
+    // eatingEase → safetyActions.kind 最優先、文言は明示語のみ（量の小さめ盛りは不可）
+    expect(system).toContain("soft→kind=soften");
+    expect(system).toContain("small_pieces→kind=cut_small");
+    expect(system).toContain("boneless→kind=remove_bones");
+    expect(system).toContain("量の「小さめに盛り」や通常の「煮込む」だけではeatingEaseを満たしたことにならない");
     // idea 専用の空配列指示を household に混ぜない
     expect(system).not.toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
   });

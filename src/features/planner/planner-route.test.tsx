@@ -285,6 +285,14 @@ vi.mock("./components/planner-wizard", () => ({
         <button
           type="button"
           onClick={() => {
+            props.onReset?.();
+          }}
+        >
+          入力をリセット
+        </button>
+        <button
+          type="button"
+          onClick={() => {
             props.onOpenPrivacyNotice();
           }}
         >
@@ -338,6 +346,7 @@ const pendingGenerationMock = vi.hoisted(() => ({
   createPendingGeneration: vi.fn(),
   savePendingGeneration: vi.fn(),
   readPendingGeneration: vi.fn(),
+  clearPendingGeneration: vi.fn(),
   savePendingGenerationMeta: vi.fn(),
 }));
 vi.mock("@/features/generation/model/pending-generation", async (importOriginal) => {
@@ -348,6 +357,7 @@ vi.mock("@/features/generation/model/pending-generation", async (importOriginal)
     createPendingGeneration: pendingGenerationMock.createPendingGeneration,
     savePendingGeneration: pendingGenerationMock.savePendingGeneration,
     readPendingGeneration: pendingGenerationMock.readPendingGeneration,
+    clearPendingGeneration: pendingGenerationMock.clearPendingGeneration,
   };
 });
 vi.mock("@/features/generation/model/pending-generation-meta", async (importOriginal) => {
@@ -403,6 +413,7 @@ beforeEach(() => {
   pendingGenerationMock.createPendingGeneration.mockReset();
   pendingGenerationMock.savePendingGeneration.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReset();
+  pendingGenerationMock.clearPendingGeneration.mockReset();
   pendingGenerationMock.savePendingGenerationMeta.mockReset();
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   pendingGenerationMock.createPendingGeneration.mockImplementation(
@@ -952,6 +963,13 @@ describe("PlannerRoutePage", () => {
     // resume は return false → startNewAttempt しない（期限確認を捨てない）
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+  });
+
+  it("入力をリセットすると進行中 pending も捨てる", async () => {
+    const user = userEvent.setup();
+    render(<PlannerPage />);
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalledTimes(1);
   });
 
   it("pending 保存が失敗したら作成状況へ遷移せず attempt を保つ", async () => {

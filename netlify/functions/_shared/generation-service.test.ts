@@ -1063,20 +1063,29 @@ describe("runGeneration", () => {
     expect(callOpenRouter).toHaveBeenCalledTimes(2);
   });
 
-  it("does not reserve repair when a known model is the sole model", async () => {
+  it("repairs with the same model when the allowlist has only one model", async () => {
     const repository = makeRepository();
+    const callOpenRouter = vi
+      .fn<GenerationDependencies["callOpenRouter"]>()
+      .mockRejectedValueOnce(new OpenRouterCallError("invalid_ai_response", models[0]))
+      .mockResolvedValueOnce({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      });
     const result = await runGeneration(
       makeDeps({
         repository,
         models: [models[0]],
-        callOpenRouter: vi
-          .fn()
-          .mockRejectedValue(new OpenRouterCallError("invalid_ai_response", models[0])),
+        callOpenRouter,
       }),
       command,
     );
-    expect(repository.reserveRepair).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ status: "failed", error: { code: "invalid_ai_response" } });
+    // 1 本構成では失敗モデルを exclude せず同モデルで 1 回 repair する
+    expect(repository.reserveRepair).toHaveBeenCalledTimes(1);
+    expect(callOpenRouter).toHaveBeenCalledTimes(2);
+    expect(callOpenRouter.mock.calls[1]?.[0].excludedModelIds).toEqual([]);
+    expect(result.status).toBe("succeeded");
   });
 
   it("does not send a repair when repair quota is denied", async () => {

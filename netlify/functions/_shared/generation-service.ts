@@ -947,7 +947,10 @@ export async function runGeneration(
     if (!canRepair()) {
       return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);
     }
-    const excludedModelIds = firstModelId === null ? [] : [firstModelId];
+    // 許可リストが2本以上のときだけ失敗モデルを exclude。
+    // 1本構成では exclude すると候補0になり repair 不能になるため、同モデル再送を許す。
+    const excludedModelIds =
+      deps.models.length <= 1 || firstModelId === null ? [] : [firstModelId];
     const eligibleModels = deps.models.filter((model) => !excludedModelIds.includes(model));
     if (eligibleModels.length === 0) {
       return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);
@@ -962,13 +965,19 @@ export async function runGeneration(
     const diagnostics: readonly GenerationRepairDiagnostic[] = toRepairDiagnostics(
       firstIssues ?? [{ code: "invalid_provider_menu" }],
     );
+    // 取り分け mismatch 時は soften/cut_small/remove_bones の kind 必須を明示（closed code のみ＋固定ヒント）
+    const preferenceRepairHint = diagnostics.some(
+      (item) => item.code === "member_preference_mismatch",
+    )
+      ? " eatingEase soft→safetyActions.kind=soften、small_pieces→cut_small、boneless→remove_bones を当該memberのadaptationに必ず含める。"
+      : "";
     let repaired: OpenRouterGenerationResult;
     try {
       const repairedCall = await call(excludedModelIds, [
         ...originalMessages,
         {
           role: "user",
-          content: `前の結果を次の項目だけ修正し、全体JSONを一度だけ再生成してください: ${JSON.stringify(diagnostics)}`,
+          content: `前の結果を次の項目だけ修正し、全体JSONを一度だけ再生成してください: ${JSON.stringify(diagnostics)}${preferenceRepairHint}`,
         },
       ]);
       if (repairedCall === "terminal") {

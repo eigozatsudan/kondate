@@ -21,6 +21,7 @@ import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import {
+  clearPendingGeneration,
   createPendingGeneration,
   readPendingGeneration,
   savePendingGeneration,
@@ -489,6 +490,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   /** 利用者の明示操作で入力を空に戻す。autosave が空下書きを保存する。 */
   const resetPlannerDraft = useCallback((): void => {
     generationAbortControllerRef.current?.abort();
+    // 進行中の作成 ID（pending）を残すと、再「献立を作る」が C2 再開専用になり
+    // offline/processing から抜けられず操作不能になる。入力リセットは作成の破棄も兼ねる。
+    clearPendingGeneration();
     setValue({ ...emptyDraft });
     setStep("meal");
     setFieldErrors({});
