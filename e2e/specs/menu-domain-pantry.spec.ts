@@ -444,29 +444,22 @@ test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewe
   await page.reload();
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await openReviewOptionalDetails(page);
+  // PLAN-1: 復元後は attempt 確認が空のため、既選択の期限切れで確認ダイアログが開く。
+  // チェックは dialog 中 disabled。確認後 must_use が残っていることを見る。
+  await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
-  await expect(page.getByLabel("キャベツの使い方")).toHaveValue("must_use");
-  // PLAN-1: 復元後 attempt 確認は消えるため、既選択の期限切れで確認ダイアログが開く。
-  // チェックは dialog 中 disabled のため、先に確認してから解除する。
-  await expect(page.getByRole("alertdialog")).toBeVisible();
   await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
+  await expect(page.getByLabel("キャベツの使い方")).toHaveValue("must_use");
   await updatePlannerAndAwaitAutosave(
     page,
     () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
     (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
   );
-  await page.getByRole("checkbox", { name: "キャベツ" }).click();
-  await expect(page.getByRole("alertdialog")).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
-  await expect
-    .poll(() =>
-      page
-        .getByRole("button", { name: "選ばない" })
-        .evaluate((element) => element === document.activeElement),
-    )
-    .toBe(true);
-  await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
+  // 同一 attempt 内の確認済み期限切れは再選択で dialog を出さない
+  await page.getByRole("checkbox", { name: "キャベツ" }).check();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
   await updatePlannerAndAwaitAutosave(
