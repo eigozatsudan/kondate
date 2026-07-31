@@ -529,6 +529,11 @@ function makeShoppingDependencies(
 ): ShoppingDependencies {
   return {
     ...toDeps(makeMocks()),
+    // 再照合 plumbing は承認差分が無い前提（空 draft）で RPC 契約だけを固定する。
+    // 食材あり draft + 空 approval は U5-002 で 422 empty_approval になる。
+    loadMenu: vi
+      .fn<ShoppingDependencies["loadMenu"]>()
+      .mockResolvedValue(makeMenu({ ingredients: [], labels: [] })),
     loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(makeList()),
     loadActiveListSources: vi
       .fn<ShoppingDependencies["loadActiveListSources"]>()
@@ -1158,6 +1163,59 @@ describe("reconcileShoppingList", () => {
       status: 409,
       code: "protected_item_conflict",
     });
+  });
+
+  // U5-002: pending diff があるのに承認ゼロは版だけ登録されるため拒否する
+  it("rejects empty approval when the computed diff has pending ops", async () => {
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({
+      loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(makeMenu()),
+      applyReconciliation,
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 422,
+      code: "empty_approval",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  // U5-004: lineage スコープ空 + 既存行 → 純 add 重複を防ぐ
+  it("rejects reconcile when source lineage is not on the list but items exist", async () => {
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({
+      loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(makeMenu()),
+      loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(
+        makeList({
+          items: [
+            {
+              id: "a1000000-0000-4000-8000-000000000099",
+              listId: LIST_ID,
+              displayName: "既存",
+              normalizedName: "既存",
+              storeSection: "other",
+              quantityValue: 1,
+              quantityText: "1",
+              unit: "個",
+              isChecked: false,
+              isManual: false,
+              isManuallyEdited: false,
+              isRemovedByUser: false,
+              pantryCheckRequired: false,
+              labelWarnings: [],
+            },
+          ],
+        }),
+      ),
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([]),
+      applyReconciliation,
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 409,
+      code: "reconcile_source_not_in_list",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
   });
 });
 

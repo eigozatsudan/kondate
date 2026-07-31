@@ -431,13 +431,30 @@ export async function reconcileShoppingList(
     command.sourceMenuId,
     menu.derivationGroupId,
   );
+  // U5-004: lineage スコープが空なのに既存行がある場合、純 add で重複登録される。
+  // 同グループ source が無い API 呼び出しを fail-closed にする（リストが空なら初回相当で許可）。
+  if (scopeItemIds.size === 0 && list.items.length > 0) {
+    throw new HttpError(
+      409,
+      "reconcile_source_not_in_list",
+      "この献立は買い物リストに取り込まれていません",
+    );
+  }
   let resolved;
   try {
-    resolved = resolveApprovedDiff(
-      computeShoppingDiff(list, draft, { scopeItemIds }),
-      command.approval,
-    );
+    const diff = computeShoppingDiff(list, draft, { scopeItemIds });
+    // U5-002: サーバ diff があるのに承認がすべて空だと版だけ登録され再 reconcile 不能になる。
+    const hasPendingDiff = diff.add.length > 0 || diff.replace.length > 0 || diff.remove.length > 0;
+    const hasApproval =
+      command.approval.addKeys.length > 0 ||
+      command.approval.replaceItemIds.length > 0 ||
+      command.approval.removeItemIds.length > 0;
+    if (hasPendingDiff && !hasApproval) {
+      throw new HttpError(422, "empty_approval", "反映する変更を1つ以上選んでください");
+    }
+    resolved = resolveApprovedDiff(diff, command.approval);
   } catch (error: unknown) {
+    if (error instanceof HttpError) throw error;
     // クライアント承認キーとサーバ再計算 diff の不一致は 4xx として閉じる（500 にしない）。
     if (error instanceof Error && error.message === "approved_diff_mismatch") {
       throw new HttpError(409, "approved_diff_mismatch", "買い物リストの差分が一致しません");

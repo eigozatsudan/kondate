@@ -1486,6 +1486,17 @@ describe("fetchReconcilableMenuSource", () => {
     await expect(fetchReconcilableMenuSource(MENU_ID, LIST_ID)).resolves.toBeNull();
   });
 
+  // U5-001: 再生成後に reconcile 成功すると古い版ソースが残る。現在版も登録済みなら CTA を出さない。
+  it("offers nothing when current version is registered even if older sources remain", async () => {
+    setMenu({ id: MENU_ID, derivation_group_id: DERIVATION_ID, version: 3 });
+    setSources([
+      { source_derivation_group_id: DERIVATION_ID, source_menu_version: 2 },
+      { source_derivation_group_id: DERIVATION_ID, source_menu_version: 3 },
+    ]);
+
+    await expect(fetchReconcilableMenuSource(MENU_ID, LIST_ID)).resolves.toBeNull();
+  });
+
   it("offers nothing when the older source belongs to another derivation group", async () => {
     setMenu({ id: MENU_ID, derivation_group_id: DERIVATION_ID, version: 3 });
     setSources([{ source_derivation_group_id: OTHER_DERIVATION_ID, source_menu_version: 1 }]);

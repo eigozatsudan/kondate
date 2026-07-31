@@ -275,10 +275,14 @@ export async function fetchReconcilableMenuSource(
     .select("source_derivation_group_id,source_menu_version")
     .eq("list_id", listId);
   if (sources.error !== null) throw new Error("買い物リストの取り込み元を確認できませんでした");
-  const stale = sources.data.some(
-    (source) =>
-      source.source_derivation_group_id === menuRow.derivation_group_id &&
-      source.source_menu_version < menuRow.version,
-  );
-  return stale ? { sourceMenuId: menuRow.id, sourceMenuVersion: menuRow.version } : null;
+  // U5-001: 「古い版がある」だけでは足りない。成功 reconcile 後も V1+V2 が残るため、
+  // 同グループに登録済みの最大版が現在献立版未満のときだけ差分 CTA を出す。
+  // （現在版が既に sources にあれば null → 再適用 409 ループを防ぐ）
+  const sameGroupVersions = sources.data
+    .filter((source) => source.source_derivation_group_id === menuRow.derivation_group_id)
+    .map((source) => source.source_menu_version);
+  if (sameGroupVersions.length === 0) return null;
+  const maxRegisteredVersion = Math.max(...sameGroupVersions);
+  if (maxRegisteredVersion >= menuRow.version) return null;
+  return { sourceMenuId: menuRow.id, sourceMenuVersion: menuRow.version };
 }
