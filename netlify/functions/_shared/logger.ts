@@ -25,6 +25,8 @@ export type SafeLogEvent = {
   identityLedgersDeleted?: number;
   /** flyer 台帳・終端 flyer request 削除件数 */
   flyerLedgersDeleted?: number;
+  /** 共有 job reaper（lease_expired）件数。job 本文・ID は出さない */
+  staleShareJobsReaped?: number;
   /** 緊急献立: household | idea */
   path?: "household" | "idea";
   /** 緊急献立: Stage M 結果。空応答は null */
@@ -113,6 +115,9 @@ export const createSafeLogger =
     }
     if (event.flyerLedgersDeleted !== undefined) {
       record.flyer_ledgers_deleted = event.flyerLedgersDeleted;
+    }
+    if (event.staleShareJobsReaped !== undefined) {
+      record.stale_share_jobs_reaped = event.staleShareJobsReaped;
     }
     // 緊急献立: 列挙・件数のみ。null も明示的に出す（省略すると集計が欠ける）
     if (event.path !== undefined) record.path = event.path;

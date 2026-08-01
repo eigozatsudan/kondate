@@ -19,6 +19,8 @@ export type MaintenanceCounts = {
   identityLedgersDeleted: number;
   /** flyer 週次台帳 + 終端 flyer request の削除合計 */
   flyerLedgersDeleted: number;
+  /** 共有一般化 job: lease 超過 running → failed(lease_expired) の件数 */
+  staleShareJobsReaped: number;
 };
 
 export type RunMaintenanceInput = {
@@ -44,6 +46,7 @@ const COUNT_KEYS = [
   "draftSubmissionsDeleted",
   "identityLedgersDeleted",
   "flyerLedgersDeleted",
+  "staleShareJobsReaped",
 ] as const;
 
 const productionTlsSslmode = /(?:^|[?&])sslmode=(?:require|verify-ca|verify-full)(?:&|$)/u;

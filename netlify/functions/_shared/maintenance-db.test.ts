@@ -27,6 +27,7 @@ const counts = {
   draftSubmissionsDeleted: 0,
   identityLedgersDeleted: 0,
   flyerLedgersDeleted: 0,
+  staleShareJobsReaped: 0,
 };
 
 function mockHappyPath(): void {
@@ -67,7 +68,7 @@ function mockHappyPath(): void {
 }
 
 describe("runMaintenance", () => {
-  it("uses one client, fixed parameterized RPC SQL, and four-count parse before commit", async () => {
+  it("uses one client, fixed parameterized RPC SQL, and nine-count parse before commit", async () => {
     mockHappyPath();
     const result = await runMaintenance({
       connectionString: "postgresql://x?sslmode=require",
@@ -75,6 +76,19 @@ describe("runMaintenance", () => {
       batchSize: 250,
     });
     expect(result).toEqual(counts);
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        "authContinuationsDeleted",
+        "draftSubmissionsDeleted",
+        "flyerLedgersDeleted",
+        "generationLedgersDeleted",
+        "identityLedgersDeleted",
+        "shoppingMutationsDeleted",
+        "staleReservationsFinalized",
+        "staleShareJobsReaped",
+        "userFeedbackDeleted",
+      ].sort(),
+    );
     expect(Client).toHaveBeenCalledTimes(1);
     const clientMock = Client as unknown as {
       mock: { calls: unknown[][] };
@@ -168,6 +182,51 @@ describe("runMaintenance", () => {
     expect(sqlCalls).toContain("rollback");
     expect(sqlCalls).not.toContain("commit");
     expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects counts missing staleShareJobsReaped (closed nine-key parse)", async () => {
+    mockHappyPath();
+    query.mockImplementation((sql: string) => {
+      if (sql.startsWith("select session_user")) {
+        const callIndex = query.mock.calls.filter((c) =>
+          String(c[0]).startsWith("select session_user"),
+        ).length;
+        if (callIndex <= 1) {
+          return {
+            rows: [
+              {
+                session_user: "kondate_maintenance_login",
+                current_user: "kondate_maintenance_login",
+                statement_timeout: "20s",
+              },
+            ],
+          };
+        }
+        return {
+          rows: [
+            {
+              session_user: "kondate_maintenance_login",
+              current_user: "kondate_maintenance_executor",
+              statement_timeout: "20s",
+            },
+          ],
+        };
+      }
+      if (sql.includes("run_kondate_maintenance")) {
+        const { staleShareJobsReaped: _removed, ...legacyEight } = counts;
+        void _removed;
+        return { rows: [{ counts: legacyEight }] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      runMaintenance({
+        connectionString: "postgresql://x",
+        now: "2026-07-24T12:00:00.000Z",
+        batchSize: 250,
+      }),
+    ).rejects.toThrow("maintenance_failed");
   });
 
   it("ends the client after SQL failure and never leaks driver text", async () => {

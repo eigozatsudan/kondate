@@ -58,6 +58,7 @@ describe("createSafeLogger", () => {
       draftSubmissionsDeleted: 6,
       identityLedgersDeleted: 7,
       flyerLedgersDeleted: 8,
+      staleShareJobsReaped: 9,
     });
     expect(JSON.parse(write.mock.calls[0]![0] as string)).toEqual({
       level: "info",
@@ -72,6 +73,7 @@ describe("createSafeLogger", () => {
       draft_submissions_deleted: 6,
       identity_ledgers_deleted: 7,
       flyer_ledgers_deleted: 8,
+      stale_share_jobs_reaped: 9,
     });
   });
 

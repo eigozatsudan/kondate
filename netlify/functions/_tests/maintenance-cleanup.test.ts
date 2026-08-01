@@ -61,7 +61,7 @@ afterEach(() => {
 });
 
 describe("maintenance-cleanup scheduled function", () => {
-  it("returns 204 and logs eight snake_case aggregates only on success", async () => {
+  it("returns 204 and logs nine snake_case aggregates only on success", async () => {
     process.env[MAINTENANCE_CRON_SECRET_ENV] = VALID_SECRET;
     selectMaintenanceEnvironmentMode.mockReturnValue("local");
     parseMaintenanceDatabaseEnv.mockReturnValue("postgresql://opaque");
@@ -74,6 +74,7 @@ describe("maintenance-cleanup scheduled function", () => {
       draftSubmissionsDeleted: 6,
       identityLedgersDeleted: 7,
       flyerLedgersDeleted: 8,
+      staleShareJobsReaped: 9,
     });
 
     const response = await maintenanceCleanup(authorizedRequest());
@@ -98,6 +99,7 @@ describe("maintenance-cleanup scheduled function", () => {
         "request_id",
         "shopping_mutations_deleted",
         "stale_reservations_finalized",
+        "stale_share_jobs_reaped",
         "user_feedback_deleted",
       ].sort(),
     );
@@ -111,6 +113,7 @@ describe("maintenance-cleanup scheduled function", () => {
       auth_continuations_deleted: 4,
       identity_ledgers_deleted: 7,
       flyer_ledgers_deleted: 8,
+      stale_share_jobs_reaped: 9,
     });
     expect(parsed).not.toHaveProperty("durationMs");
     expect(parsed).not.toHaveProperty("errorCode");
@@ -154,6 +157,7 @@ describe("maintenance-cleanup scheduled function", () => {
       draftSubmissionsDeleted: 0,
       identityLedgersDeleted: 0,
       flyerLedgersDeleted: 0,
+      staleShareJobsReaped: 0,
     });
     await maintenanceCleanup(authorizedRequest());
     expect(parseManagedSupabaseProjectRef).toHaveBeenCalled();
@@ -236,6 +240,7 @@ describe("maintenance-cleanup scheduled function", () => {
       draftSubmissionsDeleted: 0,
       identityLedgersDeleted: 0,
       flyerLedgersDeleted: 0,
+      staleShareJobsReaped: 0,
     });
     const response = await maintenanceCleanup(
       new Request("http://127.0.0.1/.netlify/functions/maintenance-cleanup", {

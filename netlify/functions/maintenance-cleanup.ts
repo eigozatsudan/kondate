@@ -1,7 +1,7 @@
 /**
  * 本番 Scheduled Function: 毎時 1 回、境界付きメンテナンス RPC を呼ぶ。
  * path なし schedule のみ。加えてアプリ層で secret 認証する（S3）。
- * 成功時は 8 集計（stale/ledgers/shopping/auth/feedback/drafts/identity/flyer）+ duration のみを snake_case で safeLog する。
+ * 成功時は 9 集計（stale/ledgers/shopping/auth/feedback/drafts/identity/flyer/share-reaper）+ duration のみを snake_case で safeLog する。
  */
 import { timingSafeEqual } from "node:crypto";
 import type { Config } from "@netlify/functions";
@@ -135,6 +135,7 @@ export default async function maintenanceCleanup(request?: Request): Promise<Res
       draftSubmissionsDeleted: counts.draftSubmissionsDeleted,
       identityLedgersDeleted: counts.identityLedgersDeleted,
       flyerLedgersDeleted: counts.flyerLedgersDeleted,
+      staleShareJobsReaped: counts.staleShareJobsReaped,
     });
     return new Response(null, { status: 204 });
   } catch {

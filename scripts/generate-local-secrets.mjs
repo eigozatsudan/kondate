@@ -161,6 +161,8 @@ values.set(
 );
 // maintenance-cleanup アプリ層 secret（local invoke ヘッダと一致させる）
 values.set("MAINTENANCE_CRON_SECRET", randomBytes(24).toString("base64url"));
+// share-generalize-worker アプリ層 secret（local invoke ヘッダと一致させる）
+values.set("SHARE_WORKER_CRON_SECRET", randomBytes(24).toString("base64url"));
 
 // 値に特殊文字が含まれる場合のみJSON文字列としてクォートし、通常の
 // KEY=VALUE 行との互換性を保つ。

@@ -1,7 +1,7 @@
 -- Task 3: 共有プール schema / public definer RPC / 削除 / reaper / success cap
 \ir 000_helpers.sql
 begin;
-select plan(29);
+select plan(33);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -569,6 +569,256 @@ select lives_ok(
     $reap$;
   $$,
   'reap_stale_share_jobs marks lease_expired and blocks re-enqueue'
+);
+
+-- ---------------------------------------------------------------------------
+-- Task 7a: claim single-winner / concurrent caps
+-- ---------------------------------------------------------------------------
+
+-- double claim: 同一 pending は 1 勝者のみ（2 回目は既に running のため再 claim しない）
+select lives_ok(
+  $$
+    do $double$
+    declare
+      v_job uuid;
+      v_first jsonb;
+      v_second jsonb;
+      v_id text;
+      v_running integer;
+    begin
+      insert into private.share_generalization_jobs (
+        source_menu_id, contributor_user_id, status, created_at
+      ) values (
+        null,
+        'a1000000-0000-4000-8000-0000000000a2',
+        'pending',
+        clock_timestamp()
+      )
+      returning id into v_job;
+
+      v_first := public.claim_share_generalization_jobs(10);
+      if jsonb_array_length(v_first -> 'jobs') is distinct from 1 then
+        raise exception 'first claim should win exactly 1, got %', v_first;
+      end if;
+      v_id := v_first -> 'jobs' -> 0 ->> 'id';
+      if v_id is distinct from v_job::text then
+        raise exception 'first claim id mismatch: % vs %', v_id, v_job;
+      end if;
+      if v_first -> 'jobs' -> 0 ->> 'status' is distinct from 'running' then
+        raise exception 'claimed status must be running';
+      end if;
+
+      v_second := public.claim_share_generalization_jobs(10);
+      if exists (
+        select 1
+        from jsonb_array_elements(v_second -> 'jobs') j
+        where j ->> 'id' = v_job::text
+      ) then
+        raise exception 'second claim must not re-claim same job: %', v_second;
+      end if;
+
+      select count(*)::integer into v_running
+      from private.share_generalization_jobs
+      where id = v_job and status = 'running';
+      if v_running is distinct from 1 then
+        raise exception 'job must remain single running row, count=%', v_running;
+      end if;
+
+      -- 後続 cap テストのため終端化
+      update private.share_generalization_jobs
+      set status = 'failed',
+          failure_code = 'openrouter_failed',
+          finished_at = clock_timestamp()
+      where id = v_job;
+    end;
+    $double$;
+  $$,
+  'double claim yields single winner for one pending job'
+);
+
+-- maxGlobalRunning=4: 既に 4 running なら pending があっても claim 0
+select lives_ok(
+  $$
+    do $gcap$
+    declare
+      v_claim jsonb;
+      v_pending uuid;
+      i integer;
+    begin
+      for i in 1..4 loop
+        insert into private.share_generalization_jobs (
+          source_menu_id, contributor_user_id, status,
+          claimed_at, heartbeat_at, created_at
+        ) values (
+          null,
+          null,
+          'running',
+          clock_timestamp(),
+          clock_timestamp(),
+          clock_timestamp() - (i || ' minutes')::interval
+        );
+      end loop;
+
+      insert into private.share_generalization_jobs (
+        source_menu_id, contributor_user_id, status, created_at
+      ) values (
+        null,
+        'a1000000-0000-4000-8000-0000000000a2',
+        'pending',
+        clock_timestamp()
+      )
+      returning id into v_pending;
+
+      v_claim := public.claim_share_generalization_jobs(10);
+      if jsonb_array_length(v_claim -> 'jobs') is distinct from 0 then
+        raise exception 'global cap 4 should block claim, got %', v_claim;
+      end if;
+
+      if not exists (
+        select 1 from private.share_generalization_jobs
+        where id = v_pending and status = 'pending'
+      ) then
+        raise exception 'pending must stay pending under global cap';
+      end if;
+
+      -- cleanup running fillers + pending
+      delete from private.share_generalization_jobs
+      where status = 'running' and contributor_user_id is null;
+      delete from private.share_generalization_jobs where id = v_pending;
+    end;
+    $gcap$;
+  $$,
+  'claim enforces maxGlobalRunning=4'
+);
+
+-- maxPerUserRunning=1: 同一 contributor の 2 本目 pending は claim しない
+select lives_ok(
+  $$
+    do $ucap$
+    declare
+      v_running uuid;
+      v_pending uuid;
+      v_other uuid;
+      v_claim jsonb;
+      v_ids text[];
+    begin
+      insert into private.share_generalization_jobs (
+        source_menu_id, contributor_user_id, status,
+        claimed_at, heartbeat_at, created_at
+      ) values (
+        null,
+        'a1000000-0000-4000-8000-0000000000a2',
+        'running',
+        clock_timestamp(),
+        clock_timestamp(),
+        clock_timestamp() - interval '1 minute'
+      )
+      returning id into v_running;
+
+      insert into private.share_generalization_jobs (
+        source_menu_id, contributor_user_id, status, created_at
+      ) values (
+        null,
+        'a1000000-0000-4000-8000-0000000000a2',
+        'pending',
+        clock_timestamp()
+      )
+      returning id into v_pending;
+
+      -- 別ユーザー pending は claim 可（per-user は a2 のみ塞ぐ）
+      insert into private.share_generalization_jobs (
+        source_menu_id, contributor_user_id, status, created_at
+      ) values (
+        null,
+        null,
+        'pending',
+        clock_timestamp()
+      )
+      returning id into v_other;
+
+      v_claim := public.claim_share_generalization_jobs(10);
+      select array_agg(j ->> 'id' order by j ->> 'id')
+      into v_ids
+      from jsonb_array_elements(v_claim -> 'jobs') j;
+
+      if v_other::text <> all (coalesce(v_ids, array[]::text[])) then
+        raise exception 'null-contributor pending should be claimable, got %', v_claim;
+      end if;
+      if v_pending::text = any (coalesce(v_ids, array[]::text[])) then
+        raise exception 'same-user pending must not claim under maxPerUserRunning=1: %', v_claim;
+      end if;
+      if not exists (
+        select 1 from private.share_generalization_jobs
+        where id = v_pending and status = 'pending'
+      ) then
+        raise exception 'same-user pending must remain pending';
+      end if;
+
+      delete from private.share_generalization_jobs
+      where id in (v_running, v_pending, v_other);
+    end;
+    $ucap$;
+  $$,
+  'claim enforces maxPerUserRunning=1'
+);
+
+-- maintenance JSON: staleShareJobsReaped が独立キーで reaper 件数を返す
+select lives_ok(
+  $$
+    do $maint$
+    declare
+      v_job uuid;
+      v_counts jsonb;
+      v_reaped integer;
+      v_stale integer;
+    begin
+      insert into private.share_generalization_jobs (
+        source_menu_id, contributor_user_id, status,
+        claimed_at, heartbeat_at, created_at
+      ) values (
+        null,
+        'a1000000-0000-4000-8000-0000000000a2',
+        'running',
+        clock_timestamp() - interval '20 minutes',
+        clock_timestamp() - interval '20 minutes',
+        clock_timestamp() - interval '20 minutes'
+      )
+      returning id into v_job;
+
+      -- pgTAP は superuser から直接呼ぶ（executor grant は inventory 側で固定）
+      v_counts := public.run_kondate_maintenance(clock_timestamp(), 100);
+
+      if not (v_counts ? 'staleShareJobsReaped') then
+        raise exception 'missing staleShareJobsReaped key: %', v_counts;
+      end if;
+      v_reaped := (v_counts ->> 'staleShareJobsReaped')::integer;
+      if v_reaped < 1 then
+        raise exception 'expected reaped >= 1, got % in %', v_reaped, v_counts;
+      end if;
+
+      -- reaper 件数は staleReservationsFinalized に混ぜない（独立キー）
+      v_stale := (v_counts ->> 'staleReservationsFinalized')::integer;
+      -- ここでは「キーが独立」であることだけ固定（stale が reaped を含む保証はしない）
+
+      if not exists (
+        select 1 from private.share_generalization_jobs
+        where id = v_job
+          and status = 'failed'
+          and failure_code = 'lease_expired'
+      ) then
+        raise exception 'maintenance reaper did not mark lease_expired';
+      end if;
+
+      if (
+        select count(*)::integer
+        from jsonb_object_keys(v_counts)
+      ) is distinct from 9 then
+        raise exception 'expected 9 maintenance keys, got %', v_counts;
+      end if;
+    end;
+    $maint$;
+  $$,
+  'run_kondate_maintenance exposes staleShareJobsReaped as dedicated count key'
 );
 
 -- ---------------------------------------------------------------------------

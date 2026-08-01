@@ -249,7 +249,7 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.finish_share_generalization_job(p_job_id uuid, p_status text, p_code text, p_ai_call_count integer, p_pass1_model text, p_pass2_model text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; failed/skipped terminal + AI call ledger |
 | `public.publish_shared_emergency_recipe(p_job_id uuid, p_payload jsonb, p_meal_type text, p_total_elapsed integer, p_standard_allergen_ids text[], p_eligible_age_bands text[], p_ai_call_count integer, p_pass1_model text, p_pass2_model text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; atomic consent recheck + pool + origin + success |
 | `public.list_active_shared_emergency_recipes(p_meal_type text, p_limit integer, p_salt text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; bound active pool fetch (hash order) |
-| `public.reap_stale_share_jobs(p_now timestamp with time zone, p_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; lease-expired running → failed; also called from `run_kondate_maintenance` |
+| `public.reap_stale_share_jobs(p_now timestamp with time zone, p_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; lease-expired running → failed; also called from `run_kondate_maintenance` (count key `staleShareJobsReaped`) |
 
 ## Policies
 
