@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { fireEvent, act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
@@ -914,6 +914,31 @@ describe("PlannerWizard review step", () => {
       "quality-mode-toggle--locked",
     );
   });
+
+  it("避ける食材の件数超過は silent truncate せずエラー表示し生成を止める (P4)", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+        }}
+        usageRemaining={3}
+        plan="free"
+      />,
+    );
+    const input = screen.getByLabelText("今回だけ避ける食材");
+    const tooMany = Array.from({ length: 21 }, (_, i) => `食材${String(i + 1)}`).join("、");
+    fireEvent.change(input, { target: { value: tooMany } });
+    expect(screen.getByRole("alert")).toHaveTextContent(/避ける食材は20件まで/u);
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  });
+
 
   it("household 確認では現在の家族・安全条件の免責を表示する", () => {
     render(

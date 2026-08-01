@@ -39,7 +39,15 @@ import {
   type PlannerStep,
 } from "./model/planner-wizard";
 import type { PlannerSafetyMember } from "./planner-safety-member";
-import { createPlannerAttempt, type PlannerAttempt } from "./expired-pantry-checks";
+import {
+  createPlannerAttempt,
+  filterExpiredPantryChecksForSelections,
+  hasCurrentExpiredConfirmation,
+  isPastEnteredExpiry,
+  type PlannerAttempt,
+} from "./expired-pantry-checks";
+import { resolvePlannerAllergyDisclosure } from "./planner-allergy-disclosure";
+import { IncompleteDraftSaveError } from "./use-draft-autosave";
 import {
   DraftRevisionConflictError,
   getPlannerDraft,
@@ -179,31 +187,27 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
           : member.unsupported_diet_status === "present"
             ? "離乳食・嚥下調整食・治療食には対応できません"
             : null;
-    // §7.1: 具体名を常時表示。status=none でも残存行があれば名前を出す（設定 UI と同方針）
-    const allergyLabel =
-      allergyNames.length > 0
-        ? unresolvedAllergyCount > 0
-          ? `${allergyNames.join("・")}（ほか名前を表示できない項目あり）`
-          : allergyNames.join("・")
-        : member.allergy_status === "none"
-          ? "アレルギーなし"
-          : member.allergy_status === "unconfirmed"
-            ? "アレルギー未確認"
-            : // GP-I2 / MVP §7.1: 件数・有無だけの「登録アレルギーあり」は禁止
-              "名前を表示できないアレルギー項目があります";
+    // §7.1 / P3: 具体名を常時表示。none でも未解決残存があれば「なし」に落とさない
+    const rawAllergyStatus = member.allergy_status;
+    const allergyStatus: "none" | "registered" | "unconfirmed" | null =
+      rawAllergyStatus === "none" ||
+      rawAllergyStatus === "registered" ||
+      rawAllergyStatus === "unconfirmed"
+        ? rawAllergyStatus
+        : null;
+    const disclosure = resolvePlannerAllergyDisclosure({
+      allergyStatus,
+      allergyNames,
+      unresolvedAllergyCount,
+    });
     return {
       id: member.id,
       displayName: member.display_name?.trim() || `家族${String(index + 1)}`,
       ageBandLabel:
         member.age_band === null ? "年齢未確認" : (ageLabels[member.age_band] ?? "年齢未確認"),
-      allergyLabel,
-      // カタログ解決不能な registered は選択不可（表示名だけの有無要約を出さない）
-      // 一部解決時は label で under-disclosure を明示し、選択は維持（サーバは allergen id で照合）
-      blockedReason:
-        blockedReason ??
-        (member.allergy_status === "registered" && allergyNames.length === 0
-          ? "アレルギー名を確認できないため、この家族では献立を作れません"
-          : null),
+      allergyLabel: disclosure.allergyLabel,
+      // カタログ解決不能・none+未解決残存は選択不可。一部解決時は label 明示のみで選択維持
+      blockedReason: blockedReason ?? disclosure.allergyBlockedReason,
       safetyLabels: member.required_safety_constraints.map(
         (constraint) => safetyLabels[constraint] ?? "安全上の個別対応",
       ),
@@ -254,6 +258,8 @@ export function PlannerRoutePage() {
         void navigate("/generation?resumed=1");
         return Promise.resolve(false);
       }
+      // P1: 送信 confirmation は選択中 pantry のみ（attempt 残存 extra を載せない）
+      // P2: Free / 非 Plus では qualityMode を必ず false（UI 見た目と command を一致）
       const pending = createPendingGeneration(
         {
           commandVersion: "generation-command.v3",
@@ -265,7 +271,10 @@ export function PlannerRoutePage() {
             draftId: draft.id,
             draftRevision: draft.revision,
             privacyNoticeVersion,
-            expiredPantryConfirmations: [...attempt.expiredPantryChecks],
+            expiredPantryConfirmations: filterExpiredPantryChecksForSelections(
+              attempt.expiredPantryChecks,
+              draft.pantrySelections,
+            ),
           },
         },
         userId,
@@ -313,6 +322,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     queryKey: [...householdKeys.members(userId ?? "missing"), "planner-safety"],
     queryFn: () => loadPlannerSafetyData(userId ?? ""),
     enabled: userId !== undefined,
+    // P11: default staleTime 30s だと同一 ID のアレルギー強化が最大 30s 開示遅延する
+    staleTime: 0,
   });
   const pantryQuery = useQuery({
     queryKey: pantryKeys.list(userId ?? "missing"),
@@ -349,6 +360,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
   }, []);
+
+  // P2: Free / plan 未取得へ降格したら attempt.qualityMode を false に同期（UI checked と state のズレ防止）
+  const planCode = usage.isSuccess ? usage.data.plan : null;
+  useEffect(() => {
+    if (planCode === "plus") return;
+    if (!attempt.qualityMode) return;
+    setAttempt((current) => (current.qualityMode ? { ...current, qualityMode: false } : current));
+  }, [attempt.qualityMode, planCode]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -557,11 +576,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         if (operationId === emergencyOperationIdRef.current) {
           setIsOpeningEmergencyMenus(false);
         }
-      } catch {
+      } catch (error) {
         if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
           // C-I14: 緊急導線の保存失敗は生成失敗と別文言（生成していないのに「生成」と言わない）。
+          // P8: idea+人数未設定の Incomplete は通信障害と誤認しない
           setSubmissionError(
-            "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
+            error instanceof IncompleteDraftSaveError
+              ? "人数など必要な条件が未設定のため、緊急献立を開けませんでした。確認画面で内容を見直してください。"
+              : "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
           );
           setIsOpeningEmergencyMenus(false);
         }
@@ -715,6 +737,32 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           setStep("review");
           return;
         }
+        // P6: 医療と同様、期限切れ未確認・削除済み pantry を submit でも再検証する
+        const pantryRows = pantryQuery.data ?? [];
+        const pantryIdSet = new Set(pantryRows.map((item) => item.id));
+        if (value.pantrySelections.some((selection) => !pantryIdSet.has(selection.pantryItemId))) {
+          setSubmissionError(
+            "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
+          );
+          setStep("review");
+          return;
+        }
+        const nowForExpiry = new Date();
+        const hasUnconfirmedExpired = value.pantrySelections.some((selection) => {
+          const item = pantryRows.find((entry) => entry.id === selection.pantryItemId);
+          if (item === undefined) return false;
+          return (
+            isPastEnteredExpiry(item, nowForExpiry) &&
+            !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiry)
+          );
+        });
+        if (hasUnconfirmedExpired) {
+          setSubmissionError(
+            "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
+          );
+          setStep("review");
+          return;
+        }
         if (startGeneration === undefined) return;
         setIsSubmitting(true);
         setAudienceStatusError(null);
@@ -743,11 +791,20 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               return;
             }
           }
+          // P1/P2: 生成へ渡す attempt は選択中 confirmation のみ・非 Plus は qualityMode を落とす
+          const commandAttempt: PlannerAttempt = {
+            ...attempt,
+            qualityMode: planCode === "plus" && attempt.qualityMode,
+            expiredPantryChecks: filterExpiredPantryChecksForSelections(
+              attempt.expiredPantryChecks,
+              saved.pantrySelections,
+            ),
+          };
           const controller = new AbortController();
           generationAbortControllerRef.current?.abort();
           generationAbortControllerRef.current = controller;
           try {
-            const result = await startGeneration(saved, attempt, controller.signal);
+            const result = await startGeneration(saved, commandAttempt, controller.signal);
             if (controller.signal.aborted || result === false) return;
             startNewAttempt();
           } finally {
@@ -755,8 +812,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               generationAbortControllerRef.current = null;
             }
           }
-        } catch {
-          setSubmissionError("献立条件を保存できなかったため、生成を開始しませんでした。");
+        } catch (error) {
+          // P8: IncompleteDraft は通信失敗と分けて人数未設定を伝える
+          setSubmissionError(
+            error instanceof IncompleteDraftSaveError
+              ? "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。"
+              : "献立条件を保存できなかったため、生成を開始しませんでした。",
+          );
         } finally {
           setIsSubmitting(false);
         }

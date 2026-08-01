@@ -50,3 +50,16 @@ export function confirmExpiredPantryItem(
     ],
   };
 }
+
+/**
+ * サーバ validateTransientChecks は「選択中 ∩ 期限切れ」と confirmation の exact-set を要求する。
+ * 同一 attempt 内で確認済み→解除しても checks を attempt に残し再選択時 dialog を抑止する設計のため、
+ * 送信直前に選択中 ID へ絞り込む（P1: 非選択 extra を載せない）。
+ */
+export function filterExpiredPantryChecksForSelections(
+  checks: readonly ExpiredPantryCheck[],
+  selections: readonly { pantryItemId: string }[],
+): ExpiredPantryCheck[] {
+  const selected = new Set(selections.map((selection) => selection.pantryItemId));
+  return checks.filter((check) => selected.has(check.pantryItemId));
+}

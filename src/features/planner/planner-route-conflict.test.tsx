@@ -10,6 +10,37 @@ import { DraftRevisionConflictError, plannerKeys } from "./planner-api";
 
 const userId = "72000000-0000-4000-8000-000000000001";
 const memberId = "70000000-0000-4000-8000-000000000001";
+
+// P11: safetyQuery staleTime:0 で mount 再取得が走るため API をモックする
+vi.mock("@/features/household/household-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/household/household-api")>();
+  const uid = "72000000-0000-4000-8000-000000000001";
+  const mid = "70000000-0000-4000-8000-000000000001";
+  return {
+    ...original,
+    listHouseholdMembers: vi.fn(async () => [
+      {
+        id: mid,
+        user_id: uid,
+        display_name: "子ども",
+        status: "complete" as const,
+        age_band: "age_3_5" as const,
+        portion_size: null,
+        spice_level: null,
+        ease_preferences: [],
+        required_safety_constraints: [],
+        allergy_status: "none" as const,
+        unsupported_diet_status: "none" as const,
+        unsupported_diet_kinds: [],
+        sort_order: 0,
+        created_at: "2026-07-01T00:00:00.000Z",
+        updated_at: "2026-07-01T00:00:00.000Z",
+      },
+    ]),
+    listAllergenCatalog: vi.fn(async () => []),
+    listMemberAllergies: vi.fn(async () => []),
+  };
+});
 const revisionOne: PlannerDraft = {
   id: "71000000-0000-4000-8000-000000000001",
   userId,

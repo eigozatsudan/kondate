@@ -427,3 +427,61 @@ it("明示 reset は reset 前の保存継続を無効化し reset 後の編集�
   expect(result.current.state).toBe("saved");
   expect(result.current.revision).toBe(3);
 });
+
+it("キュー待ち中に value が更新されていれば最新を保存する (P7)", async () => {
+  vi.useFakeTimers();
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: base } },
+  );
+
+  const staleMembers = {
+    ...base,
+    mealType: "dinner" as const,
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese" as const,
+    targetMode: "household" as const,
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+  };
+  const stripped = {
+    ...staleMembers,
+    targetMemberIds: [] as string[],
+    targetMode: null,
+  };
+
+  // 先行保存を開始
+  rerender({ value: staleMembers });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+
+  // キュー待ち中に strip（eligibility）相当の更新
+  rerender({ value: stripped });
+  // 2 件目を明示 enqueue（debounce を待たず flush 相当）
+  // 先行 save 完了後に 2 件目が走る。1 件目は開始時点の latest=stale のまま。
+  // 追加の debounce 保存を起こす
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  await act(async () => {
+    resolveFirst?.(saved(staleMembers, 2));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await act(async () => vi.runOnlyPendingTimersAsync());
+
+  // 2 件目以降は strip 後の最新を保存していること
+  expect(save.mock.calls.length).toBeGreaterThanOrEqual(2);
+  const lastValue = save.mock.calls.at(-1)?.[0] as PlannerDraftInput;
+  expect(lastValue.targetMemberIds).toEqual([]);
+  expect(lastValue.targetMode).toBeNull();
+});

@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerAttempt } from "./expired-pantry-checks";
+
+// P6 は JST 当日 confirmation のみ有効。固定過去日だと submit 再検証で落ちる
+const TEST_CHECKED_AT = new Date().toISOString();
 import type { PlannerFieldName, PlannerStep } from "./model/planner-wizard";
 
 const draft: PlannerDraft = {
@@ -200,20 +203,24 @@ vi.mock("./planner-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("./planner-api")>();
   return { ...original, savePlannerDraft: savePlannerDraftMock };
 });
-vi.mock("./use-draft-autosave", () => ({
-  useDraftAutosave: (input: {
-    value: PlannerDraftInput;
-    baselineRevision: number;
-    save(value: PlannerDraftInput, revision: number): Promise<PlannerDraft>;
-  }) => {
-    autosaveInputs.push(input);
-    return {
-      state: "saved",
-      revision: 3,
-      flush: vi.fn(() => input.save(input.value, input.baselineRevision)),
-    };
-  },
-}));
+vi.mock("./use-draft-autosave", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./use-draft-autosave")>();
+  return {
+    ...original,
+    useDraftAutosave: (input: {
+      value: PlannerDraftInput;
+      baselineRevision: number;
+      save(value: PlannerDraftInput, revision: number): Promise<PlannerDraft>;
+    }) => {
+      autosaveInputs.push(input);
+      return {
+        state: "saved",
+        revision: 3,
+        flush: vi.fn(() => input.save(input.value, input.baselineRevision)),
+      };
+    },
+  };
+});
 
 // PlannerRoutePage が実際にマウントするのは PlannerWizard であることを固定するため、
 // wizardは独立してmockし、routeから渡されたpropsだけをUIへ露出する。
@@ -267,19 +274,48 @@ vi.mock("./components/planner-wizard", () => ({
         <button
           type="button"
           onClick={() => {
+            // 実 UI 同様: 期限確認は選択中 pantry と対になる（P1 exact-set）
+            props.onDraftChange({
+              ...props.draft,
+              pantrySelections: [
+                {
+                  pantryItemId: "74000000-0000-4000-8000-000000000001",
+                  priority: "prefer_use",
+                },
+              ],
+            });
             props.onAttemptChange({
               idempotencyKey: props.attempt.idempotencyKey,
               qualityMode: false,
               expiredPantryChecks: [
                 {
                   pantryItemId: "74000000-0000-4000-8000-000000000001",
-                  checkedAt: "2026-07-11T03:00:00.000Z",
+                  checkedAt: TEST_CHECKED_AT,
                 },
               ],
             });
           }}
         >
           確認を反映
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            // P1: 確認後に選択解除しても attempt に check が残る状況を模す
+            props.onDraftChange({ ...props.draft, pantrySelections: [] });
+            props.onAttemptChange({
+              idempotencyKey: props.attempt.idempotencyKey,
+              qualityMode: false,
+              expiredPantryChecks: [
+                {
+                  pantryItemId: "74000000-0000-4000-8000-000000000001",
+                  checkedAt: TEST_CHECKED_AT,
+                },
+              ],
+            });
+          }}
+        >
+          確認後に選択解除
         </button>
         <button type="button" onClick={() => void props.onSubmit().catch(() => undefined)}>
           生成
@@ -399,7 +435,19 @@ beforeEach(() => {
     isPending: false,
   };
   queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-29.v1" };
-  savePlannerDraftMock.mockResolvedValue(draft);
+  // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
+  savePlannerDraftMock.mockImplementation(
+    (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
+      Promise.resolve({
+        ...draft,
+        ...next,
+        id: draft.id,
+        userId: draft.userId,
+        revision: revision > 0 ? revision : draft.revision,
+        createdAt: draft.createdAt,
+        updatedAt: draft.updatedAt,
+      }),
+  );
   setOnboardingStatusMock.mockResolvedValue(undefined);
   getProfileMock.mockReset();
   getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
@@ -750,6 +798,20 @@ it("冷蔵庫一覧の取得失敗を planner route の読み込み失敗とし�
   expect(screen.queryByLabelText("pantry status")).not.toBeInTheDocument();
 });
 
+it("選択解除後も attempt に残った confirmation は生成 command から落とす (P1)", async () => {
+  const user = userEvent.setup();
+  const startGeneration = vi.fn();
+  render(<PlannerPage startGeneration={startGeneration} />);
+  await user.click(screen.getByRole("button", { name: "確認後に選択解除" }));
+  expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+  await user.click(screen.getByRole("button", { name: "生成" }));
+  await vi.waitFor(() => {
+    expect(startGeneration).toHaveBeenCalled();
+  });
+  const attemptArg = startGeneration.mock.calls[0]?.[1] as PlannerAttempt;
+  expect(attemptArg.expiredPantryChecks).toEqual([]);
+});
+
 it("再読み込み相当の remount では下書きと別管理の attempt key を作り直す", () => {
   const first = render(<PlannerPage />);
   const firstKey = screen.getByLabelText("attempt key").textContent;
@@ -771,14 +833,21 @@ it("route が更新された exact attempt を生成へ渡し新しい試行で�
   expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   await user.click(screen.getByRole("button", { name: "生成" }));
   expect(startGeneration).toHaveBeenCalledWith(
-    draft,
+    expect.objectContaining({
+      pantrySelections: [
+        {
+          pantryItemId: "74000000-0000-4000-8000-000000000001",
+          priority: "prefer_use",
+        },
+      ],
+    }),
     {
       idempotencyKey: firstKey,
       qualityMode: false,
       expiredPantryChecks: [
         {
           pantryItemId: "74000000-0000-4000-8000-000000000001",
-          checkedAt: "2026-07-11T03:00:00.000Z",
+          checkedAt: TEST_CHECKED_AT,
         },
       ],
     },
@@ -790,7 +859,12 @@ it("生成成功の完了後だけ attempt を新しいキーと空の確認へ�
   const user = userEvent.setup();
   const startGeneration = vi.fn(
     (draftArg: PlannerDraft, attemptArg: PlannerAttempt): Promise<undefined> => {
-      expect(draftArg).toEqual(draft);
+      expect(draftArg.pantrySelections).toEqual([
+        {
+          pantryItemId: "74000000-0000-4000-8000-000000000001",
+          priority: "prefer_use",
+        },
+      ]);
       expect(attemptArg.expiredPantryChecks).toHaveLength(1);
       return Promise.resolve(undefined);
     },
@@ -805,20 +879,26 @@ it("生成成功の完了後だけ attempt を新しいキーと空の確認へ�
     expect(screen.getByLabelText("attempt key").textContent).not.toBe(firstKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("0");
   });
-  expect(startGeneration.mock.calls[0]).toEqual([
-    draft,
-    {
-      idempotencyKey: firstKey,
-      qualityMode: false,
-      expiredPantryChecks: [
+  expect(startGeneration.mock.calls[0]?.[0]).toEqual(
+    expect.objectContaining({
+      pantrySelections: [
         {
           pantryItemId: "74000000-0000-4000-8000-000000000001",
-          checkedAt: "2026-07-11T03:00:00.000Z",
+          priority: "prefer_use",
         },
       ],
-    },
-    expect.any(AbortSignal),
-  ]);
+    }),
+  );
+  expect(startGeneration.mock.calls[0]?.[1]).toEqual({
+    idempotencyKey: firstKey,
+    qualityMode: false,
+    expiredPantryChecks: [
+      {
+        pantryItemId: "74000000-0000-4000-8000-000000000001",
+        checkedAt: TEST_CHECKED_AT,
+      },
+    ],
+  });
 });
 
 it("生成開始後に下書き競合が確定したら処理を中止し遅延成功でも attempt を更新しない", async () => {
@@ -923,7 +1003,7 @@ describe("PlannerRoutePage", () => {
         expiredPantryConfirmations: [
           {
             pantryItemId: "74000000-0000-4000-8000-000000000001",
-            checkedAt: "2026-07-11T03:00:00.000Z",
+            checkedAt: TEST_CHECKED_AT,
           },
         ],
       },

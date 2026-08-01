@@ -134,13 +134,20 @@ export function useDraftAutosave({
         }
         // 競合前に予約済みだった後続保存も、先行保存の競合判明後は実行しない。
         if (conflictRef.current !== null) throw conflictRef.current;
-        // キュー待ち中に value がさらに変わっていても、この operation の next を検証済み
+        // P7: キュー待ち中に eligibility strip 等で value が更新されていれば最新を保存する。
+        // 予約時 snapshot を固定すると無効メンバーが中間 revision に残り得る。
+        // 最新が一時的に非 persistable（idea+servings null 等）なら予約時 next を使う。
+        const latest = latestRef.current;
+        const toSave = isPersistableDraft(latest) ? latest : next;
+        if (!isPersistableDraft(toSave)) {
+          throw new IncompleteDraftSaveError();
+        }
         try {
-          const saved = await save(next, revisionRef.current);
+          const saved = await save(toSave, revisionRef.current);
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
           }
-          return saved;
+          return { saved, toSave };
         } catch (error: unknown) {
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
@@ -149,12 +156,12 @@ export function useDraftAutosave({
         }
       });
       queueRef.current = operation.then(
-        (saved) => {
+        (result) => {
           if (resetGeneration !== resetGenerationRef.current) return;
-          revisionRef.current = saved.revision;
-          baselineSerializedRef.current = JSON.stringify(next);
+          revisionRef.current = result.saved.revision;
+          baselineSerializedRef.current = JSON.stringify(result.toSave);
           if (mountedRef.current) {
-            setSavedRevision(saved.revision);
+            setSavedRevision(result.saved.revision);
             if (operationNumber === operationNumberRef.current) setState("saved");
           }
         },
@@ -175,7 +182,7 @@ export function useDraftAutosave({
           }
         },
       );
-      return operation;
+      return operation.then((result) => result.saved);
     },
     [onConflict, save],
   );

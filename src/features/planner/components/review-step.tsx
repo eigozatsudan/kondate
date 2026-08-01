@@ -170,6 +170,8 @@ export function ReviewStep({
   // 品質トグルは Plus 確定時のみ操作可。null（usage 未取得）も Free 同様にロック（fail-closed）。
   const qualityModeLocked = plan !== "plus";
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
+  // P4: 上限超過を silent truncate せずローカルエラーで止める（schema fieldErrors と別経路）
+  const [avoidIngredientLocalError, setAvoidIngredientLocalError] = useState<string | null>(null);
   // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
   const [privacyGateOpen, setPrivacyGateOpen] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -226,7 +228,8 @@ export function ReviewStep({
     hasUnavailablePantrySelections ||
     hasUnconfirmedExpiredPantry ||
     medicalBlocked ||
-    hasActiveUsageBlocker;
+    hasActiveUsageBlocker ||
+    avoidIngredientLocalError != null;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };
@@ -358,11 +361,13 @@ export function ReviewStep({
         className="wizard-details"
         open={
           hasUnavailablePantrySelections ||
+          hasUnconfirmedExpiredPantry ||
           medicalBlocked ||
           fieldErrors?.timeLimitMinutes != null ||
           fieldErrors?.budgetPreference != null ||
           fieldErrors?.ingredientPreference != null ||
           fieldErrors?.avoidIngredients != null ||
+          avoidIngredientLocalError != null ||
           fieldErrors?.memo != null ||
           fieldErrors?.pantrySelections != null
             ? true
@@ -480,12 +485,30 @@ export function ReviewStep({
             <input
               value={avoidIngredientText}
               disabled={disabled}
-              aria-invalid={fieldErrors?.avoidIngredients != null ? "true" : undefined}
+              aria-invalid={
+                fieldErrors?.avoidIngredients != null || avoidIngredientLocalError != null
+                  ? "true"
+                  : undefined
+              }
               aria-describedby={
-                fieldErrors?.avoidIngredients != null ? "review-avoid-ingredients-error" : undefined
+                fieldErrors?.avoidIngredients != null || avoidIngredientLocalError != null
+                  ? "review-avoid-ingredients-error"
+                  : undefined
               }
               onChange={(event) => {
-                const parsed = parseAvoidIngredientInput(event.target.value);
+                const raw = event.target.value;
+                const parsed = parseAvoidIngredientInput(raw);
+                // P4: 件数・長さ超過は切り詰め反映せずエラー表示（入力全文は保持して直せるようにする）
+                if (parsed.hasTooManyItems || parsed.hasTooLongItem) {
+                  setAvoidIngredientText(raw);
+                  setAvoidIngredientLocalError(
+                    parsed.hasTooManyItems
+                      ? `避ける食材は${String(avoidIngredientLimit)}件までです。`
+                      : `避ける食材は1件${String(avoidIngredientLengthLimit)}文字までです。`,
+                  );
+                  return;
+                }
+                setAvoidIngredientLocalError(null);
                 setAvoidIngredientText(parsed.text);
                 if (
                   parsed.items.length !== value.avoidIngredients.length ||
@@ -496,9 +519,9 @@ export function ReviewStep({
               }}
             />
           </label>
-          {fieldErrors?.avoidIngredients != null && (
+          {(fieldErrors?.avoidIngredients != null || avoidIngredientLocalError != null) && (
             <p id="review-avoid-ingredients-error" role="alert">
-              {fieldErrors.avoidIngredients}
+              {fieldErrors?.avoidIngredients ?? avoidIngredientLocalError}
             </p>
           )}
           <label className="field">
