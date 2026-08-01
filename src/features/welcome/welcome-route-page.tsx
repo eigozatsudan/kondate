@@ -11,7 +11,8 @@ import { WelcomePage } from "./welcome-page";
 const ONBOARDING_START_LOCK = "kondate:welcome-onboarding-start";
 
 async function withOnboardingStartLock<T>(run: () => Promise<T>): Promise<T> {
-  const locks = globalThis.navigator?.locks;
+  // DOM 型は locks を常置するが、未対応 UA では runtime で欠けることがある
+  const locks = Reflect.get(globalThis.navigator, "locks") as LockManager | undefined;
   if (locks === undefined || typeof locks.request !== "function") {
     return run();
   }

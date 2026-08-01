@@ -29,7 +29,10 @@ export async function clickWizardNext(page: Page): Promise<void> {
   // save_generation_draft の HTTP 成功直後でも、React が isSaving を落とす前に
   // 押すと disabled のまま throw する（menu-domain-pantry 長尺で再現）。
   await expect(next).toBeEnabled({ timeout: 15_000 });
-  await next.scrollIntoViewIfNeeded();
+  // fixed bottom-nav を考慮して中央付近へ。IfNeeded だけだとナビ下に居たまま「見えた」扱いになる。
+  await next.evaluate((el) => {
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+  });
   // 固定 bottom-nav（min-height 56px）より上にボタン下端があることを固定する
   const clearance = await next.evaluate((el) => {
     const rect = el.getBoundingClientRect();

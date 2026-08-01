@@ -490,21 +490,25 @@ describe("createShoppingListFromMenu", () => {
         itemSources: [],
       },
     ]);
-    mocks.loadMenuIdentity.mockImplementation(async (menuId) => ({
-      id: menuId,
-      userId: USER_ID,
-      version: 1,
-      targetMode: "household" as const,
-    }));
+    mocks.loadMenuIdentity.mockImplementation((menuId) =>
+      Promise.resolve({
+        id: menuId,
+        userId: USER_ID,
+        version: 1,
+        targetMode: "household" as const,
+      }),
+    );
     // 既存 source が invalid なら append しない
-    mocks.revalidate.mockImplementation(async (menuId) => {
+    mocks.revalidate.mockImplementation((menuId) => {
       if (menuId === OTHER_MENU) {
-        return makeRevalidation({
-          status: "invalid",
-          issues: [{ code: "direct_allergen_match", path: "x", message: "だめ" }],
-        });
+        return Promise.resolve(
+          makeRevalidation({
+            status: "invalid",
+            issues: [{ code: "direct_allergen_match", path: "x", message: "だめ" }],
+          }),
+        );
       }
-      return makeRevalidation();
+      return Promise.resolve(makeRevalidation());
     });
     await expect(
       createShoppingListFromMenu(

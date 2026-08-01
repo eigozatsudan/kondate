@@ -34,11 +34,11 @@ test("isolated WebView deposits once and the original browser claims with its se
 });
 
 test("Google cancel and expired links return actionable login choices", async ({ page }) => {
-  await page.goto("/auth/callback?error=access_denied&returnTo=%2Fplanner");
+  // C7: callback 許可クエリに returnTo は無い（unknown key → unbound_callback）。
+  // returnTo は stored flow 由来。error 系は flow 無しでも oauth_cancelled / expired へ写る。
+  await page.goto("/auth/callback?error=access_denied");
   await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible();
-  await page.goto(
-    "/auth/callback?error=access_denied&error_code=otp_expired&flow=expired&returnTo=%2Fplanner",
-  );
+  await page.goto("/auth/callback?error=access_denied&error_code=otp_expired");
   await expect(page.getByText(/期限切れか、すでに使用/u)).toBeVisible();
   // expired 状態の CTA（idle の「Googleで続ける」「ログイン用メールを送る」ではない）。
   // 直前にメール未送信だと宛先が空で「メールアドレスを入力して再送」になる。

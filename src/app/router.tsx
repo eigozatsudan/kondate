@@ -64,7 +64,8 @@ export function createAppRouter(): AppRouter {
             {
               path: "/privacy",
               lazy: async () => {
-                const { PrivacyNoticePage } = await import("@/features/privacy/privacy-notice-page");
+                const { PrivacyNoticePage } =
+                  await import("@/features/privacy/privacy-notice-page");
                 return { Component: PrivacyNoticePage };
               },
             },
@@ -115,7 +116,8 @@ export function createAppRouter(): AppRouter {
                 {
                   path: "/plus",
                   lazy: async () => {
-                    const { PlusLandingPage } = await import("@/features/billing/plus-landing-page");
+                    const { PlusLandingPage } =
+                      await import("@/features/billing/plus-landing-page");
                     return { Component: PlusLandingPage };
                   },
                 },

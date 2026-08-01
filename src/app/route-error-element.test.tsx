@@ -32,9 +32,6 @@ describe("RouteErrorElement", () => {
       await screen.findByRole("heading", { name: "画面を表示できませんでした" }),
     ).toBeVisible();
     expect(screen.getByRole("link", { name: "ホームへ戻る" })).toHaveAttribute("href", "/");
-    expect(screen.getByRole("link", { name: "ログイン画面へ" })).toHaveAttribute(
-      "href",
-      "/login",
-    );
+    expect(screen.getByRole("link", { name: "ログイン画面へ" })).toHaveAttribute("href", "/login");
   });
 });

@@ -40,7 +40,7 @@ end;
 $block$;
 revoke all on schema public from onboarding_pgtap_dblink_test;
 grant usage on schema public to onboarding_pgtap_dblink_test;
-grant execute on function public.set_onboarding_status(text) to onboarding_pgtap_dblink_test;
+grant execute on function public.set_onboarding_status(text, text) to onboarding_pgtap_dblink_test;
 grant execute on function public.start_household_onboarding(integer) to onboarding_pgtap_dblink_test;
 
 insert into auth.users (id,instance_id,aud,role,email) values

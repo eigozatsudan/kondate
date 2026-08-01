@@ -163,9 +163,7 @@ export type GenerationDependencies = {
    * G4: markSent 前の Models 政策ゲート。未指定時は env から ensureOpenRouterRuntimeModelPolicy。
    * mock base は remote skip。失敗は model_unavailable で attempt を焼かない。
    */
-  ensureOpenRouterModelPolicy?: (input: {
-    models: readonly string[];
-  }) => Promise<void>;
+  ensureOpenRouterModelPolicy?: (input: { models: readonly string[] }) => Promise<void>;
   now(): Date;
   /** 単調時計。認証・予約も同じ 55s 総予算を消費する */
   monotonicNow(): number;

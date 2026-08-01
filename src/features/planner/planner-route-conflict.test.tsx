@@ -18,7 +18,7 @@ vi.mock("@/features/household/household-api", async (importOriginal) => {
   const mid = "70000000-0000-4000-8000-000000000001";
   return {
     ...original,
-    listHouseholdMembers: vi.fn(async () => [
+    listHouseholdMembers: vi.fn(() => [
       {
         id: mid,
         user_id: uid,
@@ -37,8 +37,8 @@ vi.mock("@/features/household/household-api", async (importOriginal) => {
         updated_at: "2026-07-01T00:00:00.000Z",
       },
     ]),
-    listAllergenCatalog: vi.fn(async () => []),
-    listMemberAllergies: vi.fn(async () => []),
+    listAllergenCatalog: vi.fn(() => []),
+    listMemberAllergies: vi.fn(() => []),
   };
 });
 const revisionOne: PlannerDraft = {

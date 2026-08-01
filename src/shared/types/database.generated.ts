@@ -2951,7 +2951,7 @@ export type Database = {
         }
       }
       set_onboarding_status: {
-        Args: { p_status: string }
+        Args: { p_expected_status?: string; p_status: string }
         Returns: {
           created_at: string
           onboarding_completed_at: string | null

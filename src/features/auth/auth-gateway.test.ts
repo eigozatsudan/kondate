@@ -104,7 +104,10 @@ const fixedFlowDeps = {
 
 function configurePublicEnv(): void {
   vi.stubEnv("VITE_SUPABASE_URL", "http://127.0.0.1:8000");
-  vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.signature");
+  vi.stubEnv(
+    "VITE_SUPABASE_PUBLISHABLE_KEY",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
+  );
   vi.stubEnv("VITE_MAGIC_LINK_RESEND_SECONDS", "60");
   vi.stubEnv("VITE_AUTH_CONTINUATION_TTL_MS", "300000");
   vi.stubEnv("VITE_AUTH_PROVIDER_MODE", "supabase");

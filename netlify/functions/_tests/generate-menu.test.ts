@@ -244,11 +244,17 @@ describe("POST /api/generations/menu", () => {
     expect(runGeneration).not.toHaveBeenCalled();
   });
 
-  it("keeps the existing boundary without adding origin or content-type requirements", async () => {
+  it("does not require Origin; parseJson still requires JSON Content-Type", async () => {
+    // Origin は generate-menu では検査しない（sentinel でも通過）。
+    // Content-Type は parseJson 境界で application/json（+json）を要求する。
     const response = await handler(
       new Request("http://127.0.0.1:5173/api/generations/menu", {
         method: "POST",
-        headers: { authorization: "Bearer token", origin: "https://sentinel.invalid" },
+        headers: {
+          authorization: "Bearer token",
+          origin: "https://sentinel.invalid",
+          "content-type": "application/json",
+        },
         body: JSON.stringify(requestBody),
       }),
     );
@@ -424,6 +430,8 @@ describe("POST /api/generations/menu", () => {
       validatePreflight,
       buildMessages,
       callOpenRouter,
+      // G4: markSent 前 ensure。未指定だと getServerEnv + Models API に落ちて failBeforeSend になる
+      ensureOpenRouterModelPolicy: vi.fn(() => Promise.resolve()),
       now: () => new Date("2026-07-11T00:00:00.000Z"),
       monotonicNow: () => 0,
       openRouterTimeoutMs: 24_000,

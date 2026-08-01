@@ -101,7 +101,10 @@ test("household journey: welcome through shopping create and alternate reconcile
   if (await newChoice.isVisible().catch(() => false)) {
     await newChoice.check();
   }
-  await page.getByRole("button", { name: "作成する" }).click();
+  // create sheet は開いた直後に list refetch で disabled になることがあった（L8 修正後も待つ）
+  const createConfirm = page.getByRole("button", { name: "作成する" });
+  await expect(createConfirm).toBeEnabled({ timeout: 60_000 });
+  await createConfirm.click();
   await expect(page).toHaveURL(/\/shopping$/u, { timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible({
     timeout: 30_000,

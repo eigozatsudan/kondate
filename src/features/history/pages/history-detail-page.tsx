@@ -1108,10 +1108,13 @@ function HouseholdDetailBody({
                 }
           }
           pending={createList.isPending}
-          safetyBlocked={!canOpenCreateSheet}
+          // L8: 開く条件 (canOpenCreateSheet) に isFetching を含むため、
+          // 表示中の再取得で「作成する」が disable 点滅しないよう送信は actionsEnabled のみ見る。
+          safetyBlocked={!actionsEnabled}
           forceNewMode={shoppingGate.blocked}
           onSubmit={(input) => {
-            if (!canOpenCreateSheet) return;
+            // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
+            if (!actionsEnabled || createList.isPending) return;
             const command = persistedShoppingCommand(
               "create",
               menuId,

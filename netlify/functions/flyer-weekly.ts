@@ -33,11 +33,7 @@ export function resolveFlyerIdempotencyKey(request: Request, form: FormData): st
   ) {
     return candidate;
   }
-  throw new HttpError(
-    400,
-    "invalid_request",
-    "操作を確認してもう一度お試しください。",
-  );
+  throw new HttpError(400, "invalid_request", "操作を確認してもう一度お試しください。");
 }
 
 /**

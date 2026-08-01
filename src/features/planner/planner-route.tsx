@@ -738,12 +738,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           return;
         }
         // P6: 医療と同様、期限切れ未確認・削除済み pantry を submit でも再検証する
-        const pantryRows = pantryQuery.data ?? [];
+        // isPending 早期 return 後は data が確定している（型上も non-nullish）
+        const pantryRows = pantryQuery.data;
         const pantryIdSet = new Set(pantryRows.map((item) => item.id));
         if (value.pantrySelections.some((selection) => !pantryIdSet.has(selection.pantryItemId))) {
-          setSubmissionError(
-            "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
-          );
+          setSubmissionError("冷蔵庫から削除された食材の選択を解除してから献立を作ってください。");
           setStep("review");
           return;
         }

@@ -228,13 +228,13 @@ describe("createDeleteAccountHandler", () => {
     cancelBillingSubscriptions.mockRejectedValue(new Error("stripe cancel boom"));
     const response = await handler()(makeDeleteRequest({ confirmation: "削除する" }));
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({
-      ok: false,
-      error: {
-        code: "billing_cancel_failed",
-        message: expect.stringMatching(/解約が完了しませんでした|請求が続く/u),
-      },
-    });
+    const body = (await response.json()) as {
+      ok: boolean;
+      error: { code: string; message: string };
+    };
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("billing_cancel_failed");
+    expect(body.error.message).toMatch(/解約が完了しませんでした|請求が続く/u);
     expect(deleteUser).not.toHaveBeenCalled();
   });
 

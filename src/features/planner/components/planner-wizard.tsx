@@ -154,6 +154,12 @@ export function PlannerWizard({
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLElement>(null);
+
+  // 前 step の scrollY が残ると短い step の「次へ」が fixed bottom-nav 下に重なる（iPhone SE）。
+  // heading focus だけでは preventScroll 系やレイアウト前 focus で足りないことがあるため明示する。
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [step]);
   // idea audience 確定の single-flight。ref は同期ガード、state は disabled 表示用。
   const confirmingIdeaAudienceRef = useRef(false);
   const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);

@@ -21,8 +21,7 @@ export type PlannerAllergyDisclosure = {
 };
 
 const unresolvedOnlyLabel = "名前を表示できないアレルギー項目があります";
-const unresolvedBlockReason =
-  "アレルギー名を確認できないため、この家族では献立を作れません";
+const unresolvedBlockReason = "アレルギー名を確認できないため、この家族では献立を作れません";
 
 /**
  * 解決済み名を優先し、未解決のみ／未解決主体では「なし」と誤開示しない。

@@ -144,7 +144,7 @@ test("delete account dialog mentions paid-plan cancellation", async ({
   const dialog = page.getByRole("dialog", { name: "アカウントを削除しますか？" });
   await expect(dialog).toBeVisible({ timeout: 15_000 });
   await expect(
-    dialog.getByText(/有料プランに入っている場合、解約手続きもあわせて行います/u),
+    dialog.getByText(/有料プランに入っている場合は、先に解約が成功してからアカウントを削除します/u),
   ).toBeVisible({ timeout: 10_000 });
 });
 

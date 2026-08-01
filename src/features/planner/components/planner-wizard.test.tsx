@@ -915,8 +915,7 @@ describe("PlannerWizard review step", () => {
     );
   });
 
-  it("避ける食材の件数超過は silent truncate せずエラー表示し生成を止める (P4)", async () => {
-    const user = userEvent.setup();
+  it("避ける食材の件数超過は silent truncate せずエラー表示し生成を止める (P4)", () => {
     render(
       <Harness
         initialStep="review"
@@ -938,7 +937,6 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/避ける食材は20件まで/u);
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   });
-
 
   it("household 確認では現在の家族・安全条件の免責を表示する", () => {
     render(

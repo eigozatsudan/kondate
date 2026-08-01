@@ -13,13 +13,7 @@ it("filterExpiredPantryChecksForSelections は選択中 ID だけを残す (P1)"
     new Date("2026-07-11T03:00:00.000Z"),
   );
   expect(
-    filterExpiredPantryChecksForSelections(withChecks.expiredPantryChecks, [
-      { pantryItemId: "b" },
-    ]),
-  ).toEqual([
-    { pantryItemId: "b", checkedAt: "2026-07-11T03:00:00.000Z" },
-  ]);
-  expect(
-    filterExpiredPantryChecksForSelections(withChecks.expiredPantryChecks, []),
-  ).toEqual([]);
+    filterExpiredPantryChecksForSelections(withChecks.expiredPantryChecks, [{ pantryItemId: "b" }]),
+  ).toEqual([{ pantryItemId: "b", checkedAt: "2026-07-11T03:00:00.000Z" }]);
+  expect(filterExpiredPantryChecksForSelections(withChecks.expiredPantryChecks, [])).toEqual([]);
 });

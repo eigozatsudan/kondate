@@ -818,7 +818,6 @@ it("accepts content parts array for vision messages", () => {
   expect(Array.isArray(msg.content)).toBe(true);
 });
 
-
 // --- G4: pure policy + process-lifetime ensure ---
 
 const usablePricing = {
@@ -828,7 +827,7 @@ const usablePricing = {
 
 describe("assertModelsMeetRuntimePolicy", () => {
   it("accepts structured_outputs AND response_format with usable pricing under cap", () => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -838,12 +837,12 @@ describe("assertModelsMeetRuntimePolicy", () => {
             pricing: usablePricing,
           },
         ],
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   it("rejects when only response_format is present", () => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -853,12 +852,12 @@ describe("assertModelsMeetRuntimePolicy", () => {
             pricing: usablePricing,
           },
         ],
-      ),
-    ).toThrow(/does not support strict structured output/u);
+      );
+    }).toThrow(/does not support strict structured output/u);
   });
 
   it("rejects when only structured_outputs is present", () => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -868,12 +867,12 @@ describe("assertModelsMeetRuntimePolicy", () => {
             pricing: usablePricing,
           },
         ],
-      ),
-    ).toThrow(/does not support strict structured output/u);
+      );
+    }).toThrow(/does not support strict structured output/u);
   });
 
   it("rejects missing usable pricing", () => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -882,8 +881,8 @@ describe("assertModelsMeetRuntimePolicy", () => {
             supported_parameters: ["structured_outputs", "response_format"],
           },
         ],
-      ),
-    ).toThrow(/missing usable pricing/u);
+      );
+    }).toThrow(/missing usable pricing/u);
   });
 
   it.each([
@@ -895,7 +894,7 @@ describe("assertModelsMeetRuntimePolicy", () => {
     ["scientific notation", { prompt: "1e-6", completion: "0.0000001" }],
     ["hex", { prompt: "0x0", completion: "0.0000001" }],
   ] as const)("rejects non-usable pricing coerced by Number(): %s", (_label, pricing) => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -905,12 +904,12 @@ describe("assertModelsMeetRuntimePolicy", () => {
             pricing,
           },
         ],
-      ),
-    ).toThrow(/missing usable pricing/u);
+      );
+    }).toThrow(/missing usable pricing/u);
   });
 
   it("rejects prompt+completion above 4 USD per 1M tokens", () => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -920,12 +919,12 @@ describe("assertModelsMeetRuntimePolicy", () => {
             pricing: { prompt: "0.0000021", completion: "0.0000021" },
           },
         ],
-      ),
-    ).toThrow(/exceeds max prompt\+completion/u);
+      );
+    }).toThrow(/exceeds max prompt\+completion/u);
   });
 
   it("accepts prompt+completion exactly 4 USD per 1M tokens", () => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -935,18 +934,18 @@ describe("assertModelsMeetRuntimePolicy", () => {
             pricing: { prompt: "0.000002", completion: "0.000002" },
           },
         ],
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   it("rejects a configured model missing from the remote catalog", () => {
-    expect(() => assertModelsMeetRuntimePolicy(["vendor/missing"], [])).toThrow(
-      /not present in the OpenRouter Models API/u,
-    );
+    expect(() => {
+      assertModelsMeetRuntimePolicy(["vendor/missing"], []);
+    }).toThrow(/not present in the OpenRouter Models API/u);
   });
 
   it("ignores pricing.request and cache fields when prompt+completion pass", () => {
-    expect(() =>
+    expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
         [
@@ -960,8 +959,8 @@ describe("assertModelsMeetRuntimePolicy", () => {
             } as { prompt: string; completion: string },
           },
         ],
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 });
 
@@ -1109,6 +1108,9 @@ describe("ensureOpenRouterRuntimeModelPolicy", () => {
       new OpenRouterCallError("model_unavailable"),
     );
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(String(fetchImpl.mock.calls[0]?.[0])).toBe(OFFICIAL_OPENROUTER_MODELS_URL);
+    const modelsUrl = fetchImpl.mock.calls[0]?.[0];
+    expect(typeof modelsUrl === "string" ? modelsUrl : undefined).toBe(
+      OFFICIAL_OPENROUTER_MODELS_URL,
+    );
   });
 });

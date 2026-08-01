@@ -56,7 +56,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
   it("does not overwrite when another tab already set in_progress; navigates to onboarding", async () => {
     // 表示中は not_started。開始直前に live を in_progress に切替（別タブ先勝ち）。
     let liveStatus: "not_started" | "in_progress" | "skipped" | "complete" = "not_started";
-    getProfileMock.mockImplementation(async () => ({ onboarding_status: liveStatus }));
+    getProfileMock.mockImplementation(() => ({ onboarding_status: liveStatus }));
     const user = userEvent.setup();
     const router = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
@@ -69,7 +69,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
 
   it("does not overwrite when another tab already set skipped; navigates to planner", async () => {
     let liveStatus: "not_started" | "in_progress" | "skipped" | "complete" = "not_started";
-    getProfileMock.mockImplementation(async () => ({ onboarding_status: liveStatus }));
+    getProfileMock.mockImplementation(() => ({ onboarding_status: liveStatus }));
     const user = userEvent.setup();
     const router = renderWelcome();
     expect(await screen.findByRole("button", { name: "家族情報を登録する" })).toBeVisible();

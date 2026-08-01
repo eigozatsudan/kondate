@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(28);
+select plan(34);
 
 select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',

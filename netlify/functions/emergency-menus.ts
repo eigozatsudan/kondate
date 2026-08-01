@@ -368,7 +368,8 @@ const handler = createEmergencyMenusHandler({
       .eq("user_id", userId)
       .in("id", [...ids]);
     // PE8: 1 件不正混入で正当 ID 分まで捨てない。error のみ空。見つからない ID は黙って落とす。
-    if (error !== null || data === null) return [];
+    // 生成型上 data は error===null のとき non-null。
+    if (error !== null) return [];
     return data.map((row) => row.name);
   },
 });

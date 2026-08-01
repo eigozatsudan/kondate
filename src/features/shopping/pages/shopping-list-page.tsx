@@ -124,7 +124,8 @@ export function ShoppingListPage() {
     try {
       setMutationError(null);
       const live = await revalidateActiveShoppingList(list.id);
-      if (live.status !== "valid" || live.safetyFingerprint === null) {
+      // discriminated union: status==="valid" なら safetyFingerprint は非 null
+      if (live.status !== "valid") {
         setMutationError("家族設定が変わりました。もう一度確認します");
         await safetyGate.refresh();
         return;

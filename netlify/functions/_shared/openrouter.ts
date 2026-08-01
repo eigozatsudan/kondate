@@ -275,7 +275,7 @@ export async function ensureOpenRouterRuntimeModelPolicy(input: {
       body === null ||
       typeof body !== "object" ||
       !("data" in body) ||
-      !Array.isArray((body as { data: unknown }).data)
+      !Array.isArray(body.data)
     ) {
       throw new OpenRouterCallError("model_unavailable");
     }
