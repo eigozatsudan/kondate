@@ -10,7 +10,7 @@ name: Maintenance cleanup
 on:
   schedule:
     # 毎時 17 分（UTC）。負荷ピークを避けるオフセット。
-    - cron: "17 * * * *"
+    # - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
