@@ -19,6 +19,13 @@ const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "incomplete_expired"
 export const BILLING_CANCEL_BLOCKED_MESSAGE =
   "有料プランの解約が完了しませんでした。請求が続く可能性があるため、アカウントは削除していません。時間をおいてもう一度お試しください";
 
+/**
+ * Stripe cancel 成功後に Auth deleteUser だけ失敗したときの専用文言（AP1）。
+ * fail-closed（Auth 未削除）は維持しつつ、解約が進んだ可能性を伝えて再試行を促す。
+ */
+export const ACCOUNT_DELETE_AFTER_BILLING_CANCEL_FAILED_MESSAGE =
+  "有料プランの解約は完了した可能性がありますが、アカウント削除に失敗しました。時間をおいてもう一度削除を試してください";
+
 export type DeleteAccountDeps = {
   authenticate: typeof requireUser;
   /** processing 予約を identity/global/quality から解放する（Auth 削除前） */
@@ -78,10 +85,12 @@ export const createDeleteAccountHandler =
       }
       const { error } = await deps.deleteUser(auth.userId);
       if (error) {
+        // AP1: cancel 成功後の Auth 失敗を汎用 account_delete_failed に潰さない。
+        // 請求 orphan は避け済みなので再試行で delete だけ通せば復旧できる。
         throw new HttpError(
           503,
-          "account_delete_failed",
-          "削除できませんでした。時間をおいてもう一度お試しください",
+          "account_delete_after_billing_cancel_failed",
+          ACCOUNT_DELETE_AFTER_BILLING_CANCEL_FAILED_MESSAGE,
         );
       }
       return json<DeleteAccountResult>(200, { ok: true, data: { deleted: true } });

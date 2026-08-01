@@ -175,17 +175,19 @@ describe("createDeleteAccountHandler", () => {
     expect(cancelBillingSubscriptions).not.toHaveBeenCalled();
   });
 
-  it("returns 503 account_delete_failed when the Admin API reports an error", async () => {
+  it("returns 503 account_delete_after_billing_cancel_failed when Admin delete fails after cancel (AP1)", async () => {
+    // cancel は成功済み → 汎用 account_delete_failed ではなく専用 code で復旧可能性を伝える
     deleteUser.mockResolvedValue({ error: { message: "admin unavailable" } });
     const response = await handler()(makeDeleteRequest({ confirmation: "削除する" }));
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
       error: {
-        code: "account_delete_failed",
-        message: "削除できませんでした。時間をおいてもう一度お試しください",
+        code: "account_delete_after_billing_cancel_failed",
+        message: expect.stringMatching(/解約は完了した可能性|アカウント削除に失敗/) as string,
       },
     });
+    expect(cancelBillingSubscriptions).toHaveBeenCalledWith(USER_ID);
     expect(releaseProcessingReservations).toHaveBeenCalledWith(USER_ID);
   });
 

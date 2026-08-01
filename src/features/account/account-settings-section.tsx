@@ -13,6 +13,10 @@ function mapDeleteError(code: string | undefined): string {
   if (code === "billing_cancel_failed") {
     return "有料プランの解約が完了しませんでした。請求が続く可能性があるため、アカウントは削除していません。時間をおいてもう一度お試しください";
   }
+  // AP1: 解約は進んだが Auth 削除だけ失敗 — 再試行で delete を通せば復旧できる
+  if (code === "account_delete_after_billing_cancel_failed") {
+    return "有料プランの解約は完了した可能性がありますが、アカウント削除に失敗しました。時間をおいてもう一度削除を試してください";
+  }
   return "削除できませんでした。時間をおいてもう一度お試しください";
 }
 
@@ -92,12 +96,40 @@ export function AccountSettingsSection() {
     }
   }
 
+  /**
+   * AP10: 削除 API 成功後に JSON/HTTP が端末側で欠落すると dialog エラーのままになる。
+   * Auth session が既に無ければサーバ削除成功とみなし、成功同等の local cleanup へ寄せる。
+   * getSession error 時は不明扱い（誤って削除成功表示しない）。
+   */
+  async function isAuthSessionGone(): Promise<boolean> {
+    try {
+      const { data, error } = await getBrowserSupabaseClient().auth.getSession();
+      if (error !== null) return false;
+      return data.session === null;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 削除成功後の local 掃除 + フル遷移（AP5 の second pass を含む） */
+  async function completeAccountDeletedLocally(): Promise<void> {
+    try {
+      await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
+    } catch {
+      clearOwnedLocalDataBestEffort();
+    }
+    window.location.replace("/login?accountDeleted=1");
+  }
+
   async function handleConfirmDelete(confirmation: "削除する"): Promise<void> {
     if (pending) return;
     setPending(true);
     setErrorMessage(null);
+    // fetch 開始前の requireAccessToken 失敗では session probe を成功扱いにしない
+    let requestStarted = false;
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
+      requestStarted = true;
       const response = await fetch("/api/account", {
         method: "DELETE",
         headers: {
@@ -111,27 +143,36 @@ export function AccountSettingsSection() {
       try {
         raw = await response.json();
       } catch {
+        // AP10: 本文欠落窓。Auth 消滅済みなら成功同等 cleanup
+        if (await isAuthSessionGone()) {
+          await completeAccountDeletedLocally();
+          return;
+        }
         setErrorMessage(mapDeleteError(undefined));
         return;
       }
       const parsed = deleteAccountEnvelopeSchema.safeParse(raw);
       if (!parsed.success) {
+        if (await isAuthSessionGone()) {
+          await completeAccountDeletedLocally();
+          return;
+        }
         setErrorMessage(mapDeleteError(undefined));
         return;
       }
       if (!parsed.data.ok) {
+        // 明示失敗（billing_cancel 等）は Auth 残存が正。probe で成功扱いしない
         setErrorMessage(mapDeleteError(parsed.data.error.code));
         return;
       }
       // サーバー削除成功後のローカル掃除は best-effort。Auth は消えているので成功遷移する。
-      // AP5: clearLocal 全体が throw しても owned キーだけ second pass で消す。
-      try {
-        await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
-      } catch {
-        clearOwnedLocalDataBestEffort();
-      }
-      window.location.replace("/login?accountDeleted=1");
+      await completeAccountDeletedLocally();
     } catch {
+      // AP10: ネットワーク切断等。DELETE 到達後に session が消えていれば成功同等
+      if (requestStarted && (await isAuthSessionGone())) {
+        await completeAccountDeletedLocally();
+        return;
+      }
       setErrorMessage(mapDeleteError(undefined));
     } finally {
       setPending(false);

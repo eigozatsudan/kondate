@@ -8,6 +8,7 @@ const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
 const clearOwnedLocalDataBestEffortMock = vi.hoisted(() => vi.fn());
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
+const getSessionMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
 const locationReplaceMock = vi.hoisted(() => vi.fn());
 
@@ -41,12 +42,15 @@ beforeEach(() => {
   clearOwnedLocalDataBestEffortMock.mockReset();
   requireAccessTokenMock.mockReset();
   getBrowserSupabaseClientMock.mockReset();
+  getSessionMock.mockReset();
   fetchMock.mockReset();
   locationReplaceMock.mockReset();
   localStorage.clear();
   sessionStorage.clear();
   requireAccessTokenMock.mockResolvedValue("access-token");
-  getBrowserSupabaseClientMock.mockReturnValue({ auth: {} });
+  // 既定は session 残存（AP10 probe が誤って成功扱いしない）
+  getSessionMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
+  getBrowserSupabaseClientMock.mockReturnValue({ auth: { getSession: getSessionMock } });
   // jsdom の location.replace は差し替え不能なことがあるため、defineProperty で固定する
   // Location は class instance のため spread すると prototype を失う（misused-spread）
   Object.defineProperty(window, "location", {
@@ -214,6 +218,35 @@ describe("AccountSettingsSection", () => {
     expect(locationReplaceMock).not.toHaveBeenCalled();
   });
 
+  it("surfaces account_delete_after_billing_cancel_failed without deleting local session (AP1)", async () => {
+    // cancel 成功後 Auth 失敗: 解約が進んだ可能性を示し、再試行を促す（セッションは消さない）
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "account_delete_after_billing_cancel_failed",
+            message: "有料プランの解約は完了した可能性がありますが、アカウント削除に失敗しました",
+          },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText(/解約は完了した可能性がありますが、アカウント削除に失敗しました/),
+    ).toBeVisible();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
   it("awaits the same cleanup helper then navigates after successful deletion", async () => {
     const user = userEvent.setup();
     seedOwnedStorage();
@@ -276,5 +309,41 @@ describe("AccountSettingsSection", () => {
       expect(clearOwnedLocalDataBestEffortMock).toHaveBeenCalled();
       expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
     });
+  });
+
+  it("AP10: fetch reject + session gone → success-equivalent local cleanup", async () => {
+    const user = userEvent.setup();
+    seedOwnedStorage();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    getSessionMock.mockResolvedValue({ data: { session: null }, error: null });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(getSessionMock).toHaveBeenCalled();
+      expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    });
+  });
+
+  it("AP10: keeps error when fetch fails but session remains", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+    ).toBeVisible();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
   });
 });
