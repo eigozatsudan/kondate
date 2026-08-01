@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { RequireSession } from "@/features/auth/protected-routes";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import { RootGatePage } from "@/features/landing/root-gate-page";
+import { RouteErrorElement } from "./route-error-element";
 import { createAppRouter } from "./router";
 
 function findRoute(routes: DataRouteObject[], path: string): DataRouteObject | undefined {
@@ -107,6 +108,17 @@ describe("app router", () => {
     const route = findRoute(router.routes, "/");
     expect(route?.element).toBeDefined();
     expect((route?.element as ReactElement).type).toBe(RootGatePage);
+    router.dispose();
+  });
+
+  it("L2: registers RouteErrorElement on root layout and key branches", () => {
+    const router = createAppRouter();
+    const root = router.routes[0];
+    expect(root?.errorElement).toBeDefined();
+    expect((root?.errorElement as ReactElement).type).toBe(RouteErrorElement);
+    const slash = findRoute(router.routes, "/");
+    expect(slash?.errorElement).toBeDefined();
+    expect((slash?.errorElement as ReactElement).type).toBe(RouteErrorElement);
     router.dispose();
   });
 });

@@ -3,12 +3,23 @@ import { z } from "zod";
 const localBrowserSupabaseUrl = "http://127.0.0.1:8000";
 const managedSupabaseOrigin = /^https:\/\/([a-z0-9]{20})\.supabase\.co$/u;
 
+// JWT anon（3 セグメント）または sb_publishable_*。min(1) だけだと誤設定の気づきが遅れる（L6）。
+const supabasePublishableKeySchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) =>
+      /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value) ||
+      /^sb_publishable_[A-Za-z0-9_-]+$/u.test(value),
+    "publishable key format",
+  );
+
 const publicEnvSchema = z.object({
   VITE_SUPABASE_URL: z.union([
     z.literal(localBrowserSupabaseUrl),
     z.string().regex(managedSupabaseOrigin, "managed Supabase origin required"),
   ]),
-  VITE_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
+  VITE_SUPABASE_PUBLISHABLE_KEY: supabasePublishableKeySchema,
   VITE_MAGIC_LINK_RESEND_SECONDS: z.coerce.number().int().min(1).max(3_600),
   VITE_AUTH_CONTINUATION_TTL_MS: z.coerce
     .number()

@@ -1,7 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { createMemoryRouter, Outlet } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { expect, it, vi } from "vitest";
+import { COLD_START_SESSION_DEADLINE_MS } from "./auth-provider";
+import { useAuth } from "./use-auth";
 import { RequireSession } from "./protected-routes";
 
 vi.mock("./use-auth", () => ({
@@ -39,4 +41,37 @@ it("returns an unauthenticated visitor to login with a safe return path", async 
   render(<RouterProvider router={router} />);
   expect(await screen.findByRole("heading", { name: "ログイン" })).toBeInTheDocument();
   expect(router.state.location.search).toBe("?returnTo=%2Fpantry%3Ffrom%3Dtest");
+});
+
+it("L1: after C5 deadline while still loading, fail-closed to login", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(useAuth).mockReturnValue({
+      status: "loading",
+      session: null,
+      refreshSession: vi.fn(),
+    });
+    const router = createMemoryRouter(
+      [
+        {
+          element: <RequireSession />,
+          children: [{ path: "/pantry", element: <h1>冷蔵庫</h1> }],
+        },
+        {
+          path: "/login",
+          element: <h1>ログイン</h1>,
+        },
+      ],
+      { initialEntries: ["/pantry"] },
+    );
+    render(<RouterProvider router={router} />);
+    expect(screen.getByText("ログイン状態を確認しています…")).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+    });
+    expect(screen.getByRole("heading", { name: "ログイン" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/login");
+  } finally {
+    vi.useRealTimers();
+  }
 });

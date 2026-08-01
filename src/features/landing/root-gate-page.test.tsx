@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 
 const useAuthMock = vi.hoisted(() => vi.fn());
 
@@ -77,5 +78,26 @@ describe("RootGatePage", () => {
     renderGate();
     expect(screen.getByRole("heading", { name: "RootEntry stub" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
+  });
+
+  it("L1: after C5 deadline while still loading, fail-closed to free landing", async () => {
+    vi.useFakeTimers();
+    try {
+      useAuthMock.mockReturnValue({
+        status: "loading",
+        session: null,
+        refreshSession: vi.fn(),
+      });
+      renderGate();
+      expect(screen.getByText("ログイン状態を確認しています…")).toBeVisible();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      // lazy + Suspense は real timer の wait が必要なので切り替える
+      vi.useRealTimers();
+      expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

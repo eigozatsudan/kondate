@@ -6,7 +6,7 @@ describe("parsePublicEnv", () => {
     expect(
       parsePublicEnv({
         VITE_SUPABASE_URL: "http://127.0.0.1:8000",
-        VITE_SUPABASE_PUBLISHABLE_KEY: "public-key",
+        VITE_SUPABASE_PUBLISHABLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
         VITE_MAGIC_LINK_RESEND_SECONDS: "60",
         VITE_AUTH_CONTINUATION_TTL_MS: "300000",
         VITE_AUTH_PROVIDER_MODE: "oauth_mock",
@@ -14,7 +14,7 @@ describe("parsePublicEnv", () => {
       }),
     ).toEqual({
       supabaseUrl: "http://127.0.0.1:8000",
-      supabasePublishableKey: "public-key",
+      supabasePublishableKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
       magicLinkResendSeconds: 60,
       authContinuationTtlMs: 300_000,
       authProviderMode: "oauth_mock",
@@ -37,7 +37,7 @@ describe("parsePublicEnv", () => {
   it("accepts real Supabase Google only in production and rejects every mock value", () => {
     const base = {
       VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
-      VITE_SUPABASE_PUBLISHABLE_KEY: "public-key",
+      VITE_SUPABASE_PUBLISHABLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
       VITE_MAGIC_LINK_RESEND_SECONDS: "60",
       VITE_AUTH_CONTINUATION_TTL_MS: "300000",
     };
@@ -103,7 +103,7 @@ describe("parsePublicEnv", () => {
     expect(() =>
       parsePublicEnv({
         VITE_SUPABASE_URL: "http://127.0.0.1:8000",
-        VITE_SUPABASE_PUBLISHABLE_KEY: "public-key",
+        VITE_SUPABASE_PUBLISHABLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
         VITE_MAGIC_LINK_RESEND_SECONDS: "60",
         VITE_AUTH_CONTINUATION_TTL_MS: "300000",
         VITE_AUTH_PROVIDER_MODE: "oauth_mock",
@@ -112,4 +112,31 @@ describe("parsePublicEnv", () => {
       }),
     ).toThrow("公開設定を読み込めません");
   });
+
+  it("rejects a publishable key that is not JWT or sb_publishable format", () => {
+    expect(() =>
+      parsePublicEnv({
+        VITE_SUPABASE_URL: "http://127.0.0.1:8000",
+        VITE_SUPABASE_PUBLISHABLE_KEY: "public-key",
+        VITE_MAGIC_LINK_RESEND_SECONDS: "60",
+        VITE_AUTH_CONTINUATION_TTL_MS: "300000",
+        VITE_AUTH_PROVIDER_MODE: "oauth_mock",
+        VITE_OAUTH_MOCK_ORIGIN: "http://127.0.0.1:8788",
+      }),
+    ).toThrow("公開設定を読み込めません");
+  });
+
+  it("accepts sb_publishable_ prefix keys", () => {
+    expect(
+      parsePublicEnv({
+        VITE_SUPABASE_URL: "http://127.0.0.1:8000",
+        VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_abc123XYZ",
+        VITE_MAGIC_LINK_RESEND_SECONDS: "60",
+        VITE_AUTH_CONTINUATION_TTL_MS: "300000",
+        VITE_AUTH_PROVIDER_MODE: "oauth_mock",
+        VITE_OAUTH_MOCK_ORIGIN: "http://127.0.0.1:8788",
+      }).supabasePublishableKey,
+    ).toBe("sb_publishable_abc123XYZ");
+  });
+
 });

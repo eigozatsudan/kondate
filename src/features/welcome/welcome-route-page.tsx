@@ -1,10 +1,41 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
+import type { OnboardingStatus } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
 import { getProfile, setOnboardingStatus } from "@/features/household/household-api";
 import { householdKeys } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { WelcomePage } from "./welcome-page";
+
+/** 別タブ同時開始の last-write-wins を抑える（L4）。Web Locks 未対応環境は直列フォールバックなしで実行。 */
+const ONBOARDING_START_LOCK = "kondate:welcome-onboarding-start";
+
+async function withOnboardingStartLock<T>(run: () => Promise<T>): Promise<T> {
+  const locks = globalThis.navigator?.locks;
+  if (locks === undefined || typeof locks.request !== "function") {
+    return run();
+  }
+  return locks.request(ONBOARDING_START_LOCK, run);
+}
+
+/**
+ * L4: 別タブが先に進めた status を尊重し、skipped ↔ in_progress の上書きレースを避ける。
+ * first-writer-wins: not_started のときだけ目標 status を書き、既に進んでいればその状態へ遷移する。
+ */
+function navigateForExistingStatus(
+  status: OnboardingStatus,
+  navigate: ReturnType<typeof useNavigate>,
+): boolean {
+  if (status === "skipped" || status === "complete") {
+    void navigate("/planner");
+    return true;
+  }
+  if (status === "in_progress") {
+    void navigate("/onboarding");
+    return true;
+  }
+  return false;
+}
 
 // router層の結線だけをここへ切り出し、WelcomePage自体はDB/APIを直接呼ばない
 // 表示専用コンポーネントのまま保つ（brief の WelcomePageProps 契約を保持するため）。
@@ -52,15 +83,32 @@ export function WelcomeRoutePage() {
       onboardingStatus={profileQuery.data.onboarding_status}
       onStartIdea={async () => {
         if (userId === undefined) return;
-        await setOnboardingStatus(getBrowserSupabaseClient(), userId, "skipped");
-        await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
-        void navigate("/planner");
+        await withOnboardingStartLock(async () => {
+          const client = getBrowserSupabaseClient();
+          // ロック内で最新 status を再読込し、別タブの確定を上書きしない
+          const latest = await getProfile(client, userId);
+          if (navigateForExistingStatus(latest.onboarding_status, navigate)) {
+            await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+            return;
+          }
+          await setOnboardingStatus(client, userId, "skipped");
+          await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+          void navigate("/planner");
+        });
       }}
       onStartHousehold={async () => {
         if (userId === undefined) return;
-        await setOnboardingStatus(getBrowserSupabaseClient(), userId, "in_progress");
-        await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
-        void navigate("/onboarding");
+        await withOnboardingStartLock(async () => {
+          const client = getBrowserSupabaseClient();
+          const latest = await getProfile(client, userId);
+          if (navigateForExistingStatus(latest.onboarding_status, navigate)) {
+            await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+            return;
+          }
+          await setOnboardingStatus(client, userId, "in_progress");
+          await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+          void navigate("/onboarding");
+        });
       }}
     />
   );

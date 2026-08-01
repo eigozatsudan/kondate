@@ -1,14 +1,18 @@
 import { Navigate, Outlet, useLocation } from "react-router";
+import { useAuthLoadingDeadline } from "./use-auth-loading-deadline";
 import { useAuth } from "./use-auth";
 import { sanitizeReturnPath } from "./auth-flow";
 
 export function RequireSession() {
   const auth = useAuth();
   const location = useLocation();
-  if (auth.status === "loading") {
+  const { showLoading, loadingTimedOut } = useAuthLoadingDeadline(auth.status);
+
+  if (showLoading) {
     return <main className="page-frame">ログイン状態を確認しています…</main>;
   }
-  if (auth.status === "unauthenticated" || auth.session === null) {
+  // L1: C5 15s 超過の loading も未ログインとして login へ（AuthProvider 主経路の二次防衛）
+  if (loadingTimedOut || auth.status === "unauthenticated" || auth.session === null) {
     const returnTo = sanitizeReturnPath(`${location.pathname}${location.search}`);
     return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />;
   }

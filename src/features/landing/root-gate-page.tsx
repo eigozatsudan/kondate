@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { RootEntryPage } from "@/features/auth/root-entry-page";
+import { useAuthLoadingDeadline } from "@/features/auth/use-auth-loading-deadline";
 import { useAuth } from "@/features/auth/use-auth";
 
 const SESSION_CHECK_COPY = "ログイン状態を確認しています…" as const;
@@ -12,16 +13,19 @@ const FreeLandingPage = lazy(async () => {
 
 /**
  * 公開 `/` のゲート（設計 2026-07-30 L13–L14）。
- * loading → 確認文のみ。session なし → FreeLanding（lazy）。authenticated+session → RootEntry。
+ * loading → 確認文のみ（C5/L1: 15s 超過は fail-closed で LP）。
+ * session なし → FreeLanding（lazy）。authenticated+session → RootEntry。
  */
 export function RootGatePage() {
   const auth = useAuth();
+  const { showLoading, loadingTimedOut } = useAuthLoadingDeadline(auth.status);
 
-  if (auth.status === "loading") {
+  if (showLoading) {
     return <main className="page-frame">{SESSION_CHECK_COPY}</main>;
   }
 
-  if (auth.status === "unauthenticated" || auth.session === null) {
+  // L1: loading が C5 期限を超えたら未ログイン相当（Free LP）へ fail-closed
+  if (loadingTimedOut || auth.status === "unauthenticated" || auth.session === null) {
     return (
       <Suspense fallback={<main className="page-frame">{SESSION_CHECK_COPY}</main>}>
         <FreeLandingPage />
