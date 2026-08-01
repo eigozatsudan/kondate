@@ -210,6 +210,7 @@ services:
   # コンテナ env は .deploy.env のみ。workspace の .env は Vite dotenv が読むため
   # .deploy.env で上書きマウントする（ローカル VITE_OAUTH_MOCK_ORIGIN 等が
   # production バンドルに焼け getPublicEnv が throw → 本番白画面になるのを防ぐ）。
+  # ` docker compose --profile deploy run --rm netlify-cli deploy --build --prod`
   netlify-cli:
     profiles: ["deploy"]
     build:
@@ -238,6 +239,7 @@ services:
   # scripts/supabase-cli-wrapper.sh が db push / migration list に自動注入する
   # （ホストの "$SUPABASE_DB_URL" 展開に依存しない。正本: docs/deployment/supabase.md）。
   # コンテナ env は .deploy.env のみ（ローカル開発用 .env の秘密を注入しない）。
+  # `docker compose --profile deploy run --rm supabase-cli db push --include-all`
   supabase-cli:
     profiles: ["deploy"]
     build:
