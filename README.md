@@ -2,9 +2,20 @@
 
 「こんだて日和」は、食事の希望や使いたい食材などへの簡単な質問から家庭向けの献立を作る Web アプリケーションです。
 家族情報の登録は任意で、登録するとアレルギーや人数などを踏まえた家族向け献立、未登録でも一般的な献立アイデアを作れます。
-履歴の見返しや（家族向け献立からの）買い物リスト、生成失敗時の緊急献立なども用意しています。
+履歴の見返し・お気に入り絞り込み、献立結果／履歴からの買い物リスト作成、生成失敗時の緊急献立（家族向け・アイデア向け）なども用意しています。
+
+主な製品面（実装が正）:
+
+- **無料 LP**（未ログインの `/`）と **Plus LP**（`/plus`）
+- プランナーウィザード（食事 → 食材 → ジャンル → 家族/アイデア → 確認）。確認では追加条件・材料の使い方などを指定可能
+- 献立作成中の体感用段階進捗、結果の操作帯（採用・買い物・再生成など）
+- 派生グループ内の案の見比べと、任意の案からの再生成
+- 家族オンボーディングの次アクション案内、対象外食事の明示と追加前確認
+- 安全: 現行の家族制約が履歴スナップショットより優先。保証表現は出さない
 
 無料のまま日常の献立づくりに使える **永久フリーミアム** に加え、有料プラン **「こんだて日和 Plus」**（Stripe Checkout / Customer Portal）で日次枠の拡大・品質モード・チラシ写真からの 1 週間献立を提供します。課金の正本はブラウザではなく **Netlify Functions + Stripe Webhook + Postgres** です。
+
+> **一時ゲート（契約定数）**: いまの main では Plus のアップグレード申込が **開発中クローズ**（`PLUS_LP_UPGRADE_COMING_SOON = true`。LP / 設定 / `POST /api/billing/checkout` を dual-surface で同期）です。ログイン画面の **メール導線もいったん非表示**（`SHOW_EMAIL_LOGIN = false`。API・callback は維持。`?emailLogin=1` で再表示）。いずれも公開時に定数を戻します。
 
 この repository には React アプリ、Netlify Functions、共有 contract、Supabase の schema、Stripe 連携、ローカル開発環境が含まれます。
 
@@ -67,6 +78,8 @@ http://127.0.0.1:5173
 
 ログイン画面: [http://127.0.0.1:5173/login](http://127.0.0.1:5173/login)
 
+**既定の導線は Google のみ**です（メールフォームは一時非表示。下節）。
+
 1. 「Googleで続ける」を押す
 2. 表示される **oauth-mock**（「ローカルGoogle認証」）で「Googleテスト利用者で続ける」を選ぶ
 
@@ -84,10 +97,15 @@ http://127.0.0.1:5173
 
 そのため `localhost` で開くと、認証継続 create が Origin 不一致で失敗したり、callback / CORS が噛み合わず、Google ログインが成立しません。ブックマークやアドレスバーも常に `127.0.0.1` を使ってください。
 
-#### メール（マジックリンク）でログインする場合
+#### メール（マジックリンク）
 
-1. ログイン画面でメールアドレスを入れ「ログイン用メールを送る」
-2. Mailpit UI（[http://127.0.0.1:8025](http://127.0.0.1:8025)）でメールを開き、リンクから続行する
+`AuthGateway.sendMagicLink`・callback・sent/expired UI は実装済みですが、ログイン画面のメール入力は **`SHOW_EMAIL_LOGIN = false` でいったん非表示**です（期限切れ復帰など必要な経路では自動表示）。
+
+手動・E2E でフォームを出すとき:
+
+1. [http://127.0.0.1:5173/login?emailLogin=1](http://127.0.0.1:5173/login?emailLogin=1) を開く（または定数を `true` に戻す）
+2. メールアドレスを入れ「ログイン用メールを送る」
+3. Mailpit UI（[http://127.0.0.1:8025](http://127.0.0.1:8025)）でメールを開き、リンクから続行する
 
 ローカルの SMTP は Compose の `mailpit`（ホスト `1025` / `8025`）です。本番のマジックリンクは Managed Supabase の **Custom SMTP** が必須（ローカル `SMTP_*` を本番へコピーしない）。手順は [docs/deployment/supabase.md](docs/deployment/supabase.md) §2.3。本番 Google の検証は [docs/testing/google-oauth-staging.md](docs/testing/google-oauth-staging.md) を参照してください。
 
@@ -109,13 +127,15 @@ API キーを設定すると、同じ UI から **本番と同じ OpenRouter 経
 3. 各 ID は Models API 上で `structured_outputs` **AND** `response_format` を公開し、`pricing.prompt` + `pricing.completion` ≤ **$4.00 / 1M tokens** であること
 4. 実装完了ゲート前に `scripts/benchmark-paid-openrouter-models.mjs` で機械フィルタ → N=10 を通す（詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)）
 
-ゲート合格後の推奨例（**N=10 を通った exact 構成に置換**すること。最大 2 本）:
+ゲート合格後の推奨例（**N=10 を通った exact 構成に置換**すること。要素も順序も変えない）:
 
 ```text
-openai/gpt-4o-mini
+openai/gpt-5.6-luna
 ```
 
-> 上記は R1-replay 候補のうち README 用の例であり、**ライブ N=10 ゲート未通過のまま本番 ship しない**こと。キー total limit 未解消も完了扱いしない。詳細は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)。
+その他 N=10 PASS の例（単体構成）: `openai/gpt-4.1-mini`、`inception/mercury-2`、`x-ai/grok-4.3`。repair 付き例: `inception/mercury-2,openai/gpt-4.1-nano`。
+
+> 上記は [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md) の freeze 例であり、**ライブ N=10 ゲート未通過のまま本番 ship しない**こと。キー total limit 未解消も完了扱いしない。
 
 #### 2. `.env` を上書きする
 
@@ -126,7 +146,7 @@ openai/gpt-4o-mini
 OPENROUTER_API_KEY=sk-or-v1-xxxxxxxx
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 # 例（実際のゲート合格 exact 構成に置換。未合格のまま使わない）
-OPENROUTER_MODELS=openai/gpt-4o-mini
+OPENROUTER_MODELS=openai/gpt-5.6-luna
 ```
 
 注意:
@@ -164,24 +184,25 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 #### 5. ブラウザで試す
 
-1. [http://127.0.0.1:5173](http://127.0.0.1:5173) を開く（`localhost` ではない）
-2. `/login` で Google（oauth-mock）またはメールログイン
+1. [http://127.0.0.1:5173](http://127.0.0.1:5173) を開く（`localhost` ではない。未ログインなら無料 LP）
+2. `/login` で Google（oauth-mock）。メールは `?emailLogin=1` が必要（上節）
 3. 初回は `/welcome`。「献立アイデアを考える」または「家族情報を登録する」を選ぶ
 4. `/planner` のウィザード（食事 → 食材 → ジャンル → 家族/アイデア → 確認）で条件を入れ、**献立を作る**
    - 未同意なら AI 情報送信の説明（`/privacy`）を先に確認する
-5. `/generation` のあと結果（`/menus/:menuId`）が出れば、実 OpenRouter 経由で動いている
+   - Plus の品質モードは Free / kill / COMING_SOON では選べない（サーバが clamp）
+5. `/generation`（段階進捗表示）のあと結果（`/menus/:menuId`）が出れば、実 OpenRouter 経由で動いている
 
 #### 制約（プラン別の個人枠）
 
-個人枠は **サーバが entitlement から決める** 値です。ブラウザが `plan=plus` を主張しても無視されます。
+個人枠は **サーバが entitlement から決める identity 日次**の値です（正本: `shared/contracts/plan-quota.ts`）。ブラウザが `plan=plus` を主張しても無視されます。ローカルだけ `AI_QUOTA_DISABLED=true` で個人枠を無効化できます（本番では起動拒否）。
 
-| 項目                           | Free               | Plus（trialing / active 等）      |
-| ------------------------------ | ------------------ | --------------------------------- |
-| 成功生成 / 利用者 / JST 日     | 3                  | **10**                            |
-| 外部 AI 送信 / 利用者 / JST 日 | 6                  | **20**                            |
-| 外部送信 / 600 秒窓            | 4                  | **8**                             |
-| 品質モード（上位モデル）       | 不可               | 3 / JST 日 **かつ** 20 / JST 暦月 |
-| チラシ→1 週間献立              | 入口のみ（locked） | 成功 2 回 / JST 暦週              |
+| 項目                           | Free               | Plus（trialing / active 等）                        |
+| ------------------------------ | ------------------ | --------------------------------------------------- |
+| 成功生成 / 利用者 / JST 日     | 3                  | **10**                                              |
+| 外部 AI 送信 / 利用者 / JST 日 | 6                  | **20**                                              |
+| 外部送信 / 600 秒窓            | 4                  | **8**                                               |
+| 品質モード（上位モデル）       | 不可               | 3 / JST 日 **かつ** 20 / JST 暦月                   |
+| チラシ→1 週間献立              | 入口のみ（locked） | 成功 **2** / JST 暦週（試行枠 **6**。成功枠と独立） |
 
 | 項目                               | 値（全プラン共通の安全弁）                                                                                                                                                 |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -206,10 +227,21 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 ### こんだて日和 Plus（Stripe 課金）
 
-実装の正本: `shared/contracts/plan-quota.ts`、`netlify/functions/billing-*`、関連 migration  
-運用 reconcile: [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)  
-本番 env 境界: [docs/deployment/netlify.md](docs/deployment/netlify.md)  
-（配送時の設計メモは [docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md) — 実装と差があれば実装を正）
+- 実装の正本: `shared/contracts/plan-quota.ts`、`shared/contracts/billing.ts`、`netlify/functions/billing-*`、関連 migration
+- 運用 reconcile: [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)
+- 本番 env 境界: [docs/deployment/netlify.md](docs/deployment/netlify.md)
+- 配送時の設計メモ（実装と差があれば実装を正）: [docs/archive/…](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md)
+
+#### 一時クローズ: アップグレード申込（COMING_SOON）
+
+| 項目   | 内容                                                                                                                           |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 定数   | `PLUS_LP_UPGRADE_COMING_SOON`（`shared/contracts/billing.ts`）。**env ではない**（デプロイ単位で UI と API を同時に開閉）      |
+| 現状   | **`true`** … Plus LP / 設定の Checkout 導線を閉じ、`POST /api/billing/checkout` も拒否（開発中案内）                           |
+| 対象外 | 既に Plus の entitlement・Customer Portal・Webhook 投影・枠/品質/チラシのサーバ強制は、`BILLING_ENABLED` と entitlement に従う |
+| 再開   | 定数を `false` にしてデプロイ。kill switch（`BILLING_ENABLED`）とは独立                                                        |
+
+ローカルで Checkout を手で通すときも、この定数が `true` のあいだは UI/API が申込を受け付けません（E2E は `page.route` で entitlement を差し替える想定）。
 
 #### 何が Plus か（製品の要点）
 
@@ -218,15 +250,16 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 | プラン       | Free + **単一**有料プラン「こんだて日和 Plus」のみ（Basic/Pro 段階なし）                                              |
 | 価格（表示） | 月額 **¥580**（税込表示）/ 年額 **¥5,800**（約 2 か月分お得）                                                         |
 | トライアル   | **7 日**無料（カード登録あり）。初回のみ（`billing_trial_history`）                                                   |
-| 決済 UI      | Stripe **Checkout**（加入）+ **Customer Portal**（解約・支払い方法・領収書）                                          |
+| 決済 UI      | Stripe **Checkout**（加入）+ **Customer Portal**（解約・支払い方法・領収書）。申込は上節 COMING_SOON で一時クローズ   |
 | 正本         | **Stripe Webhook** が entitlement を DB に投影。クライアントは信頼しない                                              |
 | サーバ API   | `GET /api/billing/entitlement`、`POST /api/billing/checkout`、`POST /api/billing/portal`、`POST /api/billing/webhook` |
+| LP           | `/plus`（イラスト付き訴求）。無料訴求は未ログイン `/`                                                                 |
 
 Plus の追加価値（P0）:
 
 1. **枠の余裕**（上表）
 2. **品質モード**（「くわしく作る」— 上位モデル allowlist。`OPENROUTER_PLUS_MODELS`）
-3. **チラシ画像 → 1 週間献立**（Plus のみ。画像は長期保存しない）
+3. **チラシ画像 → 1 週間献立**（Plus のみ。画像は長期保存しない。週次の成功枠と試行枠は独立）
 
 #### アーキテクチャ（開発時に押さえる一点）
 
@@ -273,9 +306,10 @@ Stripe ──Webhook──► process_billing_stripe_event（単一 SECURITY DEF
 | 目的                           | やること                                                                                           |
 | ------------------------------ | -------------------------------------------------------------------------------------------------- |
 | 日常開発・E2E（決定論）        | `BILLING_ENABLED=false` のまま。Checkout/Portal/品質/チラシ UI は閉じる。枠は Free                 |
-| 設定画面の文面確認             | UI は entitlement API を見る。E2E は `page.route` で mock（`e2e/specs/billing-plus.spec.ts`）      |
+| 設定・LP の COMING_SOON 文面   | 定数 `true` のまま。Checkout ボタンの代わりに開発中案内（E2E: `billing-plus.spec.ts`）             |
+| 設定画面の Plus 文面（枠など） | UI は entitlement API を見る。E2E は `page.route` で mock                                          |
 | unit / Function テスト         | `tools/stripe-mock/` の固定 Session URL・webhook secret をテストが注入。**本番 Stripe は呼ばない** |
-| 実 Stripe（test mode）で手確認 | 下の「ローカルで Stripe test mode を有効にする」                                                   |
+| 実 Stripe（test mode）で手確認 | COMING_SOON を一時 `false` にしたうえで、下の「ローカルで Stripe test mode を有効にする」          |
 
 DB 側の課金表・枠拡張はマイグレーションに含まれます（`20260729130000` 以降）。初回や schema 更新後:
 
@@ -289,10 +323,11 @@ docker compose run --rm migrate
 
 **カード課金は Stripe のテストモード**で行います。本番 live 鍵をローカルに置かないでください。
 
-1. [Stripe Dashboard（Test mode）](https://dashboard.stripe.com/test/dashboard) で Product / Price を作成
+1. **`PLUS_LP_UPGRADE_COMING_SOON` を一時 `false`** にする（`shared/contracts/billing.ts`。申込 dual-surface を開く。コミットしないなら worktree だけの変更で可）
+2. [Stripe Dashboard（Test mode）](https://dashboard.stripe.com/test/dashboard) で Product / Price を作成
    - Plus 月額・年額の **Price ID** を控える（税込表示と整合）
-2. Developers → API keys で **Secret key**（`sk_test_…`）を取得
-3. Developers → Webhooks で endpoint を追加（ローカルは [Stripe CLI](https://stripe.com/docs/stripe-cli) が現実的）:
+3. Developers → API keys で **Secret key**（`sk_test_…`）を取得
+4. Developers → Webhooks で endpoint を追加（ローカルは [Stripe CLI](https://stripe.com/docs/stripe-cli) が現実的）:
 
 ```bash
 # 例: CLI でローカル Function へ転送（app が Functions を配信している前提）
@@ -300,7 +335,7 @@ stripe listen --forward-to http://127.0.0.1:5173/api/billing/webhook
 # 表示された whsec_… を STRIPE_WEBHOOK_SECRET に入れる
 ```
 
-4. `.env` を編集:
+5. `.env` を編集:
 
 ```bash
 BILLING_ENABLED=true
@@ -310,25 +345,25 @@ STRIPE_PRICE_PLUS_MONTHLY=price_xxxxxxxx
 STRIPE_PRICE_PLUS_YEARLY=price_yyyyyyyy
 STRIPE_API_VERSION=2026-06-24.dahlia
 # STRIPE_MOCK_BASE_URL は実 Stripe 利用時は未設定のまま
-OPENROUTER_PLUS_MODELS=openai/gpt-4o-mini   # ゲート合格の有料 ID に置換
+OPENROUTER_PLUS_MODELS=openai/gpt-5.6-luna   # ゲート合格の有料 ID に置換
 # チラシ専用（任意）。未設定なら PLUS と同じリストを vision に使う
-# OPENROUTER_FLYER_MODELS=openai/gpt-4o-mini
+# OPENROUTER_FLYER_MODELS=openai/gpt-5.6-luna
 ```
 
-5. app を再作成して反映:
+6. app を再作成して反映:
 
 ```bash
 docker compose up -d --wait --force-recreate app
 ```
 
-6. ブラウザで確認（常に `http://127.0.0.1:5173`）:
+7. ブラウザで確認（常に `http://127.0.0.1:5173`）:
 
-   1. ログイン → **設定** の「プラン」節
+   1. ログイン → **設定** の「プラン」節、または `/plus`
    2. 「Plus をはじめる」→ Stripe Checkout（test カード `4242…` 等）
    3. Webhook が届けば entitlement が Plus に変わり、枠 10 / 品質 / チラシが開く
    4. 「お支払い・解約の管理」→ Customer Portal
 
-反映が Free のままなら数十秒待ち、Dashboard の Webhook 配信と `billing_user_unmapped` 等のサーバログを確認してください（カード番号やメールをログに残さない）。
+反映が Free のままなら数十秒待ち、Dashboard の Webhook 配信と `billing_user_unmapped` 等のサーバログを確認してください（カード番号やメールをログに残さない）。COMING_SOON が `true` のままだと Checkout 自体が出ません。
 
 Customer Portal（Dashboard）の最低確認:
 
@@ -384,10 +419,11 @@ npm run preflight:production
 
 手動スモーク例:
 
-1. Free ユーザ: 設定に Plus 価格・トライアル文面、Checkout 導線
-2. Checkout 完了 → Webhook 後に Plus 表示・成功枠 10
+1. Free ユーザ: 設定 / `/plus` に価格・トライアル文面。**COMING_SOON 中は Checkout ではなく開発中案内**
+2. COMING_SOON を開けたうえで Checkout 完了 → Webhook 後に Plus 表示・成功枠 10
 3. Portal から解約予約 → `cancel_at_period_end` が UI に出る
 4. `BILLING_ENABLED=false` にしたとき Checkout/品質/チラシが閉じ、枠が Free に戻ること（kill 試験はメンテ窓で）
+5. `maintenance-cleanup` が secret 付きで 204 になること（GitHub Actions 起動。Netlify schedule は使わない — [docs/deployment/netlify.md](docs/deployment/netlify.md)）
 
 **5. 再有効化・事故対応**
 
@@ -398,15 +434,17 @@ npm run preflight:production
 
 | 症状                                     | 確認すること                                                                                                                       |
 | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 設定に Plus 導線が出ない                 | `BILLING_ENABLED` と `productSurfacesOpen`。kill 中は意図的に閉じる                                                                |
+| 設定 / LP に Checkout が出ない           | まず `PLUS_LP_UPGRADE_COMING_SOON`（意図的クローズ）。次に `BILLING_ENABLED` と `productSurfacesOpen`                              |
+| ログインにメール欄が無い                 | 意図的。`?emailLogin=1` または `SHOW_EMAIL_LOGIN`。gateway 自体は生きている                                                        |
 | Checkout 後も Free のまま                | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ                            |
 | 品質モードが「通信を確認」になる         | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示                                                         |
 | 献立作成が「通信を確認しています」のまま | 業務エラー（同意・下書き・枠等）を offline に落としていた古いクライアント。現行は failed 画面。本当の通信断のみ offline 自動再試行 |
 | 本番起動失敗                             | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か          |
 | E2E が Stripe に飛ぶ                     | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                                   |
+| maintenance-cleanup が 401 / 動かない    | `MAINTENANCE_CRON_SECRET` と header。GitHub secrets と Netlify 同値。Netlify schedule は使わない                                   |
 
 本番 CLI デプロイ（Netlify / Supabase）のつまずきは
-[docs/deployment/README.md](docs/deployment/README.md) §6 が正本。Free プランで特に多いもの:
+[docs/deployment/README.md](docs/deployment/README.md) が正本。**CLI 用トークンは `.deploy.env` のみ**（ローカル `.env` と混同しない）。Free プランで特に多いもの:
 
 | 症状                                | 確認すること                                                                                             |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -454,13 +492,14 @@ vendorしたSupabase公式Docker構成は、次のwrapperで更新します。
 
 より詳しいセットアップ、検証、Supabase更新、lockやsignalからの復旧は [docs/local-development.md](docs/local-development.md) を参照してください。
 
-| 目的                                 | 文書                                                                                   |
-| ------------------------------------ | -------------------------------------------------------------------------------------- |
-| 本番 CLI 初回デプロイ・更新手順      | [docs/deployment/README.md](docs/deployment/README.md)                                 |
-| 本番デプロイ・env 境界・preflight    | [docs/deployment/netlify.md](docs/deployment/netlify.md)                               |
-| Supabase 本番                        | [docs/deployment/supabase.md](docs/deployment/supabase.md)                             |
-| リリースゲート                       | [docs/testing/release-checklist.md](docs/testing/release-checklist.md)                 |
-| ドキュメント索引（エージェント向け） | [docs/README.md](docs/README.md)                                                       |
-| 課金 reconcile / Portal チェック     | [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)               |
-| OpenRouter 有料モデル                | [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)                             |
-| Plus 設計メモ（履歴）                | [docs/archive/…](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md) |
+| 目的                                            | 文書                                                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 本番 CLI 初回デプロイ・更新手順                 | [docs/deployment/README.md](docs/deployment/README.md)（`.deploy.env` / Compose profile `deploy`） |
+| 本番デプロイ・env 境界・preflight・cleanup      | [docs/deployment/netlify.md](docs/deployment/netlify.md)                                           |
+| Supabase 本番（Custom SMTP / migrate）          | [docs/deployment/supabase.md](docs/deployment/supabase.md)                                         |
+| リリースゲート                                  | [docs/testing/release-checklist.md](docs/testing/release-checklist.md)                             |
+| ドキュメント索引（エージェント向け）            | [docs/README.md](docs/README.md)                                                                   |
+| 課金 reconcile / Portal チェック                | [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)                           |
+| OpenRouter 有料モデル                           | [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)                                         |
+| アカウント削除                                  | [docs/runbooks/account-deletion.md](docs/runbooks/account-deletion.md)                             |
+| Plus 設計メモ（履歴・実装と差があれば実装を正） | [docs/archive/…](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md)             |
