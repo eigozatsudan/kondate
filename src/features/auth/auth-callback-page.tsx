@@ -200,12 +200,15 @@ export function AuthCallbackPage({
           leaveLoginError(authError, next.returnTo);
         };
         // R3: hangWatchdog（C6）と同型で server expiresAt があれば wait もクリップする
+        // exactOptionalPropertyTypes: undefined を明示渡さない
         const flowForWait = readAuthFlow(next.flowId, window.localStorage);
         stopCompletionWait = startAuthContinuationCompletionWait({
           flowId: next.flowId,
           startedAt,
           ttlMs: callbackTtlMs,
-          serverExpiresAt: flowForWait?.expiresAt,
+          ...(flowForWait?.expiresAt !== undefined
+            ? { serverExpiresAt: flowForWait.expiresAt }
+            : {}),
           onComplete: (completion) => {
             if (finished) return;
             stopAwaiting();

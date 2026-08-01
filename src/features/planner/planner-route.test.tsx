@@ -322,6 +322,33 @@ vi.mock("./components/planner-wizard", () => ({
         >
           確認後に選択解除
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            // P3: Free でも attempt.qualityMode true を載せる（onSubmit / startGeneration の clamp 検証用）
+            props.onDraftChange({
+              ...props.draft,
+              pantrySelections: [
+                {
+                  pantryItemId: "74000000-0000-4000-8000-000000000001",
+                  priority: "prefer_use",
+                },
+              ],
+            });
+            props.onAttemptChange({
+              idempotencyKey: props.attempt.idempotencyKey,
+              qualityMode: true,
+              expiredPantryChecks: [
+                {
+                  pantryItemId: "74000000-0000-4000-8000-000000000001",
+                  checkedAt: TEST_CHECKED_AT,
+                },
+              ],
+            });
+          }}
+        >
+          品質モードONで確認
+        </button>
         <button type="button" onClick={() => void props.onSubmit().catch(() => undefined)}>
           生成
         </button>
@@ -1024,6 +1051,26 @@ describe("PlannerRoutePage", () => {
     });
     // POST 完了を待たず、保存直後に遷移する（再生成経路と同型）
     expect(navigateMock).toHaveBeenCalledWith("/generation");
+  });
+
+  it("P3: Free plan では attempt.qualityMode true でも pending に false を載せる", async () => {
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    // usage mock は plan: free。onSubmit + startGeneration の二重 clamp を固定する
+    await user.click(screen.getByRole("button", { name: "品質モードONで確認" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(pendingGenerationMock.createPendingGeneration).toHaveBeenCalled();
+    });
+    const command = pendingGenerationMock.createPendingGeneration.mock.calls[0]?.[0] as {
+      qualityMode: boolean;
+    };
+    expect(command.qualityMode).toBe(false);
+    const pending = pendingGenerationMock.savePendingGeneration.mock.calls[0]?.[0] as {
+      qualityMode: boolean;
+    };
+    expect(pending.qualityMode).toBe(false);
   });
 
   it("既存 pending があるときは上書きせず再開し attempt を回転しない", async () => {

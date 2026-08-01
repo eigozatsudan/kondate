@@ -347,7 +347,7 @@ it("R1: claim 2xx with unreadable body surfaces ContinuationResponseLostError", 
         throw new TypeError("body stream interrupted after 2xx");
       },
     };
-    return response as Response;
+    return response as unknown as Response;
   });
 
   await expect(

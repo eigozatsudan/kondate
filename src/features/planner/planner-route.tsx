@@ -246,6 +246,9 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
 export function PlannerRoutePage() {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
+  // P3: startGeneration 内でも plan を参照し qualityMode を再 clamp（onSubmit 一枚依存を避ける）
+  const usage = useUsageToday(userId ?? "");
+  const planCode = usage.isSuccess ? usage.data.plan : null;
   const startGeneration = useCallback(
     (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
       if (userId === undefined) return Promise.resolve(false);
@@ -259,13 +262,13 @@ export function PlannerRoutePage() {
         return Promise.resolve(false);
       }
       // P1: 送信 confirmation は選択中 pantry のみ（attempt 残存 extra を載せない）
-      // P2: Free / 非 Plus では qualityMode を必ず false（UI 見た目と command を一致）
+      // P2/P3: Free / 非 Plus / plan 未取得では qualityMode を必ず false
+      // （onSubmit clamp をすり抜けた注入・将来呼び出しでも pending に true を載せない）
       const pending = createPendingGeneration(
         {
           commandVersion: "generation-command.v3",
           kind: "new_menu",
-          // attempt のトグルを command に載せる（HMAC に qualityMode を含める）
-          qualityMode: attempt.qualityMode,
+          qualityMode: planCode === "plus" && attempt.qualityMode,
           request: {
             idempotencyKey: attempt.idempotencyKey,
             draftId: draft.id,
@@ -298,7 +301,7 @@ export function PlannerRoutePage() {
       void navigate("/generation");
       return Promise.resolve(true);
     },
-    [navigate, userId],
+    [navigate, planCode, userId],
   );
   return <PlannerPage startGeneration={startGeneration} />;
 }
