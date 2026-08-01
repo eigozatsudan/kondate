@@ -111,7 +111,8 @@ describe("parsePublicEnv", () => {
         VITE_AUTH_CONTINUATION_TTL_MS: "300000",
         VITE_AUTH_PROVIDER_MODE: "oauth_mock",
         VITE_OAUTH_MOCK_ORIGIN: "http://127.0.0.1:8788",
-        VITE_OPENROUTER_API_KEY: "should-not-be-here",
+        // 秘密名の部分文字列を避け、verify-browser-secrets の誤検知を起こさない
+        VITE_UNEXPECTED_SERVER_KEY: "should-not-be-here",
       }),
     ).toThrow("公開設定を読み込めません");
   });
