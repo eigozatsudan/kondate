@@ -124,8 +124,17 @@ export function AppShell() {
   // ルート遷移後、ページ h1 へプログラムフォーカスする（Plan 6 Task 5 契約）。
   // 描画後の DOM を対象にするため rAF で1フレーム待つ。既に tabindex がある見出しは尊重し、
   // 無い場合のみ -1 を付与する（キーボード順序に載せない）。
+  // L2: 既に dialog / alertdialog 内にフォーカスがあるときは奪わない
+  // （pathname 変更直後に開いたモーダルや、ページ側の意図した trap を壊さない）。
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (
+        active instanceof Element &&
+        active.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+      ) {
+        return;
+      }
       const heading = document.querySelector("main h1") ?? document.querySelector("h1");
       if (!(heading instanceof HTMLElement)) return;
       if (!heading.hasAttribute("tabindex")) {

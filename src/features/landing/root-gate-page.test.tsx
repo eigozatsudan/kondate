@@ -1,10 +1,35 @@
 import { act, render, screen } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 
 const useAuthMock = vi.hoisted(() => vi.fn());
+
+/** FreeLanding を一時 suspend させて Suspense fallback を観測する（L1）。 */
+const freeLpSuspend = vi.hoisted(() => {
+  let pending: Promise<void> | null = null;
+  let release: (() => void) | null = null;
+  return {
+    start() {
+      pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    finish() {
+      release?.();
+      pending = null;
+      release = null;
+    },
+    maybeSuspend() {
+      if (pending !== null) {
+        // React Suspense: throw した Promise が解決するまで fallback を表示
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Suspense 契約
+        throw pending;
+      }
+    },
+  };
+});
 
 vi.mock("@/features/auth/use-auth", () => ({ useAuth: useAuthMock }));
 vi.mock("@/features/auth/root-entry-page", () => ({
@@ -14,7 +39,10 @@ vi.mock("./free-landing-page", async () => {
   const actual = await vi.importActual<typeof import("./free-landing-page")>("./free-landing-page");
   return {
     ...actual,
-    FreeLandingPage: () => <h1>{actual.FREE_LP_H1}</h1>,
+    FreeLandingPage: () => {
+      freeLpSuspend.maybeSuspend();
+      return <h1>{actual.FREE_LP_H1}</h1>;
+    },
   };
 });
 
@@ -31,6 +59,11 @@ function renderGate() {
 describe("RootGatePage", () => {
   beforeEach(() => {
     useAuthMock.mockReset();
+    freeLpSuspend.finish();
+  });
+
+  afterEach(() => {
+    freeLpSuspend.finish();
   });
 
   it("shows session check copy while loading and neither landing nor entry", () => {
@@ -96,8 +129,28 @@ describe("RootGatePage", () => {
       // lazy + Suspense は real timer の wait が必要なので切り替える
       vi.useRealTimers();
       expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+      // deadline 後に cold-start と同じ「確認中」で着地しない
+      expect(screen.queryByText("ログイン状態を確認しています…")).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("L1: Suspense fallback uses chunk-loading copy, not session-check copy", async () => {
+    freeLpSuspend.start();
+    useAuthMock.mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+    });
+    renderGate();
+    // lazy chunk 解決後も FreeLanding が suspend 中 → fallback が見える
+    expect(await screen.findByText("読み込み中…")).toBeVisible();
+    expect(screen.queryByText("ログイン状態を確認しています…")).not.toBeInTheDocument();
+    await act(async () => {
+      freeLpSuspend.finish();
+    });
+    expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+    expect(screen.queryByText("読み込み中…")).not.toBeInTheDocument();
   });
 });

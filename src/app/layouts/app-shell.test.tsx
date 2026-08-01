@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { describe, expect, it, vi } from "vitest";
@@ -16,12 +17,12 @@ const unauthenticated: AuthContextValue = {
   refreshSession: vi.fn(),
 };
 
-function renderAppShellAt(path: string) {
+function renderAppShellAt(path: string, children?: { path: string; element: ReactNode }[]) {
   const router = createMemoryRouter(
     [
       {
         element: <AppShell />,
-        children: [
+        children: children ?? [
           { path: "/planner", element: <h1>献立</h1> },
           { path: "/pantry", element: <h1>冷蔵庫</h1> },
           { path: "/menus/:menuId", element: <h1>献立結果</h1> },
@@ -79,5 +80,44 @@ describe("AppShell section tinting", () => {
     expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "plus");
     // desktop-section-bar は aria-hidden だが DOM に "Plus" を持つ
     expect(document.querySelector(".desktop-section-bar")?.textContent).toBe("Plus");
+  });
+});
+
+describe("AppShell route focus (L2)", () => {
+  it("does not steal focus from an open dialog after pathname focus effect", async () => {
+    function PageWithDialog() {
+      const buttonRef = useRef<HTMLButtonElement>(null);
+      useEffect(() => {
+        // ページ側が dialog 内へフォーカスした状態をシミュレート（rAF より前でも後でも可）
+        buttonRef.current?.focus();
+      }, []);
+      return (
+        <main className="page-frame">
+          <h1>設定</h1>
+          <div role="dialog" aria-modal="true" aria-label="確認">
+            <button ref={buttonRef} type="button">
+              ダイアログ内操作
+            </button>
+          </div>
+        </main>
+      );
+    }
+
+    renderAppShellAt("/settings", [{ path: "/settings", element: <PageWithDialog /> }]);
+    const dialogButton = await screen.findByRole("button", { name: "ダイアログ内操作" });
+    // shell の rAF focus が完了するまで2フレーム待ち、dialog 内フォーカスが維持されることを固定
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(dialogButton);
+    });
+    expect(screen.getByRole("heading", { name: "設定" })).not.toHaveFocus();
   });
 });
