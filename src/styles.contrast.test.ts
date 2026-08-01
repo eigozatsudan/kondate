@@ -219,7 +219,6 @@ const allowedGuidedSelectors = new Set([
   ":root",
   ".guided-planner-theme",
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
-  ".guided-planner-theme .wizard-title:focus-visible",
   ".guided-planner-theme .primary-button",
   ".guided-planner-theme .primary-button:hover",
   ".guided-planner-theme .primary-button:active",
@@ -272,7 +271,6 @@ const allowedProtectedSelectors = new Set([
   // .guided-planner-theme 単体のトークンブロックは :root へ集約済み。
   // 配下セレクタ（.guided-planner-theme .…）のみ残す。
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
-  ".guided-planner-theme .wizard-title:focus-visible",
   ".guided-planner-theme .primary-button",
   ".guided-planner-theme .primary-button:hover",
   ".guided-planner-theme .primary-button:active",
@@ -367,10 +365,6 @@ const allowedProtectedSelectors = new Set([
 
 const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible": {
-    outline: "3px solid var(--focus)",
-    "outline-offset": "2px",
-  },
-  ".guided-planner-theme .wizard-title:focus-visible": {
     outline: "3px solid var(--focus)",
     "outline-offset": "2px",
   },
@@ -1221,9 +1215,6 @@ describe("guided planner theme", () => {
     expect(css).toMatch(/\.choice-card\s*\{[^}]*border-radius:\s*(18|19|20)px/s);
     expect(css).toMatch(/\.choice-card\s*\{[^}]*box-shadow:/s);
     expect(css).toMatch(/\.wizard-action[^}]*min-height:\s*44px/s);
-    expect(css).toMatch(
-      /\.guided-planner-theme \.wizard-title:focus-visible\s*\{[^}]*outline:\s*3px solid var\(--focus\)[^}]*outline-offset:\s*2px/s,
-    );
   });
 
   it("keeps the ingredient entry visible inside the guided planner", () => {
@@ -1613,14 +1604,36 @@ describe("guided planner theme", () => {
     expectFinalDeclarations(".inline-notice", { background: "var(--notice)" });
     expectFinalDeclarations(".inline-notice-body", { color: "var(--muted)" });
     expectFinalDeclarations(".inline-notice-error", { color: "var(--danger)" });
-    expectExactRuleDeclarations(".guided-planner-theme .wizard-title:focus-visible", {
-      outline: "3px solid var(--focus)",
-      "outline-offset": "2px",
-    });
     expectExactRuleDeclarations(
       ".guided-planner-theme :is(button, a, input, select, textarea):focus-visible",
       { outline: "3px solid var(--focus)", "outline-offset": "2px" },
     );
+  });
+
+  /**
+   * AppShell / wizard step は tabindex=-1 の見出しへ program focus する。
+   * 視覚枠は不要なので outline を消し、見出し向けに枠を再設定する規則の再導入を禁止する。
+   */
+  it("suppresses focus outline on headings and forbids reintroduction via focus-visible", () => {
+    expectExactRuleDeclarations(":is(h1, h2, h3):focus", {
+      outline: "none",
+    });
+
+    // 見出しセレクタ + :focus / :focus-visible で outline を非 none にする規則が無いこと
+    // （旧 .wizard-title:focus-visible や将来の h*:focus-visible の再追加を検知する）
+    const headingToken =
+      /(^|[^a-zA-Z0-9_-])(h1|h2|h3)([^a-zA-Z0-9_-]|$)|\.wizard-title\b|\.welcome-tutorial__title\b|\.welcome-tutorial__page-title\b|\.pantry-form-title\b/u;
+    const reintroduced = cssRules(cssWithoutImports)
+      .filter((rule) => {
+        if (!headingToken.test(rule.selector)) return false;
+        if (!/:focus(?:-visible)?\b/u.test(rule.selector)) return false;
+        const outline = rule.declarations.get("outline");
+        if (outline === undefined) return false;
+        const normalized = outline.replace(/\s+/g, " ").trim().toLowerCase();
+        return normalized !== "none" && normalized !== "0" && normalized !== "0px";
+      })
+      .map((rule) => rule.selector);
+    expect(reintroduced).toEqual([]);
   });
 
   it("binds every visible wizard state to a readable foreground and background", () => {
