@@ -14,7 +14,13 @@ import {
   EASE_SOFT_NOT_SWALLOW_DISCLAIMER,
   MENU_LABEL_DISCLAIMER,
 } from "@/features/generation/components/idea-menu-safety-notice";
-import { MenuResultActionBar } from "@/features/generation/components/menu-result-action-bar";
+import {
+  MENU_ACCEPT_NOTICE_IDEA,
+  MENU_ACCEPT_NOTICE_SHOPPING_READY,
+  MENU_ACCEPT_NOTICE_SHOPPING_WAIT,
+  MENU_ACCEPT_NOTICE_TITLE,
+  MenuResultActionBar,
+} from "@/features/generation/components/menu-result-action-bar";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   isRevalidationActionable,
@@ -391,23 +397,16 @@ function IdeaResultBody({
         notice={
           accepted ? (
             <div role="status">
-              <p className="menu-result-actions-notice-title">この献立にしました</p>
-              <p className="menu-result-actions-notice-hint">
-                履歴の「作った献立」からいつでも見返せます。下のボタンから履歴を開けます。
-              </p>
+              <p className="menu-result-actions-notice-title">{MENU_ACCEPT_NOTICE_TITLE}</p>
+              <p className="menu-result-actions-notice-hint">{MENU_ACCEPT_NOTICE_IDEA}</p>
             </div>
           ) : null
         }
         primary={
           accepted ? (
-            <button
-              type="button"
-              className="secondary-button min-h-11"
-              disabled
-              aria-pressed="true"
-            >
-              この献立にしました
-            </button>
+            <Link className="primary-button min-h-11" to="/history">
+              作った献立を見る
+            </Link>
           ) : (
             <button
               type="button"
@@ -429,13 +428,6 @@ function IdeaResultBody({
               この献立にする
             </button>
           )
-        }
-        next={
-          accepted ? (
-            <Link className="primary-button min-h-11" to="/history">
-              作った献立を見る
-            </Link>
-          ) : null
         }
         auxiliaries={
           <>
@@ -941,9 +933,11 @@ function HouseholdResultBody({
         notice={
           accepted ? (
             <div role="status">
-              <p className="menu-result-actions-notice-title">この献立にしました</p>
+              <p className="menu-result-actions-notice-title">{MENU_ACCEPT_NOTICE_TITLE}</p>
               <p className="menu-result-actions-notice-hint">
-                次は材料の買い物リストを作ると、買うものがまとまります。
+                {canCreateShoppingList
+                  ? MENU_ACCEPT_NOTICE_SHOPPING_READY
+                  : MENU_ACCEPT_NOTICE_SHOPPING_WAIT}
               </p>
             </div>
           ) : null
@@ -952,11 +946,16 @@ function HouseholdResultBody({
           accepted ? (
             <button
               type="button"
-              className="secondary-button min-h-11"
-              disabled
-              aria-pressed="true"
+              className={
+                canCreateShoppingList ? "primary-button min-h-11" : "secondary-button min-h-11"
+              }
+              disabled={!canCreateShoppingList}
+              onClick={() => {
+                setShoppingError(null);
+                setShoppingSheet("create");
+              }}
             >
-              この献立にしました
+              材料の買い物リストを作る
             </button>
           ) : (
             <button
@@ -981,17 +980,19 @@ function HouseholdResultBody({
           )
         }
         next={
-          <button
-            type="button"
-            className={accepted ? "primary-button min-h-11" : "secondary-button min-h-11"}
-            disabled={!canCreateShoppingList}
-            onClick={() => {
-              setShoppingError(null);
-              setShoppingSheet("create");
-            }}
-          >
-            材料の買い物リストを作る
-          </button>
+          accepted ? null : (
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled={!canCreateShoppingList}
+              onClick={() => {
+                setShoppingError(null);
+                setShoppingSheet("create");
+              }}
+            >
+              材料の買い物リストを作る
+            </button>
+          )
         }
         auxiliaries={
           <>

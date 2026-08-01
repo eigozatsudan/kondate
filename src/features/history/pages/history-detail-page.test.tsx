@@ -483,11 +483,13 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
     await user.click(await screen.findByRole("button", { name: "この献立にする" }));
-    // 見出しと disabled ボタンの両方に同文言があるため、次の一手の文言で完了を確認する
+    // 無効な「しました」ボタンは置かず、次の一手を primary に据える
     expect(await screen.findByText(/材料の買い物リストを作ると/u)).toBeVisible();
-    expect(screen.getByRole("button", { name: "この献立にしました" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "この献立にしました" })).toBeNull();
     const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });
     expect(shopping).toHaveClass("primary-button");
+    expect(shopping).toBeEnabled();
   });
 
   it("keeps この献立にする disabled when revalidation is invalid", async () => {

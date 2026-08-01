@@ -20,8 +20,13 @@ const clearPendingGenerationMock = vi.hoisted(() => vi.fn());
 const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
 const confirmLabelConfirmationMock = vi.hoisted(() => vi.fn());
+const acceptMenuVersionMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/menu-result-api", () => ({ getMenuResult: getMenuResultMock }));
+vi.mock("@/features/history/api/history-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/history/api/history-api")>();
+  return { ...original, acceptMenuVersion: acceptMenuVersionMock };
+});
 vi.mock("../model/pending-generation", async (importOriginal) => {
   const original = await importOriginal<typeof import("../model/pending-generation")>();
   return {
@@ -218,6 +223,7 @@ beforeEach(() => {
   });
   shoppingApi.previewShoppingDiff.mockResolvedValue(shoppingDiff);
   revalidateMenuMock.mockResolvedValue(validRevalidation);
+  acceptMenuVersionMock.mockResolvedValue(undefined);
   getUsageTodayMock.mockResolvedValue({
     plan: "free" as const,
     plusEntitled: false,
@@ -661,9 +667,7 @@ describe("MenuResultPage", () => {
     it("hides child_friendly when opening idea regeneration dialog", async () => {
       getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
       renderPage(`/menus/${VALID_MENU_ID}`);
-      await userEvent.click(
-        await screen.findByRole("button", { name: "別の献立を作り直す" }),
-      );
+      await userEvent.click(await screen.findByRole("button", { name: "別の献立を作り直す" }));
       const dialog = screen.getByRole("dialog", { name: "どのように変えますか？" });
       expect(dialog).toBeVisible();
       expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
@@ -703,6 +707,18 @@ describe("MenuResultPage", () => {
       expect(await screen.findByRole("button", { name: "条件を変えて作り直す" })).toBeEnabled();
     });
 
+    it("after accept, promotes history link as the primary next step", async () => {
+      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+      renderPage(`/menus/${VALID_MENU_ID}`);
+      await userEvent.click(await screen.findByRole("button", { name: "この献立にする" }));
+      expect(await screen.findByText(/履歴の「作った献立」から/u)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "この献立にしました" })).toBeNull();
+      const historyLink = screen.getByRole("link", { name: "作った献立を見る" });
+      expect(historyLink).toHaveAttribute("href", "/history");
+      expect(historyLink).toHaveClass("primary-button");
+    });
+
     it("applies the guided-planner-theme class to the idea body root", async () => {
       getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
 
@@ -710,6 +726,17 @@ describe("MenuResultPage", () => {
 
       expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
       expect(document.querySelector(".guided-planner-theme")).not.toBeNull();
+    });
+
+    it("after household accept, promotes shopping as primary next step", async () => {
+      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+      renderPage(`/menus/${VALID_MENU_ID}`);
+      await userEvent.click(await screen.findByRole("button", { name: "この献立にする" }));
+      expect(await screen.findByText(/材料の買い物リストを作ると/u)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
+      const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });
+      expect(shopping).toHaveClass("primary-button");
+      expect(shopping).toBeEnabled();
     });
 
     it("keeps household mode mounting revalidation and shopping as before", async () => {
