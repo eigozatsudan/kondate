@@ -3,6 +3,7 @@
 「こんだて日和」は、食事の希望や使いたい食材などへの簡単な質問から家庭向けの献立を作る Web アプリケーションです。
 家族情報の登録は任意で、登録するとアレルギーや人数などを踏まえた家族向け献立、未登録でも一般的な献立アイデアを作れます。
 履歴の見返し・お気に入り絞り込み、献立結果／履歴からの買い物リスト作成、生成失敗時の緊急献立（家族向け・アイデア向け）なども用意しています。
+緊急献立は固定候補に加え、同意した利用者の完成献立を匿名一般化した**コミュニティ緊急プール**からも補完できます（提供者名・共有バッジは出さない）。
 
 主な製品面（実装が正）:
 
@@ -12,6 +13,7 @@
 - 派生グループ内の案の見比べと、任意の案からの再生成
 - 家族オンボーディングの次アクション案内、対象外食事の明示と追加前確認
 - 安全: 現行の家族制約が履歴スナップショットより優先。保証表現は出さない
+- **匿名緊急共有**（任意同意・既定オフ）: 生成成功後に適格・抽選で一般化し、他利用者の緊急候補へ。設定で同意の on/off と提供一覧（タイトル・日付のみ）
 
 無料のまま日常の献立づくりに使える **永久フリーミアム** に加え、有料プラン **「こんだて日和 Plus」**（Stripe Checkout / Customer Portal）で日次枠の拡大・品質モード・チラシ写真からの 1 週間献立を提供します。課金の正本はブラウザではなく **Netlify Functions + Stripe Webhook + Postgres** です。
 
@@ -188,9 +190,11 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 2. `/login` で Google（oauth-mock）。メールは `?emailLogin=1` が必要（上節）
 3. 初回は `/welcome`。「献立アイデアを考える」または「家族情報を登録する」を選ぶ
 4. `/planner` のウィザード（食事 → 食材 → ジャンル → 家族/アイデア → 確認）で条件を入れ、**献立を作る**
-   - 未同意なら AI 情報送信の説明（`/privacy`）を先に確認する
+   - 未同意なら AI 情報送信の説明（`/privacy`）を先に確認する（必須）
+   - 同画面の**匿名緊急共有**は任意チェック（既定オフ）。ON にすると適格な完成献立が抽選で共有一般化の対象になる
    - Plus の品質モードは Free / kill / COMING_SOON では選べない（サーバが clamp）
 5. `/generation`（段階進捗表示）のあと結果（`/menus/:menuId`）が出れば、実 OpenRouter 経由で動いている
+6. 緊急献立（`/emergency-menus`）は AI 枠を消費しない。固定 fixture（S1）優先のうえ、空き枠だけコミュニティプール（S2）を載せる
 
 #### 制約（プラン別の個人枠）
 
@@ -224,6 +228,56 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 - E2E は共有カウンタを truncate するだけで、上限値そのものは変えない（`e2e/fixtures/reset-global-ai-quota.ts`）。
 
 有料モデルでも提供状況・単価・構造化対応は変わり得ます。失敗時はアプリが緊急献立など既存のフォールバックへ誘導します。E2E は **OpenRouter mock のまま**実行してください（実 API だと決定論が崩れ、クォータも消費し、課金も発生します）。
+
+### 匿名緊急共有（コミュニティ緊急プール）
+
+同意した利用者が作った完成献立の一部を、**ユーザー操作なし**で匿名の緊急候補に変換し、他利用者の緊急献立一覧を厚くする機能です。プライバシー優先で、提供者の特定・家族情報・安全スナップショットは載せません。閲覧時は**閲覧者の現在の**安全条件で再検証し、アレルギー安全は保証しません（既存方針と同じ）。
+
+- 実装の正本: `shared/contracts/share-*.ts`、`shared/emergency/share-*.ts`、`netlify/functions/share-generalize-worker.ts`、`netlify/functions/_shared/share-*`、migration `20260801190000` 以降
+- 配信: `GET /api/emergency-menus`（S1 fixture 優先 → 空き枠だけ S2 pool。`consumesAiQuota: false` 維持）
+- 運用: [docs/deployment/netlify.md](docs/deployment/netlify.md) の `share-generalize-worker`、[docs/runbooks/account-deletion.md](docs/runbooks/account-deletion.md)
+
+#### 製品の要点
+
+| 項目     | 内容                                                                                                           |
+| -------- | -------------------------------------------------------------------------------------------------------------- |
+| 同意     | `/privacy` の**任意**チェック（既定オフ）。AI 説明同意とは別テーブル・別版（`shareConsentVersion`）            |
+| 蓄積     | 生成成功後のみ。適格ゲート → 日次 cap → **20% 抽選** → job。生成 UX を待たせない・失敗させない                 |
+| 一般化   | 独立 worker（Pass1 一般化 → Pass2 点検）+ サーバー関門（Zod・材料グラフ不変・denylist）。不合格は非掲載         |
+| 他者向け | 緊急候補に**混ざるだけ**。提供者名・「共有」バッジなし                                                         |
+| 自分向け | 家族設定のトグル + 提供一覧（**タイトルと日付のみ**。個別取り下げ UI はこの版のスコープ外）                    |
+| 同意オフ | **新規の共有化だけ停止**。既掲載は残る。掲載直前に consent を再確認し、revoke 済みは pool に入れない            |
+| コスト   | **通常 generate 枠と完全独立**のアプリ日次 AI 呼び出し cap / 掲載 success cap（正本: `shared/contracts/share-quota.ts`） |
+
+| 項目（共有専用・generate 枠と別） | 値（契約）                          |
+| --------------------------------- | ----------------------------------- |
+| 抽選                              | 適格成功の **20%**                  |
+| attempt / ユーザー / JST 日       | **2**                              |
+| 掲載 success / ユーザー / JST 日  | **1**                              |
+| 掲載 success / アプリ / JST 日    | **200**                            |
+| OpenRouter 呼び出し / アプリ / 日 | **500**（失敗含む。LEAST pin）     |
+| 緊急レスポンス候補上限（S1∪S2）   | **5**（S2 取得 bound は最大 **20**） |
+
+#### 起動経路（Netlify schedule は使わない）
+
+共有一般化は **secret 付き HTTP** だけです（maintenance-cleanup と同型）。
+
+| 項目        | 値                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------- |
+| path        | `POST /api/share-generalize-worker`                                                                     |
+| 認証        | `x-share-worker-cron-secret` または `Authorization: Bearer` が env `SHARE_WORKER_CRON_SECRET`（16 文字以上）と一致 |
+| 定期実行    | GitHub Actions `share-generalize-worker.yml`（毎時）など。**Netlify `@hourly` schedule は使わない**     |
+| GitHub 秘密 | `SHARE_GENERALIZE_WORKER_URL` + `SHARE_WORKER_CRON_SECRET`（Netlify と同値）                            |
+| 1 起動      | claim **1** 件（Pass1+Pass2 が Netlify 60s 壁に収まるように）                                           |
+
+ローカル診断例:
+
+```bash
+curl -X POST -H "x-share-worker-cron-secret: $SHARE_WORKER_CRON_SECRET" \
+  http://127.0.0.1:5173/api/share-generalize-worker -w '%{http_code}\n' -o /dev/null
+```
+
+secret なしは **env の有無に関わらず 401**。期待ステータスは **204**。
 
 ### こんだて日和 Plus（Stripe 課金）
 
@@ -400,15 +454,21 @@ Customer Portal（Dashboard）の最低確認:
 | `OPENROUTER_FLYER_MODELS` | 任意。チラシ vision。未設定なら Plus リスト                                                           |
 | `GLOBAL_DAILY_AI_LIMIT`   | 運用推奨 **80**（1..製品 max **500**。ENV のみが正本。上げ方は上節「グローバル日次枠を上げる」）      |
 
+課金と独立だが Functions に必須な共有 worker 用:
+
+| 変数                       | 本番                                                                 |
+| -------------------------- | -------------------------------------------------------------------- |
+| `SHARE_WORKER_CRON_SECRET` | 16 文字以上。GitHub Actions の同名 secret と**同値**。preflight 必須 |
+
 **絶対に置かないもの**
 
-- `VITE_STRIPE_*` / `VITE_BILLING_*`
+- `VITE_STRIPE_*` / `VITE_BILLING_*` / `VITE_SHARE_WORKER_CRON_SECRET` / `VITE_MAINTENANCE_CRON_SECRET`
 - test の `sk_test_` / mock URL の本番持ち込み
 - ビルドログや `netlify.toml` への秘密直書き
 
 **3. DB マイグレーション**
 
-課金・プラン枠・品質・チラシの migration が本番 Supabase に適用済みであること（`20260729130000`〜`20260729170000` 系）。適用手順は [docs/deployment/supabase.md](docs/deployment/supabase.md) を参照。
+課金・プラン枠・品質・チラシの migration（`20260729130000`〜`20260729170000` 系）に加え、**匿名緊急共有**の migration（`20260801190000` / `20260801200000` / `20260801210000`）が本番 Supabase に適用済みであること。適用手順は [docs/deployment/supabase.md](docs/deployment/supabase.md) を参照。
 
 **4. デプロイ後の確認**
 
@@ -424,6 +484,7 @@ npm run preflight:production
 3. Portal から解約予約 → `cancel_at_period_end` が UI に出る
 4. `BILLING_ENABLED=false` にしたとき Checkout/品質/チラシが閉じ、枠が Free に戻ること（kill 試験はメンテ窓で）
 5. `maintenance-cleanup` が secret 付きで 204 になること（GitHub Actions 起動。Netlify schedule は使わない — [docs/deployment/netlify.md](docs/deployment/netlify.md)）
+6. `share-generalize-worker` が secret 付き POST で 204 になること（GitHub に `SHARE_GENERALIZE_WORKER_URL` / `SHARE_WORKER_CRON_SECRET`。Netlify に `SHARE_WORKER_CRON_SECRET`）
 
 **5. 再有効化・事故対応**
 
@@ -442,6 +503,7 @@ npm run preflight:production
 | 本番起動失敗                             | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か          |
 | E2E が Stripe に飛ぶ                     | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                                   |
 | maintenance-cleanup が 401 / 動かない    | `MAINTENANCE_CRON_SECRET` と header。GitHub secrets と Netlify 同値。Netlify schedule は使わない                                   |
+| 共有 worker が 401 / プールが増えない    | `SHARE_WORKER_CRON_SECRET`（16 文字以上）と `x-share-worker-cron-secret`。GitHub `SHARE_GENERALIZE_WORKER_URL` が `/api/share-generalize-worker`。同意・抽選・cap も確認 |
 
 本番 CLI デプロイ（Netlify / Supabase）のつまずきは
 [docs/deployment/README.md](docs/deployment/README.md) が正本。**CLI 用トークンは `.deploy.env` のみ**（ローカル `.env` と混同しない）。Free プランで特に多いもの:
