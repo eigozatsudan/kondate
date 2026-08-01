@@ -63,11 +63,12 @@ export function parseConfiguredModels(raw, context = {}) {
       throw new Error("OPENROUTER_MODELS rejects router model IDs");
     }
     if (mockPath) {
-      if (!id.startsWith("mock/") || !normalized.endsWith(":free")) {
+      // R1: mock/ 接頭も :free 接尾も case-insensitive
+      if (!normalized.startsWith("mock/") || !normalized.endsWith(":free")) {
         throw new Error("OPENROUTER_MODELS mock path accepts only mock/*:free IDs");
       }
-    } else if (normalized.endsWith(":free") || id.startsWith("mock/")) {
-      // 設計: exact mock 以外では mock/ も :free も拒否（:Free/:FREE 含む）
+    } else if (normalized.endsWith(":free") || normalized.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否（Mock/・:Free/:FREE 含む）
       throw new Error("OPENROUTER_MODELS rejects mock/ or :free models on non-mock base URL");
     }
   }

@@ -47,7 +47,7 @@ export function assertRealPaidOpenRouterSmokeConfig(config: RealPaidOpenRouterSm
         `OpenRouter paid smoke rejects :free model: ${model} (use paid allowlist IDs only)`,
       );
     }
-    if (model.startsWith("mock/")) {
+    if (model.toLowerCase().startsWith("mock/")) {
       throw new Error(
         `OpenRouter paid smoke rejects mock/ model: ${model} (mock path must not pass this suite)`,
       );

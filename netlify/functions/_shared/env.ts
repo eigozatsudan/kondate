@@ -218,12 +218,12 @@ export function parseOpenRouterModels(
       throw new Error(`OPENROUTER_MODELS rejects router model ID: ${model}`);
     }
     if (mockPath) {
-      // mock 例外は prefix 小文字固定 + :free は case-insensitive
-      if (!model.startsWith("mock/") || !normalized.endsWith(":free")) {
+      // R1: mock/ 接頭も :free 接尾も case-insensitive（Mock/x:Free を受理）
+      if (!normalized.startsWith("mock/") || !normalized.endsWith(":free")) {
         throw new Error(`OPENROUTER_MODELS mock path accepts only mock/*:free: ${model}`);
       }
-    } else if (normalized.endsWith(":free") || model.startsWith("mock/")) {
-      // 設計: exact mock 以外では mock/ も :free も拒否（:Free/:FREE 含む）
+    } else if (normalized.endsWith(":free") || normalized.startsWith("mock/")) {
+      // 設計: exact mock 以外では mock/ も :free も拒否（Mock/・:Free/:FREE 含む）
       throw new Error(`OPENROUTER_MODELS rejects mock/ or :free model on non-mock base: ${model}`);
     }
   }

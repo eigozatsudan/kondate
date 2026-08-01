@@ -119,6 +119,188 @@ function isExactLocalMockBaseUrl(value: string): boolean {
   }
 }
 
+/** 公式 OpenRouter base（ランタイム remote 政策の対象）。verify スクリプトと同一。 */
+export const OFFICIAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+/** Models API（text のみ）。verify-openrouter-models.mjs と同一 URL。 */
+export const OFFICIAL_OPENROUTER_MODELS_URL =
+  "https://openrouter.ai/api/v1/models?output_modalities=text";
+/** prompt+completion 上限 USD/1M（inclusive）。verify の maxPromptPlusCompletionUsdPerMillion と同一。 */
+export const MAX_PROMPT_PLUS_COMPLETION_USD_PER_MILLION = 4;
+/** Models API 1 回あたりの締切（5 秒）。verify の modelsApiTimeoutMs と同一。 */
+export const OPENROUTER_MODELS_API_TIMEOUT_MS = 5_000;
+
+/** Models API 1 エントリの最小形（policy 判定に使うフィールドのみ）。 */
+export type OpenRouterRemoteModelMeta = {
+  id: string;
+  supported_parameters?: unknown;
+  pricing?: {
+    prompt?: unknown;
+    completion?: unknown;
+  };
+};
+
+/**
+ * OpenRouter token 単価（USD/token）を USD/1M tokens に変換。
+ * verify-openrouter-models.mjs の usdPerMillion と同一規則（fail-closed）。
+ */
+export function usdPerMillion(tokenPrice: unknown): number | null {
+  if (typeof tokenPrice === "number") {
+    if (!Number.isFinite(tokenPrice) || tokenPrice < 0) return null;
+    return tokenPrice * 1e6;
+  }
+  if (typeof tokenPrice === "string") {
+    const trimmed = tokenPrice.trim();
+    if (trimmed === "") return null;
+    // 10 進表現のみ（0x0 等の Number 強制変換で $0 扱いしない）
+    if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return n * 1e6;
+  }
+  return null;
+}
+
+/**
+ * リモート Models メタに対し、allowlist の structured_outputs ∧ response_format と
+ * prompt+completion ≤ $4/1M を検証する（純粋・throw）。verifyRemoteModels の鏡像。
+ */
+export function assertModelsMeetRuntimePolicy(
+  allowlist: readonly string[],
+  modelsMeta: readonly OpenRouterRemoteModelMeta[],
+): void {
+  const byId = new Map(modelsMeta.map((model) => [model.id, model]));
+  for (const id of allowlist) {
+    const model = byId.get(id);
+    if (!model) {
+      throw new Error(`${id} is not present in the OpenRouter Models API`);
+    }
+    const parameters = new Set(
+      Array.isArray(model.supported_parameters) ? model.supported_parameters : [],
+    );
+    // AND 必須（片方だけでは不足）— 緩和禁止
+    if (!parameters.has("structured_outputs") || !parameters.has("response_format")) {
+      throw new Error(`${id} does not support strict structured output`);
+    }
+    const prompt = usdPerMillion(model.pricing?.prompt);
+    const completion = usdPerMillion(model.pricing?.completion);
+    if (prompt === null || completion === null) {
+      throw new Error(`${id} is missing usable pricing.prompt/completion`);
+    }
+    if (prompt + completion > MAX_PROMPT_PLUS_COMPLETION_USD_PER_MILLION) {
+      throw new Error(`${id} exceeds max prompt+completion USD per 1M tokens`);
+    }
+  }
+}
+
+function policyCacheKey(baseUrl: string, models: readonly string[]): string {
+  return `${baseUrl}\n${models.join("\n")}`;
+}
+
+/** process 寿命の成功キャッシュ（key 一致時のみ skip）。失敗は再試行可。 */
+let runtimePolicyOkKey: string | null = null;
+/** 同時 cold-start を 1 本の Models API 呼び出しへ畳む */
+let runtimePolicyInflight: Promise<void> | null = null;
+
+/** 単体テスト用: process 寿命キャッシュを初期化 */
+export function resetOpenRouterRuntimeModelPolicyCacheForTests(): void {
+  runtimePolicyOkKey = null;
+  runtimePolicyInflight = null;
+}
+
+/**
+ * 単体テスト用: remote 検証を成功済みとしてスキップする。
+ * key 省略時は任意の official allowlist を通す（既存 chat 経路の fixture 向け）。
+ */
+export function seedOpenRouterRuntimeModelPolicyOkForTests(key = "*"): void {
+  runtimePolicyOkKey = key;
+  runtimePolicyInflight = null;
+}
+
+/**
+ * 公式 base 上の allowlist に対し、process 寿命 1 回の Models API 政策検証を行う。
+ * exact mock base は skip。ネットワーク / 政策違反は fail-closed で model_unavailable。
+ * 成功のみキャッシュ（一時的 transport 失敗は次回再試行）。
+ */
+export async function ensureOpenRouterRuntimeModelPolicy(input: {
+  baseUrl: string;
+  models: readonly string[];
+  apiKey?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<void> {
+  // mock path はローカルフィクスチャが構造化を保証（verify --remote と同趣旨）
+  if (isExactLocalMockBaseUrl(input.baseUrl)) return;
+  // 公式 base 以外はデプロイ preflight / env が拒否。ランタイムでは remote を呼ばない
+  if (input.baseUrl !== OFFICIAL_OPENROUTER_BASE_URL) return;
+
+  const key = policyCacheKey(input.baseUrl, input.models);
+  if (runtimePolicyOkKey === "*" || runtimePolicyOkKey === key) return;
+
+  if (runtimePolicyInflight !== null) {
+    try {
+      await runtimePolicyInflight;
+    } catch {
+      // 他キーの失敗を共有しない（同一 key は下で再検証）
+    }
+    if (runtimePolicyOkKey === "*" || runtimePolicyOkKey === key) return;
+  }
+
+  const run = async (): Promise<void> => {
+    const fetchImpl = input.fetchImpl ?? fetch;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (input.apiKey !== undefined && input.apiKey.length > 0) {
+      headers.Authorization = `Bearer ${input.apiKey}`;
+    }
+
+    let response: Response;
+    try {
+      response = await fetchImpl(OFFICIAL_OPENROUTER_MODELS_URL, {
+        headers,
+        signal: AbortSignal.timeout(OPENROUTER_MODELS_API_TIMEOUT_MS),
+      });
+    } catch {
+      // transport 詳細は閉じる（verify の openrouter_models_unavailable と同趣旨）
+      throw new OpenRouterCallError("model_unavailable");
+    }
+    if (!response.ok) {
+      throw new OpenRouterCallError("model_unavailable");
+    }
+
+    let body: unknown;
+    try {
+      body = (await response.json()) as unknown;
+    } catch {
+      throw new OpenRouterCallError("model_unavailable");
+    }
+    if (
+      body === null ||
+      typeof body !== "object" ||
+      !("data" in body) ||
+      !Array.isArray((body as { data: unknown }).data)
+    ) {
+      throw new OpenRouterCallError("model_unavailable");
+    }
+
+    try {
+      assertModelsMeetRuntimePolicy(
+        input.models,
+        (body as { data: OpenRouterRemoteModelMeta[] }).data,
+      );
+    } catch {
+      // 政策違反の詳細はクライアントへ出さない
+      throw new OpenRouterCallError("model_unavailable");
+    }
+    runtimePolicyOkKey = key;
+  };
+
+  const pending = run().finally(() => {
+    if (runtimePolicyInflight === pending) {
+      runtimePolicyInflight = null;
+    }
+  });
+  runtimePolicyInflight = pending;
+  await pending;
+}
+
 /** 外部 Retry-After を UI/台帳へ載せる上限（秒）。それ以上は切り詰める。 */
 const maxRetryAfterSeconds = 86_400;
 
@@ -234,9 +416,8 @@ async function sendMenuGenerationWithRuntime(
   const mode: GenerationWireMode = input.mode ?? "full_menu";
   const configuredModels = runtime.models;
   // 有料 allowlist ガード: router 集合・空・重複は常に拒否。
-  // real API base 上の :free と mock/ も拒否（mock 例外は exact mock base のみ）。
-  // pricing / structured_outputs の remote 必須化はデプロイ verify 側（G4 residual）。
-  // ここでは invalid 連発を避けるため、明らかに不正な ID を fetch 前に落とす。
+  // real API base 上の :free と mock/ も拒否（R1: mock/ 接頭も case-insensitive）。
+  // G4: 公式 base では process 寿命 1 回の Models API で structured ∧ pricing を強制。
   const routers = new Set(["openrouter/auto", "openrouter/free", "openrouter/auto-beta"]);
   const rejectsRouterOrEmptyOrDup =
     configuredModels.length === 0 ||
@@ -244,9 +425,10 @@ async function sendMenuGenerationWithRuntime(
     configuredModels.some((model) => routers.has(model.toLowerCase()));
   const rejectsMockOrFreeOnRealApi =
     !isExactLocalMockBaseUrl(runtime.baseUrl) &&
-    configuredModels.some(
-      (model) => model.toLowerCase().endsWith(":free") || model.startsWith("mock/"),
-    );
+    configuredModels.some((model) => {
+      const normalized = model.toLowerCase();
+      return normalized.endsWith(":free") || normalized.startsWith("mock/");
+    });
   if (rejectsRouterOrEmptyOrDup || rejectsMockOrFreeOnRealApi) {
     throw new OpenRouterCallError("model_unavailable");
   }
@@ -262,6 +444,16 @@ async function sendMenuGenerationWithRuntime(
   if (!Number.isFinite(runtime.timeoutMs) || runtime.timeoutMs <= 0) {
     throw new OpenRouterCallError("generation_timeout");
   }
+
+  // 防御-in-depth: generation-service が markSent 前に ensure 済みでも、
+  // 直接 sender を呼ぶ経路では chat 前に政策違反を閉じる。成功 cache なら remote なし。
+  await ensureOpenRouterRuntimeModelPolicy({
+    baseUrl: runtime.baseUrl,
+    models: configuredModels,
+    apiKey: runtime.apiKey,
+    // exactOptionalPropertyTypes: undefined を渡さず、有るときだけ載せる
+    ...(runtime.fetchImpl !== undefined ? { fetchImpl: runtime.fetchImpl } : {}),
+  });
 
   const timeoutMs = Math.min(runtime.timeoutMs, input.timeoutMs);
   const fetchImpl = runtime.fetchImpl ?? fetch;

@@ -260,6 +260,8 @@ function makeDeps(
         modelId: models[0],
       }),
     ),
+    // 単体は policy を no-op。G4 専用ケースだけ失敗を差し込む。
+    ensureOpenRouterModelPolicy: vi.fn(() => Promise.resolve()),
     now: () => new Date("2026-07-11T00:00:00.000Z"),
     monotonicNow: () => 0,
     openRouterTimeoutMs: 24_000,
@@ -545,6 +547,25 @@ describe("runGeneration", () => {
     const payload = JSON.stringify(logTerminalEvent.mock.calls);
     expect(payload).not.toContain("prompt");
     expect(payload).not.toContain("allergy");
+  });
+
+  it("G4: fails model_unavailable before markSent when ensureOpenRouterModelPolicy rejects", async () => {
+    const repository = makeRepository();
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+    const ensureOpenRouterModelPolicy = vi
+      .fn<NonNullable<GenerationDependencies["ensureOpenRouterModelPolicy"]>>()
+      .mockRejectedValue(new OpenRouterCallError("model_unavailable"));
+    const result = await runGeneration(
+      makeDeps({ repository, callOpenRouter, ensureOpenRouterModelPolicy }),
+      command,
+    );
+    expect(result).toMatchObject({ status: "failed", error: { code: "model_unavailable" } });
+    expect(ensureOpenRouterModelPolicy).toHaveBeenCalledTimes(1);
+    expect(ensureOpenRouterModelPolicy).toHaveBeenCalledWith({ models: [...models] });
+    expect(repository.failBeforeSend).toHaveBeenCalledWith(requestId, "model_unavailable");
+    expect(repository.markSent).not.toHaveBeenCalled();
+    expect(callOpenRouter).not.toHaveBeenCalled();
+    expect(repository.reserveRepair).not.toHaveBeenCalled();
   });
 
   it("terminals fingerprint mismatch as constraint_conflict instead of failed/internal_error", async () => {

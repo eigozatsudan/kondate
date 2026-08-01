@@ -55,6 +55,7 @@ import { logGenerationEvent } from "./logger.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 import {
   createOpenRouterGenerationSender,
+  ensureOpenRouterRuntimeModelPolicy,
   OpenRouterCallError,
   sendMenuGeneration,
   type OpenRouterGenerationResult,
@@ -158,6 +159,13 @@ export type GenerationDependencies = {
   callOpenRouter(
     input: Parameters<typeof sendMenuGeneration>[0],
   ): Promise<OpenRouterGenerationResult>;
+  /**
+   * G4: markSent 前の Models 政策ゲート。未指定時は env から ensureOpenRouterRuntimeModelPolicy。
+   * mock base は remote skip。失敗は model_unavailable で attempt を焼かない。
+   */
+  ensureOpenRouterModelPolicy?: (input: {
+    models: readonly string[];
+  }) => Promise<void>;
   now(): Date;
   /** 単調時計。認証・予約も同じ 55s 総予算を消費する */
   monotonicNow(): number;
@@ -461,6 +469,15 @@ function createBaseGenerationDeps(
     validatePreflight: validateGenerationPreflight,
     buildMessages: buildGenerationMessages,
     callOpenRouter: sendMenuGeneration,
+    // G4: markSent 前に process 寿命 Models 政策を強制（openrouter 内にも cache 付き二重化）
+    ensureOpenRouterModelPolicy: async ({ models }) => {
+      const env = getServerEnv();
+      await ensureOpenRouterRuntimeModelPolicy({
+        baseUrl: env.openRouter.baseUrl,
+        models,
+        apiKey: env.openRouter.apiKey,
+      });
+    },
     now: () => new Date(),
     monotonicNow: () => performance.now(),
     openRouterTimeoutMs: env.openRouter.timeoutMs,
@@ -862,6 +879,18 @@ export async function runGeneration(
       return status;
     }
 
+    // G4: markSent 前の Models 政策。deps 未指定時は env 経由の ensure を使う。
+    const ensureModelPolicy =
+      deps.ensureOpenRouterModelPolicy ??
+      (async ({ models }: { models: readonly string[] }) => {
+        const env = getServerEnv();
+        await ensureOpenRouterRuntimeModelPolicy({
+          baseUrl: env.openRouter.baseUrl,
+          models,
+          apiKey: env.openRouter.apiKey,
+        });
+      });
+
     const call = async (
       excludedModelIds: readonly string[] = [],
       messages: readonly OpenRouterMessage[] = originalMessages,
@@ -876,6 +905,17 @@ export async function runGeneration(
       if (attemptTimeout <= 0) {
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
         return "terminal";
+      }
+      // G4 residual: attempt を焼く markSent より前に政策失敗を閉じる。
+      // process 寿命 cache により 2 回目以降（repair）は remote を叩かない。
+      try {
+        await ensureModelPolicy({ models: deps.models });
+      } catch (error) {
+        if (error instanceof OpenRouterCallError && error.code === "model_unavailable") {
+          await deps.repository.failBeforeSend(requestId, "model_unavailable");
+          return "terminal";
+        }
+        throw error;
       }
       const sent = await deps.repository.markSent(requestId);
       // 短期窓拒否は markSent 内で failed 終端化済み。再 fail せず status を読む。

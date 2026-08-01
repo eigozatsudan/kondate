@@ -1,13 +1,20 @@
-import { afterEach, expect, expectTypeOf, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import * as generationContracts from "../../../shared/contracts/generation.js";
 import { menuResponseFormat } from "../../../shared/contracts/generation.js";
 import { parseServerEnv, type ServerEnv } from "./env.js";
 import {
+  assertModelsMeetRuntimePolicy,
   createOpenRouterGenerationSender,
+  ensureOpenRouterRuntimeModelPolicy,
+  OFFICIAL_OPENROUTER_BASE_URL,
+  OFFICIAL_OPENROUTER_MODELS_URL,
   OPENROUTER_MAX_BODY_BYTES,
   OpenRouterCallError,
   readResponseBodyWithByteCap,
+  resetOpenRouterRuntimeModelPolicyCacheForTests,
+  seedOpenRouterRuntimeModelPolicyOkForTests,
   sendMenuGeneration,
+  usdPerMillion,
   type OpenRouterGenerationInput,
   type OpenRouterMessage,
 } from "./openrouter.js";
@@ -96,11 +103,17 @@ function requestBody(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): unknown
 
 getServerEnvMock.mockReturnValue(config);
 
+beforeEach(() => {
+  // 既存 chat 経路は remote Models 検証を seed でスキップ（G4 専用 describe で実 fetch を検証）
+  seedOpenRouterRuntimeModelPolicyOkForTests();
+});
+
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  resetOpenRouterRuntimeModelPolicyCacheForTests();
 });
 
 it("exposes only the constrained single-argument production input", () => {
@@ -531,6 +544,7 @@ it.each([
   ["free-on-real-api-FREE", ["vendor/a:FREE"]],
   ["router-auto-mixed-case", ["OpenRouter/Auto"]],
   ["mock-on-real-api", ["mock/vendor-paid"]],
+  ["Mock-prefix-on-real-api", ["Mock/vendor-paid"]],
 ] as const)("rejects %s configured models before fetch", async (_case, configuredModels) => {
   getServerEnvMock.mockReturnValueOnce({
     ...config,
@@ -802,4 +816,299 @@ it("accepts content parts array for vision messages", () => {
     ],
   };
   expect(Array.isArray(msg.content)).toBe(true);
+});
+
+
+// --- G4: pure policy + process-lifetime ensure ---
+
+const usablePricing = {
+  prompt: "0.0000001",
+  completion: "0.0000002",
+} as const;
+
+describe("assertModelsMeetRuntimePolicy", () => {
+  it("accepts structured_outputs AND response_format with usable pricing under cap", () => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+            pricing: usablePricing,
+          },
+        ],
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects when only response_format is present", () => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["response_format"],
+            pricing: usablePricing,
+          },
+        ],
+      ),
+    ).toThrow(/does not support strict structured output/u);
+  });
+
+  it("rejects when only structured_outputs is present", () => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs"],
+            pricing: usablePricing,
+          },
+        ],
+      ),
+    ).toThrow(/does not support strict structured output/u);
+  });
+
+  it("rejects missing usable pricing", () => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+          },
+        ],
+      ),
+    ).toThrow(/missing usable pricing/u);
+  });
+
+  it.each([
+    ["null fields", { prompt: null, completion: null }],
+    ["empty strings", { prompt: "", completion: "" }],
+    ["booleans", { prompt: false, completion: false }],
+    ["whitespace string", { prompt: "  ", completion: "0.0000001" }],
+    ["NaN string", { prompt: "NaN", completion: "0.0000001" }],
+    ["scientific notation", { prompt: "1e-6", completion: "0.0000001" }],
+    ["hex", { prompt: "0x0", completion: "0.0000001" }],
+  ] as const)("rejects non-usable pricing coerced by Number(): %s", (_label, pricing) => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+            pricing,
+          },
+        ],
+      ),
+    ).toThrow(/missing usable pricing/u);
+  });
+
+  it("rejects prompt+completion above 4 USD per 1M tokens", () => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+            pricing: { prompt: "0.0000021", completion: "0.0000021" },
+          },
+        ],
+      ),
+    ).toThrow(/exceeds max prompt\+completion/u);
+  });
+
+  it("accepts prompt+completion exactly 4 USD per 1M tokens", () => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+            pricing: { prompt: "0.000002", completion: "0.000002" },
+          },
+        ],
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects a configured model missing from the remote catalog", () => {
+    expect(() => assertModelsMeetRuntimePolicy(["vendor/missing"], [])).toThrow(
+      /not present in the OpenRouter Models API/u,
+    );
+  });
+
+  it("ignores pricing.request and cache fields when prompt+completion pass", () => {
+    expect(() =>
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+            pricing: {
+              ...usablePricing,
+              request: "999",
+              input_cache_read: "999",
+            } as { prompt: string; completion: string },
+          },
+        ],
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("usdPerMillion", () => {
+  it("is fail-closed for non-decimal inputs", () => {
+    expect(usdPerMillion(null)).toBeNull();
+    expect(usdPerMillion("")).toBeNull();
+    expect(usdPerMillion(false)).toBeNull();
+    expect(usdPerMillion("0x0")).toBeNull();
+    expect(usdPerMillion("1e-6")).toBeNull();
+    expect(usdPerMillion("0.000001")).toBe(1);
+    expect(usdPerMillion(0)).toBe(0);
+    expect(usdPerMillion(-1)).toBeNull();
+  });
+});
+
+describe("ensureOpenRouterRuntimeModelPolicy", () => {
+  beforeEach(() => {
+    // G4 専用: seed を外して実検証経路を通す
+    resetOpenRouterRuntimeModelPolicyCacheForTests();
+  });
+
+  it("skips remote fetch on exact local mock base", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    await ensureOpenRouterRuntimeModelPolicy({
+      baseUrl: "http://openrouter-mock:8787/api/v1",
+      models: ["mock/a:free"],
+      fetchImpl,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("skips remote fetch on non-official non-mock base", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    await ensureOpenRouterRuntimeModelPolicy({
+      baseUrl: "https://evil.example/api/v1",
+      models: ["vendor/a"],
+      fetchImpl,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("fetches Models API once and caches success for process life", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "vendor/a",
+              supported_parameters: ["structured_outputs", "response_format"],
+              pricing: usablePricing,
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await ensureOpenRouterRuntimeModelPolicy({
+      baseUrl: OFFICIAL_OPENROUTER_BASE_URL,
+      models: ["vendor/a"],
+      apiKey: "secret",
+      fetchImpl,
+    });
+    await ensureOpenRouterRuntimeModelPolicy({
+      baseUrl: OFFICIAL_OPENROUTER_BASE_URL,
+      models: ["vendor/a"],
+      apiKey: "secret",
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      OFFICIAL_OPENROUTER_MODELS_URL,
+      expect.objectContaining({
+        headers: {
+          Accept: "application/json",
+          Authorization: "Bearer secret",
+        },
+      }),
+    );
+  });
+
+  it("fail-closes network errors as model_unavailable", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new Error("sensitive transport detail"));
+    await expect(
+      ensureOpenRouterRuntimeModelPolicy({
+        baseUrl: OFFICIAL_OPENROUTER_BASE_URL,
+        models: ["vendor/a"],
+        fetchImpl,
+      }),
+    ).rejects.toEqual(new OpenRouterCallError("model_unavailable"));
+  });
+
+  it("fail-closes policy violations as model_unavailable without leaking detail", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "vendor/a",
+              supported_parameters: ["response_format"],
+              pricing: usablePricing,
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const error = await ensureOpenRouterRuntimeModelPolicy({
+      baseUrl: OFFICIAL_OPENROUTER_BASE_URL,
+      models: ["vendor/a"],
+      fetchImpl,
+    }).catch((reason: unknown) => reason);
+    expect(error).toEqual(new OpenRouterCallError("model_unavailable"));
+    expect(String(error)).not.toContain("structured");
+  });
+
+  it("blocks sendMenuGeneration before chat when remote policy fails", async () => {
+    resetOpenRouterRuntimeModelPolicyCacheForTests();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: models[0],
+              supported_parameters: ["response_format"],
+              pricing: usablePricing,
+            },
+            {
+              id: models[1],
+              supported_parameters: ["response_format"],
+              pricing: usablePricing,
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    await expect(sendMenuGeneration({ messages: [], timeoutMs: 1_000 })).rejects.toEqual(
+      new OpenRouterCallError("model_unavailable"),
+    );
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toBe(OFFICIAL_OPENROUTER_MODELS_URL);
+  });
 });
