@@ -134,8 +134,8 @@ type RpcArgs = Record<string, unknown>;
 
 function createRpcAdmin(
   handlers: {
-    finish?: (args: RpcArgs) => Promise<{ data: unknown; error: null }>;
-    publish?: (args: RpcArgs) => Promise<{ data: unknown; error: null }>;
+    finish?: (args: RpcArgs) => Promise<{ data: unknown; error: unknown }>;
+    publish?: (args: RpcArgs) => Promise<{ data: unknown; error: unknown }>;
     /** 当日 AI 残り枠。省略時は 500（cap 未到達） */
     aiBudgetRemaining?: number;
   } = {},
@@ -180,8 +180,8 @@ afterEach(() => {
   delete process.env.SHARE_WORKER_CRON_SECRET;
 });
 
-describe("share-generalize-worker auth / schedule", () => {
-  it("returns 401 without secret or schedule event", async () => {
+describe("share-generalize-worker auth / path", () => {
+  it("returns 401 without secret (env 有無をオラクルにしない)", async () => {
     process.env[SHARE_WORKER_CRON_SECRET_ENV] = VALID_SECRET;
     const response = await shareGeneralizeWorker(
       new Request("http://127.0.0.1/.netlify/functions/share-generalize-worker", {
@@ -189,6 +189,19 @@ describe("share-generalize-worker auth / schedule", () => {
       }),
     );
     expect(response.status).toBe(401);
+    expect(claimShareGeneralizationJobs).not.toHaveBeenCalled();
+  });
+
+  it("returns 405 for non-POST before auth", async () => {
+    process.env[SHARE_WORKER_CRON_SECRET_ENV] = VALID_SECRET;
+    const response = await shareGeneralizeWorker(
+      new Request("http://127.0.0.1/api/share-generalize-worker", {
+        method: "GET",
+        headers: { [SHARE_WORKER_CRON_SECRET_HEADER]: VALID_SECRET },
+      }),
+    );
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
     expect(claimShareGeneralizationJobs).not.toHaveBeenCalled();
   });
 
@@ -204,14 +217,13 @@ describe("share-generalize-worker auth / schedule", () => {
     expect(claimShareGeneralizationJobs).not.toHaveBeenCalled();
   });
 
-  it("accepts schedule invoke when Bearer secret matches", async () => {
+  it("accepts POST when Bearer secret matches", async () => {
     process.env[SHARE_WORKER_CRON_SECRET_ENV] = VALID_SECRET;
     claimShareGeneralizationJobs.mockResolvedValue([]);
     const response = await shareGeneralizeWorker(
-      new Request("http://127.0.0.1/.netlify/functions/share-generalize-worker", {
+      new Request("http://127.0.0.1/api/share-generalize-worker", {
         method: "POST",
         headers: {
-          "x-netlify-event": "schedule",
           authorization: `Bearer ${VALID_SECRET}`,
         },
       }),
@@ -224,9 +236,9 @@ describe("share-generalize-worker auth / schedule", () => {
     );
   });
 
-  it("exports schedule-only config without path", () => {
-    expect(config).toEqual({ schedule: "@hourly" });
-    expect(config).not.toHaveProperty("path");
+  it("exports path+POST config without schedule (maintenance 同型)", () => {
+    expect(config).toEqual({ path: "/api/share-generalize-worker", method: "POST" });
+    expect(config).not.toHaveProperty("schedule");
   });
 
   it("authorizeShareGeneralizeWorker rejects short secrets", () => {
@@ -420,6 +432,37 @@ describe("processShareGeneralizationJob pipeline", () => {
         p_ai_call_count: 0,
       }),
     );
+  });
+
+  it("classifies publish RPC failure as server_gate_failed not openrouter_failed", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const { admin, finish, publish } = createRpcAdmin({
+      publish: () =>
+        Promise.resolve({
+          data: null,
+          error: { message: "share_publish_failed" },
+        }),
+    });
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass: makePassSender((_pass, menu) => identityPatch(menu)),
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "failed",
+        p_code: "server_gate_failed",
+        p_ai_call_count: 2,
+      }),
+    );
+    const logs = logLines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(logs.some((l) => l.failure_code === "server_gate_failed")).toBe(true);
+    expect(logs.some((l) => l.failure_code === "openrouter_failed")).toBe(false);
   });
 
   it("skips with app_ai_cap before OpenRouter when budget remaining is 0", async () => {

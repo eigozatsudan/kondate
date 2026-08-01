@@ -177,6 +177,43 @@ it("upserts share consent only when the optional share checkbox is checked", asy
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
 });
 
+it("共有同意 RPC が失敗しても必須 privacy 同意後は returnTo へ進む", async () => {
+  const user = userEvent.setup();
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  upsertShare.mockRejectedValue(new Error("共有の同意を保存できませんでした"));
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  await waitFor(() => {
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+  });
+  expect(upsertShare).toHaveBeenCalledWith({}, true);
+  // 任意 share 失敗で必須 privacy を巻き戻さず遷移する
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("review resume 付きの returnTo（review確定直前の遷移）を確認して同じ画面へ戻る", async () => {
   const user = userEvent.setup();
   acceptConsent.mockResolvedValue({

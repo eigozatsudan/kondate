@@ -1,6 +1,8 @@
 /**
  * 共有一般化 worker（Task 7d: claim → load → canonical → Pass1/2 → gate → publish）。
  * generate-menu / generation-service の同期寿命には載せない。
+ * 公開 path + アプリ層 secret 認証のみ（Netlify の schedule 経路は使わない）。
+ * 定期実行は secret 付き HTTP（GitHub Actions 等）から POST する。
  * ログは閉じた code / jobId / failureCode / 件数のみ。タイトル・プロンプト・payload 禁止。
  */
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -97,31 +99,39 @@ function bearerToken(authorization: string | null): string | null {
 }
 
 /**
- * アプリ層認可:
- * - env SHARE_WORKER_CRON_SECRET 必須（短すぎ = 403）
- * - header x-share-worker-cron-secret または Authorization: Bearer が secret と一致
- * - x-netlify-event: schedule 単独は不可。Netlify scheduled function は
- *   Authorization: Bearer $SHARE_WORKER_CRON_SECRET をプラットフォーム側で付与する想定
- *  （未設定なら schedule も 401 になる fail-closed）
+ * アプリ層認可（maintenance-cleanup と同型）:
+ * - 提示 secret が無い（両ヘッダ空）→ 常に 401（env 有無をオラクルにしない）
+ * - 提示あり + env 未設定/短すぎ → 403 fail-closed
+ * - 提示あり + env あり → カスタムヘッダと Bearer の**いずれか**が一致すれば OK
+ *   （片方誤りでも他方が正しければ通す。空文字ヘッダは「未提示」扱い）
+ * - 提示あり + どちらも不一致 → 403
+ * - x-netlify-event: schedule 単独は不可（Netlify schedule は使わない）
  */
 export function authorizeShareGeneralizeWorker(
   request: Request,
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): "ok" | "unauthorized" | "forbidden" {
+  const customRaw = request.headers.get(SHARE_WORKER_CRON_SECRET_HEADER);
+  const customSecret =
+    customRaw === null ? null : customRaw.trim().length > 0 ? customRaw.trim() : null;
+  const bearerSecret = bearerToken(request.headers.get("authorization"));
+
+  if (customSecret === null && bearerSecret === null) {
+    return "unauthorized";
+  }
+
   const expected = (env[SHARE_WORKER_CRON_SECRET_ENV] ?? "").trim();
   if (expected.length < MIN_SECRET_LENGTH) {
     return "forbidden";
   }
 
-  const headerSecret =
-    request.headers.get(SHARE_WORKER_CRON_SECRET_HEADER)?.trim() ??
-    bearerToken(request.headers.get("authorization"));
-
-  if (headerSecret !== null && headerSecret.length > 0) {
-    return secretsEqual(headerSecret, expected) ? "ok" : "forbidden";
+  if (customSecret !== null && secretsEqual(customSecret, expected)) {
+    return "ok";
   }
-
-  return "unauthorized";
+  if (bearerSecret !== null && secretsEqual(bearerSecret, expected)) {
+    return "ok";
+  }
+  return "forbidden";
 }
 
 function authDeniedResponse(
@@ -370,6 +380,7 @@ export async function processShareGeneralizationJob(
   }
 
   // --- 7. publish RPC（同一 TX で consent 再確認 + pool INSERT + AI 台帳） ---
+  // AI 成功後の失敗は openrouter_failed にしない（関門/台帳側。メトリクス誤分類防止）
   let publishData: unknown;
   try {
     const result = await deps.admin.rpc("publish_shared_emergency_recipe", {
@@ -390,12 +401,12 @@ export async function processShareGeneralizationJob(
   } catch {
     // RPC 例外時は job が running のまま残る可能性があるため finish を試みる
     try {
-      await finish("failed", "openrouter_failed");
+      await finish("failed", "server_gate_failed");
     } catch {
       logTerminal({
         level: "error",
         code: "share_generalize_job_failed",
-        failureCode: "openrouter_failed",
+        failureCode: "server_gate_failed",
       });
     }
     return;
@@ -404,12 +415,12 @@ export async function processShareGeneralizationJob(
   const published = publishJobResultSchema.safeParse(publishData);
   if (!published.success || !published.data.ok) {
     try {
-      await finish("failed", "openrouter_failed");
+      await finish("failed", "server_gate_failed");
     } catch {
       logTerminal({
         level: "error",
         code: "share_generalize_job_failed",
-        failureCode: "openrouter_failed",
+        failureCode: "server_gate_failed",
       });
     }
     return;
@@ -441,7 +452,13 @@ export async function processShareGeneralizationJob(
 export default async function shareGeneralizeWorker(request?: Request): Promise<Response> {
   const started = performance.now();
   const requestId = REQUEST_ID;
+  // functions:invoke / テスト互換で省略時は空 Request。
   const req = request ?? new Request("http://127.0.0.1/.netlify/functions/share-generalize-worker");
+
+  // 運用 cron は POST のみ（誤キャッシュ・プリフェッチを避ける）。secret 検査前に閉じる。
+  if (req.method !== "POST") {
+    return new Response(null, { status: 405, headers: { allow: "POST" } });
+  }
 
   const auth = authorizeShareGeneralizeWorker(req);
   if (auth !== "ok") {
@@ -470,13 +487,14 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
         });
       } catch {
         // 1 job の例外でバッチ全体を落とさない。running 残留は reaper が回収する。
+        // 未分類例外は openrouter 以外（load/budget RPC 等）もここに来るため閉じた server 側コードを使う。
         safeLog({
           level: "error",
           requestId,
           code: "share_generalize_job_failed",
           durationMs: Math.round(performance.now() - started),
           jobId: job.id,
-          failureCode: "openrouter_failed",
+          failureCode: "server_gate_failed",
         });
       }
     }
@@ -493,4 +511,8 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
   }
 }
 
-export const config: Config = { schedule: "@hourly" };
+/** HTTP path のみ。定期起動は secret 付き外部 cron（GitHub Actions 等）。 */
+export const config: Config = {
+  path: "/api/share-generalize-worker",
+  method: "POST",
+};

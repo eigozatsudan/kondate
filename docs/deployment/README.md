@@ -370,7 +370,8 @@ Git 継続デプロイを主にする場合:
 4. Functions が 5xx の嵐にならない（例: `/api/` 配下の公開ヘルス相当があれば）。
 5. Netlify の Function ログに PII・プロンプト・生 AI 出力が出ていない。
 6. **`maintenance-cleanup`**: Netlify に `SUPABASE_MAINTENANCE_DB_URL` と `MAINTENANCE_CRON_SECRET`。GitHub に `MAINTENANCE_CLEANUP_URL` / `MAINTENANCE_CRON_SECRET` があり hourly workflow が 204 になること（[netlify.md](./netlify.md)。Netlify schedule は使わない）。
-7. Plus を使うなら Stripe Webhook が `https://<origin>/api/billing/webhook` に届くこと。
+7. **`share-generalize-worker`**: Netlify に `SHARE_WORKER_CRON_SECRET`。GitHub に `SHARE_GENERALIZE_WORKER_URL` / `SHARE_WORKER_CRON_SECRET` があり hourly workflow が 204 になること（[netlify.md](./netlify.md)。Netlify schedule は使わない）。
+8. Plus を使うなら Stripe Webhook が `https://<origin>/api/billing/webhook` に届くこと。
 
 ---
 

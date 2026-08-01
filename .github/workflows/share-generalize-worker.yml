@@ -1,0 +1,59 @@
+# 本番 share-generalize-worker を secret 付き POST で毎時起動する。
+# Netlify schedule はクライアント偽装可能なヘッダに依存するため使わない（maintenance 同型）。
+#
+# 必要な GitHub Secrets（repository）:
+#   SHARE_GENERALIZE_WORKER_URL  例: https://<site>/api/share-generalize-worker
+#                                または https://<site>/.netlify/functions/share-generalize-worker
+#   SHARE_WORKER_CRON_SECRET     Netlify の同名 env と同一（16 文字以上）
+name: Share generalize worker
+
+on:
+  schedule:
+    # 毎時 37 分（UTC）。maintenance(17) とずらして負荷を分散。
+    - cron: "37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: share-generalize-worker
+  cancel-in-progress: false
+
+jobs:
+  invoke:
+    runs-on: ubuntu-latest
+    # Pass1+Pass2 で最大 ~48s + 余白。Netlify sync 60s 壁に合わせる。
+    timeout-minutes: 3
+    steps:
+      - name: POST share generalize worker with cron secret
+        env:
+          SHARE_GENERALIZE_WORKER_URL: ${{ secrets.SHARE_GENERALIZE_WORKER_URL }}
+          SHARE_WORKER_CRON_SECRET: ${{ secrets.SHARE_WORKER_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          # GitHub Secrets UI の末尾改行を落とす（サーバ側 trim と揃える）
+          url="$(printf '%s' "${SHARE_GENERALIZE_WORKER_URL:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          secret="$(printf '%s' "${SHARE_WORKER_CRON_SECRET:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          if [ -z "${url}" ] || [ -z "${secret}" ]; then
+            echo "SHARE_GENERALIZE_WORKER_URL and SHARE_WORKER_CRON_SECRET secrets are required" >&2
+            exit 1
+          fi
+          # 誤設定による secret 外送を抑止（https + 本番 path のみ）
+          case "${url}" in
+            https://*/api/share-generalize-worker|https://*/.netlify/functions/share-generalize-worker) ;;
+            *)
+              echo "SHARE_GENERALIZE_WORKER_URL must be https .../api/share-generalize-worker (or function path)" >&2
+              exit 1
+              ;;
+          esac
+          # 本文・URL・secret をログに出さない。HTTP ステータスのみ。
+          code="$(
+            curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --request POST \
+              --header "x-share-worker-cron-secret: ${secret}" \
+              --max-time 90 \
+              "${url}"
+          )"
+          echo "http_status=${code}"
+          test "${code}" = "204"

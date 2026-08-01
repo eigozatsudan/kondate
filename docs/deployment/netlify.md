@@ -205,6 +205,33 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 2. ステージングの SQLSTATE `57014` 統合テストで再現する。
 3. 生ドライバエラーやメンテナンス URL の印刷は有効化しない。
 
+## `share-generalize-worker` Function
+
+`netlify/functions/share-generalize-worker.ts`。共有プール掲載の Pass1/2 worker。
+
+| 項目 | 値 |
+| --- | --- |
+| 公開 path | `POST /api/share-generalize-worker`（function config） |
+| スケジュール | **Netlify schedule は使わない**。GitHub Actions `share-generalize-worker.yml`（毎時）または同等の secret 付き cron |
+| 認証 | 提示 secret が無い → **常に 401**。提示あり + env 未設定/短すぎ → 403。提示あり + env あり → カスタムヘッダ `x-share-worker-cron-secret` と Bearer の**いずれか**が一致すれば 204 |
+| 処理 | claim 1 件 → load → canonical → Pass1/2 → server gate → publish（AI 枠・抽選は RPC 側） |
+| 監視 | 閉じた `code` / `job_id` / `failure_code` / 件数のみ（タイトル・payload・contributor 禁止） |
+
+初回 production デプロイ後:
+
+1. Functions に `SHARE_WORKER_CRON_SECRET`（16 文字以上）が入っていること。
+2. GitHub repository secrets に `SHARE_GENERALIZE_WORKER_URL`（本番 origin + `/api/share-generalize-worker`）と `SHARE_WORKER_CRON_SECRET`（Netlify と同値）を設定し、`share-generalize-worker` workflow が 204 を返すこと。
+3. 失敗時は閉じたログのみ。secret / URL / payload を印刷して調査しない。
+
+### ローカル診断
+
+```bash
+curl -X POST -H "x-share-worker-cron-secret: $SHARE_WORKER_CRON_SECRET" \
+  http://127.0.0.1:5173/api/share-generalize-worker -w '%{http_code}\n' -o /dev/null
+```
+
+secret なしのプローブは **env の有無に関わらず 401** になること。
+
 ## ローカル値の持ち込み禁止
 
 次を Netlify サイト変数へコピーしない:

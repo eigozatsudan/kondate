@@ -26,11 +26,16 @@ export function PrivacyNoticePage() {
     mutationFn: async (input: PrivacyAcceptInput) => {
       if (userId === undefined) throw new Error("ログインが必要です");
       const client = getBrowserSupabaseClient();
-      // privacy は必須。共有は任意チェック時のみ別 RPC で保存する
+      // privacy は必須。共有は任意チェック時のみ別 RPC で保存する。
+      // 共有 RPC 失敗で必須 privacy 同意を巻き戻さない・画面遷移を止めない（設定で再同意可）。
       const consent = await acceptCurrentPrivacyConsent(client, userId);
       if (input.shareConsentAccepted) {
-        const share = await upsertMyShareConsent(client, true);
-        queryClient.setQueryData(shareConsentKeys.current(userId), share);
+        try {
+          const share = await upsertMyShareConsent(client, true);
+          queryClient.setQueryData(shareConsentKeys.current(userId), share);
+        } catch {
+          // best-effort: privacy は保存済み。share は設定トグルで再試行できる
+        }
       }
       return consent;
     },

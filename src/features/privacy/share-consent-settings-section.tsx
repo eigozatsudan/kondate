@@ -165,8 +165,9 @@ export function ShareConsentSettingsSection({
             <p className="type-small">{shareConsentSettingsCopy.sharedListEmpty}</p>
           ) : (
             <ul className="stack gap-2">
-              {sharedList.map((item) => (
-                <li key={`${item.shared_on}:${item.title}`}>
+              {/* title+date は非一意になり得る（recipe_id は意図的に非公開）ため index を併用 */}
+              {sharedList.map((item, index) => (
+                <li key={`${item.shared_on}:${item.title}:${String(index)}`}>
                   <strong>{item.title}</strong>
                   <p className="type-small">{formatSharedOn(item.shared_on)}</p>
                 </li>
