@@ -622,13 +622,23 @@ function HouseholdResultBody({
   // D-C1: 新規作成は active list の safety gate と分離（履歴詳細と同契約）
   // isFetching（裏 refetch）では busy にしない。success 済みならシートを開いたままにする（E2E フルジャーニーの作成シート消失対策）。
   const shoppingListBusy =
-    menuId === null || (!shoppingList.isSuccess && (shoppingList.isPending || shoppingList.isLoading));
+    menuId === null ||
+    (!shoppingList.isSuccess && (shoppingList.isPending || shoppingList.isLoading));
   const shoppingMutateBlocked =
     !actionsEnabled || shoppingGate.blocked || shoppingListBusy || shoppingList.isFetching;
   // 開く条件（ボタン disabled / auto-open）。閉じる条件とは分離（L8）
   const canOpenCreateSheet = actionsEnabled && !shoppingListBusy && !createList.isPending;
-  const mustCloseCreateSheet = !actionsEnabled;
-  const mustCloseReconcileSheet = !actionsEnabled || shoppingGate.blocked;
+  // 一時的な phase=checking（hard recheck）ではシートを閉じない。invalid/error だけ fail-closed で閉じる。
+  // 送信は safetyBlocked={!actionsEnabled} のままなので、checking 中は「作成する」が disabled。
+  const mustCloseCreateSheet =
+    revalidation.phase === "error" ||
+    (revalidation.phase === "checked" &&
+      revalidation.result !== undefined &&
+      !isRevalidationActionable(revalidation.result));
+  const mustCloseReconcileSheet =
+    mustCloseCreateSheet ||
+    shoppingGate.blocked ||
+    (revalidation.phase === "checked" && !actionsEnabled);
   const canCreateShoppingList = canOpenCreateSheet;
   const nonRemovedCount =
     activeList === null ? 0 : activeList.items.filter((item) => !item.isRemovedByUser).length;

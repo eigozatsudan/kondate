@@ -611,8 +611,16 @@ function HouseholdDetailBody({
     !actionsEnabled || shoppingGate.blocked || shoppingListBusy || shoppingList.isFetching;
   // 開く条件（ボタン disabled / auto-open）。閉じる条件とは分離（L8）
   const canOpenCreateSheet = actionsEnabled && !shoppingListBusy && !createList.isPending;
-  const mustCloseCreateSheet = !actionsEnabled;
-  const mustCloseReconcileSheet = !actionsEnabled || shoppingGate.blocked;
+  // 一時的な phase=checking ではシートを閉じない（invalid/error のみ fail-closed）
+  const mustCloseCreateSheet =
+    revalidation.phase === "error" ||
+    (revalidation.phase === "checked" &&
+      revalidation.result !== undefined &&
+      !isRevalidationActionable(revalidation.result));
+  const mustCloseReconcileSheet =
+    mustCloseCreateSheet ||
+    shoppingGate.blocked ||
+    (revalidation.phase === "checked" && !actionsEnabled);
   const canCreateShoppingList = canOpenCreateSheet;
   const nonRemovedCount =
     activeList === null ? 0 : activeList.items.filter((item) => !item.isRemovedByUser).length;

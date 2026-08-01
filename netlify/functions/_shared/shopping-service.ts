@@ -137,15 +137,16 @@ async function assertActiveListSourcesCurrentlySafe(
 /**
  * SHOP1: 30 日 idempotent replay でも現行 safety を再解釈する。
  * 保存済み {listId,version} をそのまま 200 にすると、家族条件変更後も「成功」表示になる。
- * 対象 list が消えている／source が invalid なら fail-closed（再送成功にしない）。
+ *
+ * ただし create 成功後に source 献立を削除したリストは製品仕様上残る。
+ * その場合 validatedDraft(command.menuId) は常に失敗するため、
+ * **list 上の live source だけ**再検証する（menu_id null の snapshot source は許容）。
+ * list 自体が消えているときだけ 409。
  */
 async function assertReplayStillCurrentlySafe(
   deps: ShoppingDependencies,
   input: { menuId: string; listId: string },
 ): Promise<void> {
-  // コマンド対象 menu を live 再検証（pantry 読込・fingerprint before/after 含む）
-  await validatedDraft(deps, input.menuId);
-
   const list = await deps.loadActiveList(input.listId);
   if (list === null) {
     throw new HttpError(
@@ -154,8 +155,23 @@ async function assertReplayStillCurrentlySafe(
       "買い物リストの状態が変わったため、もう一度確認してください",
     );
   }
-  // multi-source list の他 source も閉じる（append 後の replay 含む）
-  await assertActiveListSourcesCurrentlySafe(deps, input.listId);
+  const sources = await deps.loadActiveListSources(input.listId);
+  const liveMenuIds = [
+    ...new Set(
+      sources
+        .map((source) => source.menuId)
+        .filter((menuId): menuId is string => menuId !== null && menuId.length > 0),
+    ),
+  ];
+  // live source が残っていれば現行 safety を当てる。全て削除済みならリスト保持のまま replay 可。
+  for (const menuId of liveMenuIds) {
+    await assertHouseholdMenuIdentity(deps, menuId);
+    await revalidateMenuOrThrow(deps, menuId);
+  }
+  // command.menuId がまだ live なら明示的に再確認（create 直後の条件変更）
+  if (liveMenuIds.includes(input.menuId)) {
+    await validatedDraft(deps, input.menuId);
+  }
 }
 
 export async function createShoppingListFromMenu(
