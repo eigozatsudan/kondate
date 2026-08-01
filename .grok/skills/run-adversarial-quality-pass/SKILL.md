@@ -42,24 +42,24 @@ description: >
 
 この skill 内の名前を使う。**`SubAgents.md` の Task Verifier（Docker コマンド再実行役）と「verifier」を同一視しない。**
 
-| この skill の役割 | 編集 | 責任 | SubAgents / 誤マップ禁止 |
-| --- | --- | --- | --- |
-| **reviewer** | 不可 | 候補発見のみ | — |
-| **finding-adjudicator** | 不可 | 候補の真偽判定（成立/棄却/未確定）のみ | **SubAgents の Verifier / fast-worker にマップしない** |
-| **fixer** | 可 | 成立指摘の最小修正のみ | implementer 相当 |
-| **re-reviewer** | 不可 | 修正後の候補再発見 + クロージャ確認 | reviewer と同型。真偽判定はしない |
-| **ci-runner** | 原則不可（`run-ci-local` の修正サイクル中のみコード編集可、**コミットは不可**） | フル `run-ci-local` 実行と step 証跡 | コマンド実行役。finding-adjudicator と兼ねない |
+| この skill の役割       | 編集                                                                            | 責任                                   | SubAgents / 誤マップ禁止                               |
+| ----------------------- | ------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------ |
+| **reviewer**            | 不可                                                                            | 候補発見のみ                           | —                                                      |
+| **finding-adjudicator** | 不可                                                                            | 候補の真偽判定（成立/棄却/未確定）のみ | **SubAgents の Verifier / fast-worker にマップしない** |
+| **fixer**               | 可                                                                              | 成立指摘の最小修正のみ                 | implementer 相当                                       |
+| **re-reviewer**         | 不可                                                                            | 修正後の候補再発見 + クロージャ確認    | reviewer と同型。真偽判定はしない                      |
+| **ci-runner**           | 原則不可（`run-ci-local` の修正サイクル中のみコード編集可、**コミットは不可**） | フル `run-ci-local` 実行と step 証跡   | コマンド実行役。finding-adjudicator と兼ねない         |
 
 description プレフィックス例: `[reviewer]` / `[finding-adjudicator]` / `[fixer]` / `[re-reviewer]` / `[ci-runner]`。
 
 ## 重大度
 
-| レベル | 定義 | 扱い |
-| --- | --- | --- |
-| **Critical** | セキュリティ侵害、データ損失/漏洩、認可バイパス、金銭・quota の不正、安全性保証の誤表示 | 即修正。破壊的/仕様変更なら先に報告 |
-| **Important** | 実害のあるバグ、リグレッション、仕様乖離、データ不整合、失敗時の危険なフォールスセーフ | 必ず修正 |
-| **Minor** | 実害は限定的だが再現可能・契約違反・エッジの誤り | 必ず修正（完了条件に含む） |
-| **Nit** | スタイル好み、任意の改善、根拠の薄い提案 | 修正しない。記録のみ |
+| レベル        | 定義                                                                                    | 扱い                                |
+| ------------- | --------------------------------------------------------------------------------------- | ----------------------------------- |
+| **Critical**  | セキュリティ侵害、データ損失/漏洩、認可バイパス、金銭・quota の不正、安全性保証の誤表示 | 即修正。破壊的/仕様変更なら先に報告 |
+| **Important** | 実害のあるバグ、リグレッション、仕様乖離、データ不整合、失敗時の危険なフォールスセーフ  | 必ず修正                            |
+| **Minor**     | 実害は限定的だが再現可能・契約違反・エッジの誤り                                        | 必ず修正（完了条件に含む）          |
+| **Nit**       | スタイル好み、任意の改善、根拠の薄い提案                                                | 修正しない。記録のみ                |
 
 - 修正キューに載せるのは **finding-adjudicator が「成立」と判定した Critical / Important / Minor** のみ
 - Nit は完了をブロックしない
@@ -71,7 +71,7 @@ description プレフィックス例: `[reviewer]` / `[finding-adjudicator]` / `
 
 1. **成立** Critical / Important / Minor が 1 件以上
 2. **未確定** Critical または Important（追加証拠を取るかユーザー判断待ち）
-3. **棄却** された Critical / Important で、**独立 2 名相当の確認が無い**もの  
+3. **棄却** された Critical / Important で、**独立 2 名相当の確認が無い**もの
    - 最低: 別の finding-adjudicator（または親以外の第二 read-only）が棄却理由を再確認し `unit-<slug>-verdict.md` に `reject-confirmed-by:` を残す
 4. **`In scope: no` の Critical / Important** が `deferred-criticals.md` に未割当・未 waive のまま
 5. re-review の **closure checklist** で prior established finding が `closed` でない
@@ -91,19 +91,19 @@ python3 -c "import uuid; print(uuid.uuid4().hex[:8])"
 台帳ディレクトリ: `.superpowers/sdd/adversarial-quality-pass-<RUN_ID>/`  
 （`.gitignore` の `.superpowers/` により **gitignored**。コミットしない。無ければ作成）
 
-| ファイル | 内容 |
-| --- | --- |
-| `plan.md` | 単位・優先順位・対象パス・関連設計・E2E spec |
-| `ledger.md` | 各単位の状態（pending / reviewing / adjudicating / fixing / rereviewing / done / blocked） |
-| `unit-<slug>-candidates.md` | reviewer の候補（親は **severity・重大度を書き換えない**） |
-| `unit-<slug>-verdict.md` | finding-adjudicator の成立/棄却/未確定 |
-| `unit-<slug>-fix-report.md` | fixer の実施内容（Important+ は design 節の引用必須） |
-| `unit-<slug>-rereview.md` | re-reviewer: 新規候補 + closure checklist |
-| `unit-<slug>-rereview-candidates.md` | re-review が出した **新規候補**（未判定。2b へ） |
-| `deferred-criticals.md` | 範囲外とされた Critical/Important の追跡台帳 |
-| `cycle-log.md` | 周回ログ（短い時系列、予算カウンタ） |
-| `ci-run-log.md` | `run-ci-local` 各ステップ名 + 終了コード |
-| `final-report.md` | 最終報告ドラフト |
+| ファイル                             | 内容                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `plan.md`                            | 単位・優先順位・対象パス・関連設計・E2E spec                                               |
+| `ledger.md`                          | 各単位の状態（pending / reviewing / adjudicating / fixing / rereviewing / done / blocked） |
+| `unit-<slug>-candidates.md`          | reviewer の候補（親は **severity・重大度を書き換えない**）                                 |
+| `unit-<slug>-verdict.md`             | finding-adjudicator の成立/棄却/未確定                                                     |
+| `unit-<slug>-fix-report.md`          | fixer の実施内容（Important+ は design 節の引用必須）                                      |
+| `unit-<slug>-rereview.md`            | re-reviewer: 新規候補 + closure checklist                                                  |
+| `unit-<slug>-rereview-candidates.md` | re-review が出した **新規候補**（未判定。2b へ）                                           |
+| `deferred-criticals.md`              | 範囲外とされた Critical/Important の追跡台帳                                               |
+| `cycle-log.md`                       | 周回ログ（短い時系列、予算カウンタ）                                                       |
+| `ci-run-log.md`                      | `run-ci-local` 各ステップ名 + 終了コード                                                   |
+| `final-report.md`                    | 最終報告ドラフト                                                                           |
 
 パスは run 中に再生成せず固定する。サブエージェントには **ファイルパス** を渡し、巨大な raw diff/log を親コンテキストへ貼らない。
 
@@ -113,14 +113,14 @@ python3 -c "import uuid; print(uuid.uuid4().hex[:8])"
 
 `cycle-log.md` でカウントする。いずれかに達したら **偽のゼロ収束を装わず** ユーザーへエスカレーション（途中版 `final-report.md`）:
 
-| 上限 | 既定値 | 意味 |
-| --- | --- | --- |
-| 全 unit スイープ | **2** | Phase 2 を全 unit なめる回数（初回 + 1 再スイープ）。以降は残件を報告 |
-| unit 内 fix↔adjudicate 往復 | **5** / unit | 同一 unit での 2b→2c→2e→2b サイクル |
-| 同一 fingerprint 修正失敗 | **3** | path + failure-path 要約の fingerprint。3 回失敗で自動棄却せず **ユーザー報告** |
-| fix コミット総数 | **40** / run | 超えたら残件付きで停止 |
-| 依存 reopen 回数 | **6** / run | contracts/auth/safety/quota 由来の他 unit 再オープン |
-| `run-ci-local` 修正サイクル | skill 既定（3） | 超えれば打ち切り報告 |
+| 上限                        | 既定値          | 意味                                                                            |
+| --------------------------- | --------------- | ------------------------------------------------------------------------------- |
+| 全 unit スイープ            | **2**           | Phase 2 を全 unit なめる回数（初回 + 1 再スイープ）。以降は残件を報告           |
+| unit 内 fix↔adjudicate 往復 | **5** / unit    | 同一 unit での 2b→2c→2e→2b サイクル                                             |
+| 同一 fingerprint 修正失敗   | **3**           | path + failure-path 要約の fingerprint。3 回失敗で自動棄却せず **ユーザー報告** |
+| fix コミット総数            | **40** / run    | 超えたら残件付きで停止                                                          |
+| 依存 reopen 回数            | **6** / run     | contracts/auth/safety/quota 由来の他 unit 再オープン                            |
+| `run-ci-local` 修正サイクル | skill 既定（3） | 超えれば打ち切り報告                                                            |
 
 「同一指摘」の判定は文言一致ではなく **fingerprint**（主な `File` + failure path の正規化キー）で行う。リネームして周回を逃れることを禁止。
 
@@ -188,20 +188,20 @@ python3 -c "import uuid; print(uuid.uuid4().hex[:8])"
 - `generation-ai`
 - `shared-contracts-infra`
 
-| 優先 | slug | 主な対象 | 関連設計 / E2E の例 |
-| ---: | --- | --- | --- |
-| 1 | `auth-session` | `src/features/auth/**`, auth-continuation Functions, session/callback | auth-callback-security, auth-recovery, oauth-mock |
-| 2 | `household-safety` | household, allergen, current-safety, RLS 周辺 | onboarding, settings, history-safety-change |
-| 3 | `generation-ai` | generation feature, generate-*, OpenRouter, quota, repair, materialize | generation-recovery-results, full-journey |
-| 4 | `planner-guided` | planner wizard, draft, route limits | full-journey, menu-domain-pantry |
-| 5 | `history-revalidation` | history, revalidate, regeneration | history-*, history-safety-change |
-| 6 | `shopping` | shopping feature + shopping-list Functions | shopping-list, shopping-list-races |
-| 7 | `billing-entitlement` | billing feature + Stripe Functions | billing-plus + paid-plan design |
-| 8 | `pantry-emergency-flyer` | pantry, emergency, flyer | menu-domain-pantry, emergency design |
-| 9 | `account-privacy` | account, privacy, delete-account, feedback | account-deletion, privacy |
-| 10 | `landing-welcome-shell` | landing, welcome, app shell/router, public-env | foundation, mobile-accessibility |
-| 11 | `shared-contracts-infra` | `shared/**`, logger, http, env, maintenance | tooling / privacy log asserts |
-| 12 | `e2e-crosscutting` | 複数 unit を跨ぐ E2E とレース/回復シナリオ | full-journey 他、残差 |
+| 優先 | slug                     | 主な対象                                                               | 関連設計 / E2E の例                               |
+| ---: | ------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------- |
+|    1 | `auth-session`           | `src/features/auth/**`, auth-continuation Functions, session/callback  | auth-callback-security, auth-recovery, oauth-mock |
+|    2 | `household-safety`       | household, allergen, current-safety, RLS 周辺                          | onboarding, settings, history-safety-change       |
+|    3 | `generation-ai`          | generation feature, generate-*, OpenRouter, quota, repair, materialize | generation-recovery-results, full-journey         |
+|    4 | `planner-guided`         | planner wizard, draft, route limits                                    | full-journey, menu-domain-pantry                  |
+|    5 | `history-revalidation`   | history, revalidate, regeneration                                      | history-*, history-safety-change                  |
+|    6 | `shopping`               | shopping feature + shopping-list Functions                             | shopping-list, shopping-list-races                |
+|    7 | `billing-entitlement`    | billing feature + Stripe Functions                                     | billing-plus + paid-plan design                   |
+|    8 | `pantry-emergency-flyer` | pantry, emergency, flyer                                               | menu-domain-pantry, emergency design              |
+|    9 | `account-privacy`        | account, privacy, delete-account, feedback                             | account-deletion, privacy                         |
+|   10 | `landing-welcome-shell`  | landing, welcome, app shell/router, public-env                         | foundation, mobile-accessibility                  |
+|   11 | `shared-contracts-infra` | `shared/**`, logger, http, env, maintenance                            | tooling / privacy log asserts                     |
+|   12 | `e2e-crosscutting`       | 複数 unit を跨ぐ E2E とレース/回復シナリオ                             | full-journey 他、残差                             |
 
 優先の原則:
 
@@ -396,10 +396,10 @@ Phase 4 開始条件:
 
 ### ネスト時のコミット方針（厳守）
 
-| 主体 | コード編集 | コミット |
-| --- | --- | --- |
-| ci-runner / `run-ci-local` | その skill が許す範囲で可 | **しない** |
-| 親（quality-pass） | Phase 2 経由で可 | **する**（2d） |
+| 主体                       | コード編集                | コミット       |
+| -------------------------- | ------------------------- | -------------- |
+| ci-runner / `run-ci-local` | その skill が許す範囲で可 | **しない**     |
+| 親（quality-pass）         | Phase 2 経由で可          | **する**（2d） |
 
 CI 失敗時:
 

@@ -620,8 +620,11 @@ function HouseholdResultBody({
   const [shoppingError, setShoppingError] = useState<string | null>(null);
   const activeList = shoppingList.data ?? null;
   // D-C1: 新規作成は active list の safety gate と分離（履歴詳細と同契約）
-  const shoppingListBusy = shoppingList.isFetching || !shoppingList.isSuccess || menuId === null;
-  const shoppingMutateBlocked = !actionsEnabled || shoppingGate.blocked || shoppingListBusy;
+  // isFetching（裏 refetch）では busy にしない。success 済みならシートを開いたままにする（E2E フルジャーニーの作成シート消失対策）。
+  const shoppingListBusy =
+    menuId === null || (!shoppingList.isSuccess && (shoppingList.isPending || shoppingList.isLoading));
+  const shoppingMutateBlocked =
+    !actionsEnabled || shoppingGate.blocked || shoppingListBusy || shoppingList.isFetching;
   // 開く条件（ボタン disabled / auto-open）。閉じる条件とは分離（L8）
   const canOpenCreateSheet = actionsEnabled && !shoppingListBusy && !createList.isPending;
   const mustCloseCreateSheet = !actionsEnabled;

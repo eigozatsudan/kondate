@@ -454,13 +454,13 @@ vendorしたSupabase公式Docker構成は、次のwrapperで更新します。
 
 より詳しいセットアップ、検証、Supabase更新、lockやsignalからの復旧は [docs/local-development.md](docs/local-development.md) を参照してください。
 
-| 目的                              | 文書                                                                                                                         |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 本番 CLI 初回デプロイ・更新手順   | [docs/deployment/README.md](docs/deployment/README.md)                                                                       |
-| 本番デプロイ・env 境界・preflight | [docs/deployment/netlify.md](docs/deployment/netlify.md)                                                                     |
-| Supabase 本番                     | [docs/deployment/supabase.md](docs/deployment/supabase.md)                                                                   |
-| リリースゲート                    | [docs/testing/release-checklist.md](docs/testing/release-checklist.md)                                                       |
-| ドキュメント索引（エージェント向け） | [docs/README.md](docs/README.md)                                                                                               |
-| 課金 reconcile / Portal チェック     | [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)                                                       |
-| OpenRouter 有料モデル                | [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)                                                                     |
-| Plus 設計メモ（履歴）                | [docs/archive/…](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md)                                        |
+| 目的                                 | 文書                                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------------------- |
+| 本番 CLI 初回デプロイ・更新手順      | [docs/deployment/README.md](docs/deployment/README.md)                                 |
+| 本番デプロイ・env 境界・preflight    | [docs/deployment/netlify.md](docs/deployment/netlify.md)                               |
+| Supabase 本番                        | [docs/deployment/supabase.md](docs/deployment/supabase.md)                             |
+| リリースゲート                       | [docs/testing/release-checklist.md](docs/testing/release-checklist.md)                 |
+| ドキュメント索引（エージェント向け） | [docs/README.md](docs/README.md)                                                       |
+| 課金 reconcile / Portal チェック     | [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)               |
+| OpenRouter 有料モデル                | [docs/runbooks/openrouter.md](docs/runbooks/openrouter.md)                             |
+| Plus 設計メモ（履歴）                | [docs/archive/…](docs/archive/superpowers/specs/2026-07-29-paid-plan-stripe-design.md) |

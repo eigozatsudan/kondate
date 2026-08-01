@@ -360,6 +360,9 @@ const allowedProtectedSelectors = new Set([
   ".field textarea",
   // `.field` 断片にヒットするため許可が必要。入力補助の muted ヒント（コントラストは --muted 契約）。
   ".field-hint",
+  // 献立結果操作帯で主/副ボタンをフル幅にする（styles.css .menu-result-actions）。
+  // .primary-button / .secondary-button 断片にヒットするため許可が必要。
+  ".menu-result-actions .primary-button, .menu-result-actions .secondary-button",
 ]);
 
 const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {

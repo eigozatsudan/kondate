@@ -603,9 +603,12 @@ function HouseholdDetailBody({
   const activeList = shoppingList.data ?? null;
   // 使用中リストの操作（差分反映など）は safety gate で止める。
   // ただし mode=new の新規作成は、削除済み献立で gate が恒久 blocked でも可能にする（D-C1）。
+  // isFetching（裏 refetch）では busy にしない。success 済みならシートを開いたままにする。
   const shoppingListBusy =
-    shoppingList.isFetching || !shoppingList.isSuccess || menuId.length === 0;
-  const shoppingMutateBlocked = !actionsEnabled || shoppingGate.blocked || shoppingListBusy;
+    menuId.length === 0 ||
+    (!shoppingList.isSuccess && (shoppingList.isPending || shoppingList.isLoading));
+  const shoppingMutateBlocked =
+    !actionsEnabled || shoppingGate.blocked || shoppingListBusy || shoppingList.isFetching;
   // 開く条件（ボタン disabled / auto-open）。閉じる条件とは分離（L8）
   const canOpenCreateSheet = actionsEnabled && !shoppingListBusy && !createList.isPending;
   const mustCloseCreateSheet = !actionsEnabled;

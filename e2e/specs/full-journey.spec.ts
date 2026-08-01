@@ -101,7 +101,10 @@ test("household journey: welcome through shopping create and alternate reconcile
   if (await newChoice.isVisible().catch(() => false)) {
     await newChoice.check();
   }
-  // create sheet は開いた直後に list refetch で disabled になることがあった（L8 修正後も待つ）
+  // dialog が開くまで待つ（list 初回 fetch 完了後に CTA が有効になる）
+  await expect(page.getByRole("heading", { name: "買い物リストを作る" })).toBeVisible({
+    timeout: 60_000,
+  });
   const createConfirm = page.getByRole("button", { name: "作成する" });
   await expect(createConfirm).toBeEnabled({ timeout: 60_000 });
   await createConfirm.click();
