@@ -168,10 +168,11 @@ test("household journey: welcome through shopping create and alternate reconcile
   await expect(page.getByRole("group", { name: /^追加 [1-9]\d*件$/u })).toBeVisible({
     timeout: 15_000,
   });
-  // alternate fixture 固有の追加材料（success は「にんじん」側菜）
+  // alternate fixture 固有の追加材料（success は「にんじん」側菜）。
+  // 使用先の料理名「きゅうりともやしの浅漬け」にも部分一致するため displayName の strong に限定する。
   const addGroup = page.getByRole("group", { name: /^追加 [1-9]\d*件$/u });
-  await expect(addGroup.getByText("きゅうり")).toBeVisible();
-  await expect(addGroup.getByText("鶏むね肉")).toBeVisible();
+  await expect(addGroup.locator("strong").filter({ hasText: "きゅうり" })).toBeVisible();
+  await expect(addGroup.locator("strong").filter({ hasText: "鶏むね肉" })).toBeVisible();
   await page.getByRole("button", { name: "選んだ変更を反映" }).click();
   await expect(page).toHaveURL(/\/shopping$/u, { timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible({

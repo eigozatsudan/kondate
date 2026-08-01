@@ -179,6 +179,8 @@ test("Free hard-limit CTA copy is available from settings Plus section", async (
   // BILL-1: COMING_SOON 中は Checkout ボタンの代わりに開発中案内を出す。
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/settings");
+  // 他の settings billing ケースと同様、プラン節の hydrate を先に待つ（白紙タイムアウト回避）
+  await expect(page.getByRole("heading", { name: "プラン" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/1 日最大 10 回まで/u)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("ただいま開発中")).toBeVisible();
   await expect(page.getByRole("button", { name: "Plus をはじめる" })).toHaveCount(0);

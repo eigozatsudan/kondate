@@ -222,6 +222,8 @@ for (const width of [320, 375, 430]) {
   test(`history detail both modes fit ${String(width)}px`, async ({
     completedOnboardingPage: page,
   }) => {
+    // household + idea の二重 seed と draft autosave 待ちのため 30s 既定では足りないことがある
+    test.setTimeout(120_000);
     await page.setViewportSize({ width, height: 800 });
     const householdId = await seedGeneratedMenu(page);
     await page.goto(`/history/${householdId}`);
