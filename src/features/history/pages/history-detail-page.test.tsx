@@ -1014,7 +1014,7 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
 
     act(() => {
       queryClient.setQueryData(
-        ["menu-result", USER_ID, MENU_ID],
+        ["menu-result", USER_ID, MENU_ID, "history"],
         makeMenuResultViewModel({ targetMode: "idea", isFavorite: true }),
       );
     });
@@ -1073,7 +1073,7 @@ describe("MenuResultPage shared revalidation gate", () => {
   );
 
   it.each(["focus", "visible-visibilitychange", "sixty-second-poll"] as const)(
-    "soft-rechecks in background without overlay for %s",
+    "soft-rechecks in background without hard overlay for %s (HR1 shared body)",
     async (signal) => {
       if (signal === "sixty-second-poll") vi.useFakeTimers({ shouldAdvanceTime: true });
       const revalidate = deferredPromise<RevalidationResult>();
@@ -1091,18 +1091,23 @@ describe("MenuResultPage shared revalidation gate", () => {
           fireSafetySignal(signal);
         });
       }
-      // focus / poll は soft: オーバーレイを出さず操作可能なまま裏再検査
+      // soft: ハードオーバーレイ文言は出さず本文は維持。mutation CTA は HR1 で閉じる。
       expect(
         screen
           .queryAllByRole("status")
           .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
       ).toBe(false);
-      expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
+      expect(await screen.findByText("いまの家族設定を再確認しています")).toBeVisible();
+      expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
       expect(screen.getByRole("heading", { name: /献立/u })).toBeVisible();
-      act(() => {
+      await act(async () => {
         revalidate.resolve(validRevalidation);
+        await revalidate.promise;
       });
-      expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
+      // soft 完了後 isSoftRechecking が下りるまで RQ の isFetching 解除を待つ
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
+      });
       if (signal === "sixty-second-poll") vi.useRealTimers();
     },
   );

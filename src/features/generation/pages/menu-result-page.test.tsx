@@ -834,7 +834,7 @@ describe("MenuResultPage", () => {
 
       act(() => {
         queryClient.setQueryData(
-          ["menu-result", USER_A_ID, VALID_MENU_ID],
+          ["menu-result", USER_A_ID, VALID_MENU_ID, "generation"],
           makeMenuResultViewModel({ targetMode: "idea", isFavorite: true }),
         );
       });
