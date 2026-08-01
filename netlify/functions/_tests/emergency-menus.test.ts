@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { shareQuota } from "../../../shared/contracts/share-quota.js";
 import type { EmergencyMenusData } from "../../../shared/emergency/contracts.js";
-import { emergencyFixtureMetadataV1 } from "../../../shared/emergency/fixtures.v1.js";
+import {
+  emergencyFixtureMetadataV1,
+  emergencyMenuFixturesV1,
+} from "../../../shared/emergency/fixtures.v1.js";
 import * as emergencyFilter from "../../../shared/emergency/filter-emergency-menus.js";
 import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
-import { createEmergencyMenusHandler } from "../emergency-menus.js";
+import {
+  createEmergencyMenusHandler,
+  type EmergencyHandlerDeps,
+  type ListActiveSharedEmergencyRecipesInput,
+  type SharedEmergencyListRow,
+} from "../emergency-menus.js";
+import * as logger from "../_shared/logger.js";
+import type { SafeLogEvent } from "../_shared/logger.js";
 
 type SuccessEnvelope = { ok: true; data: EmergencyMenusData };
 
@@ -17,6 +28,45 @@ function allFixtureAllergenUnion(): string[] {
       Object.values(emergencyFixtureMetadataV1).flatMap((meta) => meta.standardAllergenIds),
     ),
   ];
+}
+
+/** S2 list 行フィクスチャ（DB 列メタ + 新規 menuId の community 候補） */
+function communityListRowForMeal(
+  mealType: "breakfast" | "lunch" | "dinner",
+  options?: { menuId?: string; rowId?: string },
+): SharedEmergencyListRow {
+  const source = emergencyMenuFixturesV1.find((menu) => menu.mealType === mealType);
+  if (source === undefined) {
+    throw new Error(`no fixture for ${mealType}`);
+  }
+  const metadata = emergencyFixtureMetadataV1[source.menuId];
+  if (metadata === undefined) {
+    throw new Error(`no metadata for ${source.menuId}`);
+  }
+  const menuId = options?.menuId ?? "86000000-0000-4000-8000-000000000099";
+  return {
+    id: options?.rowId ?? "87000000-0000-4000-8000-000000000001",
+    menu_payload: { ...source, menuId },
+    meal_type: mealType,
+    total_elapsed_minutes: source.totalElapsedMinutes,
+    standard_allergen_ids: [...metadata.standardAllergenIds],
+    eligible_age_bands: [...metadata.eligibleAgeBands],
+    created_at: "2026-08-01T00:00:00.000Z",
+  };
+}
+
+function householdDeps(overrides: Partial<EmergencyHandlerDeps> = {}): EmergencyHandlerDeps {
+  return {
+    authenticate: () => Promise.resolve({ userId }),
+    loadContext: () =>
+      Promise.resolve({
+        context: makeCurrentSafetyContext(),
+        memberLabels: Object.freeze({ member_1: "家族1" }),
+      }),
+    loadPantryNames: () => Promise.resolve([]),
+    listActiveSharedRecipes: () => Promise.resolve([]),
+    ...overrides,
+  };
 }
 
 describe("GET /api/emergency-menus", () => {
@@ -520,10 +570,11 @@ describe("GET /api/emergency-menus", () => {
   it("idea path returns generic empty message when filter yields no_matching_fixture", async () => {
     // idea 成人・アレルギーなしの Stage S は現行 catalog では mealType ごと ≥1 が設計上保証されるため、
     // no_matching_fixture 空経路は spy で handler の §4 empty 行列だけを固定検証する。
-    const spy = vi.spyOn(emergencyFilter, "filterEmergencyMenus").mockReturnValue({
+    const spy = vi.spyOn(emergencyFilter, "filterEmergencyMenuCandidates").mockReturnValue({
       menus: [],
       emptyReason: "no_matching_fixture",
       matchMode: null,
+      sourceCounts: { fixture: 0, community: 0 },
     });
     try {
       const loadContext = vi.fn();
@@ -531,6 +582,7 @@ describe("GET /api/emergency-menus", () => {
         authenticate: () => Promise.resolve({ userId }),
         loadContext,
         loadPantryNames: () => Promise.resolve([]),
+        listActiveSharedRecipes: () => Promise.resolve([]),
       });
       const res = await handler(
         new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMode=idea`),
@@ -621,16 +673,19 @@ describe("GET /api/emergency-menus", () => {
   });
 
   it("returns 500 when idea filter yields current_safety_unavailable", async () => {
-    const spy = vi.spyOn(emergencyFilter, "filterEmergencyMenus").mockReturnValue({
+    const spy = vi.spyOn(emergencyFilter, "filterEmergencyMenuCandidates").mockReturnValue({
       menus: [],
       emptyReason: "current_safety_unavailable",
       matchMode: null,
+      sourceCounts: { fixture: 0, community: 0 },
     });
     try {
+      const listActiveSharedRecipes = vi.fn().mockResolvedValue([]);
       const handler = createEmergencyMenusHandler({
         authenticate: () => Promise.resolve({ userId }),
         loadContext: vi.fn(),
         loadPantryNames: () => Promise.resolve([]),
+        listActiveSharedRecipes,
       });
       const res = await handler(
         new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMode=idea`),
@@ -643,6 +698,8 @@ describe("GET /api/emergency-menus", () => {
       expect(body).not.toMatchObject({
         data: { emptyReason: "current_safety_unavailable" },
       });
+      // 文脈ゲート失敗時は S2 を呼ばない
+      expect(listActiveSharedRecipes).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
     }
@@ -676,5 +733,162 @@ describe("GET /api/emergency-menus", () => {
     });
     expect(body.data.candidates.length).toBeGreaterThan(0);
     expect(body.data.fixtureVersion).toBe("2026-07-28.v1");
+  });
+
+  describe("S2 shared pool (Task 9)", () => {
+    it("passes LIMIT === shareQuota.sharePoolFetchLimit to list RPC", async () => {
+      const listActiveSharedRecipes = vi
+        .fn<
+          (
+            input: ListActiveSharedEmergencyRecipesInput,
+          ) => Promise<readonly SharedEmergencyListRow[]>
+        >()
+        .mockResolvedValue([]);
+      const handler = createEmergencyMenusHandler(householdDeps({ listActiveSharedRecipes }));
+      const response = await handler(
+        new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`),
+      );
+      expect(response.status).toBe(200);
+      // dinner fixture は max(5) 未満のため S2 を bound fetch する
+      expect(listActiveSharedRecipes).toHaveBeenCalledOnce();
+      const callArg = listActiveSharedRecipes.mock.calls[0]![0];
+      expect(callArg.mealType).toBe("dinner");
+      expect(callArg.limit).toBe(shareQuota.sharePoolFetchLimit);
+      expect(shareQuota.sharePoolFetchLimit).toBe(20);
+      expect(typeof callArg.salt).toBe("string");
+      expect(callArg.salt.length).toBeGreaterThanOrEqual(1);
+      expect(callArg.salt.length).toBeLessThanOrEqual(128);
+    });
+
+    it("does not call list RPC when S1 already filled maxCandidates", async () => {
+      const listActiveSharedRecipes = vi
+        .fn()
+        .mockResolvedValue([communityListRowForMeal("dinner")]);
+      const realFilter = emergencyFilter.filterEmergencyMenuCandidates;
+      const spy = vi
+        .spyOn(emergencyFilter, "filterEmergencyMenuCandidates")
+        .mockImplementation((input) => {
+          const result = realFilter(input);
+          // S1 が emergencyMaxCandidates を埋めたように見せる
+          const seed = result.menus[0];
+          if (seed === undefined) return result;
+          const menus = Array.from({ length: shareQuota.emergencyMaxCandidates }, () => seed);
+          return {
+            ...result,
+            menus,
+            emptyReason: null,
+            matchMode: result.matchMode ?? "none",
+            sourceCounts: {
+              fixture: shareQuota.emergencyMaxCandidates,
+              community: 0,
+            },
+          };
+        });
+      try {
+        const handler = createEmergencyMenusHandler(householdDeps({ listActiveSharedRecipes }));
+        const response = await handler(
+          new Request(
+            `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`,
+          ),
+        );
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as SuccessEnvelope;
+        expect(body.data.candidates.length).toBe(shareQuota.emergencyMaxCandidates);
+        expect(listActiveSharedRecipes).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("response candidates length <= emergencyMaxCandidates", async () => {
+      // S1 3 件 + community 多数でも返却は cap
+      const communityRows = Array.from({ length: shareQuota.sharePoolFetchLimit }, (_, index) =>
+        communityListRowForMeal("dinner", {
+          menuId: `86000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          rowId: `87000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        }),
+      );
+      const listActiveSharedRecipes = vi.fn().mockResolvedValue(communityRows);
+      const handler = createEmergencyMenusHandler(householdDeps({ listActiveSharedRecipes }));
+      const response = await handler(
+        new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`),
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessEnvelope;
+      expect(body.data.candidates.length).toBeLessThanOrEqual(shareQuota.emergencyMaxCandidates);
+      expect(body.data.candidates.length).toBe(shareQuota.emergencyMaxCandidates);
+      const listCall = listActiveSharedRecipes.mock.calls[0]?.[0] as
+        ListActiveSharedEmergencyRecipesInput | undefined;
+      expect(listCall?.limit).toBe(shareQuota.sharePoolFetchLimit);
+    });
+
+    it("returns 200 with fixtures only when list RPC throws", async () => {
+      const listActiveSharedRecipes = vi.fn().mockRejectedValue(new Error("pool_unavailable"));
+      const logSpy = vi.spyOn(logger, "safeLog");
+      const handler = createEmergencyMenusHandler(householdDeps({ listActiveSharedRecipes }));
+      const response = await handler(
+        new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`),
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessEnvelope;
+      expect(body.data.candidates.length).toBeGreaterThan(0);
+      expect(body.data.path).toBe("household");
+      expect(listActiveSharedRecipes).toHaveBeenCalledOnce();
+      // sourceCounts は fixture のみ（community 0）。contributor キーは出さない
+      const emergencyLog: SafeLogEvent | undefined = logSpy.mock.calls
+        .map((call) => call[0])
+        .find((event) => event.code === "emergency_menus");
+      expect(emergencyLog).toBeDefined();
+      expect(emergencyLog?.sourceCounts?.community).toBe(0);
+      expect(emergencyLog?.sourceCounts?.fixture).toBeGreaterThan(0);
+      expect(emergencyLog).not.toHaveProperty("contributor");
+      expect(JSON.stringify(emergencyLog)).not.toMatch(/contributor/i);
+    });
+
+    it("applies S2 on both household and idea paths", async () => {
+      const communityMenuId = "86000000-0000-4000-8000-000000000777";
+      const listActiveSharedRecipes = vi
+        .fn()
+        .mockResolvedValue([communityListRowForMeal("dinner", { menuId: communityMenuId })]);
+
+      const householdHandler = createEmergencyMenusHandler(
+        householdDeps({ listActiveSharedRecipes }),
+      );
+      const householdRes = await householdHandler(
+        new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`),
+      );
+      expect(householdRes.status).toBe(200);
+      const householdBody = (await householdRes.json()) as SuccessEnvelope;
+      expect(householdBody.data.path).toBe("household");
+      expect(householdBody.data.candidates.some((c) => c.menu.menuId === communityMenuId)).toBe(
+        true,
+      );
+
+      listActiveSharedRecipes.mockClear();
+      listActiveSharedRecipes.mockResolvedValue([
+        communityListRowForMeal("dinner", { menuId: communityMenuId }),
+      ]);
+
+      const ideaHandler = createEmergencyMenusHandler({
+        authenticate: () => Promise.resolve({ userId }),
+        loadContext: vi.fn(),
+        loadPantryNames: () => Promise.resolve([]),
+        listActiveSharedRecipes,
+      });
+      const ideaRes = await ideaHandler(
+        new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMode=idea`),
+      );
+      expect(ideaRes.status).toBe(200);
+      const ideaBody = (await ideaRes.json()) as SuccessEnvelope;
+      expect(ideaBody.data.path).toBe("idea");
+      expect(ideaBody.data.candidates.some((c) => c.menu.menuId === communityMenuId)).toBe(true);
+      expect(listActiveSharedRecipes).toHaveBeenCalledOnce();
+      expect(listActiveSharedRecipes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mealType: "dinner",
+          limit: shareQuota.sharePoolFetchLimit,
+        }),
+      );
+    });
   });
 });

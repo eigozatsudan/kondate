@@ -1,14 +1,22 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
-import { mealTypes } from "../../shared/contracts/domain.js";
+import { ageBands, mealTypes } from "../../shared/contracts/domain.js";
+import { validatedMenuSchema } from "../../shared/contracts/generation.js";
+import { shareQuota } from "../../shared/contracts/share-quota.js";
 import {
   emergencyMainIngredientsSchema,
   type EmergencyMenusData,
 } from "../../shared/emergency/contracts.js";
-import { emergencyFixtureVersion } from "../../shared/emergency/fixtures.v1.js";
+import {
+  emergencyFixtureMetadataV1,
+  emergencyFixtureVersion,
+  emergencyMenuFixturesV1,
+} from "../../shared/emergency/fixtures.v1.js";
 import {
   buildEmergencyMenuCandidate,
-  filterEmergencyMenus,
+  filterEmergencyMenuCandidates,
+  type EmergencyMultiSourceFilterResult,
+  type EmergencySourceCandidate,
 } from "../../shared/emergency/filter-emergency-menus.js";
 import { buildIdeaPersonalSafetyContext } from "../../shared/emergency/idea-context.js";
 import { requireUser } from "./_shared/auth.js";
@@ -184,13 +192,164 @@ function resolveEmergencyQuery(
   };
 }
 
+/** list_active_shared_emergency_recipes が返す 1 行（service_role 向け）。contributor は含まない */
+const sharedEmergencyListRowSchema = z.object({
+  id: z.uuid(),
+  menu_payload: z.unknown(),
+  meal_type: z.enum(mealTypes).optional(),
+  total_elapsed_minutes: z.number().optional(),
+  standard_allergen_ids: z.array(z.string()),
+  eligible_age_bands: z.array(z.string()),
+  created_at: z.string().optional(),
+});
+
+export type SharedEmergencyListRow = z.infer<typeof sharedEmergencyListRowSchema>;
+
+const sharedEmergencyListResultSchema = z.array(sharedEmergencyListRowSchema);
+
+const ageBandSet = new Set<string>(ageBands);
+
+/** S1 fixture 候補をカタログから構築（metadata 欠落は落とす） */
+function buildFixtureSourceCandidates(): EmergencySourceCandidate[] {
+  return emergencyMenuFixturesV1.flatMap((menu) => {
+    const metadata = emergencyFixtureMetadataV1[menu.menuId];
+    if (metadata === undefined) return [];
+    return [
+      {
+        menu,
+        metadata: {
+          eligibleAgeBands: metadata.eligibleAgeBands,
+          standardAllergenIds: metadata.standardAllergenIds,
+        },
+        source: "fixture" as const,
+      },
+    ];
+  });
+}
+
+/**
+ * DB 行を community 候補へ。menu_payload は Zod で閉じ、メタは DB 列を正とする。
+ * 不正行は捨てて継続（個別失敗で全体 500 にしない）。
+ */
+export function mapSharedRowsToCommunityCandidates(
+  rows: readonly SharedEmergencyListRow[],
+): EmergencySourceCandidate[] {
+  const out: EmergencySourceCandidate[] = [];
+  for (const row of rows) {
+    const menuParsed = validatedMenuSchema.safeParse(row.menu_payload);
+    if (!menuParsed.success) continue;
+    const eligibleAgeBands = row.eligible_age_bands.filter(
+      (band): band is (typeof ageBands)[number] => ageBandSet.has(band),
+    );
+    // 空帯は Stage S で全メンバー脱落するため載せない（fail-closed）
+    if (eligibleAgeBands.length === 0) continue;
+    out.push({
+      menu: menuParsed.data,
+      metadata: {
+        eligibleAgeBands,
+        standardAllergenIds: row.standard_allergen_ids,
+      },
+      source: "community",
+    });
+  }
+  return out;
+}
+
+export type ListActiveSharedEmergencyRecipesInput = {
+  mealType: (typeof mealTypes)[number];
+  limit: number;
+  salt: string;
+};
+
 export type EmergencyHandlerDeps = {
   authenticate(request: Request): Promise<{ userId: string }>;
   loadContext(userId: string, targetMemberIds: readonly string[]): Promise<EmergencyCurrentSafety>;
   loadPantryNames(userId: string, pantryItemIds: readonly string[]): Promise<readonly string[]>;
+  /**
+   * S2 bound fetch。省略時は空配列（単体テスト互換）。
+   * 本番は list_active_shared_emergency_recipes を service_role で呼ぶ。
+   * 例外時は呼び出し側が S1 のみで 200 に落とす。
+   */
+  listActiveSharedRecipes?(
+    input: ListActiveSharedEmergencyRecipesInput,
+  ): Promise<readonly SharedEmergencyListRow[]>;
 };
 
+/**
+ * S1 Stage S → 空きがあれば S2 bound fetch → 再 Stage S（max = emergencyMaxCandidates）。
+ * S2 例外・空は S1 結果のまま。current_safety_unavailable では S2 を呼ばない。
+ */
+async function resolveMultiSourceEmergencyMenus(input: {
+  mealType: (typeof mealTypes)[number];
+  mainIngredients: readonly string[];
+  pantryNames: readonly string[];
+  context: EmergencyCurrentSafety["context"];
+  memberLabels: Readonly<Record<string, string>>;
+  listActiveSharedRecipes: (
+    input: ListActiveSharedEmergencyRecipesInput,
+  ) => Promise<readonly SharedEmergencyListRow[]>;
+  salt: string;
+}): Promise<EmergencyMultiSourceFilterResult> {
+  const maxCandidates = shareQuota.emergencyMaxCandidates;
+  const s1Candidates = buildFixtureSourceCandidates();
+  const filterInput = {
+    mealType: input.mealType,
+    mainIngredients: input.mainIngredients,
+    pantryNames: input.pantryNames,
+    context: input.context,
+    memberLabels: input.memberLabels,
+    maxCandidates,
+  };
+
+  const s1 = filterEmergencyMenuCandidates({
+    ...filterInput,
+    candidates: s1Candidates,
+  });
+
+  // 文脈ゲート失敗は community でも同じ結果。無駄な RPC を避ける
+  if (s1.emptyReason === "current_safety_unavailable") {
+    return s1;
+  }
+
+  // S1 が上限を埋めたら S2 を呼ばない
+  if (s1.menus.length >= maxCandidates) {
+    return s1;
+  }
+
+  let communityCandidates: EmergencySourceCandidate[] = [];
+  try {
+    const rows = await input.listActiveSharedRecipes({
+      mealType: input.mealType,
+      limit: shareQuota.sharePoolFetchLimit,
+      salt: input.salt,
+    });
+    communityCandidates = mapSharedRowsToCommunityCandidates(rows);
+  } catch {
+    // S2 全体障害は S1 のみ 200（design §10.3）
+    return s1;
+  }
+
+  if (communityCandidates.length === 0) {
+    return s1;
+  }
+
+  return filterEmergencyMenuCandidates({
+    ...filterInput,
+    candidates: [...s1Candidates, ...communityCandidates],
+  });
+}
+
 export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
+  // 省略時は空プール（単体テスト互換）。常に deps 経由で呼び unbound-method を避ける。
+  const listActiveSharedRecipes = (
+    input: ListActiveSharedEmergencyRecipesInput,
+  ): Promise<readonly SharedEmergencyListRow[]> => {
+    if (deps.listActiveSharedRecipes === undefined) {
+      return Promise.resolve([]);
+    }
+    return deps.listActiveSharedRecipes(input);
+  };
+
   return async (request: Request): Promise<Response> => {
     if (request.method !== "GET") return methodNotAllowed(["GET"]);
     const startedAt = Date.now();
@@ -227,16 +386,20 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       const { userId } = await deps.authenticate(request);
       // pantry は path 共通: 所有者 pantry のみ（家族表を読まない）
       const pantryNames = await deps.loadPantryNames(userId, resolved.pantryItemIds);
+      // salt はリクエスト単位で攪拌（newest 固定順へのフォールバックを避ける）
+      const salt = requestId;
 
       if (resolved.targetMode === "idea") {
         // loadEmergencyCurrentSafety / loadContext 禁止（家族 current safety を読まない）
         const idea = buildIdeaPersonalSafetyContext();
-        const filtered = filterEmergencyMenus({
+        const filtered = await resolveMultiSourceEmergencyMenus({
           mealType: resolved.meal,
           mainIngredients: resolved.mainIngredients,
           pantryNames,
           context: idea.context,
           memberLabels: idea.memberLabels,
+          listActiveSharedRecipes,
+          salt,
         });
         if (filtered.emptyReason === "current_safety_unavailable") {
           // 到達しない想定のバグ。偽の 200 empty にしない。運用検知用に非PII だけ記録。
@@ -251,6 +414,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
             candidateCount: 0,
             mealType: resolved.meal,
             mainIngredientCount,
+            sourceCounts: filtered.sourceCounts,
           });
           throw new Error("idea_emergency_current_safety_unavailable");
         }
@@ -269,7 +433,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
               ? "メイン食材は一致しませんでした。アレルギー条件は適用していません"
               : "AIを使わない15分緊急献立です。アレルギー条件は適用していません";
 
-        // 成功/空とも 1 回。食材名・アレルギー本文は載せない。
+        // 成功/空とも 1 回。食材名・アレルギー本文・contributor は載せない。
         safeLog({
           level: "info",
           requestId,
@@ -281,6 +445,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
           candidateCount: candidates.length,
           mealType: resolved.meal,
           mainIngredientCount,
+          sourceCounts: filtered.sourceCounts,
         });
 
         return json<EmergencyMenusData>(200, {
@@ -301,12 +466,14 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       // PE9: targetMemberIds 改ざん・順序不一致は loadEmergencyCurrentSafety/validateSnapshot が
       // safetyUnavailable で閉じ、候補を偽 valid にしない（防衛確認・挙動変更なし）。
       const loaded = await deps.loadContext(userId, resolved.targetMemberIds);
-      const filtered = filterEmergencyMenus({
+      const filtered = await resolveMultiSourceEmergencyMenus({
         mealType: resolved.meal,
         mainIngredients: resolved.mainIngredients,
         pantryNames,
         context: loaded.context,
         memberLabels: loaded.memberLabels,
+        listActiveSharedRecipes,
+        salt,
       });
       const candidates = filtered.menus.map((menu) =>
         buildEmergencyMenuCandidate({
@@ -337,6 +504,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
         candidateCount: candidates.length,
         mealType: resolved.meal,
         mainIngredientCount,
+        sourceCounts: filtered.sourceCounts,
       });
 
       return json<EmergencyMenusData>(200, {
@@ -357,6 +525,22 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
   };
 }
 
+async function listActiveSharedRecipesFromAdmin(input: ListActiveSharedEmergencyRecipesInput) {
+  const { data, error } = await getSupabaseAdmin().rpc("list_active_shared_emergency_recipes", {
+    p_meal_type: input.mealType,
+    p_limit: input.limit,
+    p_salt: input.salt,
+  });
+  if (error !== null) {
+    throw new Error("list_active_shared_emergency_recipes_failed");
+  }
+  const parsed = sharedEmergencyListResultSchema.safeParse(data ?? []);
+  if (!parsed.success) {
+    throw new Error("list_active_shared_emergency_recipes_invalid");
+  }
+  return parsed.data;
+}
+
 const handler = createEmergencyMenusHandler({
   authenticate: requireUser,
   loadContext: (userId, ids) => loadEmergencyCurrentSafety(getSupabaseAdmin(), userId, ids),
@@ -372,6 +556,7 @@ const handler = createEmergencyMenusHandler({
     if (error !== null) return [];
     return data.map((row) => row.name);
   },
+  listActiveSharedRecipes: listActiveSharedRecipesFromAdmin,
 });
 
 export default handler;
