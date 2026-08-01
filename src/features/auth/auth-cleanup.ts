@@ -26,21 +26,75 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.magicSentUi",
 ] as const;
 
+function isOwnedBrowserStorageKey(key: string): boolean {
+  return (
+    key.startsWith("kondate.auth.") ||
+    key.startsWith("kondate:generation:") ||
+    key.startsWith("kondate:shopping:") ||
+    key === householdSafetyRevisionStorageKey ||
+    // U4-003: user-scoped revision キーも掃除
+    key.startsWith(`${householdSafetyRevisionStorageKey}:`) ||
+    (MAGIC_LINK_RESIDUAL_KEYS as readonly string[]).includes(key)
+  );
+}
+
 function clearOwnedBrowserStorage(): void {
   for (const storage of [localStorage, sessionStorage]) {
-    clearOwnedAuthStorage(storage);
-    for (const key of MAGIC_LINK_RESIDUAL_KEYS) {
-      storage.removeItem(key);
+    // clearOwnedAuthStorage は auth prefix をまとめて消す。失敗しても key 単位で続ける。
+    try {
+      clearOwnedAuthStorage(storage);
+    } catch {
+      // 下の key 単位パスへ
     }
-    for (const key of Object.keys(storage)) {
+    for (const key of MAGIC_LINK_RESIDUAL_KEYS) {
+      try {
+        storage.removeItem(key);
+      } catch {
+        // 個別キー失敗は共有端末残差として許容（Auth はサーバ側で消えている）
+      }
+    }
+    let keys: string[] = [];
+    try {
+      keys = Object.keys(storage);
+    } catch {
+      continue;
+    }
+    for (const key of keys) {
       if (
         key.startsWith("kondate:generation:") ||
         key.startsWith("kondate:shopping:") ||
         key === householdSafetyRevisionStorageKey ||
-        // U4-003: user-scoped revision キーも掃除
         key.startsWith(`${householdSafetyRevisionStorageKey}:`)
       ) {
+        try {
+          storage.removeItem(key);
+        } catch {
+          // 個別キー失敗は共有端末残差として許容
+        }
+      }
+    }
+  }
+}
+
+/**
+ * signOut なしで owned ローカルデータを消す（AP5 second pass）。
+ * アカウント削除成功後に clearLocalAuthAndDrafts が throw したとき、
+ * 共有端末に draft / pending が残らないよう key 単位 best-effort で再試行する。
+ */
+export function clearOwnedLocalDataBestEffort(): void {
+  for (const storage of [localStorage, sessionStorage]) {
+    let keys: string[] = [];
+    try {
+      keys = Object.keys(storage);
+    } catch {
+      continue;
+    }
+    for (const key of keys) {
+      if (!isOwnedBrowserStorageKey(key)) continue;
+      try {
         storage.removeItem(key);
+      } catch {
+        // 1 キー失敗で他キー掃除を止めない
       }
     }
   }

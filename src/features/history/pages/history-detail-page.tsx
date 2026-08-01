@@ -554,6 +554,9 @@ function HouseholdDetailBody({
     revalidation.phase === "checked" &&
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
+  // HR4: retarget は checking/error 中は閉じる。checked なら invalid でも許可
+  // （使えない献立から条件を変えて作り直す escape hatch）。accept/regen は actionsEnabled。
+  const retargetEnabled = revalidation.phase === "checked";
   const canUpdatePostCook = result.pantryPostCookTargets.length > 0;
 
   // D-M7: 安全再検査で操作が閉じたらシート・在庫ダイアログも閉じる（開いたまま送信して unhandled reject しない）
@@ -773,7 +776,8 @@ function HouseholdDetailBody({
   };
 
   const onRetarget = async () => {
-    if (result.sourceSubmission === null || userId === undefined) return;
+    // HR4: checking/error 中は下書き上書きを始めない
+    if (!retargetEnabled || result.sourceSubmission === null || userId === undefined) return;
     setRetargetError(null);
     setRetargetPending(true);
     try {
@@ -968,6 +972,8 @@ function HouseholdDetailBody({
           className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
           disabled={!actionsEnabled || accept.isPending}
           onClick={() => {
+            // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
+            if (!actionsEnabled) return;
             setAcceptFeedback(null);
             setAcceptError(null);
             accept.mutate(menuId, {
@@ -986,8 +992,9 @@ function HouseholdDetailBody({
           <button
             type="button"
             className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={retargetPending}
+            disabled={!retargetEnabled || retargetPending}
             onClick={() => {
+              if (!retargetEnabled) return;
               void onRetarget();
             }}
           >

@@ -15,6 +15,10 @@ import { getSupabaseAdmin, type AdminSupabaseClient } from "./_shared/supabase-a
 /** Stripe 終端ステータス。これら以外の live/non-terminal を cancel 対象にする。 */
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "incomplete_expired"]);
 
+/** 課金解約失敗で Auth 削除を止めるときのユーザー向け文言（PII・内部詳細なし）。 */
+export const BILLING_CANCEL_BLOCKED_MESSAGE =
+  "有料プランの解約が完了しませんでした。請求が続く可能性があるため、アカウントは削除していません。時間をおいてもう一度お試しください";
+
 export type DeleteAccountDeps = {
   authenticate: typeof requireUser;
   /** processing 予約を identity/global/quality から解放する（Auth 削除前） */
@@ -27,8 +31,8 @@ export type DeleteAccountDeps = {
     userId: string,
   ) => Promise<{ error: { message: string } | null }>;
   /**
-   * customer 単位で live subscription を best-effort cancel。
-   * 失敗しても Auth 削除へ進む。
+   * customer 単位で live subscription を cancel。
+   * 失敗時は throw し、呼び出し側が Auth 削除を中止する（AP1 fail-closed）。
    */
   cancelBillingSubscriptions: (userId: string) => Promise<void>;
   /** 注入時は userId のみ。本番アダプタは Admin hard delete (shouldSoftDelete=false) を渡す。 */
@@ -39,6 +43,7 @@ export type DeleteAccountDeps = {
  * 認証済み本人の Auth ユーザーを Admin API で hard delete する。
  * リクエスト body の user_id は契約外（無視）であり、削除対象は常に bearer の userId のみ。
  * Auth 削除前に processing 予約解放 → flyer reserved 解放 → Stripe live sub cancel を行う。
+ * Stripe cancel が失敗した場合は Auth 削除しない（請求 orphan を優先して防ぐ）。
  */
 export const createDeleteAccountHandler =
   (deps: DeleteAccountDeps) =>
@@ -65,11 +70,11 @@ export const createDeleteAccountHandler =
           // flyer 解放失敗は Auth 削除を阻害しない
         }
       }
-      // Stripe cancel は best-effort。成否にかかわらず Auth delete へ進む
+      // AP1: Stripe cancel 失敗時は Auth 削除を中止（請求 orphan を優先して防ぐ）
       try {
         await deps.cancelBillingSubscriptions(auth.userId);
       } catch {
-        // billing cancel の throw も Auth 削除を阻害しない
+        throw new HttpError(503, "billing_cancel_failed", BILLING_CANCEL_BLOCKED_MESSAGE);
       }
       const { error } = await deps.deleteUser(auth.userId);
       if (error) {
@@ -86,8 +91,9 @@ export const createDeleteAccountHandler =
   };
 
 /**
- * customer の全 subscription を list し、live/non-terminal を best-effort cancel する。
+ * customer の全 subscription を list し、live/non-terminal を cancel する。
  * DB の billing_subscriptions 1 行だけに依存しない（二重 sub 残差を取りこぼさない）。
+ * 失敗は throw（呼び出し側が Auth 削除を fail-closed で止める）。部分失敗も最後に throw。
  */
 export async function cancelAllLiveSubscriptionsForUser(options: {
   userId: string;
@@ -98,10 +104,6 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
   startedAt: number;
 }): Promise<void> {
   const { userId, admin, stripe, log, requestId, startedAt } = options;
-  if (stripe === null) {
-    // 鍵なし / kill かつ未設定: Stripe 操作をスキップ
-    return;
-  }
 
   let data: unknown;
   try {
@@ -109,25 +111,27 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
       p_user_id: userId,
     });
     if (result.error !== null) {
-      // customer 解決失敗でも Auth 削除は進める
       log({
         level: "warn",
         requestId,
         code: "billing_cancel_failed",
         durationMs: Date.now() - startedAt,
       });
-      return;
+      throw new Error("billing_customer_lookup_failed");
     }
     data = result.data;
-  } catch {
-    // RPC 自体の throw も best-effort（Auth 削除は外側で継続）
+  } catch (error) {
+    if (error instanceof Error && error.message === "billing_customer_lookup_failed") {
+      throw error;
+    }
+    // RPC 自体の throw
     log({
       level: "warn",
       requestId,
       code: "billing_cancel_failed",
       durationMs: Date.now() - startedAt,
     });
-    return;
+    throw new Error("billing_customer_lookup_failed");
   }
 
   const customerId =
@@ -135,8 +139,20 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
       ? (data as { stripe_customer_id?: unknown }).stripe_customer_id
       : undefined;
   if (typeof customerId !== "string" || customerId.length === 0) {
-    // billing customer なし → Stripe 操作なし
+    // billing customer なし → Stripe 操作なし（Free 利用者）
     return;
+  }
+
+  // customer があるのに Stripe クライアントが無いと live sub を触れない → fail-closed
+  if (stripe === null) {
+    log({
+      level: "warn",
+      requestId,
+      code: "billing_cancel_failed",
+      durationMs: Date.now() - startedAt,
+      stripeCustomerId: customerId,
+    });
+    throw new Error("stripe_client_unavailable");
   }
 
   let subscriptions: Stripe.Subscription[];
@@ -166,9 +182,10 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
       durationMs: Date.now() - startedAt,
       stripeCustomerId: customerId,
     });
-    return;
+    throw new Error("stripe_subscription_list_failed");
   }
 
+  let cancelFailed = false;
   for (const sub of subscriptions) {
     if (TERMINAL_SUBSCRIPTION_STATUSES.has(sub.status)) {
       continue;
@@ -176,7 +193,8 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
     try {
       await stripe.subscriptions.cancel(sub.id);
     } catch {
-      // 部分失敗でも残りを試行。opaque id のみログ（email 禁止）
+      // 部分失敗でも残りを試行。いずれか失敗したら最終的に throw（Auth 削除しない）
+      cancelFailed = true;
       log({
         level: "warn",
         requestId,
@@ -186,6 +204,9 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
         stripeSubscriptionId: sub.id,
       });
     }
+  }
+  if (cancelFailed) {
+    throw new Error("stripe_subscription_cancel_failed");
   }
 }
 

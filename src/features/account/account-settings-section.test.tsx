@@ -5,6 +5,7 @@ import { householdSafetyRevisionStorageKey } from "@/features/household/househol
 import { AccountSettingsSection } from "./account-settings-section";
 
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
+const clearOwnedLocalDataBestEffortMock = vi.hoisted(() => vi.fn());
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
@@ -12,6 +13,7 @@ const locationReplaceMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/features/auth/auth-cleanup", () => ({
   clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
+  clearOwnedLocalDataBestEffort: clearOwnedLocalDataBestEffortMock,
 }));
 
 vi.mock("@/features/auth/session", () => ({
@@ -36,6 +38,7 @@ function seedOwnedStorage(): void {
 
 beforeEach(() => {
   clearLocalAuthAndDraftsMock.mockReset();
+  clearOwnedLocalDataBestEffortMock.mockReset();
   requireAccessTokenMock.mockReset();
   getBrowserSupabaseClientMock.mockReset();
   fetchMock.mockReset();
@@ -85,6 +88,8 @@ describe("AccountSettingsSection", () => {
   it("renders sign-out and a separately labelled DangerZone", () => {
     render(<AccountSettingsSection />);
     expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
+    // AP2: local scope の開示
+    expect(screen.getByText(/この端末だけログアウトします/)).toBeVisible();
     expect(screen.getByRole("region", { name: "危険な操作" })).toBeVisible();
     expect(screen.getByRole("button", { name: "アカウントを削除" })).toBeVisible();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -181,6 +186,34 @@ describe("AccountSettingsSection", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("surfaces billing_cancel_failed without deleting local session (AP1)", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "billing_cancel_failed",
+            message: "有料プランの解約が完了しませんでした",
+          },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText(/請求が続く可能性があるため、アカウントは削除していません/),
+    ).toBeVisible();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
   it("awaits the same cleanup helper then navigates after successful deletion", async () => {
     const user = userEvent.setup();
     seedOwnedStorage();
@@ -218,6 +251,29 @@ describe("AccountSettingsSection", () => {
 
     resolveCleanup?.();
     await waitFor(() => {
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    });
+  });
+
+  it("navigates after delete even when clearLocalAuthAndDrafts throws (AP5)", async () => {
+    const user = userEvent.setup();
+    seedOwnedStorage();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, data: { deleted: true } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    clearLocalAuthAndDraftsMock.mockRejectedValue(new Error("storage quota"));
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(clearOwnedLocalDataBestEffortMock).toHaveBeenCalled();
       expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
     });
   });

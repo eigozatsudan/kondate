@@ -7,6 +7,8 @@
   サポートは「先に家族設定を完了してください」と案内しない。
 - **例外（濫用防止）**: 正規化メールから作った復元できない `identity_key` と、その日次利用回数（成功・attempt）は
   Auth 削除後も残る。生メールは DB に保存しない。ユーザー向け文言はアプリ削除確認と矛盾させない。
+- **有料プラン**: 解約（Stripe cancel）が成功してから Auth を削除する。解約できない場合は
+  アカウント削除を中止し、請求が続く可能性がある旨を UI で返す。
 
 ## 削除順序（delete-account Function）
 
@@ -16,13 +18,15 @@
   （success_count / sent_count は減らさない）。
 3. 未完了 flyer request があれば flyer reserved を helper 経由で best-effort 解放する
   （失敗しても Auth 削除は止めない。stale cleanup が第二経路）。
-4. **billing cancel（best-effort）**:
-   - `get_billing_customer_by_user` → `stripe_customer_id` が無ければスキップ
+4. **billing cancel（fail-closed）**:
+   - `get_billing_customer_by_user` → `stripe_customer_id` が無ければスキップして Auth 削除へ
+   - customer があるのに Stripe クライアントが無い / customer 解決失敗 / list 失敗 → **Auth 削除しない**
+     （`billing_cancel_failed` 503）
    - `stripe.subscriptions.list({ customer, status: "all" })` で **customer 単位の全 sub** を取得
      （DB の `billing_subscriptions` 1 行だけを cancel 対象にしない）
    - live/non-terminal（`canceled` / `incomplete_expired` 以外）を各 `subscriptions.cancel`
    - 1 件失敗しても残りを試行し、SafeLog `billing_cancel_failed`（opaque sub/customer id のみ）
-   - cancel 成否にかかわらず Auth 削除へ進む
+   - **いずれか 1 件でも cancel 失敗したら Auth 削除しない**（請求 orphan を優先して防ぐ）
 5. Auth Admin hard delete（CASCADE で user 所有行・billing_customers/subscriptions 削除）。
    identity 日次表と `billing_trial_history`（identity_key）は user_id 無しのため残る。
 6. 防御第2経路: `private.ai_generation_requests` の BEFORE DELETE トリガでも reserved を解放する
@@ -35,6 +39,10 @@
 3. Auth Admin API がエラーを返した場合のみエスカレーションする。
 4. 「利用回数が消えない」問い合わせには、不正利用防止の識別子と日次回数のみ保持する旨を説明する
   （メール本文・氏名は保持しない）。
+5. 「削除できない・請求が続く」問い合わせ:
+   - UI が `billing_cancel_failed` を返した場合は **Auth は消えていない**（解約未完了で中止）。
+   - Stripe Dashboard で customer / live subscription を opaque id のみで確認し、解約後に再試行を案内する。
+   - 生メール・氏名をチケットへコピーしない。
 
 ## 禁止
 

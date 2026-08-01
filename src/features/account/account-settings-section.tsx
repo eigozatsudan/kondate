@@ -1,12 +1,18 @@
 import { useState } from "react";
 import { deleteAccountEnvelopeSchema } from "@shared/contracts/account";
-import { clearLocalAuthAndDrafts } from "@/features/auth/auth-cleanup";
+import {
+  clearLocalAuthAndDrafts,
+  clearOwnedLocalDataBestEffort,
+} from "@/features/auth/auth-cleanup";
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { DeleteAccountDialog } from "./delete-account-dialog";
 
 function mapDeleteError(code: string | undefined): string {
   if (code === "invalid_request") return "「削除する」と入力してください";
+  if (code === "billing_cancel_failed") {
+    return "有料プランの解約が完了しませんでした。請求が続く可能性があるため、アカウントは削除していません。時間をおいてもう一度お試しください";
+  }
   return "削除できませんでした。時間をおいてもう一度お試しください";
 }
 
@@ -117,11 +123,12 @@ export function AccountSettingsSection() {
         setErrorMessage(mapDeleteError(parsed.data.error.code));
         return;
       }
-      // サーバー削除成功後のローカル掃除は best-effort。失敗しても Auth は消えているので成功遷移する。
+      // サーバー削除成功後のローカル掃除は best-effort。Auth は消えているので成功遷移する。
+      // AP5: clearLocal 全体が throw しても owned キーだけ second pass で消す。
       try {
         await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
       } catch {
-        // storage 例外で削除成功を失敗表示にしない
+        clearOwnedLocalDataBestEffort();
       }
       window.location.replace("/login?accountDeleted=1");
     } catch {
@@ -147,6 +154,10 @@ export function AccountSettingsSection() {
       >
         ログアウト
       </button>
+      {/* AP2: local scope 既定を利用者に開示（全端末失効ではない） */}
+      <p className="type-small text-ink/80">
+        この端末だけログアウトします。ほかの端末のログインはそのまま続きます。
+      </p>
       <DangerZone
         expanded={dangerExpanded}
         onExpand={() => {

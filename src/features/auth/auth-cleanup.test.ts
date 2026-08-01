@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/shared/types/database";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
-import { clearLocalAuthAndDrafts, SIGN_OUT_TIMEOUT_MS } from "./auth-cleanup";
+import {
+  clearLocalAuthAndDrafts,
+  clearOwnedLocalDataBestEffort,
+  SIGN_OUT_TIMEOUT_MS,
+} from "./auth-cleanup";
 
 function seedOwnedKeys(storage: Storage): void {
   storage.setItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001", '{"id":"flow"}');
@@ -108,5 +112,18 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+  });
+
+  it("clearOwnedLocalDataBestEffort removes owned keys without signOut (AP5)", () => {
+    seedOwnedKeys(localStorage);
+    seedOwnedKeys(sessionStorage);
+    sessionStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
+    clearOwnedLocalDataBestEffort();
+    for (const storage of [localStorage, sessionStorage]) {
+      expect(storage.getItem("kondate.auth.supabase")).toBeNull();
+      expect(storage.getItem("kondate:generation:v2")).toBeNull();
+      expect(storage.getItem("kondate:preferences")).toBe("keep-me");
+    }
+    expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   });
 });

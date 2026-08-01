@@ -399,14 +399,20 @@ describe("useRegeneration", () => {
         }),
       { wrapper },
     );
+    let startResult: Awaited<ReturnType<typeof result.current.startWhole>> | undefined;
     await act(async () => {
-      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
+      startResult = await result.current.startWhole({
+        changeReason: "simpler",
+        changeReasonCustom: null,
+      });
     });
+    expect(startResult).toEqual({ kind: "resumed_existing" });
     const after = readPendingGeneration(USER_ID, new Date());
     expect(after).not.toBeNull();
     if (after === null) throw new Error("pending required");
     expect(after.request.idempotencyKey).toBe(existing.request.idempotencyKey);
     expect(after.kind).toBe("new_menu");
+    // HR5: 別献立の再生成でも上書きせず、GenerationPage の resumed 説明へ誘導
     expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -438,12 +444,14 @@ describe("useRegeneration", () => {
         }),
       { wrapper },
     );
+    let startResult: Awaited<ReturnType<typeof result.current.startDish>> | undefined;
     await act(async () => {
-      await result.current.startDish(DISH_ID, {
+      startResult = await result.current.startDish(DISH_ID, {
         changeReason: "different_flavor",
         changeReasonCustom: null,
       });
     });
+    expect(startResult).toEqual({ kind: "resumed_existing" });
     const after = readPendingGeneration(USER_ID, new Date());
     expect(after).not.toBeNull();
     if (after === null) throw new Error("pending required");

@@ -13,6 +13,7 @@ const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const channelHandlers = vi.hoisted(() => ({
   members: null as null | (() => void),
   allergies: null as null | (() => void),
+  statusCallback: null as null | ((status: string) => void),
   unsubscribe: vi.fn(),
 }));
 
@@ -33,7 +34,10 @@ vi.mock("@/shared/lib/supabase", () => ({
           if (filter.table === "member_allergies") channelHandlers.allergies = callback;
           return api;
         },
-        subscribe: () => api,
+        subscribe: (cb?: (status: string) => void) => {
+          channelHandlers.statusCallback = cb ?? null;
+          return api;
+        },
         unsubscribe: channelHandlers.unsubscribe,
       };
       return api;
@@ -79,6 +83,7 @@ describe("useMenuRevalidation", () => {
     vi.clearAllMocks();
     channelHandlers.members = null;
     channelHandlers.allergies = null;
+    channelHandlers.statusCallback = null;
     revalidateMenuMock.mockResolvedValue(valid);
   });
 
@@ -399,6 +404,55 @@ describe("useMenuRevalidation", () => {
     await waitFor(() => {
       expect(result.current.phase).toBe("checked");
     });
+  });
+
+  it("hard rechecks on Realtime CHANNEL_ERROR and TIMED_OUT (HR2)", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    expect(channelHandlers.statusCallback).not.toBeNull();
+
+    const deferredError = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferredError.promise);
+    act(() => {
+      channelHandlers.statusCallback?.("CHANNEL_ERROR");
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    act(() => {
+      deferredError.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+
+    const deferredTimeout = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferredTimeout.promise);
+    act(() => {
+      channelHandlers.statusCallback?.("TIMED_OUT");
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    act(() => {
+      deferredTimeout.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
+  it("does not hard recheck on SUBSCRIBED alone", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const before = revalidateMenuMock.mock.calls.length;
+    act(() => {
+      channelHandlers.statusCallback?.("SUBSCRIBED");
+    });
+    expect(result.current.phase).toBe("checked");
+    expect(revalidateMenuMock.mock.calls.length).toBe(before);
   });
 
   // 60 秒 poll は history-detail-page の sixty-second-poll ケースで page 統合として検証する

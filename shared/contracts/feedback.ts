@@ -7,8 +7,20 @@ export type FeedbackCategory = (typeof feedbackCategories)[number];
 export const feedbackCategorySchema = z.enum(feedbackCategories);
 
 /**
+ * 画面パスとして許可する clientPath。
+ * UI は pathname のみ送る。改変クライアントによる scheme / ホスト / 空白 / 誘導文字列を拒否する（AP4）。
+ * 例: /settings, /history/abc-123, /planner? は不可（query なし）。
+ */
+export const feedbackClientPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^\/(?:[A-Za-z0-9._~-]+\/?)*$/, "画面パスの形式が正しくありません");
+
+/**
  * フィードバック送信リクエスト。
- * body は 10〜2000 文字。clientPath は任意の画面パス（PII を載せない前提）。
+ * body は 10〜2000 文字。clientPath は相対 pathname のみ（PII・URL を載せない）。
  */
 export const submitFeedbackRequestSchema = z.object({
   category: feedbackCategorySchema,
@@ -17,7 +29,7 @@ export const submitFeedbackRequestSchema = z.object({
     .trim()
     .min(10, "もう少し詳しく書いてください（10文字以上）")
     .max(2000, "2000文字以内で入力してください"),
-  clientPath: z.string().trim().min(1).max(200).optional(),
+  clientPath: feedbackClientPathSchema.optional(),
 });
 
 export type SubmitFeedbackRequest = z.infer<typeof submitFeedbackRequestSchema>;

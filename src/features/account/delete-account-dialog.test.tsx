@@ -88,9 +88,8 @@ describe("DeleteAccountDialog", () => {
         onConfirm={() => Promise.resolve()}
       />,
     );
-    expect(
-      screen.getByText(/有料プランに入っている場合、解約手続きもあわせて行います/),
-    ).toBeVisible();
+    expect(screen.getByText(/先に解約が成功してからアカウントを削除します/)).toBeVisible();
+    expect(screen.getByText(/解約できないときは削除を中止/)).toBeVisible();
   });
 
   it("maps Escape/cancel to onCancel without confirming", () => {

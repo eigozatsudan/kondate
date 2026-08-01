@@ -47,7 +47,11 @@ export async function listHistoryGroups(): Promise<HistoryGroup[]> {
   return groupMenuRows(rows);
 }
 
-/** グループ内の採用版を差し替える RPC。 */
+/**
+ * グループ内の採用版を差し替える RPC。
+ * RPC 自体は所有権と is_selected 排他のみ（現行 safety は見ない）。
+ * 呼び出し側（履歴詳細）が revalidation checked+actionable でゲートする（HR3）。
+ */
 export async function acceptMenuVersion(menuId: string): Promise<void> {
   const supabase = getBrowserSupabaseClient();
   const { error } = await supabase.rpc("accept_menu_version", { p_menu_id: menuId });

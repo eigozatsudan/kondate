@@ -494,6 +494,69 @@ describe("HistoryDetailPage safety gate", () => {
     expect(acceptMenuVersionMock).not.toHaveBeenCalled();
   });
 
+  it("disables retarget while revalidation is checking (HR4)", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: {
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: ["10000000-0000-4000-8000-000000000001"],
+          servings: null,
+          timeLimitMinutes: 30,
+          budgetPreference: "economy",
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [],
+        },
+      }),
+    );
+    renderHistoryDetail({
+      revalidation: { phase: "checking" },
+    });
+    expect(await screen.findByRole("button", { name: "対象を変えて新しく作る" })).toBeDisabled();
+  });
+
+  it("enables retarget when revalidation is checked even if invalid (HR4 escape hatch)", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: {
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: ["10000000-0000-4000-8000-000000000001"],
+          servings: null,
+          timeLimitMinutes: 30,
+          budgetPreference: "economy",
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [],
+        },
+      }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "invalid",
+          issues: [
+            { code: "allergen_present", path: "dishes.0", message: "アレルゲンが含まれます" },
+          ],
+        },
+      },
+    });
+    expect(await screen.findByRole("button", { name: "対象を変えて新しく作る" })).toBeEnabled();
+    // accept は invalid で閉じたまま
+    expect(screen.getByRole("button", { name: "これに決めた" })).toBeDisabled();
+  });
+
   it("wires shopping create sheet and fridge tip when household actions are enabled", async () => {
     // シート表示と冷蔵庫 tip は残す。送信・resume・actions 到達は後続テストで固定する。
     const user = userEvent.setup();

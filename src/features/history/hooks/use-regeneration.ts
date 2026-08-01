@@ -18,6 +18,9 @@ export type RegenerationReasonInput = {
   expiredPantryConfirmations?: readonly ExpiredPantryConfirmation[];
 };
 
+/** startWhole / startDish の結果。既存 pending 再開と新規開始を呼び出し側で区別できる。 */
+export type RegenerationStartResult = { kind: "started" } | { kind: "resumed_existing" };
+
 /**
  * household は現行安全再検証が actionable になるまで再生成を拒否する。
  * idea は家族 revalidation を受け取らず、owner・pending・quota 制御だけを共有する。
@@ -56,7 +59,7 @@ export function useRegeneration(input: UseRegenerationInput) {
         isRevalidationActionable(input.result);
 
   const startWhole = useCallback(
-    (reason: RegenerationReasonInput) => {
+    (reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
       if (!canRegenerate || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
       }
@@ -64,9 +67,11 @@ export function useRegeneration(input: UseRegenerationInput) {
       // generation_in_progress 端末で pending ごと消える（C2）。既存 pending は再開のみ。
       // 終端（failed 等）の pending は RecoveryLinks の onClear と結果/履歴詳細の
       // clearPendingGeneration で消す前提。残っていれば /generation で再開表示する。
+      // HR5: 別献立からの再生成でも silent 上書きはしない。/generation?resumed=1 で
+      // 「進行中の作成を再開」「新条件では作り直していない」を GenerationPage が明示する。
       if (readPendingGeneration(userId, new Date()) !== null) {
         void navigate("/generation?resumed=1");
-        return Promise.resolve();
+        return Promise.resolve({ kind: "resumed_existing" });
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
@@ -90,19 +95,20 @@ export function useRegeneration(input: UseRegenerationInput) {
       );
       savePendingGeneration(pending);
       void navigate("/generation");
-      return Promise.resolve();
+      return Promise.resolve({ kind: "started" });
     },
     [canRegenerate, menuId, navigate, userId],
   );
 
   const startDish = useCallback(
-    (dishId: string, reason: RegenerationReasonInput) => {
+    (dishId: string, reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
       if (!canRegenerate || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
       }
+      // HR5 / C2: 既存 pending は上書きせず再開導線へ（GenerationPage が説明表示）
       if (readPendingGeneration(userId, new Date()) !== null) {
         void navigate("/generation?resumed=1");
-        return Promise.resolve();
+        return Promise.resolve({ kind: "resumed_existing" });
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
@@ -126,7 +132,7 @@ export function useRegeneration(input: UseRegenerationInput) {
       );
       savePendingGeneration(pending);
       void navigate("/generation");
-      return Promise.resolve();
+      return Promise.resolve({ kind: "started" });
     },
     [canRegenerate, menuId, navigate, userId],
   );

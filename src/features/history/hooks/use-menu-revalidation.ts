@@ -32,6 +32,7 @@ export function menuRevalidationQueryKey(menuId: string) {
  *
  * 飛行中の hard は常に checking。古い hard の完了で最新の閉じ状態を開けない。
  * Realtime は RLS で本人行に限定し、browser から owner ID を送らない。
+ * Realtime 購読失敗（CHANNEL_ERROR / TIMED_OUT）も hard 再検査へ落とす（shopping gate と同型の fail-closed）。
  */
 export function useMenuRevalidation(menuId: string) {
   const cache = useQueryClient();
@@ -121,9 +122,18 @@ export function useMenuRevalidation(menuId: string) {
       .channel(`menu-safety:${menuId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "household_members" }, hard)
       .on("postgres_changes", { event: "*", schema: "public", table: "member_allergies" }, hard)
-      .subscribe();
-    // 既定は 60s。E2E のみ window 上の test seam で短縮可能（本番は未設定）。
+      .subscribe((status) => {
+        // Realtime 購読状態は文字列比較（テストからも素の文字列が届く）。
+        // CHANNEL_ERROR / TIMED_OUT は hard 再検査へ（旧 valid のまま 60s soft 依存にしない）。
+        const state: string = status;
+        if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
+          hard();
+        }
+      });
+    // 既定は 60s。dev / E2E のみ window 上の test seam で短縮可能。
+    // 本番バンドル（import.meta.env.PROD）では seam を読まず常に 60s（HR7）。
     const pollMs = (() => {
+      if (import.meta.env.PROD) return 60_000;
       const candidate = (window as Window & { __KONDATE_REVALIDATE_POLL_MS?: unknown })
         .__KONDATE_REVALIDATE_POLL_MS;
       return typeof candidate === "number" && candidate > 0 && candidate <= 60_000

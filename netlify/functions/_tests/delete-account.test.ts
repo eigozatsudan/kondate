@@ -224,6 +224,20 @@ describe("createDeleteAccountHandler", () => {
     );
   });
 
+  it("blocks auth-delete with billing_cancel_failed when cancelBillingSubscriptions throws (AP1)", async () => {
+    cancelBillingSubscriptions.mockRejectedValue(new Error("stripe cancel boom"));
+    const response = await handler()(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "billing_cancel_failed",
+        message: expect.stringMatching(/解約が完了しませんでした|請求が続く/u),
+      },
+    });
+    expect(deleteUser).not.toHaveBeenCalled();
+  });
+
   it("never logs the user id, email, or access token", async () => {
     authenticate.mockResolvedValue({
       userId: USER_ID,
@@ -334,7 +348,7 @@ describe("cancelAllLiveSubscriptionsForUser", () => {
     expect(cancelMock).not.toHaveBeenCalledWith(SUB_CANCELED);
   });
 
-  it("continues canceling remaining and logs billing_cancel_failed when one cancel fails", async () => {
+  it("tries remaining cancels then throws when one cancel fails (AP1 fail-closed)", async () => {
     rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
     listMock.mockResolvedValue({
       data: [
@@ -346,14 +360,16 @@ describe("cancelAllLiveSubscriptionsForUser", () => {
       .mockRejectedValueOnce(new Error("stripe cancel boom"))
       .mockResolvedValueOnce({ id: SUB_TRIALING, status: "canceled" });
 
-    await cancelAllLiveSubscriptionsForUser({
-      userId: USER_ID,
-      admin: { rpc },
-      stripe: stripe as never,
-      log,
-      requestId: "req-4",
-      startedAt: Date.now(),
-    });
+    await expect(
+      cancelAllLiveSubscriptionsForUser({
+        userId: USER_ID,
+        admin: { rpc },
+        stripe: stripe as never,
+        log,
+        requestId: "req-4",
+        startedAt: Date.now(),
+      }),
+    ).rejects.toThrow(/cancel_failed/u);
 
     expect(cancelMock).toHaveBeenCalledTimes(2);
     expect(cancelMock).toHaveBeenCalledWith(SUB_ACTIVE);
@@ -366,7 +382,8 @@ describe("cancelAllLiveSubscriptionsForUser", () => {
     expect(JSON.stringify(events)).not.toContain(EMAIL);
   });
 
-  it("skips Stripe entirely when stripe client is null", async () => {
+  it("allows delete path when stripe is null and no billing customer", async () => {
+    rpc.mockResolvedValue({ data: {}, error: null });
     await cancelAllLiveSubscriptionsForUser({
       userId: USER_ID,
       admin: { rpc },
@@ -375,8 +392,23 @@ describe("cancelAllLiveSubscriptionsForUser", () => {
       requestId: "req-5",
       startedAt: Date.now(),
     });
-    expect(rpc).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith("get_billing_customer_by_user", { p_user_id: USER_ID });
     expect(listMock).not.toHaveBeenCalled();
+  });
+
+  it("throws when stripe is null but billing customer exists (AP1)", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    await expect(
+      cancelAllLiveSubscriptionsForUser({
+        userId: USER_ID,
+        admin: { rpc },
+        stripe: null,
+        log,
+        requestId: "req-5b",
+        startedAt: Date.now(),
+      }),
+    ).rejects.toThrow(/stripe_client_unavailable/u);
+    expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
   });
 });
 
@@ -518,7 +550,7 @@ describe("production deleteUser adapter", () => {
     );
   });
 
-  it("continues auth-delete when one cancel fails among multiple live subs", async () => {
+  it("blocks auth-delete when one cancel fails among multiple live subs (AP1)", async () => {
     const listMock = vi.fn().mockResolvedValue({
       data: [
         { id: SUB_ACTIVE, status: "active" },
@@ -556,9 +588,13 @@ describe("production deleteUser adapter", () => {
     });
 
     const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "billing_cancel_failed" },
+    });
     expect(cancelMock).toHaveBeenCalledTimes(2);
-    expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
+    expect(adminDeleteUserMock).not.toHaveBeenCalled();
   });
 
   it("continues auth-delete when flyer release RPC fails (best-effort)", async () => {
