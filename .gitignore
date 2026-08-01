@@ -7,6 +7,7 @@ coverage/
 infra/.supabase-refresh.*
 infra/.supabase-refresh.lock
 .env.local
+.deploy.env
 playwright-report/
 test-results/
 .DS_Store
