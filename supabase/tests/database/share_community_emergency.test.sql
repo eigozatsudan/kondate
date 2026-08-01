@@ -1,7 +1,7 @@
--- Task 3: 共有プール schema / public definer RPC / 削除 / reaper
+-- Task 3: 共有プール schema / public definer RPC / 削除 / reaper / success cap
 \ir 000_helpers.sql
 begin;
-select plan(27);
+select plan(29);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -57,6 +57,21 @@ insert into public.menus (
   '{}', '{}', repeat('c', 64), 'household',
   'allergens-v1', 'food-v1', 'menu-v1',
   'b1000000-0000-4000-8000-0000000000c3', 1
+);
+
+-- reaper 用（user success-cap / app success-cap で b2·b3 を消費するため別枠）
+insert into public.menus (
+  id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
+  preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
+  allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+  derivation_group_id, version
+) values (
+  'b1000000-0000-4000-8000-0000000000b4',
+  'a1000000-0000-4000-8000-0000000000a1',
+  'dinner', 'japanese', 2, 14,
+  '{}', '{}', repeat('d', 64), 'household',
+  'allergens-v1', 'food-v1', 'menu-v1',
+  'b1000000-0000-4000-8000-0000000000c4', 1
 );
 
 -- ---------------------------------------------------------------------------
@@ -311,6 +326,154 @@ select is(
   'one active pool recipe after publish'
 );
 
+-- 同一ユーザー同一日の 2 本目 publish: pool は増えない（attempt cap=2 > success cap=1）
+select lives_ok(
+  $$
+    do $cap_user$
+    declare
+      v_job uuid;
+      v_pub jsonb;
+      v_pool integer;
+    begin
+      select id into v_job
+      from private.share_generalization_jobs
+      where source_menu_id = 'b1000000-0000-4000-8000-0000000000b2'
+        and status = 'pending';
+
+      perform public.claim_share_generalization_jobs(10);
+
+      select id into v_job
+      from private.share_generalization_jobs
+      where source_menu_id = 'b1000000-0000-4000-8000-0000000000b2'
+        and status = 'running';
+
+      if v_job is null then
+        raise exception 'expected running job for b2 after claim';
+      end if;
+
+      v_pub := public.publish_shared_emergency_recipe(
+        v_job,
+        jsonb_build_object(
+          'menuId', 'c1000000-0000-4000-8000-0000000000d2',
+          'dishes', jsonb_build_array(
+            jsonb_build_object('role', 'main', 'name', 'カレー', 'position', 1)
+          )
+        ),
+        'lunch',
+        10,
+        array[]::text[],
+        array['adult']::text[],
+        1,
+        'mock/pass1',
+        null
+      );
+
+      if coalesce((v_pub ->> 'published')::boolean, true) is not false then
+        raise exception 'second publish should not insert pool: %', v_pub;
+      end if;
+      if v_pub ->> 'reason' is distinct from 'daily_success_cap' then
+        raise exception 'expected daily_success_cap, got %', v_pub;
+      end if;
+
+      select count(*)::integer into v_pool
+      from private.shared_emergency_recipes where status = 'active';
+      if v_pool is distinct from 1 then
+        raise exception 'pool should stay 1 after user success cap, got %', v_pool;
+      end if;
+
+      if not exists (
+        select 1 from private.share_generalization_jobs
+        where id = v_job
+          and status = 'skipped'
+          and skip_reason = 'daily_success_cap'
+      ) then
+        raise exception 'job should be skipped with daily_success_cap';
+      end if;
+    end;
+    $cap_user$;
+  $$,
+  'second same-user/day publish skips with daily_success_cap and does not insert pool'
+);
+
+-- app ledger success=200 のとき pool INSERT しない
+select lives_ok(
+  $$
+    do $cap_app$
+    declare
+      v_job uuid;
+      v_pub jsonb;
+      v_pool integer;
+      v_day date := private.ai_jst_day(clock_timestamp());
+    begin
+      -- user success を空けて app 上限だけを検証（attempt は既に 2 なので job は直 insert）
+      update private.share_user_daily_usage
+      set success_count = 0
+      where contributor_user_id = 'a1000000-0000-4000-8000-0000000000a1'
+        and usage_day = v_day;
+
+      insert into private.share_app_daily_usage (usage_day, success_count, ai_call_count, updated_at)
+      values (v_day, 200, 0, clock_timestamp())
+      on conflict (usage_day) do update
+        set success_count = 200, updated_at = excluded.updated_at;
+
+      insert into private.share_generalization_jobs (
+        source_menu_id,
+        contributor_user_id,
+        status,
+        claimed_at,
+        heartbeat_at,
+        created_at
+      ) values (
+        'b1000000-0000-4000-8000-0000000000b3',
+        'a1000000-0000-4000-8000-0000000000a1',
+        'running',
+        clock_timestamp(),
+        clock_timestamp(),
+        clock_timestamp()
+      )
+      returning id into v_job;
+
+      v_pub := public.publish_shared_emergency_recipe(
+        v_job,
+        jsonb_build_object(
+          'menuId', 'c1000000-0000-4000-8000-0000000000d3',
+          'dishes', jsonb_build_array(
+            jsonb_build_object('role', 'main', 'name', '味噌汁', 'position', 1)
+          )
+        ),
+        'breakfast',
+        12,
+        array[]::text[],
+        array['adult']::text[],
+        0,
+        null,
+        null
+      );
+
+      if coalesce((v_pub ->> 'published')::boolean, true) is not false then
+        raise exception 'app-cap publish should not insert pool: %', v_pub;
+      end if;
+      if v_pub ->> 'reason' is distinct from 'daily_success_cap' then
+        raise exception 'expected daily_success_cap for app cap, got %', v_pub;
+      end if;
+
+      select count(*)::integer into v_pool
+      from private.shared_emergency_recipes where status = 'active';
+      if v_pool is distinct from 1 then
+        raise exception 'pool should stay 1 after app success cap, got %', v_pool;
+      end if;
+
+      if (
+        select success_count from private.share_app_daily_usage where usage_day = v_day
+      ) is distinct from 200 then
+        raise exception 'app success_count must remain 200 after cap skip';
+      end if;
+    end;
+    $cap_app$;
+  $$,
+  'publish with app success_count=200 skips daily_success_cap and does not insert pool'
+);
+
 -- list_my as other user → 0 rows
 select lives_ok(
   $$
@@ -351,22 +514,26 @@ select lives_ok(
     do $reap$
     declare
       v_job uuid;
-      v_claim jsonb;
       v_reaped integer;
       v_enq jsonb;
     begin
-      select id into v_job
-      from private.share_generalization_jobs
-      where source_menu_id = 'b1000000-0000-4000-8000-0000000000b2'
-        and status = 'pending';
-
-      v_claim := public.claim_share_generalization_jobs(10);
-
-      update private.share_generalization_jobs
-      set claimed_at = clock_timestamp() - interval '20 minutes',
-          heartbeat_at = clock_timestamp() - interval '20 minutes'
-      where source_menu_id = 'b1000000-0000-4000-8000-0000000000b2'
-        and status = 'running';
+      -- b2/b3 は success-cap で終端済み。b4 を running にして reaper を検証
+      insert into private.share_generalization_jobs (
+        source_menu_id,
+        contributor_user_id,
+        status,
+        claimed_at,
+        heartbeat_at,
+        created_at
+      ) values (
+        'b1000000-0000-4000-8000-0000000000b4',
+        'a1000000-0000-4000-8000-0000000000a1',
+        'running',
+        clock_timestamp() - interval '20 minutes',
+        clock_timestamp() - interval '20 minutes',
+        clock_timestamp() - interval '20 minutes'
+      )
+      returning id into v_job;
 
       v_reaped := public.reap_stale_share_jobs(clock_timestamp(), 100);
       if v_reaped < 1 then
@@ -375,7 +542,7 @@ select lives_ok(
 
       if not exists (
         select 1 from private.share_generalization_jobs
-        where source_menu_id = 'b1000000-0000-4000-8000-0000000000b2'
+        where id = v_job
           and status = 'failed'
           and failure_code = 'lease_expired'
       ) then
@@ -391,7 +558,7 @@ select lives_ok(
       where usage_day = private.ai_jst_day(clock_timestamp());
 
       perform setseed(0.0005);
-      v_enq := public.try_enqueue_share_job('b1000000-0000-4000-8000-0000000000b2'::uuid);
+      v_enq := public.try_enqueue_share_job('b1000000-0000-4000-8000-0000000000b4'::uuid);
       if coalesce((v_enq ->> 'enqueued')::boolean, true) then
         raise exception 're-enqueue after terminal should fail, got %', v_enq;
       end if;

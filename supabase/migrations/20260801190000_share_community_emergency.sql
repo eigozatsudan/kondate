@@ -52,7 +52,9 @@ create table private.share_generalization_jobs (
         'not_emergency_duration',
         'pantry_bound',
         'consent_revoked',
-        'ineligible_structure'
+        'ineligible_structure',
+        -- publish 直前の user/app 日次 success 上限（pool 未 INSERT）
+        'daily_success_cap'
       )
     ),
   failure_code text null
@@ -666,7 +668,8 @@ begin
       'not_emergency_duration',
       'pantry_bound',
       'consent_revoked',
-      'ineligible_structure'
+      'ineligible_structure',
+      'daily_success_cap'
     )
   ) then
     raise exception using errcode = '22023', message = 'invalid_skip_reason';
@@ -722,7 +725,8 @@ grant execute on function public.finish_share_generalization_job(uuid, text, tex
   to service_role;
 
 -- ---------------------------------------------------------------------------
--- 6. publish（同一 TX で consent 再確認 + pool + origin + success 台帳）
+-- 6. publish（同一 TX で consent 再確認 + success 台帳 lock → pool + origin）
+-- success cap は soft WHERE ではなく、pool INSERT 前に FOR UPDATE で fail-closed。
 -- ---------------------------------------------------------------------------
 
 create or replace function public.publish_shared_emergency_recipe(
@@ -747,6 +751,8 @@ declare
   v_now timestamptz := clock_timestamp();
   v_day date;
   v_contributor uuid;
+  v_user_success integer := 0;
+  v_app_success integer := 0;
 begin
   if p_job_id is null then
     raise exception using errcode = '22023', message = 'invalid_job_id';
@@ -806,6 +812,61 @@ begin
     );
   end if;
 
+  -- 日次 success 台帳を ensure → FOR UPDATE（enqueue と同じ user→app 順で deadlock 回避）
+  insert into private.share_user_daily_usage (
+    contributor_user_id, usage_day, attempt_count, success_count, updated_at
+  ) values (v_contributor, v_day, 0, 0, v_now)
+  on conflict (contributor_user_id, usage_day) do nothing;
+
+  insert into private.share_app_daily_usage (
+    usage_day, success_count, ai_call_count, updated_at
+  ) values (v_day, 0, 0, v_now)
+  on conflict (usage_day) do nothing;
+
+  select success_count
+  into v_user_success
+  from private.share_user_daily_usage
+  where contributor_user_id = v_contributor and usage_day = v_day
+  for update;
+
+  select success_count
+  into v_app_success
+  from private.share_app_daily_usage
+  where usage_day = v_day
+  for update;
+
+  -- fail-closed: attempt cap(2) でも success cap(1/200) 超過後の 2 本目 pool INSERT を禁止
+  if v_user_success >= 1 or v_app_success >= 200 then
+    update private.share_generalization_jobs
+    set status = 'skipped',
+        skip_reason = 'daily_success_cap',
+        failure_code = null,
+        pass1_model = coalesce(p_pass1_model, pass1_model),
+        pass2_model = coalesce(p_pass2_model, pass2_model),
+        finished_at = v_now
+    where id = p_job_id;
+
+    perform private.share_increment_ai_calls(v_day, p_ai_call_count);
+
+    return jsonb_build_object(
+      'ok', true,
+      'published', false,
+      'reason', 'daily_success_cap',
+      'job_id', p_job_id
+    );
+  end if;
+
+  -- ロック下で success を先に確定してから pool/origin を書く（soft WHERE 禁止）
+  update private.share_user_daily_usage
+  set success_count = success_count + 1,
+      updated_at = v_now
+  where contributor_user_id = v_contributor and usage_day = v_day;
+
+  update private.share_app_daily_usage
+  set success_count = success_count + 1,
+      updated_at = v_now
+  where usage_day = v_day;
+
   insert into private.shared_emergency_recipes (
     menu_payload,
     meal_type,
@@ -836,23 +897,6 @@ begin
     v_job.source_menu_id,
     v_now
   );
-
-  -- success 台帳（ユーザー + アプリ）
-  insert into private.share_user_daily_usage (
-    contributor_user_id, usage_day, attempt_count, success_count, updated_at
-  ) values (v_contributor, v_day, 0, 1, v_now)
-  on conflict (contributor_user_id, usage_day) do update
-    set success_count = private.share_user_daily_usage.success_count + 1,
-        updated_at = excluded.updated_at
-  where private.share_user_daily_usage.success_count < 1;
-
-  insert into private.share_app_daily_usage (
-    usage_day, success_count, ai_call_count, updated_at
-  ) values (v_day, 1, 0, v_now)
-  on conflict (usage_day) do update
-    set success_count = private.share_app_daily_usage.success_count + 1,
-        updated_at = excluded.updated_at
-  where private.share_app_daily_usage.success_count < 200;
 
   perform private.share_increment_ai_calls(v_day, p_ai_call_count);
 

@@ -7,12 +7,14 @@
 export const shareJobStatuses = ["pending", "running", "succeeded", "failed", "skipped"] as const;
 export type ShareJobStatus = (typeof shareJobStatuses)[number];
 
-/** 適格外・同意失効など「失敗ではなくスキップ」 */
+/** 適格外・同意失効・日次成功上限など「失敗ではなくスキップ」 */
 export const shareSkipReasons = [
   "not_emergency_duration",
   "pantry_bound",
   "consent_revoked",
   "ineligible_structure",
+  /** publish 直前の user/app 日次 success 上限（pool INSERT 前に fail-closed） */
+  "daily_success_cap",
 ] as const;
 export type ShareSkipReason = (typeof shareSkipReasons)[number];
 
