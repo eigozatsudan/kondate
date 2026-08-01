@@ -1,9 +1,10 @@
 /**
  * Plus アップグレード申込の一時クローズ。
- * true のあいだ LP と Settings の Checkout を閉じ、開発中バナーを出す（公開時に false に戻す）。
- * （boolean 注釈は true 切替時に lint の always-truthy/falsy を避けるため）
+ * フラグ本体は shared 正本（API Checkout 拒否と揃える = B4）。
+ * ここは UI 用コピーと re-export。
  */
-export const PLUS_LP_UPGRADE_COMING_SOON: boolean = true;
+export { PLUS_LP_UPGRADE_COMING_SOON } from "@shared/contracts/billing";
+
 export const PLUS_LP_COMING_SOON_BADGE = "ただいま開発中" as const;
 export const PLUS_LP_COMING_SOON_BODY =
   "Plus へのアップグレードはもう少しで公開予定です。今はお申し込みいただけません。お楽しみに！" as const;

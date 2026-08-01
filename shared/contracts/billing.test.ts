@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { STRIPE_API_VERSION, checkoutRequestSchema, entitlementDataSchema } from "./billing.js";
+import {
+  PLUS_LP_UPGRADE_COMING_SOON,
+  STRIPE_API_VERSION,
+  checkoutRequestSchema,
+  entitlementDataSchema,
+} from "./billing.js";
 
 describe("billing contracts", () => {
   it("accepts month|year interval and rejects priceInterval", () => {
@@ -33,5 +38,11 @@ describe("billing contracts", () => {
 
   it("pins STRIPE_API_VERSION to the design-locked dahlia string", () => {
     expect(STRIPE_API_VERSION).toBe("2026-06-24.dahlia");
+  });
+
+  it("locks PLUS_LP_UPGRADE_COMING_SOON as the dual-surface upgrade gate (B4)", () => {
+    // 公開時に false へ戻す。true のあいだ UI と Checkout API が同時に閉じる。
+    expect(typeof PLUS_LP_UPGRADE_COMING_SOON).toBe("boolean");
+    expect(PLUS_LP_UPGRADE_COMING_SOON).toBe(true);
   });
 });

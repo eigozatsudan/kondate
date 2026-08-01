@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
+import {
+  PLUS_LP_UPGRADE_COMING_SOON,
+  STRIPE_API_VERSION,
+} from "../../../shared/contracts/billing.js";
 import { runBillingCheckout, type BillingCheckoutDeps } from "../_shared/billing-checkout.js";
 import type { Entitlement } from "../_shared/billing-entitlement.js";
 import type { ServerEnv } from "../_shared/env.js";
@@ -78,7 +81,10 @@ describe("runBillingCheckout", () => {
   const subscriptionsList = vi.fn();
   const logSink = vi.fn();
 
-  function deps(envOverrides: Partial<ServerEnv> = {}): BillingCheckoutDeps {
+  function deps(
+    envOverrides: Partial<ServerEnv> = {},
+    options: { upgradeComingSoon?: boolean } = {},
+  ): BillingCheckoutDeps {
     return {
       env: baseEnv(envOverrides),
       authenticate,
@@ -93,6 +99,8 @@ describe("runBillingCheckout", () => {
       requestId: "req-co-1",
       createLockToken: () => LOCK_TOKEN,
       now: () => new Date("2026-07-29T12:00:00.000Z"),
+      // 既定 false: COMING_SOON 契約定数が true でも Checkout 経路本体を単体検証する
+      upgradeComingSoon: options.upgradeComingSoon ?? false,
     };
   }
 
@@ -151,6 +159,46 @@ describe("runBillingCheckout", () => {
 
   it("returns 503 billing_disabled when BILLING_ENABLED=false", async () => {
     const response = await runBillingCheckout(request(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_disabled" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 billing_disabled when upgrade COMING_SOON is true (B4)", async () => {
+    const response = await runBillingCheckout(
+      request(),
+      deps({}, { upgradeComingSoon: true }),
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_disabled" },
+    });
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects checkout by shared PLUS_LP_UPGRADE_COMING_SOON when override omitted (B4)", async () => {
+    // 本番ハンドラ相当: deps に upgradeComingSoon を渡さない
+    const productionLike: BillingCheckoutDeps = {
+      env: baseEnv(),
+      authenticate,
+      loadEntitlement,
+      stripe: {
+        customers: { create: customersCreate },
+        checkout: { sessions: { create: sessionsCreate, expire: sessionsExpire } },
+        subscriptions: { list: subscriptionsList },
+      },
+      admin: { rpc } as BillingCheckoutDeps["admin"],
+      log: logSink,
+      requestId: "req-co-b4",
+      createLockToken: () => LOCK_TOKEN,
+      now: () => new Date("2026-07-29T12:00:00.000Z"),
+    };
+    // 契約定数が true のあいだだけサーバ権威で拒否されることを固定
+    expect(PLUS_LP_UPGRADE_COMING_SOON).toBe(true);
+    const response = await runBillingCheckout(request(), productionLike);
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "billing_disabled" },

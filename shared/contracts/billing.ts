@@ -55,3 +55,12 @@ export type EntitlementData = z.infer<typeof entitlementDataSchema>;
  */
 export const STRIPE_API_VERSION = "2026-06-24.dahlia" as const;
 export type StripeApiVersion = typeof STRIPE_API_VERSION;
+
+/**
+ * Plus アップグレード申込の一時クローズ（B4）。
+ * true のあいだ UI（LP/Settings）と POST /api/billing/checkout を閉じる。
+ * ブラウザと Functions の単一正本。公開時に false へ戻す（boolean 注釈は
+ * true 切替時に lint の always-truthy/falsy を避けるため）。
+ * env ではなく契約定数: デプロイ単位で UI と API を同時に開閉する。
+ */
+export const PLUS_LP_UPGRADE_COMING_SOON: boolean = true;

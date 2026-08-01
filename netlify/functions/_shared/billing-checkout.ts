@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import {
   checkoutRequestSchema,
+  PLUS_LP_UPGRADE_COMING_SOON,
   type CheckoutData,
   type CheckoutRequest,
 } from "../../../shared/contracts/billing.js";
@@ -52,6 +53,11 @@ export type BillingCheckoutDeps = {
   now?: () => Date;
   requestId?: string;
   createLockToken?: () => string;
+  /**
+   * テスト用 override。未指定時は shared の PLUS_LP_UPGRADE_COMING_SOON を正とする。
+   * 本番ハンドラは渡さない（契約定数と UI を同時に開閉する）。
+   */
+  upgradeComingSoon?: boolean;
 };
 
 const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
@@ -164,6 +170,12 @@ export async function runBillingCheckout(
 
   try {
     if (!deps.env.billingEnabled || deps.env.stripe === undefined) {
+      throw new HttpError(503, "billing_disabled", "お支払い機能は現在ご利用いただけません");
+    }
+
+    // B4: UI の COMING_SOON と API を揃える（BILLING_ENABLED だけでは申込クローズにならない）
+    const upgradeComingSoon = deps.upgradeComingSoon ?? PLUS_LP_UPGRADE_COMING_SOON;
+    if (upgradeComingSoon) {
       throw new HttpError(503, "billing_disabled", "お支払い機能は現在ご利用いただけません");
     }
 
