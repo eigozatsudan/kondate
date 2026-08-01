@@ -52,7 +52,7 @@ describe("useGenerationProgressMessage", () => {
       vi.advanceTimersByTime(GENERATION_PROGRESS_TICK_MS);
     });
     expect(result.current.stageIndex).toBe(2);
-    expect(result.current.message).toBe("AI に献立案を聞いています");
+    expect(result.current.message).toBe("献立案を用意しています");
   });
 
   it("does not reset elapsed to zero on each tick when anchorMs is null", () => {

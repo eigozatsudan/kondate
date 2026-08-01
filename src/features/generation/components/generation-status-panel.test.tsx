@@ -551,13 +551,13 @@ describe("GenerationStatusPanel", () => {
       vi.setSystemTime(new Date(NOW.getTime() + 10_000));
       vi.advanceTimersByTime(1_000);
     });
-    expect(screen.getByRole("status")).toHaveTextContent("AI に献立案を聞いています");
+    expect(screen.getByRole("status")).toHaveTextContent("献立案を用意しています");
     expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
   });
 
   it.each([
     [0, 0, "条件を確認しています"],
-    [10_000, 2, "AI に献立案を聞いています"],
+    [10_000, 2, "献立案を用意しています"],
     [35_000, 3, "組み合わせと段取りを整えています"],
     [60_000, 4, "仕上げの確認をしています"],
   ] as const)(
@@ -606,7 +606,7 @@ describe("GenerationStatusPanel", () => {
       />,
     );
     expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
-    expect(screen.getByRole("status")).toHaveTextContent("AI に献立案を聞いています");
+    expect(screen.getByRole("status")).toHaveTextContent("献立案を用意しています");
   });
 
   it("clears progress interval on unmount (V-I3)", () => {
@@ -647,8 +647,34 @@ describe("GenerationStatusPanel", () => {
     ).toBeVisible();
   });
 
-  it("lets the user abandon a processing run via onClear", () => {
+  it("lets the user abandon a processing run via onClear after confirm (G2)", () => {
     const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
+      status: "processing",
+      idempotencyKey: KEY,
+      requestId: REQUEST_ID,
+      startedAt: "2026-07-11T00:00:00.000Z",
+      quota,
+    };
+    render(
+      <GenerationStatusPanel
+        state={{ phase: "processing", data: processingData, effect: "poll" }}
+        onClear={onClear}
+      />,
+    );
+    expect(
+      screen.getByText(/破棄すると、しばらく新しい作成を始められない/),
+    ).toBeVisible();
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not abandon a processing run when confirm is cancelled (G2)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
       status: "processing",
       idempotencyKey: KEY,
@@ -663,7 +689,9 @@ describe("GenerationStatusPanel", () => {
       />,
     );
     screen.getByRole("button", { name: "条件を直してやり直す" }).click();
-    expect(onClear).toHaveBeenCalledOnce();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 
   it("shows an offline message while waiting for connectivity", () => {
@@ -675,8 +703,9 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByRole("heading", { name: "通信を確認しています" })).toBeVisible();
   });
 
-  it("lets the user abandon an offline run via onClear", () => {
+  it("lets the user abandon an offline run via onClear after confirm (G2)", () => {
     const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(
       <GenerationStatusPanel
         state={{ phase: "offline", previous: failedState, effect: "wait_online" }}
@@ -684,6 +713,33 @@ describe("GenerationStatusPanel", () => {
       />,
     );
     screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
     expect(onClear).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not abandon an offline run when confirm is cancelled (G2)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <GenerationStatusPanel
+        state={{ phase: "offline", previous: failedState, effect: "wait_online" }}
+        onClear={onClear}
+      />,
+    );
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not require confirm on terminal failed RecoveryLinks", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<GenerationStatusPanel state={failedState} onClear={onClear} />);
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(onClear).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
   });
 });

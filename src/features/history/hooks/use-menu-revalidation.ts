@@ -28,6 +28,8 @@ export function menuRevalidationQueryKey(menuId: string) {
  *   （マウスをウィンドウへ戻しただけの focus でフル画面ゲートが点滅するのを防ぐ）。
  *   soft のネットワーク失敗は error へ（last-known-good valid で CTA を開かない = fail-closed）。
  *   soft 飛行中かつ直前が成功済みのときだけ checked を維持する。
+ *   ただし soft 飛行中は isSoftRechecking=true を返し、呼び出し側は採用/再生成/買い物 CTA
+ *   だけを閉じる（HR1: 別端末のアレルギー変更〜soft 完了までの操作窓を塞ぐ）。
  * - online 復帰は hard（offline 閉鎖のあと、成功するまで操作を再開しない）。
  *
  * 飛行中の hard は常に checking。古い hard の完了で最新の閉じ状態を開けない。
@@ -173,6 +175,11 @@ export function useMenuRevalidation(menuId: string) {
         ? "checking"
         : "error";
 
+  // HR1: soft 飛行中（直前 checked を維持したまま isFetching）だけ true。
+  // hard の forcedChecking / 初回 data なしは phase=checking 側で閉じるため false。
+  const isSoftRechecking =
+    !forcedChecking && hasData && !query.isError && query.isFetching;
+
   const errorMessage =
     query.error instanceof Error ? query.error.message : "現在の家族設定で確認できませんでした";
 
@@ -189,6 +196,7 @@ export function useMenuRevalidation(menuId: string) {
     phase,
     result: phase === "checked" ? query.data : undefined,
     errorMessage: phase === "error" ? errorMessage : undefined,
+    isSoftRechecking,
     beginRecheck,
     beginSoftRecheck,
     beginHardRecheck,

@@ -32,6 +32,8 @@ export type UseRegenerationInput =
       menuId: string;
       phase: RevalidationPhaseName;
       result: RevalidationResult | undefined;
+      /** HR1: soft 再検査飛行中は canRegenerate を閉じる（phase は checked のまま） */
+      isSoftRechecking?: boolean;
     }
   | {
       targetMode: "idea";
@@ -56,7 +58,9 @@ export function useRegeneration(input: UseRegenerationInput) {
       ? true
       : input.phase === "checked" &&
         input.result !== undefined &&
-        isRevalidationActionable(input.result);
+        isRevalidationActionable(input.result) &&
+        // soft 飛行中は旧 actionable のまま POST しない（HR1）
+        !(input.isSoftRechecking ?? false);
 
   const startWhole = useCallback(
     (reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {

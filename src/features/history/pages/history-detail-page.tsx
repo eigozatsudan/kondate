@@ -34,7 +34,10 @@ import {
   pantryKeys,
   updatePantryItem,
 } from "@/features/pantry/pantry-api";
-import { listExpiredPantryForRegeneration } from "../model/expired-pantry-for-regen";
+import {
+  hasMissingPantrySelectionsForRegeneration,
+  listExpiredPantryForRegeneration,
+} from "../model/expired-pantry-for-regen";
 import { createPlannerDraftFromMenu } from "@/features/planner/model/draft-from-menu";
 import { getPlannerDraft, plannerKeys, savePlannerDraft } from "@/features/planner/planner-api";
 import {
@@ -90,6 +93,8 @@ export type HistoryDetailRevalidationView = {
   phase: RevalidationPhaseName;
   result?: RevalidationResult;
   errorMessage?: string;
+  /** HR1: soft 再検査飛行中。省略時は false（テスト注入互換） */
+  isSoftRechecking?: boolean;
   refetch?: () => void;
   beginRecheck?: () => void;
 };
@@ -225,13 +230,23 @@ function IdeaDetailBody({
       listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
     [pantryQuery.data, result.sourceSubmission],
   );
+  // HR5: live に無い selection は期限 UI に出ないため、欠落を別ゲートで塞ぐ
+  const missingPantrySelections =
+    pantryQuery.isSuccess &&
+    hasMissingPantrySelectionsForRegeneration(
+      result.sourceSubmission,
+      pantryQuery.data ?? [],
+    );
   // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない（空配列 fail-open を防ぐ）
-  const pantryGateReady = pantryQuery.isSuccess;
+  // HR5: 欠落 selection があるときは再生成 CTA を閉じる（server 422 を先回り）
+  const pantryGateReady = pantryQuery.isSuccess && !missingPantrySelections;
   const pantryGateMessage = pantryQuery.isError
     ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
     : pantryQuery.isPending
       ? "冷蔵庫を確認しています…"
-      : null;
+      : missingPantrySelections
+        ? "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"
+        : null;
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId,
@@ -531,12 +546,14 @@ function HouseholdDetailBody({
     phase: live.phase,
     ...(live.result !== undefined ? { result: live.result } : {}),
     ...(live.errorMessage !== undefined ? { errorMessage: live.errorMessage } : {}),
+    isSoftRechecking: live.isSoftRechecking,
     refetch: () => {
       void live.refetch();
     },
     beginRecheck: live.beginRecheck,
   };
   const revalidation = injectedRevalidation ?? liveView;
+  const isSoftRechecking = revalidation.isSoftRechecking ?? false;
 
   const usage = useUsageToday(userId ?? "");
   const usageView = usageViewFromQuery(usage);
@@ -550,18 +567,29 @@ function HouseholdDetailBody({
       listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
     [pantryQuery.data, result.sourceSubmission],
   );
+  // HR5: live に無い selection は期限 UI に出ないため、欠落を別ゲートで塞ぐ
+  const missingPantrySelections =
+    pantryQuery.isSuccess &&
+    hasMissingPantrySelectionsForRegeneration(
+      result.sourceSubmission,
+      pantryQuery.data ?? [],
+    );
   // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない
-  const pantryGateReady = pantryQuery.isSuccess;
+  // HR5: 欠落 selection があるときは再生成 CTA を閉じる（server 422 を先回り）
+  const pantryGateReady = pantryQuery.isSuccess && !missingPantrySelections;
   const pantryGateMessage = pantryQuery.isError
     ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
     : pantryQuery.isPending
       ? "冷蔵庫を確認しています…"
-      : null;
+      : missingPantrySelections
+        ? "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"
+        : null;
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId,
     phase: revalidation.phase,
     result: revalidation.result,
+    isSoftRechecking,
   });
   const accept = useAcceptMenuVersion();
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
@@ -573,16 +601,21 @@ function HouseholdDetailBody({
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
 
-  const actionsEnabled =
+  // gateOpen: 本文表示（soft 飛行中も直前 checked を維持 = focus 点滅防止）
+  const gateOpen =
     revalidation.phase === "checked" &&
     revalidation.result !== undefined &&
     isRevalidationActionable(revalidation.result);
+  // actionsEnabled: 採用/再生成/買い物 mutation（HR1: soft 飛行中は閉じる）
+  const actionsEnabled = gateOpen && !isSoftRechecking;
   // HR4: retarget は checking/error 中は閉じる。checked なら invalid でも許可
   // （使えない献立から条件を変えて作り直す escape hatch）。accept/regen は actionsEnabled。
+  // soft 飛行中も retarget は許可（条件変更の escape を閉じない）。
   const retargetEnabled = revalidation.phase === "checked";
   const canUpdatePostCook = result.pantryPostCookTargets.length > 0;
 
   // D-M7: 安全再検査で操作が閉じたらシート・在庫ダイアログも閉じる（開いたまま送信して unhandled reject しない）
+  // soft 飛行中も actionsEnabled=false でシートを閉じる（HR1）。
   useEffect(() => {
     if (!actionsEnabled && sheetMode !== null) {
       setSheetMode(null);
@@ -617,10 +650,9 @@ function HouseholdDetailBody({
     (revalidation.phase === "checked" &&
       revalidation.result !== undefined &&
       !isRevalidationActionable(revalidation.result));
-  const mustCloseReconcileSheet =
-    mustCloseCreateSheet ||
-    shoppingGate.blocked ||
-    (revalidation.phase === "checked" && !actionsEnabled);
+  // soft 飛行中は CTA を閉じるが、reconcile シートは invalid/error のみ fail-closed で閉じる
+  // （focus soft だけでシートが点滅して消えないように。送信は safetyBlocked で止める）
+  const mustCloseReconcileSheet = mustCloseCreateSheet || shoppingGate.blocked;
   const canCreateShoppingList = canOpenCreateSheet;
   const nonRemovedCount =
     activeList === null ? 0 : activeList.items.filter((item) => !item.isRemovedByUser).length;
@@ -777,12 +809,14 @@ function HouseholdDetailBody({
   const statusCopy = useMemo(() => {
     if (revalidation.phase === "checking") return "現在の家族設定で確認しています";
     if (revalidation.phase === "error") return revalidation.errorMessage ?? "確認できませんでした";
+    // HR1: soft 飛行中は本文を維持しつつ「再確認中」を示し CTA だけ閉じる
+    if (isSoftRechecking) return "いまの家族設定を再確認しています";
     if (revalidation.result?.status === "changed") {
       return "現在の家族設定で確認しました。作成時から条件が変わっています";
     }
     if (revalidation.result?.status === "valid") return "現在の家族設定で確認しました";
     return null;
-  }, [revalidation]);
+  }, [isSoftRechecking, revalidation]);
 
   // HR-I2: changedDetails を日本語で明示（§9.1）。
   const changedDetailLines = useMemo(() => {
@@ -875,7 +909,7 @@ function HouseholdDetailBody({
         </div>
       )}
 
-      {actionsEnabled && revalidation.result !== undefined && (
+      {gateOpen && revalidation.result !== undefined && (
         <>
           <div
             className="menu-result-gate-status sticky top-0 z-10 bg-canvas/95 py-2"
@@ -902,10 +936,13 @@ function HouseholdDetailBody({
               }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
-                if (!pantryGateReady) return;
+                // HR1/HR5: soft 飛行中・pantry ゲート未通過では皿別案を開かない
+                if (!actionsEnabled || !pantryGateReady) return;
                 setSheetMode("dish");
               }}
-              regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
+              regenerateSelectedDishDisabled={
+                dishIdForRegen === null || !pantryGateReady || !actionsEnabled
+              }
             />
           ) : (
             <MenuResult
@@ -920,10 +957,12 @@ function HouseholdDetailBody({
               }}
               onSelectedDishChange={setSelectedDishId}
               onRegenerateSelectedDish={() => {
-                if (!pantryGateReady) return;
+                if (!actionsEnabled || !pantryGateReady) return;
                 setSheetMode("dish");
               }}
-              regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
+              regenerateSelectedDishDisabled={
+                dishIdForRegen === null || !pantryGateReady || !actionsEnabled
+              }
             />
           )}
           {acceptError !== null && (
@@ -1091,8 +1130,14 @@ function HouseholdDetailBody({
           買い物リストを作る前に、いまの家族設定を確認しています
         </p>
       ) : null}
+      {/* HR1: soft 飛行中は恒久拒否ではなく再確認待ち（invalid アラートと混同しない） */}
+      {shoppingIntentActive && isSoftRechecking ? (
+        <p className="mt-4" role="status">
+          買い物リストを作る前に、いまの家族設定を再確認しています
+        </p>
+      ) : null}
       {shoppingIntentActive &&
-      (revalidation.phase === "error" || (revalidation.phase === "checked" && !actionsEnabled)) ? (
+      (revalidation.phase === "error" || (revalidation.phase === "checked" && !gateOpen)) ? (
         <section className="card stack mt-4" role="alert">
           <p>
             {revalidation.errorMessage ?? "現在の家族設定ではこの献立から買い物リストを作れません"}

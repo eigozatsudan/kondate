@@ -471,6 +471,35 @@ describe("createGenerationRepository", () => {
       code: "replace_dish_not_found",
       messageIncludes: "変更する料理",
     },
+    // G8: 設定ミス・運用向け。文言は汎用のまま code で診断可能にする
+    {
+      sqlMessage: "release_quota_mismatch",
+      sqlCode: "22023",
+      status: 500,
+      code: "release_quota_mismatch",
+      messageIncludes: "生成の受付状態を更新できませんでした",
+    },
+    {
+      sqlMessage: "invalid_request_hmac",
+      sqlCode: "22023",
+      status: 500,
+      code: "invalid_request_hmac",
+      messageIncludes: "生成の受付状態を更新できませんでした",
+    },
+    {
+      sqlMessage: "invalid_identity_key",
+      sqlCode: "22023",
+      status: 500,
+      code: "invalid_identity_key",
+      messageIncludes: "生成の受付状態を更新できませんでした",
+    },
+    {
+      sqlMessage: "repair_not_available",
+      sqlCode: "55000",
+      status: 500,
+      code: "repair_not_available",
+      messageIncludes: "生成の受付状態を更新できませんでした",
+    },
   ] as const)("maps reserve SQL $sqlMessage to closed HttpError $code", async (testCase) => {
     const databaseError = new PostgrestError({
       message: testCase.sqlMessage,

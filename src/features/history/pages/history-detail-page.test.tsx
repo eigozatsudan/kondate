@@ -465,6 +465,58 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByRole("button", { name: "この献立にする" })).toBeEnabled();
   });
 
+  it("disables mutation CTAs during soft recheck while keeping checked content (HR1)", async () => {
+    // soft 飛行中は phase=checked のまま本文を出し、採用/再生成/買い物だけ閉じる
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: validRevalidation,
+        isSoftRechecking: true,
+      },
+    });
+    expect(await screen.findByText("いまの家族設定を再確認しています")).toBeVisible();
+    // 本文ゲートは開いたまま（フル画面 checking オーバーレイは出さない）
+    expect(document.querySelector(".revalidation-checking-overlay")).toBeNull();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
+  });
+
+  it("disables regenerate when source pantry selection is missing from live (HR5)", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: {
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: ["10000000-0000-4000-8000-000000000001"],
+          servings: null,
+          timeLimitMinutes: 30,
+          budgetPreference: "economy",
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [{ pantryItemId: "missing-pantry-id", priority: "prefer_use" }],
+        },
+      }),
+    );
+    // live は空 = selection 欠落
+    listPantryItemsMock.mockResolvedValue([]);
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    expect(
+      await screen.findByText(
+        "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+    // 採用・買い物は pantry ゲートと独立（安全再検証のみ）
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+  });
+
   it("calls acceptMenuVersion when この献立にする is clicked while actionable", async () => {
     const user = userEvent.setup();
     renderHistoryDetail({

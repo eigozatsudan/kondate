@@ -902,7 +902,8 @@ export async function runGeneration(
       // G4 residual: attempt を焼く markSent より前に政策失敗を閉じる。
       // process 寿命 cache により 2 回目以降（repair）は remote を叩かない。
       // R2: ensure は Models API 最大 5s を食うことがあるため、成功後に REQUIRED_SEND を
-      // 再ゲートし、attemptTimeout も markSent 直前に再 snapshot する（stale 上限で chat しない）。
+      // 再ゲートする。G5: chat 上限（attemptTimeout）は markSent 後に再 snapshot する
+      // （RPC 遅延で finalize 2s 予約を侵食した過大 timeout を避ける）。
       try {
         await ensureModelPolicy({ models: deps.models });
       } catch (error) {
@@ -916,14 +917,21 @@ export async function runGeneration(
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
         return "terminal";
       }
-      const attemptTimeout = timeoutForAttempt();
-      if (attemptTimeout <= 0) {
+      // markSent 前ゲート: 予算不足なら attempt を焼かず timeout 終端
+      if (timeoutForAttempt() <= 0) {
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
         return "terminal";
       }
       const sent = await deps.repository.markSent(requestId);
       // 短期窓拒否は markSent 内で failed 終端化済み。再 fail せず status を読む。
       if (!sent.sent) {
+        return "terminal";
+      }
+      // G5: markSent RPC 所要後に chat 上限を再 snapshot。
+      const attemptTimeout = timeoutForAttempt();
+      if (attemptTimeout <= 0) {
+        // markSent 済みなので failBeforeSend 名義ではなく通常 fail（attempt は解放しない）
+        await deps.repository.fail(requestId, "generation_timeout", null);
         return "terminal";
       }
       let result: OpenRouterGenerationResult;

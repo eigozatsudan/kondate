@@ -1299,7 +1299,7 @@ describe("runGeneration", () => {
 
     it("R2: allows markSent when slow ensure still leaves REQUIRED_SEND budget", async () => {
       // ensure が 4s 進んでも remaining が REQUIRED 以上なら markSent し、
-      // attemptTimeout は markSent 直前の snapshot（現行定数では ATTEMPT 上限）を使う。
+      // attemptTimeout は markSent 後の再 snapshot（現行定数では ATTEMPT 上限）を使う。
       const repository = makeRepository();
       let nowMs = 0;
       const ensureOpenRouterModelPolicy = vi
@@ -1336,8 +1336,96 @@ describe("runGeneration", () => {
       expect(ensureOpenRouterModelPolicy).toHaveBeenCalledTimes(1);
       expect(repository.markSent).toHaveBeenCalledTimes(1);
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
-      // remaining after ensure === REQUIRED → timeout = ATTEMPT
+      // remaining after markSent === REQUIRED → timeout = ATTEMPT
       expect(callOpenRouter.mock.calls[0]?.[0].timeoutMs).toBe(ATTEMPT_TIMEOUT_MS);
+    });
+
+    it("G5: recomputes OpenRouter timeout after slow markSent so finalize reserve is kept", async () => {
+      // markSent が 3s 進むと、pre-mark で ATTEMPT だった上限を remaining−2s に縮める。
+      const repository = makeRepository();
+      let nowMs = 0;
+      repository.markSent = vi.fn(() => {
+        nowMs += 3_000;
+        return Promise.resolve({
+          ...record("processing"),
+          sent: true as const,
+          code: null,
+        });
+      });
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+        Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        }),
+      );
+      // deadline 55s。markSent 直前 now=28s → remaining 27s → pre gate 通過。
+      // markSent 後 now=31s → remaining 24s → timeout = 24_000 − FINALIZE = 22_000。
+      const markSentAtMs = 55_000 - (ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS + 1_000);
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 55_000,
+          openRouterTimeoutMs: 24_000,
+          monotonicNow: () => nowMs,
+          loadExecutionContext: vi.fn(() => {
+            nowMs = markSentAtMs;
+            return Promise.resolve(makeNewMenuExecutionContext());
+          }),
+        }),
+        command,
+      );
+      expect(result.status).toBe("succeeded");
+      expect(repository.markSent).toHaveBeenCalledTimes(1);
+      expect(callOpenRouter).toHaveBeenCalledTimes(1);
+      // remaining after markSent = 55_000 - (markSentAtMs + 3_000) = 24_000
+      // timeout = 24_000 - FINALIZE_RESERVE = 22_000
+      expect(callOpenRouter.mock.calls[0]?.[0].timeoutMs).toBe(
+        ATTEMPT_TIMEOUT_MS - FINALIZE_RESERVE_MS,
+      );
+      expect(callOpenRouter.mock.calls[0]?.[0].timeoutMs).toBeLessThan(ATTEMPT_TIMEOUT_MS);
+    });
+
+    it("G5: fails after markSent when RPC delay exhausts chat budget", async () => {
+      // markSent 後 remaining ≤ FINALIZE なら OpenRouter を呼ばず generation_timeout。
+      const repository = makeRepository();
+      let nowMs = 0;
+      repository.markSent = vi.fn(() => {
+        // remaining を FINALIZE 以下へ（chat timeout 0）
+        nowMs = 55_000 - FINALIZE_RESERVE_MS;
+        return Promise.resolve({
+          ...record("processing"),
+          sent: true as const,
+          code: null,
+        });
+      });
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>();
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 55_000,
+          openRouterTimeoutMs: 24_000,
+          monotonicNow: () => nowMs,
+          loadExecutionContext: vi.fn(() => {
+            // pre-mark: remaining = REQUIRED 以上
+            nowMs = 55_000 - REQUIRED_SEND_BUDGET_MS;
+            return Promise.resolve(makeNewMenuExecutionContext());
+          }),
+        }),
+        command,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "generation_timeout" },
+      });
+      expect(repository.markSent).toHaveBeenCalledTimes(1);
+      expect(repository.fail).toHaveBeenCalledWith(requestId, "generation_timeout", null);
+      expect(repository.failBeforeSend).not.toHaveBeenCalled();
+      expect(callOpenRouter).not.toHaveBeenCalled();
     });
 
     it("fails with generation_timeout after provider when deadline is already exceeded", async () => {

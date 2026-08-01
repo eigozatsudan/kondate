@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerSubmission } from "@shared/contracts/planner";
-import { listExpiredPantryForRegeneration } from "./expired-pantry-for-regen";
+import {
+  hasMissingPantrySelectionsForRegeneration,
+  listExpiredPantryForRegeneration,
+} from "./expired-pantry-for-regen";
 
 const now = new Date("2026-07-28T03:00:00.000Z");
 
@@ -61,5 +64,39 @@ describe("listExpiredPantryForRegeneration", () => {
         now,
       ),
     ).toEqual([]);
+  });
+
+  it("skips deleted live pantry from expiry list (HR5 pair: use missing gate)", () => {
+    // 欠落 ID（p-expired）は期限リストに出さない。hasMissing で別途ゲートする。
+    // 残っている p-fresh が期限切れなら、それは従来どおり期限確認対象に残る。
+    expect(
+      listExpiredPantryForRegeneration(submission, [item("p-fresh", "にんじん", "2026-07-01")], now),
+    ).toEqual([{ pantryItemId: "p-fresh", name: "にんじん" }]);
+  });
+});
+
+describe("hasMissingPantrySelectionsForRegeneration", () => {
+  it("is true when a selected pantry id is absent from live (HR5)", () => {
+    expect(
+      hasMissingPantrySelectionsForRegeneration(submission, [
+        item("p-fresh", "にんじん", "2026-08-01"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("is false when all selections exist or submission has none", () => {
+    expect(
+      hasMissingPantrySelectionsForRegeneration(submission, [
+        item("p-expired", "牛乳", "2026-07-01"),
+        item("p-fresh", "にんじん", "2026-08-01"),
+      ]),
+    ).toBe(false);
+    expect(hasMissingPantrySelectionsForRegeneration(null, [])).toBe(false);
+    expect(
+      hasMissingPantrySelectionsForRegeneration(
+        { ...submission, pantrySelections: [] } as PlannerSubmission,
+        [],
+      ),
+    ).toBe(false);
   });
 });

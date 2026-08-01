@@ -11,7 +11,9 @@ export type GenerationProgressStage = {
 export const GENERATION_PROGRESS_STAGES: readonly GenerationProgressStage[] = [
   { afterMs: 0, message: "条件を確認しています" },
   { afterMs: 3_000, message: "献立の指示を組み立てています" },
-  { afterMs: 8_000, message: "AI に献立案を聞いています" },
+  // G9: 経過時間のみの体感段階。サーバ工程（preflight/load/ensure/markSent/OpenRouter）と
+  // 一致しないため、8s 帯で「AI に聞いている」と断定しない（誤認 → pending 破棄誘発を抑える）。
+  { afterMs: 8_000, message: "献立案を用意しています" },
   { afterMs: 30_000, message: "組み合わせと段取りを整えています" },
   { afterMs: 45_000, message: "仕上げの確認をしています" },
 ] as const;

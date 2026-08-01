@@ -124,6 +124,25 @@ describe("useRegeneration", () => {
     expect(postMock).not.toHaveBeenCalled();
   });
 
+  it("refuses regenerate while soft recheck is in flight (HR1)", async () => {
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+          isSoftRechecking: true,
+        }),
+      { wrapper },
+    );
+    expect(result.current.canRegenerate).toBe(false);
+    await expect(
+      result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null }),
+    ).rejects.toThrow("revalidation_required");
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
   it("persists regenerate_menu pending and navigates to /generation without POSTing here", async () => {
     const { result } = renderHook(
       () =>

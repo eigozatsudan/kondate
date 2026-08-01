@@ -155,12 +155,16 @@ function isStatementTimeoutError(error: unknown): boolean {
  * SQL raise の exact message を閉じた HttpError に写す。
  * integrity 解決（TS）と同系の業務 code を POST 経路でも UX 可能な形で返す（G3）。
  * 未知 message は null（呼び出し側が quota_transition_failed）。
+ *
+ * G8: 設定ミス系（limit 範囲外 / HMAC / identity）と repair_not_available も
+ * exact message で写し、一律の汎用 500 に潰さない。ユーザー向け文面は汎用のまま、
+ * code だけ診断可能にする（クライアントは offline + pending 維持）。
  */
 function mapClosedRpcFailure(error: PostgrestLikeError): HttpError | null {
   const message = error.message ?? "";
   const code = error.code ?? "";
-  // 業務 raise は P0001 / P0002 / 22023。それ以外はインフラ扱いのまま 500 へ。
-  if (code !== "P0001" && code !== "P0002" && code !== "22023") {
+  // 業務 raise は P0001 / P0002 / 22023。repair 拒否は 55000。
+  if (code !== "P0001" && code !== "P0002" && code !== "22023" && code !== "55000") {
     return null;
   }
   if (message === "idempotency_payload_mismatch") {
@@ -194,6 +198,15 @@ function mapClosedRpcFailure(error: PostgrestLikeError): HttpError | null {
   }
   if (message === "replace_dish_not_found") {
     return new HttpError(404, "replace_dish_not_found", issueMessages.replace_dish_not_found);
+  }
+  // 運用・設定ミス向け診断 code（G8）。文言はユーザー向けに汎用のまま。
+  if (
+    message === "release_quota_mismatch" ||
+    message === "invalid_request_hmac" ||
+    message === "invalid_identity_key" ||
+    message === "repair_not_available"
+  ) {
+    return new HttpError(500, message, "生成の受付状態を更新できませんでした。");
   }
   return null;
 }

@@ -43,6 +43,11 @@ const CLOSED_SERVER_RECOVERABLE_CODES = new Set([
   "billing_entitlement_unavailable",
   "request_failed",
   "quota_transition_failed",
+  // G8: mapClosedRpcFailure が写す設定ミス・repair 拒否 code。pending を焼かず offline 維持。
+  "release_quota_mismatch",
+  "invalid_request_hmac",
+  "invalid_identity_key",
+  "repair_not_available",
 ]);
 
 /**

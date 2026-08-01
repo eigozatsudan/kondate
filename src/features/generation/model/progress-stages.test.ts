@@ -12,7 +12,7 @@ describe("GENERATION_PROGRESS_STAGES", () => {
     expect(GENERATION_PROGRESS_STAGES).toEqual([
       { afterMs: 0, message: "条件を確認しています" },
       { afterMs: 3_000, message: "献立の指示を組み立てています" },
-      { afterMs: 8_000, message: "AI に献立案を聞いています" },
+      { afterMs: 8_000, message: "献立案を用意しています" },
       { afterMs: 30_000, message: "組み合わせと段取りを整えています" },
       { afterMs: 45_000, message: "仕上げの確認をしています" },
     ]);
@@ -50,7 +50,7 @@ describe("selectGenerationProgressStageIndex", () => {
 
 describe("selectGenerationProgressMessage", () => {
   it("returns the message for the selected index", () => {
-    expect(selectGenerationProgressMessage(10_000)).toBe("AI に献立案を聞いています");
+    expect(selectGenerationProgressMessage(10_000)).toBe("献立案を用意しています");
     expect(selectGenerationProgressMessage(35_000)).toBe("組み合わせと段取りを整えています");
   });
 });

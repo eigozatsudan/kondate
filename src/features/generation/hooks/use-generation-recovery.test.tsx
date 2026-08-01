@@ -871,10 +871,15 @@ describe("useGenerationRecovery", () => {
   });
 
   // G1/G2: POST の閉じた 5xx 系 code で pending を焼くと processing 台帳を status 回収できない
+  // G8: 設定ミス・repair 拒否 code も offline + pending 維持
   it.each([
     "billing_entitlement_unavailable",
     "request_failed",
     "quota_transition_failed",
+    "release_quota_mismatch",
+    "invalid_request_hmac",
+    "invalid_identity_key",
+    "repair_not_available",
   ] as const)("keeps pending offline on POST %s (recoverable server path)", async (code) => {
     mockPost.mockRejectedValueOnce(new Error(code));
     const recovery = renderRecoveryAt(idleState, null);
@@ -898,10 +903,15 @@ describe("useGenerationRecovery", () => {
   });
 
   // 敵対的レビュー I-1: GET の entitlement 一時 503 で pending を焼くと processing 復旧不能。
+  // G8: 設定ミス・repair 拒否 code も offline + pending 維持
   it.each([
     "billing_entitlement_unavailable",
     "request_failed",
     "quota_transition_failed",
+    "release_quota_mismatch",
+    "invalid_request_hmac",
+    "invalid_identity_key",
+    "repair_not_available",
   ] as const)("keeps pending offline on GET %s (transient server path)", async (code) => {
     realPendingGeneration.savePendingGeneration(pendingA, storage);
     mockStatus.mockRejectedValueOnce(new Error(code));

@@ -248,6 +248,7 @@ describe("useMenuRevalidation", () => {
     await waitFor(() => {
       expect(result.current.phase).toBe("checked");
     });
+    expect(result.current.isSoftRechecking).toBe(false);
     const deferred = deferredPromise<RevalidationResult>();
     revalidateMenuMock.mockReturnValueOnce(deferred.promise);
     act(() => {
@@ -255,11 +256,17 @@ describe("useMenuRevalidation", () => {
     });
     expect(result.current.phase).toBe("checked");
     expect(result.current.result?.status).toBe("valid");
+    // HR1: 本文用 phase は checked のまま、CTA 用 isSoftRechecking だけ true
+    await waitFor(() => {
+      expect(result.current.isSoftRechecking).toBe(true);
+    });
+    expect(result.current.phase).toBe("checked");
     act(() => {
       deferred.resolve(valid);
     });
     await waitFor(() => {
       expect(result.current.phase).toBe("checked");
+      expect(result.current.isSoftRechecking).toBe(false);
     });
   });
 

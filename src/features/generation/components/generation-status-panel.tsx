@@ -74,6 +74,20 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
 }
 
 /**
+ * processing / offline からの pending 破棄確認文。
+ * 端末だけ捨てるとサーバ processing が orphan 化し、最大約 3 分の枠拘束と
+ * 裏成功時の history / 枠消費が起き得る（G2）。cancel RPC は無いため UI で安全側に寄せる。
+ */
+export const PROCESSING_DISCARD_CONFIRM_MESSAGE =
+  "作成中の記録をこの端末から消します。サーバー側では最大3分ほど作成中のまま残り、その間は新しい献立を始められないことがあります。裏で完成した場合は履歴に残り、作成回数が減ることがあります。よろしいですか？";
+
+function confirmProcessingDiscard(): boolean {
+  // SSR / 非ブラウザでは confirm 不可。破壊操作なので fail-closed で破棄しない。
+  if (typeof window === "undefined") return false;
+  return window.confirm(PROCESSING_DISCARD_CONFIRM_MESSAGE);
+}
+
+/**
  * 終端（failed / constraint_conflict）からの復帰導線。
  * 「条件を直してやり直す」は onClear（pending+machine）で idle へ。
  * idle の遷移先は GenerationPage が pending.kind から決める
@@ -81,20 +95,43 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
  * 緊急献立・履歴は pending のみ消す（machine を idle にすると GenerationPage の
  * Navigate と <a href> が競合するため）。
  * 緊急献立 CTA は household / idea とも常時表示（2026-07-28 設計: idea 個人固定候補パス）。
+ *
+ * requireDiscardConfirm: processing / offline 用。localStorage の冪等キー破棄前に確認する。
  */
-function RecoveryLinks({ onClear }: { onClear?: () => void }) {
+function RecoveryLinks({
+  onClear,
+  requireDiscardConfirm = false,
+}: {
+  onClear?: () => void;
+  requireDiscardConfirm?: boolean;
+}) {
+  const guardDiscard = (): boolean => {
+    if (!requireDiscardConfirm) return true;
+    return confirmProcessingDiscard();
+  };
   // idea / household とも個人向け緊急献立へ誘導する（targetMode で gate しない）。
   return (
     <div className="gen-status-actions">
       {onClear !== undefined ? (
-        <button type="button" className="button-link" onClick={onClear}>
+        <button
+          type="button"
+          className="button-link"
+          onClick={() => {
+            if (!guardDiscard()) return;
+            onClear();
+          }}
+        >
           条件を直してやり直す
         </button>
       ) : (
         <a
           className="button-link"
           href="/planner"
-          onClick={() => {
+          onClick={(event) => {
+            if (!guardDiscard()) {
+              event.preventDefault();
+              return;
+            }
             clearPendingGeneration();
           }}
         >
@@ -104,7 +141,11 @@ function RecoveryLinks({ onClear }: { onClear?: () => void }) {
       <a
         className="button-link"
         href="/emergency-menus"
-        onClick={() => {
+        onClick={(event) => {
+          if (!guardDiscard()) {
+            event.preventDefault();
+            return;
+          }
           clearPendingGeneration();
         }}
       >
@@ -113,7 +154,11 @@ function RecoveryLinks({ onClear }: { onClear?: () => void }) {
       <a
         className="button-link"
         href="/history"
-        onClick={() => {
+        onClick={(event) => {
+          if (!guardDiscard()) {
+            event.preventDefault();
+            return;
+          }
           clearPendingGeneration();
         }}
       >
@@ -263,9 +308,15 @@ export function GenerationStatusPanel({
           {progressMessage}
         </p>
         <p>この画面を閉じても、同じ作成IDであとから確認できます。</p>
-        {/* 長時間 processing / ハング時の脱出。pending を捨て条件入力へ戻せる */}
-        <p>途中でやめる場合は、下の「条件を直してやり直す」で作成中のIDを破棄できます。</p>
-        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
+        {/* 長時間 processing / ハング時の脱出。破棄は confirm 必須（G2）。
+            端末 pending だけ消してもサーバ processing は最大約 3 分残り得る。 */}
+        <p>
+          途中でやめる場合は下のリンクから作成中のIDを破棄できます。破棄すると、しばらく新しい作成を始められないことや、裏で完成した献立が履歴に残ることがあります。
+        </p>
+        <RecoveryLinks
+          requireDiscardConfirm
+          {...(onClear === undefined ? {} : { onClear })}
+        />
       </div>
     );
   }
@@ -276,8 +327,15 @@ export function GenerationStatusPanel({
         <h1>通信を確認しています</h1>
         <p>接続が戻ると、保存した作成IDから自動で確認します。</p>
         {/* 実ネット断以外（API 失敗・長時間 POST）でも offline に落ちる。
-            自動復帰だけに頼ると pending 保持で planner 再開がループするため、明示破棄を出す。 */}
-        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
+            自動復帰だけに頼ると pending 保持で planner 再開がループするため、明示破棄を出す。
+            processing 台帳が残っている可能性があるため破棄は confirm 必須（G2）。 */}
+        <p>
+          やめて条件を変える場合は下のリンクから作成中のIDを破棄できます。破棄すると、しばらく新しい作成を始められないことがあります。
+        </p>
+        <RecoveryLinks
+          requireDiscardConfirm
+          {...(onClear === undefined ? {} : { onClear })}
+        />
       </div>
     );
   }
