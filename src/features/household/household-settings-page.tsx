@@ -17,6 +17,7 @@ import { AccountSettingsSection } from "@/features/account/account-settings-sect
 import { FeedbackSection } from "@/features/account/feedback-section";
 import { useAuth } from "@/features/auth/use-auth";
 import { PlanSettingsSection } from "@/features/billing/plan-settings-section";
+import { ShareConsentSettingsSection } from "@/features/privacy/share-consent-settings-section";
 import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { useAppToast } from "@/shared/ui/app-toast";
@@ -1261,6 +1262,8 @@ export function HouseholdSettingsForm({
           pollAfterCheckoutSuccess={pollAfterCheckoutSuccess}
           onCheckoutPollSettled={clearBillingReturnQuery}
         />
+        {/* 共有同意トグルと提供管理一覧（Task 5）。プランとアカウントの間。 */}
+        <ShareConsentSettingsSection userId={userId} />
         {/* アカウント操作（ログアウト等）の下にフィードバックを置く */}
         <AccountSettingsSection />
         <FeedbackSection />
@@ -1906,6 +1909,8 @@ export function HouseholdSettingsForm({
         pollAfterCheckoutSuccess={pollAfterCheckoutSuccess}
         onCheckoutPollSettled={clearBillingReturnQuery}
       />
+      {/* 共有同意トグルと提供管理一覧（Task 5）。プランとアカウントの間。 */}
+      <ShareConsentSettingsSection userId={userId} />
       {/* Plan 6: アカウント操作は本ページ所有者の下に合成するだけ。家族 CRUD は置換しない。 */}
       <AccountSettingsSection />
       {/* フィードバックはログアウト等のアカウント操作の下へ。日常操作の邪魔にしない。 */}

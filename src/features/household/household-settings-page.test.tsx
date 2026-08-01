@@ -50,6 +50,12 @@ vi.mock("@/shared/lib/supabase", () => ({
 vi.mock("@/features/billing/plan-settings-section", () => ({
   PlanSettingsSection: () => <section aria-label="プラン">プラン</section>,
 }));
+// 共有同意 UI は privacy 専用テストで検証。家族 CRUD は share RPC に依存させない。
+vi.mock("@/features/privacy/share-consent-settings-section", () => ({
+  ShareConsentSettingsSection: () => (
+    <section aria-label="匿名の緊急候補への協力">共有設定</section>
+  ),
+}));
 
 beforeEach(() => {
   navigateMock.mockReset();

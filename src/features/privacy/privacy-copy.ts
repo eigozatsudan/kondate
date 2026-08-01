@@ -53,3 +53,23 @@ export const shareConsentSection = {
     ),
   ].join(""),
 } as const;
+
+/**
+ * 設定ページの共有同意トグル・提供管理一覧用コピー。
+ * オフ時は「既提供分は残る」を再表示する（設計 §7.2）。
+ */
+export const shareConsentSettingsCopy = {
+  title: "匿名の緊急候補への協力",
+  toggleLabel: "匿名で緊急候補に役立てる",
+  help: "完成した献立のうち条件を満たしたものの一部を、匿名で他の方の緊急候補に使うことがあります。どれが選ばれるかは選べません。",
+  /** トグル off 操作時・オフ状態で必ず見せる残存説明 */
+  residualRetentionNotice:
+    "協力を止めても、すでに提供済みの献立は他の方の緊急候補に残り続けます（既提供分は残ります）。",
+  sharedListTitle: "提供済みの緊急候補",
+  sharedListEmpty: "まだ提供済みの緊急候補はありません。",
+  sharedListLoading: "提供済みの一覧を読み込んでいます…",
+  sharedListError: "提供済みの一覧を読み込めませんでした。時間をおいてもう一度お試しください。",
+  consentLoading: "共有の設定を確認しています…",
+  consentError: "共有の設定を読み込めませんでした。再読み込みしてください。",
+  saveError: "共有の設定を保存できませんでした。時間をおいてもう一度お試しください。",
+} as const;

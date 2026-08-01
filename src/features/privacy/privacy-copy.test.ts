@@ -4,6 +4,7 @@ import {
   privacySections,
   shareConsentRequiredPhrases,
   shareConsentSection,
+  shareConsentSettingsCopy,
 } from "./privacy-copy";
 
 it("locks the six required share-consent phrases for UI copy", () => {
@@ -42,4 +43,12 @@ it("keeps share consent optional and separate from AI privacy sections", () => {
   for (const section of privacySections) {
     expect(section.title).not.toBe(shareConsentSection.title);
   }
+});
+
+it("locks residual retention copy for settings toggle off", () => {
+  // 設計 §7.2: オフ操作時にも「既提供分は残る」を再表示
+  expect(shareConsentSettingsCopy.residualRetentionNotice).toContain("既提供分は残");
+  expect(shareConsentSettingsCopy.residualRetentionNotice).toContain("残り");
+  expect(shareConsentSettingsCopy.toggleLabel).toContain("匿名");
+  expect(shareConsentSettingsCopy.sharedListTitle).toMatch(/提供/);
 });
