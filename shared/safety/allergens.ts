@@ -5,7 +5,7 @@ import type {
   ValidatedMenu,
 } from "../contracts/generation.js";
 import type { CurrentSafetyContext } from "./context.js";
-import { normalizeFoodText, normalizeFoodTextBase } from "./normalize-food-text.js";
+import { normalizeFoodText, normalizeFoodTextBase } from "../safety-pure/normalize-food-text.js";
 
 export type AllergenCatalogEntry = {
   id: string;
@@ -37,8 +37,8 @@ export type MenuTextSource = {
   ingredientId: string | null;
 };
 
-// 正規化本体は normalize-food-text に分離（preference-gaps 等が allergens 評価を引き込まない）
-export { normalizeFoodText } from "./normalize-food-text.js";
+// 正規化本体は safety-pure（dual-surface）。allergens 評価はここから re-export する。
+export { normalizeFoodText } from "../safety-pure/normalize-food-text.js";
 
 const FOOD_TEXT_SEPARATOR = /[\s\u3000、。・,./（）()「」『』']/u;
 

@@ -86,16 +86,17 @@ tests; use `format:check` not `format`) → review → Conventional Commit in Ja
   auth-continuation TTL, retention for terminal generation/shopping-replay rows.
 - Ownership boundaries are fixed: `shared/contracts` ← browser + Functions;
   `shared/safety` ← Functions + emergency-menu service (full allergen evaluation,
-  food-rules, validate-generated-menu, generation hard gates); pure dual-surface
-  modules under `shared/safety` intentionally shared with the browser for UX
-  pre-checks only — currently `medical-scope`, `normalize-food-text`, and
-  `preference-gaps` (display soft gaps; no hard safety authority). Type-only
-  imports from `shared/safety` (e.g. `ExpiredPantryCheck`) are allowed. Do not
-  import evaluation pipelines or server-only helpers into `src/`.
-  Intentional dual-surface non-safety packages for the browser: `shared/shopping`,
-  `shared/emergency` (contracts/filter as designed), `shared/copy`, `shared/time`,
-  `shared/season`. `src/features` ← browser only; `netlify/functions` ← server
-  only. Do not cross these.
+  food-rules, validate-generated-menu, generation hard gates; evaluation pipelines
+  stay Functions-oriented — do not import into `src/`); `shared/safety-pure` ←
+  browser + Functions pure UX pre-checks only (`medical-scope`,
+  `normalize-food-text`, `preference-gaps` display soft gaps; no hard safety
+  authority). Browser must import pure modules only from `@shared/safety-pure/*`
+  (or contracts for shared types such as `ExpiredPantryConfirmation`); never
+  `@shared/safety/*`. Server may import from `safety-pure` or thin re-exports under
+  `shared/safety` for back-compat. Intentional dual-surface non-safety packages for
+  the browser: `shared/shopping`, `shared/emergency` (contracts/filter as designed),
+  `shared/copy`, `shared/time`, `shared/season`. `src/features` ← browser only;
+  `netlify/functions` ← server only. Do not cross these.
 - Locked interfaces, API route ownership, and migration order already in the
   tree are not renegotiable casually — needing to redefine a locked export or
   cross an ownership boundary is a signal to stop and ask, not to change it.

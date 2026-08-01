@@ -8,7 +8,7 @@ import {
   type PlannerDraftInput,
 } from "@shared/contracts/planner";
 import { privacyNoticeVersion } from "@shared/contracts/domain";
-import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
+import { detectUnsupportedMedicalRequest } from "@shared/safety-pure/medical-scope";
 import {
   getProfile,
   listAllergenCatalog,

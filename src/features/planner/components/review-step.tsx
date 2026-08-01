@@ -3,7 +3,7 @@ import type { PantryItem } from "@shared/contracts/pantry";
 import { collectPlannerRequestText, type PlannerDraftInput } from "@shared/contracts/planner";
 import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
 import type { PlanCode } from "@shared/contracts/plan-quota";
-import { detectUnsupportedMedicalRequest } from "@shared/safety/medical-scope";
+import { detectUnsupportedMedicalRequest } from "@shared/safety-pure/medical-scope";
 import { getJstSeasonContext, type SeasonContext } from "@shared/season/jst-season";
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import {

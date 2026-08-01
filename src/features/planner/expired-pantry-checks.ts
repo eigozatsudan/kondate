@@ -1,6 +1,9 @@
+import type { ExpiredPantryConfirmation } from "@shared/contracts/generation";
 import type { PantryItem } from "@shared/contracts/pantry";
-import type { ExpiredPantryCheck } from "@shared/safety/generation-context";
 import { getJstDateKey } from "@shared/time/jst";
+
+// サーバ GenerationContext の expiredPantryChecks と同形。browser は contracts を正とする。
+export type ExpiredPantryCheck = ExpiredPantryConfirmation;
 
 export type PlannerAttempt = {
   idempotencyKey: string;

@@ -18,9 +18,9 @@ import type {
   IdeaGenerationContext,
 } from "./generation-context.js";
 import { createIdeaSafetyFingerprint } from "./idea-fingerprint.js";
-import { detectUnsupportedMedicalRequest } from "./medical-scope.js";
+import { detectUnsupportedMedicalRequest } from "../safety-pure/medical-scope.js";
 import { collectNonJapaneseUserTextIssues } from "./japanese-user-text.js";
-import { collectDislikePreferenceGaps } from "./preference-gaps.js";
+import { collectDislikePreferenceGaps } from "../safety-pure/preference-gaps.js";
 
 type ConfirmationIdentity = Pick<
   GeneratedLabelConfirmation,

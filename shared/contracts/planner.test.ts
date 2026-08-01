@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectUnsupportedMedicalRequest } from "../safety/medical-scope.js";
+import { detectUnsupportedMedicalRequest } from "../safety-pure/medical-scope.js";
 import {
   collectPlannerRequestText,
   plannerDraftInputSchema,

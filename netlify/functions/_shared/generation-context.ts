@@ -19,7 +19,7 @@ import type {
   IdeaGenerationContext,
 } from "../../../shared/safety/generation-context.js";
 import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
-import { detectUnsupportedMedicalRequest } from "../../../shared/safety/medical-scope.js";
+import { detectUnsupportedMedicalRequest } from "../../../shared/safety-pure/medical-scope.js";
 import { getJstDateKey } from "../../../shared/time/jst.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import { HttpError } from "./http.js";

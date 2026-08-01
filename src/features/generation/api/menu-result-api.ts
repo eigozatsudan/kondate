@@ -2,7 +2,7 @@ import { pantryItemSchema } from "@shared/contracts/pantry";
 import { validatedMenuSchema } from "@shared/contracts/generation";
 import type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
 import { plannerSubmissionSchema, targetModeSchema } from "@shared/contracts/planner";
-import { collectDislikePreferenceGaps } from "@shared/safety/preference-gaps";
+import { collectDislikePreferenceGaps } from "@shared/safety-pure/preference-gaps";
 import { z } from "zod";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
