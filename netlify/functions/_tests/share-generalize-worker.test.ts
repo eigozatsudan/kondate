@@ -24,7 +24,8 @@ vi.mock("../_shared/stored-menu-loader.js", async () => {
   );
   return {
     ...actual,
-    loadStoredMenu: (...args: unknown[]) => loadStoredMenu(...args),
+    // vi.fn を直接差し替え（unknown[] 中継は no-unsafe-return になる）
+    loadStoredMenu,
   };
 });
 vi.mock("../_shared/logger.js", async () => {
@@ -444,9 +445,7 @@ describe("defaultLoadSourceMenu failure classification", () => {
   };
 
   it("returns null on 404 menu_not_found so job can skip", async () => {
-    loadStoredMenu.mockRejectedValue(
-      new HttpError(404, "menu_not_found", "献立が見つかりません"),
-    );
+    loadStoredMenu.mockRejectedValue(new HttpError(404, "menu_not_found", "献立が見つかりません"));
     await expect(defaultLoadSourceMenu(loadInput)).resolves.toBeNull();
   });
 
@@ -462,4 +461,3 @@ describe("defaultLoadSourceMenu failure classification", () => {
     await expect(defaultLoadSourceMenu(loadInput)).rejects.toBe(boom);
   });
 });
-

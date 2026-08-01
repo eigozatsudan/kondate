@@ -35,7 +35,13 @@ test("resumes a partially saved member, shows next-action after complete, then r
 
   await page.goto("/privacy?returnTo=%2Fplanner");
   await expect(page.getByRole("button", { name: "確認して進む" })).toBeDisabled();
+  // 共有同意は任意カード: 既定 unchecked。未チェックでも privacy 同意だけで生成導線へ戻れる。
+  const shareCheckbox = page.getByRole("checkbox", { name: "匿名で緊急候補に役立ててよい" });
+  await expect(page.getByRole("heading", { name: "匿名の緊急候補への協力（任意）" })).toBeVisible();
+  await expect(shareCheckbox).toBeVisible();
+  await expect(shareCheckbox).not.toBeChecked();
   await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
+  await expect(page.getByRole("button", { name: "確認して進む" })).toBeEnabled();
   await page.getByRole("button", { name: "確認して進む" }).click();
   await expect(page).toHaveURL(/\/planner$/u);
   await expect(page.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
