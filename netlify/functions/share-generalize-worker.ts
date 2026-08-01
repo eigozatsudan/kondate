@@ -1,13 +1,39 @@
 /**
- * 共有一般化 worker（Task 7a: claim のみ。Pass / AI 段は 7c 以降）。
- * path なし schedule。アプリ層 secret で認可（maintenance-cleanup と同型の S3）。
- * ログは claim 件数のみ。job 本文・menu 名・プロンプトは出さない。
+ * 共有一般化 worker（Task 7d: claim → load → canonical → Pass1/2 → gate → publish）。
+ * generate-menu / generation-service の同期寿命には載せない。
+ * ログは閉じた code / jobId / failureCode / 件数のみ。タイトル・プロンプト・payload 禁止。
  */
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "@netlify/functions";
+import { z } from "zod";
+import { OPENROUTER_TIMEOUT_MS } from "../../shared/contracts/function-budget.js";
+import type { ValidatedMenu } from "../../shared/contracts/generation.js";
+import {
+  shareFailureCodes,
+  shareSkipReasons,
+  type ShareFailureCode,
+  type ShareSkipReason,
+} from "../../shared/contracts/share-job.js";
+import { buildShareCanonicalMenu } from "../../shared/emergency/share-canonical.js";
+import {
+  computeSharePublishMetadata,
+  type SharePublishAllergenCatalog,
+} from "../../shared/emergency/share-publish-metadata.js";
+import { currentAllergenCatalogV1 } from "../../shared/safety/current-allergen-catalog.v1.js";
+import { currentAllergenAliasManifest } from "./_shared/current-safety.js";
 import { safeLog } from "./_shared/logger.js";
-import { claimShareGeneralizationJobs } from "./_shared/share-claim.js";
-import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
+import { claimShareGeneralizationJobs, type ShareClaimedJob } from "./_shared/share-claim.js";
+import {
+  runShareGeneralizeAiPipeline,
+  type SharePassSender,
+} from "./_shared/share-generalize-pipeline.js";
+import { sendShareGeneralizationPassFromEnv } from "./_shared/share-openrouter.js";
+import {
+  captureShareIngredientGraphLock,
+  runShareServerGate,
+} from "./_shared/share-server-gate.js";
+import { loadStoredMenu } from "./_shared/stored-menu-loader.js";
+import { getSupabaseAdmin, type AdminSupabaseClient } from "./_shared/supabase-admin.js";
 
 /** 共有 worker secret の env 名（local .env / 本番 Netlify secret）。 */
 export const SHARE_WORKER_CRON_SECRET_ENV = "SHARE_WORKER_CRON_SECRET";
@@ -16,6 +42,39 @@ export const SHARE_WORKER_CRON_SECRET_ENV = "SHARE_WORKER_CRON_SECRET";
 export const SHARE_WORKER_CRON_SECRET_HEADER = "x-share-worker-cron-secret";
 
 const MIN_SECRET_LENGTH = 16;
+
+const REQUEST_ID = "share-worker";
+
+/** Functions 現行辞書（catalog + aliases）を publish metadata 用に閉じる */
+export function buildSharePublishAllergenCatalog(): SharePublishAllergenCatalog {
+  return {
+    catalog: currentAllergenCatalogV1.map((entry) => ({
+      id: entry.id,
+      displayName: entry.displayName,
+    })),
+    aliases: currentAllergenAliasManifest.map((entry) => ({
+      allergenId: entry.allergenId,
+      alias: entry.alias,
+      normalizedAlias: entry.normalizedAlias,
+    })),
+  };
+}
+
+const finishJobResultSchema = z.looseObject({
+  ok: z.boolean(),
+  reason: z.string().optional(),
+  status: z.string().optional(),
+  job_id: z.string().optional(),
+  code: z.string().optional(),
+});
+
+const publishJobResultSchema = z.looseObject({
+  ok: z.boolean(),
+  published: z.boolean().optional(),
+  reason: z.string().optional(),
+  job_id: z.string().optional(),
+  recipe_id: z.string().optional(),
+});
 
 function secretsEqual(provided: string, expected: string): boolean {
   const a = Buffer.from(provided, "utf8");
@@ -82,9 +141,272 @@ function authDeniedResponse(
   return new Response(null, { status: kind === "unauthorized" ? 401 : 403 });
 }
 
+/** job 1 件処理の依存（テスト注入用）。本番は default 組み立て。 */
+export type ProcessShareGeneralizationJobDeps = {
+  admin: Pick<AdminSupabaseClient, "rpc" | "from">;
+  /** source menu を ValidatedMenu へ。欠損は null（skipped）。 */
+  loadSourceMenu: (input: {
+    admin: Pick<AdminSupabaseClient, "from">;
+    userId: string;
+    menuId: string;
+  }) => Promise<ValidatedMenu | null>;
+  sendPass: SharePassSender;
+  /** カノニカル再採番。省略時は randomUUID */
+  idFactory?: () => string;
+  /** publish metadata 用アレルゲン辞書。省略時は Functions 現行フル */
+  allergenCatalog?: SharePublishAllergenCatalog;
+};
+
+/** service_role で所有者境界をクエリし、欠損は null（throw しない） */
+export async function defaultLoadSourceMenu(input: {
+  admin: Pick<AdminSupabaseClient, "from">;
+  userId: string;
+  menuId: string;
+}): Promise<ValidatedMenu | null> {
+  try {
+    const aggregate = await loadStoredMenu(
+      input.admin as AdminSupabaseClient,
+      input.userId,
+      input.menuId,
+    );
+    return aggregate.menu;
+  } catch {
+    return null;
+  }
+}
+
+/** 本番 Pass 送信（OpenRouter env）。テストでは sendPass を差し替える。 */
+export function defaultSharePassSender(): SharePassSender {
+  return async ({ pass, menu }) =>
+    sendShareGeneralizationPassFromEnv({
+      pass,
+      menu,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+    });
+}
+
+async function finishShareJob(input: {
+  admin: Pick<AdminSupabaseClient, "rpc">;
+  jobId: string;
+  status: "failed" | "skipped";
+  code: ShareFailureCode | ShareSkipReason;
+  aiCallCount: number;
+  pass1Model: string | null;
+  pass2Model: string | null;
+}): Promise<void> {
+  const { error, data } = await input.admin.rpc("finish_share_generalization_job", {
+    p_job_id: input.jobId,
+    p_status: input.status,
+    p_code: input.code,
+    p_ai_call_count: input.aiCallCount,
+    ...(input.pass1Model !== null ? { p_pass1_model: input.pass1Model } : {}),
+    ...(input.pass2Model !== null ? { p_pass2_model: input.pass2Model } : {}),
+  });
+  if (error) {
+    throw new Error("share_finish_failed");
+  }
+  const parsed = finishJobResultSchema.safeParse(data);
+  if (!parsed.success || !parsed.data.ok) {
+    throw new Error("share_finish_failed");
+  }
+}
+
+/**
+ * claim 済み 1 job を固定パイプラインで処理する。
+ * 1 claim → 2 load → 3 eligibility/canonical → 4 Pass1/2 → 5 gate → 6 metadata → 7 publish → 8 finish/台帳
+ * publish RPC は success / consent_revoked / daily_success_cap で job を終端する。
+ * それ以外の skip/fail は finish_share_generalization_job で AI call 台帳を計上する。
+ */
+export async function processShareGeneralizationJob(
+  job: ShareClaimedJob,
+  deps: ProcessShareGeneralizationJobDeps,
+): Promise<void> {
+  const jobStarted = performance.now();
+  let aiCallCount = 0;
+  let pass1Model: string | null = null;
+  let pass2Model: string | null = null;
+
+  const logTerminal = (input: {
+    level: "info" | "warn" | "error";
+    code: string;
+    failureCode?: string;
+  }): void => {
+    safeLog({
+      level: input.level,
+      requestId: REQUEST_ID,
+      code: input.code,
+      durationMs: Math.round(performance.now() - jobStarted),
+      jobId: job.id,
+      ...(input.failureCode !== undefined ? { failureCode: input.failureCode } : {}),
+    });
+  };
+
+  const finish = async (
+    status: "failed" | "skipped",
+    code: ShareFailureCode | ShareSkipReason,
+  ): Promise<void> => {
+    await finishShareJob({
+      admin: deps.admin,
+      jobId: job.id,
+      status,
+      code,
+      aiCallCount,
+      pass1Model,
+      pass2Model,
+    });
+    logTerminal({
+      level: status === "failed" ? "error" : "info",
+      code: status === "failed" ? "share_generalize_job_failed" : "share_generalize_job_skipped",
+      failureCode: code,
+    });
+  };
+
+  // --- 2. load source menu ---
+  if (job.source_menu_id === null || job.contributor_user_id === null) {
+    await finish("skipped", "ineligible_structure");
+    return;
+  }
+  const sourceMenuId = job.source_menu_id;
+  const sourceMenu = await deps.loadSourceMenu({
+    admin: deps.admin,
+    userId: job.contributor_user_id,
+    menuId: sourceMenuId,
+  });
+  if (sourceMenu === null) {
+    await finish("skipped", "ineligible_structure");
+    return;
+  }
+
+  // --- 3. eligibility + canonical（構造。全 UUID 再採番） ---
+  const idFactory = deps.idFactory ?? randomUUID;
+  const canonical = buildShareCanonicalMenu(sourceMenu, idFactory);
+  if (!canonical.ok) {
+    await finish("skipped", canonical.reason);
+    return;
+  }
+  // プール payload の menuId は source と一致させない（§9.5 / RED）
+  if (canonical.menu.menuId === sourceMenuId) {
+    await finish("failed", "server_gate_failed");
+    return;
+  }
+
+  const lockedGraph = captureShareIngredientGraphLock(canonical.menu);
+
+  // --- 4. Pass1 → Pass2（AI 台帳は injectable。generate 予約には非接触） ---
+  // publish はゲート後に実 RPC するため、ここでは no-op でメニューだけ確定させる。
+  const aiResult = await runShareGeneralizeAiPipeline({
+    menu: canonical.menu,
+    lockedGraph,
+    sendPass: deps.sendPass,
+    recordAiCallLedger: (delta) => {
+      aiCallCount += delta;
+    },
+    publish: async () => {
+      // Task 7d: 実 publish は gate + metadata の後
+    },
+  });
+  aiCallCount = aiResult.aiCallCount;
+  pass1Model = aiResult.pass1Model;
+  pass2Model = aiResult.pass2Model;
+
+  if (!aiResult.ok) {
+    await finish("failed", aiResult.code);
+    return;
+  }
+
+  // --- 5. server gate（Zod + グラフロック + denylist） ---
+  const gate = runShareServerGate(aiResult.menu, lockedGraph);
+  if (!gate.ok) {
+    await finish("failed", gate.code);
+    return;
+  }
+
+  // --- 6. publish metadata（空 eligibleAgeBands での publish 禁止） ---
+  const catalog = deps.allergenCatalog ?? buildSharePublishAllergenCatalog();
+  const metadata = computeSharePublishMetadata(aiResult.menu, catalog);
+  if (metadata.eligibleAgeBands.length < 1) {
+    await finish("failed", "server_gate_failed");
+    return;
+  }
+
+  // 防御: 一般化後も source menuId を payload に載せない
+  if (aiResult.menu.menuId === sourceMenuId) {
+    await finish("failed", "server_gate_failed");
+    return;
+  }
+
+  // --- 7. publish RPC（同一 TX で consent 再確認 + pool INSERT + AI 台帳） ---
+  let publishData: unknown;
+  try {
+    const result = await deps.admin.rpc("publish_shared_emergency_recipe", {
+      p_job_id: job.id,
+      p_payload: aiResult.menu,
+      p_meal_type: aiResult.menu.mealType,
+      p_total_elapsed: aiResult.menu.totalElapsedMinutes,
+      p_standard_allergen_ids: metadata.standardAllergenIds,
+      p_eligible_age_bands: [...metadata.eligibleAgeBands],
+      p_ai_call_count: aiCallCount,
+      ...(pass1Model !== null ? { p_pass1_model: pass1Model } : {}),
+      ...(pass2Model !== null ? { p_pass2_model: pass2Model } : {}),
+    });
+    if (result.error) {
+      throw new Error("share_publish_failed");
+    }
+    publishData = result.data;
+  } catch {
+    // RPC 例外時は job が running のまま残る可能性があるため finish を試みる
+    try {
+      await finish("failed", "openrouter_failed");
+    } catch {
+      logTerminal({
+        level: "error",
+        code: "share_generalize_job_failed",
+        failureCode: "openrouter_failed",
+      });
+    }
+    return;
+  }
+
+  const published = publishJobResultSchema.safeParse(publishData);
+  if (!published.success || !published.data.ok) {
+    try {
+      await finish("failed", "openrouter_failed");
+    } catch {
+      logTerminal({
+        level: "error",
+        code: "share_generalize_job_failed",
+        failureCode: "openrouter_failed",
+      });
+    }
+    return;
+  }
+
+  if (published.data.published) {
+    logTerminal({
+      level: "info",
+      code: "share_generalize_job_succeeded",
+    });
+    return;
+  }
+
+  // publish RPC 内で skipped（consent_revoked / daily_success_cap）。二重 finish しない。
+  const reason = published.data.reason;
+  const skipReason =
+    reason !== undefined && (shareSkipReasons as readonly string[]).includes(reason)
+      ? reason
+      : reason !== undefined && (shareFailureCodes as readonly string[]).includes(reason)
+        ? reason
+        : "consent_revoked";
+  logTerminal({
+    level: "info",
+    code: "share_generalize_job_skipped",
+    failureCode: skipReason,
+  });
+}
+
 export default async function shareGeneralizeWorker(request?: Request): Promise<Response> {
   const started = performance.now();
-  const requestId = "share-worker";
+  const requestId = REQUEST_ID;
   const req = request ?? new Request("http://127.0.0.1/.netlify/functions/share-generalize-worker");
 
   const auth = authorizeShareGeneralizeWorker(req);
@@ -93,7 +415,6 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
   }
 
   try {
-    // Task 7a: claim のみ。AI / publish は後続 Task。
     const admin = getSupabaseAdmin();
     const jobs = await claimShareGeneralizationJobs({ admin });
     safeLog({
@@ -101,9 +422,30 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
       requestId,
       code: "share_generalize_worker_claim",
       durationMs: Math.round(performance.now() - started),
-      // 件数のみ。jobId 配列や menu は載せない（7d で閉じたフィールドを拡張）
       candidateCount: jobs.length,
     });
+
+    const sendPass = defaultSharePassSender();
+    for (const job of jobs) {
+      try {
+        await processShareGeneralizationJob(job, {
+          admin,
+          loadSourceMenu: defaultLoadSourceMenu,
+          sendPass,
+        });
+      } catch {
+        // 1 job の例外でバッチ全体を落とさない。running 残留は reaper が回収する。
+        safeLog({
+          level: "error",
+          requestId,
+          code: "share_generalize_job_failed",
+          durationMs: Math.round(performance.now() - started),
+          jobId: job.id,
+          failureCode: "openrouter_failed",
+        });
+      }
+    }
+
     return new Response(null, { status: 204 });
   } catch {
     safeLog({

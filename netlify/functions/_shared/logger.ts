@@ -57,6 +57,24 @@ export type SafeLogEvent = {
   generationRoute?: "menu" | "dish" | "status";
   /** 返却 HTTP ステータス（本文・PII は出さない） */
   httpStatus?: number;
+  /**
+   * 共有一般化 job の opaque id（UUID）。
+   * タイトル・プロンプト・menu_payload・contributor は載せない。
+   */
+  jobId?: string;
+  /**
+   * 共有 job の閉じた failure / skip コード（自由文禁止）。
+   * log `code` はイベント種別、こちらは端末理由。
+   */
+  failureCode?: string;
+  /**
+   * 緊急候補の非PII ソース件数（Task 9 以降）。contributor / 本文は禁止。
+   * シリアライズは fixture/community をフラット化する。
+   */
+  sourceCounts?: {
+    fixture: number;
+    community: number;
+  };
 };
 
 type LogWriter = (serialized: string) => void;
@@ -150,6 +168,17 @@ export const createSafeLogger =
     }
     if (event.httpStatus !== undefined) {
       record.http_status = Math.max(0, Math.trunc(event.httpStatus));
+    }
+    // 共有 worker / 緊急: opaque id と閉じたコード・件数のみ（自由文キーは型で拒否）
+    if (event.jobId !== undefined) {
+      record.job_id = event.jobId;
+    }
+    if (event.failureCode !== undefined) {
+      record.failure_code = closedErrorCode(event.failureCode);
+    }
+    if (event.sourceCounts !== undefined) {
+      record.source_counts_fixture = Math.max(0, Math.trunc(event.sourceCounts.fixture));
+      record.source_counts_community = Math.max(0, Math.trunc(event.sourceCounts.community));
     }
     write(JSON.stringify(record));
   };

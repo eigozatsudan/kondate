@@ -130,6 +130,29 @@ describe("createSafeLogger", () => {
     });
   });
 
+  it("serializes share worker opaque jobId / failureCode / sourceCounts only", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "share-worker",
+      code: "share_generalize_job_succeeded",
+      durationMs: 90,
+      jobId: "d1000000-0000-4000-8000-000000000001",
+      failureCode: "consent_revoked",
+      sourceCounts: { fixture: 3, community: 1 },
+    });
+    expect(JSON.parse(write.mock.calls[0]![0] as string)).toEqual({
+      level: "info",
+      request_id: "share-worker",
+      code: "share_generalize_job_succeeded",
+      duration_ms: 90,
+      job_id: "d1000000-0000-4000-8000-000000000001",
+      failure_code: "consent_revoked",
+      source_counts_fixture: 3,
+      source_counts_community: 1,
+    });
+  });
+
   it("serializes billing non-PII fields and drops email canaries", () => {
     const write = vi.fn();
     createSafeLogger(write)({
