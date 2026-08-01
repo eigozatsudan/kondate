@@ -115,6 +115,7 @@ export function EmergencyMenuPage() {
   // 別端末・他タブでの家族/アレルギー変更を、history revalidation と同様に
   // owner-scoped Realtime + focus/visible/online + 60s poll で拾う。
   // revision を query key に載せ、signal 直後は旧候補を閉じて再取得完了まで fail closed。
+  // PE6: CHANNEL_ERROR / TIMED_OUT も revision 更新（history / shopping 同型）。
   // idea 下書きでは household 安全信号を購読しない（safetyRealtimeEnabled で gate）。
   useEffect(() => {
     if (userId === undefined || !safetyRealtimeEnabled) return;
@@ -156,7 +157,14 @@ export function EmergencyMenuPage() {
         { event: "*", schema: "public", table: "member_allergies", filter: ownerFilter },
         refreshRevision,
       )
-      .subscribe();
+      .subscribe((status) => {
+        // PE6: history revalidation / shopping と同型。CHANNEL_ERROR / TIMED_OUT は
+        // 購読死のまま最大 60s 旧候補を残さない（hard fail-closed → revision 再取得）。
+        const state: string = status;
+        if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
+          refreshRevision();
+        }
+      });
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible" && navigator.onLine) refreshRevision();
     }, 60_000);

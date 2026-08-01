@@ -5,6 +5,7 @@ import {
 } from "../../../shared/contracts/flyer-weekly.js";
 import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
 import {
+  appendDraftMemberAllergiesForFlyerInspection,
   assertFlyerMenuAgainstSafety,
   assertFlyerMenuSafe,
   assertFlyerPrivacyConsent,
@@ -341,5 +342,54 @@ describe("assertFlyerMenuAgainstSafety", () => {
     expect(() => {
       assertFlyerMenuAgainstSafety(sampleMenu({ sideName: "おしるこ（餅）" }), safety);
     }).toThrow(HttpError);
+  });
+
+  it("PE1: rejects egg when only draft member has egg registered (complete is none)", () => {
+    // 混在世帯: complete「アレルギーなし」+ draft に卵 → 検査 union 後は卵メニュー拒否
+    const base = makeCurrentSafetyContext();
+    const completeOnly = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          householdMemberId: "55000000-0000-4000-8000-000000000001",
+          allergyStatus: "none",
+          allergenIds: [],
+          customAllergies: [],
+        },
+      ],
+    });
+    // draft 針を union する前は卵メニューが通ってしまう（false-safe 再現）
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "卵焼き" }), completeOnly);
+    }).not.toThrow();
+
+    const inspection = appendDraftMemberAllergiesForFlyerInspection(completeOnly, [
+      {
+        member_id: "55000000-0000-4000-8000-000000000099",
+        allergen_id: "egg",
+        custom_name: null,
+        custom_aliases: null,
+        custom_confirmed: false,
+      },
+    ]);
+    expect(inspection.members).toHaveLength(2);
+    expect(inspection.members[1]?.allergenIds).toEqual(["egg"]);
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "卵焼き" }), inspection);
+    }).toThrow(HttpError);
+  });
+
+  it("PE1: does not invent members when draft allergies are empty", () => {
+    const base = makeCurrentSafetyContext();
+    const merged = appendDraftMemberAllergiesForFlyerInspection(base, [
+      {
+        member_id: "55000000-0000-4000-8000-000000000099",
+        allergen_id: null,
+        custom_name: "未確認自由文",
+        custom_aliases: [],
+        custom_confirmed: false,
+      },
+    ]);
+    expect(merged.members).toHaveLength(base.members.length);
   });
 });

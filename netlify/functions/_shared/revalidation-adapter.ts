@@ -190,7 +190,10 @@ function scanPantryNameSnapshotIssues(
         const matched = aliases.filter((alias) =>
           foodTextContainsAlias(usage.pantryItemName, alias.normalizedAlias),
         );
-        if (matched.some((alias) => !alias.requiresLabelConfirmation)) {
+        // H5: 履歴再検証にラベル確認 UI が無いため soft（requiresLabelConfirmation）命中も
+        // hard と同型で issue 化（flyer assertFlyerMenuAgainstSafety / 生成 preflight と同型 fail-closed）。
+        // 本文 soft は evaluateAllergens が label confirmation を返す別経路。ここは pantry 名専用。
+        if (matched.length > 0) {
           const catalogEntry = safety.allergenDictionary.catalog.find(
             (entry) => entry.id === allergenId,
           );

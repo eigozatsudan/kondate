@@ -241,6 +241,102 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(result.issues.some((issue) => /allergen|allergy/i.test(issue.code))).toBe(false);
   });
 
+  // H5: 履歴にラベル確認 UI が無いため soft pantry 命中も invalid（flyer 同型 fail-closed）
+  it("H5: marks invalid when soft pantry alias matches registered allergen (mayonnaise/egg)", async () => {
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            householdMemberId: LIVE_MEMBER_ID,
+            anonymousRef: "member_1",
+            ageBand: "adult",
+            allergyStatus: "registered",
+            allergenIds: ["egg"],
+            hasUnmappedCustomAllergy: false,
+            customAllergies: [],
+            requiredSafetyConstraints: [],
+            unsupportedDietStatus: "none",
+            unsupportedDietKinds: [],
+          },
+        ],
+        allergenDictionary: {
+          version: "jp-caa-2026-04.v1",
+          catalog: [{ id: "egg", displayName: "卵", catalogVersion: "jp-caa-2026-04.v1" }],
+          aliases: [
+            {
+              allergenId: "egg",
+              alias: "卵",
+              normalizedAlias: "卵",
+              aliasKind: "direct",
+              requiresLabelConfirmation: false,
+              dictionaryVersion: "jp-caa-2026-04.v1",
+            },
+            {
+              allergenId: "egg",
+              alias: "マヨネーズ",
+              normalizedAlias: "マヨネーズ",
+              aliasKind: "processed",
+              requiresLabelConfirmation: true,
+              dictionaryVersion: "jp-caa-2026-04.v1",
+            },
+          ],
+        },
+      }),
+    );
+    const dishId = "50000000-0000-4000-8000-000000000001";
+    const stored = makeStored({
+      menu: makeValidatedMenu({
+        menuId: MENU_ID,
+        pantryUsage: [
+          {
+            selectionId: SELECTION_ID,
+            pantryItemId: PANTRY_ITEM_ID,
+            pantryItemName: "マヨネーズ",
+            priority: "must_use",
+            usageStatus: "used",
+            plannedQuantity: 1,
+            inventoryQuantity: 1,
+            shortageQuantity: 0,
+            unit: "本",
+            dishIds: [dishId],
+            unusedReason: null,
+          },
+        ],
+        labelConfirmations: [],
+      }),
+    });
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [{ id: PANTRY_ITEM_ID, quantity: 1 }], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "direct_allergen_match")).toBe(true);
+    expect(
+      result.issues.some(
+        (issue) =>
+          issue.path.startsWith("pantryUsage.") && issue.message.includes("マヨネーズ"),
+      ),
+    ).toBe(true);
+  });
+
   // U3-002: registered なのに針が無い世帯を false-valid にしない
   it("marks allergen_missing when allergy is registered with no allergens", async () => {
     vi.mocked(loadCurrentSafetyContext).mockResolvedValue(

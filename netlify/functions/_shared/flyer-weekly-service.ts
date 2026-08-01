@@ -246,6 +246,79 @@ function rejectFlyerSafetyHit(): never {
   );
 }
 
+/** draft メンバーの member_allergies 行（検査用 union 入力）。 */
+export type FlyerDraftAllergyRow = {
+  member_id: string;
+  allergen_id: string | null;
+  custom_name: string | null;
+  custom_aliases: readonly string[] | null;
+  custom_confirmed: boolean;
+};
+
+/**
+ * PE1: complete のみの safety に、draft（入力途中）メンバーの確認済みアレルギー針を検査集合へ union する。
+ * get_current_safety_snapshot は status=complete のみのため draft は RPC に載せられない。
+ * 表示ターゲットにはせず、banned / assert 用にだけ合成する。
+ * ageBand は adult 固定（年齢帯ルールは complete 側のみ。draft の部分 age は推測しない）。
+ */
+export function appendDraftMemberAllergiesForFlyerInspection(
+  safety: CurrentSafetyContext,
+  draftAllergyRows: readonly FlyerDraftAllergyRow[],
+): CurrentSafetyContext {
+  if (draftAllergyRows.length === 0) return safety;
+
+  const byMember = new Map<
+    string,
+    { allergenIds: string[]; customAllergies: { name: string; aliases: string[] }[] }
+  >();
+  for (const row of draftAllergyRows) {
+    const bucket = byMember.get(row.member_id) ?? { allergenIds: [], customAllergies: [] };
+    if (row.allergen_id !== null && row.allergen_id.trim() !== "") {
+      if (!bucket.allergenIds.includes(row.allergen_id)) {
+        bucket.allergenIds.push(row.allergen_id);
+      }
+    } else if (
+      row.custom_confirmed &&
+      row.custom_name !== null &&
+      row.custom_name.trim() !== ""
+    ) {
+      // RPC と同型: custom_confirmed のみ検査針にする
+      bucket.customAllergies.push({
+        name: row.custom_name,
+        aliases: [...(row.custom_aliases ?? [])].filter((alias) => alias.trim() !== ""),
+      });
+    }
+    byMember.set(row.member_id, bucket);
+  }
+
+  // member_id 昇順で合成し、anonymousRef 採番を決定的にする
+  const extraMembers: CurrentSafetyContext["members"][number][] = [];
+  let refIndex = safety.members.length;
+  for (const memberId of [...byMember.keys()].sort()) {
+    const bucket = byMember.get(memberId);
+    if (bucket === undefined) continue;
+    if (bucket.allergenIds.length === 0 && bucket.customAllergies.length === 0) continue;
+    refIndex += 1;
+    extraMembers.push({
+      householdMemberId: memberId,
+      anonymousRef: `member_${String(refIndex)}`,
+      ageBand: "adult",
+      allergyStatus: "registered",
+      allergenIds: bucket.allergenIds,
+      hasUnmappedCustomAllergy: bucket.customAllergies.length > 0,
+      customAllergies: bucket.customAllergies,
+      requiredSafetyConstraints: [],
+      unsupportedDietStatus: "none",
+      unsupportedDietKinds: [],
+    });
+  }
+  if (extraMembers.length === 0) return safety;
+  return {
+    ...safety,
+    members: [...safety.members, ...extraMembers],
+  };
+}
+
 export function assertFlyerMenuAgainstSafety(
   menu: WeeklyFlyerMenu,
   safety: CurrentSafetyContext,
@@ -579,6 +652,7 @@ export async function runFlyerWeekly(
     }
     const safety = await loadCurrentSafetyContext(admin, deps.user.userId, memberIds);
     // U6-001: unconfirmed / allergen_missing を generation と同型で fail-closed。
+    // ゲートは complete ターゲットのみ（draft 検査用 union は後段で足す）。
     for (const member of safety.members) {
       if (member.allergyStatus === "unconfirmed") {
         throw new HttpError(422, "allergy_unconfirmed", issueMessages.allergy_unconfirmed);
@@ -601,8 +675,44 @@ export async function runFlyerWeekly(
         throw new HttpError(422, "unsupported_diet", issueMessages.unsupported_diet);
       }
     }
+    // PE1: draft（入力途中）に登録済みアレルギーが残っていても検査集合から外さない。
+    // complete「なし」+ draft「卵」混在で卵メニューが 200 になる false-safe を閉じる。
+    const { data: draftMemberRows, error: draftMemberError } = await admin
+      .from("household_members")
+      .select("id")
+      .eq("user_id", deps.user.userId)
+      .eq("status", "draft");
+    if (draftMemberError !== null) {
+      throw new HttpError(
+        400,
+        "flyer_invalid_ai_response",
+        flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+      );
+    }
+    const draftMemberIds = (Array.isArray(draftMemberRows) ? draftMemberRows : []).map(
+      (row: { id: string }) => row.id,
+    );
+    let inspectionSafety = safety;
+    if (draftMemberIds.length > 0) {
+      const { data: draftAllergyRows, error: draftAllergyError } = await admin
+        .from("member_allergies")
+        .select("member_id,allergen_id,custom_name,custom_aliases,custom_confirmed")
+        .eq("user_id", deps.user.userId)
+        .in("member_id", draftMemberIds);
+      if (draftAllergyError !== null) {
+        throw new HttpError(
+          400,
+          "flyer_invalid_ai_response",
+          flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+        );
+      }
+      inspectionSafety = appendDraftMemberAllergiesForFlyerInspection(
+        safety,
+        Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
+      );
+    }
     // PE2: 辞書 alias + custom を foodTextContainsAlias（evaluateAllergens 同型）で検査
-    assertFlyerMenuAgainstSafety(parsedMenu.data, safety);
+    assertFlyerMenuAgainstSafety(parsedMenu.data, inspectionSafety);
   } catch (error: unknown) {
     if (error instanceof HttpError) {
       await rpcUntyped(admin, "finalize_flyer_weekly_failure", {

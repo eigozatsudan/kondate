@@ -22,6 +22,7 @@ const listMemberAllergiesMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
 const realtime = vi.hoisted(() => ({
   handlers: [] as { table: string; filter: string; callback: () => void }[],
+  statusCallback: null as null | ((status: string) => void),
   removeChannel: vi.fn(),
 }));
 
@@ -39,7 +40,10 @@ vi.mock("@/shared/lib/supabase", () => ({
         });
         return channel;
       },
-      subscribe: () => channel,
+      subscribe: (cb?: (status: string) => void) => {
+        realtime.statusCallback = cb ?? null;
+        return channel;
+      },
     };
     return {
       channel: () => channel,
@@ -142,6 +146,7 @@ beforeEach(() => {
   localStorage.clear();
   // 前テストのRealtime handlerが残ると他owner除外や再取得回数の検証が壊れる。
   realtime.handlers.length = 0;
+  realtime.statusCallback = null;
   getPlannerDraftMock.mockResolvedValue({
     id: "draft-1",
     userId: "72000000-0000-4000-8000-000000000001",
@@ -210,6 +215,46 @@ it.each([
     await Promise.resolve();
   });
   expect(await screen.findByRole("heading", { name: "新候補" })).toBeVisible();
+  view.unmount();
+});
+
+it.each(["CHANNEL_ERROR", "TIMED_OUT"] as const)(
+  "PE6: Realtime %s で旧候補を閉じて再取得する",
+  async (status) => {
+    const { view } = await renderVisibleEmergencyResponse();
+    await waitFor(() => {
+      expect(realtime.statusCallback).not.toBeNull();
+    });
+    const callsBefore = listHouseholdMembersMock.mock.calls.length;
+    const nextHousehold = deferredPromise<HouseholdMemberRow[]>();
+    listHouseholdMembersMock.mockReturnValueOnce(nextHousehold.promise);
+
+    act(() => {
+      realtime.statusCallback?.(status);
+    });
+    expect(screen.getByText("候補を確認中…")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "旧候補" })).not.toBeInTheDocument();
+    expect(listHouseholdMembersMock).toHaveBeenCalledTimes(callsBefore + 1);
+
+    await act(async () => {
+      nextHousehold.resolve([eligibleMember]);
+      await Promise.resolve();
+    });
+    view.unmount();
+  },
+);
+
+it("PE6: SUBSCRIBED alone does not refresh household safety revision", async () => {
+  const { view } = await renderVisibleEmergencyResponse();
+  await waitFor(() => {
+    expect(realtime.statusCallback).not.toBeNull();
+  });
+  const callsBefore = listHouseholdMembersMock.mock.calls.length;
+  act(() => {
+    realtime.statusCallback?.("SUBSCRIBED");
+  });
+  expect(listHouseholdMembersMock).toHaveBeenCalledTimes(callsBefore);
+  expect(screen.getByRole("heading", { name: "旧候補" })).toBeVisible();
   view.unmount();
 });
 
