@@ -7,9 +7,12 @@ import {
   generationConflictCopy,
   generationIssueCodes,
   generationStatusDataSchema,
+  isAllowedMenuDishCount,
   issueMessages,
+  menuDishCountMax,
   menuValidationIssueCodes,
   menuResponseFormat,
+  minDishCountForMealType,
   newMenuGenerationRequestSchema,
   regenerateDishRequestSchema,
   regenerateMenuRequestSchema,
@@ -137,6 +140,71 @@ it("rejects validated menu safetyTags longer than 32 (A-I12)", () => {
       safetyTags: Array.from({ length: 32 }, () => "cut_small" as const),
     }).success,
   ).toBe(true);
+});
+
+describe("menu dish count bounds (main-ingredient spread)", () => {
+  it("locks min by mealType and shared max", () => {
+    expect(minDishCountForMealType("breakfast")).toBe(2);
+    expect(minDishCountForMealType("lunch")).toBe(2);
+    expect(minDishCountForMealType("dinner")).toBe(3);
+    expect(menuDishCountMax).toBe(5);
+  });
+
+  it("allows min through max and rejects below min or above max", () => {
+    expect(isAllowedMenuDishCount("breakfast", 1)).toBe(false);
+    expect(isAllowedMenuDishCount("breakfast", 2)).toBe(true);
+    expect(isAllowedMenuDishCount("breakfast", 5)).toBe(true);
+    expect(isAllowedMenuDishCount("breakfast", 6)).toBe(false);
+    expect(isAllowedMenuDishCount("dinner", 2)).toBe(false);
+    expect(isAllowedMenuDishCount("dinner", 3)).toBe(true);
+    expect(isAllowedMenuDishCount("dinner", 5)).toBe(true);
+  });
+
+  it("accepts breakfast with more than minimum dishes in validatedMenuSchema", () => {
+    const thirdDish = {
+      id: "40000000-0000-4000-8000-000000000003",
+      role: "soup" as const,
+      position: 3,
+      name: "味噌汁",
+      description: "朝の汁物",
+      cookingTimeMinutes: 5,
+      ingredients: [
+        {
+          id: "43000000-0000-4000-8000-000000000003",
+          position: 1,
+          name: "みそ",
+          quantityValue: 1,
+          quantityText: "大さじ1",
+          unit: "大さじ",
+          storeSection: "seasonings" as const,
+          pantrySelectionId: null,
+          labelConfirmationRequired: false,
+        },
+      ],
+      steps: [
+        {
+          id: "41000000-0000-4000-8000-000000000003",
+          position: 1,
+          instruction: "みそを溶く",
+        },
+      ],
+    };
+    expect(
+      validatedMenuSchema.safeParse({
+        ...menu,
+        dishes: [...menu.dishes, thirdDish],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects breakfast below minimum dishes in validatedMenuSchema", () => {
+    expect(
+      validatedMenuSchema.safeParse({
+        ...menu,
+        dishes: [menu.dishes[0]],
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("generationConflictCopy", () => {

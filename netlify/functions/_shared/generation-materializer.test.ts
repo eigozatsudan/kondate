@@ -408,15 +408,48 @@ describe("materializeAiGeneratedMenu", () => {
     );
   });
 
-  it("rejects meal-type dish count mismatch as invalid_menu_structure", () => {
+  it("rejects meal-type dish count below minimum as invalid_menu_structure", () => {
     const payload = makePayload();
-    // breakfast は確定 2 品。1 品は AI schema 上は合法でも内部構造として拒否する。
+    // breakfast は最低 2 品。1 品は AI schema 上は合法でも内部構造として拒否する。
     payload.dishes = [payload.dishes[0]!];
     payload.timeline = payload.timeline.filter((entry) => entry.dishRef === "dish_1");
     expectOutputError(
       () => materializeAiGeneratedMenu(payload, makeContext(), uuidFactory()),
       "invalid_menu_structure",
     );
+  });
+
+  it("accepts breakfast with more than minimum dishes within the max (main-ingredient spread)", () => {
+    const payload = makePayload();
+    // 最低 2 より多い 3 品は上限内なら許容（メイン食材の分散用）。ちょうど 2 に固定しない。
+    payload.dishes = [
+      ...payload.dishes,
+      {
+        dishRef: "dish_3",
+        role: "soup",
+        position: 3,
+        name: "味噌汁",
+        description: "朝の汁物",
+        cookingTimeMinutes: 5,
+        ingredients: [
+          {
+            ingredientRef: "ingredient_3",
+            position: 1,
+            name: "みそ",
+            quantityValue: 1,
+            quantityText: "大さじ1",
+            unit: "大さじ",
+            storeSection: "seasonings",
+            pantryRef: null,
+            labelConfirmationRequired: false,
+          },
+        ],
+        steps: [{ stepRef: "step_3", position: 1, instruction: "みそを溶く" }],
+      },
+    ];
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.dishes).toHaveLength(3);
+    expect(generatedMenuSchema.safeParse(menu).success).toBe(true);
   });
 
   it("resolves every safety action ref to the fresh internal graph", () => {

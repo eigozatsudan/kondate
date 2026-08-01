@@ -110,7 +110,8 @@ function scoreCookability(menu: MenuLike, context: IdeaGenerationContext): Score
       menu.totalElapsedMinutes <= context.submission.timeLimitMinutes,
     "over_time_budget",
   );
-  add("dish_count_2", menu.dishes.length === 2, "dish_count_not_2");
+  // 朝/昼の最低品数は 2。上限内の増品（メイン食材分散）は合格とする。
+  add("dish_count_min_2", menu.dishes.length >= 2, "dish_count_below_min");
   const roles = new Set(menu.dishes.map((d) => d.role));
   add(
     "roles_breakfast",

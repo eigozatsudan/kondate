@@ -8,6 +8,22 @@ export { releaseQuota, planQuota } from "./plan-quota.js";
 export type { PlanCode } from "./plan-quota.js";
 
 export const dishRoles = ["main", "side", "soup", "staple", "other"] as const;
+/**
+ * 献立 dishes の契約上限（AI payload / generatedMenu 共通）。
+ * mealType ごとの最低品数は minDishCountForMealType。ちょうど N ではなく下限〜上限。
+ */
+export const menuDishCountMax = 5 as const;
+/** mealType ごとの最低品数。朝/昼=2・夕=3。上限は menuDishCountMax。 */
+export function minDishCountForMealType(mealType: (typeof mealTypes)[number]): number {
+  return mealType === "dinner" ? 3 : 2;
+}
+/** 最低品数以上・menuDishCountMax 以下なら構造として許容する。 */
+export function isAllowedMenuDishCount(
+  mealType: (typeof mealTypes)[number],
+  dishCount: number,
+): boolean {
+  return dishCount >= minDishCountForMealType(mealType) && dishCount <= menuDishCountMax;
+}
 export const storeSections = [
   "produce",
   "meat_fish",
@@ -164,7 +180,7 @@ const generatedMenuObjectSchema = z
     servings: z.number().int().min(1).max(20),
     totalElapsedMinutes: z.number().int().min(1).max(180),
     safetyTags: z.array(safetyTagSchema).max(32),
-    dishes: z.array(dishSchema).min(1).max(5),
+    dishes: z.array(dishSchema).min(1).max(menuDishCountMax),
     timeline: z.array(menuTimelineStepSchema).min(1).max(60),
     adaptations: z.array(menuMemberAdaptationSchema).max(100),
     pantryUsage: z.array(generatedPantryUsageSchema).max(50),
@@ -259,12 +275,13 @@ function validateMenuReferences(menu: MenuReferenceInput, context: z.RefinementC
     }
   }
 
-  const expectedDishCount = menu.mealType === "dinner" ? 3 : 2;
-  if (menu.dishes.length !== expectedDishCount) {
+  // 確定品数（ちょうど N）ではなく最低品数〜上限。メイン食材が多いときに品数を増やして分散できる。
+  // 最低を下回る応答だけ拒否し、従来の 2/3 品成功パスは温存する（生成失敗率を上げない）。
+  if (!isAllowedMenuDishCount(menu.mealType, menu.dishes.length)) {
     context.addIssue({
       code: "custom",
       path: ["dishes"],
-      message: "食事区分の品数と一致しません",
+      message: "食事区分の最低品数を満たしていないか、上限を超えています",
     });
   }
 

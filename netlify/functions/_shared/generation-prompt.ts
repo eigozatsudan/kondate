@@ -90,11 +90,17 @@ const GENERATION_SYSTEM_PROMPT_CORE_PREFIX =
   // structural / refs
   "すべてのdishRef/ingredientRef/stepRef/timelineRef/adaptationRefは一意にし、" +
   "dish_1・ingredient_1・step_1 のように種別ごとの連番形式を使う。" +
-  // 品数・役割（設計 §7.3 / materialize の確定品数と一致）
-  "dishesの品数はmealTypeに厳密に合わせる:" +
-  "breakfastとlunchはちょうど2品、dinnerはちょうど3品。" +
+  // 品数・役割（設計 §7.3 / materialize の最低品数〜上限と一致）
+  // ちょうど N ではなく下限のみ hard。上限内の増品はメイン食材分散のため許容（失敗率を上げない）。
+  "dishesの品数はmealTypeの最低以上・最大5品:" +
+  "breakfastとlunchは最低2品（最大5品）、dinnerは最低3品（最大5品）。" +
+  "最低品数を下回らないこと。最低より多くしてよい。" +
   "breakfast/lunchは(mainまたはstaple)とsideを両方含める。" +
   "dinnerはmain・side・soupをすべて含める。" +
+  "preferences.mainIngredientsが多いときは、最低品数の2〜3品に無理に詰め込まず、" +
+  "品数を増やして各食材を別の料理へ分散してよい。" +
+  "品数を増やす場合もtotalElapsedMinutesとpreferences.timeLimitMinutesを守る。" +
+  "時間内に収まらないなら品数を増やさない。" +
   "timelineの各要素はstartMinute+durationMinutesがtotalElapsedMinutesを超えない。" +
   "totalElapsedMinutesはpreferences.timeLimitMinutesがあるときそれを超えない。" +
   // timeline / adaptation の dish–step 対応（materialize の dangling_ref 防止）

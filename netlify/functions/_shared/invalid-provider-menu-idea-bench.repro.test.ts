@@ -90,7 +90,8 @@ describe("idea-bench invalid_provider_menu / invalid_menu_structure mock repro",
     expect(codes).not.toContain("invalid_provider_menu");
   });
 
-  it("maps breakfast with 3 dishes to invalid_menu_structure (exact count 2)", () => {
+  it("accepts breakfast with 3 dishes within max (no longer exact count 2)", () => {
+    // メイン食材分散のため朝/昼も最低2〜最大5を許容。3品は invalid_menu_structure にしない。
     const menu = ideaServings2Menu();
     menu.dishes = [
       ...menu.dishes,
@@ -108,7 +109,7 @@ describe("idea-bench invalid_provider_menu / invalid_menu_structure mock repro",
             name: "みそ",
             quantityValue: 1,
             quantityText: "大さじ1",
-            unit: "tbsp",
+            unit: "大さじ",
             storeSection: "seasonings",
             pantryRef: null,
             labelConfirmationRequired: false,
@@ -128,7 +129,7 @@ describe("idea-bench invalid_provider_menu / invalid_menu_structure mock repro",
       ideaBenchContext(),
       uuidFactory(),
     );
-    expect(codes).toContain("invalid_menu_structure");
+    expect(codes).not.toContain("invalid_menu_structure");
   });
 
   it("maps idea adaptations with member refs to unknown_member_ref (not invalid_provider_menu)", () => {

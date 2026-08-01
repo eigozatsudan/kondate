@@ -283,9 +283,14 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain("mandatory_safety_conflictは使わない");
     expect(system).toContain("conditionRefsが空のconflictは出さない");
     expect(system).toContain("pantryが空のときallergen_pantry_conflictは使わない");
-    // 品数・役割は materialize の確定品数と揃える（invalid_menu_structure 本筋）
-    expect(system).toContain("ちょうど2品");
-    expect(system).toContain("ちょうど3品");
+    // 品数・役割は materialize の最低品数〜上限と揃える（invalid_menu_structure 本筋）
+    // ちょうど N ではなく下限〜5。メイン食材が多いときの増品分散を許可する。
+    expect(system).toContain("最低2品");
+    expect(system).toContain("最低3品");
+    expect(system).toContain("最大5品");
+    expect(system).toContain("無理に詰め込まず");
+    expect(system).toContain("品数を増やして");
+    expect(system).toContain("時間内に収まらないなら品数を増やさない");
     expect(system).toContain("mainまたはstaple");
     expect(system).toContain("totalElapsedMinutes");
     // timeline の dish–step 対応（Luna 応答の dish_3+step_2 型を抑止）
