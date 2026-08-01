@@ -3,10 +3,13 @@ import type Stripe from "stripe";
 import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
 import type { ServerEnv } from "./env.js";
 import {
+  guardSubscriptionProjection,
   handleBillingWebhook,
+  isAllowlistedPlusPrice,
   resolveBillingUserId,
   subscriptionIdFromInvoice,
   type BillingWebhookDeps,
+  type SubscriptionProjection,
 } from "./billing-webhook.js";
 
 const USER_ID = "a1000000-0000-4000-8000-000000000001";
@@ -49,7 +52,8 @@ function baseEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
       requestHmacKey: new Uint8Array(32),
     },
     quotaIdentityHmacKey: new Uint8Array(32).fill(2),
-    billingEnabled: false,
+    // 既定は enabled（B1/B7 投影ガードを本番相当で検証）。kill は個別 override。
+    billingEnabled: true,
     stripe: {
       secretKey: "sk_test_xxx",
       webhookSecret: "whsec_xxx",
@@ -293,6 +297,12 @@ describe("handleBillingWebhook", () => {
       if (name === "insert_billing_trial_history") {
         return { data: { ok: true, inserted: true }, error: null };
       }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
+      }
       return { data: null, error: null };
     });
 
@@ -316,6 +326,12 @@ describe("handleBillingWebhook", () => {
     rpc.mockImplementation((name: string) => {
       if (name === "process_billing_stripe_event") {
         return { data: { ok: true, outcome: "stale_ignored" }, error: null };
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
       }
       return { data: null, error: null };
     });
@@ -360,6 +376,12 @@ describe("handleBillingWebhook", () => {
       if (name === "process_billing_stripe_event") {
         return { data: { ok: true, outcome: "stale_ignored" }, error: null };
       }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
+      }
       return { data: null, error: null };
     });
     const response = await handleBillingWebhook(signedRequest(), deps());
@@ -379,6 +401,12 @@ describe("handleBillingWebhook", () => {
     rpc.mockImplementation((name: string) => {
       if (name === "process_billing_stripe_event") {
         return { data: { ok: true, outcome: "stale_ignored" }, error: null };
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
       }
       return { data: null, error: null };
     });
@@ -400,6 +428,12 @@ describe("handleBillingWebhook", () => {
     rpc.mockImplementation((name: string) => {
       if (name === "process_billing_stripe_event") {
         return { data: { ok: true, outcome: "stale_ignored" }, error: null };
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
       }
       return { data: null, error: null };
     });
@@ -440,6 +474,12 @@ describe("handleBillingWebhook", () => {
       }
       if (name === "insert_billing_trial_history") {
         return { data: { ok: true, inserted: false }, error: null };
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
       }
       return { data: null, error: null };
     });
@@ -640,6 +680,8 @@ describe("handleBillingWebhook", () => {
       object: "invoice",
       customer: CUSTOMER_ID,
       subscription: SUB_ID,
+      // B4: duplicate 強制 burn は trial 証拠（create/update or trial_end）があるときのみ
+      billing_reason: "subscription_create",
     } as unknown as Stripe.Invoice;
     constructEvent.mockReturnValue(
       makeEvent("invoice.paid", invoice, { id: "evt_invoice_retry_cancel" }),
@@ -691,6 +733,12 @@ describe("handleBillingWebhook", () => {
       }
       if (name === "insert_billing_trial_history") {
         return { data: { ok: true, inserted: false }, error: null };
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
       }
       return { data: null, error: null };
     });
@@ -856,7 +904,7 @@ describe("handleBillingWebhook", () => {
     expect(processPayload.status).toBe("active");
   });
 
-  it("cancels newer dual live subscription and keeps older entitled row", async () => {
+  it("cancels older dual live subscription and keeps newer entitled row (B5)", async () => {
     const older = makeSubscription({
       id: "sub_older",
       created: 1000,
@@ -871,14 +919,14 @@ describe("handleBillingWebhook", () => {
     constructEvent.mockReturnValue(
       makeEvent("customer.subscription.created", newer, { id: "evt_dual" }),
     );
-    // cancel 後の newer retrieve は canceled を返し得る。投影は keep(older) を正とする。
+    // cancel 後の older retrieve。投影は keep(newer) を正とする。
     retrieve.mockImplementation((id: string) => {
-      if (id === "sub_newer") {
+      if (id === "sub_older") {
         return Promise.resolve(
-          makeSubscription({ id: "sub_newer", status: "canceled", created: 2000 }),
+          makeSubscription({ id: "sub_older", status: "canceled", created: 1000 }),
         );
       }
-      return Promise.resolve(older);
+      return Promise.resolve(newer);
     });
     // status 別 list に対応（active だけに両方が載る）
     list.mockImplementation((params: { status?: string }) => {
@@ -891,16 +939,16 @@ describe("handleBillingWebhook", () => {
       });
     });
     cancel.mockResolvedValue(
-      makeSubscription({ id: "sub_newer", status: "canceled", created: 2000 }),
+      makeSubscription({ id: "sub_older", status: "canceled", created: 1000 }),
     );
 
     await handleBillingWebhook(signedRequest(), deps());
-    expect(cancel).toHaveBeenCalledWith("sub_newer");
+    expect(cancel).toHaveBeenCalledWith("sub_older");
     expect(rpc).toHaveBeenCalledWith(
       "mark_billing_subscription_dual_cancel_keep",
       expect.objectContaining({
         p_user_id: USER_ID,
-        p_keep_stripe_subscription_id: "sub_older",
+        p_keep_stripe_subscription_id: "sub_newer",
       }),
     );
     expect(logSink).toHaveBeenCalledWith(
@@ -912,8 +960,8 @@ describe("handleBillingWebhook", () => {
         p_payload: Record<string, unknown>;
       }
     ).p_payload;
-    // discard した newer ではなく keep(older) の id/status で投影する
-    expect(processPayload.stripe_subscription_id).toBe("sub_older");
+    // discard した older ではなく keep(newer) の id/status で投影する
+    expect(processPayload.stripe_subscription_id).toBe("sub_newer");
     expect(processPayload.status).toBe("active");
   });
 
@@ -973,13 +1021,19 @@ describe("handleBillingWebhook", () => {
       const data = params.status === "active" || params.status === undefined ? [older, newer] : [];
       return Promise.resolve({ object: "list", data, has_more: false, url: "" });
     });
-    cancel.mockResolvedValue(newer);
+    cancel.mockResolvedValue(older);
     rpc.mockImplementation((name: string) => {
       if (name === "mark_billing_subscription_dual_cancel_keep") {
         return Promise.resolve({ data: null, error: { message: "mark failed" } });
       }
       if (name === "process_billing_stripe_event") {
         return Promise.resolve({ data: { ok: true, outcome: "applied" }, error: null });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
       }
       return Promise.resolve({ data: null, error: null });
     });
@@ -989,11 +1043,50 @@ describe("handleBillingWebhook", () => {
     expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
   });
 
-  it("processes webhook when BILLING_ENABLED=false if secrets present (A3)", async () => {
+  it("processes webhook when BILLING_ENABLED=false if secrets present but does not project Plus (A3/B7)", async () => {
     constructEvent.mockReturnValue(makeEvent("customer.subscription.updated", makeSubscription()));
     const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
     expect(response.status).toBe(200);
-    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(true);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    // kill 中も event は処理するが Plus になり得る status は unpaid へ落とす
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.stripe_price_id).toBe("price_m");
+  });
+
+  it("demotes unknown price to unpaid and does not elevate Plus (B1)", async () => {
+    const sub = makeSubscription({
+      items: {
+        object: "list",
+        data: [
+          {
+            id: "si_1",
+            object: "subscription_item",
+            current_period_start: 1_720_000_000,
+            current_period_end: 1_722_592_000,
+            price: { id: "price_other_product", object: "price" },
+          } as never,
+        ],
+        has_more: false,
+        url: "",
+      },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", sub, { id: "evt_unknown_price" }),
+    );
+    retrieve.mockResolvedValue(sub);
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.stripe_price_id).toBe("price_other_product");
   });
 
   it("releases lock by session id on checkout.session.completed webhook", async () => {
@@ -1026,16 +1119,28 @@ describe("handleBillingWebhook", () => {
   });
 });
 
-describe("resolveBillingUserId U5-M1", () => {
-  it("returns metadata when only metadata is present", async () => {
+describe("resolveBillingUserId U5-M1 / B2", () => {
+  it("returns null when only metadata is present (map required)", async () => {
     const admin = { rpc: vi.fn() };
     await expect(
       resolveBillingUserId(admin as never, {
         metadataUserId: USER_ID,
         stripeCustomerId: null,
       }),
-    ).resolves.toBe(USER_ID);
+    ).resolves.toBeNull();
     expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("returns null when customer is unmapped even if metadata is set (B2)", async () => {
+    const admin = {
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+    await expect(
+      resolveBillingUserId(admin as never, {
+        metadataUserId: USER_ID,
+        stripeCustomerId: CUSTOMER_ID,
+      }),
+    ).resolves.toBeNull();
   });
 
   it("returns mapped user when only customer map is present", async () => {
@@ -1073,5 +1178,44 @@ describe("resolveBillingUserId U5-M1", () => {
         stripeCustomerId: CUSTOMER_ID,
       }),
     ).resolves.toBe(USER_ID);
+  });
+});
+
+describe("guardSubscriptionProjection B1/B7", () => {
+  const base: SubscriptionProjection = {
+    stripe_subscription_id: SUB_ID,
+    stripe_price_id: "price_m",
+    status: "active",
+    cancel_at_period_end: false,
+    current_period_start: "2026-07-01T00:00:00.000Z",
+    current_period_end: "2026-08-01T00:00:00.000Z",
+    trial_end: null,
+  };
+  const stripe = { pricePlusMonthly: "price_m", pricePlusYearly: "price_y" };
+
+  it("allowlists checkout prices", () => {
+    expect(isAllowlistedPlusPrice("price_m", stripe)).toBe(true);
+    expect(isAllowlistedPlusPrice("price_y", stripe)).toBe(true);
+    expect(isAllowlistedPlusPrice("price_other", stripe)).toBe(false);
+  });
+
+  it("demotes unknown price elevating status to unpaid", () => {
+    const guarded = guardSubscriptionProjection(
+      { ...base, stripe_price_id: "price_unknown", status: "trialing" },
+      { billingEnabled: true, stripe },
+    );
+    expect(guarded.status).toBe("unpaid");
+    expect(guarded.stripe_price_id).toBe("price_unknown");
+  });
+
+  it("demotes elevating status when billing kill switch is on", () => {
+    const guarded = guardSubscriptionProjection(base, { billingEnabled: false, stripe });
+    expect(guarded.status).toBe("unpaid");
+  });
+
+  it("keeps allowlisted active when billing enabled", () => {
+    expect(guardSubscriptionProjection(base, { billingEnabled: true, stripe }).status).toBe(
+      "active",
+    );
   });
 });

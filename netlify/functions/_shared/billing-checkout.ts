@@ -188,11 +188,18 @@ export async function runBillingCheckout(
     if (entitlement.dbPlusEntitled) {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
+    // B8: incomplete 放置は新規 Checkout ではなく Portal 完了を促す（30m lock 残骸と区別）
+    if (entitlement.status === "incomplete") {
+      throw new HttpError(
+        409,
+        "billing_checkout_incomplete",
+        "お支払い手続きが完了していません。設定からお支払い管理を開いてください",
+      );
+    }
     if (
       entitlement.status === "trialing" ||
       entitlement.status === "active" ||
-      entitlement.status === "past_due" ||
-      entitlement.status === "incomplete"
+      entitlement.status === "past_due"
     ) {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
@@ -320,7 +327,14 @@ export async function runBillingCheckout(
           durationMs: Date.now() - startedAt,
         });
       } catch {
-        // best-effort expire
+        // B10: expire 失敗は orphan session 残差。ops 向けに alert だけ上げる（PII なし）
+        log({
+          level: "error",
+          requestId,
+          code: "billing_checkout_session_expire_failed",
+          durationMs: Date.now() - startedAt,
+          alertMetric: 1,
+        });
       }
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
@@ -336,7 +350,13 @@ export async function runBillingCheckout(
           durationMs: Date.now() - startedAt,
         });
       } catch {
-        // best-effort expire
+        log({
+          level: "error",
+          requestId,
+          code: "billing_checkout_session_expire_failed",
+          durationMs: Date.now() - startedAt,
+          alertMetric: 1,
+        });
       }
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }

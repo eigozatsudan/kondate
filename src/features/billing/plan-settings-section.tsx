@@ -38,8 +38,9 @@ function formatTrialEnd(iso: string | null): string | null {
   }
 }
 
-function planLabel(data: EntitlementData): string {
-  if (data.plusEntitled || data.plan === "plus") {
+function planLabel(data: EntitlementData, options: { trustPlus: boolean }): string {
+  // trustPlus=false（error）時は Plus ラベルを出さない
+  if (options.trustPlus && (data.plusEntitled || data.plan === "plus")) {
     if (data.status === "trialing") return "こんだて日和 Plus（無料期間中）";
     if (data.pastDueGrace || data.status === "past_due")
       return "こんだて日和 Plus（お支払い確認中）";
@@ -91,7 +92,8 @@ export function PlanSettingsSection({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const surfacesOpen = data?.productSurfacesOpen === true;
-  const entitled = data?.plusEntitled === true;
+  // B6: error 時は stale Plus を出さない（サーバ再検証までの fail-closed 表示）
+  const entitled = !error && data?.plusEntitled === true;
   const isTrialing = data?.status === "trialing";
   const isPastDue = data?.status === "past_due" || data?.pastDueGrace === true;
   const trialEndLabel = formatTrialEnd(data?.trialEnd ?? null);
@@ -128,7 +130,7 @@ export function PlanSettingsSection({
       {data !== null ? (
         <>
           <p>
-            いまのプラン: <strong>{planLabel(data)}</strong>
+            いまのプラン: <strong>{planLabel(data, { trustPlus: !error })}</strong>
           </p>
 
           {!surfacesOpen ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}

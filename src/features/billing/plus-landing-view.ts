@@ -29,6 +29,7 @@ function isCheckoutBlockedStatus(status: EntitlementData["status"]): boolean {
  * Plus LP の表示分岐の唯一の入口（設計 State matrix）。
  * 上から最初に当てはまった行だけを返す。
  * 順序: loading → error → past_due → entitled → incomplete → full
+ * B6: loading/error 中は data があっても Plus 短形を出さない（fetch 成功後のみ）
  */
 export function resolvePlusLandingView(input: {
   loading: boolean;
@@ -37,18 +38,13 @@ export function resolvePlusLandingView(input: {
 }): PlusLandingView {
   const { loading, error, data } = input;
 
-  // 1. loading かつ data なし
-  if (loading && data == null) {
+  // 1. loading: stale cache でも Plus 専用短形を出さない（B6 fail-closed display）
+  if (loading) {
     return { kind: "loading" };
   }
 
-  // 2. error かつ data なし
-  if (error && data == null) {
-    return { kind: "error" };
-  }
-
-  // data が無いが loading/error でもない場合は error に寄せる（取得失敗扱い）
-  if (data == null) {
+  // 2. error または data なし: Plus 表示を信頼しない（stale plusEntitled を出さない）
+  if (error || data == null) {
     return { kind: "error" };
   }
 

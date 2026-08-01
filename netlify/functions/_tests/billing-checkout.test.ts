@@ -198,6 +198,21 @@ describe("runBillingCheckout", () => {
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
+  it("returns 409 billing_checkout_incomplete when status is incomplete (B8)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeEntitlement,
+      status: "incomplete",
+      dbPlusEntitled: false,
+      plusEntitled: false,
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_checkout_incomplete" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
   it("acquire → sessions.create → bind → returns url (happy path)", async () => {
     const response = await runBillingCheckout(request({ interval: "year" }), deps());
     expect(response.status).toBe(200);
@@ -463,4 +478,38 @@ describe("runBillingCheckout", () => {
       }),
     );
   });
+
+  it("logs expire failure with alert when bind fails and expire throws (B10)", async () => {
+    sessionsExpire.mockRejectedValue(new Error("expire down"));
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_user") {
+        return { data: { stripe_customer_id: "cus_existing" }, error: null };
+      }
+      if (name === "has_billing_trial_history") {
+        return { data: false, error: null };
+      }
+      if (name === "acquire_billing_checkout_lock") {
+        return { data: { ok: true, lock_token: LOCK_TOKEN }, error: null };
+      }
+      if (name === "bind_billing_checkout_session") {
+        return {
+          data: { ok: false, failure_code: "billing_checkout_bind_failed" },
+          error: null,
+        };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(503);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "billing_checkout_session_expire_failed",
+        alertMetric: 1,
+      }),
+    );
+  });
+
 });

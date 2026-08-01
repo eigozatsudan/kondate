@@ -107,3 +107,27 @@ describe("resolvePlusLandingView", () => {
     expect(resolvePlusLandingView({ loading: false, error: false, data }).kind).toBe("entitled");
   });
 });
+
+  it("returns loading even when stale entitled data is present (B6)", () => {
+    const data: EntitlementData = {
+      ...freeOpen,
+      plan: "plus",
+      status: "active",
+      plusEntitled: true,
+      dbPlusEntitled: true,
+      quotaPlan: "plus",
+    };
+    expect(resolvePlusLandingView({ loading: true, error: false, data }).kind).toBe("loading");
+  });
+
+  it("returns error even when stale entitled data is present (B6)", () => {
+    const data: EntitlementData = {
+      ...freeOpen,
+      plan: "plus",
+      status: "active",
+      plusEntitled: true,
+      dbPlusEntitled: true,
+      quotaPlan: "plus",
+    };
+    expect(resolvePlusLandingView({ loading: false, error: true, data }).kind).toBe("error");
+  });

@@ -3,6 +3,11 @@ import type { Config } from "@netlify/functions";
 import type Stripe from "stripe";
 import type { PortalData } from "../../shared/contracts/billing.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
+import {
+  BillingEntitlementUnavailableError,
+  loadEntitlement,
+  type Entitlement,
+} from "./_shared/billing-entitlement.js";
 import { getStripeClientFromEnv } from "./_shared/billing-stripe.js";
 import { getServerEnv, type ServerEnv } from "./_shared/env.js";
 import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.js";
@@ -12,6 +17,7 @@ import { getSupabaseAdmin, type AdminSupabaseClient } from "./_shared/supabase-a
 export type BillingPortalDeps = {
   env: ServerEnv;
   authenticate: (request: Request) => Promise<{ userId: string; email: string }>;
+  loadEntitlement: (userId: string) => Promise<Entitlement>;
   stripe: {
     billingPortal: {
       sessions: {
@@ -24,7 +30,30 @@ export type BillingPortalDeps = {
   admin: Pick<AdminSupabaseClient, "rpc">;
   log?: (event: SafeLogEvent) => void;
   requestId?: string;
+  now?: () => Date;
 };
+
+/**
+ * Portal を開いてよい subscription 状態（B9）。
+ * Free 終端（none / canceled 期間外 / unpaid 等）は Checkout へ誘導し、
+ * Portal 経由の price 変更・trial 再付与をアプリ側で塞ぐ。
+ * incomplete / past_due / 期間内 canceled は支払い完了・解約管理のため許可。
+ */
+export function isBillingPortalAllowed(entitlement: Entitlement, now: Date = new Date()): boolean {
+  if (entitlement.dbPlusEntitled) return true;
+  if (
+    entitlement.status === "trialing" ||
+    entitlement.status === "active" ||
+    entitlement.status === "past_due" ||
+    entitlement.status === "incomplete"
+  ) {
+    return true;
+  }
+  if (entitlement.status === "canceled" && entitlement.currentPeriodEnd !== null) {
+    return now.getTime() < new Date(entitlement.currentPeriodEnd).getTime();
+  }
+  return false;
+}
 
 /**
  * POST /api/billing/portal
@@ -45,6 +74,30 @@ export async function runBillingPortal(
     }
 
     const user = await deps.authenticate(request);
+
+    let entitlement: Entitlement;
+    try {
+      entitlement = await deps.loadEntitlement(user.userId);
+    } catch (error: unknown) {
+      if (error instanceof BillingEntitlementUnavailableError) {
+        throw new HttpError(
+          503,
+          "billing_entitlement_unavailable",
+          "プラン情報を確認できませんでした。しばらくしてからお試しください。",
+        );
+      }
+      throw error;
+    }
+    const now = deps.now ?? (() => new Date());
+    // B9: Free 終端の Portal 再開（Checkout trial ゲート迂回）をアプリ側で拒否
+    if (!isBillingPortalAllowed(entitlement, now())) {
+      throw new HttpError(
+        403,
+        "billing_portal_unavailable",
+        "お支払い管理を開ける状態ではありません。プラン登録からお進みください",
+      );
+    }
+
     const { data, error } = await deps.admin.rpc("get_billing_customer_by_user", {
       p_user_id: user.userId,
     });
@@ -91,6 +144,7 @@ export default async function billingPortal(request: Request): Promise<Response>
   return runBillingPortal(request, {
     env,
     authenticate: requireUserWithEmail,
+    loadEntitlement,
     stripe: getStripeClientFromEnv(env) ?? (null as never),
     admin: getSupabaseAdmin(),
   });

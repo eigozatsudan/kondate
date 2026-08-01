@@ -109,12 +109,48 @@ const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete
 
 /**
  * dual-sub keep 優先: entitled（trialing/active/past_due）を incomplete より常に優先。
- * 古い incomplete Checkout 残骸を keep し、後からできた active を cancel しない（設計: 先に entitled）。
+ * 同 rank 内は新しい created を keep（再 Checkout 後の誤ダウングレード残差を減らす）。
  */
 function dualSubKeepRank(status: string): number {
   if (status === "trialing" || status === "active" || status === "past_due") return 0;
   if (status === "incomplete") return 1;
   return 2;
+}
+
+/** Checkout が使う Plus price のみを権益対象にする（Dashboard 手動・Portal 価格変更の elevation を閉じる）。 */
+export function isAllowlistedPlusPrice(
+  priceId: string,
+  stripe: { pricePlusMonthly: string; pricePlusYearly: string },
+): boolean {
+  return priceId === stripe.pricePlusMonthly || priceId === stripe.pricePlusYearly;
+}
+
+/**
+ * B1/B7: 投影直前の権益ガード。
+ * - 未知 price → unpaid（status のみ Plus になる経路を閉じる）
+ * - BILLING_ENABLED=false → Plus になり得る status を unpaid に落とす（kill 中の DB Plus 投影を止める）
+ * price_id 自体は監査用に保持する。
+ */
+export function guardSubscriptionProjection(
+  projection: SubscriptionProjection,
+  options: {
+    billingEnabled: boolean;
+    stripe: { pricePlusMonthly: string; pricePlusYearly: string };
+  },
+): SubscriptionProjection {
+  const priceOk = isAllowlistedPlusPrice(projection.stripe_price_id, options.stripe);
+  const elevating =
+    projection.status === "trialing" ||
+    projection.status === "active" ||
+    projection.status === "past_due" ||
+    projection.status === "canceled";
+  if (!priceOk && elevating) {
+    return { ...projection, status: "unpaid" };
+  }
+  if (!options.billingEnabled && elevating) {
+    return { ...projection, status: "unpaid" };
+  }
+  return projection;
 }
 
 function unixToIsoZ(seconds: number | null | undefined): string | null {
@@ -196,8 +232,10 @@ function subscriptionIdFromUnknown(value: unknown): string | null {
 }
 
 /**
- * user 解決: metadata.supabase_user_id → billing_customers by stripe_customer_id。
- * どちらも無ければ null（200 + billing_user_unmapped）。
+ * user 解決: billing_customers の stripe_customer_id マップを正とする。
+ * - map 必須（meta のみの被害者 UUID 載せ elevation を閉じる = B2）
+ * - map + meta 両方あるときは一致必須（U5-M1）
+ * - 解決不能は null（200 + billing_user_unmapped、権益なし）
  */
 export async function resolveBillingUserId(
   admin: BillingWebhookAdmin,
@@ -206,8 +244,6 @@ export async function resolveBillingUserId(
     stripeCustomerId: string | null;
   },
 ): Promise<string | null> {
-  // U5-M1: metadata と customer マップが両方あるときは一致必須（ops 誤タグでの取り違え防止）。
-  // 片方だけならその経路を採用。どちらも無ければ null。
   const meta =
     typeof options.metadataUserId === "string" && options.metadataUserId.length > 0
       ? options.metadataUserId
@@ -222,10 +258,10 @@ export async function resolveBillingUserId(
       if (typeof userId === "string" && userId.length > 0) mapped = userId;
     }
   }
-  if (meta !== null && mapped !== null) {
-    return meta === mapped ? meta : null;
-  }
-  return meta ?? mapped;
+  // B2: customer map が無ければ投影しない（Checkout 正規は ensure_billing_customer 済み）。
+  if (mapped === null) return null;
+  if (meta !== null && meta !== mapped) return null;
+  return mapped;
 }
 
 async function processStripeEvent(
@@ -252,7 +288,7 @@ export type DualSubscriptionCleanup = {
 };
 
 /**
- * 二重 live subscription: keep は entitled 優先・同順位なら created が古い方、他を Stripe cancel。
+ * 二重 live subscription: keep は entitled 優先・同順位なら created が新しい方、他を Stripe cancel。
  * 呼び出し側は discarded に含まれるイベント subscription を通常 projection してはならない。
  */
 export async function cancelDualLiveSubscriptions(
@@ -290,7 +326,8 @@ export async function cancelDualLiveSubscriptions(
   const sorted = [...live].sort((a, b) => {
     const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
     if (rankDiff !== 0) return rankDiff;
-    return a.created - b.created;
+    // 同 rank は新しい subscription を keep（古い incomplete/残骸を誤 keep しない）
+    return b.created - a.created;
   });
   const keep = sorted[0];
   if (keep === undefined) {
@@ -372,7 +409,8 @@ export async function resolveTerminalEventDualProjection(
   const sorted = [...live].sort((a, b) => {
     const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
     if (rankDiff !== 0) return rankDiff;
-    return a.created - b.created;
+    // 同 rank は新しい subscription を keep（古い incomplete/残骸を誤 keep しない）
+    return b.created - a.created;
   });
   const keep = sorted[0];
   if (keep === undefined) {
@@ -527,7 +565,7 @@ async function handleSubscriptionEvent(
       retrieved = projectionFromSubscription(sub);
     }
   }
-  const projection =
+  let projection =
     retrieved ?? (projectSubscriptionId === sub.id ? projectionFromSubscription(sub) : null);
   if (projection === null) {
     // 投影不能は event 記録のみ（再送地獄回避で 200）
@@ -551,7 +589,20 @@ async function handleSubscriptionEvent(
   // deleted で discarded を keep へリダイレクトしているとき、keep を canceled に落とさない
   const forceCanceledFromDeleted =
     event.type === "customer.subscription.deleted" && !projectingDiscardedOntoKeep;
-  const projectedStatus = forceCanceledFromDeleted ? "canceled" : projection.status;
+  // forceCanceled 後に B1/B7 ガード（deleted→canceled が kill 中に再昇格しないよう後段で適用）
+  let guardedProjection: SubscriptionProjection = {
+    ...projection,
+    status: forceCanceledFromDeleted ? "canceled" : projection.status,
+  };
+  const stripeCfg = deps.env.stripe;
+  if (stripeCfg !== undefined) {
+    guardedProjection = guardSubscriptionProjection(guardedProjection, {
+      billingEnabled: deps.env.billingEnabled,
+      stripe: stripeCfg,
+    });
+  }
+  const projectedStatus = guardedProjection.status;
+  projection = guardedProjection;
 
   const clearPastDue =
     projectedStatus === "active" || projectedStatus === "trialing" || forceCanceledFromDeleted;
@@ -613,12 +664,18 @@ async function handleSubscriptionEvent(
   // trial 焼成の status は **イベントオブジェクトの frozen status** を使う。
   // live retrieve（projection）だと、applied 後 burn 500 → cancel → 同一 event 再送で
   // retrieve=canceled となり burn が永久スキップされ、同一 identity の再 trial が開く。
+  // 非 allowlist price は Plus 対象外なので焼成しない（B1 と整合。過焼成を避ける）。
   const statusForTrial = event.type === "customer.subscription.deleted" ? "canceled" : sub.status;
-  await maybeInsertTrialHistory(
-    { admin: deps.admin, env: deps.env, log, requestId, startedAt },
-    userId,
-    statusForTrial,
-  );
+  if (
+    deps.env.stripe !== undefined &&
+    isAllowlistedPlusPrice(projection.stripe_price_id, deps.env.stripe)
+  ) {
+    await maybeInsertTrialHistory(
+      { admin: deps.admin, env: deps.env, log, requestId, startedAt },
+      userId,
+      statusForTrial,
+    );
+  }
 
   return json(200, { ok: true, data: { outcome } });
 }
@@ -787,6 +844,15 @@ async function handleInvoiceEvent(
     return json(200, { ok: true, data: { outcome } });
   }
 
+  // B1 price allowlist + B7 kill 中の Plus 投影抑止
+  const stripeCfg = deps.env.stripe;
+  if (stripeCfg !== undefined) {
+    projection = guardSubscriptionProjection(projection, {
+      billingEnabled: deps.env.billingEnabled,
+      stripe: stripeCfg,
+    });
+  }
+
   // invoice.paid は Subscription オブジェクトの status と整合させる（past_due を勝手に active 化しない）。
   // past_due_since クリアは paid 確定かつ status が active/trialing のときだけ（A6: past_due+NULL=非 entitled）。
   const isPaid = event.type === "invoice.paid";
@@ -828,20 +894,34 @@ async function handleInvoiceEvent(
 
   // subscription.* が欠落・遅延しても invoice 経路だけで Plus が投影され得るため、
   // 初回 trialing|active の trial 焼成はイベント種別を問わず共有する（A7）。
-  // invoice.paid の duplicate 再送時は live retrieve が canceled でも焼成を再試行する
-  //（初回 applied 後 burn 失敗 → cancel で永久スキップされるのを防ぐ）。
+  // invoice.paid の duplicate 再送時は、trial 証拠があるときだけ live canceled でも焼成を再試行する
+  //（初回 applied 後 burn 失敗 → cancel で永久スキップされる穴を塞ぎつつ、証拠無しの過焼成を減らす = B4）。
+  const invoiceBillingReason =
+    typeof (invoice as { billing_reason?: unknown }).billing_reason === "string"
+      ? (invoice as { billing_reason: string }).billing_reason
+      : null;
+  const hasTrialBurnEvidence =
+    projection.trial_end != null ||
+    invoiceBillingReason === "subscription_create" ||
+    invoiceBillingReason === "subscription_update";
   const statusForTrial =
     event.type === "invoice.paid" &&
     outcome === "duplicate_processed" &&
     status !== "trialing" &&
-    status !== "active"
+    status !== "active" &&
+    hasTrialBurnEvidence
       ? "active"
       : status;
-  await maybeInsertTrialHistory(
-    { admin: deps.admin, env: deps.env, log, requestId, startedAt },
-    userId,
-    statusForTrial,
-  );
+  if (
+    deps.env.stripe !== undefined &&
+    isAllowlistedPlusPrice(projection.stripe_price_id, deps.env.stripe)
+  ) {
+    await maybeInsertTrialHistory(
+      { admin: deps.admin, env: deps.env, log, requestId, startedAt },
+      userId,
+      statusForTrial,
+    );
+  }
 
   return json(200, { ok: true, data: { outcome } });
 }
@@ -872,7 +952,8 @@ async function handleCustomerOnlyEvent(
 /**
  * Stripe Webhook の本体。
  * - 署名検証は body parse 前（constructEvent が raw body を要求）
- * - BILLING_ENABLED 非依存（鍵があれば稼働 = A3）
+ * - 署名検証と event 処理は BILLING_ENABLED 非依存（鍵があれば稼働 = A3）
+ * - ただし kill 中は guardSubscriptionProjection で Plus になり得る status を投影しない（B7）
  * - subscription 投影の DB 書込は process_billing_stripe_event 1 回のみ
  */
 export async function handleBillingWebhook(

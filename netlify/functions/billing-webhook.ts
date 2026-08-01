@@ -47,7 +47,7 @@ function asWebhookAdmin(): BillingWebhookAdmin {
 
 /**
  * POST /api/billing/webhook
- * Stripe-Signature 検証。JWT 不要。BILLING_ENABLED 非依存（鍵があれば稼働 = A3）。
+ * Stripe-Signature 検証。JWT 不要。鍵があれば稼働（A3）。kill 中は Plus 投影を unpaid に落とす（B7）。
  */
 export default async function billingWebhook(request: Request): Promise<Response> {
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
