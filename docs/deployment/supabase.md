@@ -183,7 +183,7 @@ npm exec --offline supabase -- db push --db-url "$SUPABASE_DB_URL" --include-all
    - `ALTER ROLE kondate_maintenance_login SET statement_timeout = '20s'`
 3. 非秘密の grant / default 文だけは、トランスクリプトが保護されている場合に限り SQL エディタでも可。
 
-スケジュール実行の本体は Netlify の `maintenance-cleanup`（[netlify.md](./netlify.md)）。
+定期実行の HTTP 入口は Netlify の `maintenance-cleanup`（secret 付き POST。起動は GitHub Actions 等 — [netlify.md](./netlify.md)）。
 
 ## 5. `SUPABASE_MAINTENANCE_DB_URL` の組み立て
 

@@ -1,7 +1,8 @@
 /**
- * 本番 Scheduled Function: 毎時 1 回、境界付きメンテナンス RPC を呼ぶ。
- * path なし schedule のみ。加えてアプリ層で secret 認証する（S3）。
- * 成功時は 8 集計（stale/ledgers/shopping/auth/feedback/drafts/identity/flyer）+ duration のみを snake_case で safeLog する。
+ * 境界付きメンテナンス RPC を呼ぶ Function。
+ * 公開 path + アプリ層 secret 認証のみ（Netlify の schedule 経路は使わない）。
+ * 定期実行は secret 付き HTTP（運用 cron / GitHub Actions 等）から POST する。
+ * 成功時は 8 集計 + duration のみを snake_case で safeLog する。
  */
 import { timingSafeEqual } from "node:crypto";
 import type { Config } from "@netlify/functions";
@@ -16,7 +17,7 @@ import {
 /** 共有 secret の env 名。local は generate-local-secrets / .env、本番は Netlify secret。 */
 export const MAINTENANCE_CRON_SECRET_ENV = "MAINTENANCE_CRON_SECRET";
 
-/** 手動・local invoke 用ヘッダ（値が env secret と一致すること）。 */
+/** 手動・cron invoke 用ヘッダ（値が env secret と一致すること）。 */
 export const MAINTENANCE_CRON_SECRET_HEADER = "x-maintenance-cron-secret";
 
 /** 最低長（短すぎる secret は設定漏れとみなし fail-closed）。 */
@@ -41,38 +42,38 @@ function bearerToken(authorization: string | null): string | null {
 }
 
 /**
- * アプリ層認可（S3）:
- * - env の MAINTENANCE_CRON_SECRET は常に必須（未設定・短すぎ = 403 fail-closed）
- * - 次のいずれかで通す（header/secret 二重化）:
- *   1) `x-maintenance-cron-secret` または Authorization Bearer が secret と一致
- *   2) Netlify schedule 起動（`x-netlify-event: schedule`）かつ secret が env に設定済み
- *      （プラットフォーム schedule は custom secret ヘッダを送れないため、event ヘッダ + env secret で二重化）
- * - 無ヘッダ/無 schedule = 401、誤 secret = 403
+ * アプリ層認可:
+ * - 提示 secret が無い（両ヘッダ空）→ 常に 401（env 有無をオラクルにしない）
+ * - 提示あり + env 未設定/短すぎ → 403 fail-closed
+ * - 提示あり + env あり → カスタムヘッダと Bearer の**いずれか**が一致すれば OK
+ *   （片方誤りでも他方が正しければ通す。空文字ヘッダは「未提示」扱い）
+ * - 提示あり + どちらも不一致 → 403
  */
 export function authorizeMaintenanceCleanup(
   request: Request,
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): "ok" | "unauthorized" | "forbidden" {
+  const customRaw = request.headers.get(MAINTENANCE_CRON_SECRET_HEADER);
+  const customSecret =
+    customRaw === null ? null : customRaw.trim().length > 0 ? customRaw.trim() : null;
+  const bearerSecret = bearerToken(request.headers.get("authorization"));
+
+  if (customSecret === null && bearerSecret === null) {
+    return "unauthorized";
+  }
+
   const expected = (env[MAINTENANCE_CRON_SECRET_ENV] ?? "").trim();
   if (expected.length < MIN_SECRET_LENGTH) {
     return "forbidden";
   }
 
-  const headerSecret =
-    request.headers.get(MAINTENANCE_CRON_SECRET_HEADER)?.trim() ??
-    bearerToken(request.headers.get("authorization"));
-
-  if (headerSecret !== null && headerSecret.length > 0) {
-    return secretsEqual(headerSecret, expected) ? "ok" : "forbidden";
-  }
-
-  const netlifyEvent = request.headers.get("x-netlify-event")?.trim().toLowerCase();
-  if (netlifyEvent === "schedule") {
-    // schedule ヘッダ + env secret 必須（上で長さ検証済み）= 二重化
+  if (customSecret !== null && secretsEqual(customSecret, expected)) {
     return "ok";
   }
-
-  return "unauthorized";
+  if (bearerSecret !== null && secretsEqual(bearerSecret, expected)) {
+    return "ok";
+  }
+  return "forbidden";
 }
 
 function authDeniedResponse(
@@ -95,8 +96,13 @@ export default async function maintenanceCleanup(request?: Request): Promise<Res
   const started = performance.now();
   const deadline = AbortSignal.timeout(25_000);
   const requestId = "maintenance";
-  // Netlify schedule / functions:invoke は Request を渡す。テスト互換で省略時は空 Request。
+  // functions:invoke / テスト互換で省略時は空 Request。
   const req = request ?? new Request("http://127.0.0.1/.netlify/functions/maintenance-cleanup");
+
+  // 運用 cron は POST のみ（誤キャッシュ・プリフェッチを避ける）。secret 検査前に閉じる。
+  if (req.method !== "POST") {
+    return new Response(null, { status: 405, headers: { allow: "POST" } });
+  }
 
   const auth = authorizeMaintenanceCleanup(req);
   if (auth !== "ok") {
@@ -148,4 +154,8 @@ export default async function maintenanceCleanup(request?: Request): Promise<Res
   }
 }
 
-export const config: Config = { schedule: "@hourly" };
+/** HTTP path のみ。定期起動は secret 付き外部 cron（GitHub Actions 等）。 */
+export const config: Config = {
+  path: "/api/maintenance/cleanup",
+  method: "POST",
+};
