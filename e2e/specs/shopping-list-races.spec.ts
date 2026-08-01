@@ -233,9 +233,10 @@ test("pending create envelope does not create a list after household safety chan
   }
 
   // メニュー結果は安全条件変更で fail closed。作成 CTA は disabled。
-  await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
-    timeout: 30_000,
-  });
+  // shopping 側の別 alert（リスト状態）と strict 衝突しないよう文言で絞る。
+  await expect(
+    page.getByRole("alert").filter({ hasText: /現在の(家族設定|安全条件)/u }),
+  ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled({
     timeout: 30_000,
   });

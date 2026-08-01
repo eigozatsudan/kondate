@@ -158,7 +158,9 @@ test("household journey: welcome through shopping create and alternate reconcile
   const reconcileCta = page.getByRole("button", { name: "買い物リストの差分を見る" });
   await expect(reconcileCta).toBeEnabled({ timeout: 60_000 });
   await reconcileCta.click();
-  await expect(page.getByText("購入済み・手動変更の項目はそのまま残します。")).toBeVisible({
+  // protected 文言は購入済み/手動変更があるときだけ出る。本ジャーニーは未保護のため常時見出しで開通を固定する
+  // （保護コピー自体は shopping-list.spec の protected rows で検証）。
+  await expect(page.getByRole("heading", { name: "献立変更の差分" })).toBeVisible({
     timeout: 30_000,
   });
   await page.getByRole("button", { name: "選んだ変更を反映" }).click();
