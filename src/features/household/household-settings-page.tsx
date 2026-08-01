@@ -1658,7 +1658,8 @@ export function HouseholdSettingsForm({
               </fieldset>
             )}
             <fieldset className="control-group">
-              <legend>安全のための制約</legend>
+              {/* 「安全のための制約」は保証語に寄るため、設定項目としての配慮に言い換える（H10） */}
+              <legend>調理時の配慮</legend>
               <label className="control-label">
                 <input
                   type="checkbox"

@@ -558,7 +558,8 @@ export function EmergencyMenuContent({
                             <dd>配膳時: {adaptation.servingCheck}</dd>
                             {adaptation.safetyActions.length > 0 && (
                               <dd>
-                                <strong>安全のための手順</strong>
+                                {/* 結果画面と同型。保証語「安全のための手順」を避け取り分け時の注意とする */}
+                                <strong>取り分け時の注意</strong>
                                 <ul>
                                   {adaptation.safetyActions.map((action, index) => (
                                     <li key={`${action.beforeRecipeStepId}-${String(index)}`}>

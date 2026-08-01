@@ -7,6 +7,7 @@ import {
 import { formatGenerationModelLabel } from "@shared/contracts/generation-model-label";
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
+import { MENU_LABEL_CONFIRMATION_RECORD_NOTICE } from "@/features/generation/components/idea-menu-safety-notice";
 
 const roleLabels = {
   main: "主菜",
@@ -207,7 +208,8 @@ export function MenuResult({
     setConfirmingId(confirmationId);
     try {
       await actions.onConfirmLabel(confirmationId, fingerprint);
-      setLiveMessage("原材料表示を確認済みにしました");
+      // 「確認済み＝安全」と誤読させない。手続きの記録完了だけを伝える。
+      setLiveMessage("原材料表示の確認を記録しました");
     } catch {
       // 古い警告・stale fingerprint はゲート再閉鎖を呼び出し側に委ねる
       setLiveMessage("確認を保存できませんでした");
@@ -562,7 +564,8 @@ export function MenuResult({
                   <dd>配膳時: {item.servingCheck}</dd>
                   {item.safetyActions.length !== 0 && (
                     <dd>
-                      <strong>安全のための手順</strong>
+                      {/* 「安全のための手順」は保証語に寄るため、取り分け時の注意として示す（H10） */}
+                      <strong>取り分け時の注意</strong>
                       <ul>
                         {item.safetyActions.map((action, index) => (
                           <li key={`${action.beforeRecipeStepId}-${String(index)}`}>
@@ -586,6 +589,8 @@ export function MenuResult({
               原材料表示の確認
             </h3>
             <p className="font-semibold">加工品は原材料表示を確認してください</p>
+            {/* soft processed は確認手続きのみ。バッジ直近で確認＝安全の誤認を抑える（H1） */}
+            <p className="type-small">{MENU_LABEL_CONFIRMATION_RECORD_NOTICE}</p>
             <ul className="space-y-3">
               {labels.map((item) => (
                 <li key={item.confirmationId} className="break-words">
@@ -594,7 +599,9 @@ export function MenuResult({
                     辞書版 {item.dictionaryVersion}
                   </span>
                   {item.confirmationStatus === "confirmed" ? (
-                    <span className="mt-1 inline-block rounded bg-line px-2 text-sm">確認済み</span>
+                    <span className="mt-1 inline-block rounded bg-line px-2 text-sm">
+                      表示確認を記録済み
+                    </span>
                   ) : actions === undefined ? null : (
                     <button
                       type="button"

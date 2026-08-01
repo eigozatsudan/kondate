@@ -139,7 +139,7 @@ it("renders normalized structured safety actions returned by the aggregate loade
   expect(action).toBeDefined();
   if (action === undefined) throw new Error("fixture must contain a safety action");
   render(<MenuResult result={result} />);
-  expect(screen.getByText("安全のための手順")).toBeVisible();
+  expect(screen.getByText("取り分け時の注意")).toBeVisible();
   expect(screen.getByText(action.instruction)).toBeVisible();
 });
 
@@ -160,6 +160,51 @@ it("renders confirmation ids through human source, allergen, and member labels",
     within(confirmationSection).getByText(new RegExp(confirmation.memberLabel, "u")),
   ).toBeVisible();
   expect(within(confirmationSection).getByText(/辞書版 jp-caa-2026-04\.v1/u)).toBeVisible();
+  // H1: 確認セクション直近に「確認＝安全」ではない旨を明示する
+  expect(
+    within(confirmationSection).getByText(
+      "表示確認は商品の原材料表示を見た記録です。確認した＝食べて安全、という意味ではありません。",
+    ),
+  ).toBeVisible();
+});
+
+it("shows recorded badge without bare 確認済み when label confirmation is confirmed", () => {
+  // H1: soft processed の確認完了バッジが「確認済み＝安全」と誤読されない文言であること
+  const base = makeMenuResultViewModel();
+  const first = base.labelConfirmations[0];
+  if (first === undefined) throw new Error("fixture must contain a label confirmation");
+  const result = {
+    ...base,
+    labelConfirmations: [
+      {
+        ...first,
+        confirmationStatus: "confirmed" as const,
+        confirmedAt: "2026-07-01T00:00:00.000Z",
+        confirmedBy: "10000000-0000-4000-8000-000000000001",
+      },
+      ...base.labelConfirmations.slice(1),
+    ],
+  };
+  render(
+    <MenuResult
+      result={result}
+      currentLabelWarnings={[
+        {
+          confirmationId: first.confirmationId,
+          sourceId: first.sourceId,
+          sourceText: first.sourceText,
+          allergenName: first.allergenName,
+          memberLabel: first.memberLabel,
+          dictionaryVersion: first.dictionaryVersion,
+          confirmationStatus: "confirmed",
+        },
+      ]}
+    />,
+  );
+  const confirmationSection = screen.getByRole("region", { name: "原材料表示の確認" });
+  expect(within(confirmationSection).getByText("表示確認を記録済み")).toBeVisible();
+  // 単独の「確認済み」バッジ語は出さない（保証誤認 residual の削減）
+  expect(within(confirmationSection).queryByText("確認済み")).toBeNull();
 });
 
 it("renders numbered steps and every persisted adaptation field", () => {
@@ -214,7 +259,7 @@ it("leaves the label disclaimer to the page shell and keeps a 320px no-overflow 
   // 本文コンポーネントではなくページ枠（MenuResultPage/HistoryDetailPage）が持つ。
   expect(
     screen.queryByText(
-      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+      "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
     ),
   ).toBeNull();
   // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
