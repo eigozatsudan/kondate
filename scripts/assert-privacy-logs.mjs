@@ -23,6 +23,43 @@ const generationCodes = new Set([
   "generation_conflict",
 ]);
 
+/**
+ * SafeLogEvent / createSafeLogger が出し得る snake_case キー集合。
+ * S4: generation 以外（billing / emergency / maintenance 等）の JSON 行も同一 allowlist。
+ * 未知キーは fail。自由文キーの将来漏れを regex だけに頼らない。
+ */
+const allowedLogKeys = new Set([
+  "level",
+  "request_id",
+  "code",
+  "duration_ms",
+  "model_id",
+  "stale_reservations_finalized",
+  "generation_ledgers_deleted",
+  "shopping_mutations_deleted",
+  "auth_continuations_deleted",
+  "user_feedback_deleted",
+  "draft_submissions_deleted",
+  "identity_ledgers_deleted",
+  "flyer_ledgers_deleted",
+  "path",
+  "match_mode",
+  "empty_reason",
+  "candidate_count",
+  "meal_type",
+  "main_ingredient_count",
+  "plan",
+  "billing_status",
+  "price_interval",
+  "quality_mode",
+  "flyer",
+  "stripe_customer_id",
+  "stripe_subscription_id",
+  "alert_metric",
+  "generation_route",
+  "http_status",
+]);
+
 const absencePatterns = [
   // 合成 E2E メール・一般メール
   /@example\.invalid/iu,
@@ -52,15 +89,10 @@ const absencePatterns = [
 ];
 
 /**
- * @param {string} logText
- * @param {{ requireGeneration?: boolean }} [options]
- */
-/**
  * 許可された opaque id キーの値は検査前に伏せる。
  * request_id は correlation 用 UUID を載せてよい契約。
  * stripe_customer_id / stripe_subscription_id は opaque Stripe id 契約。
  * 構造化 user_id 等の非許可キーに UUID が載った場合は bare UUID 検査で落とす。
- * residual: 非 generation 行は field allowlist 対象外（absencePatterns 依存）。
  * @param {string} logText
  */
 function redactAllowedOpaqueIds(logText) {
@@ -70,6 +102,33 @@ function redactAllowedOpaqueIds(logText) {
     .replace(/"stripe_subscription_id"\s*:\s*"[^"]*"/gu, '"stripe_subscription_id":"<redacted>"');
 }
 
+/**
+ * SafeLogEvent 形の JSON 行（code 文字列あり）に共通キー検査を掛ける。
+ * generation 存在証明は generationCodes のみ。absencePatterns は全行維持。
+ * @param {Record<string, unknown>} parsed
+ */
+function assertSafeLogKeys(parsed) {
+  // camelCase 残骸は generation 以外でも拒否（createSafeLogger 契約）
+  if ("requestId" in parsed || "errorCode" in parsed || "durationMs" in parsed) {
+    throw new Error("privacy_log_camel_case");
+  }
+  for (const key of Object.keys(parsed)) {
+    if (!allowedLogKeys.has(key)) {
+      throw new Error("privacy_log_unexpected_field");
+    }
+  }
+  // createSafeLogger 必須 4 キー（非 generation 行も同契約）
+  for (const key of ["request_id", "code", "duration_ms", "level"]) {
+    if (!(key in parsed)) {
+      throw new Error(`privacy_log_missing_${key}`);
+    }
+  }
+}
+
+/**
+ * @param {string} logText
+ * @param {{ requireGeneration?: boolean }} [options]
+ */
 export function assertPrivacyLogs(logText, options = {}) {
   const requireGeneration = options.requireGeneration !== false;
   if (logText.trim().length === 0) {
@@ -95,59 +154,17 @@ export function assertPrivacyLogs(logText, options = {}) {
     }
     if (typeof parsed !== "object" || parsed === null) continue;
     const code = parsed.code;
+    // code が無い JSON（ノイズ）はキー検査対象外。absencePatterns が拾う。
     if (typeof code !== "string") continue;
+
+    // S4: generation / 非 generation ともキー allowlist + 必須キー
+    assertSafeLogKeys(parsed);
+
     // generation presence は allowlist のみ（maintenance_cleanup / 未知 code は数えない）
     if (!generationCodes.has(code)) {
       continue;
     }
     generationLines += 1;
-    for (const key of ["request_id", "code", "duration_ms", "level"]) {
-      if (!(key in parsed)) {
-        throw new Error(`privacy_log_missing_${key}`);
-      }
-    }
-    if ("requestId" in parsed || "errorCode" in parsed || "durationMs" in parsed) {
-      throw new Error("privacy_log_camel_case");
-    }
-    // 許可キー以外の自由文フィールドを拒否。
-    // SafeLogEvent / createSafeLogger が出し得る snake_case キーと揃える（S2: generation_route 等の stale allowlist 修正）。
-    for (const key of Object.keys(parsed)) {
-      if (
-        ![
-          "level",
-          "request_id",
-          "code",
-          "duration_ms",
-          "model_id",
-          "stale_reservations_finalized",
-          "generation_ledgers_deleted",
-          "shopping_mutations_deleted",
-          "auth_continuations_deleted",
-          "user_feedback_deleted",
-          "draft_submissions_deleted",
-          "identity_ledgers_deleted",
-          "flyer_ledgers_deleted",
-          "path",
-          "match_mode",
-          "empty_reason",
-          "candidate_count",
-          "meal_type",
-          "main_ingredient_count",
-          "plan",
-          "billing_status",
-          "price_interval",
-          "quality_mode",
-          "flyer",
-          "stripe_customer_id",
-          "stripe_subscription_id",
-          "alert_metric",
-          "generation_route",
-          "http_status",
-        ].includes(key)
-      ) {
-        throw new Error("privacy_log_unexpected_field");
-      }
-    }
   }
   if (requireGeneration && generationLines === 0) {
     throw new Error("privacy_log_no_generation");

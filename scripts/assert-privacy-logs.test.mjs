@@ -91,6 +91,35 @@ describe("assertPrivacyLogs", () => {
     );
   });
 
+  // S4: 非 generation 行も同一キー allowlist（billing / emergency / maintenance）
+  it("rejects unexpected fields on non-generation SafeLog lines (S4)", () => {
+    assert.throws(
+      () =>
+        assertPrivacyLogs(
+          `${goodLine}\n${JSON.stringify({
+            level: "info",
+            code: "billing_user_unmapped",
+            request_id: "req-b",
+            duration_ms: 5,
+            free_text_debug: "should fail",
+          })}\n`,
+        ),
+      /privacy_log_unexpected_field/,
+    );
+  });
+
+  it("allows billed non-generation lines with allowlisted keys only (S4)", () => {
+    const billing = JSON.stringify({
+      level: "info",
+      code: "billing_webhook_ok",
+      request_id: "req-b",
+      duration_ms: 8,
+      alert_metric: 1,
+      stripe_customer_id: "cus_testopaque",
+    });
+    assert.equal(assertPrivacyLogs(`${goodLine}\n${billing}\n`).generationLines, 1);
+  });
+
   it("allows generation_route and http_status from SafeLogEvent HTTP boundary", () => {
     const line = JSON.stringify({
       level: "error",
