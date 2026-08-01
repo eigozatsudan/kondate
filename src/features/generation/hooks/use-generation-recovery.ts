@@ -24,6 +24,7 @@ import {
   savePendingGeneration,
   type PendingGeneration,
 } from "../model/pending-generation";
+import { historyKeys } from "@/features/history/api/history-api";
 import { plannerKeys } from "@/features/planner/planner-api";
 import { jstDayKey, usageTodayQueryKey } from "./use-usage-today";
 
@@ -486,6 +487,12 @@ export function useGenerationRecovery(
     if (state.phase === "succeeded" && userId !== null) {
       void queryClient.invalidateQueries({
         queryKey: usageTodayQueryKey(userId, jstDayKey()),
+      });
+      // 再生成で同グループに案が増える。versions/groups を残すと 15–30s の間
+      // スイッチャーが1案のまま・履歴「N案」が古いままになる（敵対的 C1/C11）。
+      void queryClient.invalidateQueries({ queryKey: historyKeys.groups(userId) });
+      void queryClient.invalidateQueries({
+        queryKey: ["history", "versions", userId],
       });
       // finalize の soft-delete は new_menu（draft_id あり）のみ。
       // regenerate_* は下書きを消さないため、cache を null で潰すと planner の

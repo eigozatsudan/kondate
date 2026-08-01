@@ -70,9 +70,15 @@ import {
   type RegenerationReasonInput,
   type RegenerationUsageView,
 } from "../components/regeneration-sheet";
-import { useAcceptMenuVersion, useToggleFavorite } from "../hooks/use-history";
+import { MenuVersionSwitcher } from "../components/menu-version-switcher";
+import {
+  useAcceptMenuVersion,
+  useDerivationVersions,
+  useToggleFavorite,
+} from "../hooks/use-history";
 import { useMenuRevalidation, type RevalidationPhaseName } from "../hooks/use-menu-revalidation";
 import { useRegeneration } from "../hooks/use-regeneration";
+import { derivationVersionUiState } from "../model/derivation-version-ui";
 
 function usageViewFromQuery(usage: ReturnType<typeof useUsageToday>): RegenerationUsageView {
   return {
@@ -167,6 +173,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
   if (menuQuery.data.targetMode === "idea") {
     return (
       <IdeaDetailBody
+        key={menuId}
         result={menuQuery.data}
         menuId={menuId}
         userId={userId}
@@ -177,6 +184,7 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
   }
   return (
     <HouseholdDetailBody
+      key={menuId}
       result={menuQuery.data}
       menuId={menuId}
       userId={userId}
@@ -231,12 +239,10 @@ function IdeaDetailBody({
     [pantryQuery.data, result.sourceSubmission],
   );
   // HR5: live に無い selection は期限 UI に出ないため、欠落を別ゲートで塞ぐ
+  // isSuccess 時 data は確定するので ?? [] は不要（exact narrowing）
   const missingPantrySelections =
     pantryQuery.isSuccess &&
-    hasMissingPantrySelectionsForRegeneration(
-      result.sourceSubmission,
-      pantryQuery.data ?? [],
-    );
+    hasMissingPantrySelectionsForRegeneration(result.sourceSubmission, pantryQuery.data);
   // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない（空配列 fail-open を防ぐ）
   // HR5: 欠落 selection があるときは再生成 CTA を閉じる（server 422 を先回り）
   const pantryGateReady = pantryQuery.isSuccess && !missingPantrySelections;
@@ -255,13 +261,16 @@ function IdeaDetailBody({
   });
   const accept = useAcceptMenuVersion();
   const favorite = useToggleFavorite();
+  const versionsQuery = useDerivationVersions(result.derivationGroupId);
+  const siblingVersions = versionsQuery.data ?? [];
+  const { confirmedSingle, versionsFailed } = derivationVersionUiState(versionsQuery);
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   // DB hydrate: query の isFavorite を初期値にし、同一 route での再取得も useEffect で同期する
   const [isFavorite, setIsFavorite] = useState(result.isFavorite);
-  /** 採用成功後は「作った献立を見る」を主操作にする。 */
-  const [accepted, setAccepted] = useState(false);
+  /** 採用成功後は「履歴一覧」を主操作。is_selected も hydrate。 */
+  const [accepted, setAccepted] = useState(result.isSelected);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
@@ -270,6 +279,13 @@ function IdeaDetailBody({
   useEffect(() => {
     setIsFavorite(result.isFavorite);
   }, [result.isFavorite]);
+
+  useEffect(() => {
+    setAccepted(result.isSelected);
+  }, [menuId]);
+  useEffect(() => {
+    if (result.isSelected) setAccepted(true);
+  }, [result.isSelected]);
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
@@ -346,6 +362,25 @@ function IdeaDetailBody({
           </Link>
         </section>
       ) : null}
+      <MenuVersionSwitcher
+        versions={siblingVersions}
+        currentMenuId={menuId}
+        pathForMenuId={(id) => `/history/${id}`}
+      />
+      {versionsFailed ? (
+        <p className="mb-2" role="alert">
+          案の一覧を読み込めませんでした。
+          <button
+            type="button"
+            className="ml-2 underline"
+            onClick={() => {
+              void versionsQuery.refetch();
+            }}
+          >
+            もう一度読み込む
+          </button>
+        </p>
+      ) : null}
       {actions === undefined ? (
         <MenuResult
           result={result}
@@ -404,7 +439,7 @@ function IdeaDetailBody({
           ) : null
         }
         primary={
-          accepted ? (
+          accepted || confirmedSingle ? (
             <Link className="primary-button min-h-11" to="/history">
               履歴一覧に戻る
             </Link>
@@ -431,6 +466,26 @@ function IdeaDetailBody({
         }
         auxiliaries={
           <>
+            {!accepted && confirmedSingle ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                disabled={accept.isPending}
+                onClick={() => {
+                  setAcceptError(null);
+                  accept.mutate(menuId, {
+                    onSuccess: () => {
+                      setAccepted(true);
+                    },
+                    onError: () => {
+                      setAcceptError("採用を保存できませんでした。もう一度お試しください");
+                    },
+                  });
+                }}
+              >
+                この献立にする
+              </button>
+            ) : null}
             <button
               type="button"
               className="secondary-button min-h-11"
@@ -440,7 +495,7 @@ function IdeaDetailBody({
                 setSheetMode("whole");
               }}
             >
-              別の献立を作り直す
+              この案を元に別の献立を作り直す
             </button>
             {canUpdatePostCook ? (
               <button
@@ -568,12 +623,10 @@ function HouseholdDetailBody({
     [pantryQuery.data, result.sourceSubmission],
   );
   // HR5: live に無い selection は期限 UI に出ないため、欠落を別ゲートで塞ぐ
+  // isSuccess 時 data は確定するので ?? [] は不要（exact narrowing）
   const missingPantrySelections =
     pantryQuery.isSuccess &&
-    hasMissingPantrySelectionsForRegeneration(
-      result.sourceSubmission,
-      pantryQuery.data ?? [],
-    );
+    hasMissingPantrySelectionsForRegeneration(result.sourceSubmission, pantryQuery.data);
   // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない
   // HR5: 欠落 selection があるときは再生成 CTA を閉じる（server 422 を先回り）
   const pantryGateReady = pantryQuery.isSuccess && !missingPantrySelections;
@@ -592,14 +645,24 @@ function HouseholdDetailBody({
     isSoftRechecking,
   });
   const accept = useAcceptMenuVersion();
+  const versionsQuery = useDerivationVersions(result.derivationGroupId);
+  const siblingVersions = versionsQuery.data ?? [];
+  const { confirmedSingle, versionsFailed } = derivationVersionUiState(versionsQuery);
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
-  /** 採用成功後は買い物リスト作成を主操作に昇格する。 */
-  const [accepted, setAccepted] = useState(false);
+  /** 採用成功後は買い物リスト作成を主操作に昇格。is_selected も hydrate。 */
+  const [accepted, setAccepted] = useState(result.isSelected);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
+
+  useEffect(() => {
+    setAccepted(result.isSelected);
+  }, [menuId]);
+  useEffect(() => {
+    if (result.isSelected) setAccepted(true);
+  }, [result.isSelected]);
 
   // gateOpen: 本文表示（soft 飛行中も直前 checked を維持 = focus 点滅防止）
   const gateOpen =
@@ -909,6 +972,26 @@ function HouseholdDetailBody({
         </div>
       )}
 
+      <MenuVersionSwitcher
+        versions={siblingVersions}
+        currentMenuId={menuId}
+        pathForMenuId={(id) => `/history/${id}`}
+      />
+      {versionsFailed ? (
+        <p className="mb-2" role="alert">
+          案の一覧を読み込めませんでした。
+          <button
+            type="button"
+            className="ml-2 underline"
+            onClick={() => {
+              void versionsQuery.refetch();
+            }}
+          >
+            もう一度読み込む
+          </button>
+        </p>
+      ) : null}
+
       {gateOpen && revalidation.result !== undefined && (
         <>
           <div
@@ -992,7 +1075,8 @@ function HouseholdDetailBody({
           ) : null
         }
         primary={
-          accepted ? (
+          // 単一案の採用降格は買い物が作れるときだけ（C5 / 再検証中の死んだ主操作防止）
+          accepted || (confirmedSingle && canCreateShoppingList) ? (
             <button
               type="button"
               className={
@@ -1030,7 +1114,7 @@ function HouseholdDetailBody({
           )
         }
         next={
-          accepted ? null : (
+          accepted || (confirmedSingle && canCreateShoppingList) ? null : (
             <button
               type="button"
               className="secondary-button min-h-11"
@@ -1046,6 +1130,27 @@ function HouseholdDetailBody({
         }
         auxiliaries={
           <>
+            {!accepted && confirmedSingle && canCreateShoppingList ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                disabled={!actionsEnabled || accept.isPending}
+                onClick={() => {
+                  if (!actionsEnabled) return;
+                  setAcceptError(null);
+                  accept.mutate(menuId, {
+                    onSuccess: () => {
+                      setAccepted(true);
+                    },
+                    onError: () => {
+                      setAcceptError("採用を保存できませんでした。もう一度お試しください");
+                    },
+                  });
+                }}
+              >
+                この献立にする
+              </button>
+            ) : null}
             <button
               type="button"
               className="secondary-button min-h-11"
@@ -1055,7 +1160,7 @@ function HouseholdDetailBody({
                 setSheetMode("whole");
               }}
             >
-              別の献立を作り直す
+              この案を元に別の献立を作り直す
             </button>
             {reconcileTarget.data !== null && reconcileTarget.data !== undefined ? (
               <button

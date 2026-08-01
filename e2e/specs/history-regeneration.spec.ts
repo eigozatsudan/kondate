@@ -104,7 +104,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   // 詳細: 短い注意喚起 + child_friendly 不在
   await page.goto(`/history/${sourceMenuId}`);
   await expectIdeaResultSurface(page, { timeout: 15_000 });
-  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
+  await page.getByRole("button", { name: "この案を元に別の献立を作り直す" }).click();
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
   await page.getByRole("button", { name: "やめる" }).click();
 

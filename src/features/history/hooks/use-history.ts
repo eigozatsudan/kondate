@@ -4,6 +4,7 @@ import {
   acceptMenuVersion,
   deleteMenuGroup,
   historyKeys,
+  listDerivationVersions,
   listHistoryGroups,
   setMenuFavorite,
 } from "../api/history-api";
@@ -16,6 +17,21 @@ export function useHistoryGroups() {
     queryFn: () => listHistoryGroups(),
     enabled: userId !== undefined && userId.length > 0,
     staleTime: 30_000,
+  });
+}
+
+/**
+ * 同一派生グループ内の案一覧。案が2件以上のときスイッチャー表示に使う。
+ * derivationGroupId が無い（結果未ロード）間は無効。
+ */
+export function useDerivationVersions(derivationGroupId: string | null | undefined) {
+  const userId = useAuth().session?.user.id;
+  const groupId = derivationGroupId ?? "";
+  return useQuery({
+    queryKey: historyKeys.versions(userId ?? "missing", groupId),
+    queryFn: () => listDerivationVersions(groupId),
+    enabled: userId !== undefined && userId.length > 0 && groupId.length > 0,
+    staleTime: 15_000,
   });
 }
 
@@ -44,9 +60,24 @@ export function useAcceptMenuVersion() {
   const userId = useAuth().session?.user.id;
   return useMutation({
     mutationFn: (menuId: string) => acceptMenuVersion(menuId),
-    onSuccess: async () => {
+    onSuccess: async (_void, menuId) => {
       if (userId === undefined) return;
-      await queryClient.invalidateQueries({ queryKey: historyKeys.groups(userId) });
+      // 採用直後の UI は local accepted が正。menu-result を丸ごと invalidate すると
+      // isSelected:false の再取得で「採用しました」が消えるため、isSelected だけ楽観更新し
+      // 一覧・案バッジ用の versions/groups を先に無効化する。
+      queryClient.setQueriesData(
+        { queryKey: ["menu-result", userId, menuId] },
+        (previous: { isSelected?: boolean } | undefined) => {
+          if (previous === undefined || typeof previous !== "object") return previous;
+          return { ...previous, isSelected: true };
+        },
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: historyKeys.groups(userId) }),
+        queryClient.invalidateQueries({
+          queryKey: ["history", "versions", userId],
+        }),
+      ]);
     },
     retry: false,
   });

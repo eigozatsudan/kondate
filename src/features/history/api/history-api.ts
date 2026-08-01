@@ -7,6 +7,20 @@ export type { HistoryGroup, HistoryMenuRow } from "../model/group-history";
 export const historyKeys = {
   all: ["history"] as const,
   groups: (userId: string) => ["history", "groups", userId] as const,
+  /** 派生グループ内の案一覧（結果/詳細の案スイッチャー）。 */
+  versions: (userId: string, derivationGroupId: string) =>
+    ["history", "versions", userId, derivationGroupId] as const,
+};
+
+/** グループ内の1案。結果画面のチップ表示と /menus/:id 遷移に使う。 */
+export type DerivationVersionSummary = {
+  id: string;
+  version: number;
+  title: string;
+  isSelected: boolean;
+  createdAt: string;
+  /** 再生成元。初回案は null。 */
+  parentMenuId: string | null;
 };
 
 function historyError(message: string): Error {
@@ -45,6 +59,41 @@ export async function listHistoryGroups(): Promise<HistoryGroup[]> {
     };
   });
   return groupMenuRows(rows);
+}
+
+/**
+ * 同一 derivation_group 内の全案を version 昇順で返す。
+ * 案スイッチャー用。2件未満なら呼び出し側は UI を出さない。
+ */
+export async function listDerivationVersions(
+  derivationGroupId: string,
+): Promise<DerivationVersionSummary[]> {
+  const supabase = getBrowserSupabaseClient();
+  const { data, error } = await supabase
+    .from("menus")
+    .select("id,version,created_at,is_selected,parent_menu_id,dishes(name,position)")
+    .eq("derivation_group_id", derivationGroupId)
+    .order("version", { ascending: true });
+  if (error !== null) throw historyError("案の一覧を読み込めませんでした");
+  // PostgREST が data:null を返す経路でも map で TypeError にしない（C10）
+  if (data === null) return [];
+  return data.map((row) => {
+    const dishes = Array.isArray(row.dishes)
+      ? row.dishes.map((dish) => ({ name: dish.name, position: dish.position }))
+      : [];
+    const title = dishes
+      .toSorted((left, right) => left.position - right.position)
+      .map((dish) => dish.name)
+      .join("・");
+    return {
+      id: row.id,
+      version: row.version,
+      title: title.length > 0 ? title : "献立",
+      isSelected: row.is_selected,
+      createdAt: row.created_at,
+      parentMenuId: row.parent_menu_id,
+    };
+  });
 }
 
 /**

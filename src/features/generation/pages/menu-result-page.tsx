@@ -35,8 +35,14 @@ import {
   useMenuRevalidation,
   type RevalidationPhaseName,
 } from "@/features/history/hooks/use-menu-revalidation";
-import { useAcceptMenuVersion, useToggleFavorite } from "@/features/history/hooks/use-history";
+import { MenuVersionSwitcher } from "@/features/history/components/menu-version-switcher";
+import {
+  useAcceptMenuVersion,
+  useDerivationVersions,
+  useToggleFavorite,
+} from "@/features/history/hooks/use-history";
 import { useRegeneration } from "@/features/history/hooks/use-regeneration";
+import { derivationVersionUiState } from "@/features/history/model/derivation-version-ui";
 import {
   createPantryItem,
   deletePantryItem,
@@ -165,6 +171,8 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   if (query.data.targetMode === "idea") {
     return (
       <IdeaResultBody
+        // menuId 変更で local accepted 等を捨てる（案チップ遷移の state 汚染防止 C3）
+        key={menuId}
         result={query.data}
         menuId={menuId}
         userId={userId}
@@ -176,6 +184,7 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   }
   return (
     <HouseholdResultBody
+      key={menuId}
       result={query.data}
       menuId={menuId}
       userId={userId}
@@ -248,13 +257,20 @@ function IdeaResultBody({
   });
   const accept = useAcceptMenuVersion();
   const favorite = useToggleFavorite();
+  const versionsQuery = useDerivationVersions(result.derivationGroupId);
+  const siblingVersions = versionsQuery.data ?? [];
+  // pending/error を「1案」とみなさない（C2/C4）。確定単一のときだけ採用を副へ。
+  const { confirmedSingle, versionsFailed } = derivationVersionUiState(versionsQuery);
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   // DB hydrate: query の isFavorite を初期値にし、同一 route での再取得も useEffect で同期する
   const [isFavorite, setIsFavorite] = useState(result.isFavorite);
-  /** 採用成功後は「履歴へ」を主操作にする（メッセージだけで終わらせない）。 */
-  const [accepted, setAccepted] = useState(false);
+  /**
+   * 採用成功後は「履歴へ」を主操作にする（メッセージだけで終わらせない）。
+   * is_selected も hydrate（別端末で採用済み／再訪時）。
+   */
+  const [accepted, setAccepted] = useState(result.isSelected);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
@@ -264,9 +280,40 @@ function IdeaResultBody({
     setIsFavorite(result.isFavorite);
   }, [result.isFavorite]);
 
+  // menuId 変更時だけ isSelected で初期化し、採用後の refetch(isSelected:false)
+  // で local accepted を潰さない（true 方向の server 更新だけ取り込む）
+  useEffect(() => {
+    setAccepted(result.isSelected);
+  }, [menuId]);
+  useEffect(() => {
+    if (result.isSelected) setAccepted(true);
+  }, [result.isSelected]);
+
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
   const canUpdatePostCook = result.pantryPostCookTargets.length > 0;
+
+  const acceptButton = (
+    <button
+      type="button"
+      className={confirmedSingle ? "secondary-button min-h-11" : "primary-button min-h-11"}
+      disabled={accept.isPending || menuId === null}
+      onClick={() => {
+        if (menuId === null) return;
+        setAcceptError(null);
+        accept.mutate(menuId, {
+          onSuccess: () => {
+            setAccepted(true);
+          },
+          onError: () => {
+            setAcceptError("採用を保存できませんでした。もう一度お試しください");
+          },
+        });
+      }}
+    >
+      この献立にする
+    </button>
+  );
 
   const actions = useMemo((): MenuResultActions | undefined => {
     if (userId === undefined || menuId === null) return undefined;
@@ -345,6 +392,23 @@ function IdeaResultBody({
           <FlyerUpsellBanner plusEntitled={false} />
         </div>
       ) : null}
+      {menuId !== null ? (
+        <MenuVersionSwitcher versions={siblingVersions} currentMenuId={menuId} />
+      ) : null}
+      {versionsFailed ? (
+        <p className="mb-2" role="alert">
+          案の一覧を読み込めませんでした。
+          <button
+            type="button"
+            className="ml-2 underline"
+            onClick={() => {
+              void versionsQuery.refetch();
+            }}
+          >
+            もう一度読み込む
+          </button>
+        </p>
+      ) : null}
       {actions === undefined ? (
         <MenuResult
           result={result}
@@ -403,34 +467,17 @@ function IdeaResultBody({
           ) : null
         }
         primary={
-          accepted ? (
+          accepted || confirmedSingle ? (
             <Link className="primary-button min-h-11" to="/history">
               作った献立を見る
             </Link>
           ) : (
-            <button
-              type="button"
-              className="primary-button min-h-11"
-              disabled={accept.isPending || menuId === null}
-              onClick={() => {
-                if (menuId === null) return;
-                setAcceptError(null);
-                accept.mutate(menuId, {
-                  onSuccess: () => {
-                    setAccepted(true);
-                  },
-                  onError: () => {
-                    setAcceptError("採用を保存できませんでした。もう一度お試しください");
-                  },
-                });
-              }}
-            >
-              この献立にする
-            </button>
+            acceptButton
           )
         }
         auxiliaries={
           <>
+            {!accepted && confirmedSingle ? acceptButton : null}
             <button
               type="button"
               className="secondary-button min-h-11"
@@ -440,7 +487,7 @@ function IdeaResultBody({
                 setSheetMode("whole");
               }}
             >
-              別の献立を作り直す
+              この案を元に別の献立を作り直す
             </button>
             {canUpdatePostCook ? (
               <button
@@ -583,14 +630,24 @@ function HouseholdResultBody({
   });
   // 履歴詳細と同じ採用。再生成結果画面からもバージョンを確定できる。
   const accept = useAcceptMenuVersion();
+  const versionsQuery = useDerivationVersions(result.derivationGroupId);
+  const siblingVersions = versionsQuery.data ?? [];
+  const { confirmedSingle, versionsFailed } = derivationVersionUiState(versionsQuery);
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
-  /** 採用成功後は買い物リスト作成を主操作に昇格する。 */
-  const [accepted, setAccepted] = useState(false);
+  /** 採用成功後は買い物リスト作成を主操作に昇格。is_selected も hydrate。 */
+  const [accepted, setAccepted] = useState(result.isSelected);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
+
+  useEffect(() => {
+    setAccepted(result.isSelected);
+  }, [menuId]);
+  useEffect(() => {
+    if (result.isSelected) setAccepted(true);
+  }, [result.isSelected]);
 
   const actionsEnabled =
     revalidation.phase === "checked" &&
@@ -888,6 +945,24 @@ function HouseholdResultBody({
         </div>
       )}
 
+      {menuId !== null ? (
+        <MenuVersionSwitcher versions={siblingVersions} currentMenuId={menuId} />
+      ) : null}
+      {versionsFailed ? (
+        <p className="mb-2" role="alert">
+          案の一覧を読み込めませんでした。
+          <button
+            type="button"
+            className="ml-2 underline"
+            onClick={() => {
+              void versionsQuery.refetch();
+            }}
+          >
+            もう一度読み込む
+          </button>
+        </p>
+      ) : null}
+
       {actionsEnabled && revalidation.result !== undefined && (
         <>
           <p className="menu-result-gate-status" role="status">
@@ -956,7 +1031,9 @@ function HouseholdResultBody({
           ) : null
         }
         primary={
-          accepted ? (
+          // 単一案の採用降格は「買い物が作れる」と確定したときだけ（C5）。
+          // 再検証中に無効な買い物を主操作にすると詰む。
+          accepted || (confirmedSingle && canCreateShoppingList) ? (
             <button
               type="button"
               className={
@@ -993,7 +1070,7 @@ function HouseholdResultBody({
           )
         }
         next={
-          accepted ? null : (
+          accepted || (confirmedSingle && canCreateShoppingList) ? null : (
             <button
               type="button"
               className="secondary-button min-h-11"
@@ -1009,6 +1086,27 @@ function HouseholdResultBody({
         }
         auxiliaries={
           <>
+            {!accepted && confirmedSingle && canCreateShoppingList ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                disabled={!actionsEnabled || accept.isPending || menuId === null}
+                onClick={() => {
+                  if (menuId === null) return;
+                  setAcceptError(null);
+                  accept.mutate(menuId, {
+                    onSuccess: () => {
+                      setAccepted(true);
+                    },
+                    onError: () => {
+                      setAcceptError("採用を保存できませんでした。もう一度お試しください");
+                    },
+                  });
+                }}
+              >
+                この献立にする
+              </button>
+            ) : null}
             <button
               type="button"
               className="secondary-button min-h-11"
@@ -1018,7 +1116,7 @@ function HouseholdResultBody({
                 setSheetMode("whole");
               }}
             >
-              別の献立を作り直す
+              この案を元に別の献立を作り直す
             </button>
             {reconcileTarget.data !== null && reconcileTarget.data !== undefined ? (
               <button

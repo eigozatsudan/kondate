@@ -21,11 +21,16 @@ const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
 const confirmLabelConfirmationMock = vi.hoisted(() => vi.fn());
 const acceptMenuVersionMock = vi.hoisted(() => vi.fn());
+const listDerivationVersionsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/menu-result-api", () => ({ getMenuResult: getMenuResultMock }));
 vi.mock("@/features/history/api/history-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/history/api/history-api")>();
-  return { ...original, acceptMenuVersion: acceptMenuVersionMock };
+  return {
+    ...original,
+    acceptMenuVersion: acceptMenuVersionMock,
+    listDerivationVersions: listDerivationVersionsMock,
+  };
 });
 vi.mock("../model/pending-generation", async (importOriginal) => {
   const original = await importOriginal<typeof import("../model/pending-generation")>();
@@ -224,6 +229,8 @@ beforeEach(() => {
   shoppingApi.previewShoppingDiff.mockResolvedValue(shoppingDiff);
   revalidateMenuMock.mockResolvedValue(validRevalidation);
   acceptMenuVersionMock.mockResolvedValue(undefined);
+  // 既定は単一案（スイッチャー非表示・採用は副操作）
+  listDerivationVersionsMock.mockResolvedValue([]);
   getUsageTodayMock.mockResolvedValue({
     plan: "free" as const,
     plusEntitled: false,
@@ -294,7 +301,7 @@ describe("MenuResultPage", () => {
     expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
     expect(
       screen.getAllByText(
-        "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+        "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
       ),
     ).toHaveLength(1);
   });
@@ -359,7 +366,7 @@ describe("MenuResultPage", () => {
     // 本文が閉じている間もラベル確認の免責文は常時表示する
     expect(
       screen.getByText(
-        "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+        "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
       ),
     ).toBeVisible();
   });
@@ -414,11 +421,13 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
     });
-    expect(create).toBeEnabled();
+    // 案一覧確定後に主/副が入れ替わるため、有効化された時点のボタンを取り直す
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
+    });
     expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
   });
 
@@ -500,11 +509,10 @@ describe("MenuResultPage", () => {
 
     const router = renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
-      expect(create).toBeEnabled();
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
     });
-    await userEvent.click(create);
+    await userEvent.click(screen.getByRole("button", { name: "材料の買い物リストを作る" }));
     expect(screen.getByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "作成する" }));
 
@@ -544,11 +552,10 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
-      expect(create).toBeEnabled();
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
     });
-    await userEvent.click(create);
+    await userEvent.click(screen.getByRole("button", { name: "材料の買い物リストを作る" }));
     await userEvent.click(screen.getByRole("radio", { name: "新しいリストにする" }));
     await userEvent.click(screen.getByRole("button", { name: "作成する" }));
 
@@ -644,7 +651,7 @@ describe("MenuResultPage", () => {
       expect(dialog).toHaveTextContent("年齢・アレルギーへの適合は確認されていません");
       expect(dialog).toHaveTextContent("AIが作成した献立です。");
       expect(dialog).toHaveTextContent(
-        "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+        "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
       );
       // 家族 revalidation / shopping は mount しない
       expect(revalidateMenuMock).not.toHaveBeenCalled();
@@ -655,7 +662,7 @@ describe("MenuResultPage", () => {
       // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
       expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeEnabled();
       // idea では sessionStorage に再送用の shopping 記録を一切作らない
@@ -667,7 +674,9 @@ describe("MenuResultPage", () => {
     it("hides child_friendly when opening idea regeneration dialog", async () => {
       getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
       renderPage(`/menus/${VALID_MENU_ID}`);
-      await userEvent.click(await screen.findByRole("button", { name: "別の献立を作り直す" }));
+      await userEvent.click(
+        await screen.findByRole("button", { name: "この案を元に別の献立を作り直す" }),
+      );
       const dialog = screen.getByRole("dialog", { name: "どのように変えますか？" });
       expect(dialog).toBeVisible();
       expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
@@ -710,13 +719,57 @@ describe("MenuResultPage", () => {
     it("after accept, promotes history link as the primary next step", async () => {
       getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
       renderPage(`/menus/${VALID_MENU_ID}`);
-      await userEvent.click(await screen.findByRole("button", { name: "この献立にする" }));
+      // 案一覧確定で採用が副操作へ移るため、有効な現在のボタンを取り直す
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+      });
+      await userEvent.click(screen.getByRole("button", { name: "この献立にする" }));
       expect(await screen.findByText(/履歴の「作った献立」から/u)).toBeVisible();
       expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
       expect(screen.queryByRole("button", { name: "この献立にしました" })).toBeNull();
       const historyLink = screen.getByRole("link", { name: "作った献立を見る" });
       expect(historyLink).toHaveAttribute("href", "/history");
       expect(historyLink).toHaveClass("primary-button");
+    });
+
+    it("shows version switcher and primary accept when multiple sibling versions exist", async () => {
+      const groupId = "c1000000-0000-4000-8000-000000000001";
+      const otherId = "c1000000-0000-4000-8000-000000000002";
+      getMenuResultMock.mockResolvedValue(
+        makeMenuResultViewModel({
+          targetMode: "idea",
+          derivationGroupId: groupId,
+          version: 2,
+          isSelected: false,
+        }),
+      );
+      listDerivationVersionsMock.mockResolvedValue([
+        {
+          id: otherId,
+          version: 1,
+          title: "最初の案・副菜",
+          isSelected: true,
+          createdAt: "2026-07-11T09:00:00Z",
+          parentMenuId: null,
+        },
+        {
+          id: VALID_MENU_ID,
+          version: 2,
+          title: "二案目・副菜",
+          isSelected: false,
+          createdAt: "2026-07-11T10:00:00Z",
+          parentMenuId: otherId,
+        },
+      ]);
+      renderPage(`/menus/${VALID_MENU_ID}`);
+      expect(await screen.findByText(/別案を見比べる（2案）/u)).toBeVisible();
+      // 複数案では採用が主操作
+      const accept = await screen.findByRole("button", { name: "この献立にする" });
+      expect(accept).toHaveClass("primary-button");
+      expect(screen.getByRole("link", { name: /案1/u })).toHaveAttribute(
+        "href",
+        `/menus/${otherId}`,
+      );
     });
 
     it("applies the guided-planner-theme class to the idea body root", async () => {
@@ -731,7 +784,10 @@ describe("MenuResultPage", () => {
     it("after household accept, promotes shopping as primary next step", async () => {
       getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
       renderPage(`/menus/${VALID_MENU_ID}`);
-      await userEvent.click(await screen.findByRole("button", { name: "この献立にする" }));
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+      });
+      await userEvent.click(screen.getByRole("button", { name: "この献立にする" }));
       expect(await screen.findByText(/材料の買い物リストを作ると/u)).toBeVisible();
       expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
       const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });

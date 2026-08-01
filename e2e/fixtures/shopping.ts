@@ -160,10 +160,10 @@ export async function regenerateWholeMenu(page: Page, menuId: string): Promise<s
   await setMockScenario(page, "alternate-menu");
   await page.goto(`/history/${menuId}`);
   await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled({
+  await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
+  await page.getByRole("button", { name: "この案を元に別の献立を作り直す" }).click();
   await page.getByRole("radio", { name: "別の味に" }).check();
   await page.getByRole("button", { name: "別案を作る" }).click();
   await expect(page).toHaveURL(new RegExp(`/menus/(?!${menuId})[0-9a-f-]{36}`, "iu"), {

@@ -86,6 +86,9 @@ function rawMenuRow() {
     target_mode: "household" as string,
     preference_snapshot: HOUSEHOLD_PREFERENCE_SNAPSHOT as unknown,
     is_favorite: false as boolean,
+    derivation_group_id: "a1000000-0000-4000-8000-000000000001",
+    version: 1,
+    is_selected: false as boolean,
     dishes: [
       {
         id: DISH2_ID,
@@ -642,6 +645,20 @@ describe("getMenuResult", () => {
     );
     const result = await getMenuResult(MENU_ID);
     expect(result.isFavorite).toBe(true);
+  });
+
+  it("maps derivation lineage fields for version switcher and accept hydrate", async () => {
+    const row = rawMenuRow();
+    row.derivation_group_id = "b1000000-0000-4000-8000-000000000099";
+    row.version = 3;
+    row.is_selected = true;
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.derivationGroupId).toBe("b1000000-0000-4000-8000-000000000099");
+    expect(result.version).toBe(3);
+    expect(result.isSelected).toBe(true);
   });
 
   it("行が見つからない場合はmenu_not_foundを送出する", async () => {

@@ -255,7 +255,7 @@ export async function openAndAssertIdeaSafetyDetails(page: Page): Promise<void> 
   await expect(dialog.getByText(/AIが作成した献立です/u)).toBeVisible();
   await expect(
     dialog.getByText(
-      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+      "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
     ),
   ).toBeVisible();
 }
@@ -303,10 +303,10 @@ export async function requestWholeRegeneration(
   const targetMode = options.targetMode ?? "household";
   // 結果画面の再生成コントロールを使う（履歴詳細と同等の UI）
   await openMenuResultForRegeneration(page, menuId, targetMode);
-  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled({
+  await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
+  await page.getByRole("button", { name: "この案を元に別の献立を作り直す" }).click();
   await submitRegenerationSheet(page, menuId, reason, targetMode);
 }
 

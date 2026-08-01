@@ -367,9 +367,9 @@ async function expectCompleteCandidate(
   await expect(
     adaptation.getByText(`配膳時: ${input.adaptation.servingCheck}`, { exact: true }),
   ).toBeVisible();
-  // 全料理の「安全のための手順」を DOM 出現順で突き合わせる（cut_small 追加後は複数行）
+  // 全料理の「取り分け時の注意」を DOM 出現順で突き合わせる（cut_small 追加後は複数行）
   const safetyItems = adaptation
-    .getByText("安全のための手順", { exact: true })
+    .getByText("取り分け時の注意", { exact: true })
     .locator("..")
     .getByRole("listitem");
   await expect(safetyItems).toHaveText([...input.safetyActions]);

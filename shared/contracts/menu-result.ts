@@ -55,6 +55,18 @@ export type MenuResultViewModel = {
    * トグル初期値と query 再取得後の同期元になる（false 既定で安全側）。
    */
   isFavorite: boolean;
+  /**
+   * 同一派生グループ内の案切替・採用判定に使う lineage 投影。
+   * 兄弟案一覧 API のキーと、「この献立にする」の is_selected hydrate に使う。
+   */
+  derivationGroupId: string;
+  /** グループ内の版番号（1 始まり）。案チップの「案N」表示に使う。 */
+  version: number;
+  /**
+   * menus.is_selected。true のときグループ代表（採用版）。
+   * 再生成で増えた案は false のまま（採用済みを維持する）。
+   */
+  isSelected: boolean;
   menu: ValidatedMenu;
   memberLabels: Readonly<Record<string, string>>;
   labelConfirmations: readonly MenuResultLabelConfirmation[];

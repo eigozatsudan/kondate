@@ -335,7 +335,14 @@ export function makeMenuResultViewModel(
   overrides: Partial<
     Pick<
       MenuResultViewModel,
-      "targetMode" | "sourceSubmission" | "isFavorite" | "preferenceGaps" | "generationModelId"
+      | "targetMode"
+      | "sourceSubmission"
+      | "isFavorite"
+      | "derivationGroupId"
+      | "version"
+      | "isSelected"
+      | "preferenceGaps"
+      | "generationModelId"
     >
   > = {},
 ): MenuResultViewModel {
@@ -461,6 +468,10 @@ export function makeMenuResultViewModel(
     sourceSubmission: null,
     // お気に入り未設定が大半のケースなので既定 false。hydrate テストだけ true を渡す。
     isFavorite: false,
+    // 単一案の既定。複数案 UI テストは derivationGroupId/version/isSelected を上書きする。
+    derivationGroupId: "a0000000-0000-4000-8000-000000000001",
+    version: 1,
+    isSelected: false,
     preferenceGaps: [],
     // モデル表示テスト以外は null（非表示）既定。
     generationModelId: null,

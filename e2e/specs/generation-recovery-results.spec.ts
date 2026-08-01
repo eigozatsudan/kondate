@@ -379,7 +379,7 @@ test("shows result details and keeps major regions within their parent", async (
   // 免責文全文（menu-result.tsx の実際の固定文言）
   await expect(
     page.getByText(
-      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+      "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
     ),
   ).toBeVisible();
   for (const width of [320, 390, 916]) {
@@ -393,7 +393,7 @@ test("shows result details and keeps major regions within their parent", async (
     const root = page.locator("#root");
     const pageContainer = page.locator("main");
     const pageDisclaimer = page.getByText(
-      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+      "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
     );
     const resultRoot = page.getByRole("heading", { name: "献立ができました" }).locator("..");
     const timeline = page.getByRole("heading", { name: "全体の段取り" }).locator("..");
@@ -484,7 +484,7 @@ async function assertIdeaResultBoundary(page: Page, servings: number): Promise<v
   await expect(page.getByText(`${String(servings)}人分`, { exact: false })).toBeVisible();
   // 許可操作: 採用・お気に入り・whole/dish 再生成は利用できる
   // dialog 閉鎖直後は action bar の再描画待ちが必要なことがある
-  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeVisible({

@@ -60,9 +60,14 @@ vi.mock("@/features/generation/api/usage-today-api", () => ({
 vi.mock("@/features/generation/api/confirm-label-api", () => ({
   confirmLabelConfirmation: confirmLabelConfirmationMock,
 }));
+const listDerivationVersionsMock = vi.hoisted(() => vi.fn());
 vi.mock("../api/history-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/history-api")>();
-  return { ...original, acceptMenuVersion: acceptMenuVersionMock };
+  return {
+    ...original,
+    acceptMenuVersion: acceptMenuVersionMock,
+    listDerivationVersions: listDerivationVersionsMock,
+  };
 });
 vi.mock("@/features/generation/model/pending-generation", async (importOriginal) => {
   const original =
@@ -376,6 +381,8 @@ beforeEach(() => {
     retryAt: null,
   });
   acceptMenuVersionMock.mockResolvedValue(undefined);
+  // 既定は単一案（スイッチャー非表示・採用は副操作）
+  listDerivationVersionsMock.mockResolvedValue([]);
   confirmLabelConfirmationMock.mockResolvedValue(undefined);
   deletePantryItemMock.mockResolvedValue({ id: "66000000-0000-4000-8000-000000000001" });
   updatePantryItemMock.mockResolvedValue({
@@ -428,7 +435,7 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
     expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
     expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
     act(() => {
       revalidate.resolve(validRevalidation);
@@ -452,7 +459,7 @@ describe("HistoryDetailPage safety gate", () => {
     expect(
       await screen.findByText("現在の家族設定で確認しました。作成時から条件が変わっています"),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
   });
 
   it("disables この献立にする while checking and enables when revalidation is actionable", async () => {
@@ -478,7 +485,7 @@ describe("HistoryDetailPage safety gate", () => {
     // 本文ゲートは開いたまま（フル画面 checking オーバーレイは出さない）
     expect(document.querySelector(".revalidation-checking-overlay")).toBeNull();
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
   });
 
@@ -512,7 +519,7 @@ describe("HistoryDetailPage safety gate", () => {
         "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。",
       ),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
     // 採用・買い物は pantry ゲートと独立（安全再検証のみ）
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
   });
@@ -522,9 +529,10 @@ describe("HistoryDetailPage safety gate", () => {
     renderHistoryDetail({
       revalidation: { phase: "checked", result: validRevalidation },
     });
-    const button = await screen.findByRole("button", { name: "この献立にする" });
-    expect(button).toBeEnabled();
-    await user.click(button);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "この献立にする" }));
     expect(acceptMenuVersionMock).toHaveBeenCalledTimes(1);
     expect(acceptMenuVersionMock).toHaveBeenCalledWith(MENU_ID);
   });
@@ -534,7 +542,10 @@ describe("HistoryDetailPage safety gate", () => {
     renderHistoryDetail({
       revalidation: { phase: "checked", result: validRevalidation },
     });
-    await user.click(await screen.findByRole("button", { name: "この献立にする" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "この献立にする" }));
     // 無効な「しました」ボタンは置かず、次の一手を primary に据える
     expect(await screen.findByText(/材料の買い物リストを作ると/u)).toBeVisible();
     expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
@@ -631,11 +642,10 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const shopping = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
-      expect(shopping).toBeEnabled();
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
     });
-    await user.click(shopping);
+    await user.click(screen.getByRole("button", { name: "材料の買い物リストを作る" }));
     expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
 
     const fridge = screen.getByRole("button", { name: "使った食材の在庫を更新" });
@@ -652,11 +662,10 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const shopping = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
-      expect(shopping).toBeEnabled();
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
     });
-    await user.click(shopping);
+    await user.click(screen.getByRole("button", { name: "材料の買い物リストを作る" }));
     expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "作成する" }));
 
@@ -693,11 +702,10 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const shopping = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
-      expect(shopping).toBeEnabled();
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
     });
-    await user.click(shopping);
+    await user.click(screen.getByRole("button", { name: "材料の買い物リストを作る" }));
     await user.click(screen.getByRole("radio", { name: "新しいリストにする" }));
     await user.click(screen.getByRole("button", { name: "作成する" }));
 
@@ -748,12 +756,14 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
     });
     // D-C1: 新規リスト作成は gate blocked でも可能なまま。差分確認は隠す。
-    expect(create).toBeEnabled();
+    // 案一覧確定で主/副が入れ替わるため有効化後に取り直す
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
+    });
     expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
   });
 
@@ -924,7 +934,7 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
     expect(dialog).toHaveTextContent("年齢・アレルギーへの適合は確認されていません");
     expect(dialog).toHaveTextContent("AIが作成した献立です。");
     expect(dialog).toHaveTextContent(
-      "加工品はラベル確認が必要です。AI生成レシピだけでアレルギー対応を保証するものではありません。",
+      "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
     );
     // idea では家族 revalidation と買い物 hooks/API を mount しない
     expect(revalidateMenuMock).not.toHaveBeenCalled();
@@ -934,7 +944,7 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
     expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
     // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeEnabled();
@@ -959,7 +969,9 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
   it("hides child_friendly in idea regeneration dialog", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
     renderHistoryDetail();
-    await userEvent.click(await screen.findByRole("button", { name: "別の献立を作り直す" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "この案を元に別の献立を作り直す" }),
+    );
     expect(screen.getByRole("dialog", { name: "どのように変えますか？" })).toBeVisible();
     expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
   });
@@ -1104,7 +1116,7 @@ describe("MenuResultPage shared revalidation gate", () => {
     renderMenuResultPage({});
     expect(await screen.findByText("アレルゲンが含まれます")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
   });
 
   it("shows もう一度確認 on network failure without a manual-success escape", async () => {
