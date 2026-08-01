@@ -362,6 +362,53 @@ describe("createShoppingListFromMenu", () => {
     );
   });
 
+  it("replays after list_version_conflict when the same key+hash mutation already exists (SHOP3)", async () => {
+    // 並行 create: 初回 find は miss、apply が version 競合、勝者が書いた mutation を再読して 200
+    const mocks = makeMocks();
+    const concurrentReplay = makeResponse({ version: 4, replayed: true });
+    mocks.findMutationReplay
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(concurrentReplay);
+    mocks.applyDraft.mockRejectedValue(
+      new HttpError(409, "list_version_conflict", "買い物リストが更新されました"),
+    );
+    mocks.loadActiveList.mockResolvedValue({
+      id: concurrentReplay.listId,
+      status: "active",
+      version: 4,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).resolves.toEqual(
+      concurrentReplay,
+    );
+    expect(mocks.findMutationReplay).toHaveBeenCalledTimes(2);
+    expect(mocks.applyDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps list_version_conflict when no same-key mutation exists after apply failure", async () => {
+    // 真の stale version（並行勝者なし）は 409 のまま
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(null);
+    mocks.applyDraft.mockRejectedValue(
+      new HttpError(409, "list_version_conflict", "買い物リストが更新されました"),
+    );
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).rejects.toMatchObject({
+      status: 409,
+      code: "list_version_conflict",
+    });
+    expect(mocks.findMutationReplay).toHaveBeenCalledTimes(2);
+  });
+
   it("adds a newly derived warning into the returned draft's snapshot when a new allergy appears", async () => {
     // 設計書 Step1 は「新規許可されたアレルギーの null-ID warning」を要求するが、
     // CurrentMenuLabelWarning.confirmationId は reconcileCurrentMenuLabelWarnings が
@@ -1266,6 +1313,51 @@ describe("reconcileShoppingList", () => {
     expect(deps.revalidate).toHaveBeenCalled();
     expect(deps.loadActiveList).toHaveBeenCalled();
     /* eslint-enable @typescript-eslint/unbound-method */
+  });
+
+  it("replays reconcile after apply list_version_conflict when mutation exists (SHOP3)", async () => {
+    // 並行 reconcile: version は通ったが apply 内で競合 → 同一 key+hash を再読
+    const concurrentReplay = { listId: LIST_ID, version: 4, replayed: true };
+    const findMutationReplay = vi
+      .fn<ShoppingDependencies["findMutationReplay"]>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(concurrentReplay);
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockRejectedValue(
+        new HttpError(409, "list_version_conflict", "買い物リストが更新されました"),
+      );
+    const deps = makeShoppingDependencies({
+      findMutationReplay,
+      applyReconciliation,
+      loadActiveList: vi.fn().mockResolvedValue(makeList()),
+      loadActiveListSources: vi.fn().mockResolvedValue([
+        makeSource({
+          menuId: MENU_ID,
+          sourceMenuIdSnapshot: MENU_ID,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        }),
+      ]),
+    });
+    // pure add 承認を付けて prepare を通し、apply の競合パスへ進める
+    const draftKey = (
+      await previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      })
+    ).add[0]?.key;
+    expect(draftKey).toBeDefined();
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).resolves.toEqual(concurrentReplay);
+    expect(findMutationReplay).toHaveBeenCalledTimes(2);
+    expect(applyReconciliation).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a stale source menu version before the list version check", async () => {

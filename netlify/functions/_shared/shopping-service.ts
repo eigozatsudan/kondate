@@ -174,6 +174,36 @@ async function assertReplayStillCurrentlySafe(
   }
 }
 
+/**
+ * list_version_conflict 後に同一 key+hash の mutation が既にあれば replay する。
+ * 並行 create/reconcile で敗者が SQL の version 競合だけ見て 409 になる非対称を閉じる（SHOP3）。
+ * 真の stale version（mutation 無し）は 409 のまま。
+ * 応答形は create/reconcile とも { listId, version, replayed }。
+ */
+async function replayAfterListVersionConflict(
+  deps: ShoppingDependencies,
+  input: {
+    idempotencyKey: string;
+    requestHash: string;
+    menuId: string;
+  },
+  error: unknown,
+): Promise<CreateShoppingListResponse | null> {
+  if (!(error instanceof HttpError) || error.code !== "list_version_conflict") {
+    return null;
+  }
+  const concurrentReplay = await deps.findMutationReplay({
+    idempotencyKey: input.idempotencyKey,
+    requestHash: input.requestHash,
+  });
+  if (concurrentReplay === null) return null;
+  await assertReplayStillCurrentlySafe(deps, {
+    menuId: input.menuId,
+    listId: concurrentReplay.listId,
+  });
+  return concurrentReplay;
+}
+
 export async function createShoppingListFromMenu(
   deps: ShoppingDependencies,
   command: CreateShoppingListRequest & UserCommand,
@@ -197,7 +227,23 @@ export async function createShoppingListFromMenu(
   if (command.mode === "append" && command.activeListId !== null) {
     await assertActiveListSourcesCurrentlySafe(deps, command.activeListId);
   }
-  return deps.applyDraft({ ...command, requestHash, safetyFingerprint, draft });
+  try {
+    return await deps.applyDraft({ ...command, requestHash, safetyFingerprint, draft });
+  } catch (error: unknown) {
+    // SHOP3: 並行同一 key+hash で敗者が list_version_conflict になった場合は
+    // 勝者が書いた mutation を再読して 200 replayed にする（逐次再送と対称）
+    const concurrent = await replayAfterListVersionConflict(
+      deps,
+      {
+        idempotencyKey: command.idempotencyKey,
+        requestHash,
+        menuId: command.menuId,
+      },
+      error,
+    );
+    if (concurrent !== null) return concurrent;
+    throw error;
+  }
 }
 
 /** 再照合対象 item を同一献立 lineage（menu id / derivation group）に限定する */
@@ -647,13 +693,30 @@ export async function reconcileShoppingList(
     }
     throw error;
   }
-  const result = await deps.applyReconciliation({
-    ...command,
-    requestHash,
-    safetyFingerprint,
-    resolvedDiff: prepared.resolvedDiff,
-    stampSourceVersion: prepared.stampSourceVersion,
-  });
+  let result: ReconcileShoppingListResponse;
+  try {
+    result = await deps.applyReconciliation({
+      ...command,
+      requestHash,
+      safetyFingerprint,
+      resolvedDiff: prepared.resolvedDiff,
+      stampSourceVersion: prepared.stampSourceVersion,
+    });
+  } catch (error: unknown) {
+    // SHOP3: create と同じく、並行 apply 敗者が list_version_conflict でも
+    // 同一 key+hash mutation があれば 200 replayed に畳む
+    const concurrent = await replayAfterListVersionConflict(
+      deps,
+      {
+        idempotencyKey: command.idempotencyKey,
+        requestHash,
+        menuId: command.sourceMenuId,
+      },
+      error,
+    );
+    if (concurrent !== null) return concurrent;
+    throw error;
+  }
   // R2: SHOP7 の scoped current delete 後、対象 group の projection が空のまま残る窓を
   // 応答前の list revalidate で閉じる。失敗しても reconcile 自体は成功済みなので握りつぶし、
   // 買い物画面着地時の revalidate に委ねる。

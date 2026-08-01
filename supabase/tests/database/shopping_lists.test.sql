@@ -638,6 +638,134 @@ select pass('idempotency: same-key replay returns the saved response before stal
   || 'and same-key different-payload retry fails with idempotency_payload_mismatch');
 
 -- -----------------------------------------------------------------------------
+-- SHOP10: mutate early replay は list safety を再解釈する。
+-- 同一 key 成功後に世帯アレルギーを足すと、旧 fingerprint の同一 key 再送は
+-- shopping_safety_fingerprint_changed で失敗する（200 replay で通さない）。
+-- -----------------------------------------------------------------------------
+do $test$
+declare
+  v_owner constant uuid := 'c6100000-0000-4000-8000-000000000001';
+  v_member constant uuid := 'c6100000-0000-4000-8000-000000000002';
+  v_menu constant uuid := 'c6100000-0000-4000-8000-000000000003';
+  v_dish constant uuid := 'c6100000-0000-4000-8000-000000000004';
+  v_ingredient constant uuid := 'c6100000-0000-4000-8000-000000000005';
+  v_list_id uuid;
+  v_item_id uuid;
+  v_fingerprint text;
+  v_list_fingerprint text;
+  v_draft jsonb;
+  v_response jsonb;
+  v_key constant uuid := 'c6100000-0000-4000-8000-000000000006';
+  v_payload jsonb := jsonb_build_object('isChecked', true);
+  v_raised boolean := false;
+begin
+  insert into auth.users (id,instance_id,aud,role,email) values
+    (v_owner,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',
+      'shopping-shop10-owner@example.test');
+  insert into public.household_members (
+    id,user_id,status,display_name,age_band,portion_size,spice_level,
+    allergy_status,unsupported_diet_status
+  ) values (
+    v_member,v_owner,'draft','子ども','age_6_8','regular','mild','registered','none'
+  );
+  insert into public.member_allergies (
+    id,user_id,member_id,allergen_id,custom_name,custom_confirmed
+  ) values (
+    'c6100000-0000-4000-8000-000000000007',v_owner,v_member,'wheat',null,false
+  );
+  update public.household_members set status='complete' where id=v_member;
+  insert into public.menus (
+    id,user_id,meal_type,cuisine_genre,servings,total_elapsed_minutes,
+    preference_snapshot,safety_snapshot,safety_fingerprint,target_mode,allergen_dictionary_version,
+    food_safety_rule_version,output_schema_version,derivation_group_id,version
+  ) values (
+    v_menu,v_owner,'dinner','japanese',2,30,'{}','{}',repeat('a',64),'household',
+    'allergens-v1','food-v1','menu-v1','c6100000-0000-4000-8000-000000000008',1
+  );
+  insert into public.menu_target_members (
+    id,menu_id,user_id,household_member_id,household_member_user_id,
+    anonymous_ref,member_display_name_snapshot
+  ) values (
+    'c6100000-0000-4000-8000-000000000009',v_menu,v_owner,v_member,v_owner,'member_1','子ども'
+  );
+  insert into public.dishes (
+    id,menu_id,user_id,role,position,name,description,cooking_time_minutes
+  ) values (
+    v_dish,v_menu,v_owner,'main',1,'煮物','SHOP10検証用',20
+  );
+  insert into public.dish_ingredients (
+    id,menu_id,dish_id,user_id,position,name,quantity_value,quantity_text,unit,store_section
+  ) values (
+    v_ingredient,v_menu,v_dish,v_owner,1,'にんじん',1,'1本','本','produce'
+  );
+
+  v_fingerprint := public.shopping_safety_fingerprint(v_owner, v_menu);
+  v_draft := jsonb_build_object(
+    'items', jsonb_build_array(jsonb_build_object(
+      'key','carrot-shop10','displayName','にんじん','normalizedName','にんじん',
+      'storeSection','produce','quantityValue',1,'quantityText','1本','unit','本',
+      'pantryCheckRequired',false,
+      'sourceIngredients', jsonb_build_array(jsonb_build_object(
+        'ingredientId',v_ingredient,'dishId',v_dish,'dishName','煮物','name','にんじん',
+        'quantityValue',1,'quantityText','1本','unit','本','storeSection','produce'
+      )),
+      'labelWarnings','[]'::jsonb
+    )),
+    'listLabelWarnings','[]'::jsonb
+  );
+  v_response := public.apply_shopping_draft(
+    v_owner, v_menu, 'new', null, null, v_fingerprint,
+    'c6100000-0000-4000-8000-000000000010'::uuid,
+    encode(extensions.digest(convert_to('creation-shop10','UTF8'),'sha256'),'hex'),
+    v_draft
+  );
+  v_list_id := (v_response->>'listId')::uuid;
+  v_list_fingerprint := public.shopping_list_safety_fingerprint(v_owner, v_list_id);
+  select id into v_item_id from public.shopping_items where list_id = v_list_id limit 1;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+
+  v_response := public.mutate_shopping_item(
+    v_list_id, 1, v_list_fingerprint, 'set_checked', v_item_id, v_key, v_payload
+  );
+  if (v_response->>'replayed')::boolean is distinct from false then
+    raise exception 'SHOP10: first mutation should not be replayed, got %', v_response;
+  end if;
+
+  -- 世帯安全を変える（list FP がずれる）。RLS 回避のため superuser で insert
+  reset role;
+  insert into public.member_allergies (
+    id,user_id,member_id,allergen_id,custom_name,custom_confirmed
+  ) values (
+    'c6100000-0000-4000-8000-000000000011',v_owner,v_member,'egg',null,false
+  );
+
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+  begin
+    -- 同一 key + 旧 fingerprint: early replay 前の safety で拒否されること
+    perform public.mutate_shopping_item(
+      v_list_id, 1, v_list_fingerprint, 'set_checked', v_item_id, v_key, v_payload
+    );
+  exception when others then
+    if sqlerrm = 'shopping_safety_fingerprint_changed' then
+      v_raised := true;
+    else
+      raise;
+    end if;
+  end;
+
+  if not v_raised then
+    raise exception 'SHOP10: same-key replay after household change unexpectedly succeeded';
+  end if;
+
+  reset role;
+end;
+$test$;
+select pass('SHOP10: same-key item mutate replay re-checks list safety and rejects stale fingerprint');
+
+-- -----------------------------------------------------------------------------
 -- idempotency二重送信検証（apply_shopping_reconciliation）:
 -- 差分整合を適用してversion 4を記録したあと、同じキー/ハッシュでの再送は
 -- 「古い期待version 3」を渡したままでも保存済みレスポンスを返す（version不一致
