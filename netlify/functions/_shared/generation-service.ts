@@ -73,6 +73,7 @@ import {
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
 } from "./regeneration-context.js";
+import { maybeEnqueueShareJob } from "./share-enqueue.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
 
 /** L13 フラグを boolean として読む（`true as const` の死枝 lint 回避 + テスト mock 可） */
@@ -824,6 +825,18 @@ export async function runGeneration(
       // hydrate 後の status を ops ログの errorCode にする。
       if (status.status === "succeeded") {
         emitTerminalLog("info", "succeeded");
+        // 共有化 job: 成功かつ completed_menu_id hydrate 後のみ。
+        // conflict/timeout/failed では呼ばない。enqueue 失敗は握りつぶし（生成成功を壊さない）。
+        // OpenRouter / Pass pipeline はここから import しない（share-enqueue 内 eligibility + RPC のみ）。
+        try {
+          await maybeEnqueueShareJob({
+            menuId: status.menuId,
+            menu: input.menu,
+            admin: getSupabaseAdmin(),
+          });
+        } catch {
+          // maybeEnqueueShareJob は never throws 契約だが、生成成功を二重に守る
+        }
       } else if (status.status === "constraint_conflict") {
         emitTerminalLog("warn", "constraint_conflict");
       } else if (status.status === "failed") {

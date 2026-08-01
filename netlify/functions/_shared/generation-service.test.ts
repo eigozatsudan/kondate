@@ -36,6 +36,13 @@ vi.mock("./generation-integrity-context.js", () => ({
 vi.mock("./supabase-admin.js", () => ({
   getSupabaseAdmin: vi.fn(() => ({})),
 }));
+// succeed 後 enqueue は接続検証用に差し替え（OpenRouter 経路を触らない）
+const { maybeEnqueueShareJobMock } = vi.hoisted(() => ({
+  maybeEnqueueShareJobMock: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("./share-enqueue.js", () => ({
+  maybeEnqueueShareJob: maybeEnqueueShareJobMock,
+}));
 import { resolveGenerationIntegrityContext } from "./generation-integrity-context.js";
 import {
   ATTEMPT_TIMEOUT_MS,
@@ -500,6 +507,72 @@ describe("runGeneration", () => {
     expect(repository.succeed).toHaveBeenCalledTimes(1);
     expect(repository.status).toHaveBeenCalled();
     expect(result.status).toBe("succeeded");
+  });
+
+  it("enqueues share job only after succeeded hydrate with completed_menu_id", async () => {
+    const validated = makeValidatedMenu({ totalElapsedMinutes: 12 });
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu: validated,
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+      preferenceGaps: [],
+    });
+    const result = await runGeneration(makeDeps(), command);
+    expect(result.status).toBe("succeeded");
+    expect(maybeEnqueueShareJobMock).toHaveBeenCalledTimes(1);
+    expect(maybeEnqueueShareJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        menuId,
+        menu: validated,
+      }),
+    );
+    // 生成レスポンス wire に share フィールドを足さない
+    expect(result).not.toHaveProperty("share");
+    expect(JSON.stringify(result)).not.toMatch(/share|enqueued|job_id/i);
+  });
+
+  it("does not enqueue share job on constraint_conflict after succeed", async () => {
+    const repository = makeRepository();
+    repository.succeed.mockImplementation(() =>
+      Promise.resolve({
+        ...record("constraint_conflict"),
+        terminal_details: { conflictCodes: ["current_safety_changed"] },
+      }),
+    );
+    repository.status.mockResolvedValue({
+      ...record("constraint_conflict"),
+      terminal_details: { conflictCodes: ["current_safety_changed"] },
+    });
+    const result = await runGeneration(makeDeps({ repository }), command);
+    expect(result.status).toBe("constraint_conflict");
+    expect(maybeEnqueueShareJobMock).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue share job on failed generation", async () => {
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+      Promise.reject(new OpenRouterCallError("model_unavailable")),
+    );
+    const result = await runGeneration(makeDeps({ callOpenRouter }), command);
+    expect(result).toMatchObject({ status: "failed", error: { code: "model_unavailable" } });
+    expect(maybeEnqueueShareJobMock).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue share job when finalize times out", async () => {
+    const repository = makeRepository();
+    const { GenerationFinalizeTimeoutError } = await import("./generation-repository.js");
+    repository.succeed.mockRejectedValue(new GenerationFinalizeTimeoutError());
+    const result = await runGeneration(makeDeps({ repository }), command);
+    expect(result).toMatchObject({ status: "failed", error: { code: "generation_timeout" } });
+    expect(maybeEnqueueShareJobMock).not.toHaveBeenCalled();
+  });
+
+  it("still returns succeeded when share enqueue rejects", async () => {
+    // maybeEnqueueShareJob は never throws 契約だが、生成成功を二重に守る
+    maybeEnqueueShareJobMock.mockRejectedValueOnce(new Error("enqueue boom"));
+    const result = await runGeneration(makeDeps(), command);
+    expect(result.status).toBe("succeeded");
+    expect(maybeEnqueueShareJobMock).toHaveBeenCalledTimes(1);
   });
 
   it("logs a closed success event with requestId, code, durationMs, and modelId", async () => {
